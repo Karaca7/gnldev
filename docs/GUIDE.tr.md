@@ -1,0 +1,827 @@
+# GNL v2 — Tam Rehber: Nedir, Nasıl Çalışır, Neden Farklı?
+
+> Bu belge GNL'i **hiç bilmeyen birine** anlatmak için yazıldı. Teknik terimler ilk geçtikleri
+> yerde parantez içinde açıklanır. Şemalar Mermaid formatındadır (GitHub/VS Code otomatik çizer).
+
+---
+
+## 1. GNL nedir? (tek paragraf)
+
+GNL, **yapay zekâ ajanları** (agent: bir LLM'in — yani ChatGPT benzeri bir dil modelinin — araçlar
+kullanarak çok adımlı iş yapan hali) inşa etmek için bir TypeScript framework'üdür (framework:
+uygulamanın iskeletini hazır veren kod kütüphanesi seti). Diğer agent framework'lerinden
+temel farkı şudur: **GNL'de her ajan koşusu bir "seyir defterine" yazılır ve bu sayede elektrik
+kesilse, sunucu çökse, işlem yarıda kalsa bile ajan kaldığı yerden devam eder — ve para çeken,
+e-posta atan gibi geri alınamaz işlemler ASLA iki kez çalışmaz.**
+
+---
+
+## 2. Çözdüğü problem: "Ajan yarıda ölürse ne olur?"
+
+Bir ajan düşün: müşterinin kartından 20$ çekiyor, sonra fatura e-postası atıyor, sonra CRM'e
+(müşteri kayıt sistemi) not düşüyor. Üç adım, üç **yan etki** (side effect: dış dünyayı değiştiren,
+geri alınamaz işlem).
+
+Senaryo: Kart çekildi ✅ → e-posta atıldı ✅ → tam CRM'e yazarken **sunucu çöktü** 💥.
+
+Şimdi ne yapacaksın?
+
+- **Baştan çalıştırırsan:** kart İKİNCİ kez çekilir, e-posta İKİNCİ kez gider. Felaket.
+- **Hiç çalıştırmazsan:** CRM notu eksik kalır. İş yarım.
+
+Çoğu framework bu soruna tam bir cevap vermez. GNL'in cevabı:
+
+```
+Ajanı AYNI runId ile tekrar çalıştır.
+→ Kart çekimi: seyir defterinde kayıtlı → ATLANIR (tekrar çekilmez, kayıtlı sonuç kullanılır)
+→ E-posta:     seyir defterinde kayıtlı → ATLANIR
+→ CRM notu:    kayıtlı DEĞİL → şimdi çalışır ✅
+```
+
+Buna **exactly-once** (tam-bir-kez: her yan etki ne eksik ne fazla, tam olarak bir kez çalışır)
+ve **deterministic replay** (deterministik tekrar-oynatma: aynı koşu tekrar edildiğinde LLM'e ve
+araçlara yeniden gitmeden, defterdeki kayıtlardan aynı sonucun yeniden kurulması) denir.
+**GNL'in "moat"u** (hendek: rakiplerin kolay kopyalayamayacağı temel üstünlük) budur.
+
+---
+
+## 3. Temel kavram sözlüğü
+
+| Terim | Açıklama |
+|---|---|
+| **LLM** | Büyük dil modeli — GPT, Claude, Gemini gibi metin üreten yapay zekâ. |
+| **Agent (ajan)** | LLM + araçlar + döngü: model "şu aracı çağır" der, sonuç modele döner, model devam eder — cevap bitene kadar. |
+| **Tool (araç)** | Ajanın çağırabildiği fonksiyon: hava durumu API'si, veritabanı sorgusu, kart çekme... |
+| **Run (koşu)** | Bir ajanın tek bir görevi baştan sona işlemesi. Her koşunun benzersiz bir `runId` kimliği vardır. |
+| **Journal (seyir defteri)** | GNL'in kalbi: koşudaki HER LLM cevabı ve HER araç sonucu, anahtar-değer (key-value) olarak veritabanına yazılır. Yalnızca EKLEME yapılır, değiştirilmez (append-only). |
+| **Replay (tekrar oynatma)** | Aynı `runId` ile tekrar çağrıldığında GNL defteri okur: kayıtlı adımlar çalıştırılmadan kayıttan döner, yalnız eksik adımlar gerçekten koşar. |
+| **Resume (devam etme)** | Çökme/kesinti sonrası koşuyu aynı `runId` ile yeniden başlatmak — replay sayesinde kaldığı yerden sürer. |
+| **CAS** | Compare-And-Set (karşılaştır-ve-yaz): "bu anahtar BOŞSA yaz, doluysa dokunma" işleminin veritabanı motorunda TEK atomik adımda yapılması. İki sunucu aynı anda yazmaya kalksa bile yalnız BİRİ kazanır. Exactly-once'ın teknik temeli. |
+| **Idempotent (tekrar-güvenli)** | Bir işlemin 1 kez de 10 kez de çağrılsa aynı sonucu üretmesi (örn. "bu id ile kayıt varsa yenisini açma"). |
+| **HITL** | Human-in-the-loop (döngüde insan): ajan riskli bir işlemden önce durup insan onayı bekler. |
+| **RAG** | Retrieval-Augmented Generation (getirmeli üretim): soruyla ilgili dokümanları önce bir arşivden bulup LLM'e bağlam olarak verme tekniği. |
+| **Embedding (gömme vektörü)** | Metnin anlamını temsil eden sayı dizisi; iki metnin "anlamca yakınlığı" bu sayılarla ölçülür. |
+| **Workflow (iş akışı)** | Ajan serbest döngüsünün aksine, adımları senin belirlediğin sıralı/dallı süreç (adım 1 → koşula göre adım 2a veya 2b → ...). |
+| **Multi-tenant (çok kiracılı)** | Tek kurulumda birden çok müşterinin verisinin/bütçesinin birbirinden yalıtılması. |
+
+---
+
+## 4. Bir koşu adım adım nasıl işler?
+
+```mermaid
+sequenceDiagram
+    participant K as Senin Kodun
+    participant G as GNL (runDurable)
+    participant J as Journal (veritabanı)
+    participant M as LLM (model)
+    participant T as Tool (araç)
+
+    K->>G: runDurable({ runId: "siparis-42", prompt: "20$ çek" })
+    G->>J: girdi kaydı yaz (siparis-42:input)
+    G->>J: 1. adım kaydı var mı? (siparis-42:model:0)
+    J-->>G: YOK
+    G->>M: LLM'e sor
+    M-->>G: "chargeCard aracını çağır"
+    G->>J: LLM cevabını yaz (model:0)
+    G->>J: CAS: tool kaydını KİLİTLE (tool:call-1 = 'çalışıyor')
+    G->>T: chargeCard(20) — GERÇEK yan etki, TAM 1 kez
+    T-->>G: { charged: 20 }
+    G->>J: sonucu yaz (tool:call-1 = 'başarılı')
+    Note over G: 💥 BURADA ÇÖKSE BİLE...
+    K->>G: aynı runId ile TEKRAR çağır
+    G->>J: model:0 var mı? VAR → LLM'e GİTME, kayıttan oku
+    G->>J: tool:call-1 var mı? VAR → kartı TEKRAR ÇEKME, kayıttan oku
+    G->>M: yalnız EKSİK adım için LLM'e sor
+    M-->>G: "İşlem tamam" (final metin)
+    G-->>K: sonuç + maliyet + iz kaydı
+```
+
+Kritik ayrıntılar:
+
+1. **Araç çağrısından ÖNCE kilit yazılır** (CAS ile `'running'` işareti): iki sunucu aynı koşuyu
+   aynı anda işlese bile aracı yalnız biri çalıştırabilir — kart asla iki kez çekilmez.
+   Bu, canlı testlerle kanıtlı (aşağıda "Kanıtlar" bölümü).
+2. **LLM cevapları da deftere yazılır**: resume'da LLM'e yeniden gidilmez → hem aynı karar
+   korunur (determinizm) hem token parası (LLM kullanım ücreti) tekrar ödenmez.
+3. **Onay (HITL)**: bir araç `guard` (bekçi: hangi aracın onay istediğini söyleyen kural) ile
+   işaretliyse koşu orada ASKIYA alınır; insan onayı geldiğinde aynı `runId` ile devam eder.
+
+---
+
+## 5. Veritabanı yapısı — "seyir defteri" içeride nasıl görünür?
+
+### 5.1 Anahtar şeması (her kayıt bir anahtar-değer çifti)
+
+| Anahtar | İçerik |
+|---|---|
+| `<runId>:input` | Koşunun girdisi (soru/mesajlar/sistem talimatı) — resume kendi kendine yetsin diye. |
+| `<runId>:model:<N>` | N'inci LLM cevabı (metin + araç-çağrısı talepleri + token sayıları). |
+| `<runId>:tool:<çağrıId>` | Bir araç çağrısının durumu: `running` → `succeeded/failed/denied/suspended` + çıktı. |
+| `<runId>:cfg:model` | Model yedek zincirinde (fallback: birincil model çökerse yedeğe geçme) KAZANAN model — koşu boyunca aynı modele "yapışır". |
+| `<runId>:proc:<ad>` | Deterministik olmayan ara kararların (LLM'li moderasyon, skorlama...) dondurulmuş sonucu. |
+| `<runId>:wf:<adımId>` | Workflow adım çıktıları. |
+| `<runId>:net:route:<i>` / `net:step:<i>` | Dinamik ajan ağında (aşağıda) yönlendirici kararları + adım sonuçları. |
+| `<runId>:lock` | Koşu kilidi (aynı koşuyu iki sunucunun aynı anda işlemesini önler). |
+| `agent:<çağrıId>` / `net:<runId>:<i>` | Alt-ajanların KENDİ defterleri (her alt-ajan tam teşekküllü bir koşudur). |
+
+### 5.2 Depolama mimarisi: 6 "liman" (port), 4 adaptör
+
+GNL veritabanına doğrudan bağlanmaz; **Storage** adlı soyut bir arayüz (interface: "şu fonksiyonlar
+olacak" sözleşmesi) üzerinden konuşur. Bu arayüz 6 limana ayrılır:
+
+```mermaid
+graph TB
+    subgraph Storage ["Storage (tek sözleşme)"]
+        R["runs — RunJournal<br/>(seyir defteri; replay motoru<br/>YALNIZ bununla konuşur)"]
+        M["memory — MemoryStore<br/>(konuşma geçmişi, thread'ler,<br/>anımsama/recall)"]
+        V["vectors — VectorStore<br/>(RAG doküman arşivi,<br/>embedding araması)"]
+        W["work — WorkStore<br/>(kuyruk + olay/event log'u)"]
+        C["cache — CacheStore<br/>(süreli önbellek, TTL)"]
+        Me["meta — MetaStore<br/>(şema versiyonu vb.)"]
+    end
+    subgraph Adaptörler
+        A1["InMemory<br/>(test/geliştirme)"]
+        A2["SQLite<br/>(tek makine,<br/>sıfır kurulum)"]
+        A3["Postgres<br/>(çok sunuculu<br/>üretim)"]
+        A4["Redis<br/>(hızlı kuyruk/<br/>önbellek)"]
+    end
+    Storage --- Adaptörler
+```
+
+Her adaptör her limanı desteklemek ZORUNDA değil — **capability matrix** (yetenek matrisi) dürüstçe
+ne verebildiğini söyler ve `composite()` (birleştirici) ile limanlar farklı motorlara dağıtılır:
+
+```ts
+// Örnek: koşu defteri Postgres'te (dayanıklılık), kuyruk+önbellek Redis'te (hız):
+const storage = composite({
+  default: new PostgresStorage({ connectionString: PG_URL }),
+  overrides: { work: redis, cache: redis }, // redis = new RedisStorage({...})
+});
+```
+
+| Adaptör | runs (defter) | memory | vectors | work | cache | Ne zaman? |
+|---|---|---|---|---|---|---|
+| InMemory | ✅ | ✅ | ✅ | ✅ | ✅ | Test, prototip. |
+| SQLite | ✅ | ✅ | ✅ | ✅ | ✅ | Tek makine, sıfır kurulum (Node'a gömülü). |
+| Postgres | ✅ | ✅ | ✅ (pgvector ile) | ✅ | ✅ | Çok sunuculu üretim. **Önerilen defter.** |
+| Redis | ✅* | ❌ | ❌ | ✅ | ✅ (gerçek TTL) | Kuyruk/önbellek hızlandırıcı. *Defter için failover'lı kurulumda önerilmez (aşağıda). |
+
+### 5.3 Somut tablo yapıları — hangi tablo ne için, ne zaman kullanılır?
+
+SQLite ve Postgres adaptörleri ilk açılışta AYNI adlarla **11 tablo** kurar (`init()` — idempotent:
+tablo varsa dokunmaz). Limanların tablolara dağılımı:
+
+```mermaid
+graph LR
+    runs["runs limanı"] --> T1["gnl_run_journal<br/>(defterin kendisi)"]
+    runs --> T2["gnl_runs<br/>(koşu özetleri/vitrin)"]
+    memory["memory limanı"] --> T3["gnl_threads"] & T4["gnl_messages"] & T5["gnl_working_memory"] & T6["gnl_observations"]
+    vectors["vectors limanı"] --> T7["gnl_vectors"]
+    work["work limanı"] --> T8["gnl_work_log"] & T9["gnl_work_kv"]
+    cache["cache limanı"] --> T10["gnl_cache"]
+    meta["meta limanı"] --> T11["gnl_meta"]
+```
+
+**① `gnl_run_journal` — seyir defterinin kendisi (en önemli tablo).**
+
+| Kolon | Ne işe yarar? |
+|---|---|
+| `key` | §5.1'deki anahtar (örn. `siparis-42:model:0`) — birincil anahtar (primary key: satırı benzersiz kılan kolon; aynı anahtar İKİNCİ kez EKLENEMEZ — CAS bu kısıta yaslanır). |
+| `run_id` | Hangi koşuya ait (anahtardan çıkarılıp ayrıca yazılır — "bu koşunun tüm satırları" sorgusu index'le hızlı olsun diye). |
+| `kind` | Satır türü: `model` (LLM cevabı) mı `tool` (araç sonucu) mu. |
+| `value` | Kaydın kendisi — JSON metni (superjson: Date gibi tipleri de koruyan JSON türevi). |
+| `suspended` | "Bu satır onay bekleyen bir araç mı?" işareti — onay kuyruğu ekranı koca değeri açmadan bulabilsin diye önceden çıkarılmış. |
+| `created_at` | Yazılma zamanı (milisaniye) — replay'de satırların SIRASI buna göre kurulur. |
+
+*Ne zaman?* Her LLM/araç adımında 1 satır YAZILIR; resume başında koşunun tüm satırları TEK
+sorguyla OKUNUR (bkz. §11.2). Atomiklik doğrudan SQL'dedir: `INSERT ... ON CONFLICT DO NOTHING`
+("varsa ekleme" — iki sunucu aynı anahtarı yazarsa motor yalnız birine izin verir = CAS).
+
+**② `gnl_runs` — koşuların vitrini.** Kolonlar: `run_id, model_steps (kaç LLM adımı),
+tool_calls (kaç araç), suspended (askıda mı), created_at/updated_at`. *Neden var?* Studio'nun
+"Koşular" listesi için: 10.000 koşuyu listelemek için milyonlarca defter satırını taramak yerine
+koşu başına 1 özet satır okunur. Her defter yazımında otomatik güncellenir (türetilmiş veridir —
+bozulsa bile defterden yeniden hesaplanabilir).
+
+**③ `gnl_threads` — konuşma başlıkları.** Kolonlar: `id, resource_id (hangi KULLANICININ
+konuşması — çok kullanıcılı ayrım), title, parent_thread_id (bir konuşmadan dallanan konuşma),
+metadata, created/updated_at, deleted_at (silindi işareti)`. *Ne zaman?* Hafızayı (`threadId`)
+kullanıyorsan; kullanıcının konuşma listesi ekranı buradan gelir.
+
+**④ `gnl_messages` — konuşma mesajları, mesaj başına 1 satır.** Kolonlar: `thread_id + seq
+(sıra numarası — ikisi birlikte birincil anahtar: aynı sıraya iki mesaj yazılamaz → eşzamanlı
+eklemede çiftleme yok), role (user/assistant), text (aranabilir düz metin), embedding (anlamsal
+arama vektörü — "recall" bununla yapılır), ts (zaman), message (mesajın ham/tam hali)`.
+*Ne zaman?* Koşu tamamlanınca konuşma buraya eklenir; sonraki koşularda geçmiş buradan yüklenir,
+anlamsal anımsama burada arar.
+
+**⑤ `gnl_working_memory` — ajanın "çalışma notu".** Konuşma/kullanıcı başına TEK satır
+(`scope_id → data`): ajanın kendine tuttuğu güncel özet ("müşterinin adı Ali, siparişi #42...").
+Defterin aksine ÜZERİNE YAZILIR — çünkü bu bir kayıt değil, güncel durum notudur.
+
+**⑥ `gnl_observations` — damıtılmış gözlemler.** Ajanın konuşmalardan çıkardığı kalıcı notlar
+("kullanıcı resmi dil tercih ediyor"). Thread başına tek satır, içinde gözlem listesi.
+
+**⑦ `gnl_vectors` — RAG doküman arşivi.** Kolonlar: `id (parça kimliği, örn. 'el-kitabi#3'),
+text (parçanın metni), embedding (anlam vektörü), metadata (kaynak/başlık izi), created_at`.
+*Ne zaman?* `indexDocuments` ile doldurulur; ajan bilgi-bankası aracını her kullandığında
+"soruya en yakın K parça" burada aranır. Postgres'te pgvector eklentisi varsa arama motor
+içinde (hızlı index'le) yapılır.
+
+**⑧ `gnl_work_log` — kuyruk/olay defteri.** Kolonlar: `ns (namespace — hangi kuyruk/konu,
+örn. 'evt:siparis'), id (kayıt kimliği; ns+id birincil anahtar → aynı olay iki kez EKLENEMEZ =
+idempotent yayın), payload (içerik), ts`. *Ne zaman?* `@gnl/queue` iş ekleyince, `@gnl/events`
+olay yayınlayınca. Yalnız-ekle çalışır; eskiler `sweepLog` ile süpürülür.
+
+**⑨ `gnl_work_kv` — kuyruk yönetim notları.** Serbest anahtar-değer: işlerin durumu, zamanlayıcı
+tanımları ve en önemlisi **teslim işaretleri** (ack marker: "X olayını Y tüketicisi aldı" —
+CAS ile yazılır → aynı olay aynı tüketiciye İKİ KEZ teslim edilemez).
+
+**⑩ `gnl_cache` — süreli önbellek.** `key, value, expires_at (son kullanma zamanı)`. Koşular
+ARASI tekrar kullanım için (örn. aynı metnin embedding'i iki koşuda → bir kez hesapla).
+Süresi geçen kayıt okunmaz ve temizlenir.
+
+**⑪ `gnl_meta` — sistem künyesi.** `k → v` (örn. `schema_version = 3`): adaptör açılışta bakar,
+tablo şeması eski sürümden kalmaysa güvenli göç (migration) kararını buradan verir.
+
+> Akılda kalsın diye: **① defter, ② vitrin, ③-⑥ hafıza, ⑦ kütüphane, ⑧-⑨ postane, ⑩ buzdolabı,
+> ⑪ künye.** Kritik garanti yalnız ①'de yaşar; gerisi konfor/hız katmanlarıdır ve `composite()`
+> ile başka motorlara taşınabilir.
+
+---
+
+## 6. Paket haritası — 21 paket, 6 grup
+
+```mermaid
+graph LR
+    subgraph Çekirdek
+        durable["@gnl/durable<br/>seyir defteri + replay motoru<br/>(HER ŞEYİN kalbi)"]
+    end
+    subgraph Yetenekler
+        memory["@gnl/memory<br/>zengin hafıza"]
+        rag["@gnl/rag<br/>RAG + GraphRAG + chunking"]
+        workflow["@gnl/workflow<br/>iş akışları + retry"]
+        processors["@gnl/processors<br/>PII maskesi, moderasyon,<br/>toolSearch..."]
+        evals["@gnl/evals<br/>kalite ölçümü (scorer'lar,<br/>deney karşılaştırma)"]
+    end
+    subgraph Dağıtık
+        queue["@gnl/queue<br/>arkaplan iş kuyruğu"]
+        events["@gnl/events<br/>olay yayını (pubsub)"]
+        scheduler["@gnl/scheduler<br/>zamanlanmış tetikleyici"]
+        cache["@gnl/cache<br/>koşular-arası önbellek"]
+    end
+    subgraph Sunum
+        server["@gnl/server<br/>otomatik REST API"]
+        client["@gnl/client<br/>type-safe istemci + React"]
+        studio["@gnl/studio + studio-ui<br/>web kontrol paneli"]
+        agui["@gnl/agui<br/>CopilotKit köprüsü"]
+    end
+    subgraph Entegrasyon
+        mcp["@gnl/mcp<br/>MCP araç protokolü"]
+        a2a["@gnl/a2a<br/>uzak ajan çağrısı"]
+        otel["@gnl/otel<br/>izleme (Langfuse vb.)"]
+        schema["@gnl/schema-compat<br/>sağlayıcı şema uyumu"]
+    end
+    subgraph Operasyon
+        auth["@gnl/auth (ücretsiz)<br/>@gnl/auth-ee (kurumsal SSO)"]
+        deploy["@gnl/deploy<br/>bundle + Vercel/CF/Netlify"]
+        cli["@gnl/cli + create-gnl<br/>komut satırı + şablon"]
+    end
+    Yetenekler --> durable
+    Dağıtık --> durable
+    Sunum --> durable
+```
+
+Kilit nokta: **her paket `@gnl/durable`ın üstüne kurulur** — RAG sorgusu da, kuyruk işi de, uzak
+ajan çağrısı da otomatik olarak deftere yazılır ve exactly-once garantisini MİRAS alır. Rakiplerde
+bu özellikler ayrı ayrı vardır ama ortak bir dayanıklılık zemini yoktur.
+
+---
+
+## 7. Tam kullanım senaryosu — sıfırdan üretime
+
+### 7.1 İlk ajan (5 dakika)
+
+```ts
+import { createGnl, InMemoryJournal } from '@gnl/durable';
+import { openai } from '@ai-sdk/openai';
+
+const gnl = createGnl({
+  journal: new InMemoryJournal(),           // prod'da: new SqliteStorage('app.db').runs
+  agents: {
+    asistan: {
+      model: ['openai/gpt-4o', 'anthropic/claude-sonnet-4'], // YEDEK ZİNCİRİ: ilki çökerse ikinci
+      system: 'Kısa ve net cevap ver.',      // sistem talimatı (ajanın kişiliği/kuralları)
+    },
+  },
+});
+
+const r = await gnl.run('asistan', { runId: 'soru-1', prompt: 'Merhaba!' });
+console.log(r.text);
+```
+
+`model`'e dizi verince **deterministik fallback** devreye girer: ilk başarılı model deftere
+"dondurulur", koşunun kalanı ve tüm resume'lar AYNI modeli kullanır (birçok diğer framework'te fallback kararı
+kalıcı değildir — resume'da farklı model farklı cevap üretebilir).
+
+### 7.2 Araç + insan onayı (HITL)
+
+```ts
+const gnl = createGnl({
+  journal,
+  agents: {
+    kasiyer: {
+      model: 'openai/gpt-4o',
+      tools: { chargeCard: tool({ /* kart çekme */ }) },
+      guard: { requireApproval: ['chargeCard'] },  // bu araç İNSAN ONAYI ister
+    },
+  },
+});
+
+const r1 = await gnl.run('kasiyer', { runId: 'odeme-7', prompt: '20$ çek' });
+// r1.interrupts → [{ toolCallId: 'call-1', toolName: 'chargeCard', args: {...} }]  → ASKIDA
+
+// ... insan Studio'dan (veya kendi arayüzünden) onayladı ...
+const r2 = await gnl.run('kasiyer', {
+  runId: 'odeme-7',                             // AYNI runId = devam
+  approvals: { 'call-1': true },
+});
+// LLM'e yeniden gidilmedi, kart TAM 1 kez çekildi.
+```
+
+### 7.3 Hafıza (konuşma geçmişi)
+
+```ts
+import { AgentMemory } from '@gnl/memory';
+const gnl = createGnl({ storage, memoryFactory: (s) => new AgentMemory({ storage: s, embed }) });
+await gnl.run('asistan', { runId: 'r1', threadId: 'musteri-5', prompt: 'Adım Ali' });
+await gnl.run('asistan', { runId: 'r2', threadId: 'musteri-5', prompt: 'Adım neydi?' }); // "Ali"
+```
+`threadId` (konuşma ipliği kimliği) aynı olan koşular geçmişi paylaşır; **semantic recall**
+(anlamsal anımsama: eski mesajlar arasından soruyla alakalı olanları embedding ile bulup getirme)
+ve **working memory** (çalışma notu: ajanın kendine tuttuğu güncel özet) desteklenir.
+
+### 7.4 RAG — doküman arşivinden cevap
+
+```ts
+import { chunkDocuments, PostgresVectorStore, createRagTool, GraphRag } from '@gnl/rag';
+
+// 1) Dokümanları parçala (chunk: uzun metni aranabilir küçük parçalara bölme):
+const parcalar = chunkDocuments([{ id: 'el-kitabi', text: uzunMetin }], { strategy: 'markdown' });
+// 2) Kalıcı vektör arşivine yaz (pgvector: Postgres'in embedding arama eklentisi):
+const store = new PostgresVectorStore({ connectionString: PG_URL });
+await indexDocuments(store, embed, parcalar);
+// 3) Ajana araç olarak ver:
+tools: { bilgiBankasi: createRagTool({ store, embed, topK: 4 }) }
+```
+İnce ayrıntı: RAG sorgusu da deftere yazıldığı için **resume'da arama tekrarlanmaz** — arşive o
+arada yeni doküman eklense bile koşu aynı kanıtlarla devam eder (deterministik RAG — rakiplerde yok).
+`GraphRag` ise parçalar arası benzerlik grafı kurup **dolaylı ilgili** parçaları da bulur.
+
+### 7.5 Çoklu ajan — statik ve dinamik
+
+```ts
+// STATİK: ana ajan, alt-ajanları birer araç gibi görür (agent-as-tool):
+agents: {
+  yonetici: { model, agents: ['arastirmaci', 'yazar'] },   // agent_arastirmaci, agent_yazar araçları
+  arastirmaci: { model, description: 'web araştırması yapar' },
+  yazar: { model, description: 'metin kaleme alır' },
+}
+
+// DİNAMİK AĞ: bir yönlendirici-LLM her turda hangi ajanın çalışacağına KENDİ karar verir:
+networks: {
+  destek: { router: 'openai/gpt-4o-mini', agents: ['arastirmaci', 'yazar'], maxIterations: 6 },
+}
+const sonuc = await gnl.runNetwork('destek', { runId: 'talep-9', task: 'X konusunu araştır ve özetle' });
+```
+GNL'in farkı: yönlendirme kararları da deftere **CAS ile dondurulur** → resume'da yönlendirici
+yeniden çağrılmaz, ağ aynı yolu izler. Alt-ajan onay için askıya alınırsa kesinti yukarı taşınır.
+Studio `GET /runs/:id/network` ile ağacın görselini verir.
+
+### 7.6 Workflow — kontrollü süreç + retry
+
+```ts
+import { workflow, step, retry } from '@gnl/workflow';
+
+const wf = workflow<Siparis>()
+  .then(retry(step('stokKontrol', kontrolEt), { attempts: 3, backoffMs: 500, fallback: step('manuel', kuyrugaAt) }))
+  .branch((s) => s.tutar > 1000, step('mudurOnayi', onayla), step('otoOnay', gecir))
+  .foreach((s) => s.kalemler, (kalem) => hazirla(kalem));
+
+await wf.run(siparis, { runId: 'wf-42', journal });
+```
+Her adım deftere yazılır → süreç ortasında çökerse tamamlanan adımlar atlanır. `retry`'ın deneme
+sayacı bile defterdedir: çökme sonrası "3 deneme hakkı" sıfırlanmaz.
+
+### 7.7 Kalite ölçümü (evals)
+
+```ts
+import { faithfulness, toxicity, createDatasetsManager } from '@gnl/evals';
+
+// Koşu-sonu otomatik skor: agents.asistan.scorers = [toxicity({ model: hakem })]
+// Deney karşılaştırma:
+const m = createDatasetsManager(journal);
+await m.runExperiment({ dataset, run: eskiModelle, scorers, experimentId: 'v1' });
+await m.runExperiment({ datasetId: dataset.id, run: yeniModelle, scorers, experimentId: 'v2' });
+const fark = await m.compare(dataset.id, 'v1', 'v2');  // hangi soruda geriledik, hangisinde iyileştik
+```
+Suite ortasında çökerse tamamlanan test-case'ler atlanır (**resumable evals** — rakiplerde yok);
+LLM-hakem puanları da deftere yazıldığından tekrar koşularda aynı puan döner (para da yanmaz).
+
+### 7.8 Sunucu, istemci, Studio
+
+```ts
+// Sunucu: registry'yi otomatik REST API yapar (OpenAPI şemasıyla):
+import { createServer } from '@gnl/server';
+serve(createServer(gnl));                      // POST /agents/asistan/run, SSE stream, /metrics...
+
+// İstemci (tarayıcı/React):
+import { createClient } from '@gnl/client';
+const api = createClient('http://localhost:3000');
+await api.run('asistan', { prompt: '...' });
+
+// Studio: web kontrol paneli — npx @gnl/studio
+// 15 görünüm: koşu zaman çizelgesi, TIME-TRAVEL (geçmiş bir adıma dönüp oradan ÇATALLAMA),
+// onay kuyruğu, maliyet, izler, tenant/bütçe yönetimi, ağ ağacı, playground...
+```
+
+### 7.9 Yayınlama (deploy) ve izleme
+
+```ts
+import { deployTargets, writeDeployTarget, bundleApp } from '@gnl/deploy';
+await writeDeployTarget(deployTargets.cloudflare({ entry: './src/server.ts' }), '.');
+// → worker.ts + wrangler.toml hazır; `npx wrangler deploy`
+
+import { exportRunToOtlp, otlpPresets } from '@gnl/otel';
+await exportRunToOtlp(journal, 'siparis-42', otlpPresets.langfuse({ publicKey, secretKey }));
+// koşunun tüm izi (trace) tek satırla Langfuse'a (LLM izleme servisi)
+```
+
+### 7.10 Bakım: temizlik ve uzun ömürlü ajanlar
+
+```ts
+await sweepRuns(journal, { olderThanMs: 30 * GUN });   // eski koşuları sil (askıdakiler korunur)
+await purgeRun(journal, 'siparis-42');                  // GDPR: bir koşunun TÜM izini sil
+                                                        // (alt-ajan defterleri dahil — özyinelemeli)
+const { newRunId } = await rolloverRun(journal, 'asistan-ana');  // haftalardır yaşayan ajanın
+// defteri büyüdü → durumu yeni bir "döneme" taşı, eski dönemi sonra sil
+```
+
+---
+
+## 8. Rakiplerden GERÇEK farklar (dürüst tablo)
+
+| Özellik | GNL | Diğer framework'ler (tipik) | Bazı framework'ler (checkpoint-tabanlı) |
+|---|---|---|---|
+| **Exactly-once yan etki** | ✅ CAS ile, canlı çok-sunucu testli | ❌ | ❌ (checkpoint durumu saklar ama araç tekrarını engellemez) |
+| **Deterministic replay** (LLM'e gitmeden aynı sonucu kur) | ✅ | ❌ | Kısmen (durum var, kayıtlı LLM cevabı yok) |
+| **Time-travel + fork** (geçmiş adıma dön, oradan dallan) | ✅ Studio'da görsel | ❌ | ❌ |
+| **Model fallback'in kalıcılığı** (kazanan model koşuya yapışır) | ✅ | ❌ (anlık) | ❌ |
+| **Dinamik ajan ağı kararlarının dondurulması** | ✅ | ❌ (.network kararları uçucu) | ❌ |
+| **Resumable evals** (test paketi kaldığı yerden) | ✅ | ❌ | ❌ |
+| **Governance Studio** (tenant/bütçe/politika/onay) | ✅ 15 görünüm | Temel playground | ❌ |
+| **Edge bundle küçüklüğü** | ✅ (~ince çekirdek, bağımlılıklar opsiyonel) | Orta | Ağır |
+| Hazır scorer sayısı | 8 + hakem altyapısı | 18 | Ayrı paketlerle |
+| Ses (TTS/STT), Slack/WhatsApp kanalları | ❌ (bilinçli kapsam dışı) | ✅ | Kısmen |
+| No-code ajan editörü | ❌ (bilinçli: kod-öncelikli) | ✅ | ❌ |
+| Depolama adaptörü sayısı | 4 (+composite karışımı) | ~16 | Çok |
+
+Özet: **tipik tam-donanımlı framework'ler genişlikte** (çok entegrasyon, kanal, editör), **GNL derinlikte** (dayanıklılık,
+determinizm, denetlenebilirlik) güçlüdür. Para/hukuk/sağlık gibi "iki kez çalışırsa felaket"
+alanlarında GNL'in garantilerinin rakibi yok; hızlı demo/çok-kanallı bot içinse bu tür framework'ler daha
+hazır gelir.
+
+---
+
+## 9. Kanıtlar — bu iddialar test edildi mi?
+
+Evet; iddiaların çoğu **gerçek motorlarda canlı testlerle** kanıtlı (ayrıntı: `docs/CORE-HARDENING.md`):
+
+- **Çok-sunucu CAS yarışı:** iki ayrı Postgres bağlantı havuzu aynı anahtara aynı anda yazıyor →
+  her seferinde TAM BİR kazanan (20 tur + 10'lu fırtına). Redis'te aynı (SET NX).
+- **Canlı failover** (sunucu değişimi): birincil Postgres **SIGKILL ile öldürüldü**, yedek terfi
+  ettirildi → 30/30 onaylı yazı korundu, exactly-once sürdü. (Ön koşul: senkron replikasyon —
+  README'de dağıtım notu; asenkron kurulumda bu garanti YOKTUR, dürüstçe belgeli.)
+- **Kilit devralma:** süresi dolmuş kilidi iki sunucu aynı anda devralmaya kalktı → yalnız biri
+  kazandı (`putIfMatch` CAS'i; eski sürümde buradaki yarış bulunmuş ve kapatılmıştı).
+- **Süreç öldürme testleri:** çocuk süreç gerçek `SIGKILL` ile öldürülüp resume ediliyor.
+- Toplam: **700+ test**, ayrıca `GNL_INTEGRATION=1` ve `GNL_FAILOVER=1` ile gerçek-altyapı paketleri.
+
+---
+
+## 10. Sık sorulacaklar
+
+**"Journal şişmez mi?"** Koşu başına kayıt adım sayısıyla doğrusal büyür. Biten koşular
+`sweepRuns` ile silinir; haftalarca yaşayan tek ajan için `rolloverRun` durumu yeni döneme taşır.
+Resume, tüm defteri TEK toplu sorguyla okur (adım başına sorgu fırtınası yok — ölçülü, testli).
+👉 Bu konunun derin anlatımı: **Bölüm 11**.
+
+**"LLM aynı girdiye farklı cevap verirse determinizm nasıl korunuyor?"** Sır şu: GNL modeli
+"deterministikleştirmez", **cevabı kaydeder**. İlk koşuda model ne dediyse defterde odur; replay
+o kaydı okur, modele hiç gitmez.
+
+**"Hangi LLM'lerle çalışır?"** Vercel AI SDK üzerine kuruludur → OpenAI, Anthropic, Google,
+Mistral... `'sağlayıcı/model'` yazman yeterli; sağlayıcı paketleri ancak kullanılırsa yüklenir.
+
+**"En küçük başlangıç?"** `npm create gnl` → SQLite ile tek dosya kalıcılık, sunucu ve Studio
+dahil çalışan iskelet. Postgres/Redis üretime geçerken tek satır `storage` değişikliğidir.
+
+---
+
+## 11. Derin konu: Journal büyümesi, okuma maliyeti ve yaşam döngüsü
+
+> Bu bölüm "defter şişmez mi?" sorusunun tam cevabıdır. Sayılar `test/journal-growth.test.ts`
+> karakterizasyon testleriyle (karakterizasyon testi: bir davranışı değiştirmeyip ÖLÇÜP sabitleyen
+> test) kanıtlıdır — tahmin değil.
+
+### 11.1 Defter tam olarak ne kadar büyür?
+
+Deftere iki tür satır yazılır: LLM her **konuştuğunda** 1 satır, araç her **çalıştığında** 1 satır.
+Kilit gözlem: **her araç kullanımı bir ÇİFT üretir** — önce LLM "şu aracı çağır" der (1 satır),
+sonra aracın sonucu yazılır (1 satır). En sonda LLM bir kez daha konuşup final cevabı verir (+1).
+2 araçlı bir koşuyu sayarak görelim:
+
+```
+Soru: "İstanbul'da hava nasıl, dolar kaç TL?"
+1. LLM: "hava aracını çağır"        → satır 1 ┐
+2. Araç: hava = güneşli             → satır 2 ┘ 1. çift
+3. LLM: "döviz aracını çağır"       → satır 3 ┐
+4. Araç: dolar = 40 TL              → satır 4 ┘ 2. çift
+5. LLM: "Hava güneşli, dolar 40 TL" → satır 5   FİNAL (+1)
+                                      ─────────
+ 2 araç → 2 çift + 1 final          =  5 satır
+ 3 araç → 3 çift + 1 final          =  7 satır
+10 araç → 10 çift + 1 final         = 21 satır      ← kısaltması: "2K+1"
+```
+
+Bunlara ek olarak koşu başında sorunun kendisi (girdi) 1 kez ve kilit/seçilen-model gibi 2-3 küçük
+idari not yazılır — bunlar **adım sayısıyla BÜYÜMEZ** (2 araçta da 100 araçta da aynı 3-4 satır),
+o yüzden büyüme matematiğinde önemli olan yalnız çiftlerdir. Kayıt boyutu ise LLM'in
+ÇIKTISININ uzunluğu kadardır (defter LLM'e giden koca prompt'u değil, dönen CEVABI saklar —
+bu bilinçli bir tasarımdır, yoksa her kayıt konuşma geçmişinin tamamını taşırdı).
+
+```mermaid
+graph LR
+    subgraph "runId = 'destek-42' defteri"
+        I[":input<br/>(girdi, 1 kez)"] --> M0[":model:0<br/>(LLM cevabı)"]
+        M0 --> T1[":tool:call-1<br/>(araç sonucu)"]
+        T1 --> M1[":model:1"]
+        M1 --> T2[":tool:call-2"]
+        T2 --> M2[":model:2<br/>(final metin)"]
+    end
+```
+
+Yani büyüme **koşu İÇİNDE doğrusaldır** (adım sayısıyla orantılı — ne üstel ne kontrolsüz),
+koşular ARASINDA ise koşu sayısıyla orantılıdır. Şişme riski iki ayrı soruya ayrışır ve ikisinin
+de ayrı cevabı vardır: **(a)** biten koşular birikir → 11.3, **(b)** tek koşu haftalarca yaşar → 11.4.
+
+### 11.2 Okuma maliyeti: "resume pahalı mı?" — fotokopi benzetmesi
+
+Benzetme: veritabanı bodrumdaki **arşiv odası**, resume eden koşu ise masasında çalışan bir
+**memur**. Memurun, yarıda kalmış 500 sayfalık bir dosyayı devralması gerekiyor.
+
+**Kötü yöntem (naif):** memur her sayfaya ihtiyaç duydukça bodruma iner — 500 sayfa = 500 kez
+merdiven. Her iniş bir **round-trip**tir (gidiş-dönüş: uygulama ile veritabanı arasında bir ağ
+turu, tanesi ~1 milisaniye). 500 tur = yarım saniye SADECE yürümekle geçer.
+
+**GNL'in yöntemi:** memur sabah İLK iş bodruma BİR KEZ iner, dosyanın **tamamının fotokopisini**
+çeker, masasına koyar. Gün boyu her sayfaya masadan bakar — bir daha bodruma inmez.
+
+```mermaid
+graph TB
+    A["RESUME BAŞLADI"] --> B["1️⃣ Bodruma TEK iniş:<br/>'siparis-42'nin TÜM satırlarını ver'<br/>(tek SQL sorgusu → 500 satır birden gelir)"]
+    B --> C["2️⃣ Fotokopi masaya:<br/>satırlar bellekte bir haritaya konur<br/>(anahtar → kayıt; RAM'den okuma ≈ bedava)"]
+    C --> D{"3️⃣ Sıradaki adımın kaydı<br/>masada VAR MI?"}
+    D -- "VAR (eski adım)" --> E["masadan oku:<br/>LLM'e gitme, aracı çalıştırma,<br/>bodruma da inme ✅"]
+    E --> D
+    D -- "YOK (yeni adım)" --> F["gerçekten çalıştır<br/>(LLM/araç) ve sonucu<br/>bodruma HEMEN yaz 📝"]
+    F --> D
+    D -- "final cevap geldi" --> G["BİTTİ"]
+```
+
+İki incelik:
+
+- **Yazma neden tek tek?** Yeni adımların sonucu masada bekletilmez, her adım biter bitmez arşive
+  yazılır — çünkü bir sonraki saniye elektrik kesilirse o adımın kaydı kalıcı olmalı. Okuma toplu,
+  **yazma anında**: ikisi farklı işler için optimize edilmiştir.
+- **Masa (fotokopi) koşu bitince atılır** — kalıcı gerçek her zaman arşivdir; masa yalnız o
+  resume'un hız notudur. İki sunucu aynı anda çalışsa bile birbirlerinin masasını görmez,
+  arşivdeki CAS kuralları yine tek kazanan seçer.
+
+Sayılarla aynı şey (testle kanıtlı): resume başına bodrum inişi = **1** (koşu 3 adım da olsa
+500 adım da olsa); adım başına ek sorgu = **0**; replay sırasında LLM/araç çağrısı = **0** →
+token parası yanmaz, yan etki tekrarlanmaz.
+
+Dürüst sınır: koşu M kez resume edilirse fotokopi M kez çekilir (her seferinde N sayfa kopyalanır).
+Dosya BİNLERCE sayfaya ulaşmış VE sık sık devralınıyorsa fotokopinin kendisi yorar — işte o zaman
+dosyayı kapatıp yeni klasör açarsın: `rolloverRun` (11.4).
+
+### 11.3 Biten koşuların yaşam döngüsü: `sweepRuns` + `purgeRun`
+
+```mermaid
+stateDiagram-v2
+    [*] --> Aktif: runDurable başladı
+    Aktif --> Tamamlandı: final cevap yazıldı
+    Aktif --> Askıda: onay bekliyor (HITL)
+    Askıda --> Aktif: onay geldi (aynı runId)
+    Tamamlandı --> Silindi: sweepRuns (yaş > eşik)
+    Askıda --> Askıda: sweepRuns DOKUNMAZ<br/>(bekleyen iş sessizce silinmez)
+    Tamamlandı --> Silindi2: purgeRun (GDPR - anında, yaşa bakmaz)
+    Silindi --> [*]
+    Silindi2 --> [*]
+```
+
+- **`sweepRuns({ olderThanMs })`** — süpürücü: son aktivitesi eşikten eski koşuları kalıcı siler.
+  Güvenlik varsayılanları: **askıdaki** (onay bekleyen) koşular ve zaman damgası okunamayan
+  kayıtlar SİLİNMEZ — "bekleyen işi çöpe atma" ilkesi. Bunu bir cron'a (zamanlanmış görev)
+  bağlarsın; `@gnl/scheduler` ile GNL'in kendi içinden de kurulabilir.
+- **`purgeRun(runId)`** — nokta atışı silme (GDPR "unutulma hakkı" için): koşunun TÜM izini siler
+  ve **özyinelemelidir** (özyinelemeli/recursive: çocukları, çocukların çocuklarını da işler) —
+  alt-ajan defterleri hangi derinlikte olursa olsun yetim kalmaz:
+
+```mermaid
+graph TB
+    P["purgeRun('destek-42')"] --> A["destek-42:* kayıtları"]
+    P --> N["net:destek-42:0<br/>(ağ alt-ajanı defteri)"]
+    P --> G["agent:call-7<br/>(araç-ajanı defteri)"]
+    N --> NG["agent:call-9<br/>(ağ alt-ajanının KENDİ alt-ajanı<br/>— torun da silinir)"]
+    style P fill:#c62828,color:#fff
+```
+
+- Yan defterler de süpürülür: `sweepLog` (kuyruk/olay kayıtları), `sweepThreads` (eski konuşma
+  geçmişleri). Yani "retention" (saklama politikası) yalnız koşulara değil tüm veri türlerine işler.
+
+### 11.4 Haftalarca yaşayan TEK ajan: `rolloverRun` (dönem devri)
+
+Asıl zor senaryo: bir ajan tek `runId` ile haftalarca yaşıyor (örn. sürekli çalışan bir operasyon
+asistanı). Defteri silemezsin (koşu bitmedi), kırpamazsın da — çünkü defter **append-only**dir
+(yalnız-ekle: kayıtlar asla değiştirilmez/silinmez; denetlenebilirlik ve time-travel bu söze dayanır).
+
+Çözüm, muhasebecilerin yüzyıllardır yaptığı şeydir: **dönem kapatmak.** Yıl sonunda eski defteri
+kapatır, kapanış bakiyesini yeni defterin İLK satırına yazarsın.
+
+```mermaid
+graph LR
+    subgraph "ESKİ dönem: runId = 'asistan'"
+        E1["8.000 kayıt<br/>(3 haftalık geçmiş)"]
+    end
+    E1 -->|"1) reconstructState<br/>(defterden son durumu<br/>yeniden kur)"| S["Son durum:<br/>tüm konuşma mesajları"]
+    S -->|"2) carry (opsiyonel):<br/>özetle — örn. LLM'e<br/>'bu geçmişi 10 maddede özetle'"| O["Taşınacak bagaj:<br/>özet + son mesajlar"]
+    O -->|"3) yeni defterin :input<br/>tohumuna yaz (CAS ile,<br/>tekrar çağrılsa da 1 kez)"| Y["YENİ dönem: runId = 'asistan@2'<br/>0 kayıt + tohum"]
+    E1 -.->|"4) eski dönem artık BİTMİŞ<br/>bir koşu → sweepRuns<br/>zamanı gelince siler"| X["🗑"]
+```
+
+Önemli özellikler (hepsi testli):
+
+- **İdempotent**: `rolloverRun`'ı yanlışlıkla iki kez çağırsan da ikinci çağrı yeni dönem AÇMAZ,
+  mevcut hedefi döner; özet (`carry`) de bir kez üretilip dondurulur — LLM'li özetleme iki kez
+  para yakmaz.
+- **Yıkıcı değil**: eski defter olduğu gibi durur (denetim izi korunur); silme kararı ayrıdır ve
+  `sweepRuns`'a aittir.
+- **Zincirlenebilir**: `asistan` → `asistan@2` → `asistan@3`... her dönem küçük bir defterle başlar,
+  resume maliyeti sıfırlanır.
+- Devir bağı deftere yazılır (`asistan:rollover → { to: 'asistan@2' }`) — hangi dönemin hangisine
+  devrettiği sonradan izlenebilir.
+
+### 11.5 Neden "yerinde kırpma" (in-place compaction) YOK?
+
+Bilinçli bir tasarım kararı: defterdeki kayıtları yerinde silip "özet kayıtla" değiştirmek
+(compaction) append-only sözünü bozar. O söz bozulursa üç şey birden ölür: **time-travel**
+(geçmiş adıma dönme — kayıt yoksa dönülecek yer yok), **denetlenebilirlik** (audit: "model o gün
+gerçekten ne dedi?" sorusunun kanıtı) ve **replay determinizmi** (özet ≠ orijinal; özetten devam
+eden koşu farklı davranabilir). Rollover aynı faydayı (küçük aktif defter) bu üç garantiyi
+bozmadan verir — eski dönem, silinene KADAR tam kanıt olarak durur.
+
+### 11.6 Özet tablo: ne büyür, neyi sınırlar, hangi araç yönetir?
+
+| Büyüyen şey | Büyüme hızı | Sınırlayan mekanizma |
+|---|---|---|
+| Bir koşunun defteri | Adım başına 1-2 kayıt (doğrusal) | Koşu biter → `sweepRuns`; bitmiyorsa → `rolloverRun` |
+| Koşuların toplamı | Koşu sayısıyla doğrusal | `sweepRuns` (cron'da) + `purgeRun` (GDPR) |
+| Kuyruk/olay kayıtları | Olay başına 1 kayıt | `sweepLog` |
+| Konuşma geçmişleri | Mesaj başına 1 satır | `sweepThreads` + `purgeThread` |
+| Resume okuma maliyeti | Koşu adımıyla doğrusal ama TEK sorguda | C2 replay-cache; sık-resume + dev koşuda → rollover |
+
+---
+
+## 12. Derin konu: Crash sırasında kod/model değişirse ne olur?
+
+> Senaryo: koşu yarıda çöktü, sunucu kapalıyken developer modeli/kodu/prompt'u değiştirdi,
+> sonra resume edildi. Kısa cevap: **kayıtlı geçmiş dokunulmazdır; değişiklik yalnız
+> "bundan sonrasını" etkiler.** Replay, modeli yeniden çalıştırmak değil KAYDI OKUMAKTIR —
+> model değişse de kayıt değişmez.
+
+### 12.1 Somut zaman çizelgesi
+
+```
+Pazartesi: koşu başladı (model: gpt-4o)
+  satır 1: LLM "kartı çek" dedi          → deftere yazıldı
+  satır 2: kart çekildi (20$)            → deftere yazıldı
+  💥 CRASH
+
+Salı: developer modeli değiştirdi (gpt-4o → claude-sonnet), sunucu açıldı
+  aynı runId ile resume:
+  satır 1-2: DEFTERDEN okunur → Claude'a HİÇ sorulmaz, kart TEKRAR çekilmez
+             (geçmiş, "o gün gpt-4o ne dediyse" olarak sabittir)
+  satır 3+:  yeni adımlar → artık yeni yapılandırma devreye girer
+```
+
+### 12.2 Değişiklik türüne göre davranış tablosu
+
+| Developer neyi değiştirdi? | Resume'da ne olur? |
+|---|---|
+| **Modeli** | Kayıtlı adımlar defterden. Yeni adımlar için: koşu başında kazanan model deftere DONDURULUR (`:cfg:model`) — yeni listede o model hâlâ varsa koşu ona yapışır (yarısı gpt-4o yarısı Claude olan koşu oluşmaz); listeden tamamen çıkarıldıysa ancak o zaman yeni zincir denenir. |
+| **Prompt / sistem talimatını** | Girdi ilk çağrıda deftere yazılır, İLK-YAZAN-KAZANIR: resume'da farklı prompt versen bile defterdeki orijinal geçerlidir (`resumeRun` girdiyi defterden okur). Koşu, başladığı soruyla biter. |
+| **Tool'un kodunu** | Kayıtlı tool çağrıları defterden döner (tool gövdesi yeniden ÇALIŞMAZ — eski kod ne döndürdüyse o). Yeni çağrılar yeni kodla koşar. |
+| **Tool'u tamamen sildi** | Kayıtlı çağrılar sorunsuz (defterden). Model YENİ bir adımda artık olmayan aracı çağırmaya kalkarsa normal "araç bulunamadı" hatası — bu framework'ün değil, tasarım değişikliğinin sonucu. |
+| **Agent'ın diğer ayarlarını** (maxSteps, guard, alt-agent listesi...) | Kayıtlı kısım sabit; yeni adımlar yeni ayarlarla. |
+| **Ağ (network) yönlendiricisini** | Yönlendirme kararları CAS ile donmuştur → resume aynı yolu izler; yeni router eski kararları DEĞİŞTİREMEZ. |
+
+### 12.3 Drift koruması: uyumsuzluk fark edilirse?
+
+Değişiklik, replay sırasında yeniden kurulan konuşmayı kayıtla ÇELİŞTİRECEK kadar büyükse
+(örn. tool'a giden argümanlar kayıttakinden farklı üretiliyor — buna **drift**/sapma denir)
+GNL'in iki modu vardır:
+
+- **`replay: 'lenient'`** (varsayılan, hoşgörülü): uyarı basar, kayıttaki sonucu kullanır,
+  koşu devam eder — "iş dursun istemiyorum" modu.
+- **`replay: 'strict'`** (katı): drift tespitinde `DivergenceError` fırlatıp DURUR —
+  "tutarsızlık varsa körlemesine devam etme" modu; para/hukuk işlerinde bunu açarsın.
+
+### 12.4 "Yeni modelin ne yapacağını GÖRMEK istiyorum" — resume değil, deney araçları
+
+Resume geçmişe sadakat içindir; geçmişle DENEY yapmak ayrı kapıdır:
+
+- **`replayRun(kayıt, { model: yeniModel })`** — kayıtlı koşuyu yeni modele karşı yeniden oynatır:
+  yan etkiler ÇALIŞMAZ (tool sonuçları kayıttan verilir), yalnız modelin KARARLARI karşılaştırılır
+  → "aynı durumda yeni model farklı mı davranırdı?"
+- **`regressionReport`** — bunu toplu yapar: N eski koşuyu yeni modele karşı koşup karar farklarını
+  raporlar. Model yükseltmeden önceki güvenlik ağı.
+- **`forkRun` (time-travel)** — Studio'dan geçmiş bir adıma dönüp oradan YENİ BİR DAL açarsın;
+  orijinal koşu bozulmaz, dal ayrı bir runId olarak yaşar.
+
+```mermaid
+graph LR
+    subgraph "Üretim kapısı"
+        R["resume<br/>(geçmişe SADAKAT:<br/>kayıt neyse o)"]
+    end
+    subgraph "Deney kapısı"
+        RP["replayRun<br/>(yeni modelle<br/>yeniden oynat)"]
+        RG["regressionReport<br/>(toplu karşılaştır)"]
+        F["forkRun<br/>(geçmiş adımdan<br/>dallan)"]
+    end
+    J["📖 Journal<br/>(değişmez kayıt)"] --> R
+    J --> RP
+    J --> RG
+    J --> F
+```
+
+Tek cümlelik özet: **resume = geçmişe sadakat (üretim güvenliği), replay/fork = geçmişle deney
+(geliştirme aracı).** Kod/model değişikliği ilkini asla bozamaz, ikincisiyle test edilir.
+
+---
+
+## 13. Teknoloji yığını — hangi teknoloji ne işe yarar (ve neden ClickHouse yok?)
+
+| Katman | Teknoloji | Bu projede ne işe yarar? |
+|---|---|---|
+| Dil / çalışma ortamı | TypeScript + Node.js | Tüm kod TypeScript (tip güvenliği: yanlış veri şekli derlemede yakalanır). Node 22'nin gömülü `node:sqlite`'ı sayesinde SQLite için ek paket bile gerekmez. |
+| Monorepo yönetimi | pnpm workspaces | 21 paketi tek depoda tutar (monorepo: çok paketli tek depo). |
+| LLM soyutlaması | **Vercel AI SDK** (`ai`) | En kritik bağımlılık: OpenAI/Anthropic/Google/Mistral'e TEK arayüz. `runDurable` aslında `generateText`'in dayanıklı sarmalayıcısıdır — sağlayıcı kilidi yok. |
+| Şema doğrulama | Zod | Araç girdi şemaları (LLM'in araca göndereceği parametrelerin biçim kontrolü). |
+| Web çatısı | **Hono** | Server/Studio/auth'un HTTP katmanı. Express yerine Hono: hem Node'da hem edge'de (Cloudflare Workers) aynen çalışır, çok küçüktür — "küçük edge bundle" iddiasının temeli. |
+| Depolama | SQLite / PostgreSQL / Redis | §5'teki adaptörler; hepsi OPSİYONEL bağımlılık (kullanmadığın sürücü yüklenmez — lazy import). |
+| Serileştirme | superjson | Kayıt→metin çevirimi; düz JSON'dan farkı `Date` gibi tipleri kaybetmemesi. |
+| Test | Vitest + pg-mem + Docker | 700+ test; pg-mem = bellek-içi sahte Postgres (hızlı); Docker compose'ları = GERÇEK PG/Redis entegrasyonu + canlı failover senaryosu. |
+| Paketleme | esbuild | `bundleApp`: tek dosyaya derleme (deploy hedefleri kullanır). |
+| Studio arayüzü | React + TanStack Query + Recharts | Panel ön yüzü: arayüz + veri çekme/önbellek + grafikler. |
+| Gözlemlenebilirlik | OTLP/HTTP (elle, ~8KB) | İzleri dış araçlara gönderme; koca OTel SDK yerine elle yazılmış çevirici (ince-kal felsefesi). Canlı mod ayrıca OTel SDK'sını opsiyonel kullanır. |
+| Protokoller | MCP · A2A · AG-UI · OpenAPI | Dış araç takma · uzak ajan · CopilotKit köprüsü · makine-okur API şeması. |
+| Kimlik | `node:crypto` (jose YOK) | JWT/JWKS imza doğrulaması gömülü kriptoyla — sıfır ek bağımlılık. |
+
+Yığındaki ortak desen: **çekirdek ince kalsın; ağır şeyler opsiyonel/lazy; gömülüsü varsa dışarıdan alma.**
+
+### 13.1 "Neden ClickHouse yok?" — OLTP/OLAP ayrımı ve rakip yaklaşım karşılaştırması
+
+Dikkat, benzer iki kısaltma FARKLI şeyler: **OLTP** = işlemsel veritabanı türü (Postgres gibi —
+tek satırlık atomik işlemlerde usta); **OTLP** = OpenTelemetry Protocol (izleme verisinin evrensel
+kablo formatı — "gözlemlenebilirliğin USB fişi"). **ClickHouse** ise bir **OLAP** veritabanıdır
+(analitik: milyarlarca satırda "geçen ay hangi model kaç token yaktı?" gibi TOPLU soru sormak
+için kolonar depolama; tek satırı atomik güncellemek için değil).
+
+Aynı veri üzerinde iki farklı soru vardır:
+
+- **"ŞU koşuda ne oldu?"** → nokta okuma → OLTP işi → GNL'in journal'ı + Studio (iz, journal'dan
+  ANLIK türetilir; ikinci kopya tutulmaz). Journal ClickHouse'a KONAMAZ: CAS yok → exactly-once çöker.
+- **"5 milyon koşuda p95 gecikme trendi?"** → toplu tarama → OLAP işi → GNL bunu OTLP fişiyle
+  dış araca devreder (`otlpPresets`). Komik detay: fişi taktığın Langfuse'un kendisi de arkada
+  ClickHouse çalıştırır — yani izlerin yine ClickHouse'a varır, sadece onu SEN işletmezsin.
+
+**Rakip yaklaşım farkı:** bazı framework'ler resmi bir ClickHouse adaptörüyle telemetriyi kendi ClickHouse'una
+yazar ve panosunda toplu trendleri kendisi gösterir — "tek marka" deneyimi, karşılığında ClickHouse
+işletme yükü sende (ya da ücretli bulutlarında). GNL'in bahsi ters yönde: **kritik olan analitik
+değil, KAYIT** — kayıt (journal) sende ve eksiksizse, analitiği istediğin araca sonradan bile
+dökebilirsin; kaydı eksik tutup panosu güzel olanın geri dönüş şansı yoktur. Studio bu yüzden
+salt izleme panosu değil, **operasyon/yönetişim** panosudur (time-travel, onay kuyruğu, regresyon
+karşılaştırma, kiracı/bütçe — bunlar adanmış izleme araçlarında yoktur); filo analitiği + alerting
+ise bilinçli olarak dışarıya, fişin ucundaki uzmana bırakılır.
