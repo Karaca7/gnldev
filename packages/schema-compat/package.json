@@ -2,7 +2,7 @@
   "name": "@gnl/schema-compat",
   "version": "0.0.0",
   "license": "Apache-2.0",
-  "description": "Sağlayıcıya özel tool-şema uyumluluk katmanı (OpenAI/Gemini/Anthropic). Genişletilebilir SchemaCompatRule + opt-in default set; @gnl/durable ile opt-in.",
+  "description": "Provider-specific tool-schema compatibility layer (OpenAI/Gemini/Anthropic). Extensible SchemaCompatRule + opt-in default set; opt-in with @gnl/durable.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -1,5 +1,5 @@
-/** "Local Influence" marka token'ları (index.css) → Tailwind renkleri hsl(var(--x)).
- *  brand/primary = Fluo Lime (seyrek, yüksek-etki vurgu); accent/success = Neon Green (ikincil). */
+/** "Local Influence" brand tokens (index.css) → Tailwind colors hsl(var(--x)).
+ *  brand/primary = Fluo Lime (sparse, high-impact accent); accent/success = Neon Green (secondary). */
 export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   darkMode: ['class', '[data-theme="dark"]'],
@@ -22,7 +22,7 @@ export default {
         input: 'hsl(var(--input))',
         ring: 'hsl(var(--ring))',
         brand: { DEFAULT: 'hsl(var(--brand))', foreground: 'hsl(var(--brand-foreground))' },
-        // En derin shell/sidebar zemini (App shell — D3 bağlayacak).
+        // Deepest shell/sidebar background (App shell — will connect to D3).
         'surface-deep': 'hsl(var(--surface-deep))',
         'surface-1': 'hsl(var(--surface-1))',
       },

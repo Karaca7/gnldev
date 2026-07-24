@@ -1,25 +1,25 @@
 # incident-proofs
 
-Tek koşulabilir harness: 3 belgelenmiş çift-yan-etki vakasını yeniden üretir ve GNL'in her birini
-engellediğini gösterir. Her vaka için gerçek bir `runDurable`/`resumeRun` çalıştırması var — iddia değil,
-konsoldan okunan kanıt.
+A single runnable harness: reproduces 3 documented double-side-effect cases and shows that GNL
+blocks each one. Every case has a real `runDurable`/`resumeRun` run behind it — not a claim, but
+proof you can read off the console.
 
-## Çalıştır
+## Run
 ```bash
-cd ../.. && pnpm -r build   # önce paketleri derle (workspace link'leri dist'e işaret ediyor)
+cd ../.. && pnpm -r build   # build the packages first (workspace links point at dist)
 cd examples/incident-proofs
 pnpm install
 pnpm proofs
 ```
-API key gerekmez — deterministik mock model kullanılır.
+No API key required — a deterministic mock model is used.
 
-## Vakalar
-| # | Vaka | Kök neden | Dosya |
+## Cases
+| # | Case | Root cause | File |
 |---|---|---|---|
-| 1 | duplicate-toolcall-ids | model aynı tool'u aynı argümanlarla, tek turda, FARKLI toolCallId'lerle 5 kez çağırıyor | `src/duplicate-toolcall-ids.ts` |
-| 2 | checkpoint-resend | 180sn+ tool call, checkpoint'ten crash sonrası sessizce yeniden gönderiliyor | `src/checkpoint-resend.ts` |
-| 3 | double-approval | onay olayı iki kez işleniyor, tool onay sonrası iki kez çalışıyor | `src/double-approval.ts` |
+| 1 | duplicate-toolcall-ids | the model calls the same tool with the same arguments, in a single turn, 5 times with DIFFERENT toolCallIds | `src/duplicate-toolcall-ids.ts` |
+| 2 | checkpoint-resend | a 180s+ tool call is silently resent after a crash-from-checkpoint | `src/checkpoint-resend.ts` |
+| 3 | double-approval | the approval event is processed twice, the tool runs twice after approval | `src/double-approval.ts` |
 
-Her dosyada iki koşum var: **korumasız** (varsayılan/naif yol — kaç kez çalıştığını gösterir) ve
-**GNL ile** (`idempotency: 'args'`, `runDurable` + aynı `runId` ile resume, veya `resumeRun` — kaç kez
-çalıştığını gösterir). `src/report.ts` ikisini yan yana bir tabloya basar.
+Each file has two runs: **unprotected** (the default/naive path — shows how many times it runs) and
+**with GNL** (`idempotency: 'args'`, `runDurable` + resume with the same `runId`, or `resumeRun` — shows
+how many times it runs). `src/report.ts` prints both side by side in a table.

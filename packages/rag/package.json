@@ -2,7 +2,7 @@
   "name": "@gnl/rag",
   "version": "0.0.0",
   "license": "Apache-2.0",
-  "description": "Vector store + RAG tool for AI SDK agents. Tool olarak kullanılınca @gnl/durable ile replayable/exactly-once RAG.",
+  "description": "Vector store + RAG tool for AI SDK agents. Used as a tool, it becomes replayable/exactly-once RAG with @gnl/durable.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

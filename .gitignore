@@ -1,27 +1,28 @@
-# Bağımlılıklar
+# Dependencies
 node_modules/
 
-# Build çıktıları (tsc → dist/)
+# Build output (tsc → dist/)
 dist/
 *.tsbuildinfo
+*.timestamp-*.mjs
 
 # Test/coverage
 coverage/
 
-# Yerel veri / journal dosyaları
+# Local data / journal files
 *.sqlite
 *.db
 runs.db
 
-# Ortam
+# Environment
 .env
 .env.*
 
-# OS / editör
+# OS / editor
 .DS_Store
 *.log
 
-# Demo/test SQLite artefaktları
+# Demo/test SQLite artifacts
 *.db
 *.db-shm
 *.db-wal

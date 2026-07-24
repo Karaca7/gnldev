@@ -7,26 +7,27 @@ payment provider itself — the same way it would with the real Stripe SDK's `Id
 
 No real Stripe SDK, no network calls, no API key required.
 
-## Çalıştır
+## Run
 ```bash
-cd ../.. && pnpm -r build   # önce paketleri derle
+cd ../.. && pnpm -r build   # build the packages first
 cd examples/stripe-idempotency
 pnpm install
 pnpm demo
 ```
 
-## Senaryolar
-- **A — korumasız**: `@gnl/durable` yok, naif retry her denemede FARKLI bir idempotency key üretiyor →
-  Stripe bunun bir retry olduğunu ANLAYAMIYOR → **2 charge**.
-- **B — GNL ile (onaylı retry, `recover()` yok)**: crash+resume sonrası GNL retry'a izin veriyor
-  (`approvals`), `execute` GERÇEKTEN ikinci kez çalışıyor — ama enjekte edilen `idempotencyKey` her iki
-  denemede de AYNI olduğu için Stripe ikinci isteği aynı charge'a eşliyor → **1 charge**.
-- **C — GNL ile + `recover()`**: `tool.recover()` hook'u Stripe'a "bu idempotencyKey ile daha önce charge
-  oldu mu?" diye soruyor — `execute` **hiç ikinci kez çalışmıyor**, onay bile gerekmiyor → **1 charge**.
+## Scenarios
+- **A — unprotected**: no `@gnl/durable`, the naive retry generates a DIFFERENT idempotency key on every
+  attempt → Stripe CANNOT tell it's a retry → **2 charges**.
+- **B — with GNL (approved retry, no `recover()`)**: after crash+resume, GNL allows the retry
+  (`approvals`), `execute` REALLY does run a second time — but because the injected `idempotencyKey` is
+  the SAME on both attempts, Stripe maps the second request to the same charge → **1 charge**.
+- **C — with GNL + `recover()`**: the `tool.recover()` hook asks Stripe "was there already a charge
+  with this idempotencyKey?" — `execute` **never runs a second time**, not even approval is needed →
+  **1 charge**.
 
-## Gerçek Stripe'a bağlamak
+## Wiring up the real Stripe
 ```ts
-// Gerçek Stripe SDK — idempotencyKey İSTEK GÖVDESİNDE DEĞİL, `Idempotency-Key` HTTP header'ında gider:
+// Real Stripe SDK — idempotencyKey goes in the `Idempotency-Key` HTTP header, NOT the request body:
 import Stripe from 'stripe';
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
@@ -35,5 +36,5 @@ const chargeCard = {
     stripe.charges.create({ amount, currency: 'usd' }, { idempotencyKey: options.idempotencyKey }),
 };
 ```
-`options.idempotencyKey` yukarıdaki gibi doğrudan `durableTool` tarafından enjekte edilir — ekstra kod
-gerekmez.
+`options.idempotencyKey` is injected directly by `durableTool` as shown above — no extra code
+needed.

@@ -41,9 +41,9 @@ jobs:
           --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       GNL_INTEGRATION: '1'
-      # integration-real.test.ts GNL_PG_URL / GNL_REDIS_URL okur (denetim: eski PG_URL/REDIS_PORT
-      # adları testle hiç eslesmiyordu -> job servislerin yerine default 55432/6380'e baglanip
-      # retry-timeout ile kiziyordu).
+      # integration-real.test.ts reads GNL_PG_URL / GNL_REDIS_URL (audit finding: the old
+      # PG_URL/REDIS_PORT names never matched what the test expected -> instead of the job
+      # services it connected to the defaults 55432/6380 and failed with a retry-timeout).
       GNL_PG_URL: postgresql://postgres:postgres@localhost:5432/postgres
       GNL_REDIS_URL: redis://localhost:6379
     steps:

@@ -2,10 +2,10 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    // .tsx dahil: studio-ui view testleri de kök koşuda çalışsın (yalnız .ts iken sessizce atlanıyordu).
+    // Includes .tsx: so studio-ui view tests also run in the root run (they were silently skipped when only .ts).
     include: ['packages/*/test/**/*.test.{ts,tsx}'],
     environment: 'node',
-    // node:sqlite yeni bir Node builtin; vite onu tanımayıp bundle'lamaya çalışıyor → external bırak.
+    // node:sqlite is a new Node builtin; vite doesn't recognize it and tries to bundle it → leave it external.
     server: {
       deps: {
         external: [/node:sqlite/, 'node:sqlite'],

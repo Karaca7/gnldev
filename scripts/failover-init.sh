@@ -1,11 +1,11 @@
 #!/bin/sh
-# Failover testi kurulumu (yalnız test compose'u — prod değil!).
-# 1) Replikasyon/bağlantı izni: pg_basebackup + walreceiver için trust.
+# Failover test setup (test compose only — not prod!).
+# 1) Replication/connection permission: trust for pg_basebackup + walreceiver.
 echo "host replication all all trust" >> "$PGDATA/pg_hba.conf"
 echo "host all all all trust" >> "$PGDATA/pg_hba.conf"
-# 2) SENKRON replikasyon FINAL sunucu için conf'a yazılır (komut satırıyla verilirse entrypoint'in
-#    GEÇİCİ init sunucusuna da uygulanır ve CREATE DATABASE, henüz bağlanamayan standby'ı bekleyip
-#    kilitlenirdi — init bittikten sonra devreye girmesi için buradan).
+# 2) SYNCHRONOUS replication is written to conf for the FINAL server (if passed via command line,
+#    it would also apply to the entrypoint's TEMPORARY init server, and CREATE DATABASE would wait
+#    on a standby that can't connect yet and deadlock — hence applying it here, after init finishes).
 cat >> "$PGDATA/postgresql.conf" << 'CONF'
 synchronous_commit = on
 synchronous_standby_names = '*'
