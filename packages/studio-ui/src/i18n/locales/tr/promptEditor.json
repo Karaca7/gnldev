@@ -1,0 +1,77 @@
+{
+  "addTemplate": "+ Şablon",
+  "addTemplateAriaLabel": "Şablon ekle",
+  "addSection": "+ Bölüm",
+  "addSectionAriaLabel": "Bölüm ekle",
+  "addRule": "+ Kural / snippet",
+  "addRuleAriaLabel": "Kural ekle",
+  "clear": "temizle",
+  "placeholder": "Boş bırakılabilir. İskelet için \"+ Şablon\" seç ya da:\n\n# Rol\nSen bir ... asistanısın.\n\n# Kurallar\n- Tahmin etme; emin değilsen aracı çağır.",
+  "auditLabel": "Denetim:",
+  "characterCount": "{{count}} karakter",
+  "templates": {
+    "rag": {
+      "label": "Araştırma / RAG asistanı",
+      "body": "# Rol\nSen, yalnızca sağlanan belgelere dayanarak yanıt veren bir araştırma asistanısın.\n\n# Görev\nKullanıcının sorusunu, getirilen bağlamdaki bilgilerle yanıtla.\n\n# Kurallar\n- Yalnız sağlanan bağlamdan/araç sonuçlarından yanıtla; bilgi yoksa \"Bilmiyorum\" de.\n- Uydurma; emin değilsen ilgili aracı çağır.\n- Her iddiayı kaynağıyla göster.\n\n# Çıktı formatı\nTürkçe, kısa ve net. Gerekiyorsa maddeler halinde."
+    },
+    "toolAgent": {
+      "label": "Araç kullanan agent (ReAct)",
+      "body": "# Rol\nSen, görevleri araçları kullanarak çözen bir agent'sın.\n\n# Görev\nKullanıcının isteğini yerine getirmek için gerekli araçları çağır ve sonucu özetle.\n\n# Kurallar\n- Adım adım düşün ama yalnız sonucu paylaş.\n- Tahmin etme; doğrulamak için ilgili aracı çağır.\n\n# Araç kullanımı\n- Gerekli parametre eksikse kullanıcıdan iste.\n- Aynı aracı aynı argümanlarla tekrar çağırma (döngüye girme).\n\n# Çıktı formatı\nTürkçe, kısa. Sonucu ve varsa kaynağı belirt."
+    },
+    "extractor": {
+      "label": "Veri çıkarıcı (structured)",
+      "body": "# Rol\nSen, metinden yapılandırılmış veri çıkaran bir ayıklama motorusun.\n\n# Görev\nGirdiden istenen alanları çıkar ve YALNIZ geçerli JSON döndür.\n\n# Kurallar\n- Alan bulunamazsa null kullan; uydurma.\n- Şemaya birebir uy.\n\n# Çıktı formatı\nYalnız geçerli JSON döndür; açıklama/markdown ekleme.\n{ \"alan1\": \"...\", \"alan2\": null }"
+    },
+    "support": {
+      "label": "Müşteri destek / sohbet",
+      "body": "# Rol\nSen, {ürün} için bir müşteri destek asistanısın.\n\n# Görev\nKullanıcının sorununu kapsam içinde, nazik ve net biçimde çöz.\n\n# Kurallar\n- Emin olmadığın bilgiyi uydurma; gerekiyorsa ilgili aracı çağır ya da eskalasyon öner.\n\n# Kısıtlar / Yasaklar\n- Yalnız {ürün} kapsamındaki konularda yardım et; dışına çıkan istekleri nazikçe kapsamına yönlendir.\n- Parola/token gibi gizli veriyi isteme ve çıktına yazma.\n\n# Ton\nProfesyonel, sabırlı, samimi.\n\n# Çıktı formatı\nTürkçe, kısa adımlar halinde."
+    }
+  },
+  "sections": {
+    "role": "Rol",
+    "task": "Görev",
+    "context": "Bağlam",
+    "rules": "Kurallar",
+    "toolUsage": "Araç kullanımı",
+    "outputFormat": "Çıktı formatı",
+    "constraints": "Kısıtlar / Yasaklar",
+    "tone": "Ton",
+    "examples": "Örnekler"
+  },
+  "snippets": {
+    "rules": [
+      "Adım adım düşün ama yalnız sonucu paylaş.",
+      "Yalnız sağlanan bağlamdan/araç sonuçlarından yanıtla; bilgi yoksa \"Bilmiyorum\" de.",
+      "Uydurma; her iddiayı kaynağıyla göster."
+    ],
+    "toolUsage": [
+      "Tahmin etme; emin değilsen ilgili aracı çağır.",
+      "Aracı çağırmadan önce gerekli parametreler elde yoksa kullanıcıdan iste.",
+      "Aynı aracı aynı argümanlarla tekrar çağırma (döngüye girme).",
+      "Araç sonucunu doğrula; çelişki varsa yeniden sorgula."
+    ],
+    "outputFormat": [
+      "Yanıtı Türkçe ve kısa ver.",
+      "Yalnız geçerli JSON döndür; açıklama/markdown ekleme.",
+      "Maddeler halinde, en fazla 5 madde."
+    ],
+    "constraints": [
+      "Yalnız kullanıcının yetkili olduğu kaynaklara eriş; yetki yoksa nazikçe reddet.",
+      "Parola, token, API anahtarı gibi sırları asla çıktına yazma.",
+      "Yıkıcı işlemlerden (silme, ödeme) önce kullanıcıdan açık onay iste.",
+      "Konu dışı isteklerde nazikçe kapsamını hatırlat."
+    ],
+    "tone": [
+      "Profesyonel ve net bir dil kullan.",
+      "Kullanıcının dilinde yanıtla.",
+      "Kesin tıbbi/hukuki/finansal tavsiye verme; uzmana yönlendir."
+    ]
+  },
+  "lint": {
+    "role": "Rol",
+    "task": "Görev",
+    "rule": "Kural/kısıt",
+    "tool": "Araç yönergesi",
+    "output": "Çıktı formatı"
+  }
+}

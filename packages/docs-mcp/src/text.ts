@@ -1,0 +1,118 @@
+// Produces human/LLM-readable text from the embedded static content (content.ts) — stays
+// faithful to gnl.dev's llms.txt / llms-full.txt format (see gnl-site app/llms*.txt/route.ts),
+// so the tool output doesn't look different in shape when the live fetch fails.
+import { DEFAULT_DOCS_URL } from './docs-source.js';
+import { FEATURES, FEATURES_BY_SLUG, OVERVIEW_DETAIL, OVERVIEW_SUMMARY, TIER_LABEL, type DocFeature } from './content.js';
+
+/** gnl_docs_overview's embedded-content output: summary + ordered list of the 25 features. */
+export function buildOverviewText(docsUrl: string = DEFAULT_DOCS_URL): string {
+  const lines: string[] = [];
+  lines.push('# GNL');
+  lines.push('');
+  lines.push(`> ${OVERVIEW_SUMMARY}`);
+  lines.push('');
+  lines.push(OVERVIEW_DETAIL);
+  lines.push('');
+  lines.push('## Features (25)');
+  lines.push('');
+  for (const f of FEATURES) {
+    lines.push(`${f.order}. [${f.title}](${docsUrl}/docs/${f.slug}) — ${f.oneLiner} (${TIER_LABEL[f.tier]}, \`${f.package}\`)`);
+  }
+  lines.push('');
+  lines.push('Use gnl_docs_feature({ slug }) to see a feature\'s installation/API/example.');
+  return lines.join('\n');
+}
+
+/** gnl_docs_feature's embedded-content output: full detail for a single feature. */
+export function buildFeatureText(f: DocFeature, docsUrl: string = DEFAULT_DOCS_URL): string {
+  const lines: string[] = [];
+  lines.push(`## ${f.order}. ${f.title}`);
+  lines.push('');
+  lines.push(`- URL: ${docsUrl}/docs/${f.slug}`);
+  lines.push(`- Tier: ${TIER_LABEL[f.tier]}`);
+  lines.push(`- Package: \`${f.package}\``);
+  lines.push(`- Summary: ${f.oneLiner}`);
+  lines.push('');
+  lines.push('### Installation / import');
+  lines.push('```ts');
+  lines.push(f.install);
+  lines.push('```');
+  lines.push('');
+  lines.push('### Core API');
+  lines.push('');
+  for (const api of f.apis) lines.push(`- ${api}`);
+  lines.push('');
+  lines.push('### Minimal example');
+  lines.push('```ts');
+  lines.push(f.example);
+  lines.push('```');
+  return lines.join('\n');
+}
+
+/** Error text for an unknown slug — also includes the list of valid slugs (so the LLM can easily self-correct). */
+export function buildUnknownSlugText(slug: string): string {
+  const valid = FEATURES.map((f) => f.slug).join(', ');
+  return `Unknown slug: '${slug}'. Valid slugs: ${valid}`;
+}
+
+export interface LocalSearchHit {
+  slug: string;
+  title: string;
+  oneLiner: string;
+  snippet: string;
+}
+
+/** Simple text search: case-insensitive substring across each feature's title/oneLiner/apis/install/example fields. */
+export function searchLocal(query: string): LocalSearchHit[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const hits: LocalSearchHit[] = [];
+  for (const f of FEATURES) {
+    const haystacks = [f.title, f.oneLiner, f.package, ...f.apis, f.install, f.example];
+    const matchLine = haystacks
+      .join('\n')
+      .split('\n')
+      .find((line) => line.toLowerCase().includes(q));
+    if (matchLine !== undefined) {
+      hits.push({ slug: f.slug, title: f.title, oneLiner: f.oneLiner, snippet: matchLine.trim().slice(0, 200) });
+    }
+  }
+  return hits;
+}
+
+export function buildSearchResultsText(query: string, hits: LocalSearchHit[]): string {
+  if (hits.length === 0) {
+    return `No results for '${query}'. Call gnl_docs_overview() for the full list of features.`;
+  }
+  const lines: string[] = [];
+  lines.push(`# Search: "${query}" (${hits.length} results)`);
+  lines.push('');
+  for (const h of hits) {
+    lines.push(`- [${h.slug}] ${h.title} — ${h.oneLiner}`);
+    lines.push(`  match: ${h.snippet}`);
+  }
+  return lines.join('\n');
+}
+
+/** Runs the same simple substring search against the remote /llms-full.txt (section heading + matching line). */
+export function searchRemoteFullText(query: string, llmsFullTxt: string): string {
+  const q = query.trim().toLowerCase();
+  if (!q) return buildSearchResultsText(query, []);
+  const sections = llmsFullTxt.split(/\n---\n/);
+  const lines: string[] = [];
+  let count = 0;
+  for (const section of sections) {
+    const secLines = section.split('\n');
+    const heading = secLines.find((l) => l.trim().startsWith('## '));
+    const matchLine = secLines.find((l) => l.toLowerCase().includes(q));
+    if (matchLine !== undefined) {
+      count++;
+      lines.push(`- ${heading?.replace(/^##\s*/, '') ?? '(?)'}`);
+      lines.push(`  match: ${matchLine.trim().slice(0, 200)}`);
+    }
+  }
+  if (count === 0) return `No results for '${query}'. Call gnl_docs_overview() for the full list of features.`;
+  return [`# Search: "${query}" (${count} results)`, '', ...lines].join('\n');
+}
+
+export { FEATURES_BY_SLUG };

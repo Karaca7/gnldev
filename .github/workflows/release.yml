@@ -1,0 +1,101 @@
+name: Release
+
+# Publishes @gnl packages to npm with provenance (GitHub OIDC). This is deliberately
+# separate from ci.yml: it never runs on a plain push to master/main, only on an
+# explicit version tag or a manual dispatch — publishing is a user-triggered action.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run only (pnpm -r publish --dry-run) — no packages are actually published'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write # required for npm provenance (OIDC) — see docs/RELEASE.md
+
+# Avoid two release runs racing on the same set of npm publishes (e.g. a tag push and a
+# manual dispatch overlapping).
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: build · typecheck · test · publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - run: pnpm -r typecheck
+      - run: pnpm test
+
+      # All 25 packages ship as version 0.0.0 in the repo (single-version policy, see
+      # docs/RELEASE.md §3 Versioning). Publishing 0.0.0 is almost certainly a mistake —
+      # bump every non-private package to the same real version in one commit first, then
+      # tag. This step fails loudly instead of letting npm silently publish 0.0.0.
+      - name: Guard against unbumped (0.0.0) versions
+        run: |
+          set -euo pipefail
+          bad=0
+          for pkg in packages/*/package.json; do
+            private=$(jq -r '.private // false' "$pkg")
+            if [ "$private" = "true" ]; then
+              continue
+            fi
+            name=$(jq -r '.name' "$pkg")
+            version=$(jq -r '.version' "$pkg")
+            if [ "$version" = "0.0.0" ]; then
+              echo "::error file=$pkg::$name is still at version 0.0.0"
+              bad=1
+            fi
+          done
+          if [ "$bad" -eq 1 ]; then
+            echo "Refusing to publish: one or more packages are unbumped (0.0.0)."
+            echo "Bump all package versions to the same real version first (docs/RELEASE.md §3), then re-tag."
+            exit 1
+          fi
+          echo "Version guard passed: no publishable package is at 0.0.0."
+
+      # pnpm -r publish walks the workspace in topological order on its own (peers such as
+      # @gnl/schema-compat and @gnl/durable publish before their dependents), so no manual
+      # --filter ordering is needed here.
+      #
+      # @gnl/auth-ee is licensed Elastic-2.0 (everything else is Apache-2.0) and is marked
+      # "private": true in its package.json. pnpm skips private packages during `-r publish`
+      # automatically, so it is excluded from this release by default without any extra
+      # --filter flag. That is the current, intentional state of the codebase (open-core:
+      # free @gnl/auth vs. paid @gnl/auth-ee) — if that ever changes to "publish auth-ee to
+      # npm too", flip its `private` field and reconsider the --access/licensing implications
+      # before removing this note.
+      #
+      # --no-git-checks is required because the tag ref is checked out detached (not on a
+      # branch), which pnpm's default git-status checks would otherwise reject.
+      - name: Publish (dry run)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        run: pnpm -r publish --access public --provenance --no-git-checks --dry-run
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
+        run: pnpm -r publish --access public --provenance --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

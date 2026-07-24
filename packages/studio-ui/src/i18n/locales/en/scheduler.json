@@ -1,0 +1,22 @@
+{
+  "statSchedules": "Schedules",
+  "statActive": "Active",
+  "statNextRun": "Next run",
+  "statFailures": "Failures",
+  "unitDay": "d",
+  "unitHour": "h",
+  "unitMinute": "m",
+  "unitSecond": "s",
+  "everyPrefix": "every {{duration}}",
+  "oneTime": "one-time",
+  "relativeNow": "now",
+  "relativeIn": "in {{duration}}",
+  "relativeAgo": "{{duration}} ago",
+  "disabled": "Scheduler view is not enabled (journal doesn't support writable/listKeys).",
+  "emptyTitle": "No triggers yet",
+  "emptyDescription": "Triggers appear once your app calls scheduleWorkflow() (cron / every / at) in code — Studio only shows their live status here.",
+  "liveStatus": "{{count}} trigger · refreshes every 5s",
+  "colTrigger": "Trigger",
+  "colNextRun": "Next run",
+  "colStatusAttempts": "Status / attempts"
+}

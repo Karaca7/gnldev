@@ -1,0 +1,16 @@
+# Gerçek backend entegrasyon testi için Postgres + Redis. Çakışmamak için 5433/6380 portları.
+#   docker compose up -d
+#   GNL_INTEGRATION=1 pnpm --filter @gnl/durable exec vitest run test/integration-real.test.ts
+#   docker compose down
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_PASSWORD: gnl
+      POSTGRES_DB: gnl
+    ports:
+      - '55432:5432'
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '6380:6379'

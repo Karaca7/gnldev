@@ -1,0 +1,30 @@
+# @gnl/cache
+
+**Cross-run content-hash cache** on top of the journal. The key is run-independent (`cache:<ns>:<hash>`) →
+a result computed in one run is **reused in other runs**. (Within-run reuse is already journal replay; this
+closes the across-run gap.)
+
+```bash
+npm i @gnl/cache   # peer: @gnl/durable
+```
+
+```ts
+import { createCache } from '@gnl/cache';
+import { SqliteJournal } from '@gnl/durable/sqlite';
+
+const cache = createCache(new SqliteJournal('runs.db'), 'embeddings');
+
+// Same input → embed computed once; later runs get it back from the journal.
+const vec = await cache.getOrCompute({ text: 'hello' }, () => embed('hello'));
+```
+
+## API
+- `createCache(journal, namespace?) → Cache`
+- `cache.get(key)` · `cache.set(key, value)` · `cache.getOrCompute(key, compute)`
+
+`key` can be any value (hashed stably with `argsHash`). The value is stored in the journal → persistent +
+crash-proof.
+
+## How it works
+The content-hash key is independent of the run id, so the cache outlives a single run's lifetime. It's
+ideal for expensive, pure computations (embed, retrieval, price calculation).

@@ -1,0 +1,10 @@
+{
+  "emptyTitle": "No MCP servers connected",
+  "emptyDescription": "Connect a server with @gnl/mcp's connectMcp() and pass it in the `mcp` array to createStudioApi — its tools then appear here.",
+  "errorBadge": "error",
+  "statServers": "Servers",
+  "statTools": "Tools",
+  "toolCount": "{{count}} tools",
+  "backTitle": "Back to servers",
+  "noTools": "This server exposes no tools."
+}

@@ -1,0 +1,9 @@
+{
+  "searchPlaceholder": "Vektör store'da ara…",
+  "topKTitle": "En yakın kaç sonuç getirilsin (sunucuya geçirilir)",
+  "minScoreTitle": "Bu skorun altındaki sonuçlar elenir (client-side — API minScore almıyor)",
+  "searchAction": "Ara",
+  "emptyPrompt": "Bir sorgu yaz → en yakın chunk'lar (skor + metadata).",
+  "noResults": "Sonuç yok.",
+  "scoreLabel": "skor {{score}}"
+}

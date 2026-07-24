@@ -1,0 +1,36 @@
+{
+  "name": "@gnl/showcase",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "demo": "tsx src/demo.ts",
+    "studio": "tsx src/studio.ts",
+    "bench": "tsx src/benchmark.ts",
+    "bundle": "tsx src/bundle-size.ts"
+  },
+  "dependencies": {
+    "@gnl/durable": "workspace:*",
+    "@gnl/memory": "workspace:*",
+    "@gnl/rag": "workspace:*",
+    "@gnl/workflow": "workspace:*",
+    "@gnl/processors": "workspace:*",
+    "@gnl/evals": "workspace:*",
+    "@gnl/mcp": "workspace:*",
+    "@gnl/server": "workspace:*",
+    "@gnl/otel": "workspace:*",
+    "@gnl/queue": "workspace:*",
+    "@gnl/events": "workspace:*",
+    "@gnl/a2a": "workspace:*",
+    "@gnl/cache": "workspace:*",
+    "@gnl/studio": "workspace:*",
+    "ai": "^5.0.0",
+    "zod": "^3.25.0",
+    "hono": "^4.6.0",
+    "@hono/node-server": "^1.13.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "esbuild": "^0.24.0"
+  }
+}

@@ -1,0 +1,27 @@
+# Bağımlılıklar
+node_modules/
+
+# Build çıktıları (tsc → dist/)
+dist/
+*.tsbuildinfo
+
+# Test/coverage
+coverage/
+
+# Yerel veri / journal dosyaları
+*.sqlite
+*.db
+runs.db
+
+# Ortam
+.env
+.env.*
+
+# OS / editör
+.DS_Store
+*.log
+
+# Demo/test SQLite artefaktları
+*.db
+*.db-shm
+*.db-wal

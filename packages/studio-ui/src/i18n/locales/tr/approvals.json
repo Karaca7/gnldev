@@ -1,0 +1,14 @@
+{
+  "pendingLabel": "Bekleyen onaylar",
+  "emptyTitle": "Bekleyen onay yok",
+  "emptyDescription": "Bir policy kuralı require-approval işaretlediğinde ve run askıya alındığında tool çağrısı burada görünür.",
+  "openInInspector": "Inspector'da aç",
+  "approve": "Onayla",
+  "deny": "Reddet",
+  "reasonLabel": "Gerekçe: {{reason}}",
+  "toolArgsSummary": "tool argümanları",
+  "approveSuccess": "Onaylandı — run devam ediyor",
+  "denySuccess": "Reddedildi",
+  "conflictError": "Bu onay başka bir yerde zaten karara bağlanmış: {{error}}",
+  "actionError": "İşlem başarısız: {{error}}"
+}

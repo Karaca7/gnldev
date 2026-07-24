@@ -1,0 +1,44 @@
+# Gerçek FAILOVER doğrulaması için Postgres primary + SENKRON replika (CORE-HARDENING §5.5 / §8).
+# README'deki dağıtım ön koşulunu ("synchronous_commit=on + standby") canlı sınar:
+#   docker compose -f docker-compose.failover.yml up -d
+#   GNL_FAILOVER=1 npx vitest run packages/durable/test/failover-real.test.ts
+#   docker compose -f docker-compose.failover.yml down -v
+# Test akışı: primary'ye ack'li CAS yazıları → primary'yi ÖLDÜR (SIGKILL) → replikayı PROMOTE et →
+# yeni primary'de (a) ack'li yazıların TAMAMI duruyor mu, (b) CAS atomikliği sürüyor mu?
+# Resmi postgres imajı + pg_basebackup ile streaming replication; senkron mod primary bayraklarıyla.
+# Portlar: 55440 (primary), 55441 (replica). DİKKAT: trust auth — YALNIZ yerel test içindir.
+services:
+  pg-primary:
+    image: postgres:15-alpine
+    container_name: gnl-failover-primary
+    environment:
+      POSTGRES_USER: gnl
+      POSTGRES_PASSWORD: gnl
+      POSTGRES_DB: gnl
+    # Senkron ayarlar KOMUTLA DEĞİL init script'iyle (bkz. scripts/failover-init.sh): komutla verilse
+    # entrypoint'in geçici init sunucusu da senkron beklerdi → CREATE DATABASE deadlock'u.
+    volumes:
+      - ./scripts/failover-init.sh:/docker-entrypoint-initdb.d/zz-replication.sh:ro
+    ports:
+      - '55440:5432'
+  pg-replica:
+    image: postgres:15-alpine
+    container_name: gnl-failover-replica
+    depends_on:
+      - pg-primary
+    user: postgres
+    environment:
+      # Volume KÖKÜ değil alt dizin: pg_basebackup 0700 ile oluşturur → postgres izin kontrolü geçer.
+      PGDATA: /var/lib/postgresql/data/pgdata
+    # İlk açılışta primary'den taban yedeği al (-R: standby.signal + primary_conninfo yazar),
+    # sonra hot standby olarak başla. Primary hazır değilse hazır olana dek dener.
+    command: >
+      sh -c 'if [ ! -s "$$PGDATA/PG_VERSION" ]; then
+               until pg_basebackup -h pg-primary -p 5432 -U gnl -D "$$PGDATA" -R -X stream; do
+                 echo "primary bekleniyor..."; sleep 2;
+               done;
+             fi;
+             chmod 700 "$$PGDATA";
+             exec postgres -c hot_standby=on'
+    ports:
+      - '55441:5432'

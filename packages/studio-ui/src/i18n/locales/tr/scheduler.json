@@ -1,0 +1,22 @@
+{
+  "statSchedules": "Zamanlama",
+  "statActive": "Aktif",
+  "statNextRun": "Sonraki",
+  "statFailures": "Hata",
+  "unitDay": "g",
+  "unitHour": "sa",
+  "unitMinute": "dk",
+  "unitSecond": "sn",
+  "everyPrefix": "her {{duration}}",
+  "oneTime": "tek seferlik",
+  "relativeNow": "şimdi",
+  "relativeIn": "{{duration}} sonra",
+  "relativeAgo": "{{duration}} gecikti",
+  "disabled": "Scheduler görünümü etkin değil (journal writable/listKeys desteklemiyor).",
+  "emptyTitle": "Henüz trigger yok",
+  "emptyDescription": "Trigger'lar, uygulamanız kod içinde scheduleWorkflow() (cron / every / at) çağırdığında burada görünür — Studio yalnızca canlı durumlarını gösterir.",
+  "liveStatus": "{{count}} trigger · 5sn'de bir yenilenir",
+  "colTrigger": "Tetikleme",
+  "colNextRun": "Sonraki çalışma",
+  "colStatusAttempts": "Durum / deneme"
+}

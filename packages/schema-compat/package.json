@@ -1,0 +1,31 @@
+{
+  "name": "@gnl/schema-compat",
+  "version": "0.0.0",
+  "license": "Apache-2.0",
+  "description": "Sağlayıcıya özel tool-şema uyumluluk katmanı (OpenAI/Gemini/Anthropic). Genişletilebilir SchemaCompatRule + opt-in default set; @gnl/durable ile opt-in.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "ai": "^5.0.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "ai": "^5.0.0",
+    "zod": "^3.25.0"
+  }
+}

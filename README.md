@@ -1,0 +1,178 @@
+# GNL — Correct Durable Agents
+
+**English** · [Türkçe](./README.tr.md)
+
+**A thin correctness layer on top of the Vercel AI SDK — durable execution without standing up a server.**
+It doesn't touch the AI SDK's agentic loop (`generateText`/`streamText` + `tools`) at all; it adds two
+wrappers and a journal on top: **a side-effecting tool call is never silently fired twice.** That's the
+precise meaning of **"exactly-once effect"** here — call-scoped dedup with a safe default: the guarantee
+is carried all the way to the provider itself via `recover()`/`idempotencyKey`, and when the outcome is
+genuinely unknown (e.g. after a crash), the system **blocks and asks for approval** instead of silently
+retrying. If you know the AI SDK, you already know this.
+
+```ts
+import { runDurable } from '@gnl/durable';
+import { SqliteStorage } from '@gnl/durable/sqlite';
+
+const res = await runDurable({
+  runId: 'order-123',                       // idempotency key (typically an orderId/sessionId)
+  journal: new SqliteStorage('runs.db').runs,
+  model, tools: { chargeCard }, prompt: 'Cancel the order, suggest a similar product',
+});
+// After a crash: call again with the SAME runId → the card is never charged a 2nd time, the loop resumes where it left off.
+```
+
+## Why? (the edge — code-verified)
+Agent frameworks either have no durability, or durability only at the level of an **opaque snapshot**
+(e.g. a policy-gated step-snapshot durable agent — no atomic claim to prevent double-execution
+on concurrent resume, no replay/fork from a given step; idempotency on retry is left to the caller →
+double-charge risk). GNL's one sharp difference: **call-scoped, CAS-guaranteed exactly-once effect** — the
+same tool call (`toolCallId`) never runs twice, and with opt-in `idempotency: 'args'` the same **arguments**
+never run twice either, even when the model re-plans the call under a brand-new `toolCallId` (the dominant
+real-world duplicate case — see below); a call whose outcome is unknown is first checked against
+the provider via `recover()`, and if it's still unknown, the system **blocks and asks a human for
+approval** instead of silently retrying — **plus deterministic replay + time-travel.** Every feature is
+built on a single `Journal` interface, so it **inherits** these guarantees.
+
+### LLM-aware idempotency (`idempotency: 'args'`)
+Most documented double-side-effect incidents in the wild don't come from crash-replay — they come from
+the LLM planning the same work again under a **new** `toolCallId` (a documented AI SDK pattern: the same tool called
+5× in one turn, *"Tool call ids are different"*). Call-keyed exactly-once — every durable engine's,
+including our default — is blind to that case by construction. Opt in per tool and GNL keys the journal
+by the **arguments** instead:
+
+```ts
+const tools = {
+  charge: {
+    idempotency: 'args',                       // default: 'call' (toolCallId-keyed, unchanged)
+    // or dedup by a logical key: idempotencyKey: (args) => args.orderId,
+    execute: chargeCard,
+  },
+};
+```
+
+Every duplicate — including concurrent duplicates inside the same step, which wait for the winner's
+result instead of erroring — collapses into a single execution; the rest receive the journaled output.
+The dedup window is run-scoped by default; opt into `idempotencyWindow: 'cross-run'` to make the same
+arguments (or logical key, e.g. an `orderId`) execute once across **all** runs — retried jobs and
+re-triggered agents included. Proof test that reproduces this duplicate-toolCallId pattern end-to-end and shows it
+blocked: `packages/durable/test/args-idempotency.test.ts`.
+
+#### AI SDK drop-in: `withIdempotency` — without `runDurable`
+Already on a plain `generateText`/`streamText` + `tools` loop and don't want to adopt `runDurable`? Wrap
+the tool map instead — same call sites, same loop:
+
+```ts
+import { withIdempotency, InMemoryJournal } from '@gnl/durable';
+// or: const journal = new SqliteStorage('runs.db').runs;
+
+const tools = withIdempotency(rawTools, {
+  journal: new InMemoryJournal(),
+  // window defaults to 'cross-run' → an orderId charges once no matter which call/run it comes from
+  // window: 'run', runId: 'order-123',        // scope dedup to one run instead
+  // key: (name, args) => (args as any).orderId, // dedup by a logical key
+});
+```
+
+**Honest limit:** this layer gives you *"the same argument never runs twice"* — the happy-path dedup and
+cross-run single-execution work fully. It does **not** give full durability: without loop integration the
+blocked/retry/approval ladder (crash recovery, approval gating) **throws** in standalone mode rather than
+suspending. For those, use `runDurable`. Runnable example (no API key):
+`examples/showcase/src/ai-sdk-idempotency.ts`; tests: `packages/durable/test/with-idempotency.test.ts`.
+
+| Only us | Parity (+ durable twist) |
+|---|---|
+| exactly-once tool/model/MCP/RAG · **LLM-aware args-based idempotency** (`idempotency: 'args'` / `idempotencyKey` — dedups the model re-planning the same call under a new `toolCallId`) · deterministic replay (opt-in `replay: 'strict'` → `DivergenceError`; the default is lenient and only warns — replay is an **opt-in assurance**, not an imposed constraint) · time-travel + fork · **deterministic model fallback** (the winner is written to the journal, resume sticks with it) · **org-scoped journal** (`withOrg` — organization isolation + inherits exactly-once) · **edge-native**: **16.4 KiB gzip** core, **62.2 KiB** gzip including the AI SDK = 2.0% of the CF Workers free-tier limit (measured with `pnpm bundle`; a typical full-featured agent framework's build output is ~17.58 MiB raw) · durable queue (lock renewal via heartbeat) · event bus (exactly-once marking + at-least-once delivery) · cross-network A2A (opt-in HMAC-SHA256 signing) · idempotent OTEL · cross-run cache · outbound-call **timeouts** (`timeouts: {modelStepMs,toolMs,claimTtlMs}` → `StepTimeoutError`) · **fail-closed auth** (setup errors out in production if no provider is configured) · **approval decisions are first-class in the journal** (in the approved-but-crashed-before-the-tool-ran scenario, resume applies the decision from the journal even if the `approvals` parameter isn't passed) | agent loop · **requestContext DI** (dynamic model/system/tools) · memory (recall/schema-WM/thread/OM) · workflows (evented) · MCP (client+server) · evals (+datasets) · auto-REST/OpenAPI (409/422 resumable contract) · processors · RAG (+rerank) · cost ledger |
+
+## Quickstart (DX)
+Until the packages land on npm, run the starter from a clone (honest note: `npm create gnl`
+becomes the one-liner only after the npm release):
+```bash
+git clone https://github.com/Karaca7/gnldev.git gnl && cd gnl
+pnpm install && pnpm -r build
+cd examples && node ../packages/create-gnl/dist/index.js my-agent   # starter (mock model — no API key needed)
+cd my-agent && pnpm install       # inside examples/ → @gnl/* resolve via workspace links
+pnpm dev                          # REST API + Studio Playground (single port): http://localhost:3000 (+ /studio)
+```
+After the npm release: `npm create gnl my-agent` anywhere.
+Type-safe calls from the frontend:
+```ts
+import { GnlClient } from '@gnl/client';                 // or: '@gnl/client/react' → useChat
+const gnl = new GnlClient({ baseUrl: 'http://localhost:3000' });
+const { text } = await gnl.run('assistant', { prompt: 'hello' });
+for await (const ev of gnl.stream('assistant', { prompt: 'streaming' })) { /* text-delta… */ }
+```
+
+## Packages (17)
+| Package | What |
+|---|---|
+| **`@gnl/durable`** | Core: `runDurable`/`resume`/`stream` · `durableTool`/`withDurableModel` · journal (memory/**sqlite/postgres/redis**) · `createGnl` + model router · `agentAsTool` + **dynamic network (`runNetwork`, CAS-frozen routing)** · `getRunCost` · `reconstructState`/`forkRun` · run-lock (**atomic takeover: `putIfMatch`**) · `rolloverRun` (period rollover) · retention (`sweepRuns/sweepLog/sweepThreads`, recursive `purgeRun`, disk reclaim via `compact`) · **`timeouts` (`modelStepMs`/`toolMs`/`claimTtlMs`) → `StepTimeoutError`** |
+| **`@gnl/memory`** | `GnlMemory`: recall (messageRange/threshold/filter/resource-scope) · schema working memory + `updateWorkingMemory` tool · thread CRUD/clone · observational memory (Observer/Reflector, pluggable tokenizer) · MessageList |
+| **`@gnl/rag`** | vector store (dev: in-memory · **prod: pgvector**) · **`chunkText`/`chunkDocuments`** (recursive/markdown/character) · **`GraphRag`** (similarity-graph retrieval) · `createRagTool` · `llmReranker` · `SemanticMemory` |
+| **`@gnl/workflow`** | then/parallel/branch · foreach/loop · **`retry` (declarative retry policy, counter kept in the journal)** · `runResumable` + `sleep`/`waitFor` (evented/scheduled) |
+| **`@gnl/processors`** | piiRedactor · moderation · toolFilter · **`toolSearch` (semantic tool selection, journaled)** · tokenLimit · promptInjection · outputLimit |
+| **`@gnl/evals`** | **8 built-in scorers** (faithfulness/hallucination/…) · llmJudge · `scoreRun` · `evalDataset` (resumable) · **`createDatasetsManager`** (version history + experiment `compare`) |
+| **`@gnl/mcp`** | MCP client (`mcpTools`) **+ server** (`createMcpServer`, server-side exactly-once) |
+| **`@gnl/server`** | `createRestApi` + OpenAPI · **fail-closed auth** (setup errors out in production if no provider is configured; opt in explicitly with `allowOpenAccess: true`) · **409/422 resumable contract** (blocked/limit errors return `resumable`/`retry` from a single `BLOCKED_ERROR_CODES` source of truth) |
+| **`@gnl/otel`** | `exportRunToOtlp` + **`otlpPresets`** (Langfuse/Braintrust/Honeycomb/Datadog/Collector + generic API-key OTLP) · **live mode** (`@gnl/otel/live`) |
+| **`@gnl/queue`** | durable job queue + worker · **lock renewal via heartbeat** (prevents takeover during long-running handlers) + opt-in empty-poll backoff |
+| **`@gnl/events`** | event bus (fan-out) — exactly-once marking + at-least-once delivery; handlers must be idempotent · opt-in empty-poll backoff |
+| **`@gnl/a2a`** | remote agent (cross-network exactly-once) · **opt-in HMAC-SHA256-signed requests** (`createA2ATool({ secret })` ↔ `createRestApi({ a2aSecret })`, replay resistance via a timestamp window) |
+| **`@gnl/cache`** | cross-run cache |
+| **`@gnl/studio`** | inspector **+ Playground**: pick agent → prompt → streaming response → approval · time-travel/fork + cost/trace/metrics/diff · admin/API separation + role-based auth |
+| **`@gnl/client`** | type-safe REST/SSE client (framework-agnostic core) + React hooks (`@gnl/client/react`: `useGnlAgent`/`useChat`) |
+| **`@gnl/cli`** | project: `gnl init` (**interactive feature checkbox** — pick idempotency-tool/rag/mcp/memory/workflow/auth/e2e → a wired `gnl.config.ts` is generated; non-interactive via `--features a,b,c` / `--template minimal\|full` / `--yes`, prompt never opens without a TTY) / `add <idempotency-tool\|rag\|mcp\|memory\|workflow\|auth>` / `dev` / `studio` · inspect: `runs`/`run`/`inspect` (**time-travel in the terminal**) · operate: `fork`/`resume`/`sweep`/`rm` (all wired straight to `@gnl/durable`'s own exports, nothing reimplemented) · **zero new runtime deps** (hand-rolled ANSI/table + a from-scratch raw-mode checkbox, no chalk/ora/commander/inquirer) · `create-gnl` (`npm create gnl`) |
+| **`@gnl/deploy`** | `nodeAdapter`/`edgeAdapter` · `bundleApp` (esbuild, edge target) · **`deployTargets`** (Cloudflare/Vercel/Netlify generators) |
+
+## Examples (`examples/`)
+- **`showcase`** — a single self-verifying file exercising all 14 packages: `pnpm --filter @gnl/showcase demo` → 22 sections, 22/22 ✓ (mock model, no API key needed) · `bench` (overhead measurement)
+- **`app`** — **Durable AI Support Desk** (web UI + API): `pnpm --filter @gnl/app start` → :3100 (UI) + :3100/studio (ops). Ticket → message → approval → exactly-once refund + queue/events/otel.
+- **`react-client`** — a `@gnl/client/react` demo (`useChat` + streaming + approval), API-key-free echo backend. `pnpm --filter @gnl/react-client-example server` + `… dev`.
+
+## Supply-chain hygiene
+A dependency you install runs code on your machine and in your build. GNL's posture, verifiable in
+this repo today:
+- **Zero install scripts** — no `postinstall`/`preinstall` in any package.
+- **Minimal dependency surface** — the core (`@gnl/durable`) has exactly **one** runtime dependency
+  (`superjson`); storage drivers (`pg`, `ioredis`) are optional peers you explicitly opt into.
+- **Signed, provenance-attested releases** (`npm publish --provenance`) are the publishing plan — no
+  release happens outside CI.
+
+## Development
+```bash
+pnpm install
+pnpm -r build && pnpm -r typecheck && pnpm test   # 230+ tests
+
+# real-backend integration test (optional):
+docker-compose up -d
+GNL_INTEGRATION=1 npx vitest run packages/durable/test/integration-real.test.ts
+docker-compose down
+```
+TypeScript strict · 0 `@ts-ignore` (type escapes are kept minimal; some `any` remains at boundary/
+serialization points) · ~920 KB total dist · dependency: `superjson` (+ optional hono/opentelemetry).
+Peers: `ai`, `zod`. **No telemetry, no phone-home.**
+
+## Deployment
+gnl is fully Hono-based, so a Node deploy is a few lines:
+```ts
+import { createRestApi } from '@gnl/server';
+import { nodeAdapter } from '@gnl/deploy';                // thin @hono/node-server wrapper
+nodeAdapter(createRestApi(config), { port: process.env.PORT });
+```
+**Journal warning:** `node:sqlite` doesn't work on serverless/edge runtimes → use a network-backed journal
+(`@gnl/durable/postgres` or `/redis`, D1 on Cloudflare). `SqliteStorage` is only for long-lived Node
+processes. Targets for Vercel/Cloudflare/Netlify are ready to go: `deployTargets` (see
+[`@gnl/deploy`](packages/deploy)).
+
+## Honest positioning
+Not "a full-featured agent-framework alternative" — a **durability/correctness layer for the AI SDK**: a solid core
+(`@gnl/durable`) plus satellite packages of varying maturity that inherit its guarantees. It covers most of
+what a typical full-featured agent framework's core provides (memory/workflow/rag/mcp/processors/eval…), but builds it on top of
+**call-scoped exactly-once effect + deterministic replay**. "Exactly-once" here isn't an absolute physical
+guarantee — it means **call-scoped dedup with a safe default**: the same `toolCallId` never runs again, a
+call whose outcome is unknown is tracked all the way to the provider via `recover()`/`idempotencyKey`, and
+if it's still unknown the system **blocks and asks for approval instead of silently retrying** (H7/H9, see
+`docs/CORE-HARDENING.md`) — which is exactly what an opaque step-snapshot durable agent doesn't give
+you. Full-featured agent frameworks are broader/more mature (voice/deployer/editor/auth — deliberately out of scope for us), but
+none of their features ship with these guarantees. Our edge is **correctness**; it's decisive for
+payment/financial and transactional or long-running/distributed workloads.

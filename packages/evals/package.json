@@ -1,0 +1,31 @@
+{
+  "name": "@gnl/evals",
+  "version": "0.0.0",
+  "license": "Apache-2.0",
+  "description": "Scorers + LLM-judge for @gnl/durable. scoreRun reads the journal trace → deterministic, replayable scoring.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "@gnl/durable": "workspace:^",
+    "ai": "^5.0.0"
+  },
+  "devDependencies": {
+    "@gnl/durable": "workspace:*",
+    "ai": "^5.0.0"
+  }
+}

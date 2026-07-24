@@ -1,0 +1,64 @@
+{
+  "name": "@gnl/durable",
+  "version": "0.0.0",
+  "license": "Apache-2.0",
+  "description": "Exactly-once + deterministic-replay durability layer for Vercel AI SDK agents. Drop-in: generateText -> runDurable.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./sqlite": {
+      "types": "./dist/sqlite-storage.d.ts",
+      "default": "./dist/sqlite-storage.js"
+    },
+    "./postgres": {
+      "types": "./dist/postgres-storage.d.ts",
+      "default": "./dist/postgres-storage.js"
+    },
+    "./redis": {
+      "types": "./dist/redis-storage.d.ts",
+      "default": "./dist/redis-storage.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "@gnl/schema-compat": "workspace:^",
+    "ai": "^5.0.0",
+    "ioredis": "^5.4.0",
+    "pg": "^8.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@gnl/schema-compat": {
+      "optional": true
+    },
+    "ioredis": {
+      "optional": true
+    },
+    "pg": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@ai-sdk/provider": "^2.0.0",
+    "@gnl/schema-compat": "workspace:*",
+    "ai": "^5.0.0",
+    "ioredis": "^5.4.0",
+    "pg": "^8.0.0",
+    "pg-mem": "^3.0.14",
+    "zod": "^3.25.0"
+  },
+  "dependencies": {
+    "superjson": "^2.2.6"
+  }
+}

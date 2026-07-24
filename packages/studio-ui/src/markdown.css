@@ -1,0 +1,12 @@
+/* hljs token renkleri — tema token'larından türetilmiş küçük palet (Local Influence).
+   Koyu (Ink) varsayılan; açık tema data-theme=light override'larıyla okunur kalır.
+   Kapsam .md-body ile sınırlı → global kod stillerine sızmaz. */
+.md-body .hljs-comment, .md-body .hljs-quote { color: hsl(var(--muted-foreground)); font-style: italic; }
+.md-body .hljs-keyword, .md-body .hljs-selector-tag, .md-body .hljs-built_in { color: hsl(var(--brand)); }
+.md-body .hljs-string, .md-body .hljs-regexp, .md-body .hljs-addition { color: hsl(var(--success)); }
+.md-body .hljs-number, .md-body .hljs-literal { color: hsl(var(--warning)); }
+.md-body .hljs-title, .md-body .hljs-name, .md-body .hljs-section { color: hsl(var(--info)); }
+.md-body .hljs-attr, .md-body .hljs-attribute, .md-body .hljs-variable, .md-body .hljs-template-variable { color: hsl(var(--foreground)); }
+.md-body .hljs-deletion { color: hsl(var(--destructive)); }
+.md-body .hljs-emphasis { font-style: italic; }
+.md-body .hljs-strong { font-weight: 600; }

@@ -1,0 +1,23 @@
+{
+  "inspector": "Inspector",
+  "observability": "Observability",
+  "playground": "Playground",
+  "agents": "Agents",
+  "tools": "Tools",
+  "workflows": "Workflows",
+  "jobs": "Jobs",
+  "cache": "Cache",
+  "scheduler": "Scheduler",
+  "knowledge": "Knowledge",
+  "evals": "Evals",
+  "networks": "Networks",
+  "mcp": "MCP",
+  "approvals": "Approvals",
+  "audit": "Audit",
+  "organizations": "Organizations",
+  "users": "Users",
+  "policy": "Policy",
+  "groupRuns": "Runs",
+  "groupBuild": "Build",
+  "groupGovernance": "Governance"
+}

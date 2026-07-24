@@ -1,0 +1,7 @@
+{
+  "emptyTitle": "No agent-to-agent calls yet",
+  "emptyDescription": "An edge appears here once a durable run calls another agent through @gnl/a2a's createA2ATool().",
+  "callEdgesTitle": "Call edges",
+  "callCount_one": "{{count}} call",
+  "callCount_other": "{{count}} calls"
+}

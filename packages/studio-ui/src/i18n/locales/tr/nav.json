@@ -1,0 +1,23 @@
+{
+  "inspector": "Inspector",
+  "observability": "Observability",
+  "playground": "Playground",
+  "agents": "Agents",
+  "tools": "Tools",
+  "workflows": "Workflows",
+  "jobs": "Jobs",
+  "cache": "Cache",
+  "scheduler": "Scheduler",
+  "knowledge": "Knowledge",
+  "evals": "Evals",
+  "networks": "Networks",
+  "mcp": "MCP",
+  "approvals": "Onaylar",
+  "audit": "Denetim",
+  "organizations": "Organizasyonlar",
+  "users": "Kullanıcılar",
+  "policy": "Policy",
+  "groupRuns": "Çalışmalar",
+  "groupBuild": "Geliştirme",
+  "groupGovernance": "Yönetişim"
+}

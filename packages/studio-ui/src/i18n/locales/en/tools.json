@@ -1,0 +1,15 @@
+{
+  "statRegistered": "Registered tools",
+  "statGuarded": "Guarded",
+  "emptyTitle": "No tools registered",
+  "emptyDescription": "Tools are registered in code via createGnl({ tools: … }) (or per-agent tools) — add one there and it appears here.",
+  "execDisabled": "Tool execution disabled (gnl.runTool not provided).",
+  "invalidJson": "Invalid JSON",
+  "invalidFields": "Invalid/missing field: {{fields}}",
+  "switchToFormMode": "Switch to form mode",
+  "switchToRawJsonMode": "Switch to raw JSON mode",
+  "rawJsonInputAriaLabel": "Raw JSON input",
+  "running": "Running…",
+  "runTest": "Run test",
+  "backToToolsTitle": "Back to tool list"
+}

@@ -1,0 +1,14 @@
+{
+  "pendingLabel": "Pending approvals",
+  "emptyTitle": "No pending approvals",
+  "emptyDescription": "A tool call appears here once a policy rule marks it require-approval and its run suspends.",
+  "openInInspector": "Open in Inspector",
+  "approve": "Approve",
+  "deny": "Deny",
+  "reasonLabel": "Reason: {{reason}}",
+  "toolArgsSummary": "tool arguments",
+  "approveSuccess": "Approved — run continues",
+  "denySuccess": "Denied",
+  "conflictError": "This approval was already decided elsewhere: {{error}}",
+  "actionError": "Action failed: {{error}}"
+}

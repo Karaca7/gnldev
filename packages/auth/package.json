@@ -1,0 +1,29 @@
+{
+  "name": "@gnl/auth",
+  "version": "0.0.0",
+  "license": "Apache-2.0",
+  "description": "Auth contract (AuthProvider) + free role-based default (bearer/basic, read/write). Open-core seam: @gnl/auth-ee plugs into the same interface.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "hono": "^4.6.0"
+  },
+  "devDependencies": {
+    "hono": "^4.6.0"
+  }
+}

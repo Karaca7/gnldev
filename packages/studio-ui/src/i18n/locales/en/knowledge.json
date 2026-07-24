@@ -1,0 +1,9 @@
+{
+  "searchPlaceholder": "Search the vector store…",
+  "topKTitle": "How many nearest results to fetch (passed to the server)",
+  "minScoreTitle": "Results below this score are filtered out (client-side — the API does not accept minScore)",
+  "searchAction": "Search",
+  "emptyPrompt": "Write a query → nearest chunks (score + metadata).",
+  "noResults": "No results.",
+  "scoreLabel": "score {{score}}"
+}

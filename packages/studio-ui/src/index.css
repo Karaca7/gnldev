@@ -1,0 +1,135 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── GNL Studio kimliği: "Local Influence" (GNL Design System — kesin hex) ──────────
+   Zemin DAIMA Ink (koyu) — birincil deneyim budur, :root varsayılanı da bu.
+   Paper = metin; Fluo Lime = tek kimlik rengi (--brand/--primary), seyrek/yüksek-etki
+   vurgu (kayıt/canlı/aktif gösterge, birincil aksiyon). Neon Green = ikincil vurgu
+   (--accent, --success). Metin lime/yeşil DOLGU üstünde HER ZAMAN Ink — asla beyaz.
+   Açık tema (data-theme=light) Paper-zemin + Ink-metin + lime-aksan zarif varyant
+   olarak korunur (tema toggle + testler kırılmasın). Token ADLARI shadcn sözleşmesiyle
+   aynı kaldı → tüm mevcut view'lar otomatik geçer.
+
+   Yüzey merdiveni (hex → HSL, kesin): shell/sidebar #0c0c0e (--surface-deep/--sidebar,
+   en derin) < zemin Ink #101012 (--background) < kart/panel Surface #17171b (--card,
+   --popover) < kenar Border #2c2c32 (--border). Metin: Paper #F5F5F5 (--foreground),
+   ikincil #9a9a9f (--muted-foreground — 170+ kullanım yeri için AA-güvenli okunur ton),
+   en-sönük #5a5a5f (--muted-foreground-dim — yalnız dekoratif/disabled, gövde metni
+   İÇİN DEĞİL: Ink zemine karşı ~2.8:1, AA'yı karşılamaz). Aksan: Fluo Lime #C6FF00
+   (--primary/--brand), Neon Green #39FF88 (--accent/--success) — ikisinin de üstündeki
+   metin DAİMA Ink (#101012). Hata: yumuşak kırmızı #ff7a7a (--destructive), kodda
+   text-destructive olarak metin rengi + bg-destructive/10..15 tint şeklinde kullanılıyor
+   (spec'teki rgba(255,90,90,0.12) tint'iyle örtüşür). */
+:root {
+  /* Yeni tasarım paleti (Claude Design artifact → hex→HSL). Daha koyu/serin Ink merdiveni,
+     lime #b4ff00, yumuşak durum renkleri. Token ADLARI değişmedi → 18 view otomatik geçer.
+     Merdiven: sidebar #0a0a0c < zemin #0e0e11 < muted #1b1b21 < kart #15151a < secondary #232329
+     < border #35353d. Metin: paper #f4f4f5, muted #9a9aa3, dim #5f5f68. */
+  /* Birebir mockup hex'leri (hex→HSL ondalıklı, render tam hex'e otursun). Merdiven:
+     sidebar/deep #0a0a0c < main/panel #15151a < muted #1b1b21 < kart/secondary #232329 < border #35353d. */
+  --background: 240 10.6% 9.2%; --foreground: 240 4.8% 95.9%;         /* #15151a / #f4f4f5 */
+  --card: 240 10% 11.8%; --card-foreground: 240 4.8% 95.9%;           /* #1b1b21 (main #15151a üstünde hafif yükselti) */
+  --popover: 240 10% 11.8%; --popover-foreground: 240 4.8% 95.9%;     /* #1b1b21 */
+  --primary: 78 100% 50%; --primary-foreground: 240 9.1% 4.3%;        /* #b4ff00 / ink #0a0a0c */
+  --secondary: 240 8% 14.9%; --secondary-foreground: 240 4.8% 95.9%;  /* #232329 */
+  --muted: 240 10% 11.8%; --muted-foreground: 240 4.7% 62.2%; --muted-foreground-dim: 240 4.5% 39%; /* #1b1b21 / #9a9aa3 / #5f5f68 */
+  --accent: 149 75% 56.1%; --accent-foreground: 240 9.1% 4.3%;        /* #3be38b */
+  --destructive: 0 100% 71%; --destructive-foreground: 0 0% 98%;      /* #ff6b6b */
+  --border: 240 7% 22.4%; --input: 240 6.5% 27.3%; --ring: 78 100% 50%; /* #35353d / #41414a */
+  --success: 149 75% 56.1%; --warning: 42 86.3% 62.7%; --info: 208 89.7% 69.4%; /* #3be38b / #f2c14e / #6bb6f7 */
+  --brand: 78 100% 50%; --brand-foreground: 240 9.1% 4.3%;
+  --surface-deep: 240 9.1% 4.3%; --sidebar: 240 9.1% 4.3%;            /* #0a0a0c (sidebar, en derin) */
+  --surface-1: 240 9.7% 6.1%;                                         /* #0e0e11 (topbar chrome — deep < bu < main) */
+  --radius: 0.5rem;
+}
+[data-theme='light'] {
+  --background: 0 0% 96%; --foreground: 240 6% 10%;
+  --card: 0 0% 100%; --card-foreground: 240 6% 10%;
+  --popover: 0 0% 100%; --popover-foreground: 240 6% 10%;
+  --primary: 78 85% 32%; --primary-foreground: 240 10% 6%;
+  --secondary: 240 4% 90%; --secondary-foreground: 240 6% 10%;
+  --muted: 240 4% 92%; --muted-foreground: 240 4% 40%; --muted-foreground-dim: 240 3% 62%;
+  --accent: 152 60% 32%; --accent-foreground: 240 10% 6%;
+  --destructive: 0 74% 50%; --destructive-foreground: 0 0% 98%;
+  --border: 240 4% 85%; --input: 240 4% 80%; --ring: 78 85% 32%;
+  --success: 152 60% 32%; --warning: 42 92% 44%; --info: 208 88% 48%;
+  --brand: 78 85% 32%; --brand-foreground: 240 10% 6%;
+  /* Açık temada "en derin" katman şell/sidebar için ayrı hex verilmedi (spec yalnız koyu
+     temayı sabitliyor) — merdiven ilişkisi korunarak (sidebar zemin'den biraz daha resif/gri)
+     türetildi; App shell (D3) bağladığında gerekirse burada ince ayar yapılabilir. */
+  --surface-deep: 240 4% 91%; --sidebar: 240 4% 91%;
+  --surface-1: 240 4% 93%; /* light topbar: bir kademe (background 96% > bu > sidebar 91%) */
+}
+
+* { border-color: hsl(var(--border)); }
+html, body, #root { height: 100%; }
+body {
+  margin: 0; background: hsl(var(--background)); color: hsl(var(--foreground));
+  font: 13px/1.55 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+}
+::selection { background: hsl(var(--brand) / 0.25); }
+
+/* Klavye odağı: kimlik rengiyle görünür halka (fare tıklamasında değil). */
+:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 1px; border-radius: 2px; }
+
+/* Veri yüzeyleri (journal key, seq, ts, kod) mono ailede toplanır. */
+code, kbd, pre, samp { font-family: 'Geist Mono Variable', ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+/* Mikro-etiket: bölüm başlıkları/rozetler için mono "eyebrow" — journal sözlüğünün tipografik izi. */
+.microlabel {
+  font-family: 'Geist Mono Variable', ui-monospace, monospace;
+  font-size: 10px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase;
+}
+
+/* Kayıt göstergesi: canlı run / stream işareti. prefers-reduced-motion'da sabit kalır. */
+.record-dot { width: 7px; height: 7px; border-radius: 2px; background: hsl(var(--brand)); }
+.record-dot--live { animation: record-pulse 1.6s ease-in-out infinite; }
+@keyframes record-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+/* Marka imleci: 1c "Prompt" kimliği — wordmark/amblem ardında yanıp sönen terminal
+   caret'ı (lime dolgu). prefers-reduced-motion'da sabit (opaklık 1) kalır. */
+.brand-caret {
+  display: inline-block; width: 9px; height: 26px; border-radius: 2px;
+  background: hsl(var(--brand)); animation: gnlBlink 1.1s step-end infinite;
+}
+.brand-caret--inline { margin-left: 5px; }
+@keyframes gnlBlink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+
+/* Açık temada imleç Ink olur ve SÖNMEZ (statik) — amblemdeki "›" caret lime kalır (--brand
+   zaten açık temada kontrastlı koyu-lime varyantına döner, bkz. üstteki tema bloğu). */
+[data-theme='light'] .brand-caret { background: hsl(var(--foreground)); animation: none; }
+
+/* Nabız noktası: "running/canlı" durum göstergesi (Badge/Ajan kartı — D2 bu utility'i
+   tüketecek). Dekoratif göstergedir; kullanan bileşen aria-hidden işaretlemeli, durum
+   metinle (ör. "running") ayrıca ifade edilmeli (renk+nokta tek başına yeterli değil). */
+.live-dot {
+  display: inline-block; width: 6px; height: 6px; border-radius: 999px;
+  background: hsl(var(--success)); animation: gnlPulse 1.4s ease-in-out infinite;
+}
+@keyframes gnlPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .record-dot--live { animation: none; }
+  .brand-caret { animation: none; opacity: 1; }
+  .live-dot { animation: none; opacity: 1; }
+  * { transition-duration: 0.01ms !important; }
+}
+
+/* İnce scrollbar — yoğun panellerde gövdeyi ezmesin. */
+* { scrollbar-width: thin; scrollbar-color: hsl(var(--border)) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 4px; }
+*::-webkit-scrollbar-track { background: transparent; }
+
+/* ReactFlow (Workflows grafiği) — koyu/açık tema uyumu (varsayılan ReactFlow stilleri açık-tema → koyuda beyaz kutu). */
+.react-flow__minimap { background-color: hsl(var(--card)) !important; }
+.react-flow__minimap-mask { fill: hsl(var(--muted) / 0.5); }
+.react-flow__controls { box-shadow: none; }
+.react-flow__controls-button {
+  background: hsl(var(--card)); border-bottom: 1px solid hsl(var(--border));
+  color: hsl(var(--foreground)); fill: hsl(var(--foreground));
+}
+.react-flow__controls-button:hover { background: hsl(var(--muted)); }
+.react-flow__attribution { display: none; }

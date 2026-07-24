@@ -1,0 +1,44 @@
+{
+  "name": "@gnl/rag",
+  "version": "0.0.0",
+  "license": "Apache-2.0",
+  "description": "Vector store + RAG tool for AI SDK agents. Tool olarak kullanılınca @gnl/durable ile replayable/exactly-once RAG.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./postgres": {
+      "types": "./dist/postgres-vector-store.d.ts",
+      "default": "./dist/postgres-vector-store.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "@gnl/durable": "workspace:^",
+    "ai": "^5.0.0",
+    "pg": "^8.0.0",
+    "zod": "^3.25.0"
+  },
+  "peerDependenciesMeta": {
+    "pg": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@gnl/durable": "workspace:*",
+    "ai": "^5.0.0",
+    "pg": "^8.0.0",
+    "zod": "^3.25.0"
+  }
+}

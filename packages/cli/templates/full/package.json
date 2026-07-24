@@ -1,0 +1,27 @@
+{
+  "name": "__PROJECT_NAME__",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "gnl dev",
+    "studio": "gnl studio",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@gnl/durable": "^0.0.0",
+    "@gnl/server": "^0.0.0",
+    "@gnl/studio": "^0.0.0",
+    "@gnl/memory": "^0.0.0",
+    "@gnl/auth": "^0.0.0",
+    "@hono/node-server": "^1.13.0",
+    "hono": "^4.6.0",
+    "ai": "^5.0.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@gnl/cli": "^0.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0"
+  }
+}

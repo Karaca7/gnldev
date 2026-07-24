@@ -1,0 +1,41 @@
+{
+  "name": "@gnl/client",
+  "version": "0.0.0",
+  "license": "Apache-2.0",
+  "description": "Type-safe REST/SSE client for @gnl/server agents: framework-agnostic core + React hooks.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "default": "./dist/react/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "@gnl/durable": "workspace:^",
+    "react": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@gnl/durable": "workspace:*",
+    "@types/react": "^18.3.0",
+    "react": "^18.3.0"
+  }
+}

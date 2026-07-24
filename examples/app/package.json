@@ -1,0 +1,29 @@
+{
+  "name": "@gnl/app",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@gnl/cache": "workspace:*",
+    "@gnl/durable": "workspace:*",
+    "@gnl/evals": "workspace:*",
+    "@gnl/events": "workspace:*",
+    "@gnl/memory": "workspace:*",
+    "@gnl/otel": "workspace:*",
+    "@gnl/processors": "workspace:*",
+    "@gnl/queue": "workspace:*",
+    "@gnl/rag": "workspace:*",
+    "@gnl/studio": "workspace:*",
+    "@gnl/workflow": "workspace:*",
+    "@hono/node-server": "^1.13.0",
+    "ai": "^5.0.0",
+    "hono": "^4.6.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0"
+  }
+}

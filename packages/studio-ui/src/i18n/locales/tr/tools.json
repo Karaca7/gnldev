@@ -1,0 +1,15 @@
+{
+  "statRegistered": "Kayıtlı araç",
+  "statGuarded": "Guard'lı",
+  "emptyTitle": "Kayıtlı tool yok",
+  "emptyDescription": "Tool'lar kod içinde createGnl({ tools: … }) ile (veya agent bazında) kaydedilir — birini orada eklediğinizde burada görünür.",
+  "execDisabled": "Tool çalıştırma kapalı (gnl.runTool yok).",
+  "invalidJson": "Geçersiz JSON",
+  "invalidFields": "Geçersiz/eksik alan: {{fields}}",
+  "switchToFormMode": "Form moduna geç",
+  "switchToRawJsonMode": "Ham JSON moduna geç",
+  "rawJsonInputAriaLabel": "Ham JSON girdi",
+  "running": "Çalışıyor…",
+  "runTest": "Test çalıştır",
+  "backToToolsTitle": "Tool listesine dön"
+}

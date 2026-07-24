@@ -1,0 +1,73 @@
+{
+  "name": "@gnl/cli",
+  "version": "0.0.0",
+  "license": "Apache-2.0",
+  "description": "gnl developer CLI: scaffold (init), hot-reload dev server (REST + Studio Playground), studio.",
+  "type": "module",
+  "bin": {
+    "gnl": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "templates"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "tsx": "^4.19.0"
+  },
+  "peerDependencies": {
+    "@gnl/auth": "workspace:^",
+    "@gnl/durable": "workspace:^",
+    "@gnl/server": "workspace:^",
+    "@gnl/studio": "workspace:^",
+    "@gnl/memory": "workspace:^",
+    "@hono/node-server": "^1.13.0",
+    "hono": "^4.6.0"
+  },
+  "peerDependenciesMeta": {
+    "@gnl/auth": {
+      "optional": true
+    },
+    "@gnl/durable": {
+      "optional": true
+    },
+    "@gnl/server": {
+      "optional": true
+    },
+    "@gnl/studio": {
+      "optional": true
+    },
+    "@gnl/memory": {
+      "optional": true
+    },
+    "@hono/node-server": {
+      "optional": true
+    },
+    "hono": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@gnl/auth": "workspace:^",
+    "@gnl/durable": "workspace:^",
+    "@gnl/server": "workspace:^",
+    "@gnl/studio": "workspace:^",
+    "@gnl/memory": "workspace:^",
+    "@hono/node-server": "^1.13.0",
+    "hono": "^4.6.0",
+    "ai": "^5.0.0",
+    "zod": "^3.25.0"
+  }
+}

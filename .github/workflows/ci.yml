@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  build-test:
+    name: typecheck · build · test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - run: pnpm -r typecheck
+      - run: pnpm test
+
+  integration:
+    name: gerçek backend (Postgres + Redis)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      GNL_INTEGRATION: '1'
+      # integration-real.test.ts GNL_PG_URL / GNL_REDIS_URL okur (denetim: eski PG_URL/REDIS_PORT
+      # adları testle hiç eslesmiyordu -> job servislerin yerine default 55432/6380'e baglanip
+      # retry-timeout ile kiziyordu).
+      GNL_PG_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      GNL_REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Kokten kosulur: kok vitest.config include'u 'packages/*/test/**' — paket dizininden
+      # kosunca "No test files found" verir (bilinen monorepo durumu).
+      - run: pnpm exec vitest run packages/durable/test/integration-real.test.ts

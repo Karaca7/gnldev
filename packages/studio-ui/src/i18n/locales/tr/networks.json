@@ -1,0 +1,7 @@
+{
+  "emptyTitle": "Henüz agent-agent çağrısı yok",
+  "emptyDescription": "Durable bir run, @gnl/a2a'nın createA2ATool()'u ile başka bir agent'ı çağırdığında burada bir kenar (edge) görünür.",
+  "callEdgesTitle": "Çağrı kenarları",
+  "callCount_one": "{{count}} çağrı",
+  "callCount_other": "{{count}} çağrı"
+}

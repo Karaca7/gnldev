@@ -1,0 +1,26 @@
+{
+  "name": "@gnl/docs-mcp",
+  "version": "0.0.0",
+  "license": "Apache-2.0",
+  "description": "MCP stdio server exposing GNL docs to AI coding assistants (any MCP-compatible CLI/editor): overview/feature/search tools. Hand-written JSON-RPC 2.0 (no SDK), embedded static content + optional live gnl.dev fetch.",
+  "type": "module",
+  "bin": {
+    "gnl-docs-mcp": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  }
+}

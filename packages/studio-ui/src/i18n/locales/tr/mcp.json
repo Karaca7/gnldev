@@ -1,0 +1,10 @@
+{
+  "emptyTitle": "Bağlı MCP server yok",
+  "emptyDescription": "@gnl/mcp'nin connectMcp() ile bir server bağlayıp `mcp` dizisinde createStudioApi'ye ver — tool'ları burada görünür.",
+  "errorBadge": "hata",
+  "statServers": "Sunucu",
+  "statTools": "Araç",
+  "toolCount": "{{count}} araç",
+  "backTitle": "Sunuculara dön",
+  "noTools": "Bu sunucu araç sunmuyor."
+}

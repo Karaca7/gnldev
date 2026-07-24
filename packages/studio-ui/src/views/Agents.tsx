@@ -1,0 +1,704 @@
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
+import { Rocket, Plus, Trash2, Pencil, ShieldCheck, ShieldAlert, ShieldX, Clock } from 'lucide-react';
+import { useAgents, useManagedAgents, useCapabilities, useAgentRegistry, useMe, api, errMessage, type ManagedAgentRecord, type AgentRegistryRecord } from '../api';
+import { config } from '../config';
+import { authHeader } from '../auth';
+import { Spinner, Empty, Badge, Btn, Tabs, StatStrip, cn } from '../components';
+import { ConfirmDialog, toast } from '../ui';
+import { Stagger, StaggerItem } from '../motion';
+import { PromptEditor } from './PromptEditor';
+
+/**
+ * Bug-investigation finding: when a promote is rejected with 412 (eval gate BLOCKED), the server
+ * body is `{ error, aggregate }` — `aggregate` carries the scorer→score records. api.ts's http()
+ * (see api.ts ~L165-186) only puts `.error` into ApiError.message; `aggregate` is silently
+ * dropped. Without touching api.ts (out of scope), we hit the same endpoint with a raw fetch using
+ * this sibling error class of ApiError, capturing `aggregate` too — the success shape matches
+ * api.promoteAgentVersion exactly.
+ */
+class GateRejection extends Error {
+  status: number;
+  aggregate?: Record<string, number>;
+  constructor(status: number, message: string, aggregate?: Record<string, number>) {
+    super(message);
+    this.name = 'GateRejection';
+    this.status = status;
+    this.aggregate = aggregate;
+  }
+}
+
+async function promoteWithGateInfo(
+  name: string,
+  version: number,
+): Promise<{ ok: boolean; name: string; active: number; previous: number | null }> {
+  const res = await fetch(`${config.apiBase}/managed-agents/${encodeURIComponent(name)}/promote`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...authHeader() },
+    body: JSON.stringify({ version }),
+  });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    const message = (body && typeof body.error === 'string' && body.error) || `${res.status} ${res.statusText}`;
+    const aggregate = body && body.aggregate && typeof body.aggregate === 'object' ? (body.aggregate as Record<string, number>) : undefined;
+    throw new GateRejection(res.status, message, aggregate);
+  }
+  return body;
+}
+
+/** A single scorer's gate-table row: score + threshold + pass/fail. */
+export interface GateScoreRow { scorer: string; score: number; threshold: number; passed: boolean; }
+
+/**
+ * The server (server.ts ~L1724-1738) evaluates ALL scorers against a SINGLE global `minAvg` and
+ * only embeds the FAILING ones in the message, formatted as `scorer=score<threshold` (passing ones
+ * aren't in the message, only in `aggregate`). We extract the threshold from the message and apply
+ * it to ALL scorers in `aggregate` — so passing scorers show up in the table too. Pure function:
+ * tested as long as the server's text format doesn't change.
+ */
+export function parseGateScores(message: string, aggregate: Record<string, number>): GateScoreRow[] {
+  const failing = new Map<string, number>();
+  const re = /([^\s,=]+)=([\d.]+)<([\d.]+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(message))) failing.set(m[1], Number(m[3]));
+  const fallbackThreshold = failing.size ? [...failing.values()][0] : 0.5;
+  return Object.entries(aggregate)
+    .map(([scorer, score]) => ({
+      scorer,
+      score,
+      threshold: failing.get(scorer) ?? fallbackThreshold,
+      passed: !failing.has(scorer),
+    }))
+    .sort((a, b) => a.scorer.localeCompare(b.scorer));
+}
+
+// Agent card: appears one by one in a stagger-entrance list, lifts slightly on hover (translateY+shadow) —
+// only transform/box-shadow, GPU-friendly; the global prefers-reduced-motion CSS rule already zeroes out the transition.
+const CARD_HOVER = 'transition-[transform,box-shadow] duration-200 ease-out hover:-translate-y-1 hover:shadow-lg';
+
+/** Agent card avatar: lime "›G" — filled for agents with a managed+active (live in prod)
+    version, outline "idle" state for others (registry-only/draft). Without touching BrandMark,
+    reuses the same visual language at card scale. */
+function AgentAvatar({ live }: { live: boolean }) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        'flex h-8 w-8 shrink-0 items-center justify-center gap-0.5 rounded-md text-sm font-extrabold leading-none',
+        live ? 'bg-brand text-brand-foreground' : 'border border-brand/60 bg-transparent text-brand',
+      )}
+    >
+      <span>›</span>
+      <span className="tracking-tighter">G</span>
+    </span>
+  );
+}
+
+/** GNL Progress recipe: Ink track + lime fill + MONO % (lime). The percentage is always also
+    presented as text (color+fill alone doesn't convey meaning — WCAG 1.4.1). */
+function ProgressBar({ value, label }: { value: number; label: string }) {
+  const pct = Math.max(0, Math.min(100, Math.round(value * 100)));
+  return (
+    <div className="mt-2.5">
+      <div className="mb-1 flex items-center justify-between text-[10px] text-muted-foreground">
+        <span>{label}</span>
+        <span className="font-mono text-brand">%{pct}</span>
+      </div>
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-background">
+        <div className="h-full rounded-full bg-brand" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
+/** "How many versions behind" indicator, shown when prod is BEHIND the newest draft. Shows
+    NOTHING when active === newest or there's only one version (in that case the bar was just 100%
+    noise — it blurred "is it active / is it the latest"). Only visible when prod < newest draft,
+    and says "waiting to promote". */
+function FreshnessBar({ active, latest }: { active: number | null; latest: number }) {
+  const { t } = useTranslation('agents');
+  if (active == null || latest <= active) return null;
+  return <ProgressBar value={active / latest} label={t('freshnessLabel', { active, latest })} />;
+}
+
+/** Version panel: immutable version list + promote/rollback. Active version highlighted with brand
+    color. When evalGate is on, a promote rejection (412) is shown as a score table (instead of a
+    truncated single line). */
+type AgentVersion = ManagedAgentRecord['versions'][number];
+function VersionPanel({ rec, canManage, evalGate, onChanged, onEdit, onDelete }: {
+  rec: ManagedAgentRecord; canManage: boolean; evalGate: boolean; onChanged: () => void;
+  onEdit: (v: AgentVersion) => void; onDelete: (v: AgentVersion) => void;
+}) {
+  const { t, i18n } = useTranslation('agents');
+  const [busy, setBusy] = useState<number | null>(null);
+  const [gateFail, setGateFail] = useState<{ message: string; rows: GateScoreRow[] } | null>(null);
+  const promote = async (version: number) => {
+    if (busy != null) return; // panel-wide lock: prevent a second click from racing while a promote is in flight
+    setBusy(version);
+    setGateFail(null);
+    try {
+      const r = await promoteWithGateInfo(rec.name, version);
+      toast.success(t('promotedToast', { name: rec.name, previous: r.previous ?? '—', active: r.active }));
+      onChanged();
+    } catch (e) {
+      if (e instanceof GateRejection && e.status === 412 && e.aggregate) {
+        setGateFail({ message: e.message, rows: parseGateScores(e.message, e.aggregate) });
+      }
+      toast.error(t('promoteFailedToast', { message: errMessage(e) }));
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <div className="space-y-1.5">
+      {canManage && evalGate && (
+        <span title={t('evalGateTitle')}>
+          <Badge tone="info">{t('evalGateBadge')}</Badge>
+        </span>
+      )}
+      {(() => { const latest = Math.max(...rec.versions.map((v) => v.version)); return [...rec.versions].reverse().map((v) => {
+        const isActive = rec.active === v.version;
+        const isOld = rec.active != null && v.version < rec.active;
+        const isNewest = v.version === latest;
+        return (
+          <div key={v.version} className={cn('rounded-md border p-2', isActive ? 'border-brand/50 bg-brand/5' : 'border-border')}>
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-[11px] font-semibold">v{v.version}</span>
+              {isActive ? <Badge tone="success" live>{t('activeProdBadge')}</Badge> : isOld ? <Badge tone="muted">{t('oldBadge')}</Badge> : <Badge tone="muted">{t('draftBadge')}</Badge>}
+              {/* Marked when the newest draft is NOT prod → makes "which one is the latest version" clear (if active is already the newest, the badge is enough). */}
+              {isNewest && !isActive && <span className="text-[10px] font-medium text-brand">{t('newestLabel')}</span>}
+              <span className="truncate font-mono text-[10px] text-muted-foreground">{v.model}</span>
+              <span className="ml-auto shrink-0 font-mono text-[10px] text-muted-foreground">
+                {new Date(v.createdAt).toLocaleString(i18n.language === 'tr' ? 'tr-TR' : 'en-US', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+              </span>
+              {canManage && (
+                <div className="flex shrink-0 items-center gap-1">
+                  {!isActive && (
+                    <Btn size="xs" variant="outline" disabled={busy !== null} onClick={() => promote(v.version)}
+                      title={isOld ? t('rollbackTitle') : t('promoteVersionTitle')}>
+                      <Rocket size={11} /> {isOld ? 'Rollback' : 'Promote'}
+                    </Btn>
+                  )}
+                  <button type="button" title={t('editBasedOnTitle')}
+                    onClick={() => onEdit(v)} className="rounded p-1 text-muted-foreground hover:text-brand">
+                    <Pencil size={11} />
+                  </button>
+                  {!isActive && (
+                    <button type="button" title={t('deleteVersionTitle')}
+                      disabled={busy !== null} onClick={() => onDelete(v)}
+                      className="rounded p-1 text-muted-foreground hover:text-destructive disabled:opacity-50">
+                      <Trash2 size={11} />
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+            {v.note && <div className="mt-1 text-[11px] text-muted-foreground">{v.note}</div>}
+            {v.system && <div className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">system: {v.system}</div>}
+          </div>
+        );
+      }); })()}
+      {gateFail && <GateFailureTable message={gateFail.message} rows={gateFail.rows} />}
+    </div>
+  );
+}
+
+/** Promote 412 (eval gate BLOCKED) — rich score table: scorer + score + threshold + pass/fail.
+    Rows that fail the threshold are highlighted with a destructive badge (makes "why the promote was
+    blocked" clear). */
+function GateFailureTable({ message, rows }: { message: string; rows: GateScoreRow[] }) {
+  const { t } = useTranslation('agents');
+  return (
+    <div className="rounded-md border border-destructive/40 bg-destructive/5 p-2.5">
+      <div className="mb-1.5 text-[11px] font-medium text-destructive">{message}</div>
+      <table className="w-full text-left text-[11px]">
+        <thead className="text-muted-foreground">
+          <tr>
+            <th className="py-0.5 pr-2 font-normal">scorer</th>
+            <th className="py-0.5 pr-2 font-normal">{t('scoreHeader')}</th>
+            <th className="py-0.5 pr-2 font-normal">{t('thresholdHeader')}</th>
+            <th className="py-0.5 font-normal">{t('statusHeader')}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.scorer} className="border-t border-border/50">
+              <td className="py-1 pr-2 font-mono">{r.scorer}</td>
+              <td className="py-1 pr-2 font-mono">{r.score.toFixed(2)}</td>
+              <td className="py-1 pr-2 font-mono text-muted-foreground">≥ {r.threshold.toFixed(2)}</td>
+              <td className="py-1"><Badge tone={r.passed ? 'success' : 'destructive'}>{r.passed ? t('gatePassed') : t('gateFailed')}</Badge></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** New draft version form — versions a CODE-DEFINED agent (managed = governance over code agents,
+    NOT a no-code agent factory). The name is chosen from the code-agent list, never free text, so a
+    version can't be created for a name that has no code (which could never run). When arriving via
+    "edit" from a card, the name is fixed to that agent and its CURRENT version (model+system) is
+    pre-filled (remounted via key); `note` is deliberately left empty (the change note for THIS version). */
+function NewVersionForm({ onCreated, agentNames, initialName = '', initialModel = '', initialSystem = '', initialNote = '' }: {
+  onCreated: () => void; agentNames: string[]; initialName?: string; initialModel?: string; initialSystem?: string; initialNote?: string;
+}) {
+  const { t } = useTranslation('agents');
+  const [name, setName] = useState(initialName);
+  const [model, setModel] = useState(initialModel);
+  const [system, setSystem] = useState(initialSystem);
+  const [note, setNote] = useState(initialNote);
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    if (!name.trim() || !model.trim() || busy) return;
+    setBusy(true);
+    try {
+      const r = await api.createAgentVersion({
+        name: name.trim(), model: model.trim(),
+        ...(system.trim() ? { system: system.trim() } : {}),
+        ...(note.trim() ? { note: note.trim() } : {}),
+      });
+      // active === version → the first version was automatically taken to prod (backend); otherwise a draft was added, prod untouched.
+      toast.success(r.active === r.version
+        ? t('createdAndPromotedToast', { name: r.name, version: r.version })
+        : t('createdDraftToast', { name: r.name, version: r.version }));
+      setSystem(''); setNote('');
+      onCreated();
+    } catch (e) {
+      toast.error(t('versionAddFailedToast', { message: errMessage(e) }));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const cls = 'rounded-md border border-input bg-background px-2 py-1 text-xs outline-none';
+  return (
+    <div className="space-y-2 rounded-md border border-border bg-muted/10 p-2.5">
+      <div className="flex flex-wrap items-end gap-2">
+        {initialName ? (
+          // Editing a specific code agent → the name is FIXED (you're adding a version to IT).
+          <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground">{t('agentNameLabel')}
+            <span className={cn(cls, 'inline-block w-40 truncate bg-muted/40 font-mono text-foreground')}>{name}</span>
+          </label>
+        ) : (
+          // Fresh version → pick a CODE-defined agent (no free text → no un-runnable orphan records).
+          <label title={t('agentNameHint')}
+            className="flex flex-col gap-0.5 text-[10px] text-muted-foreground">{t('agentNameLabel')}
+            <select value={name} onChange={(e) => setName(e.target.value)} className={cn(cls, 'w-40 font-mono')}>
+              <option value="">{t('selectAgentPlaceholder')}</option>
+              {agentNames.map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </label>
+        )}
+        <label title={t('modelFieldHint')}
+          className="flex flex-col gap-0.5 text-[10px] text-muted-foreground">{t('modelFieldLabel')}
+          <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="openai/gpt-4o-mini" className={cn(cls, 'w-52 font-mono')} />
+        </label>
+        <label title={t('noteFieldHint')}
+          className="flex min-w-32 flex-1 flex-col gap-0.5 text-[10px] text-muted-foreground">{t('noteFieldLabel')}
+          <input value={note} onChange={(e) => setNote(e.target.value)} placeholder={t('noteFieldPlaceholder')} className={cn(cls, 'w-full')} />
+        </label>
+        <Btn size="xs" onClick={submit} disabled={busy || !name.trim() || !model.trim()}
+          title={t('draftVersionTitle')}>
+          <Plus size={12} /> {t('draftVersionButton')}
+        </Btn>
+      </div>
+      <div>
+        <div className="mb-1 text-[10px] text-muted-foreground">{t('systemPromptFieldLabel')}</div>
+        <PromptEditor value={system} onChange={setSystem} />
+      </div>
+      {!initialName && agentNames.length === 0 && (
+        <p className="text-[10px] text-warning">{t('noCodeAgentsForVersion')}</p>
+      )}
+      <p className="text-[10px] text-muted-foreground">
+        {t('reqNotePrefix')} <b>{t('agentNameLabel')}</b> + <b>{t('modelFieldLabel')}</b>{t('reqNoteMiddle')} <b>Promote</b>{t('reqNoteSuffix')}
+      </p>
+    </div>
+  );
+}
+
+/** Agent approval registry status badge (see @gnl/durable's agent-registry.ts): `pending` awaits an
+    admin decision, `approved` is servable, `changed` was approved but its config DRIFTED since (needs
+    re-approval — deliberately worded/colored the SAME as `blocked`, both mean "not servable right now",
+    but the icon+label distinguish "drifted, review the diff" from "explicitly blocked"), `blocked` is
+    explicitly denied. Renders nothing when there's no record yet (agent not seen by @gnl/server's boot,
+    or the caller can't see the registry — see canSeeRegistry in Agents() below). */
+function AgentApprovalBadge({ record }: { record?: AgentRegistryRecord }) {
+  const { t } = useTranslation('agents');
+  if (!record) return null;
+  if (record.status === 'approved') {
+    return <Badge tone="success" live><ShieldCheck size={11} /> {t('registryApproved')}</Badge>;
+  }
+  if (record.status === 'changed') {
+    return (
+      <span title={t('registryChangedTitle')}>
+        <Badge tone="destructive"><ShieldAlert size={11} /> {t('registryChanged')}</Badge>
+      </span>
+    );
+  }
+  if (record.status === 'blocked') {
+    return <Badge tone="destructive"><ShieldX size={11} /> {t('registryBlocked')}</Badge>;
+  }
+  return <Badge tone="warning"><Clock size={11} /> {t('registryPending')}</Badge>;
+}
+
+/** Approve/Block buttons for one agent's registry record — only rendered when `canSeeRegistry` (see
+    Agents()) and a record actually exists (nothing to act on before @gnl/server's boot has recorded
+    it). `busy` locks BOTH buttons for this agent while a request is in flight (prevents a double-click
+    race, same pattern as VersionPanel's promote lock). */
+function AgentApprovalControls({ name, record, busy, onApprove, onBlock }: {
+  name: string; record?: AgentRegistryRecord; busy: boolean;
+  onApprove: (name: string) => void; onBlock: (name: string) => void;
+}) {
+  const { t } = useTranslation('agents');
+  if (!record) return null;
+  return (
+    <div className="flex items-center gap-1">
+      {record.status !== 'approved' && (
+        <Btn size="xs" variant="outline" disabled={busy} onClick={() => onApprove(name)} title={t('registryApproveTitle')}>
+          <ShieldCheck size={11} /> {t('registryApproveButton')}
+        </Btn>
+      )}
+      {record.status !== 'blocked' && (
+        <Btn size="xs" variant="outline" disabled={busy} onClick={() => onBlock(name)} title={t('registryBlockTitle')}>
+          <ShieldX size={11} /> {t('registryBlockButton')}
+        </Btn>
+      )}
+    </div>
+  );
+}
+
+/** Section heading: establishes the type distinction at the STRUCTURE level (not a badge). A short
+    inline context is enough for orientation — no need for a separate "how it works" paragraph. */
+function SectionHead({ title, hint, count }: { title: string; hint: string; count?: number }) {
+  return (
+    <div className="mb-2 flex flex-wrap items-baseline gap-x-2">
+      <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+      {count != null && <span className="font-mono text-xs text-muted-foreground">({count})</span>}
+      <span className="text-[11px] text-muted-foreground">— {hint}</span>
+    </div>
+  );
+}
+
+export function Agents() {
+  const { t } = useTranslation('agents');
+  const agents = useAgents();
+  const caps = useCapabilities();
+  const managed = useManagedAgents();
+  const me = useMe();
+  const qc = useQueryClient();
+  const refresh = () => qc.invalidateQueries({ queryKey: ['managed-agents'] });
+  const managedByName = new Map((managed.data?.agents ?? []).map((m) => [m.name, m]));
+  // Also show agents that aren't in the registry (only living as a managed record).
+  const managedOnly = (managed.data?.agents ?? []).filter((m) => !agents.data?.some((a) => a.name === m.name));
+  // If there's no agentVersions cap, promote/rollback/delete buttons are NOT SHOWN (nav is hidden but reachable via URL).
+  const canManage = !!caps.data?.agentVersions;
+  const totalCount = (agents.data?.length ?? 0) + managedOnly.length;
+
+  // Agent APPROVAL registry (governance — see @gnl/durable's agent-registry.ts): GET/approve/block are
+  // platform-admin gated server-side (approval is "may this code-agent serve AT ALL", never per-org —
+  // same reasoning as org create/delete). `canSeeRegistry` mirrors the server's own `requirePlatformAdmin`
+  // check (org-bound → never; strict multi-org → needs the explicit platform-admin grant; otherwise the
+  // legacy operator) so a caller who WOULD get 403 never even issues the request — this hook is
+  // background-polled (10s), and App.tsx force-logs-out on any 401/403, so an always-on query here would
+  // boot a legitimate-but-unprivileged user out on every tick. Held false until caps+me both resolve
+  // (their `undefined` fields would otherwise evaluate "true" and fire one premature request).
+  const identityKnown = !!caps.data && !!me.data;
+  const canSeeRegistry = identityKnown && !!caps.data?.agentRegistry && !me.data?.orgId && (!caps.data?.multiOrganization || !!me.data?.platformAdmin);
+  const registry = useAgentRegistry(canSeeRegistry);
+  const registryByName = new Map((registry.data ?? []).map((r) => [r.name, r]));
+  const [registryBusy, setRegistryBusy] = useState<string | null>(null);
+  const refreshRegistry = () => qc.invalidateQueries({ queryKey: ['agent-registry'] });
+  const handleApproveAgent = async (name: string) => {
+    if (registryBusy) return;
+    setRegistryBusy(name);
+    try {
+      await api.approveAgent(name);
+      refreshRegistry();
+      toast.success(t('registryApprovedToast', { name }));
+    } catch (e) {
+      toast.error(t('registryActionFailedToast', { message: errMessage(e) }));
+    } finally {
+      setRegistryBusy(null);
+    }
+  };
+  const handleBlockAgent = async (name: string) => {
+    if (registryBusy) return;
+    setRegistryBusy(name);
+    try {
+      await api.blockAgent(name);
+      refreshRegistry();
+      toast.success(t('registryBlockedToast', { name }));
+    } catch (e) {
+      toast.error(t('registryActionFailedToast', { message: errMessage(e) }));
+    } finally {
+      setRegistryBusy(null);
+    }
+  };
+
+  // Tabs: 'list' (cards) · 'create' (create/edit). Switching tabs manually gives an EMPTY form (new agent);
+  // arriving via "edit" from a card pre-fills that agent's CURRENT version (draft + remount via formKey).
+  const [tab, setTab] = useState<'list' | 'create'>('list');
+  const BLANK = { name: '', model: '', system: '', note: '' };
+  const [draft, setDraft] = useState<{ name: string; model: string; system: string; note: string }>(BLANK);
+  const [formKey, setFormKey] = useState(0);
+  // Edit from card: load the current version's content (including the note) into the form + inform the user (versions are immutable → this becomes a new version).
+  const startEdit = (name: string, model: string, system: string, note = '', versionLabel?: string) => {
+    setDraft({ name, model, system, note });
+    setFormKey((k) => k + 1);
+    setTab('create');
+    toast.info(versionLabel
+      ? t('editToastVersioned', { name, version: versionLabel })
+      : t('editToastUnversioned', { name }));
+  };
+  // Switching to 'create' from the tab bar: a brand-new agent from scratch → clear the form.
+  const onTab = (tabId: 'list' | 'create') => { if (tabId === 'create') { setDraft(BLANK); setFormKey((k) => k + 1); } setTab(tabId); };
+
+  // Delete the managed agent record (with ALL its versions) — only removes the managed record; a
+  // code-defined agent (if defined in createGnl agents) is unaffected and keeps showing up as-is.
+  // `hasCode` determines the confirmation text.
+  const [deleting, setDeleting] = useState<{ name: string; hasCode: boolean } | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const handleDelete = async (name: string) => {
+    if (deleteBusy) return;
+    setDeleteBusy(true);
+    try {
+      await api.deleteManagedAgent(name);
+      refresh();
+      toast.success(t('managedAgentDeletedToast', { name }));
+    } catch (e) {
+      toast.error(t('deleteFailedToast', { message: errMessage(e) }));
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
+
+  // Single version delete (trash icon in VersionPanel → confirm → DELETE .../versions/:v). The active
+  // version can't be deleted (button is already hidden + backend 409); when the last version goes, the
+  // agent disappears entirely.
+  const [deletingVer, setDeletingVer] = useState<{ name: string; version: number; remaining: number } | null>(null);
+  const [verBusy, setVerBusy] = useState(false);
+  const handleDeleteVersion = async () => {
+    if (!deletingVer || verBusy) return;
+    setVerBusy(true);
+    try {
+      const r = await api.deleteAgentVersion(deletingVer.name, deletingVer.version);
+      refresh();
+      toast.success(r.remaining === 0
+        ? t('lastVersionDeletedToast', { name: deletingVer.name })
+        : t('versionDeletedToast', { name: deletingVer.name, version: deletingVer.version }));
+    } catch (e) {
+      toast.error(t('deleteFailedToast', { message: errMessage(e) }));
+    } finally {
+      setVerBusy(false);
+      setDeletingVer(null);
+    }
+  };
+
+  if (agents.isLoading) return <Spinner />;
+  return (
+    <>
+    <StatStrip items={[
+      { label: t('statAgents'), value: totalCount.toLocaleString() },
+      { label: t('statManaged'), value: String(managed.data?.agents?.length ?? 0) },
+      { label: t('statCodeDefined'), value: String(agents.data?.length ?? 0) },
+    ]} />
+    <div className="space-y-5 p-5">
+      <ConfirmDialog
+        open={deleting !== null}
+        onOpenChange={(o) => { if (!o) setDeleting(null); }}
+        title={t('deleteManagedAgentDialogTitle')}
+        description={
+          deleting?.hasCode
+            ? t('deleteManagedAgentDescHasCode', { name: deleting.name })
+            : t('deleteManagedAgentDescNoCode', { name: deleting?.name })
+        }
+        confirmLabel={t('deleteConfirmLabel')}
+        destructive
+        onConfirm={() => { if (deleting) void handleDelete(deleting.name); }}
+      />
+      <ConfirmDialog
+        open={deletingVer !== null}
+        onOpenChange={(o) => { if (!o) setDeletingVer(null); }}
+        title={t('deleteVersionDialogTitle')}
+        description={deletingVer
+          ? t('deleteVersionDescription', {
+              name: deletingVer.name,
+              version: deletingVer.version,
+              lastSuffix: deletingVer.remaining === 0 ? t('deleteVersionLastSuffix') : '',
+            })
+          : ''}
+        confirmLabel={t('deleteConfirmLabel')}
+        destructive
+        onConfirm={() => void handleDeleteVersion()}
+      />
+      {canManage ? (
+        <Tabs<'list' | 'create'>
+          active={tab}
+          onChange={onTab}
+          tabs={[
+            { id: 'list', label: totalCount ? t('agentsTabCount', { count: totalCount }) : t('agentsTab') },
+            { id: 'create', label: draft.name ? t('editTab', { name: draft.name }) : t('createEditTab') },
+          ]}
+        />
+      ) : (
+        <h1 className="text-lg font-bold text-foreground">{t('agentsHeading')}</h1>
+      )}
+
+      {tab === 'list' && (
+        <>
+      {/* Clarity note: prevents the wrong expectation that an agent belongs to an org — isolation is
+          at the run/journal level (see the org badge in Inspector), not per-agent. */}
+      <p className="text-[11px] leading-relaxed text-muted-foreground">{t('orgIsolationNote')}</p>
+      {!agents.data?.length && managedOnly.length === 0 && (
+        <Empty>{canManage ? t('noAgentsManageable') : t('noAgentsUnmanageable')}</Empty>
+      )}
+
+      {!!agents.data?.length && (
+        <section>
+          <SectionHead title={t('codeDefinedAgentsTitle')} hint={t('codeDefinedAgentsHint')} count={agents.data.length} />
+          <Stagger className="grid gap-3 sm:grid-cols-2">
+        {agents.data.map((a) => {
+          const m = managedByName.get(a.name);
+          const activeV = m?.versions.find((v) => v.version === m.active);
+          const latestVersion = m?.versions.length ? Math.max(...m.versions.map((v) => v.version)) : 0;
+          return (
+            <StaggerItem key={a.name} className={cn('rounded-md border border-border p-4', CARD_HOVER)}>
+              <div className="flex items-start gap-2.5">
+                <AgentAvatar live={!!activeV} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate text-sm font-bold text-foreground">{a.name}</span>
+                    <Badge tone="model">{activeV?.model ?? a.model}</Badge>
+                  </div>
+                  {/* Status: managed+active version = live in prod (green + .live-dot pulse); relies on text too, not just color. */}
+                  {activeV && <div className="mt-1"><Badge tone="success" live>{t('managedActiveBadge', { version: activeV.version })}</Badge></div>}
+                  {/* Org-scoped agent: small `org · <id>` chip(s) — consistent with the Inspector org badge.
+                      Operators (who see every org's agents) can tell org-scoped agents apart from global ones. */}
+                  {!!a.orgs?.length && (
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {a.orgs.map((o) => <Badge key={o} tone="info">{t('orgBadge', { org: o })}</Badge>)}
+                    </div>
+                  )}
+                  {/* Agent approval registry (governance) — see AgentApprovalBadge's JSDoc. Absent
+                      entirely when the caller can't see the registry or @gnl/server hasn't recorded
+                      this agent yet (canSeeRegistry / registryByName). */}
+                  {registryByName.get(a.name) && (
+                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                      <AgentApprovalBadge record={registryByName.get(a.name)} />
+                      <AgentApprovalControls name={a.name} record={registryByName.get(a.name)}
+                        busy={registryBusy === a.name} onApprove={handleApproveAgent} onBlock={handleBlockAgent} />
+                    </div>
+                  )}
+                </div>
+              </div>
+              {a.system && <p className="mt-2 line-clamp-3 text-xs text-muted-foreground">{a.system}</p>}
+              {a.tools && a.tools.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {a.tools.map((tool) => <Badge key={tool.name} tone={tool.guarded ? 'warning' : 'muted'}>{tool.name}{tool.guarded ? ' 🔒' : ''}</Badge>)}
+                </div>
+              )}
+              <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
+                <span>maxSteps: {a.maxSteps ?? '—'}</span>
+                <div className="flex items-center gap-3">
+                  {canManage && (
+                    <button type="button" title={t('editCardTitle')}
+                      onClick={() => { const v = activeV ?? m?.versions[m.versions.length - 1]; startEdit(a.name, v?.model ?? a.model ?? '', v?.system ?? a.system ?? '', v?.note ?? '', v ? `v${v.version}` : undefined); }}
+                      className="inline-flex items-center gap-1 hover:text-brand"><Pencil size={11} /> {t('editLabel')}</button>
+                  )}
+                  <Link to="/playground" className="text-info underline">▶ Playground</Link>
+                </div>
+              </div>
+              {m && (
+                <>
+                  <FreshnessBar active={m.active} latest={latestVersion} />
+                  <div className="mt-3 border-t border-border pt-2">
+                    <div className="flex items-center justify-between">
+                      <div className="microlabel mb-1.5 text-muted-foreground">{t('versionsLabel')}</div>
+                      {canManage && (
+                        <button type="button" title={t('managedOnlyDeleteTitle')}
+                          disabled={deleteBusy} onClick={() => setDeleting({ name: a.name, hasCode: true })}
+                          className="rounded p-0.5 text-muted-foreground hover:text-destructive disabled:opacity-50 disabled:pointer-events-none">
+                          <Trash2 size={11} />
+                        </button>
+                      )}
+                    </div>
+                    <VersionPanel rec={m} canManage={canManage} evalGate={!!caps.data?.evalGate} onChanged={refresh}
+                      onEdit={(v) => startEdit(a.name, v.model, v.system ?? '', v.note ?? '', `v${v.version}`)}
+                      onDelete={(v) => setDeletingVer({ name: a.name, version: v.version, remaining: m.versions.length - 1 })} />
+                  </div>
+                </>
+              )}
+            </StaggerItem>
+          );
+        })}
+          </Stagger>
+        </section>
+      )}
+
+      {managedOnly.length > 0 && (
+        <section>
+          <SectionHead title={t('managedAgentsTitle')} hint={t('managedAgentsHint')} count={managedOnly.length} />
+          <Stagger className="grid gap-3 sm:grid-cols-2">
+        {managedOnly.map((m) => {
+          const latestVersion = m.versions.length ? Math.max(...m.versions.map((v) => v.version)) : 0;
+          const activeV = m.versions.find((v) => v.version === m.active);
+          return (
+            <StaggerItem key={m.name} className={cn('rounded-md border border-border p-4', CARD_HOVER)}>
+              <div className="flex items-start gap-2.5">
+                <AgentAvatar live={m.active != null} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate text-sm font-bold text-foreground">{m.name}</span>
+                    {/* No edit here on purpose: a managed-only record has NO code agent, so it can't run and
+                        can't take new versions (backend returns 422). Only deletion is offered. */}
+                    {canManage && (
+                      <div className="ml-auto flex shrink-0 items-center gap-1">
+                        <button type="button" title={t('managedOnlyDeleteTitleNoCode')}
+                          disabled={deleteBusy} onClick={() => setDeleting({ name: m.name, hasCode: false })}
+                          className="rounded p-0.5 text-muted-foreground hover:text-destructive disabled:opacity-50 disabled:pointer-events-none">
+                          <Trash2 size={11} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  {/* Prod status in a single line: each agent's OWN prod version is clear → resolves the "what does 'both active' mean" confusion structurally. */}
+                  <div className="mt-0.5 text-[11px] text-muted-foreground">
+                    {activeV
+                      ? <>{t('prodVersionLabel')} <span className="font-mono font-semibold text-brand">v{activeV.version}</span> · <span className="font-mono">{activeV.model}</span></>
+                      : t('prodNoneYet')}
+                  </div>
+                  {/* Honest dead-end marker: no code agent backs this record → it can't run. */}
+                  <div className="mt-1 text-[11px] font-medium text-warning">⚠ {t('managedOnlyNoCodeWarning')}</div>
+                </div>
+              </div>
+              <FreshnessBar active={m.active} latest={latestVersion} />
+              <div className="mt-3">
+                <VersionPanel rec={m} canManage={canManage} evalGate={!!caps.data?.evalGate} onChanged={refresh}
+                  onEdit={(v) => startEdit(m.name, v.model, v.system ?? '', v.note ?? '', `v${v.version}`)}
+                  onDelete={(v) => setDeletingVer({ name: m.name, version: v.version, remaining: m.versions.length - 1 })} />
+              </div>
+            </StaggerItem>
+          );
+        })}
+          </Stagger>
+        </section>
+      )}
+        </>
+      )}
+
+      {tab === 'create' && canManage && (
+        <div>
+          <div className="microlabel mb-1.5 text-muted-foreground">
+            {draft.name ? t('editingDraftLabel', { name: draft.name }) : t('newAgentDraftLabel')}
+          </div>
+          <NewVersionForm key={formKey} agentNames={agents.data?.map((a) => a.name) ?? []}
+            initialName={draft.name} initialModel={draft.model} initialSystem={draft.system}
+            initialNote={draft.note} onCreated={() => { refresh(); setTab('list'); }} />
+        </div>
+      )}
+    </div>
+    </>
+  );
+}

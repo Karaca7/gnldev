@@ -1,0 +1,18 @@
+{
+  "name": "@gnl/incident-proofs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Reproduces 3 documented double-side-effect failure patterns and shows GNL blocking each one — runnable proof, no API key required (mock model).",
+  "scripts": {
+    "proofs": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@gnl/durable": "workspace:*",
+    "ai": "^5.0.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0"
+  }
+}

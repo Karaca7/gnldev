@@ -1,0 +1,77 @@
+{
+  "addTemplate": "+ Template",
+  "addTemplateAriaLabel": "Add template",
+  "addSection": "+ Section",
+  "addSectionAriaLabel": "Add section",
+  "addRule": "+ Rule / snippet",
+  "addRuleAriaLabel": "Add rule",
+  "clear": "clear",
+  "placeholder": "Can be left empty. Pick \"+ Template\" for a skeleton, or write your own, e.g.:\n\n# Rol\nSen bir ... asistanısın.\n\n# Kurallar\n- Tahmin etme; emin değilsen aracı çağır.",
+  "auditLabel": "Audit:",
+  "characterCount": "{{count}} characters",
+  "templates": {
+    "rag": {
+      "label": "Research / RAG assistant",
+      "body": "# Role\nYou are a research assistant that answers only based on the provided documents.\n\n# Task\nAnswer the user's question using the information in the retrieved context.\n\n# Rules\n- Answer only from the provided context/tool results; if the information isn't there, say \"I don't know.\"\n- Don't make things up; call the relevant tool if you're unsure.\n- Support every claim with its source.\n\n# Output format\nConcise and clear. Use bullet points if helpful."
+    },
+    "toolAgent": {
+      "label": "Tool-using agent (ReAct)",
+      "body": "# Role\nYou are an agent that solves tasks by using tools.\n\n# Task\nCall the tools needed to fulfill the user's request and summarize the result.\n\n# Rules\n- Think step by step but share only the result.\n- Don't guess; call the relevant tool to verify.\n\n# Tool usage\n- If a required parameter is missing, ask the user for it.\n- Don't call the same tool with the same arguments again (avoid loops).\n\n# Output format\nConcise. State the result and the source if available."
+    },
+    "extractor": {
+      "label": "Structured data extractor",
+      "body": "# Role\nYou are an extraction engine that pulls structured data from text.\n\n# Task\nExtract the requested fields from the input and return ONLY valid JSON.\n\n# Rules\n- Use null if a field isn't found; don't make things up.\n- Follow the schema exactly.\n\n# Output format\nReturn only valid JSON; no explanation or markdown.\n{ \"field1\": \"...\", \"field2\": null }"
+    },
+    "support": {
+      "label": "Customer support / chat",
+      "body": "# Role\nYou are a customer support assistant for {product}.\n\n# Task\nResolve the user's issue within scope, politely and clearly.\n\n# Rules\n- Don't make up information you're unsure of; call the relevant tool or suggest escalation if needed.\n\n# Constraints / Prohibitions\n- Only help with topics within {product}'s scope; politely redirect out-of-scope requests back to scope.\n- Never ask for or output secrets like passwords or tokens.\n\n# Tone\nProfessional, patient, friendly.\n\n# Output format\nConcise, step-by-step."
+    }
+  },
+  "sections": {
+    "role": "Role",
+    "task": "Task",
+    "context": "Context",
+    "rules": "Rules",
+    "toolUsage": "Tool usage",
+    "outputFormat": "Output format",
+    "constraints": "Constraints / Prohibitions",
+    "tone": "Tone",
+    "examples": "Examples"
+  },
+  "snippets": {
+    "rules": [
+      "Think step by step but share only the result.",
+      "Answer only from the provided context/tool results; if the information isn't there, say \"I don't know.\"",
+      "Don't make things up; support every claim with its source."
+    ],
+    "toolUsage": [
+      "Don't guess; call the relevant tool if you're unsure.",
+      "If required parameters are missing before calling a tool, ask the user for them.",
+      "Don't call the same tool with the same arguments again (avoid loops).",
+      "Verify the tool result; re-query if there's a contradiction."
+    ],
+    "outputFormat": [
+      "Keep the response concise.",
+      "Return only valid JSON; no explanation or markdown.",
+      "Use bullet points, at most 5 items."
+    ],
+    "constraints": [
+      "Only access resources the user is authorized for; politely refuse if not authorized.",
+      "Never output secrets like passwords, tokens, or API keys.",
+      "Ask for explicit user confirmation before destructive actions (delete, payment).",
+      "Politely remind the user of scope for off-topic requests."
+    ],
+    "tone": [
+      "Use a professional and clear tone.",
+      "Respond in the user's language.",
+      "Don't give definitive medical/legal/financial advice; refer to a specialist."
+    ]
+  },
+  "lint": {
+    "role": "Role",
+    "task": "Task",
+    "rule": "Rule/constraint",
+    "tool": "Tool guidance",
+    "output": "Output format"
+  }
+}

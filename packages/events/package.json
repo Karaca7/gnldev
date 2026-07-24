@@ -1,0 +1,29 @@
+{
+  "name": "@gnl/events",
+  "version": "0.0.0",
+  "license": "Apache-2.0",
+  "description": "Durable event/notification bus on @gnl/durable. Journal-backed exactly-once delivery per consumer; fan-out.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "@gnl/durable": "workspace:^"
+  },
+  "devDependencies": {
+    "@gnl/durable": "workspace:*"
+  }
+}

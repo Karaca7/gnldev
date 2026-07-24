@@ -1,0 +1,58 @@
+{
+  "name": "@gnl/studio",
+  "version": "0.0.0",
+  "license": "Apache-2.0",
+  "description": "Web inspector for @gnl/durable runs: timeline, time-travel, approval queue.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./ai": {
+      "types": "./dist/ai-schema.d.ts",
+      "default": "./dist/ai-schema.js"
+    },
+    "./workflow": {
+      "types": "./dist/managed-workflow.d.ts",
+      "default": "./dist/managed-workflow.js"
+    }
+  },
+  "bin": {
+    "gnl-studio": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@gnl/auth": "workspace:^",
+    "@gnl/durable": "workspace:^",
+    "@gnl/scheduler": "workspace:^",
+    "@gnl/studio-ui": "workspace:^",
+    "@hono/node-server": "^1.13.0",
+    "hono": "^4.6.0"
+  },
+  "peerDependencies": {
+    "ai": "^5.0.0",
+    "@gnl/workflow": "workspace:^"
+  },
+  "peerDependenciesMeta": {
+    "ai": {
+      "optional": true
+    },
+    "@gnl/workflow": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "ai": "^5.0.0",
+    "@gnl/workflow": "workspace:*",
+    "pg-mem": "^3.0.14"
+  }
+}
