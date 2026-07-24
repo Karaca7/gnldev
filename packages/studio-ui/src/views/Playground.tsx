@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
-import { Check, X, Wrench, Plus, Trash2, Pencil, Ban, Copy, Database, Activity, RotateCw, ArrowDown, Settings, Paperclip, FileText, PanelLeft } from 'lucide-react';
+import { Check, X, Wrench, Plus, Trash2, Pencil, Ban, Copy, Database, Activity, RotateCw, ArrowDown, Settings, Paperclip, FileText, PanelLeft, ChevronDown } from 'lucide-react';
 import { useAgents, useCapabilities, useThreads, useWorkingMemory, streamAgent, api, errMessage, type Interrupt, type ThreadRecord, type AgentRunBody, type RunCost } from '../api';
 import { Btn, Spinner, Empty, Badge, JsonBlock, cn } from '../components';
 import { Markdown } from '../markdown';
@@ -454,14 +454,11 @@ export function Playground() {
           onSelect={(th) => { setMobileHistoryOpen(false); loadThread(th); }}
           onNew={() => { setMobileHistoryOpen(false); newConversation(); }}
           onDeleted={(id) => { if (id === thread) newConversation(); }}
+          configSlot={configFields}
         />
       )}
-      {/* Configuration — persistent left panel on desktop (the mockup's config column); on mobile it
-          collapses into the Settings dropdown below (same `configFields`). */}
-      <aside className="hidden md:flex md:w-72 md:shrink-0 md:flex-col md:overflow-auto md:border-r md:border-border">
-        <div className="microlabel shrink-0 border-b border-border px-4 py-3.5 text-foreground">{t('configurationTitle')}</div>
-        <div className="p-4">{configFields}</div>
-      </aside>
+      {/* Configuration lives UNDER the thread list in the History sidebar (collapsible section). When memory
+          is OFF there's no sidebar, so a ⚙ popover in the top toolbar (below) is the fallback home for it. */}
       <div className={cn('h-full min-w-0 flex-1 flex-col', mobileHistoryOpen ? 'hidden md:flex' : 'flex')}>
         <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2">
           {/* Mobile-only: open the conversation history as a full-width panel (master-detail —
@@ -473,10 +470,26 @@ export function Playground() {
               </Btn>
             </span>
           )}
-          {/* Agent + full config live in the persistent left panel on desktop; on mobile the Settings
-              button opens the same fields. The agent name is shown here as a compact label. */}
+          {/* Agent name as a compact label. Config normally lives under the thread list (sidebar); only when
+              memory is OFF (no sidebar) does it fall back to a ⚙ popover anchored right here. */}
           <span className="font-mono text-sm text-foreground">{agent}</span>
-          <span className="md:hidden"><Btn variant="ghost" size="xs" onClick={() => setShowSettings((s) => !s)}><Settings size={14} /> {t('settingsButton')}</Btn></span>
+          {!caps.data?.memory && (
+            <div className="relative">
+              <Btn variant="ghost" size="xs" onClick={() => setShowSettings((s) => !s)} title={t('configurationTitle')}>
+                <Settings size={14} /> {t('settingsButton')}
+              </Btn>
+              {showSettings && (
+                <>
+                  {/* Click-away backdrop (transparent) — closes the popover; sits under it, over everything else. */}
+                  <div className="fixed inset-0 z-20" onClick={() => setShowSettings(false)} aria-hidden />
+                  <div className="absolute left-0 top-full z-30 mt-1 max-h-[70vh] w-80 max-w-[calc(100vw-2rem)] overflow-auto rounded-md border border-border bg-background p-4 shadow-lg">
+                    <div className="microlabel mb-3 text-foreground">{t('configurationTitle')}</div>
+                    {configFields}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
           {/* Live stream: pulse only while busy+streaming — double-coded with the "streaming" text (WCAG 1.4.1). */}
           <span className="flex items-center gap-1.5 text-xs text-muted-foreground md:ml-auto">
             {busy && canStream && <span className="live-dot" aria-hidden />}
@@ -494,10 +507,6 @@ export function Playground() {
           {!caps.data?.memory && <Btn variant="ghost" size="xs" onClick={newConversation}>{t('clearButton')}</Btn>}
         </div>
 
-        {/* Mobile config: the SAME fields as the desktop left panel, revealed by the Settings button. */}
-        {showSettings && (
-          <div className="border-b border-border bg-muted/20 px-4 py-3 md:hidden">{configFields}</div>
-        )}
         <datalist id="pg-models">{MODEL_SUGGESTIONS.map((m) => <option key={m} value={m} />)}</datalist>
         {showWm && thread && <WorkingMemoryPanel id={thread} />}
 
@@ -592,14 +601,18 @@ export function Playground() {
   );
 }
 
-function HistorySidebar({ open, activeId, busy, onSelect, onNew, onDeleted }: {
+function HistorySidebar({ open, activeId, busy, onSelect, onNew, onDeleted, configSlot }: {
   /** Mobile-only master-detail toggle (see the `mobileHistoryOpen` state in Playground) — always
    *  visible at md+ regardless of this flag. */
   open: boolean;
   activeId: string; busy: boolean; onSelect: (t: ThreadRecord) => void; onNew: () => void; onDeleted: (id: string) => void;
+  /** The Configuration fields, rendered as a collapsible section UNDER the thread list (state is owned by
+   *  Playground; this component just slots the node in). */
+  configSlot?: ReactNode;
 }) {
   const { t } = useTranslation('playground');
   const [allRes, setAllRes] = useState(false);
+  const [cfgOpen, setCfgOpen] = useState(true);
   const threads = useThreads(allRes ? undefined : RESOURCE_ID);
   const qc = useQueryClient();
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -626,7 +639,7 @@ function HistorySidebar({ open, activeId, busy, onSelect, onNew, onDeleted }: {
   }
 
   return (
-    <div className={cn('w-full flex-col border-r border-border md:flex md:w-60', open ? 'flex' : 'hidden md:flex')}>
+    <div className={cn('w-full flex-col border-r border-border md:flex md:w-64', open ? 'flex' : 'hidden md:flex')}>
       <div className="space-y-1.5 border-b border-border p-2">
         <button
           type="button"
@@ -641,7 +654,7 @@ function HistorySidebar({ open, activeId, busy, onSelect, onNew, onDeleted }: {
           {t('allConversations')}
         </label>
       </div>
-      <div className="flex-1 overflow-auto p-1.5">
+      <div className="flex-1 min-h-0 overflow-auto p-1.5">
         {threads.isLoading ? (
           <Spinner />
         ) : !threads.data?.length ? (
@@ -692,6 +705,22 @@ function HistorySidebar({ open, activeId, busy, onSelect, onNew, onDeleted }: {
           })
         )}
       </div>
+      {/* Configuration — a collapsible section pinned UNDER the thread list. The thread list above scrolls
+          (flex-1 min-h-0); this section has its own bounded scroll so it never crowds the list out. */}
+      {configSlot && (
+        <div className="shrink-0 border-t border-border">
+          <button
+            type="button"
+            onClick={() => setCfgOpen((o) => !o)}
+            aria-expanded={cfgOpen}
+            className="microlabel flex w-full items-center gap-1.5 px-3 py-2.5 text-left text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <Settings size={13} /> {t('configurationTitle')}
+            <ChevronDown size={13} className={cn('ml-auto transition-transform', cfgOpen ? '' : '-rotate-90')} />
+          </button>
+          {cfgOpen && <div className="max-h-[45vh] overflow-auto px-3 pb-3">{configSlot}</div>}
+        </div>
+      )}
     </div>
   );
 }
