@@ -1,4 +1,4 @@
-// İŞ 3 — suite-consistency guard: packages/cli/src/runtime.ts already guards CLI↔runtime compatibility
+// Task 3 — suite-consistency guard: packages/cli/src/runtime.ts already guards CLI↔runtime compatibility
 // (the CLI's own minimum version requirement against the PROJECT's installed @gnl/durable). But a
 // project can bypass its package manager's caret (^) range entirely — `--force`, dependency
 // `overrides`, or hand-edited node_modules — and end up with a SIBLING @gnl/* suite that is internally
@@ -91,7 +91,7 @@ export interface AssertSuiteConsistentOptions {
 }
 
 /**
- * GOREV (İŞ 3, opt-in — see module header): compares every INSTALLED sibling @gnl/* package's version
+ * GOREV (Task 3, opt-in — see module header): compares every INSTALLED sibling @gnl/* package's version
  * against @gnl/durable's OWN version; if any differ, warns (default) or throws
  * (`onMismatch: 'throw'`) — surfacing a `--force`/overrides-installed incompatible suite instead of
  * letting it fail silently at runtime later.

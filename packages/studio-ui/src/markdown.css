@@ -1,6 +1,6 @@
-/* hljs token renkleri — tema token'larından türetilmiş küçük palet (Local Influence).
-   Koyu (Ink) varsayılan; açık tema data-theme=light override'larıyla okunur kalır.
-   Kapsam .md-body ile sınırlı → global kod stillerine sızmaz. */
+/* hljs token colors — a small palette derived from the theme tokens (Local Influence).
+   Dark (Ink) is the default; stays readable in the light theme via data-theme=light overrides.
+   Scoped to .md-body → doesn't leak into global code styles. */
 .md-body .hljs-comment, .md-body .hljs-quote { color: hsl(var(--muted-foreground)); font-style: italic; }
 .md-body .hljs-keyword, .md-body .hljs-selector-tag, .md-body .hljs-built_in { color: hsl(var(--brand)); }
 .md-body .hljs-string, .md-body .hljs-regexp, .md-body .hljs-addition { color: hsl(var(--success)); }

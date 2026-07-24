@@ -29,7 +29,7 @@ export {
   DivergenceError, RunBusyError, SideEffectRetryBlockedError, RetryLimitExceededError,
   ReplicationNotAcknowledgedError, SuiteVersionMismatchError, BLOCKED_ERROR_CODES, blockedErrorCode,
 } from './errors.js';
-// İŞ 3: opt-in sibling-suite version-skew guard (see suite-consistency.ts).
+// Task 3: opt-in sibling-suite version-skew guard (see suite-consistency.ts).
 export { assertSuiteConsistent, versionsEqual } from './suite-consistency.js';
 export type { AssertSuiteConsistentOptions } from './suite-consistency.js';
 export { StepTimeoutError, withTimeout } from './timeout.js';

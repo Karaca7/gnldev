@@ -5,8 +5,8 @@ import { ReactFlow, Handle, Position, type Node, type Edge, type NodeProps } fro
 import { useA2A, type A2AEdge } from '../api';
 import { Spinner, EmptyState, ErrorBox, cn } from '../components';
 
-/** Pill node (mockup birebir): solda renkli nokta + monospace agent adı. Kök agent'lar (gelen çağrısı
-    olmayanlar) marka/lime vurgusu, diğerleri nötr `info` noktası alır. */
+/** Pill node (exact mockup match): a colored dot on the left + the agent name in monospace. Root
+    agents (ones with no incoming call) get the brand/lime accent, others get the neutral `info` dot. */
 function PillNode({ data }: NodeProps) {
   const root = Boolean((data as { root?: boolean }).root);
   return (
@@ -21,8 +21,8 @@ function PillNode({ data }: NodeProps) {
 }
 const nodeTypes = { pill: PillNode };
 
-/** A2A kenarlarından bir agent grafiği kur: her benzersiz ad = tek node, parent → remote yönlü kenar.
-    Yerleşim: köklerden (gelen çağrısı yok) BFS ile katman; her katman yatayda ortalanır. */
+/** Build an agent graph from A2A edges: every unique name = one node, parent → remote directed edge.
+    Layout: layer via BFS from the roots (no incoming call); each layer is horizontally centered. */
 function build(edges: A2AEdge[]): { nodes: Node[]; edges: Edge[] } {
   const names = new Set<string>();
   const incoming = new Set<string>();
@@ -35,12 +35,12 @@ function build(edges: A2AEdge[]): { nodes: Node[]; edges: Edge[] } {
     if (!pairSeen.has(key)) {
       pairSeen.add(key);
       (adj.get(e.parentRunId) ?? adj.set(e.parentRunId, []).get(e.parentRunId)!).push(e.remoteAgent);
-      // Düz köşegen, etiketsiz, oksuz ince kenar (mockup birebir): bezier kıvrım/status/animasyon yok.
+      // A plain diagonal, unlabeled, arrowless thin edge (exact mockup match): no bezier curve/status/animation.
       outEdges.push({ id: key, source: e.parentRunId, target: e.remoteAgent, type: 'straight',
         style: { stroke: 'hsl(var(--border))', strokeWidth: 1.25 } });
     }
   }
-  // BFS ile katman (en uzun yol = daha alt seviye → çocuklar ebeveynin altında durur).
+  // Layer via BFS (the longest path = a lower level → children stay below their parent).
   const level = new Map<string, number>();
   const roots = [...names].filter((n) => !incoming.has(n));
   const queue = roots.length ? roots.slice() : [...names].slice(0, 1);
@@ -72,8 +72,8 @@ export function Networks() {
   const { t } = useTranslation('networks');
   const a2a = useA2A();
   const { nodes, edges } = useMemo(() => build(a2a.data ?? []), [a2a.data]);
-  // Call edges: parent → remote ilişkilerini GERÇEK çağrı sayısıyla topla (her A2AEdge = bir çağrı).
-  // Kenar başına gecikme izlenmediğinden (mockup'taki "0.4s" mock) gösterilmez — uydurma yok.
+  // Call edges: aggregate parent → remote relationships by their REAL call count (each A2AEdge = one call).
+  // Per-edge latency isn't tracked, so the mockup's "0.4s" mock value isn't shown — no making things up.
   const callEdges = useMemo(() => {
     const m = new Map<string, { source: string; target: string; calls: number }>();
     for (const e of a2a.data ?? []) {
@@ -88,7 +88,7 @@ export function Networks() {
   if (!a2a.data?.length) return <EmptyState icon={Network} title={t('emptyTitle')} description={t('emptyDescription')} />;
   return (
     <div className="flex h-full gap-4 p-4">
-      {/* Graf kartı: temiz koyu kart (minimap/controls/nokta-arkaplan yok — mockup birebir). */}
+      {/* Graph card: a clean dark card (no minimap/controls/dot-background — exact mockup match). */}
       <div className="min-w-0 flex-1 overflow-hidden rounded-xl border border-border bg-surface-1">
         <ReactFlow
           nodes={nodes}
@@ -106,7 +106,7 @@ export function Networks() {
           maxZoom={1.4}
         />
       </div>
-      {/* Call edges kartı (mockup'ın sağ paneli): her source → target ilişkisi + gerçek çağrı sayısı. */}
+      {/* Call edges card (the mockup's right-hand panel): every source → target relationship + its real call count. */}
       <aside className="hidden w-80 shrink-0 overflow-auto rounded-xl border border-border bg-surface-1 p-4 md:block">
         <div className="mb-4 font-medium text-foreground">{t('callEdgesTitle')}</div>
         <div className="space-y-4">

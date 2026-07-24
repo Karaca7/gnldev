@@ -2,14 +2,14 @@
 //
 // Compiled 1:1 from components/docs/nav-data.ts (ordered list of the 25 features:
 // slug/title/oneLiner/tier/package) and lib/llms-content.ts (per-slug install/apis/example)
-// in a separate site project — content is NOT made up here.
+// on the gnl.dev site — content mirrors the official docs, not invented here.
 // It is embedded here so this package can work on its own even if the site
 // (https://gnl.dev) is down/unreachable; falls back to this if live content can't be
 // fetched via GNL_DOCS_URL.
 //
 // If the site content changes, this file must be synced by hand (no automatic sync —
-// no runtime dependency was set up between the two separate repos/packages, to avoid a
-// lockfile race with W1).
+// no runtime dependency was set up between the site and this package, to avoid a
+// lockfile race).
 
 export type DocTier = 'core' | 'studio' | 'ee';
 

@@ -69,7 +69,7 @@ export interface RedisLike {
   /** OPTIONAL native Redis WAIT (available in ioredis) — `WAIT numreplicas timeout` blocks until
    *  `numreplicas` replicas have acknowledged all writes issued by this connection so far, or until
    *  `timeout` ms elapse, returning the number that actually acknowledged. See
-   *  RedisStorageOptions.waitReplicas (İŞ 2 — opt-in strong replication guarantee). Absent on
+   *  RedisStorageOptions.waitReplicas (Task 2 — opt-in strong replication guarantee). Absent on
    *  custom/legacy clients → the check silently no-ops (fail-open). */
   wait?(numreplicas: number, timeout: number): Promise<number>;
 }
@@ -100,7 +100,7 @@ export interface RedisStorageOptions {
    *  silence the advisory (e.g. single-node dev, or the risk is already knowingly accepted). */
   replicationWarning?: boolean;
   /**
-   * GOREV (İŞ 2 — opt-in STRONG replication guarantee, closes the gap `replicationWarning` above only
+   * GOREV (Task 2 — opt-in STRONG replication guarantee, closes the gap `replicationWarning` above only
    * WARNS about): if given, EVERY SUCCESSFUL claim (putIfAbsent/putIfMatch returning `true` — i.e. this
    * call genuinely wrote a NEW record, not a no-op loss) is followed by a native Redis `WAIT
    * replicas timeoutMs` call, requiring at least `replicas` replicas to have acknowledged the write
@@ -260,7 +260,7 @@ class RedisRunJournal implements RunJournal {
   /** CORE-HARDENING §8.2 advisory (see `checkReplicationOnce`) — flips true after the first check attempt
    *  (whether or not it warned) so it only ever runs ONCE per RedisRunJournal instance. */
   private replicationChecked = false;
-  /** İŞ 2: flips true after the first `waitReplicas` ack-shortfall WARNING (onTimeout:'warn', the
+  /** Task 2: flips true after the first `waitReplicas` ack-shortfall WARNING (onTimeout:'warn', the
    *  default) — like `replicationChecked` above, this keeps the console quiet after the first hit
    *  instead of warning on every claim in a degraded cluster. Does NOT gate 'throw' mode (every
    *  shortfall there raises — the caller asked to be told every time). */
@@ -386,7 +386,7 @@ class RedisRunJournal implements RunJournal {
   }
 
   /**
-   * İŞ 2 (opt-in strong replication guarantee): AWAITED (unlike `checkReplicationOnce` above, which is
+   * Task 2 (opt-in strong replication guarantee): AWAITED (unlike `checkReplicationOnce` above, which is
    * fire-and-forget advisory) — called AFTER a claim already succeeded (putIfAbsent/putIfMatch about to
    * return `true`), so it can only ever ADD a delay or a thrown ack-shortfall error, never change
    * whether the write happened. No-op if `waitReplicas` wasn't configured, or the client doesn't
@@ -466,14 +466,14 @@ class RedisRunJournal implements RunJournal {
       // win it drops from 2→1 RTT, on a loss it was already 1 RTT (the ZADD rides in the same packet).
       const results = await this.client.multi!().set(full, payload, 'NX').zadd(this.activityKey(), await this.now(), p.runId).exec();
       const ok = results?.[0]?.[1] === 'OK';
-      if (ok) await this.waitForReplicas(); // İŞ 2: only after a GENUINE new claim (NX won)
+      if (ok) await this.waitForReplicas(); // Task 2: only after a GENUINE new claim (NX won)
       return ok;
     }
     const res = await this.client.set(full, payload, 'NX');
     const ok = res === 'OK';
     if (ok) {
       await this.touch(p);
-      await this.waitForReplicas(); // İŞ 2: only after a GENUINE new claim (NX won)
+      await this.waitForReplicas(); // Task 2: only after a GENUINE new claim (NX won)
     }
     return ok;
   }
@@ -501,14 +501,14 @@ class RedisRunJournal implements RunJournal {
         // the SAME round-trip; the ZADD runs even if the CAS loses (safe direction: late cleanup, never early).
         const results = await this.client.multi!().eval(CAS_LUA, 1, full, raw, next).zadd(this.activityKey(), await this.now(), p.runId).exec();
         const ok = Number(results?.[0]?.[1]) === 1;
-        if (ok) await this.waitForReplicas(); // İŞ 2: only after a GENUINE takeover (CAS won)
+        if (ok) await this.waitForReplicas(); // Task 2: only after a GENUINE takeover (CAS won)
         return ok;
       }
       const res = await this.client.eval(CAS_LUA, 1, full, raw, next);
       const ok = Number(res) === 1;
       if (ok) {
         await this.touch(p); // a resume/takeover is ALSO "last activity" — prevents stale-false-positives
-        await this.waitForReplicas(); // İŞ 2: only after a GENUINE takeover (CAS won)
+        await this.waitForReplicas(); // Task 2: only after a GENUINE takeover (CAS won)
       }
       return ok;
     }
@@ -518,12 +518,12 @@ class RedisRunJournal implements RunJournal {
       // touch() is already UNCONDITIONAL here (the best-effort branch always returns true) → the
       // pipeline behavior is IDENTICAL, just 2 RTT → 1 RTT.
       await this.client.multi!().set(full, next).zadd(this.activityKey(), await this.now(), p.runId).exec();
-      await this.waitForReplicas(); // İŞ 2: this branch always writes (best-effort, no CAS) → always a genuine write
+      await this.waitForReplicas(); // Task 2: this branch always writes (best-effort, no CAS) → always a genuine write
       return true;
     }
     await this.client.set(full, next);
     await this.touch(p);
-    await this.waitForReplicas(); // İŞ 2: this branch always writes (best-effort, no CAS) → always a genuine write
+    await this.waitForReplicas(); // Task 2: this branch always writes (best-effort, no CAS) → always a genuine write
     return true;
   }
   /** H8a: engine-internal atomic counter via HINCRBYFLOAT (if the client supports it; otherwise the

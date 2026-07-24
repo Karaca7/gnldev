@@ -18,7 +18,7 @@ export interface RunnerAgentLike {
   maxSteps?: number;
   /** Policy that gates tool calls (same as createGnl). Test-run applies this. */
   guard?: Guard;
-  /** Org-scoped agent'ın ait olduğu org'lar (görünürlük filtresi + UI etiketi); verilmezse GLOBAL. */
+  /** Orgs this org-scoped agent belongs to (visibility filter + UI label); GLOBAL if not given. */
   orgs?: string[];
 }
 export interface RunnerConfigLike {

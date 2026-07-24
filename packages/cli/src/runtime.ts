@@ -1,23 +1,23 @@
-// Runtime resolver: @gnl/cli ships ~zero sert runtime bağımlılığı. Komutlar (`gnl runs`, `gnl dev`, …)
-// @gnl/durable/server/studio/memory/auth ve hono/@hono/node-server'ı KENDİ node_modules'ından değil,
-// üzerinde çalıştığı PROJENİN node_modules'ından çözer — `npx @gnl/cli init` koca runtime'ı indirmez,
-// ve komutlar her zaman projenin yüklü sürümüyle çalışır (CLI ↔ proje arasında sürüm çakışması yok).
+// Runtime resolver: @gnl/cli ships with ~zero hard runtime dependencies. Commands (`gnl runs`,
+// `gnl dev`, …) resolve @gnl/durable/server/studio/memory/auth and hono/@hono/node-server from the
+// PROJECT's own node_modules, not the CLI's — `npx @gnl/cli init` doesn't pull in the whole runtime,
+// and commands always run against the project's installed version (no CLI ↔ project version conflict).
 //
-// Çözümleme kökü: gnl.config'in bulunduğu dizin (projectDirOf). Node'un kendi modül çözümleme
-// algoritması (createRequire + require.resolve), tıpkı gnl.config.ts içindeki `import '@gnl/durable'`
-// satırının izleyeceği node_modules üst-dizin taramasının AYNISINI izler — bu yüzden hem loadConfig'in
-// gnl.config.ts'yi dinamik import etmesi HEM DE loadDurable(dir) AYNI çözümlenmiş dosyaya (aynı
-// file:// URL'ine) varır, ve Node'un ESM modül önbelleği (resolved URL'e göre anahtarlanır) bu ikisine
-// AYNI modül örneğini döndürür. Bu, doğruluk açısından kritik: bir journal nesnesi projenin
-// `@gnl/durable`'ıyla kuruluyorsa, üzerinde çalışan fonksiyonlar (forkRun/reconstructState/…) da AYNI
-// örnekten gelmeli — iki farklı @gnl/durable kopyası aynı journal'ı işlemsel olarak uyumsuz kılar.
+// Resolution root: the directory gnl.config lives in (projectDirOf). This follows Node's OWN module
+// resolution algorithm (createRequire + require.resolve) — the SAME node_modules upward-directory walk
+// that the `import '@gnl/durable'` line inside gnl.config.ts would follow — so both loadConfig's dynamic
+// import of gnl.config.ts AND loadDurable(dir) land on the SAME resolved file (the same file:// URL),
+// and Node's ESM module cache (keyed by resolved URL) returns the SAME module instance to both. This is
+// correctness-critical: if a journal object is built with the project's `@gnl/durable`, the functions
+// operating on it (forkRun/reconstructState/…) must come from the SAME instance — two different
+// @gnl/durable copies make the same journal transactionally incompatible with each other.
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 
-// `import type` — derleme zamanında tam tip kontrolü sağlar, tsc tarafından silinir → runtime
-// bağımlılığı DEĞİLDİR (bu paketler @gnl/cli'nin peerDependencies + devDependencies'inde durur).
+// `import type` — gives full type checking at compile time, erased by tsc → NOT a runtime
+// dependency (these packages stay in @gnl/cli's peerDependencies + devDependencies).
 import type * as Durable from '@gnl/durable';
 import type * as Server from '@gnl/server';
 import type * as Studio from '@gnl/studio';
@@ -27,7 +27,7 @@ import type * as Auth from '@gnl/auth';
 import type * as HonoNs from 'hono';
 import type * as NodeServer from '@hono/node-server';
 
-/** gnl.config'in bulunduğu dizin = çözümleme kökü (`dirname(resolve(configPath))`). */
+/** The directory gnl.config lives in = the resolution root (`dirname(resolve(configPath))`). */
 export function projectDirOf(configPath: string): string {
   return dirname(resolve(configPath));
 }
@@ -48,21 +48,21 @@ async function resolveModuleFromProject(spec: string, projectDir: string): Promi
 }
 
 /**
- * `spec`'i `projectDir`'in node_modules'ından çözer + dinamik import eder (@gnl/cli'nin KENDİ
- * bağımlılıklarından DEĞİL). Bulunamazsa net, eyleme geçirilebilir bir hata fırlatır.
+ * Resolves `spec` from `projectDir`'s node_modules + dynamically imports it (NOT from @gnl/cli's OWN
+ * dependencies). Throws a clear, actionable error if it can't be found.
  */
 export async function resolveFromProject(spec: string, projectDir: string): Promise<unknown> {
   return (await resolveModuleFromProject(spec, projectDir)).mod;
 }
 
-// --- Uyum guard'ı (şekil/capability + sürüm) ------------------------------------------------------
-// CLI runtime'ı projeden çözünce, çekirdek CLI'nin beklediğinden ESKİ/UYUMSUZ olabilir (örn. yeni CLI
-// + eski @gnl/durable → CLI'nin çağırdığı bir export yok → çıplak "X is not a function" TypeError).
-// Bunu net bir hataya çeviriyoruz: (1) ŞEKİL kontrolü — CLI'nin GERÇEKTEN çağırdığı export'lar mod'da
-// fonksiyon olarak var mı (sürümden bağımsız, iki yönü de yakalar: eski çekirdek eksik export, YA DA
-// yeni çekirdek bir export'u kaldırmış); (2) SÜRÜM kontrolü — package.json'daki version, CLI'nin
-// minimumunun altındaysa net bir "upgrade" mesajı. Zero-dep: semver paketi yok, elle major.minor.patch
-// karşılaştırması (prerelease/build metadata yok sayılır).
+// --- Compatibility guard (shape/capability + version) ----------------------------------------------
+// Once the CLI resolves its runtime from the project, it can be OLDER/INCOMPATIBLE with what the core
+// CLI expects (e.g. a new CLI + an old @gnl/durable → an export the CLI calls doesn't exist → a bare
+// "X is not a function" TypeError). We turn this into a clear error: (1) SHAPE check — do the exports
+// the CLI ACTUALLY calls exist as functions on the module (version-independent, catches both
+// directions: the old core is missing an export, OR the new core removed one); (2) VERSION check — if
+// the version in package.json is below the CLI's minimum, a clear "upgrade" message. Zero-dep: no
+// semver package, a manual major.minor.patch comparison (prerelease/build metadata is ignored).
 
 export const REQUIRED_DURABLE_EXPORTS = [
   'forkRun',
@@ -80,14 +80,14 @@ export const REQUIRED_DURABLE_EXPORTS = [
 export const REQUIRED_SERVER_EXPORTS = ['createRestApi'] as const;
 export const REQUIRED_STUDIO_EXPORTS = ['createStudioApp', 'createStudioRunner'] as const;
 
-// Henüz her paket 0.0.0'da (yayın öncesi) — false-positive üretmemek için taban şimdilik '0.0.0'.
-// Yayınla birlikte (ilk gerçek minor/major) bunları CLI'nin fiilen ihtiyaç duyduğu en düşük sürüme
-// bump'la; mekanizma (assertCompatible/gte) zaten yerinde ve test edilmiş durumda.
+// Every package is still at 0.0.0 (pre-release) — the floor is '0.0.0' for now to avoid false
+// positives. Once published (first real minor/major), bump these to the actual minimum version the
+// CLI needs; the mechanism (assertCompatible/gte) is already in place and tested.
 const MIN_DURABLE = '0.0.0';
 const MIN_SERVER = '0.0.0';
 const MIN_STUDIO = '0.0.0';
 
-/** Zero-dep semver `>=`: yalnız major.minor.patch'i sayısal karşılaştırır, prerelease/build yok sayılır. */
+/** Zero-dep semver `>=`: numerically compares only major.minor.patch; prerelease/build is ignored. */
 export function gte(version: string, min: string): boolean {
   const parse = (v: string): [number, number, number] => {
     const core = v.split('-')[0]!.split('+')[0]!;
@@ -149,48 +149,48 @@ export function assertCompatible(
   }
 }
 
-/** Projenin @gnl/durable'ı — forkRun/reconstructState/toJournal/getRunCost/summarizeRun/sweepRuns/… */
+/** The project's @gnl/durable — forkRun/reconstructState/toJournal/getRunCost/summarizeRun/sweepRuns/… */
 export async function loadDurable(projectDir: string): Promise<typeof Durable> {
   const { mod, resolvedFile } = await resolveModuleFromProject('@gnl/durable', projectDir);
   assertCompatible(mod, '@gnl/durable', projectDir, resolvedFile, REQUIRED_DURABLE_EXPORTS, MIN_DURABLE);
   return mod as unknown as typeof Durable;
 }
 
-/** Projenin @gnl/server'ı — createRestApi. */
+/** The project's @gnl/server — createRestApi. */
 export async function loadServer(projectDir: string): Promise<typeof Server> {
   const { mod, resolvedFile } = await resolveModuleFromProject('@gnl/server', projectDir);
   assertCompatible(mod, '@gnl/server', projectDir, resolvedFile, REQUIRED_SERVER_EXPORTS, MIN_SERVER);
   return mod as unknown as typeof Server;
 }
 
-/** Projenin @gnl/studio'su — createStudioApp/createStudioRunner. */
+/** The project's @gnl/studio — createStudioApp/createStudioRunner. */
 export async function loadStudio(projectDir: string): Promise<typeof Studio> {
   const { mod, resolvedFile } = await resolveModuleFromProject('@gnl/studio', projectDir);
   assertCompatible(mod, '@gnl/studio', projectDir, resolvedFile, REQUIRED_STUDIO_EXPORTS, MIN_STUDIO);
   return mod as unknown as typeof Studio;
 }
 
-/** Projenin @gnl/studio/ai'ı — aiToolSchema. */
+/** The project's @gnl/studio/ai — aiToolSchema. */
 export async function loadStudioAi(projectDir: string): Promise<typeof StudioAi> {
   return (await resolveFromProject('@gnl/studio/ai', projectDir)) as typeof StudioAi;
 }
 
-/** Projenin @gnl/memory'si — memoryPreset (dev studio/playground varsayılan hafızası, opsiyonel). */
+/** The project's @gnl/memory — memoryPreset (default dev studio/playground memory, optional). */
 export async function loadMemory(projectDir: string): Promise<typeof Memory> {
   return (await resolveFromProject('@gnl/memory', projectDir)) as typeof Memory;
 }
 
-/** Projenin @gnl/auth'u — roleAuth (opt-in rol tabanlı REST + Studio auth). */
+/** The project's @gnl/auth — roleAuth (opt-in role-based REST + Studio auth). */
 export async function loadAuth(projectDir: string): Promise<typeof Auth> {
   return (await resolveFromProject('@gnl/auth', projectDir)) as typeof Auth;
 }
 
-/** Projenin hono'su — Hono (dev server app gövdesi). */
+/** The project's hono — Hono (dev server app body). */
 export async function loadHono(projectDir: string): Promise<typeof HonoNs> {
   return (await resolveFromProject('hono', projectDir)) as typeof HonoNs;
 }
 
-/** Projenin @hono/node-server'ı — serve (Node HTTP boot). */
+/** The project's @hono/node-server — serve (Node HTTP boot). */
 export async function loadNodeServer(projectDir: string): Promise<typeof NodeServer> {
   return (await resolveFromProject('@hono/node-server', projectDir)) as typeof NodeServer;
 }

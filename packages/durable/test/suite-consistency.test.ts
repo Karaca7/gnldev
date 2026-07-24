@@ -1,4 +1,4 @@
-// İŞ 3 — suite-consistency guard: assertSuiteConsistent + versionsEqual (see src/suite-consistency.ts).
+// Task 3 — suite-consistency guard: assertSuiteConsistent + versionsEqual (see src/suite-consistency.ts).
 // Builds a FAKE project dir (node_modules/@gnl/<pkg>/package.json) and points `fromDir` at it — no real
 // sibling packages are touched. @gnl/durable's OWN version is read from the real package.json (whatever
 // it happens to be — the tests derive the "equal"/"mismatch" versions FROM it, so they stay correct

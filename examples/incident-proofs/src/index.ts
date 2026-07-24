@@ -1,12 +1,12 @@
 // Run:  pnpm proofs   (no API key needed — deterministic mock model)
 //
 // Reproduces 3 DOCUMENTED double-side-effect incidents and proves GNL blocks each one: for every case
-// this prints "korumasız: N kez / GNL ile: 1 kez" from a REAL, running `runDurable` call — not a claim.
+// this prints "unprotected: N times / with GNL: 1 time" from a REAL, running `runDurable` call — not a claim.
 import { runDuplicateToolCallIds } from './duplicate-toolcall-ids.js';
 import { runCheckpointResend } from './checkpoint-resend.js';
 import { runDoubleApproval } from './double-approval.js';
 
-console.log('GNL incident-proofs — 3 belgelenmiş çift-yan-etki vakası, koddan kanıtlı\n');
+console.log('GNL incident-proofs — 3 documented double-side-effect cases, proven from code\n');
 
 const results = [
   await runDuplicateToolCallIds(),
@@ -15,5 +15,5 @@ const results = [
 ];
 
 console.log('');
-console.log(`SONUÇ: ${results.filter(Boolean).length}/${results.length} vaka GNL tarafından engellendi.`);
+console.log(`RESULT: ${results.filter(Boolean).length}/${results.length} cases blocked by GNL.`);
 if (!results.every(Boolean)) process.exitCode = 1;

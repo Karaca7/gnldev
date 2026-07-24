@@ -9,24 +9,24 @@ import { RunBusyError } from '../src/errors.js';
 import { createMockModel, countToolResults, toolCallResult, finalTextResult } from './mock.js';
 
 describe('createGnl + model router (8.6)', () => {
-  it('kayitli agent durable calisir', async () => {
+  it('registered agent runs durably', async () => {
     const journal = new InMemoryJournal();
     const gnl = createGnl({
       journal,
       agents: {
-        support: { model: createMockModel(async () => finalTextResult('merhaba')), system: 'Yardimci ol' },
+        support: { model: createMockModel(async () => finalTextResult('hello')), system: 'Be helpful' },
       },
     });
-    const res = await gnl.run('support', { prompt: 'selam', runId: 's1' });
-    expect(res.text).toBe('merhaba');
+    const res = await gnl.run('support', { prompt: 'hi', runId: 's1' });
+    expect(res.text).toBe('hello');
   });
 
-  it('bilinmeyen agent -> hata', async () => {
+  it('unknown agent -> error', async () => {
     const gnl = createGnl({ journal: new InMemoryJournal() });
-    await expect(gnl.run('yok', { prompt: 'x', runId: 'r' })).rejects.toThrow('is not registered');
+    await expect(gnl.run('nope', { prompt: 'x', runId: 'r' })).rejects.toThrow('is not registered');
   });
 
-  it('model router: provider/model parse + hata yollari', async () => {
+  it('model router: provider/model parse + error paths', async () => {
     await expect(resolveModel('justmodel')).rejects.toThrow(/provider\/model/);
     await expect(resolveModel('bogus/x')).rejects.toThrow(/Unknown provider/);
   });

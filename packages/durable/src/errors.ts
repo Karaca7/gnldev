@@ -55,7 +55,7 @@ export class RetryLimitExceededError extends Error {
 }
 
 /**
- * GOREV (İŞ 2 — Redis WAIT opt-in, `RedisStorageOptions.waitReplicas`): after a successful claim
+ * GOREV (Task 2 — Redis WAIT opt-in, `RedisStorageOptions.waitReplicas`): after a successful claim
  * (putIfAbsent/putIfMatch genuinely wrote something new), fewer than the requested number of replicas
  * acknowledged the write within the timeout (native Redis `WAIT`). The claim itself already happened —
  * this only means the async-replication gap (CORE-HARDENING.md §8.2: a claim acked only by the primary
@@ -73,7 +73,7 @@ export class ReplicationNotAcknowledgedError extends Error {
 }
 
 /**
- * GOREV (İŞ 3 — suite-consistency guard, `assertSuiteConsistent`/`createGnl({ checkSuiteConsistency })`):
+ * GOREV (Task 3 — suite-consistency guard, `assertSuiteConsistent`/`createGnl({ checkSuiteConsistency })`):
  * an INSTALLED sibling @gnl/* package's version differs from @gnl/durable's own — a project that
  * bypassed the package manager's caret range (--force/overrides/manual node_modules edits) ended up
  * with an incompatible suite. Thrown only when `onMismatch: 'throw'` was requested (default is 'warn' —

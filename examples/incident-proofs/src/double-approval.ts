@@ -1,4 +1,4 @@
-// VAKA 3 — double-approval: a documented pattern where, after the user approves a permission prompt,
+// CASE 3 — double-approval: a documented pattern where, after the user approves a permission prompt,
 // the underlying tool runs TWICE — "unintended side effects... non-idempotent operations". Root cause
 // is orchestration, not crash/replay: the approval EVENT itself gets processed more than once
 // (double-click, retried webhook/IPC message, etc.) and nothing remembers that the approved call
@@ -42,14 +42,14 @@ const guard: Guard = ({ toolName }) =>
   toolName === 'runShellCommand' ? { action: 'require-approval', reason: 'destructive command' } : { action: 'allow' };
 
 export async function runDoubleApproval() {
-  // ── korumasız: the approval event is processed twice — nothing remembers the first execution, so the
+  // ── unprotected: the approval event is processed twice — nothing remembers the first execution, so the
   // tool just runs again (this IS the double-approval bug). ──
   let unprotectedCalls = 0;
   const unprotectedCleanup = async () => { unprotectedCalls++; return { ok: true }; };
   await unprotectedCleanup(); // ran after the 1st delivery of the approval event
   await unprotectedCleanup(); // ran again after the 2nd (duplicate) delivery
 
-  // ── GNL ile: guard suspends the call; resumeRun (called TWICE — simulating the duplicate approval
+  // ── with GNL: guard suspends the call; resumeRun (called TWICE — simulating the duplicate approval
   // event) only executes the tool on the first call, the 2nd returns the journaled result. ──
   let protectedCalls = 0;
   const runShellCommand = tool({
@@ -61,13 +61,13 @@ export async function runDoubleApproval() {
   const resumeArgs = { journal, model: makeModel(), tools: { runShellCommand }, guard, approvals: { 'call-cleanup': true }, stopWhen: stepCountIs(6) };
 
   const r1 = await runDurable({ runId: 'shell-run-1', journal, model: makeModel(), tools: { runShellCommand }, guard, prompt: 'clean tmp cache', stopWhen: stepCountIs(6) });
-  console.log(`  (askı: ${r1.interrupts.length} onay bekliyor — 'çalıştır' onaylanıyor)`);
+  console.log(`  (suspended: ${r1.interrupts.length} approval pending — approving 'run')`);
   await resumeRun('shell-run-1', resumeArgs); // 1st delivery of the approval event → tool actually runs
   await resumeRun('shell-run-1', resumeArgs); // 2nd (duplicate) delivery → journal already has 'succeeded'
 
   return printCase({
     id: 'double-approval',
-    title: 'onay sonrası tool iki kez çalışıyor (onay olayı iki kez işleniyor)',
+    title: 'tool runs twice after approval (the approval event is processed twice)',
     unprotectedCalls,
     protectedCalls,
   });

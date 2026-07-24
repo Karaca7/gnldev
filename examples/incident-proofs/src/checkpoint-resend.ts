@@ -1,4 +1,4 @@
-// VAKA 2 — checkpoint-resend: a documented pattern where a tool call that runs 180s+ gets silently
+// CASE 2 — checkpoint-resend: a documented pattern where a tool call that runs 180s+ gets silently
 // RESENT from a checkpoint after a reconnect/replay — the original invocation may already be in flight
 // or already finished, but the orchestrator has no memory of that and re-issues the call: "2-3x
 // redundant work and cost". Without a durable journal, a crash/reconnect boundary is invisible to the
@@ -38,7 +38,7 @@ function mockModel(crash: { active: boolean }): any {
 }
 
 export async function runCheckpointResend() {
-  // ── korumasız: no journal — the process resuming after "reconnect" has no memory of the first
+  // ── unprotected: no journal — the process resuming after "reconnect" has no memory of the first
   // attempt, so the orchestrator just calls the tool function again (this IS the checkpoint-resend bug). ──
   let unprotectedCalls = 0;
   const unprotectedRefund = async () => { unprotectedCalls++; return { refunded: true }; };
@@ -65,7 +65,7 @@ export async function runCheckpointResend() {
 
   return printCase({
     id: 'checkpoint-resend',
-    title: '180s+ tool call, checkpoint\'ten crash sonrası sessizce yeniden gönderiliyor',
+    title: '180s+ tool call, silently resent from the checkpoint after a crash',
     unprotectedCalls,
     protectedCalls,
   });

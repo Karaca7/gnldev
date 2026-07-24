@@ -1,6 +1,6 @@
 // Produces human/LLM-readable text from the embedded static content (content.ts) — stays
-// faithful to gnl.dev's llms.txt / llms-full.txt format (see gnl-site app/llms*.txt/route.ts),
-// so the tool output doesn't look different in shape when the live fetch fails.
+// faithful to gnl.dev's llms.txt / llms-full.txt format, so the tool output doesn't look
+// different in shape when the live fetch fails.
 import { DEFAULT_DOCS_URL } from './docs-source.js';
 import { FEATURES, FEATURES_BY_SLUG, OVERVIEW_DETAIL, OVERVIEW_SUMMARY, TIER_LABEL, type DocFeature } from './content.js';
 

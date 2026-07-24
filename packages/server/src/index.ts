@@ -181,11 +181,11 @@ export interface AgentMeta {
   system?: string;
   hasTools: boolean;
   maxSteps: number;
-  /** Org-scoped agent'lar için ait olduğu org'lar (UI etiketi); global agent'larda undefined. */
+  /** Orgs this org-scoped agent belongs to (UI label); undefined for global agents. */
   orgs?: string[];
 }
 
-/** Çağıranın org'una göre FİLTRELENMİŞ agent metadata (görünmeyen org-scoped agent listede çıkmaz). */
+/** Agent metadata FILTERED by the caller's org (an invisible org-scoped agent doesn't appear in the list). */
 function listAgentMeta(config: CreateGnlConfig, callerOrgId?: string): AgentMeta[] {
   const sharedTools = config.tools ? Object.keys(config.tools).length : 0;
   return Object.entries(config.agents ?? {})

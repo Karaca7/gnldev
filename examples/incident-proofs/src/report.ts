@@ -15,18 +15,18 @@ export function printCase(r: CaseResult): boolean {
   const ok = r.protectedCalls === 1 && r.unprotectedCalls > r.protectedCalls;
   console.log('');
   console.log(`=== ${r.id} — ${r.title} ===`);
-  const col1 = 'senaryo';
-  const col2 = 'yan-etki sayısı';
-  const w1 = Math.max(col1.length, 'korumasız (GNL yok)'.length);
-  const w2 = Math.max(col2.length, 'N kez'.length);
+  const col1 = 'scenario';
+  const col2 = 'side-effect count';
+  const w1 = Math.max(col1.length, 'unprotected (no GNL)'.length);
+  const w2 = Math.max(col2.length, 'N times'.length);
   const line = (a: string, b: string) => `| ${pad(a, w1)} | ${pad(b, w2)} |`;
   const sep = `+-${'-'.repeat(w1)}-+-${'-'.repeat(w2)}-+`;
   console.log(sep);
   console.log(line(col1, col2));
   console.log(sep);
-  console.log(line('korumasız (GNL yok)', `${r.unprotectedCalls} kez`));
-  console.log(line('GNL ile', `${r.protectedCalls} kez`));
+  console.log(line('unprotected (no GNL)', `${r.unprotectedCalls} times`));
+  console.log(line('with GNL', `${r.protectedCalls} times`));
   console.log(sep);
-  console.log(ok ? '✅ GNL engelledi — yan-etki 1 kez' : '❌ BEKLENMEYEN SONUÇ');
+  console.log(ok ? '✅ GNL blocked it — side effect ran 1 time' : '❌ UNEXPECTED RESULT');
   return ok;
 }

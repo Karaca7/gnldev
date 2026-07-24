@@ -844,9 +844,9 @@ export async function checkToolGate(
       // Note the reflected flag only matters while the chain MATCHES this tool+hash — a different call
       // resets the whole chain (flag included) in applyToolOutcomeToChain.
       if (limits.loopDetection?.onRepeat === 'reflect' && !chain.reflected) {
-        // MODEL-FACING metin (nudge olarak konuşmaya girer → sağlayıcıya gider): bilinçli olarak
-        // NÖTR — framework adı/markası yok (kullanıcı trafiği çalışılan altyapıyı fingerprint'lememeli).
-        // Operatör-yüzeyli mesajlar (console/incident/error) markalı kalabilir.
+        // MODEL-FACING text (enters the conversation as a nudge → goes to the provider): deliberately
+        // NEUTRAL — no framework name/branding (user traffic shouldn't fingerprint the underlying stack).
+        // Operator-facing messages (console/incident/error) can stay branded.
         return {
           kind: 'reflect',
           message:

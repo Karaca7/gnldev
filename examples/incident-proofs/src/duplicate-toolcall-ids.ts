@@ -1,4 +1,4 @@
-// VAKA 1 — duplicate-toolcall-ids: a documented failure pattern where the model calls the SAME tool,
+// CASE 1 — duplicate-toolcall-ids: a documented failure pattern where the model calls the SAME tool,
 // with the SAME arguments, 5 TIMES in a single turn, each time under a DIFFERENT toolCallId. A
 // call-scoped exactly-once guard (keyed by toolCallId — every durable engine's default, including
 // GNL's) is blind to this by construction: 5 different keys, 5 executions, 5 charges. GNL's opt-in
@@ -41,7 +41,7 @@ function multiCallModel(): any {
 }
 
 export async function runDuplicateToolCallIds() {
-  // ── korumasız: default idempotency mode ('call', keyed by toolCallId) — documents CURRENT/baseline behavior ──
+  // ── unprotected: default idempotency mode ('call', keyed by toolCallId) — documents CURRENT/baseline behavior ──
   let unprotectedCalls = 0;
   const unprotectedTools = { charge: { execute: async () => { unprotectedCalls++; return { charged: 20, seq: unprotectedCalls }; } } };
   await runDurable({
@@ -49,7 +49,7 @@ export async function runDuplicateToolCallIds() {
     tools: unprotectedTools as any, stopWhen: stepCountIs(6), prompt: 'charge $20',
   });
 
-  // ── GNL ile: idempotency: 'args' — journal keyed by (toolName, argsHash) instead of toolCallId ──
+  // ── with GNL: idempotency: 'args' — journal keyed by (toolName, argsHash) instead of toolCallId ──
   let protectedCalls = 0;
   const protectedTools = {
     charge: { idempotency: 'args' as const, execute: async () => { protectedCalls++; return { charged: 20, seq: protectedCalls }; } },
@@ -61,7 +61,7 @@ export async function runDuplicateToolCallIds() {
 
   return printCase({
     id: 'duplicate-toolcall-ids',
-    title: 'model tek turda aynı tool + aynı argümanları 5 FARKLI toolCallId ile çağırıyor',
+    title: 'model calls the same tool + same arguments 5 DIFFERENT toolCallIds in one turn',
     unprotectedCalls,
     protectedCalls,
   });

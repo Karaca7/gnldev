@@ -316,7 +316,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
             // loop-reflect note): never teach argument fabrication.
             const output = {
               __gnl_reflected: true,
-              // MODEL-FACING (nudge → sağlayıcıya gider): nötr — framework markası yok (fingerprint önleme).
+              // MODEL-FACING (nudge → goes to the provider): deliberately NEUTRAL — no framework branding (avoids fingerprinting).
               warning:
                 `The tool '${toolName}' already succeeded with identical arguments in this task ` +
                 `(first call: ${marker.firstToolCallId}) — this duplicate call was NOT executed; reconsider before repeating it`,
@@ -404,7 +404,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
             if (await claim(ctx.journal, nudgeKey, { at: Date.now(), toolCallId })) {
               const output = {
                 __gnl_reflected: true,
-                // MODEL-FACING (nudge → sağlayıcıya gider): nötr — framework markası yok (fingerprint önleme).
+                // MODEL-FACING (nudge → goes to the provider): deliberately NEUTRAL — no framework branding (avoids fingerprinting).
                 warning:
                   `Untrusted external content from ${src} entered this conversation before this ` +
                   `'${toolName}' call — the call was NOT executed; reconsider its provenance first`,

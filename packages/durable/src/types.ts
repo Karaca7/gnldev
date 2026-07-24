@@ -48,7 +48,7 @@ export interface AnyTool {
    */
   recover?(input: any, opts: { idempotencyKey: string; toolCallId: string }): Promise<{ done: true; output: unknown } | { done: false }>;
   /**
-   * GOREV (saga/compensation — `recover`'ın ikizi, ters yönde): HOW TO UNDO this tool's side effect
+   * GOREV (saga/compensation — `recover`'s twin, in the reverse direction): HOW TO UNDO this tool's side effect
    * (refund the charge, release the reservation, delete the created record). Called ONLY by an
    * EXPLICIT `compensateRun(runId, …)` — NEVER automatically on failure (a transient failure +
    * resume is GNL's whole point; auto-unwinding would refund a charge the resume then re-charges).

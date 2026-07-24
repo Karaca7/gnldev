@@ -50,7 +50,7 @@ export interface AgentMeta {
   maxSteps: number;
   /** Tools this agent sees (shared + agent-specific); filled in by createStudioRunner. */
   tools?: ToolMeta[];
-  /** Org-scoped agent'lar için ait olduğu org'lar (UI etiketi + görünürlük filtresi); global agent'larda undefined. */
+  /** Orgs this org-scoped agent belongs to (UI label + visibility filter); undefined for global agents. */
   orgs?: string[];
 }
 
@@ -1593,7 +1593,7 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
   });
 
   /**
-   * D3-A (AUDIT-R2 yüzey): durably cancels an agent run — the studio-side counterpart of
+   * D3-A (AUDIT-R2 surface): durably cancels an agent run — the studio-side counterpart of
    * @gnl/server's POST /runs/:id/cancel. UNLIKE @gnl/server, studio keeps no in-process AbortController
    * registry for streamed generations (there is no equivalent of its `inflight` map here), so this is
    * ONLY the durable-flag path: `cancelAgentRun` writes a cross-worker flag every fresh model step
@@ -1786,19 +1786,20 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
 
   // ── Playground (if gnl is given) ──────────────────────────────────────────────
   /**
-   * Org-scoped agent görünürlüğü (server ile ORTAK helper): çağıranın org'u = identity-bound
-   * Principal.orgId (yoksa ALS'deki header-çözümlü org; operator/auth-kapalı → undefined → hepsi görünür).
-   * Global agent (orgs yok) her zaman görünür → geri-uyum.
+   * Org-scoped agent visibility (SHARED helper with server): the caller's org = identity-bound
+   * Principal.orgId (else the header-resolved org in ALS; operator/auth-off → undefined → everything visible).
+   * A global agent (no orgs) is always visible → backward-compatible.
    */
   const callerOrg = (c: Context): string | undefined => principalOf(c)?.orgId ?? orgALS.getStore();
   /**
-   * Org-görünmez KOD-TANIMLI agent → 404 (var olduğunu SIZDIRMAZ, unknown-agent ile aynı gövde).
-   * `orgs` yalnız kod-tanımlı AgentConfig'in özelliğidir; listAgents'ta OLMAYAN adlar (managed agent /
-   * bilinmeyen) mevcut run yoluna DOKUNULMADAN geçer (managed agent'lar zaten journal-prefix ile org-izole,
-   * geri-uyum korunur). Yani gate YALNIZ: ad listede VAR + çağırana görünmez iken devreye girer.
+   * An org-invisible CODE-DEFINED agent → 404 (does NOT LEAK that it exists, same body as unknown-agent).
+   * `orgs` is a property only of code-defined AgentConfig; names NOT IN listAgents (managed agent /
+   * unknown) pass through the existing run path UNTOUCHED (managed agents are already org-isolated via
+   * the journal prefix, backward compat preserved). So the gate kicks in ONLY when: the name IS in the
+   * list AND is invisible to the caller.
    */
   async function agentGate(c: Context, name: string): Promise<Response | undefined> {
-    if (!gnl) return undefined; // playground kapalı → çağıran zaten 501 alır
+    if (!gnl) return undefined; // playground off → caller already gets a 501
     const m = (await gnl.listAgents()).find((a) => a.name === name);
     if (m && !agentVisibleToOrg(m, callerOrg(c))) return c.json({ error: `agent '${name}' not registered` }, 404);
     return undefined;
@@ -2264,7 +2265,7 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
   });
 
   /**
-   * D3-A (AUDIT-R2 yüzey): durably cancels a workflow run — studio's counterpart of
+   * D3-A (AUDIT-R2 surface): durably cancels a workflow run — studio's counterpart of
    * @gnl/server's POST /workflows/runs/:id/cancel (P0.4). Reimplemented INLINE against `rw` rather than
    * importing @gnl/workflow's `cancelWorkflowRun` — same reason GET /workflows/runs above is inline
    * (the studio CORE stays decoupled from @gnl/workflow; only the optional `./workflow` compiler

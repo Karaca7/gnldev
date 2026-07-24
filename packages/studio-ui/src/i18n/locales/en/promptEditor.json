@@ -6,7 +6,7 @@
   "addRule": "+ Rule / snippet",
   "addRuleAriaLabel": "Add rule",
   "clear": "clear",
-  "placeholder": "Can be left empty. Pick \"+ Template\" for a skeleton, or write your own, e.g.:\n\n# Rol\nSen bir ... asistanısın.\n\n# Kurallar\n- Tahmin etme; emin değilsen aracı çağır.",
+  "placeholder": "Can be left empty. Pick \"+ Template\" for a skeleton, or write your own, e.g.:\n\n# Role\nYou are a(n) ... assistant.\n\n# Rules\n- Don't guess; call the relevant tool if you're unsure.",
   "auditLabel": "Audit:",
   "characterCount": "{{count}} characters",
   "templates": {

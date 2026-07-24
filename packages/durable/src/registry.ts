@@ -179,22 +179,23 @@ export interface AgentConfig {
    */
   scorerSampling?: { rate: number };
   /**
-   * Bu agent'ın ait olduğu org'lar. VERİLMEZSE agent GLOBAL'dir (her org + operator görür/çalıştırır —
-   * mevcut davranış). Verilirse yalnız orgId'si listede olan kimlikler (ve operator=org'suz) görür/çalıştırır.
-   * Görünürlük mantığı `agentVisibleToOrg` ile ORTAKLAŞTIRILMIŞTIR (server + studio aynı helper'ı kullanır).
+   * The orgs this agent belongs to. IF NOT GIVEN, the agent is GLOBAL (every org + operator
+   * sees/runs it — existing behavior). If given, only identities whose orgId is in the list (plus
+   * operator=orgless) see/run it. Visibility logic is SHARED via `agentVisibleToOrg` (server + studio
+   * use the same helper).
    */
   orgs?: string[];
 }
 
 /**
- * Org-scoped agent görünürlük kararı (server + studio ORTAK helper). Opt-in:
- *  - agent `orgs` VERMEMİŞ → GLOBAL, herkes görür (mevcut davranış, geri-uyum).
- *  - çağıran org-bound DEĞİL (operator / auth kapalı → undefined) → hepsini görür.
- *  - aksi halde: yalnız çağıranın org'u agent'ın `orgs` listesindeyse görünür.
+ * Org-scoped agent visibility decision (SHARED helper for server + studio). Opt-in:
+ *  - agent didn't GIVE `orgs` → GLOBAL, everyone sees it (existing behavior, backward-compatible).
+ *  - caller is NOT org-bound (operator / auth off → undefined) → sees everything.
+ *  - otherwise: visible only if the caller's org is in the agent's `orgs` list.
  */
 export function agentVisibleToOrg(cfg: { orgs?: string[] }, callerOrgId: string | undefined): boolean {
   if (!cfg.orgs?.length) return true; // global agent
-  if (!callerOrgId) return true; // operator (org'suz) / auth kapalı
+  if (!callerOrgId) return true; // operator (orgless) / auth off
   return cfg.orgs.includes(callerOrgId);
 }
 
@@ -260,7 +261,7 @@ export interface CreateGnlConfig {
   /** Named dynamic agent networks (parity with Supervisor/`.network()`) — run via `runNetwork(name, ...)`. */
   networks?: Record<string, NetworkConfig>;
   /**
-   * İŞ 3 (opt-in): validates that INSTALLED sibling @gnl/* packages (memory/server/studio/...) share
+   * Task 3 (opt-in): validates that INSTALLED sibling @gnl/* packages (memory/server/studio/...) share
    * @gnl/durable's OWN version — catches a `--force`/overrides-installed incompatible suite that the
    * package manager's caret range would normally prevent (see suite-consistency.ts
    * `assertSuiteConsistent`). `true` → warn on mismatch (default), `'throw'` → hard error at
@@ -361,7 +362,7 @@ export interface RunOptions {
 }
 
 export function createGnl(config: CreateGnlConfig) {
-  // İŞ 3 (opt-in): run BEFORE anything else — a version-skewed suite should be caught up front, not
+  // Task 3 (opt-in): run BEFORE anything else — a version-skewed suite should be caught up front, not
   // after agents/tools are already wired against a possibly-incompatible sibling package.
   if (config.checkSuiteConsistency) {
     assertSuiteConsistent({ onMismatch: config.checkSuiteConsistency === 'throw' ? 'throw' : 'warn' });

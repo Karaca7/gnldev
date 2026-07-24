@@ -1,4 +1,4 @@
-// İŞ 2 — Redis WAIT opt-in (RedisStorageOptions.waitReplicas): closes the async-replication gap
+// Task 2 — Redis WAIT opt-in (RedisStorageOptions.waitReplicas): closes the async-replication gap
 // (CORE-HARDENING §8.2 — a claim acked only by the primary can be LOST on the replica promoted during
 // failover) with an OPT-IN strong guarantee: after a GENUINE new claim (putIfAbsent/putIfMatch actually
 // wrote something new, not a lost race), call native Redis `WAIT replicas timeoutMs` and act on the ack
@@ -38,7 +38,7 @@ function waitClient(
   return { client, calls };
 }
 
-describe('RedisStorage · İŞ 2 waitReplicas (opt-in strong replication guarantee)', () => {
+describe('RedisStorage · Task 2 waitReplicas (opt-in strong replication guarantee)', () => {
   let warnSpy: ReturnType<typeof vi.spyOn> | undefined;
   afterEach(() => { warnSpy?.mockRestore(); warnSpy = undefined; });
 
