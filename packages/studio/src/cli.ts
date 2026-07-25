@@ -13,7 +13,7 @@ function getArg(name: string): string | undefined {
 
 const db = getArg('db');
 const configPath = getArg('config');
-const port = Number(getArg('port') ?? 4111);
+const port = Number(getArg('port') ?? 4747);
 // Default is loopback-only (audit #2): the Studio CLI opens without auth, so it must not leak onto
 // the network unintentionally. Deliberate external access is opted into via --host 0.0.0.0 (or another address).
 const host = getArg('host') ?? '127.0.0.1';
@@ -71,8 +71,8 @@ async function main(): Promise<void> {
     };
   } else {
     if (!db || db.startsWith('--')) {
-      console.error('Usage: gnl-studio --db <runs.db> [--port 4111] [--host 127.0.0.1]   (inspector)');
-      console.error('    or: gnl-studio --config <gnl.config.ts> [--port 4111] [--host 127.0.0.1]   (+ Playground)');
+      console.error('Usage: gnl-studio --db <runs.db> [--port 4747] [--host 127.0.0.1]   (inspector)');
+      console.error('    or: gnl-studio --config <gnl.config.ts> [--port 4747] [--host 127.0.0.1]   (+ Playground)');
       process.exit(1);
       return;
     }

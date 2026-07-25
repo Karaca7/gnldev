@@ -20,7 +20,7 @@ npm i -g @gnldev/cli   # or: npx @gnldev/cli <command>
 | `gnl init [dir] --yes` | Non-interactive `minimal`. The prompt also **never opens without a TTY** (`stdin` not a terminal → `minimal`), so CI is safe. |
 | `gnl add <idempotency-tool\|rag\|mcp\|memory\|workflow\|auth>` | Add a feature recipe to an existing project: writes `src/<feature>.ts` (never overwrites) + prints the `gnl.config.ts` wiring (the config is decoupled — you edit the plain config object, no `defineConfig`). |
 | `gnl dev [--config gnl.config.ts]` | Hot-reload dev server: REST API + Studio Playground on one port. Restarts when `gnl.config.ts` or `src/` changes. |
-| `gnl studio [--config ...] [--port 4111]` | Studio (inspector + Playground) standalone |
+| `gnl studio [--config ...] [--port 4747]` | Studio (inspector + Playground) standalone |
 
 ```bash
 gnl init my-agent --template full && cd my-agent && pnpm install && pnpm test   # proves idempotency

@@ -10,7 +10,7 @@ pnpm dev      # REST API + Studio Playground → http://localhost:3000  (+ /stud
 - **`gnl dev`** — hot-reload. Restarts when `gnl.config.ts` or `src/` changes.
   - REST: `POST /agents/assistant/run` · `POST /agents/assistant/stream` (SSE) · `GET /openapi.json`
   - Studio Playground: `http://localhost:3000/studio` → pick an agent, write a prompt, get a streaming response.
-- **`pnpm studio`** — Studio only (inspector + playground), on `:4111`.
+- **`pnpm studio`** — Studio only (inspector + playground), on `:4747`.
 
 ## Inspecting & operating on runs
 Once `gnl.config.ts` has a `storage` (or `journal`), the CLI can inspect and operate on runs directly

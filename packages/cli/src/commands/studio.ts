@@ -1,4 +1,4 @@
-// gnl studio [--config gnl.config.ts] [--port 4111] — Studio inspector + Playground.
+// gnl studio [--config gnl.config.ts] [--port 4747] — Studio inspector + Playground.
 // Behavior unchanged from the original cli.ts switch-statement version, only moved into the
 // command-module shape. Runtime (@gnldev/durable/@gnldev/studio/@gnldev/memory/@hono/node-server) is resolved
 // from the PROJECT (see runtime.ts), not bundled with @gnldev/cli.
@@ -9,10 +9,10 @@ export const studioCommand: Command = {
   name: 'studio',
   group: 'project',
   summary: 'Studio inspector + Playground',
-  usage: 'gnl studio [--config gnl.config.ts] [--port 4111]',
+  usage: 'gnl studio [--config gnl.config.ts] [--port 4747]',
   async run(ctx) {
     const configPath = flag(ctx.argv, 'config') ?? 'gnl.config.ts';
-    const port = Number(flag(ctx.argv, 'port') ?? 4111);
+    const port = Number(flag(ctx.argv, 'port') ?? 4747);
     const { loadConfig } = await import('../config.js');
     const { devMemoryFactory, devStudioMemory } = await import('../memory.js');
     const { loadDurable, loadStudio, loadStudioAi, loadMemory, loadNodeServer, projectDirOf } = await import('../runtime.js');
