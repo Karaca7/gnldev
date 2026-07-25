@@ -203,6 +203,36 @@ describe('Users: EditUser dialog (catalog enabled)', () => {
     expect([...secondBody.permissions].sort()).toEqual(['*:read', 'agents:run']);
   });
 
+  it('[FORM-06] Escape/outside-click closes an UNTOUCHED dialog, but not once a permission has been edited', async () => {
+    const existing = { id: 'dan@x.com', email: 'dan@x.com', roles: ['viewer'] };
+    mockFetch([
+      route('/capabilities', 'GET', CAPS),
+      route('/me', 'GET', ME),
+      route('/organizations', 'GET', { organizations: [] }),
+      route('/permissions/catalog', 'GET', CATALOG),
+      route('/users', 'GET', { users: [existing] }),
+    ]);
+    wrap(<Users />);
+    await waitFor(() => expect(screen.getByText('dan@x.com')).toBeTruthy());
+    fireEvent.click(screen.getByTitle('Edit role & permissions'));
+    await screen.findByRole('dialog');
+
+    // Untouched (nothing edited yet) → Escape is allowed to dismiss it.
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+
+    // Re-open and actually edit a checkbox this time → Escape must NOT close it anymore.
+    fireEvent.click(screen.getByTitle('Edit role & permissions'));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(within(dialog).getByLabelText('Run agents'));
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.getByRole('dialog')).toBeTruthy(); // still open — the edit wasn't discarded
+
+    // Cancel remains a deliberate way out even with unsaved edits.
+    fireEvent.click(within(dialog).getByText('Cancel'));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
   it('an existing explicit override can be cleared → PATCH sends permissions: []', async () => {
     const existing = { id: 'carol@x.com', email: 'carol@x.com', roles: ['member'], permissions: ['*:read', 'agents:run', 'users:write'] };
     mockFetch([

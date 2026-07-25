@@ -8,5 +8,6 @@
   "selectPlaceholder": "select…",
   "expectedOptional": "expected (optional)",
   "scoring": "Scoring…",
-  "scoreAction": "Score"
+  "scoreAction": "Score",
+  "selectAtLeastOneScorer": "select at least one scorer"
 }

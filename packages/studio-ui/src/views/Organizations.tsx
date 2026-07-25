@@ -77,15 +77,22 @@ function BudgetEditor({ id, initial, onDone }: { id: string; initial?: BudgetLim
   const [usd, setUsd] = useState(initial?.usdLimit != null ? String(initial.usdLimit) : '');
   const [tok, setTok] = useState(initial?.tokenLimit != null ? String(initial.tokenLimit) : '');
   const [busy, setBusy] = useState(false);
+  // Field-level errors (FORM-09): a negative limit is flagged on the exact input that caused it
+  // (aria-invalid + inline message right below), instead of a toast in the screen's opposite corner
+  // that leaves no trace once it fades — see validateOrgId/CreateOrganization for the same pattern.
+  const [errs, setErrs] = useState<{ usd?: string; tok?: string }>({});
   const inputCls = 'w-28 rounded-md border border-input bg-background px-2 py-1 text-xs outline-none transition-colors focus:border-brand focus:shadow-[0_0_0_3px_hsl(var(--brand)/0.12)]';
 
   const save = async () => {
     const usdLimit = usd.trim() === '' ? null : Number(usd);
     const tokenLimit = tok.trim() === '' ? null : Number(tok);
-    if ((usdLimit != null && !(usdLimit >= 0)) || (tokenLimit != null && !(tokenLimit >= 0))) {
-      toast.error(t('limitsMustBeNonNegative'));
+    const usdInvalid = usdLimit != null && !(usdLimit >= 0);
+    const tokInvalid = tokenLimit != null && !(tokenLimit >= 0);
+    if (usdInvalid || tokInvalid) {
+      setErrs({ usd: usdInvalid ? t('limitsMustBeNonNegative') : undefined, tok: tokInvalid ? t('limitsMustBeNonNegative') : undefined });
       return;
     }
+    setErrs({});
     setBusy(true);
     try {
       await api.setOrgBudget(id, { usdLimit, tokenLimit });
@@ -95,6 +102,7 @@ function BudgetEditor({ id, initial, onDone }: { id: string; initial?: BudgetLim
       qc.invalidateQueries({ queryKey: ['organizations'] });
       onDone();
     } catch (e) {
+      // Server/network error — genuinely off-screen (no single input to blame), toast stays.
       toast.error(t('saveError', { error: errMessage(e) }));
     } finally {
       setBusy(false);
@@ -103,14 +111,30 @@ function BudgetEditor({ id, initial, onDone }: { id: string; initial?: BudgetLim
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
-        USD
-        <input className={inputCls} type="number" min="0" step="0.01" placeholder={t('unlimited')} value={usd} onChange={(e) => setUsd(e.target.value)} />
-      </label>
-      <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
-        token
-        <input className={inputCls} type="number" min="0" step="1" placeholder={t('unlimited')} value={tok} onChange={(e) => setTok(e.target.value)} />
-      </label>
+      <div className="flex flex-col gap-0.5">
+        <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
+          USD
+          <input
+            className={cn(inputCls, errs.usd && 'border-destructive')}
+            aria-invalid={!!errs.usd}
+            type="number" min="0" step="0.01" placeholder={t('unlimited')} value={usd}
+            onChange={(e) => { setUsd(e.target.value); setErrs((s) => ({ ...s, usd: undefined })); }}
+          />
+        </label>
+        {errs.usd && <span className="text-[11px] text-destructive">{errs.usd}</span>}
+      </div>
+      <div className="flex flex-col gap-0.5">
+        <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
+          token
+          <input
+            className={cn(inputCls, errs.tok && 'border-destructive')}
+            aria-invalid={!!errs.tok}
+            type="number" min="0" step="1" placeholder={t('unlimited')} value={tok}
+            onChange={(e) => { setTok(e.target.value); setErrs((s) => ({ ...s, tok: undefined })); }}
+          />
+        </label>
+        {errs.tok && <span className="text-[11px] text-destructive">{errs.tok}</span>}
+      </div>
       <Btn size="xs" onClick={save} disabled={busy}><Save size={12} /> {t('save')}</Btn>
       <Btn size="xs" variant="outline" onClick={onDone}><X size={12} /></Btn>
     </div>
@@ -147,12 +171,17 @@ function CreateOrganization() {
   const [id, setId] = useState('');
   const [label, setLabel] = useState('');
   const [busy, setBusy] = useState(false);
+  // Inline field error (FORM-09): validateOrgId's result is shown right below the id input
+  // (aria-invalid + border-destructive) instead of a toast in the opposite screen corner — client-side
+  // validation no longer uses toast at all; toast stays reserved for actual server/network errors below.
+  const [idErr, setIdErr] = useState<string | null>(null);
   const inputCls = 'rounded-md border border-input bg-background px-2 py-1 text-xs outline-none transition-colors focus:border-brand focus:shadow-[0_0_0_3px_hsl(var(--brand)/0.12)]';
 
   const create = async () => {
     const tid = id.trim();
     const err = validateOrgId(tid, t);
-    if (err) { toast.error(err); return; }
+    if (err) { setIdErr(err); return; }
+    setIdErr(null);
     setBusy(true);
     try {
       await api.createOrganization(tid, label.trim() || undefined);
@@ -169,7 +198,15 @@ function CreateOrganization() {
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-card px-3 py-2">
       <span className="text-xs font-medium">{t('newOrgLabel')}</span>
-      <input className={inputCls} placeholder={t('idPlaceholder')} value={id} onChange={(e) => setId(e.target.value)} />
+      <div className="flex flex-col gap-0.5">
+        <input
+          className={cn(inputCls, idErr && 'border-destructive')}
+          aria-invalid={!!idErr}
+          placeholder={t('idPlaceholder')} value={id}
+          onChange={(e) => { setId(e.target.value); setIdErr(null); }}
+        />
+        {idErr && <span className="text-[11px] text-destructive">{idErr}</span>}
+      </div>
       <input className={inputCls} placeholder={t('labelPlaceholder')} value={label} onChange={(e) => setLabel(e.target.value)} />
       <Btn size="xs" onClick={create} disabled={busy || !id.trim()}><Plus size={12} /> {t('addButton')}</Btn>
     </div>

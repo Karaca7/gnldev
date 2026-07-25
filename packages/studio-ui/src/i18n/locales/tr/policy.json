@@ -1,6 +1,8 @@
 {
   "rolesMatrixTitle": "Roller & izinler",
   "permissionCol": "İzin",
+  "granted": "İzin var",
+  "notGranted": "İzin yok",
   "duplicateToolError": "Aynı tool için birden fazla kural var: '{{tool}}' — kaydetmeden önce düzelt",
   "emptyToolError": "Bir veya daha fazla kuralda tool adı eksik — kaydetmeden önce düzelt",
   "emptyToolInlineError": "Tool adı zorunlu",

@@ -92,9 +92,12 @@ describe('SuspendedRunsInbox resume form (via Workflows view)', () => {
     stubFetch({
       '/capabilities': CAPS,
       '/workflows': WORKFLOWS,
-      '/workflows/runs?status=suspended': [
-        { runId: 'wf-invoice-1721900000000', workflowName: 'invoice', status: 'suspended', stepId: 'review', waitId: 'approval', updatedAt: 1721900000000 },
-      ],
+      // API-03: useWorkflowRunsRegistry now always sends `limit` (default 50) → the paged envelope.
+      '/workflows/runs?status=suspended&limit=50': {
+        items: [
+          { runId: 'wf-invoice-1721900000000', workflowName: 'invoice', status: 'suspended', stepId: 'review', waitId: 'approval', updatedAt: 1721900000000 },
+        ],
+      },
     });
     wrap(<Workflows />);
 

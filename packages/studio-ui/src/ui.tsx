@@ -42,10 +42,14 @@ export function Toaster() {
 // ── Dialog ────────────────────────────────────────────────────────────────
 
 export function Dialog({
-  open, onOpenChange, title, children, footer, width = 'w-[28rem]',
+  open, onOpenChange, title, children, footer, width = 'w-[28rem]', dismissible = true,
 }: {
   open: boolean; onOpenChange: (o: boolean) => void; title: ReactNode;
   children?: ReactNode; footer?: ReactNode; width?: string;
+  // When false, clicking the overlay or pressing Escape no longer closes the dialog — only an
+  // explicit Cancel/X/Save inside it can. Defaults to true so every existing call site (Organizations,
+  // Agents, Inspector purge, ConfirmDialog, …) keeps Radix's default dismiss-on-outside-click behavior.
+  dismissible?: boolean;
 }) {
   const { t } = useTranslation('common');
   return (
@@ -58,6 +62,8 @@ export function Dialog({
             'rounded-lg border border-border bg-popover p-4 text-popover-foreground shadow-xl outline-none',
             width,
           )}
+          onInteractOutside={dismissible ? undefined : (e) => e.preventDefault()}
+          onEscapeKeyDown={dismissible ? undefined : (e) => e.preventDefault()}
         >
           <div className="mb-3 flex items-start justify-between gap-4">
             <DialogPrimitive.Title className="text-sm font-bold">{title}</DialogPrimitive.Title>

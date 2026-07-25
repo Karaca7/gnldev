@@ -194,6 +194,11 @@ function EditUser({ user, catalog, open, onOpenChange }: {
   const [customized, setCustomized] = useState(hadOverride);
   const [clearedOverride, setClearedOverride] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Tracks in-SESSION edits only (role switch, checkbox toggle, or "reset to defaults") — distinct from
+  // `customized`, which can start true just because the user already HAD a saved override. Drives the
+  // dialog's `dismissible` gate: an untouched dialog (even one pre-filled from an existing override) may
+  // still be dismissed by an outside click/Escape; the moment something is edited, that stops (see [FORM-06]).
+  const [touched, setTouched] = useState(false);
 
   // Re-derive local state whenever the dialog (re)opens — possibly for a different user/row.
   useEffect(() => {
@@ -203,6 +208,7 @@ function EditUser({ user, catalog, open, onOpenChange }: {
     setChecked(new Set(user.permissions ?? catalog.rolePresets[r] ?? []));
     setCustomized(!!user.permissions?.length);
     setClearedOverride(false);
+    setTouched(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, user.id]);
 
@@ -211,6 +217,7 @@ function EditUser({ user, catalog, open, onOpenChange }: {
     setChecked(new Set(catalog.rolePresets[r] ?? []));
     setCustomized(false);
     setClearedOverride(false);
+    setTouched(true);
   };
   const toggle = (id: string) => {
     setChecked((prev) => {
@@ -220,11 +227,13 @@ function EditUser({ user, catalog, open, onOpenChange }: {
     });
     setCustomized(true);
     setClearedOverride(false);
+    setTouched(true);
   };
   const clearOverride = () => {
     setChecked(new Set(catalog.rolePresets[role] ?? []));
     setCustomized(false);
     setClearedOverride(true);
+    setTouched(true);
   };
 
   const save = async () => {
@@ -253,6 +262,7 @@ function EditUser({ user, catalog, open, onOpenChange }: {
       onOpenChange={onOpenChange}
       title={t('editDialogTitle', { id: user.id })}
       width="w-[32rem]"
+      dismissible={!touched}
       footer={
         <>
           <Btn variant="outline" onClick={() => onOpenChange(false)}>{t('cancelButton')}</Btn>

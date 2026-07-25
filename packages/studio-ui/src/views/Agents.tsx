@@ -95,6 +95,11 @@ function VersionPanel({ rec, canManage, evalGate, onChanged, onEdit, onDelete }:
   const { t, i18n } = useTranslation('agents');
   const [busy, setBusy] = useState<number | null>(null);
   const [gateFail, setGateFail] = useState<{ message: string; rows: GateScoreRow[] } | null>(null);
+  // FLOW-11: promote/rollback used to fire the API call on click, with no confirmation — a single
+  // misclick in a dense version list would immediately re-point prod at an untested draft (every new
+  // run picks up the new model/system prompt until someone notices and rolls back). Gated behind a
+  // confirm dialog, same primitive/pattern as the delete flows in Agents() below.
+  const [confirmPromote, setConfirmPromote] = useState<number | null>(null);
   const promote = async (version: number) => {
     if (busy != null) return; // panel-wide lock: prevent a second click from racing while a promote is in flight
     setBusy(version);
@@ -114,8 +119,23 @@ function VersionPanel({ rec, canManage, evalGate, onChanged, onEdit, onDelete }:
       setBusy(null);
     }
   };
+  // Recomputed from rec.active (not captured at click time) so the dialog always reflects the
+  // CURRENT prod version, never a stale snapshot from when the button was clicked.
+  const confirmIsOld = confirmPromote != null && rec.active != null && confirmPromote < rec.active;
   return (
     <div className="space-y-1.5">
+      <ConfirmDialog
+        open={confirmPromote !== null}
+        onOpenChange={(o) => { if (!o) setConfirmPromote(null); }}
+        title={confirmIsOld ? t('rollbackConfirmDialogTitle') : t('promoteConfirmDialogTitle')}
+        description={confirmPromote != null
+          ? (confirmIsOld
+              ? t('rollbackConfirmDescription', { name: rec.name, version: confirmPromote, active: rec.active ?? '—' })
+              : t('promoteConfirmDescription', { name: rec.name, version: confirmPromote, active: rec.active ?? '—' }))
+          : ''}
+        confirmLabel={confirmIsOld ? t('rollbackConfirmLabel') : t('promoteConfirmLabel')}
+        onConfirm={() => { if (confirmPromote != null) void promote(confirmPromote); }}
+      />
       {canManage && evalGate && (
         <span title={t('evalGateTitle')}>
           <Badge tone="info">{t('evalGateBadge')}</Badge>
@@ -139,7 +159,7 @@ function VersionPanel({ rec, canManage, evalGate, onChanged, onEdit, onDelete }:
               {canManage && (
                 <div className="flex shrink-0 items-center gap-1">
                   {!isActive && (
-                    <Btn size="xs" variant="outline" disabled={busy !== null} onClick={() => promote(v.version)}
+                    <Btn size="xs" variant="outline" disabled={busy !== null} onClick={() => setConfirmPromote(v.version)}
                       title={isOld ? t('rollbackTitle') : t('promoteVersionTitle')}>
                       <Rocket size={11} /> {isOld ? 'Rollback' : 'Promote'}
                     </Btn>

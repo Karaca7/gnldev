@@ -53,9 +53,21 @@ function RoleMatrix() {
                 <td className="px-3 py-2 font-mono text-xs text-foreground" title={p.description}>{p.id}</td>
                 {roles.map((r) => (
                   <td key={r} className="px-3 py-2 text-center">
-                    {grants(r, p.id)
-                      ? <span className="font-semibold text-brand">✓</span>
-                      : <span className="text-muted-foreground/40">–</span>}
+                    {/* A11Y-12: '–' at /40 opacity was ~1.8:1 (fails WCAG 1.4.3) and relied on color
+                        alone to distinguish granted vs not (fails 1.4.1). Fix: full-opacity foreground
+                        color (AA-passing) PLUS a distinct glyph (✓ vs ✕) so the pair reads without
+                        color, and glyphs are decorative — the accessible name comes from sr-only text. */}
+                    {grants(r, p.id) ? (
+                      <>
+                        <span aria-hidden="true" className="font-semibold text-brand">✓</span>
+                        <span className="sr-only">{t('granted')}</span>
+                      </>
+                    ) : (
+                      <>
+                        <span aria-hidden="true" className="text-muted-foreground">✕</span>
+                        <span className="sr-only">{t('notGranted')}</span>
+                      </>
+                    )}
                   </td>
                 ))}
               </tr>

@@ -1,6 +1,6 @@
 // Typed API client (@gnl/studio JSON endpoints) + react-query hooks + SSE helpers.
 import { useEffect } from 'react';
-import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData, type QueryClient } from '@tanstack/react-query';
 import { config } from './config';
 import { authHeader, getToken } from './auth';
 
@@ -238,6 +238,9 @@ export interface WorkflowRunRegistryItem {
   reason?: unknown;
   updatedAt: number;
 }
+/** API-03: paged envelope for GET /workflows/runs?limit= (same shape as RunsPage, minus `total` — the
+ *  registry doesn't have a cheap filtered-count aggregate, see server.ts's route JSDoc). */
+export interface WorkflowRunRegistryPage { items: WorkflowRunRegistryItem[]; nextCursor?: string; }
 export interface WorkflowRunState { runId: string; steps: { stepId: string; output: unknown }[]; suspended: boolean; suspend?: unknown; }
 export type WfStreamEvent =
   | { type: 'start'; data: { runId: string } }
@@ -303,6 +306,35 @@ export interface RegressionRunDiff {
 export interface RegressionReport { ok?: boolean; baseRunId: string; newRunId: string; diff: RegressionRunDiff; score?: unknown; }
 
 // ── fetch helpers ─────────────────────────────────────────────────────────
+/**
+ * API-07: shared HTTP-error-body reader (this used to be `http()`-only logic; the SSE helpers
+ * below — streamAgent/runWorkflowStream — duplicated a stripped-down `!res.ok` branch that never
+ * read the body, so a server-side rejection like `{error:"writes are not supported in an org
+ * context…"}` only ever showed up as "403 Forbidden" in the Playground). Starts from the generic
+ * "<status> <statusText>[ @ context]" text, then tries `res.clone().json()` and uses `.error` as
+ * the message when it's a non-empty string; non-JSON/empty bodies leave `body` undefined and keep
+ * the generic message. `context` (the request path) is optional so the SSE call sites — which have
+ * no meaningful path to report — get the same generic text `http()` always produced.
+ */
+async function parseErrorResponse(res: Response, context?: string): Promise<{ message: string; body?: Record<string, unknown> }> {
+  let message = context ? `${res.status} ${res.statusText} @ ${context}` : `${res.status} ${res.statusText}`;
+  let body: Record<string, unknown> | undefined;
+  try {
+    const parsed = await res.clone().json();
+    if (parsed && typeof parsed.error === 'string' && parsed.error) message = parsed.error;
+    // API-05: keep the whole parsed body (code/detail/resumable/aggregate/…) on the error, not just `.error`.
+    if (parsed && typeof parsed === 'object') body = parsed;
+  } catch {
+    /* not JSON / empty body → keep the generic message, body stays undefined */
+  }
+  return { message, body };
+}
+/** Message-only half of parseErrorResponse — used by streamAgent/runWorkflowStream, which report
+ *  a plain string via `on({type:'error', data:{error}})` and have no `ApiError.body` to fill. */
+async function errorMessageFromResponse(res: Response): Promise<string> {
+  return (await parseErrorResponse(res)).message;
+}
+
 async function http<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(config.apiBase + path, {
     ...init,
@@ -311,19 +343,9 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     // Bug-investigation fix: the server produces a meaningful error body ({error:'...'}) —
-    // this used to go unread, so the user only saw a generic "400 Bad Request". Read the body,
-    // use the `.error` field as the message if present; fall back to the old generic text if unreadable.
-    let msg = `${res.status} ${res.statusText} @ ${path}`;
-    let body: Record<string, unknown> | undefined;
-    try {
-      const parsed = await res.clone().json();
-      if (parsed && typeof parsed.error === 'string' && parsed.error) msg = parsed.error;
-      // API-05: keep the whole parsed body (code/detail/resumable/aggregate/…) on the error, not just `.error`.
-      if (parsed && typeof parsed === 'object') body = parsed;
-    } catch {
-      /* not JSON / empty body → keep the generic message, body stays undefined */
-    }
-    throw new ApiError(res.status, msg, body);
+    // this used to go unread, so the user only saw a generic "400 Bad Request".
+    const { message, body } = await parseErrorResponse(res, path);
+    throw new ApiError(res.status, message, body);
   }
   const ct = res.headers.get('content-type') ?? '';
   return (ct.includes('application/json') ? res.json() : res.text()) as Promise<T>;
@@ -332,6 +354,23 @@ const get = <T>(p: string) => http<T>(p);
 const post = <T>(p: string, body: unknown) => http<T>(p, { method: 'POST', body: JSON.stringify(body) });
 const del = <T>(p: string) => http<T>(p, { method: 'DELETE' });
 const patch = <T>(p: string, body: unknown) => http<T>(p, { method: 'PATCH', body: JSON.stringify(body) });
+
+/** D3-A: the cross-workflow `wfrun:` registry (GET /workflows/runs — P0.4), optionally filtered by
+ *  status. API-03: passing `limit` opts into the paged `{items,nextCursor}` envelope (a BOUNDED scan
+ *  server-side, see server.ts's route JSDoc); omitted → the legacy flat array. Overloaded (rather than a
+ *  union return) so a call site that passes a definite `limit` gets a definite `WorkflowRunRegistryPage`
+ *  back — no `Array.isArray` narrowing needed there, and react-query's `useQuery` overload resolution
+ *  (which chokes on a bare union queryFn return type) keeps working for useWorkflowRunsRegistry below. */
+function workflowRunsRegistry(status?: 'suspended' | 'completed' | 'canceled'): Promise<WorkflowRunRegistryItem[]>;
+function workflowRunsRegistry(status: 'suspended' | 'completed' | 'canceled' | undefined, limit: number): Promise<WorkflowRunRegistryPage>;
+function workflowRunsRegistry(status?: 'suspended' | 'completed' | 'canceled', limit?: number): Promise<WorkflowRunRegistryItem[] | WorkflowRunRegistryPage> {
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (limit != null) params.set('limit', String(limit));
+  const qs = params.toString();
+  const path = `/workflows/runs${qs ? `?${qs}` : ''}`;
+  return limit != null ? get<WorkflowRunRegistryPage>(path) : get<WorkflowRunRegistryItem[]>(path);
+}
 
 export const api = {
   capabilities: () => get<Capabilities>('/capabilities'),
@@ -369,7 +408,11 @@ export const api = {
   // Server GET /runs/:id/network already existed (getNetworkTrace); it just wasn't used in the UI.
   runNetwork: (id: string) => get<NetworkTrace>(`/runs/${encodeURIComponent(id)}/network`),
   metrics: () => get<Metrics>('/metrics'),
-  metricsRuns: () => get<{ runs: MetricsRun[] }>('/metrics/runs'),
+  // API-10: optional ?limit= (server clamps 1..1000, see server.ts's /metrics/runs) — without it the
+  // client used to download a metrics row for EVERY run in the journal on every 10s poll, no matter how
+  // many the UI actually renders. `undefined` keeps the old unlimited request (used nowhere currently,
+  // kept for API completeness / any future direct caller).
+  metricsRuns: (limit?: number) => get<{ runs: MetricsRun[] }>(`/metrics/runs${limit != null ? `?limit=${limit}` : ''}`),
   agents: () => get<AgentMeta[]>('/agents'),
   tools: () => get<ToolListItem[]>('/tools'),
   workflows: () => get<WorkflowMeta[]>('/workflows'),
@@ -408,9 +451,7 @@ export const api = {
   workflowRun: (runId: string) => get<WorkflowRunState>(`/workflows/run/${encodeURIComponent(runId)}`),
   workflowRuns: (name: string, limit?: number) =>
     get<WorkflowRunSummary[]>(`/workflows/${encodeURIComponent(name)}/runs${limit ? `?limit=${limit}` : ''}`),
-  /** D3-A: the cross-workflow `wfrun:` registry (GET /workflows/runs — P0.4), optionally filtered by status. */
-  workflowRunsRegistry: (status?: 'suspended' | 'completed' | 'canceled') =>
-    get<WorkflowRunRegistryItem[]>(`/workflows/runs${status ? `?status=${status}` : ''}`),
+  workflowRunsRegistry,
   /** D3-A: durably cancels a workflow run (studio's counterpart of @gnl/server's P0.4 cancel). */
   cancelWorkflowRun: (runId: string) =>
     post<{ ok: boolean; cancelled: boolean; note?: string }>(`/workflows/runs/${encodeURIComponent(runId)}/cancel`, {}),
@@ -519,7 +560,13 @@ export async function streamAgent(name: string, body: AgentRunBody, on: (ev: Str
     on({ type: 'error', data: { error: errMessage(e) } });
     return;
   }
-  if (!res.ok || !res.body) { on({ type: 'error', data: { error: `${res.status} ${res.statusText}` } }); return; }
+  if (!res.ok) {
+    // API-07: read the server's {error} body (same helper http() uses) instead of showing just
+    // the HTTP status text — e.g. surfaces "writes are not supported in an org context…" on 403.
+    on({ type: 'error', data: { error: await errorMessageFromResponse(res) } });
+    return;
+  }
+  if (!res.body) { on({ type: 'error', data: { error: `${res.status} ${res.statusText}` } }); return; }
   const reader = res.body.getReader();
   const dec = new TextDecoder();
   let buf = '';
@@ -562,7 +609,13 @@ export async function runWorkflowStream(
     on({ type: 'error', data: { error: errMessage(e) } });
     return;
   }
-  if (!res.ok || !res.body) { on({ type: 'error', data: { error: `${res.status} ${res.statusText}` } }); return; }
+  if (!res.ok) {
+    // API-07: same fix as streamAgent — read the server's {error} body instead of showing just
+    // the HTTP status text.
+    on({ type: 'error', data: { error: await errorMessageFromResponse(res) } });
+    return;
+  }
+  if (!res.body) { on({ type: 'error', data: { error: `${res.status} ${res.statusText}` } }); return; }
   const reader = res.body.getReader();
   const dec = new TextDecoder();
   let buf = '';
@@ -609,7 +662,6 @@ export const useRunState = (id: string | null, step?: number) =>
   useQuery({ queryKey: ['state', id, step], queryFn: () => api.state(id!, step), enabled: !!id });
 export const useDiff = (id: string | null, step: number) =>
   useQuery({ queryKey: ['diff', id, step], queryFn: () => api.diff(id!, step), enabled: !!id && step > 0 });
-export const useCost = (id: string | null) => useQuery({ queryKey: ['cost', id], queryFn: () => api.cost(id!), enabled: !!id });
 export const useRunIncidents = (id: string | null) =>
   useQuery({ queryKey: ['incidents', id], queryFn: () => api.runIncidents(id!), enabled: !!id });
 export const useRunNetwork = (id: string | null) => useQuery({ queryKey: ['run-network', id], queryFn: () => api.runNetwork(id!), enabled: !!id });
@@ -619,7 +671,15 @@ export const useWorkflowRunState = (id: string | null) =>
   useQuery({ queryKey: ['wf-run-state', id], queryFn: () => api.workflowRun(id!), enabled: !!id });
 export const useTrace = (id: string | null) => useQuery({ queryKey: ['trace', id], queryFn: () => api.trace(id!), enabled: !!id });
 export const useMetrics = () => useQuery({ queryKey: ['metrics'], queryFn: api.metrics, refetchInterval: 5000 });
-export const useMetricsRuns = () => useQuery({ queryKey: ['metrics-runs'], queryFn: api.metricsRuns, refetchInterval: 10000 });
+// API-10: the Inspector's run list only ever shows RUNS_PAGE_SIZE (50) rows at a time — 200 comfortably
+// covers a few loaded pages without re-downloading a metrics row for every run the journal has ever
+// seen. The limit is part of the query key: a caller that genuinely needs a different (e.g. larger)
+// window must pass an explicit `limit`, which gets its OWN cache entry — reusing this key with a
+// different limit would otherwise mix results from two different requests under one cache slot.
+// Pass `null` to opt OUT of the cap and fetch the whole set — Observability's percentiles and CSV
+// export are only correct over ALL runs, so a silent 200-run window would quietly narrow the analytics.
+export const useMetricsRuns = (limit: number | null = 200) =>
+  useQuery({ queryKey: ['metrics-runs', limit], queryFn: () => api.metricsRuns(limit ?? undefined), refetchInterval: 10000 });
 export const useAgents = () => useQuery({ queryKey: ['agents'], queryFn: api.agents });
 // Governance: same 10s cadence as useOrganizations — this is a review surface, not a live feed.
 // `enabled` MUST be false for a caller who isn't expected to pass the server's platform-admin gate
@@ -658,9 +718,13 @@ export const useManagedAgents = () => useQuery({ queryKey: ['managed-agents'], q
 export const usePolicy = () => useQuery({ queryKey: ['policy'], queryFn: api.policy });
 export const useWorkflowRuns = (name: string | null, limit?: number) =>
   useQuery({ queryKey: ['wf-runs', name, limit], queryFn: () => api.workflowRuns(name!, limit), enabled: !!name });
-/** D3-A: the suspended-runs inbox — polls at the same 5s cadence as useApprovals (both are "needs attention" queues). */
-export const useWorkflowRunsRegistry = (status?: 'suspended' | 'completed' | 'canceled') =>
-  useQuery({ queryKey: ['wf-runs-registry', status], queryFn: () => api.workflowRunsRegistry(status), refetchInterval: 5000 });
+// API-03: the suspended-runs inbox is a review surface, not a live feed — 15s (was 5s) avoids
+// re-scanning the wfrun: registry every 5s just because the Workflows tab is left open. `limit`
+// defaults to 50 (an inbox, not a browsable list — see server.ts's route JSDoc for why no "load more"
+// was added) and is part of the query key so a caller that asks for a different window gets its own
+// cache entry instead of silently mixing pages.
+export const useWorkflowRunsRegistry = (status?: 'suspended' | 'completed' | 'canceled', limit = 50) =>
+  useQuery({ queryKey: ['wf-runs-registry', status, limit], queryFn: () => api.workflowRunsRegistry(status, limit), refetchInterval: 15000 });
 
 /**
  * Bug-investigation fix #2 — pure decision logic (tested): should we fall back to the persistent
@@ -702,8 +766,62 @@ export async function sseAuthQuery(): Promise<string> {
   return sseTicketNeedsTokenFallback(status) ? `?token=${encodeURIComponent(token)}` : '';
 }
 
+/** The shape useRunsPaged's useInfiniteQuery caches under every `['runs','paged',…]` key. */
+type RunsPagedData = InfiniteData<RunsPage, string | undefined>;
+
 /**
- * Live-tail: /events SSE (GET) → invalidate the runs query on a 'change' event (live instead of polling).
+ * API-04: applies one /events change notification to the cached `['runs','paged',…]` pages WITHOUT
+ * refetching every loaded page (the old behavior — a bare `invalidateQueries({queryKey:['runs']})`
+ * matched every filter variant AND every page an infinite query had already loaded).
+ * For each changed runId: a small existing-endpoint probe (`GET /runs?limit=1&q=<runId>` — the SAME
+ * substring filter the search box already uses, API-09) fetches its current row. If that row is found
+ * in an ALREADY-CACHED page (any loaded filter variant), it's patched in place via `setQueriesData`. If
+ * the probe comes back empty, the run is gone (purge/retention sweep) and the row is dropped from every
+ * cached page it was in. If the runId isn't in any cached page yet (a brand-new run), only the FIRST
+ * page of each loaded list is reset + refetched — never the pages after it, so a user who has scrolled
+ * down doesn't lose that work over one new run appearing at the top.
+ */
+async function applyRunChanges(qc: QueryClient, runIds: string[]): Promise<void> {
+  for (const runId of runIds) {
+    let fresh: RunSummary | undefined;
+    try {
+      const page = await api.runsPage(1, undefined, { q: runId });
+      fresh = page.items.find((r) => r.runId === runId);
+    } catch { /* best-effort: a network hiccup here just means this runId's patch is skipped this tick */ }
+
+    let foundInCache = false;
+    qc.setQueriesData<RunsPagedData>({ queryKey: ['runs', 'paged'] }, (old) => {
+      if (!old) return old;
+      let touched = false;
+      const pages = old.pages.map((p) => {
+        if (!p.items.some((r) => r.runId === runId)) return p;
+        touched = true;
+        const items = fresh
+          ? p.items.map((r) => (r.runId === runId ? fresh! : r))
+          : p.items.filter((r) => r.runId !== runId); // the probe found nothing → the run was removed
+        return { ...p, items };
+      });
+      if (!touched) return old;
+      foundInCache = true;
+      return { ...old, pages };
+    });
+
+    if (!foundInCache && fresh) {
+      qc.setQueriesData<RunsPagedData>({ queryKey: ['runs', 'paged'] }, (old) =>
+        old && old.pages.length > 0 ? { pages: [old.pages[0]!], pageParams: [old.pageParams[0]] } : old,
+      );
+      await qc.invalidateQueries({ queryKey: ['runs', 'paged'] });
+    }
+  }
+}
+
+/**
+ * Live-tail: /events SSE (GET) → patch the runs cache on a 'change' event (live instead of polling).
+ * API-04: the event body is now informative — `{"runIds":[...],"at":…}` — so only the changed rows are
+ * patched (applyRunChanges above) instead of invalidating every loaded page. A body that fails to
+ * JSON.parse, or has no `runIds` array (an older/incompatible server still sending the bare `'runs'`
+ * string), falls back to the pre-API-04 blanket invalidation — this is the ONLY compat handling needed;
+ * the server doesn't fork into two implementations for old vs new clients.
  * If SSE can't be established/drops (e.g. under basic-auth setups EventSource can't send a token → 401),
  * we fall back to polling rather than SILENTLY HANGING: on error the connection is closed and periodic
  * invalidation starts. While auth is on, a short-lived ticket is put in the URL instead of the
@@ -720,6 +838,13 @@ export function useLiveRuns() {
       if (poll) return;
       poll = setInterval(invalidate, 5000); // 5s polling when there's no SSE — the list still updates
     };
+    const onChange = (e?: { data?: unknown }) => {
+      let parsed: { runIds?: unknown } | undefined;
+      try { parsed = typeof e?.data === 'string' ? JSON.parse(e.data) : undefined; } catch { parsed = undefined; }
+      const runIds = Array.isArray(parsed?.runIds) ? (parsed!.runIds as string[]) : undefined;
+      if (!runIds) { invalidate(); return; } // parse failure / legacy 'runs' payload → old full-invalidate behavior
+      void applyRunChanges(qc, runIds);
+    };
     // If EventSource doesn't exist at all, poll directly; otherwise fetch a short-lived ticket first, then connect.
     if (typeof EventSource === 'undefined') {
       startPolling();
@@ -728,7 +853,7 @@ export function useLiveRuns() {
         if (cancelled) return;
         try {
           es = new EventSource(config.apiBase + '/events' + suffix);
-          es.addEventListener('change', invalidate);
+          es.addEventListener('change', onChange as EventListener);
           // 401/network error/disconnect → drop SSE, fall back to polling (no silent hang).
           es.addEventListener('error', () => { es?.close(); es = null; startPolling(); });
         } catch {

@@ -1631,6 +1631,55 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
 
   // SSE: pushes when the run list changes (live instead of polling). EventSource can't send headers →
   // gated with ?token= (roleAuth fallback) OR ?ticket= (the single-use ticket above).
+  // API-04: poll interval — 2s (was 1s). The cheap-signal path below only pays for a full listRuns()
+  // scan when something has ACTUALLY changed (see readCheapEventsSignal), so this interval mostly gates
+  // the cheap probe itself (already O(distinct statuses) via the engine's countRunsByStatus push-down,
+  // or a single indexed page read for the newest run) — 2s keeps the UI feeling live while halving even
+  // that probe's frequency, with no user-visible latency cost worth calling out.
+  const EVENTS_POLL_MS = 2000;
+  /**
+   * API-04-followup: the cheap signal (readCheapEventsSignal, below) only tracks per-status totals + the
+   * newest run's tuple, so an OLDER (non-newest) run's step progress can advance without moving it (see
+   * the KNOWN GAP note below). Rather than pay for a full listRuns() scan every tick to close that gap,
+   * a full listRuns() diff also runs unconditionally once every FULL_SCAN_EVERY_TICKS ticks — bounding
+   * the worst-case staleness for a non-newest run's progress to one full-scan period (~10s at the 2s poll
+   * interval) instead of "until its own status changes". Net cost: 1 full scan per ~10s instead of per
+   * 1s pre-API-04 (~10x cut) while every change is still surfaced within a bounded delay.
+   * Not part of the public API (StudioApiOptions) — overridable only via an internal, untyped option so
+   * tests don't have to wait out the full 10s in real time.
+   */
+  const FULL_SCAN_EVERY_TICKS: number = (opts as any).__fullScanEveryTicks ?? 5;
+  /**
+   * API-04: a CHEAP fingerprint of "has anything changed" — deliberately NOT a full listRuns() scan.
+   * Combines countRunsByStatus()'s per-status totals (catches a run being added/removed, or any run
+   * transitioning completed↔suspended — O(distinct statuses), see journal.ts's JSDoc) with the newest
+   * run's own summary tuple, read via a single indexed listRunsPaged({limit:1}) tail slice — the SAME
+   * total→ascending-range conversion GET /runs already uses above (catches the common case: the
+   * most-recently-created run's modelSteps/toolCalls advancing while it's still mid-flight).
+   * Returns undefined when the underlying reader doesn't support countRunsByStatus (a bare/custom
+   * JournalReader, or an org-scoped view — countRunsByStatus is deliberately not bridged per-org, see
+   * the `reader` construction above) → callers fall back to the pre-API-04 full-scan behavior.
+   * KNOWN GAP (bounded, not lost): an OLDER (non-newest) run advancing its steps while a newer run also
+   * exists won't move this fingerprint until ITS OWN status changes — but the periodic full scan below
+   * (FULL_SCAN_EVERY_TICKS) still catches it within at most ~10s, so this is a bounded delay, not a
+   * missed event; the fallback path below has no such gap (or delay) at all.
+   */
+  async function readCheapEventsSignal(): Promise<string | undefined> {
+    if (typeof rw.countRunsByStatus !== 'function') return undefined;
+    let counted: Record<string, number> | undefined;
+    try { counted = await rw.countRunsByStatus(); } catch { counted = undefined; }
+    if (!counted) return undefined;
+    const total = Object.values(counted).reduce((a, b) => a + b, 0);
+    let newest: [string, string, number, number] | null = null;
+    if (total > 0 && typeof reader.listRunsPaged === 'function') {
+      try {
+        const page = await reader.listRunsPaged({ limit: 1, cursor: String(total - 1) });
+        const r = page.items[0];
+        if (r) newest = [r.runId, r.status, r.modelSteps, r.toolCalls];
+      } catch { newest = null; }
+    }
+    return JSON.stringify([counted, newest]);
+  }
   app.get('/events', async (c) => {
     const ticket = c.req.query('ticket');
     let ticketOrg: string | undefined;
@@ -1644,12 +1693,59 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
       return deny(c, 'read');
     }
     const run = () => streamSSE(c, async (stream) => {
-      let last = '';
+      // API-04: the event body is now INFORMATIVE — `{"runIds":[...],"at":<epoch ms>}` naming exactly
+      // which runs changed, instead of the old signal-only `data:'runs'` — so the client can patch just
+      // those rows (see studio-ui/api.ts's useLiveRuns) instead of refetching every loaded page.
+      // BACKWARD COMPAT is handled CLIENT-SIDE (a JSON.parse failure there falls back to full
+      // invalidation) — this endpoint doesn't fork into two implementations for old vs new clients.
+      let cheapSig: string | undefined;
+      let known = new Map<string, string>(); // runId -> `${status}|${modelSteps}|${toolCalls}`
+      let baselined = false;
+      let legacyLast = ''; // fallback-path signature, used ONLY when countRunsByStatus is unavailable
+      let tick = 0; // counts cheap-path ticks SINCE the baseline (for FULL_SCAN_EVERY_TICKS below)
       while (!stream.aborted) {
-        const runs = await reader.listRuns();
-        const sig = JSON.stringify(runs.map((r) => [r.runId, r.status, r.modelSteps, r.toolCalls]));
-        if (sig !== last) { last = sig; await stream.writeSSE({ data: 'runs', event: 'change' }); }
-        await stream.sleep(1000);
+        const sig = await readCheapEventsSignal();
+        if (sig !== undefined) {
+          if (!baselined) {
+            // First tick: establish the baseline silently (no event) — a freshly-connected client just
+            // did its own initial fetch, so reporting every existing run as "changed" here would be a
+            // needless (and, at tens of thousands of runs, large) initial payload.
+            cheapSig = sig;
+            known = new Map((await reader.listRuns()).map((r) => [r.runId, `${r.status}|${r.modelSteps}|${r.toolCalls}`]));
+            baselined = true;
+          } else {
+            tick++;
+            // Periodic full scan (FULL_SCAN_EVERY_TICKS): runs a full listRuns() diff even when the cheap
+            // signal DIDN'T change, so a non-newest run's progress (the KNOWN GAP above) is still caught
+            // within a bounded delay instead of only when its status flips.
+            const forceFullScan = tick % FULL_SCAN_EVERY_TICKS === 0;
+            if (sig !== cheapSig || forceFullScan) {
+              cheapSig = sig;
+              const runs = await reader.listRuns();
+              const nextKnown = new Map<string, string>();
+              const changed: string[] = [];
+              for (const r of runs) {
+                const fp = `${r.status}|${r.modelSteps}|${r.toolCalls}`;
+                nextKnown.set(r.runId, fp);
+                if (known.get(r.runId) !== fp) changed.push(r.runId);
+              }
+              // A run disappearing (purge/retention sweep) also counts as "changed" — the client needs
+              // its id to drop the row from cached pages, not just to see growth/edits.
+              for (const id of known.keys()) if (!nextKnown.has(id)) changed.push(id);
+              known = nextKnown;
+              if (changed.length > 0) {
+                await stream.writeSSE({ data: JSON.stringify({ runIds: changed, at: Date.now() }), event: 'change' });
+              }
+            }
+          }
+        } else {
+          // Fallback: no cheap aggregate available → PRESERVE the exact pre-API-04 behavior (full
+          // listRuns() scan every poll, diffed as one whole-list signature, old uninformative payload).
+          const runs = await reader.listRuns();
+          const fullSig = JSON.stringify(runs.map((r) => [r.runId, r.status, r.modelSteps, r.toolCalls]));
+          if (fullSig !== legacyLast) { legacyLast = fullSig; await stream.writeSSE({ data: 'runs', event: 'change' }); }
+        }
+        await stream.sleep(EVENTS_POLL_MS);
       }
     });
     return ticketOrg ? orgALS.run(ticketOrg, run) : run();
@@ -2012,7 +2108,10 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
         ...(Array.isArray(body.tools) ? { tools: body.tools as string[] } : {}),
       });
     } catch (e: any) {
-      return c.json({ error: String(e?.message ?? e) }, 400);
+      // Same taxonomy as the non-streaming /agents/:name/run handler above: this catch fires
+      // BEFORE the SSE body starts (gnl.stream() only sets up the run — pipeAgentStream() below
+      // is what actually streams), so a normal JSON error response is still safe here.
+      return runErrorResponse(c, e) ?? c.json({ error: String(e?.message ?? e) }, 400);
     }
     await audit(c, 'agent.run', name, { runId: body.runId, stream: true });
     return pipeAgentStream(c, body.runId, result);
@@ -2378,14 +2477,56 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
     if (statusRaw != null && statusRaw !== 'suspended' && statusRaw !== 'completed' && statusRaw !== 'canceled') {
       return c.json({ error: `invalid status '${statusRaw}' (expected 'suspended', 'completed', or 'canceled')` }, 400);
     }
+    type WfRunRow = { runId: string; status: string; stepId?: string; waitId?: string; reason?: unknown; updatedAt: number };
     const keys = await rw.listKeys('wfrun:');
-    const out: { runId: string; status: string; stepId?: string; waitId?: string; reason?: unknown; updatedAt: number }[] = [];
-    for (const k of keys) {
-      const st = (await rw.get(k)) as { status?: string; updatedAt?: number } | undefined;
-      if (st && (!statusRaw || st.status === statusRaw)) out.push(st as any);
+    const limitRaw = c.req.query('limit');
+
+    // API-03: `limit` omitted → the legacy flat-array contract, UNCHANGED (older callers — e.g.
+    // packages/server — never send `limit` and must keep getting a bare array back).
+    if (limitRaw === undefined) {
+      const out: WfRunRow[] = [];
+      for (const k of keys) {
+        const st = (await rw.get(k)) as WfRunRow | undefined;
+        if (st && (!statusRaw || st.status === statusRaw)) out.push(st);
+      }
+      out.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+      return c.json(out);
+    }
+
+    // API-03: `limit` given → a paged `{items,nextCursor}` envelope (same shape GET /runs above uses)
+    // AND a bounded scan. This route used to `get` EVERY `wfrun:*` key on every poll regardless of how
+    // few rows the caller actually wanted (Workflows.tsx refetches it repeatedly for the suspended-runs
+    // inbox) — a 20k-run registry meant ~20k reads just to show 3 suspended rows. `listKeys` returns keys
+    // oldest-first (created_at ASC — see journal.ts/postgres-storage.ts), so reversing gives newest-first;
+    // `cursor` is an offset into that reversed order, and the scan stops as soon as `limit` matches are
+    // found (the `status` filter still can't be pushed into the key shape itself, so this is the cheapest
+    // bound available without changing the `wfrun:` record format).
+    const limit = Math.min(Math.max(Math.floor(Number(limitRaw)) || 0, 1), 500);
+    const start = Math.max(Math.floor(Number(c.req.query('cursor'))) || 0, 0);
+    const window = [...keys].reverse().slice(start);
+
+    const out: WfRunRow[] = [];
+    let scanned = 0;
+    if (typeof rw.getMany === 'function') {
+      // ONE batched round-trip for the whole remaining window instead of a `get` call per key (same
+      // pattern as /metrics/runs above) — the early exit below still keeps the RESPONSE bounded even
+      // though the batch itself already happened.
+      const values = await rw.getMany<WfRunRow>(window);
+      for (; scanned < values.length; scanned++) {
+        const st = values[scanned];
+        if (st && (!statusRaw || st.status === statusRaw)) out.push(st);
+        if (out.length >= limit) { scanned++; break; }
+      }
+    } else {
+      for (; scanned < window.length; scanned++) {
+        const st = (await rw.get(window[scanned]!)) as WfRunRow | undefined;
+        if (st && (!statusRaw || st.status === statusRaw)) out.push(st);
+        if (out.length >= limit) { scanned++; break; }
+      }
     }
     out.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
-    return c.json(out);
+    const nextCursor = scanned < window.length ? String(start + scanned) : undefined;
+    return c.json({ items: out, nextCursor });
   });
 
   /**

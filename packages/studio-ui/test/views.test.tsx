@@ -159,7 +159,9 @@ describe('studio-ui components', () => {
   });
 
   it('Observability: renders cards + p95 + the rich run table', async () => {
-    // Note: the '/metrics/runs' key must come BEFORE '/runs' (stubFetch's endsWith takes the first match).
+    // Note: the '/metrics/runs' key must come BEFORE '/runs' (stubFetch's endsWith takes the
+    // first match). API-10: useMetricsRuns now sends a default `?limit=200` (see api.ts) instead of an
+    // unbounded request.
     stubFetch({
       '/metrics/runs': {
         runs: [
@@ -219,6 +221,37 @@ describe('studio-ui components', () => {
     // Switch agents → the previous agent's conversation must NOT linger.
     fireEvent.change(screen.getByLabelText('Agent'), { target: { value: 'beta' } });
     await waitFor(() => expect(screen.queryByText('message from the old thread')).toBeNull());
+  });
+
+  // FORM-08 — switching agents resets the CONVERSATION (see the test above) but must NOT throw away
+  // whatever the user was mid-typing in the composer: the reset is about not appending the new agent's
+  // turns into the old agent's thread, not about the prompt itself, which is unrelated to which agent
+  // it eventually gets sent to.
+  it('Playground FORM-08: switching agents clears the thread but keeps the in-progress composer text', async () => {
+    stubFetch({
+      '/capabilities': { ...CAPS, playground: true, memory: true },
+      '/agents': [
+        { name: 'alpha', model: 'm', hasTools: false },
+        { name: 'beta', model: 'm', hasTools: false },
+      ],
+      '/me': { id: null, roles: [], orgId: null, operator: true, platformAdmin: false, scope: 'none' },
+      '/threads?resourceId=studio-user': [{ id: 't-1', title: 'Old chat', resourceId: 'studio-user', createdAt: 1, updatedAt: 1 }],
+      '/threads/t-1/messages': [{ role: 'user', content: 'message from the old thread' }],
+    });
+    wrap(<Playground />);
+    fireEvent.click(await screen.findByText('Old chat'));
+    await waitFor(() => expect(screen.getByText('message from the old thread')).toBeTruthy());
+
+    const textarea = screen.getByPlaceholderText(enPlayground.messagePlaceholder) as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: 'a prompt worth keeping' } });
+
+    fireEvent.change(screen.getByLabelText('Agent'), { target: { value: 'beta' } });
+
+    // The old thread's messages are gone (conversation reset) …
+    await waitFor(() => expect(screen.queryByText('message from the old thread')).toBeNull());
+    // … but the composer the user was mid-typing survives the reset.
+    expect((screen.getByPlaceholderText(enPlayground.messagePlaceholder) as HTMLTextAreaElement).value)
+      .toBe('a prompt worth keeping');
   });
 
   // REGRESSION GUARD — "messages vanished, huge blank area below the last visible line".

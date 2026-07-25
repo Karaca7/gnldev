@@ -1,6 +1,8 @@
 {
   "rolesMatrixTitle": "Roles & permissions",
   "permissionCol": "Permission",
+  "granted": "Granted",
+  "notGranted": "Not granted",
   "duplicateToolError": "Multiple rules exist for the same tool: '{{tool}}' — fix before saving",
   "emptyToolError": "One or more rules are missing a tool name — fix before saving",
   "emptyToolInlineError": "Tool name is required",

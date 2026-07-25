@@ -42,3 +42,56 @@ describe('runWorkflowStream — fetch network exception (bug investigation #3)',
     expect(events).toEqual([]);
   });
 });
+
+// API-07: streamAgent/runWorkflowStream's `!res.ok` branch used to build the error event straight
+// from `${res.status} ${res.statusText}` and never read the server's {error} JSON body — a
+// Playground user hitting e.g. the org-write guard only ever saw "403 Forbidden" instead of the
+// real reason. Both SSE helpers now go through the same body-reading logic http() already used
+// (errorMessageFromResponse / parseErrorResponse in src/api.ts).
+describe('streamAgent — surfaces the server error body on !res.ok (API-07)', () => {
+  it('403 { error: "…org context…" } → the error event carries the SERVER text, not "403 Forbidden"', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: false,
+      status: 403,
+      statusText: 'Forbidden',
+      body: null,
+      json: async () => ({ error: "writes are not supported in an org context (v1 read-only audit) — use @gnl/server's org option for writes" }),
+      clone() { return this; },
+    })));
+    const events: StreamEvent[] = [];
+    await streamAgent('demo', { runId: 'r1', prompt: 'hi' }, (ev) => events.push(ev));
+    expect(events).toEqual([
+      { type: 'error', data: { error: "writes are not supported in an org context (v1 read-only audit) — use @gnl/server's org option for writes" } },
+    ]);
+  });
+
+  it('non-JSON/empty body → falls back to the generic "<status> <statusText>" message', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: false,
+      status: 500,
+      statusText: 'Internal Server Error',
+      body: null,
+      json: async () => { throw new Error('not JSON'); },
+      clone() { return this; },
+    })));
+    const events: StreamEvent[] = [];
+    await streamAgent('demo', { runId: 'r1', prompt: 'hi' }, (ev) => events.push(ev));
+    expect(events).toEqual([{ type: 'error', data: { error: '500 Internal Server Error' } }]);
+  });
+});
+
+describe('runWorkflowStream — surfaces the server error body on !res.ok (API-07)', () => {
+  it('404 { error: "agent \'x\' not registered" } → the error event carries the SERVER text', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: false,
+      status: 404,
+      statusText: 'Not Found',
+      body: null,
+      json: async () => ({ error: "agent 'x' not registered" }),
+      clone() { return this; },
+    })));
+    const events: WfStreamEvent[] = [];
+    await runWorkflowStream('wf1', {}, 'run-1', (ev) => events.push(ev));
+    expect(events).toEqual([{ type: 'error', data: { error: "agent 'x' not registered" } }]);
+  });
+});

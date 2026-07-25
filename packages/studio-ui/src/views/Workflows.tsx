@@ -43,6 +43,14 @@ export function deriveWorkflowName(runId: string, knownNames: string[]): string 
   return best;
 }
 
+// API-03: useWorkflowRunsRegistry now always passes a `limit`, so api.workflowRunsRegistry returns the
+// paged `{items,nextCursor}` envelope in practice — but its declared type stays the union it always was
+// (the legacy flat array is still what a bare, limit-less call returns), so callers narrow at the edge.
+function registryItems(data: WorkflowRunRegistryItem[] | { items: WorkflowRunRegistryItem[] } | undefined): WorkflowRunRegistryItem[] {
+  if (!data) return [];
+  return Array.isArray(data) ? data : data.items;
+}
+
 // Graph from build() steps: parallel(a+b) → sub-node fan-out (status from the parent key); others are single nodes.
 function buildGraph(steps: { id: string; kind: string }[]): { nodes: GNode[]; edges: Edge[]; order: string[] } {
   const nodes: GNode[] = [];
@@ -206,7 +214,7 @@ export function Workflows() {
           <button type="button" onClick={() => setShowInbox(true)} disabled={running} title={running ? t('runningGuardTitle') : undefined}
             className="inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground">
             <Inbox size={13} /> {t('inboxToggleLabel')}
-            {(suspendedRuns.data?.length ?? 0) > 0 && <Badge tone="warning">{suspendedRuns.data!.length}</Badge>}
+            {registryItems(suspendedRuns.data).length > 0 && <Badge tone="warning">{registryItems(suspendedRuns.data).length}</Badge>}
           </button>
         </div>
         <div className="flex-1 overflow-auto p-1.5">
@@ -233,7 +241,12 @@ export function Workflows() {
                     <button type="button" title={t('deleteTitle')} onClick={() => setDeleting(w.name)} className="rounded p-0.5 text-muted-foreground hover:text-destructive"><Trash2 size={11} /></button>
                   </div>
                 ) : (
-                  <span className="shrink-0 pr-2 text-[9px] uppercase tracking-wide text-muted-foreground/60" title={t('codeDefinedTitle')}>{t('codeLabel')}</span>
+                  // VIS-06: this label is the ONLY visual signal that a workflow is code-defined
+                  // (not editable from the UI) — was a hand-rolled text-[9px]/60 span (~3.1:1
+                  // contrast, the app's one 9px usage). Badge tone="muted" matches the mono
+                  // 10px + full muted-foreground contrast already used for data tags elsewhere
+                  // (e.g. the "from server"/"guessed" badges in the resume form below).
+                  <span className="shrink-0 pr-2" title={t('codeDefinedTitle')}><Badge tone="muted">{t('codeLabel')}</Badge></span>
                 )}
               </div>
             );
@@ -810,7 +823,7 @@ function SuspendedRunsInbox({ workflows, canResume, canCancel, onClose }: {
     }
   };
 
-  const items = registry.data ?? [];
+  const items = registryItems(registry.data);
 
   return (
     <div className="flex flex-1 flex-col">
@@ -1120,6 +1133,11 @@ function WorkflowRunDiff({ a, b, onClose }: { a: string; b: string; onClose: () 
     [sa.data, sb.data],
   );
   const diffCount = rows.filter((r) => !r.equal).length;
+  // STATE-08: sa.error/sb.error were never read — a failed GET /workflows/run/:runId left `rows`
+  // empty, which read exactly like "both runs have identical steps" (0/0 in the header, then
+  // noStepsToCompareNote). For a what-if-fork comparison that's the one message that must never
+  // appear on a fetch failure: it reads as "the fork changed nothing" instead of "couldn't load".
+  const loadError = sa.error ?? sb.error;
 
   return (
     <div className="border-b border-border bg-muted/10 px-4 py-2">
@@ -1127,12 +1145,14 @@ function WorkflowRunDiff({ a, b, onClose }: { a: string; b: string; onClose: () 
         <span className="microlabel">RUN DIFF</span>
         <span className="truncate font-mono text-info" title={a}>A: {a}</span>
         <span className="truncate font-mono text-brand" title={b}>B: {b}</span>
-        <span className="text-muted-foreground">{t('diffSummary', { same: rows.length - diffCount, diff: diffCount })}</span>
+        {/* Hidden on error: a stale/zeroed "0 identical · 0 diverged" would misreport a fetch
+            failure as "the two runs have no differences". */}
+        {!loadError && <span className="text-muted-foreground">{t('diffSummary', { same: rows.length - diffCount, diff: diffCount })}</span>}
         <button type="button" onClick={onClose} className="ml-auto rounded p-0.5 text-muted-foreground hover:text-foreground" aria-label={t('closeAriaLabel')}>
           <X size={13} />
         </button>
       </div>
-      {(sa.isLoading || sb.isLoading) ? <Spinner /> : (
+      {(sa.isLoading || sb.isLoading) ? <Spinner /> : loadError ? <ErrorBox error={loadError} /> : (
         <div className="max-h-64 space-y-1.5 overflow-auto">
           {rows.map((r) => (
             <div key={r.stepId} className={`rounded-md border p-2 ${r.equal ? 'border-border opacity-55' : 'border-brand/40 bg-brand/5'}`}>

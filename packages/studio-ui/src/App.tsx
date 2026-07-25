@@ -181,7 +181,10 @@ function SidebarContent({
           if (items.length === 0) return null; // capability-hidden group → the header itself stays hidden too
           return (
             <div key={g.key} className={cn(gi > 0 && 'mt-3 border-t border-border/60 pt-3')}>
-              <div className="microlabel px-3 pb-1 text-muted-foreground/70">{t(g.titleKey)}</div>
+              {/* A11Y-11: full-opacity --muted-foreground (AA-safe per index.css), not /70 — at 10px this
+                  text doesn't qualify for the "large text" 3:1 exception, so hierarchy comes from the
+                  .microlabel typography (mono + uppercase + letter-spacing) alone, not from fading it out. */}
+              <div className="microlabel px-3 pb-1 text-muted-foreground">{t(g.titleKey)}</div>
               {items.map(({ to, labelKey, icon: Icon }) => {
                 const label = t(labelKey);
                 return (
@@ -260,6 +263,15 @@ function AppShell({ onLogout }: { onLogout?: () => void }) {
 
   return (
     <div className="flex h-full flex-col md:flex-row">
+      {/* A11Y-08 (WCAG 2.4.1 Bypass Blocks): first focusable element in the shell — a keyboard user
+          can jump straight to <main> instead of tabbing through the full sidebar (~19 nav items +
+          Swagger/lang/theme/logout) on every single page load. Visually hidden until focused. */}
+      <a
+        href="#main"
+        className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:m-2 focus:rounded focus:bg-popover focus:px-3 focus:py-2"
+      >
+        {tc('skipToContent')}
+      </a>
       <CommandPalette items={commands} />
 
       {/* Mobile top bar (<768px): hamburger opens the slide-in drawer below; the full sidebar
@@ -301,7 +313,7 @@ function AppShell({ onLogout }: { onLogout?: () => void }) {
         <SidebarContent visible={visible} t={t} tc={tc} lang={lang} toggleLang={toggleLang} dark={dark} toggle={toggle} onLogout={onLogout} plan={caps.data?.plan} />
       </aside>
 
-      <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <main id="main" tabIndex={-1} className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {/* Desktop top bar (≥768px): breadcrumb · palette-search · New run. Mobile has its own bar above.
             The search box opens the SAME Ctrl/Cmd+K command palette (synthetic keydown) — no separate
             search implementation, it's the existing palette. "New run" jumps to the Playground. */}

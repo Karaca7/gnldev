@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Play, FlaskConical } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useScorers, useDatasets, useRuns, useCapabilities, api, errMessage, type EvalDatasetResult } from '../api';
@@ -17,6 +17,11 @@ export function Evals() {
   if (!hasScorers && !hasDatasets) return <EmptyState icon={FlaskConical} title={t('disabledTitle')} description={t('disabledDescription')} />;
   if (scorers.error) return <ErrorBox error={scorers.error} />;
   if (datasets.error) return <ErrorBox error={datasets.error} />;
+  // STATE-09: `caps.data` is already warm on app boot (fetched once, cached), so it resolves well
+  // before `scorers`/`datasets` (which only start fetching on this view's mount). Rendering the panels
+  // while those two are still in flight used to mount ScoreRunPanel with `scorerNames: []` (seeding its
+  // checkbox `Set` empty forever, see below) and flash "no datasets" for a beat. Wait for both first.
+  if (scorers.isLoading || datasets.isLoading) return <Spinner />;
 
   return (
     <div className="space-y-6 p-5">
@@ -91,19 +96,30 @@ function ScorePill({ v }: { v?: number }) {
   return <Badge tone={tone}>{v.toFixed(2)}</Badge>;
 }
 
-function ScoreRunPanel({ scorerNames }: { scorerNames: string[] }) {
+// Exported (only) for the regression test — Evals is the sole route-level export otherwise; see
+// test/evals-score-panel.test.tsx (same pattern as Scheduler.tsx exporting its pure helpers for tests).
+export function ScoreRunPanel({ scorerNames }: { scorerNames: string[] }) {
   const { t } = useTranslation('evals');
   const runs = useRuns();
   const [runId, setRunId] = useState('');
   const [sel, setSel] = useState<Set<string>>(new Set(scorerNames));
+  const [touched, setTouched] = useState(false);
   const [expected, setExpected] = useState('');
   const [busy, setBusy] = useState(false);
   const [res, setRes] = useState<any>(null);
   const [err, setErr] = useState<string | null>(null);
-  const toggle = (n: string) => setSel((s) => { const c = new Set(s); c.has(n) ? c.delete(n) : c.add(n); return c; });
+  const toggle = (n: string) => { setTouched(true); setSel((s) => { const c = new Set(s); c.has(n) ? c.delete(n) : c.add(n); return c; }); };
+
+  // STATE-09: `scorerNames` can arrive AFTER this panel first mounts (see Evals' comment above) — reseed
+  // the "all selected" default whenever the list (re)loads, but only as long as the user hasn't manually
+  // touched a checkbox yet (same untouched-vs-customized convention as Users.tsx's permission editor).
+  useEffect(() => {
+    if (!touched) setSel(new Set(scorerNames));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scorerNames.join(',')]);
 
   const score = async () => {
-    if (!runId) return;
+    if (!runId || sel.size === 0) return;
     setBusy(true); setErr(null);
     try { setRes(await api.score(runId, [...sel], expected || undefined)); }
     catch (e) { setErr(errMessage(e)); }
@@ -115,10 +131,12 @@ function ScoreRunPanel({ scorerNames }: { scorerNames: string[] }) {
       <h2 className="mb-2 text-sm font-semibold">{t('scoreRunHeading')}</h2>
       <div className="flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1 text-xs">run
-          <select aria-label="run" value={runId} onChange={(e) => setRunId(e.target.value)} className="w-56 rounded-md border border-input bg-background px-2 py-1 text-sm outline-none transition-colors focus:border-brand focus:shadow-[0_0_0_3px_hsl(var(--brand)/0.12)]">
-            <option value="">{t('selectPlaceholder')}</option>
-            {runs.data?.map((r) => <option key={r.runId} value={r.runId}>{r.runId}</option>)}
-          </select>
+          {runs.error ? <ErrorBox error={runs.error} /> : (
+            <select aria-label="run" value={runId} onChange={(e) => setRunId(e.target.value)} className="w-56 rounded-md border border-input bg-background px-2 py-1 text-sm outline-none transition-colors focus:border-brand focus:shadow-[0_0_0_3px_hsl(var(--brand)/0.12)]">
+              <option value="">{t('selectPlaceholder')}</option>
+              {runs.data?.map((r) => <option key={r.runId} value={r.runId}>{r.runId}</option>)}
+            </select>
+          )}
         </label>
         <label className="flex flex-col gap-1 text-xs">{t('expectedOptional')}
           <input value={expected} onChange={(e) => setExpected(e.target.value)} className="w-48 rounded-md border border-input bg-background px-2 py-1 text-sm outline-none transition-colors focus:border-brand focus:shadow-[0_0_0_3px_hsl(var(--brand)/0.12)]" />
@@ -128,7 +146,10 @@ function ScoreRunPanel({ scorerNames }: { scorerNames: string[] }) {
             <label key={n} className="flex items-center gap-1 text-xs"><input type="checkbox" checked={sel.has(n)} onChange={() => toggle(n)} /> {n}</label>
           ))}
         </div>
-        <Btn size="xs" onClick={score} disabled={busy || !runId}>{busy ? t('scoring') : t('scoreAction')}</Btn>
+        <div className="flex flex-col items-start gap-1">
+          <Btn size="xs" onClick={score} disabled={busy || !runId || sel.size === 0}>{busy ? t('scoring') : t('scoreAction')}</Btn>
+          {sel.size === 0 && <span className="text-[11px] text-muted-foreground">{t('selectAtLeastOneScorer')}</span>}
+        </div>
       </div>
       {err && <div className="mt-2 text-sm text-destructive">{err}</div>}
       {res?.scores && (

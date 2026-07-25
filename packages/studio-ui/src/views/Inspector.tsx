@@ -7,7 +7,7 @@ import { ReactFlow, Background, Controls, MiniMap, type Node, type Edge } from '
 import dagre from '@dagrejs/dagre';
 import { GitFork, Check, X, Play, Pause, ChevronLeft, ChevronRight, SkipBack, SkipForward, Columns2, FlaskConical, Trash2, Undo2, UploadCloud, Wrench, Ban } from 'lucide-react';
 import {
-  useRunsPaged, useRun, useCost, useRunState, useDiff, useTrace, useRunNetwork, useCapabilities, useLiveRuns, useRunScores, useThreads,
+  useRunsPaged, useRun, useRunState, useDiff, useTrace, useRunNetwork, useCapabilities, useLiveRuns, useRunScores, useThreads,
   useProcessorReports, useRunIncidents, useMetrics, useMetricsRuns, type MetricsRun,
   api, errMessage, ApiError, type Capabilities, type RunSummary, type RegressionReport, type RegressionDiffEntry, type RunCost, type NetworkTrace,
   type ProcessorReport, type JournalEntry, type RunIncident,
@@ -19,6 +19,7 @@ import { MediaParts } from '../media';
 import { Stagger, StaggerItem, Reveal } from '../motion';
 
 type TabId = 'conversation' | 'trace' | 'network' | 'forks' | 'regression' | 'processors' | 'cost' | 'incidents';
+const ALL_TAB_IDS: readonly TabId[] = ['conversation', 'trace', 'network', 'forks', 'regression', 'processors', 'cost', 'incidents'];
 
 // ── fork lineage tree: runId convention `<source>:fork:<ts>` (forkRun's default) ────
 function forkParent(id: string): string | null {
@@ -74,19 +75,44 @@ export function Inspector() {
   // react-query key as `runs` above (see useRunsPaged) → deduped to a single request, no extra cost.
   const allRunsQ = useRunsPaged();
   const allRuns = useMemo(() => (allRunsQ.data?.pages ?? []).flatMap((p) => p.items), [allRunsQ.data]);
+  // API-10: ONE /metrics/runs query (limited, see useMetricsRuns) shared by every RunRow AND RunDetail
+  // below — each used to call useMetricsRuns() ITSELF and re-`.find()` the runId on every render (50
+  // rows × the full metrics array, on every 10s poll AND every unrelated re-render). Building the
+  // runId → MetricsRun lookup ONCE here and handing it down as a Map turns that into a single O(1)
+  // lookup per row, computed once per data change instead of once per row per render.
+  const mr = useMetricsRuns();
+  const metricsById = useMemo(() => new Map((mr.data?.runs ?? []).map((r) => [r.runId, r] as const)), [mr.data]);
+  // FLOW-07: the URL (`?run=`/`?tab=`) is the single source of truth for the selected run and active
+  // tab — this is what makes "paste a link to this exact run+tab" and the browser Back button work.
+  // localStorage is only a FALLBACK for the initial value when the URL carries no `run` (e.g. a bare
+  // /inspector visit) — it is never written back into the URL. The OLD one-time-consume effect used
+  // to DELETE `?run` right after reading it, which is exactly what broke deep links and Back. The
+  // Playground "Inspect" link (`/inspector?run=<id>`) still works unchanged: its `run` value becomes
+  // the initial `sel` below, same as before.
   const [params, setParams] = useSearchParams();
-  const runParam = params.get('run');
-  const [sel, setSel] = useState<string | null>(() => runParam || localStorage.getItem('gnl-insp-run'));
+  const [sel, setSel] = useState<string | null>(() => params.get('run') || localStorage.getItem('gnl-insp-run'));
+  const [tab, setTab] = useState<TabId>(() => (params.get('tab') as TabId | null) || 'conversation');
   // F5-resilient selection; when sel drops to null via purge/onPurged, clear the key too (so a stale runId doesn't come back on F5).
   useEffect(() => { if (sel) localStorage.setItem('gnl-insp-run', sel); else localStorage.removeItem('gnl-insp-run'); }, [sel]);
-  // Select when arriving from Playground via ?run=<id>; one-time — clear it from the URL once consumed so F5/back doesn't break the persisted selection.
+  // Pull sel/tab FROM the URL when it changes from outside our own writes below — a new `?run=` link
+  // clicked while Inspector is already mounted (no remount, so the initial useState above doesn't
+  // re-run), or a browser Back/Forward navigation.
   useEffect(() => {
-    if (!runParam) return;
-    setSel(runParam);
+    const urlRun = params.get('run');
+    const urlTab = params.get('tab') as TabId | null;
+    if (urlRun !== null && urlRun !== sel) setSel(urlRun);
+    if (urlTab !== null && urlTab !== tab) setTab(urlTab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params]);
+  // Push sel/tab TO the URL so it always reflects the current selection (replace: this is in-app
+  // navigation within Inspector, not a new page — it should not pile up history entries).
+  useEffect(() => {
     const next = new URLSearchParams(params);
-    next.delete('run');
-    setParams(next, { replace: true });
-  }, [runParam]);
+    if (sel) next.set('run', sel); else next.delete('run');
+    if (tab !== 'conversation') next.set('tab', tab); else next.delete('tab');
+    if (next.toString() !== params.toString()) setParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sel, tab]);
 
   // Left list view: flat list (default, industry pattern: trace-first) or grouped by thread —
   // the selection (`sel`) is preserved when the mode changes, only the display shape changes.
@@ -130,6 +156,7 @@ export function Inspector() {
               <button
                 key={s}
                 type="button"
+                aria-pressed={statusF === s}
                 onClick={() => setStatusF(s)}
                 className={cn(
                   'rounded-md border px-2 py-0.5 font-mono text-[10px] transition-colors',
@@ -147,15 +174,18 @@ export function Inspector() {
           {/* API-09: distinguish "no runs at all" from "no runs match the active filter" — a filter
               (status or search) active but zero server-side results is a different situation from an
               empty journal (the old bug: this used to always say "No runs." even with a filter narrowing
-              a non-empty list down to nothing, which read as "your run was deleted"). */}
-          {runList.length === 0 && !runs.isLoading && (
+              a non-empty list down to nothing, which read as "your run was deleted").
+              STATE-11: also excludes `runs.error` — otherwise the red ErrorBox above is immediately
+              followed by "No runs yet", which reads as "empty" rather than "the request failed", and
+              since the list refetches every 5s the two flicker in and out together. */}
+          {runList.length === 0 && !runs.isLoading && !runs.error && (
             <Empty>{statusF !== 'all' || debouncedFilter ? t('noMatchesEmpty') : t('noRunsEmpty')}</Empty>
           )}
           {view === 'runs' && runList.map((r) => (
-            <RunRow key={r.runId} run={r} active={sel === r.runId} onClick={() => setSel(r.runId)} />
+            <RunRow key={r.runId} run={r} metricsById={metricsById} active={sel === r.runId} onClick={() => setSel(r.runId)} />
           ))}
           {view === 'threads' && threadGroups.map((g) => (
-            <ThreadGroupRow key={g.threadId ?? '__ungrouped__'} group={g} title={g.threadId ? threadTitles.get(g.threadId) : undefined} sel={sel} onSelect={setSel} />
+            <ThreadGroupRow key={g.threadId ?? '__ungrouped__'} group={g} title={g.threadId ? threadTitles.get(g.threadId) : undefined} sel={sel} onSelect={setSel} metricsById={metricsById} />
           ))}
           {runs.hasNextPage && (
             <button
@@ -179,6 +209,10 @@ export function Inspector() {
             status={allRuns.find((r) => r.runId === sel)?.status}
             caps={caps.data}
             allRuns={allRuns}
+            allRunsLoading={allRunsQ.isLoading}
+            metricsById={metricsById}
+            tab={tab}
+            onTabChange={setTab}
             onSelectRun={setSel}
             onPurged={() => setSel(null)}
             onBack={() => setSel(null)}
@@ -237,14 +271,13 @@ function fmtTok(n: number): string {
   return n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n);
 }
 
-function RunRow({ run, active, onClick }: { run: RunSummary; active: boolean; onClick: () => void }) {
+function RunRow({ run, metricsById, active, onClick }: { run: RunSummary; metricsById: Map<string, MetricsRun>; active: boolean; onClick: () => void }) {
   // New-design row: the AGENT name is the primary label (falls back to the runId when a run has no
   // agent — e.g. pre-existing runs / direct runDurable). A status PILL + per-run COST/relative-time
-  // come from the shared /metrics/runs query (react-query cached — one fetch for the whole list, no
-  // per-row request). Org-scoped runs still surface their `org:<id>:` prefix as a small badge.
+  // come from the shared /metrics/runs query (react-query cached — one fetch for the whole list, looked
+  // up O(1) via the `metricsById` Map the parent builds once — see API-10 in Inspector()).
   const { t } = useTranslation('inspector');
-  const mr = useMetricsRuns();
-  const metric: MetricsRun | undefined = (mr.data?.runs ?? []).find((x) => x.runId === run.runId);
+  const metric = metricsById.get(run.runId);
   const suspended = run.status === 'suspended';
   const { org, displayId } = parseOrgFromRunId(run.runId);
   const label = run.agent ?? displayId; // agent name = primary label (mockup); runId falls to the meta line
@@ -317,7 +350,7 @@ export function threadGroupLabel(threadId: string | null, title?: string, ungrou
   return threadId.length > 14 ? `${threadId.slice(0, 12)}…` : threadId;
 }
 
-function ThreadGroupRow({ group, title, sel, onSelect }: { group: ThreadGroup; title?: string; sel: string | null; onSelect: (id: string) => void }) {
+function ThreadGroupRow({ group, title, sel, onSelect, metricsById }: { group: ThreadGroup; title?: string; sel: string | null; onSelect: (id: string) => void; metricsById: Map<string, MetricsRun> }) {
   const { t } = useTranslation('inspector');
   const label = threadGroupLabel(group.threadId, title, t('ungrouped'));
   const named = group.threadId != null && !!title;
@@ -332,19 +365,19 @@ function ThreadGroupRow({ group, title, sel, onSelect }: { group: ThreadGroup; t
       </summary>
       <div className="ml-2 border-l border-border pl-1.5">
         {group.runs.map((r) => (
-          <RunRow key={r.runId} run={r} active={sel === r.runId} onClick={() => onSelect(r.runId)} />
+          <RunRow key={r.runId} run={r} metricsById={metricsById} active={sel === r.runId} onClick={() => onSelect(r.runId)} />
         ))}
       </div>
     </details>
   );
 }
 
-function RunDetail({ runId, status, caps, allRuns, onSelectRun, onPurged, onBack }: {
-  runId: string; status?: string; caps?: Capabilities; allRuns: RunSummary[]; onSelectRun: (id: string) => void; onPurged?: () => void; onBack?: () => void;
+function RunDetail({ runId, status, caps, allRuns, allRunsLoading, metricsById, tab, onTabChange, onSelectRun, onPurged, onBack }: {
+  runId: string; status?: string; caps?: Capabilities; allRuns: RunSummary[]; allRunsLoading: boolean; metricsById: Map<string, MetricsRun>;
+  tab: TabId; onTabChange: (tab: TabId) => void; onSelectRun: (id: string) => void; onPurged?: () => void; onBack?: () => void;
 }) {
   const { t } = useTranslation('inspector');
   const qc = useQueryClient();
-  const [tab, setTab] = useState<TabId>('conversation');
   const [purgeOpen, setPurgeOpen] = useState(false);
   const [unwindOpen, setUnwindOpen] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
@@ -385,16 +418,57 @@ function RunDetail({ runId, status, caps, allRuns, onSelectRun, onPurged, onBack
       toast.error(t('cancelRunFailedToast', { message: (e as Error).message }));
     }
   };
-  const cost = useCost(runId);
+  // API-11: sourced from /trace instead of a separate /cost request — the server's /trace response
+  // ALREADY includes `cost` (same getRunCost call the old /cost endpoint made), so this is one fewer
+  // full journal read per run selected, and NO extra request when the Trace/Journal tab is opened
+  // afterwards (same ['trace', runId] query, deduped by react-query — see TraceView/JournalTimeline,
+  // which already fetch this exact query).
+  const traceQ = useTrace(runId);
+  const cost = traceQ.data?.cost;
   const incidents = useRunIncidents(runId);
   const run = useRun(runId);
   const scores = useRunScores(runId);
-  const mr = useMetricsRuns();
-  const metric: MetricsRun | undefined = (mr.data?.runs ?? []).find((x) => x.runId === runId);
+  const metric = metricsById.get(runId);
   const runAgent = allRuns.find((r) => r.runId === runId)?.agent;
   const suspended = status === 'suspended';
   // Number of runs in the same lineage tree (for the tab badge text): those sharing a common root.
   const family = useMemo(() => allRuns.filter((r) => forkRoot(r.runId) === forkRoot(runId)), [allRuns, runId]);
+
+  // FLOW-12: a run purged/retention-swept from another tab (or otherwise gone) must not leave this
+  // one stuck on a dead ErrorBox forever with no matching row in the left list to give the user any
+  // context. Once the (unfiltered) run list has finished loading and no longer contains this runId,
+  // AND the direct fetch for it 404s, treat it exactly like a purge: clear the selection → Empty state.
+  useEffect(() => {
+    if (allRunsLoading) return;
+    if (allRuns.some((r) => r.runId === runId)) return;
+    if (run.error instanceof ApiError && run.error.status === 404) onPurged?.();
+  }, [allRunsLoading, allRuns, runId, run.error, onPurged]);
+
+  // Tab defs (shared by the <Tabs> nav below and the guard effect right after it — `tab` now lives in
+  // the parent Inspector/URL, see FLOW-07, so it SURVIVES switching to a different run instead of
+  // resetting on remount the way local state used to).
+  const tabDefs = useMemo(() => [
+    { id: 'conversation' as const, label: t('tabJournal') },
+    { id: 'trace' as const, label: 'Trace' },
+    ...(cost ? [{ id: 'cost' as const, label: t('tabCost') }] : []),
+    { id: 'network' as const, label: t('tabNetwork') },
+    { id: 'forks' as const, label: family.length > 1 ? t('tabForksCount', { count: family.length - 1 }) : t('tabForks') },
+    ...(caps?.regression ? [{ id: 'regression' as const, label: t('tabRegression') }] : []),
+    ...(caps?.processors ? [{ id: 'processors' as const, label: 'Processor' }] : []),
+    // Guard incidents (duplicate guard / loop detection): the tab appears ONLY when the run has
+    // any — an always-present empty tab would be noise (same conditional pattern as Cost).
+    ...(incidents.data?.incidents?.length ? [{ id: 'incidents' as const, label: t('tabIncidents', { count: incidents.data.incidents.length }) }] : []),
+  ], [cost, family.length, caps?.regression, caps?.processors, incidents.data, t]);
+  // Sanity-check `tab` against the full TabId union — NOT against `tabDefs` above: several entries in
+  // tabDefs are conditional on data that's still LOADING on first render for a freshly-selected run
+  // (cost, incidents.data), so validating against it would bounce a perfectly valid persisted/
+  // shared-URL tab (e.g. "cost") back to Conversation for a frame before its data arrives. This only
+  // catches genuinely bogus values (a hand-edited `?tab=` in the URL) — a conditional tab that simply
+  // doesn't apply to this particular run (e.g. "incidents" with none) just renders an empty panel below,
+  // same as it already did before `tab` moved into RunDetail.
+  useEffect(() => {
+    if (!ALL_TAB_IDS.includes(tab)) onTabChange('conversation');
+  }, [tab, onTabChange]);
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ['runs'] });
@@ -412,10 +486,13 @@ function RunDetail({ runId, status, caps, allRuns, onSelectRun, onPurged, onBack
     <div className="flex h-full flex-col">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-2.5">
         <div className="flex min-w-0 flex-wrap items-center gap-3">
-          {/* Mobile-only back arrow: below md the list/detail panels are master-detail (see
-              Inspector's top-level layout) — this is the only way back to the run list on a phone. */}
+          {/* Back/clear-selection arrow: below md the list/detail panels are master-detail (see
+              Inspector's top-level layout) — this is the ONLY way back to the run list on a phone.
+              FLOW-12: also shown at md+ — it's the only way to clear the selection on desktop (a
+              purged/otherwise-gone run's id sticks in localStorage otherwise, so F5 keeps loading it
+              back into a dead ErrorBox with no escape short of purging it). `onBack` just clears `sel`. */}
           {onBack && (
-            <button type="button" onClick={onBack} title={t('backToRunsTitle')} className="shrink-0 text-muted-foreground hover:text-foreground md:hidden">
+            <button type="button" onClick={onBack} title={t('backToRunsTitle')} className="shrink-0 text-muted-foreground hover:text-foreground">
               <ChevronLeft size={16} />
             </button>
           )}
@@ -458,13 +535,13 @@ function RunDetail({ runId, status, caps, allRuns, onSelectRun, onPurged, onBack
       {/* Meta grid (new design): labeled AGENT · MODEL · DURATION · TOKENS · COST — REAL data (run
           summary agent, /metrics/runs duration, cost breakdown). Fields with no data are omitted. */}
       {(() => {
-        const model = Object.keys(cost.data?.byModel ?? {}).find((m) => m && m !== 'unknown');
+        const model = Object.keys(cost?.byModel ?? {}).find((m) => m && m !== 'unknown');
         const items: { k: string; v: string; accent?: boolean }[] = [
           ...(runAgent ? [{ k: t('metaAgent'), v: runAgent }] : []),
           ...(model ? [{ k: t('metaModel'), v: model }] : []),
           ...(metric?.durationMs != null ? [{ k: t('metaDuration'), v: fmtDur(metric.durationMs) }] : []),
-          ...(cost.data?.totalTokens ? [{ k: t('metaTokens'), v: fmtTok(cost.data.totalTokens) }] : []),
-          ...(cost.data ? [{ k: t('metaCost'), v: `$${cost.data.costUsd.toFixed(4)}`, accent: true }] : []),
+          ...(cost?.totalTokens ? [{ k: t('metaTokens'), v: fmtTok(cost.totalTokens) }] : []),
+          ...(cost ? [{ k: t('metaCost'), v: `$${cost.costUsd.toFixed(4)}`, accent: true }] : []),
         ];
         if (!items.length) return null;
         return (
@@ -511,19 +588,8 @@ function RunDetail({ runId, status, caps, allRuns, onSelectRun, onPurged, onBack
       <div className="px-4 pt-2">
         <Tabs<TabId>
           active={tab}
-          onChange={setTab}
-          tabs={[
-            { id: 'conversation', label: t('tabJournal') },
-            { id: 'trace', label: 'Trace' },
-            ...(cost.data ? [{ id: 'cost' as const, label: t('tabCost') }] : []),
-            { id: 'network', label: t('tabNetwork') },
-            { id: 'forks', label: family.length > 1 ? t('tabForksCount', { count: family.length - 1 }) : t('tabForks') },
-            ...(caps?.regression ? [{ id: 'regression' as const, label: t('tabRegression') }] : []),
-            ...(caps?.processors ? [{ id: 'processors' as const, label: 'Processor' }] : []),
-            // Guard incidents (duplicate guard / loop detection): the tab appears ONLY when the run has
-            // any — an always-present empty tab would be noise (same conditional pattern as Cost).
-            ...(incidents.data?.incidents?.length ? [{ id: 'incidents' as const, label: t('tabIncidents', { count: incidents.data.incidents.length }) }] : []),
-          ]}
+          onChange={onTabChange}
+          tabs={tabDefs}
         />
       </div>
 
@@ -538,7 +604,7 @@ function RunDetail({ runId, status, caps, allRuns, onSelectRun, onPurged, onBack
           </div>
         )}
         {tab === 'trace' && <TraceView runId={runId} />}
-        {tab === 'cost' && cost.data && <CostSummary cost={cost.data} />}
+        {tab === 'cost' && cost && <CostSummary cost={cost} />}
         {tab === 'network' && <NetworkView runId={runId} />}
         {tab === 'forks' && <ForkView runId={runId} allRuns={allRuns} onSelectRun={onSelectRun} />}
         {/* Kept mounted (not conditionally rendered): a regression run is a REAL paid model call —
@@ -611,6 +677,7 @@ function Timeline({ runId }: { runId: string }) {
           <button
             key={k}
             type="button"
+            aria-pressed={kind === k}
             onClick={() => setKind(k)}
             className={cn(
               'rounded-md border px-2 py-1 font-mono text-[11px] transition-colors',
@@ -973,50 +1040,57 @@ function TraceView({ runId }: { runId: string }) {
         <span>{spans.length} span</span>
       </div>
 
-      <div className="overflow-hidden rounded-md border border-border">
-        {/* Axis header */}
-        <div className="flex border-b border-border bg-muted/30 text-[10px] text-muted-foreground">
-          <div className="microlabel w-48 shrink-0 border-r border-border px-2 py-1.5">span</div>
-          <div className="relative h-6 flex-1">
-            {ticks.map((tick) => (
-              <span key={tick} className="absolute top-1.5 font-mono" style={{ left: `calc(${tick * 100}% + 3px)` }}>
-                {tick === 1 ? '' : fmtSpanMs(tick * total)}
-              </span>
-            ))}
-          </div>
-          <div className="w-16 shrink-0 border-l border-border px-2 py-1.5 text-right font-mono">{t('durationHeader')}</div>
-        </div>
-
-        {spans.map((s, i) => {
-          const left = (s.startMs / total) * 100;
-          const width = Math.max(0.5, (s.durationMs / total) * 100);
-          const isTool = s.kind === 'tool';
-          const failed = isTool && (s.attrs as any)?.status === 'failed';
-          return (
-            <div
-              key={i}
-              onMouseEnter={() => setHover(i)}
-              onMouseLeave={() => setHover(null)}
-              className={`flex border-b border-border/50 last:border-b-0 ${hover === i ? 'bg-muted/40' : ''}`}
-            >
-              <div className={`w-48 shrink-0 truncate border-r border-border px-2 py-1 font-mono text-[11px] ${isTool ? 'pl-6 text-muted-foreground' : ''}`}>
-                {isTool ? s.name : `llm.generate #${s.step ?? '?'}`}
-              </div>
-              <div className="relative flex-1">
-                {ticks.slice(1, 4).map((tick) => (
-                  <div key={tick} className="absolute top-0 h-full border-l border-border/30" style={{ left: `${tick * 100}%` }} />
-                ))}
-                <div
-                  className={`absolute top-1 h-4 rounded-[3px] ${failed ? 'bg-destructive/70' : isTool ? 'bg-success/60' : 'bg-brand/60'}`}
-                  style={{ left: `${left}%`, width: `${width}%` }}
-                />
-              </div>
-              <div className="w-16 shrink-0 border-l border-border px-2 py-1 text-right font-mono text-[11px] tabular-nums text-muted-foreground">
-                {fmtSpanMs(s.durationMs)}
-              </div>
+      {/* VIS-08: the name/duration columns are fixed-width — on a narrow viewport (detail is full-width
+          below md) they used to eat almost the entire row, leaving only ~120px of bar strip with no way
+          to scroll to see more (overflow-hidden). Now the wrapper scrolls horizontally instead of
+          crushing the time axis; min-w-[520px] keeps the bar strip a legible width. Percent-based bar
+          positioning (left/width) is untouched. */}
+      <div className="overflow-x-auto rounded-md border border-border">
+        <div className="min-w-[520px]">
+          {/* Axis header */}
+          <div className="flex border-b border-border bg-muted/30 text-[10px] text-muted-foreground">
+            <div className="microlabel w-32 shrink-0 border-r border-border px-2 py-1.5 md:w-48">span</div>
+            <div className="relative h-6 flex-1">
+              {ticks.map((tick) => (
+                <span key={tick} className="absolute top-1.5 font-mono" style={{ left: `calc(${tick * 100}% + 3px)` }}>
+                  {tick === 1 ? '' : fmtSpanMs(tick * total)}
+                </span>
+              ))}
             </div>
-          );
-        })}
+            <div className="w-16 shrink-0 border-l border-border px-2 py-1.5 text-right font-mono">{t('durationHeader')}</div>
+          </div>
+
+          {spans.map((s, i) => {
+            const left = (s.startMs / total) * 100;
+            const width = Math.max(0.5, (s.durationMs / total) * 100);
+            const isTool = s.kind === 'tool';
+            const failed = isTool && (s.attrs as any)?.status === 'failed';
+            return (
+              <div
+                key={i}
+                onMouseEnter={() => setHover(i)}
+                onMouseLeave={() => setHover(null)}
+                className={`flex border-b border-border/50 last:border-b-0 ${hover === i ? 'bg-muted/40' : ''}`}
+              >
+                <div className={`w-32 shrink-0 truncate border-r border-border px-2 py-1 font-mono text-[11px] md:w-48 ${isTool ? 'pl-6 text-muted-foreground' : ''}`}>
+                  {isTool ? s.name : `llm.generate #${s.step ?? '?'}`}
+                </div>
+                <div className="relative flex-1">
+                  {ticks.slice(1, 4).map((tick) => (
+                    <div key={tick} className="absolute top-0 h-full border-l border-border/30" style={{ left: `${tick * 100}%` }} />
+                  ))}
+                  <div
+                    className={`absolute top-1 h-4 rounded-[3px] ${failed ? 'bg-destructive/70' : isTool ? 'bg-success/60' : 'bg-brand/60'}`}
+                    style={{ left: `${left}%`, width: `${width}%` }}
+                  />
+                </div>
+                <div className="w-16 shrink-0 border-l border-border px-2 py-1 text-right font-mono text-[11px] tabular-nums text-muted-foreground">
+                  {fmtSpanMs(s.durationMs)}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {/* Color key: kind identity via color + text (not color alone). Model=lime (primary, drives the flow), tool=green (secondary). */}

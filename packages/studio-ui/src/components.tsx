@@ -1,5 +1,7 @@
-import type { ComponentType, ReactNode } from 'react';
+import type { ComponentType, KeyboardEvent, ReactNode } from 'react';
+import { useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import { errMessage } from './api';
 
 export const cn = (...xs: (string | false | null | undefined)[]) => xs.filter(Boolean).join(' ');
 
@@ -103,7 +105,10 @@ export function StatStrip({ items }: { items: { label: string; value: string }[]
       {items.map((c) => (
         <div key={c.label} className="rounded-lg border border-border bg-card px-4 py-3">
           <div className="truncate text-xs text-muted-foreground">{c.label}</div>
-          <div className="mt-1.5 truncate font-mono text-2xl font-bold leading-none text-foreground">{c.value}</div>
+          {/* VIS-04: title exposes the full value on hover when truncate clips it (this is the number
+              itself, not a label — losing it silently would mislead a budget/cost read); text-xl at the
+              md breakpoint (narrowest width StatStrip renders at, before lg) leaves more room per digit. */}
+          <div title={c.value} className="mt-1.5 truncate font-mono text-xl font-bold leading-none text-foreground lg:text-2xl">{c.value}</div>
         </div>
       ))}
     </div>
@@ -163,7 +168,10 @@ export function EmptyState({
 
 export function ErrorBox({ error }: { error: unknown }) {
   const { t } = useTranslation('common');
-  return <div role="alert" className="m-3 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{t('errorPrefix')}: {String(error)}</div>;
+  // STATE-10: errMessage() strips the technical "ApiError:"/"Error:" prefix `String(error)` used to
+  // leak (see api.ts's errMessage JSDoc — "Use this in all views' toast/error display"); ErrorBox was
+  // the one central place still bypassing it, doubling up with its own t('errorPrefix') label.
+  return <div role="alert" className="m-3 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{t('errorPrefix')}: {errMessage(error)}</div>;
 }
 
 // Collapsible JSON node: object/array → <details> (open below depth 2), primitives get color tinting.
@@ -222,12 +230,34 @@ export function JsonBlock({ value, max = 1200 }: { value: unknown; max?: number 
 export function Tabs<T extends string>({ tabs, active, onChange }: { tabs: { id: T; label: string }[]; active: T; onChange: (t: T) => void }) {
   // overflow-x-auto + shrink-0 buttons: on a narrow (mobile) viewport a long tab strip scrolls
   // horizontally IN PLACE instead of wrapping/overflowing the page (common mobile tab-strip pattern).
+  const btnRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  // A11Y-06: real ARIA APG tabs pattern — role="tablist" on the wrapper, role="tab" + aria-selected
+  // on each button, roving tabindex (only the active tab is Tab-key reachable; ArrowLeft/Right both
+  // move selection AND move focus, per the APG "automatic activation" tabs pattern). This is the
+  // correct semantics for a real tab strip (screen readers announce "tab, selected, N of M"), unlike
+  // a toggle-button group (aria-pressed). Call-site tests were updated to query by role="tab" instead
+  // of role="button" for these tab strips (agents-tabs.test.tsx, network-view.test.tsx).
+  const onKeyDown = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {
+    let next = -1;
+    if (e.key === 'ArrowRight') next = (i + 1) % tabs.length;
+    else if (e.key === 'ArrowLeft') next = (i - 1 + tabs.length) % tabs.length;
+    if (next === -1) return;
+    e.preventDefault();
+    onChange(tabs[next].id);
+    btnRefs.current[next]?.focus();
+  };
   return (
-    <div className="flex gap-1 overflow-x-auto border-b border-border">
-      {tabs.map((t) => (
+    <div role="tablist" className="flex gap-1 overflow-x-auto border-b border-border">
+      {tabs.map((t, i) => (
         <button
           key={t.id}
+          ref={(el) => { btnRefs.current[i] = el; }}
+          type="button"
+          role="tab"
+          aria-selected={active === t.id}
+          tabIndex={active === t.id ? 0 : -1}
           onClick={() => onChange(t.id)}
+          onKeyDown={(e) => onKeyDown(e, i)}
           className={cn(
             '-mb-px shrink-0 border-b-2 px-3 py-1.5 text-sm transition-colors',
             active === t.id ? 'border-primary font-medium text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground',

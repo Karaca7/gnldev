@@ -36,7 +36,10 @@
   --muted: 240 10% 11.8%; --muted-foreground: 240 4.7% 62.2%; --muted-foreground-dim: 240 4.5% 39%; /* #1b1b21 / #9a9aa3 / #5f5f68 */
   --accent: 149 75% 56.1%; --accent-foreground: 240 9.1% 4.3%;        /* #3be38b */
   --destructive: 0 100% 71%; --destructive-foreground: 0 0% 98%;      /* #ff6b6b */
-  --border: 240 7% 22.4%; --input: 240 6.5% 27.3%; --ring: 78 100% 50%; /* #35353d / #41414a */
+  /* --input separated from --border (A11Y-10): form-field borders were only 1.41-1.81:1 against
+     background/card, failing WCAG 1.4.11 (3:1). #696977 clears 3.39:1 vs --background and 3.19:1
+     vs --card. --border itself is untouched — it stays the decorative panel-grid divider. */
+  --border: 240 7% 22.4%; --input: 240 6% 44%; --ring: 78 100% 50%; /* #35353d / #696977 */
   --success: 149 75% 56.1%; --warning: 42 86.3% 62.7%; --info: 208 89.7% 69.4%; /* #3be38b / #f2c14e / #6bb6f7 */
   --brand: 78 100% 50%; --brand-foreground: 240 9.1% 4.3%;
   --surface-deep: 240 9.1% 4.3%; --sidebar: 240 9.1% 4.3%;            /* #0a0a0c (sidebar, en derin) */
@@ -52,7 +55,9 @@
   --muted: 240 4% 92%; --muted-foreground: 240 4% 40%; --muted-foreground-dim: 240 3% 62%;
   --accent: 152 60% 32%; --accent-foreground: 240 10% 6%;
   --destructive: 0 74% 40%; --destructive-foreground: 0 0% 98%;
-  --border: 240 4% 85%; --input: 240 4% 80%; --ring: 78 85% 32%;
+  /* --input separated from --border (A11Y-10): same non-text-contrast gap as the dark theme
+     (was 1.31-1.50:1). #8a8a93 clears 3.12:1 vs --background and 3.41:1 vs --card. */
+  --border: 240 4% 85%; --input: 240 4% 56%; --ring: 78 85% 32%;
   /* WCAG AA fix (A11Y-02): darkened so StatusBadge's solid text at 15% bg tint clears 4.5:1
      against both --background and --card (was 2.0-3.9:1, see git history for the pre-fix values). */
   --success: 152 60% 26%; --warning: 42 92% 25%; --info: 208 88% 35%;

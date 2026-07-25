@@ -229,6 +229,8 @@ export function Playground() {
   const runIdRef = useRef<string>('');
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // A11Y-07: the ⚙ settings popover's trigger — Escape needs to return focus to it on close.
+  const settingsBtnRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => { if (!agent && agents.data?.[0]) setAgent(agents.data[0].name); }, [agents.data, agent]);
   // Smart auto-scroll: only follow while the user is pinned to the bottom.
@@ -236,6 +238,17 @@ export function Playground() {
   // Unmount cleanup: abort any in-flight stream when navigating away (e.g. to Inspector) so it
   // doesn't keep burning tokens invisibly — same pattern as Workflows.tsx.
   useEffect(() => () => { abortRef.current?.abort(); }, []);
+  // A11Y-07: the settings popover had no keyboard way to close (only re-clicking ⚙, or clicking the
+  // aria-hidden backdrop — unreachable from the keyboard). Escape closes it and returns focus to the
+  // trigger, same as any other non-modal popover.
+  useEffect(() => {
+    if (!showSettings) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') { setShowSettings(false); settingsBtnRef.current?.focus(); }
+    }
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [showSettings]);
 
   if (caps.data && !caps.data.playground) return <Empty>{t('playgroundDisabled')}</Empty>;
   if (agents.isLoading) return <Spinner />;
@@ -470,15 +483,20 @@ export function Playground() {
   // append the new agent's turns into the old agent's thread. Nothing is lost with memory on — the old
   // thread stays in the History list, one click away. Per-agent tool toggles are dropped too (they name
   // the previous agent's tools). The select is disabled while a run is in flight, so this never races a stream.
+  // FORM-08: the composer (input + attachments) is NOT part of that "fresh conversation" decision — a user
+  // who wrote a long prompt and then reconsiders which agent to send it to must not lose it, so this keeps it.
   function changeAgent(name: string) {
     if (name === agent) return;
     setAgent(name);
     setToolsOff(new Set());
-    newConversation();
+    newConversation(true);
   }
 
-  // Clean chat: the next send creates a new thread.
-  function newConversation() {
+  // Clean chat: the next send creates a new thread. `keepComposer` (FORM-08) preserves the in-progress
+  // input/attachments across the reset — used by changeAgent and the "New chat" button, where the reset is
+  // about the conversation/thread, not about whatever the user was in the middle of typing. Other callers
+  // (e.g. a deleted active thread) keep the full reset, including the composer.
+  function newConversation(keepComposer = false) {
     runIdRef.current = '';
     setThread('');
     setMsgs([]);
@@ -486,8 +504,7 @@ export function Playground() {
     setError(null);
     setCost(null);
     setLastRunId('');
-    setInput('');
-    setFiles([]);
+    if (!keepComposer) { setInput(''); setFiles([]); }
     setEditing(null);
     setEditVal('');
     setPinned(true); // empty transcript → the next reply must be followed (see loadThread)
@@ -564,7 +581,7 @@ export function Playground() {
           activeId={thread}
           busy={busy}
           onSelect={(th) => { setMobileHistoryOpen(false); loadThread(th); }}
-          onNew={() => { setMobileHistoryOpen(false); newConversation(); }}
+          onNew={() => { setMobileHistoryOpen(false); newConversation(true); }}
           onDeleted={(id) => { if (id === thread) newConversation(); }}
           configSlot={configFields}
           resourceId={resourceId}
@@ -588,14 +605,24 @@ export function Playground() {
           <span className="font-mono text-sm text-foreground">{agent}</span>
           {!caps.data?.memory && (
             <div className="relative">
-              <Btn variant="ghost" size="xs" onClick={() => setShowSettings((s) => !s)} title={t('configurationTitle')}>
+              {/* A plain <button> here, not <Btn> (which doesn't forward refs or accept aria-* props) —
+                  classes match Btn's ghost/xs recipe exactly so this stays visually identical. */}
+              <button
+                ref={settingsBtnRef}
+                type="button"
+                aria-expanded={showSettings}
+                aria-haspopup="dialog"
+                onClick={() => setShowSettings((s) => !s)}
+                title={t('configurationTitle')}
+                className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+              >
                 <Settings size={14} /> {t('settingsButton')}
-              </Btn>
+              </button>
               {showSettings && (
                 <>
                   {/* Click-away backdrop (transparent) — closes the popover; sits under it, over everything else. */}
                   <div className="fixed inset-0 z-20" onClick={() => setShowSettings(false)} aria-hidden />
-                  <div className="absolute left-0 top-full z-30 mt-1 max-h-[70vh] w-80 max-w-[calc(100vw-2rem)] overflow-auto rounded-md border border-border bg-background p-4 shadow-lg">
+                  <div role="dialog" aria-label={t('configurationTitle')} className="absolute left-0 top-full z-30 mt-1 max-h-[70vh] w-80 max-w-[calc(100vw-2rem)] overflow-auto rounded-md border border-border bg-background p-4 shadow-lg">
                     <div className="microlabel mb-3 text-foreground">{t('configurationTitle')}</div>
                     {configFields}
                   </div>
@@ -766,6 +793,15 @@ function HistorySidebar({ open, activeId, busy, onSelect, onNew, onDeleted, conf
   const [renameVal, setRenameVal] = useState('');
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
+  // FORM-07: closing the rename row (Enter/Escape/✓/✕) removes the focused <input> from the DOM, which
+  // fires a native blur on it — without this guard that blur would ALSO call onBlur's saveRename, double
+  // -submitting on Enter/✓ and, worse, silently overriding Escape/✕'s cancel with a save. Set right
+  // before every one of those closes; onBlur checks it and, if set, skips the save-on-blur path once.
+  const suppressRenameBlurRef = useRef(false);
+  function closeRenaming(save: boolean, id: string) {
+    suppressRenameBlurRef.current = true;
+    if (save) saveRename(id); else setRenaming(null);
+  }
 
   async function saveRename(id: string) {
     const title = renameVal.trim();
@@ -813,17 +849,26 @@ function HistorySidebar({ open, activeId, busy, onSelect, onNew, onDeleted, conf
             const active = activeId === th.id;
             if (renaming === th.id) {
               return (
-                <div key={th.id} className="mb-0.5 px-1 py-0.5">
+                <div key={th.id} className="mb-0.5 flex items-center gap-1 px-1 py-0.5">
                   <input
                     autoFocus
                     aria-label={t('conversationNamePlaceholder')}
                     placeholder={t('conversationNamePlaceholder')}
                     value={renameVal}
                     onChange={(e) => setRenameVal(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') saveRename(th.id); else if (e.key === 'Escape') setRenaming(null); }}
-                    onBlur={() => setRenaming(null)}
-                    className="w-full rounded-md border border-input bg-background px-2 py-1 text-sm outline-none focus:ring-1 focus:ring-ring"
+                    onKeyDown={(e) => { if (e.key === 'Enter') closeRenaming(true, th.id); else if (e.key === 'Escape') closeRenaming(false, th.id); }}
+                    // FORM-07: clicking away (a different thread row, outside the sidebar, …) now SAVES
+                    // instead of silently discarding the typed title — saveRename is a no-op on an empty
+                    // title. ✓/✕ below cover the discoverable, mouse-driven path (mirrors the delete flow).
+                    onBlur={() => { if (suppressRenameBlurRef.current) { suppressRenameBlurRef.current = false; return; } saveRename(th.id); }}
+                    className="w-full min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1 text-sm outline-none focus:ring-1 focus:ring-ring"
                   />
+                  <div className="flex items-center gap-0.5">
+                    {/* onMouseDown preventDefault: keeps focus on the input through the click so onBlur's
+                        save-on-blur path doesn't race this button's own (guarded) action. */}
+                    <button type="button" title={t('rename')} onMouseDown={(e) => e.preventDefault()} onClick={() => closeRenaming(true, th.id)} disabled={working} className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"><Check size={13} /></button>
+                    <button type="button" title={t('cancel')} onMouseDown={(e) => e.preventDefault()} onClick={() => closeRenaming(false, th.id)} className="rounded p-1 text-muted-foreground hover:bg-muted"><X size={13} /></button>
+                  </div>
                 </div>
               );
             }
@@ -956,13 +1001,17 @@ function MsgBlock({ msg, canEdit, onEdit, streaming }: { msg: Msg; canEdit?: boo
     <div className={`group flex ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div className={cn(
         'relative max-w-[80%] rounded-lg px-3 py-2 text-sm',
-        isUser ? 'whitespace-pre-wrap bg-primary text-primary-foreground' : 'border-l-2 border-success/40 bg-muted',
+        // VIS-07: user bubble is a TINT, not a full lime fill — a full-saturation `bg-primary` on every
+        // turn of a long conversation buried the one control that should read as "primary action" (Send,
+        // and Stop while streaming) in a wall of lime, and pending approval cards (border-warning/bg-warning)
+        // got lost in it too. index.css's contract for lime is a sparse/high-impact accent, not a fill.
+        isUser ? 'whitespace-pre-wrap border border-brand/40 bg-brand/10 text-foreground' : 'border-l-2 border-success/40 bg-muted',
       )}>
         {msg.role === 'user' && msg.files && msg.files.length > 0 && (
           <div className="mb-1.5 flex flex-wrap gap-1.5">
             {msg.files.map((f, i) => f.type.startsWith('image/')
-              ? <img key={i} src={f.dataUrl} alt={f.name} className="max-h-32 rounded border border-primary-foreground/20" />
-              : <span key={i} className="inline-flex items-center gap-1 rounded bg-primary-foreground/15 px-1.5 py-0.5 text-[11px]"><FileText size={11} /> {f.name}</span>)}
+              ? <img key={i} src={f.dataUrl} alt={f.name} className="max-h-32 rounded border border-border" />
+              : <span key={i} className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[11px]"><FileText size={11} /> {f.name}</span>)}
           </div>
         )}
         {isUser ? msg.text : <Markdown text={msg.text} />}

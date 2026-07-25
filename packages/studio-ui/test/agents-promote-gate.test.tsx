@@ -121,6 +121,11 @@ describe('Agents: promote eval-gate (412) UI', () => {
     const promoteBtn = await screen.findByRole('button', { name: /Promote/ });
     fireEvent.click(promoteBtn);
 
+    // FLOW-11: promote no longer fires on click — it opens a confirm dialog first (old/new version
+    // shown together). Confirming it is what actually triggers the request.
+    const confirmBtn = await screen.findByRole('button', { name: /Yes, promote/ });
+    fireEvent.click(confirmBtn);
+
     await waitFor(() => expect(screen.getByText('helpfulness')).toBeTruthy());
     expect(screen.getByText('accuracy')).toBeTruthy();
     expect(screen.getByText('0.30')).toBeTruthy();
@@ -134,5 +139,66 @@ describe('Agents: promote eval-gate (412) UI', () => {
     const post = calls.find(([u, init]: any[]) => String(u).endsWith('/managed-agents/yazar/promote') && init?.method === 'POST');
     expect(post).toBeTruthy();
     expect(JSON.parse((post![1] as any).body)).toEqual({ version: 2 });
+  });
+});
+
+/** POST to the promote endpoint → 200 success (no eval gate involved); other endpoints (capabilities/agents/managed-agents) ok:true. */
+function stubFetchPromoteSuccess() {
+  const calls: { url: string; method?: string }[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    const u = String(url);
+    calls.push({ url: u, method: init?.method });
+    if (u.endsWith('/promote') && init?.method === 'POST') return jsonOk({ ok: true, name: 'yazar', active: 2, previous: 1 });
+    if (u.endsWith('/capabilities')) return jsonOk({ agentVersions: true, evalGate: false });
+    if (u.endsWith('/agents')) return jsonOk([{ name: 'yazar', model: 'anthropic/claude-3', hasTools: false }]);
+    if (u.endsWith('/managed-agents')) {
+      return jsonOk({
+        agents: [{
+          name: 'yazar', active: 1,
+          versions: [
+            { version: 1, model: 'anthropic/claude-3', createdAt: 1 },
+            { version: 2, model: 'anthropic/claude-3', createdAt: 2 },
+          ],
+        }],
+      });
+    }
+    return jsonOk([]);
+  }));
+  return calls;
+}
+
+describe('FLOW-11: promote requires confirmation (no more fire-on-click)', () => {
+  it('clicking Promote opens a confirm dialog FIRST — no request is sent until the dialog is confirmed; the dialog names old+new version', async () => {
+    const calls = stubFetchPromoteSuccess();
+    wrap(<Agents />);
+    await waitFor(() => expect(screen.getByText('yazar')).toBeTruthy());
+
+    const promoteBtn = await screen.findByRole('button', { name: /Promote/ });
+    fireEvent.click(promoteBtn);
+
+    // Dialog surfaces BOTH the target version (2) and the currently-active one (1) together — so a
+    // wrong-row click is caught here instead of silently repointing prod.
+    await waitFor(() => expect(screen.getByText(/v2 → prod \(currently v1\)/)).toBeTruthy());
+    expect(calls.some((c) => c.url.endsWith('/promote'))).toBe(false); // not sent yet
+
+    const confirmBtn = await screen.findByRole('button', { name: /Yes, promote/ });
+    fireEvent.click(confirmBtn);
+
+    await waitFor(() => expect(calls.some((c) => c.url.endsWith('/managed-agents/yazar/promote') && c.method === 'POST')).toBe(true));
+  });
+
+  it('canceling the confirm dialog does NOT send a promote request', async () => {
+    const calls = stubFetchPromoteSuccess();
+    wrap(<Agents />);
+    await waitFor(() => expect(screen.getByText('yazar')).toBeTruthy());
+
+    const promoteBtn = await screen.findByRole('button', { name: /Promote/ });
+    fireEvent.click(promoteBtn);
+    await screen.findByRole('button', { name: /Yes, promote/ });
+
+    fireEvent.click(screen.getByText('Cancel').closest('button')!);
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: /Yes, promote/ })).toBeNull());
+    expect(calls.some((c) => c.url.endsWith('/promote'))).toBe(false);
   });
 });

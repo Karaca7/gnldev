@@ -146,7 +146,10 @@ export function buildScoreTrend(byDay: MetricsDayEntry[]): { scorers: string[]; 
 export function Observability() {
   const { t } = useTranslation('observability');
   const metrics = useMetrics();
-  const runRows = useMetricsRuns();
+  // `null` = no limit: percentiles (p50/p95/p99), the chart series and the CSV export are only
+  // meaningful over the FULL run set — the default 200-run cap (API-10, sized for Inspector's
+  // 50-row list) would silently truncate them. Its own cache key, so Inspector's capped query stands.
+  const runRows = useMetricsRuns(null);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [nameFilter, setNameFilter] = useState('');
 

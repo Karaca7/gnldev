@@ -42,8 +42,9 @@ describe('Agents: tab split (cards / create-edit)', () => {
     wrap(<Agents />);
     await waitFor(() => expect(screen.getByText('dd')).toBeTruthy());
 
-    expect(screen.getByRole('button', { name: /Agents/ })).toBeTruthy();
-    const createTab = screen.getByRole('button', { name: 'New version' }); // versions a code agent (renamed from "Create / Edit")
+    // A11Y-06: these are real ARIA tabs (role="tab" + aria-selected on a role="tablist" wrapper).
+    expect(screen.getByRole('tab', { name: /Agents/ })).toBeTruthy();
+    const createTab = screen.getByRole('tab', { name: 'New version' }); // versions a code agent (renamed from "Create / Edit")
 
     // Form is HIDDEN on the default (list) tab (the model input's placeholder is unique to the form)
     expect(screen.queryByPlaceholderText('openai/gpt-4o-mini')).toBeNull();
@@ -63,7 +64,7 @@ describe('Agents: tab split (cards / create-edit)', () => {
     // The model (from the current version) is pre-filled → a real edit. The name is PINNED to the code
     // agent (shown read-only, not a free-text field → Option A: versions govern code agents).
     await waitFor(() => expect(screen.getByDisplayValue('openai/gpt-4o')).toBeTruthy());
-    expect(screen.getByRole('button', { name: /Edit · dd/ })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /Edit · dd/ })).toBeTruthy();
   });
 });
 

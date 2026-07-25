@@ -8,5 +8,6 @@
   "selectPlaceholder": "seç…",
   "expectedOptional": "expected (ops.)",
   "scoring": "Skorlanıyor…",
-  "scoreAction": "Skorla"
+  "scoreAction": "Skorla",
+  "selectAtLeastOneScorer": "en az bir scorer seç"
 }
