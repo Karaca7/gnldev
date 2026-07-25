@@ -176,9 +176,18 @@ describe('Inspector — deep links (FLOW-07) and desktop selection recovery (FLO
       '/runs/ghost-run',
     );
     wrap(<Inspector />, ['/inspector?run=ghost-run']);
-    await waitFor(() => expect(screen.getByText('Select a run on the left → timeline · time-travel · trace · forks.')).toBeTruthy());
-    // The dead id must not resurrect itself into the URL or localStorage.
-    expect(screen.getByTestId('search-probe').textContent).not.toContain('ghost-run');
-    expect(localStorage.getItem('gnl-insp-run')).toBeNull();
+    // The Empty-state text lands as soon as `sel` clears to null (a synchronous render), but the
+    // `?run=` URL param and the `gnl-insp-run` localStorage key are cleared by separate effects
+    // (Inspector.tsx's [sel] and [sel, tab] effects) that commit on a later render pass — asserting
+    // on them right after the text appears is a real race, not just a slow query, and full-suite
+    // parallel load (290 files, many workers) widens that gap past a single tick often enough to
+    // flake. Waiting for all three inside one waitFor asserts the same end state without depending
+    // on everything landing in the same commit.
+    await waitFor(() => {
+      expect(screen.getByText('Select a run on the left → timeline · time-travel · trace · forks.')).toBeTruthy();
+      // The dead id must not resurrect itself into the URL or localStorage.
+      expect(screen.getByTestId('search-probe').textContent).not.toContain('ghost-run');
+      expect(localStorage.getItem('gnl-insp-run')).toBeNull();
+    }, { timeout: 5000 });
   });
 });

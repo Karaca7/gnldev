@@ -131,29 +131,42 @@ describe('@gnl/queue', () => {
 
   // Y2 — heartbeat: on a long handler, the lock TTL expiring and letting a second worker take over
   // (the "job double-runs" bug) is prevented by the heartbeat renewing every ttlMs/3.
+  // DETERMINISM: fake timers, same reasoning as the transient-renew test below — on the wall clock
+  // each heartbeat tick has only ~ttlMs*2/3 (~34ms) of slack, and a longer event-loop stall under
+  // full-suite load lets the lease REALLY expire (a legitimate takeover, not a lock defect).
   it('Y2: short ttl + long handler → heartbeat keeps the lock alive, the second worker cannot take over, the job runs ONCE', async () => {
-    const storage = new InMemoryStorage();
-    const runs = { n: 0 };
-    const handler: JobHandler = async () => {
-      runs.n++;
-      await new Promise((r) => setTimeout(r, 150)); // much longer than ttlMs (50)
-    };
-    // heartbeat option not given → default ON.
-    const w1 = createWorker(storage, { t: handler }, { owner: 'w1', ttlMs: 50 });
-    const w2 = createWorker(storage, { t: handler }, { owner: 'w2', ttlMs: 50 });
-    await enqueue(storage.work, 't', {}, { id: 'j' });
+    vi.useFakeTimers();
+    try {
+      const storage = new InMemoryStorage();
+      const runs = { n: 0 };
+      const handler: JobHandler = async () => {
+        runs.n++;
+        await new Promise((r) => setTimeout(r, 150)); // much longer than ttlMs (50)
+      };
+      // heartbeat option not given → default ON.
+      const w1 = createWorker(storage, { t: handler }, { owner: 'w1', ttlMs: 50 });
+      const w2 = createWorker(storage, { t: handler }, { owner: 'w2', ttlMs: 50 });
+      await enqueue(storage.work, 't', {}, { id: 'j' });
 
-    // w1 takes the job and runs the handler (150ms), while w2 keeps retrying like a poll.
-    const w1p = w1.runOnce();
-    const pokes: Promise<boolean>[] = [];
-    for (let i = 0; i < 6; i++) {
-      await new Promise((r) => setTimeout(r, 30));
-      pokes.push(w2.runOnce());
+      // w1 takes the job and runs the handler (150ms), while w2 keeps retrying like a poll.
+      const w1p = w1.runOnce();
+      await vi.advanceTimersByTimeAsync(0); // let w1 claim the lock and enter the handler
+      const pokes: Promise<boolean>[] = [];
+      for (let i = 0; i < 4; i++) { // pokes at t=30/60/90/120 — all while the handler is running
+        await vi.advanceTimersByTimeAsync(30);
+        const rec = await (storage.runs as any).get('job:j:lock'); // explicit lease check
+        expect(rec.owner).toBe('w1');
+        expect(rec.expires).toBeGreaterThan(Date.now()); // the heartbeat keeps extending it
+        pokes.push(w2.runOnce());
+      }
+      await vi.advanceTimersByTimeAsync(200);
+      await Promise.all([w1p, ...pokes]);
+
+      expect(runs.n).toBe(1); // heartbeat kept extending the TTL → w2 never took over
+      expect((await listJobs(storage.work))[0]!.status).toBe('done');
+    } finally {
+      vi.useRealTimers();
     }
-    await Promise.all([w1p, ...pokes]);
-
-    expect(runs.n).toBe(1); // heartbeat kept extending the TTL → w2 never took over
-    expect((await listJobs(storage.work))[0]!.status).toBe('done');
   });
 
   // Review finding: if renew() THROWS (a transient network/journal hiccup — NOT a token mismatch),
@@ -161,35 +174,118 @@ describe('@gnl/queue', () => {
   // finishes successfully, AND release() genuinely frees the lock (the token still matches) → a
   // second worker could RE-RUN the job. Fix: only renew returning FALSE (a real token mismatch)
   // makes lockLost true; a throw is just logged, and the next tick retries.
+  // DETERMINISM (flake fix): this test runs on FAKE TIMERS. The earlier real-time version measured
+  // the race on the WALL CLOCK: after the first renew THROWS, the lock (ttlMs=50, acquired at t=0)
+  // is only extended by the NEXT heartbeat tick at ttlMs/3*2 = ~32ms — a margin of ~18ms. Under
+  // full-suite load (288 files, parallel workers) the event loop stalls longer than that, so the
+  // tick lands after t=50, the lock GENUINELY expires and the second worker CORRECTLY takes over
+  // (queue job runs are at-least-once; exactly-once applies to the EFFECTS via the RunJournal) →
+  // `runs.n` became 2 intermittently. That was a test-timing artifact, not a lock/fencing defect.
+  // With fake timers every heartbeat tick, handler sleep and poke happens at an exact VIRTUAL
+  // time, so the lease is provably still alive at each poke regardless of machine load.
   it('Y2: renew throws on the first call (transient error), succeeds afterwards → job runs ONCE, qdone is written, the second worker cannot take over', async () => {
-    const storage = new InMemoryStorage();
-    const runs = { n: 0 };
-    const handler: JobHandler = async () => {
-      runs.n++;
-      await new Promise((r) => setTimeout(r, 150)); // much longer than ttlMs (50) → several renew ticks happen
-    };
-    let putIfMatchCalls = 0;
-    const origPutIfMatch = (storage.runs as any).putIfMatch.bind(storage.runs);
-    vi.spyOn(storage.runs as any, 'putIfMatch').mockImplementation(async (...args: any[]) => {
-      putIfMatchCalls++;
-      if (putIfMatchCalls === 1) throw new Error('transient network error'); // only the FIRST renew throws
-      return origPutIfMatch(...args);
-    });
-    const w1 = createWorker(storage, { t: handler }, { owner: 'w1', ttlMs: 50 });
-    const w2 = createWorker(storage, { t: handler }, { owner: 'w2', ttlMs: 50 });
-    await enqueue(storage.work, 't', {}, { id: 'j' });
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const storage = new InMemoryStorage();
+      const runs = { n: 0 };
+      const handler: JobHandler = async () => {
+        runs.n++;
+        await new Promise((r) => setTimeout(r, 150)); // much longer than ttlMs (50) → several renew ticks happen
+      };
+      let putIfMatchCalls = 0;
+      const origPutIfMatch = (storage.runs as any).putIfMatch.bind(storage.runs);
+      vi.spyOn(storage.runs as any, 'putIfMatch').mockImplementation(async (...args: any[]) => {
+        putIfMatchCalls++;
+        if (putIfMatchCalls === 1) throw new Error('transient network error'); // only the FIRST renew throws
+        return origPutIfMatch(...args);
+      });
+      const w1 = createWorker(storage, { t: handler }, { owner: 'w1', ttlMs: 50 });
+      const w2 = createWorker(storage, { t: handler }, { owner: 'w2', ttlMs: 50 });
+      await enqueue(storage.work, 't', {}, { id: 'j' });
 
-    const w1p = w1.runOnce();
-    const pokes: Promise<boolean>[] = [];
-    for (let i = 0; i < 6; i++) {
-      await new Promise((r) => setTimeout(r, 30));
-      pokes.push(w2.runOnce());
+      const w1p = w1.runOnce();
+      await vi.advanceTimersByTimeAsync(0); // let w1 claim the lock and enter the handler
+      const lockKey = 'job:j:lock';
+      const pokes: Promise<boolean>[] = [];
+      // 4 pokes at t=30/60/90/120 — all WHILE the 150ms handler is still running.
+      for (let i = 0; i < 4; i++) {
+        await vi.advanceTimersByTimeAsync(30); // virtual time: the heartbeat ticks (every 16ms) run in order
+        // EXPLICIT LEASE CHECK: the lock must still be LIVE and OURS at every poke — this is what
+        // the test is really about (the single transient renew error must not orphan the lease).
+        const rec = await (storage.runs as any).get(lockKey);
+        expect(rec.owner).toBe('w1');
+        expect(rec.expires).toBeGreaterThan(Date.now());
+        pokes.push(w2.runOnce()); // w2 sees a live lock → acquireRunLock returns null → no takeover
+      }
+      await vi.advanceTimersByTimeAsync(200); // let the 150ms handler finish + the terminal write land
+      await Promise.all([w1p, ...pokes]);
+      expect(await w2.runOnce()).toBe(false); // job is terminal (qdone) → nothing left for w2 to claim
+
+      expect(putIfMatchCalls).toBeGreaterThan(1); // the first renew threw, later ones went through
+      expect(runs.n).toBe(1); // despite the transient renew error, the job ran only ONCE (w2 did not take over)
+      expect((await listJobs(storage.work))[0]!.status).toBe('done'); // qdone was written (lockLost was not flipped to true by mistake)
+    } finally {
+      warn.mockRestore();
+      vi.useRealTimers();
     }
-    await Promise.all([w1p, ...pokes]);
+  });
 
-    expect(putIfMatchCalls).toBeGreaterThanOrEqual(1); // at least one renew happened (the first one threw)
-    expect(runs.n).toBe(1); // despite the transient renew error, the job ran only ONCE (w2 did not take over)
-    expect((await listJobs(storage.work))[0]!.status).toBe('done'); // qdone was written (lockLost was not flipped to true by mistake)
+  // The FLAKE'S OTHER HALF, pinned deterministically: if renew ticks are actually MISSED long
+  // enough for the lease to expire on the clock (transient renew errors + a stalled event loop —
+  // exactly what happened under full-suite load), a takeover is LEGITIMATE and the job body runs
+  // again (queue runs are at-least-once; exactly-once applies to the EFFECTS of a durable handler).
+  // What must NEVER break in that window is RESULT INTEGRITY: the takeover is a single atomic CAS
+  // (no split-brain), and the stale worker can neither write the result nor release the new owner's
+  // lock. `maxRenewFailures: 10` isolates the TTL-expiry path (lockLost is not assumed from the
+  // consecutive-throw heuristic here).
+  it('lease REALLY expires (missed renews) → takeover is atomic, the job re-runs, but the stale worker writes NOTHING', async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const storage = new InMemoryStorage();
+      const runs: string[] = [];
+      const handler: JobHandler = async () => {
+        runs.push('start');
+        await new Promise((r) => setTimeout(r, 150));
+      };
+      let renewBroken = true; // while true, every renew CAS throws → the lock is never extended
+      const origPutIfMatch = (storage.runs as any).putIfMatch.bind(storage.runs);
+      vi.spyOn(storage.runs as any, 'putIfMatch').mockImplementation(async (...args: any[]) => {
+        if (renewBroken) throw new Error('transient network error');
+        return origPutIfMatch(...args);
+      });
+      const qdoneWrites: unknown[] = [];
+      const origPut = storage.work.put.bind(storage.work);
+      vi.spyOn(storage.work, 'put').mockImplementation(async (k: string, v: unknown) => {
+        if (k === 'qdone:j') qdoneWrites.push(v);
+        return origPut(k, v);
+      });
+      const w1 = createWorker(storage, { t: handler }, { owner: 'w1', ttlMs: 50, maxRenewFailures: 10 });
+      const w2 = createWorker(storage, { t: handler }, { owner: 'w2', ttlMs: 50, maxRenewFailures: 10 });
+      await enqueue(storage.work, 't', {}, { id: 'j' });
+
+      const w1p = w1.runOnce();
+      await vi.advanceTimersByTimeAsync(0); // w1 holds the lock until t=50; its renews (t=16/32/48) all throw
+      await vi.advanceTimersByTimeAsync(55); // virtual clock passes the lease end — the lock is now genuinely stale
+      const stale = await (storage.runs as any).get('job:j:lock');
+      expect(stale.owner).toBe('w1');
+      expect(stale.expires).toBeLessThan(Date.now()); // proof: EXPIRED, not "stolen"
+      renewBroken = false;
+      const w2p = w2.runOnce(); // takes over the expired lock via CAS (acquireRunLock putIfMatch)
+      await vi.advanceTimersByTimeAsync(250); // both handlers finish (w1 at t=150, w2 at t=205)
+      await Promise.all([w1p, w2p]);
+
+      expect(runs.length).toBe(2); // at-least-once: the takeover legitimately re-ran the body
+      const owner = await (storage.runs as any).get('job:j:lock');
+      expect(owner.owner).toBe('w2'); // w1's release() was a no-op (token fencing) — it never freed w2's lock
+      expect(qdoneWrites.length).toBe(1); // ONE result: the stale w1 was blocked (lockLost + qown CAS)
+      expect(await storage.work.get('qatt:j')).toBeUndefined(); // and it corrupted no attempt counter either
+      expect((await listJobs(storage.work))[0]!.status).toBe('done');
+    } finally {
+      warn.mockRestore();
+      vi.useRealTimers();
+    }
   });
 
   // Phase 8 (review leftover): if renew throws `maxRenewFailures` (default 3) times IN A ROW,
@@ -371,19 +467,28 @@ describe('@gnl/queue', () => {
       worker.stop();
     });
 
+    // DETERMINISM: fake timers. The real-time version counted ticks in a 205ms WALL-CLOCK window
+    // (pollMs=10, expecting ≥15) — under a stalled event loop the loop simply gets fewer turns
+    // (observed: 13) even though the interval logic is correct. On the virtual clock the 10ms
+    // interval yields exactly 20 ticks, load-independent.
     it('backoff:false → constant poll interval (old behavior)', async () => {
-      const storage = new InMemoryStorage();
-      const origList = storage.work.list.bind(storage.work);
-      let calls = 0;
-      vi.spyOn(storage.work, 'list').mockImplementation((...args: any[]) => {
-        calls++;
-        return (origList as any)(...args);
-      });
-      const worker = createWorker(storage, {}, { pollMs: 10, backoff: false });
-      worker.start();
-      await new Promise((r) => setTimeout(r, 205)); // ~20-tick window
-      worker.stop();
-      expect(calls).toBeGreaterThanOrEqual(15); // ticks at a regular constant interval, no backoff
+      vi.useFakeTimers();
+      try {
+        const storage = new InMemoryStorage();
+        const origList = storage.work.list.bind(storage.work);
+        let calls = 0;
+        vi.spyOn(storage.work, 'list').mockImplementation((...args: any[]) => {
+          calls++;
+          return (origList as any)(...args);
+        });
+        const worker = createWorker(storage, {}, { pollMs: 10, backoff: false });
+        worker.start();
+        await vi.advanceTimersByTimeAsync(205); // ~20-tick window
+        worker.stop();
+        expect(calls).toBeGreaterThanOrEqual(15); // ticks at a regular constant interval, no backoff
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('no overlap: a new tick does not start while a slow poll is still running', async () => {

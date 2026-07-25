@@ -71,6 +71,14 @@ const WORKFLOWS = [{ name: 'invoice', steps: [{ id: 's1', kind: 'step' }] }];
 const RUN_A = 'wf-invoice-100';
 const RUN_B = 'wf-invoice-200';
 
+// This test's setup chains three mocked fetches (capabilities → workflows → the auto-selected
+// workflow's runs) plus a run-state fetch on top before each async assertion below can resolve.
+// Under an isolated run that settles well inside the default 1000ms @testing-library timeout, but
+// full-suite runs (290 files, many parallel workers competing for CPU) can push the same chain past
+// it without anything actually being broken — this widens only the load-sensitive waits, it does not
+// change what they assert.
+const LOAD_TIMEOUT = 5000;
+
 describe('WorkflowRunDiff (via Workflows view) — STATE-08', () => {
   it('shows ErrorBox (not "no steps to compare") when one side of the diff fails to load, and hides the diff counter', async () => {
     stubFetch({
@@ -89,18 +97,18 @@ describe('WorkflowRunDiff (via Workflows view) — STATE-08', () => {
     wrap(<Workflows />);
 
     // Open the history menu and pick RUN_A as the active run (sets lastRunId → onDiff becomes available).
-    const historyBtn = await screen.findByText('History (2)');
+    const historyBtn = await screen.findByText('History (2)', {}, { timeout: LOAD_TIMEOUT });
     fireEvent.click(historyBtn);
     fireEvent.click(await screen.findByText(RUN_A));
 
     // Reopen the history menu; the "compare with active run" icon only renders once lastRunId is set —
     // its appearance is the async-safe signal that RUN_A finished loading as the active run.
-    fireEvent.click(await screen.findByText('History (2)'));
-    fireEvent.click(await screen.findByTitle('Compare with active run'));
+    fireEvent.click(await screen.findByText('History (2)', {}, { timeout: LOAD_TIMEOUT }));
+    fireEvent.click(await screen.findByTitle('Compare with active run', {}, { timeout: LOAD_TIMEOUT }));
 
     // WorkflowRunDiff is now mounted with a=RUN_A (ok), b=RUN_B (500) — assert the error branch, not the
     // "identical / no steps" branch that STATE-08 used to fall into.
-    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy(), { timeout: LOAD_TIMEOUT });
     expect(screen.getByRole('alert').textContent).toContain('journal unavailable');
     expect(screen.queryByText('No step output to compare.')).toBeNull();
     expect(screen.queryByText(/identical/)).toBeNull();
