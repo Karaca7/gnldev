@@ -24,6 +24,14 @@ describe('groupRunsByThread (Runs | Threads toggle — pure grouping)', () => {
     expect(groups.find((g) => g.threadId === null)?.runs.map((r) => r.runId)).toEqual(['r1', 'r3']);
   });
 
+  it('a run whose threadId equals its own runId (memory-off sentinel) is folded into "ungrouped", not a pseudo-thread', () => {
+    // pg-1 self-threads (threadId === runId); t-a is a real multi-turn thread.
+    const runs = [run('r1', 't-a'), run('pg-1', 'pg-1'), run('r2', 't-a'), run('pg-2', 'pg-2')];
+    const groups = groupRunsByThread(runs);
+    expect(groups.map((g) => g.threadId)).toEqual(['t-a', null]);
+    expect(groups.find((g) => g.threadId === null)?.runs.map((r) => r.runId)).toEqual(['pg-1', 'pg-2']);
+  });
+
   it('within a group, order matches input order (newest-first is preserved)', () => {
     const runs = [run('newest', 't-a'), run('middle', 't-a'), run('oldest', 't-a')];
     const groups = groupRunsByThread(runs);

@@ -264,12 +264,18 @@ export interface ThreadGroup { threadId: string | null; runs: RunSummary[]; }
  * caller already provides newest-first). Group order is stable by first-seen order — i.e. the group
  * whose most recent activity is newest (whose first run in input order is the newest) comes first;
  * the "ungrouped" group is always moved to the very end.
+ *
+ * A run whose `threadId` EQUALS its own `runId` is treated as ungrouped: that's the sentinel the
+ * Playground writes when memory is OFF (`threadId: runId`), and any bare `runDurable` that self-threads.
+ * It's not a real multi-turn conversation and has no thread record (→ no title), so grouping it on its
+ * own would render a pseudo-thread headed by a raw run id. Folding it into "ungrouped" keeps the Threads
+ * view to REAL threads + one ungrouped bucket.
  */
 export function groupRunsByThread(runs: RunSummary[]): ThreadGroup[] {
   const order: (string | null)[] = [];
   const byKey = new Map<string | null, RunSummary[]>();
   for (const r of runs) {
-    const key = r.threadId ?? null;
+    const key = r.threadId && r.threadId !== r.runId ? r.threadId : null;
     if (!byKey.has(key)) { byKey.set(key, []); order.push(key); }
     byKey.get(key)!.push(r);
   }
