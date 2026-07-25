@@ -22,6 +22,124 @@ const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as { Data
 
 const SCHEMA_VERSION = '1';
 
+// ── SQLITE_BUSY: bounded retry at the STATEMENT boundary ───────────────────────
+/**
+ * WHY (multi-process contention): SQLite admits exactly ONE writer at a time. `busy_timeout` (the
+ * constructor's first pragma) hides most of that contention — but NOT all of it:
+ *   • SQLite refuses to invoke the busy handler where waiting could deadlock (a read→write lock
+ *     upgrade returns SQLITE_BUSY IMMEDIATELY), and some statements never consult it at all
+ *     (`PRAGMA journal_mode = WAL` against a concurrent booter fails instantly — measured).
+ *   • The timeout is WALL-CLOCK: on a saturated machine (a full test suite, a noisy host) 5s can
+ *     elapse before the OS even schedules this process.
+ * In every one of those cases the caller was handed "database is locked" for a purely TRANSIENT
+ * condition. A durability layer should absorb that (Postgres drivers do the same for transient
+ * conflicts) — and must absorb NOTHING else: only SQLITE_BUSY is retried here; every other error
+ * (constraint violations, corruption, misuse) propagates on the FIRST throw, untouched.
+ *
+ * WHAT IS RETRIED — exactly ONE SQLite statement per attempt. This wrapper sits at the statement
+ * boundary (`exec`, `prepare().run|get|all`), NEVER around a multi-statement block. That placement
+ * is what makes the retry provably safe:
+ *   • A statement that fails with SQLITE_BUSY applied NOTHING — it never obtained the write lock, and
+ *     SQLite rolls back that statement's implicit sub-transaction. There is no half-applied write to
+ *     resume from, so re-executing it cannot apply anything twice.
+ *   • `BEGIN IMMEDIATE` is itself a statement, so the usual contention point IS covered, and retrying
+ *     it restarts the transaction from before its first write (a failed BEGIN leaves autocommit mode).
+ *     A statement that fails INSIDE an open transaction re-runs alone — the transaction stays open and
+ *     keeps holding its lock, so the already-applied statements are neither lost nor repeated.
+ *   • CAS keeps its exact meaning. `putIfAbsent` (INSERT … ON CONFLICT DO NOTHING) and `putIfMatch`
+ *     (UPDATE … WHERE value = ?) are decided by the ENGINE at the instant the statement actually
+ *     executes: if a competing process claimed the key while we were backing off, the retry sees
+ *     `changes = 0` → `false` = "we lost", which is the TRUTH (our failed attempt wrote nothing).
+ *     A retry can therefore never manufacture a second winner for the same key.
+ * When the bound is exhausted the error is still THROWN: the "never silently swallow, never fake
+ * atomicity" rule (see SqliteRunJournal.withTx) is unchanged — we merely wait a bounded while first.
+ *
+ * WHY THE BACKOFF IS SYNCHRONOUS: node:sqlite is synchronous and the journal's transaction bodies
+ * must stay await-free — an `await` between BEGIN and COMMIT would let a concurrent caller's
+ * statements join the open transaction (see applyBatch's comment). So the pause blocks the thread
+ * (Atomics.wait — a real sleep, not a spin), exactly as the engine's own busy_timeout wait does.
+ *
+ * THE BOUND (both halves matter — MEASURED, not guessed). Two very different BUSY regimes exist and
+ * one number cannot bound both:
+ *   • FAST regime — the engine returns SQLITE_BUSY without waiting (lock upgrade, `journal_mode`
+ *     pragma). Attempts are ~free, so the ATTEMPT count is the meaningful limit: 10 tries spread over
+ *     ≈0.65s of backoff.
+ *   • SLOW regime — the busy handler IS consulted and eats the whole `busy_timeout` (measured under a
+ *     saturated 6-way parallel race: the FIRST attempt threw at elapsed=5106ms). Here the attempt
+ *     count is irrelevant and only WALL TIME bounds anything — and the ceiling MUST sit above 5000,
+ *     or the very case this retry exists for gets zero retries. 15s ⇒ ~3 full busy_timeout windows.
+ * Worst case for a caller is therefore ~20s (the last attempt may start just under the ceiling and
+ * then burn its own 5s busy_timeout) — after which the error is THROWN, never swallowed.
+ */
+const BUSY_MAX_ATTEMPTS = 10;       // TOTAL executions of the statement (1 initial + 9 retries)
+const BUSY_MAX_ELAPSED_MS = 15_000; // hard ceiling; counts the engine's OWN busy_timeout waits too
+const BUSY_MAX_DELAY_MS = 100;      // backoff: 1,2,4,8,16,32,64,100,100 ms, each +0..100% jitter
+
+/** SQLITE_BUSY only (primary code 5, incl. the BUSY_* extended codes). NOT SQLITE_LOCKED (6) — a
+ *  table-level/shared-cache conflict is not the transient cross-process case and waiting won't fix it. */
+function isBusyError(e: unknown): boolean {
+  if (e == null || typeof e !== 'object') return false;
+  const err = e as { errcode?: unknown; errstr?: unknown; message?: unknown };
+  // node:sqlite stamps a numeric `errcode` — authoritative, so never second-guess it with a text match
+  // (a constraint error whose MESSAGE happened to mention a lock must not be retried).
+  if (typeof err.errcode === 'number') return (err.errcode & 0xff) === 5;
+  const text = `${String(err.errstr ?? '')} ${String(err.message ?? '')}`;
+  return /database is locked/i.test(text) || /SQLITE_BUSY/i.test(text);
+}
+
+const BUSY_SLEEP_SLOT = new Int32Array(new SharedArrayBuffer(4));
+/** Blocking pause without yielding the event loop (see the "WHY SYNCHRONOUS" note above). */
+function sleepSync(ms: number): void {
+  if (ms <= 0) return;
+  try {
+    Atomics.wait(BUSY_SLEEP_SLOT, 0, 0, ms);
+  } catch {
+    // Runtime that forbids Atomics.wait on this thread → short bounded spin (≤100ms) instead.
+    const until = Date.now() + ms;
+    while (Date.now() < until) { /* spin */ }
+  }
+}
+
+/** Runs ONE statement, retrying it while it fails with SQLITE_BUSY, within the bound above. */
+function retryOnBusy<T>(fn: () => T): T {
+  const startedAt = Date.now();
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return fn();
+    } catch (e) {
+      if (!isBusyError(e)) throw e;                                  // not transient → surface as-is
+      if (attempt + 1 >= BUSY_MAX_ATTEMPTS) throw e;                 // bound: attempts
+      if (Date.now() - startedAt >= BUSY_MAX_ELAPSED_MS) throw e;    // bound: total elapsed time
+      const base = Math.min(1 << attempt, BUSY_MAX_DELAY_MS);
+      sleepSync(base + Math.floor(Math.random() * base)); // jitter → two racers don't re-collide in lockstep
+    }
+  }
+}
+
+/**
+ * The DatabaseSync handle every store below is given: identical surface (`exec` / `prepare` /
+ * `close`), with each statement execution passed through `retryOnBusy`. Wrapping HERE (once, at
+ * construction) rather than at ~25 call sites keeps the retry uniformly at the one granularity that
+ * is safe to repeat — a single statement — instead of leaving it to each caller to get right.
+ */
+class BusyRetryDatabase {
+  constructor(readonly inner: any) {}
+  exec(sql: string): unknown {
+    // Multi-statement `exec` is used ONLY for BEGIN/COMMIT/ROLLBACK, pragmas and the idempotent
+    // `IF NOT EXISTS` DDL — all safe to re-run whole.
+    return retryOnBusy(() => this.inner.exec(sql));
+  }
+  prepare(sql: string): { run: (...a: any[]) => any; get: (...a: any[]) => any; all: (...a: any[]) => any } {
+    const stmt = retryOnBusy(() => this.inner.prepare(sql));
+    return {
+      run: (...a: any[]) => retryOnBusy(() => stmt.run(...a)),
+      get: (...a: any[]) => retryOnBusy(() => stmt.get(...a)),
+      all: (...a: any[]) => retryOnBusy(() => stmt.all(...a)),
+    };
+  }
+  close(): void { this.inner.close(); }
+}
+
 function offset(q?: ListQuery): { start: number; limit: number } {
   return { start: q?.cursor ? Number(q.cursor) || 0 : 0, limit: q?.limit ?? 50 };
 }
@@ -51,7 +169,9 @@ export class SqliteStorage implements Storage {
   private readonly dbPath: string;
   constructor(path = ':memory:') {
     this.dbPath = path;
-    this.db = new DatabaseSync(path);
+    // Every statement below (and in every store class) goes through the SQLITE_BUSY retry wrapper —
+    // see BusyRetryDatabase. Transient lock contention is absorbed; anything else still throws.
+    this.db = new BusyRetryDatabase(new DatabaseSync(path));
     // GOREV (multi-process cold start — caught by multi-process-race.test.ts): busy_timeout MUST be
     // the FIRST pragma, in its OWN try. It used to be the LAST statement of the shared try below —
     // when two processes cold-started the same file simultaneously, the WAL switch raced with
@@ -259,7 +379,11 @@ class SqliteRunJournal implements RunJournal {
    * "within a transaction" error), it proceeds without wrapping — the outer transaction provides
    * atomicity (a savepoint is unnecessary: nothing in src/ calls the journal from inside a transaction,
    * this is purely a safety net for external callers).
-   * Other errors (e.g. SQLITE_BUSY) are NOT SWALLOWED — thrown rather than silently dropping atomicity.
+   * Other errors are NOT SWALLOWED — thrown rather than silently dropping atomicity. SQLITE_BUSY is
+   * the one contended-but-transient case, and it is handled WITHOUT weakening that rule: the retry
+   * lives one level down, per STATEMENT (BusyRetryDatabase — `BEGIN IMMEDIATE` is a statement, so a
+   * contended lock is retried from before the transaction's first write); once its bound is exhausted
+   * the error still lands here and is still thrown, after this ROLLBACK.
    */
   private withTx<T>(fn: () => T): T {
     let began = false;
