@@ -1,6 +1,6 @@
 {
   "name": "@gnldev/auth",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "license": "Apache-2.0",
   "description": "Auth contract (AuthProvider) + free role-based default (bearer/basic, read/write). Open-core seam: @gnldev/auth-ee plugs into the same interface.",
   "type": "module",
@@ -25,5 +25,18 @@
   },
   "devDependencies": {
     "hono": "^4.6.0"
+  },
+  "author": "Karaca7 (https://gnl.dev)",
+  "homepage": "https://gnl.dev",
+  "bugs": {
+    "url": "https://github.com/Karaca7/gnl/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Karaca7/gnl.git",
+    "directory": "packages/auth"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

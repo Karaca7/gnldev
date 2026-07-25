@@ -1,6 +1,6 @@
 {
   "name": "@gnldev/cache",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "license": "Apache-2.0",
   "description": "Cross-run content-hash cache on @gnldev/durable. Within-run reuse = journal replay; across-run reuse = cache.",
   "type": "module",
@@ -25,5 +25,18 @@
   },
   "devDependencies": {
     "@gnldev/durable": "workspace:*"
+  },
+  "author": "Karaca7 (https://gnl.dev)",
+  "homepage": "https://gnl.dev",
+  "bugs": {
+    "url": "https://github.com/Karaca7/gnl/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Karaca7/gnl.git",
+    "directory": "packages/cache"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

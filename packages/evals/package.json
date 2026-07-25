@@ -1,6 +1,6 @@
 {
   "name": "@gnldev/evals",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "license": "Apache-2.0",
   "description": "Scorers + LLM-judge for @gnldev/durable. scoreRun reads the journal trace → deterministic, replayable scoring.",
   "type": "module",
@@ -27,5 +27,18 @@
   "devDependencies": {
     "@gnldev/durable": "workspace:*",
     "ai": "^5.0.0"
+  },
+  "author": "Karaca7 (https://gnl.dev)",
+  "homepage": "https://gnl.dev",
+  "bugs": {
+    "url": "https://github.com/Karaca7/gnl/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Karaca7/gnl.git",
+    "directory": "packages/evals"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

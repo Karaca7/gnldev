@@ -1,6 +1,6 @@
 {
   "name": "@gnldev/server",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "license": "Apache-2.0",
   "description": "Auto-REST + OpenAPI for @gnldev/durable agents: createGnl registry → HTTP router (run/resume/runs + openapi.json).",
   "type": "module",
@@ -32,5 +32,18 @@
     "@gnldev/durable": "workspace:*",
     "ai": "^5.0.0",
     "zod": "^3.25.0"
+  },
+  "author": "Karaca7 (https://gnl.dev)",
+  "homepage": "https://gnl.dev",
+  "bugs": {
+    "url": "https://github.com/Karaca7/gnl/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Karaca7/gnl.git",
+    "directory": "packages/server"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "@gnldev/client",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "license": "Apache-2.0",
   "description": "Type-safe REST/SSE client for @gnldev/server agents: framework-agnostic core + React hooks.",
   "type": "module",
@@ -37,5 +37,18 @@
     "@gnldev/durable": "workspace:*",
     "@types/react": "^18.3.0",
     "react": "^18.3.0"
+  },
+  "author": "Karaca7 (https://gnl.dev)",
+  "homepage": "https://gnl.dev",
+  "bugs": {
+    "url": "https://github.com/Karaca7/gnl/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Karaca7/gnl.git",
+    "directory": "packages/client"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

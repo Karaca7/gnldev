@@ -1,6 +1,6 @@
 {
   "name": "@gnldev/queue",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "license": "Apache-2.0",
   "description": "Durable background-task queue + worker on @gnldev/durable. Jobs run as durable runs → crash mid-job resumes exactly-once.",
   "type": "module",
@@ -25,5 +25,18 @@
   },
   "devDependencies": {
     "@gnldev/durable": "workspace:*"
+  },
+  "author": "Karaca7 (https://gnl.dev)",
+  "homepage": "https://gnl.dev",
+  "bugs": {
+    "url": "https://github.com/Karaca7/gnl/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Karaca7/gnl.git",
+    "directory": "packages/queue"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

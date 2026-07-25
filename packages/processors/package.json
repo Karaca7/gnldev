@@ -1,6 +1,6 @@
 {
   "name": "@gnldev/processors",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "license": "Apache-2.0",
   "description": "Input/output processors for @gnldev/durable agents: PII redaction, moderation, tool-filter. Durability-infused (journaled).",
   "type": "module",
@@ -25,5 +25,18 @@
   },
   "devDependencies": {
     "@gnldev/durable": "workspace:*"
+  },
+  "author": "Karaca7 (https://gnl.dev)",
+  "homepage": "https://gnl.dev",
+  "bugs": {
+    "url": "https://github.com/Karaca7/gnl/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Karaca7/gnl.git",
+    "directory": "packages/processors"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

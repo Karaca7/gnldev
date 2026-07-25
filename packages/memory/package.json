@@ -1,6 +1,6 @@
 {
   "name": "@gnldev/memory",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "license": "Apache-2.0",
   "description": "Rich semantic-recall memory for @gnldev/durable: schema working memory, thread/resource mgmt, observational memory — all journaled (replayable/exactly-once).",
   "type": "module",
@@ -30,5 +30,18 @@
     "@gnldev/queue": "workspace:*",
     "ai": "^5.0.0",
     "zod": "^3.25.0"
+  },
+  "author": "Karaca7 (https://gnl.dev)",
+  "homepage": "https://gnl.dev",
+  "bugs": {
+    "url": "https://github.com/Karaca7/gnl/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Karaca7/gnl.git",
+    "directory": "packages/memory"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

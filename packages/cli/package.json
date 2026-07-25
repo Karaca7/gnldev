@@ -1,6 +1,6 @@
 {
   "name": "@gnldev/cli",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "license": "Apache-2.0",
   "description": "gnl developer CLI: scaffold (init), hot-reload dev server (REST + Studio Playground), studio.",
   "type": "module",
@@ -69,5 +69,18 @@
     "hono": "^4.6.0",
     "ai": "^5.0.0",
     "zod": "^3.25.0"
+  },
+  "author": "Karaca7 (https://gnl.dev)",
+  "homepage": "https://gnl.dev",
+  "bugs": {
+    "url": "https://github.com/Karaca7/gnl/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Karaca7/gnl.git",
+    "directory": "packages/cli"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

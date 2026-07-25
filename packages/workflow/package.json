@@ -1,6 +1,6 @@
 {
   "name": "@gnldev/workflow",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "license": "Apache-2.0",
   "description": "Durable deterministic workflows: each step journaled exactly-once, crash→resume picks up where it left off.",
   "type": "module",
@@ -19,5 +19,18 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
+  },
+  "author": "Karaca7 (https://gnl.dev)",
+  "homepage": "https://gnl.dev",
+  "bugs": {
+    "url": "https://github.com/Karaca7/gnl/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Karaca7/gnl.git",
+    "directory": "packages/workflow"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

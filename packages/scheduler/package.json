@@ -1,6 +1,6 @@
 {
   "name": "@gnldev/scheduler",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "license": "Apache-2.0",
   "description": "Durable workflow scheduler on @gnldev/durable: cron/interval/at triggers, exactly-once fire (run-lock), backoff/retry. Zaman = veri (resolve-then-freeze).",
   "type": "module",
@@ -28,5 +28,18 @@
   },
   "devDependencies": {
     "@gnldev/durable": "workspace:*"
+  },
+  "author": "Karaca7 (https://gnl.dev)",
+  "homepage": "https://gnl.dev",
+  "bugs": {
+    "url": "https://github.com/Karaca7/gnl/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Karaca7/gnl.git",
+    "directory": "packages/scheduler"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "@gnldev/durable",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "license": "Apache-2.0",
   "description": "Exactly-once + deterministic-replay durability layer for Vercel AI SDK agents. Drop-in: generateText -> runDurable.",
   "type": "module",
@@ -60,5 +60,18 @@
   },
   "dependencies": {
     "superjson": "^2.2.6"
+  },
+  "author": "Karaca7 (https://gnl.dev)",
+  "homepage": "https://gnl.dev",
+  "bugs": {
+    "url": "https://github.com/Karaca7/gnl/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Karaca7/gnl.git",
+    "directory": "packages/durable"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "@gnldev/mcp",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "license": "Apache-2.0",
   "description": "MCP client → AI SDK tools. With @gnldev/durable, external MCP tool calls become exactly-once + replayable.",
   "type": "module",
@@ -30,5 +30,18 @@
   "devDependencies": {
     "@gnldev/durable": "workspace:*",
     "ai": "^5.0.0"
+  },
+  "author": "Karaca7 (https://gnl.dev)",
+  "homepage": "https://gnl.dev",
+  "bugs": {
+    "url": "https://github.com/Karaca7/gnl/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Karaca7/gnl.git",
+    "directory": "packages/mcp"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

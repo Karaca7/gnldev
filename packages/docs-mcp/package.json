@@ -1,6 +1,6 @@
 {
   "name": "@gnldev/docs-mcp",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "license": "Apache-2.0",
   "description": "MCP stdio server exposing GNL docs to AI coding assistants (any MCP-compatible CLI/editor): overview/feature/search tools. Hand-written JSON-RPC 2.0 (no SDK), embedded static content + optional live gnl.dev fetch.",
   "type": "module",
@@ -22,5 +22,18 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
+  },
+  "author": "Karaca7 (https://gnl.dev)",
+  "homepage": "https://gnl.dev",
+  "bugs": {
+    "url": "https://github.com/Karaca7/gnl/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Karaca7/gnl.git",
+    "directory": "packages/docs-mcp"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

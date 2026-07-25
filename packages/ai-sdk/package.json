@@ -1,6 +1,6 @@
 {
   "name": "@gnldev/ai-sdk",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "license": "Apache-2.0",
   "description": "Vercel AI SDK `useChat` compatibility for @gnldev/durable agents: UI message stream conversion (with sentinel masking), journal→UIMessage history reconstruction, and a Hono chat route.",
   "type": "module",
@@ -32,5 +32,18 @@
     "ai": "^5.0.0",
     "hono": "^4.6.0",
     "zod": "^3.25.0"
+  },
+  "author": "Karaca7 (https://gnl.dev)",
+  "homepage": "https://gnl.dev",
+  "bugs": {
+    "url": "https://github.com/Karaca7/gnl/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Karaca7/gnl.git",
+    "directory": "packages/ai-sdk"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

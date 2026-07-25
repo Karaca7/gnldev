@@ -1,6 +1,6 @@
 {
   "name": "@gnldev/studio",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "license": "Apache-2.0",
   "description": "Web inspector for @gnldev/durable runs: timeline, time-travel, approval queue.",
   "type": "module",
@@ -54,5 +54,18 @@
     "ai": "^5.0.0",
     "@gnldev/workflow": "workspace:*",
     "pg-mem": "^3.0.14"
+  },
+  "author": "Karaca7 (https://gnl.dev)",
+  "homepage": "https://gnl.dev",
+  "bugs": {
+    "url": "https://github.com/Karaca7/gnl/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Karaca7/gnl.git",
+    "directory": "packages/studio"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

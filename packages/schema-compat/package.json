@@ -1,6 +1,6 @@
 {
   "name": "@gnldev/schema-compat",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "license": "Apache-2.0",
   "description": "Provider-specific tool-schema compatibility layer (OpenAI/Gemini/Anthropic). Extensible SchemaCompatRule + opt-in default set; opt-in with @gnldev/durable.",
   "type": "module",
@@ -27,5 +27,18 @@
   "devDependencies": {
     "ai": "^5.0.0",
     "zod": "^3.25.0"
+  },
+  "author": "Karaca7 (https://gnl.dev)",
+  "homepage": "https://gnl.dev",
+  "bugs": {
+    "url": "https://github.com/Karaca7/gnl/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Karaca7/gnl.git",
+    "directory": "packages/schema-compat"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
