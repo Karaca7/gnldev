@@ -9,6 +9,7 @@ import { Inspector } from '../src/views/Inspector';
 import { Observability } from '../src/views/Observability';
 import { Approvals } from '../src/views/Approvals';
 import { Organizations } from '../src/views/Organizations';
+import { Playground } from '../src/views/Playground';
 import { diffWorkflowSteps } from '../src/views/workflow-diff';
 
 afterEach(() => {
@@ -22,6 +23,9 @@ vi.stubGlobal('ResizeObserver', class {
   unobserve() {}
   disconnect() {}
 });
+
+// Playground's smart auto-scroll calls scrollIntoView; jsdom doesn't implement it → no-op stub.
+Element.prototype.scrollIntoView = vi.fn();
 
 // framer-motion's Reveal (viewport) feature needs IntersectionObserver; not present in jsdom → no-op stub.
 vi.stubGlobal('IntersectionObserver', class {
@@ -174,6 +178,26 @@ describe('studio-ui components', () => {
     ]);
     expect(rows[2].b).toBeUndefined();
     expect(rows[3].a).toBeUndefined();
+  });
+
+  it('Playground: switching agents clears the loaded thread (no leftover conversation from the previous agent)', async () => {
+    stubFetch({
+      '/capabilities': { ...CAPS, playground: true, memory: true },
+      '/agents': [
+        { name: 'alpha', model: 'm', hasTools: false },
+        { name: 'beta', model: 'm', hasTools: false },
+      ],
+      '/me': { id: null, roles: [], orgId: null, operator: true, platformAdmin: false, scope: 'none' },
+      '/threads?resourceId=studio-user': [{ id: 't-1', title: 'Old chat', resourceId: 'studio-user', createdAt: 1, updatedAt: 1 }],
+      '/threads/t-1/messages': [{ role: 'user', content: 'message from the old thread' }],
+    });
+    wrap(<Playground />);
+    // Pick the past conversation → its history is restored into the chat pane.
+    fireEvent.click(await screen.findByText('Old chat'));
+    await waitFor(() => expect(screen.getByText('message from the old thread')).toBeTruthy());
+    // Switch agents → the previous agent's conversation must NOT linger.
+    fireEvent.change(screen.getByLabelText('Agent'), { target: { value: 'beta' } });
+    await waitFor(() => expect(screen.queryByText('message from the old thread')).toBeNull());
   });
 
   it('Approvals: lists the pending approval, Approve/Deny buttons are visible', async () => {

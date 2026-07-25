@@ -376,6 +376,18 @@ export function Playground() {
     }
   }
 
+  // Switching agents starts a FRESH conversation. The messages on screen — and the ACTIVE thread — belong
+  // to the previous agent: keeping them would not only show its history under a different agent, it would
+  // append the new agent's turns into the old agent's thread. Nothing is lost with memory on — the old
+  // thread stays in the History list, one click away. Per-agent tool toggles are dropped too (they name
+  // the previous agent's tools). The select is disabled while a run is in flight, so this never races a stream.
+  function changeAgent(name: string) {
+    if (name === agent) return;
+    setAgent(name);
+    setToolsOff(new Set());
+    newConversation();
+  }
+
   // Clean chat: the next send creates a new thread.
   function newConversation() {
     runIdRef.current = '';
@@ -397,8 +409,8 @@ export function Playground() {
     <div className="space-y-4">
       <div>
         <label className="microlabel mb-1.5 block text-muted-foreground">{t('cfgAgent')}</label>
-        <select aria-label="Agent" value={agent} onChange={(e) => setAgent(e.target.value)}
-          className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-ring">
+        <select aria-label="Agent" value={agent} disabled={busy} onChange={(e) => changeAgent(e.target.value)}
+          className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-ring disabled:opacity-50">
           {agents.data?.map((a) => <option key={a.name} value={a.name}>{a.name}</option>)}
         </select>
       </div>
