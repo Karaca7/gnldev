@@ -207,9 +207,10 @@ export function CommandPalette({ items }: { items: CommandItem[] }) {
             <Command.Input
               autoFocus
               placeholder={t('commandPalettePlaceholder')}
-              // Prompt-style focus: lime border + glow ring (see the GNL Input recipe) — the color
-              // resolves from a token (--brand), not hardcoded.
-              className="w-full border-b border-border bg-transparent px-3 py-2.5 text-sm outline-none transition-colors focus:border-brand focus:shadow-[0_0_0_3px_hsl(var(--brand)/0.12)] placeholder:text-muted-foreground"
+              // index.css turns the border --ring on focus, which is exactly right here. `field-bare`
+              // drops only the 3px halo: this field has a BOTTOM border, so a box-shadow would ring the
+              // whole palette width instead of underlining it.
+              className="field-bare w-full border-b border-border bg-transparent px-3 py-2.5 text-sm outline-none transition-colors placeholder:text-muted-foreground"
             />
             <Command.List className="max-h-72 overflow-auto p-1.5">
               <Command.Empty className="px-3 py-6 text-center text-sm text-muted-foreground">

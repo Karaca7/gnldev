@@ -92,7 +92,7 @@ function CreateUser({ orgs, ownOrg, onToken, catalog }: {
   const [busy, setBusy] = useState(false);
   const [checked, setChecked] = useState<Set<string>>(new Set(catalog?.rolePresets[role] ?? []));
   const [customized, setCustomized] = useState(false);
-  const inputCls = 'rounded-md border border-input bg-background px-2 py-1 text-xs outline-none transition-colors focus:border-brand focus:shadow-[0_0_0_3px_hsl(var(--brand)/0.12)]';
+  const inputCls = 'rounded-md border border-input bg-background px-2 py-1 text-xs outline-none transition-colors';
 
   // Reseed the checkbox set from the CURRENT role whenever the catalog (re)loads, as long as the admin
   // hasn't customized anything yet — keeps the default in sync if the catalog data arrives after mount.
@@ -275,7 +275,7 @@ function EditUser({ user, catalog, open, onOpenChange }: {
           <span className="microlabel text-muted-foreground">{t('roleAriaLabel')}</span>
           <select
             aria-label={t('roleAriaLabel')}
-            className="rounded-md border border-input bg-background px-2 py-1 text-xs outline-none transition-colors focus:border-brand"
+            className="rounded-md border border-input bg-background px-2 py-1 text-xs outline-none transition-colors"
             value={role}
             onChange={(e) => selectRole(e.target.value)}
           >

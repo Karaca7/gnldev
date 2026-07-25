@@ -62,17 +62,17 @@ export function Knowledge() {
   return (
     <div className="flex h-full flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b border-border p-3">
-        {/* GNL Input recipe: lime "›" prefix + blinking caret, mono; lime border + glow ring on focus. */}
-        <div className="flex min-w-[12rem] flex-1 items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 transition-colors focus-within:border-brand focus-within:shadow-[0_0_0_3px_hsl(var(--brand)/0.12)]">
+        {/* GNL Input recipe: a static "›" prefix in the identity green, mono text, and the shared focus
+            ring — carried by the WRAPPER (.field-ring), since the border is on the wrapper not the input. */}
+        <div className="flex min-w-[12rem] flex-1 items-center gap-1.5 rounded-md border border-input bg-background px-3 py-2 transition-colors field-ring">
           <span aria-hidden className="select-none font-mono text-sm text-brand">›</span>
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') run(); }}
             placeholder={t('searchPlaceholder')}
-            className="flex-1 bg-transparent font-mono text-sm outline-none placeholder:text-muted-foreground"
+            className="field-bare flex-1 bg-transparent font-mono text-sm outline-none placeholder:text-muted-foreground"
           />
-          <span aria-hidden className="brand-caret" />
         </div>
         <label className="flex items-center gap-1 text-xs text-muted-foreground" title={t('topKTitle')}>
           topK
@@ -84,7 +84,7 @@ export function Knowledge() {
             value={topKRaw}
             onChange={(e) => setTopKRaw(e.target.value)}
             onBlur={() => setTopKRaw(String(clampTopK(topKRaw)))}
-            className="w-14 rounded-md border border-input bg-background px-1.5 py-1 text-sm outline-none focus:ring-1 focus:ring-ring"
+            className="w-14 rounded-md border border-input bg-background px-1.5 py-1 text-sm outline-none"
           />
         </label>
         <label className="flex items-center gap-1 text-xs text-muted-foreground" title={t('minScoreTitle')}>
@@ -98,7 +98,7 @@ export function Knowledge() {
             value={minScoreRaw}
             onChange={(e) => setMinScoreRaw(e.target.value)}
             onBlur={() => setMinScoreRaw(String(clampMinScore(minScoreRaw)))}
-            className="w-16 rounded-md border border-input bg-background px-1.5 py-1 text-sm outline-none focus:ring-1 focus:ring-ring"
+            className="w-16 rounded-md border border-input bg-background px-1.5 py-1 text-sm outline-none"
           />
         </label>
         <Btn arrow onClick={run} disabled={busy || !q.trim()}>{t('searchAction')}</Btn>

@@ -9,8 +9,9 @@ import { Spinner, EmptyState, ErrorBox, Badge, StatStrip, JsonBlock } from '../c
 // accesses localStorage unconditionally and blows up in a node environment. In the real app,
 // main.tsx already imports './i18n' before App, so the `Audit` component works fine in real usage.
 
-// GNL Input recipe: lime border + glow ring on focus (shared class for form/filter inputs).
-const inputCls = 'rounded-md border border-input bg-background px-2 py-1 text-xs outline-none transition-colors focus:border-brand focus:shadow-[0_0_0_3px_hsl(var(--brand)/0.12)]';
+// Shared class for form/filter inputs. The focus recipe (ring + halo) lives in index.css and applies
+// to every input/textarea/select — do not re-declare it here.
+const inputCls = 'rounded-md border border-input bg-background px-2 py-1 text-xs outline-none transition-colors';
 
 // The server's /audit does NOT take cursor/offset, only `limit` (newest first, trimmed to
 // limit — see packages/studio/src/server.ts). There's no real pagination (cursor); "load more"

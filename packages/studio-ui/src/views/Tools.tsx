@@ -4,9 +4,9 @@ import { Wrench, ChevronLeft } from 'lucide-react';
 import { useTools, useCapabilities, api, errMessage, type ToolListItem, type ToolExecResult } from '../api';
 import { Btn, Spinner, Empty, EmptyState, ErrorBox, Badge, StatStrip, JsonBlock, cn } from '../components';
 
-// GNL Input recipe: ink background + border, lime border + glow ring on focus (shared class for
-// form/JSON inputs — same pattern as in Playground/CommandPalette).
-const inputCls = 'rounded-md border border-input bg-background px-2 py-1 text-sm outline-none transition-colors focus:border-brand focus:shadow-[0_0_0_3px_hsl(var(--brand)/0.12)]';
+// Shared class for form/JSON inputs: ink background + border. The focus recipe (ring + halo) lives in
+// index.css and applies to every input/textarea/select — do not re-declare it here.
+const inputCls = 'rounded-md border border-input bg-background px-2 py-1 text-sm outline-none transition-colors';
 
 export function Tools() {
   const { t } = useTranslation('tools');
@@ -163,7 +163,7 @@ function ToolRunner({ tool, canExec, durableAvail, onBack }: { tool: ToolListIte
             <div className="space-y-2">
               {fields.map((f) => {
                 const invalid = invalidFields.includes(f.key);
-                const fieldCls = cn(inputCls, invalid && 'border-destructive focus:border-destructive');
+                const fieldCls = cn(inputCls, invalid && 'border-destructive');
                 return (
                 <div key={f.key} className="flex flex-col gap-1">
                   <label className="text-xs font-medium">{f.key}{f.required && <span className="text-destructive"> *</span>}<span className="ml-1 font-normal text-muted-foreground">{f.type}</span></label>

@@ -517,7 +517,7 @@ export function Playground() {
       <div>
         <label className="microlabel mb-1.5 block text-muted-foreground">{t('cfgAgent')}</label>
         <select aria-label="Agent" value={agent} disabled={busy} onChange={(e) => changeAgent(e.target.value)}
-          className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-ring disabled:opacity-50">
+          className="w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm outline-none disabled:opacity-50">
           {agents.data?.map((a) => <option key={a.name} value={a.name}>{a.name}</option>)}
         </select>
       </div>
@@ -525,7 +525,7 @@ export function Playground() {
         <label className="microlabel mb-1.5 block text-muted-foreground">{t('cfgModel')}</label>
         <input aria-label={t('cfgModel')} value={modelOv} onChange={(e) => setModelOv(e.target.value)} list="pg-models"
           placeholder={typeof currentMeta?.model === 'string' && currentMeta.model ? currentMeta.model : t('agentDefaultPlaceholder')}
-          className="w-full rounded-md border border-input bg-background px-2 py-1.5 font-mono text-sm outline-none focus:ring-1 focus:ring-ring" />
+          className="w-full rounded-md border border-input bg-background px-2 py-1.5 font-mono text-sm outline-none" />
       </div>
       <div>
         <label className="microlabel mb-1.5 flex items-center justify-between text-muted-foreground">
@@ -547,7 +547,7 @@ export function Playground() {
         <label className="microlabel mb-1.5 block text-muted-foreground">{t('cfgSystem')}</label>
         <textarea aria-label={t('cfgSystem')} value={systemOv} onChange={(e) => setSystemOv(e.target.value)} rows={4}
           placeholder={currentMeta?.system || t('agentDefaultPlaceholder')}
-          className="w-full resize-none rounded-md border border-input bg-background px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-ring" />
+          className="w-full resize-none rounded-md border border-input bg-background px-2 py-1.5 text-sm outline-none" />
       </div>
       {currentMeta?.tools && currentMeta.tools.length > 0 && (
         <div>
@@ -752,8 +752,10 @@ export function Playground() {
               <input type="file" aria-label={t('attachFileAriaLabel')} multiple accept="image/*,application/pdf" className="hidden"
                 onChange={(e) => { if (e.target.files) addFiles(e.target.files); e.target.value = ''; }} />
             </label>
-            {/* Prompt-style input (GNL Input recipe): lime "›" prefix + blinking caret, mono; lime border + glow ring on focus. */}
-            <div className="flex flex-1 items-start gap-1.5 rounded-md border border-input bg-background px-3 py-2 transition-colors focus-within:border-brand focus-within:shadow-[0_0_0_3px_hsl(var(--brand)/0.12)]">
+            {/* Prompt-style input (GNL Input recipe): a static "›" prefix in the identity green, mono
+                text, and the shared focus ring — carried by the WRAPPER (.field-ring), since the border
+                is on the wrapper and not on the textarea. */}
+            <div className="flex flex-1 items-start gap-1.5 rounded-md border border-input bg-background px-3 py-2 transition-colors field-ring">
               <span aria-hidden className="select-none pt-0.5 font-mono text-sm text-brand">›</span>
               <textarea
                 value={input}
@@ -761,9 +763,8 @@ export function Playground() {
                 onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) send(); }}
                 placeholder={t('messagePlaceholder')}
                 rows={2}
-                className="flex-1 resize-none bg-transparent font-mono text-sm outline-none placeholder:text-muted-foreground"
+                className="field-bare flex-1 resize-none bg-transparent font-mono text-sm outline-none placeholder:text-muted-foreground"
               />
-              <span aria-hidden className="brand-caret mt-1.5" />
             </div>
             <Btn arrow onClick={() => send()} disabled={busy || !agent || (!input.trim() && files.length === 0)}>{t('sendButton')}</Btn>
           </div>
@@ -861,7 +862,7 @@ function HistorySidebar({ open, activeId, busy, onSelect, onNew, onDeleted, conf
                     // instead of silently discarding the typed title — saveRename is a no-op on an empty
                     // title. ✓/✕ below cover the discoverable, mouse-driven path (mirrors the delete flow).
                     onBlur={() => { if (suppressRenameBlurRef.current) { suppressRenameBlurRef.current = false; return; } saveRename(th.id); }}
-                    className="w-full min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1 text-sm outline-none focus:ring-1 focus:ring-ring"
+                    className="w-full min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1 text-sm outline-none"
                   />
                   <div className="flex items-center gap-0.5">
                     {/* onMouseDown preventDefault: keeps focus on the input through the click so onBlur's
@@ -944,7 +945,7 @@ function EditRow({ value, onChange, onSave, onCancel }: { value: string; onChang
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) onSave(); else if (e.key === 'Escape') onCancel(); }}
           rows={2}
-          className="w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
+          className="w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm outline-none"
         />
         <div className="flex justify-end gap-1.5">
           <Btn variant="ghost" size="xs" onClick={onCancel}>{t('cancel')}</Btn>

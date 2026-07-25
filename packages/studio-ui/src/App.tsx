@@ -421,7 +421,7 @@ function Login({ sso, onAuthed }: { sso?: boolean; onAuthed: () => void }) {
           value={value}
           onChange={(e) => setValue(e.target.value)}
           placeholder="Bearer token"
-          className="mb-3 w-full rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-foreground outline-none focus:border-primary"
+          className="mb-3 w-full rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-foreground outline-none"
         />
         {error && <div className="mb-3 rounded-md border border-destructive/30 bg-destructive/10 p-2 text-xs text-destructive">{error}</div>}
         <Btn disabled={busy || !value.trim()}>{busy ? t('verifying') : t('signIn')}</Btn>

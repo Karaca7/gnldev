@@ -24,7 +24,11 @@ export function Btn({
   // action) — "outline" is kept as a backward-compatible alias, an exact synonym for tertiary
   // (40+ call sites in the codebase already use this neutral meaning, don't break it). ghost = just
   // muted text ("text" recipe). ok/deny approve/reject pair is out of brand scope, kept since T1.
-  const PRIMARY = 'bg-primary text-primary-foreground hover:bg-primary/90 font-bold';
+  // bg-BRAND, not bg-primary. In the dark theme the two tokens hold the same hex (#b4ff00), so this
+  // changes nothing there. In the light theme --brand is the deeper step (#445e08) and --primary the
+  // lighter one (#6d970c) — the deeper one takes WHITE text at 7.33:1, which is the look we want,
+  // while the lighter one only worked with near-black and read as mud. See --brand-foreground.
+  const PRIMARY = 'bg-brand text-brand-foreground hover:bg-brand/90 font-bold';
   const TERTIARY = 'border border-border bg-transparent text-foreground hover:bg-muted font-medium';
   const v = {
     default: PRIMARY,

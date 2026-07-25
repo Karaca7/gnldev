@@ -158,7 +158,7 @@ export function Policy() {
 
   if (policy.isLoading) return <Spinner />;
   if (policy.error) return <ErrorBox error={policy.error} />;
-  const inputCls = 'rounded-md border border-input bg-background px-2 py-1 text-xs outline-none transition-colors focus:border-brand focus:shadow-[0_0_0_3px_hsl(var(--brand)/0.12)] disabled:cursor-not-allowed disabled:opacity-60';
+  const inputCls = 'rounded-md border border-input bg-background px-2 py-1 text-xs outline-none transition-colors disabled:cursor-not-allowed disabled:opacity-60';
 
   return (
     <div className="space-y-5 p-5">
@@ -199,7 +199,7 @@ export function Policy() {
                 aria-invalid={toolInvalid}
                 required
                 disabled={!canManage}
-                className={cn(inputCls, 'w-40 font-mono', toolInvalid && 'border-destructive focus:border-destructive')}
+                className={cn(inputCls, 'w-40 font-mono', toolInvalid && 'border-destructive')}
               />
               {toolInvalid && <span className="text-[11px] text-destructive">{t('emptyToolInlineError')}</span>}
             </div>

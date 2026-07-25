@@ -149,7 +149,7 @@ export function Inspector() {
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             placeholder={t('searchPlaceholder', { count: total })}
-            className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none focus:ring-1 focus:ring-ring"
+            className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none"
           />
           <div className="flex items-center gap-1">
             {(['all', 'completed', 'suspended'] as const).map((s) => (
@@ -1747,7 +1747,7 @@ function RegressionView({ runId }: { runId: string }) {
               value={model}
               onChange={(e) => setModel(e.target.value)}
               placeholder={t('modelOverridePlaceholder')}
-              className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 font-mono text-xs outline-none focus:ring-1 focus:ring-ring"
+              className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 font-mono text-xs outline-none"
             />
           </label>
           <label className="flex-1 min-w-[220px] space-y-1">
@@ -1756,7 +1756,7 @@ function RegressionView({ runId }: { runId: string }) {
               value={system}
               onChange={(e) => setSystem(e.target.value)}
               placeholder={t('systemOverridePlaceholder')}
-              className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-xs outline-none focus:ring-1 focus:ring-ring"
+              className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-xs outline-none"
             />
           </label>
           <Btn variant="primary" size="sm" disabled={running || !model.trim()} onClick={runAgain} arrow>
@@ -1774,7 +1774,7 @@ function RegressionView({ runId }: { runId: string }) {
               value={otherRunId}
               onChange={(e) => setOtherRunId(e.target.value)}
               placeholder={t('otherRunIdPlaceholder')}
-              className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 font-mono text-xs outline-none focus:ring-1 focus:ring-ring"
+              className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 font-mono text-xs outline-none"
             />
           </label>
           <Btn variant="outline" size="sm" disabled={running || !otherRunId.trim()} onClick={diffExisting}>

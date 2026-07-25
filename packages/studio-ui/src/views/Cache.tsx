@@ -77,7 +77,7 @@ function InvalidatePanel() {
           onChange={(e) => setKey(e.target.value)}
           placeholder={t('keyPlaceholder')}
           aria-label={t('keyAriaLabel')}
-          className="w-56 rounded-md border border-input bg-background px-2 py-1 font-mono text-xs outline-none focus:ring-1 focus:ring-ring"
+          className="w-56 rounded-md border border-input bg-background px-2 py-1 font-mono text-xs outline-none"
         />
         <Btn size="xs" variant="outline" disabled={busy} onClick={() => setConfirmOpen(true)}>
           <Trash2 size={12} className="text-destructive" /> {busy ? t('clearing') : t('clearButton')}

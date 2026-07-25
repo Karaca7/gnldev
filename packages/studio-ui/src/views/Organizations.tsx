@@ -81,7 +81,7 @@ function BudgetEditor({ id, initial, onDone }: { id: string; initial?: BudgetLim
   // (aria-invalid + inline message right below), instead of a toast in the screen's opposite corner
   // that leaves no trace once it fades — see validateOrgId/CreateOrganization for the same pattern.
   const [errs, setErrs] = useState<{ usd?: string; tok?: string }>({});
-  const inputCls = 'w-28 rounded-md border border-input bg-background px-2 py-1 text-xs outline-none transition-colors focus:border-brand focus:shadow-[0_0_0_3px_hsl(var(--brand)/0.12)]';
+  const inputCls = 'w-28 rounded-md border border-input bg-background px-2 py-1 text-xs outline-none transition-colors';
 
   const save = async () => {
     const usdLimit = usd.trim() === '' ? null : Number(usd);
@@ -175,7 +175,7 @@ function CreateOrganization() {
   // (aria-invalid + border-destructive) instead of a toast in the opposite screen corner — client-side
   // validation no longer uses toast at all; toast stays reserved for actual server/network errors below.
   const [idErr, setIdErr] = useState<string | null>(null);
-  const inputCls = 'rounded-md border border-input bg-background px-2 py-1 text-xs outline-none transition-colors focus:border-brand focus:shadow-[0_0_0_3px_hsl(var(--brand)/0.12)]';
+  const inputCls = 'rounded-md border border-input bg-background px-2 py-1 text-xs outline-none transition-colors';
 
   const create = async () => {
     const tid = id.trim();
@@ -440,7 +440,7 @@ function RetentionPanel() {
             min={1}
             value={days}
             onChange={(e) => setDays(Math.max(1, Number(e.target.value) || 1))}
-            className="w-16 rounded-md border border-input bg-background px-2 py-1 text-right font-mono text-xs outline-none focus:ring-1 focus:ring-ring"
+            className="w-16 rounded-md border border-input bg-background px-2 py-1 text-right font-mono text-xs outline-none"
             aria-label={t('daysAriaLabel')}
           />
           {t('olderThanSuffix')}

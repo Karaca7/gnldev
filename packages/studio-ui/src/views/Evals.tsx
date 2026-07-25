@@ -132,14 +132,14 @@ export function ScoreRunPanel({ scorerNames }: { scorerNames: string[] }) {
       <div className="flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1 text-xs">run
           {runs.error ? <ErrorBox error={runs.error} /> : (
-            <select aria-label="run" value={runId} onChange={(e) => setRunId(e.target.value)} className="w-56 rounded-md border border-input bg-background px-2 py-1 text-sm outline-none transition-colors focus:border-brand focus:shadow-[0_0_0_3px_hsl(var(--brand)/0.12)]">
+            <select aria-label="run" value={runId} onChange={(e) => setRunId(e.target.value)} className="w-56 rounded-md border border-input bg-background px-2 py-1 text-sm outline-none transition-colors">
               <option value="">{t('selectPlaceholder')}</option>
               {runs.data?.map((r) => <option key={r.runId} value={r.runId}>{r.runId}</option>)}
             </select>
           )}
         </label>
         <label className="flex flex-col gap-1 text-xs">{t('expectedOptional')}
-          <input value={expected} onChange={(e) => setExpected(e.target.value)} className="w-48 rounded-md border border-input bg-background px-2 py-1 text-sm outline-none transition-colors focus:border-brand focus:shadow-[0_0_0_3px_hsl(var(--brand)/0.12)]" />
+          <input value={expected} onChange={(e) => setExpected(e.target.value)} className="w-48 rounded-md border border-input bg-background px-2 py-1 text-sm outline-none transition-colors" />
         </label>
         <div className="flex flex-wrap gap-2">
           {scorerNames.map((n) => (

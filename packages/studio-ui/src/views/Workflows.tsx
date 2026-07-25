@@ -205,7 +205,7 @@ export function Workflows() {
         {canManage && (
           <div className="p-1.5 border-b border-border">
             <button type="button" onClick={() => setEditing('new')}
-              className="inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90">
+              className="inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-brand px-2 py-1 text-xs font-medium text-brand-foreground transition-colors hover:bg-brand/90">
               <Plus size={13} /> {t('newWorkflow')}
             </button>
           </div>
@@ -334,14 +334,14 @@ function InputForm({ params, input, onChange }: {
               value={base[p.key] ?? ''}
               onChange={(e) => setField(p.key, e.target.value === '' ? undefined : Number(e.target.value))}
               placeholder={p.description}
-              className="w-32 rounded-md border border-input bg-background px-2 py-1 font-mono text-xs outline-none transition-colors focus:border-brand focus:shadow-[0_0_0_3px_hsl(var(--brand)/0.12)]"
+              className="w-32 rounded-md border border-input bg-background px-2 py-1 font-mono text-xs outline-none transition-colors"
             />
           ) : (
             <input
               value={typeof base[p.key] === 'string' ? base[p.key] : base[p.key] !== undefined ? JSON.stringify(base[p.key]) : ''}
               onChange={(e) => setField(p.key, e.target.value)}
               placeholder={p.description ?? p.type}
-              className="w-44 rounded-md border border-input bg-background px-2 py-1 font-mono text-xs outline-none transition-colors focus:border-brand focus:shadow-[0_0_0_3px_hsl(var(--brand)/0.12)]"
+              className="w-44 rounded-md border border-input bg-background px-2 py-1 font-mono text-xs outline-none transition-colors"
             />
           )}
         </label>
@@ -520,7 +520,7 @@ function WorkflowDetail({ wf, canRun, canManage, onEdit, onRunningChange, onBack
           <Btn size="xs" variant="ghost" onClick={onEdit} title={t('editTitle')}><Pencil size={12} /></Btn>
         )}
         <input value={input} onChange={(e) => setInput(e.target.value)} placeholder={t('inputPlaceholder')}
-          className="w-56 rounded-md border border-input bg-background px-2 py-1 font-mono text-xs outline-none transition-colors focus:border-brand focus:shadow-[0_0_0_3px_hsl(var(--brand)/0.12)]" />
+          className="w-56 rounded-md border border-input bg-background px-2 py-1 font-mono text-xs outline-none transition-colors" />
         {wf.input?.example !== undefined && !busy && (
           <Btn size="xs" variant="ghost" onClick={() => setInput(JSON.stringify(wf.input!.example))} title={t('fillExampleTitle')}>{t('exampleLabel')}</Btn>
         )}
@@ -718,7 +718,7 @@ function WorkflowEditor({ initial, onSave, onCancel }: {
     catch (e: any) { setErr(String(e?.message ?? e)); setSaving(false); }
   }
 
-  const inputCls = 'w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm outline-none transition-colors focus:border-brand focus:shadow-[0_0_0_3px_hsl(var(--brand)/0.12)]';
+  const inputCls = 'w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm outline-none transition-colors';
 
   return (
     <div className="flex flex-1 flex-col overflow-auto">
@@ -768,9 +768,9 @@ function WorkflowEditor({ initial, onSave, onCancel }: {
                 </div>
                 <span className="text-[11px] text-muted-foreground font-mono shrink-0">#{i + 1}</span>
                 <input value={step.id} onChange={(e) => updateStep(i, { id: e.target.value })}
-                  placeholder={t('stepIdPlaceholder')} aria-label={t('stepIdAriaLabel')} className="w-32 rounded border border-input bg-background px-2 py-1 text-xs font-mono outline-none transition-colors focus:border-brand focus:shadow-[0_0_0_3px_hsl(var(--brand)/0.12)]" />
+                  placeholder={t('stepIdPlaceholder')} aria-label={t('stepIdAriaLabel')} className="w-32 rounded border border-input bg-background px-2 py-1 text-xs font-mono outline-none transition-colors" />
                 <select title={t('selectAgentTitle')} value={step.agentName} onChange={(e) => updateStep(i, { agentName: e.target.value })}
-                  className="flex-1 rounded border border-input bg-background px-2 py-1 text-xs outline-none transition-colors focus:border-brand focus:shadow-[0_0_0_3px_hsl(var(--brand)/0.12)]">
+                  className="flex-1 rounded border border-input bg-background px-2 py-1 text-xs outline-none transition-colors">
                   {agentNames.length === 0 && <option value={step.agentName}>{step.agentName || t('selectAgentOption')}</option>}
                   {agentNames.map((n) => <option key={n} value={n}>{n}</option>)}
                 </select>
@@ -778,7 +778,7 @@ function WorkflowEditor({ initial, onSave, onCancel }: {
               </div>
               <textarea value={step.prompt ?? ''} onChange={(e) => updateStep(i, { prompt: e.target.value })}
                 placeholder={t('promptTemplatePlaceholder')}
-                rows={2} className="w-full resize-none rounded border border-input bg-background px-2 py-1.5 text-xs font-mono outline-none transition-colors focus:border-brand focus:shadow-[0_0_0_3px_hsl(var(--brand)/0.12)]" />
+                rows={2} className="w-full resize-none rounded border border-input bg-background px-2 py-1.5 text-xs font-mono outline-none transition-colors" />
             </div>
           ))}
         </div>
@@ -954,7 +954,7 @@ function SuspendedRunRow({ item, workflows, canResume, canCancel, busy, onCancel
               aria-label={t('inboxWorkflowLabel')}
               value={wfName}
               onChange={(e) => setWfName(e.target.value)}
-              className="w-56 rounded-md border border-input bg-background px-2 py-1 text-xs outline-none transition-colors focus:border-brand focus:shadow-[0_0_0_3px_hsl(var(--brand)/0.12)]"
+              className="w-56 rounded-md border border-input bg-background px-2 py-1 text-xs outline-none transition-colors"
             >
               <option value="">{t('inboxSelectWorkflowOption')}</option>
               {workflows.map((w) => <option key={w.name} value={w.name}>{w.name}</option>)}
@@ -966,7 +966,7 @@ function SuspendedRunRow({ item, workflows, canResume, canCancel, busy, onCancel
               value={payload}
               onChange={(e) => setPayload(e.target.value)}
               rows={3}
-              className="w-full resize-y rounded-md border border-input bg-background px-2 py-1.5 font-mono text-xs outline-none transition-colors focus:border-brand focus:shadow-[0_0_0_3px_hsl(var(--brand)/0.12)]"
+              className="w-full resize-y rounded-md border border-input bg-background px-2 py-1.5 font-mono text-xs outline-none transition-colors"
             />
           </label>
           {err && <p className="text-xs text-destructive">{err}</p>}
