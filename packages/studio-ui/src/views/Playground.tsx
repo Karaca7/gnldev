@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { Check, X, Wrench, Plus, Trash2, Pencil, Ban, Copy, Database, Activity, RotateCw, ArrowDown, Settings, Paperclip, FileText, PanelLeft, ChevronDown } from 'lucide-react';
-import { useAgents, useCapabilities, useThreads, useWorkingMemory, streamAgent, api, errMessage, type Interrupt, type ThreadRecord, type AgentRunBody, type RunCost } from '../api';
+import { useAgents, useCapabilities, useMe, useThreads, useWorkingMemory, streamAgent, api, errMessage, type Interrupt, type ThreadRecord, type AgentRunBody, type RunCost } from '../api';
 import { Btn, Spinner, Empty, Badge, JsonBlock, cn } from '../components';
 import { Markdown } from '../markdown';
 import { Stagger, StaggerItem, Reveal } from '../motion';
@@ -46,8 +46,15 @@ export function validateAttachment(
   return { ok: true };
 }
 
-// Playground conversations are stored under this resource for the single-user local studio.
+// Fallback resource for a local, NO-AUTH studio (a personal dev tool — one user, one machine). When
+// auth IS on (shared/hosted studio, several developers), the resource is scoped to the authenticated
+// user id instead (see `resourceId` in Playground, derived from GET /me) so each developer only sees
+// their OWN Playground conversations — otherwise everyone's threads would pool under one resource.
 const RESOURCE_ID = 'studio-user';
+/** Per-user resource when authenticated; the shared fallback when auth is off (id === null). */
+function resourceForUser(meId: string | null | undefined): string {
+  return meId ? `studio:${meId}` : RESOURCE_ID;
+}
 
 // Model suggestions: known ids from the 4 providers the model-router supports.
 // Suggestion only (datalist) — free text is always valid, the list may be incomplete.
@@ -133,6 +140,9 @@ export function Playground() {
   const STARTERS = t('starters', { returnObjects: true }) as string[];
   const caps = useCapabilities();
   const agents = useAgents();
+  const me = useMe();
+  // Per-user thread scoping: authenticated → `studio:<id>`; local no-auth → the shared 'studio-user'.
+  const resourceId = resourceForUser(me.data?.id);
   const qc = useQueryClient();
   const [agent, setAgent] = useState('');
   const [thread, setThread] = useState('');
@@ -230,7 +240,7 @@ export function Playground() {
         ] }] }
       : { prompt };
     const body: AgentRunBody = memoryOn
-      ? { runId, threadId: tid, resourceId: RESOURCE_ID, ...msgBody, ...overrides }
+      ? { runId, threadId: tid, resourceId, ...msgBody, ...overrides }
       : { runId, threadId: runId, ...msgBody, ...overrides };
     const ac = new AbortController();
     abortRef.current = ac;
@@ -455,6 +465,7 @@ export function Playground() {
           onNew={() => { setMobileHistoryOpen(false); newConversation(); }}
           onDeleted={(id) => { if (id === thread) newConversation(); }}
           configSlot={configFields}
+          resourceId={resourceId}
         />
       )}
       {/* Configuration lives UNDER the thread list in the History sidebar (collapsible section). When memory
@@ -601,7 +612,7 @@ export function Playground() {
   );
 }
 
-function HistorySidebar({ open, activeId, busy, onSelect, onNew, onDeleted, configSlot }: {
+function HistorySidebar({ open, activeId, busy, onSelect, onNew, onDeleted, configSlot, resourceId }: {
   /** Mobile-only master-detail toggle (see the `mobileHistoryOpen` state in Playground) — always
    *  visible at md+ regardless of this flag. */
   open: boolean;
@@ -609,11 +620,13 @@ function HistorySidebar({ open, activeId, busy, onSelect, onNew, onDeleted, conf
   /** The Configuration fields, rendered as a collapsible section UNDER the thread list (state is owned by
    *  Playground; this component just slots the node in). */
   configSlot?: ReactNode;
+  /** Per-user (or shared-fallback) resource the thread list is scoped to — see Playground's `resourceId`. */
+  resourceId: string;
 }) {
   const { t } = useTranslation('playground');
   const [allRes, setAllRes] = useState(false);
   const [cfgOpen, setCfgOpen] = useState(true);
-  const threads = useThreads(allRes ? undefined : RESOURCE_ID);
+  const threads = useThreads(allRes ? undefined : resourceId);
   const qc = useQueryClient();
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameVal, setRenameVal] = useState('');
