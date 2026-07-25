@@ -9,7 +9,7 @@ const fakeEmbed = async (text: string): Promise<number[]> => {
   return VOCAB.map((v) => (words.includes(v) ? 1 : 0));
 };
 
-describe('@gnl/evals embeddingSimilarity', () => {
+describe('@gnldev/evals embeddingSimilarity', () => {
   it('overlapping meaning → high similarity (raw score)', async () => {
     const scorer = embeddingSimilarity(fakeEmbed);
     const r = await scorer.score({ output: 'cat pet animal', expected: 'dog pet animal' });

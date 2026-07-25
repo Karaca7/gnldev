@@ -1,12 +1,12 @@
-// @gnl/events — durable event/notification bus on top of WorkStore. emit writes to an append-only log;
+// @gnldev/events — durable event/notification bus on top of WorkStore. emit writes to an append-only log;
 // each consumer processes an event with its own ack marker (ackOnce=CAS): exactly-once MARKING +
 // at-least-once DELIVERY. The marker is written AFTER the handler SUCCEEDS → if the handler throws/the
 // process dies, the event isn't lost, the next poll retries it. Cost: a crash between handler success
 // and ackOnce (or a concurrent poll race) → redelivery is possible. Write the handler idempotently, or
 // use durable (runDurable/claim) inside the handler. Fan-out: N consumers → each gets every event at least once.
 // (WorkStore keeps it in its own namespace → doesn't pollute the RunJournal/replay reader.)
-import { createPollLoop } from '@gnl/durable';
-import type { WorkStore } from '@gnl/durable';
+import { createPollLoop } from '@gnldev/durable';
+import type { WorkStore } from '@gnldev/durable';
 
 export interface EventMeta {
   id: string;
@@ -87,7 +87,7 @@ export async function emit(
     const depth = await countUpTo(work, `evt:${topic}`, opts.maxDepth);
     if (depth >= opts.maxDepth) {
       throw new EventDepthExceededError(
-        `@gnl/events: topic depth limit exceeded (${depth} >= ${opts.maxDepth}) — event rejected (topic='${topic}').`,
+        `@gnldev/events: topic depth limit exceeded (${depth} >= ${opts.maxDepth}) — event rejected (topic='${topic}').`,
         { topic, depth, maxDepth: opts.maxDepth },
       );
     }
@@ -132,7 +132,7 @@ export function createConsumer(
           // Handler threw → marker NOT WRITTEN → next poll retries it (no loss).
           // The poll loop doesn't die: this event is skipped, the rest of the page keeps processing.
           pageHasFailure = true;
-          console.warn(`@gnl/events: handler errored (topic=${topic}, consumer=${opts.name}, event=${e.id}) — will retry on next poll:`, err);
+          console.warn(`@gnldev/events: handler errored (topic=${topic}, consumer=${opts.name}, event=${e.id}) — will retry on next poll:`, err);
           continue;
         }
         // Handler SUCCEEDED → mark it now. false = another poll/instance finished the race first
@@ -150,7 +150,7 @@ export function createConsumer(
     }
   }
 
-  // Phase 8.1: the tick/backoff/"polling" flag loop now lives in @gnl/durable's shared
+  // Phase 8.1: the tick/backoff/"polling" flag loop now lives in @gnldev/durable's shared
   // createPollLoop (was a triplicate copy across queue/events/scheduler) — behavior is identical:
   // if poll() delivers 0 events, the interval grows ×2 while backoffOn (ceiling maxPollMs); it
   // resets to pollMs once something is delivered. poll() catches handler errors internally (above);

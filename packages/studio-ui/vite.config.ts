@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 // base: './' → relative asset paths → resolves correctly with the <base href> injected under the
-// @gnl/studio mount prefix (e.g. /studio) (mount-path agnostic SPA).
+// @gnldev/studio mount prefix (e.g. /studio) (mount-path agnostic SPA).
 export default defineConfig({
   plugins: [react()],
   base: './',

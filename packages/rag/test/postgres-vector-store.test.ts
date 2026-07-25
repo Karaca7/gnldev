@@ -1,4 +1,4 @@
-// @gnl/rag PostgresVectorStore — since pg-mem doesn't support pgvector (no vector type/<=>),
+// @gnldev/rag PostgresVectorStore — since pg-mem doesn't support pgvector (no vector type/<=>),
 // two layers: (1) adapter glue via fakePool (SQL/params/result + cosine in JS), (2) env-gated real DB.
 import { describe, it, expect } from 'vitest';
 import { PostgresVectorStore, type PoolLike } from '../src/postgres-vector-store.js';

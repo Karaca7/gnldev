@@ -1,4 +1,4 @@
-// @gnl/memory — rich, durable agent memory. One rich class: AgentMemory (Memory + loadContext).
+// @gnldev/memory — rich, durable agent memory. One rich class: AgentMemory (Memory + loadContext).
 export { AgentMemory } from './agent-memory.js';
 export type { MemoryConfig, RecallOptions, LoadedContext, ThreadRecord } from './agent-memory.js';
 export { messageText, hasNorm } from './keys.js';

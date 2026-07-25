@@ -1,14 +1,14 @@
-# @gnl/queue
+# @gnldev/queue
 
 **Durable background-task queue + worker** on top of the journal. Each job runs as a durable run → if the process crashes mid-job, it resumes **exactly-once**. `acquireRunLock` prevents two workers from running the same job concurrently.
 
 ```bash
-npm i @gnl/queue   # peer: @gnl/durable
+npm i @gnldev/queue   # peer: @gnldev/durable
 ```
 
 ```ts
-import { enqueue, createWorker } from '@gnl/queue';
-import { SqliteJournal } from '@gnl/durable/sqlite';
+import { enqueue, createWorker } from '@gnldev/queue';
+import { SqliteJournal } from '@gnldev/durable/sqlite';
 
 const journal = new SqliteJournal('runs.db');
 

@@ -7,7 +7,7 @@
 // via `ctx.step` — on resume/replay, embed is NOT CALLED AGAIN, the model sees the same tool subset.
 // Safe-side behavior: does NOT NARROW when there is no query, or when the tool count is already
 // within topK.
-import type { Processor } from '@gnl/durable';
+import type { Processor } from '@gnldev/durable';
 
 export interface ToolSearchOptions {
   /** text → embedding (wires to the AI SDK `embed`; faked in tests). */
@@ -52,7 +52,7 @@ function queryOf(input?: { messages?: any[]; prompt?: unknown }): string | undef
  */
 export function toolSearch(opts: ToolSearchOptions): Processor {
   const topK = opts.topK ?? 8;
-  if (topK < 1) throw new Error('@gnl/processors toolSearch: topK must be >= 1');
+  if (topK < 1) throw new Error('@gnldev/processors toolSearch: topK must be >= 1');
   const always = new Set(opts.always ?? []);
   return {
     name: 'tool-search',

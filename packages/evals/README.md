@@ -1,15 +1,15 @@
-# @gnl/evals
+# @gnldev/evals
 
-**Scorers + LLM judge** for `@gnl/durable` runs. `scoreRun` reads from the journal trace → deterministic &
+**Scorers + LLM judge** for `@gnldev/durable` runs. `scoreRun` reads from the journal trace → deterministic &
 replayable scores (memoized if the journal is writable → same score on resume). `evalDataset` runs a
 resumable suite (picks up where it left off if interrupted).
 
 ```bash
-npm i @gnl/evals   # peer: @gnl/durable, ai
+npm i @gnldev/evals   # peer: @gnldev/durable, ai
 ```
 
 ```ts
-import { scoreRun, contains, llmJudge, evalDataset } from '@gnl/evals';
+import { scoreRun, contains, llmJudge, evalDataset } from '@gnldev/evals';
 
 // Score a single run.
 const s = await scoreRun(journal, 'order-1', [contains('Charged'), llmJudge(model, { criteria: 'is it polite?' })]);

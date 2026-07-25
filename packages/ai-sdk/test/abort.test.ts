@@ -5,7 +5,7 @@
 // (field name verified against @ai-sdk/provider's LanguageModelV2CallOptions). Route-level: createChatRoute
 // wires `c.req.raw.signal` — a server-level smoke exercising the SAME capture through the HTTP route.
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal, createGnl } from '@gnl/durable';
+import { InMemoryJournal, createGnl } from '@gnldev/durable';
 import { createChatRoute } from '../src/index.js';
 
 /** A model whose stream never finishes (no 'finish' chunk, stream left open) — lets the test abort
@@ -49,7 +49,7 @@ async function readUntil(reader: ReadableStreamDefaultReader<any>, predicate: (v
   }
 }
 
-describe('@gnl/ai-sdk abort forwarding', () => {
+describe('@gnldev/ai-sdk abort forwarding', () => {
   it('registry: gnl.stream forwards RunOptions.abortSignal into the model call', async () => {
     const captured: { signal?: AbortSignal } = {};
     const gnl = createGnl({ journal: new InMemoryJournal(), agents: { chat: { model: controllableMock(captured), maxSteps: 4 } } });

@@ -1,9 +1,9 @@
-// @gnl/durable/storage — Greenfield persistence contracts.
+// @gnldev/durable/storage — Greenfield persistence contracts.
 // TYPED store ports + an explicit capability matrix + composite storage, instead of "a single generic journal".
 // PRESERVED moat: RunJournal = append-only journal (replay/time-travel). Other concerns are connected to
 // whichever store fits best (composite), as needed. Contracts (pagination/cursor, mandatory CAS) are baked in from day one.
 //
-// NOTE: this file contains ONLY the INTERFACE + pure helpers (NO storage implementation) → the @gnl/durable
+// NOTE: this file contains ONLY the INTERFACE + pure helpers (NO storage implementation) → the @gnldev/durable
 // core stays thin; concrete impls (in-memory/sqlite/postgres-storage) implement these ports.
 
 import type { Journal, JournalEntry, RunSummary, JournalReader } from './journal.js';
@@ -230,7 +230,7 @@ export interface WorkStore {
    * `key` — the same addressing as get/put/ackOnce). If the key's CURRENT value matches `expected`, it
    * writes `value` + returns `true`; otherwise (different/changed/absent) it returns `false` WITHOUT
    * touching anything.
-   * Usage: @gnl/queue's terminal writes (qdone/qfail/qatt). Until now these writes were a PLAIN
+   * Usage: @gnldev/queue's terminal writes (qdone/qfail/qatt). Until now these writes were a PLAIN
    * overwrite via `put` — there was NO fencing (only the client-side `lockLost` flag, a DELAYED
    * approximation on the order of the heartbeat tick). `putIfMatch` provides an engine-internal
    * (engine-level) CAS: when a worker claims a job it writes the lock's fencing token to WorkStore;
@@ -340,7 +340,7 @@ export class CapabilityError extends Error {
     readonly hint?: string,
   ) {
     super(
-      `@gnl: storage does not support the '${store}' store (capability='${have}').` +
+      `@gnldev: storage does not support the '${store}' store (capability='${have}').` +
         (hint ? ` ${hint}` : ` Override this store with a suitable storage via composite().`),
     );
     this.name = 'CapabilityError';

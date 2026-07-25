@@ -1,11 +1,11 @@
 // D3-A (AUDIT-R2 yüzey): studio's durable-flag-only cancel affordances — the studio-side
-// counterparts of @gnl/server's POST /runs/:id/cancel (P0.3/P2-cancel) and POST /workflows/runs/:id/cancel
+// counterparts of @gnldev/server's POST /runs/:id/cancel (P0.3/P2-cancel) and POST /workflows/runs/:id/cancel
 // (P0.4). Studio keeps no in-process AbortController registry (see server.ts's own JSDoc on both routes),
 // so both endpoints are the durable-flag path only: cancelAgentRun's cross-worker flag for agent runs,
-// and the same `${runId}:wf:_canceled` + `wfrun:<runId>` write @gnl/workflow's cancelWorkflowRun performs
+// and the same `${runId}:wf:_canceled` + `wfrun:<runId>` write @gnldev/workflow's cancelWorkflowRun performs
 // for workflow runs (see workflow-p04.test.ts's comment on this exact key shape).
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
 import { createStudioApi } from '../src/server.js';
 
 const post = (app: any, path: string, body: unknown = {}) =>
@@ -24,8 +24,8 @@ describe('POST /runs/:id/cancel (durable-flag only)', () => {
     const body = await res.json();
     expect(body).toEqual({ ok: true, durable: true });
 
-    // Key shape is an implementation detail of @gnl/durable's cancel.ts — assert via its own public reader.
-    const { agentRunCanceled } = await import('@gnl/durable');
+    // Key shape is an implementation detail of @gnldev/durable's cancel.ts — assert via its own public reader.
+    const { agentRunCanceled } = await import('@gnldev/durable');
     expect(await agentRunCanceled(journal, 'r1')).toMatchObject({ reason: 'studio-cancel' });
 
     const audit = await (await app.request('/audit?action=run.cancel')).json();
@@ -51,7 +51,7 @@ describe('POST /runs/:id/cancel (durable-flag only)', () => {
   });
 });
 
-describe('POST /workflows/runs/:id/cancel (durable-flag only, mirrors @gnl/server P0.4)', () => {
+describe('POST /workflows/runs/:id/cancel (durable-flag only, mirrors @gnldev/server P0.4)', () => {
   it('cancels a suspended workflow run: writes _canceled + moves the registry record to canceled', async () => {
     const journal = new InMemoryJournal();
     await journal.put('wf-1:wf:step-a', 'ok');

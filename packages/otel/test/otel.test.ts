@@ -1,8 +1,8 @@
-// Phase 10 — @gnl/otel: journal → OTEL trace. root+child span, attribute=cost, parent nesting,
+// Phase 10 — @gnldev/otel: journal → OTEL trace. root+child span, attribute=cost, parent nesting,
 // idempotent traceId/spanId, crash-proof (partial journal), timing (duration wired).
 import { describe, it, expect } from 'vitest';
 import { InMemorySpanExporter } from '@opentelemetry/sdk-trace-base';
-import { InMemoryJournal, runDurable, getRunCost } from '@gnl/durable';
+import { InMemoryJournal, runDurable, getRunCost } from '@gnldev/durable';
 import { exportRun, traceIdFor } from '../src/index.js';
 
 // Avoid importing 'ai' (not a dep in the otel package): don't pass stopWhen → default stepCountIs(12).

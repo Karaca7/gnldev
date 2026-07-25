@@ -1,9 +1,9 @@
 // D4-FGA (EE-2) opt-in hook: RestApiOptions.resourceAuth, consulted AFTER the existing coarse gate.
 // This file tests the HTTP layer directly (a plain function stand-in for opts.resourceAuth) — an EE
-// user wires this to createEnterpriseAuth(...).checkResource (see @gnl/auth-ee's fga.test.ts for the
+// user wires this to createEnterpriseAuth(...).checkResource (see @gnldev/auth-ee's fga.test.ts for the
 // license-gated createFga/checkResource behavior itself).
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
 import { createRestApi, type ResourceAuthResource, type ResourceAuthAction } from '../src/index.js';
 
 function mkModel(): any {
@@ -30,7 +30,7 @@ function mkApi(resourceAuth?: (p: any, r: ResourceAuthResource, a: ResourceAuthA
   );
 }
 
-describe('@gnl/server resourceAuth opt-in hook (D4-FGA)', () => {
+describe('@gnldev/server resourceAuth opt-in hook (D4-FGA)', () => {
   it('resourceAuth denies an agent run → 403 with code "resource_denied"', async () => {
     const api = mkApi(() => false);
     const res = await api.request('/agents/a/run', {

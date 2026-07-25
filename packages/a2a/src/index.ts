@@ -1,4 +1,4 @@
-// @gnl/a2a — remote agent-to-agent. createAgentTool is in-process; this one calls a REMOTE agent (a @gnl/server
+// @gnldev/a2a — remote agent-to-agent. createAgentTool is in-process; this one calls a REMOTE agent (a @gnldev/server
 // REST endpoint) as an AI SDK tool. **Exactly-once across the network:** runId is deterministic
 // (`a2a:<idempotencyKey ?? toolCallId>`) → the remote runDurable replays the same runId (a second POST has no
 // side effect). When wrapped in durableTool inside a parent runDurable, the parent also journals it → on parent
@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { createHmac } from 'node:crypto';
 
 export interface A2AToolOptions {
-  /** Remote @gnl/server base URL (e.g. 'https://host'). */
+  /** Remote @gnldev/server base URL (e.g. 'https://host'). */
   endpoint: string;
   /** Remote agent name (REST: POST /agents/<name>/run). */
   agentName: string;
@@ -23,13 +23,13 @@ export interface A2AToolOptions {
    * TASK (audit: A2A unsigned) — opt-in HMAC-SHA256 signing. When provided, the request body is
    * sent with a hex signature in the `x-gnl-signature` header: signature = HMAC(secret, timestamp + '.' + body),
    * `x-gnl-timestamp` (epoch-ms) is also included to be part of the replay window. Verified on the
-   * remote `@gnl/server` side via `createRestApi({ a2aSecret })`. If not provided, behavior is
+   * remote `@gnldev/server` side via `createRestApi({ a2aSecret })`. If not provided, behavior is
    * UNCHANGED (unsigned request, current behavior).
    */
   secret?: string;
   /**
    * 1.4 — optional budget/quota hook: called BEFORE the remote call (before fetch). On overage
-   * it throws (typically `@gnl/durable`'s `assertBudget` — the caller side's/LOCAL quota; a2a
+   * it throws (typically `@gnldev/durable`'s `assertBudget` — the caller side's/LOCAL quota; a2a
    * does not know/enforce the remote endpoint's own quota, it only gates the call made FROM this process).
    * The thrown error propagates upward as-is (same pattern as K3 — durableTool writes 'failed',
    * the model sees the real error). IF NOT PROVIDED (default), behavior is UNCHANGED — NO quota check.
@@ -40,9 +40,9 @@ export interface A2AToolOptions {
 }
 
 /**
- * K3/timeout — an ALIGNED but INDEPENDENT local definition matching `@gnl/durable`'s `StepTimeoutError`
- * contract (name='StepTimeoutError', detail:{label,timeoutMs}): in @gnl/a2a's package.json,
- * @gnl/durable is only a devDependency (for tests) — NOT a runtime dependency/peerDependency
+ * K3/timeout — an ALIGNED but INDEPENDENT local definition matching `@gnldev/durable`'s `StepTimeoutError`
+ * contract (name='StepTimeoutError', detail:{label,timeoutMs}): in @gnldev/a2a's package.json,
+ * @gnldev/durable is only a devDependency (for tests) — NOT a runtime dependency/peerDependency
  * (see peerDependencies: only 'ai'/'zod'). Hence, instead of importing it, this class with the same
  * name/shape is defined here: when wrapped (with durableTool) inside runDurable, the H9 recovery
  * ladder recognizes it the same way via `err.name === 'StepTimeoutError'`, but the a2a package has
@@ -61,7 +61,7 @@ export class StepTimeoutError extends Error {
 /**
  * Exposes a remote agent as a tool. The router/parent agent calls it with `task`; the tool POSTs to the
  * remote `/agents/:name/run` (with deterministic runId) and returns the result. Durable when used within
- * `@gnl/durable`'s `runDurable`.
+ * `@gnldev/durable`'s `runDurable`.
  */
 export function createA2ATool(opts: A2AToolOptions) {
   const doFetch = opts.fetchImpl ?? fetch;
@@ -79,7 +79,7 @@ export function createA2ATool(opts: A2AToolOptions) {
       // runId collision fix: raw `toolCallId` is only unique WITHIN its own run — two DIFFERENT
       // parent runs can produce the SAME toolCallId (some providers use short ids like 'call_1'),
       // which would make the remote side replay the FIRST run's journaled result for the SECOND
-      // call (wrong result leaking across runs). @gnl/durable's durableTool injects
+      // call (wrong result leaking across runs). @gnldev/durable's durableTool injects
       // `options.idempotencyKey` (`${parentRunId}:${toolCallId}` in 'call' mode,
       // `${parentRunId}:${toolName}:${hash}` in 'args' mode) — parent-run-scoped and globally
       // unique — so prefer it when present (always the case when reached via runDurable).
@@ -108,7 +108,7 @@ export function createA2ATool(opts: A2AToolOptions) {
           signal: AbortSignal.timeout(timeoutMs),
         });
       } catch (e: any) {
-        // K3: no silent failure — convert the timeout into an error aligned with @gnl/durable's
+        // K3: no silent failure — convert the timeout into an error aligned with @gnldev/durable's
         // StepTimeoutError contract (name='StepTimeoutError'), rethrow the rest as-is.
         if (e?.name === 'TimeoutError' || e?.name === 'AbortError')
           throw new StepTimeoutError(

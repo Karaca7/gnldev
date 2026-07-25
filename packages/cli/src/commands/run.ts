@@ -1,7 +1,7 @@
 // gnl run <runId> — a single run's timeline: messages/tool-calls/status (reconstructState) + cost.
 // --raw shows the underlying journal entries instead (model/tool records, write order).
-import type * as Durable from '@gnl/durable';
-import type { JournalEntry, ReconstructedState, RunCost, RunSummary } from '@gnl/durable';
+import type * as Durable from '@gnldev/durable';
+import type { JournalEntry, ReconstructedState, RunCost, RunSummary } from '@gnldev/durable';
 import type { Command } from './types.js';
 import { flag, flagBool, positional } from '../args.js';
 import { loadConfig } from '../config.js';

@@ -1,4 +1,4 @@
-// Typed API client (@gnl/studio JSON endpoints) + react-query hooks + SSE helpers.
+// Typed API client (@gnldev/studio JSON endpoints) + react-query hooks + SSE helpers.
 import { useEffect } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData, type QueryClient } from '@tanstack/react-query';
 import { config } from './config';
@@ -18,14 +18,14 @@ export interface Capabilities {
   queue: boolean; knowledge: boolean; workflowManage: boolean;
   /** "Retry" action in the Jobs view (on if the host implements queue.retry). */
   queueManage?: boolean;
-  /** Cache view (@gnl/cache hit/miss ratio + size — on if the host passed the `cache` option). */
+  /** Cache view (@gnldev/cache hit/miss ratio + size — on if the host passed the `cache` option). */
   cache?: boolean;
   /** Manual invalidate button in the Cache view (on if the host implements cache.invalidate). */
   cacheManage?: boolean;
-  /** Scheduler view (@gnl/scheduler trigger introspection) — on when the journal is writable + listKeys,
-   *  no separate host option required (list comes back empty if the host doesn't use @gnl/scheduler). */
+  /** Scheduler view (@gnldev/scheduler trigger introspection) — on when the journal is writable + listKeys,
+   *  no separate host option required (list comes back empty if the host doesn't use @gnldev/scheduler). */
   scheduler?: boolean;
-  // Auth (opt-in): authRequired → the UI requires login. The rest unlock premium surfaces if the paid @gnl/auth-ee is active.
+  // Auth (opt-in): authRequired → the UI requires login. The rest unlock premium surfaces if the paid @gnldev/auth-ee is active.
   authRequired?: boolean; sso?: boolean; rbac?: boolean; audit?: boolean; multiOrganization?: boolean; users?: boolean;
   // EE license info (flows from auth-ee capabilities): plan badge + expiry warning.
   plan?: string; licenseExp?: number;
@@ -115,9 +115,9 @@ export function queryRetry(failureCount: number, error: unknown): boolean {
   return !isAuthError(error) && failureCount < 1;
 }
 export interface JobStatus { id: string; type: string; status: string; attempts: number; }
-/** Structurally compatible with @gnl/cache `stats()` (server GET /cache/stats). */
+/** Structurally compatible with @gnldev/cache `stats()` (server GET /cache/stats). */
 export interface CacheStats { hits: number; misses: number; hitRate: number; size: number; }
-/** Structurally compatible with @gnl/scheduler `TriggerInfo` (server GET /scheduler/triggers). */
+/** Structurally compatible with @gnldev/scheduler `TriggerInfo` (server GET /scheduler/triggers). */
 export interface SchedulerTrigger {
   id: string;
   name: string;
@@ -162,7 +162,7 @@ export interface TraceResult { totalMs: number; cost: RunCost; spans: TraceSpan[
 export type NetworkRouteDecision = { action: 'route'; agent: string; task: string } | { action: 'final'; answer: string };
 export interface NetworkTraceStep { i: number; agent: string; task: string; text: string; }
 export interface NetworkTrace { routes: { i: number | 'final'; decision: NetworkRouteDecision }[]; steps: NetworkTraceStep[]; }
-/** Audit report (structurally identical to @gnl/durable recordProcessorReport/readProcessorReports). */
+/** Audit report (structurally identical to @gnldev/durable recordProcessorReport/readProcessorReports). */
 export interface ProcessorReport { name: string; phase: 'input' | 'output' | 'tool'; findings: unknown; ts?: number; }
 /** A guard decision journaled by the runtime (duplicate guard / loop detection / maxToolCalls). */
 export interface RunIncident {
@@ -174,7 +174,7 @@ export interface RunIncident {
   message: string;
   detail?: Record<string, unknown>;
 }
-/** One materialized day (or all-time) bucket's counter fields — see @gnl/durable readMetricsSummary.
+/** One materialized day (or all-time) bucket's counter fields — see @gnldev/durable readMetricsSummary.
  *  `score:<name>:avg` fields (P2-skor) appear dynamically, one pair per scorer that has run in that bucket. */
 export interface MetricsDayEntry { day: string; fields?: Record<string, number>; }
 export interface Metrics {
@@ -189,7 +189,7 @@ export interface MetricsRun {
   startTs: number | null; durationMs: number | null; costUsd: number; totalTokens: number;
 }
 export interface AgentMeta { name: string; model: string; system?: string; hasTools: boolean; maxSteps?: number; tools?: ToolMeta[]; orgs?: string[]; }
-// ── Agent approval registry (governance — structurally compatible with @gnl/durable's agent-registry.ts) ──
+// ── Agent approval registry (governance — structurally compatible with @gnldev/durable's agent-registry.ts) ──
 export type AgentApprovalStatus = 'pending' | 'approved' | 'changed' | 'blocked';
 export interface AgentRegistryRecord {
   name: string;
@@ -290,7 +290,7 @@ export interface AgentVersion { version: number; model: string; system?: string;
 export interface ManagedAgentRecord { name: string; active: number | null; versions: AgentVersion[]; }
 export interface PolicyRule { tool: string; action: 'allow' | 'deny' | 'require-approval'; reason?: string; }
 export interface PolicyDoc { version: number; rules: PolicyRule[]; updatedAt?: number; }
-// ── W5: regression (structurally compatible with @gnl/durable regression.ts — DiffDetail/DiffEntry/RunDiff) ──
+// ── W5: regression (structurally compatible with @gnldev/durable regression.ts — DiffDetail/DiffEntry/RunDiff) ──
 export interface RegressionDiffDetail {
   textA?: string; textB?: string;
   toolCallsA?: { toolName: string; argsHash: string }[]; toolCallsB?: { toolName: string; argsHash: string }[];
@@ -375,7 +375,7 @@ function workflowRunsRegistry(status?: 'suspended' | 'completed' | 'canceled', l
 export const api = {
   capabilities: () => get<Capabilities>('/capabilities'),
   runs: () => get<RunSummary[]>('/runs'),
-  // API-09: optional server-side filters — SAME parameter names as @gnl/server's GET /runs (status/agent
+  // API-09: optional server-side filters — SAME parameter names as @gnldev/server's GET /runs (status/agent
   // are pushed down to the engine; q is a runId substring). Filtering is done on the server so `total`
   // (shown in the search placeholder) always describes the same set as `items`.
   runsPage: (limit: number, cursor?: string, filters?: RunsFilter) => {
@@ -452,7 +452,7 @@ export const api = {
   workflowRuns: (name: string, limit?: number) =>
     get<WorkflowRunSummary[]>(`/workflows/${encodeURIComponent(name)}/runs${limit ? `?limit=${limit}` : ''}`),
   workflowRunsRegistry,
-  /** D3-A: durably cancels a workflow run (studio's counterpart of @gnl/server's P0.4 cancel). */
+  /** D3-A: durably cancels a workflow run (studio's counterpart of @gnldev/server's P0.4 cancel). */
   cancelWorkflowRun: (runId: string) =>
     post<{ ok: boolean; cancelled: boolean; note?: string }>(`/workflows/runs/${encodeURIComponent(runId)}/cancel`, {}),
   /** D3-A: durable-flag-only agent run cancel (stops at the run's next fresh model step, cross-worker). */

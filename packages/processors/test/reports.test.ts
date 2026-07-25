@@ -1,9 +1,9 @@
-// Audit reports (recordProcessorReport/readProcessorReports, @gnl/durable additive): verifies that
+// Audit reports (recordProcessorReport/readProcessorReports, @gnldev/durable additive): verifies that
 // built-in processors' (pii/injection/moderation) findings are recorded with a REAL journal +
 // ProcessorCtx. The minimal fake ctxs (without a journal) in builtins.test.ts/safety.test.ts were
 // DELIBERATELY left untouched — this file adds the real-journal scenario ALONGSIDE them.
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal, createProcessorCtx, readProcessorReports } from '@gnl/durable';
+import { InMemoryJournal, createProcessorCtx, readProcessorReports } from '@gnldev/durable';
 import { piiRedactor } from '../src/pii.js';
 import { promptInjectionDetector } from '../src/safety.js';
 import { moderationProcessor } from '../src/moderation.js';

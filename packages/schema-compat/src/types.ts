@@ -1,4 +1,4 @@
-// @gnl/schema-compat type surface — the core of the mechanism.
+// @gnldev/schema-compat type surface — the core of the mechanism.
 
 /** Tool input schema — JSON Schema node (loose; `any`-friendly across gnl). */
 export type JsonSchema = Record<string, any>;

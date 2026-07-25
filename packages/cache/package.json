@@ -1,8 +1,8 @@
 {
-  "name": "@gnl/cache",
+  "name": "@gnldev/cache",
   "version": "0.0.0",
   "license": "Apache-2.0",
-  "description": "Cross-run content-hash cache on @gnl/durable. Within-run reuse = journal replay; across-run reuse = cache.",
+  "description": "Cross-run content-hash cache on @gnldev/durable. Within-run reuse = journal replay; across-run reuse = cache.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -21,9 +21,9 @@
     "test": "vitest run"
   },
   "peerDependencies": {
-    "@gnl/durable": "workspace:^"
+    "@gnldev/durable": "workspace:^"
   },
   "devDependencies": {
-    "@gnl/durable": "workspace:*"
+    "@gnldev/durable": "workspace:*"
   }
 }

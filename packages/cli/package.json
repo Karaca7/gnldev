@@ -1,5 +1,5 @@
 {
-  "name": "@gnl/cli",
+  "name": "@gnldev/cli",
   "version": "0.0.0",
   "license": "Apache-2.0",
   "description": "gnl developer CLI: scaffold (init), hot-reload dev server (REST + Studio Playground), studio.",
@@ -28,28 +28,28 @@
     "tsx": "^4.19.0"
   },
   "peerDependencies": {
-    "@gnl/auth": "workspace:^",
-    "@gnl/durable": "workspace:^",
-    "@gnl/server": "workspace:^",
-    "@gnl/studio": "workspace:^",
-    "@gnl/memory": "workspace:^",
+    "@gnldev/auth": "workspace:^",
+    "@gnldev/durable": "workspace:^",
+    "@gnldev/server": "workspace:^",
+    "@gnldev/studio": "workspace:^",
+    "@gnldev/memory": "workspace:^",
     "@hono/node-server": "^1.13.0",
     "hono": "^4.6.0"
   },
   "peerDependenciesMeta": {
-    "@gnl/auth": {
+    "@gnldev/auth": {
       "optional": true
     },
-    "@gnl/durable": {
+    "@gnldev/durable": {
       "optional": true
     },
-    "@gnl/server": {
+    "@gnldev/server": {
       "optional": true
     },
-    "@gnl/studio": {
+    "@gnldev/studio": {
       "optional": true
     },
-    "@gnl/memory": {
+    "@gnldev/memory": {
       "optional": true
     },
     "@hono/node-server": {
@@ -60,11 +60,11 @@
     }
   },
   "devDependencies": {
-    "@gnl/auth": "workspace:^",
-    "@gnl/durable": "workspace:^",
-    "@gnl/server": "workspace:^",
-    "@gnl/studio": "workspace:^",
-    "@gnl/memory": "workspace:^",
+    "@gnldev/auth": "workspace:^",
+    "@gnldev/durable": "workspace:^",
+    "@gnldev/server": "workspace:^",
+    "@gnldev/studio": "workspace:^",
+    "@gnldev/memory": "workspace:^",
     "@hono/node-server": "^1.13.0",
     "hono": "^4.6.0",
     "ai": "^5.0.0",

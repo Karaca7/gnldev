@@ -1,4 +1,4 @@
-// pipeAguiStream: the AG-UI-output counterpart of @gnl/server's pipeAgentStream. Streams fullStream (AI SDK
+// pipeAguiStream: the AG-UI-output counterpart of @gnldev/server's pipeAgentStream. Streams fullStream (AI SDK
 // StreamTextResult) as SSE, but instead of writing GNL's own event/data schema, converts it via toAguiEvents
 // and writes AG-UI events. createAguiRoute: a small single-endpoint (POST /agents/:name/run) factory —
 // an endpoint that CopilotKit's AG-UI HttpAgent can POST to.
@@ -12,10 +12,10 @@
 import { streamSSE } from 'hono/streaming';
 import type { Context } from 'hono';
 import { Hono } from 'hono';
-import { limitBreachFromSteps, blockedFromSteps, BLOCKED_ERROR_CODES } from '@gnl/durable';
-import type { CreateGnlConfig } from '@gnl/durable';
-import { createGnl } from '@gnl/durable';
-import { interruptsFromSteps } from '@gnl/server';
+import { limitBreachFromSteps, blockedFromSteps, BLOCKED_ERROR_CODES } from '@gnldev/durable';
+import type { CreateGnlConfig } from '@gnldev/durable';
+import { createGnl } from '@gnldev/durable';
+import { interruptsFromSteps } from '@gnldev/server';
 import { toAguiEvents, initialAguiConvertState, type GnlSseEvent } from './convert.js';
 import { EventType, type AguiEvent, type RunStartedEvent } from './types.js';
 
@@ -145,7 +145,7 @@ export interface CreateAguiRouteOptions {
 /**
  * Produces a single-endpoint Hono router from a createGnl config that CopilotKit's AG-UI HttpAgent can talk to:
  *   POST /agents/:name/run   {runId, prompt|messages, threadId?, approvals?}  → AG-UI SSE
- * Deliberately kept small: NO auth/org/budget gates (if needed, use @gnl/server's createRestApi
+ * Deliberately kept small: NO auth/org/budget gates (if needed, use @gnldev/server's createRestApi
  * and pass its stream result to pipeAguiStream — see README).
  */
 export function createAguiRoute(config: CreateGnlConfig, opts: CreateAguiRouteOptions = {}): Hono {

@@ -2,8 +2,8 @@
 // evidence in the journal) and maxCallsPerRun. With InMemoryJournal, does NOT require a real MCP
 // transport/SDK (Guard is a pure function — takes GuardCall, returns GuardDecision; called directly here).
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal, argsHash, runKeys } from '@gnl/durable';
-import type { GuardCall } from '@gnl/durable';
+import { InMemoryJournal, argsHash, runKeys } from '@gnldev/durable';
+import type { GuardCall } from '@gnldev/durable';
 import { mcpFirewall, composeGuards, mcpPinKey } from '../src/index.js';
 import type { McpToolSummary } from '../src/index.js';
 

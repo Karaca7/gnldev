@@ -1,8 +1,8 @@
 // Converts a createGnl instance into the Playground/Tools runner (StudioAgentRunner). Pure adapter — does not import `ai`.
-// @gnl/cli and the studio CLI `--config` share this → single source of truth.
+// @gnldev/cli and the studio CLI `--config` share this → single source of truth.
 import type { AgentMeta, StudioAgentRunner, ToolMeta, ToolListItem } from './server.js';
-import { durableTool } from '@gnl/durable';
-import type { Guard, Journal, WorkflowMeta, WorkflowRunResult } from '@gnl/durable';
+import { durableTool } from '@gnldev/durable';
+import type { Guard, Journal, WorkflowMeta, WorkflowRunResult } from '@gnldev/durable';
 
 export interface RunnerToolLike {
   description?: string;
@@ -42,7 +42,7 @@ export interface MakeRunnerOptions {
   /**
    * Converts a zod (or other) input schema to JSON Schema — so the Tools view can generate a form.
    * If not given, no schema is exposed (UI shows "no schema"). Since the runner does not import `ai`,
-   * the conversion is supplied externally; a ready-made helper: `@gnl/studio/ai` → `aiToolSchema`.
+   * the conversion is supplied externally; a ready-made helper: `@gnldev/studio/ai` → `aiToolSchema`.
    */
   toJsonSchema?: (schema: unknown) => unknown;
   /**
@@ -92,7 +92,7 @@ export function createStudioRunner(
     return {
       name,
       model: typeof a.model === 'string' ? a.model : 'custom',
-      system: typeof a.system === 'string' ? a.system : undefined, // dynamic system is never leaked (parity with @gnl/server)
+      system: typeof a.system === 'string' ? a.system : undefined, // dynamic system is never leaked (parity with @gnldev/server)
       hasTools: names.length > 0,
       maxSteps: a.maxSteps ?? 12,
       tools,

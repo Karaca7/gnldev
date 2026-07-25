@@ -1,11 +1,11 @@
-// @gnl/otel/otlp — ZERO-dependency OTLP/HTTP JSON exporter. DOES NOT USE the OTel SDK (~8KB ethos):
+// @gnldev/otel/otlp — ZERO-dependency OTLP/HTTP JSON exporter. DOES NOT USE the OTel SDK (~8KB ethos):
 // converts the journal (via toTraceSpans) by hand into an OTLP/HTTP JSON body and POSTs it with `fetch`.
 // DIFFERENT from exportRun in index.ts: here there is no @opentelemetry/sdk-trace-base, just node:crypto +
 // global fetch. The user sends to THEIR OWN collector/backend (Langfuse/Datadog/Jaeger/Honeycomb…) —
 // NEVER to our server (see README's "no-telemetry" principle).
 import { createHash } from 'node:crypto';
-import { toTraceSpans } from '@gnl/durable';
-import type { JournalReader, TraceSpan } from '@gnl/durable';
+import { toTraceSpans } from '@gnldev/durable';
+import type { JournalReader, TraceSpan } from '@gnldev/durable';
 
 /** runId → 16-byte (32-hex) deterministic trace id — the same run yields the SAME trace on every export (idempotent). */
 export function otlpTraceId(runId: string): string {
@@ -152,7 +152,7 @@ export function toOtlpJson(spans: TraceSpan[], opts: ToOtlpJsonOptions): OtlpPay
     resourceSpans: [
       {
         resource: { attributes: toKv(resourceAttrs) },
-        scopeSpans: [{ scope: { name: '@gnl/otel' }, spans: otlpSpans }],
+        scopeSpans: [{ scope: { name: '@gnldev/otel' }, spans: otlpSpans }],
       },
     ],
   };

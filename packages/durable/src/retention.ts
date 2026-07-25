@@ -13,14 +13,14 @@ import type { PollLoop } from './polling.js';
 
 function requireDelete(journal: Journal): NonNullable<Journal['deletePrefix']> {
   if (typeof journal.deletePrefix !== 'function') {
-    throw new Error("@gnl/durable: journal must support 'deletePrefix' for purge (InMemory/Sqlite/Postgres provide it)");
+    throw new Error("@gnldev/durable: journal must support 'deletePrefix' for purge (InMemory/Sqlite/Postgres provide it)");
   }
   return journal.deletePrefix.bind(journal);
 }
 
 function requireListKeys(journal: Journal): NonNullable<Journal['listKeys']> {
   if (typeof journal.listKeys !== 'function') {
-    throw new Error("@gnl/durable: journal must support 'listKeys' for sweep (InMemory/Sqlite/Postgres provide it)");
+    throw new Error("@gnldev/durable: journal must support 'listKeys' for sweep (InMemory/Sqlite/Postgres provide it)");
   }
   return journal.listKeys.bind(journal);
 }
@@ -148,7 +148,7 @@ export async function purgeThread(journal: Journal, threadId: string): Promise<n
  *    `opts.users` is wired; call that surface (or the user store directly) alongside this.
  */
 export async function purgeOrganization(journal: Journal, orgId: string): Promise<number> {
-  if (orgId.includes(':')) throw new Error(`@gnl/durable: purgeOrganization('${orgId}') — org id must not contain ':' (it would break the org:<id>: prefix boundary)`);
+  if (orgId.includes(':')) throw new Error(`@gnldev/durable: purgeOrganization('${orgId}') — org id must not contain ':' (it would break the org:<id>: prefix boundary)`);
   const del = requireDelete(journal);
   return del(`org:${orgId}:`);
 }
@@ -181,7 +181,7 @@ export interface SweepResult {
 export async function sweepRuns(journal: Journal & Partial<JournalReader>, opts: SweepOptions): Promise<SweepResult> {
   requireDelete(journal);
   if (typeof journal.listRuns !== 'function' || typeof journal.readRun !== 'function') {
-    throw new Error("@gnl/durable: sweepRuns requires a journal read surface (listRuns/readRun)");
+    throw new Error("@gnldev/durable: sweepRuns requires a journal read surface (listRuns/readRun)");
   }
   const now = opts.now ?? Date.now();
   const keepSuspended = opts.keepSuspended !== false;
@@ -240,7 +240,7 @@ export interface LogSweepOptions {
   /**
    * Consume marker key(s) belonging to the deleted entry. HONEST NOTE: in journal-based durable-log,
    * the marker schema is NOT FIXED — `consumeOnce(journal, marker)` leaves the marker key entirely up
-   * to the caller (qdone/evtack-like schemas live in the WorkStore layer, see @gnl/queue, @gnl/events).
+   * to the caller (qdone/evtack-like schemas live in the WorkStore layer, see @gnldev/queue, @gnldev/events).
    * Because of this, markers can't be auto-discovered; declare your own schema via this callback
    * (e.g. `(it) => \`ack:worker1:\${it.id}\``) — the markers of every deleted entry get cleaned up too.
    */
@@ -399,7 +399,7 @@ export async function sweepThreads(journal: Journal, opts: ThreadSweepOptions): 
 // ── Phase 8.3: opt-in automatic retention scheduling ────────────────────────────────────────
 // sweepRuns/sweepLog/sweepThreads/compact were all called MANUALLY (from Studio or a script) —
 // none of them were triggered automatically. The helper below sets up a periodic sweep round
-// using @gnl/durable/polling's createPollLoop (the SAME scheduler core SHARED with queue/events/scheduler).
+// using @gnldev/durable/polling's createPollLoop (the SAME scheduler core SHARED with queue/events/scheduler).
 // It does NOT start anything AUTOMATICALLY — the user must explicitly call `start()`.
 
 export interface LogSweepTarget extends LogSweepOptions {

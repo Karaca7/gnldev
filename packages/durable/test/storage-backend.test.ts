@@ -414,7 +414,7 @@ for (const [name, make, caps] of storages) {
     });
 
     // 8.2 — the queue's terminal writes (qdone/qfail/qatt) rely on this for in-engine fencing (see
-    // @gnl/queue createWorker: stillOwns()). EXACTLY the same shape as RunJournal's putIfMatch (H1)
+    // @gnldev/queue createWorker: stillOwns()). EXACTLY the same shape as RunJournal's putIfMatch (H1)
     // test, adapted to WorkStore's flat key schema (no envelope → direct value comparison).
     it('WorkStore: putIfMatch — matching expected updates, mismatching (stale token) leaves untouched, missing key false', async () => {
       const b = make();

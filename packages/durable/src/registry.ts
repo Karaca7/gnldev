@@ -120,7 +120,7 @@ function shouldSampleScorers(runId: string, rate: number): boolean {
 }
 
 /**
- * Structural compatibility with @gnl/evals's Scorer (a reverse import would be circular). Runtime
+ * Structural compatibility with @gnldev/evals's Scorer (a reverse import would be circular). Runtime
  * scoring: when a run completes, each scorer is memoized under `${runId}:proc:eval:${name}` →
  * EXACTLY-ONCE (even llmJudge doesn't rerun on resume/repeat calls, the same score is returned).
  * Same key schema as scoreRun — studio /runs/:id/score sees the same records.
@@ -200,8 +200,8 @@ export function agentVisibleToOrg(cfg: { orgs?: string[] }, callerOrgId: string 
 }
 
 /**
- * Structural type for the workflow registry — to AVOID CREATING a dependency on @gnl/workflow
- * (workflow→durable already exists; a reverse import would be circular). @gnl/workflow's `Workflow`
+ * Structural type for the workflow registry — to AVOID CREATING a dependency on @gnldev/workflow
+ * (workflow→durable already exists; a reverse import would be circular). @gnldev/workflow's `Workflow`
  * class structurally satisfies this.
  */
 export interface WorkflowLike {
@@ -212,7 +212,7 @@ export interface WorkflowLike {
     ctx: { runId: string; journal: Journal },
     // P0.4 (AUDIT-R2): resume delivers typed HITL payloads (consumed via ctx.resumeData/
     // waitForResume); signal is the in-process cancel/disconnect path, checked between steps.
-    // FLOW-08: workflowName is mirrored into the `wfrun:` status record (see @gnl/workflow's
+    // FLOW-08: workflowName is mirrored into the `wfrun:` status record (see @gnldev/workflow's
     // runResumable) so the run registry can show which workflow a run belongs to.
     opts?: { maxSteps?: number; resume?: Record<string, unknown>; signal?: AbortSignal; workflowName?: string },
   ): Promise<
@@ -263,8 +263,8 @@ export interface CreateGnlConfig {
   /** Named dynamic agent networks (parity with Supervisor/`.network()`) — run via `runNetwork(name, ...)`. */
   networks?: Record<string, NetworkConfig>;
   /**
-   * Task 3 (opt-in): validates that INSTALLED sibling @gnl/* packages (memory/server/studio/...) share
-   * @gnl/durable's OWN version — catches a `--force`/overrides-installed incompatible suite that the
+   * Task 3 (opt-in): validates that INSTALLED sibling @gnldev/* packages (memory/server/studio/...) share
+   * @gnldev/durable's OWN version — catches a `--force`/overrides-installed incompatible suite that the
    * package manager's caret range would normally prevent (see suite-consistency.ts
    * `assertSuiteConsistent`). `true` → warn on mismatch (default), `'throw'` → hard error at
    * `createGnl()` time. Default: `undefined` (OFF) — existing behavior byte-for-byte unchanged; this is
@@ -307,7 +307,7 @@ export interface RunOptions {
   /**
    * P1.7: PRECEDENCE — if `context` carries a server-sealed identity (see sealRequestContext /
    * GNL_THREAD_ID_KEY), that value ALWAYS wins over this field. Chosen deliberately: `context` is where
-   * a server-side caller (e.g. @gnl/server after auth) seals the AUTHENTICATED identity, so it must not
+   * a server-side caller (e.g. @gnldev/server after auth) seals the AUTHENTICATED identity, so it must not
    * be overridable by a plain top-level RunOptions field a less-trusted caller could also set.
    */
   threadId?: string;
@@ -355,7 +355,7 @@ export interface RunOptions {
    * P0.2 (AUDIT-R2): thread a request's AbortSignal into generation — forwarded AS-IS to
    * runDurable/streamDurable, which don't destructure it (see the `...rest` spread ~run.ts:650/885) so it
    * lands directly in `generateText`/`streamText`'s own `abortSignal` option. Lets a caller (e.g.
-   * @gnl/ai-sdk's chat route, wired to `c.req.raw.signal`) stop token generation on client disconnect
+   * @gnldev/ai-sdk's chat route, wired to `c.req.raw.signal`) stop token generation on client disconnect
    * WITHOUT touching the resumable-SSE replay story: an abort just ends generation early — the journal
    * keeps whatever prefix already completed, and a later call with the SAME runId resumes/replays exactly
    * as it would have without an abort ever happening.

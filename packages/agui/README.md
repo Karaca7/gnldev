@@ -1,15 +1,15 @@
-# @gnl/agui
+# @gnldev/agui
 
-**AG-UI protocol adapter**: converts `@gnl/server`'s SSE contract ([see `@gnl/server` README](../server/README.md)) into [AG-UI](https://github.com/ag-ui-protocol/ag-ui) (CopilotKit's open agent↔UI event protocol) event sequences. **Zero `@ag-ui/*` dependency** — event types are hand-defined (AG-UI is an open SSE/JSON protocol, no SDK required).
+**AG-UI protocol adapter**: converts `@gnldev/server`'s SSE contract ([see `@gnldev/server` README](../server/README.md)) into [AG-UI](https://github.com/ag-ui-protocol/ag-ui) (CopilotKit's open agent↔UI event protocol) event sequences. **Zero `@ag-ui/*` dependency** — event types are hand-defined (AG-UI is an open SSE/JSON protocol, no SDK required).
 
 ```bash
-npm i @gnl/agui   # dep: @gnl/server, hono  ·  peer: @gnl/durable
+npm i @gnldev/agui   # dep: @gnldev/server, hono  ·  peer: @gnldev/durable
 ```
 
 ```ts
-import { createAguiRoute } from '@gnl/agui';
+import { createAguiRoute } from '@gnldev/agui';
 import { serve } from '@hono/node-server';
-import { SqliteJournal } from '@gnl/durable/sqlite';
+import { SqliteJournal } from '@gnldev/durable/sqlite';
 
 const app = createAguiRoute({
   journal: new SqliteJournal('runs.db'),
@@ -33,15 +33,15 @@ agent.runAgent({ runId: 'r1', threadId: 't1', prompt: 'hi' });
 are marked with comments in `types.ts`/`convert.ts` (no made-up fields were added).
 
 ## API
-- `createAguiRoute(config, opts?)` — a single-endpoint Hono router from `@gnl/durable`'s `CreateGnlConfig`:
+- `createAguiRoute(config, opts?)` — a single-endpoint Hono router from `@gnldev/durable`'s `CreateGnlConfig`:
   `POST /agents/:name/run {runId, prompt|messages, threadId?, approvals?}` → AG-UI SSE. Deliberately
-  small: NO auth/tenancy/budget gates. If these are needed, use `@gnl/server`'s `createRestApi` to
+  small: NO auth/tenancy/budget gates. If these are needed, use `@gnldev/server`'s `createRestApi` to
   produce a `gnl.stream(...)` result and pass it to `pipeAguiStream`.
 - `pipeAguiStream(c, runId, result, opts?)` — the AG-UI-output counterpart of `pipeAgentStream` (takes a Hono `Context`
   + AI SDK `StreamTextResult`, starts with `RUN_STARTED`, ends with `RUN_FINISHED`/`RUN_ERROR`).
   If `opts.threadId` is not given, `runId` is used.
 - `toAguiEvents(gnlEvent, ctx, state?)` — a PURE (I/O-free) converter: converts a single GNL SSE event
-  (`{event, data}` — the schema from `@gnl/server`'s W3 id contract) into an AG-UI event sequence. `state`
+  (`{event, data}` — the schema from `@gnldev/server`'s W3 id contract) into an AG-UI event sequence. `state`
   is threaded in from outside (`initialAguiConvertState`) — a SINGLE state object must be threaded
   through from start to end for an ENTIRE run (this is required for text message framing START/END).
 
@@ -61,12 +61,12 @@ If `tool-call`/`tool-result`/`interrupt`/`error`/`done` arrives while a text mes
 
 ## How it works
 `pipeAguiStream` keeps a small, independent copy of the fullStream-reading loop from `pipeAgentStream` in
-`@gnl/server/sse.ts` (`sse.ts` was not touched, since it is a sensitive file carrying the W3
+`@gnldev/server/sse.ts` (`sse.ts` was not touched, since it is a sensitive file carrying the W3
 resumable-id contract and locked in by exactly-once tests) — it converts to the GNL `{event,data}` shape and
 passes it to `toAguiEvents`. AG-UI SSE frames carry only a `data:` field (the type is inside the JSON) — the
 `event:` field is not used.
 
 ## Known limits
-- This adapter has **NO resumable stream (Last-Event-ID)** — `@gnl/server`'s W3 contract is not
+- This adapter has **NO resumable stream (Last-Event-ID)** — `@gnldev/server`'s W3 contract is not
   carried here (could be a separate task).
 - `createAguiRoute` does not include auth/tenancy/budget (see the API note above).

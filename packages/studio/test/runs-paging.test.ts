@@ -1,7 +1,7 @@
 // S4 pagination: GET /runs?limit=&cursor= → a Page envelope (newest first); no parameters → a flat array (backward-compatible).
 import { describe, it, expect, vi } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
-import type { RunSummary } from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
+import type { RunSummary } from '@gnldev/durable';
 import { createStudioApi } from '../src/server.js';
 
 /** Seeds N ordered runs (journal append order = oldest → newest). */
@@ -171,7 +171,7 @@ describe('GET /runs pagination', () => {
       expect(completed.total).toBe(2);
     });
 
-    it('an invalid status value is rejected (400), same contract as @gnl/server', async () => {
+    it('an invalid status value is rejected (400), same contract as @gnldev/server', async () => {
       const journal = new InMemoryJournal();
       await seedRuns(journal, 1);
       const app = createStudioApi({ reader: journal });

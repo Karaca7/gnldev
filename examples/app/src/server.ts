@@ -1,11 +1,11 @@
 // App API (hono): open ticket → message (durable run) → high-amount refund waits for approval → /approve resumes it.
 // Background: send-email worker + refund event consumer. Ops: refund/email/notification + run trace.
 import { Hono } from 'hono';
-import { createWorker } from '@gnl/queue';
-import { createConsumer } from '@gnl/events';
-import { exportRun } from '@gnl/otel';
-import { getRunCost, RunBusyError, SideEffectRetryBlockedError, RetryLimitExceededError } from '@gnl/durable';
-import type { Storage } from '@gnl/durable';
+import { createWorker } from '@gnldev/queue';
+import { createConsumer } from '@gnldev/events';
+import { exportRun } from '@gnldev/otel';
+import { getRunCost, RunBusyError, SideEffectRetryBlockedError, RetryLimitExceededError } from '@gnldev/durable';
+import type { Storage } from '@gnldev/durable';
 import { APP_HTML } from './ui.js';
 import { ORDERS, type OrderRow } from './knowledge.js';
 import type { AppState } from './agent.js';
@@ -30,12 +30,12 @@ export function buildServer(opts: {
 
   // K1: gnl.run/resume (messages, approve) are called without try/catch — a double-clicked approval or
   // a concurrent message can throw SideEffectRetryBlockedError/RunBusyError/RetryLimitExceededError
-  // from @gnl/durable (see durable-tool.ts blockedOrThrow → run.ts errorFromBlocked, the request that
+  // from @gnldev/durable (see durable-tool.ts blockedOrThrow → run.ts errorFromBlocked, the request that
   // LOSES the atomic tool-claim race for the same runId). If uncaught, Hono's default returns 500 — the
   // client would think "the server crashed", when it's actually a deterministic and RESUMABLE state
   // (retrying/replay resolves it). The `instanceof || err?.name === '...'` pair is the SAME pattern as
-  // limitErrorResponse in @gnl/server (packages/server/src/index.ts) — instanceof alone would also work
-  // in this repo (@gnl/durable is symlinked as a single dist copy, see node_modules/@gnl/durable), but
+  // limitErrorResponse in @gnldev/server (packages/server/src/index.ts) — instanceof alone would also work
+  // in this repo (@gnldev/durable is symlinked as a single dist copy, see node_modules/@gnldev/durable), but
   // the name-check also makes it resilient to class-identity differences coming from a different
   // module-resolution/build path (e.g. a separate tsc output) — consistent with the existing architecture, no extra cost.
   app.onError((err, c) => {
@@ -100,7 +100,7 @@ export function buildServer(opts: {
   });
 
   // Double-clicked approval: two concurrent requests read the SAME t.pending (runId+toolCallId) and
-  // race on resume(). @gnl/durable's atomic tool-claim leaves a single winner (see durable-tool.ts) —
+  // race on resume(). @gnldev/durable's atomic tool-claim leaves a single winner (see durable-tool.ts) —
   // if the LOSING request arrives after the WINNER has already written 'succeeded' (e.g. a very fast
   // tool), it gets the idempotent REPLAY result from the journal and returns a normal 200 (no separate
   // code needed, exactly-once already gives this); only if the loser catches up WHILE the winner is

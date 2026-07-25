@@ -1,5 +1,5 @@
 // Studio embed API: createStudioApp({reader, resume}) → approval-queue Approve, exactly-once preserved in the embed too.
-// (Test lives in the durable package because ai/zod are here; studio's server does not import @gnl/durable at runtime.)
+// (Test lives in the durable package because ai/zod are here; studio's server does not import @gnldev/durable at runtime.)
 import { describe, it, expect } from 'vitest';
 import { tool, stepCountIs } from 'ai';
 import { z } from 'zod';

@@ -1,4 +1,4 @@
-// @gnl/otel/live — LIVE (real-time) observability. Unlike the post-hoc exportRun, it emits live OTEL
+// @gnldev/otel/live — LIVE (real-time) observability. Unlike the post-hoc exportRun, it emits live OTEL
 // spans + cost WHILE model/tool calls are ACTUALLY running. The wrappers compose BELOW durable → they
 // never run on replay (journal cache hit) → the live layer NEVER TOUCHES THE JOURNAL, does not break determinism.
 // It carries real wall-clock time/latency (non-det) — that's why it goes only to the exporter, never the journal.
@@ -12,8 +12,8 @@ import {
   type SpanExporter,
 } from '@opentelemetry/sdk-trace-base';
 import { trace, context, SpanKind, SpanStatusCode, type Span, type Context } from '@opentelemetry/api';
-import { priceFor, costOf, DEFAULT_PRICING } from '@gnl/durable';
-import type { ModelPricing } from '@gnl/durable';
+import { priceFor, costOf, DEFAULT_PRICING } from '@gnldev/durable';
+import type { ModelPricing } from '@gnldev/durable';
 
 export interface LiveCost {
   inputTokens: number;
@@ -111,7 +111,7 @@ export function liveObservability(opts: LiveObservabilityOptions = {}): LiveObse
   const exporter = opts.exporter ?? (opts.endpoint ? otlpExporterSync(opts.endpoint) : new InMemorySpanExporter());
   const provider = new BasicTracerProvider();
   provider.addSpanProcessor(new SimpleSpanProcessor(exporter));
-  const tracer = provider.getTracer('@gnl/otel/live');
+  const tracer = provider.getTracer('@gnldev/otel/live');
 
   const roots = new Map<string, { span: Span; ctx: Context }>();
   const total: LiveCost = {

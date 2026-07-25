@@ -4,8 +4,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { tool } from 'ai';
 import { z } from 'zod';
-import { InMemoryJournal } from '@gnl/durable';
-import { roleAuth } from '@gnl/auth';
+import { InMemoryJournal } from '@gnldev/durable';
+import { roleAuth } from '@gnldev/auth';
 import { createRestApi } from '../src/index.js';
 
 const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
@@ -63,7 +63,7 @@ const run = (api: any, runId: string, headers: Record<string, string> = {}) =>
     body: JSON.stringify({ runId, prompt: 'hi' }),
   });
 
-describe('@gnl/server GET /runs (P0.3 pagination + filters)', () => {
+describe('@gnldev/server GET /runs (P0.3 pagination + filters)', () => {
   it('no params → EXACTLY the legacy array response (backward compat)', async () => {
     const api = createRestApi({ journal: new InMemoryJournal(), agents: { a: { model: mkModel('ok') } } });
     await run(api, 'r1');
@@ -121,7 +121,7 @@ describe('@gnl/server GET /runs (P0.3 pagination + filters)', () => {
   });
 });
 
-describe('@gnl/server POST /runs/:id/cancel (P0.3)', () => {
+describe('@gnldev/server POST /runs/:id/cancel (P0.3)', () => {
   it('aborts the composed AbortSignal reaching an in-flight stream generation on this instance', async () => {
     const captured: { signal?: AbortSignal } = {};
     const api = createRestApi({ journal: new InMemoryJournal(), agents: { chat: { model: mkNeverEndingStreamModel(captured) } } });

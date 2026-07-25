@@ -7,9 +7,9 @@
 // the whole run is retried (cross-run window, the default).
 //
 // No API key needed: the model is a mock LanguageModelV2 that scripts the tool calls.
-// Run:  pnpm --filter @gnl/showcase exec tsx src/ai-sdk-idempotency.ts
+// Run:  pnpm --filter @gnldev/showcase exec tsx src/ai-sdk-idempotency.ts
 import { generateText, stepCountIs } from 'ai';
-import { InMemoryJournal, withIdempotency } from '@gnl/durable';
+import { InMemoryJournal, withIdempotency } from '@gnldev/durable';
 
 // ── The side-effectful tool: charge a card. A real one would hit Stripe; here it just counts. ──
 let charges = 0;

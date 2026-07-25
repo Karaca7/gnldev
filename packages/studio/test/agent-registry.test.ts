@@ -1,17 +1,17 @@
 // Agent approval registry surface (GET/POST /agents/registry*) — Studio EXPOSES the SAME root-level
-// `__agent_registry__:<name>` journal records @gnl/server writes at boot (via fingerprintAgent/
+// `__agent_registry__:<name>` journal records @gnldev/server writes at boot (via fingerprintAgent/
 // recordAgent); Studio never fingerprints an agent itself (its playground runner is duck-typed, see
-// StudioAgentRunner's JSDoc). These tests seed records directly (mirroring what @gnl/server's boot would
+// StudioAgentRunner's JSDoc). These tests seed records directly (mirroring what @gnldev/server's boot would
 // have written) and drive the review/approve/block surface + its platform-admin gating + audit trail.
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal, recordAgent, fingerprintAgent, listLog } from '@gnl/durable';
-import { roleAuth } from '@gnl/auth';
+import { InMemoryJournal, recordAgent, fingerprintAgent, listLog } from '@gnldev/durable';
+import { roleAuth } from '@gnldev/auth';
 import { createStudioApi } from '../src/server.js';
 
 const JH = (t?: string) => ({ 'content-type': 'application/json', ...(t ? { authorization: `Bearer ${t}` } : {}) });
 
-describe('@gnl/studio agent approval registry', () => {
-  it('GET /agents/registry lists the records @gnl/server would have written at boot', async () => {
+describe('@gnldev/studio agent approval registry', () => {
+  it('GET /agents/registry lists the records @gnldev/server would have written at boot', async () => {
     const journal = new InMemoryJournal();
     await recordAgent(journal, 'a', fingerprintAgent('a', { model: 'openai/gpt-4o' } as any));
     await recordAgent(journal, 'b', fingerprintAgent('b', { model: 'openai/gpt-4o' } as any));
@@ -72,7 +72,7 @@ describe('@gnl/studio agent approval registry', () => {
   });
 });
 
-describe('@gnl/studio agent approval registry — strict multi-org platform-admin gating', () => {
+describe('@gnldev/studio agent approval registry — strict multi-org platform-admin gating', () => {
   it('an org-bound identity cannot view/approve/block the registry (platform-only surface)', async () => {
     const journal = new InMemoryJournal();
     await recordAgent(journal, 'a', fingerprintAgent('a', { model: 'openai/gpt-4o' } as any));

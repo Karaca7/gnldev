@@ -96,7 +96,7 @@ function InvalidatePanel() {
   );
 }
 
-// Cache: @gnl/cache hit/miss rate + manual invalidate. Auto-refreshes every 5s (see api.ts
+// Cache: @gnldev/cache hit/miss rate + manual invalidate. Auto-refreshes every 5s (see api.ts
 // useCacheStats refetchInterval) — same live-list spirit as the Jobs view.
 export function Cache() {
   const { t } = useTranslation('cache');

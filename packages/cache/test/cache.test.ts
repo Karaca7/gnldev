@@ -1,7 +1,7 @@
-// @gnl/cache: getOrCompute computes once; cross-run sharing; get/set; best-effort (store down → run continues).
+// @gnldev/cache: getOrCompute computes once; cross-run sharing; get/set; best-effort (store down → run continues).
 import { describe, it, expect } from 'vitest';
-import { InMemoryStorage } from '@gnl/durable';
-import type { CacheStore } from '@gnl/durable';
+import { InMemoryStorage } from '@gnldev/durable';
+import type { CacheStore } from '@gnldev/durable';
 import { createCache } from '../src/index.js';
 
 /** A CacheStore that blows up on every call (simulates cache storage down). */
@@ -11,7 +11,7 @@ const downStore: CacheStore = {
   async delete() { throw new Error('cache down'); },
 };
 
-describe('@gnl/cache', () => {
+describe('@gnldev/cache', () => {
   it('getOrCompute: same key → compute runs once', async () => {
     const cache = createCache(new InMemoryStorage().cache, 'embeds');
     let calls = 0;

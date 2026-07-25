@@ -1,8 +1,8 @@
 {
-  "name": "@gnl/memory",
+  "name": "@gnldev/memory",
   "version": "0.0.0",
   "license": "Apache-2.0",
-  "description": "Rich semantic-recall memory for @gnl/durable: schema working memory, thread/resource mgmt, observational memory — all journaled (replayable/exactly-once).",
+  "description": "Rich semantic-recall memory for @gnldev/durable: schema working memory, thread/resource mgmt, observational memory — all journaled (replayable/exactly-once).",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -21,13 +21,13 @@
     "test": "vitest run"
   },
   "peerDependencies": {
-    "@gnl/durable": "workspace:^",
+    "@gnldev/durable": "workspace:^",
     "ai": "^5.0.0",
     "zod": "^3.25.0"
   },
   "devDependencies": {
-    "@gnl/durable": "workspace:*",
-    "@gnl/queue": "workspace:*",
+    "@gnldev/durable": "workspace:*",
+    "@gnldev/queue": "workspace:*",
     "ai": "^5.0.0",
     "zod": "^3.25.0"
   }

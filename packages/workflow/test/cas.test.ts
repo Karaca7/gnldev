@@ -69,7 +69,7 @@ function counterJournal() {
   return cj;
 }
 
-describe('@gnl/workflow — CAS (multi-worker exactly-once)', () => {
+describe('@gnldev/workflow — CAS (multi-worker exactly-once)', () => {
   it('journal with putIfAbsent: two concurrent runs execute the same step ONCE; the loser returns the winner\'s result', async () => {
     // Both runs start their get BEFORE computing (microtask ordering) →
     // both see a cache-miss, both compute → CAS picks a single writer.

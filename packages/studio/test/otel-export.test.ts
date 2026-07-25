@@ -1,9 +1,9 @@
 // OTEL export trigger: POST /runs/:id/otel-export. SECURITY DESIGN: Studio itself NEVER receives
 // the target endpoint/API key — the host applies `opts.otelExport(runId)` with its own configured
-// target (@gnl/otel exportRunToOtlp runs in-host with its own preset); the server only TRIGGERS it.
+// target (@gnldev/otel exportRunToOtlp runs in-host with its own preset); the server only TRIGGERS it.
 // SAME pattern as cache-endpoints.test.ts: capability flag + permission (write) + audit + 501/no-op.
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
 import { createStudioApi } from '../src/server.js';
 
 const post = (app: any, path: string, body: unknown = {}, headers: Record<string, string> = {}) =>

@@ -85,17 +85,17 @@ describe('registry: workflow P0.4 resume/signal forwarding + canceled mapping', 
 // FLOW-08: the `wfrun:` run-registry record didn't carry the workflow's NAME, only its runId — the
 // studio run list had to derive a name from the runId. `runWorkflow` now forwards `opts.workflowName`
 // into `runResumable` AUTOMATICALLY (registered-name lookups happen right here — the caller of
-// `runWorkflow('w', ...)` never has to pass a name themselves). @gnl/durable stays intentionally
-// decoupled from @gnl/workflow (structural WorkflowLike typing — see registry.ts's JSDoc), so this
-// stub mirrors the REAL runResumable's `wfrun:` write (see @gnl/workflow's `putStatus`) to prove the
-// name actually reaches a status record end-to-end, without importing @gnl/workflow.
+// `runWorkflow('w', ...)` never has to pass a name themselves). @gnldev/durable stays intentionally
+// decoupled from @gnldev/workflow (structural WorkflowLike typing — see registry.ts's JSDoc), so this
+// stub mirrors the REAL runResumable's `wfrun:` write (see @gnldev/workflow's `putStatus`) to prove the
+// name actually reaches a status record end-to-end, without importing @gnldev/workflow.
 describe('registry: FLOW-08 — workflow name auto-populated into the wfrun: registry via runWorkflow', () => {
   function stubWorkflowWithStatusWrite(journal: InMemoryJournal) {
     return {
       build: () => [{ id: 'a' }],
       run: async () => 'unused',
       async runResumable(_input: unknown, ctx: { runId: string; journal: any }, opts?: { workflowName?: string }) {
-        // Mirrors @gnl/workflow's putStatus: workflowName written ONLY when present (additive).
+        // Mirrors @gnldev/workflow's putStatus: workflowName written ONLY when present (additive).
         await journal.put(`wfrun:${ctx.runId}`, {
           runId: ctx.runId,
           status: 'completed',

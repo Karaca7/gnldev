@@ -91,7 +91,7 @@ async function claimTaint(journal: Journal, key: string, rec: RunTaint, what: st
     }
   }
   console.error(
-    `@gnl/durable: FAILED to persist ${what} after 3 attempts — the prompt-injection ` +
+    `@gnldev/durable: FAILED to persist ${what} after 3 attempts — the prompt-injection ` +
       `defense may be DISARMED. Last error: ${String((lastErr as Error)?.message ?? lastErr)}`,
   );
 }
@@ -191,7 +191,7 @@ export async function recordTaintProvenance(journal: Journal, threadId: string, 
     }
   }
   console.error(
-    `@gnl/durable: FAILED to record taint content provenance for thread '${threadId}' after 3 attempts — ` +
+    `@gnldev/durable: FAILED to record taint content provenance for thread '${threadId}' after 3 attempts — ` +
       `if an OLDER provenance record exists, the content-window taint may EXPIRE EARLY while this run's ` +
       `poisoned content is still visible. Last error: ${String((lastErr as Error)?.message ?? lastErr ?? 'CAS contention')}`,
   );

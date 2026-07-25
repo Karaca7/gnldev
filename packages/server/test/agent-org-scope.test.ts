@@ -2,8 +2,8 @@
 // whose `orgs` include their org. An org-invisible agent returns the SAME 404 as an unknown agent
 // (existence is not leaked). Operators (unbound) and auth-off callers see/run everything (backward-compat).
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
-import { roleAuth } from '@gnl/auth';
+import { InMemoryJournal } from '@gnldev/durable';
+import { roleAuth } from '@gnldev/auth';
 import { createRestApi } from '../src/index.js';
 
 function mkModel(text: string): any {
@@ -50,7 +50,7 @@ const list = async (api: any, token: string) =>
   (await (await api.request('/agents', { headers: { authorization: `Bearer ${token}` } })).json())
     .map((a: any) => a.name).sort();
 
-describe('@gnl/server org-scoped agents', () => {
+describe('@gnldev/server org-scoped agents', () => {
   it('1. acme-bound caller + orgs:[globex] agent → 404 (run) + ABSENT from list', async () => {
     const api = boundApi();
     expect((await run(api, 'glbx', 'acme-adm')).status).toBe(404);

@@ -1,5 +1,5 @@
 // Free default auth provider: viewer/admin roles, bearer + basic, read/write.
-// (The paid @gnl/auth-ee implements the same AuthProvider with SSO/RBAC.)
+// (The paid @gnldev/auth-ee implements the same AuthProvider with SSO/RBAC.)
 import type { Context } from 'hono';
 import type { AuthProvider, Principal, Decision, AuthContext, Cred } from './types.js';
 import { safeEqual } from './safe-equal.js';
@@ -42,7 +42,7 @@ export function roleAuth(cfg: { admin?: Cred; viewer?: Cred }): AuthProvider | u
      * SECURITY NOTE — log-leak risk: a token carried in the query string can leak into web
      * server/proxy access logs, browser history, and (if the URL is shared/redirected) the
      * `Referer` header. This fallback only remains because of the EventSource constraint; prefer
-     * @gnl/studio's short-lived (60s TTL) one-time `POST /auth/sse-ticket` → `?ticket=` flow where
+     * @gnldev/studio's short-lived (60s TTL) one-time `POST /auth/sse-ticket` → `?ticket=` flow where
      * possible (see the `/events` endpoint in packages/studio/src/server.ts) — the persistent secret
      * is never carried in the URL.
      */

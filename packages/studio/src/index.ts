@@ -1,4 +1,4 @@
-// @gnl/studio — durable run inspector. Admin↔API split:
+// @gnldev/studio — durable run inspector. Admin↔API split:
 //   createStudioApi   → JSON only (mount/auth/programmatic)
 //   createStudioAdmin → HTML UI only (local/remote API via apiBase)
 //   createStudioApp   → convenience combining both (backward compatible)

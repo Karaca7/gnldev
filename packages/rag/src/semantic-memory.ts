@@ -1,10 +1,10 @@
-// SemanticMemory — the semantic-recall version of @gnl/durable's Memory. Embeds past messages and
+// SemanticMemory — the semantic-recall version of @gnldev/durable's Memory. Embeds past messages and
 // stores them in the journal; when a new turn (query) arrives, retrieves relevant OLD messages via
 // vector search. Durable/replayable: the recall result falls into runDurable's input journaling
 // (frozen on resume); embeddings persist in the journal. (Most semantic-recall implementations don't come with these guarantees.)
 import { cosineSimilarity } from 'ai';
-import { matchFilter } from '@gnl/durable';
-import type { Memory, Journal } from '@gnl/durable';
+import { matchFilter } from '@gnldev/durable';
+import type { Memory, Journal } from '@gnldev/durable';
 import type { Embed } from './vector-store.js';
 
 export interface SemanticMemoryOptions {
@@ -17,7 +17,7 @@ export interface SemanticMemoryOptions {
 }
 
 /**
- * P1.5 (AUDIT-R2): the same recall knobs @gnl/durable's `RecallOptions` exposes, wired
+ * P1.5 (AUDIT-R2): the same recall knobs @gnldev/durable's `RecallOptions` exposes, wired
  * through SemanticMemory's local (journal-backed) cosine recall — `Memory.getMessages`'s `opts` is
  * structurally wider here than the base interface (bivariant method params), so this is call-compatible
  * with plain `{query}` callers.
@@ -28,7 +28,7 @@ export interface SemanticGetMessagesOptions {
   threshold?: number;
   /** Expand each hit with its before/after neighbors BY LOG POSITION; `n` is sugar for `{before:n,after:n}`. */
   messageRange?: number | { before: number; after: number };
-  /** Metadata filter (same operator subset as `@gnl/durable`'s `matchFilter`), applied BEFORE topK selection. */
+  /** Metadata filter (same operator subset as `@gnldev/durable`'s `matchFilter`), applied BEFORE topK selection. */
   filter?: Record<string, unknown>;
 }
 

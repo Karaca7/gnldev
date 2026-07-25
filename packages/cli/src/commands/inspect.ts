@@ -1,7 +1,7 @@
 // gnl inspect <runId> --step N — the CLI view of time-travel: materialized state at journal entry N
 // (reconstructState). This is the differentiator command: snapshot-based durability layers have no equivalent (opaque snapshots).
-import type * as Durable from '@gnl/durable';
-import type { ReconstructedState } from '@gnl/durable';
+import type * as Durable from '@gnldev/durable';
+import type { ReconstructedState } from '@gnldev/durable';
 import type { Command } from './types.js';
 import { flag, flagBool, positional } from '../args.js';
 import { loadConfig } from '../config.js';

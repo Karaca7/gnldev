@@ -11,8 +11,8 @@ genuinely unknown (e.g. after a crash), the system **blocks and asks for approva
 retrying. If you know the AI SDK, you already know this.
 
 ```ts
-import { runDurable } from '@gnl/durable';
-import { SqliteStorage } from '@gnl/durable/sqlite';
+import { runDurable } from '@gnldev/durable';
+import { SqliteStorage } from '@gnldev/durable/sqlite';
 
 const res = await runDurable({
   runId: 'order-123',                       // idempotency key (typically an orderId/sessionId)
@@ -63,7 +63,7 @@ Already on a plain `generateText`/`streamText` + `tools` loop and don't want to 
 the tool map instead — same call sites, same loop:
 
 ```ts
-import { withIdempotency, InMemoryJournal } from '@gnl/durable';
+import { withIdempotency, InMemoryJournal } from '@gnldev/durable';
 // or: const journal = new SqliteStorage('runs.db').runs;
 
 const tools = withIdempotency(rawTools, {
@@ -91,13 +91,13 @@ becomes the one-liner only after the npm release):
 git clone https://github.com/Karaca7/gnldev.git gnl && cd gnl
 pnpm install && pnpm -r build
 cd examples && node ../packages/create-gnl/dist/index.js my-agent   # starter (mock model — no API key needed)
-cd my-agent && pnpm install       # inside examples/ → @gnl/* resolve via workspace links
+cd my-agent && pnpm install       # inside examples/ → @gnldev/* resolve via workspace links
 pnpm dev                          # REST API + Studio Playground (single port): http://localhost:3000 (+ /studio)
 ```
 After the npm release: `npm create gnl my-agent` anywhere.
 Type-safe calls from the frontend:
 ```ts
-import { GnlClient } from '@gnl/client';                 // or: '@gnl/client/react' → useChat
+import { GnlClient } from '@gnldev/client';                 // or: '@gnldev/client/react' → useChat
 const gnl = new GnlClient({ baseUrl: 'http://localhost:3000' });
 const { text } = await gnl.run('assistant', { prompt: 'hello' });
 for await (const ev of gnl.stream('assistant', { prompt: 'streaming' })) { /* text-delta… */ }
@@ -106,34 +106,33 @@ for await (const ev of gnl.stream('assistant', { prompt: 'streaming' })) { /* te
 ## Packages (17)
 | Package | What |
 |---|---|
-| **`@gnl/durable`** | Core: `runDurable`/`resume`/`stream` · `durableTool`/`withDurableModel` · journal (memory/**sqlite/postgres/redis**) · `createGnl` + model router · `agentAsTool` + **dynamic network (`runNetwork`, CAS-frozen routing)** · `getRunCost` · `reconstructState`/`forkRun` · run-lock (**atomic takeover: `putIfMatch`**) · `rolloverRun` (period rollover) · retention (`sweepRuns/sweepLog/sweepThreads`, recursive `purgeRun`, disk reclaim via `compact`) · **`timeouts` (`modelStepMs`/`toolMs`/`claimTtlMs`) → `StepTimeoutError`** |
-| **`@gnl/memory`** | `GnlMemory`: recall (messageRange/threshold/filter/resource-scope) · schema working memory + `updateWorkingMemory` tool · thread CRUD/clone · observational memory (Observer/Reflector, pluggable tokenizer) · MessageList |
-| **`@gnl/rag`** | vector store (dev: in-memory · **prod: pgvector**) · **`chunkText`/`chunkDocuments`** (recursive/markdown/character) · **`GraphRag`** (similarity-graph retrieval) · `createRagTool` · `llmReranker` · `SemanticMemory` |
-| **`@gnl/workflow`** | then/parallel/branch · foreach/loop · **`retry` (declarative retry policy, counter kept in the journal)** · `runResumable` + `sleep`/`waitFor` (evented/scheduled) |
-| **`@gnl/processors`** | piiRedactor · moderation · toolFilter · **`toolSearch` (semantic tool selection, journaled)** · tokenLimit · promptInjection · outputLimit |
-| **`@gnl/evals`** | **8 built-in scorers** (faithfulness/hallucination/…) · llmJudge · `scoreRun` · `evalDataset` (resumable) · **`createDatasetsManager`** (version history + experiment `compare`) |
-| **`@gnl/mcp`** | MCP client (`mcpTools`) **+ server** (`createMcpServer`, server-side exactly-once) |
-| **`@gnl/server`** | `createRestApi` + OpenAPI · **fail-closed auth** (setup errors out in production if no provider is configured; opt in explicitly with `allowOpenAccess: true`) · **409/422 resumable contract** (blocked/limit errors return `resumable`/`retry` from a single `BLOCKED_ERROR_CODES` source of truth) |
-| **`@gnl/otel`** | `exportRunToOtlp` + **`otlpPresets`** (Langfuse/Braintrust/Honeycomb/Datadog/Collector + generic API-key OTLP) · **live mode** (`@gnl/otel/live`) |
-| **`@gnl/queue`** | durable job queue + worker · **lock renewal via heartbeat** (prevents takeover during long-running handlers) + opt-in empty-poll backoff |
-| **`@gnl/events`** | event bus (fan-out) — exactly-once marking + at-least-once delivery; handlers must be idempotent · opt-in empty-poll backoff |
-| **`@gnl/a2a`** | remote agent (cross-network exactly-once) · **opt-in HMAC-SHA256-signed requests** (`createA2ATool({ secret })` ↔ `createRestApi({ a2aSecret })`, replay resistance via a timestamp window) |
-| **`@gnl/cache`** | cross-run cache |
-| **`@gnl/studio`** | inspector **+ Playground**: pick agent → prompt → streaming response → approval · time-travel/fork + cost/trace/metrics/diff · admin/API separation + role-based auth |
-| **`@gnl/client`** | type-safe REST/SSE client (framework-agnostic core) + React hooks (`@gnl/client/react`: `useGnlAgent`/`useChat`) |
-| **`@gnl/cli`** | project: `gnl init` (**interactive feature checkbox** — pick idempotency-tool/rag/mcp/memory/workflow/auth/e2e → a wired `gnl.config.ts` is generated; non-interactive via `--features a,b,c` / `--template minimal\|full` / `--yes`, prompt never opens without a TTY) / `add <idempotency-tool\|rag\|mcp\|memory\|workflow\|auth>` / `dev` / `studio` · inspect: `runs`/`run`/`inspect` (**time-travel in the terminal**) · operate: `fork`/`resume`/`sweep`/`rm` (all wired straight to `@gnl/durable`'s own exports, nothing reimplemented) · **zero new runtime deps** (hand-rolled ANSI/table + a from-scratch raw-mode checkbox, no chalk/ora/commander/inquirer) · `create-gnl` (`npm create gnl`) |
-| **`@gnl/deploy`** | `nodeAdapter`/`edgeAdapter` · `bundleApp` (esbuild, edge target) · **`deployTargets`** (Cloudflare/Vercel/Netlify generators) |
+| **`@gnldev/durable`** | Core: `runDurable`/`resume`/`stream` · `durableTool`/`withDurableModel` · journal (memory/**sqlite/postgres/redis**) · `createGnl` + model router · `agentAsTool` + **dynamic network (`runNetwork`, CAS-frozen routing)** · `getRunCost` · `reconstructState`/`forkRun` · run-lock (**atomic takeover: `putIfMatch`**) · `rolloverRun` (period rollover) · retention (`sweepRuns/sweepLog/sweepThreads`, recursive `purgeRun`, disk reclaim via `compact`) · **`timeouts` (`modelStepMs`/`toolMs`/`claimTtlMs`) → `StepTimeoutError`** |
+| **`@gnldev/memory`** | `GnlMemory`: recall (messageRange/threshold/filter/resource-scope) · schema working memory + `updateWorkingMemory` tool · thread CRUD/clone · observational memory (Observer/Reflector, pluggable tokenizer) · MessageList |
+| **`@gnldev/rag`** | vector store (dev: in-memory · **prod: pgvector**) · **`chunkText`/`chunkDocuments`** (recursive/markdown/character) · **`GraphRag`** (similarity-graph retrieval) · `createRagTool` · `llmReranker` · `SemanticMemory` |
+| **`@gnldev/workflow`** | then/parallel/branch · foreach/loop · **`retry` (declarative retry policy, counter kept in the journal)** · `runResumable` + `sleep`/`waitFor` (evented/scheduled) |
+| **`@gnldev/processors`** | piiRedactor · moderation · toolFilter · **`toolSearch` (semantic tool selection, journaled)** · tokenLimit · promptInjection · outputLimit |
+| **`@gnldev/evals`** | **8 built-in scorers** (faithfulness/hallucination/…) · llmJudge · `scoreRun` · `evalDataset` (resumable) · **`createDatasetsManager`** (version history + experiment `compare`) |
+| **`@gnldev/mcp`** | MCP client (`mcpTools`) **+ server** (`createMcpServer`, server-side exactly-once) |
+| **`@gnldev/server`** | `createRestApi` + OpenAPI · **fail-closed auth** (setup errors out in production if no provider is configured; opt in explicitly with `allowOpenAccess: true`) · **409/422 resumable contract** (blocked/limit errors return `resumable`/`retry` from a single `BLOCKED_ERROR_CODES` source of truth) |
+| **`@gnldev/otel`** | `exportRunToOtlp` + **`otlpPresets`** (Langfuse/Braintrust/Honeycomb/Datadog/Collector + generic API-key OTLP) · **live mode** (`@gnldev/otel/live`) |
+| **`@gnldev/queue`** | durable job queue + worker · **lock renewal via heartbeat** (prevents takeover during long-running handlers) + opt-in empty-poll backoff |
+| **`@gnldev/events`** | event bus (fan-out) — exactly-once marking + at-least-once delivery; handlers must be idempotent · opt-in empty-poll backoff |
+| **`@gnldev/a2a`** | remote agent (cross-network exactly-once) · **opt-in HMAC-SHA256-signed requests** (`createA2ATool({ secret })` ↔ `createRestApi({ a2aSecret })`, replay resistance via a timestamp window) |
+| **`@gnldev/cache`** | cross-run cache |
+| **`@gnldev/studio`** | inspector **+ Playground**: pick agent → prompt → streaming response → approval · time-travel/fork + cost/trace/metrics/diff · admin/API separation + role-based auth |
+| **`@gnldev/client`** | type-safe REST/SSE client (framework-agnostic core) + React hooks (`@gnldev/client/react`: `useGnlAgent`/`useChat`) |
+| **`@gnldev/cli`** | project: `gnl init` (**interactive feature checkbox** — pick idempotency-tool/rag/mcp/memory/workflow/auth/e2e → a wired `gnl.config.ts` is generated; non-interactive via `--features a,b,c` / `--template minimal\|full` / `--yes`, prompt never opens without a TTY) / `add <idempotency-tool\|rag\|mcp\|memory\|workflow\|auth>` / `dev` / `studio` · inspect: `runs`/`run`/`inspect` (**time-travel in the terminal**) · operate: `fork`/`resume`/`sweep`/`rm` (all wired straight to `@gnldev/durable`'s own exports, nothing reimplemented) · **zero new runtime deps** (hand-rolled ANSI/table + a from-scratch raw-mode checkbox, no chalk/ora/commander/inquirer) · `create-gnl` (`npm create gnl`) |
 
 ## Examples (`examples/`)
-- **`showcase`** — a single self-verifying file exercising all 14 packages: `pnpm --filter @gnl/showcase demo` → 22 sections, 22/22 ✓ (mock model, no API key needed) · `bench` (overhead measurement)
-- **`app`** — **Durable AI Support Desk** (web UI + API): `pnpm --filter @gnl/app start` → :3100 (UI) + :3100/studio (ops). Ticket → message → approval → exactly-once refund + queue/events/otel.
-- **`react-client`** — a `@gnl/client/react` demo (`useChat` + streaming + approval), API-key-free echo backend. `pnpm --filter @gnl/react-client-example server` + `… dev`.
+- **`showcase`** — a single self-verifying file exercising all 14 packages: `pnpm --filter @gnldev/showcase demo` → 22 sections, 22/22 ✓ (mock model, no API key needed) · `bench` (overhead measurement)
+- **`app`** — **Durable AI Support Desk** (web UI + API): `pnpm --filter @gnldev/app start` → :3100 (UI) + :3100/studio (ops). Ticket → message → approval → exactly-once refund + queue/events/otel.
+- **`react-client`** — a `@gnldev/client/react` demo (`useChat` + streaming + approval), API-key-free echo backend. `pnpm --filter @gnldev/react-client-example server` + `… dev`.
 
 ## Supply-chain hygiene
 A dependency you install runs code on your machine and in your build. GNL's posture, verifiable in
 this repo today:
 - **Zero install scripts** — no `postinstall`/`preinstall` in any package.
-- **Minimal dependency surface** — the core (`@gnl/durable`) has exactly **one** runtime dependency
+- **Minimal dependency surface** — the core (`@gnldev/durable`) has exactly **one** runtime dependency
   (`superjson`); storage drivers (`pg`, `ioredis`) are optional peers you explicitly opt into.
 - **Signed, provenance-attested releases** (`npm publish --provenance`) are the publishing plan — no
   release happens outside CI.
@@ -155,18 +154,18 @@ Peers: `ai`, `zod`. **No telemetry, no phone-home.**
 ## Deployment
 gnl is fully Hono-based, so a Node deploy is a few lines:
 ```ts
-import { createRestApi } from '@gnl/server';
-import { nodeAdapter } from '@gnl/deploy';                // thin @hono/node-server wrapper
+import { createRestApi } from '@gnldev/server';
+import { nodeAdapter } from '@gnldev/deploy';                // thin @hono/node-server wrapper
 nodeAdapter(createRestApi(config), { port: process.env.PORT });
 ```
 **Journal warning:** `node:sqlite` doesn't work on serverless/edge runtimes → use a network-backed journal
-(`@gnl/durable/postgres` or `/redis`, D1 on Cloudflare). `SqliteStorage` is only for long-lived Node
-processes. Targets for Vercel/Cloudflare/Netlify are ready to go: `deployTargets` (see
-[`@gnl/deploy`](packages/deploy)).
+(`@gnldev/durable/postgres` or `/redis`, D1 on Cloudflare). `SqliteStorage` is only for long-lived Node
+processes. For Vercel/Cloudflare/Netlify, deploy the Hono app the way that platform documents — nothing here
+needs a gnl-specific adapter.
 
 ## Honest positioning
 Not "a full-featured agent-framework alternative" — a **durability/correctness layer for the AI SDK**: a solid core
-(`@gnl/durable`) plus satellite packages of varying maturity that inherit its guarantees. It covers most of
+(`@gnldev/durable`) plus satellite packages of varying maturity that inherit its guarantees. It covers most of
 what a typical full-featured agent framework's core provides (memory/workflow/rag/mcp/processors/eval…), but builds it on top of
 **call-scoped exactly-once effect + deterministic replay**. "Exactly-once" here isn't an absolute physical
 guarantee — it means **call-scoped dedup with a safe default**: the same `toolCallId` never runs again, a

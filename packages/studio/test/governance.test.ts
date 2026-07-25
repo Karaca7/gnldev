@@ -1,6 +1,6 @@
 // Governance endpoints: /approvals (approval inbox), /audit (audit log), /organizations (org counters + budget).
 import { describe, it, expect, vi } from 'vitest';
-import { InMemoryJournal, recordRunMetrics, withOrg } from '@gnl/durable';
+import { InMemoryJournal, recordRunMetrics, withOrg } from '@gnldev/durable';
 import { createStudioApi } from '../src/server.js';
 
 /** Seeds a suspended run: the model produced a tool-call, the tool is waiting on the suspended sentinel. */
@@ -109,7 +109,7 @@ describe('governance: /runs/:id/scores', () => {
 });
 
 describe('governance: /runs/:id/processors (compliance reports)', () => {
-  it('returns findings written via recordProcessorReport (@gnl/durable procreport key scheme)', async () => {
+  it('returns findings written via recordProcessorReport (@gnldev/durable procreport key scheme)', async () => {
     const journal = new InMemoryJournal();
     await journal.put('proc-run:procreport:pii-redactor:input', { v: { name: 'pii-redactor', phase: 'input', findings: { redactedCount: 2, types: ['email'] }, ts: 1 } });
     await journal.put('proc-run:procreport:prompt-injection:input', { v: { name: 'prompt-injection', phase: 'input', findings: { matched: ['ignore previous'] }, ts: 2 } });

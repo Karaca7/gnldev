@@ -36,7 +36,7 @@ describe('makeGate (fail-open audit)', () => {
   });
 });
 
-// An RBAC-style provider that honours ctx.permission (like @gnl/auth-ee): the exact permission is matched
+// An RBAC-style provider that honours ctx.permission (like @gnldev/auth-ee): the exact permission is matched
 // against a fixed grant set with wildcard support. capabilities().rbac = true (fine-grained mode).
 function rbacFake(grants: string[]): AuthProvider {
   const match = (g: string, req: string): boolean => {

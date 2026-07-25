@@ -30,8 +30,8 @@ const DEFAULT_OVERLAP = 120;
 function resolveOpts(opts?: ChunkOptions): { size: number; overlap: number; strategy: NonNullable<ChunkOptions['strategy']> } {
   const size = opts?.size ?? DEFAULT_SIZE;
   const overlap = opts?.overlap ?? Math.min(DEFAULT_OVERLAP, Math.floor(size / 4));
-  if (size < 1) throw new Error('@gnl/rag chunk: size must be >= 1');
-  if (overlap < 0 || overlap >= size) throw new Error('@gnl/rag chunk: 0 <= overlap < size must hold');
+  if (size < 1) throw new Error('@gnldev/rag chunk: size must be >= 1');
+  if (overlap < 0 || overlap >= size) throw new Error('@gnldev/rag chunk: 0 <= overlap < size must hold');
   return { size, overlap, strategy: opts?.strategy ?? 'recursive' };
 }
 

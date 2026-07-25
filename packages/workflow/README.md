@@ -1,14 +1,14 @@
-# @gnl/workflow
+# @gnldev/workflow
 
 **Durable deterministic workflows** — each step journaled exactly-once; crash → resume picks up where it left off. Control flow: `then` / `parallel` / `branch` / `foreach` / `loop`. Suspendable: `runResumable` + `sleep` / `waitFor` (evented + scheduled).
 
 ```bash
-npm i @gnl/workflow   # journal: @gnl/durable
+npm i @gnldev/workflow   # journal: @gnldev/durable
 ```
 
 ```ts
-import { workflow, step } from '@gnl/workflow';
-import { SqliteJournal } from '@gnl/durable/sqlite';
+import { workflow, step } from '@gnldev/workflow';
+import { SqliteJournal } from '@gnldev/durable/sqlite';
 
 const fetchUser = step('fetchUser', async (id: number) => ({ id, name: 'Ada' }));
 const greet = step('greet', async (u: { name: string }) => `Hello ${u.name}`);

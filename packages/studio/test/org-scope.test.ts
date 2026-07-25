@@ -1,7 +1,7 @@
 // Studio org scope (v1 read-only audit): x-gnl-org → the read surface is scoped to the org;
 // writes in an org context return 403; an orgless request runs in the shared space (existing behavior).
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
 import { createStudioApi } from '../src/server.js';
 
 async function seed(journal: InMemoryJournal) {
@@ -9,7 +9,7 @@ async function seed(journal: InMemoryJournal) {
   await journal.put('r-shared:model:0', { content: [{ type: 'text', text: 'shared' }], finishReason: 'stop' });
 }
 
-describe('@gnl/studio org scope (read-only)', () => {
+describe('@gnldev/studio org scope (read-only)', () => {
   it('GET /runs is isolated to the org; an orgless request sees the shared space', async () => {
     const journal = new InMemoryJournal();
     await seed(journal);

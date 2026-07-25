@@ -1,6 +1,6 @@
 // 8.8 — Scorers + llmJudge + scoreRun (journal-trace, deterministic & replayable).
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
 import { exactMatch, contains, regexScore } from '../src/scorer.js';
 import { llmJudge } from '../src/llm-judge.js';
 import { scoreRun } from '../src/score-run.js';

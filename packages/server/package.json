@@ -1,8 +1,8 @@
 {
-  "name": "@gnl/server",
+  "name": "@gnldev/server",
   "version": "0.0.0",
   "license": "Apache-2.0",
-  "description": "Auto-REST + OpenAPI for @gnl/durable agents: createGnl registry → HTTP router (run/resume/runs + openapi.json).",
+  "description": "Auto-REST + OpenAPI for @gnldev/durable agents: createGnl registry → HTTP router (run/resume/runs + openapi.json).",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -21,15 +21,15 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@gnl/auth": "workspace:^",
-    "@gnl/workflow": "workspace:^",
+    "@gnldev/auth": "workspace:^",
+    "@gnldev/workflow": "workspace:^",
     "hono": "^4.6.0"
   },
   "peerDependencies": {
-    "@gnl/durable": "workspace:^"
+    "@gnldev/durable": "workspace:^"
   },
   "devDependencies": {
-    "@gnl/durable": "workspace:*",
+    "@gnldev/durable": "workspace:*",
     "ai": "^5.0.0",
     "zod": "^3.25.0"
   }

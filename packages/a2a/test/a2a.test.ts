@@ -1,8 +1,8 @@
-// Phase 12 — @gnl/a2a: in-process remote server (createRestApi). (1) deterministic runId → remote idempotent
+// Phase 12 — @gnldev/a2a: in-process remote server (createRestApi). (1) deterministic runId → remote idempotent
 // (same toolCallId two calls → remote charge 1); (2) parent runDurable + resume → remote call SKIPPED.
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal, runDurable } from '@gnl/durable';
-import { createRestApi } from '@gnl/server';
+import { InMemoryJournal, runDurable } from '@gnldev/durable';
+import { createRestApi } from '@gnldev/server';
 import { createA2ATool, StepTimeoutError } from '../src/index.js';
 
 function chargeModel(counter: { gen: number }): any {
@@ -38,7 +38,7 @@ function remoteServer(a2aSecret?: string) {
   return { remote, fetchImpl };
 }
 
-describe('@gnl/a2a', () => {
+describe('@gnldev/a2a', () => {
   it('deterministic runId → remote idempotent (same toolCallId two calls → charge 1)', async () => {
     const { remote, fetchImpl } = remoteServer();
     const t = createA2ATool({ endpoint: 'http://a2a.local', agentName: 'billing', fetchImpl });
@@ -205,7 +205,7 @@ describe('@gnl/a2a', () => {
     expect(remote.charges).toBe(1);
   });
 
-  // K3/timeout — error aligned with @gnl/durable's StepTimeoutError contract (name/detail shape).
+  // K3/timeout — error aligned with @gnldev/durable's StepTimeoutError contract (name/detail shape).
   it('timeout error is thrown in StepTimeoutError shape (name/detail)', async () => {
     const fetchImpl = ((_url: any, init: any) =>
       new Promise((_resolve, reject) => {
@@ -222,7 +222,7 @@ describe('@gnl/a2a', () => {
     }
   });
 
-  // runId collision fix — options.idempotencyKey (injected by @gnl/durable's durableTool) is
+  // runId collision fix — options.idempotencyKey (injected by @gnldev/durable's durableTool) is
   // parent-run-scoped and globally unique; it must be preferred over the raw toolCallId, which is
   // only unique WITHIN a single run and can collide across DIFFERENT runs (e.g. providers that use
   // short ids like 'call_1').

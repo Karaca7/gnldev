@@ -182,7 +182,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
         // carries a REAL determinism signal in 'call' mode; in 'args' mode it's a harmless no-op).
         if (record.status === 'succeeded' && record.argsHash !== undefined) {
           if (hash !== record.argsHash) {
-            const msg = `@gnl/durable: divergence — '${toolName}' (${key}) produced different args on replay`;
+            const msg = `@gnldev/durable: divergence — '${toolName}' (${key}) produced different args on replay`;
             if (ctx.replay === 'strict') {
               throw new DivergenceError(msg, { key, expected: record.argsHash, actual: hash });
             }
@@ -288,7 +288,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           if (dupAction === 'block' || (dupAction === 'reflect' && (marker.nudged || !nudgeWon))) {
             const ignoredNudge = dupAction === 'reflect';
             const message =
-              `@gnl/durable: side-effect tool '${toolName}' already succeeded with identical arguments in run ` +
+              `@gnldev/durable: side-effect tool '${toolName}' already succeeded with identical arguments in run ` +
               `'${ctx.runId}' (first: ${marker.firstToolCallId})${ignoredNudge ? ' and repeated identically even after a reconsider nudge' : ''} ` +
               `— duplicate blocked, this call was NOT EXECUTED`;
             const detail = { toolName, argsHash: hash, firstToolCallId: marker.firstToolCallId, toolCallId };
@@ -338,7 +338,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           // named, with BOTH exits (adoption ramp toward the stricter modes, never a silent duplicate).
           // Journaled too (recordIncident): a console line evaporates; an operator can query this one.
           const warnMessage =
-            `@gnl/durable: side-effect tool '${toolName}' is about to EXECUTE AGAIN with arguments identical to an ` +
+            `@gnldev/durable: side-effect tool '${toolName}' is about to EXECUTE AGAIN with arguments identical to an ` +
             `earlier successful call in run '${ctx.runId}' (first: ${marker.firstToolCallId}, now: ${toolCallId}). ` +
             `If repeating this action is harmless, mark the tool \`idempotent: true\` (or \`sideEffect: false\`). ` +
             `If it must never duplicate, set \`idempotency: 'args'\` (+ \`idempotencyKey\` for the business identity, ` +
@@ -378,7 +378,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           const taintDetail = { toolName, toolCallId, taintSource: { toolCallId: taint.toolCallId, toolName: taint.toolName } };
           if (taintAction === 'block') {
             const message =
-              `@gnl/durable: side-effect tool '${toolName}' blocked — untrusted external content from ${src} ` +
+              `@gnldev/durable: side-effect tool '${toolName}' blocked — untrusted external content from ${src} ` +
               `entered this run before the call (taintedSideEffects: 'block'), this call was NOT EXECUTED`;
             await recordIncident(ctx.journal, ctx.runId, { at: Date.now(), source: 'taint-guard', action: 'block', toolName, toolCallId, message, detail: taintDetail });
             return { __gnl_limit_exceeded: { toolCallId, toolName, kind: 'taintedSideEffect', message, detail: taintDetail } };
@@ -423,7 +423,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
             await recordIncident(ctx.journal, ctx.runId, {
               at: Date.now(), source: 'taint-guard', action: 'warn', toolName, toolCallId,
               message:
-                `@gnl/durable: '${toolName}' EXECUTED in a tainted context after reconsidering (nudge delivered ` +
+                `@gnldev/durable: '${toolName}' EXECUTED in a tainted context after reconsidering (nudge delivered ` +
                 `earlier for these arguments; taint source: ${src})`,
               detail: taintDetail,
             });
@@ -431,7 +431,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           } else {
             // 'warn' (default): execute, but the provenance is NAMED and journaled — never silent.
             const warnMessage =
-              `@gnl/durable: side-effect tool '${toolName}' is about to execute AFTER untrusted external content ` +
+              `@gnldev/durable: side-effect tool '${toolName}' is about to execute AFTER untrusted external content ` +
               `from ${src} entered run '${ctx.runId}'. Verify the action serves the user's request, not the fetched ` +
               `content. To gate this automatically, set \`limits.taintedSideEffects\` to 'reflect' | 'block' | 'suspend'.`;
             console.warn(warnMessage);
@@ -586,7 +586,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           // (b) if the maxRetries limit is reached, permanently failed (no infinite retry loop).
           if (sideEffect && approved !== true && !recovered) {
             return blockedOrThrow(ctx, toolCallId, toolName, new SideEffectRetryBlockedError(
-              `@gnl/durable: '${toolName}' (${key}) has side effects — not auto-retried after failed ` +
+              `@gnldev/durable: '${toolName}' (${key}) has side effects — not auto-retried after failed ` +
                 `(allow explicitly with approvals['${toolCallId}']=true, mark idempotent: true, or provide a recover() hook)`,
               { key, attempts },
             ));
@@ -594,7 +594,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           const maxRetries = tool.maxRetries ?? DEFAULT_MAX_RETRIES;
           if (attempts >= maxRetries) {
             return blockedOrThrow(ctx, toolCallId, toolName, new RetryLimitExceededError(
-              `@gnl/durable: '${toolName}' (${key}) reached the maxRetries (${maxRetries}) limit — permanently failed`,
+              `@gnldev/durable: '${toolName}' (${key}) reached the maxRetries (${maxRetries}) limit — permanently failed`,
               { key, attempts, maxRetries },
             ));
           }
@@ -607,7 +607,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           // risking a double side effect).
           if (sideEffect && approved !== true && !recovered) {
             return blockedOrThrow(ctx, toolCallId, toolName, new SideEffectRetryBlockedError(
-              `@gnl/durable: '${toolName}' (${key}) crashed mid-execution (stale 'running') and has side ` +
+              `@gnldev/durable: '${toolName}' (${key}) crashed mid-execution (stale 'running') and has side ` +
                 `effects — it MAY have already run. Provide a recover() hook to resolve automatically, ` +
                 `mark idempotent: true, or approve with approvals['${toolCallId}']=true`,
               { key, attempts: 1 },
@@ -695,7 +695,7 @@ function warnTaintCannotFire(ctx: DurableCtx, tools: Record<string, any>): void 
   if (taintNeverFiresWarned.has(ctx.journal)) return;
   taintNeverFiresWarned.add(ctx.journal);
   console.warn(
-    `@gnl/durable: limits.taintedSideEffects is '${action}' but NO tool is marked \`untrusted: true\` and ` +
+    `@gnldev/durable: limits.taintedSideEffects is '${action}' but NO tool is marked \`untrusted: true\` and ` +
       'no tool-result processor is configured — the taint guard has no source and can NEVER FIRE (armed but ' +
       'inert). Mark the tool(s) that ingest external/untrusted content with `untrusted: true` (or add a ' +
       'processor that calls markRunTainted), otherwise remove taintedSideEffects to avoid a false sense of protection.',
@@ -713,7 +713,7 @@ export function durableTools<T extends Record<string, any>>(tools: T, ctx: Durab
       .map(([name]) => name);
     if (beyansiz.length) {
       throw new Error(
-        `@gnl/durable: toolPolicy 'strict' — these tools do not declare their side-effect intent: ` +
+        `@gnldev/durable: toolPolicy 'strict' — these tools do not declare their side-effect intent: ` +
           `[${beyansiz.join(', ')}]. Add idempotent: true|false, sideEffect: true|false ` +
           `or recover() to each (recover is recommended for critical tools — it automates exactly-once).`,
       );

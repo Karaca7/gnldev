@@ -3,7 +3,7 @@
 // {code,resumable} body (consistent with BLOCKED_CODES on the SSE path (sse.ts) — see review finding A).
 // Previously these errors fell through to a generic 400 (no code/detail/resumable).
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal, runKeys } from '@gnl/durable';
+import { InMemoryJournal, runKeys } from '@gnldev/durable';
 import { createRestApi } from '../src/index.js';
 
 const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
@@ -27,7 +27,7 @@ function stubbornModel(): any {
   };
 }
 
-describe('@gnl/server — K1 blocked errors (side_effect_retry_blocked/run_busy)', () => {
+describe('@gnldev/server — K1 blocked errors (side_effect_retry_blocked/run_busy)', () => {
   it('/run: unapproved side-effect retry (failed record) → 409 + code=side_effect_retry_blocked + resumable:true', async () => {
     const journal = new InMemoryJournal();
     // chargeCard has a side effect (NOT idempotent): a prior 'failed' record is NOT auto-retried without approval.

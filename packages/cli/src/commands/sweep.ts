@@ -5,8 +5,8 @@
 // via listRuns/readRun/summarizeRun — the SAME primitives sweepRuns uses internally — but always takes
 // the plain scan path (not the storage-specific listStaleRuns fast path sweepRuns may use for the real
 // delete); that's a deliberate simplicity/portability trade-off for a preview, not a correctness gap.
-import type * as Durable from '@gnl/durable';
-import type { SweepResult } from '@gnl/durable';
+import type * as Durable from '@gnldev/durable';
+import type { SweepResult } from '@gnldev/durable';
 import type { Command } from './types.js';
 import { flag, flagBool } from '../args.js';
 import { loadConfig } from '../config.js';

@@ -1,5 +1,5 @@
-// @gnl/scheduler/workflow-waker — P2-waker (AUDIT-R2): closes the "suspend and hope
-// someone polls" gap in @gnl/workflow. `sleep(id, untilMs)`/`waitFor` suspend a run and rely on
+// @gnldev/scheduler/workflow-waker — P2-waker (AUDIT-R2): closes the "suspend and hope
+// someone polls" gap in @gnldev/workflow. `sleep(id, untilMs)`/`waitFor` suspend a run and rely on
 // someone re-calling `runResumable` to wake it up — this builds a real waker on top of the P0.4
 // suspended-run registry (`listWorkflowRuns`) the same way `pollScheduler` drives cron/interval/at
 // triggers: a self-rescheduling poll loop (`createPollLoop`, the SAME shared core `createScheduler`
@@ -9,10 +9,10 @@
 // The waker does NOT know how to rebuild a workflow instance — it has no `workflows: {}` registry.
 // `resume(runId, status)` is host-supplied and closes over whatever registry (e.g. `createGnl` /
 // a plain `Workflow` map) actually knows how to call `runResumable` again for that run.
-import { claim, createPollLoop } from '@gnl/durable';
-import type { PollLoop } from '@gnl/durable';
-import { listWorkflowRuns } from '@gnl/workflow';
-import type { JournalLike, WorkflowRunStatus } from '@gnl/workflow';
+import { claim, createPollLoop } from '@gnldev/durable';
+import type { PollLoop } from '@gnldev/durable';
+import { listWorkflowRuns } from '@gnldev/workflow';
+import type { JournalLike, WorkflowRunStatus } from '@gnldev/workflow';
 
 /**
  * Per-run wake ticket key. Includes `updatedAt` so a run that later re-suspends (sleep/waitFor
@@ -25,13 +25,13 @@ import type { JournalLike, WorkflowRunStatus } from '@gnl/workflow';
  */
 const WAKE_TICKET = (runId: string, updatedAt: number) => `wfwake:${runId}:${updatedAt}`;
 
-/** Best-effort narrowing of `WorkflowRunStatus.reason` — see `sleep`/`waitFor`/`waitForResume` in @gnl/workflow. */
+/** Best-effort narrowing of `WorkflowRunStatus.reason` — see `sleep`/`waitFor`/`waitForResume` in @gnldev/workflow. */
 function reasonKind(reason: unknown): { kind?: string; untilMs?: number } {
   return reason && typeof reason === 'object' ? (reason as { kind?: string; untilMs?: number }) : {};
 }
 
 export interface WorkflowWakerOptions {
-  /** Structurally compatible with @gnl/workflow's JournalLike (a superset — @gnl/durable's Journal — also works). */
+  /** Structurally compatible with @gnldev/workflow's JournalLike (a superset — @gnldev/durable's Journal — also works). */
   journal: JournalLike;
   /**
    * Host-supplied resume: the waker does not know how to rebuild a workflow instance, so it hands
@@ -87,7 +87,7 @@ export interface WorkflowWaker {
 }
 
 /**
- * Creates a durable sleep/event waker for @gnl/workflow suspended runs. `start()`/`stop()` mirror
+ * Creates a durable sleep/event waker for @gnldev/workflow suspended runs. `start()`/`stop()` mirror
  * `createScheduler`'s lifecycle (a self-rescheduling `setTimeout` chain via `createPollLoop` — no
  * dangling timer after `stop()`).
  */
@@ -143,7 +143,7 @@ export function createWorkflowWaker(opts: WorkflowWakerOptions): WorkflowWaker {
           const streak = (failStreak.get(run.runId) ?? 0) + 1;
           failStreak.set(run.runId, streak);
           if (streak === 1) {
-            console.warn(`@gnl/scheduler: workflow-waker resume('${run.runId}') failed (chain continues):`, err);
+            console.warn(`@gnldev/scheduler: workflow-waker resume('${run.runId}') failed (chain continues):`, err);
           }
         }
       }

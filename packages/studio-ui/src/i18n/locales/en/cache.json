@@ -1,6 +1,6 @@
 {
   "disabledTitle": "Cache disabled",
-  "disabledDescription": "Pass a @gnl/cache-backed store (implementing stats()) as the `cache` option to createStudioApi to enable this view.",
+  "disabledDescription": "Pass a @gnldev/cache-backed store (implementing stats()) as the `cache` option to createStudioApi to enable this view.",
   "liveStatus": "auto-updates every 5s",
   "hitLabel": "Hit",
   "missLabel": "Miss",

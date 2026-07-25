@@ -8,7 +8,7 @@
 // This is adapted (as a runnable demo, not a test) from the proof test at
 // packages/durable/test/args-idempotency.test.ts.
 import { stepCountIs } from 'ai';
-import { InMemoryJournal, runDurable } from '@gnl/durable';
+import { InMemoryJournal, runDurable } from '@gnldev/durable';
 import { printCase } from './report.js';
 
 const usage = { inputTokens: 10, outputTokens: 5, totalTokens: 15 };

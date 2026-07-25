@@ -1,4 +1,4 @@
-// @gnl/cache — cross-run content-hash cache built on top of CacheStore. Key is run-independent (`<ns>:<hash>`)
+// @gnldev/cache — cross-run content-hash cache built on top of CacheStore. Key is run-independent (`<ns>:<hash>`)
 // → a result computed in one run is reused across OTHER runs. (Within-run reuse is already
 // journal replay; this closes the across-run gap — e.g. the same RAG query in two runs → embed once.)
 //
@@ -8,8 +8,8 @@
 // VISIBILITY: `stats()` returns in-process hit/miss counters + known key count; `invalidate(key?)`
 // deletes a single key or (best-effort, since CacheStore doesn't offer enumeration, only what this instance knows about)
 // deletes all of them (the Studio Cache view wraps these — see packages/studio/src/server.ts StudioCache).
-import { argsHash } from '@gnl/durable';
-import type { CacheStore } from '@gnl/durable';
+import { argsHash } from '@gnldev/durable';
+import type { CacheStore } from '@gnldev/durable';
 
 export interface CacheSetOptions {
   /** Time-to-live (ms). Applied if the storage supports the 'ttl' capability. */

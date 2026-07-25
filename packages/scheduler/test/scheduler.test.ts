@@ -1,7 +1,7 @@
 // #5B scheduler: at/every firing, backoff/retry, lock, suspended workflow + createGnl integration.
 import { describe, it, expect, vi } from 'vitest';
-import { InMemoryJournal, acquireRunLock, createGnl } from '@gnl/durable';
-import { workflow, step } from '@gnl/workflow';
+import { InMemoryJournal, acquireRunLock, createGnl } from '@gnldev/durable';
+import { workflow, step } from '@gnldev/workflow';
 import { scheduleWorkflow, pollScheduler, createScheduler, listTriggers, type WorkflowRunner } from '../src/index.js';
 
 function mockRunner(behavior: () => { suspended?: boolean; output?: unknown }): WorkflowRunner & { calls: { name: string; runId: string }[] } {
@@ -16,7 +16,7 @@ function mockRunner(behavior: () => { suspended?: boolean; output?: unknown }): 
   };
 }
 
-describe('@gnl/scheduler', () => {
+describe('@gnldev/scheduler', () => {
   it('at (past): fires once, second poll is a no-op', async () => {
     const j = new InMemoryJournal();
     const runner = mockRunner(() => ({ output: 'ok' }));

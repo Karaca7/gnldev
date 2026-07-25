@@ -9,7 +9,7 @@
 //   (2) terminal-promise reject — `await result.text` (and the other terminal promises) REJECTS with
 //       the SAME typed error `streamFinishError(steps)` returns, mirroring runDurable's throw.
 //       `steps`/`finishReason`/`usage`/`fullStream` deliberately keep the sentinel contract —
-//       @gnl/server sse.ts, @gnl/agui and @gnl/studio post-scan `steps` and must NOT get a reject.
+//       @gnldev/server sse.ts, @gnldev/agui and @gnldev/studio post-scan `steps` and must NOT get a reject.
 import { describe, it, expect } from 'vitest';
 import { tool, stepCountIs } from 'ai';
 import { z } from 'zod';

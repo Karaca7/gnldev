@@ -108,7 +108,7 @@ async function notify<A extends unknown[], R>(
   try {
     return await fn(...args);
   } catch (e) {
-    console.warn(`@gnl/durable network: observer callback threw — ignored (${String((e as Error)?.message ?? e)})`);
+    console.warn(`@gnldev/durable network: observer callback threw — ignored (${String((e as Error)?.message ?? e)})`);
     return undefined;
   }
 }
@@ -238,7 +238,7 @@ async function decideOnce(opts: RunNetworkOptions, history: NetworkStep[], force
       lastErr = e;
     }
   }
-  throw new Error(`@gnl/durable network: router could not produce a valid decision — ${String((lastErr as Error)?.message)}`);
+  throw new Error(`@gnldev/durable network: router could not produce a valid decision — ${String((lastErr as Error)?.message)}`);
 }
 
 /**
@@ -248,7 +248,7 @@ async function decideOnce(opts: RunNetworkOptions, history: NetworkStep[], force
  */
 export async function runNetwork(opts: RunNetworkOptions): Promise<NetworkResult> {
   if (Object.keys(opts.agents).length === 0) {
-    throw new Error('@gnl/durable network: at least one agent is required');
+    throw new Error('@gnldev/durable network: at least one agent is required');
   }
   const maxIterations = opts.maxIterations ?? 6;
   const steps: NetworkStep[] = [];
@@ -267,7 +267,7 @@ export async function runNetwork(opts: RunNetworkOptions): Promise<NetworkResult
     // If the frozen decision's agent is no longer registered, fail clearly (instead of silently drifting).
     const target = opts.agents[decision.agent];
     if (!target) {
-      throw new Error(`@gnl/durable network: frozen decision requires agent '${decision.agent}' but it is not registered`);
+      throw new Error(`@gnldev/durable network: frozen decision requires agent '${decision.agent}' but it is not registered`);
     }
     // The step result freezes CONDITIONALLY: if the sub-agent was suspended (interrupts is
     // non-empty) it is NOT FROZEN — otherwise an empty/half-finished text would become permanent
@@ -353,7 +353,7 @@ export async function getNetworkTrace(
   runId: string,
 ): Promise<{ routes: { i: number | 'final'; decision: RouteDecision }[]; steps: NetworkStep[] }> {
   if (typeof journal.listKeys !== 'function') {
-    throw new Error('@gnl/durable network: getNetworkTrace requires a journal that supports `listKeys`');
+    throw new Error('@gnldev/durable network: getNetworkTrace requires a journal that supports `listKeys`');
   }
   const keys = await journal.listKeys(`${runId}:net:`);
   const routes: { i: number | 'final'; decision: RouteDecision }[] = [];

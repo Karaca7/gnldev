@@ -6,7 +6,7 @@
   "retrySuccess": "Job '{{id}}' yeniden kuyruğa alındı",
   "retryError": "Yeniden deneme başarısız: {{error}}",
   "emptyTitle": "Henüz job yok",
-  "emptyDescription": "Job'lar, uygulamanız @gnl/queue'nun enqueue() fonksiyonuyla arka plan işini kuyruğa aldığında burada görünür — Studio onları burada görüntüleyip yeniden deneyebilir, oluşturamaz.",
+  "emptyDescription": "Job'lar, uygulamanız @gnldev/queue'nun enqueue() fonksiyonuyla arka plan işini kuyruğa aldığında burada görünür — Studio onları burada görüntüleyip yeniden deneyebilir, oluşturamaz.",
   "liveStatus": "{{count}} job · 3sn'de bir yenilenir",
   "colType": "Tip",
   "colStatus": "Durum",

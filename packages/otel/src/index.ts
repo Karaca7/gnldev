@@ -1,4 +1,4 @@
-// @gnl/otel — converts the journal into a real OpenTelemetry trace and sends it to a SpanExporter (or an
+// @gnldev/otel — converts the journal into a real OpenTelemetry trace and sends it to a SpanExporter (or an
 // OTLP endpoint). Deterministic ids → idempotent; post-hoc from the journal → complete even after a crash,
 // consistent across replays = exactly-once / crash-proof observability (frameworks that live-instrument cannot offer this).
 import {
@@ -8,8 +8,8 @@ import {
   type SpanExporter,
 } from '@opentelemetry/sdk-trace-base';
 import { trace, context, SpanKind, SpanStatusCode } from '@opentelemetry/api';
-import { getRunCost } from '@gnl/durable';
-import type { JournalReader, ModelPricing } from '@gnl/durable';
+import { getRunCost } from '@gnldev/durable';
+import type { JournalReader, ModelPricing } from '@gnldev/durable';
 import { traceIdFor, spanIdFor, QueueIdGenerator, mapEntry } from './spans.js';
 
 export interface ExportRunOptions {
@@ -58,7 +58,7 @@ export async function exportRun(
 
   const provider = new BasicTracerProvider({ idGenerator });
   provider.addSpanProcessor(new SimpleSpanProcessor(exporter));
-  const tracer = provider.getTracer('@gnl/otel');
+  const tracer = provider.getTracer('@gnldev/otel');
 
   const cost = await getRunCost(reader, runId, { pricing: opts.pricing, modelId: opts.modelId });
 

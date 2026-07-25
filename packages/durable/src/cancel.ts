@@ -1,5 +1,5 @@
 // P2-cancel (AUDIT-R2, Dalga-2): DURABLE cross-worker cancellation for AGENT runs — the
-// agent-side twin of @gnl/workflow's `cancelWorkflowRun` (P0.4) and the missing half of the server's
+// agent-side twin of @gnldev/workflow's `cancelWorkflowRun` (P0.4) and the missing half of the server's
 // P0.3 `/runs/:id/cancel` (which only aborts in-flight generation ON THAT INSTANCE; this flag reaches
 // every worker and survives restarts).
 //

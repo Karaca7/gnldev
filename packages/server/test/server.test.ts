@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import { tool } from 'ai';
 import { z } from 'zod';
-import { InMemoryJournal } from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
 import { createRestApi } from '../src/index.js';
 
 function mkModel(): any {

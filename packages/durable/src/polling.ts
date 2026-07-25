@@ -1,5 +1,5 @@
-// @gnl/durable/polling — shared poll-loop core (Phase 8.1 review finding: the tick/backoff/"polling"
-// flag loop in @gnl/queue, @gnl/events, @gnl/scheduler was nearly THREE identical copies). This module
+// @gnldev/durable/polling — shared poll-loop core (Phase 8.1 review finding: the tick/backoff/"polling"
+// flag loop in @gnldev/queue, @gnldev/events, @gnldev/scheduler was nearly THREE identical copies). This module
 // consolidates those three copies into ONE place — external behavior (tick timing, backoff
 // growth/reset, overlap protection) is preserved exactly; calling packages only pass their own
 // `backoff` default already RESOLVED (queue/events ON, scheduler OFF) — this module doesn't impose its own default.
@@ -45,7 +45,7 @@ export function createPollLoop(fn: () => Promise<boolean>, opts: PollLoopOptions
     } catch (err) {
       // fn() usually swallows its own work/handler errors internally; this is the last resort only
       // for unexpected (e.g. storage I/O) errors — it matters that the chain NOT DIE (the next tick can still be scheduled).
-      console.warn('@gnl/durable: poll-loop tick failed (chain continues):', err);
+      console.warn('@gnldev/durable: poll-loop tick failed (chain continues):', err);
     } finally {
       polling = false;
     }

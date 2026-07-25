@@ -1,6 +1,6 @@
 // Sub-batch C — evalDataset: batch eval + aggregate; resumable via journal (a completed case does not re-run).
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
 import { evalDataset, contains, exactMatch, type Dataset } from '../src/index.js';
 
 const dataset: Dataset = {
@@ -11,7 +11,7 @@ const dataset: Dataset = {
   ],
 };
 
-describe('@gnl/evals evalDataset', () => {
+describe('@gnldev/evals evalDataset', () => {
   it('batch eval + aggregate', async () => {
     const res = await evalDataset({
       dataset,

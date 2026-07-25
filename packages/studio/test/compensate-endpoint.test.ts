@@ -2,8 +2,8 @@
 // live in code, like resume); without the option → 501. Write-gated; audited with the report summary;
 // dryRun is NOT audited (nothing happened).
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
-import { roleAuth } from '@gnl/auth';
+import { InMemoryJournal } from '@gnldev/durable';
+import { roleAuth } from '@gnldev/auth';
 import { createStudioApi } from '../src/server.js';
 
 const report = { runId: 'r1', dryRun: false, condemned: true, entries: [

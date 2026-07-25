@@ -1,5 +1,5 @@
 // Data-driven budget/quota: limits live in the journal (editable from Studio, the policy.ts pattern),
-// hosts (@gnl/server) read them LIVE via checkBudget on the write path and return 402 on overrun → a
+// hosts (@gnldev/server) read them LIVE via checkBudget on the write path and return 402 on overrun → a
 // limit change does not require a deploy. Usage is computed post-hoc/exactly from journaled usage (cost.ts).
 import type { Journal, JournalReader, RunSummary } from './journal.js';
 import { claim } from './journal.js';
@@ -70,7 +70,7 @@ function warnUsageCasFallback(journal: object): void {
   if (usageCasFallbackWarned.has(journal)) return;
   usageCasFallbackWarned.add(journal);
   console.warn(
-    '@gnl/durable: this journal does not implement `incrBy` — the org usage counter fell back to get→put. ' +
+    '@gnldev/durable: this journal does not implement `incrBy` — the org usage counter fell back to get→put. ' +
       'Safe in single-process usage; in multi-worker/distributed environments concurrent completions can LOSE ' +
       'increments (usage UNDER-counts → the budget can silently OVER-run). Implement `incrBy` (all first-party ' +
       'adapters do — see the parity matrix in journal.ts).',
@@ -141,7 +141,7 @@ type RunLike = Pick<RunSummary, 'runId' | 'status'>;
 /**
  * `listRuns()` may return the old contract (an array) OR a paginated one (`{items, nextCursor}`); if
  * paginated, it walks ALL pages (PHASE 1.1 finding: "don't count only the first page on a paginated
- * reader" — `@gnl/server` already bridges this on its own side via `toJournal`, but `getOrgUsage`
+ * reader" — `@gnldev/server` already bridges this on its own side via `toJournal`, but `getOrgUsage`
  * should be correct on its own even if the host doesn't provide that — e.g. an embedding that hands
  * back `storage.runs` directly).
  */
@@ -339,7 +339,7 @@ function warnBudgetUnenforceable(reader: object): void {
   if (budgetFailOpenWarned.has(reader)) return;
   budgetFailOpenWarned.add(reader);
   console.warn(
-    '@gnl/durable: a budget/quota limit is configured but this journal does not implement `listRuns` — ' +
+    '@gnldev/durable: a budget/quota limit is configured but this journal does not implement `listRuns` — ' +
       'usage CANNOT be computed, so the budget is SILENTLY NOT ENFORCED (never exceeded). Use a journal that ' +
       'implements `listRuns` (all first-party adapters do), or remove the budget to avoid a false sense of a cap.',
   );
@@ -356,8 +356,8 @@ export class BudgetExceededError extends Error {
 
 /**
  * Shareable enforcement primitive: called BEFORE a run starts; throws BudgetExceededError on overrun,
- * otherwise returns a BudgetCheck. @gnl/server's write path uses it in HTTP; **non-HTTP paths
- * (@gnl/queue worker, @gnl/scheduler cron, @gnl/a2a, direct runDurable/createGnl embedders) do NOT
+ * otherwise returns a BudgetCheck. @gnldev/server's write path uses it in HTTP; **non-HTTP paths
+ * (@gnldev/queue worker, @gnldev/scheduler cron, @gnldev/a2a, direct runDurable/createGnl embedders) do NOT
  * AUTOMATICALLY ENFORCE the quota** — if quota enforcement is needed, they must call this function
  * themselves before the run (example: `await assertBudget(reader, { orgId, fallback })` inside the
  * worker handler). If there's no limit it exits at zero cost.

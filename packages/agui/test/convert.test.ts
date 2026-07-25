@@ -6,7 +6,7 @@ import { EventType } from '../src/types.js';
 
 const ctx = { threadId: 't1', runId: 'r1' };
 
-describe('@gnl/agui toAguiEvents', () => {
+describe('@gnldev/agui toAguiEvents', () => {
   it('text-delta (first) → TEXT_MESSAGE_START + TEXT_MESSAGE_CONTENT, state becomes textOpen', () => {
     const { events, state } = toAguiEvents({ event: 'text-delta', data: { text: 'Hello ' } }, ctx);
     expect(events).toEqual([

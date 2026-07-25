@@ -1,10 +1,10 @@
-// @gnl/studio/workflow — compiles a managed (UI-authored) WorkflowDef into a REAL @gnl/workflow Workflow.
-// Separate sub-export: keeps the @gnl/workflow import isolated from the studio core (server.ts) → core stays decoupled.
+// @gnldev/studio/workflow — compiles a managed (UI-authored) WorkflowDef into a REAL @gnldev/workflow Workflow.
+// Separate sub-export: keeps the @gnldev/workflow import isolated from the studio core (server.ts) → core stays decoupled.
 // The host passes this via `createStudioApp({ compileWorkflow: compileManagedWorkflow })`; the server runs the
 // compiled Workflow with the same engine (each step is journaled as `${runId}:wf:${stepId}` → exactly-once + suspend/resume,
 // poll-to-stream / run-state / run-history / inspector all work the same way as for code workflows).
-import { workflow, step } from '@gnl/workflow';
-import type { WorkflowLike } from '@gnl/durable';
+import { workflow, step } from '@gnldev/workflow';
+import type { WorkflowLike } from '@gnldev/durable';
 import type { WorkflowDef } from './server.js';
 
 /** The studio runner's agent executor (structurally compatible with StudioAgentRunner.run). */

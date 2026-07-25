@@ -1,8 +1,8 @@
 {
-  "name": "@gnl/a2a",
+  "name": "@gnldev/a2a",
   "version": "0.0.0",
   "license": "Apache-2.0",
-  "description": "Remote agent-to-agent tool over @gnl/server REST. Deterministic remote runId → exactly-once across the network.",
+  "description": "Remote agent-to-agent tool over @gnldev/server REST. Deterministic remote runId → exactly-once across the network.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -25,8 +25,8 @@
     "zod": "^3.25.0"
   },
   "devDependencies": {
-    "@gnl/durable": "workspace:*",
-    "@gnl/server": "workspace:*",
+    "@gnldev/durable": "workspace:*",
+    "@gnldev/server": "workspace:*",
     "ai": "^5.0.0",
     "zod": "^3.25.0"
   }

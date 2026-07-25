@@ -1,4 +1,4 @@
-// EMBEDDED static GNL doc content — the fallback single source of truth for @gnl/docs-mcp.
+// EMBEDDED static GNL doc content — the fallback single source of truth for @gnldev/docs-mcp.
 //
 // Compiled 1:1 from components/docs/nav-data.ts (ordered list of the 25 features:
 // slug/title/oneLiner/tier/package) and lib/llms-content.ts (per-slug install/apis/example)
@@ -39,7 +39,7 @@ export interface DocFeature {
 /** GNL overview summary — short summary mirroring gnl.dev/llms.txt (source for the gnl_docs_overview tool). */
 export const OVERVIEW_SUMMARY = `A thin correctness layer on top of the Vercel AI SDK: journal-based durability, exactly-once tool calls, deterministic replay/time-travel. Runtime footprint ~8KB, BYO-DB (SQLite/Postgres/your own storage), no telemetry/phone-home — your journal always stays on your own infrastructure.`;
 
-export const OVERVIEW_DETAIL = `GNL keeps the same agent loop via \`runDurable\`, a drop-in replacement for \`generateText\`/\`streamText\`; it additionally takes a \`journal\` + \`runId\`. Even if the process crashes, calling it again with the same \`runId\` resumes deterministically from where it left off, and completed tool calls never run again. Three tiers: Core (free, @gnl/durable/@gnl/server/@gnl/auth/@gnl/evals), Studio (@gnl/studio — inspection/management, free), Enterprise (@gnl/auth-ee — signed license, RBAC/SSO/multi-organization/budget).`;
+export const OVERVIEW_DETAIL = `GNL keeps the same agent loop via \`runDurable\`, a drop-in replacement for \`generateText\`/\`streamText\`; it additionally takes a \`journal\` + \`runId\`. Even if the process crashes, calling it again with the same \`runId\` resumes deterministically from where it left off, and completed tool calls never run again. Three tiers: Core (free, @gnldev/durable/@gnldev/server/@gnldev/auth/@gnldev/evals), Studio (@gnldev/studio — inspection/management, free), Enterprise (@gnldev/auth-ee — signed license, RBAC/SSO/multi-organization/budget).`;
 
 /** Full list of the 25 features — mirrors gnl.dev/llms-full.txt. Order = the order field. */
 export const FEATURES: DocFeature[] = [
@@ -49,10 +49,10 @@ export const FEATURES: DocFeature[] = [
     title: `Agent registry (createGnl)`,
     oneLiner: `Central entry point that defines agents/tools/workflows in a single config and runs them durably.`,
     tier: `core`,
-    package: `@gnl/durable`,
-    install: `import { SqliteStorage } from '@gnl/durable/sqlite';
-import { createGnl, toJournal } from '@gnl/durable';
-import type { CreateGnlConfig } from '@gnl/durable';`,
+    package: `@gnldev/durable`,
+    install: `import { SqliteStorage } from '@gnldev/durable/sqlite';
+import { createGnl, toJournal } from '@gnldev/durable';
+import type { CreateGnlConfig } from '@gnldev/durable';`,
     apis: [`createGnl(config) — returns { run, stream, listWorkflows, runWorkflow }`, `CreateGnlConfig — storage/journal, agents, tools, workflows`, `AgentConfig — model, tools, system, guard, maxSteps, agents (sub-agent)`, `RunOptions — runId, prompt|messages, threadId, resourceId, approvals`],
     example: `const storage = new SqliteStorage(process.env.DB_PATH ?? 'app.db');
 const config: CreateGnlConfig = {
@@ -68,13 +68,13 @@ await gnl.run('starwars', { runId: 'demo-1', prompt: 'Who is Luke Skywalker?' })
     title: `Storage adapters`,
     oneLiner: `Pluggable storage: SqliteStorage, PostgresStorage, InMemoryStorage.`,
     tier: `core`,
-    package: `@gnl/durable`,
-    install: `import { SqliteStorage } from '@gnl/durable/sqlite';
-import { PostgresStorage } from '@gnl/durable/postgres';
-import { InMemoryStorage, toJournal, composite } from '@gnl/durable';`,
+    package: `@gnldev/durable`,
+    install: `import { SqliteStorage } from '@gnldev/durable/sqlite';
+import { PostgresStorage } from '@gnldev/durable/postgres';
+import { InMemoryStorage, toJournal, composite } from '@gnldev/durable';`,
     apis: [`SqliteStorage — node:sqlite-based dev/single-file storage`, `PostgresStorage — pg-based production storage (connectionString or pool)`, `InMemoryStorage — test storage without persistence`, `composite({ default, overrides }) — different backend per port`, `toJournal(storage.runs) — bridges RunJournal to Journal & JournalReader`],
-    example: `import { composite } from '@gnl/durable';
-import { SqliteStorage } from '@gnl/durable/sqlite';
+    example: `import { composite } from '@gnldev/durable';
+import { SqliteStorage } from '@gnldev/durable/sqlite';
 
 const storage = composite({
   default: new SqliteStorage('app.db'),
@@ -87,8 +87,8 @@ const storage = composite({
     title: `Automatic REST API + OpenAPI + SSE`,
     oneLiner: `Turns createGnl into a durable HTTP API + SSE stream in a single line.`,
     tier: `core`,
-    package: `@gnl/server`,
-    install: `npm install @gnl/server @gnl/durable hono`,
+    package: `@gnldev/server`,
+    install: `npm install @gnldev/server @gnldev/durable hono`,
     apis: [`createRestApi(config, opts) — Hono router: run/resume/stream/usage/openapi.json`, `RestApiOptions — title, auth, org, budgets`, `buildOpenApi(...) — generates an OpenAPI 3.1 schema`, `pipeAgentStream(...) — converts a streamDurable result into an SSE event stream`],
     example: `const app = new Hono();
 app.route('/api', createRestApi(config, { title: 'SWAPI Free', auth }));
@@ -102,8 +102,8 @@ app.route('/api', createRestApi(config, { title: 'SWAPI Free', auth }));
     title: `Exactly-once tools`,
     oneLiner: `Side-effecting tools run only once per runId.`,
     tier: `core`,
-    package: `@gnl/durable`,
-    install: `pnpm add @gnl/durable ai`,
+    package: `@gnldev/durable`,
+    install: `pnpm add @gnldev/durable ai`,
     apis: [`runDurable — the durable counterpart of generateText, takes journal+runId`, `durableTool / durableTools — wraps a tool (set) as exactly-once`, `argsHash — detects determinism drift during replay`, `SideEffectRetryBlockedError / RetryLimitExceededError`],
     example: `const journal = new InMemoryJournal();
 await runDurable({
@@ -122,8 +122,8 @@ await runDurable({
     title: `Deterministic replay & crash recovery`,
     oneLiner: `An interrupted run resumes deterministically from where it left off.`,
     tier: `core`,
-    package: `@gnl/durable`,
-    install: `import { runDurable, resumeRun, InMemoryJournal } from '@gnl/durable';`,
+    package: `@gnldev/durable`,
+    install: `import { runDurable, resumeRun, InMemoryJournal } from '@gnldev/durable';`,
     apis: [`runDurable — writes every model/tool step to the journal`, `resumeRun(runId, opts) — reads the recorded input from the journal and resumes`, `reconstructState — materializes state from journal entries`, `DivergenceError — non-determinism detection in replay: 'strict' mode`],
     example: `const r2 = await resumeRun('o1', {
   journal,
@@ -140,9 +140,9 @@ await runDurable({
     title: `Human-approved tools (guard)`,
     oneLiner: `Guard suspends risky calls; resumed with approval.`,
     tier: `core`,
-    package: `@gnl/durable`,
-    install: `import { runDurable, resumeRun } from '@gnl/durable';
-import type { Guard, GuardCall, GuardDecision, Interrupt } from '@gnl/durable';`,
+    package: `@gnldev/durable`,
+    install: `import { runDurable, resumeRun } from '@gnldev/durable';
+import type { Guard, GuardCall, GuardDecision, Interrupt } from '@gnldev/durable';`,
     apis: [`Guard — (call: GuardCall) => GuardDecision, runs before every tool call`, `GuardDecision — 'allow' | 'deny' | 'require-approval'`, `Interrupt — record of a suspended tool call`, `resumeRun — resumes a suspended run with approvals`],
     example: `const guard: Guard = ({ toolName, args }) =>
   toolName === 'chargeCard' && (args as any).amount > 1000
@@ -158,9 +158,9 @@ await runDurable({ runId: 'o1', journal, model, tools, guard, prompt: 'Charge 50
     title: `Durable workflows`,
     oneLiner: `Multi-step workflows are safe to suspend/resume.`,
     tier: `core`,
-    package: `@gnl/durable`,
-    install: `import { workflow, step } from '@gnl/workflow';
-import { createGnl } from '@gnl/durable';`,
+    package: `@gnldev/durable`,
+    install: `import { workflow, step } from '@gnldev/workflow';
+import { createGnl } from '@gnldev/durable';`,
     apis: [`workflow() / step(id, run) — defines a workflow with sequential steps`, `createGnl(config).runWorkflow(name, input, { runId }) — runs it durably`, `WorkflowLike — structural interface with build()/run()/optional runResumable()`, `listWorkflows() — introspects the registered workflow's step list`],
     example: `const myWorkflow = workflow<{ email: string }>()
   .then(step('onboard:create-account', async (input) => ({ ...input, accountId: 'acc_1' })))
@@ -175,9 +175,9 @@ const res = await gnl.runWorkflow('onboard', input, { runId: 'wf-1' });`,
     title: `Model routing & fallback`,
     oneLiner: `Deterministically falls back to the first working model from a candidate list.`,
     tier: `core`,
-    package: `@gnl/durable`,
-    install: `import { withModelFallback, resolveModel, runDurable } from '@gnl/durable';
-import type { FallbackCandidate } from '@gnl/durable';`,
+    package: `@gnldev/durable`,
+    install: `import { withModelFallback, resolveModel, runDurable } from '@gnldev/durable';
+import type { FallbackCandidate } from '@gnldev/durable';`,
     apis: [`resolveModel('provider/model') — converts a string id into an actual model (lazy import)`, `withModelFallback(candidates, journal, runId) — deterministically falls back to the first successful model`, `FallbackCandidate — { spec, model }`],
     example: `const model = withModelFallback(
   [{ model: 'openai:gpt-4o' }, { model: 'openai:gpt-4o-mini' }],
@@ -192,8 +192,8 @@ await runDurable({ runId, journal, model, tools, prompt });`,
     title: `Cost & pricing observability`,
     oneLiner: `Computes per-run token/cost/trace from the journal.`,
     tier: `core`,
-    package: `@gnl/durable`,
-    install: `import { getRunCost, toTraceSpans } from '@gnl/durable';`,
+    package: `@gnldev/durable`,
+    install: `import { getRunCost, toTraceSpans } from '@gnldev/durable';`,
     apis: [`getRunCost(reader, runId) — computes per-run token/USD cost`, `toTraceSpans(reader, runId) — generates an OTel gen_ai-compatible span list`, `effectivePricingTable(journal) — journal __pricing__ (if present) > DEFAULT_PRICING`, `DEFAULT_PRICING — approximate model pricing table ($/1M tokens)`],
     example: `const cost = await getRunCost(reader, runId);
 // { runId, inputTokens, outputTokens, totalTokens, costUsd, byModel }`,
@@ -204,10 +204,10 @@ await runDurable({ runId, journal, model, tools, prompt });`,
     title: `Open-core auth (roleAuth)`,
     oneLiner: `Free bearer/role-based identity/authorization; REST+Studio gate.`,
     tier: `core`,
-    package: `@gnl/auth`,
-    install: `import { roleAuth, type Cred } from '@gnl/auth';
-import { createRestApi } from '@gnl/server';
-import { createStudioApp } from '@gnl/studio';`,
+    package: `@gnldev/auth`,
+    install: `import { roleAuth, type Cred } from '@gnldev/auth';
+import { createRestApi } from '@gnldev/server';
+import { createStudioApp } from '@gnldev/studio';`,
     apis: [`roleAuth({ admin?, viewer? }) — AuthProvider | undefined (opt-in)`, `AuthProvider — authenticate(c), authorize(principal, c, ctx)`, `Principal — { id?, roles, orgId?, permissions? }`, `makeGate — converts an AuthProvider into a Hono gate`],
     example: `const auth = roleAuth({
   admin: { token: process.env.GNL_ADMIN_TOKEN ?? 'free-admin' },
@@ -221,9 +221,9 @@ app.route('/api', createRestApi(config, { title: 'SWAPI Free', auth }));`,
     title: `Studio — inspector & management plane`,
     oneLiner: `Journal observation UI+API: timeline/trace/cost/Playground/management.`,
     tier: `studio`,
-    package: `@gnl/studio`,
-    install: `import { createStudioApp, createStudioRunner } from '@gnl/studio';
-import { aiToolSchema } from '@gnl/studio/ai';`,
+    package: `@gnldev/studio`,
+    install: `import { createStudioApp, createStudioRunner } from '@gnldev/studio';
+import { aiToolSchema } from '@gnldev/studio/ai';`,
     apis: [`createStudioApp(opts) — Admin HTML UI + JSON API in a single app`, `createStudioApi / createStudioAdmin — JSON API only / HTML UI only`, `createStudioRunner(gnl, config, opts) — Playground/Tools/Workflows runner`, `GET /capabilities — discovers which Studio views are enabled`],
     example: `app.route('/studio', createStudioApp({
   reader: toJournal(storage.runs),
@@ -238,9 +238,9 @@ import { aiToolSchema } from '@gnl/studio/ai';`,
     title: `Time travel & fork`,
     oneLiner: `Reconstruct state from any step, or fork into a new branch.`,
     tier: `core`,
-    package: `@gnl/durable`,
-    install: `import { reconstructState, forkRun } from '@gnl/durable';
-import { runDurable, resumeRun } from '@gnl/durable';`,
+    package: `@gnldev/durable`,
+    install: `import { reconstructState, forkRun } from '@gnldev/durable';
+import { runDurable, resumeRun } from '@gnldev/durable';`,
     apis: [`reconstructState(entries, uptoStep, seed?) — materializes state at a given step`, `forkRun(journal, srcRunId, step, newRunId) — copies the first N steps to a new runId`, `ForkResult — { newRunId, copiedModel, copiedTool }`],
     example: `const fork = await forkRun(journal, 'r', 1, 'fork1');
 // fork => { newRunId: 'fork1', copiedModel: 1, copiedTool: 1 }
@@ -252,8 +252,8 @@ const r2 = await resumeRun('fork1', { journal, model: forkModel(), tools: tools(
     title: `Data-driven guard/policy`,
     oneLiner: `Allow/deny/suspend guard driven by __policy__ in the journal; no deploy needed.`,
     tier: `core`,
-    package: `@gnl/durable`,
-    install: `import { policyGuard } from '@gnl/durable';`,
+    package: `@gnldev/durable`,
+    install: `import { policyGuard } from '@gnldev/durable';`,
     apis: [`policyGuard(journal, { key?, fallback }) — builds a Guard from the __policy__ document`, `evaluatePolicy(doc, toolName, fallback) — pure evaluation function`, `POLICY_KEY — journal key ('__policy__')`, `PolicyRule — { tool, action: 'allow'|'deny'|'require-approval', reason? }`],
     example: `const guard = policyGuard(journal, { fallback: 'allow' });
 await runDurable({ runId, journal, model, tools, guard, prompt });
@@ -267,8 +267,8 @@ await runDurable({ runId, journal, model, tools, guard, prompt });
     title: `Evaluation: scorer & LLM-judge`,
     oneLiner: `Scores runs deterministically from the journal trace.`,
     tier: `core`,
-    package: `@gnl/evals`,
-    install: `pnpm add @gnl/evals @gnl/durable ai`,
+    package: `@gnldev/evals`,
+    install: `pnpm add @gnldev/evals @gnldev/durable ai`,
     apis: [`scoreRun(reader, runId, scorers, opts) — scores deterministically from the journal trace`, `exactMatch / contains / regexScore / embeddingSimilarity — rule-based scorers`, `llmJudge({ model, rubric }) — LLM-judge scorer (memoized)`, `evalDataset({ dataset, run, scorers, journal? }) — batch/resumable suite`],
     example: `const res = await scoreRun(reader, runId, [
   exactMatch(),
@@ -282,10 +282,10 @@ await runDurable({ runId, journal, model, tools, guard, prompt });
     title: `Eval gate (promote governance)`,
     oneLiner: `No promote without passing the suite (412).`,
     tier: `studio`,
-    package: `@gnl/studio`,
-    install: `import { createStudioApp } from '@gnl/studio';
-import type { StudioDatasets, EvalDatasetResultLike } from '@gnl/studio';
-import { evalDataset } from '@gnl/evals';`,
+    package: `@gnldev/studio`,
+    install: `import { createStudioApp } from '@gnldev/studio';
+import type { StudioDatasets, EvalDatasetResultLike } from '@gnldev/studio';
+import { evalDataset } from '@gnldev/evals';`,
     apis: [`StudioAppOptions.evalGate — { datasetId, minAvg? } (if given, gates promote)`, `StudioDatasets — { list(), run(id) } contract supplied by the host`, `POST /managed-agents/:name/promote — 412 without passing the suite if evalGate is enabled`],
     example: `app.route('/studio', createStudioApp({
   reader: toJournal(storage.runs),
@@ -301,8 +301,8 @@ import { evalDataset } from '@gnl/evals';`,
     title: `Agent versioning`,
     oneLiner: `Keep agent versions in the journal, activate via promote.`,
     tier: `studio`,
-    package: `@gnl/studio`,
-    install: `import { createStudioApp } from '@gnl/studio';`,
+    package: `@gnldev/studio`,
+    install: `import { createStudioApp } from '@gnldev/studio';`,
     apis: [`POST /managed-agents — { name, model, system?, maxSteps?, note? } adds a new version`, `POST /managed-agents/:name/promote — { version } changes the active version`, `GET /managed-agents — version history + active version number`],
     example: `// POST /studio/api/managed-agents
 { "name": "support-bot", "model": "gpt-4o-mini", "system": "Give short and polite answers.", "maxSteps": 4 }
@@ -317,8 +317,8 @@ import { evalDataset } from '@gnl/evals';`,
     title: `Retention TTL sweep`,
     oneLiner: `Bulk-cleans old runs by age (sweepRuns).`,
     tier: `core`,
-    package: `@gnl/durable`,
-    install: `import { sweepRuns } from '@gnl/durable';`,
+    package: `@gnldev/durable`,
+    install: `import { sweepRuns } from '@gnldev/durable';`,
     apis: [`sweepRuns(journal, { olderThanMs, keepSuspended? }) — bulk-deletes old runs`, `SweepResult — { scanned, purged, keptSuspended, keptNoTs, deletedEntries }`, `purgeRun — the single-run deletion helper used internally by sweepRuns`],
     example: `const result = await sweepRuns(journal, { olderThanMs: 30 * 86_400_000 }); // 30 days
 // suspended (awaiting approval) runs are kept via keepSuspended (default true)
@@ -331,8 +331,8 @@ import { evalDataset } from '@gnl/evals';`,
     title: `GDPR / PII deletion (purge)`,
     oneLiner: `Permanently delete a run/thread's journal trace (purgeRun/purgeThread).`,
     tier: `core`,
-    package: `@gnl/durable`,
-    install: `import { purgeRun, purgeThread } from '@gnl/durable';`,
+    package: `@gnldev/durable`,
+    install: `import { purgeRun, purgeThread } from '@gnldev/durable';`,
     apis: [`purgeRun(journal, runId) — permanently deletes ALL trace of a run (the only exception to append-only)`, `purgeThread(journal, threadId) — deletes a thread's BasicMemory trace`, `sweepRuns — bulk purgeRun based on retention policy`],
     example: `const removed = await purgeRun(journal, 'run-123');
 // removed: number of journal keys deleted
@@ -345,14 +345,14 @@ import { evalDataset } from '@gnl/evals';`,
     title: `Signed license (Enterprise)`,
     oneLiner: `Validates an Ed25519-signed license; fail-closed boot.`,
     tier: `ee`,
-    package: `@gnl/auth-ee`,
+    package: `@gnldev/auth-ee`,
     install: `import {
   createEnterpriseAuth,
   generateLicenseKeys,
   signLicense,
   validateLicense,
   assertLicensed,
-} from '@gnl/auth-ee';`,
+} from '@gnldev/auth-ee';`,
     apis: [`generateLicenseKeys() — generates an Ed25519 key pair (vendor, one-time)`, `signLicense(payload, privateKey) — generates a signed license key`, `validateLicense(key, { publicKey }) — returns LicenseInfo (offline validation)`, `createEnterpriseAuth(opts) — returns a premium AuthProvider if the license is valid`],
     example: `const auth = createEnterpriseAuth({
   licenseKey: process.env.GNL_LICENSE_KEY,
@@ -367,8 +367,8 @@ import { evalDataset } from '@gnl/evals';`,
     title: `Multi-organization (organization isolation)`,
     oneLiner: `Each request scoped to an isolated organization journal; tied to identity, 403 on mismatch.`,
     tier: `ee`,
-    package: `@gnl/server`,
-    install: `npm install @gnl/server @gnl/durable @gnl/auth-ee`,
+    package: `@gnldev/server`,
+    install: `npm install @gnldev/server @gnldev/durable @gnldev/auth-ee`,
     apis: [`withOrg(journal, orgId) — scopes the journal with an 'org:<orgId>:' prefix`, `RestApiOptions.org — opt-in multi-organization (createRestApi option name; concept: organization scope)`, `OrgOptions — { resolve?, required? } (defaults to the x-gnl-org header)`],
     example: `app.route('/api', createRestApi(config, {
   title: 'SWAPI Pro',
@@ -383,10 +383,10 @@ import { evalDataset } from '@gnl/evals';`,
     title: `Budget & quota (402)`,
     oneLiner: `Organization token/cost limit; new runs get 402 when exceeded.`,
     tier: `ee`,
-    package: `@gnl/server`,
-    install: `import { createGnl } from '@gnl/durable';
-import { createRestApi } from '@gnl/server';
-import { checkBudget, assertBudget, getOrgUsage, BudgetExceededError } from '@gnl/durable';`,
+    package: `@gnldev/server`,
+    install: `import { createGnl } from '@gnldev/durable';
+import { createRestApi } from '@gnldev/server';
+import { checkBudget, assertBudget, getOrgUsage, BudgetExceededError } from '@gnldev/durable';`,
     apis: [`RestApiOptions.budgets — { default?, perOrg? } (journal __budget__ overrides this)`, `checkBudget / assertBudget — checks / throws on limit overage`, `getOrgUsage — returns the organization's total runs/tokens/costUsd (O(1))`, `recordRunUsage — adds to the __usage__ counter when a run completes (idempotent)`],
     example: `app.route('/api', createRestApi(config, {
   auth,
@@ -401,9 +401,9 @@ import { checkBudget, assertBudget, getOrgUsage, BudgetExceededError } from '@gn
     title: `RBAC (role-based authorization)`,
     oneLiner: `Resource/action authorization via role→permission mapping.`,
     tier: `ee`,
-    package: `@gnl/auth-ee`,
-    install: `import { createRbac, createEnterpriseAuth } from '@gnl/auth-ee';
-import type { Permission, RbacProvider } from '@gnl/auth-ee';`,
+    package: `@gnldev/auth-ee`,
+    install: `import { createRbac, createEnterpriseAuth } from '@gnldev/auth-ee';
+import type { Permission, RbacProvider } from '@gnldev/auth-ee';`,
     apis: [`createRbac(roleGrants?) — defaults to { admin: ['*'], viewer: ['*:read'] }`, `Permission — 'resource:action' pattern (e.g. 'runs:read', '*:read', '*')`, `permissionMatches(granted, required) — wildcard (*)-supported matching`],
     example: `const rbac = createRbac({ editor: ['runs:read', 'runs:write'], viewer: ['*:read'] });
 const auth = createEnterpriseAuth({ licenseKey, rbac, fallback });
@@ -415,8 +415,8 @@ const auth = createEnterpriseAuth({ licenseKey, rbac, fallback });
     title: `SSO (OAuth/OIDC/SAML/JWT)`,
     oneLiner: `Resolves an enterprise identity provider to a Principal.`,
     tier: `ee`,
-    package: `@gnl/auth-ee`,
-    install: `import { createJwtSso, createEnterpriseAuth } from '@gnl/auth-ee';`,
+    package: `@gnldev/auth-ee`,
+    install: `import { createJwtSso, createEnterpriseAuth } from '@gnldev/auth-ee';`,
     apis: [`createJwtSso({ secret|publicKey, issuer?, audience? }) — validates the JWT and produces a Principal`, `SsoProvider — { authorizeUrl, handleCallback, principalFromRequest }`, `createAuth0Sso / createWorkOsSso — full OAuth/OIDC providers (redirect → callback → token exchange + JWKS signature verification)`],
     example: `const sso = createJwtSso({
   publicKey: process.env.SSO_JWT_PUBLIC_KEY,
@@ -431,9 +431,9 @@ const auth = createEnterpriseAuth({ licenseKey, sso, fallback });`,
     title: `User management (journal-backed)`,
     oneLiner: `Token→Principal; hashed in the journal; Studio Users.`,
     tier: `ee`,
-    package: `@gnl/auth-ee`,
-    install: `import { createEnterpriseAuth, createJournalUserStore, createJournalAuditSink } from '@gnl/auth-ee';
-import { toJournal } from '@gnl/durable';`,
+    package: `@gnldev/auth-ee`,
+    install: `import { createEnterpriseAuth, createJournalUserStore, createJournalAuditSink } from '@gnldev/auth-ee';
+import { toJournal } from '@gnldev/durable';`,
     apis: [`createJournalUserStore(journal) — bearer token → Principal, hashed in the journal`, `JournalUserStore — authenticate(token), list(), create(input), revoke(id)`, `EeUserRecord/EeUserPublic — record shape (token only appears once, in the create() return)`],
     example: `const userStore = createJournalUserStore(toJournal(storage.runs));
 const { token } = await userStore.create({ email: 'acme-viewer@example.com', roles: ['viewer'], orgId: 'acme' });
@@ -445,9 +445,9 @@ const { token } = await userStore.create({ email: 'acme-viewer@example.com', rol
     title: `Audit log`,
     oneLiner: `Authorization decisions + management actions persisted, with a non-spoofable actor.`,
     tier: `ee`,
-    package: `@gnl/auth-ee`,
-    install: `import { createEnterpriseAuth, createJournalAuditSink, consoleAuditSink } from '@gnl/auth-ee';
-import { toJournal } from '@gnl/durable';`,
+    package: `@gnldev/auth-ee`,
+    install: `import { createEnterpriseAuth, createJournalAuditSink, consoleAuditSink } from '@gnldev/auth-ee';
+import { toJournal } from '@gnldev/durable';`,
     apis: [`createJournalAuditSink(journal) — writes every authorization decision permanently to the journal`, `readJournalAudit(journal) — returns written AuditEvents, newest first`, `AuditEvent — { ts, principalId?, orgId?, path, method, action, allowed }`],
     example: `const auth = createEnterpriseAuth({
   licenseKey,

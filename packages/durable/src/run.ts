@@ -18,7 +18,7 @@ import { assertNotCompensated, CompensatedRunError } from './compensation.js';
 import { assertNotCanceled } from './cancel.js';
 import { markRunTainted, readThreadTaint, readDirectRunTaint, recordTaintProvenance, isThreadTaintExpired } from './taint.js';
 import type { RunLimits } from './limits.js';
-import type { SchemaCompatRule } from '@gnl/schema-compat';
+import type { SchemaCompatRule } from '@gnldev/schema-compat';
 import type { LanguageModelV2 } from '@ai-sdk/provider';
 
 type GenerateTextOptions = Parameters<typeof generateText>[0];
@@ -155,7 +155,7 @@ function hasLimitExceeded(part: any): boolean {
 
 /**
  * Converts the FIRST sentinel found via `hasLimitExceeded` into a real error (see runDurableInner).
- * Decision #2: @gnl/server sse.ts also uses this at the end of the stream — the sentinel does not
+ * Decision #2: @gnldev/server sse.ts also uses this at the end of the stream — the sentinel does not
  * leak to the client, the breach is converted into an SSE `error` event ({code, detail}). This is
  * why it is EXPORTED.
  */
@@ -176,7 +176,7 @@ function hasBlocked(part: any): boolean {
 
 /**
  * K1: return the FIRST `__gnl_blocked` sentinel — SAME contract as limitBreachFromSteps:
- * @gnl/server sse.ts / @gnl/agui use this at the end of the stream (the sentinel does not leak
+ * @gnldev/server sse.ts / @gnldev/agui use this at the end of the stream (the sentinel does not leak
  * to the client, it is converted into an error event). This is why it is EXPORTED.
  */
 export function blockedFromSteps(steps: any[]): { toolCallId: string; toolName: string; code: string; message: string; detail?: any } | undefined {
@@ -201,7 +201,7 @@ function errorFromBlocked(b: { code: string; message: string; detail?: any }): E
 /**
  * K1/GOREV W1 (B): converts the FIRST blocked/limit sentinel in the `steps` array into a real
  * typed error. runDurableInner uses this; it is also EXPORTED for code that consumes streamDurable
- * DIRECTLY (manually reading fullStream, not @gnl/server sse.ts / @gnl/agui) — pass it onFinish's
+ * DIRECTLY (manually reading fullStream, not @gnldev/server sse.ts / @gnldev/agui) — pass it onFinish's
  * `ev.steps`: if a sentinel exists, it returns the TYPED error, otherwise `undefined` (the sentinel
  * itself never leaks outward). Uses the SAME scan order as blockedFromSteps/limitBreachFromSteps —
  * the conversion logic lives in ONE place (no duplication): runDurableInner also calls this function.
@@ -250,9 +250,9 @@ function streamBreachFromSteps(steps: any[]): StreamBreach | undefined {
 // AUDIT B3(b) — terminal-promise reject: the awaited-result promises a happy-path consumer reads
 // (`result.text` first among them) must REJECT with the typed `streamFinishError(steps)` error when a
 // block/limit sentinel fired, mirroring runDurable's throw. DELIBERATELY EXCLUDED (they keep the
-// sentinel contract): `steps` (@gnl/server sse.ts, @gnl/agui and @gnl/studio `await result.steps`
+// sentinel contract): `steps` (@gnldev/server sse.ts, @gnldev/agui and @gnldev/studio `await result.steps`
 // WITHOUT a catch and post-scan it — rejecting it would replace their structured terminal error with a
-// generic one), `finishReason`/`usage` (@gnl/studio's pipe awaits them even on the breach path — a
+// generic one), `finishReason`/`usage` (@gnldev/studio's pipe awaits them even on the breach path — a
 // reject would blank its `done` event), `request`/`warnings` (resolve BEFORE stream finish — gating
 // them on `steps` would delay them), and the streams themselves (`fullStream`/`textStream`).
 const STREAM_BREACH_REJECT_PROPS = new Set([
@@ -364,7 +364,7 @@ async function resolveApprovals(
     const paramDecision = approvals?.[toolCallId];
     if (paramDecision !== undefined && paramDecision !== journalDecision) {
       console.warn(
-        `@gnl/durable: '${runId}' approval conflict — for toolCallId '${toolCallId}' the parameter approval ` +
+        `@gnldev/durable: '${runId}' approval conflict — for toolCallId '${toolCallId}' the parameter approval ` +
           `(${paramDecision}) differs from the RECORDED decision in the journal (${journalDecision}); ` +
           `the journal's FIRST decision wins (in the spirit of exactly-once).`,
       );
@@ -655,7 +655,7 @@ async function runGenerateWithRetryLadder(
     const maxForProc = err.opts?.maxRetries ?? 1;
     if (attempt >= RETRY_LADDER_GLOBAL_CAP || usedForProc >= maxForProc) {
       throw new RetryExhaustedByProcessorError(
-        `@gnl/durable: '${runId}' retry ladder exhausted for processor '${err.processor}' (attempt ` +
+        `@gnldev/durable: '${runId}' retry ladder exhausted for processor '${err.processor}' (attempt ` +
           `${attempt}/${RETRY_LADDER_GLOBAL_CAP} global, ${usedForProc}/${maxForProc} for this processor) — last feedback: ${err.feedback}`,
         err.processor, err.feedback,
       );
@@ -793,9 +793,9 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
 
   // 8.8 Schema-compat (opt-in): provider-specific tool-schema transformation. PURE + BEFORE the model
   // call + BEFORE durableTools wraps it → doesn't touch the journal, argsHash/toolCallId/replay unaffected.
-  // Lazy import: if unused, @gnl/schema-compat is never loaded (keeps the durable core thin).
+  // Lazy import: if unused, @gnldev/schema-compat is never loaded (keeps the durable core thin).
   if (schemaCompat && effectiveTools) {
-    const { applyToolCompat, defaultRules } = await import('@gnl/schema-compat');
+    const { applyToolCompat, defaultRules } = await import('@gnldev/schema-compat');
     const rules = schemaCompat === true ? defaultRules : schemaCompat;
     effectiveTools = applyToolCompat(effectiveTools, model, rules);
   }
@@ -902,7 +902,7 @@ export async function resumeRun(
     runKeys.input(runId),
   ); // H13: legacy-format input is upgraded to the current shape on resume
   if (!input) {
-    throw new Error(`@gnl/durable: no recorded input for runId "${runId}" — cannot resume.`);
+    throw new Error(`@gnldev/durable: no recorded input for runId "${runId}" — cannot resume.`);
   }
   // AUDIT B2: `limits` is a runtime value the CLI/embed callers can't re-supply (it isn't part of
   // AgentConfig). If the caller passes `limits`, it wins (explicit override); otherwise recover the
@@ -947,7 +947,7 @@ export async function resumeRun(
  * K1/GOREV W1 NOTE (B) — AUDIT B3(b), READ THIS IF YOU CONSUME `fullStream` DIRECTLY: a
  * loop/maxToolCalls/duplicate/tainted BLOCK does NOT throw from the stream — the blocked/limit/suspend
  * SENTINEL (`__gnl_blocked`/`__gnl_limit_exceeded`) leaks into `fullStream` as an internal tool-result
- * part. This is DELIBERATE: @gnl/server sse.ts / @gnl/agui rely on it — they skip the sentinel part in
+ * part. This is DELIBERATE: @gnldev/server sse.ts / @gnldev/agui rely on it — they skip the sentinel part in
  * `fullStream` and, AFTER the stream ends, scan `steps` (`limitBreachFromSteps`/`blockedFromSteps`) to
  * emit ONE terminal `error` event. Surfacing the breach as a `{type:'error'}` fullStream part instead
  * would make those consumers emit a DOUBLE error event (the injected part + their post-scan), so it is
@@ -1008,7 +1008,7 @@ export async function streamDurable(args: StreamDurableArgs) {
 
   // 8.8 Schema-compat (opt-in): see runDurableInner — pure, before the model call + before durableTools.
   if (schemaCompat && effectiveTools) {
-    const { applyToolCompat, defaultRules } = await import('@gnl/schema-compat');
+    const { applyToolCompat, defaultRules } = await import('@gnldev/schema-compat');
     const rules = schemaCompat === true ? defaultRules : schemaCompat;
     effectiveTools = applyToolCompat(effectiveTools, model, rules);
   }
@@ -1048,7 +1048,7 @@ export async function streamDurable(args: StreamDurableArgs) {
         const breach = streamBreachFromSteps(stepsArr);
         if (breach) {
           try { await onBlocked(breach); } catch (err) {
-            console.warn(`@gnl/durable: '${runId}' onBlocked callback threw — swallowed (advisory callback):`, err);
+            console.warn(`@gnldev/durable: '${runId}' onBlocked callback threw — swallowed (advisory callback):`, err);
           }
         }
       }
@@ -1087,7 +1087,7 @@ export async function streamDurable(args: StreamDurableArgs) {
           }
         } catch (err) {
           // NO silent swallowing (audit): history could not be written for this run — surface it, don't break the stream.
-          console.warn(`@gnl/durable: '${runId}' stream memory/processor finalization failed — conversation history may be incomplete:`, err);
+          console.warn(`@gnldev/durable: '${runId}' stream memory/processor finalization failed — conversation history may be incomplete:`, err);
         }
         // 1.1: usage counter only on a COMPLETED run (parity with runDurableInner; not counted while suspended).
         try { await recordRunUsage(journal, runId); } catch { /* counter is optional — must not affect the stream */ }

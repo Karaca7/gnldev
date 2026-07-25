@@ -1,11 +1,11 @@
 // P0.4 (AUDIT-R2): studio's POST /workflows/:name/run forwards `resume` (both the
 // code-defined and managed paths) and maps a canceled runResumable result the same way suspended/paused
-// already are (mirrors @gnl/durable registry.ts's runWorkflow mapping — see registry-workflow-p04.test.ts).
+// already are (mirrors @gnldev/durable registry.ts's runWorkflow mapping — see registry-workflow-p04.test.ts).
 // GET /workflows/runs is the new wfrun: registry query, reimplemented inline against `rw` rather than
-// importing @gnl/workflow (see the route's own JSDoc in server.ts for why).
+// importing @gnldev/workflow (see the route's own JSDoc in server.ts for why).
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
-import { workflow, step, waitForResume } from '@gnl/workflow';
+import { InMemoryJournal } from '@gnldev/durable';
+import { workflow, step, waitForResume } from '@gnldev/workflow';
 import { createStudioApi, type WorkflowDef } from '../src/server.js';
 
 const post = (app: any, path: string, body: unknown) =>
@@ -51,7 +51,7 @@ describe('studio: P0.4 workflow resume + canceled (managed workflow, real engine
         set: (d) => { defs.set(d.name, d); },
         delete: (n) => { defs.delete(n); },
       },
-      // Ignores the compiled WorkflowDef/runAgent — returns a REAL @gnl/workflow Workflow with a
+      // Ignores the compiled WorkflowDef/runAgent — returns a REAL @gnldev/workflow Workflow with a
       // waitForResume step, so runManaged's suspend/resume/cancel plumbing exercises the real engine
       // (not a stub), the same spirit as workflow-p04's registry test but through the HTTP layer.
       compileWorkflow: (() => workflow<string>()
@@ -86,8 +86,8 @@ describe('studio: P0.4 workflow resume + canceled (managed workflow, real engine
     const app = makeApp(journal);
     await post(app, '/workflows/approvewf/run', { input: 'hi', runId: 'm-2' }); // suspend
 
-    // Durably cancel by writing the SAME flag @gnl/workflow's cancelWorkflowRun would (kept minimal —
-    // avoids importing @gnl/workflow's cancelWorkflowRun into the test just for this one write).
+    // Durably cancel by writing the SAME flag @gnldev/workflow's cancelWorkflowRun would (kept minimal —
+    // avoids importing @gnldev/workflow's cancelWorkflowRun into the test just for this one write).
     await journal.put('m-2:wf:_canceled', { at: Date.now() });
 
     const r2 = await (await post(app, '/workflows/approvewf/run', { input: 'hi', runId: 'm-2', resume: { approval: { ok: true } } })).json();

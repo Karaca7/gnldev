@@ -1,9 +1,9 @@
 // Sub-batch A — MCP server: listTools + callTool + server-side exactly-once with a journal.
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
 import { createMcpServer } from '../src/index.js';
 
-describe('@gnl/mcp createMcpServer', () => {
+describe('@gnldev/mcp createMcpServer', () => {
   it('listTools returns definitions; callTool executes', async () => {
     const server = createMcpServer({
       tools: {
@@ -40,7 +40,7 @@ describe('@gnl/mcp createMcpServer', () => {
 });
 
 // ---- Arg validation: if inputSchema is executable (safeParse / ~standard), applied BEFORE execute ----
-describe('@gnl/mcp callTool arg validation', () => {
+describe('@gnldev/mcp callTool arg validation', () => {
   /** zod-like fake schema: expects { msg: string }, applies a default if msg is missing (for the transform test). */
   const zodLike = {
     safeParse(args: any) {

@@ -6,11 +6,11 @@
 //   • EE OFF → legacy behavior EXACTLY: an org-less identity is the all-seeing operator (proved here + by
 //              the existing auth-org suite).
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
-import { roleAuth, type AuthProvider, type Principal } from '@gnl/auth';
+import { InMemoryJournal } from '@gnldev/durable';
+import { roleAuth, type AuthProvider, type Principal } from '@gnldev/auth';
 import { createStudioApi } from '../src/server.js';
 
-// A fake PAID provider: token → Principal, capabilities().multiOrganization = true (as real @gnl/auth-ee
+// A fake PAID provider: token → Principal, capabilities().multiOrganization = true (as real @gnldev/auth-ee
 // with a valid `multiOrg` license). Write requires admin OR platform-admin; read is open to any principal.
 function licensedAuth(map: Record<string, Principal>): AuthProvider {
   return {
@@ -47,7 +47,7 @@ async function seed(journal: InMemoryJournal) {
 const H = (t: string) => ({ authorization: `Bearer ${t}` });
 const JH = (t: string) => ({ 'content-type': 'application/json', authorization: `Bearer ${t}` });
 
-describe('@gnl/studio strict multi-org (EE ON)', () => {
+describe('@gnldev/studio strict multi-org (EE ON)', () => {
   it('(1) an org-bound identity reads ONLY its own org; a different org header → 403', async () => {
     const journal = new InMemoryJournal();
     await seed(journal);
@@ -111,7 +111,7 @@ describe('@gnl/studio strict multi-org (EE ON)', () => {
   });
 });
 
-describe('@gnl/studio strict multi-org (EE OFF → legacy operator UNCHANGED)', () => {
+describe('@gnldev/studio strict multi-org (EE OFF → legacy operator UNCHANGED)', () => {
   it('an org-less roleAuth admin (multiOrganization:false) still sees & manages everything', async () => {
     const journal = new InMemoryJournal();
     await seed(journal);

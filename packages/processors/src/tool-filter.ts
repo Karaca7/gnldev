@@ -1,4 +1,4 @@
-import type { Processor } from '@gnl/durable';
+import type { Processor } from '@gnldev/durable';
 
 export interface ToolFilterOptions {
   /** Only these tools are visible (whitelist). If given, `deny` is ignored. */

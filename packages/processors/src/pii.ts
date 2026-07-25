@@ -1,5 +1,5 @@
-import { recordProcessorReport } from '@gnl/durable';
-import type { Processor, ProcessorCtx, ProcessorInput, ProcessorOutput, ProcessorToolResult } from '@gnl/durable';
+import { recordProcessorReport } from '@gnldev/durable';
+import type { Processor, ProcessorCtx, ProcessorInput, ProcessorOutput, ProcessorToolResult } from '@gnldev/durable';
 import { redactString, redactMessages, PII_PATTERNS, ORDER, type PiiType } from './redact.js';
 
 export interface PiiRedactorOptions {

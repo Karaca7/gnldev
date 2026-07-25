@@ -16,7 +16,7 @@ export interface RunLock {
   /**
    * 8.2: unique fencing token for this acquisition (the same token is written to the journal's
    * LockRecord). Exposed read-only for consumers who want to build their own in-engine CAS fencing
-   * chain in THEIR OWN store (outside RunJournal, e.g. @gnl/queue's WorkStore) — see @gnl/queue's
+   * chain in THEIR OWN store (outside RunJournal, e.g. @gnldev/queue's WorkStore) — see @gnldev/queue's
    * createWorker: on terminal writes (qdone/qfail/qatt), WorkStore.putIfMatch uses this token to verify "I'm still the owner".
    */
   readonly token: string;

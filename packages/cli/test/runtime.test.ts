@@ -1,4 +1,4 @@
-// runtime.ts: resolves @gnl/durable/server/studio/… from the TARGET PROJECT (not @gnl/cli's own deps),
+// runtime.ts: resolves @gnldev/durable/server/studio/… from the TARGET PROJECT (not @gnldev/cli's own deps),
 // plus the compatibility guard (assertCompatible/gte) that turns a version/shape mismatch into a clear
 // error instead of a bare "X is not a function" crash.
 import { describe, it, expect, afterEach } from 'vitest';
@@ -15,7 +15,7 @@ import {
 } from '../src/runtime.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const cliRoot = join(here, '..'); // packages/cli — has a real node_modules/@gnl/durable workspace symlink
+const cliRoot = join(here, '..'); // packages/cli — has a real node_modules/@gnldev/durable workspace symlink
 
 const created: string[] = [];
 afterEach(() => {
@@ -39,7 +39,7 @@ function writeFakePackage(baseDir: string, pkgName: string, version: string, exp
 
 describe('resolveFromProject', () => {
   it('resolves a real package from a project that has it installed (workspace symlink)', async () => {
-    const mod = (await resolveFromProject('@gnl/durable', cliRoot)) as Record<string, unknown>;
+    const mod = (await resolveFromProject('@gnldev/durable', cliRoot)) as Record<string, unknown>;
     expect(typeof mod.forkRun).toBe('function');
   });
 
@@ -73,33 +73,33 @@ describe('gte (zero-dep semver >=, prerelease/build ignored)', () => {
 describe('assertCompatible (shape/capability + version guard)', () => {
   it('a module missing required exports -> a clear error naming exactly what is missing', () => {
     const dir = tmpProjectDir();
-    writeFakePackage(dir, '@gnl/durable', '0.1.0', ['forkRun', 'reconstructState']); // missing the rest
+    writeFakePackage(dir, '@gnldev/durable', '0.1.0', ['forkRun', 'reconstructState']); // missing the rest
     const req = createRequire(join(dir, 'noop.js'));
-    const resolvedFile = req.resolve('@gnl/durable');
+    const resolvedFile = req.resolve('@gnldev/durable');
     const mod = { forkRun: () => {}, reconstructState: () => {} };
-    expect(() => assertCompatible(mod, '@gnl/durable', dir, resolvedFile, REQUIRED_DURABLE_EXPORTS, '0.0.0')).toThrow(
+    expect(() => assertCompatible(mod, '@gnldev/durable', dir, resolvedFile, REQUIRED_DURABLE_EXPORTS, '0.0.0')).toThrow(
       /missing: .*toJournal.*getRunCost/,
     );
   });
 
   it('a real disk-resolved package.json below the required minimum -> a clear version error', () => {
     const dir = tmpProjectDir();
-    writeFakePackage(dir, '@gnl/durable', '0.5.0', REQUIRED_DURABLE_EXPORTS);
+    writeFakePackage(dir, '@gnldev/durable', '0.5.0', REQUIRED_DURABLE_EXPORTS);
     const req = createRequire(join(dir, 'noop.js'));
-    const resolvedFile = req.resolve('@gnl/durable');
+    const resolvedFile = req.resolve('@gnldev/durable');
     const mod = Object.fromEntries(REQUIRED_DURABLE_EXPORTS.map((n) => [n, () => {}]));
-    expect(() => assertCompatible(mod, '@gnl/durable', dir, resolvedFile, REQUIRED_DURABLE_EXPORTS, '1.0.0')).toThrow(
-      /needs @gnl\/durable >= 1\.0\.0, but this project .* has 0\.5\.0/,
+    expect(() => assertCompatible(mod, '@gnldev/durable', dir, resolvedFile, REQUIRED_DURABLE_EXPORTS, '1.0.0')).toThrow(
+      /needs @gnldev\/durable >= 1\.0\.0, but this project .* has 0\.5\.0/,
     );
   });
 
   it('a fully-shaped, version-satisfying module -> no throw', () => {
     const dir = tmpProjectDir();
-    writeFakePackage(dir, '@gnl/durable', '0.5.0', REQUIRED_DURABLE_EXPORTS);
+    writeFakePackage(dir, '@gnldev/durable', '0.5.0', REQUIRED_DURABLE_EXPORTS);
     const req = createRequire(join(dir, 'noop.js'));
-    const resolvedFile = req.resolve('@gnl/durable');
+    const resolvedFile = req.resolve('@gnldev/durable');
     const mod = Object.fromEntries(REQUIRED_DURABLE_EXPORTS.map((n) => [n, () => {}]));
-    expect(() => assertCompatible(mod, '@gnl/durable', dir, resolvedFile, REQUIRED_DURABLE_EXPORTS, '0.0.0')).not.toThrow();
+    expect(() => assertCompatible(mod, '@gnldev/durable', dir, resolvedFile, REQUIRED_DURABLE_EXPORTS, '0.0.0')).not.toThrow();
   });
 });
 
@@ -110,16 +110,16 @@ describe('loadDurable (end-to-end through the guard)', () => {
     expect(typeof d.createGnl).toBe('function');
   });
 
-  it("an installed but incompatible @gnl/durable (old shape, missing exports) -> a clear 'incompatible' error, not a raw crash", async () => {
+  it("an installed but incompatible @gnldev/durable (old shape, missing exports) -> a clear 'incompatible' error, not a raw crash", async () => {
     const dir = tmpProjectDir();
-    writeFakePackage(dir, '@gnl/durable', '0.1.0', ['forkRun', 'toJournal']); // old core: most of what the CLI calls is missing
+    writeFakePackage(dir, '@gnldev/durable', '0.1.0', ['forkRun', 'toJournal']); // old core: most of what the CLI calls is missing
     await expect(loadDurable(dir)).rejects.toThrow(/incompatible with this gnl CLI/);
     await expect(loadDurable(dir)).rejects.toThrow(/missing: .*resumeRun/);
   });
 
-  it('a fake but fully-shaped @gnl/durable -> loads successfully (all required exports present)', async () => {
+  it('a fake but fully-shaped @gnldev/durable -> loads successfully (all required exports present)', async () => {
     const dir = tmpProjectDir();
-    writeFakePackage(dir, '@gnl/durable', '1.2.3', REQUIRED_DURABLE_EXPORTS);
+    writeFakePackage(dir, '@gnldev/durable', '1.2.3', REQUIRED_DURABLE_EXPORTS);
     const d = await loadDurable(dir);
     for (const name of REQUIRED_DURABLE_EXPORTS) expect(typeof (d as any)[name]).toBe('function');
   });

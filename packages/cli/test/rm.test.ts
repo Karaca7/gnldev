@@ -1,8 +1,8 @@
 // gnl rm: purgeRunCore (pure delete) + rmCommand.run's confirmation gate (refuses without --yes
 // when not interactive — the test runner's stdin/stdout are not a TTY, so this exercises that path).
 import { describe, it, expect } from 'vitest';
-import * as Durable from '@gnl/durable';
-import { InMemoryJournal, runDurable } from '@gnl/durable';
+import * as Durable from '@gnldev/durable';
+import { InMemoryJournal, runDurable } from '@gnldev/durable';
 import { purgeRunCore, rmCommand } from '../src/commands/rm.js';
 import { agentModel } from './helpers.js';
 

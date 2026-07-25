@@ -1,4 +1,4 @@
-// @gnl/durable/postgres — Postgres implementation of all store ports (prod default).
+// @gnldev/durable/postgres — Postgres implementation of all store ports (prod default).
 // Same schema/semantics as SqliteStorage; pg async API ($N placeholders, CAS detection via RETURNING).
 // Injectable pool pattern → zero-infra testing with pg-mem. `pg` is an optional peer dep.
 // Vector is 'scan' for now (brute-force cosine; pgvector deferred — pg-mem compatibility + lean first cut).
@@ -71,7 +71,7 @@ export class PostgresStorage implements Storage {
   private _pool: Pool;
   /**
    * The underlying connection pool. Exposed so COMPANION stores that live in the SAME Postgres
-   * database can share this exact pool — notably `@gnl/auth-ee`'s `createPostgresUserStore(storage.pool)`,
+   * database can share this exact pool — notably `@gnldev/auth-ee`'s `createPostgresUserStore(storage.pool)`,
    * which puts admin/developer accounts in their own `gnl_ee_*` tables next to the run journal.
    */
   get pool(): Pool { return this._pool; }

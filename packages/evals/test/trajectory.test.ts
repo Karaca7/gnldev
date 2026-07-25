@@ -4,11 +4,11 @@
 // buildDecisionSequence integration is exercised end-to-end too.
 import { describe, it, expect } from 'vitest';
 import { stepCountIs } from 'ai';
-import { InMemoryJournal, runDurable } from '@gnl/durable';
+import { InMemoryJournal, runDurable } from '@gnldev/durable';
 import { createTrajectoryScorer, scoreTrajectory, trajectoryScorerFor, scoreRun } from '../src/index.js';
 import { createMockModel, countToolResults, toolCallResult, finalTextResult } from '../../durable/test/mock.js';
 
-describe('@gnl/evals createTrajectoryScorer — ordered/required/forbidden/budget', () => {
+describe('@gnldev/evals createTrajectoryScorer — ordered/required/forbidden/budget', () => {
   it('expectedTools: full ordered subsequence match → score 1', () => {
     const scorer = createTrajectoryScorer({ expectedTools: ['search', 'fetch', 'summarize'] });
     const r = scorer.score({ output: '', toolCalls: ['search', 'fetch', 'summarize'] });
@@ -129,7 +129,7 @@ function makeToolModel(steps: { tool?: { name: string; args: unknown }; final?: 
   });
 }
 
-describe('@gnl/evals scoreTrajectory / trajectoryScorerFor — from a real run journal', () => {
+describe('@gnldev/evals scoreTrajectory / trajectoryScorerFor — from a real run journal', () => {
   it('scoreTrajectory reads the run, rebuilds the decision sequence, scores tool order', async () => {
     const journal = new InMemoryJournal();
     const model = makeToolModel([

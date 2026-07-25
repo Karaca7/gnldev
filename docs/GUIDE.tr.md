@@ -230,7 +230,7 @@ içinde (hızlı index'le) yapılır.
 
 **⑧ `gnl_work_log` — kuyruk/olay defteri.** Kolonlar: `ns (namespace — hangi kuyruk/konu,
 örn. 'evt:siparis'), id (kayıt kimliği; ns+id birincil anahtar → aynı olay iki kez EKLENEMEZ =
-idempotent yayın), payload (içerik), ts`. *Ne zaman?* `@gnl/queue` iş ekleyince, `@gnl/events`
+idempotent yayın), payload (içerik), ts`. *Ne zaman?* `@gnldev/queue` iş ekleyince, `@gnldev/events`
 olay yayınlayınca. Yalnız-ekle çalışır; eskiler `sweepLog` ile süpürülür.
 
 **⑨ `gnl_work_kv` — kuyruk yönetim notları.** Serbest anahtar-değer: işlerin durumu, zamanlayıcı
@@ -255,44 +255,44 @@ tablo şeması eski sürümden kalmaysa güvenli göç (migration) kararını bu
 ```mermaid
 graph LR
     subgraph Çekirdek
-        durable["@gnl/durable<br/>seyir defteri + replay motoru<br/>(HER ŞEYİN kalbi)"]
+        durable["@gnldev/durable<br/>seyir defteri + replay motoru<br/>(HER ŞEYİN kalbi)"]
     end
     subgraph Yetenekler
-        memory["@gnl/memory<br/>zengin hafıza"]
-        rag["@gnl/rag<br/>RAG + GraphRAG + chunking"]
-        workflow["@gnl/workflow<br/>iş akışları + retry"]
-        processors["@gnl/processors<br/>PII maskesi, moderasyon,<br/>toolSearch..."]
-        evals["@gnl/evals<br/>kalite ölçümü (scorer'lar,<br/>deney karşılaştırma)"]
+        memory["@gnldev/memory<br/>zengin hafıza"]
+        rag["@gnldev/rag<br/>RAG + GraphRAG + chunking"]
+        workflow["@gnldev/workflow<br/>iş akışları + retry"]
+        processors["@gnldev/processors<br/>PII maskesi, moderasyon,<br/>toolSearch..."]
+        evals["@gnldev/evals<br/>kalite ölçümü (scorer'lar,<br/>deney karşılaştırma)"]
     end
     subgraph Dağıtık
-        queue["@gnl/queue<br/>arkaplan iş kuyruğu"]
-        events["@gnl/events<br/>olay yayını (pubsub)"]
-        scheduler["@gnl/scheduler<br/>zamanlanmış tetikleyici"]
-        cache["@gnl/cache<br/>koşular-arası önbellek"]
+        queue["@gnldev/queue<br/>arkaplan iş kuyruğu"]
+        events["@gnldev/events<br/>olay yayını (pubsub)"]
+        scheduler["@gnldev/scheduler<br/>zamanlanmış tetikleyici"]
+        cache["@gnldev/cache<br/>koşular-arası önbellek"]
     end
     subgraph Sunum
-        server["@gnl/server<br/>otomatik REST API"]
-        client["@gnl/client<br/>type-safe istemci + React"]
-        studio["@gnl/studio + studio-ui<br/>web kontrol paneli"]
-        agui["@gnl/agui<br/>CopilotKit köprüsü"]
+        server["@gnldev/server<br/>otomatik REST API"]
+        client["@gnldev/client<br/>type-safe istemci + React"]
+        studio["@gnldev/studio + studio-ui<br/>web kontrol paneli"]
+        agui["@gnldev/agui<br/>CopilotKit köprüsü"]
     end
     subgraph Entegrasyon
-        mcp["@gnl/mcp<br/>MCP araç protokolü"]
-        a2a["@gnl/a2a<br/>uzak ajan çağrısı"]
-        otel["@gnl/otel<br/>izleme (Langfuse vb.)"]
-        schema["@gnl/schema-compat<br/>sağlayıcı şema uyumu"]
+        mcp["@gnldev/mcp<br/>MCP araç protokolü"]
+        a2a["@gnldev/a2a<br/>uzak ajan çağrısı"]
+        otel["@gnldev/otel<br/>izleme (Langfuse vb.)"]
+        schema["@gnldev/schema-compat<br/>sağlayıcı şema uyumu"]
     end
     subgraph Operasyon
-        auth["@gnl/auth (ücretsiz)<br/>@gnl/auth-ee (kurumsal SSO)"]
-        deploy["@gnl/deploy<br/>bundle + Vercel/CF/Netlify"]
-        cli["@gnl/cli + create-gnl<br/>komut satırı + şablon"]
+        auth["@gnldev/auth (ücretsiz)<br/>@gnldev/auth-ee (kurumsal SSO)"]
+        deploy["@gnldev/deploy<br/>bundle + Vercel/CF/Netlify"]
+        cli["@gnldev/cli + create-gnl<br/>komut satırı + şablon"]
     end
     Yetenekler --> durable
     Dağıtık --> durable
     Sunum --> durable
 ```
 
-Kilit nokta: **her paket `@gnl/durable`ın üstüne kurulur** — RAG sorgusu da, kuyruk işi de, uzak
+Kilit nokta: **her paket `@gnldev/durable`ın üstüne kurulur** — RAG sorgusu da, kuyruk işi de, uzak
 ajan çağrısı da otomatik olarak deftere yazılır ve exactly-once garantisini MİRAS alır. Rakiplerde
 bu özellikler ayrı ayrı vardır ama ortak bir dayanıklılık zemini yoktur.
 
@@ -303,7 +303,7 @@ bu özellikler ayrı ayrı vardır ama ortak bir dayanıklılık zemini yoktur.
 ### 7.1 İlk ajan (5 dakika)
 
 ```ts
-import { createGnl, InMemoryJournal } from '@gnl/durable';
+import { createGnl, InMemoryJournal } from '@gnldev/durable';
 import { openai } from '@ai-sdk/openai';
 
 const gnl = createGnl({
@@ -352,7 +352,7 @@ const r2 = await gnl.run('kasiyer', {
 ### 7.3 Hafıza (konuşma geçmişi)
 
 ```ts
-import { AgentMemory } from '@gnl/memory';
+import { AgentMemory } from '@gnldev/memory';
 const gnl = createGnl({ storage, memoryFactory: (s) => new AgentMemory({ storage: s, embed }) });
 await gnl.run('asistan', { runId: 'r1', threadId: 'musteri-5', prompt: 'Adım Ali' });
 await gnl.run('asistan', { runId: 'r2', threadId: 'musteri-5', prompt: 'Adım neydi?' }); // "Ali"
@@ -364,7 +364,7 @@ ve **working memory** (çalışma notu: ajanın kendine tuttuğu güncel özet) 
 ### 7.4 RAG — doküman arşivinden cevap
 
 ```ts
-import { chunkDocuments, PostgresVectorStore, createRagTool, GraphRag } from '@gnl/rag';
+import { chunkDocuments, PostgresVectorStore, createRagTool, GraphRag } from '@gnldev/rag';
 
 // 1) Dokümanları parçala (chunk: uzun metni aranabilir küçük parçalara bölme):
 const parcalar = chunkDocuments([{ id: 'el-kitabi', text: uzunMetin }], { strategy: 'markdown' });
@@ -401,7 +401,7 @@ Studio `GET /runs/:id/network` ile ağacın görselini verir.
 ### 7.6 Workflow — kontrollü süreç + retry
 
 ```ts
-import { workflow, step, retry } from '@gnl/workflow';
+import { workflow, step, retry } from '@gnldev/workflow';
 
 const wf = workflow<Siparis>()
   .then(retry(step('stokKontrol', kontrolEt), { attempts: 3, backoffMs: 500, fallback: step('manuel', kuyrugaAt) }))
@@ -416,7 +416,7 @@ sayacı bile defterdedir: çökme sonrası "3 deneme hakkı" sıfırlanmaz.
 ### 7.7 Kalite ölçümü (evals)
 
 ```ts
-import { faithfulness, toxicity, createDatasetsManager } from '@gnl/evals';
+import { faithfulness, toxicity, createDatasetsManager } from '@gnldev/evals';
 
 // Koşu-sonu otomatik skor: agents.asistan.scorers = [toxicity({ model: hakem })]
 // Deney karşılaştırma:
@@ -432,15 +432,15 @@ LLM-hakem puanları da deftere yazıldığından tekrar koşularda aynı puan d�
 
 ```ts
 // Sunucu: registry'yi otomatik REST API yapar (OpenAPI şemasıyla):
-import { createServer } from '@gnl/server';
+import { createServer } from '@gnldev/server';
 serve(createServer(gnl));                      // POST /agents/asistan/run, SSE stream, /metrics...
 
 // İstemci (tarayıcı/React):
-import { createClient } from '@gnl/client';
+import { createClient } from '@gnldev/client';
 const api = createClient('http://localhost:3000');
 await api.run('asistan', { prompt: '...' });
 
-// Studio: web kontrol paneli — npx @gnl/studio
+// Studio: web kontrol paneli — npx @gnldev/studio
 // 15 görünüm: koşu zaman çizelgesi, TIME-TRAVEL (geçmiş bir adıma dönüp oradan ÇATALLAMA),
 // onay kuyruğu, maliyet, izler, tenant/bütçe yönetimi, ağ ağacı, playground...
 ```
@@ -448,11 +448,11 @@ await api.run('asistan', { prompt: '...' });
 ### 7.9 Yayınlama (deploy) ve izleme
 
 ```ts
-import { deployTargets, writeDeployTarget, bundleApp } from '@gnl/deploy';
+import { deployTargets, writeDeployTarget, bundleApp } from '@gnldev/deploy';
 await writeDeployTarget(deployTargets.cloudflare({ entry: './src/server.ts' }), '.');
 // → worker.ts + wrangler.toml hazır; `npx wrangler deploy`
 
-import { exportRunToOtlp, otlpPresets } from '@gnl/otel';
+import { exportRunToOtlp, otlpPresets } from '@gnldev/otel';
 await exportRunToOtlp(journal, 'siparis-42', otlpPresets.langfuse({ publicKey, secretKey }));
 // koşunun tüm izi (trace) tek satırla Langfuse'a (LLM izleme servisi)
 ```
@@ -634,7 +634,7 @@ stateDiagram-v2
 - **`sweepRuns({ olderThanMs })`** — süpürücü: son aktivitesi eşikten eski koşuları kalıcı siler.
   Güvenlik varsayılanları: **askıdaki** (onay bekleyen) koşular ve zaman damgası okunamayan
   kayıtlar SİLİNMEZ — "bekleyen işi çöpe atma" ilkesi. Bunu bir cron'a (zamanlanmış görev)
-  bağlarsın; `@gnl/scheduler` ile GNL'in kendi içinden de kurulabilir.
+  bağlarsın; `@gnldev/scheduler` ile GNL'in kendi içinden de kurulabilir.
 - **`purgeRun(runId)`** — nokta atışı silme (GDPR "unutulma hakkı" için): koşunun TÜM izini siler
   ve **özyinelemelidir** (özyinelemeli/recursive: çocukları, çocukların çocuklarını da işler) —
   alt-ajan defterleri hangi derinlikte olursa olsun yetim kalmaz:

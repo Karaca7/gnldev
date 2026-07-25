@@ -31,7 +31,7 @@ function memJournal() {
   return j;
 }
 
-describe('@gnl/workflow P0.4 — waitForResume', () => {
+describe('@gnldev/workflow P0.4 — waitForResume', () => {
   it('(a) suspends carrying waitId; runResumable({resume}) completes with the payload AS the step output', async () => {
     const journal = memJournal();
     const wf = workflow<string>()
@@ -89,7 +89,7 @@ describe('@gnl/workflow P0.4 — waitForResume', () => {
   });
 });
 
-describe('@gnl/workflow P0.4 — cancelWorkflowRun', () => {
+describe('@gnldev/workflow P0.4 — cancelWorkflowRun', () => {
   it('(d) cancels a suspended run FOREVER — resume returns canceled, again on a second attempt; canceling an already-completed run is a no-op (false)', async () => {
     const journal = memJournal();
     const wf = workflow<string>().then(waitForResume('approval'));
@@ -143,7 +143,7 @@ describe('@gnl/workflow P0.4 — cancelWorkflowRun', () => {
   });
 });
 
-describe('@gnl/workflow P0.4 — listWorkflowRuns / getWorkflowRunStatus registry', () => {
+describe('@gnldev/workflow P0.4 — listWorkflowRuns / getWorkflowRunStatus registry', () => {
   it('(f) filters by status with stepId/waitId; a completed run moves out of "suspended" into "completed"; throws without listKeys', async () => {
     const journal = memJournal();
     const wf = workflow<string>().then(waitForResume('approval'));
@@ -219,7 +219,7 @@ describe('FLOW-08 — workflowName mirrored into the wfrun: status record', () =
   });
 });
 
-describe('@gnl/workflow P0.4 — nested asStep + waitForResume', () => {
+describe('@gnldev/workflow P0.4 — nested asStep + waitForResume', () => {
   it('(g) an inner waitForResume suspends OUTWARD; the resume payload (addressed by waitId, per-run namespace) reaches the inner step', async () => {
     const journal = memJournal();
     const inner = workflow<string>().then(waitForResume<{ approved: boolean }>('innerApproval'));

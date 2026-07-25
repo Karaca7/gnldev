@@ -1,11 +1,11 @@
-// GET /scheduler/triggers: @gnl/scheduler trigger introspection. Studio itself does NOT require a
+// GET /scheduler/triggers: @gnldev/scheduler trigger introspection. Studio itself does NOT require a
 // running Scheduler INSTANCE — if the journal supports writable + listKeys, it READS from the
-// journal via @gnl/scheduler's `listTriggers` helper (see src/server.ts). Here we write triggers
+// journal via @gnldev/scheduler's `listTriggers` helper (see src/server.ts). Here we write triggers
 // to the journal with the real `scheduleWorkflow`/`pollScheduler` and verify they're read back
-// end-to-end (instead of a mock like the cache/queue tests — @gnl/scheduler is already a devDependency).
+// end-to-end (instead of a mock like the cache/queue tests — @gnldev/scheduler is already a devDependency).
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
-import { scheduleWorkflow, pollScheduler } from '@gnl/scheduler';
+import { InMemoryJournal } from '@gnldev/durable';
+import { scheduleWorkflow, pollScheduler } from '@gnldev/scheduler';
 import { createStudioApi } from '../src/server.js';
 
 describe('GET /scheduler/triggers', () => {

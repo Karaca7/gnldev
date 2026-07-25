@@ -1,4 +1,4 @@
-// @gnl/client/react — useGnlAgent / useChat. NO JSX (pure logic hooks) → compiled with tsc.
+// @gnldev/client/react — useGnlAgent / useChat. NO JSX (pure logic hooks) → compiled with tsc.
 import { useCallback, useRef, useState } from 'react';
 import type { GnlClient } from '../index.js';
 import { appendUserMessage, applyRunResult, applyStreamEvent, initialChatState } from '../accumulator.js';

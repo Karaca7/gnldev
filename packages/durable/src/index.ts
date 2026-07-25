@@ -1,4 +1,4 @@
-// @gnl/durable — an exactly-once + deterministic-replay layer for Vercel AI SDK agents.
+// @gnldev/durable — an exactly-once + deterministic-replay layer for Vercel AI SDK agents.
 // Drop-in: generateText -> runDurable. Composable: withDurableModel + durableTools.
 
 export { InMemoryJournal, parseJournalKey, summarizeRun, claim, frozenGet, runKeys } from './journal.js';
@@ -116,7 +116,7 @@ export type { RunLimits, RunLimitKind } from './limits.js';
 export { resolveModel, withModelFallback } from './model-router.js';
 export type { FallbackCandidate } from './model-router.js';
 // W2: Replay-based regression core (diffRuns/replayRun/regressionReport) — see regression.ts.
-// buildDecisionSequence: also re-exported for P1.1 (AUDIT-R2) — @gnl/evals' trajectory
+// buildDecisionSequence: also re-exported for P1.1 (AUDIT-R2) — @gnldev/evals' trajectory
 // scorer builds a run's tool-call sequence from this same primitive.
 export { diffRuns, replayRun, regressionReport, buildDecisionSequence } from './regression.js';
 export type {
@@ -124,8 +124,8 @@ export type {
   ReplayRunConfig, ReplayRunResult,
   RegressionScorer, RegressionReportOptions, RegressionReport,
 } from './regression.js';
-// Persistent storage: `@gnl/durable/sqlite` (SqliteStorage) · `@gnl/durable/postgres`
-// (PostgresStorage) · `@gnl/durable/redis` (RedisStorage — runs/work/cache/meta; memory/vectors are
+// Persistent storage: `@gnldev/durable/sqlite` (SqliteStorage) · `@gnldev/durable/postgres`
+// (PostgresStorage) · `@gnldev/durable/redis` (RedisStorage — runs/work/cache/meta; memory/vectors are
 // overridden via composite). For a bare durable run use `new SqliteStorage(path).runs` (RunJournal = journal).
 // P2-migrate (AUDIT-R2 §4): schema introspection/migration façade — see migrate.ts.
 export { runMigrationCheck, tablesFromDDL } from './migrate.js';

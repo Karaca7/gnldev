@@ -1,6 +1,6 @@
 // OM deep-dive (token threshold + token-tier model + public compact) + MessageList.
 import { describe, it, expect } from 'vitest';
-import { InMemoryStorage } from '@gnl/durable';
+import { InMemoryStorage } from '@gnldev/durable';
 import { AgentMemory, ModelByTokens, approxTokens, MessageList } from '../src/index.js';
 
 function observerModel(tag: string, counter: { calls: number }): any {

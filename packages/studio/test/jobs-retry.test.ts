@@ -1,14 +1,14 @@
 // Queue/Jobs: POST /jobs/:id/retry — re-queues a failed (dead-letter) job via queue.retry (the
-// host typically bridges this to @gnl/queue's retryJob — see packages/queue/src/index.ts
-// retryJob). Studio itself has NO dependency on @gnl/queue (bridged via the StudioQueue
+// host typically bridges this to @gnldev/queue's retryJob — see packages/queue/src/index.ts
+// retryJob). Studio itself has NO dependency on @gnldev/queue (bridged via the StudioQueue
 // interface) — here we mock queue.retry and verify it's CALLED, plus permission (write) +
 // audit + no-op (double-run protection) behavior.
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
 import { createStudioApi, type StudioJob, type StudioQueue } from '../src/server.js';
 
 /** Simple fake queue: id → status. retry only produces a new id for 'failed' jobs (mimics the
- *  real @gnl/queue retryJob's no-op/double-run-protection semantics). */
+ *  real @gnldev/queue retryJob's no-op/double-run-protection semantics). */
 function fakeQueue(jobs: StudioJob[]): StudioQueue & { retryCalls: string[] } {
   const byId = new Map(jobs.map((j) => [j.id, j]));
   const retryCalls: string[] = [];
@@ -38,7 +38,7 @@ describe('POST /jobs/:id/retry', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toMatchObject({ ok: true, id: 'j1-retry' });
-    expect(queue.retryCalls).toEqual(['j1']); // queue.retry (→ @gnl/queue enqueue in the real world) was called EXACTLY ONCE
+    expect(queue.retryCalls).toEqual(['j1']); // queue.retry (→ @gnldev/queue enqueue in the real world) was called EXACTLY ONCE
 
     // the new job appears in the queue, the old one (dead-letter) still stands (append-only — not deleted)
     const jobs = await (await app.request('/jobs')).json();

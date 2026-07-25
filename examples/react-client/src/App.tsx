@@ -1,5 +1,5 @@
-import { GnlClient } from '@gnl/client';
-import { useChat } from '@gnl/client/react';
+import { GnlClient } from '@gnldev/client';
+import { useChat } from '@gnldev/client/react';
 
 // baseUrl '' → same-origin; the Vite proxy routes /agents,/runs to the :3000 backend.
 const client = new GnlClient({ baseUrl: '' });
@@ -9,7 +9,7 @@ export function App() {
 
   return (
     <div style={{ maxWidth: 640, margin: '40px auto', fontFamily: 'system-ui, sans-serif' }}>
-      <h1 style={{ fontSize: 18 }}>gnl · @gnl/client/react</h1>
+      <h1 style={{ fontSize: 18 }}>gnl · @gnldev/client/react</h1>
       <p style={{ color: '#666', fontSize: 13 }}>useChat + streaming + interrupt approve (no API key needed).</p>
 
       <div style={{ border: '1px solid #ddd', borderRadius: 8, padding: 12, minHeight: 200 }}>

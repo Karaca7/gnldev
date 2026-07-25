@@ -1,5 +1,5 @@
-import { durableProcessorStep } from '@gnl/durable';
-import type { JournalReader, Journal, JournalEntry } from '@gnl/durable';
+import { durableProcessorStep } from '@gnldev/durable';
+import type { JournalReader, Journal, JournalEntry } from '@gnldev/durable';
 import type { Scorer, ScoreResult, ScoreSample } from './scorer.js';
 
 export interface ScoreRunResult {

@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import { tool } from 'ai';
 import { z } from 'zod';
-import { InMemoryJournal } from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
 import { createRestApi } from '../src/index.js';
 
 const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
@@ -88,7 +88,7 @@ function makeApi(execs: { n: number }) {
   return createRestApi({ journal: new InMemoryJournal(), agents: { echoAgent: { model: agentMock(), tools, maxSteps: 6 } } });
 }
 
-describe('@gnl/server SSE — resumable (W3)', () => {
+describe('@gnldev/server SSE — resumable (W3)', () => {
   it('when lastEventId is not given, behavior is the same as before; id starts at 0 and increments', async () => {
     const execs = { n: 0 };
     const api = makeApi(execs);

@@ -3,7 +3,7 @@
 // that baseline); these tests cover the NEW behavior: concurrency actually parallelizes, a per-case
 // timeout fails only that case (not the whole suite), and crash-resume memoization survives both.
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
 import { evalDataset, contains, type Dataset } from '../src/index.js';
 
 function sleep(ms: number): Promise<void> {
@@ -16,7 +16,7 @@ function delayedDataset(n: number): Dataset {
   return { id: `delayed-${n}`, cases: Array.from({ length: n }, (_, i) => ({ id: `c${i}`, input: `in${i}`, expected: `echo:in${i}` })) };
 }
 
-describe('@gnl/evals evalDataset — concurrency (P1.4)', () => {
+describe('@gnldev/evals evalDataset — concurrency (P1.4)', () => {
   it('default concurrency (1) preserves exact case order and result content', async () => {
     const dataset = delayedDataset(3);
     const order: string[] = [];

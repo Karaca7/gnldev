@@ -1,13 +1,13 @@
-# @gnl/otel
+# @gnldev/otel
 
 Converts the journal into a real **OpenTelemetry trace** and sends it to a SpanExporter (or an OTLP endpoint). Deterministic span ids → **idempotent**; since it's produced post-hoc from the journal, it stays complete even after a crash and consistent across replays = **crash-proof / exactly-once observability** (live-instrumenting frameworks cannot offer this).
 
 ```bash
-npm i @gnl/otel   # peer: @gnl/durable, (optional) @opentelemetry/exporter-trace-otlp-http
+npm i @gnldev/otel   # peer: @gnldev/durable, (optional) @opentelemetry/exporter-trace-otlp-http
 ```
 
 ```ts
-import { exportRun } from '@gnl/otel';
+import { exportRun } from '@gnldev/otel';
 
 // Send a run to an OTLP collector (Jaeger/Tempo/Honeycomb…).
 const { traceId, spans } = await exportRun(journal, 'order-123', {
@@ -30,8 +30,8 @@ Each model/tool journal entry maps to a span; trace/span ids are derived from ru
 The `exportRun` above uses `@opentelemetry/sdk-trace-base` (peer dep). Alongside it there is also a smaller alternative that **doesn't need any OTel SDK** — it manually converts `packages/durable`'s `toTraceSpans` output into an OTLP/HTTP JSON body and POSTs it with plain `fetch` (~8KB footprint: just `node:crypto` + the global `fetch`).
 
 ```ts
-import { exportRunToOtlp, toOtlpJson } from '@gnl/otel';
-import { toTraceSpans } from '@gnl/durable';
+import { exportRunToOtlp, toOtlpJson } from '@gnldev/otel';
+import { toTraceSpans } from '@gnldev/durable';
 
 // Send a run directly to an OTLP/HTTP collector.
 const { traceId, spans, ok, status } = await exportRunToOtlp(journal, 'order-123', {

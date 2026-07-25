@@ -1,8 +1,8 @@
 {
-  "name": "@gnl/evals",
+  "name": "@gnldev/evals",
   "version": "0.0.0",
   "license": "Apache-2.0",
-  "description": "Scorers + LLM-judge for @gnl/durable. scoreRun reads the journal trace → deterministic, replayable scoring.",
+  "description": "Scorers + LLM-judge for @gnldev/durable. scoreRun reads the journal trace → deterministic, replayable scoring.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -21,11 +21,11 @@
     "test": "vitest run"
   },
   "peerDependencies": {
-    "@gnl/durable": "workspace:^",
+    "@gnldev/durable": "workspace:^",
     "ai": "^5.0.0"
   },
   "devDependencies": {
-    "@gnl/durable": "workspace:*",
+    "@gnldev/durable": "workspace:*",
     "ai": "^5.0.0"
   }
 }

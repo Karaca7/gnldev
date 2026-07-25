@@ -1,11 +1,11 @@
 // Open the gnl-demo.db produced by the demo in the browser. FULL demo of the Phase 2–4 views:
 // Workflows (registry + run + resume), Scorers, A2A Networks, MCP Servers.
 import { serve } from '@hono/node-server';
-import { SqliteStorage } from '@gnl/durable/sqlite';
-import { createGnl, toJournal } from '@gnl/durable';
-import { createStudioApp, createStudioRunner } from '@gnl/studio';
-import { workflow, step, waitFor } from '@gnl/workflow';
-import { scoreRun, contains, exactMatch } from '@gnl/evals';
+import { SqliteStorage } from '@gnldev/durable/sqlite';
+import { createGnl, toJournal } from '@gnldev/durable';
+import { createStudioApp, createStudioRunner } from '@gnldev/studio';
+import { workflow, step, waitFor } from '@gnldev/workflow';
+import { scoreRun, contains, exactMatch } from '@gnldev/evals';
 
 const storage = new SqliteStorage('gnl-demo.db');
 const journal = storage.runs;

@@ -150,7 +150,7 @@ async function warnOnModelDivergence(
   if (ctx.replay !== 'strict' || reqHash === undefined) return;
   const claimed = await ctxGet<ModelClaimRecord>(ctx, claimKey);
   if (claimed?.reqHash !== undefined && claimed.reqHash !== reqHash) {
-    console.warn(`@gnl/durable: divergence — ${label} (${key}) produced a different request on replay (informational; run not stopped)`);
+    console.warn(`@gnldev/durable: divergence — ${label} (${key}) produced a different request on replay (informational; run not stopped)`);
   }
 }
 
@@ -167,7 +167,7 @@ function assertReplayEntryPoint(hit: unknown, expected: 'generate' | 'stream', k
   const isStreamRecord = hit != null && typeof hit === 'object' && Array.isArray((hit as { parts?: unknown }).parts);
   if (expected === 'stream' && !isStreamRecord) {
     throw new Error(
-      `@gnl/durable: replay entry-point mismatch at '${key}' — this model step was journaled by the ` +
+      `@gnldev/durable: replay entry-point mismatch at '${key}' — this model step was journaled by the ` +
         'NON-streaming path (runDurable/generateText) but is being replayed through the STREAMING path ' +
         '(streamDurable/streamText). Resume the run through the SAME entry point it was created with ' +
         '(here: runDurable), or start a fresh runId for the streaming path.',
@@ -175,7 +175,7 @@ function assertReplayEntryPoint(hit: unknown, expected: 'generate' | 'stream', k
   }
   if (expected === 'generate' && isStreamRecord) {
     throw new Error(
-      `@gnl/durable: replay entry-point mismatch at '${key}' — this model step was journaled by the ` +
+      `@gnldev/durable: replay entry-point mismatch at '${key}' — this model step was journaled by the ` +
         'STREAMING path (streamDurable/streamText) but is being replayed through the NON-streaming path ' +
         '(runDurable/generateText). Resume the run through the SAME entry point it was created with ' +
         '(here: streamDurable), or start a fresh runId for the non-streaming path.',

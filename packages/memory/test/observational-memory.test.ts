@@ -2,7 +2,7 @@
 // loadContext returns observations(system)+unobserved; durable: the same seq again does not call the LLM (RunJournal memoizes).
 import { describe, it, expect } from 'vitest';
 import { cosineSimilarity } from 'ai';
-import { InMemoryStorage } from '@gnl/durable';
+import { InMemoryStorage } from '@gnldev/durable';
 import { AgentMemory, createOmRecallTool } from '../src/index.js';
 import type { Observation, OmVectorItem, OmVectorMatch } from '../src/index.js';
 
@@ -172,7 +172,7 @@ describe('Track 4 OM retrieval mode (P2-memory)', () => {
 // D4-om (AUDIT-R2 follow-up): OM retrieval mode, vector-indexed — the honest follow-up the P2
 // v1 keyword/substring `recallObservations` promised. `omVectors` is opt-in; absent → behavior stays v1.
 
-/** Mirrors `@gnl/durable`'s `InMemoryVectorStore` EXACTLY (no metadata-filter param on `query`) — proves
+/** Mirrors `@gnldev/durable`'s `InMemoryVectorStore` EXACTLY (no metadata-filter param on `query`) — proves
  *  `omVectors.store` works against the real (filter-less) VectorStore port surface, not an idealized mock. */
 class FakeVectorStore {
   items: OmVectorItem[] = [];

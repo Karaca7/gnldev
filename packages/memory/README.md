@@ -1,9 +1,9 @@
-# @gnl/memory
+# @gnldev/memory
 
-Rich semantic-recall memory for `@gnl/durable` — **journaled, replayable, exactly-once.** One class: `GnlMemory`.
+Rich semantic-recall memory for `@gnldev/durable` — **journaled, replayable, exactly-once.** One class: `GnlMemory`.
 
 ```ts
-import { GnlMemory } from '@gnl/memory';
+import { GnlMemory } from '@gnldev/memory';
 import { z } from 'zod';
 
 const mem = new GnlMemory({
@@ -46,5 +46,5 @@ await runDurable({ runId, journal, model, memory: mem, threadId: 'th-1', resourc
   resource-scope OM.
 
 ## Lite alternative
-For anyone who just wants simple topK recall, `SemanticMemory` in `@gnl/rag` is lighter; it uses the same
+For anyone who just wants simple topK recall, `SemanticMemory` in `@gnldev/rag` is lighter; it uses the same
 `sem:${threadId}:log` shape (cross-readable).

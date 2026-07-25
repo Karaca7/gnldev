@@ -6,7 +6,7 @@
 // `idempotency: 'args'` does. Run with: pnpm test
 import { describe, it, expect } from 'vitest';
 import { stepCountIs } from 'ai';
-import { runDurable, InMemoryJournal } from '@gnl/durable';
+import { runDurable, InMemoryJournal } from '@gnldev/durable';
 import { chargeOrder, ledger } from '../src/tools.js';
 
 const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };

@@ -385,7 +385,7 @@ describe.skipIf(!RUN)('REAL Redis — SET NX / TTL / MGET (FakeRedis fidelity ch
     expect(Math.abs(ms - Date.now())).toBeLessThan(60_000);
   });
 
-  it('DISTRIBUTED PUBSUB: @gnl/events on a real Redis WorkStore — fan-out to two workers, exactly-once', async () => {
+  it('DISTRIBUTED PUBSUB: @gnldev/events on a real Redis WorkStore — fan-out to two workers, exactly-once', async () => {
     // The GNL-design closure of the internal audit's "external pubsub backends" item: events already
     // sits on the WorkStore port; RedisStorage.work='full' → pointing at Redis is enough. Two
     // consumers on two SEPARATE connections (fan-out) must each receive EVERY event EXACTLY ONCE;

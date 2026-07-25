@@ -1,7 +1,7 @@
 // Opt-in auth: createRestApi(config, { auth }) → GET=read, POST=write. roleAuth (viewer/admin).
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
-import { roleAuth } from '@gnl/auth';
+import { InMemoryJournal } from '@gnldev/durable';
+import { roleAuth } from '@gnldev/auth';
 import { createRestApi } from '../src/index.js';
 
 function mkModel(): any {
@@ -17,7 +17,7 @@ function mkModel(): any {
 
 const cfg = () => ({ journal: new InMemoryJournal(), agents: { pay: { model: mkModel() } } });
 
-describe('@gnl/server opt-in auth', () => {
+describe('@gnldev/server opt-in auth', () => {
   it('if auth is not given, all endpoints are open (regression)', async () => {
     const api = createRestApi(cfg());
     expect((await api.request('/agents')).status).toBe(200);
@@ -51,7 +51,7 @@ describe('@gnl/server opt-in auth', () => {
 
     it('production + no auth → setup error', () => {
       vi.stubEnv('NODE_ENV', 'production');
-      // NOT translated on purpose: this regex matches the exact message thrown by @gnl/auth's
+      // NOT translated on purpose: this regex matches the exact message thrown by @gnldev/auth's
       // makeGate (packages/auth/src/gate.ts), which is deliberately kept in Turkish because
       // packages/studio/test/auth-org.test.ts (a different workstream) asserts on the same string.
       expect(() => createRestApi(cfg())).toThrowError(/auth is required in production/);

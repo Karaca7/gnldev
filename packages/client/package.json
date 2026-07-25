@@ -1,8 +1,8 @@
 {
-  "name": "@gnl/client",
+  "name": "@gnldev/client",
   "version": "0.0.0",
   "license": "Apache-2.0",
-  "description": "Type-safe REST/SSE client for @gnl/server agents: framework-agnostic core + React hooks.",
+  "description": "Type-safe REST/SSE client for @gnldev/server agents: framework-agnostic core + React hooks.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -25,7 +25,7 @@
     "test": "vitest run"
   },
   "peerDependencies": {
-    "@gnl/durable": "workspace:^",
+    "@gnldev/durable": "workspace:^",
     "react": ">=18"
   },
   "peerDependenciesMeta": {
@@ -34,7 +34,7 @@
     }
   },
   "devDependencies": {
-    "@gnl/durable": "workspace:*",
+    "@gnldev/durable": "workspace:*",
     "@types/react": "^18.3.0",
     "react": "^18.3.0"
   }

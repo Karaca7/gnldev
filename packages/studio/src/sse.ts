@@ -1,5 +1,5 @@
-// Pumps a streamDurable result (AI SDK StreamTextResult) into SSE — the SAME schema as @gnl/server,
-// so @gnl/client can connect to both the REST server and the studio playground.
+// Pumps a streamDurable result (AI SDK StreamTextResult) into SSE — the SAME schema as @gnldev/server,
+// so @gnldev/client can connect to both the REST server and the studio playground.
 // Schema: text-delta {text} · tool-call {toolCallId,toolName,input} · tool-result {...} · error {error}
 //         reasoning-start/delta/end · tool-input-start/delta/end · source · file · step-start/finish
 //         tool-error (non-terminal) · raw {type} (unknown-part marker) — P0.1, kept IN SYNC with
@@ -7,7 +7,7 @@
 //         interrupt {interrupts[]} (once the stream ends) · done {runId,finishReason,usage}
 import { streamSSE } from 'hono/streaming';
 import type { Context } from 'hono';
-import type { Interrupt } from '@gnl/durable';
+import type { Interrupt } from '@gnldev/durable';
 
 function hasSuspend(part: any): boolean {
   return part?.type === 'tool-result' && !!part.output?.__gnl_suspend;

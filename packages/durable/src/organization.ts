@@ -10,7 +10,7 @@ import type { Journal, JournalBatch, JournalReader, JournalEntry, RunSummary } f
 /** An organization-prefixed key. orgId must not contain ':' (it would break the key schema). */
 function orgPrefix(orgId: string): string {
   if (!orgId || orgId.includes(':')) {
-    throw new Error(`@gnl/durable: invalid orgId '${orgId}' — must be non-empty and must not contain ':'`);
+    throw new Error(`@gnldev/durable: invalid orgId '${orgId}' — must be non-empty and must not contain ':'`);
   }
   return `org:${orgId}:`; // the 'org:' journal prefix
 }

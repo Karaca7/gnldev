@@ -1,15 +1,15 @@
-# @gnl/react-client-example
+# @gnldev/react-client-example
 
-A demo of `@gnl/client/react`: **useChat + streaming + interrupt approve**. No API key needed (echo mock backend).
+A demo of `@gnldev/client/react`: **useChat + streaming + interrupt approve**. No API key needed (echo mock backend).
 
 Two terminals:
 
 ```bash
 # 1) backend (echo mock model, :3000)
-pnpm --filter @gnl/react-client-example server
+pnpm --filter @gnldev/react-client-example server
 
 # 2) frontend (Vite, :5173 → /agents,/runs proxy → :3000)
-pnpm --filter @gnl/react-client-example dev
+pnpm --filter @gnldev/react-client-example dev
 ```
 
 Browser: http://localhost:5173
@@ -20,4 +20,4 @@ Browser: http://localhost:5173
 - Proxy ([vite.config.ts](vite.config.ts)) for same-origin → no CORS.
 
 ## Connecting to your own backend
-For a real agent, run the backend with `@gnl/cli` (`gnl dev`) and point `GnlClient`'s baseUrl at it; or change the proxy target.
+For a real agent, run the backend with `@gnldev/cli` (`gnl dev`) and point `GnlClient`'s baseUrl at it; or change the proxy target.

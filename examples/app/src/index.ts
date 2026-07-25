@@ -3,9 +3,9 @@
 //   ops  → http://localhost:4321  (studio: time-travel/fork/approval)
 import { serve } from '@hono/node-server';
 import { rmSync } from 'node:fs';
-import { SqliteStorage } from '@gnl/durable/sqlite';
-import { toJournal } from '@gnl/durable';
-import { createStudioApp } from '@gnl/studio';
+import { SqliteStorage } from '@gnldev/durable/sqlite';
+import { toJournal } from '@gnldev/durable';
+import { createStudioApp } from '@gnldev/studio';
 import { buildSupport } from './agent.js';
 import { buildServer } from './server.js';
 

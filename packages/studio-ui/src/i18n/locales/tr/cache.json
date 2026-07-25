@@ -1,6 +1,6 @@
 {
   "disabledTitle": "Cache kapalı",
-  "disabledDescription": "Bu görünümü açmak için stats() içeren bir @gnl/cache store'unu `cache` opsiyonu olarak createStudioApi'ye ver.",
+  "disabledDescription": "Bu görünümü açmak için stats() içeren bir @gnldev/cache store'unu `cache` opsiyonu olarak createStudioApi'ye ver.",
   "liveStatus": "otomatik güncellenir (5sn'de bir)",
   "hitLabel": "Hit",
   "missLabel": "Miss",

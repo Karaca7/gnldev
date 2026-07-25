@@ -1,7 +1,7 @@
 // FLOW-10: AgentMemory.truncateMessagesAfter — index→seq conversion on top of the (optional)
 // MemoryStore.deleteMessagesAfter port method (see storage.ts's JSDoc for the port contract).
 import { describe, it, expect } from 'vitest';
-import { InMemoryStorage } from '@gnl/durable';
+import { InMemoryStorage } from '@gnldev/durable';
 import { AgentMemory } from '../src/index.js';
 
 const u = (content: string) => ({ role: 'user', content });

@@ -1,4 +1,4 @@
-// Public API surface — for anyone who wants to use @gnl/docs-mcp as a library (embedding,
+// Public API surface — for anyone who wants to use @gnldev/docs-mcp as a library (embedding,
 // testing). The CLI entry point (bin: gnl-docs-mcp) lives in a separate file: src/cli.ts (NOT
 // imported here — the process.stdin/exit side effect must not affect any consumer that imports
 // index.ts).

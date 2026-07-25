@@ -1,8 +1,8 @@
 {
-  "name": "@gnl/otel",
+  "name": "@gnldev/otel",
   "version": "0.0.0",
   "license": "Apache-2.0",
-  "description": "OpenTelemetry trace exporter for @gnl/durable. Journal → OTEL spans (deterministic ids = idempotent, crash-proof, exactly-once observability).",
+  "description": "OpenTelemetry trace exporter for @gnldev/durable. Journal → OTEL spans (deterministic ids = idempotent, crash-proof, exactly-once observability).",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -30,7 +30,7 @@
     "@opentelemetry/semantic-conventions": "^1.28.0"
   },
   "peerDependencies": {
-    "@gnl/durable": "workspace:^",
+    "@gnldev/durable": "workspace:^",
     "@opentelemetry/exporter-trace-otlp-http": "^0.57.0",
     "ai": "^5.0.0"
   },
@@ -44,7 +44,7 @@
   },
   "devDependencies": {
     "@ai-sdk/provider": "^2.0.0",
-    "@gnl/durable": "workspace:*",
+    "@gnldev/durable": "workspace:*",
     "ai": "^5.0.0",
     "zod": "^3.25.0"
   }

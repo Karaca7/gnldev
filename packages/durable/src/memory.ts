@@ -1,7 +1,7 @@
 import type { Journal } from './journal.js';
 
 // Conversation (thread) + working memory. Journal-backed → durable & replayable by construction.
-// (Rich memory like semantic recall / observational memory lives in a separate @gnl/memory package in the future.)
+// (Rich memory like semantic recall / observational memory lives in a separate @gnldev/memory package in the future.)
 
 export interface Memory {
   /**
@@ -18,7 +18,7 @@ export interface Memory {
   /** The resource (user) id a thread belongs to (optional; enables rich memory). */
   getThreadResource?(threadId: string): Promise<string | undefined>;
   /**
-   * Rich path (optional — provided by @gnl/memory's AgentMemory): composes recall + working memory +
+   * Rich path (optional — provided by @gnldev/memory's AgentMemory): composes recall + working memory +
    * observational memory + the WM tool in ONE call. If defined, runDurable/streamDurable use this
    * instead of `getMessages`/`getWorkingMemory`.
    */

@@ -1,8 +1,8 @@
 {
-  "name": "@gnl/processors",
+  "name": "@gnldev/processors",
   "version": "0.0.0",
   "license": "Apache-2.0",
-  "description": "Input/output processors for @gnl/durable agents: PII redaction, moderation, tool-filter. Durability-infused (journaled).",
+  "description": "Input/output processors for @gnldev/durable agents: PII redaction, moderation, tool-filter. Durability-infused (journaled).",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -21,9 +21,9 @@
     "test": "vitest run"
   },
   "peerDependencies": {
-    "@gnl/durable": "workspace:^"
+    "@gnldev/durable": "workspace:^"
   },
   "devDependencies": {
-    "@gnl/durable": "workspace:*"
+    "@gnldev/durable": "workspace:*"
   }
 }

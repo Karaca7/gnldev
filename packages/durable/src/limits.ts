@@ -246,7 +246,7 @@ export interface RunLimits {
    *
    * HONEST BOUNDS (all fail toward OVER-gating, never early expiry, except (4)):
    *  (1) WORKING MEMORY is checked conservatively — ANY non-empty WM keeps the taint (we cannot tell
-   *      whether the poison was summarized into it). Resource-scoped WM (`@gnl/memory` `scope:
+   *      whether the poison was summarized into it). Resource-scoped WM (`@gnldev/memory` `scope:
    *      'resource'`) is read via `getWorkingMemory(threadId)` and may be missed — pair OM/resource-WM
    *      setups with `'persistent'` if that matters to you.
    *  (2) memory-SYNTHESIZED content: any system-role message in the loaded window (the OM
@@ -461,7 +461,7 @@ function warnCasFallback(store: object, missing: string): void {
   if (casFallbackWarned.has(store)) return;
   casFallbackWarned.add(store);
   console.warn(
-    `@gnl/durable: this journal does not implement ${missing} — limit-state updates fell back to get→put. ` +
+    `@gnldev/durable: this journal does not implement ${missing} — limit-state updates fell back to get→put. ` +
       'Safe in single-process usage; in multi-worker/distributed environments concurrent updates can be ' +
       'LOST (limits may under-enforce). Implement the primitive (see the Journal interface / parity matrix in journal.ts).',
   );
@@ -733,7 +733,7 @@ function reportUnenforceableLimits(store: object, limits: RunLimits): void {
   if (disabled.length === 0) return; // nothing this reader would enforce is configured
   if (limits.strict) {
     throw new Error(
-      `@gnl/durable: run limits (${disabled.join(', ')}) are configured with \`strict: true\`, but this ` +
+      `@gnldev/durable: run limits (${disabled.join(', ')}) are configured with \`strict: true\`, but this ` +
         'journal does not implement `readRun` — they CANNOT be enforced. Use a journal that implements ' +
         '`readRun` (all first-party adapters do), or remove `strict` to fail open with a warning instead.',
     );
@@ -741,7 +741,7 @@ function reportUnenforceableLimits(store: object, limits: RunLimits): void {
   if (!limitsFailOpenWarned.has(store)) {
     limitsFailOpenWarned.add(store);
     console.warn(
-      `@gnl/durable: run limits (${disabled.join(', ')}) are configured but this journal does not implement ` +
+      `@gnldev/durable: run limits (${disabled.join(', ')}) are configured but this journal does not implement ` +
         '`readRun` — these protections are SILENTLY NOT ENFORCED (the run is NOT capped). Use a journal that ' +
         'implements `readRun` (all first-party adapters do), or set `limits.strict: true` to fail loudly instead.',
     );
@@ -778,13 +778,13 @@ export async function enforceStepLimits(
 
   if (limits.maxTokens != null && totalTokens > limits.maxTokens) {
     throw new RunLimitExceededError(
-      `@gnl/durable: run '${runId}' exceeded the maxTokens limit (${limits.maxTokens}) with ${totalTokens} tokens`,
+      `@gnldev/durable: run '${runId}' exceeded the maxTokens limit (${limits.maxTokens}) with ${totalTokens} tokens`,
       { kind: 'maxTokens', value: totalTokens, limit: limits.maxTokens },
     );
   }
   if (limits.maxCostUsd != null && costUsd > limits.maxCostUsd) {
     throw new RunLimitExceededError(
-      `@gnl/durable: run '${runId}' exceeded the maxCostUsd limit ($${limits.maxCostUsd}) at $${costUsd.toFixed(4)}`,
+      `@gnldev/durable: run '${runId}' exceeded the maxCostUsd limit ($${limits.maxCostUsd}) at $${costUsd.toFixed(4)}`,
       { kind: 'maxCostUsd', value: costUsd, limit: limits.maxCostUsd },
     );
   }
@@ -859,7 +859,7 @@ export async function checkToolGate(
       return {
         kind: 'loop',
         message:
-          `@gnl/durable: '${toolName}' ran ${priorRepeats} times in a row with the same arguments ` +
+          `@gnldev/durable: '${toolName}' ran ${priorRepeats} times in a row with the same arguments ` +
           `(maxRepeats=${maxRepeats})${ignoredNudge ? ' and repeated identically even after a reconsider nudge' : ''} ` +
           `— loop detected, this call was NOT EXECUTED`,
         detail: { toolName, argsHash: hash, repeats: priorRepeats, maxRepeats, ...(ignoredNudge ? { reflected: true } : {}) },
@@ -875,7 +875,7 @@ export async function checkToolGate(
       return {
         kind: 'maxToolCalls',
         message:
-          `@gnl/durable: run '${runId}' reached the maxToolCalls limit (${limits.maxToolCalls}) ` +
+          `@gnldev/durable: run '${runId}' reached the maxToolCalls limit (${limits.maxToolCalls}) ` +
           `(${succeededToolCalls}) — the new tool call was NOT EXECUTED`,
         detail: { kind: 'maxToolCalls', value: succeededToolCalls, limit: limits.maxToolCalls },
       };

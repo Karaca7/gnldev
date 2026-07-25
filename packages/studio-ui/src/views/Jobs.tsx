@@ -22,7 +22,7 @@ function StatusGlyph({ s }: { s: string }) {
   return <span aria-hidden className="text-muted-foreground">→</span>;
 }
 
-// Queue/Jobs: live table of background jobs (@gnl/queue listJobs). Refreshes every 3s.
+// Queue/Jobs: live table of background jobs (@gnldev/queue listJobs). Refreshes every 3s.
 export function Jobs() {
   const { t } = useTranslation('jobs');
   const jobs = useJobs();

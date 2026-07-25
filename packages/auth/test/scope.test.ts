@@ -4,7 +4,7 @@ import { describe, it, expect } from 'vitest';
 import { isPlatformAdmin, principalScope, PLATFORM_ADMIN_ROLE, roleAuth, assertAssignablePrivileges } from '../src/index.js';
 import type { Principal } from '../src/index.js';
 
-describe('@gnl/auth scope helpers', () => {
+describe('@gnldev/auth scope helpers', () => {
   it('isPlatformAdmin: ONLY the explicit platform-admin role grants it (org-less alone does NOT)', () => {
     expect(isPlatformAdmin(null)).toBe(false);
     expect(isPlatformAdmin(undefined)).toBe(false);

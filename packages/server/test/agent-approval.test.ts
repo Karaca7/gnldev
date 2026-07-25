@@ -1,11 +1,11 @@
 // Agent approval registry (governance surface — see RestApiOptions.requireAgentApproval, and
-// @gnl/durable's agent-registry.ts for the underlying primitives: fingerprintAgent/recordAgent/
+// @gnldev/durable's agent-registry.ts for the underlying primitives: fingerprintAgent/recordAgent/
 // approveAgent/blockAgent/isAgentServable/listAgentRegistry). Every `config.agents` entry is recorded
 // (idempotent) into the journal ONCE at `createRestApi` construction; the flag OPTS IN to enforcing it
 // on run/resume/stream — off by default (backward compat: an existing deployment is unaffected).
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal, listLog } from '@gnl/durable';
-import { roleAuth } from '@gnl/auth';
+import { InMemoryJournal, listLog } from '@gnldev/durable';
+import { roleAuth } from '@gnldev/auth';
 import { createRestApi } from '../src/index.js';
 
 function mkModel(text: string): any {
@@ -31,7 +31,7 @@ const run = (api: any, name: string, runId: string, headers: Record<string, stri
     body: JSON.stringify({ runId, prompt: 'hi' }),
   });
 
-describe('@gnl/server agent approval registry', () => {
+describe('@gnldev/server agent approval registry', () => {
   it('requireAgentApproval OFF (default) → agent serves, no regression from a pending registry record', async () => {
     const journal = new InMemoryJournal();
     const api = createRestApi({ journal, agents: { a: { model: mkModel('ok') } } });

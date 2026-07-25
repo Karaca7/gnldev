@@ -8,7 +8,7 @@
 // (paid/EE multi-org) model treat an unbound identity WITHOUT this grant as fail-CLOSED (no access).
 //
 // This module is pure (no host/Hono coupling) → unit-testable in isolation and reusable by
-// @gnl/server, @gnl/studio and @gnl/auth-ee.
+// @gnldev/server, @gnldev/studio and @gnldev/auth-ee.
 import type { Principal } from './types.js';
 
 /** The reserved role that grants PLATFORM scope (sees/manages every organization). */
@@ -51,7 +51,7 @@ export type AssignabilityResult = { ok: true } | { ok: false; reason: string };
  * PRIVILEGE CEILING for user-management (create/update). An assigner must NEVER be able to hand out a
  * privilege it does not itself hold — otherwise an org-bound admin could mint itself (or a new user)
  * the reserved `platform-admin` role and walk out of its own org as a cross-org super-admin. The
- * user-management surfaces (@gnl/studio POST/PATCH /users) validate only the target's ORG, not the
+ * user-management surfaces (@gnldev/studio POST/PATCH /users) validate only the target's ORG, not the
  * ROLE/PERMISSION VALUES; this closes that gap.
  *
  * Rule (deliberately minimal + scope-aware): a platform-admin may assign anything. Anyone else may

@@ -2,7 +2,7 @@
 // real MCP Server via the SDK's InMemoryTransport and tests tools/list + tools/call with real
 // protocol messaging (only the 'tool behavior' is fake, the transport/protocol is real).
 import { describe, it, expect } from 'vitest';
-import { argsHash, InMemoryJournal } from '@gnl/durable';
+import { argsHash, InMemoryJournal } from '@gnldev/durable';
 import { mcpTools, createMcpServer, serveMcp } from '../src/index.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';

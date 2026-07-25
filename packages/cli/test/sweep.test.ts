@@ -1,7 +1,7 @@
-// gnl sweep: previewSweepCore (dry-run, never deletes) + sweepRunsCore (the real @gnl/durable sweepRuns).
+// gnl sweep: previewSweepCore (dry-run, never deletes) + sweepRunsCore (the real @gnldev/durable sweepRuns).
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import * as Durable from '@gnl/durable';
-import { InMemoryJournal, runDurable } from '@gnl/durable';
+import * as Durable from '@gnldev/durable';
+import { InMemoryJournal, runDurable } from '@gnldev/durable';
 import { previewSweepCore, sweepRunsCore } from '../src/commands/sweep.js';
 import { agentModel } from './helpers.js';
 

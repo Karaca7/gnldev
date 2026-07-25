@@ -1,9 +1,9 @@
 // GOREV W2 — MCP FIREWALL. Market evidence: 30 CVEs in 60 days, tool-poisoning, rug-pull — MCP tools:
-// their DEFINITIONS (description/inputSchema) are untrusted data coming from the server. `@gnl/durable`'s
+// their DEFINITIONS (description/inputSchema) are untrusted data coming from the server. `@gnldev/durable`'s
 // Guard contract is already pluggable (see guard.ts, policy.ts) — this file, WITHOUT TOUCHING `durable`,
 // produces an MCP-specific Guard: allowlist/denylist + description-pinning (rug-pull defense) + per-tool limit.
-import { claim } from '@gnl/durable';
-import type { Guard, GuardCall, GuardDecision, Journal, JournalReader } from '@gnl/durable';
+import { claim } from '@gnldev/durable';
+import type { Guard, GuardCall, GuardDecision, Journal, JournalReader } from '@gnldev/durable';
 import type { McpToolSummary } from './index.js';
 
 /** Journal key for the pinned description hash — invisible to parseJournalKey (not a model/tool). */

@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import { contentSimilarity, keywordCoverage, textualDifference, answerSimilarity } from '../src/index.js';
 
-describe('@gnl/evals contentSimilarity (Dice bigram)', () => {
+describe('@gnldev/evals contentSimilarity (Dice bigram)', () => {
   it('identical strings → 1', () => {
     const r: any = contentSimilarity().score({ output: 'the quick brown fox', expected: 'the quick brown fox' });
     expect(r.score).toBe(1);
@@ -30,7 +30,7 @@ describe('@gnl/evals contentSimilarity (Dice bigram)', () => {
   });
 });
 
-describe('@gnl/evals keywordCoverage', () => {
+describe('@gnldev/evals keywordCoverage', () => {
   it('all expected keywords present → 1', () => {
     const r: any = keywordCoverage().score({ output: 'Paris is the capital of France', expected: 'Paris capital France' });
     expect(r.score).toBe(1);
@@ -66,7 +66,7 @@ describe('@gnl/evals keywordCoverage', () => {
   });
 });
 
-describe('@gnl/evals textualDifference (1 - normalized Levenshtein)', () => {
+describe('@gnldev/evals textualDifference (1 - normalized Levenshtein)', () => {
   it('identical strings → 1', () => {
     const r: any = textualDifference().score({ output: 'hello world', expected: 'hello world' });
     expect(r.score).toBe(1);
@@ -97,7 +97,7 @@ describe('@gnl/evals textualDifference (1 - normalized Levenshtein)', () => {
   });
 });
 
-describe('@gnl/evals answerSimilarity (token-overlap F1)', () => {
+describe('@gnldev/evals answerSimilarity (token-overlap F1)', () => {
   it('identical token sets → 1', () => {
     const r: any = answerSimilarity().score({ output: 'the capital of France is Paris', expected: 'the capital of France is Paris' });
     expect(r.score).toBe(1);

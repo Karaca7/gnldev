@@ -1,6 +1,6 @@
 // gnl.config convention: defineConfig (type helper) + loadConfig (dynamic loader).
-import type { CreateGnlConfig } from '@gnl/durable';
-import type { Cred } from '@gnl/auth';
+import type { CreateGnlConfig } from '@gnldev/durable';
+import type { Cred } from '@gnldev/auth';
 
 /** gnl.config shape: createGnl config + dev server options. */
 export interface GnlDevConfig extends CreateGnlConfig {
@@ -15,7 +15,7 @@ export interface GnlDevConfig extends CreateGnlConfig {
    * GNL_ADMIN_TOKEN / GNL_VIEWER_TOKEN, GNL_ADMIN_USER+GNL_ADMIN_PASS / GNL_VIEWER_USER+GNL_VIEWER_PASS.
    */
   auth?: { admin?: Cred; viewer?: Cred };
-  /** Paid @gnl/auth-ee license key (or GNL_LICENSE_KEY env). If installed, the premium provider takes over. */
+  /** Paid @gnldev/auth-ee license key (or GNL_LICENSE_KEY env). If installed, the premium provider takes over. */
   license?: string;
   /** License signature public key (base64url DER spki; or GNL_EE_PUBLIC_KEY env). */
   licensePublicKey?: string;

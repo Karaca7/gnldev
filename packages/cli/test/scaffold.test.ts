@@ -88,14 +88,14 @@ describe('scaffold — feature composition', () => {
 
     // package.json: new deps added, memory dep already present, vitest + test script from e2e
     const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
-    expect(pkg.dependencies['@gnl/rag']).toBeTruthy();
-    expect(pkg.dependencies['@gnl/memory']).toBeTruthy(); // base template already had it
+    expect(pkg.dependencies['@gnldev/rag']).toBeTruthy();
+    expect(pkg.dependencies['@gnldev/memory']).toBeTruthy(); // base template already had it
     expect(pkg.devDependencies.vitest).toBeTruthy();
     expect(pkg.scripts.test).toBe('vitest run');
 
-    // generated gnl.config.ts: correct imports + wiring, NO @gnl/cli import
+    // generated gnl.config.ts: correct imports + wiring, NO @gnldev/cli import
     const config = readFileSync(join(dir, 'gnl.config.ts'), 'utf8');
-    expect(config).not.toContain('@gnl/cli');
+    expect(config).not.toContain('@gnldev/cli');
     expect(config).toContain("import { chargeOrder } from './src/tools.js';");
     expect(config).toContain("import { searchDocs } from './src/rag.js';");
     expect(config).toContain("import { memoryFactory } from './src/memory.js';");
@@ -114,7 +114,7 @@ describe('scaffold — feature composition', () => {
     expect(config).toContain('auth,');
     expect(config).toContain('& { auth?: { admin?: { token?: string }; viewer?: { token?: string } } }');
     const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
-    expect(pkg.dependencies['@gnl/workflow']).toBeTruthy();
+    expect(pkg.dependencies['@gnldev/workflow']).toBeTruthy();
   });
 
   it('mcp: spread wiring into agent tools', () => {

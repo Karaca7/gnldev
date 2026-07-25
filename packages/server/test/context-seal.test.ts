@@ -1,9 +1,9 @@
 // P1.7 (AUDIT-R2): a body-supplied `context.__gnl_orgId`/`__gnl_resourceId` spoof must NEVER
-// survive — @gnl/server seals the AUTHENTICATED identity (principal) into context via sealRequestContext
+// survive — @gnldev/server seals the AUTHENTICATED identity (principal) into context via sealRequestContext
 // BEFORE handing it to the registry, overwriting whatever the client tried to smuggle in.
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal, GNL_ORG_ID_KEY, GNL_RESOURCE_ID_KEY } from '@gnl/durable';
-import { roleAuth } from '@gnl/auth';
+import { InMemoryJournal, GNL_ORG_ID_KEY, GNL_RESOURCE_ID_KEY } from '@gnldev/durable';
+import { roleAuth } from '@gnldev/auth';
 import { createRestApi } from '../src/index.js';
 
 const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
@@ -59,7 +59,7 @@ function mkApi(journal: InMemoryJournal) {
 
 const basicAuthHeader = 'Basic ' + Buffer.from('alice:pw').toString('base64');
 
-describe('@gnl/server: request-context identity sealing (P1.7)', () => {
+describe('@gnldev/server: request-context identity sealing (P1.7)', () => {
   it('POST /agents/:name/run: a spoofed body.context.__gnl_orgId/__gnl_resourceId is overwritten by the SERVER identity', async () => {
     const journal = new InMemoryJournal();
     const api = mkApi(journal);

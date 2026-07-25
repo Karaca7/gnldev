@@ -12,8 +12,8 @@
 // Adapted (as a runnable demo) from packages/durable/test/resume-run.test.ts.
 import { tool, stepCountIs } from 'ai';
 import { z } from 'zod';
-import { InMemoryJournal, runDurable, resumeRun } from '@gnl/durable';
-import type { Guard } from '@gnl/durable';
+import { InMemoryJournal, runDurable, resumeRun } from '@gnldev/durable';
+import type { Guard } from '@gnldev/durable';
 import { printCase } from './report.js';
 
 const usage = { inputTokens: 10, outputTokens: 5, totalTokens: 15 };

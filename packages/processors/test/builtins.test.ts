@@ -1,9 +1,9 @@
-// @gnl/processors built-ins: piiRedactor (5 PII types), moderation tripwire, toolFilter.
+// @gnldev/processors built-ins: piiRedactor (5 PII types), moderation tripwire, toolFilter.
 import { describe, it, expect } from 'vitest';
 import { piiRedactor } from '../src/pii.js';
 import { moderationProcessor } from '../src/moderation.js';
 import { toolFilter } from '../src/tool-filter.js';
-import { ProcessorTripwire } from '@gnl/durable';
+import { ProcessorTripwire } from '@gnldev/durable';
 
 const ctx = { runId: 'r', journal: {} as any, step: async (_n: string, c: any) => c() };
 

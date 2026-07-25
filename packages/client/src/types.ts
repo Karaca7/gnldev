@@ -1,8 +1,8 @@
-// @gnl/client public types. Single source for Interrupt/RunSummary/JournalEntry: @gnl/durable (type-only).
-import type { Interrupt, RunSummary, JournalEntry } from '@gnl/durable';
+// @gnldev/client public types. Single source for Interrupt/RunSummary/JournalEntry: @gnldev/durable (type-only).
+import type { Interrupt, RunSummary, JournalEntry } from '@gnldev/durable';
 export type { Interrupt, RunSummary, JournalEntry };
 
-/** @gnl/server GET /agents output. */
+/** @gnldev/server GET /agents output. */
 export interface AgentMeta {
   name: string;
   model: string;
@@ -30,7 +30,7 @@ export interface RunInput {
   approvals?: Record<string, boolean>;
 }
 
-/** SSE event union (same schema as @gnl/server + @gnl/studio playground; P0.1 additions — see sse.ts header). */
+/** SSE event union (same schema as @gnldev/server + @gnldev/studio playground; P0.1 additions — see sse.ts header). */
 export type StreamEvent =
   | { event: 'text-delta'; data: { text: string } }
   | { event: 'tool-call'; data: { toolCallId: string; toolName: string; input: unknown } }

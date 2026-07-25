@@ -237,8 +237,8 @@ the search happens inside the engine (via a fast index).
 
 **⑧ `gnl_work_log` — queue/event log.** Columns: `ns (namespace — which queue/topic, e.g.,
 'evt:order'), id (record id; ns+id is the primary key → the same event CANNOT be inserted twice
-= idempotent publishing), payload (content), ts`. *When?* When `@gnl/queue` adds a job, when
-`@gnl/events` publishes an event. Append-only; old entries are swept with `sweepLog`.
+= idempotent publishing), payload (content), ts`. *When?* When `@gnldev/queue` adds a job, when
+`@gnldev/events` publishes an event. Append-only; old entries are swept with `sweepLog`.
 
 **⑨ `gnl_work_kv` — queue management notes.** Free-form key-value: job status, scheduler
 definitions, and most importantly **ack markers** (ack marker: "consumer Y received event X" —
@@ -263,44 +263,44 @@ from here.
 ```mermaid
 graph LR
     subgraph Core
-        durable["@gnl/durable<br/>journal + replay engine<br/>(the heart of EVERYTHING)"]
+        durable["@gnldev/durable<br/>journal + replay engine<br/>(the heart of EVERYTHING)"]
     end
     subgraph Capabilities
-        memory["@gnl/memory<br/>rich memory"]
-        rag["@gnl/rag<br/>RAG + GraphRAG + chunking"]
-        workflow["@gnl/workflow<br/>workflows + retry"]
-        processors["@gnl/processors<br/>PII masking, moderation,<br/>toolSearch..."]
-        evals["@gnl/evals<br/>quality measurement (scorers,<br/>experiment comparison)"]
+        memory["@gnldev/memory<br/>rich memory"]
+        rag["@gnldev/rag<br/>RAG + GraphRAG + chunking"]
+        workflow["@gnldev/workflow<br/>workflows + retry"]
+        processors["@gnldev/processors<br/>PII masking, moderation,<br/>toolSearch..."]
+        evals["@gnldev/evals<br/>quality measurement (scorers,<br/>experiment comparison)"]
     end
     subgraph Distributed
-        queue["@gnl/queue<br/>background job queue"]
-        events["@gnl/events<br/>event publishing (pubsub)"]
-        scheduler["@gnl/scheduler<br/>scheduled triggers"]
-        cache["@gnl/cache<br/>cross-run cache"]
+        queue["@gnldev/queue<br/>background job queue"]
+        events["@gnldev/events<br/>event publishing (pubsub)"]
+        scheduler["@gnldev/scheduler<br/>scheduled triggers"]
+        cache["@gnldev/cache<br/>cross-run cache"]
     end
     subgraph Presentation
-        server["@gnl/server<br/>automatic REST API"]
-        client["@gnl/client<br/>type-safe client + React"]
-        studio["@gnl/studio + studio-ui<br/>web control panel"]
-        agui["@gnl/agui<br/>CopilotKit bridge"]
+        server["@gnldev/server<br/>automatic REST API"]
+        client["@gnldev/client<br/>type-safe client + React"]
+        studio["@gnldev/studio + studio-ui<br/>web control panel"]
+        agui["@gnldev/agui<br/>CopilotKit bridge"]
     end
     subgraph Integration
-        mcp["@gnl/mcp<br/>MCP tool protocol"]
-        a2a["@gnl/a2a<br/>remote agent calls"]
-        otel["@gnl/otel<br/>tracing (Langfuse, etc.)"]
-        schema["@gnl/schema-compat<br/>provider schema compatibility"]
+        mcp["@gnldev/mcp<br/>MCP tool protocol"]
+        a2a["@gnldev/a2a<br/>remote agent calls"]
+        otel["@gnldev/otel<br/>tracing (Langfuse, etc.)"]
+        schema["@gnldev/schema-compat<br/>provider schema compatibility"]
     end
     subgraph Operations
-        auth["@gnl/auth (free)<br/>@gnl/auth-ee (enterprise SSO)"]
-        deploy["@gnl/deploy<br/>bundle + Vercel/CF/Netlify"]
-        cli["@gnl/cli + create-gnl<br/>CLI + scaffolding"]
+        auth["@gnldev/auth (free)<br/>@gnldev/auth-ee (enterprise SSO)"]
+        deploy["@gnldev/deploy<br/>bundle + Vercel/CF/Netlify"]
+        cli["@gnldev/cli + create-gnl<br/>CLI + scaffolding"]
     end
     Capabilities --> durable
     Distributed --> durable
     Presentation --> durable
 ```
 
-Key point: **every package is built on top of `@gnl/durable`** — a RAG query, a queue job, a
+Key point: **every package is built on top of `@gnldev/durable`** — a RAG query, a queue job, a
 remote agent call are all automatically written to the journal and INHERIT the exactly-once
 guarantee. In competing frameworks these features exist individually, but there's no shared
 durability foundation.
@@ -312,7 +312,7 @@ durability foundation.
 ### 7.1 Your first agent (5 minutes)
 
 ```ts
-import { createGnl, InMemoryJournal } from '@gnl/durable';
+import { createGnl, InMemoryJournal } from '@gnldev/durable';
 import { openai } from '@ai-sdk/openai';
 
 const gnl = createGnl({
@@ -362,7 +362,7 @@ const r2 = await gnl.run('cashier', {
 ### 7.3 Memory (conversation history)
 
 ```ts
-import { AgentMemory } from '@gnl/memory';
+import { AgentMemory } from '@gnldev/memory';
 const gnl = createGnl({ storage, memoryFactory: (s) => new AgentMemory({ storage: s, embed }) });
 await gnl.run('assistant', { runId: 'r1', threadId: 'customer-5', prompt: 'My name is Ali' });
 await gnl.run('assistant', { runId: 'r2', threadId: 'customer-5', prompt: 'What was my name?' }); // "Ali"
@@ -374,7 +374,7 @@ memory** (the running summary the agent keeps for itself) are both supported.
 ### 7.4 RAG — answering from a document archive
 
 ```ts
-import { chunkDocuments, PostgresVectorStore, createRagTool, GraphRag } from '@gnl/rag';
+import { chunkDocuments, PostgresVectorStore, createRagTool, GraphRag } from '@gnldev/rag';
 
 // 1) Split documents into chunks (chunk: breaking long text into small, searchable pieces):
 const chunks = chunkDocuments([{ id: 'handbook', text: longText }], { strategy: 'markdown' });
@@ -413,7 +413,7 @@ the tree.
 ### 7.6 Workflow — controlled processes + retry
 
 ```ts
-import { workflow, step, retry } from '@gnl/workflow';
+import { workflow, step, retry } from '@gnldev/workflow';
 
 const wf = workflow<Order>()
   .then(retry(step('stockCheck', check), { attempts: 3, backoffMs: 500, fallback: step('manual', enqueue) }))
@@ -429,7 +429,7 @@ allowed" budget isn't reset.
 ### 7.7 Quality measurement (evals)
 
 ```ts
-import { faithfulness, toxicity, createDatasetsManager } from '@gnl/evals';
+import { faithfulness, toxicity, createDatasetsManager } from '@gnldev/evals';
 
 // Automatic end-of-run scoring: agents.assistant.scorers = [toxicity({ model: judge })]
 // Experiment comparison:
@@ -446,15 +446,15 @@ same score (and no money is burned again).
 
 ```ts
 // Server: turns a registry into an automatic REST API (with an OpenAPI schema):
-import { createServer } from '@gnl/server';
+import { createServer } from '@gnldev/server';
 serve(createServer(gnl));                      // POST /agents/assistant/run, SSE stream, /metrics...
 
 // Client (browser/React):
-import { createClient } from '@gnl/client';
+import { createClient } from '@gnldev/client';
 const api = createClient('http://localhost:3000');
 await api.run('assistant', { prompt: '...' });
 
-// Studio: web control panel — npx @gnl/studio
+// Studio: web control panel — npx @gnldev/studio
 // 15 views: run timeline, TIME-TRAVEL (jump back to a past step and FORK from there),
 // approval queue, cost, traces, tenant/budget management, network tree, playground...
 ```
@@ -462,11 +462,11 @@ await api.run('assistant', { prompt: '...' });
 ### 7.9 Deployment and observability
 
 ```ts
-import { deployTargets, writeDeployTarget, bundleApp } from '@gnl/deploy';
+import { deployTargets, writeDeployTarget, bundleApp } from '@gnldev/deploy';
 await writeDeployTarget(deployTargets.cloudflare({ entry: './src/server.ts' }), '.');
 // → worker.ts + wrangler.toml ready; `npx wrangler deploy`
 
-import { exportRunToOtlp, otlpPresets } from '@gnl/otel';
+import { exportRunToOtlp, otlpPresets } from '@gnldev/otel';
 await exportRunToOtlp(journal, 'order-42', otlpPresets.langfuse({ publicKey, secretKey }));
 // the run's full trace to Langfuse (an LLM tracing service) in a single line
 ```
@@ -661,7 +661,7 @@ stateDiagram-v2
   older than the threshold. Safe defaults: **suspended** runs (awaiting approval) and records
   whose timestamp can't be read are NOT deleted — the "don't throw away pending work" principle.
   You hook this up to a cron (scheduled job); it can also be set up from within GNL itself via
-  `@gnl/scheduler`.
+  `@gnldev/scheduler`.
 - **`purgeRun(runId)`** — targeted deletion (for GDPR "right to be forgotten"): erases ALL traces
   of a run and is **recursive** (recursive: it also processes children, and children of
   children) — sub-agent journals are never orphaned no matter how deep:

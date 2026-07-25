@@ -1,5 +1,5 @@
 {
-  "name": "@gnl/workflow",
+  "name": "@gnldev/workflow",
   "version": "0.0.0",
   "license": "Apache-2.0",
   "description": "Durable deterministic workflows: each step journaled exactly-once, crash→resume picks up where it left off.",

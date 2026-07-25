@@ -1,4 +1,4 @@
-// @gnl/durable/in-memory-storage — Reference (Map) implementation of all store ports.
+// @gnldev/durable/in-memory-storage — Reference (Map) implementation of all store ports.
 // Zero-infra test storage (moat): per-storage bundles mimic this behavior.
 // Correctness matters, not perf (naive filter/sort). Date.now/Math.random are free to use here (runtime code).
 import { cosineSimilarity } from 'ai';

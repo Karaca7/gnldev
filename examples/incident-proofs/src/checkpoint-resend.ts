@@ -11,7 +11,7 @@
 // Adapted (as a runnable demo) from packages/durable/examples/no-double-charge.ts.
 import { tool, stepCountIs } from 'ai';
 import { z } from 'zod';
-import { InMemoryJournal, runDurable } from '@gnl/durable';
+import { InMemoryJournal, runDurable } from '@gnldev/durable';
 import { printCase } from './report.js';
 
 const usage = { inputTokens: 10, outputTokens: 5, totalTokens: 15 };

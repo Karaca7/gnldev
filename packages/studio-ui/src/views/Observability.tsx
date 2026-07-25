@@ -110,7 +110,7 @@ function buildSeries(rows: MetricsRun[]) {
   return { points, skipped: rows.length - stamped.length };
 }
 
-/** Matches a `score:<name>:avg` counter field key (P2-skor, see @gnl/durable metrics.ts's withDerivedScores) — group 1 is the scorer name. */
+/** Matches a `score:<name>:avg` counter field key (P2-skor, see @gnldev/durable metrics.ts's withDerivedScores) — group 1 is the scorer name. */
 const SCORE_AVG_FIELD_RE = /^score:(.+):avg$/;
 
 /**

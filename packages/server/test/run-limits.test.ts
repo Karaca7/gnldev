@@ -1,7 +1,7 @@
 // TASK W1: per-run cost ceiling as a server-side UPPER BOUND (opt-in). The `limits` in the request
 // body (client request) CANNOT EXCEED `opts.limits` (server ceiling) — see server/src/index.ts `clampLimits`.
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
 import { createRestApi } from '../src/index.js';
 
 function mkModel(tokens = 15): any {
@@ -31,7 +31,7 @@ const run = (api: any, runId: string, limits?: any) =>
     body: JSON.stringify({ runId, prompt: 'hi', ...(limits ? { limits } : {}) }),
   });
 
-describe('@gnl/server run-limits (TASK W1)', () => {
+describe('@gnldev/server run-limits (TASK W1)', () => {
   it('server ceiling (opts.limits) is enforced: a request exceeding it gets 422 + machine-readable body (Decision #1)', async () => {
     const journal = new InMemoryJournal();
     const api = createRestApi(

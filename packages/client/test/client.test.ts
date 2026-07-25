@@ -1,4 +1,4 @@
-// @gnl/client: run/listAgents with mock fetch, split-frame SSE stream, pure accumulator.
+// @gnldev/client: run/listAgents with mock fetch, split-frame SSE stream, pure accumulator.
 import { describe, it, expect } from 'vitest';
 import { GnlClient, applyStreamEvent, appendUserMessage, initialChatState, parseSSEStream } from '../src/index.js';
 

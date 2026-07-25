@@ -1,6 +1,6 @@
 // 8.9 — createMcpTools: an MCP tool becomes an AI SDK tool; wrapped with durableTool the MCP call is exactly-once.
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal, durableTool } from '@gnl/durable';
+import { InMemoryJournal, durableTool } from '@gnldev/durable';
 import { createMcpTools, type McpClientLike } from '../src/index.js';
 
 function fakeClient(counter: { calls: number }, lastParams?: { value?: any }): McpClientLike {

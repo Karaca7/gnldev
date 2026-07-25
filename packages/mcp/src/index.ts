@@ -1,7 +1,7 @@
-// @gnl/mcp — MCP client (adapts external tools to the AI SDK) + server (exposes our own tools as MCP).
+// @gnldev/mcp — MCP client (adapts external tools to the AI SDK) + server (exposes our own tools as MCP).
 // Both are durable: client calls are exactly-once within runDurable; server callTool is exactly-once via idempotencyKey.
 import { tool, jsonSchema } from 'ai';
-import { argsHash } from '@gnl/durable';
+import { argsHash } from '@gnldev/durable';
 
 export { createMcpServer, serveMcp } from './server.js';
 export type { McpServer, McpServerOptions, McpServerToolDef } from './server.js';

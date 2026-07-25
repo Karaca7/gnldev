@@ -16,7 +16,7 @@ pnpm demo
 ```
 
 ## Scenarios
-- **A — unprotected**: no `@gnl/durable`, the naive retry generates a DIFFERENT idempotency key on every
+- **A — unprotected**: no `@gnldev/durable`, the naive retry generates a DIFFERENT idempotency key on every
   attempt → Stripe CANNOT tell it's a retry → **2 charges**.
 - **B — with GNL (approved retry, no `recover()`)**: after crash+resume, GNL allows the retry
   (`approvals`), `execute` REALLY does run a second time — but because the injected `idempotencyKey` is

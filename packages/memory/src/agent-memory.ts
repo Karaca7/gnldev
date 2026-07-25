@@ -1,11 +1,11 @@
-// @gnl/memory — rich agent memory, durable twist. AgentMemory implements `Memory` (compatible with run.ts)
+// @gnldev/memory — rich agent memory, durable twist. AgentMemory implements `Memory` (compatible with run.ts)
 // + a rich `loadContext` hook. GREENFIELD: storage is split into two ports —
 //   • MemoryStore (storage.memory): thread/message/working-memory/observations (derived, queryable).
 //   • RunJournal   (storage.runs):   OM's LLM memoization + durable progress (replay is deterministic).
 // loadContext runs BEFORE persistInput, so the whole context freezes into `:input` = replayable.
 import { cosineSimilarity } from 'ai';
-import { requireCapability, durableProcessorStep } from '@gnl/durable';
-import type { Storage, RunJournal, MemoryStore, MessageRecord, ThreadRecord, RecallOptions } from '@gnl/durable';
+import { requireCapability, durableProcessorStep } from '@gnldev/durable';
+import type { Storage, RunJournal, MemoryStore, MessageRecord, ThreadRecord, RecallOptions } from '@gnldev/durable';
 import { messageText, hasNorm, type Embed } from './keys.js';
 import { deepMerge } from './deep-merge.js';
 import { createWorkingMemoryTool, renderWorkingMemorySystem, type WorkingMemoryConfig } from './working-memory.js';
@@ -24,7 +24,7 @@ export interface MemoryConfig {
    * `getMessages`/`loadContext` call (see `getMessages` below — `{...this.recallDefaults, scope, resourceId}`).
    * `topK`/`threshold`/`scope` were already honored; `messageRange` (expand each hit with before/after
    * neighbors by seq, deduped) and `filter` (now `$eq`/`$ne`/`$gt`/`$gte`/`$lt`/`$lte`/`$in`/`$nin`
-   * operators, not just bare-value equality — see `@gnl/durable`'s `matchFilter`) are now honored by
+   * operators, not just bare-value equality — see `@gnldev/durable`'s `matchFilter`) are now honored by
    * every first-party MemoryStore adapter (in-memory/sqlite/postgres). No default changed here.
    */
   recall?: RecallOptions;
@@ -217,7 +217,7 @@ export class AgentMemory {
       // Explicit `Observation[]` (the LOCAL, P2-extended shape — see observational.ts): the durable
       // MemoryStore port's own Observation type has no fromSeq/toSeq/threadId; every durable Observation
       // structurally satisfies the local (superset, all-optional-extras) type, so this widens the read
-      // without touching @gnl/durable.
+      // without touching @gnldev/durable.
       const obs: Observation[] = await this.store.getObservations(threadId);
       // P2-memory (AUDIT-R2): `block` is a seq-ascending prefix of `unobserved` (pushed in
       // order until keepBudget) → its first/last entries ARE the min/max seq — no extra scan needed.
@@ -330,7 +330,7 @@ export class AgentMemory {
    * `recallObservations`. FALLS BACK to the v1 keyword/substring match when `om.omVectors` isn't
    * configured — no behavior change for existing callers who never set it up.
    *
-   * Thread scoping: the `@gnl/durable` `VectorStore` port's `query(embedding, topK)` has no metadata
+   * Thread scoping: the `@gnldev/durable` `VectorStore` port's `query(embedding, topK)` has no metadata
    * filter parameter (see `omVectors.store`'s doc in observational.ts), so `{threadId}` narrowing can't be
    * pushed down to the store — this OVERFETCHES (`max(topK×20, 100)`) and filters by
    * `metadata.threadId === threadId` client-side before slicing to `topK`. Fine for the scoped v1 (small
@@ -366,7 +366,7 @@ export class AgentMemory {
   /**
    * Expand an observation's source range back into the raw messages it was distilled from (inclusive
    * `seq` bounds, ascending order). v1 cost note: the MemoryStore port has no per-thread seq-range read —
-   * only a paginated full listing (`getMessages(threadId, {limit, cursor})`, see @gnl/durable's
+   * only a paginated full listing (`getMessages(threadId, {limit, cursor})`, see @gnldev/durable's
    * storage.ts) — so this filters the thread's FULL message list client-side: O(thread size), not
    * O(range size). Fine for the scoped v1; a real seq-range read on MemoryStore would be the natural
    * follow-up if this becomes a hot path on long threads.

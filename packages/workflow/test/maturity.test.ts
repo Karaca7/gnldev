@@ -1,5 +1,5 @@
 // Phase 13B — workflow maturity: foreach/loop (control flow, journaled) + sleep (scheduled) +
-// waitFor (evented) suspend/resume. (waitFor's `check` in real usage hooks into @gnl/events.)
+// waitFor (evented) suspend/resume. (waitFor's `check` in real usage hooks into @gnldev/events.)
 import { describe, it, expect } from 'vitest';
 import { workflow, sleep, waitFor } from '../src/index.js';
 
@@ -15,7 +15,7 @@ function memJournal() {
   };
 }
 
-describe('@gnl/workflow maturity', () => {
+describe('@gnldev/workflow maturity', () => {
   it('foreach: journaled per item → completed ones do not run again on resume', async () => {
     const journal = memJournal();
     const seen: number[] = [];
@@ -62,7 +62,7 @@ describe('@gnl/workflow maturity', () => {
 
   it('waitFor: suspends while no event, resumes completed once the event arrives (events synergy)', async () => {
     const journal = memJournal();
-    const bus = { approved: false }; // in reality @gnl/events listLog/consume
+    const bus = { approved: false }; // in reality @gnldev/events listLog/consume
     const wf = workflow<{ id: string }>()
       .then({ id: 'prepare', run: async (i: any) => i })
       .then(waitFor('approval', async () => (bus.approved ? { ok: true } : null)) as any);

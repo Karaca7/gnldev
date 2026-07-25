@@ -16,7 +16,7 @@ function memJournal() {
   };
 }
 
-describe('@gnl/workflow — .map', () => {
+describe('@gnldev/workflow — .map', () => {
   it('transforms the previous output and is journaled (does not run again on replay)', async () => {
     const journal = memJournal();
     let calls = 0;
@@ -39,7 +39,7 @@ describe('@gnl/workflow — .map', () => {
   });
 });
 
-describe('@gnl/workflow — asStep (nested)', () => {
+describe('@gnldev/workflow — asStep (nested)', () => {
   it('inner steps live under namespaced keys; outer/inner with the SAME step id do not collide', async () => {
     const journal = memJournal();
     // The inner and outer workflow deliberately use the SAME step id ('process') → collision test.

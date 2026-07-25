@@ -1,4 +1,4 @@
-// @gnl/durable error types. Separate file: imported by both journal and durable-tool/run-lock.
+// @gnldev/durable error types. Separate file: imported by both journal and durable-tool/run-lock.
 
 /**
  * Non-determinism detected during replay: the argsHash of a succeeded tool record doesn't match
@@ -74,7 +74,7 @@ export class ReplicationNotAcknowledgedError extends Error {
 
 /**
  * GOREV (Task 3 — suite-consistency guard, `assertSuiteConsistent`/`createGnl({ checkSuiteConsistency })`):
- * an INSTALLED sibling @gnl/* package's version differs from @gnl/durable's own — a project that
+ * an INSTALLED sibling @gnldev/* package's version differs from @gnldev/durable's own — a project that
  * bypassed the package manager's caret range (--force/overrides/manual node_modules edits) ended up
  * with an incompatible suite. Thrown only when `onMismatch: 'throw'` was requested (default is 'warn' —
  * see suite-consistency.ts).
@@ -91,8 +91,8 @@ export class SuiteVersionMismatchError extends Error {
 
 /**
  * K1: maps the class name of the three "blocked" errors above → the snake_case error code sent to
- * the client. The SINGLE source of truth — @gnl/server (sse.ts), @gnl/agui (route.ts) and
- * @gnl/studio (server.ts) all use this same map here (previously each package had its own copy that
+ * the client. The SINGLE source of truth — @gnldev/server (sse.ts), @gnldev/agui (route.ts) and
+ * @gnldev/studio (server.ts) all use this same map here (previously each package had its own copy that
  * needed to stay in sync).
  */
 export const BLOCKED_ERROR_CODES: Record<string, string> = {

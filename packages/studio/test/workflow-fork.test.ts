@@ -1,7 +1,7 @@
 // Workflow what-if fork: the first `upto` steps' journal output is copied to a new runId;
 // composite sub-keys (foreach[i], loop#k) travel with their owning step; lands in audit.
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
 import { createStudioApi } from '../src/server.js';
 
 function appWith(journal: InMemoryJournal) {

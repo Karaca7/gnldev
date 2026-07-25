@@ -1,16 +1,16 @@
-// @gnl/server — serves the createGnl registry over HTTP (auto-REST + OpenAPI). Every endpoint
+// @gnldev/server — serves the createGnl registry over HTTP (auto-REST + OpenAPI). Every endpoint
 // descends into runDurable → exactly-once/durability inherited for free. (The durable counterpart of the common auto-REST pattern.)
 import { Hono, type Context } from 'hono';
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { createGnl, agentVisibleToOrg, withOrg, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, blockedErrorCode, sealRequestContext, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry } from '@gnl/durable';
-import type { CreateGnlConfig, Journal, JournalReader, BudgetLimit, UsageCostCache, RunLimits } from '@gnl/durable';
-import { makeGate, normalizeAuth, principalOf, isPlatformAdmin, type AuthProvider, type ReadWriteAuth, type Principal } from '@gnl/auth';
-// P0.4 (AUDIT-R2): @gnl/workflow is zero-dependency (see its package.json) — depending on it
-// from @gnl/server is a clean one-way edge (server→workflow), NOT circular: @gnl/durable's registry.ts
+import { createGnl, agentVisibleToOrg, withOrg, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, blockedErrorCode, sealRequestContext, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry } from '@gnldev/durable';
+import type { CreateGnlConfig, Journal, JournalReader, BudgetLimit, UsageCostCache, RunLimits } from '@gnldev/durable';
+import { makeGate, normalizeAuth, principalOf, isPlatformAdmin, type AuthProvider, type ReadWriteAuth, type Principal } from '@gnldev/auth';
+// P0.4 (AUDIT-R2): @gnldev/workflow is zero-dependency (see its package.json) — depending on it
+// from @gnldev/server is a clean one-way edge (server→workflow), NOT circular: @gnldev/durable's registry.ts
 // deliberately stays workflow-agnostic (WorkflowLike is a structural type, no import) to avoid a
 // durable→workflow edge; server has no such constraint and needs the real functions at runtime.
-import { listWorkflowRuns, getWorkflowRunStatus, cancelWorkflowRun } from '@gnl/workflow';
-import type { WorkflowRunStatus } from '@gnl/workflow';
+import { listWorkflowRuns, getWorkflowRunStatus, cancelWorkflowRun } from '@gnldev/workflow';
+import type { WorkflowRunStatus } from '@gnldev/workflow';
 import { buildOpenApi } from './openapi.js';
 import { pipeAgentStream } from './sse.js';
 
@@ -18,7 +18,7 @@ import { pipeAgentStream } from './sse.js';
 const A2A_TIMESTAMP_WINDOW_MS = 300_000; // ±300s
 
 /**
- * Verifies the `x-gnl-signature`/`x-gnl-timestamp` header pair produced by @gnl/a2a's
+ * Verifies the `x-gnl-signature`/`x-gnl-timestamp` header pair produced by @gnldev/a2a's
  * `createA2ATool({ secret })`: signature = HMAC-SHA256(secret, timestamp + '.' + rawBody) hex, compared
  * with `timingSafeEqual` (closed to timing attacks). A second layer INDEPENDENT of the existing auth gate
  * (makeGate/opts.auth) — one asks identity/permission, the other verifies message integrity/origin; both
@@ -53,8 +53,8 @@ function parseJsonBody(raw: string): any {
 }
 
 /**
- * D4-FGA (EE-2): structural mirror of @gnl/auth-ee's `FgaResource`/`FgaAction` — @gnl/server does NOT
- * depend on the paid @gnl/auth-ee package, so these are typed here rather than imported (see
+ * D4-FGA (EE-2): structural mirror of @gnldev/auth-ee's `FgaResource`/`FgaAction` — @gnldev/server does NOT
+ * depend on the paid @gnldev/auth-ee package, so these are typed here rather than imported (see
  * `RestApiOptions.resourceAuth` below).
  */
 export interface ResourceAuthResource {
@@ -85,7 +85,7 @@ export interface RestApiOptions {
   title?: string;
   /**
    * Optional auth (opt-in). If not given, all endpoints are OPEN (existing behavior). Accepts an
-   * AuthProvider (@gnl/auth or the paid @gnl/auth-ee) or a backward-compatible {read,write} predicate pair.
+   * AuthProvider (@gnldev/auth or the paid @gnldev/auth-ee) or a backward-compatible {read,write} predicate pair.
    * GET → read, POST → write.
    */
   auth?: AuthProvider | ReadWriteAuth;
@@ -121,7 +121,7 @@ export interface RestApiOptions {
   limits?: RunLimits;
   /**
    * GOREV (audit: A2A unsigned) — opt-in A2A request verification: if given, the `x-gnl-signature`/
-   * `x-gnl-timestamp` header pair produced by `@gnl/a2a`'s `createA2ATool({ secret })` becomes REQUIRED on
+   * `x-gnl-timestamp` header pair produced by `@gnldev/a2a`'s `createA2ATool({ secret })` becomes REQUIRED on
    * `/agents/:name/run` POSTs (see verifyA2ASignature) — missing/wrong signature or a timestamp outside
    * ±300s → 401. If not given, behavior is preserved EXACTLY AS IS (unsigned requests are accepted as
    * before). Works TOGETHER WITH the existing auth gate (opts.auth) — the two are independent layers,
@@ -133,8 +133,8 @@ export interface RestApiOptions {
    * coarse gate (opts.auth) already allowed the request — on agents run/stream, workflows run, and the
    * two cancel endpoints (`/runs/:id/cancel`, `/workflows/runs/:id/cancel`). A denial → 403
    * `{error, code: 'resource_denied'}`, distinct from the coarse gate's 403 (which carries no `code`).
-   * Structurally typed (`ResourceAuthResource`/`ResourceAuthAction` above) — @gnl/server does NOT import
-   * @gnl/auth-ee; an EE user wires this to `createEnterpriseAuth(...).checkResource` (see @gnl/auth-ee's
+   * Structurally typed (`ResourceAuthResource`/`ResourceAuthAction` above) — @gnldev/server does NOT import
+   * @gnldev/auth-ee; an EE user wires this to `createEnterpriseAuth(...).checkResource` (see @gnldev/auth-ee's
    * `createFga`/`EnterpriseAuthProvider.checkResource`), e.g.:
    *   resourceAuth: (p, r, a) => enterpriseAuth.checkResource!(p, r, a).then((res) => res.allowed)
    * If NOT given, behavior is preserved EXACTLY AS IS (no resource-level gate — existing coarse auth only).
@@ -143,7 +143,7 @@ export interface RestApiOptions {
   /**
    * Agent approval registry (opt-in governance gate, default false — BACKWARD COMPAT: existing
    * deployments are byte-for-byte unchanged). When true, run/resume/stream ALSO require the target
-   * agent to be `approved` in the journal-backed registry (@gnl/durable's `isAgentServable`) — a
+   * agent to be `approved` in the journal-backed registry (@gnldev/durable's `isAgentServable`) — a
    * pending/changed/blocked agent gets 403 `{error, code: 'agent_not_approved'}`. Every `config.agents`
    * entry is recorded (idempotent, fingerprinted) once at construction so a platform-admin can review
    * it via `GET /agents/registry` and approve/block it (see the `/agents/registry*` endpoints below) —
@@ -237,7 +237,7 @@ function limitErrorResponse(c: Context, e: unknown): Response | undefined {
 /**
  * K1: makes SideEffectRetryBlockedError/RunBusyError/RetryLimitExceededError thrown by runDurable
  * (see errorFromBlocked, run.ts) consistent with the `BLOCKED_CODES` mapping on the SSE path (sse.ts).
- * The code comes from @gnl/durable#blockedErrorCode (the ONE source of truth, based on err.name); the
+ * The code comes from @gnldev/durable#blockedErrorCode (the ONE source of truth, based on err.name); the
  * HTTP status/`resumable` choice is IDENTICAL to the `onError` in examples/app/src/server.ts:
  * side_effect_retry_blocked/run_busy → 409 + resumable:true (resolved via approval/retry);
  * retry_limit_exceeded → 422, NO resumable (a permanent 'failed' is left in the journal, the same runId
@@ -276,7 +276,7 @@ export function createRestApi(config: CreateGnlConfig, opts: RestApiOptions = {}
       await recordAgent(baseJournal, agentName, fingerprintAgent(agentName, cfg));
     }
   })().catch((e) => {
-    console.warn('@gnl/server: agent registry boot recording failed (approval state may be stale):', e);
+    console.warn('@gnldev/server: agent registry boot recording failed (approval state may be stale):', e);
   });
   // Opt-in auth gate: endpoints are open without a provider; in production this is only possible with
   // allowOpenAccess: true (otherwise makeGate throws at setup), outside production a single warning is issued on the first request.
@@ -295,7 +295,7 @@ export function createRestApi(config: CreateGnlConfig, opts: RestApiOptions = {}
     }
     return { body: parseJsonBody(rawBody) };
   }
-  // STRICT multi-org model = PAID gate: on ONLY when the auth provider (paid @gnl/auth-ee, valid
+  // STRICT multi-org model = PAID gate: on ONLY when the auth provider (paid @gnldev/auth-ee, valid
   // license) reports the `multiOrganization` capability. When on, an unbound identity is NO LONGER a
   // super-admin by default — it must carry the EXPLICIT platform-admin grant (scope: 'platform'),
   // otherwise it is fail-closed. When OFF (free/host-org/no-auth) behavior is preserved EXACTLY: an
@@ -365,7 +365,7 @@ export function createRestApi(config: CreateGnlConfig, opts: RestApiOptions = {}
       // want `org.required = true` for strict tenant isolation.
       if (!warnedSharedOrgFallback) {
         warnedSharedOrgFallback = true;
-        console.warn('@gnl/server: multi-org is configured but a request resolved NO organization → served in the SHARED scope (its data mixes with other org-less requests). Set `org.required = true` to reject such requests instead (fail-closed). This warning fires once.');
+        console.warn('@gnldev/server: multi-org is configured but a request resolved NO organization → served in the SHARED scope (its data mixes with other org-less requests). Set `org.required = true` to reject such requests instead (fail-closed). This warning fires once.');
       }
       return defaultInstance;
     }
@@ -429,7 +429,7 @@ export function createRestApi(config: CreateGnlConfig, opts: RestApiOptions = {}
   }
 
   /**
-   * PLATFORM-ADMIN gate for the agent registry endpoints below — mirrors @gnl/studio's
+   * PLATFORM-ADMIN gate for the agent registry endpoints below — mirrors @gnldev/studio's
    * `requirePlatformAdmin` (packages/studio/src/server.ts). Approval is a PLATFORM decision (should this
    * code-agent serve AT ALL), never per-org, so an org-bound identity is always denied; in the strict
    * multi-org model an unbound identity additionally needs the EXPLICIT platform-admin grant.
@@ -453,7 +453,7 @@ export function createRestApi(config: CreateGnlConfig, opts: RestApiOptions = {}
   const usageCostCache: UsageCostCache = new Map();
   const budgetsConfigured = !!(opts.budgets?.default || opts.budgets?.perOrg);
   if (budgetsConfigured && !budgetsEnforceable(baseJournal)) {
-    console.warn('@gnl/server: budgets configured but journal does not support listRuns → quota CANNOT be enforced (fail-open).');
+    console.warn('@gnldev/server: budgets configured but journal does not support listRuns → quota CANNOT be enforced (fail-open).');
   }
   const effectiveFallback = (orgId?: string): BudgetLimit | undefined =>
     (orgId ? opts.budgets?.perOrg?.[orgId] : undefined) ?? opts.budgets?.default;
@@ -519,8 +519,8 @@ export function createRestApi(config: CreateGnlConfig, opts: RestApiOptions = {}
   }
 
   /**
-   * P0.3: minimal governance log for this package's own mutating endpoints — mirrors @gnl/studio's
-   * `audit()` helper (packages/studio/src/server.ts) but scoped down: @gnl/server has no broader
+   * P0.3: minimal governance log for this package's own mutating endpoints — mirrors @gnldev/studio's
+   * `audit()` helper (packages/studio/src/server.ts) but scoped down: @gnldev/server has no broader
    * governance surface (org/user CRUD, agent versioning, …) to log — `run.cancel`/`workflow.cancel` plus
    * the agent-registry `agent.approve`/`agent.block` actions. Writes to the SAME `__audit__` journal
    * namespace studio uses (via the shared `appendLog` primitive) so a consumer reading either surface's
@@ -533,7 +533,7 @@ export function createRestApi(config: CreateGnlConfig, opts: RestApiOptions = {}
       const p = principalOf(c);
       const org = p?.orgId ?? orgId;
       // ALWAYS the ROOT journal (baseJournal), NEVER an org-scoped view — the `__audit__` contract
-      // (see @gnl/studio server.ts's /audit reader) is a SINGLE root-level trail with the organization
+      // (see @gnldev/studio server.ts's /audit reader) is a SINGLE root-level trail with the organization
       // carried as a PAYLOAD FIELD for filtering. An org-prefixed write (`org:<id>:__audit__:…`) would
       // be invisible to studio's audit view (it deliberately reads the root journal for exactly this reason).
       await appendLog(baseJournal, '__audit__', { actor, action, target, ...(org ? { org } : {}), ...(detail !== undefined ? { detail } : {}) });
@@ -811,7 +811,7 @@ export function createRestApi(config: CreateGnlConfig, opts: RestApiOptions = {}
 
   /**
    * P0.4 (AUDIT-R2): the suspended/completed/canceled workflow-run REGISTRY query — every run
-   * in ONE `wfrun:` prefix scan (see @gnl/workflow's listWorkflowRuns). Org-scoped via `scope(c)`/
+   * in ONE `wfrun:` prefix scan (see @gnldev/workflow's listWorkflowRuns). Org-scoped via `scope(c)`/
    * `s.journal`: `wfrun:<runId>` keys are NOT runId-prefixed but `withOrg` still prefixes them
    * unconditionally (prefixes EVERY key), so organization isolation holds automatically — see the
    * `statusKey` JSDoc in workflow.ts. `listKeys` is an optional Journal capability; without it

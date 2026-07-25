@@ -1,7 +1,7 @@
-// Knowledge base: policy documents → vector store (RAG). Embeds are cross-run cached via @gnl/cache.
-import { InMemoryVectorStore, indexDocuments, createRagTool } from '@gnl/rag';
-import { createCache } from '@gnl/cache';
-import type { CacheStore } from '@gnl/durable';
+// Knowledge base: policy documents → vector store (RAG). Embeds are cross-run cached via @gnldev/cache.
+import { InMemoryVectorStore, indexDocuments, createRagTool } from '@gnldev/rag';
+import { createCache } from '@gnldev/cache';
+import type { CacheStore } from '@gnldev/durable';
 
 const DIMS = ['return', 'shipping', 'warranty', 'invoice', 'account', 'password'];
 const rawEmbed = (t: string): number[] => {

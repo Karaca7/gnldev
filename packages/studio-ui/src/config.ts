@@ -1,4 +1,4 @@
-// Runtime config: @gnl/studio injects `window.__GNL_STUDIO__` into index.html (apiBase + capabilities).
+// Runtime config: @gnldev/studio injects `window.__GNL_STUDIO__` into index.html (apiBase + capabilities).
 // No injection in dev (vite) → '/api' (the vite proxy forwards to GNL_STUDIO_API).
 export interface StudioConfig {
   apiBase: string;

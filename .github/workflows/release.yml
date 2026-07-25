@@ -1,6 +1,6 @@
 name: Release
 
-# Publishes @gnl packages to npm with provenance (GitHub OIDC). This is deliberately
+# Publishes @gnldev packages to npm with provenance (GitHub OIDC). This is deliberately
 # separate from ci.yml: it never runs on a plain push to master/main, only on an
 # explicit version tag or a manual dispatch — publishing is a user-triggered action.
 on:
@@ -75,14 +75,14 @@ jobs:
           echo "Version guard passed: no publishable package is at 0.0.0."
 
       # pnpm -r publish walks the workspace in topological order on its own (peers such as
-      # @gnl/schema-compat and @gnl/durable publish before their dependents), so no manual
+      # @gnldev/schema-compat and @gnldev/durable publish before their dependents), so no manual
       # --filter ordering is needed here.
       #
-      # @gnl/auth-ee is licensed Elastic-2.0 (everything else is Apache-2.0) and is marked
+      # @gnldev/auth-ee is licensed Elastic-2.0 (everything else is Apache-2.0) and is marked
       # "private": true in its package.json. pnpm skips private packages during `-r publish`
       # automatically, so it is excluded from this release by default without any extra
       # --filter flag. That is the current, intentional state of the codebase (open-core:
-      # free @gnl/auth vs. paid @gnl/auth-ee) — if that ever changes to "publish auth-ee to
+      # free @gnldev/auth vs. paid @gnldev/auth-ee) — if that ever changes to "publish auth-ee to
       # npm too", flip its `private` field and reconsider the --access/licensing implications
       # before removing this note.
       #

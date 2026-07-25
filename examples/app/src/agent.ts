@@ -2,12 +2,12 @@
 // + AgentMemory (per-customer recall + working memory) + processors (PII redaction + moderation) + guard.
 import { tool, stepCountIs } from 'ai';
 import { z } from 'zod';
-import { createGnl, resumeRun } from '@gnl/durable';
-import type { Storage } from '@gnl/durable';
-import { AgentMemory } from '@gnl/memory';
-import { piiRedactor, moderationProcessor } from '@gnl/processors';
-import { enqueue } from '@gnl/queue';
-import { emit } from '@gnl/events';
+import { createGnl, resumeRun } from '@gnldev/durable';
+import type { Storage } from '@gnldev/durable';
+import { AgentMemory } from '@gnldev/memory';
+import { piiRedactor, moderationProcessor } from '@gnldev/processors';
+import { enqueue } from '@gnldev/queue';
+import { emit } from '@gnldev/events';
 import { supportModel } from './model.js';
 import { buildKnowledge, ORDERS } from './knowledge.js';
 

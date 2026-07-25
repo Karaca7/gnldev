@@ -1,4 +1,4 @@
-// Public API type helpers — types expressing intent instead of `any` (consumers get these from @gnl/durable).
+// Public API type helpers — types expressing intent instead of `any` (consumers get these from @gnldev/durable).
 import type { LanguageModelV2 } from '@ai-sdk/provider';
 
 /** An AI SDK model OR a 'provider/model' string (resolved via the model router). */

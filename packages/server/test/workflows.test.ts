@@ -1,7 +1,7 @@
 // #4 auto-REST expansion: workflows are also exposed over REST (GET /workflows, POST /workflows/:name/run)
 // + the OpenAPI spec includes the workflow paths. createGnl goes durable via listWorkflows/runWorkflow.
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
 import { createRestApi } from '../src/index.js';
 
 // Minimal structural WorkflowLike (satisfies the registry's structural type): 2 steps, writes to the journal.

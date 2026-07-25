@@ -1,4 +1,4 @@
-// PURE (side-effect-free) converter: converts a single event from the @gnl/server SSE contract
+// PURE (side-effect-free) converter: converts a single event from the @gnldev/server SSE contract
 // ({event, data} — text-delta/tool-call/tool-result/error/interrupt/done, see the header comment in
 // packages/server/src/sse.ts) into an AG-UI event sequence. State is passed in/returned from OUTSIDE
 // (no closed-over mutable state) → the same (gnlEvent, ctx, state) input ALWAYS produces the same
@@ -9,7 +9,7 @@
 // END is closed when the next non-text event arrives (or on done/error).
 import { EventType, type AguiEvent, type RunErrorEvent, type RunFinishedEvent } from './types.js';
 
-/** The SSE frame shape written by @gnl/server's pipeAgentStream (event name + JSON data). */
+/** The SSE frame shape written by @gnldev/server's pipeAgentStream (event name + JSON data). */
 export interface GnlSseEvent {
   event: 'text-delta' | 'tool-call' | 'tool-result' | 'error' | 'interrupt' | 'done' | string;
   data: any;

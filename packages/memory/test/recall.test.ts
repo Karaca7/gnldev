@@ -1,6 +1,6 @@
 // Track 1 rich recall: messageRange + threshold + metadata filter + resource scope + freeze.
 import { describe, it, expect } from 'vitest';
-import { InMemoryStorage, runDurable } from '@gnl/durable';
+import { InMemoryStorage, runDurable } from '@gnldev/durable';
 import { AgentMemory } from '../src/index.js';
 
 const DIMS = ['refund', 'shipping', 'weather', 'joke'];

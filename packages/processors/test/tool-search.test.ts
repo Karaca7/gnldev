@@ -3,7 +3,7 @@
 // (embed doesn't run on resume), skipping a tool no longer present in the journaled selection.
 import { describe, it, expect } from 'vitest';
 import { toolSearch } from '../src/index.js';
-import { InMemoryJournal, createProcessorCtx } from '@gnl/durable';
+import { InMemoryJournal, createProcessorCtx } from '@gnldev/durable';
 
 /** Fake embed: axis based on keyword in the text — 'weather' → [1,0], 'currency' → [0,1], neutral → [0.5,0.5]. */
 const fakeEmbed = (calls?: { n: number }) => async (t: string): Promise<number[]> => {

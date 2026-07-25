@@ -165,7 +165,7 @@ export interface JournalBatch {
  */
 function assertNoColonInToolName(toolName: string): void {
   if (toolName.includes(':')) {
-    throw new Error(`@gnl/durable: tool name '${toolName}' must not contain ':' — it would break the journal key schema (see runKeys.toolByArgs/toolCrossRun in journal.ts)`);
+    throw new Error(`@gnldev/durable: tool name '${toolName}' must not contain ':' — it would break the journal key schema (see runKeys.toolByArgs/toolCrossRun in journal.ts)`);
   }
 }
 
@@ -247,7 +247,7 @@ export async function claim(journal: Journal, key: string, value: unknown): Prom
   if (!claimFallbackWarned.has(journal)) {
     claimFallbackWarned.add(journal);
     console.warn(
-      '@gnl/durable: this journal does not implement `putIfAbsent` — atomic claim fell back to get→put. ' +
+      '@gnldev/durable: this journal does not implement `putIfAbsent` — atomic claim fell back to get→put. ' +
         'This is safe in single-process usage; in multi-worker/distributed environments exactly-once is ' +
         'NOT guaranteed ATOMICALLY (double-claim is possible in the contention window). Implementing ' +
         '`putIfAbsent(key, value)` is recommended (see the Journal interface in journal.ts).',
@@ -274,7 +274,7 @@ export async function frozenGet<T>(journal: Journal, key: string, compute: () =>
   const v = await compute();
   if (await claim(journal, key, { v })) return v;
   const winner = await journal.get<{ v: T }>(key);
-  if (winner === undefined) throw new Error(`@gnl/durable: claim was lost but the record could not be read (${key})`);
+  if (winner === undefined) throw new Error(`@gnldev/durable: claim was lost but the record could not be read (${key})`);
   return winner.v;
 }
 
@@ -372,7 +372,7 @@ export async function loadReplayCache(
       const cap = opts.maxBytes ?? REPLAY_CACHE_MAX_BYTES;
       if (st.bytes > cap) {
         console.warn(
-          `@gnl/durable: '${runId}' journal ~${Math.round(st.bytes / 1048576)}MB > replay-cache threshold ` +
+          `@gnldev/durable: '${runId}' journal ~${Math.round(st.bytes / 1048576)}MB > replay-cache threshold ` +
             `(${Math.round(cap / 1048576)}MB) — bulk cache is skipped (point-read replay). ` +
             `For long-lived runs, epoch handover via rolloverRun is recommended.`,
         );

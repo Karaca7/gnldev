@@ -22,7 +22,7 @@ const KIND_GLYPH: Record<string, string> = { parallel: '⇉', branch: '⌥', loo
  * FLOW-08: derive a workflow name from a run's runId when the registry item doesn't carry one
  * (`WorkflowRunRegistryItem.workflowName` is optional — see api.ts). The runId convention, confirmed
  * from this file's own run() and runStepwise() (`` `${dry ? 'dry-' : ''}wf-${wf.name}-${Date.now()}` ``)
- * and mirrored server-side in @gnl/durable's registry.ts (`` `wf-${name}-${Date.now()}` ``), is
+ * and mirrored server-side in @gnldev/durable's registry.ts (`` `wf-${name}-${Date.now()}` ``), is
  * `wf-<name>-<timestamp>` (optionally `dry-` prefixed). Workflow names may themselves contain hyphens
  * (e.g. 'order-fulfillment'), so a naive `split('-')[1]` would truncate them — instead every known
  * name is tried as a `wf-<name>-<all-digit-timestamp>` prefix, and the LONGEST matching name wins

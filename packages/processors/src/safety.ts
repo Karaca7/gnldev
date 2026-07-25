@@ -1,6 +1,6 @@
 // Additional built-in processors (expanding toward a common 18-processor built-in set). All pure/deterministic → no journaling needed.
-import { ProcessorTripwire, recordProcessorReport } from '@gnl/durable';
-import type { Processor, ProcessorCtx, ProcessorInput, ProcessorOutput, ProcessorToolResult } from '@gnl/durable';
+import { ProcessorTripwire, recordProcessorReport } from '@gnldev/durable';
+import type { Processor, ProcessorCtx, ProcessorInput, ProcessorOutput, ProcessorToolResult } from '@gnldev/durable';
 
 function msgChars(m: any): number {
   if (typeof m?.content === 'string') return m.content.length;

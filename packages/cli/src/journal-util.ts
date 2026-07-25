@@ -1,14 +1,14 @@
 // Shared "which journal does this storage command read/write" resolution — the SAME pattern the
 // studio/dev commands already use: config.storage ? toJournal(storage.runs) : config.journal.
 // Also: duration parsing for `gnl sweep --older-than`.
-import type * as Durable from '@gnl/durable';
-import type { Journal, JournalReader } from '@gnl/durable';
+import type * as Durable from '@gnldev/durable';
+import type { Journal, JournalReader } from '@gnldev/durable';
 import type { GnlDevConfig } from './config.js';
 
 /** Resolves the journal a storage command reads/writes. NET error if neither storage nor journal is configured
  *  (loadConfig already checks this at load time; this is a second, command-local guard for a clear message).
- *  `d` is the caller's already project-resolved @gnl/durable module (see runtime.ts) — toJournal must
- *  come from the SAME @gnl/durable instance the journal/storage objects themselves were built with. */
+ *  `d` is the caller's already project-resolved @gnldev/durable module (see runtime.ts) — toJournal must
+ *  come from the SAME @gnldev/durable instance the journal/storage objects themselves were built with. */
 export function getJournal(config: GnlDevConfig, d: typeof Durable): Journal & JournalReader {
   if (config.storage) return d.toJournal(config.storage.runs);
   if (config.journal) return config.journal as Journal & JournalReader;

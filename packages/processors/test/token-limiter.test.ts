@@ -1,6 +1,6 @@
 // P2 (AUDIT-R2): tokenLimiter — "TokenLimiter" (fuller sibling of tokenLimit).
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal, createProcessorCtx, readProcessorReports, ProcessorTripwire } from '@gnl/durable';
+import { InMemoryJournal, createProcessorCtx, readProcessorReports, ProcessorTripwire } from '@gnldev/durable';
 import { tokenLimiter } from '../src/token-limiter.js';
 
 const ctx = { runId: 'r', journal: {} as any, step: async (_n: string, c: any) => c() } as any;

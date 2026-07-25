@@ -1,7 +1,7 @@
 // gnl studio [--config gnl.config.ts] [--port 4111] — Studio inspector + Playground.
 // Behavior unchanged from the original cli.ts switch-statement version, only moved into the
-// command-module shape. Runtime (@gnl/durable/@gnl/studio/@gnl/memory/@hono/node-server) is resolved
-// from the PROJECT (see runtime.ts), not bundled with @gnl/cli.
+// command-module shape. Runtime (@gnldev/durable/@gnldev/studio/@gnldev/memory/@hono/node-server) is resolved
+// from the PROJECT (see runtime.ts), not bundled with @gnldev/cli.
 import type { Command } from './types.js';
 import { flag } from '../args.js';
 

@@ -1,6 +1,6 @@
 // Demo agent: deterministic "echo" mock model that does NOT require an API key.
 // To switch to a real provider: model: 'anthropic/claude-opus-4-8' (or an AI SDK model object).
-import type { AgentConfig } from '@gnl/durable';
+import type { AgentConfig } from '@gnldev/durable';
 
 function lastUserText(prompt: any[]): string {
   const m = [...(prompt ?? [])].reverse().find((x: any) => x.role === 'user');

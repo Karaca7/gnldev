@@ -1,8 +1,8 @@
 // Measure the durable layer's overhead: plain generateText vs runDurable (InMemory/Sqlite) vs replay.
 // The numeric answer to the question "how much does the correctness guarantee cost?"
 import { generateText, stepCountIs } from 'ai';
-import { runDurable, InMemoryJournal } from '@gnl/durable';
-import { SqliteStorage } from '@gnl/durable/sqlite';
+import { runDurable, InMemoryJournal } from '@gnldev/durable';
+import { SqliteStorage } from '@gnldev/durable/sqlite';
 import { agentModel } from './mock.js';
 
 const toolset = () => ({ charge: { execute: async () => ({ ok: true }) } });

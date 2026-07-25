@@ -1,7 +1,7 @@
 // End-to-end proof of GNL's durability: a run resumed with the SAME runId REPLAYS from the
 // journal instead of re-invoking the model (exactly-once model step). Run with: pnpm test
 import { describe, it, expect } from 'vitest';
-import { runDurable, InMemoryJournal } from '@gnl/durable';
+import { runDurable, InMemoryJournal } from '@gnldev/durable';
 
 const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
 

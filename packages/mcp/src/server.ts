@@ -1,8 +1,8 @@
 // MCP server side: EXPOSE durable agents' tools over the MCP protocol (for others to consume).
 // If a journal is given, every callTool is wrapped with durableTool → SERVER-SIDE exactly-once (a repeated
 // request with the same idempotencyKey produces the side effect only once — absent from most MCP server implementations).
-import { durableTool } from '@gnl/durable';
-import type { Journal } from '@gnl/durable';
+import { durableTool } from '@gnldev/durable';
+import type { Journal } from '@gnldev/durable';
 import type { McpToolDef } from './index.js';
 
 export interface McpServerToolDef {

@@ -1,6 +1,6 @@
 // End-to-end through the real plumbing: a temp gnl.config.ts on disk, loaded via the real loadConfig
 // (dynamic import), driven through a command's ACTUAL Command.run() (arg parsing + --json contract).
-// The fixture lives under packages/cli/test/ so bare-specifier imports inside it (@gnl/durable) resolve
+// The fixture lives under packages/cli/test/ so bare-specifier imports inside it (@gnldev/durable) resolve
 // via the workspace's node_modules (a fixture placed under system /tmp would NOT resolve them).
 import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -21,7 +21,7 @@ function writeFixtureConfig(): string {
   writeFileSync(
     cfgPath,
     `
-import { InMemoryJournal, runDurable } from '@gnl/durable';
+import { InMemoryJournal, runDurable } from '@gnldev/durable';
 
 function mkModel(doGenerate) {
   return { specificationVersion: 'v2', provider: 'mock', modelId: 'm', supportedUrls: {}, doGenerate, doStream: async () => { throw new Error('no'); } };

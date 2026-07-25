@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import { tool } from 'ai';
 import { z } from 'zod';
-import { InMemoryJournal, runDurable } from '@gnl/durable';
+import { InMemoryJournal, runDurable } from '@gnldev/durable';
 import { InMemorySpanExporter } from '@opentelemetry/sdk-trace-base';
 import { liveObservability } from '../src/live.js';
 
@@ -50,7 +50,7 @@ function makeTools(counter: { n: number }) {
 
 const spanNames = (exp: InMemorySpanExporter) => exp.getFinishedSpans().map((s) => s.name);
 
-describe('@gnl/otel/live', () => {
+describe('@gnldev/otel/live', () => {
   it('emits live span + cost; the same runId on replay does NOT emit (journal-external)', async () => {
     const journal = new InMemoryJournal();
     const counter = { n: 0 };

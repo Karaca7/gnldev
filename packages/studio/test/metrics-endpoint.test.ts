@@ -1,7 +1,7 @@
 // P1.6 (AUDIT-R2): GET /metrics + /metrics/runs — materialized-counter fast path vs the
 // legacy full-scan fallback. Mirrors runs-paging.test.ts's seeding style (raw journal.put model/tool keys).
 import { describe, it, expect, vi } from 'vitest';
-import { InMemoryJournal, recordRunMetrics, metricsDayKey, METRICS_ALL_KEY } from '@gnl/durable';
+import { InMemoryJournal, recordRunMetrics, metricsDayKey, METRICS_ALL_KEY } from '@gnldev/durable';
 import { createStudioApi } from '../src/server.js';
 
 async function seedRun(journal: InMemoryJournal, runId: string, tokens: number) {
@@ -111,8 +111,8 @@ describe('GET /metrics', () => {
   // derives `score:<name>:avg` onto every day/all counter bundle it reads back (see withDerivedScores in
   // metrics.ts), and `byDay` is returned as-is. Seeds the score:*:sumMilli/:count fields directly (the
   // same shape recordRunScores writes, see packages/durable/test/metrics-scores.test.ts for the writer
-  // side) to keep this test @gnl/durable-package-agnostic of recordRunScores itself (not exported off
-  // the package's public index — the writer is exercised from inside @gnl/durable's own test suite).
+  // side) to keep this test @gnldev/durable-package-agnostic of recordRunScores itself (not exported off
+  // the package's public index — the writer is exercised from inside @gnldev/durable's own test suite).
   it('a score:<name>:avg field appears in the materialized byDay response once score counters exist', async () => {
     const journal = new InMemoryJournal();
     await seedRun(journal, 'r1', 10);

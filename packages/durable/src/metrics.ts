@@ -386,7 +386,7 @@ export async function rebuildMetrics(
 ): Promise<{ recorded: number; skipped: number; scoresRestored: number }> {
   if (typeof journal.deletePrefix !== 'function') {
     throw new Error(
-      "@gnl/durable: rebuildMetrics requires the journal to implement `deletePrefix` (see the Journal interface in journal.ts) — without it there is no safe way to wipe the existing aggregate before recomputing it.",
+      "@gnldev/durable: rebuildMetrics requires the journal to implement `deletePrefix` (see the Journal interface in journal.ts) — without it there is no safe way to wipe the existing aggregate before recomputing it.",
     );
   }
   await journal.deletePrefix(METRICS_COUNTERS_PRE);

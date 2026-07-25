@@ -1,8 +1,8 @@
-// OM async-buffering: loadContext defers compaction to @gnl/queue (no LLM on the read path);
+// OM async-buffering: loadContext defers compaction to @gnldev/queue (no LLM on the read path);
 // the Observer runs once a worker calls memory.compact().
 import { describe, it, expect } from 'vitest';
-import { InMemoryStorage } from '@gnl/durable';
-import { enqueue, createWorker } from '@gnl/queue';
+import { InMemoryStorage } from '@gnldev/durable';
+import { enqueue, createWorker } from '@gnldev/queue';
 import { AgentMemory } from '../src/index.js';
 
 const u = (content: string) => ({ role: 'user', content });
@@ -14,7 +14,7 @@ function observerModel(counter: { calls: number }): any {
   };
 }
 
-describe('OM async-buffering (@gnl/queue)', () => {
+describe('OM async-buffering (@gnldev/queue)', () => {
   it('compaction is taken off the read path → the worker does it', async () => {
     const storage = new InMemoryStorage();
     const counter = { calls: 0 };

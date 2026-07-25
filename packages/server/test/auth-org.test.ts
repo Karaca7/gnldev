@@ -2,8 +2,8 @@
 // A cred bound to identity (Cred.orgId) → scoped to its own organization even without a header; a
 // request for a different organization → 403; an unbound (global) admin can work in whatever organization it wants via the header.
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
-import { roleAuth } from '@gnl/auth';
+import { InMemoryJournal } from '@gnldev/durable';
+import { roleAuth } from '@gnldev/auth';
 import { createRestApi } from '../src/index.js';
 
 function mkModel(text: string): any {
@@ -32,7 +32,7 @@ function mkApi(journal: InMemoryJournal) {
   );
 }
 
-describe('@gnl/server auth↔org', () => {
+describe('@gnldev/server auth↔org', () => {
   it('a viewer bound to identity is scoped to ITS OWN organization even without a header', async () => {
     const journal = new InMemoryJournal();
     await journal.put('org:acme:r-acme:model:0', { content: [{ type: 'text', text: 'x' }], finishReason: 'stop' });

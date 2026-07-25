@@ -1,16 +1,16 @@
-# @gnl/processors
+# @gnldev/processors
 
-**Input/output processors** for `@gnl/durable` agents: PII masking, moderation, tool filtering, safety.
+**Input/output processors** for `@gnldev/durable` agents: PII masking, moderation, tool filtering, safety.
 Built-ins inherit durability — input processors run before `persistInput` (masking is journaled → doesn't
 run again on resume).
 
 ```bash
-npm i @gnl/processors   # peer: @gnl/durable
+npm i @gnldev/processors   # peer: @gnldev/durable
 ```
 
 ```ts
-import { runDurable } from '@gnl/durable';
-import { piiRedactor, moderationProcessor, toolFilter } from '@gnl/processors';
+import { runDurable } from '@gnldev/durable';
+import { piiRedactor, moderationProcessor, toolFilter } from '@gnldev/processors';
 
 await runDurable({
   runId: 'r1', journal, model, prompt: '...',

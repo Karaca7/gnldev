@@ -55,13 +55,13 @@ describe('streamAgent — surfaces the server error body on !res.ok (API-07)', (
       status: 403,
       statusText: 'Forbidden',
       body: null,
-      json: async () => ({ error: "writes are not supported in an org context (v1 read-only audit) — use @gnl/server's org option for writes" }),
+      json: async () => ({ error: "writes are not supported in an org context (v1 read-only audit) — use @gnldev/server's org option for writes" }),
       clone() { return this; },
     })));
     const events: StreamEvent[] = [];
     await streamAgent('demo', { runId: 'r1', prompt: 'hi' }, (ev) => events.push(ev));
     expect(events).toEqual([
-      { type: 'error', data: { error: "writes are not supported in an org context (v1 read-only audit) — use @gnl/server's org option for writes" } },
+      { type: 'error', data: { error: "writes are not supported in an org context (v1 read-only audit) — use @gnldev/server's org option for writes" } },
     ]);
   });
 

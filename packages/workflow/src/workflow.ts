@@ -1,6 +1,6 @@
 // Durable deterministic workflow: each step's output is journaled with (runId, stepId).
 // On crash→resume, COMPLETED steps do NOT run again (exactly-once); resumes from where it left off.
-// Structurally compatible with @gnl/durable's Journal (JournalLike) — zero dependency for the package.
+// Structurally compatible with @gnldev/durable's Journal (JournalLike) — zero dependency for the package.
 
 export interface JournalLike {
   get<T = unknown>(key: string): Promise<T | undefined>;
@@ -8,12 +8,12 @@ export interface JournalLike {
   /**
    * Optional (CAS): writes and returns `true` when the key is ABSENT, returns `false` without
    * touching anything if it exists. Prevents the same step from running twice in multi-worker
-   * setups (structurally compatible with @gnl/durable Journal.putIfAbsent). If undefined, falls
+   * setups (structurally compatible with @gnldev/durable Journal.putIfAbsent). If undefined, falls
    * back to get+put (single-process safe, behavior unchanged).
    */
   putIfAbsent?(key: string, value: unknown): Promise<boolean>;
   /**
-   * Optional: field-based ATOMIC counter increment (structurally compatible with @gnl/durable
+   * Optional: field-based ATOMIC counter increment (structurally compatible with @gnldev/durable
    * Journal.incrBy). Saves the retry counter from get→put's lost-update race. If undefined,
    * falls back to the existing path.
    */
@@ -21,7 +21,7 @@ export interface JournalLike {
   /** Optional: read counter fields written via incrBy (undefined if absent). */
   getCounters?(key: string): Promise<Record<string, number> | undefined>;
   /**
-   * P0.4 (optional): keys starting with a prefix — structurally compatible with @gnl/durable
+   * P0.4 (optional): keys starting with a prefix — structurally compatible with @gnldev/durable
    * Journal.listKeys. Only `listWorkflowRuns` (the suspended-run registry query) needs it; every
    * engine path works without it.
    */
@@ -58,7 +58,7 @@ const canceledKey = (runId: string) => `${runId}:wf:_canceled`;
 /**
  * Top-level status registry key. Deliberately NOT under `<runId>:` — a `wfrun:` prefix scan
  * (`listKeys('wfrun:')`) enumerates every workflow run in ONE query, which a runId-prefixed key
- * cannot offer (no suffix scans). Same pattern precedent as @gnl/durable's `xrun:` cross-run keys:
+ * cannot offer (no suffix scans). Same pattern precedent as @gnldev/durable's `xrun:` cross-run keys:
  * invisible to parseJournalKey (not part of any single run's timeline) and org-prefixed automatically
  * by `withOrg` (it prefixes ALL keys unconditionally) → organization isolation is preserved.
  * Cleanup note (same as xrun:): run-retention sweeps that delete `<runId>:*` do NOT touch this key —
@@ -83,7 +83,7 @@ export function step<I = any, O = any>(
   return { id, run };
 }
 
-// Atomic claim — identical contract to `claim` in @gnl/durable (packages/durable/src/journal.ts;
+// Atomic claim — identical contract to `claim` in @gnldev/durable (packages/durable/src/journal.ts;
 // kept as a local copy since the package stays zero-dependency): CAS if putIfAbsent exists, else
 // get+put fallback (single-process safe). Returns `true` if this call created the key.
 async function claim(journal: JournalLike, key: string, value: unknown): Promise<boolean> {
@@ -95,7 +95,7 @@ async function claim(journal: JournalLike, key: string, value: unknown): Promise
 
 // Runs a step exactly-once: if a record exists, returns it (replay); otherwise runs it and records
 // it via CAS — the loser of the race DISCARDS its own result and returns the winner's record (single
-// source of truth in multi-worker setups). This is @gnl/durable's `frozenGet` adapted to workflow;
+// source of truth in multi-worker setups). This is @gnldev/durable's `frozenGet` adapted to workflow;
 // the ONLY difference is the record shape: existing workflow records are plain values WITHOUT a `{ v }`
 // wrapper, kept this way for backward compatibility (using frozenGet would make old records unreadable).
 // The plain shape's known limitation still holds: an `undefined` output cannot be distinguished from
@@ -247,7 +247,7 @@ export class Workflow<I = any, O = any> {
    * - Durable cancel: `cancelWorkflowRun()` writes a `_canceled` journal flag — checked here BEFORE
    *   EVERY step, so cancellation reaches runs on OTHER workers at their next step boundary, and a
    *   canceled run REFUSES to resume forever after (same terminal-refusal principle as
-   *   @gnl/durable's compensated runs). Cancel never deletes journal state — completed steps stay
+   *   @gnldev/durable's compensated runs). Cancel never deletes journal state — completed steps stay
    *   replayable/inspectable; the run just stops producing new work.
    * - Status registry: every terminal/suspend transition is mirrored to a top-level `wfrun:<runId>`
    *   record → `listWorkflowRuns` answers "which runs are suspended right now, on which step,
@@ -265,7 +265,7 @@ export class Workflow<I = any, O = any> {
        * `putStatus`) so `listWorkflowRuns`/the studio run list can display it without the caller
        * re-deriving it from the runId. Purely additive — the `Workflow` class itself still doesn't
        * carry a name (its constructor stays name-less); callers that know the name (e.g.
-       * @gnl/durable's `runWorkflow`, which registers workflows by name) pass it here. Omitted =
+       * @gnldev/durable's `runWorkflow`, which registers workflows by name) pass it here. Omitted =
        * today's behavior exactly (no field written to the record).
        */
       workflowName?: string;
@@ -413,7 +413,7 @@ export interface WorkflowRunStatus {
 /**
  * Durably cancels a workflow run: writes the `_canceled` flag (checked by `runResumable` before EVERY
  * step — reaches runs in-flight on OTHER workers at their next step boundary) and mirrors the registry
- * record. Terminal: a canceled run refuses to resume forever after (same principle as @gnl/durable's
+ * record. Terminal: a canceled run refuses to resume forever after (same principle as @gnldev/durable's
  * compensated-run refusal). Never deletes journal state — completed steps stay replayable/inspectable.
  * Returns `false` (no-op) if the run had already COMPLETED (nothing left to cancel); `true` otherwise
  * (idempotent — canceling an already-canceled run is `true` again).
@@ -455,7 +455,7 @@ export async function listWorkflowRuns(
   opts: { status?: WorkflowRunStatus['status'] } = {},
 ): Promise<WorkflowRunStatus[]> {
   if (typeof journal.listKeys !== 'function') {
-    throw new Error("@gnl/workflow: listWorkflowRuns requires the journal to implement `listKeys` (see JournalLike) — without it the registry cannot be enumerated.");
+    throw new Error("@gnldev/workflow: listWorkflowRuns requires the journal to implement `listKeys` (see JournalLike) — without it the registry cannot be enumerated.");
   }
   const keys = await journal.listKeys(WFRUN_PRE);
   const out: WorkflowRunStatus[] = [];
@@ -469,7 +469,7 @@ export async function listWorkflowRuns(
 
 /**
  * Durable step that waits until a condition (event) is satisfied. If `check` returns a value, that
- * becomes the step's output; if null/undefined, it suspends. `check` typically hooks into @gnl/events
+ * becomes the step's output; if null/undefined, it suspends. `check` typically hooks into @gnldev/events
  * (e.g. searching for an event via listLog).
  */
 export function waitFor<O = any>(
@@ -504,7 +504,7 @@ export class RetryExhaustedError extends Error {
     readonly attempts: number,
     readonly cause?: unknown,
   ) {
-    super(`@gnl/workflow: '${stepId}' failed after ${attempts} attempts.`);
+    super(`@gnldev/workflow: '${stepId}' failed after ${attempts} attempts.`);
     this.name = 'RetryExhaustedError';
   }
 }
@@ -564,7 +564,7 @@ async function bumpAttempts(journal: JournalLike, key: string, used: number): Pr
  *   the counter and the final output are).
  */
 export function retry<I = any, O = any>(s: Step<I, O>, policy: RetryPolicy<I, O>): Step<I, O> {
-  if (!(policy.attempts >= 1)) throw new Error(`@gnl/workflow: retry('${s.id}') requires attempts >= 1`);
+  if (!(policy.attempts >= 1)) throw new Error(`@gnldev/workflow: retry('${s.id}') requires attempts >= 1`);
   return {
     id: s.id,
     run: async (input, ctx) => {

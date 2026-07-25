@@ -1,10 +1,10 @@
-// STRICT multi-org model on @gnl/server (PAID: gated on the EE `multiOrganization` capability).
+// STRICT multi-org model on @gnldev/server (PAID: gated on the EE `multiOrganization` capability).
 //   • EE ON  → org-bound is scoped; EXPLICIT platform-admin is the operator; org-less WITHOUT a grant is
 //              FAIL-CLOSED (403 — previously the all-seeing operator).
 //   • EE OFF → legacy operator behavior EXACTLY (proved by the existing auth-org suite).
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
-import { type AuthProvider, type Principal } from '@gnl/auth';
+import { InMemoryJournal } from '@gnldev/durable';
+import { type AuthProvider, type Principal } from '@gnldev/auth';
 import { createRestApi } from '../src/index.js';
 
 function mkModel(text: string): any {
@@ -46,7 +46,7 @@ function mkApi(journal: InMemoryJournal, withOrgOpt = true) {
 
 const H = (t: string) => ({ authorization: `Bearer ${t}` });
 
-describe('@gnl/server strict multi-org (EE ON)', () => {
+describe('@gnldev/server strict multi-org (EE ON)', () => {
   it('(1) an org-bound identity is scoped to its own org; another org header → 403', async () => {
     const journal = new InMemoryJournal();
     await journal.put('org:acme:r-acme:model:0', { content: [{ type: 'text', text: 'x' }], finishReason: 'stop' });

@@ -1,10 +1,10 @@
-// Phase 12 — @gnl/events: exactly-once marking + at-least-once delivery + fan-out + no redelivery on re-poll.
+// Phase 12 — @gnldev/events: exactly-once marking + at-least-once delivery + fan-out + no redelivery on re-poll.
 // (K2 audit: the marker is now written AFTER handler SUCCESS → the event isn't lost on handler error/crash.)
 import { describe, it, expect, vi } from 'vitest';
-import { InMemoryStorage } from '@gnl/durable';
+import { InMemoryStorage } from '@gnldev/durable';
 import { emit, createConsumer, EventDepthExceededError } from '../src/index.js';
 
-describe('@gnl/events', () => {
+describe('@gnldev/events', () => {
   it('fan-out: 2 consumers → each gets every event once; re-poll 0; new event delivered', async () => {
     const work = new InMemoryStorage().work;
     const a: string[] = [];

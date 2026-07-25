@@ -1,4 +1,4 @@
-// @gnl/auth — stable auth contract. The free core defines this; @gnl/auth-ee (paid) implements the
+// @gnldev/auth — stable auth contract. The free core defines this; @gnldev/auth-ee (paid) implements the
 // same interface → premium (RBAC/SSO/multi-organization/audit) plugs in without touching the core.
 import type { Context } from 'hono';
 
@@ -24,7 +24,7 @@ export interface AuthContext {
   /**
    * EE fine-grained permission (e.g. 'agents:run', 'users:write'). Set by the gate's `allowP`. When
    * present, an RBAC provider matches THIS exact permission instead of deriving one from resource/action
-   * (see @gnl/auth-ee rbac.ts `requiredPermission`). A free/read-write provider ignores it and falls back
+   * (see @gnldev/auth-ee rbac.ts `requiredPermission`). A free/read-write provider ignores it and falls back
    * to `action` (the gate already reduces the permission to read/write) → coarse but backward-compatible.
    */
   permission?: string;
@@ -68,7 +68,7 @@ export type Cred = {
   pass?: string;
   orgId?: string;
   /**
-   * EXPLICIT platform-admin grant (scope: 'platform') — see @gnl/auth scope.ts. Injects the reserved
+   * EXPLICIT platform-admin grant (scope: 'platform') — see @gnldev/auth scope.ts. Injects the reserved
    * `platform-admin` role into the principal. Use it to bootstrap a statically-configured root admin
    * that the strict (EE multi-org) model must recognise as cross-org; WITHOUT it, an unbound identity
    * is denied under the strict model (fail-closed). Harmless in the free tier (the role is inert there).

@@ -7,7 +7,7 @@ import { build } from 'esbuild';
 import { gzipSync } from 'node:zlib';
 
 const ENTRY = `
-import { runDurable, streamDurable, createGnl, withTenant, InMemoryJournal, withModelFallback } from '@gnl/durable';
+import { runDurable, streamDurable, createGnl, withTenant, InMemoryJournal, withModelFallback } from '@gnldev/durable';
 export { runDurable, streamDurable, createGnl, withTenant, InMemoryJournal, withModelFallback };
 `;
 
@@ -32,8 +32,8 @@ async function measure(label: string, external: string[]): Promise<{ raw: number
 }
 
 console.log('— GNL edge bundle benchmark (esbuild, minify, esm/browser) —\n');
-const a = await measure('A) @gnl/durable (ai/zod external)', ['ai', 'zod', '@ai-sdk/*', 'node:*', '@gnl/schema-compat']);
-const b = await measure('B) @gnl/durable + ai (full bundle)', ['zod', 'node:*', '@gnl/schema-compat']);
+const a = await measure('A) @gnldev/durable (ai/zod external)', ['ai', 'zod', '@ai-sdk/*', 'node:*', '@gnldev/schema-compat']);
+const b = await measure('B) @gnldev/durable + ai (full bundle)', ['zod', 'node:*', '@gnldev/schema-compat']);
 
 const MIB = 1024 * 1024;
 console.log(`

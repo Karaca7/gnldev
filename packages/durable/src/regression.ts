@@ -38,7 +38,7 @@ function modelStepFromKey(key: string): number {
 /**
  * Converts journal entries into a sequence of decision points: model steps in step order, followed
  * immediately by the tool-calls (if any) produced in that step's content — a PURE function.
- * Exported for P1.1 (AUDIT-R2): @gnl/evals' trajectory scorer (`trajectory.ts`) reuses this
+ * Exported for P1.1 (AUDIT-R2): @gnldev/evals' trajectory scorer (`trajectory.ts`) reuses this
  * same primitive to build the tool-call sequence it scores against expectations — no duplicate logic.
  */
 export function buildDecisionSequence(entries: JournalEntry[]): DecisionPoint[] {
@@ -265,7 +265,7 @@ export async function replayRun(cfg: ReplayRunConfig): Promise<ReplayRunResult> 
   const { journal, runId, newRunId, model, tools, system, guard, approvals, stopWhen, replay } = cfg;
   const input = await journal.get<{ prompt?: unknown; messages?: unknown; system?: unknown }>(runKeys.input(runId));
   if (!input) {
-    throw new Error(`@gnl/durable: no recorded input for runId "${runId}" — cannot replay.`);
+    throw new Error(`@gnldev/durable: no recorded input for runId "${runId}" — cannot replay.`);
   }
 
   const dst = newRunId ?? `${runId}:replay:${Date.now()}:${replaySeq++}`;
@@ -291,7 +291,7 @@ export async function replayRun(cfg: ReplayRunConfig): Promise<ReplayRunResult> 
 
 /**
  * Optional function producing a score from a diff result. The concrete Scorer type is defined in
- * the evals package (@gnl/evals -> @gnl/durable dependency is one-directional); only a loose
+ * the evals package (@gnldev/evals -> @gnldev/durable dependency is one-directional); only a loose
  * interface is given here.
  */
 export type RegressionScorer = (diff: RunDiff) => unknown | Promise<unknown>;

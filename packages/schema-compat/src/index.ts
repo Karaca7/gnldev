@@ -1,9 +1,9 @@
-// @gnl/schema-compat — provider-specific tool-schema compatibility.
+// @gnldev/schema-compat — provider-specific tool-schema compatibility.
 //
 // MECHANISM: `SchemaCompatRule` interface — developers write their own rule and add/override it.
 // OPT-IN DEFAULT SET: openaiStrict / gemini / anthropic — the AI SDK's known provider gaps.
 //
-// Opt-in usage with @gnl/durable:
+// Opt-in usage with @gnldev/durable:
 //   runDurable({ ..., schemaCompat: true })                  // default set
 //   runDurable({ ..., schemaCompat: [...defaultRules, mine] }) // extend
 //   runDurable({ ..., schemaCompat: [mine] })                 // fully your own set

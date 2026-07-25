@@ -1,8 +1,8 @@
 // Shared feature recipes — the single source used by BOTH `gnl add <feature>` (writes the src file +
 // prints hand-wiring) and `gnl init` feature-composition (writes the src file + GENERATES gnl.config.ts).
 //
-// Each recipe is a real, type-correct src file against the current package APIs (@gnl/rag,
-// @gnl/memory, @gnl/mcp, @gnl/workflow, @gnl/auth, @gnl/durable) plus a structured `wiring` describing
+// Each recipe is a real, type-correct src file against the current package APIs (@gnldev/rag,
+// @gnldev/memory, @gnldev/mcp, @gnldev/workflow, @gnldev/auth, @gnldev/durable) plus a structured `wiring` describing
 // how it slots into the decoupled gnl.config.ts (agentTool → an agent's `tools`; configField → a
 // top-level config property). `humanWire` is the corrected instruction `gnl add` prints (the config is
 // decoupled now — NO `defineConfig({ … })`; you edit the plain config object).
@@ -89,10 +89,10 @@ export const chargeOrder = {
     id: 'rag',
     label: 'RAG (retrieval tool)',
     file: 'src/rag.ts',
-    dep: '@gnl/rag',
+    dep: '@gnldev/rag',
     contents: `// Retrieval-augmented generation: an in-memory vector store + a tool the agent can call.
 // Swap InMemoryVectorStore for PostgresVectorStore in production.
-import { InMemoryVectorStore, indexDocuments, createRagTool } from '@gnl/rag';
+import { InMemoryVectorStore, indexDocuments, createRagTool } from '@gnldev/rag';
 
 // A trivial deterministic embed so this runs with no API key. Replace with a real embedder.
 const embed = async (text: string): Promise<number[]> =>
@@ -121,12 +121,12 @@ export const searchDocs = createRagTool({ store, embed, topK: 3 });
     id: 'mcp',
     label: 'MCP tools',
     file: 'src/mcp.ts',
-    dep: '@gnl/mcp',
+    dep: '@gnldev/mcp',
     contents: `// Connect an MCP server and expose its tools to your agent.
 // \`mcpTools(...)\` opens no connection until \`.tools()\` is called; we resolve the toolset here (top-level
 // await) so it can be spread into an agent's \`tools\`. Until you point it at a real server this is empty,
 // so the app still boots — replace the export below with the two commented lines once you have one.
-import { mcpTools } from '@gnl/mcp';
+import { mcpTools } from '@gnldev/mcp';
 import type { ToolSet } from 'ai';
 
 // const handle = mcpTools({ transport: { kind: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', '.'] } });
@@ -148,10 +148,10 @@ export const mcpToolset: ToolSet = {};
     id: 'memory',
     label: 'Conversation memory',
     file: 'src/memory.ts',
-    // @gnl/memory is already a dependency of the base template — no dep to add.
+    // @gnldev/memory is already a dependency of the base template — no dep to add.
     contents: `// Conversation memory (threads + recall) for the Playground. Derived from the config's storage.
-import { AgentMemory } from '@gnl/memory';
-import type { Storage, CreateGnlConfig } from '@gnl/durable';
+import { AgentMemory } from '@gnldev/memory';
+import type { Storage, CreateGnlConfig } from '@gnldev/durable';
 
 // memoryFactory receives the config's storage (or journal). AgentMemory needs a Storage with the
 // \`memory\` capability — SqliteStorage (the default in gnl.config.ts) has it.
@@ -172,10 +172,10 @@ export const memoryFactory: NonNullable<CreateGnlConfig['memoryFactory']> = (sto
     id: 'workflow',
     label: 'Durable workflow',
     file: 'src/workflow.ts',
-    dep: '@gnl/workflow',
+    dep: '@gnldev/workflow',
     contents: `// A durable multi-step workflow. Each step is journaled → resumes from where it crashed.
 // Appears in Studio → Workflows (list + run).
-import { workflow, step } from '@gnl/workflow';
+import { workflow, step } from '@gnldev/workflow';
 
 export const checkout = workflow<{ orderId?: string }>()
   .then(step('reserve', async (i: any) => ({ ...i, reserved: true })))
@@ -196,10 +196,10 @@ export const checkout = workflow<{ orderId?: string }>()
     id: 'auth',
     label: 'Role-based auth',
     file: 'src/auth.ts',
-    // @gnl/auth is already a dependency of the base template — no dep to add.
+    // @gnldev/auth is already a dependency of the base template — no dep to add.
     contents: `// Role-based auth for the REST API + Studio (admin = read/write, viewer = read).
 // Provide credentials only — the dev server calls roleAuth() for you. Omit \`auth\` → the API stays open.
-import type { Cred } from '@gnl/auth';
+import type { Cred } from '@gnldev/auth';
 
 export const auth: { admin?: Cred; viewer?: Cred } = {
   admin: { token: process.env.GNL_ADMIN_TOKEN ?? 'admin-dev' },
@@ -215,7 +215,7 @@ export const auth: { admin?: Cred; viewer?: Cred } = {
     humanWire: `import { auth } from './src/auth.js';
 // …then add to the config object (top level):
   auth,   // { admin: { token }, viewer: { token } } — omit to keep the API open`,
-    note: 'Free tier = token/role auth (JWT via @gnl/auth). SSO (Auth0/WorkOS), RBAC and user management are in the paid @gnl/auth-ee.',
+    note: 'Free tier = token/role auth (JWT via @gnldev/auth). SSO (Auth0/WorkOS), RBAC and user management are in the paid @gnldev/auth-ee.',
   },
 };
 

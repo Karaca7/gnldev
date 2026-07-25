@@ -1,7 +1,7 @@
 // gnl run: getRunCore (pure).
 import { describe, it, expect } from 'vitest';
-import * as Durable from '@gnl/durable';
-import { InMemoryJournal, runDurable } from '@gnl/durable';
+import * as Durable from '@gnldev/durable';
+import { InMemoryJournal, runDurable } from '@gnldev/durable';
 import { getRunCore } from '../src/commands/run.js';
 import { agentModel } from './helpers.js';
 

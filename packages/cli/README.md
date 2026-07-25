@@ -1,13 +1,13 @@
-# @gnl/cli
+# @gnldev/cli
 
-The `gnl` developer CLI. Three groups of commands, all wired straight to `@gnl/durable`'s own exports
+The `gnl` developer CLI. Three groups of commands, all wired straight to `@gnldev/durable`'s own exports
 (`listRuns`/`readRun`/`reconstructState`/`forkRun`/`resumeRun`/`sweepRuns`/`purgeRun`/`getRunCost`) —
 nothing here reimplements durability, it just puts it in your terminal. **Zero new runtime
 dependencies**: no commander/yargs/chalk/ora, colors and tables are hand-rolled ANSI (see
 [Supply-chain hygiene](../../README.md#supply-chain-hygiene)).
 
 ```bash
-npm i -g @gnl/cli   # or: npx @gnl/cli <command>
+npm i -g @gnldev/cli   # or: npx @gnldev/cli <command>
 ```
 
 ## Project
@@ -90,6 +90,6 @@ Every storage command accepts `--config` (default `gnl.config.ts`). See
 `port`/`studio`/`auth`).
 
 ## Programmatic surface
-`import { commands, commandList } from '@gnl/cli'` — the same `Command` registry `cli.ts` dispatches
+`import { commands, commandList } from '@gnldev/cli'` — the same `Command` registry `cli.ts` dispatches
 through, for embedding/tests that want to drive a command's `run()` without spawning the `gnl` binary.
 Also re-exported: `defineConfig`/`loadConfig`, `buildDevApp`/`serveDev`, `scaffold`.

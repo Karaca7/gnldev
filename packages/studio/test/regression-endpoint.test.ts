@@ -1,8 +1,8 @@
 // W5 — Studio regression endpoints: POST /runs/:id/regression (re-run with replayRun + diff),
 // GET /runs/:id/regression/:otherId (diff two existing runs without re-running). Unauthorized → 403.
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal, runDurable } from '@gnl/durable';
-import { roleAuth } from '@gnl/auth';
+import { InMemoryJournal, runDurable } from '@gnldev/durable';
+import { roleAuth } from '@gnldev/auth';
 import { createStudioApi } from '../src/server.js';
 
 // A minimal LanguageModelV2 mock without depending on ai/test (and transitively msw) — same pattern as durable/test/mock.ts.

@@ -1,4 +1,4 @@
-// @gnl/durable/sqlite — node:sqlite implementation of all store ports (dev default).
+// @gnldev/durable/sqlite — node:sqlite implementation of all store ports (dev default).
 // RunJournal = append-only journal (gnl_run_journal) + derived gnl_runs index (indexed readRun/listRuns).
 // MemoryStore = gnl_threads + gnl_messages (per-message PK → idempotent append) + WM + observations.
 // vectors = 'scan' (brute-force cosine; no pgvector). node:sqlite (loaded at runtime via createRequire).

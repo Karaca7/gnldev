@@ -67,7 +67,7 @@ function BudgetMeter({ label, used, limit, unit, exceeded }: { label: string; us
 }
 
 /**
- * Budget editor: writes the __budget__ document in the journal (the @gnl/server write path reads it
+ * Budget editor: writes the __budget__ document in the journal (the @gnldev/server write path reads it
  * LIVE → save = takes effect without a deploy). A field left empty means unlimited; if both are
  * empty, the budget is deleted.
  */

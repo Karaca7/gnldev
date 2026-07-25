@@ -4,7 +4,7 @@
 // registry meant ~20k reads just to show a handful of suspended rows on every poll. `limit` omitted still
 // returns the legacy flat array, unchanged (older callers, e.g. packages/server, never send `limit`).
 import { describe, it, expect, vi } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
 import { createStudioApi } from '../src/server.js';
 
 /** Seeds N `wfrun:` registry records (journal append order = oldest → newest, updatedAt = i). */

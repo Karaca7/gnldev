@@ -1,12 +1,12 @@
 // CLI-only glue for `gnl resume`: turns a registered `config.agents[name]` into the resolved
-// {model, tools, guard, maxSteps} that @gnl/durable's resumeRun needs. This mirrors (does not
-// reimplement the durable behavior of) @gnl/durable/registry.ts's internal materializeModel — it
+// {model, tools, guard, maxSteps} that @gnldev/durable's resumeRun needs. This mirrors (does not
+// reimplement the durable behavior of) @gnldev/durable/registry.ts's internal materializeModel — it
 // composes the SAME exported primitives (resolveModel/withModelFallback) the registry itself uses,
 // so a string spec ('openai/gpt-4o') or a fallback chain resolves identically whether run via
 // createGnl().run() or via `gnl resume`. requestContext is empty ({}) — the CLI has no per-request
 // context to inject (org/user/etc.), same as an agent invoked with no `context` at createGnl.run time.
-import type * as Durable from '@gnl/durable';
-import type { AgentConfig, Guard, Journal, ModelInput, RequestContext, ToolSet } from '@gnl/durable';
+import type * as Durable from '@gnldev/durable';
+import type { AgentConfig, Guard, Journal, ModelInput, RequestContext, ToolSet } from '@gnldev/durable';
 
 async function resolveDyn<T>(v: T | ((ctx: RequestContext) => T | Promise<T>), ctx: RequestContext): Promise<T> {
   return typeof v === 'function' ? await (v as (c: RequestContext) => T | Promise<T>)(ctx) : v;
@@ -14,7 +14,7 @@ async function resolveDyn<T>(v: T | ((ctx: RequestContext) => T | Promise<T>), c
 
 /** Same logic as registry.ts's private materializeModel: a string resolves via resolveModel, an array
  *  is a deterministic fallback chain (frozen into the journal by withModelFallback). `d` is the
- *  caller's already project-resolved @gnl/durable module — must be the SAME instance the journal came
+ *  caller's already project-resolved @gnldev/durable module — must be the SAME instance the journal came
  *  from (see runtime.ts). */
 async function materializeModel(d: typeof Durable, spec: ModelInput | ModelInput[], runId: string, journal: Journal): Promise<unknown> {
   const chain = Array.isArray(spec) ? spec : [spec];
@@ -45,8 +45,8 @@ export async function resolveAgentForResume(d: typeof Durable, agentCfg: AgentCo
 }
 
 /** Local equivalent of the AI SDK's `stepCountIs(n)` — avoided importing the 'ai' package here on
- *  purpose (it is not a runtime dependency of @gnl/cli; only @gnl/durable itself needs it). The shape
- *  is exactly what @gnl/durable's composeStopWhen expects: `(opts: { steps }) => boolean`. */
+ *  purpose (it is not a runtime dependency of @gnldev/cli; only @gnldev/durable itself needs it). The shape
+ *  is exactly what @gnldev/durable's composeStopWhen expects: `(opts: { steps }) => boolean`. */
 export function stepCountIs(n: number): (opts: { steps: { length: number } }) => boolean {
   return ({ steps }) => steps.length >= n;
 }

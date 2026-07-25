@@ -1,7 +1,7 @@
 // Track 2: deepMerge (null=delete) + updateWorkingMemory tool round-trip (journaled exactly-once) + system + readOnly.
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
-import { InMemoryStorage, runDurable } from '@gnl/durable';
+import { InMemoryStorage, runDurable } from '@gnldev/durable';
 import { AgentMemory, deepMerge } from '../src/index.js';
 
 describe('Track 2 deepMerge', () => {

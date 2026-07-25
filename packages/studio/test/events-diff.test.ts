@@ -5,7 +5,7 @@
 // countRunsByStatus()+newest-run fingerprint (never a per-tick full listRuns() scan) — and a reader
 // without that capability keeps the exact pre-fix behavior (full scan, uninformative payload).
 import { describe, it, expect, vi } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
 import { createStudioApi } from '../src/server.js';
 
 /** nextEvent's cross-call state: the decoded buffer, plus a `read()` call that may still be in

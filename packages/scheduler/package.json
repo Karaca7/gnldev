@@ -1,8 +1,8 @@
 {
-  "name": "@gnl/scheduler",
+  "name": "@gnldev/scheduler",
   "version": "0.0.0",
   "license": "Apache-2.0",
-  "description": "Durable workflow scheduler on @gnl/durable: cron/interval/at triggers, exactly-once fire (run-lock), backoff/retry. Zaman = veri (resolve-then-freeze).",
+  "description": "Durable workflow scheduler on @gnldev/durable: cron/interval/at triggers, exactly-once fire (run-lock), backoff/retry. Zaman = veri (resolve-then-freeze).",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -21,12 +21,12 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@gnl/workflow": "workspace:^"
+    "@gnldev/workflow": "workspace:^"
   },
   "peerDependencies": {
-    "@gnl/durable": "workspace:^"
+    "@gnldev/durable": "workspace:^"
   },
   "devDependencies": {
-    "@gnl/durable": "workspace:*"
+    "@gnldev/durable": "workspace:*"
   }
 }

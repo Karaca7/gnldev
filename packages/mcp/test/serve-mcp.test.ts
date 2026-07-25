@@ -2,7 +2,7 @@
 // The SDK's setRequestHandler expects a Zod schema (not a plain {method:'...'}) — this test
 // verifies that bridge works with the real SDK (InMemoryTransport, NO network).
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
 import { createMcpServer, serveMcp } from '../src/server.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';

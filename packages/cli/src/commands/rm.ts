@@ -1,7 +1,7 @@
 // gnl rm <runId> [--yes] — permanently delete one run (purgeRun): the run's journal trace, its
 // sub-agent/network children (cascade), and its memory marker. Never runs without confirmation:
 // --yes skips the prompt; otherwise, in a TTY, a y/N prompt is shown; non-interactively it refuses.
-import type * as Durable from '@gnl/durable';
+import type * as Durable from '@gnldev/durable';
 import type { Command } from './types.js';
 import { flag, flagBool, positional } from '../args.js';
 import { loadConfig } from '../config.js';

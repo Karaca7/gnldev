@@ -1,7 +1,7 @@
 // Per-request multi-organization: x-gnl-org header → journal + registry scoped to the org.
 // The same runId is independent across different orgs; GET /runs is isolated per org; required → 400.
 import { describe, it, expect, vi } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
 import { createRestApi } from '../src/index.js';
 
 function mkModel(text: string, counter?: { calls: number }): any {
@@ -25,7 +25,7 @@ const run = (api: any, org?: string, runId = 'r1') =>
     body: JSON.stringify({ runId, prompt: 'hi' }),
   });
 
-describe('@gnl/server org', () => {
+describe('@gnldev/server org', () => {
   it('the same runId is independent across two orgs; a within-org replay does not call the model', async () => {
     const counter = { calls: 0 };
     const api = createRestApi(

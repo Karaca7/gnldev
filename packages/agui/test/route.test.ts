@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import { tool } from 'ai';
 import { z } from 'zod';
-import { InMemoryJournal } from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
 import { createAguiRoute } from '../src/route.js';
 import { EventType } from '../src/types.js';
 
@@ -87,7 +87,7 @@ async function readAguiSSE(res: Response): Promise<any[]> {
     });
 }
 
-describe('@gnl/agui createAguiRoute + pipeAguiStream', () => {
+describe('@gnldev/agui createAguiRoute + pipeAguiStream', () => {
   it('POST /agents/:name/run → RUN_STARTED ... TEXT_MESSAGE_* ... RUN_FINISHED', async () => {
     const app = createAguiRoute({ journal: new InMemoryJournal(), agents: { chat: { model: textMock(), maxSteps: 4 } } });
     const res = await app.request('/agents/chat/run', {

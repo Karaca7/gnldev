@@ -1,7 +1,7 @@
 // Journal entry → OTEL span mapping + DETERMINISTIC id generation (re-export idempotent).
 import { createHash } from 'node:crypto';
 import type { IdGenerator } from '@opentelemetry/sdk-trace-base';
-import type { JournalEntry } from '@gnl/durable';
+import type { JournalEntry } from '@gnldev/durable';
 
 /** runId → fixed 32-hex trace id (the same run always yields the same trace). */
 export function traceIdFor(runId: string): string {

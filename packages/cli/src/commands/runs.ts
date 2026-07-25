@@ -1,7 +1,7 @@
 // gnl runs — list runs from the configured storage/journal. Read-only.
 // Core logic (listRunsCore) is a pure function of (config, durable, options) → data, same testability
 // pattern as dev-server.ts's buildDevApp: no console I/O, so tests can assert on the returned rows directly.
-import type * as Durable from '@gnl/durable';
+import type * as Durable from '@gnldev/durable';
 import type { Command } from './types.js';
 import { flag, flagBool } from '../args.js';
 import { loadConfig } from '../config.js';

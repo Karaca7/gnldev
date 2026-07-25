@@ -4,7 +4,7 @@
 // internal fields (`detail`, raw guard reasons) that are an INTERNAL API, not a wire contract. This one
 // helper is shared by ui-stream.ts (LIVE stream masking) and messages.ts (HISTORY reconstruction) so the
 // masked shape can't drift between the two call sites.
-import type { Interrupt } from '@gnl/durable';
+import type { Interrupt } from '@gnldev/durable';
 
 export interface MaskedToolOutput {
   /** What the client should see in place of the raw tool output — either the untouched original value,

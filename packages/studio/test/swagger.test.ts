@@ -3,7 +3,7 @@
 // mislead an integrator. Kept small/focused — the fuller openapi.json/swagger smoke test lives in
 // packages/durable/test/studio-evals.test.ts (createStudioApp, apiBase injection, swagger-ui markup).
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
 import { createStudioApp } from '../src/server.js';
 
 describe('openapi.json — swagger stays in sync with server.ts', () => {

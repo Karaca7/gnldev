@@ -1,4 +1,4 @@
-// @gnl/durable/migrate — P2 migration tooling (AUDIT-R2 §4 storage comparison).
+// @gnldev/durable/migrate — P2 migration tooling (AUDIT-R2 §4 storage comparison).
 //
 // gnl's original migration story was `CREATE TABLE IF NOT EXISTS` + inline ALTERs run eagerly at
 // construction time (SqliteStorage's constructor, PostgresStorage's lazy ensureReady()) — safe (additive,

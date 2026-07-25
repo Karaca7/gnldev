@@ -8,7 +8,7 @@ const embed = async (t: string) => [
   t.includes('car') ? 1 : 0,
 ];
 
-describe('@gnl/rag', () => {
+describe('@gnldev/rag', () => {
   it('index + retrieve returns the most relevant document', async () => {
     const store = new InMemoryVectorStore();
     await indexDocuments(store, embed, [

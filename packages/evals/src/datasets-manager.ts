@@ -6,8 +6,8 @@
 //   ds:def:<dsId>:v<N>      → the Nth version of the dataset definition ({ dataset, at, hash })
 //   ds:def:<dsId>:latest    → { version: N }
 //   ds:exp:<dsId>:<expId>   → experiment record ({ result, at, label, datasetVersion })
-import { claim, stableStringify } from '@gnl/durable';
-import type { Journal } from '@gnl/durable';
+import { claim, stableStringify } from '@gnldev/durable';
+import type { Journal } from '@gnldev/durable';
 import type { Scorer } from './scorer.js';
 import { evalDataset } from './dataset.js';
 import type { Dataset, EvalRunner, EvalDatasetResult } from './dataset.js';
@@ -43,7 +43,7 @@ export interface ExperimentDiff {
 
 const ID_RE = /^[^:\s]+$/; // ':' is the journal key separator; whitespace is also forbidden for readability
 function assertId(kind: string, id: string): void {
-  if (!ID_RE.test(id)) throw new Error(`@gnl/evals DatasetsManager: ${kind} id cannot contain ':' or whitespace ('${id}')`);
+  if (!ID_RE.test(id)) throw new Error(`@gnldev/evals DatasetsManager: ${kind} id cannot contain ':' or whitespace ('${id}')`);
 }
 
 export interface RunExperimentOptions {
@@ -65,7 +65,7 @@ export interface RunExperimentOptions {
 export function createDatasetsManager(journal: Journal) {
   const requireListKeys = () => {
     if (typeof journal.listKeys !== 'function') {
-      throw new Error("@gnl/evals DatasetsManager: journal does not support 'listKeys'");
+      throw new Error("@gnldev/evals DatasetsManager: journal does not support 'listKeys'");
     }
     return journal.listKeys.bind(journal);
   };
@@ -115,7 +115,7 @@ export function createDatasetsManager(journal: Journal) {
     let dsv: DatasetVersion | undefined;
     if (opts.dataset) dsv = await saveDataset(opts.dataset, now);
     else if (opts.datasetId) dsv = await getDataset(opts.datasetId);
-    if (!dsv) throw new Error('@gnl/evals DatasetsManager: dataset not found (give a dataset or a saved datasetId)');
+    if (!dsv) throw new Error('@gnldev/evals DatasetsManager: dataset not found (give a dataset or a saved datasetId)');
 
     const expId = opts.experimentId ?? `e${now.toString(36)}`;
     assertId('experiment', expId);
@@ -153,7 +153,7 @@ export function createDatasetsManager(journal: Journal) {
   /** Compare two experiments: aggregate deltas + (case, scorer) pairs whose score changed. */
   async function compare(dsId: string, baselineId: string, candidateId: string): Promise<ExperimentDiff> {
     const [base, cand] = await Promise.all([getExperiment(dsId, baselineId), getExperiment(dsId, candidateId)]);
-    if (!base || !cand) throw new Error(`@gnl/evals DatasetsManager: experiment not found ('${!base ? baselineId : candidateId}')`);
+    if (!base || !cand) throw new Error(`@gnldev/evals DatasetsManager: experiment not found ('${!base ? baselineId : candidateId}')`);
 
     const aggregate: ExperimentDiff['aggregate'] = {};
     for (const name of new Set([...Object.keys(base.result.aggregate), ...Object.keys(cand.result.aggregate)])) {

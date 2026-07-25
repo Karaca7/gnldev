@@ -1,8 +1,8 @@
 {
-  "name": "@gnl/queue",
+  "name": "@gnldev/queue",
   "version": "0.0.0",
   "license": "Apache-2.0",
-  "description": "Durable background-task queue + worker on @gnl/durable. Jobs run as durable runs → crash mid-job resumes exactly-once.",
+  "description": "Durable background-task queue + worker on @gnldev/durable. Jobs run as durable runs → crash mid-job resumes exactly-once.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -21,9 +21,9 @@
     "test": "vitest run"
   },
   "peerDependencies": {
-    "@gnl/durable": "workspace:^"
+    "@gnldev/durable": "workspace:^"
   },
   "devDependencies": {
-    "@gnl/durable": "workspace:*"
+    "@gnldev/durable": "workspace:*"
   }
 }

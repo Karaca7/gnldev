@@ -1,11 +1,11 @@
-// @gnl/queue — durable background-task queue + worker on top of WorkStore.
+// @gnldev/queue — durable background-task queue + worker on top of WorkStore.
 // Each job runs as a DURABLE run (the handler typically calls runDurable(runId:'job:'+id)) →
 // if the worker crashes mid-job the lock goes stale → reclaim → handler runs again → runDurable
 // resumes from the RunJournal → SIDE EFFECT HAPPENS ONCE. acquireRunLock (M4) prevents two workers
 // from running the same job concurrently.
 // Job log + markers live in WorkStore (own namespace); the lock + handler's durability live in RunJournal.
-import { acquireRunLock, requireCapability, createPollLoop } from '@gnl/durable';
-import type { Storage, WorkStore, RunJournal, LogRecord } from '@gnl/durable';
+import { acquireRunLock, requireCapability, createPollLoop } from '@gnldev/durable';
+import type { Storage, WorkStore, RunJournal, LogRecord } from '@gnldev/durable';
 
 export interface JobCtx {
   /** RunJournal for the job's own durable runId ('job:<id>') (passed to the handler as the journal for runDurable). */
@@ -103,7 +103,7 @@ export async function enqueue(
     const depth = await countUpTo(work, 'qjob', opts.maxDepth);
     if (depth >= opts.maxDepth) {
       throw new QueueDepthExceededError(
-        `@gnl/queue: queue depth limit exceeded (${depth} >= ${opts.maxDepth}) — job rejected (type='${type}').`,
+        `@gnldev/queue: queue depth limit exceeded (${depth} >= ${opts.maxDepth}) — job rejected (type='${type}').`,
         { type, depth, maxDepth: opts.maxDepth },
       );
     }
@@ -346,7 +346,7 @@ export function createWorker(
     return n;
   }
 
-  // Phase 8.1: the tick/backoff/"polling" flag loop now lives in @gnl/durable's shared
+  // Phase 8.1: the tick/backoff/"polling" flag loop now lives in @gnldev/durable's shared
   // createPollLoop (it was triplicated across queue/events/scheduler) — behavior is identical: if
   // runOnce() does NOT CLAIM a job (false) the interval grows ×2 while backoffOn (cap maxPollMs);
   // resets to pollMs once a job is claimed.

@@ -10,8 +10,8 @@ kendisine kadar uzanır, belirsizlikte (crash sonrası sonuç bilinmiyorsa) sess
 AI SDK biliyorsan bunu da biliyorsun.
 
 ```ts
-import { runDurable } from '@gnl/durable';
-import { SqliteStorage } from '@gnl/durable/sqlite';
+import { runDurable } from '@gnldev/durable';
+import { SqliteStorage } from '@gnldev/durable/sqlite';
 
 const res = await runDurable({
   runId: 'order-123',                       // idempotency anahtarı (genelde orderId/sessionId)
@@ -61,7 +61,7 @@ Zaten düz bir `generateText`/`streamText` + `tools` loop'undasın ve `runDurabl
 Tool haritasını sarmalaman yeter — aynı çağrı noktaları, aynı loop:
 
 ```ts
-import { withIdempotency, InMemoryJournal } from '@gnl/durable';
+import { withIdempotency, InMemoryJournal } from '@gnldev/durable';
 // ya da: const journal = new SqliteStorage('runs.db').runs;
 
 const tools = withIdempotency(rawTools, {
@@ -89,13 +89,13 @@ ancak npm yayınından sonra çalışır):
 git clone https://github.com/Karaca7/gnldev.git gnl && cd gnl
 pnpm install && pnpm -r build
 cd examples && node ../packages/create-gnl/dist/index.js my-agent   # starter (mock model — API key gerekmez)
-cd my-agent && pnpm install       # examples/ içinde → @gnl/* workspace linkiyle çözülür
+cd my-agent && pnpm install       # examples/ içinde → @gnldev/* workspace linkiyle çözülür
 pnpm dev                          # REST API + Studio Playground (tek port): http://localhost:3000 (+ /studio)
 ```
 npm yayınından sonra: her yerde `npm create gnl my-agent`.
 Frontend'den type-safe çağrı:
 ```ts
-import { GnlClient } from '@gnl/client';                 // veya: '@gnl/client/react' → useChat
+import { GnlClient } from '@gnldev/client';                 // veya: '@gnldev/client/react' → useChat
 const gnl = new GnlClient({ baseUrl: 'http://localhost:3000' });
 const { text } = await gnl.run('assistant', { prompt: 'merhaba' });
 for await (const ev of gnl.stream('assistant', { prompt: 'akış' })) { /* text-delta… */ }
@@ -104,34 +104,34 @@ for await (const ev of gnl.stream('assistant', { prompt: 'akış' })) { /* text-
 ## Paketler (17)
 | Paket | Ne |
 |---|---|
-| **`@gnl/durable`** | Çekirdek: `runDurable`/`resume`/`stream` · `durableTool`/`withDurableModel` · journal (memory/**sqlite/postgres/redis**) · `createGnl`+model-router · `agentAsTool` + **dinamik ağ (`runNetwork`, CAS-frozen routing)** · `getRunCost` · `reconstructState`/`forkRun` · run-lock (**atomik takeover: `putIfMatch`**) · `rolloverRun` (dönem devri) · retention (`sweepRuns/sweepLog/sweepThreads`, özyinelemeli `purgeRun`, disk geri kazanımı `compact`) · **`timeouts` (`modelStepMs`/`toolMs`/`claimTtlMs`) → `StepTimeoutError`** |
-| **`@gnl/memory`** | `GnlMemory`: recall (messageRange/threshold/filter/resource-scope) · schema WM + `updateWorkingMemory` tool · thread CRUD/clone · observational memory (Observer/Reflector, pluggable tokenizer) · MessageList |
-| **`@gnl/rag`** | vector store (dev: in-memory · **prod: pgvector**) · **`chunkText`/`chunkDocuments`** (recursive/markdown/character) · **`GraphRag`** (benzerlik-grafı retrieval) · `createRagTool` · `llmReranker` · `SemanticMemory` |
-| **`@gnl/workflow`** | then/parallel/branch · foreach/loop · **`retry` (bildirimsel retry-policy, sayaç journal'da)** · `runResumable` + `sleep`/`waitFor` (evented/scheduled) |
-| **`@gnl/processors`** | piiRedactor · moderation · toolFilter · **`toolSearch` (semantik tool seçimi, journal'lı)** · tokenLimit · promptInjection · outputLimit |
-| **`@gnl/evals`** | **8 hazır scorer** (faithfulness/hallucination/…) · llmJudge · `scoreRun` · `evalDataset` (resumable) · **`createDatasetsManager`** (versiyon geçmişi + deney `compare`) |
-| **`@gnl/mcp`** | MCP client (`mcpTools`) **+ server** (`createMcpServer`, server-side exactly-once) |
-| **`@gnl/server`** | `createRestApi` + OpenAPI · **fail-closed auth** (production'da provider yoksa kurulum hata verir; bilinçli açık erişim `allowOpenAccess: true`) · **409/422 resumable sözleşmesi** (blok/limit hataları `BLOCKED_ERROR_CODES` tek kaynağından `resumable`/`retry` ayrımıyla döner) |
-| **`@gnl/otel`** | `exportRunToOtlp` + **`otlpPresets`** (Langfuse/Braintrust/Honeycomb/Datadog/Collector + jenerik API-key OTLP) · **canlı mod** (`@gnl/otel/live`) |
-| **`@gnl/queue`** | durable job queue + worker · **heartbeat'li lock renew** (uzun handler'larda takeover'ı önler) + opt-in boş-poll backoff |
-| **`@gnl/events`** | event bus (fan-out) — exactly-once işaretleme + at-least-once teslim; handler idempotent olmalı · opt-in boş-poll backoff |
-| **`@gnl/a2a`** | uzak agent (network-ötesi exactly-once) · **opt-in HMAC-SHA256 imzalı istek** (`createA2ATool({ secret })` ↔ `createRestApi({ a2aSecret })`, timestamp penceresiyle replay direnci) |
-| **`@gnl/cache`** | cross-run cache |
-| **`@gnl/studio`** | inspector **+ Playground**: agent seç→prompt→streaming yanıt→onay · time-travel/fork + cost/trace/metrics/diff · admin↔API ayrımı + rol auth |
-| **`@gnl/client`** | type-safe REST/SSE client (framework-agnostik core) + React hook'ları (`@gnl/client/react`: `useGnlAgent`/`useChat`) |
-| **`@gnl/cli`** | proje: `gnl init [--template minimal\|full] [--e2e]` (starter'lar — **`full`, `idempotency: 'args'` tool'u + tekrarlanan-toolCallId desenini yeniden üreten e2e testi taşır**) / `add <memory\|rag\|mcp\|workflow\|auth>` / `dev` / `studio` · inceleme: `runs`/`run`/`inspect` (**terminalde zaman yolculuğu**) · operasyon: `fork`/`resume`/`sweep`/`rm` (hepsi doğrudan `@gnl/durable`'ın kendi export'larına bağlı, hiçbiri yeniden implement edilmedi) · **sıfır yeni runtime bağımlılığı** (elle yazılmış ANSI/tablo, chalk/ora/commander yok) · `create-gnl` (`npm create gnl`) |
-| **`@gnl/deploy`** | `nodeAdapter`/`edgeAdapter` · `bundleApp` (esbuild, edge hedefi) · **`deployTargets`** (Cloudflare/Vercel/Netlify üreticileri) |
+| **`@gnldev/durable`** | Çekirdek: `runDurable`/`resume`/`stream` · `durableTool`/`withDurableModel` · journal (memory/**sqlite/postgres/redis**) · `createGnl`+model-router · `agentAsTool` + **dinamik ağ (`runNetwork`, CAS-frozen routing)** · `getRunCost` · `reconstructState`/`forkRun` · run-lock (**atomik takeover: `putIfMatch`**) · `rolloverRun` (dönem devri) · retention (`sweepRuns/sweepLog/sweepThreads`, özyinelemeli `purgeRun`, disk geri kazanımı `compact`) · **`timeouts` (`modelStepMs`/`toolMs`/`claimTtlMs`) → `StepTimeoutError`** |
+| **`@gnldev/memory`** | `GnlMemory`: recall (messageRange/threshold/filter/resource-scope) · schema WM + `updateWorkingMemory` tool · thread CRUD/clone · observational memory (Observer/Reflector, pluggable tokenizer) · MessageList |
+| **`@gnldev/rag`** | vector store (dev: in-memory · **prod: pgvector**) · **`chunkText`/`chunkDocuments`** (recursive/markdown/character) · **`GraphRag`** (benzerlik-grafı retrieval) · `createRagTool` · `llmReranker` · `SemanticMemory` |
+| **`@gnldev/workflow`** | then/parallel/branch · foreach/loop · **`retry` (bildirimsel retry-policy, sayaç journal'da)** · `runResumable` + `sleep`/`waitFor` (evented/scheduled) |
+| **`@gnldev/processors`** | piiRedactor · moderation · toolFilter · **`toolSearch` (semantik tool seçimi, journal'lı)** · tokenLimit · promptInjection · outputLimit |
+| **`@gnldev/evals`** | **8 hazır scorer** (faithfulness/hallucination/…) · llmJudge · `scoreRun` · `evalDataset` (resumable) · **`createDatasetsManager`** (versiyon geçmişi + deney `compare`) |
+| **`@gnldev/mcp`** | MCP client (`mcpTools`) **+ server** (`createMcpServer`, server-side exactly-once) |
+| **`@gnldev/server`** | `createRestApi` + OpenAPI · **fail-closed auth** (production'da provider yoksa kurulum hata verir; bilinçli açık erişim `allowOpenAccess: true`) · **409/422 resumable sözleşmesi** (blok/limit hataları `BLOCKED_ERROR_CODES` tek kaynağından `resumable`/`retry` ayrımıyla döner) |
+| **`@gnldev/otel`** | `exportRunToOtlp` + **`otlpPresets`** (Langfuse/Braintrust/Honeycomb/Datadog/Collector + jenerik API-key OTLP) · **canlı mod** (`@gnldev/otel/live`) |
+| **`@gnldev/queue`** | durable job queue + worker · **heartbeat'li lock renew** (uzun handler'larda takeover'ı önler) + opt-in boş-poll backoff |
+| **`@gnldev/events`** | event bus (fan-out) — exactly-once işaretleme + at-least-once teslim; handler idempotent olmalı · opt-in boş-poll backoff |
+| **`@gnldev/a2a`** | uzak agent (network-ötesi exactly-once) · **opt-in HMAC-SHA256 imzalı istek** (`createA2ATool({ secret })` ↔ `createRestApi({ a2aSecret })`, timestamp penceresiyle replay direnci) |
+| **`@gnldev/cache`** | cross-run cache |
+| **`@gnldev/studio`** | inspector **+ Playground**: agent seç→prompt→streaming yanıt→onay · time-travel/fork + cost/trace/metrics/diff · admin↔API ayrımı + rol auth |
+| **`@gnldev/client`** | type-safe REST/SSE client (framework-agnostik core) + React hook'ları (`@gnldev/client/react`: `useGnlAgent`/`useChat`) |
+| **`@gnldev/cli`** | proje: `gnl init [--template minimal\|full] [--e2e]` (starter'lar — **`full`, `idempotency: 'args'` tool'u + tekrarlanan-toolCallId desenini yeniden üreten e2e testi taşır**) / `add <memory\|rag\|mcp\|workflow\|auth>` / `dev` / `studio` · inceleme: `runs`/`run`/`inspect` (**terminalde zaman yolculuğu**) · operasyon: `fork`/`resume`/`sweep`/`rm` (hepsi doğrudan `@gnldev/durable`'ın kendi export'larına bağlı, hiçbiri yeniden implement edilmedi) · **sıfır yeni runtime bağımlılığı** (elle yazılmış ANSI/tablo, chalk/ora/commander yok) · `create-gnl` (`npm create gnl`) |
+| **`@gnldev/deploy`** | `nodeAdapter`/`edgeAdapter` · `bundleApp` (esbuild, edge hedefi) · **`deployTargets`** (Cloudflare/Vercel/Netlify üreticileri) |
 
 ## Örnekler (`examples/`)
-- **`showcase`** — 14 paketi kendi kendini doğrulayan tek dosya: `pnpm --filter @gnl/showcase demo` → 22 bölüm 22/22 ✓ (mock model, API key gerekmez) · `bench` (overhead ölçer)
-- **`app`** — **Durable AI Support Desk** (web UI + API): `pnpm --filter @gnl/app start` → :3100 (UI) + :3100/studio (ops). Ticket→mesaj→onay→exactly-once iade + queue/events/otel.
-- **`react-client`** — `@gnl/client/react` demosu (`useChat` + streaming + onay), API key'siz echo backend. `pnpm --filter @gnl/react-client-example server` + `… dev`.
+- **`showcase`** — 14 paketi kendi kendini doğrulayan tek dosya: `pnpm --filter @gnldev/showcase demo` → 22 bölüm 22/22 ✓ (mock model, API key gerekmez) · `bench` (overhead ölçer)
+- **`app`** — **Durable AI Support Desk** (web UI + API): `pnpm --filter @gnldev/app start` → :3100 (UI) + :3100/studio (ops). Ticket→mesaj→onay→exactly-once iade + queue/events/otel.
+- **`react-client`** — `@gnldev/client/react` demosu (`useChat` + streaming + onay), API key'siz echo backend. `pnpm --filter @gnldev/react-client-example server` + `… dev`.
 
 ## Tedarik zinciri hijyeni
 Kurduğun bir bağımlılık, makinende ve derlemende kod çalıştırır. GNL'in bu repoda bugün
 doğrulanabilir duruşu:
 - **Sıfır install script** — hiçbir pakette `postinstall`/`preinstall` yok.
-- **Minimal bağımlılık yüzeyi** — çekirdeğin (`@gnl/durable`) tam olarak **bir** runtime bağımlılığı var
+- **Minimal bağımlılık yüzeyi** — çekirdeğin (`@gnldev/durable`) tam olarak **bir** runtime bağımlılığı var
   (`superjson`); storage sürücüleri (`pg`, `ioredis`) açıkça opt-in olduğun opsiyonel peer'lar.
 - **İmzalı, provenance-attested yayın** (`npm publish --provenance`) yayın planıdır — CI dışında yayın olmaz.
 
@@ -150,14 +150,14 @@ TypeScript strict · 0 `@ts-ignore` (tip kaçışları sınırlı tutuldu; sın�
 ## Deployment
 gnl tamamen Hono tabanlı → Node deploy birkaç satır:
 ```ts
-import { createRestApi } from '@gnl/server';
-import { nodeAdapter } from '@gnl/deploy';                // ince @hono/node-server sarmalı
+import { createRestApi } from '@gnldev/server';
+import { nodeAdapter } from '@gnldev/deploy';                // ince @hono/node-server sarmalı
 nodeAdapter(createRestApi(config), { port: process.env.PORT });
 ```
-**Journal uyarısı:** serverless/edge runtime'larda `node:sqlite` çalışmaz → ağ-tabanlı journal kullanın (`@gnl/durable/postgres` veya `/redis`, Cloudflare'de D1). `SqliteStorage` yalnız uzun-ömürlü Node süreçleri içindir. Vercel/Cloudflare/Netlify hedefleri hazır: `deployTargets` (bkz. [`@gnl/deploy`](packages/deploy)).
+**Journal uyarısı:** serverless/edge runtime'larda `node:sqlite` çalışmaz → ağ-tabanlı journal kullanın (`@gnldev/durable/postgres` veya `/redis`, Cloudflare'de D1). `SqliteStorage` yalnız uzun-ömürlü Node süreçleri içindir. Vercel/Cloudflare/Netlify hedefleri hazır: `deployTargets` (bkz. [`@gnldev/deploy`](packages/deploy)).
 
 ## Dürüst konumlandırma
-"Tam-donanımlı bir agent framework alternatifi" değil; **AI SDK için durability/correctness katmanı**: sağlam bir çekirdek (`@gnl/durable`) +
+"Tam-donanımlı bir agent framework alternatifi" değil; **AI SDK için durability/correctness katmanı**: sağlam bir çekirdek (`@gnldev/durable`) +
 onun garantilerini miras alan değişken olgunlukta uydu paketler. Tipik tam-donanımlı bir agent framework'ün temel yeteneklerinin çoğunu kapsar
 (memory/workflow/rag/mcp/processors/eval…) ama bunu **çağrı-bazında exactly-once effect + deterministic replay**
 üstüne kurar. "Exactly-once" burada mutlak bir fiziksel garanti değil — **çağrı-bazlı dedup + güvenli-varsayılan**

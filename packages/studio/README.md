@@ -1,4 +1,4 @@
-# @gnl/studio
+# @gnldev/studio
 
 Durable run **inspector + Playground**. Run history from the journal: timeline, time-travel, reconstructed
 state, cost, an OTEL-like trace waterfall, fork, approval (resume). **Playground** (when `gnl` is given):
@@ -6,12 +6,12 @@ pick an agent from the browser → prompt → **streaming** response → interru
 Single-file inline UI (no build step).
 
 ```bash
-npm i @gnl/studio   # peer/dep: @gnl/durable, hono, @hono/node-server
+npm i @gnldev/studio   # peer/dep: @gnldev/durable, hono, @hono/node-server
 ```
 
 ```ts
-import { createStudioApp, makeStudioRunner } from '@gnl/studio';
-import { createGnl } from '@gnl/durable';
+import { createStudioApp, makeStudioRunner } from '@gnldev/studio';
+import { createGnl } from '@gnldev/durable';
 
 const config = { journal, agents: { support } };
 const gnl = createGnl(config);
@@ -47,7 +47,7 @@ intentional choice for open access.
 
 ### Playground endpoints (when `gnl` is given, write-gated)
 `GET /api/agents` · `POST /api/agents/:name/run` · `POST /api/agents/:name/stream` (SSE — same schema as
-[`@gnl/server`](../server)).
+[`@gnldev/server`](../server)).
 
 ## How it works
 **Runs view note:** nested runs (network steps `net:<parentRunId>:<i>`, agent-tool sub-agents
@@ -58,4 +58,4 @@ view (`getNetworkTrace`).
 The UI rewrites `./api` relative to `apiBase` (admin↔API separation, can be mounted under any prefix). The
 Playground's approval flow doesn't go through a separate resume — it goes to `/run` with the **same runId +
 prompt + approvals** → the suspended tool is released (exactly-once is preserved). REST + Studio in one
-command: [`@gnl/cli`](../cli) `gnl dev`.
+command: [`@gnldev/cli`](../cli) `gnl dev`.

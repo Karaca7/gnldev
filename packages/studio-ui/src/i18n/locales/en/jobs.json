@@ -6,7 +6,7 @@
   "retrySuccess": "Job '{{id}}' requeued",
   "retryError": "Retry failed: {{error}}",
   "emptyTitle": "No jobs yet",
-  "emptyDescription": "Jobs appear once your app enqueues background work with @gnl/queue's enqueue() — Studio can view and retry them here, not create them.",
+  "emptyDescription": "Jobs appear once your app enqueues background work with @gnldev/queue's enqueue() — Studio can view and retry them here, not create them.",
   "liveStatus": "{{count}} job · refreshes every 3s",
   "colType": "Type",
   "colStatus": "Status",

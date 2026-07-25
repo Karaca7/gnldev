@@ -1,10 +1,10 @@
-// @gnl/memory ergonomics: zero-dependency default embed + ready-made presets. Does NOT change existing
+// @gnldev/memory ergonomics: zero-dependency default embed + ready-made presets. Does NOT change existing
 // AgentMemory behavior (opt-in): defaultEmbed is not auto-wired (so it won't change recall), presets are a separate helper.
 // P2-memory (AUDIT-R2): OM retrieval mode (`AgentMemory.recallObservations`/`expandObservation`,
 // `createOmRecallTool`) is ALSO opt-in — neither preset below auto-registers the recall tool in
 // `loadContext`'s `out.tools` the way the WM update tool is, so turning on `observationalMemory` here does
 // not silently hand the model a new tool. Callers who want it wire `createOmRecallTool` themselves.
-import type { Storage } from '@gnl/durable';
+import type { Storage } from '@gnldev/durable';
 import type { Embed } from './keys.js';
 import { AgentMemory } from './agent-memory.js';
 import type { WorkingMemoryConfig } from './working-memory.js';

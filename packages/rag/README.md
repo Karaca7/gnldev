@@ -1,15 +1,15 @@
-# @gnl/rag
+# @gnldev/rag
 
 **Vector store + RAG tool** for AI SDK agents. Used as a tool inside `runDurable`, it's automatically
 **replayable/exactly-once** (thanks to durableTool, retrieval happens once, and comes back from the journal
 on resume).
 
 ```bash
-npm i @gnl/rag   # peer: @gnl/durable, ai, zod
+npm i @gnldev/rag   # peer: @gnldev/durable, ai, zod
 ```
 
 ```ts
-import { InMemoryVectorStore, indexDocuments, createRagTool, llmReranker } from '@gnl/rag';
+import { InMemoryVectorStore, indexDocuments, createRagTool, llmReranker } from '@gnldev/rag';
 
 const store = new InMemoryVectorStore();
 await indexDocuments(store, embed, [{ id: 'p1', text: 'Return policy: 30 days…' }]);
@@ -31,4 +31,4 @@ await runDurable({ runId: 'r1', journal, model, tools: { searchPolicy }, prompt:
 
 ## How it works
 Since RAG is a tool, it naturally fits into the durable agent loop: retrieval + rerank are journaled
-exactly-once. For cross-run reuse, it can be combined with `@gnl/cache`.
+exactly-once. For cross-run reuse, it can be combined with `@gnldev/cache`.

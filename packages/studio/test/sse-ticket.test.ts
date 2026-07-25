@@ -3,8 +3,8 @@
 // existing ?token= behavior is verified separately in auth-org.test.ts — only the new ticket flow
 // is tested here.
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
-import { roleAuth } from '@gnl/auth';
+import { InMemoryJournal } from '@gnldev/durable';
+import { roleAuth } from '@gnldev/auth';
 import { createStudioApi } from '../src/server.js';
 
 afterEach(() => {
@@ -13,7 +13,7 @@ afterEach(() => {
 
 const AUTH = () => roleAuth({ viewer: { token: 'viw' }, admin: { token: 'adm' } });
 
-describe('@gnl/studio SSE ticket', () => {
+describe('@gnldev/studio SSE ticket', () => {
   it('an unauthorized request cannot get a ticket (401)', async () => {
     const app = createStudioApi({ reader: new InMemoryJournal(), auth: AUTH() });
     expect((await app.request('/auth/sse-ticket', { method: 'POST' })).status).toBe(401);

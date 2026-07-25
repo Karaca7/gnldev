@@ -10,7 +10,7 @@ function rerankModel(order: string): any {
   };
 }
 
-describe('@gnl/rag reranking', () => {
+describe('@gnldev/rag reranking', () => {
   it('llmReranker: applies the model index order (+ unmentioned ones go last) + topN', async () => {
     const matches = [
       { id: 'a', text: 'doc A', score: 0.5 },

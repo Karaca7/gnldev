@@ -1,5 +1,5 @@
 // createChatRoute: a single-endpoint Hono router speaking the Vercel AI SDK v5 `useChat` wire format —
-// the ai-sdk-package counterpart of @gnl/agui's createAguiRoute (AG-UI/CopilotKit) and @gnl/server's
+// the ai-sdk-package counterpart of @gnldev/agui's createAguiRoute (AG-UI/CopilotKit) and @gnldev/server's
 // pipeAgentStream (GNL's own SSE schema). Converts `UIMessage[]` -> `ModelMessage[]` via `ai`'s
 // `convertToModelMessages` (verified export name against the installed ai@5.0.204 package), streams the
 // agent via `gnl.stream`, and returns the SENTINEL-MASKED UI message stream response (ui-stream.ts) —
@@ -8,8 +8,8 @@ import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { convertToModelMessages } from 'ai';
 import type { UIMessage } from 'ai';
-import { createGnl } from '@gnl/durable';
-import type { CreateGnlConfig } from '@gnl/durable';
+import { createGnl } from '@gnldev/durable';
+import type { CreateGnlConfig } from '@gnldev/durable';
 import { toUIMessageStreamResponse } from './ui-stream.js';
 
 export interface CreateChatRouteOptions {
@@ -25,8 +25,8 @@ let anonCounter = 0;
  * Produces a single-endpoint Hono router from a createGnl config (or an already-built `gnl` instance)
  * that a `useChat({ api: '.../agents/:name/chat' })` client can talk to:
  *   POST /agents/:name/chat   { id?, messages: UIMessage[], runId?, threadId?, approvals? }  → UI message stream
- * Deliberately kept small — SAME posture as @gnl/agui's `createAguiRoute`: NO auth/org/budget gates (if
- * needed, wrap this route, or compose @gnl/server's createRestApi's auth middleware around it — see README).
+ * Deliberately kept small — SAME posture as @gnldev/agui's `createAguiRoute`: NO auth/org/budget gates (if
+ * needed, wrap this route, or compose @gnldev/server's createRestApi's auth middleware around it — see README).
  *
  * `runId` precedence: `body.runId` > `opts.resolveRunId(...)` > DERIVED `${body.id}:${lastMessage.id}` >
  * a generated id. The derivation is the load-bearing default: `body.id` is useChat's STABLE

@@ -1,6 +1,6 @@
 // createDatasetsManager — version history + experiment records + comparison.
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
 import { createDatasetsManager, contains } from '../src/index.js';
 import type { Dataset } from '../src/index.js';
 

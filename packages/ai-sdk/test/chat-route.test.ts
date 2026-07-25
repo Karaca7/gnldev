@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import { tool } from 'ai';
 import { z } from 'zod';
-import { InMemoryJournal } from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
 import { createChatRoute } from '../src/index.js';
 
 const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
@@ -114,7 +114,7 @@ async function readChunks(res: Response): Promise<any[]> {
     .map((d) => JSON.parse(d));
 }
 
-describe('@gnl/ai-sdk createChatRoute', () => {
+describe('@gnldev/ai-sdk createChatRoute', () => {
   // REGRESSION (review finding): useChat's `body.id` is STABLE across the whole conversation — using it
   // alone as the runId made every later turn REPLAY turn 1 from the journal (the model never ran again).
   // The route now derives `${body.id}:${lastMessage.id}` — same chat id + NEW message id → fresh run.

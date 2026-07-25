@@ -1,7 +1,7 @@
 // Demo agent (mock model — no API key). On the first turn it calls the `chargeOrder` tool,
 // then it summarizes the receipt. Swap `model` for a real provider
 // (e.g. 'anthropic/claude-opus-4-8') and delete the mock to go live.
-import type { AgentConfig } from '@gnl/durable';
+import type { AgentConfig } from '@gnldev/durable';
 import { chargeOrder } from './tools.js';
 
 function toolResultsSeen(prompt: any[]): number {

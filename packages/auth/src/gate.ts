@@ -47,7 +47,7 @@ export function makeGate(provider?: AuthProvider, opts?: GateOptions): Gate {
   // (If left to request time, the error would blow up on the first request after deploy — an early, clear failure was preferred.)
   if (!provider && process.env.NODE_ENV === 'production' && opts?.allowOpenAccess !== true) {
     throw new Error(
-      'auth is required in production; for deliberately open access, set allowOpenAccess: true (see @gnl/auth makeGate / host options)',
+      'auth is required in production; for deliberately open access, set allowOpenAccess: true (see @gnldev/auth makeGate / host options)',
     );
   }
   // Non-production providerless gate: warn ONCE on the first request (no silent openness), then open.
@@ -58,7 +58,7 @@ export function makeGate(provider?: AuthProvider, opts?: GateOptions): Gate {
         if (!warnedOpen && process.env.NODE_ENV !== 'production') {
           warnedOpen = true;
           console.warn(
-            '@gnl/auth: no provider given → ALL endpoints are open (opt-in gate not set up). Add auth before production; for deliberate open access use allowOpenAccess: true.',
+            '@gnldev/auth: no provider given → ALL endpoints are open (opt-in gate not set up). Add auth before production; for deliberate open access use allowOpenAccess: true.',
           );
         }
         return true;
@@ -80,7 +80,7 @@ export function makeGate(provider?: AuthProvider, opts?: GateOptions): Gate {
         if (!warnedOpen && process.env.NODE_ENV !== 'production') {
           warnedOpen = true;
           console.warn(
-            '@gnl/auth: no provider given → ALL endpoints are open (opt-in gate not set up). Add auth before production; for deliberate open access use allowOpenAccess: true.',
+            '@gnldev/auth: no provider given → ALL endpoints are open (opt-in gate not set up). Add auth before production; for deliberate open access use allowOpenAccess: true.',
           );
         }
         return true;

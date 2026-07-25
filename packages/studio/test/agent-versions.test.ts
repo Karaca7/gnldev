@@ -1,8 +1,8 @@
 // Managed agent versions: versions are immutable, promote only moves the 'active' pointer,
 // rollback = promoting the older version; every change lands in the audit log.
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
-import { roleAuth } from '@gnl/auth';
+import { InMemoryJournal } from '@gnldev/durable';
+import { roleAuth } from '@gnldev/auth';
 import { createStudioApi } from '../src/server.js';
 
 const post = (app: any, path: string, body: unknown, actor = 'dev@acme.co') =>

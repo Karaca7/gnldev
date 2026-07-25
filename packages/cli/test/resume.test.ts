@@ -1,8 +1,8 @@
 // gnl resume: resumeRunCore (pure) — a suspended (Guard require-approval) run progresses to completed
 // once approved, using the agent config registered under gnl.config.ts's `agents`.
 import { describe, it, expect } from 'vitest';
-import * as Durable from '@gnl/durable';
-import { InMemoryJournal, runDurable } from '@gnl/durable';
+import * as Durable from '@gnldev/durable';
+import { InMemoryJournal, runDurable } from '@gnldev/durable';
 import { resumeRunCore } from '../src/commands/resume.js';
 import { agentModel } from './helpers.js';
 

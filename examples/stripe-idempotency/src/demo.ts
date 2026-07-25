@@ -6,7 +6,7 @@
 //
 // Three scenarios, same crash+resume shape (charge succeeds at the provider, then the process
 // "crashes" before the result is durably recorded):
-//   A) unprotected — no @gnl/durable at all, naive retry with a FRESH key each attempt → Stripe sees
+//   A) unprotected — no @gnldev/durable at all, naive retry with a FRESH key each attempt → Stripe sees
 //                    two unrelated requests → 2 charges.
 //   B) with GNL    — durableTool + approved retry, NO recover() hook. GNL allows the retry (approval
 //                    was granted) so `execute` genuinely runs twice — but because the injected
@@ -16,8 +16,8 @@
 //   C) with GNL    — durableTool + a `recover()` hook (H9 ladder): asks Stripe "did this idempotencyKey
 //      (bonus)       already succeed?" BEFORE retrying — `execute` doesn't even run a second time, no
 //                    human approval needed.
-import { InMemoryJournal, durableTool } from '@gnl/durable';
-import type { DurableCtx } from '@gnl/durable';
+import { InMemoryJournal, durableTool } from '@gnldev/durable';
+import type { DurableCtx } from '@gnldev/durable';
 import { MockStripe } from './mock-stripe.js';
 
 function section(title: string): void {

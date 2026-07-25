@@ -2,8 +2,8 @@
 // and POST /workflows/runs/:id/cancel (durable cross-process cancel, write-gated, audited to the ROOT
 // journal) — see runs-cancel.test.ts (P0.3) for the sibling agent-run cancel this mirrors.
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal, listLog } from '@gnl/durable';
-import { workflow, step, waitForResume } from '@gnl/workflow';
+import { InMemoryJournal, listLog } from '@gnldev/durable';
+import { workflow, step, waitForResume } from '@gnldev/workflow';
 import { createRestApi } from '../src/index.js';
 
 /** A tiny suspend-on-first-call workflow: 'prepare' runs once, 'approval' waits for a typed resume payload. */
@@ -20,7 +20,7 @@ const runWf = (api: any, runId: string, org: string, extra: Record<string, unkno
     body: JSON.stringify({ runId, input: 'hi', ...extra }),
   });
 
-describe('@gnl/server GET /workflows/runs (P0.4)', () => {
+describe('@gnldev/server GET /workflows/runs (P0.4)', () => {
   it('?status= filters; org-scoped — org A does not see org B\'s workflow runs', async () => {
     const journal = new InMemoryJournal();
     const api = createRestApi({ journal, workflows: { wf: makeWf() } }, { org: {} });
@@ -62,7 +62,7 @@ describe('@gnl/server GET /workflows/runs (P0.4)', () => {
   });
 });
 
-describe('@gnl/server POST /workflows/runs/:id/cancel (P0.4)', () => {
+describe('@gnldev/server POST /workflows/runs/:id/cancel (P0.4)', () => {
   it('cancels a suspended run — a later resume attempt with the SAME runId reports canceled; audit lands in the ROOT journal', async () => {
     const journal = new InMemoryJournal();
     const api = createRestApi({ journal, workflows: { wf: makeWf() } }, { org: {} });

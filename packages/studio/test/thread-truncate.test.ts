@@ -1,10 +1,10 @@
 // Threads view: DELETE /threads/:id/messages — truncates a thread from a message index onward
 // (destructive; e.g. "retry from here"/branching flows). Studio bridges this via the StudioMemory
-// interface's optional truncateMessages (the host typically wraps @gnl/memory's AgentMemory
+// interface's optional truncateMessages (the host typically wraps @gnldev/memory's AgentMemory
 // truncateMessagesAfter) — here we mock it and verify permission (write) + audit + the 501 fallback
 // for both "not implemented" and "adapter returned null (store doesn't support it)".
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
 import { createStudioApi, type StudioMemory } from '../src/server.js';
 
 /** Simple fake memory: only truncateMessages matters here; listThreads/getMessages are stubs. */

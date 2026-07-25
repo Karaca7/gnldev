@@ -16,6 +16,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@gnl/cli": "workspace:^"
+    "@gnldev/cli": "workspace:^"
   }
 }

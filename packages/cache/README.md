@@ -1,16 +1,16 @@
-# @gnl/cache
+# @gnldev/cache
 
 **Cross-run content-hash cache** on top of the journal. The key is run-independent (`cache:<ns>:<hash>`) →
 a result computed in one run is **reused in other runs**. (Within-run reuse is already journal replay; this
 closes the across-run gap.)
 
 ```bash
-npm i @gnl/cache   # peer: @gnl/durable
+npm i @gnldev/cache   # peer: @gnldev/durable
 ```
 
 ```ts
-import { createCache } from '@gnl/cache';
-import { SqliteJournal } from '@gnl/durable/sqlite';
+import { createCache } from '@gnldev/cache';
+import { SqliteJournal } from '@gnldev/durable/sqlite';
 
 const cache = createCache(new SqliteJournal('runs.db'), 'embeddings');
 

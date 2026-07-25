@@ -3,8 +3,8 @@
 // read-only, code-defined list. Uses an inline RBAC-style provider (honours ctx.permission, capabilities
 // rbac:true) backed by the SAME user store PATCH mutates — so a role change is observable end-to-end.
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
-import { roleAuth, type AuthProvider } from '@gnl/auth';
+import { InMemoryJournal } from '@gnldev/durable';
+import { roleAuth, type AuthProvider } from '@gnldev/auth';
 import { createStudioApi, type StudioUserStore, type StudioUser } from '../src/server.js';
 
 const GRANTS: Record<string, string[]> = {
@@ -21,7 +21,7 @@ const match = (g: string, req: string): boolean => {
 };
 
 // A user store that ALSO serves as the auth source (token → principal), so PATCH updates are reflected on
-// the next authenticate — mirroring @gnl/auth-ee createJournalUserStore + createEnterpriseAuth.
+// the next authenticate — mirroring @gnldev/auth-ee createJournalUserStore + createEnterpriseAuth.
 function makeStore() {
   const byId = new Map<string, StudioUser>();
   const byToken = new Map<string, string>();
@@ -91,7 +91,7 @@ const H = (t: string) => ({ authorization: `Bearer ${t}` });
 const JH = (t: string) => ({ 'content-type': 'application/json', authorization: `Bearer ${t}` });
 const runReq = (app: any, t: string) => app.request('/agents/echo/run', { method: 'POST', headers: JH(t), body: JSON.stringify({ runId: 'r-' + t, prompt: 'hi' }) });
 
-describe('@gnl/studio fine-grained routes (RBAC)', () => {
+describe('@gnldev/studio fine-grained routes (RBAC)', () => {
   it('member: runs agents (200) but cannot manage users/budget (403); reads OK', async () => {
     const { app, member } = await setup();
     expect((await runReq(app, member)).status).toBe(200);

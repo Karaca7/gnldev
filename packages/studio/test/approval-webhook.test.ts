@@ -1,6 +1,6 @@
 // Approval webhook: ONE POST per pending tool approval (the __alert__ first-write-wins marker).
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
 import { createStudioApi } from '../src/server.js';
 
 afterEach(() => vi.unstubAllGlobals());

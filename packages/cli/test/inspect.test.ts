@@ -1,7 +1,7 @@
 // gnl inspect: inspectRunCore (pure) — the CLI view of time-travel (reconstructState at step N).
 import { describe, it, expect } from 'vitest';
-import * as Durable from '@gnl/durable';
-import { InMemoryJournal, runDurable } from '@gnl/durable';
+import * as Durable from '@gnldev/durable';
+import { InMemoryJournal, runDurable } from '@gnldev/durable';
 import { inspectRunCore } from '../src/commands/inspect.js';
 import { agentModel } from './helpers.js';
 

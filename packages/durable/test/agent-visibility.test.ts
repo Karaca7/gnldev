@@ -1,4 +1,4 @@
-// Unit test for the org-scoped agent visibility helper (shared by @gnl/server + @gnl/studio).
+// Unit test for the org-scoped agent visibility helper (shared by @gnldev/server + @gnldev/studio).
 // Opt-in: no `orgs` → GLOBAL (everyone sees it); a caller with no org (operator / auth off) sees
 // everything; otherwise the caller's org must be in the agent's `orgs` list.
 import { describe, it, expect } from 'vitest';

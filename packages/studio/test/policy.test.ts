@@ -1,6 +1,6 @@
 // Policy CRUD: rules are versioned, the full rule set lands in audit, validation is strict.
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal, POLICY_KEY } from '@gnl/durable';
+import { InMemoryJournal, POLICY_KEY } from '@gnldev/durable';
 import { createStudioApi } from '../src/server.js';
 
 const put = (app: any, body: unknown, actor = 'sec@acme.co') =>

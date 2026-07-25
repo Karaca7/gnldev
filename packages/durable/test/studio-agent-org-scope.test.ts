@@ -1,4 +1,4 @@
-// Org-scoped agents in @gnl/studio playground: an org-bound caller only lists/runs GLOBAL agents
+// Org-scoped agents in @gnldev/studio playground: an org-bound caller only lists/runs GLOBAL agents
 // (no `orgs`) + agents whose `orgs` include their org; an org-invisible agent returns the SAME 404
 // as an unknown agent (no existence leak). Operators + auth-off callers see/run everything (backward-compat).
 // (Test lives in the durable package because ai/createGnl live here; studio uses createStudioRunner.)
@@ -42,7 +42,7 @@ const list = async (app: any, token?: string) =>
   (await (await app.request('/agents', { headers: token ? { authorization: `Bearer ${token}` } : {} })).json())
     .map((a: any) => a.name).sort();
 
-describe('@gnl/studio org-scoped agents', () => {
+describe('@gnldev/studio org-scoped agents', () => {
   it('1. acme-bound caller + orgs:[globex] agent → 404 (run) + ABSENT from list', async () => {
     const app = api(boundAdmin());
     expect((await run(app, 'glbx', 'acme-adm')).status).toBe(404);

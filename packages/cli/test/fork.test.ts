@@ -1,7 +1,7 @@
 // gnl fork: forkRunCore (pure) — copies a run's prefix into a new, live-continuable runId.
 import { describe, it, expect } from 'vitest';
-import * as Durable from '@gnl/durable';
-import { InMemoryJournal, runDurable } from '@gnl/durable';
+import * as Durable from '@gnldev/durable';
+import { InMemoryJournal, runDurable } from '@gnldev/durable';
 import { forkRunCore } from '../src/commands/fork.js';
 import { agentModel } from './helpers.js';
 

@@ -3,17 +3,17 @@ import { randomUUID } from 'node:crypto';
 import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
 
-import { reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, purgeRun, purgeOrganization, sweepRuns, POLICY_KEY, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, blockedErrorCode, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent } from '@gnl/durable';
-import type { PolicyDoc, PolicyRule, BudgetLimit } from '@gnl/durable';
-import type { JournalReader, Journal, WorkflowLike, MetricsRunRow } from '@gnl/durable';
-import { makeGate, normalizeAuth, principalOf, isPlatformAdmin, principalScope, assertAssignablePrivileges, type AuthProvider, type Principal } from '@gnl/auth';
-import { listTriggers } from '@gnl/scheduler';
+import { reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, purgeRun, purgeOrganization, sweepRuns, POLICY_KEY, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, blockedErrorCode, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent } from '@gnldev/durable';
+import type { PolicyDoc, PolicyRule, BudgetLimit } from '@gnldev/durable';
+import type { JournalReader, Journal, WorkflowLike, MetricsRunRow } from '@gnldev/durable';
+import { makeGate, normalizeAuth, principalOf, isPlatformAdmin, principalScope, assertAssignablePrivileges, type AuthProvider, type Principal } from '@gnldev/auth';
+import { listTriggers } from '@gnldev/scheduler';
 import { mountSpa, notBuiltHtml } from './spa.js';
 import { openapiSpec, swaggerHtml } from './swagger.js';
 import { pipeAgentStream } from './sse.js';
 
-/** Scheduler view trigger row (same shape as @gnl/scheduler `listTriggers` — see GET /scheduler/triggers). */
-export type { TriggerInfo } from '@gnl/scheduler';
+/** Scheduler view trigger row (same shape as @gnldev/scheduler `listTriggers` — see GET /scheduler/triggers). */
+export type { TriggerInfo } from '@gnldev/scheduler';
 
 export type StudioResume = (
   runId: string,
@@ -76,7 +76,7 @@ export interface StudioAgentRunner {
   /** If given, the Workflows view lists workflow definitions. */
   listWorkflows?(): WorkflowMeta[] | Promise<WorkflowMeta[]>;
   /** If given, workflows can run durably; if opts.runId is given, RESUMES the SAME run.
-   *  P0.4 (AUDIT-R2): opts.resume delivers typed HITL payloads (see @gnl/workflow's
+   *  P0.4 (AUDIT-R2): opts.resume delivers typed HITL payloads (see @gnldev/workflow's
    *  waitForResume); a canceled run (durable cancel or an aborted signal upstream) reports `canceled`. */
   runWorkflow?(
     name: string,
@@ -86,7 +86,7 @@ export interface StudioAgentRunner {
 }
 
 /**
- * For the Memory/Threads view (optional). The app wraps a @gnl/memory (AgentMemory) instance in this interface.
+ * For the Memory/Threads view (optional). The app wraps a @gnldev/memory (AgentMemory) instance in this interface.
  * `listThreads` takes a resourceId (threads are indexed by resource).
  */
 export interface StudioMemory {
@@ -162,7 +162,7 @@ export interface StudioWorkflowStore {
 
 /**
  * Compiles a managed WorkflowDef into an executable WorkflowLike. The host passes `compileManagedWorkflow`
- * from `@gnl/studio/workflow` (the @gnl/workflow import is isolated there so the studio core stays decoupled).
+ * from `@gnldev/studio/workflow` (the @gnldev/workflow import is isolated there so the studio core stays decoupled).
  * If given, managed workflows run with the SAME engine as code workflows (each step is journaled → exactly-once,
  * suspend/resume, poll-to-stream/history/inspector all work the same way).
  */
@@ -180,7 +180,7 @@ export interface ScoreRunResultLike {
 
 /**
  * For the Scorers/Evals view (optional). The app supplies scorer names + a scoring function
- * (internally calls @gnl/evals `scoreRun(reader, runId, scorers, {expected})` → studio has no dependency on evals).
+ * (internally calls @gnldev/evals `scoreRun(reader, runId, scorers, {expected})` → studio has no dependency on evals).
  */
 export interface StudioScorers {
   list (): Promise<string[]> | string[];
@@ -189,7 +189,7 @@ export interface StudioScorers {
 
 /** Eval dataset info (for the Evals view list). */
 export interface DatasetMeta { id: string; cases: number; description?: string }
-/** A dataset eval suite result (structurally compatible with @gnl/evals `evalDataset` output). */
+/** A dataset eval suite result (structurally compatible with @gnldev/evals `evalDataset` output). */
 export interface EvalDatasetResultLike {
   datasetId: string;
   cases: { caseId: string; output: string; scores: Record<string, { score: number; reason?: string }> }[];
@@ -197,7 +197,7 @@ export interface EvalDatasetResultLike {
 }
 /**
  * For the Evals/datasets view (optional). The app supplies a dataset list + a runner (internally calls
- * @gnl/evals `evalDataset(...)` → studio has no dependency on evals).
+ * @gnldev/evals `evalDataset(...)` → studio has no dependency on evals).
  */
 export interface StudioDatasets {
   list (): Promise<DatasetMeta[]> | DatasetMeta[];
@@ -211,12 +211,12 @@ export interface StudioMcpServer {
   client: { listTools (): Promise<{ tools: { name: string; description?: string; inputSchema?: unknown }[] }> };
 }
 
-/** Queue/Jobs view: summary of background jobs (fed by @gnl/queue listJobs). */
+/** Queue/Jobs view: summary of background jobs (fed by @gnldev/queue listJobs). */
 export interface StudioJob { id: string; type: string; status: string; attempts: number; }
 export interface StudioQueue {
   listJobs (): Promise<StudioJob[]> | StudioJob[];
   /**
-   * If given, `POST /jobs/:id/retry` works (the host typically wraps @gnl/queue's `retryJob(work, id)`):
+   * If given, `POST /jobs/:id/retry` works (the host typically wraps @gnldev/queue's `retryJob(work, id)`):
    * re-queues a failed (dead-letter/qfail) job as a NEW job with the original type/payload, and returns
    * the new job id. Returns `null` if the job isn't found OR isn't yet terminal-failed (pending/done — to
    * prevent DOUBLE-RUNNING it); the server reflects this as a 409.
@@ -224,16 +224,16 @@ export interface StudioQueue {
   retry?(id: string): Promise<string | null> | string | null;
 }
 
-/** Cache view: hit/miss ratio + size (duck-type compatible with @gnl/cache `stats()`). */
+/** Cache view: hit/miss ratio + size (duck-type compatible with @gnldev/cache `stats()`). */
 export interface StudioCacheStats { hits: number; misses: number; hitRate: number; size: number; }
-/** Cache view contract — studio has no DEPENDENCY on @gnl/cache; the host wraps its own cache instance
+/** Cache view contract — studio has no DEPENDENCY on @gnldev/cache; the host wraps its own cache instance
  *  (same pattern as Queue/Vectors: optional, duck-typed interface). */
 export interface StudioCache {
   stats (): Promise<StudioCacheStats> | StudioCacheStats;
   /**
    * If given, `POST /cache/invalidate` works: if `key` is given, only that key is removed; if not given
    * (best-effort — CacheStore doesn't offer key enumeration), all keys the host KNOWS ABOUT are removed
-   * (see @gnl/cache `invalidate()`). Returns the number of keys removed.
+   * (see @gnldev/cache `invalidate()`). Returns the number of keys removed.
    */
   invalidate?(key?: unknown): Promise<number> | number;
 }
@@ -259,7 +259,7 @@ export interface StudioUser {
   /** true → the token is revoked (access is cut WITHOUT deleting the user). */
   revoked?: boolean;
 }
-/** User management contract (paid; implemented by @gnl/auth-ee createJournalUserStore). */
+/** User management contract (paid; implemented by @gnldev/auth-ee createJournalUserStore). */
 export interface StudioUserStore {
   list(): Promise<StudioUser[]> | StudioUser[];
   create(input: { email?: string; name?: string; roles?: string[]; permissions?: string[]; orgId?: string; ttlMs?: number; expiresAt?: number }): Promise<{ user: StudioUser; token: string }>;
@@ -303,7 +303,7 @@ export const PERMISSION_CATALOG: PermissionCatalogEntry[] = [
 ];
 
 /**
- * Role → pre-checked permissions. MIRRORS the @gnl/auth-ee rbac.ts default grants (both are code, kept in
+ * Role → pre-checked permissions. MIRRORS the @gnldev/auth-ee rbac.ts default grants (both are code, kept in
  * sync by the GNL team in one release). The UI seeds a role's checkboxes from this when a role is picked;
  * the customer admin can then tick/untick individual boxes and PATCH the user's explicit permissions.
  */
@@ -325,7 +325,7 @@ export interface StudioApiOptions {
   resume?: StudioResume;
   /**
    * GOREV (saga): if given, POST /runs/:id/compensate works — the operator's "unwind this abandoned
-   * run" action. The host wires it to @gnl/durable compensateRun with ITS tool set (the compensate
+   * run" action. The host wires it to @gnldev/durable compensateRun with ITS tool set (the compensate
    * hooks live in code): `compensate: (runId, o) => compensateRun(runId, { journal, tools, ...o })`.
    * IRREVERSIBLE (a condemned run never resumes) → the endpoint is write-gated and audited.
    */
@@ -352,7 +352,7 @@ export interface StudioApiOptions {
   a2a?: boolean;
   /** If given, the Queue/Jobs view works. */
   queue?: StudioQueue;
-  /** If given, the Cache view works (@gnl/cache hit/miss ratio + manual invalidate). */
+  /** If given, the Cache view works (@gnldev/cache hit/miss ratio + manual invalidate). */
   cache?: StudioCache;
   /** If given, the Knowledge (vector search) view works. */
   vectors?: StudioVectors;
@@ -360,15 +360,15 @@ export interface StudioApiOptions {
   workflowStore?: StudioWorkflowStore;
   /**
    * Optional user management (a PAID feature — the contract lives here, the implementation lives in
-   * @gnl/auth-ee `createJournalUserStore`). If given, the Studio "Users" view + /users endpoints are enabled.
+   * @gnldev/auth-ee `createJournalUserStore`). If given, the Studio "Users" view + /users endpoints are enabled.
    * The `token` returned on creation is shown in the UI ONCE (the server never stores it in plaintext).
    */
   users?: StudioUserStore;
-  /** Compiler to run a managed workflow with the real engine (@gnl/studio/workflow → compileManagedWorkflow). */
+  /** Compiler to run a managed workflow with the real engine (@gnldev/studio/workflow → compileManagedWorkflow). */
   compileWorkflow?: CompileWorkflowFn;
   /**
    * Optional auth (opt-in). If not given, all endpoints are open. Accepts either the backward-compatible
-   * `StudioAuth` {read,write} or an `AuthProvider` (free @gnl/auth `roleAuth` or paid @gnl/auth-ee).
+   * `StudioAuth` {read,write} or an `AuthProvider` (free @gnldev/auth `roleAuth` or paid @gnldev/auth-ee).
    */
   auth?: StudioAuth | AuthProvider;
   /**
@@ -382,8 +382,8 @@ export interface StudioApiOptions {
    * Opt-in multi-org support (v1 = READ-ONLY audit): if an org resolves (default: the `x-gnl-org`
    * header), the entire read surface (runs/state/diff/trace/metrics/threads) is scoped to that org via
    * withOrg. In an org context, WRITES (POST/PATCH/DELETE) return 403 — since the runner/resume are tied
-   * to the caller's gnl instance, a half-scoped write would create data confusion; use @gnl/server's
-   * `org` option for the write path (the option name is KEPT for consistency with @gnl/server). A request
+   * to the caller's gnl instance, a half-scoped write would create data confusion; use @gnldev/server's
+   * `org` option for the write path (the option name is KEPT for consistency with @gnldev/server). A request
    * without an org runs in the shared space.
    */
   org?: { resolve?: (c: Context) => string | undefined | Promise<string | undefined> };
@@ -412,13 +412,13 @@ export interface StudioApiOptions {
   alerts?: { webhook?: string };
   /**
    * W5 regression: converts POST /runs/:id/regression body.model (a 'provider/model' spec) to a real
-   * model. If not given, @gnl/durable's `resolveModel` is used (dynamically imports the relevant provider
+   * model. If not given, @gnldev/durable's `resolveModel` is used (dynamically imports the relevant provider
    * package → a real API call). Provide this on hosts with a test/mock model store.
    */
   regressionModel?: (spec: string) => Promise<unknown> | unknown;
   /**
    * OTEL export (host-provided): the UI/client NEVER sends data to an arbitrary endpoint — the host
-   * itself CALLS @gnl/otel's `exportRunToOtlp` with its configured target (Langfuse/Honeycomb/Datadog/
+   * itself CALLS @gnldev/otel's `exportRunToOtlp` with its configured target (Langfuse/Honeycomb/Datadog/
    * Collector) + auth (API key); Studio only TRIGGERS it (POST /runs/:id/otel-export). If not given,
    * the route returns 501 and the button (capabilities.otelExport) is hidden.
    */
@@ -444,7 +444,7 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
   const { reader: rawReader, resume, compensate, chat, gnl, memory, workflows, scorers, datasets, mcp, a2a, queue, cache, vectors, workflowInputs, workflowStore: _wfStoreOpt, compileWorkflow, auth } = opts;
   const app = new Hono();
 
-  // Opt-in auth: an AuthProvider (free roleAuth / paid @gnl/auth-ee) or the backward-compatible {read,write}.
+  // Opt-in auth: an AuthProvider (free roleAuth / paid @gnldev/auth-ee) or the backward-compatible {read,write}.
   // If there's no provider, endpoints are open; in production that's only possible with allowOpenAccess: true
   // (otherwise makeGate throws at setup), and outside production it's warned once. Since the org middleware
   // needs the identity-bound org (Principal.orgId), the gate is set up HERE, before the middleware.
@@ -454,7 +454,7 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
   // against the principal's effective permissions; the permission catalog surface is also gated on this.
   // When OFF (free tier), allowP transparently reduces to read/write → the coarse legacy behavior.
   const rbacEnabled = authProvider?.capabilities?.().rbac === true;
-  // STRICT multi-org model = PAID gate: ON only when the auth provider (paid @gnl/auth-ee, valid
+  // STRICT multi-org model = PAID gate: ON only when the auth provider (paid @gnldev/auth-ee, valid
   // license) reports the `multiOrganization` capability. When ON, an org-less identity is NO LONGER the
   // all-seeing operator by default — it must carry the EXPLICIT `platform-admin` grant (scope:
   // 'platform'); otherwise it is fail-closed (403 on org data + org management). When OFF (free tier /
@@ -568,7 +568,7 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
       if (!org) return next();
       if (org.includes(':')) return c.json({ error: "invalid org: cannot contain ':'" }, 400);
       if (c.req.method !== 'GET') {
-        return c.json({ error: 'writes are not supported in an org context (v1 read-only audit) — use @gnl/server\'s org option for writes' }, 403);
+        return c.json({ error: 'writes are not supported in an org context (v1 read-only audit) — use @gnldev/server\'s org option for writes' }, 403);
       }
       await orgALS.run(org, () => next());
     });
@@ -742,7 +742,7 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
   /**
    * ORG-SCOPED agent version store: a bound identity (Principal.orgId) only manages/sees/promotes ITS OWN
    * org's versions (via the withOrg prefix); an unbound operator manages the root (shared) namespace.
-   * Note: runtime enforcement (@gnl/server's actual traffic) is a separate layer — this store brings org
+   * Note: runtime enforcement (@gnldev/server's actual traffic) is a separate layer — this store brings org
    * isolation to Studio playground/workflow runs and to management/visibility.
    */
   function agentStoreFor(c: Context): AgentStore | undefined {
@@ -768,7 +768,7 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
   }
 
   // Is multi-org ON? Only if the host gave org OR the auth provider reports multiOrganization (paid
-  // @gnl/auth-ee). Neither exists on the free tier → org surfaces are NEVER shown: it runs in a single
+  // @gnldev/auth-ee). Neither exists on the free tier → org surfaces are NEVER shown: it runs in a single
   // implicit org, and the user is never aware multi-org exists.
   const multiOrganizationEnabled = !!opts.org || !!authProvider?.capabilities?.().multiOrganization;
 
@@ -796,14 +796,14 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
       // "Retry" action in the Jobs view: on if the host implemented queue.retry (RBAC is also
       // enforced server-side on every request via allow(c,'write') — this is only button visibility).
       queueManage: !!queue?.retry,
-      // Cache view (@gnl/cache hit/miss + size): on if the host gave a cache instance.
+      // Cache view (@gnldev/cache hit/miss + size): on if the host gave a cache instance.
       cache: !!cache,
       // Manual invalidate button: on if the host implemented cache.invalidate (RBAC is again enforced
       // server-side via allow(c,'write') — this is only button visibility, same pattern as queueManage).
       cacheManage: !!cache?.invalidate,
-      // Scheduler (@gnl/scheduler trigger introspection): the journal is READ-ONLY (see GET /scheduler/triggers),
+      // Scheduler (@gnldev/scheduler trigger introspection): the journal is READ-ONLY (see GET /scheduler/triggers),
       // it needs neither a separate opts.scheduler surface nor a running instance — writable + listKeys
-      // is enough (same auto-detection pattern as audit/organizations; returns an empty list if the host doesn't use @gnl/scheduler).
+      // is enough (same auto-detection pattern as audit/organizations; returns an empty list if the host doesn't use @gnldev/scheduler).
       scheduler: writable && typeof rw.listKeys === 'function',
       knowledge: !!vectors,
       workflowManage: !!resolvedWfStore,
@@ -811,7 +811,7 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
       approvals: !!resume,
       audit: writable && typeof rw.listKeys === 'function',
       // Agent approval registry (governance): review/approve/block code-defined agents recorded by
-      // @gnl/server's boot-time recording (see GET/POST /agents/registry* below) — SAME auto-detection
+      // @gnldev/server's boot-time recording (see GET/POST /agents/registry* below) — SAME auto-detection
       // pattern as audit/scheduler, no separate host option needed.
       agentRegistry: writable && typeof rw.listKeys === 'function',
       // Compliance reports: findings produced in this run by the pii/moderation/prompt-injection
@@ -838,11 +838,11 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
       // via allow(c,'write') — this is only button visibility, same pattern as queueManage/cacheManage).
       otelExport: !!opts.otelExport,
       // D3-A: durable run cancel (POST /runs/:id/cancel) — writes cancelAgentRun's cross-worker flag.
-      // Studio has no in-process AbortController registry (unlike @gnl/server's P0.3 in-flight abort),
+      // Studio has no in-process AbortController registry (unlike @gnldev/server's P0.3 in-flight abort),
       // so this is the durable-flag path ONLY: a canceled run stops at its NEXT fresh model step,
       // wherever it's running. Needs nothing but a writable journal (cancelAgentRun only get/put's a flag).
       runCancel: writable,
-      // D3-A: durable workflow-run cancel (POST /workflows/runs/:id/cancel) — mirrors @gnl/server's
+      // D3-A: durable workflow-run cancel (POST /workflows/runs/:id/cancel) — mirrors @gnldev/server's
       // P0.4 /workflows/runs/:id/cancel (reimplemented inline, see the route's own JSDoc for why).
       // Same capability gate as the suspended-runs registry itself (GET /workflows/runs) needs.
       workflowRunCancel: writable && typeof rw.listKeys === 'function',
@@ -853,7 +853,7 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
   );
   // S4 pagination: if ?limit= is given, returns a Page envelope {items,nextCursor,total} (newest first);
   // a call without the parameter stays a backward-compatible flat array (existing consumers don't break).
-  // API-09: optional status/agent/q filters — SAME parameter names as @gnl/server's GET /runs (see
+  // API-09: optional status/agent/q filters — SAME parameter names as @gnldev/server's GET /runs (see
   // packages/server/src/index.ts). Only honored together with `limit` (a bare filter with no `limit`
   // falls through to the unfiltered flat array below, same as today — matches the "no params → identical
   // to today" backward-compat contract; the studio-ui client always sends `limit`, so this never bites it).
@@ -959,7 +959,7 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
   });
 
   // Compliance reports: findings the pii-redactor/prompt-injection/moderation processors produced in
-  // this run (`readProcessorReports` — @gnl/durable, reads the `${runId}:procreport:...` prefix).
+  // this run (`readProcessorReports` — @gnldev/durable, reads the `${runId}:procreport:...` prefix).
   // Empty list if the host doesn't use a processor / writable+listKeys is missing (SAME fallback as scores).
   app.get('/runs/:id/processors', async (c) => {
     if (!(await allow(c, 'read'))) return deny(c, 'read');
@@ -1175,8 +1175,8 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
       // implicit/discovered org (not yet registered) has no label.
       const orgRec = (await rootRw.get!(ORG_PRE + id).catch(() => undefined)) as { label?: string } | undefined;
       const label = orgRec?.label;
-      // Effective limit: the journal's __budget__ document (managed from Studio, enforced by @gnl/server)
-      // > the host config fallback (opts.budgets). readBudget resolves the same way as @gnl/server's enforcement.
+      // Effective limit: the journal's __budget__ document (managed from Studio, enforced by @gnldev/server)
+      // > the host config fallback (opts.budgets). readBudget resolves the same way as @gnldev/server's enforcement.
       // inherited: true if the ORG'S OWN __budget__:<id> document is missing/unlimited (inherited from the
       // default) — distinguished so the UI doesn't pre-fill these inherited values on edit and accidentally
       // create a per-org override (see bug report #3).
@@ -1452,7 +1452,7 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
 
   // Write/clear an org's budget (management — admin): the `__budget__:<id>` document in the journal.
   // id='default' is the fallback for all orgs. Empty body/null values → the budget is deleted.
-  // @gnl/server's write path reads this document LIVE → changes take effect without a redeploy.
+  // @gnldev/server's write path reads this document LIVE → changes take effect without a redeploy.
   const putOrganizationBudget = async (c: Context) => {
     if (!(await allowP(c, 'budget:write'))) return deny(c, 'write');
     if (!writable) return c.json({ error: 'budget management requires a writable journal' }, 501);
@@ -1779,12 +1779,12 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
 
   /**
    * D3-A (AUDIT-R2 surface): durably cancels an agent run — the studio-side counterpart of
-   * @gnl/server's POST /runs/:id/cancel. UNLIKE @gnl/server, studio keeps no in-process AbortController
+   * @gnldev/server's POST /runs/:id/cancel. UNLIKE @gnldev/server, studio keeps no in-process AbortController
    * registry for streamed generations (there is no equivalent of its `inflight` map here), so this is
    * ONLY the durable-flag path: `cancelAgentRun` writes a cross-worker flag every fresh model step
    * checks (durable-model.ts) — a run in flight elsewhere stops at its NEXT step boundary, and every
    * future resume attempt is refused (terminal, like a compensated run; recovery = fork). Visibility:
-   * the SAME `${id}:input` presence check @gnl/server's cancel endpoint uses (persistInput is written by
+   * the SAME `${id}:input` presence check @gnldev/server's cancel endpoint uses (persistInput is written by
    * every run()/stream() call) — a run from another organization is invisible through the org-scoped
    * `rw` (withOrg prefixes every key), so this returns the same 404 (no existence leak) as elsewhere.
    */
@@ -1800,7 +1800,7 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
   });
 
   // GOREV (saga): unwind an abandoned run — every executed side effect whose tool declares a
-  // `compensate` hook is undone in reverse order, exactly-once (@gnl/durable compensateRun). The run
+  // `compensate` hook is undone in reverse order, exactly-once (@gnldev/durable compensateRun). The run
   // is CONDEMNED first (never resumable again) → write-gated + audited with the report summary.
   // `dryRun: true` previews the work without condemning or executing anything.
   app.post('/runs/:id/compensate', async (c) => {
@@ -1875,7 +1875,7 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
 
   // Export a run's trace to an external APM (Langfuse/Honeycomb/Datadog/Collector). SECURITY: Studio
   // NEVER holds the target endpoint/API key itself — the host CALLS opts.otelExport with its own
-  // configured target (internally the host runs @gnl/otel's `exportRunToOtlp` with its own preset); we only TRIGGER it.
+  // configured target (internally the host runs @gnldev/otel's `exportRunToOtlp` with its own preset); we only TRIGGER it.
   app.post('/runs/:id/otel-export', async (c) => {
     if (!(await allow(c, 'write'))) return deny(c, 'write');
     if (!opts.otelExport) return c.json({ error: 'OTEL export is not enabled (the host must provide otelExport)' }, 501);
@@ -1931,7 +1931,7 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
     const prev = (await rw.get!(POLICY_KEY)) as PolicyDoc | undefined;
     // Optimistic lock (API-08): if the caller tells us which version it edited, refuse a silent
     // lost update when another admin has since saved. Omitted `ifVersion` → old behavior (backward
-    // compat for existing clients / @gnl/server, which never sends it).
+    // compat for existing clients / @gnldev/server, which never sends it).
     if (body.ifVersion != null) {
       const current = prev?.version ?? 0;
       if (body.ifVersion !== current) {
@@ -1959,8 +1959,8 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
   });
 
   /**
-   * K1/W1: the SAME mapping as `limitErrorResponse`/`blockedErrorResponse` in @gnl/server — but Studio is
-   * NOT dependent on @gnl/server (no dependency in package.json, only @gnl/durable) → it's set up
+   * K1/W1: the SAME mapping as `limitErrorResponse`/`blockedErrorResponse` in @gnldev/server — but Studio is
+   * NOT dependent on @gnldev/server (no dependency in package.json, only @gnldev/durable) → it's set up
    * LOCALLY here. The code/HTTP status choices are IDENTICAL to packages/server/src/index.ts: run_limit_
    * exceeded/tool_loop_detected → 422 + resumable:true; side_effect_retry_blocked/run_busy → 409 +
    * resumable:true; retry_limit_exceeded → 422, NO resumable (permanently 'failed' in the journal). If
@@ -2013,7 +2013,7 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
   });
 
   // ── Agent approval registry (governance) ────────────────────────────────────────────────────
-  // @gnl/server RECORDS each `config.agents` entry (fingerprinted) into the ROOT journal at its own
+  // @gnldev/server RECORDS each `config.agents` entry (fingerprinted) into the ROOT journal at its own
   // boot — Studio only EXPOSES those same `__agent_registry__:<name>` records for review/approve/block;
   // it never computes a fingerprint itself (the playground runner is duck-typed via StudioAgentRunner
   // and doesn't carry the real AgentConfig — see its JSDoc above). Platform-level (never per-org, same
@@ -2082,7 +2082,7 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
     }
   });
 
-  // Run an agent with streaming (admin) — the same SSE schema as @gnl/server.
+  // Run an agent with streaming (admin) — the same SSE schema as @gnldev/server.
   app.post('/agents/:name/stream', async (c) => {
     if (!(await allowP(c, 'agents:run'))) return deny(c, 'write');
     if (!gnl?.stream) return c.json({ error: 'streaming is not enabled' }, 501);
@@ -2206,7 +2206,7 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
   });
 
   // Re-queue a failed (dead-letter/qfail) job (if queue.retry is given — the host typically wraps
-  // @gnl/queue's retryJob). Only a TERMINAL-FAIL job can be retried: retrying a job that's still
+  // @gnldev/queue's retryJob). Only a TERMINAL-FAIL job can be retried: retrying a job that's still
   // pending/locked would queue work the worker is ALREADY going to process a second time, causing a
   // DOUBLE-RUN — this protection lives on queue.retry's own side (returns null → 409).
   app.post('/jobs/:id/retry', async (c) => {
@@ -2221,7 +2221,7 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
     return c.json({ ok: true, id: newId });
   });
 
-  // ── Cache (if cache is given): hit/miss ratio + manual invalidate (@gnl/cache stats()/invalidate() duck-type) ──
+  // ── Cache (if cache is given): hit/miss ratio + manual invalidate (@gnldev/cache stats()/invalidate() duck-type) ──
   app.get('/cache/stats', async (c) => {
     if (!(await allow(c, 'read'))) return deny(c, 'read');
     if (!cache) return c.json({ hits: 0, misses: 0, hitRate: 0, size: 0 });
@@ -2239,10 +2239,10 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
     return c.json({ ok: true, deleted });
   });
 
-  // ── Scheduler (@gnl/scheduler trigger introspection): the journal is READ-ONLY, it needs NO separate
-  // running scheduler instance (see @gnl/scheduler's `listTriggers` — reads the SAME sched:def:/
+  // ── Scheduler (@gnldev/scheduler trigger introspection): the journal is READ-ONLY, it needs NO separate
+  // running scheduler instance (see @gnldev/scheduler's `listTriggers` — reads the SAME sched:def:/
   // sched:state:/sched:fail: keys as pollScheduler, never MUTATES any state). Returns an empty list if
-  // the journal isn't writable + doesn't support listKeys (or the host doesn't use @gnl/scheduler at all) (same pattern as queue/jobs).
+  // the journal isn't writable + doesn't support listKeys (or the host doesn't use @gnldev/scheduler at all) (same pattern as queue/jobs).
   app.get('/scheduler/triggers', async (c) => {
     if (!(await allow(c, 'read'))) return deny(c, 'read');
     if (!writable || typeof rw.listKeys !== 'function' || typeof rw.get !== 'function') return c.json([]);
@@ -2303,7 +2303,7 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
       }
     }
     if (resolvedWfStore && !compileWorkflow && (await resolvedWfStore.get(name)))
-      return c.json({ error: 'running a managed workflow requires compileWorkflow (@gnl/studio/workflow)' }, 501);
+      return c.json({ error: 'running a managed workflow requires compileWorkflow (@gnldev/studio/workflow)' }, 501);
     if (!gnl?.runWorkflow && !canRunManaged) return c.json({ error: 'workflow execution is not enabled' }, 501);
     return c.json({ error: `workflow '${name}' not found` }, 404);
   });
@@ -2364,7 +2364,7 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
     }
     if (!begin) {
       if (resolvedWfStore && !compileWorkflow && (await resolvedWfStore.get(name)))
-        return c.json({ error: 'running a managed workflow requires compileWorkflow (@gnl/studio/workflow)' }, 501);
+        return c.json({ error: 'running a managed workflow requires compileWorkflow (@gnldev/studio/workflow)' }, 501);
       if (!gnl?.runWorkflow && !canRunManaged) return c.json({ error: 'workflow execution is not enabled' }, 501);
       return c.json({ error: `workflow '${name}' not found` }, 404);
     }
@@ -2463,11 +2463,11 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
   /**
    * P0.4 (AUDIT-R2): the suspended/completed/canceled workflow-run REGISTRY query — every run
    * (code OR managed) in ONE `wfrun:` prefix scan. Deliberately reimplemented INLINE against `rw` rather
-   * than importing @gnl/workflow's `listWorkflowRuns`: the studio CORE stays decoupled from @gnl/workflow
+   * than importing @gnldev/workflow's `listWorkflowRuns`: the studio CORE stays decoupled from @gnldev/workflow
    * (see WorkflowLike/managed-workflow.ts — only the optional `./workflow` compiler subpath depends on
    * it), and `rw` here already goes through the org-scoped ALS bridge on GET (same isolation guarantee
    * every other listKeys-based route in this file gets — see `reader`'s `scopedNow()` above). The
-   * `wfrun:<runId>` key shape is a documented contract of @gnl/workflow's workflow.ts (statusKey),
+   * `wfrun:<runId>` key shape is a documented contract of @gnldev/workflow's workflow.ts (statusKey),
    * stable to read directly without importing the package.
    */
   app.get('/workflows/runs', async (c) => {
@@ -2531,9 +2531,9 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
 
   /**
    * D3-A (AUDIT-R2 surface): durably cancels a workflow run — studio's counterpart of
-   * @gnl/server's POST /workflows/runs/:id/cancel (P0.4). Reimplemented INLINE against `rw` rather than
-   * importing @gnl/workflow's `cancelWorkflowRun` — same reason GET /workflows/runs above is inline
-   * (the studio CORE stays decoupled from @gnl/workflow; only the optional `./workflow` compiler
+   * @gnldev/server's POST /workflows/runs/:id/cancel (P0.4). Reimplemented INLINE against `rw` rather than
+   * importing @gnldev/workflow's `cancelWorkflowRun` — same reason GET /workflows/runs above is inline
+   * (the studio CORE stays decoupled from @gnldev/workflow; only the optional `./workflow` compiler
    * subpath depends on it). Writes the SAME two keys `cancelWorkflowRun` does: the per-run
    * `${runId}:wf:_canceled` flag (checked by runResumable before every step — reaches a run in flight
    * on ANOTHER worker at its next step boundary) and the `wfrun:<runId>` registry record with
@@ -2821,7 +2821,7 @@ export function createStudioAdmin (opts: { apiBase?: string } = {}): Hono {
   const app = new Hono();
   app.get('/openapi.json', (c) => c.json(openapiSpec(opts.apiBase ?? '')));
   app.get('/swagger', (c) => c.html(swaggerHtml(opts.apiBase ?? '')));
-  // Prefer the prebuilt React SPA (@gnl/studio-ui) first; fall back to the old single-file HTML if there's no build.
+  // Prefer the prebuilt React SPA (@gnldev/studio-ui) first; fall back to the old single-file HTML if there's no build.
   if (!mountSpa(app, opts.apiBase ?? '')) app.get('/', (c) => c.html(notBuiltHtml()));
   return app;
 }
@@ -2836,7 +2836,7 @@ export function createStudioApp (input: JournalReader | StudioAppOptions): Hono 
   app.route('/api', createStudioApi(opts));
   app.get('/openapi.json', (c) => c.json(openapiSpec(opts.apiBase ?? '')));
   app.get('/swagger', (c) => c.html(swaggerHtml(opts.apiBase ?? '')));
-  // Prefer the prebuilt React SPA (@gnl/studio-ui) first; fall back to the old single-file HTML if there's no build.
+  // Prefer the prebuilt React SPA (@gnldev/studio-ui) first; fall back to the old single-file HTML if there's no build.
   if (!mountSpa(app, opts.apiBase ?? '')) app.get('/', (c) => c.html(notBuiltHtml()));
   return app;
 }

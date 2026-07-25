@@ -1,8 +1,8 @@
 {
-  "name": "@gnl/ai-sdk",
+  "name": "@gnldev/ai-sdk",
   "version": "0.0.0",
   "license": "Apache-2.0",
-  "description": "Vercel AI SDK `useChat` compatibility for @gnl/durable agents: UI message stream conversion (with sentinel masking), journal→UIMessage history reconstruction, and a Hono chat route.",
+  "description": "Vercel AI SDK `useChat` compatibility for @gnldev/durable agents: UI message stream conversion (with sentinel masking), journal→UIMessage history reconstruction, and a Hono chat route.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -21,14 +21,14 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@gnl/durable": "workspace:^"
+    "@gnldev/durable": "workspace:^"
   },
   "peerDependencies": {
     "ai": "^5.0.0",
     "hono": "^4.6.0"
   },
   "devDependencies": {
-    "@gnl/durable": "workspace:*",
+    "@gnldev/durable": "workspace:*",
     "ai": "^5.0.0",
     "hono": "^4.6.0",
     "zod": "^3.25.0"

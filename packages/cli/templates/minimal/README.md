@@ -41,17 +41,17 @@ export const assistant: AgentConfig = {
 ```
 
 ## Frontend
-For type-safe calls, use [`@gnl/client`](https://www.npmjs.com/package/@gnl/client):
+For type-safe calls, use [`@gnldev/client`](https://www.npmjs.com/package/@gnldev/client):
 
 ```ts
-import { GnlClient } from '@gnl/client';
+import { GnlClient } from '@gnldev/client';
 const gnl = new GnlClient({ baseUrl: 'http://localhost:3000' });
 const { text } = await gnl.run('assistant', { prompt: 'hello' });
 ```
 
-React: `import { useChat } from '@gnl/client/react'`.
+React: `import { useChat } from '@gnldev/client/react'`.
 
 ## Note
-`@gnl/*` packages are not yet published to npm. For now, this project only works inside the
+`@gnldev/*` packages are not yet published to npm. For now, this project only works inside the
 `gnl` monorepo (via the pnpm workspace link); to install it outside the monorepo you'll need
 to wait for the relevant packages to be published to npm, or link them with `pnpm link`.

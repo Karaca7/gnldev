@@ -1,9 +1,9 @@
-// @gnl/scheduler — durable workflow scheduler on top of @gnl/durable.
+// @gnldev/scheduler — durable workflow scheduler on top of @gnldev/durable.
 // Keeps triggers in the journal (definition immutable, state mutable). The poll loop (now=Date.now())
 // fires due triggers exactly-once (acquireRunLock + per-fireCount runId). The workflow run carries its
 // own durable guarantee. Time = DATA (nextRunAt in the journal) → resolve-then-freeze, replay-safe.
-import { acquireRunLock, createPollLoop } from '@gnl/durable';
-import type { Journal } from '@gnl/durable';
+import { acquireRunLock, createPollLoop } from '@gnldev/durable';
+import type { Journal } from '@gnldev/durable';
 import { nextCronTime } from './cron.js';
 
 export { nextCronTime, parseField } from './cron.js';
@@ -65,7 +65,7 @@ const BUDGET_SKIP = (id: string) => `sched:budget-skip:${id}`;
 
 /**
  * 1.4: optional budget/quota hook — called BEFORE the trigger starts (before runner.runWorkflow is
- * CALLED). Throws on overage (typically `@gnl/durable`'s `assertBudget` — `BudgetExceededError`);
+ * CALLED). Throws on overage (typically `@gnldev/durable`'s `assertBudget` — `BudgetExceededError`);
  * `pollScheduler` does NOT RUN this trigger (skip + records/logs to `sched:budget-skip:<id>`,
  * `out.skipped` increments), state is DEFERRED to retry after `retryMs` but `attempts` DOES NOT
  * increase (a budget overage isn't the workflow's fault → doesn't count toward maxAttempts, `status`
@@ -144,7 +144,7 @@ export async function pollScheduler(
   now: number = Date.now(),
   opts: { owner?: string; retryMs?: number; budgetGuard?: BudgetGuard } = {},
 ): Promise<PollResult> {
-  if (!journal.listKeys) throw new Error('@gnl/scheduler: journal.listKeys is required (trigger enumeration)');
+  if (!journal.listKeys) throw new Error('@gnldev/scheduler: journal.listKeys is required (trigger enumeration)');
   const owner = opts.owner ?? `sched-${Math.random().toString(36).slice(2, 8)}`;
   const retryMs = opts.retryMs ?? 30_000;
   const out: PollResult = { fired: 0, rescheduled: 0, failed: 0, skipped: 0 };
@@ -237,7 +237,7 @@ export interface TriggerInfo {
  * results sorted alphabetically by id (stable list order).
  */
 export async function listTriggers(journal: Journal): Promise<TriggerInfo[]> {
-  if (!journal.listKeys) throw new Error('@gnl/scheduler: listTriggers requires journal.listKeys (trigger enumeration)');
+  if (!journal.listKeys) throw new Error('@gnldev/scheduler: listTriggers requires journal.listKeys (trigger enumeration)');
   const defKeys = await journal.listKeys('sched:def:');
   const out: TriggerInfo[] = [];
   for (const dkey of defKeys) {
@@ -278,7 +278,7 @@ export interface Scheduler {
 
 /**
  * Scheduler that manages the poll loop (a self-rescheduling setTimeout chain) — the same pattern as
- * @gnl/queue's createWorker. `backoff` (default OFF — timing is the scheduler's core contract, see the
+ * @gnldev/queue's createWorker. `backoff` (default OFF — timing is the scheduler's core contract, see the
  * trade-off below): IF ENABLED, when a poll fires NO triggers at all (`fired === 0`) the next poll
  * interval grows ×2 (cap: `maxPollMs ?? pollMs*32`) → prevents tens of thousands of empty queries per
  * second (poll storm) on an empty schedule table; the interval resets to `pollMs` once a trigger fires.
@@ -297,7 +297,7 @@ export function createScheduler(
   const poll = (now: number = Date.now()) =>
     pollScheduler(journal, runner, now, { owner: opts.owner, retryMs: opts.retryMs, budgetGuard: opts.budgetGuard });
 
-  // Phase 8.1: the tick/backoff/"polling" flag loop now lives in @gnl/durable's shared createPollLoop
+  // Phase 8.1: the tick/backoff/"polling" flag loop now lives in @gnldev/durable's shared createPollLoop
   // (it used to be triplicated across queue/events/scheduler) — behavior is identical: pollScheduler only
   // catches runWorkflow errors internally; the rest (journal I/O etc.) are logged and swallowed by
   // createPollLoop (the chain doesn't die). While `fired === 0` and backoffOn, the interval grows ×2

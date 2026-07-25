@@ -1,4 +1,4 @@
-// @gnl/durable/redis — Redis implementation of RunJournal + WorkStore + CacheStore + MetaStore.
+// @gnldev/durable/redis — Redis implementation of RunJournal + WorkStore + CacheStore + MetaStore.
 // Ports where Redis is STRONG: KV + atomic CAS (SET NX) + native TTL (SET PX) + queue/log.
 // SAME serialization (serialize.ts / superjson) and SAME contracts (Page/ListQuery,
 // exactly-once CAS, readRun ORDER BY created_at,key) as Sqlite/Postgres. Injectable client + lazy `createRequire`
@@ -375,7 +375,7 @@ class RedisRunJournal implements RunJournal {
         const m = /connected_slaves:(\d+)/.exec(info);
         if (m && Number(m[1]) > 0) {
           console.warn(
-            '@gnl/durable redis: replicas are fed asynchronously — on failover, an acknowledged claim ' +
+            '@gnldev/durable redis: replicas are fed asynchronously — on failover, an acknowledged claim ' +
               '(SET NX) can be lost on the promoted replica, so exactly-once may be VIOLATED ' +
               '(see CORE-HARDENING.md §8.2). Configure WAIT / min-replicas-to-write, or knowingly accept ' +
               'the risk (silence this warning via `replicationWarning: false`).',
@@ -403,7 +403,7 @@ class RedisRunJournal implements RunJournal {
     }
     if (acked >= replicas) return;
     const message =
-      `@gnl/durable redis: WAIT requested ${replicas} replica ack(s) within ${timeoutMs}ms, only ${acked} ` +
+      `@gnldev/durable redis: WAIT requested ${replicas} replica ack(s) within ${timeoutMs}ms, only ${acked} ` +
       'acknowledged — the claim already happened, but on failover it may be LOST on a replica that never ' +
       'caught up (see CORE-HARDENING.md §8.2).';
     if (onTimeout === 'throw') {
@@ -530,7 +530,7 @@ class RedisRunJournal implements RunJournal {
    *  method is considered undefined — budget.ts falls back to the legacy path). Key lives in its own
    *  sub-namespace (ctr:). */
   async incrBy(key: string, fields: Record<string, number>): Promise<void> {
-    if (!this.client.hincrbyfloat) throw new Error('@gnl/durable redis: client does not support hincrbyfloat');
+    if (!this.client.hincrbyfloat) throw new Error('@gnldev/durable redis: client does not support hincrbyfloat');
     for (const [f, d] of Object.entries(fields)) await this.client.hincrbyfloat(this.pfx + CTR + key, f, d);
   }
   async getCounters(key: string): Promise<Record<string, number> | undefined> {

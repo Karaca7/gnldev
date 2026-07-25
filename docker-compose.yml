@@ -1,6 +1,6 @@
 # Postgres + Redis for the real backend integration test. Using ports 5433/6380 to avoid conflicts.
 #   docker compose up -d
-#   GNL_INTEGRATION=1 pnpm --filter @gnl/durable exec vitest run test/integration-real.test.ts
+#   GNL_INTEGRATION=1 pnpm --filter @gnldev/durable exec vitest run test/integration-real.test.ts
 #   docker compose down
 services:
   postgres:

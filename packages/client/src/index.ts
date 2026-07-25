@@ -1,10 +1,10 @@
-// @gnl/client — type-safe REST/SSE client for @gnl/server (and the @gnl/studio playground) agents.
-// Framework-agnostic core. For React hooks: `@gnl/client/react`.
+// @gnldev/client — type-safe REST/SSE client for @gnldev/server (and the @gnldev/studio playground) agents.
+// Framework-agnostic core. For React hooks: `@gnldev/client/react`.
 import { parseSSEStream } from './sse.js';
 import type { AgentMeta, JournalEntry, RunInput, RunResult, RunSummary, StreamEvent, StreamHandlers } from './types.js';
 
 export interface GnlClientOptions {
-  /** @gnl/server root URL (e.g. 'http://localhost:3000' or '.../studio/api' for studio). */
+  /** @gnldev/server root URL (e.g. 'http://localhost:3000' or '.../studio/api' for studio). */
   baseUrl: string;
   /** Headers added to every request (e.g. Authorization). */
   headers?: Record<string, string>;
@@ -28,7 +28,7 @@ export class GnlClient {
     this.baseUrl = opts.baseUrl.replace(/\/$/, '');
     this.headers = { 'content-type': 'application/json', ...opts.headers };
     const f = opts.fetch ?? (globalThis.fetch ? globalThis.fetch.bind(globalThis) : undefined);
-    if (!f) throw new Error('@gnl/client: fetch not found — provide opts.fetch (Node <18).');
+    if (!f) throw new Error('@gnldev/client: fetch not found — provide opts.fetch (Node <18).');
     this._fetch = f;
   }
 
@@ -79,7 +79,7 @@ export class GnlClient {
     });
     if (!res.body) {
       const err = await res.text().catch(() => '');
-      throw new Error(`@gnl/client: no stream body (HTTP ${res.status}) ${err}`);
+      throw new Error(`@gnldev/client: no stream body (HTTP ${res.status}) ${err}`);
     }
     for await (const ev of parseSSEStream(res.body)) yield ev as StreamEvent;
   }

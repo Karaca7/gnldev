@@ -1,5 +1,5 @@
 // studio-ui auth: keeps the bearer token in localStorage, adds the Authorization header to requests.
-// Used while server opt-in auth (free roleAuth / paid @gnl/auth-ee) is on; the token stays empty while it's off.
+// Used while server opt-in auth (free roleAuth / paid @gnldev/auth-ee) is on; the token stays empty while it's off.
 const KEY = 'gnl-token';
 
 export function getToken(): string | null {

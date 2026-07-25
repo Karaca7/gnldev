@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { serve } from '@hono/node-server';
-import { toJournal } from '@gnl/durable';
-import { SqliteStorage } from '@gnl/durable/sqlite';
+import { toJournal } from '@gnldev/durable';
+import { SqliteStorage } from '@gnldev/durable/sqlite';
 import { createStudioApp, type StudioAppOptions } from './server.js';
 import { createStudioRunner } from './runner.js';
 import { aiToolSchema } from './ai-schema.js';
@@ -30,20 +30,20 @@ async function main(): Promise<void> {
     const projectDir = dirname(configFile);
     const mod: any = await import(pathToFileURL(configFile).href);
     const cfg = mod.default ?? mod.config ?? mod;
-    const { createGnl } = await import('@gnl/durable');
+    const { createGnl } = await import('@gnldev/durable');
     // Dev default: if the config has storage, derive memory so Playground conversations become threads —
-    // this is what powers the History sidebar (thread list + resume). @gnl/studio deliberately does NOT
-    // depend on @gnl/memory (it stays lean; memory is optional), so it's resolved dynamically from the
-    // PROJECT (the dir gnl.config lives in) — the same "resolved from the project" pattern @gnl/cli's
-    // runtime.ts uses (createRequire from projectDir, NOT from @gnl/studio's own location, so a real
-    // project's `node_modules/@gnl/memory` is found). Absent/unresolvable → the Playground still runs,
+    // this is what powers the History sidebar (thread list + resume). @gnldev/studio deliberately does NOT
+    // depend on @gnldev/memory (it stays lean; memory is optional), so it's resolved dynamically from the
+    // PROJECT (the dir gnl.config lives in) — the same "resolved from the project" pattern @gnldev/cli's
+    // runtime.ts uses (createRequire from projectDir, NOT from @gnldev/studio's own location, so a real
+    // project's `node_modules/@gnldev/memory` is found). Absent/unresolvable → the Playground still runs,
     // just without the thread list (prior behavior, no crash).
     let memory: StudioAppOptions['memory'] | undefined;
     let memoryFactory: ((storage: unknown) => unknown) | undefined;
     if (cfg.storage) {
       const req = createRequire(join(projectDir, 'noop.js'));
       const mem: any = await (async () => {
-        try { return await import(pathToFileURL(req.resolve('@gnl/memory')).href); }
+        try { return await import(pathToFileURL(req.resolve('@gnldev/memory')).href); }
         catch { return undefined; }
       })();
       if (mem?.memoryPreset) {
@@ -59,7 +59,7 @@ async function main(): Promise<void> {
         // reads). Respect a user-provided factory in the config; otherwise use the 'chat' preset.
         memoryFactory = cfg.memoryFactory ?? ((storage: unknown) => mem.memoryPreset(storage, 'chat'));
       } else {
-        console.warn('gnl studio: config has storage but @gnl/memory could not be resolved — Playground works, but the thread list/history is off. Install @gnl/memory in the project to enable it.');
+        console.warn('gnl studio: config has storage but @gnldev/memory could not be resolved — Playground works, but the thread list/history is off. Install @gnldev/memory in the project to enable it.');
       }
     }
     const gnl = createGnl(memoryFactory ? { ...cfg, memoryFactory } : cfg);

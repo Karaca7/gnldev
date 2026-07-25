@@ -1,6 +1,6 @@
 {
   "disabledTitle": "Evals kapalı",
-  "disabledDescription": "Bu görünümü açmak için @gnl/evals'ın scoreRun/evalDataset'ini sarmalayıp `scorers`/`datasets` olarak createStudioApi'ye ver.",
+  "disabledDescription": "Bu görünümü açmak için @gnldev/evals'ın scoreRun/evalDataset'ini sarmalayıp `scorers`/`datasets` olarak createStudioApi'ye ver.",
   "noDatasets": "Dataset yok.",
   "running": "Çalışıyor…",
   "runAction": "Çalıştır",

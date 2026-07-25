@@ -1,4 +1,4 @@
-// @gnl/schema-compat — detect + default rules + applyToolCompat pipeline.
+// @gnldev/schema-compat — detect + default rules + applyToolCompat pipeline.
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
 import { tool, jsonSchema } from 'ai';

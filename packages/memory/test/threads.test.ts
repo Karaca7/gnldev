@@ -1,6 +1,6 @@
 // Track 3: thread CRUD + clone + delete + reader invariant (on top of the MemoryStore port).
 import { describe, it, expect } from 'vitest';
-import { InMemoryStorage } from '@gnl/durable';
+import { InMemoryStorage } from '@gnldev/durable';
 import { AgentMemory } from '../src/index.js';
 
 const u = (content: string) => ({ role: 'user', content });

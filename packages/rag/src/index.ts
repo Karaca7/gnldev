@@ -1,4 +1,4 @@
-// @gnl/rag — vector store + RAG tool for AI SDK agents.
+// @gnldev/rag — vector store + RAG tool for AI SDK agents.
 // Automatically replayable/exactly-once when used as a tool inside runDurable (thanks to durableTool).
 export { InMemoryVectorStore, indexDocuments, tokenize, keywordScore } from './vector-store.js';
 export type { VectorStore, VectorDoc, VectorItem, VectorMatch, Embed, QueryOptions, DeleteWhere } from './vector-store.js';

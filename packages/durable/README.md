@@ -1,4 +1,4 @@
-# @gnl/durable
+# @gnldev/durable
 
 **Exactly-once + deterministic-replay durability for [Vercel AI SDK](https://sdk.vercel.ai) agents.**
 
@@ -8,14 +8,14 @@ it guarantees that tools **never run again** (exactly-once) and that the agent *
 **correctness.**
 
 ```bash
-npm i @gnl/durable ai @ai-sdk/anthropic
+npm i @gnldev/durable ai @ai-sdk/anthropic
 ```
 
 ## Durability in 2 lines
 
 ```ts
-import { runDurable } from '@gnl/durable';
-import { SqliteJournal } from '@gnl/durable/sqlite';
+import { runDurable } from '@gnldev/durable';
+import { SqliteJournal } from '@gnldev/durable/sqlite';
 import { anthropic } from '@ai-sdk/anthropic';
 import { tool, stepCountIs } from 'ai';
 import { z } from 'zod';
@@ -145,7 +145,7 @@ passed again.
 
 `runDurable` **throws** when a protection fires (loop / `maxToolCalls` / duplicate-side-effect /
 tainted-side-effect block). `streamDurable` can't throw mid-stream — the block shows up as an internal
-sentinel in `fullStream` (kept there deliberately: `@gnl/server` / `@gnl/agui` post-scan `steps` and
+sentinel in `fullStream` (kept there deliberately: `@gnldev/server` / `@gnldev/agui` post-scan `steps` and
 emit one terminal error event). As a **direct** consumer you still can't miss it:
 
 ```ts
@@ -163,12 +163,12 @@ try {
 - `await result.text` (and the other terminal promises — `content`, `response`, `toolCalls`, …) reject
   with the same typed error `streamFinishError(steps)` would return. `steps`/`finishReason`/`usage` and
   `fullStream` itself deliberately never reject — the post-scan contract (`streamFinishError(steps)`)
-  keeps working, which is what `@gnl/server`/`@gnl/agui` rely on.
+  keeps working, which is what `@gnldev/server`/`@gnldev/agui` rely on.
 
 ## Composable (any agent framework / your own loop)
 
 ```ts
-import { withDurableModel, durableTools } from '@gnl/durable';
+import { withDurableModel, durableTools } from '@gnldev/durable';
 const model = withDurableModel(anthropic('claude-opus-4-8'), { journal, runId });
 const tools = durableTools(myTools, { journal, runId });
 // use these with your own generateText OR with another framework's agent
@@ -177,8 +177,8 @@ const tools = durableTools(myTools, { journal, runId });
 ## Tools
 
 - **`gnl chat`** — durable agent terminal REPL (crash & resume, inline tool/cost). `gnl chat --db runs.db`
-- **`@gnl/studio`** (separate package) — web UI: runs/timeline + **time-travel** + approval queue.
-  `npx @gnl/studio`
+- **`@gnldev/studio`** (separate package) — web UI: runs/timeline + **time-travel** + approval queue.
+  `npx @gnldev/studio`
 
 ## Examples
 

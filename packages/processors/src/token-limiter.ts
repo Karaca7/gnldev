@@ -1,17 +1,17 @@
 // P2 (AUDIT-R2): "TokenLimiter" — a fuller sibling of `tokenLimit` (safety.ts).
 // `tokenLimit` keeps only the newest messages that fit the budget (simple sliding window); `tokenLimiter`
-// adds a pluggable `countTokens` (same convention as @gnl/memory's `approxTokens`: char/4 heuristic by
+// adds a pluggable `countTokens` (same convention as @gnldev/memory's `approxTokens`: char/4 heuristic by
 // default), an explicit oldest-first trim strategy that always protects the system message(s) + the
 // LAST user message, and an 'error' strategy (ProcessorTripwire) for callers who'd rather fail loudly
 // than silently drop context.
-import { ProcessorTripwire, recordProcessorReport } from '@gnl/durable';
-import type { Processor, ProcessorCtx, ProcessorInput } from '@gnl/durable';
+import { ProcessorTripwire, recordProcessorReport } from '@gnldev/durable';
+import type { Processor, ProcessorCtx, ProcessorInput } from '@gnldev/durable';
 
 export interface TokenLimiterOptions {
   /** Token budget for the whole input (system + messages). */
   maxInputTokens: number;
   /**
-   * Token counter (default: the char/4 heuristic, SAME as @gnl/memory's `approxTokens`). For a real
+   * Token counter (default: the char/4 heuristic, SAME as @gnldev/memory's `approxTokens`). For a real
    * tokenizer, pass e.g. `gpt-tokenizer`/`tokenx`/`js-tiktoken`: `countTokens: (t) => enc.encode(t).length`.
    */
   countTokens?: (text: string) => number;
@@ -28,7 +28,7 @@ export interface TokenLimiterOptions {
   keepSystem?: boolean;
 }
 
-/** Default token counter — char/4 heuristic (not a real tokenizer; same approximation as @gnl/memory's `approxTokens`). */
+/** Default token counter — char/4 heuristic (not a real tokenizer; same approximation as @gnldev/memory's `approxTokens`). */
 function approxTokens(s: string): number {
   return Math.ceil((s?.length ?? 0) / 4);
 }

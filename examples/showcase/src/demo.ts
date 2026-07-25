@@ -2,22 +2,22 @@
 // (file: import). NO API key required. Writes to `gnl-demo.db` → inspect visually with `pnpm studio`.
 import { rmSync } from 'node:fs';
 import { z } from 'zod';
-import { runDurable, resumeRun, getRunCost, forkRun, reconstructState, toJournal, createGnl, rolloverRun } from '@gnl/durable';
-import { SqliteStorage } from '@gnl/durable/sqlite';
-import { createAgentTool } from '@gnl/durable';
-import { AgentMemory } from '@gnl/memory';
-import { InMemoryVectorStore, indexDocuments, createRagTool, llmReranker, chunkDocuments, GraphRag } from '@gnl/rag';
-import { workflow, waitFor, retry, step } from '@gnl/workflow';
-import { piiRedactor, promptInjectionDetector, toolSearch } from '@gnl/processors';
-import { scoreRun, evalDataset, contains, toxicity, createDatasetsManager } from '@gnl/evals';
-import { createMcpTools, createMcpServer } from '@gnl/mcp';
-import { createRestApi } from '@gnl/server';
-import { exportRun } from '@gnl/otel';
-import { enqueue, createWorker } from '@gnl/queue';
-import { emit, createConsumer } from '@gnl/events';
-import { createA2ATool } from '@gnl/a2a';
-import { createCache } from '@gnl/cache';
-import { createStudioApp } from '@gnl/studio';
+import { runDurable, resumeRun, getRunCost, forkRun, reconstructState, toJournal, createGnl, rolloverRun } from '@gnldev/durable';
+import { SqliteStorage } from '@gnldev/durable/sqlite';
+import { createAgentTool } from '@gnldev/durable';
+import { AgentMemory } from '@gnldev/memory';
+import { InMemoryVectorStore, indexDocuments, createRagTool, llmReranker, chunkDocuments, GraphRag } from '@gnldev/rag';
+import { workflow, waitFor, retry, step } from '@gnldev/workflow';
+import { piiRedactor, promptInjectionDetector, toolSearch } from '@gnldev/processors';
+import { scoreRun, evalDataset, contains, toxicity, createDatasetsManager } from '@gnldev/evals';
+import { createMcpTools, createMcpServer } from '@gnldev/mcp';
+import { createRestApi } from '@gnldev/server';
+import { exportRun } from '@gnldev/otel';
+import { enqueue, createWorker } from '@gnldev/queue';
+import { emit, createConsumer } from '@gnldev/events';
+import { createA2ATool } from '@gnldev/a2a';
+import { createCache } from '@gnldev/cache';
+import { createStudioApp } from '@gnldev/studio';
 import { agentModel, finalText, toolCall, countToolResults, mkModel, embed, fakeMcpClient } from './mock.js';
 
 const assert = (cond: any, msg: string) => { if (!cond) throw new Error(msg); };
@@ -33,7 +33,7 @@ const journal = storage.runs; // low-level RunJournal (durable run/inspection)
 
 console.log('\n=== gnl-demo: 14 packages, no API key, durable showcase ===\n');
 
-await section('@gnl/durable — exactly-once (charge→crash→resume)', async () => {
+await section('@gnldev/durable — exactly-once (charge→crash→resume)', async () => {
   const charges = { n: 0 };
   const crash = { active: true };
   const tools = () => ({ charge: { execute: async () => ({ charged: (charges.n++, 20) }) } });
@@ -50,14 +50,14 @@ await section('@gnl/durable — exactly-once (charge→crash→resume)', async (
   return `charge = ${charges.n} despite the crash`;
 });
 
-await section('@gnl/processors — PII redaction (masked in the journal)', async () => {
+await section('@gnldev/processors — PII redaction (masked in the journal)', async () => {
   await runDurable({ runId: 'pii-1', journal, model: mkModel(async () => finalText('ok')), processors: [piiRedactor(), promptInjectionDetector()], prompt: 'mail: ada@x.com' });
   const input = await journal.get<any>('pii-1:input');
   assert(!JSON.stringify(input).includes('ada@x.com'), 'raw email remained in the journal');
   return 'raw email was not written to the journal';
 });
 
-await section('@gnl/memory — schema working memory + tool', async () => {
+await section('@gnldev/memory — schema working memory + tool', async () => {
   const mem = new AgentMemory({ storage, embed, workingMemory: { schema: z.object({ name: z.string().optional() }) } });
   const m = () => agentModel('updateWorkingMemory', 'wm1', { name: 'Ada' }, 'saved');
   await runDurable({ runId: 'mem-1', journal, model: m(), memory: mem, threadId: 'cust-7', prompt: 'save my name' });
@@ -66,7 +66,7 @@ await section('@gnl/memory — schema working memory + tool', async () => {
   return `working memory = ${JSON.stringify(wm)}`;
 });
 
-await section('@gnl/rag — retrieval + LLM reranker', async () => {
+await section('@gnldev/rag — retrieval + LLM reranker', async () => {
   const store = new InMemoryVectorStore();
   await indexDocuments(store, embed, [
     { id: '1', text: 'refund policy: 14 days' }, { id: '2', text: 'shipping time: 3 days' }, { id: '3', text: 'refund and shipping' },
@@ -77,7 +77,7 @@ await section('@gnl/rag — retrieval + LLM reranker', async () => {
   return `${res.length} documents after rerank`;
 });
 
-await section('@gnl/mcp — client durable + server-side exactly-once', async () => {
+await section('@gnldev/mcp — client durable + server-side exactly-once', async () => {
   const counter = { calls: 0 };
   const tools = await createMcpTools(fakeMcpClient(counter));
   await runDurable({ runId: 'mcp-1', journal, model: agentModel('lookup', 'l', { id: '42' }), tools, prompt: 'search' });
@@ -89,7 +89,7 @@ await section('@gnl/mcp — client durable + server-side exactly-once', async ()
   return `client+server exactly-once (total exec=${counter.calls})`;
 });
 
-await section('@gnl/durable — multi-agent (createAgentTool)', async () => {
+await section('@gnldev/durable — multi-agent (createAgentTool)', async () => {
   let sub = 0;
   const expert = createAgentTool({ journal, model: mkModel(async () => (sub++, finalText('expert: 42'))) }, { description: 'expert' });
   const m = () => agentModel('askExpert', 'ax', { task: '6x7' }, 'Result ready');
@@ -100,7 +100,7 @@ await section('@gnl/durable — multi-agent (createAgentTool)', async () => {
   return `sub-agent was skipped on resume (calls=${sub})`;
 });
 
-await section('@gnl/durable — suspend/resume (human approval)', async () => {
+await section('@gnldev/durable — suspend/resume (human approval)', async () => {
   const charges = { n: 0 };
   const guard = ({ args }: any) => ((args as any).amount > 1000 ? { action: 'require-approval' as const } : { action: 'allow' as const });
   const tools = () => ({ charge: { execute: async () => ({ charged: (charges.n++, 5000) }) } });
@@ -112,7 +112,7 @@ await section('@gnl/durable — suspend/resume (human approval)', async () => {
   return 'suspended → approved → exactly 1 charge';
 });
 
-await section('@gnl/workflow — evented (waitFor suspend/resume)', async () => {
+await section('@gnldev/workflow — evented (waitFor suspend/resume)', async () => {
   const bus = { ok: false };
   const wf = workflow<{ id: string }>().then({ id: 'prep', run: async (i: any) => i }).then(waitFor('approval', async () => (bus.ok ? { done: true } : null)) as any);
   const r1 = await wf.runResumable({ id: 'x' }, { runId: 'wf-1', journal });
@@ -123,7 +123,7 @@ await section('@gnl/workflow — evented (waitFor suspend/resume)', async () => 
   return 'waited for event → arrived → completed';
 });
 
-await section('@gnl/queue — durable job (worker)', async () => {
+await section('@gnldev/queue — durable job (worker)', async () => {
   const log: string[] = [];
   await enqueue(storage.work!, 'notify', { to: 'ada' }, { id: 'job-1' });
   const worker = createWorker(storage, { notify: async (p: any) => void log.push(p.to) });
@@ -132,7 +132,7 @@ await section('@gnl/queue — durable job (worker)', async () => {
   return `job ran on the worker (${log[0]})`;
 });
 
-await section('@gnl/events — event bus (exactly-once marking + at-least-once delivery) + fan-out', async () => {
+await section('@gnldev/events — event bus (exactly-once marking + at-least-once delivery) + fan-out', async () => {
   const a: string[] = [], b: string[] = [];
   await emit(storage.work!, 'orders', { id: 'o1' }, { id: 'o1' });
   await createConsumer(storage.work!, 'orders', (p: any) => void a.push(p.id), { name: 'A' }).poll();
@@ -141,9 +141,9 @@ await section('@gnl/events — event bus (exactly-once marking + at-least-once d
   return 'each consumer received the event once (fan-out)';
 });
 
-await section('@gnl/a2a + @gnl/server — remote agent (cross-network exactly-once)', async () => {
+await section('@gnldev/a2a + @gnldev/server — remote agent (cross-network exactly-once)', async () => {
   const remote = { charges: 0 };
-  const app = createRestApi({ journal: new (await import('@gnl/durable')).InMemoryJournal(), agents: { billing: { model: agentModel('charge', 'rc', { amt: 20 }, 'charged'), tools: { charge: { execute: async () => (remote.charges++, { ok: true }) } }, maxSteps: 6 } } });
+  const app = createRestApi({ journal: new (await import('@gnldev/durable')).InMemoryJournal(), agents: { billing: { model: agentModel('charge', 'rc', { amt: 20 }, 'charged'), tools: { charge: { execute: async () => (remote.charges++, { ok: true }) } }, maxSteps: 6 } } });
   const fetchImpl = ((u: any, i: any) => app.request(String(u), i)) as any;
   const t = createA2ATool({ endpoint: 'http://x', agentName: 'billing', fetchImpl });
   await t.execute!({ task: 'charge' }, { toolCallId: 'a1' } as any);
@@ -152,7 +152,7 @@ await section('@gnl/a2a + @gnl/server — remote agent (cross-network exactly-on
   return `remote agent idempotent (charge=${remote.charges})`;
 });
 
-await section('@gnl/cache — cross-run cache', async () => {
+await section('@gnldev/cache — cross-run cache', async () => {
   const cache = createCache(storage.cache!, 'embeds');
   let calls = 0;
   await cache.getOrCompute('refund', () => (calls++, [1, 0]));
@@ -161,7 +161,7 @@ await section('@gnl/cache — cross-run cache', async () => {
   return `computed once (cross-run hit)`;
 });
 
-await section('@gnl/evals — scoreRun + dataset bulk', async () => {
+await section('@gnldev/evals — scoreRun + dataset bulk', async () => {
   const s = await scoreRun(journal, 'order-1', [contains('Charged')]);
   assert(s.scores['contains'].score === 1, 'scoreRun incorrect');
   const ds = await evalDataset({ dataset: { id: 'd', cases: [{ id: 'c1', input: 'x', expected: 'echo:x' }] }, run: async (i) => `echo:${i}`, scorers: [contains('echo')], journal });
@@ -169,7 +169,7 @@ await section('@gnl/evals — scoreRun + dataset bulk', async () => {
   return `scoreRun + evalDataset (aggregate=${ds.aggregate['contains']})`;
 });
 
-await section('@gnl/otel — trace export (waterfall)', async () => {
+await section('@gnldev/otel — trace export (waterfall)', async () => {
   const { traceId, spans, exporter } = await exportRun(journal, 'order-1', { serviceName: 'demo' });
   const fin = (exporter as any).getFinishedSpans();
   const cost = await getRunCost(journal, 'order-1');
@@ -178,7 +178,7 @@ await section('@gnl/otel — trace export (waterfall)', async () => {
   return `traceId=${traceId.slice(0, 8)}… ${spans} span · $${cost.costUsd.toFixed(4)}\n     ${wf}`;
 });
 
-await section('@gnl/durable — time-travel + fork', async () => {
+await section('@gnldev/durable — time-travel + fork', async () => {
   const entries = await journal.readRun('order-1');
   const state = reconstructState(entries, 1);
   assert(state.messages.length >= 1, 'no state reconstruct');
@@ -187,7 +187,7 @@ await section('@gnl/durable — time-travel + fork', async () => {
   return `step-1 state + fork (${fork.copiedModel} model, ${fork.copiedTool} tool copied)`;
 });
 
-await section('@gnl/studio — state endpoint + fork (app.request)', async () => {
+await section('@gnldev/studio — state endpoint + fork (app.request)', async () => {
   const app = createStudioApp({ reader: toJournal(journal), resume: async () => ({ text: 'ok' }) });
   const caps = await (await app.request('/api/capabilities')).json();
   assert(caps.fork === true, 'fork capability disabled');
@@ -198,7 +198,7 @@ await section('@gnl/studio — state endpoint + fork (app.request)', async () =>
 
 // ── Features added in recent weeks (same pattern, mock model, no API key) ──────────────────────
 
-await section('@gnl/durable — dynamic agent network (createGnl networks + runNetwork)', async () => {
+await section('@gnldev/durable — dynamic agent network (createGnl networks + runNetwork)', async () => {
   // Scripted router: returns the given JSON decisions in order + counts how many times it was called
   // (the scriptedRouter pattern from network.test.ts). Determinism: the decision freezes into the
   // journal → the router is NOT CALLED AGAIN on resume (proven below with the call counter).
@@ -228,7 +228,7 @@ await section('@gnl/durable — dynamic agent network (createGnl networks + runN
   return `route→route→final (router calls=${c1}), router called 0 times on resume`;
 });
 
-await section('@gnl/workflow — retry(attempts) (fails twice → succeeds on the 3rd)', async () => {
+await section('@gnldev/workflow — retry(attempts) (fails twice → succeeds on the 3rd)', async () => {
   const tries = { n: 0 };
   const flaky = step('charge', async () => {
     tries.n++;
@@ -244,7 +244,7 @@ await section('@gnl/workflow — retry(attempts) (fails twice → succeeds on th
   return `2 failed attempts (journal attempts=${used}) → 3rd attempt succeeded`;
 });
 
-await section('@gnl/rag — chunkDocuments (markdown) → GraphRag indirect-relevance contrast', async () => {
+await section('@gnldev/rag — chunkDocuments (markdown) → GraphRag indirect-relevance contrast', async () => {
   const md = ['# Refunds', 'refund policy 14 days', '## Shipping', 'refund shipping form', '# Security', 'password reset', '## Compensation', 'shipping delay compensation'].join('\n');
   const chunks = chunkDocuments([{ id: 'kb', text: md }], { strategy: 'markdown' });
   assert(chunks.some((c) => c.metadata?.heading === 'Refunds > Shipping'), 'no markdown breadcrumb metadata');
@@ -264,7 +264,7 @@ await section('@gnl/rag — chunkDocuments (markdown) → GraphRag indirect-rele
   return `${chunks.length} chunks (with breadcrumbs); the indirect chunk only showed up in GraphRag`;
 });
 
-await section('@gnl/processors — toolSearch (4 tools → 1 selection, journal replay)', async () => {
+await section('@gnldev/processors — toolSearch (4 tools → 1 selection, journal replay)', async () => {
   const embedCalls = { n: 0 };
   const cEmbed = async (t: string) => (embedCalls.n++, embed(t));
   const tools = {
@@ -283,7 +283,7 @@ await section('@gnl/processors — toolSearch (4 tools → 1 selection, journal 
   return `'refund' was selected out of 4 tools (embed=${c1}) · selection replayed from the journal on resume`;
 });
 
-await section('@gnl/durable — rolloverRun (period rollover → context moved to the new period)', async () => {
+await section('@gnldev/durable — rolloverRun (period rollover → context moved to the new period)', async () => {
   // Period 1: a 2-step run (tool call + final).
   await runDurable({ runId: 'ro-1', journal, model: agentModel('note', 'n1', { text: 'Ada' }, 'Note taken.'), tools: { note: { execute: async (a: any) => ({ saved: a.text }) } }, prompt: 'my name is Ada, take a note' });
   // Rollover: the old run's final state is carried into the new period's :input seed (nothing is deleted).
@@ -297,7 +297,7 @@ await section('@gnl/durable — rolloverRun (period rollover → context moved t
   return `${rr.seededMessages} messages carried to ${rr.newRunId}, the new period's model saw the context`;
 });
 
-await section('@gnl/evals — toxicity(sampleFields=[]) + DatasetsManager compare (regression)', async () => {
+await section('@gnldev/evals — toxicity(sampleFields=[]) + DatasetsManager compare (regression)', async () => {
   // 1) toxicity: sampleFields=[] → input/context (toxic words) are NOT ADDED to the prompt, only the
   //    output is evaluated. Since the judge prompt never sees the toxic context, it returns a clean score.
   let judgePrompt = '';

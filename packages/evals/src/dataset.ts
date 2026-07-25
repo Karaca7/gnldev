@@ -9,8 +9,8 @@
 // because each case's `durableProcessorStep` key (`case:${c.id}`) is disjoint — concurrent cases never
 // contend on the same journal key, so "a completed case is skipped on the next run" still holds
 // exactly, at any concurrency.
-import { durableProcessorStep } from '@gnl/durable';
-import type { Journal } from '@gnl/durable';
+import { durableProcessorStep } from '@gnldev/durable';
+import type { Journal } from '@gnldev/durable';
 import type { Scorer, ScoreResult } from './scorer.js';
 
 export interface DatasetCase {

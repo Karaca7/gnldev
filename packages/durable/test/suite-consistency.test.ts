@@ -1,6 +1,6 @@
 // Task 3 — suite-consistency guard: assertSuiteConsistent + versionsEqual (see src/suite-consistency.ts).
-// Builds a FAKE project dir (node_modules/@gnl/<pkg>/package.json) and points `fromDir` at it — no real
-// sibling packages are touched. @gnl/durable's OWN version is read from the real package.json (whatever
+// Builds a FAKE project dir (node_modules/@gnldev/<pkg>/package.json) and points `fromDir` at it — no real
+// sibling packages are touched. @gnldev/durable's OWN version is read from the real package.json (whatever
 // it happens to be — the tests derive the "equal"/"mismatch" versions FROM it, so they stay correct
 // even if the version is bumped later).
 import { describe, it, expect, vi, afterEach, beforeAll, afterAll } from 'vitest';
@@ -16,11 +16,11 @@ const OWN_VERSION: string = JSON.parse(readFileSync(join(__dirname, '..', 'packa
 const [maj, min, pat] = OWN_VERSION.split('.').map((n) => Number(n) || 0);
 const MISMATCHED_VERSION = `${maj}.${min}.${pat + 1}`;
 
-/** Creates `<tmp>/node_modules/@gnl/<name>/package.json` with the given version. */
+/** Creates `<tmp>/node_modules/@gnldev/<name>/package.json` with the given version. */
 function fakeSibling(root: string, name: string, version: string): void {
-  const dir = join(root, 'node_modules', '@gnl', name);
+  const dir = join(root, 'node_modules', '@gnldev', name);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: `@gnl/${name}`, version }));
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: `@gnldev/${name}`, version }));
 }
 
 describe('versionsEqual (pure function)', () => {
@@ -69,8 +69,8 @@ describe('assertSuiteConsistent (fake project dir, no real sibling packages touc
     expect(() => assertSuiteConsistent({ packages: ['server'], fromDir: dir })).not.toThrow();
     expect(warnSpy).toHaveBeenCalledTimes(1);
     const msg = warnSpy.mock.calls[0]![0] as string;
-    expect(msg).toContain('@gnl/server@' + MISMATCHED_VERSION);
-    expect(msg).toContain('@gnl/durable@' + OWN_VERSION);
+    expect(msg).toContain('@gnldev/server@' + MISMATCHED_VERSION);
+    expect(msg).toContain('@gnldev/durable@' + OWN_VERSION);
     expect(msg).toContain('version skew');
   });
 
@@ -85,7 +85,7 @@ describe('assertSuiteConsistent (fake project dir, no real sibling packages touc
     expect(caught).toBeInstanceOf(SuiteVersionMismatchError);
     const err = caught as InstanceType<typeof SuiteVersionMismatchError>;
     expect(err.detail.durableVersion).toBe(OWN_VERSION);
-    expect(err.detail.mismatches).toEqual([{ pkg: '@gnl/studio', version: MISMATCHED_VERSION }]);
+    expect(err.detail.mismatches).toEqual([{ pkg: '@gnldev/studio', version: MISMATCHED_VERSION }]);
   });
 
   it('an uninstalled sibling package is silently skipped (no warn, no throw)', () => {
@@ -103,8 +103,8 @@ describe('assertSuiteConsistent (fake project dir, no real sibling packages touc
     assertSuiteConsistent({ packages: ['rag', 'evals'], fromDir: dir });
     expect(warnSpy).toHaveBeenCalledTimes(1);
     const msg = warnSpy.mock.calls[0]![0] as string;
-    expect(msg).toContain('@gnl/rag@' + MISMATCHED_VERSION);
-    expect(msg).toContain('@gnl/evals@' + MISMATCHED_VERSION);
+    expect(msg).toContain('@gnldev/rag@' + MISMATCHED_VERSION);
+    expect(msg).toContain('@gnldev/evals@' + MISMATCHED_VERSION);
   });
 
   it('default `packages` list is the documented common suite (memory/server/studio/rag/workflow/evals/processors/mcp/auth) — none installed here → silent', () => {

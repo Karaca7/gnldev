@@ -1,14 +1,14 @@
 // P2-waker (AUDIT-R2): createWorkflowWaker closes the "suspend and hope someone polls"
-// gap — sleep(id, untilMs)/waitFor suspend a @gnl/workflow run and NOTHING re-drives it on its own.
+// gap — sleep(id, untilMs)/waitFor suspend a @gnldev/workflow run and NOTHING re-drives it on its own.
 // This waker scans the P0.4 suspended-run registry (listWorkflowRuns) and calls a host-supplied
-// `resume` for runs that are actually due, the same poll-loop pattern @gnl/scheduler already uses
+// `resume` for runs that are actually due, the same poll-loop pattern @gnldev/scheduler already uses
 // for cron/interval/at triggers.
 import { describe, it, expect, vi } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
-import { workflow, step, sleep, waitFor, type JournalLike, type WorkflowRunStatus } from '@gnl/workflow';
+import { InMemoryJournal } from '@gnldev/durable';
+import { workflow, step, sleep, waitFor, type JournalLike, type WorkflowRunStatus } from '@gnldev/workflow';
 import { createWorkflowWaker } from '../src/index.js';
 
-describe('@gnl/scheduler — createWorkflowWaker', () => {
+describe('@gnldev/scheduler — createWorkflowWaker', () => {
   it('time-based sleep: NOT resumed before untilMs, resumed once it passes', async () => {
     const journal = new InMemoryJournal();
     const untilMs = Date.now() + 150;
@@ -159,7 +159,7 @@ describe('@gnl/scheduler — createWorkflowWaker', () => {
     // "runResumable is idempotent anyway" means the RUN'S OUTCOME is single-sourced (CAS on the
     // step's journal record) — NOT that a step's own internal side effects are magically deduped
     // (a bare counter inside a step is not itself durable; steps with side effects must be
-    // idempotent themselves, same as everywhere else in @gnl/workflow — see cas.test.ts). Both
+    // idempotent themselves, same as everywhere else in @gnldev/workflow — see cas.test.ts). Both
     // callers nonetheless converge on the IDENTICAL final result: the losing compute's output is
     // discarded, the winner's journaled record is what both resume() calls return.
     expect(results).toHaveLength(2);
@@ -265,7 +265,7 @@ describe('@gnl/scheduler — createWorkflowWaker', () => {
     expect(scans).toBeGreaterThan(scansAtStop);
   });
 
-  it('integration: a REAL @gnl/workflow with sleep() — suspend → waker resumes → completes', async () => {
+  it('integration: a REAL @gnldev/workflow with sleep() — suspend → waker resumes → completes', async () => {
     const journal = new InMemoryJournal();
     const untilMs = Date.now() + 60;
     const wf = workflow<{ x: number }>()

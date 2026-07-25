@@ -1,4 +1,4 @@
-// @gnl/auth — open-core auth seam:
+// @gnldev/auth — open-core auth seam:
 //   AuthProvider  → stable contract (server + studio gate against this)
 //   roleAuth      → free default (bearer/basic, viewer/admin)
 //   makeGate      → shared Hono gate (allow/deny)

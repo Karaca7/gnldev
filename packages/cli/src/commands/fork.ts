@@ -1,8 +1,8 @@
 // gnl fork <runId> [--step N] [--to newRunId] — non-destructive "re-run from here": copies the first
 // N model steps (+ referenced tool results) to a new runId (forkRun). The differentiator counterpart
 // of `gnl inspect`: inspect SHOWS a past state, fork lets you continue LIVE from it.
-import type * as Durable from '@gnl/durable';
-import type { ForkResult } from '@gnl/durable';
+import type * as Durable from '@gnldev/durable';
+import type { ForkResult } from '@gnldev/durable';
 import type { Command } from './types.js';
 import { flag, flagBool, positional } from '../args.js';
 import { loadConfig } from '../config.js';

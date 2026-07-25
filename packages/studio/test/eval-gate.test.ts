@@ -2,7 +2,7 @@
 // prod broke" safety net. The gate decision (passed/failed + aggregate) always lands in audit;
 // a blocked promote returns 412, active stays unchanged.
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
 import { createStudioApi } from '../src/server.js';
 
 const post = (app: any, path: string, body: unknown) =>

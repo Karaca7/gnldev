@@ -1,7 +1,7 @@
 // Phase 13A — SemanticMemory: given a query, recalls the relevant OLD message (even if outside recentN);
 // without a query, only the last N. Embeddings live in the journal (durable).
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
 import { SemanticMemory } from '../src/semantic-memory.js';
 
 // Deterministic keyword embed: each dimension is the count of one keyword.
@@ -11,7 +11,7 @@ const embed = async (text: string): Promise<number[]> => {
   return DIMS.map((k) => t.split(k).length - 1);
 };
 
-describe('@gnl/rag SemanticMemory', () => {
+describe('@gnldev/rag SemanticMemory', () => {
   it('recall: query brings back the old-but-relevant message; without a query, only the last N', async () => {
     const journal = new InMemoryJournal();
     const mem = new SemanticMemory({ journal, embed, recentN: 2, topK: 1 });

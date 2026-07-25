@@ -1,7 +1,7 @@
 // Dry-run: runs a managed workflow with a stub agent + a TEMPORARY journal — the real agent is
 // never called, no trace is left in the persistent journal; validates flow/template wiring end-to-end.
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
 import { createStudioApi, type WorkflowDef } from '../src/server.js';
 import { compileManagedWorkflow } from '../src/managed-workflow.js';
 

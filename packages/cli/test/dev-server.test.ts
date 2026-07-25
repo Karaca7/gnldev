@@ -1,16 +1,16 @@
-// buildDevApp: REST (@gnl/server) + Studio Playground (@gnl/studio) in a single Hono app.
+// buildDevApp: REST (@gnldev/server) + Studio Playground (@gnldev/studio) in a single Hono app.
 // buildDevApp takes the resolved runtime modules explicitly (see runtime.ts) — in production these
 // come from loadDevRuntime(projectDir, config) (project-resolved); here, since the test IS the
 // project (this is the monorepo), we statically import the same modules `gnl dev` would dynamically
 // resolve — same instances, same behavior, no dynamic-import indirection needed for a unit test.
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
-import * as Durable from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
+import * as Durable from '@gnldev/durable';
 import * as Hono from 'hono';
-import * as Server from '@gnl/server';
-import * as Studio from '@gnl/studio';
-import * as StudioAi from '@gnl/studio/ai';
-import * as Auth from '@gnl/auth';
+import * as Server from '@gnldev/server';
+import * as Studio from '@gnldev/studio';
+import * as StudioAi from '@gnldev/studio/ai';
+import * as Auth from '@gnldev/auth';
 import { buildDevApp, type DevRuntimeModules } from '../src/dev-server.js';
 
 const rt: DevRuntimeModules = { hono: Hono, durable: Durable, server: Server, studio: Studio, studioAi: StudioAi, auth: Auth };

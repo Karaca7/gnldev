@@ -42,7 +42,7 @@ export interface ObservationalMemoryConfig {
   countTokens?: (text: string) => number;
   /**
    * Async buffering: if true, compaction does NOT run SYNCHRONOUSLY on the read path; when the threshold
-   * is exceeded, `onCompact` fires (usually enqueues to @gnl/queue) → a worker calls `memory.compact(threadId)`.
+   * is exceeded, `onCompact` fires (usually enqueues to @gnldev/queue) → a worker calls `memory.compact(threadId)`.
    * LLM calls (Observer/Reflector) are taken out of the request flow.
    */
   buffering?: boolean;
@@ -59,7 +59,7 @@ export interface ObservationalMemoryConfig {
    */
   omVectors?: {
     /**
-     * Structural VectorStore (matches `@gnl/durable`'s `VectorStore` port from packages/durable/src/
+     * Structural VectorStore (matches `@gnldev/durable`'s `VectorStore` port from packages/durable/src/
      * storage.ts: `upsert(items)` / `query(embedding, topK)` — verified against that port AND its
      * in-memory/sqlite/postgres adapters: NONE of them accept a metadata-filter argument on `query`. So
      * thread-scoping in `recallObservationsSemantic` can't be pushed down to the store — it's done via an
@@ -72,8 +72,8 @@ export interface ObservationalMemoryConfig {
   };
 }
 
-/** A single vector row (mirrors `@gnl/durable`'s `VectorItem`/`VectorMatch` shape — kept local so this
- *  package doesn't need a compile-time dependency on `@gnl/durable`'s exact type, only structural compat). */
+/** A single vector row (mirrors `@gnldev/durable`'s `VectorItem`/`VectorMatch` shape — kept local so this
+ *  package doesn't need a compile-time dependency on `@gnldev/durable`'s exact type, only structural compat). */
 export interface OmVectorItem {
   id: string;
   text: string;

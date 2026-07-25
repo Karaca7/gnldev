@@ -21,7 +21,7 @@ export async function withTimeout<T>(p: PromiseLike<T>, ms: number, label: strin
       p,
       new Promise<never>((_, reject) => {
         timer = setTimeout(
-          () => reject(new StepTimeoutError(`@gnl/durable: '${label}' timed out after ${ms}ms`, { label, timeoutMs: ms })),
+          () => reject(new StepTimeoutError(`@gnldev/durable: '${label}' timed out after ${ms}ms`, { label, timeoutMs: ms })),
           ms,
         );
       }),

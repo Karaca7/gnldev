@@ -1,8 +1,8 @@
 // API-key'siz demo storage: createRestApi + echo mock model. Frontend (Vite :5173) buraya proxy'lenir.
 import { serve } from '@hono/node-server';
-import { createRestApi } from '@gnl/server';
-import { InMemoryJournal } from '@gnl/durable';
-import type { AgentConfig } from '@gnl/durable';
+import { createRestApi } from '@gnldev/server';
+import { InMemoryJournal } from '@gnldev/durable';
+import type { AgentConfig } from '@gnldev/durable';
 
 const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
 function lastUserText(prompt: any[]): string {

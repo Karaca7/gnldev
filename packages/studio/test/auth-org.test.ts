@@ -3,8 +3,8 @@
 // organization sees only itself in /organizations, and the read surface is automatically scoped
 // to its own organization.
 import { describe, it, expect, vi } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
-import { roleAuth, type AuthProvider } from '@gnl/auth';
+import { InMemoryJournal } from '@gnldev/durable';
+import { roleAuth, type AuthProvider } from '@gnldev/auth';
 import { createStudioApi } from '../src/server.js';
 
 const AUTH = () => roleAuth({
@@ -17,7 +17,7 @@ async function seed(journal: InMemoryJournal) {
   await journal.put('org:globex:r-globex:model:0', { content: [{ type: 'text', text: 'g' }], finishReason: 'stop' });
 }
 
-describe('@gnl/studio auth↔org', () => {
+describe('@gnldev/studio auth↔org', () => {
   it('/events is auth-gated: 401 without identity, 200 with ?token= (EventSource fallback)', async () => {
     const app = createStudioApi({ reader: new InMemoryJournal(), auth: AUTH() });
     expect((await app.request('/events')).status).toBe(401);
@@ -513,7 +513,7 @@ describe('@gnl/studio auth↔org', () => {
 
   it('2.1: even if opts.org is not given, if the auth provider declares multiOrganization=true (paid license), org surfaces open up', async () => {
     // A fake "licensed" provider: uses roleAuth's behavior but capabilities() returns multiOrganization:true
-    // (as the real @gnl/auth-ee does) — the org option is never given at all.
+    // (as the real @gnldev/auth-ee does) — the org option is never given at all.
     const base = roleAuth({ admin: { token: 'lic-adm' } })!;
     const licensedAuth: AuthProvider = {
       authenticate: (c) => base.authenticate(c),

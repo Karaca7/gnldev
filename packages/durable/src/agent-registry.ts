@@ -156,7 +156,7 @@ export async function isAgentServable(journal: Journal, name: string): Promise<b
 /** Lists every agent registry record (requires `listKeys`; throws a clear error otherwise). */
 export async function listAgentRegistry(journal: Journal): Promise<AgentRegistryRecord[]> {
   if (typeof journal.listKeys !== 'function') {
-    throw new Error('@gnl/durable: listAgentRegistry requires the journal to implement `listKeys` (see the Journal interface) — cannot enumerate the registry without it.');
+    throw new Error('@gnldev/durable: listAgentRegistry requires the journal to implement `listKeys` (see the Journal interface) — cannot enumerate the registry without it.');
   }
   const keys = await journal.listKeys(AGENT_REGISTRY_PRE);
   const out: AgentRegistryRecord[] = [];

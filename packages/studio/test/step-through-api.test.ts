@@ -1,6 +1,6 @@
 // Studio /workflows/:name/run: body.maxSteps is passed to the runner; a paused response surfaces.
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
 import { createStudioApi } from '../src/server.js';
 
 describe('studio: workflow step-through API', () => {

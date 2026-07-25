@@ -1,6 +1,6 @@
-// @gnl/memory presets: defaultEmbed is deterministic/normalized + memoryPreset produces a working AgentMemory.
+// @gnldev/memory presets: defaultEmbed is deterministic/normalized + memoryPreset produces a working AgentMemory.
 import { describe, it, expect } from 'vitest';
-import { InMemoryStorage } from '@gnl/durable';
+import { InMemoryStorage } from '@gnldev/durable';
 import { AgentMemory, defaultEmbed, createDefaultEmbed, memoryPreset } from '../src/index.js';
 
 describe('defaultEmbed', () => {

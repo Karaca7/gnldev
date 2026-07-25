@@ -1,8 +1,8 @@
 // gnl resume <runId> --agent <name> — continue a suspended (or crashed mid-run) run live, using a
 // registered agent's model/tools/guard. This is durability's "pays the bills" command: resumeRun
 // self-contained reads the original input back from the journal (no need to re-supply the prompt).
-import type * as Durable from '@gnl/durable';
-import type { Interrupt } from '@gnl/durable';
+import type * as Durable from '@gnldev/durable';
+import type { Interrupt } from '@gnldev/durable';
 import type { Command } from './types.js';
 import { flag, flagBool, positional } from '../args.js';
 import { loadConfig } from '../config.js';

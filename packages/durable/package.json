@@ -1,5 +1,5 @@
 {
-  "name": "@gnl/durable",
+  "name": "@gnldev/durable",
   "version": "0.0.0",
   "license": "Apache-2.0",
   "description": "Exactly-once + deterministic-replay durability layer for Vercel AI SDK agents. Drop-in: generateText -> runDurable.",
@@ -33,13 +33,13 @@
     "test": "vitest run"
   },
   "peerDependencies": {
-    "@gnl/schema-compat": "workspace:^",
+    "@gnldev/schema-compat": "workspace:^",
     "ai": "^5.0.0",
     "ioredis": "^5.4.0",
     "pg": "^8.0.0"
   },
   "peerDependenciesMeta": {
-    "@gnl/schema-compat": {
+    "@gnldev/schema-compat": {
       "optional": true
     },
     "ioredis": {
@@ -51,7 +51,7 @@
   },
   "devDependencies": {
     "@ai-sdk/provider": "^2.0.0",
-    "@gnl/schema-compat": "workspace:*",
+    "@gnldev/schema-compat": "workspace:*",
     "ai": "^5.0.0",
     "ioredis": "^5.4.0",
     "pg": "^8.0.0",

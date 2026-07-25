@@ -11,7 +11,7 @@ import enScheduler from '../i18n/locales/en/scheduler.json';
 
 // ── Pure logic (tested) — the server already returns the raw trigger state (kind/value/nextRunAt
 // epoch ms); here only the PRESENTATION (readable duration/date/tone) is derived. See
-// packages/scheduler/src/index.ts `listTriggers` for the @gnl/scheduler `TriggerInfo` shape. ──────
+// packages/scheduler/src/index.ts `listTriggers` for the @gnldev/scheduler `TriggerInfo` shape. ──────
 //
 // These pure functions can also be called directly outside the component (from a test file); so
 // they're not hard-dependent on the i18next context — `t` is optional, and if not given, a fallback
@@ -63,7 +63,7 @@ export function statusTone(
   return trigger.nextRunAt <= now ? 'warning' : 'muted';
 }
 
-// Scheduler: live table of @gnl/scheduler triggers (READ-ONLY from the journal — see server side
+// Scheduler: live table of @gnldev/scheduler triggers (READ-ONLY from the journal — see server side
 // GET /scheduler/triggers). Auto-refreshes every 5s (same live-list spirit as the Cache view).
 export function Scheduler() {
   const { t } = useTranslation('scheduler');

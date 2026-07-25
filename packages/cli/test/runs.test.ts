@@ -1,7 +1,7 @@
 // gnl runs: listRunsCore (pure) + runsCommand.run's --json output shape.
 import { describe, it, expect } from 'vitest';
-import * as Durable from '@gnl/durable';
-import { InMemoryJournal, runDurable } from '@gnl/durable';
+import * as Durable from '@gnldev/durable';
+import { InMemoryJournal, runDurable } from '@gnldev/durable';
 import { listRunsCore } from '../src/commands/runs.js';
 import { mkModel, finalText, agentModel, captureLog } from './helpers.js';
 

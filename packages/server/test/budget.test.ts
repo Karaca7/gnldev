@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import { tool } from 'ai';
 import { z } from 'zod';
-import { InMemoryJournal, BUDGET_PRE } from '@gnl/durable';
+import { InMemoryJournal, BUDGET_PRE } from '@gnldev/durable';
 import { createRestApi } from '../src/index.js';
 
 function mkModel(tokens = 10): any {
@@ -29,7 +29,7 @@ const run = (api: any, org: string | undefined, runId: string) =>
     body: JSON.stringify({ runId, prompt: 'hi' }),
   });
 
-describe('@gnl/server budget enforcement', () => {
+describe('@gnldev/server budget enforcement', () => {
   it('once the journal budget is exceeded, a new run gets 402 (usage + limit in the body); other orgs are unaffected', async () => {
     const journal = new InMemoryJournal();
     await journal.put(BUDGET_PRE + 'acme', { tokenLimit: 15 });

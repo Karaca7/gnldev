@@ -1,5 +1,5 @@
 // K1/GOREV W1 (B) — streamFinishError: helper exported so code that consumes streamDurable directly
-// (manually reading fullStream, NOT @gnl/server sse.ts / @gnl/agui) can convert the blocked/limit
+// (manually reading fullStream, NOT @gnldev/server sse.ts / @gnldev/agui) can convert the blocked/limit
 // sentinel into a TYPED error on its own. Uses the SAME scan order as blockedFromSteps/limitBreachFromSteps
 // (runDurableInner calls this same function too — the conversion logic lives in one place).
 import { describe, it, expect } from 'vitest';

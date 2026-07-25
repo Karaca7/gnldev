@@ -1,5 +1,5 @@
 {
-  "name": "@gnl/stripe-idempotency",
+  "name": "@gnldev/stripe-idempotency",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -8,7 +8,7 @@
     "demo": "tsx src/demo.ts"
   },
   "dependencies": {
-    "@gnl/durable": "workspace:*"
+    "@gnldev/durable": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.19.0"

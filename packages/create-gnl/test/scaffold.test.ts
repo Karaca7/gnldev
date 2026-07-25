@@ -1,5 +1,5 @@
 // Runs the create-gnl bin as a real child process: verifies end-to-end that it correctly
-// wires up to `@gnl/cli`'s scaffold (workspace resolution + dist output). npm install is NOT performed.
+// wires up to `@gnldev/cli`'s scaffold (workspace resolution + dist output). npm install is NOT performed.
 import { describe, it, expect, afterEach, beforeAll } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -41,9 +41,9 @@ describe('create-gnl bin (child process)', () => {
     const pkg = JSON.parse(readFileSync(join(target, 'package.json'), 'utf8'));
     expect(pkg.name).toBe('my-agent');
     expect(pkg.scripts.dev).toBe('gnl dev');
-    expect(pkg.dependencies['@gnl/durable']).toBeDefined();
-    expect(pkg.dependencies['@gnl/server']).toBeDefined();
-    expect(pkg.dependencies['@gnl/studio']).toBeDefined();
+    expect(pkg.dependencies['@gnldev/durable']).toBeDefined();
+    expect(pkg.dependencies['@gnldev/server']).toBeDefined();
+    expect(pkg.dependencies['@gnldev/studio']).toBeDefined();
 
     const readme = readFileSync(join(target, 'README.md'), 'utf8');
     expect(readme).toContain('my-agent');

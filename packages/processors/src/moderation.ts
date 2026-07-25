@@ -1,5 +1,5 @@
-import { ProcessorTripwire, recordProcessorReport } from '@gnl/durable';
-import type { Processor, ProcessorInput, ProcessorOutput, ProcessorCtx } from '@gnl/durable';
+import { ProcessorTripwire, recordProcessorReport } from '@gnldev/durable';
+import type { Processor, ProcessorInput, ProcessorOutput, ProcessorCtx } from '@gnldev/durable';
 
 export interface ModerationOptions {
   /**

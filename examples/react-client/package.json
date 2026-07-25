@@ -1,16 +1,16 @@
 {
-  "name": "@gnl/react-client-example",
+  "name": "@gnldev/react-client-example",
   "private": true,
   "type": "module",
-  "description": "@gnl/client/react demo: useChat + streaming + interrupt approve, against an API-key-free backend.",
+  "description": "@gnldev/client/react demo: useChat + streaming + interrupt approve, against an API-key-free backend.",
   "scripts": {
     "server": "tsx src/server.ts",
     "dev": "vite"
   },
   "dependencies": {
-    "@gnl/client": "workspace:*",
-    "@gnl/durable": "workspace:*",
-    "@gnl/server": "workspace:*",
+    "@gnldev/client": "workspace:*",
+    "@gnldev/durable": "workspace:*",
+    "@gnldev/server": "workspace:*",
     "ai": "^5.0.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0"

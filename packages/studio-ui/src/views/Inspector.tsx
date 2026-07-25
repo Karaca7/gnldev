@@ -35,7 +35,7 @@ function forkRoot(id: string): string {
 /**
  * Org derivation from a runId (pure, tested). In the ROOT (unscoped) Studio view, org-scoped runs
  * surface with an `org:<orgId>:` prefix in their runId (journal key `org:acme:order-1:model:0` →
- * runId `org:acme:order-1`, see @gnl/durable parseJournalKey). There is no separate org field on
+ * runId `org:acme:order-1`, see @gnldev/durable parseJournalKey). There is no separate org field on
  * RunSummary — it is DERIVED from this prefix here. `displayId` is the prefix-stripped, readable id
  * shown to the user; the FULL `runId` must still be used for every API call (readRun/fork/purge/…).
  * A runId with no `org:` prefix → `{ org: null, displayId: runId }` (unchanged).
@@ -1608,7 +1608,7 @@ function DecisionList({ report }: { report: RegressionReport }) {
 }
 
 // ── Processor (audit/compliance) tab: findings left behind by pii-redactor/prompt-injection/moderation
-// processors in this run (@gnl/durable readProcessorReports — GET /runs/:id/processors).
+// processors in this run (@gnldev/durable readProcessorReports — GET /runs/:id/processors).
 // BROWSER VERIFICATION: this view's actual visual layout must be manually verified (within this task's
 // scope only the code/data-flow was written and auto-tested).
 /** Short summary for known built-in processors; unknown ones fall back to raw JSON. `t` is passed in by

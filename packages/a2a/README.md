@@ -1,13 +1,13 @@
-# @gnl/a2a
+# @gnldev/a2a
 
-**Remote agent-to-agent**: calls a remote agent on a `@gnl/server` REST endpoint as an AI SDK tool. **Exactly-once across the network:** runId is deterministic (`a2a:<toolCallId>`) → the remote `runDurable` replays the same runId (a second POST has no side effect). When wrapped in durableTool inside a parent `runDurable`, the remote call is skipped on parent resume.
+**Remote agent-to-agent**: calls a remote agent on a `@gnldev/server` REST endpoint as an AI SDK tool. **Exactly-once across the network:** runId is deterministic (`a2a:<toolCallId>`) → the remote `runDurable` replays the same runId (a second POST has no side effect). When wrapped in durableTool inside a parent `runDurable`, the remote call is skipped on parent resume.
 
 ```bash
-npm i @gnl/a2a   # peer: ai, zod
+npm i @gnldev/a2a   # peer: ai, zod
 ```
 
 ```ts
-import { a2aTool } from '@gnl/a2a';
+import { a2aTool } from '@gnldev/a2a';
 
 const tools = {
   research: a2aTool({ endpoint: 'https://agents.internal', agentName: 'researcher' }),

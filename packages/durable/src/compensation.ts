@@ -33,7 +33,7 @@ export class CompensatedRunError extends Error {
   public readonly detail: { runId: string };
   constructor(runId: string) {
     super(
-      `@gnl/durable: run '${runId}' has been COMPENSATED (its side effects were unwound) — it cannot ` +
+      `@gnldev/durable: run '${runId}' has been COMPENSATED (its side effects were unwound) — it cannot ` +
       'continue: replaying/continuing would treat already-reverted side effects as if they still hold.',
     );
     this.name = 'CompensatedRunError';
@@ -131,7 +131,7 @@ export async function compensateRun(
 ): Promise<CompensationReport> {
   const { journal, tools = {}, dryRun = false } = opts;
   if (typeof journal.readRun !== 'function') {
-    throw new Error('@gnl/durable compensateRun: the journal does not support readRun — cannot enumerate the run');
+    throw new Error('@gnldev/durable compensateRun: the journal does not support readRun — cannot enumerate the run');
   }
   const entries = await journal.readRun(runId);
   const callsMap = callsFromModelSteps(entries);

@@ -42,8 +42,8 @@ export class GraphRag implements VectorStore {
     this.hops = opts.hops ?? 1;
     this.decay = opts.decay ?? 0.7;
     this.seeds = opts.seeds ?? 4;
-    if (this.threshold < -1 || this.threshold > 1) throw new Error('@gnl/rag GraphRag: threshold must be in the range [-1,1]');
-    if (this.decay <= 0 || this.decay > 1) throw new Error('@gnl/rag GraphRag: 0 < decay <= 1 must hold');
+    if (this.threshold < -1 || this.threshold > 1) throw new Error('@gnldev/rag GraphRag: threshold must be in the range [-1,1]');
+    if (this.decay <= 0 || this.decay > 1) throw new Error('@gnldev/rag GraphRag: 0 < decay <= 1 must hold');
   }
 
   async upsert(newItems: VectorItem[]): Promise<void> {

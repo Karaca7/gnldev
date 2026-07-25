@@ -307,11 +307,11 @@ function NewVersionForm({ onCreated, agentNames, draft, setDraft, nameFixed }: {
   );
 }
 
-/** Agent approval registry status badge (see @gnl/durable's agent-registry.ts): `pending` awaits an
+/** Agent approval registry status badge (see @gnldev/durable's agent-registry.ts): `pending` awaits an
     admin decision, `approved` is servable, `changed` was approved but its config DRIFTED since (needs
     re-approval — deliberately worded/colored the SAME as `blocked`, both mean "not servable right now",
     but the icon+label distinguish "drifted, review the diff" from "explicitly blocked"), `blocked` is
-    explicitly denied. Renders nothing when there's no record yet (agent not seen by @gnl/server's boot,
+    explicitly denied. Renders nothing when there's no record yet (agent not seen by @gnldev/server's boot,
     or the caller can't see the registry — see canSeeRegistry in Agents() below). */
 function AgentApprovalBadge({ record }: { record?: AgentRegistryRecord }) {
   const { t } = useTranslation('agents');
@@ -333,7 +333,7 @@ function AgentApprovalBadge({ record }: { record?: AgentRegistryRecord }) {
 }
 
 /** Approve/Block buttons for one agent's registry record — only rendered when `canSeeRegistry` (see
-    Agents()) and a record actually exists (nothing to act on before @gnl/server's boot has recorded
+    Agents()) and a record actually exists (nothing to act on before @gnldev/server's boot has recorded
     it). `busy` locks BOTH buttons for this agent while a request is in flight (prevents a double-click
     race, same pattern as VersionPanel's promote lock). */
 function AgentApprovalControls({ name, record, busy, onApprove, onBlock }: {
@@ -385,7 +385,7 @@ export function Agents() {
   const canManage = !!caps.data?.agentVersions;
   const totalCount = (agents.data?.length ?? 0) + managedOnly.length;
 
-  // Agent APPROVAL registry (governance — see @gnl/durable's agent-registry.ts): GET/approve/block are
+  // Agent APPROVAL registry (governance — see @gnldev/durable's agent-registry.ts): GET/approve/block are
   // platform-admin gated server-side (approval is "may this code-agent serve AT ALL", never per-org —
   // same reasoning as org create/delete). `canSeeRegistry` mirrors the server's own `requirePlatformAdmin`
   // check (org-bound → never; strict multi-org → needs the explicit platform-admin grant; otherwise the
@@ -597,7 +597,7 @@ export function Agents() {
                     </div>
                   )}
                   {/* Agent approval registry (governance) — see AgentApprovalBadge's JSDoc. Absent
-                      entirely when the caller can't see the registry or @gnl/server hasn't recorded
+                      entirely when the caller can't see the registry or @gnldev/server hasn't recorded
                       this agent yet (canSeeRegistry / registryByName). */}
                   {registryByName.get(a.name) && (
                     <div className="mt-1.5 flex flex-wrap items-center gap-1.5">

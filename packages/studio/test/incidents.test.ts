@@ -1,8 +1,8 @@
 // GET /runs/:id/incidents — the run's guard incidents (duplicate guard / loop detection) as
 // queryable telemetry. Mirrors the /processors contract: listKeys-less journal → empty list.
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
-import { recordIncident } from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
+import { recordIncident } from '@gnldev/durable';
 import { createStudioApi } from '../src/server.js';
 
 describe('GET /runs/:id/incidents', () => {

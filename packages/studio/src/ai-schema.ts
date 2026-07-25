@@ -1,4 +1,4 @@
-// AI SDK bridge — OPTIONAL subpath (`@gnl/studio/ai`). ONLY this file imports `ai`;
+// AI SDK bridge — OPTIONAL subpath (`@gnldev/studio/ai`). ONLY this file imports `ai`;
 // the studio core (`.` export, server, runner) stays `ai`-free. Converts a tool's zod (or other AI SDK)
 // input schema to JSON Schema so the Tools view can generate a form.
 //   createStudioRunner(gnl, config, { toJsonSchema: aiToolSchema })

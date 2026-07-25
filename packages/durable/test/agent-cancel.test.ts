@@ -1,5 +1,5 @@
 // P2-cancel (AUDIT-R2 Dalga-2): durable cross-worker AGENT-run cancel — the agent twin of
-// @gnl/workflow's cancelWorkflowRun. Mirrors compensation.test.ts's terminal-refusal test style.
+// @gnldev/workflow's cancelWorkflowRun. Mirrors compensation.test.ts's terminal-refusal test style.
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
 import { tool } from 'ai';

@@ -7,7 +7,7 @@
 //   tool-error {toolCallId,toolName,error} (NON-terminal — the loop may continue; distinct from `error`)
 //   raw {type} (unrecognized part marker — see the default case) · error {error} (terminal)
 //   interrupt {interrupts[]} (derived when the stream ends) · done {runId,finishReason,usage}
-// The same schema is also used in the @gnl/studio playground → @gnl/client can connect to either endpoint.
+// The same schema is also used in the @gnldev/studio playground → @gnldev/client can connect to either endpoint.
 //
 // P0.1 (AUDIT-R2): the old switch knew only 4 part types and had NO default — every
 // reasoning-*/source/file/step-*/tool-input-* part from the AI SDK fullStream was SILENTLY DROPPED
@@ -33,8 +33,8 @@
 // assertions look at the event/data fields, they don't care about id).
 import { streamSSE } from 'hono/streaming';
 import type { Context } from 'hono';
-import { limitBreachFromSteps, blockedFromSteps, BLOCKED_ERROR_CODES } from '@gnl/durable';
-import type { Interrupt } from '@gnl/durable';
+import { limitBreachFromSteps, blockedFromSteps, BLOCKED_ERROR_CODES } from '@gnldev/durable';
+import type { Interrupt } from '@gnldev/durable';
 
 function hasSuspend(part: any): boolean {
   return part?.type === 'tool-result' && !!part.output?.__gnl_suspend;

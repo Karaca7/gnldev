@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { workflow, step } from '../src/index.js';
 
-// A tiny JournalLike with no package dependency (in reality, @gnl/durable's journal is provided).
+// A tiny JournalLike with no package dependency (in reality, @gnldev/durable's journal is provided).
 function memJournal() {
   const m = new Map<string, unknown>();
   return {
@@ -14,7 +14,7 @@ function memJournal() {
   };
 }
 
-describe('@gnl/workflow — durable steps', () => {
+describe('@gnldev/workflow — durable steps', () => {
   it('sequential: a completed step does not run again after a crash (exactly-once)', async () => {
     const journal = memJournal();
     const fx: string[] = [];

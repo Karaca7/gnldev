@@ -1,9 +1,9 @@
 // Cache view: GET /cache/stats + POST /cache/invalidate. Studio itself has NO dependency on
-// @gnl/cache (bridged via the StudioCache interface, same pattern as queue/vectors) — here we
+// @gnldev/cache (bridged via the StudioCache interface, same pattern as queue/vectors) — here we
 // mock a fake stats()/invalidate() and verify the capability flag, permission (write) + audit +
 // 501/no-op behavior.
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
 import { createStudioApi, type StudioCache, type StudioCacheStats } from '../src/server.js';
 
 /** Simple fake cache: fixed stats + records invalidate calls. */
@@ -38,7 +38,7 @@ describe('GET /cache/stats', () => {
     expect(await res.json()).toEqual({ hits: 0, misses: 0, hitRate: 0, size: 0 });
   });
 
-  it('401 without read permission (read denial — write denial returns 403, see @gnl/auth gate.ts)', async () => {
+  it('401 without read permission (read denial — write denial returns 403, see @gnldev/auth gate.ts)', async () => {
     const cache = fakeCache({ hits: 1, misses: 1, hitRate: 0.5, size: 1 });
     const app = createStudioApi({ reader: new InMemoryJournal(), cache, auth: { read: () => false } });
     const res = await app.request('/cache/stats');

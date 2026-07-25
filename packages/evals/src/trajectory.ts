@@ -1,21 +1,21 @@
 // P1.1 (AUDIT-R2) — Trajectory/tool-call scorer: "did the agent call the right tools, in
 // the right order, without calling the wrong ones, within budget?" — the scorer at the centre of the
-// governance thesis. Built directly on `buildDecisionSequence` (@gnl/durable/regression.ts), which was
+// governance thesis. Built directly on `buildDecisionSequence` (@gnldev/durable/regression.ts), which was
 // PRIVATE until now (exported for exactly this purpose) — no duplicate decision-sequence logic here.
 //
 // PURE/DETERMINISTIC: no model call, unlike llm-judge. Same decision sequence → same score, always.
 //
 // Three ways to use it, cheapest-to-richest:
 //  - `createTrajectoryScorer(opts)` — pure core: scores `sample.toolCalls` (string[]) or
-//    `sample.decisionPoints` (DecisionPoint[]) directly. No @gnl/durable I/O — usable in unit tests
+//    `sample.decisionPoints` (DecisionPoint[]) directly. No @gnldev/durable I/O — usable in unit tests
 //    with a hand-built sequence.
 //  - `scoreTrajectory(reader, runId, opts)` — reads `runId`'s journal via `reader.readRun`, rebuilds
 //    the decision sequence, scores it. One-shot, not a Scorer.
 //  - `trajectoryScorerFor(reader, opts)` — Scorer adapter: `score(sample)` reads `sample.runId` and
 //    delegates to `scoreTrajectory`. Drop straight into `scoreRun`/`evalDataset`'s scorer list — both
 //    populate `sample.runId` (see score-run.ts / dataset.ts) so this works with zero extra wiring.
-import type { DecisionPoint, JournalReader } from '@gnl/durable';
-import { buildDecisionSequence } from '@gnl/durable';
+import type { DecisionPoint, JournalReader } from '@gnldev/durable';
+import { buildDecisionSequence } from '@gnldev/durable';
 import type { Scorer, ScoreResult, ScoreSample } from './scorer.js';
 
 export interface TrajectoryWeights {

@@ -1,4 +1,4 @@
-# @gnl/events
+# @gnldev/events
 
 A **durable event/notification bus** on top of the journal. `emit` writes to an append-only log; each
 consumer processes events with its own ack marker: **exactly-once marking + at-least-once delivery**. The
@@ -9,12 +9,12 @@ inside it (`runDurable`/`claim`). Fan-out: N consumers → each gets every event
 marker stream.
 
 ```bash
-npm i @gnl/events   # peer: @gnl/durable
+npm i @gnldev/events   # peer: @gnldev/durable
 ```
 
 ```ts
-import { emit, createConsumer } from '@gnl/events';
-import { SqliteJournal } from '@gnl/durable/sqlite';
+import { emit, createConsumer } from '@gnldev/events';
+import { SqliteJournal } from '@gnldev/durable/sqlite';
 
 const journal = new SqliteJournal('runs.db');
 

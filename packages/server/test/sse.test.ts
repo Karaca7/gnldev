@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import { tool } from 'ai';
 import { z } from 'zod';
-import { InMemoryJournal } from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
 import { createRestApi } from '../src/index.js';
 
 const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
@@ -115,7 +115,7 @@ async function readSSE(res: Response): Promise<{ event: string; data: any }[]> {
     });
 }
 
-describe('@gnl/server SSE', () => {
+describe('@gnldev/server SSE', () => {
   it('GET /agents → lists registered agent metadata', async () => {
     const api = createRestApi({ journal: new InMemoryJournal(), agents: { chat: { model: textMock(), maxSteps: 4 } } });
     const agents = (await (await api.request('/agents')).json()) as any[];

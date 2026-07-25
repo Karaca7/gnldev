@@ -1,4 +1,4 @@
-// Journal history → `useChat({ messages: … })`-shaped `UIMessage[]`. Built on @gnl/durable's
+// Journal history → `useChat({ messages: … })`-shaped `UIMessage[]`. Built on @gnldev/durable's
 // `reconstructState` (packages/durable/src/time-travel.ts) — a PURE walk over `JournalEntry[]` that
 // already solves the hard part (matching tool-calls to tool-results, including the args-mode
 // idempotency dedup cases documented at the top of time-travel.ts). We deliberately do NOT touch
@@ -14,8 +14,8 @@
 // instead of relying on reconstructState's simplified content. Files/sources ARE dropped for v1 (no
 // `file`/`source` UIMessage parts are produced) — a real limitation, called out here rather than papered
 // over.
-import { reconstructState } from '@gnl/durable';
-import type { Interrupt, JournalEntry, ReconstructSeed } from '@gnl/durable';
+import { reconstructState } from '@gnldev/durable';
+import type { Interrupt, JournalEntry, ReconstructSeed } from '@gnldev/durable';
 import type { UIMessage } from 'ai';
 import { maskSentinelOutput } from './sentinel-mask.js';
 
@@ -163,5 +163,5 @@ export function toUIMessages(entries: JournalEntry[], opts: ToUIMessagesOptions 
 }
 
 // Re-exported for callers who want to inspect a raw Interrupt shape alongside toUIMessages' output
-// (e.g. to render an approval banner keyed by toolCallId) without a separate @gnl/durable import.
+// (e.g. to render an approval banner keyed by toolCallId) without a separate @gnldev/durable import.
 export type { Interrupt };

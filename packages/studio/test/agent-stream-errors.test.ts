@@ -8,7 +8,7 @@
 // (after pipeAgentStream has started writing SSE frames) are a DIFFERENT contract, unaffected by
 // this fix — they surface as an SSE `error` event (see stream-finish-error.test.ts).
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal, RunLimitExceededError } from '@gnl/durable';
+import { InMemoryJournal, RunLimitExceededError } from '@gnldev/durable';
 import { createStudioApp, type StudioAgentRunner } from '../src/server.js';
 
 function runnerThatThrowsOnStream(err: unknown): StudioAgentRunner {

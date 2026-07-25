@@ -60,7 +60,7 @@ async function pickNextRunId(journal: Journal, runId: string): Promise<string> {
     const cand = `${base}@${n}`;
     if ((await journal.get(runKeys.input(cand))) === undefined) return cand;
   }
-  throw new Error(`@gnl/durable: rolloverRun could not find a free epoch name (all '${base}@N' are taken).`);
+  throw new Error(`@gnldev/durable: rolloverRun could not find a free epoch name (all '${base}@N' are taken).`);
 }
 
 function parseMaybeJson(s: unknown): unknown {
@@ -142,7 +142,7 @@ export async function rolloverRun(journal: Journal, runId: string, opts?: Rollov
   const readRun = (journal as Partial<JournalReader>).readRun;
   if (typeof readRun !== 'function') {
     throw new Error(
-      `@gnl/durable: rolloverRun requires 'readRun' (JournalReader) — this journal does not provide a read surface. ` +
+      `@gnldev/durable: rolloverRun requires 'readRun' (JournalReader) — this journal does not provide a read surface. ` +
         `Use an adapter like InMemoryJournal / SqliteStorage.runs / PostgresStorage.runs.`,
     );
   }
@@ -152,7 +152,7 @@ export async function rolloverRun(journal: Journal, runId: string, opts?: Rollov
   let newRunId = candidate;
   if (!(await claim(journal, rolloverKey(runId), { to: candidate, at: Date.now() }))) {
     const existing = await journal.get<{ to: string }>(rolloverKey(runId));
-    if (!existing?.to) throw new Error(`@gnl/durable: the '${rolloverKey(runId)}' marker could not be read (corrupt record?).`);
+    if (!existing?.to) throw new Error(`@gnldev/durable: the '${rolloverKey(runId)}' marker could not be read (corrupt record?).`);
     newRunId = existing.to;
   }
 
@@ -168,7 +168,7 @@ export async function rolloverRun(journal: Journal, runId: string, opts?: Rollov
   const entries = await readRun.call(journal, runId);
   const oldInput = upgradeFormat(await journal.get<ReconstructSeed>(runKeys.input(runId)), runKeys.input(runId)); // H13
   if (entries.length === 0 && oldInput === undefined) {
-    throw new Error(`@gnl/durable: rolloverRun — no journal record for '${runId}' (no state found to hand over).`);
+    throw new Error(`@gnldev/durable: rolloverRun — no journal record for '${runId}' (no state found to hand over).`);
   }
   const state = reconstructState(entries, entries.length, oldInput);
   let messages = toModelMessages(state.messages);

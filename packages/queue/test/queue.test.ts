@@ -1,7 +1,7 @@
-// Phase 12 — @gnl/queue: durable job. crash mid-job → worker reclaim → side-effect exactly-once;
+// Phase 12 — @gnldev/queue: durable job. crash mid-job → worker reclaim → side-effect exactly-once;
 // two workers, one job; drain.
 import { describe, it, expect, vi } from 'vitest';
-import { InMemoryStorage, runDurable } from '@gnl/durable';
+import { InMemoryStorage, runDurable } from '@gnldev/durable';
 import { enqueue, createWorker, listJobs, retryJob, QueueDepthExceededError, type JobHandler } from '../src/index.js';
 
 function mockModel(crash: { active: boolean }): any {
@@ -23,7 +23,7 @@ function mockModel(crash: { active: boolean }): any {
   };
 }
 
-describe('@gnl/queue', () => {
+describe('@gnldev/queue', () => {
   it('crash mid-job → reclaim → side-effect exactly-once (job = durable run)', async () => {
     const storage = new InMemoryStorage();
     const charges = { n: 0 };

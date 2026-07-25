@@ -1,8 +1,8 @@
 {
-  "name": "@gnl/mcp",
+  "name": "@gnldev/mcp",
   "version": "0.0.0",
   "license": "Apache-2.0",
-  "description": "MCP client → AI SDK tools. With @gnl/durable, external MCP tool calls become exactly-once + replayable.",
+  "description": "MCP client → AI SDK tools. With @gnldev/durable, external MCP tool calls become exactly-once + replayable.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -24,11 +24,11 @@
     "@modelcontextprotocol/sdk": "^1.29.0"
   },
   "peerDependencies": {
-    "@gnl/durable": "workspace:^",
+    "@gnldev/durable": "workspace:^",
     "ai": "^5.0.0"
   },
   "devDependencies": {
-    "@gnl/durable": "workspace:*",
+    "@gnldev/durable": "workspace:*",
     "ai": "^5.0.0"
   }
 }

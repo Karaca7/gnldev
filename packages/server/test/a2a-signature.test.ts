@@ -1,10 +1,10 @@
 // GOREV (audit: A2A unsigned) — opt-in a2aSecret verification: if given, x-gnl-signature/x-gnl-timestamp
 // become REQUIRED on /agents/:name/run POSTs (signature = HMAC-SHA256(secret, timestamp + '.' + rawBody) hex).
 // This file tests the HTTP layer directly (with a manually signed request) — for a round-trip
-// with the @gnl/a2a package see packages/a2a/test/a2a.test.ts.
+// with the @gnldev/a2a package see packages/a2a/test/a2a.test.ts.
 import { describe, it, expect } from 'vitest';
 import { createHmac } from 'node:crypto';
-import { InMemoryJournal } from '@gnl/durable';
+import { InMemoryJournal } from '@gnldev/durable';
 import { createRestApi } from '../src/index.js';
 
 function mkModel(): any {
@@ -32,7 +32,7 @@ function mkApi(a2aSecret?: string) {
   return createRestApi({ journal, agents: { a: { model: mkModel() } } }, a2aSecret ? { a2aSecret } : {});
 }
 
-describe('@gnl/server A2A signature verification (a2aSecret)', () => {
+describe('@gnldev/server A2A signature verification (a2aSecret)', () => {
   it('valid signature + fresh timestamp → 200 (round-trip)', async () => {
     const secret = 'secret-key';
     const api = mkApi(secret);

@@ -1,6 +1,6 @@
 // Pluggable real tokenizer: the countTokens hook drives the compaction threshold (instead of the default char/4).
 import { describe, it, expect } from 'vitest';
-import { InMemoryStorage } from '@gnl/durable';
+import { InMemoryStorage } from '@gnldev/durable';
 import { AgentMemory } from '../src/index.js';
 
 function observerModel(counter: { calls: number }): any {

@@ -15,7 +15,7 @@ import '../i18n';
 
 // Free-tier role select (roleAuth: admin/viewer only) — UNCHANGED from before this feature.
 const ROLES = ['admin', 'viewer'] as const;
-// RBAC (paid) role ladder — mirrors @gnl/studio's ROLE_PERMISSION_PRESETS keys (viewer/member/admin).
+// RBAC (paid) role ladder — mirrors @gnldev/studio's ROLE_PERMISSION_PRESETS keys (viewer/member/admin).
 // Only offered once the permission catalog reports enabled:true (a 'member'-only user under the free
 // roleAuth provider would be a dead end — it isn't 'admin' or 'viewer' there).
 const RBAC_ROLES = ['viewer', 'member', 'admin'] as const;
