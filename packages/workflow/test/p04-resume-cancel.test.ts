@@ -171,6 +171,54 @@ describe('@gnl/workflow P0.4 — listWorkflowRuns / getWorkflowRunStatus registr
   });
 });
 
+describe('FLOW-08 — workflowName mirrored into the wfrun: status record', () => {
+  it('(a) opts.workflowName is written into the wfrun: record and returned by getWorkflowRunStatus/listWorkflowRuns', async () => {
+    const journal = memJournal();
+    const wf = workflow<string>().then(waitForResume('approval'));
+    const ctx = { runId: 'r-flow08-a', journal };
+
+    await wf.runResumable('hey', ctx, { workflowName: 'my-workflow' });
+
+    const status = await getWorkflowRunStatus(journal, 'r-flow08-a');
+    expect(status?.workflowName).toBe('my-workflow');
+
+    const list = await listWorkflowRuns(journal, { status: 'suspended' });
+    expect(list.find((r) => r.runId === 'r-flow08-a')?.workflowName).toBe('my-workflow');
+
+    // reaches 'completed' too.
+    await wf.runResumable('hey', ctx, { resume: { approval: { ok: true } }, workflowName: 'my-workflow' });
+    const completedStatus = await getWorkflowRunStatus(journal, 'r-flow08-a');
+    expect(completedStatus).toEqual({
+      runId: 'r-flow08-a',
+      status: 'completed',
+      workflowName: 'my-workflow',
+      updatedAt: completedStatus!.updatedAt,
+    });
+  });
+
+  it('(b) omitted workflowName → the wfrun: record is byte-for-byte the pre-FLOW-08 shape (no workflowName key at all)', async () => {
+    const journal = memJournal();
+    const wf = workflow<string>().then(waitForResume('approval'));
+    const ctx = { runId: 'r-flow08-b', journal };
+
+    await wf.runResumable('hey', ctx); // no workflowName passed
+
+    const raw = journal.map.get('wfrun:r-flow08-b') as Record<string, unknown>;
+    expect(raw).not.toHaveProperty('workflowName');
+    expect(raw).toEqual({
+      runId: 'r-flow08-b',
+      status: 'suspended',
+      stepId: 'approval',
+      waitId: 'approval',
+      reason: { kind: 'resume' },
+      updatedAt: raw.updatedAt,
+    });
+
+    const status = await getWorkflowRunStatus(journal, 'r-flow08-b');
+    expect(status?.workflowName).toBeUndefined();
+  });
+});
+
 describe('@gnl/workflow P0.4 — nested asStep + waitForResume', () => {
   it('(g) an inner waitForResume suspends OUTWARD; the resume payload (addressed by waitId, per-run namespace) reaches the inner step', async () => {
     const journal = memJournal();

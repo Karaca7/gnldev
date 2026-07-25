@@ -107,6 +107,48 @@ export class AgentMemory {
     return [...recalledMsgs, ...recent.map((e) => e.message)];
   }
 
+  /**
+   * FLOW-10: truncate a thread's message history at `afterIndex` — the message AT `afterIndex` is
+   * KEPT, everything AFTER it is permanently deleted from the store. Delegates to the (optional)
+   * `MemoryStore.deleteMessagesAfter(threadId, afterSeq)` port method, converting the caller-facing
+   * INDEX to the store's `seq`.
+   *
+   * INDEX BASE: `afterIndex` indexes into the SAME array `getMessages(threadId)` (no `opts`) would
+   * return — i.e. exactly what Studio's `GET /threads/:id/messages` route shows (it calls
+   * `resolvedMemory.getMessages(threadId)` with no query, see `packages/studio/src/server.ts`). Note
+   * this is NOT always the thread's full history: per `getMessages` above, when the thread has more
+   * than `recentN` messages, the no-query path returns only the LAST `recentN` — `afterIndex` is
+   * relative to that same (possibly windowed) list, matching what a Studio user actually sees.
+   *
+   * `afterIndex === -1` is a special sentinel meaning "clear this thread's entire message history"
+   * (from the very first message, seq 0 onward) — NOT just the displayed window's start. This bypasses
+   * the windowed-index mapping above entirely (maps straight to the store's "afterSeq < min seq ⇒
+   * removes all" boundary).
+   *
+   * Any other out-of-range `afterIndex` (< -1, or >= the displayed list's length) is a no-op: returns
+   * `0`, mirroring the port's own "afterSeq >= max seq → 0" boundary contract, rather than throwing.
+   *
+   * Returns `null` — distinct from `0` — when the underlying `MemoryStore` doesn't implement
+   * `deleteMessagesAfter` at all (adapter capability gap), so a caller (e.g. Studio's route) can
+   * answer "not supported" (501) instead of reporting a silent no-op.
+   *
+   * NOT touched: observation records (`store.getObservations`/`putObservations`). After a truncation,
+   * an existing observation's `fromSeq`/`toSeq` range may now point partly or wholly at deleted
+   * messages (`expandObservation` would then return a partial/empty slice for that range). Reconciling
+   * observations with a truncated history is out of scope here.
+   */
+  async truncateMessagesAfter(threadId: string, afterIndex: number): Promise<number | null> {
+    const del = this.store.deleteMessagesAfter;
+    if (!del) return null;
+    if (afterIndex === -1) return del.call(this.store, threadId, -1);
+    if (!Number.isInteger(afterIndex) || afterIndex < -1) return 0;
+    const all = await this.allMessages(threadId);
+    const displayed = all.length <= this.recentN ? all : all.slice(-this.recentN);
+    if (afterIndex >= displayed.length) return 0;
+    const seq = displayed[afterIndex]!.seq;
+    return del.call(this.store, threadId, seq);
+  }
+
   /** Rich context hook (run.ts feature-detects it). */
   async loadContext(threadId: string, opts: { query?: string; resourceId?: string; incoming?: any[] }): Promise<LoadedContext> {
     if (opts.resourceId) {

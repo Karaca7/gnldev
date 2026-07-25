@@ -1,7 +1,7 @@
 // @vitest-environment node
 // F6.5: Playground attachment size limit + extracting tool parts from history, Knowledge minScore threshold — PURE functions.
 import { describe, it, expect } from 'vitest';
-import { MAX_ATTACHMENT_BYTES, validateAttachment, mapMessages, matchToolResult, type Msg } from '../src/views/Playground';
+import { MAX_ATTACHMENT_BYTES, validateAttachment, mapMessages, matchToolResult, userOrdinalAt, userMessageServerIndex, type Msg } from '../src/views/Playground';
 import { filterByMinScore, clampTopK, clampMinScore } from '../src/views/Knowledge';
 import { validateToolInput, coerceToolField } from '../src/views/Tools';
 
@@ -76,6 +76,57 @@ describe('mapMessages — preserves past tool steps', () => {
   it('does not crash on empty/missing data', () => {
     expect(mapMessages([])).toEqual([]);
     expect(mapMessages(undefined as unknown as any[])).toEqual([]);
+  });
+});
+
+// FLOW-10: local msgs index ↔ server /threads/:id/messages index are NOT 1:1 (a single assistant
+// server entry fans out into several local Msg entries — interleaved text/tool-call blocks). These
+// two pure functions anchor edit/regenerate's server-side truncation on "the Nth user turn" instead,
+// which IS the same ordinal on both sides.
+describe('userOrdinalAt / userMessageServerIndex — local↔server index mapping for edit/regenerate', () => {
+  it('userOrdinalAt: counts user messages up to and including the target index', () => {
+    const msgs: Msg[] = [
+      { role: 'user', text: 'q1' },
+      { role: 'assistant', text: 'a1' },
+      { role: 'tool', name: 'x', input: {}, output: 1 },
+      { role: 'assistant', text: 'a1 continued' },
+      { role: 'user', text: 'q2' },
+      { role: 'assistant', text: 'a2' },
+    ];
+    expect(userOrdinalAt(msgs, 0)).toBe(0); // q1 is the 0th user turn
+    expect(userOrdinalAt(msgs, 4)).toBe(1); // q2 is the 1st user turn, despite being local index 4
+  });
+
+  it('userMessageServerIndex: finds the Nth user turn in the RAW server array, skipping fanned-out assistant/tool entries', () => {
+    // Mirrors the local `msgs` above: one assistant server turn (text + tool-call) fans out into 3
+    // local Msg entries (assistant/tool/assistant), but is still a SINGLE entry here.
+    const data = [
+      { role: 'user', content: 'q1' },
+      { role: 'assistant', content: [
+        { type: 'text', text: 'a1' },
+        { type: 'tool-call', toolCallId: 'c1', toolName: 'x', input: {} },
+      ] },
+      { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'c1', toolName: 'x', output: 1 }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'a1 continued' }] },
+      { role: 'user', content: 'q2' },
+      { role: 'assistant', content: [{ type: 'text', text: 'a2' }] },
+    ];
+    expect(userMessageServerIndex(data, 0)).toBe(0); // q1
+    expect(userMessageServerIndex(data, 1)).toBe(4); // q2 — server index 4, NOT local index 4
+  });
+
+  it('userMessageServerIndex: skips a user entry with empty text (mapMessages would skip it too)', () => {
+    const data = [
+      { role: 'user', content: '' },
+      { role: 'user', content: 'real question' },
+    ];
+    expect(userMessageServerIndex(data, 0)).toBe(1);
+  });
+
+  it('userMessageServerIndex: out-of-range ordinal → -1 (caller must not guess an index)', () => {
+    const data = [{ role: 'user', content: 'only one' }];
+    expect(userMessageServerIndex(data, 1)).toBe(-1);
+    expect(userMessageServerIndex([], 0)).toBe(-1);
   });
 });
 

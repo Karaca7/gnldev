@@ -257,7 +257,7 @@ export function Organizations() {
       )}
 
       {rows.length > 0 && (
-        <Reveal className="overflow-hidden rounded-md border border-border bg-card">
+        <Reveal className="overflow-x-auto rounded-md border border-border bg-card">
           <table className="w-full text-left text-xs">
             <thead className="bg-muted/30 text-muted-foreground">
               <tr>

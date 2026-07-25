@@ -49,6 +49,7 @@
   "copyTitle": "Kopyala",
   "runningLabel": "çalışıyor",
   "respondingSrOnly": "yanıt yazılıyor",
+  "responseCompleteSrOnly": "Yanıt tamamlandı — {{tokens}} token, ${{cost}}",
   "editAndResendTitle": "Düzenle & yeniden gönder",
   "pendingApprovalTool": "⏸ Onay bekleyen {{count}} tool",
   "approveButton": "Onayla",

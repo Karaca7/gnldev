@@ -165,6 +165,27 @@ export interface MemoryStore {
   /** ONLY final/derived observation texts (LLM-memoization stays in RunJournal). */
   getObservations(threadId: string): Promise<Observation[]>;
   putObservations(threadId: string, obs: Observation[]): Promise<void>;
+
+  /**
+   * FLOW-10 (optional capability): truncate a thread's tail — deletes every message with
+   * `seq > afterSeq`; `afterSeq` itself, and everything before it, is KEPT (afterSeq is EXCLUSIVE
+   * as a delete boundary, INCLUSIVE as a keep boundary). Anchored on `MessageRecord.seq` — a stable
+   * per-thread sequence number — rather than a list index, because an index can shift under a
+   * concurrent append while `seq` cannot.
+   * Use case: "edit & resend" / "regenerate" in a chat UI. Today those flows only truncate the
+   * CLIENT's view; the server-side thread keeps both the abandoned and the corrected turn, so the
+   * next run replays both back to the model. This method lets a caller make the server's history
+   * match what the user sees after such an edit.
+   * Returns the number of messages actually removed, so a caller can surface e.g. "6 messages
+   * removed" to the user.
+   * Boundary behavior: unknown/nonexistent threadId → 0, never throws. `afterSeq` at or above the
+   * thread's highest existing seq (nothing to remove) → 0. `afterSeq` below the thread's lowest
+   * existing seq → removes ALL of the thread's messages and returns that count.
+   * OPTIONAL: adapters that don't implement this leave the method `undefined`. Callers MUST treat an
+   * absent method as "capability not available" (e.g. respond 501 / fall back) — never call it
+   * unconditionally.
+   */
+  deleteMessagesAfter?(threadId: string, afterSeq: number): Promise<number>;
 }
 
 // ── 3) VectorStore = RAG corpus (structurally compatible with the rag package) ─

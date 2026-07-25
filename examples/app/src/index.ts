@@ -28,6 +28,7 @@ app.route('/studio', createStudioApp({
     listThreads: (rid) => (rid ? memory.listThreads({ resourceId: rid }) : memory.listAllThreads()),
     getMessages: (tid) => memory.getMessages(tid),
     getWorkingMemory: (tid) => memory.getWorkingMemory(tid),
+    truncateMessages: (tid, afterIndex) => memory.truncateMessagesAfter(tid, afterIndex),
   },
   auth: { write: (c) => !ADMIN || c.req.header('x-studio-admin') === ADMIN },
 }));

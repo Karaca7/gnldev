@@ -97,6 +97,11 @@ export interface StudioMemory {
   updateThread?(threadId: string, patch: { title?: string; metadata?: Record<string, unknown> }): Promise<unknown> | unknown;
   /** Deletes the thread (soft-delete). Returns 501 from the route if the adapter doesn't support it. */
   deleteThread?(threadId: string): Promise<void> | void;
+  /** Truncates the thread: deletes the message at `afterIndex` and every message after it (index base:
+   *  the `getMessages` list — i.e. matches the `/threads/:id/messages` response 1:1). `afterIndex === -1`
+   *  deletes every message. Returns the number of deleted messages, or `null` if the underlying store
+   *  doesn't support the capability. Returns 501 from the route if the adapter doesn't support it. */
+  truncateMessages?(threadId: string, afterIndex: number): Promise<number | null> | number | null;
 }
 
 /** Introspection for a single workflow (Workflows view). */
@@ -517,6 +522,13 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
     ...(typeof (rawReader as any).countRunsByStatus === 'function'
       ? { countRunsByStatus: () => (scopedNow() as any).countRunsByStatus?.() }
       : {}),
+    // API-01: listRunsPaged bridged the same way as every other optional capability above — withOrg
+    // ALREADY handles org isolation for it (walks the underlying mixed-org pages and strips/filters by
+    // prefix, see organization.ts's own listRunsPaged bridge), so a plain delegation through
+    // scopedNow() is safe here too, same as listRuns/readRun.
+    ...(typeof (rawReader as any).listRunsPaged === 'function'
+      ? { listRunsPaged: (q: any) => (scopedNow() as any).listRunsPaged(q) }
+      : {}),
   } as JournalReader;
 
   // The middleware is only set up if opts.org (header-based resolution) OR an auth provider (which can
@@ -633,7 +645,7 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
   // Best-effort: only on a writable journal; errors are SWALLOWED — never breaks the main flow.
   type AuditAction =
     | 'approve' | 'deny' | 'fork'
-    | 'thread.rename' | 'thread.delete'
+    | 'thread.rename' | 'thread.delete' | 'thread.truncate'
     | 'workflow.create' | 'workflow.update' | 'workflow.delete'
     | 'tool.exec' | 'agent.run'
     | 'agent.version' | 'agent.promote' | 'agent.gate' | 'agent.delete' | 'agent.version-delete'
@@ -841,14 +853,68 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
   );
   // S4 pagination: if ?limit= is given, returns a Page envelope {items,nextCursor,total} (newest first);
   // a call without the parameter stays a backward-compatible flat array (existing consumers don't break).
+  // API-09: optional status/agent/q filters — SAME parameter names as @gnl/server's GET /runs (see
+  // packages/server/src/index.ts). Only honored together with `limit` (a bare filter with no `limit`
+  // falls through to the unfiltered flat array below, same as today — matches the "no params → identical
+  // to today" backward-compat contract; the studio-ui client always sends `limit`, so this never bites it).
   app.get('/runs', async (c) => {
     if (!(await allow(c, 'read'))) return deny(c, 'read');
     const limitRaw = c.req.query('limit');
-    const all = await reader.listRuns();
-    if (limitRaw === undefined) return c.json(all);
+    if (limitRaw === undefined) return c.json(await reader.listRuns());
     const limit = Math.min(Math.max(Math.floor(Number(limitRaw)) || 0, 1), 500);
     const start = Math.max(Math.floor(Number(c.req.query('cursor'))) || 0, 0);
-    const newestFirst = [...all].reverse(); // journal append order is ascending → reversed = newest first
+    const statusRaw = c.req.query('status');
+    if (statusRaw != null && statusRaw !== 'completed' && statusRaw !== 'suspended') {
+      return c.json({ error: `invalid status '${statusRaw}' (expected 'completed' or 'suspended')` }, 400);
+    }
+    const status = statusRaw as 'completed' | 'suspended' | undefined;
+    const agent = c.req.query('agent') || undefined;
+    const q = c.req.query('q') || undefined;
+    // API-01/API-09: prefer the engine push-down (listRunsPaged) — avoids materializing EVERY run (see
+    // journal.ts JournalReader.listRunsPaged / postgres-storage.ts's indexed `ORDER BY ... LIMIT`)
+    // just to slice out one page. listRunsPaged's own order is ASCENDING (oldest-first, mirroring the
+    // underlying `ORDER BY created_at`), but studio's contract here is "newest first" (see
+    // studio-ui/api.ts's RunsPage type) — so the requested newest-first window [start, start+limit) is
+    // converted into the matching ascending-order range using `total` (countRunsByStatus's push-down
+    // aggregate, the SAME source GET /metrics already uses below) and only that small (≤limit-sized)
+    // slice is reversed locally, never the whole table. Falls back to the legacy full-scan+reverse when
+    // either capability is missing (a bare custom JournalReader, or an adapter without a cheap status
+    // aggregate — e.g. Redis, see redis-storage.ts), when total couldn't be read, or (API-09) when an
+    // `agent`/`q` filter is active: countRunsByStatus has no per-agent/per-substring count, so there is
+    // no cheap way to learn the FILTERED total upfront (needed for the newest-first↔ascending conversion
+    // above) — those filters fall through to the in-memory path below, no worse than the engine's own
+    // agent handling (postgres-storage.ts also full-scans for `agent` — there's no indexed column for it).
+    if (agent === undefined && q === undefined && typeof reader.listRunsPaged === 'function' && typeof rw.countRunsByStatus === 'function') {
+      // NOTE: unlike a normal optional-capability call, this can't be `rw.countRunsByStatus().catch(...)`
+      // — under an active org (see the reader bridge above + organization.ts: countRunsByStatus is
+      // deliberately NOT bridged per-org), the call resolves SYNCHRONOUSLY to `undefined` (not a
+      // rejected promise, via `scopedNow().countRunsByStatus?.()`), and `.catch` on `undefined` throws.
+      let counted: Record<string, number> | undefined;
+      try { counted = await rw.countRunsByStatus(); } catch { counted = undefined; }
+      if (counted) {
+        // API-09: total is the FILTERED count — countRunsByStatus's per-status breakdown already gives
+        // it for free when `status` is set; unfiltered, sum every status (unchanged from before).
+        const total = status ? (counted[status] ?? 0) : Object.values(counted).reduce((a, b) => a + b, 0);
+        const ascEnd = Math.max(0, total - start);
+        const ascStart = Math.max(0, ascEnd - limit);
+        const items = ascEnd > ascStart
+          ? (await reader.listRunsPaged({ limit: ascEnd - ascStart, cursor: String(ascStart), ...(status ? { status } : {}) })).items.reverse()
+          : [];
+        const next = start + limit;
+        return c.json({ items, nextCursor: next < total ? String(next) : undefined, total });
+      }
+    }
+    const all = await reader.listRuns();
+    // API-09: status/agent/q filters applied server-side BEFORE reversing/slicing — `total` below
+    // therefore already reflects the FILTERED set, never the whole journal (the UI shows `total` in its
+    // search placeholder, and it must describe the same set as `items`).
+    const needle = q?.toLowerCase();
+    const filtered = all.filter((r) =>
+      (status === undefined || r.status === status) &&
+      (agent === undefined || r.agent === agent) &&
+      (needle === undefined || r.runId.toLowerCase().includes(needle)),
+    );
+    const newestFirst = [...filtered].reverse(); // journal append order is ascending → reversed = newest first
     // threadId now comes from listRuns itself (every adapter surfaces it from the run's invisible `:input`
     // entry in a SINGLE read, see journal.ts RunSummary.threadId) — no ADDITIONAL N+1 read happens here.
     const items = newestFirst.slice(start, start + limit);
@@ -1070,16 +1136,39 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
       if ((await rootRw.get!(k).catch(() => undefined)) != null) registered.push(k.slice(ORG_PRE.length));
     }
     const ids = [...new Set([...discovered, ...registered])].filter((id) => !bound || id === bound).sort();
-    const orgs: { id: string; label?: string; runs: number; tokens: number; costUsd: number; budget?: { usdLimit?: number; tokenLimit?: number; exceeded: boolean; inherited: boolean } }[] = [];
+    const orgs: { id: string; label?: string; runs: number; tokens: number; costUsd: number; source?: 'materialized' | 'scan'; budget?: { usdLimit?: number; tokenLimit?: number; exceeded: boolean; inherited: boolean } }[] = [];
     for (const id of ids) {
-      const view = withOrg(rootRw as Journal, id) as unknown as JournalReader;
+      const view = withOrg(rootRw as Journal, id) as unknown as Partial<Journal> & JournalReader;
       const runsList = typeof view.listRuns === 'function' ? await view.listRuns() : [];
       let tokens = 0;
       let costUsd = 0;
-      for (const r of runsList) {
-        const rc = await getRunCost(view, r.runId);
-        tokens += rc.totalTokens;
-        costUsd += rc.costUsd;
+      // API-02: fast path — the SAME materialized-counter shortcut GET /metrics already uses
+      // (readMetricsSummary → O(1) getCounters point-read), instead of a SEQUENTIAL
+      // getRunCost/readRun scan over EVERY run in the organization. withOrg bridges getCounters
+      // 1:1 (key-prefixed, see organization.ts) → this stays per-org isolated, same as /metrics'
+      // own use of it. `source` mirrors /metrics' honesty field so the UI/tests can tell which
+      // path served the response.
+      let source: 'materialized' | 'scan' = 'scan';
+      if (typeof view.getCounters === 'function') {
+        const summary = await readMetricsSummary(view as unknown as Journal);
+        if (summary.all) {
+          tokens = summary.all.tokens ?? 0;
+          costUsd = summary.all.costUsd ?? 0;
+          source = 'materialized';
+        }
+      }
+      // No materialized data yet (older data / a journal without getCounters) — fall back to the
+      // legacy per-run scan so behavior is IDENTICAL to before this fix. NOTE: `view.countRunsByStatus`
+      // is intentionally NOT used here — withOrg deliberately does not bridge it (an org-scoped
+      // aggregate would otherwise leak every organization's counts, see organization.ts) — run COUNT
+      // keeps coming from `runsList` above (already a cheap listRuns() summary pass, not a per-run
+      // readRun) in both the fast and the scan path, so it's unaffected either way.
+      if (source === 'scan') {
+        for (const r of runsList) {
+          const rc = await getRunCost(view, r.runId);
+          tokens += rc.totalTokens;
+          costUsd += rc.costUsd;
+        }
       }
       // Label: from the __org__:<id> record document (collected via POST /organizations) — GET used to
       // never read it, so the label was collected but never shown in the UI (see bug report #1). An
@@ -1108,7 +1197,7 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
           } catch { /* alert is best-effort — swallow */ }
         }
       }
-      orgs.push({ id, ...(label ? { label } : {}), runs: runsList.length, tokens, costUsd, ...(budget ? { budget } : {}) });
+      orgs.push({ id, ...(label ? { label } : {}), runs: runsList.length, tokens, costUsd, source, ...(budget ? { budget } : {}) });
     }
     // The default budget is also included in the response so the panel can edit it (journal > opts fallback).
     const defaultBudget = (await readBudget(rootRw, undefined)) ?? opts.budgets?.default ?? null;
@@ -1735,7 +1824,7 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
     // Root-level management: the policy is a SINGLE GLOBAL rule set for ALL orgs (org-unscoped) → a
     // bound identity could otherwise change everyone's guard. Only an unbound operator can do this.
     { const denied = requirePlatformAdmin(c, 'an org-bound identity cannot update the global policy (operator required)'); if (denied) return denied; }
-    const body = (await c.req.json().catch(() => null)) as { rules?: PolicyRule[] } | null;
+    const body = (await c.req.json().catch(() => null)) as { rules?: PolicyRule[]; ifVersion?: number } | null;
     if (!Array.isArray(body?.rules)) return c.json({ error: 'a rules array is required' }, 400);
     const ACTIONS = new Set(['allow', 'deny', 'require-approval']);
     for (const r of body.rules) {
@@ -1744,6 +1833,19 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
       }
     }
     const prev = (await rw.get!(POLICY_KEY)) as PolicyDoc | undefined;
+    // Optimistic lock (API-08): if the caller tells us which version it edited, refuse a silent
+    // lost update when another admin has since saved. Omitted `ifVersion` → old behavior (backward
+    // compat for existing clients / @gnl/server, which never sends it).
+    if (body.ifVersion != null) {
+      const current = prev?.version ?? 0;
+      if (body.ifVersion !== current) {
+        return c.json({
+          error: `policy was modified by another admin (expected v${body.ifVersion}, current v${current})`,
+          code: 'version_conflict',
+          current: prev ?? null,
+        }, 409);
+      }
+    }
     const doc: PolicyDoc = { version: (prev?.version ?? 0) + 1, rules: body.rules, updatedAt: Date.now() };
     await rw.put!(POLICY_KEY, doc);
     // The FULL rule set is in the audit detail → past versions can be read back from the audit trail.
@@ -1970,6 +2072,28 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
       await resolvedMemory.deleteThread(decodeURIComponent(c.req.param('id')));
       await audit(c, 'thread.delete', decodeURIComponent(c.req.param('id')));
       return c.json({ ok: true });
+    } catch (e) {
+      return c.json({ error: String((e as Error)?.message ?? e) }, 400);
+    }
+  });
+  // Truncates a thread FROM a message index onward (destructive, e.g. for "retry from here"/branching
+  // flows) — deletes the message at afterIndex and everything after it (index base: getMessages, same
+  // list the /threads/:id/messages route returns). afterIndex===-1 deletes the whole thread's messages.
+  // 501 both when the adapter doesn't implement truncateMessages AND when it does but the underlying
+  // store can't support it (signaled by a `null` return) — same externally-observable outcome either way.
+  app.delete('/threads/:id/messages', async (c) => {
+    if (!(await allow(c, 'write'))) return deny(c, 'write');
+    if (!resolvedMemory?.truncateMessages) return c.json({ error: 'truncateMessages is not supported' }, 501);
+    const body = (await c.req.json().catch(() => ({}))) as { afterIndex?: unknown };
+    if (typeof body.afterIndex !== 'number' || !Number.isFinite(body.afterIndex)) {
+      return c.json({ error: 'afterIndex (number) is required' }, 400);
+    }
+    try {
+      const id = decodeURIComponent(c.req.param('id'));
+      const removed = await resolvedMemory.truncateMessages(id, body.afterIndex);
+      if (removed == null) return c.json({ error: 'truncateMessages is not supported' }, 501);
+      await audit(c, 'thread.truncate', id, { afterIndex: body.afterIndex, removed });
+      return c.json({ ok: true, removed });
     } catch (e) {
       return c.json({ error: String((e as Error)?.message ?? e) }, 400);
     }

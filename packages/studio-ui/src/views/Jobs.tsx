@@ -67,7 +67,7 @@ export function Jobs() {
         <span className="live-dot" aria-hidden />
         {t('liveStatus', { count: jobs.data.length })}
       </div>
-      <div className="overflow-hidden rounded-md border border-border bg-background">
+      <div className="overflow-x-auto rounded-md border border-border bg-background">
         <table className="w-full font-mono text-sm">
           <thead>
             <tr className="border-b border-border text-left text-xs text-muted-foreground">

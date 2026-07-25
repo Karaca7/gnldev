@@ -256,7 +256,20 @@ export class Workflow<I = any, O = any> {
   async runResumable(
     input: I,
     ctx: StepCtx,
-    opts: { maxSteps?: number; resume?: Record<string, unknown>; signal?: AbortSignal } = {},
+    opts: {
+      maxSteps?: number;
+      resume?: Record<string, unknown>;
+      signal?: AbortSignal;
+      /**
+       * FLOW-08: the workflow's registered name, mirrored into the `wfrun:` status record (see
+       * `putStatus`) so `listWorkflowRuns`/the studio run list can display it without the caller
+       * re-deriving it from the runId. Purely additive — the `Workflow` class itself still doesn't
+       * carry a name (its constructor stays name-less); callers that know the name (e.g.
+       * @gnl/durable's `runWorkflow`, which registers workflows by name) pass it here. Omitted =
+       * today's behavior exactly (no field written to the record).
+       */
+      workflowName?: string;
+    } = {},
   ): Promise<WorkflowResult<O>> {
     const limit = opts.maxSteps ?? Infinity;
     const journal = ctx.journal;
@@ -280,7 +293,7 @@ export class Workflow<I = any, O = any> {
       if (flag !== undefined || opts.signal?.aborted) {
         if (flag === undefined) await journal.put(canceledKey(ctx.runId), { at: Date.now(), reason: 'signal' });
         const reason = flag?.reason ?? 'signal';
-        await this.putStatus(journal, ctx.runId, { status: 'canceled', stepId: this.steps[i]!.id, reason });
+        await this.putStatus(journal, ctx.runId, { status: 'canceled', stepId: this.steps[i]!.id, reason }, opts.workflowName);
         return { status: 'canceled', stepId: this.steps[i]!.id, reason };
       }
       if (i >= limit) return { status: 'paused', stepId: this.steps[i]!.id, partial: cur };
@@ -290,20 +303,33 @@ export class Workflow<I = any, O = any> {
       } catch (e) {
         if (e instanceof WorkflowSuspended) {
           await journal.put(`${ctx.runId}:wf:_suspend`, { stepId: s.id, waitId: e.waitId, reason: e.reason });
-          await this.putStatus(journal, ctx.runId, { status: 'suspended', stepId: s.id, waitId: e.waitId, reason: e.reason });
+          await this.putStatus(journal, ctx.runId, { status: 'suspended', stepId: s.id, waitId: e.waitId, reason: e.reason }, opts.workflowName);
           return { status: 'suspended', stepId: s.id, waitId: e.waitId, reason: e.reason };
         }
         throw e;
       }
     }
-    await this.putStatus(journal, ctx.runId, { status: 'completed' });
+    await this.putStatus(journal, ctx.runId, { status: 'completed' }, opts.workflowName);
     return { status: 'completed', output: cur as O };
   }
 
-  /** Status-registry mirror — best-effort (a registry write failure must not fail the run itself). */
-  private async putStatus(journal: JournalLike, runId: string, s: Omit<WorkflowRunStatus, 'runId' | 'updatedAt'>): Promise<void> {
+  /** Status-registry mirror — best-effort (a registry write failure must not fail the run itself).
+   *  FLOW-08: `workflowName` (from `runResumable`'s opts) is mirrored in ONLY when the caller passed
+   *  one — omitted entirely otherwise, so a `wfrun:` record written without a name is byte-for-byte
+   *  identical to pre-FLOW-08 records (backward compatible with readers of the old shape). */
+  private async putStatus(
+    journal: JournalLike,
+    runId: string,
+    s: Omit<WorkflowRunStatus, 'runId' | 'updatedAt' | 'workflowName'>,
+    workflowName?: string,
+  ): Promise<void> {
     try {
-      await journal.put(statusKey(runId), { ...s, runId, updatedAt: Date.now() } satisfies WorkflowRunStatus);
+      await journal.put(statusKey(runId), {
+        ...s,
+        runId,
+        ...(workflowName !== undefined ? { workflowName } : {}),
+        updatedAt: Date.now(),
+      } satisfies WorkflowRunStatus);
     } catch { /* advisory registry — the WorkflowResult return value is the source of truth */ }
   }
 }
@@ -378,6 +404,9 @@ export interface WorkflowRunStatus {
   /** Suspended: the waitId to address in `runResumable({ resume: { [waitId]: … } })`. */
   waitId?: string;
   reason?: unknown;
+  /** FLOW-08: the workflow's registered name (from `runResumable`'s opts), when the caller provided
+   *  one. Absent on records written before FLOW-08 or when the caller didn't pass a name. */
+  workflowName?: string;
   updatedAt: number;
 }
 
@@ -401,6 +430,9 @@ export async function cancelWorkflowRun(
     runId,
     status: 'canceled',
     ...(st?.stepId ? { stepId: st.stepId } : {}),
+    // FLOW-08: carry the name forward from the existing record (same pattern as stepId above) —
+    // an external cancelWorkflowRun() call doesn't know the name itself, only runResumable does.
+    ...(st?.workflowName ? { workflowName: st.workflowName } : {}),
     ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
     updatedAt: Date.now(),
   } satisfies WorkflowRunStatus);

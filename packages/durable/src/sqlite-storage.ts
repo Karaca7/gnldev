@@ -604,6 +604,16 @@ class SqliteMemoryStore implements MemoryStore {
       .all(threadId, limit, start);
     return pageOf(rows.map((r: any) => this.rowToMsg(r)), start, limit, total);
   }
+  /**
+   * FLOW-10: tail-truncate — deletes every row with seq > afterSeq for the thread; afterSeq itself
+   * (and everything before it) is kept. `gnl_messages`' PK is (thread_id, seq), so this is a direct
+   * indexed range delete. Unknown/nonexistent threadId simply matches zero rows → 0, never throws.
+   * Observations (gnl_observations) are a separate table and are intentionally left untouched.
+   */
+  async deleteMessagesAfter(threadId: string, afterSeq: number): Promise<number> {
+    const info = this.db.prepare('DELETE FROM gnl_messages WHERE thread_id = ? AND seq > ?').run(threadId, afterSeq);
+    return Number(info.changes ?? 0);
+  }
   async recall(threadId: string, query: number[], opts: RecallOptions): Promise<MessageRecord[]> {
     if (!hasNorm(query)) return [];
     let rows: any[];

@@ -22,5 +22,6 @@ export function devStudioMemory(mem: typeof Memory, storage: Storage) {
     getWorkingMemory: (tid: string) => m.getWorkingMemory(tid),
     updateThread: (tid: string, patch: { title?: string; metadata?: Record<string, unknown> }) => m.updateThread(tid, patch),
     deleteThread: (tid: string) => m.deleteThread(tid),
+    truncateMessages: (tid: string, afterIndex: number) => m.truncateMessagesAfter(tid, afterIndex),
   };
 }

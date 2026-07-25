@@ -55,13 +55,26 @@ export interface Capabilities {
   agentRegistry?: boolean;
 }
 
-/** Fetch error: carries the HTTP status → the UI can redirect to login on 401/403. */
+/**
+ * Fetch error: carries the HTTP status → the UI can redirect to login on 401/403.
+ * API-05 fix: also carries the server's full JSON error body (when present) — `http()` used to
+ * discard every field but `.error` (folded into `message`), so callers had no channel for
+ * machine-readable fields like `code`/`resumable`/`detail`/`aggregate` (e.g. run_limit_exceeded's
+ * `resumable`, or the eval-gate 412's `aggregate`). `code` is pulled out as a convenience shortcut;
+ * `body` carries the raw parsed object for anything else. Both stay optional/undefined when the
+ * response wasn't valid JSON (unreadable body) — existing `new ApiError(status, msg)` call sites
+ * keep compiling and behaving exactly as before.
+ */
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  code?: string;
+  body?: Record<string, unknown>;
+  constructor(status: number, message: string, body?: Record<string, unknown>) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.body = body;
+    if (body && typeof body.code === 'string') this.code = body.code;
   }
 }
 
@@ -128,6 +141,8 @@ export interface EvalDatasetResult { datasetId: string; cases: { caseId: string;
 export interface RunSummary { runId: string; status: 'completed' | 'suspended'; modelSteps: number; toolCalls: number; threadId?: string; agent?: string; }
 /** S4 pagination envelope: GET /runs?limit=&cursor= (newest first). */
 export interface RunsPage { items: RunSummary[]; nextCursor?: string; total: number; }
+/** API-09: optional GET /runs filters (status/agent pushed down server-side; q = runId substring). */
+export interface RunsFilter { status?: 'completed' | 'suspended'; agent?: string; q?: string; }
 /** POST /retention/sweep response (purged is truncated to the first 100 runIds). */
 export interface SweepResult { ok: boolean; scanned: number; purged: string[]; keptSuspended: number; keptNoTs: number; deletedEntries: number; }
 export interface JournalEntry { key: string; runId: string; kind: 'model' | 'tool'; value: unknown; seq: number; ts?: number; }
@@ -201,13 +216,20 @@ export interface WorkflowRunResult { ok?: boolean; runId: string; output?: unkno
 export interface WorkflowRunSummary { runId: string; startedAt?: number; steps: number; status: 'completed' | 'suspended'; suspended: boolean; }
 /**
  * D3-A: one record from the `wfrun:` run REGISTRY (GET /workflows/runs — P0.4), covering code AND
- * managed workflows in one scan. Deliberately does NOT carry the workflow's `name` — the registry key
- * is only `wfrun:<runId>`, so the workflow that produced a suspended run must be picked by the user
- * (see Workflows.tsx's suspended-runs inbox) rather than inferred.
+ * managed workflows in one scan. The registry key is only `wfrun:<runId>` — historically the record
+ * carried no workflow `name`, so the workflow that produced a suspended run had to be picked by the
+ * user (see Workflows.tsx's suspended-runs inbox) rather than inferred.
+ * FLOW-08: `workflowName` is an OPTIONAL server-side addition — OLDER registry records (written before
+ * the server started stamping it) won't have it, so callers must keep working when it's absent (see
+ * Workflows.tsx's `deriveWorkflowName` fallback, which derives it from the runId's `wf-<name>-<ts>`
+ * convention instead of forcing the user to guess from a flat dropdown).
  */
 export interface WorkflowRunRegistryItem {
   runId: string;
   status: 'suspended' | 'completed' | 'canceled';
+  /** FLOW-08: the workflow this run belongs to, when the server recorded it (optional — absent on
+   *  older records). When present, this is authoritative (not a guess). */
+  workflowName?: string;
   /** Suspended: the step waiting on resume. Canceled: the step that would have run next (if known). */
   stepId?: string;
   /** Suspended: the waitId to key the resume payload by (`{ [waitId]: payload }`) — absent means the
@@ -231,6 +253,9 @@ export interface ApprovalItem { runId: string; toolCallId: string; toolName: str
 export interface AuditItem { id: string; at?: number; actor: string; action: string; target: string; org?: string; detail?: unknown; }
 export interface OrganizationRow {
   id: string; label?: string; runs: number; tokens: number; costUsd: number;
+  /** API-02: 'materialized' (counters served tokens/costUsd, O(1)) | 'scan' (legacy per-run readRun scan).
+   *  Absent on older servers. Mirrors Metrics.source. */
+  source?: 'materialized' | 'scan';
   /** inherited: true → the limit doesn't come from the organization's OWN document but from the default fallback. */
   budget?: { usdLimit?: number; tokenLimit?: number; exceeded: boolean; inherited: boolean };
 }
@@ -289,13 +314,16 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
     // this used to go unread, so the user only saw a generic "400 Bad Request". Read the body,
     // use the `.error` field as the message if present; fall back to the old generic text if unreadable.
     let msg = `${res.status} ${res.statusText} @ ${path}`;
+    let body: Record<string, unknown> | undefined;
     try {
-      const body = await res.clone().json();
-      if (body && typeof body.error === 'string' && body.error) msg = body.error;
+      const parsed = await res.clone().json();
+      if (parsed && typeof parsed.error === 'string' && parsed.error) msg = parsed.error;
+      // API-05: keep the whole parsed body (code/detail/resumable/aggregate/…) on the error, not just `.error`.
+      if (parsed && typeof parsed === 'object') body = parsed;
     } catch {
-      /* not JSON / empty body → keep the generic message */
+      /* not JSON / empty body → keep the generic message, body stays undefined */
     }
-    throw new ApiError(res.status, msg);
+    throw new ApiError(res.status, msg, body);
   }
   const ct = res.headers.get('content-type') ?? '';
   return (ct.includes('application/json') ? res.json() : res.text()) as Promise<T>;
@@ -308,8 +336,17 @@ const patch = <T>(p: string, body: unknown) => http<T>(p, { method: 'PATCH', bod
 export const api = {
   capabilities: () => get<Capabilities>('/capabilities'),
   runs: () => get<RunSummary[]>('/runs'),
-  runsPage: (limit: number, cursor?: string) =>
-    get<RunsPage>(`/runs?limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`),
+  // API-09: optional server-side filters — SAME parameter names as @gnl/server's GET /runs (status/agent
+  // are pushed down to the engine; q is a runId substring). Filtering is done on the server so `total`
+  // (shown in the search placeholder) always describes the same set as `items`.
+  runsPage: (limit: number, cursor?: string, filters?: RunsFilter) => {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (cursor) params.set('cursor', cursor);
+    if (filters?.status) params.set('status', filters.status);
+    if (filters?.agent) params.set('agent', filters.agent);
+    if (filters?.q) params.set('q', filters.q);
+    return get<RunsPage>(`/runs?${params.toString()}`);
+  },
   /** GDPR purge: permanently deletes ALL journal entries for the run (operator; caps.purge). */
   purgeRun: (id: string) => del<{ ok: boolean; deleted: number }>(`/runs/${encodeURIComponent(id)}`),
   /** TTL sweep: purges runs older than olderThanMs (suspended ones are kept by default). */
@@ -338,6 +375,15 @@ export const api = {
   workflows: () => get<WorkflowMeta[]>('/workflows'),
   threads: (resourceId?: string) => get<ThreadRecord[]>(`/threads${resourceId ? `?resourceId=${encodeURIComponent(resourceId)}` : ''}`),
   messages: (id: string) => get<any[]>(`/threads/${encodeURIComponent(id)}/messages`),
+  /**
+   * FLOW-10: truncates a thread's PERSISTED history — `afterIndex` is INCLUSIVE (kept), everything
+   * after it is removed. Index space matches GET /threads/:id/messages' response order (the same
+   * array Playground's `mapMessages` consumes) — NOT the local, possibly-fanned-out `Msg[]` index.
+   * 501 when the host's memory adapter doesn't implement truncateMessages (see Playground's
+   * warnStaleServerHistory fallback); 400 if `afterIndex` is missing/not a number.
+   */
+  truncateThreadMessages: (id: string, afterIndex: number) =>
+    http<{ ok: boolean; removed: number }>(`/threads/${encodeURIComponent(id)}/messages`, { method: 'DELETE', body: JSON.stringify({ afterIndex }) }),
   workingMemory: (id: string) => get<unknown>(`/threads/${encodeURIComponent(id)}/working-memory`),
   renameThread: (id: string, title: string) => patch<{ ok: boolean; thread: ThreadRecord }>(`/threads/${encodeURIComponent(id)}`, { title }),
   deleteThread: (id: string) => del<{ ok: boolean }>(`/threads/${encodeURIComponent(id)}`),
@@ -423,7 +469,10 @@ export const api = {
   blockAgent: (name: string, note?: string) =>
     post<{ ok: boolean; record: AgentRegistryRecord }>(`/agents/registry/${encodeURIComponent(name)}/block`, note ? { note } : {}),
   policy: () => get<{ policy: PolicyDoc | null }>('/policy'),
-  savePolicy: (rules: PolicyRule[]) => http<{ ok: boolean; version: number }>('/policy', { method: 'PUT', body: JSON.stringify({ rules }) }),
+  /** `ifVersion`: the version the caller loaded — optimistic lock (API-08). Omit for the old
+   *  last-write-wins behavior. Mismatch → 409 ApiError (see `ApiError.status`). */
+  savePolicy: (rules: PolicyRule[], ifVersion?: number) =>
+    http<{ ok: boolean; version: number }>('/policy', { method: 'PUT', body: JSON.stringify({ rules, ifVersion }) }),
   createAgentVersion: (body: { name: string; model: string; system?: string; maxSteps?: number; note?: string }) =>
     post<{ ok: boolean; name: string; version: number; active: number | null }>('/managed-agents', body),
   promoteAgentVersion: (name: string, version: number) =>
@@ -539,12 +588,19 @@ export async function runWorkflowStream(
 // ── react-query hooks ─────────────────────────────────────────────────────
 export const useCapabilities = () => useQuery({ queryKey: ['capabilities'], queryFn: api.capabilities });
 export const useRuns = () => useQuery({ queryKey: ['runs'], queryFn: api.runs });
-/** Paginated run list (newest first). ['runs',…] key → useLiveRuns invalidation covers this too. */
+/**
+ * Paginated run list (newest first). ['runs',…] key → useLiveRuns invalidation still matches (prefix
+ * match on ['runs']), regardless of the filter values appended below.
+ * API-09: `filters` (status/agent/q) is part of the query key — changing a filter is a genuinely
+ * different result set, so react-query must re-fetch (not just re-render) when it changes. Two calls
+ * with the SAME (or no) filters share the same key → react-query dedupes them to one request/cache
+ * entry (used by Inspector.tsx to reuse the unfiltered list for fork lineage without doubling fetches).
+ */
 export const RUNS_PAGE_SIZE = 50;
-export const useRunsPaged = () =>
+export const useRunsPaged = (filters?: RunsFilter) =>
   useInfiniteQuery({
-    queryKey: ['runs', 'paged'],
-    queryFn: ({ pageParam }) => api.runsPage(RUNS_PAGE_SIZE, pageParam),
+    queryKey: ['runs', 'paged', filters?.status ?? '', filters?.agent ?? '', filters?.q ?? ''],
+    queryFn: ({ pageParam }) => api.runsPage(RUNS_PAGE_SIZE, pageParam, filters),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (last) => last.nextCursor,
   });
@@ -591,7 +647,10 @@ export const useSchedulerTriggers = () => useQuery({ queryKey: ['scheduler-trigg
 export const useApprovals = () => useQuery({ queryKey: ['approvals'], queryFn: api.approvals, refetchInterval: 5000 });
 export const useAudit = (filters?: AuditFilters) =>
   useQuery({ queryKey: ['audit', filters], queryFn: () => api.audit(filters) });
-export const useOrganizations = () => useQuery({ queryKey: ['organizations'], queryFn: api.organizations, refetchInterval: 10000 });
+// API-02: this is a review surface, not a live feed — 30s (was 10s) avoids re-triggering a per-org
+// usage scan every 10s just because the Organizations/Users panel is left open (see server.ts's
+// listOrganizations for the O(1) materialized-counter fast path this interval now backs off).
+export const useOrganizations = () => useQuery({ queryKey: ['organizations'], queryFn: api.organizations, refetchInterval: 30000 });
 export const useUsers = () => useQuery({ queryKey: ['users'], queryFn: api.users });
 export const usePermissionsCatalog = () => useQuery({ queryKey: ['permissions-catalog'], queryFn: api.permissionsCatalog });
 export const useMe = () => useQuery({ queryKey: ['me'], queryFn: api.me });

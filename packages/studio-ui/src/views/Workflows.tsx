@@ -3,12 +3,12 @@ import { useTranslation } from 'react-i18next';
 import { useQueryClient } from '@tanstack/react-query';
 import { ReactFlow, Background, Controls, MiniMap, type Node, type Edge } from '@xyflow/react';
 import dagre from '@dagrejs/dagre';
-import { Play, RotateCw, History, X, Ban, Plus, Pencil, Trash2, GripVertical, Code2, Cpu, Copy, ArrowRight, GitFork, Columns2, Inbox } from 'lucide-react';
+import { Play, RotateCw, History, X, Ban, Plus, Pencil, Trash2, GripVertical, Code2, Cpu, Copy, ArrowRight, GitFork, Columns2, Inbox, ChevronLeft } from 'lucide-react';
 import {
   useWorkflows, useWorkflowRuns, useWorkflowRunsRegistry, useCapabilities, useAgents, runWorkflowStream, api, errMessage, useWorkflowRunState,
   type WorkflowMeta, type WorkflowRunResult, type WorkflowRunSummary, type WorkflowRunRegistryItem, type WorkflowDef, type WorkflowStepDef,
 } from '../api';
-import { Btn, Spinner, Badge, EmptyState, JsonBlock, cn } from '../components';
+import { Btn, Spinner, Badge, EmptyState, ErrorBox, JsonBlock, cn } from '../components';
 import { ConfirmDialog, toast } from '../ui';
 import { diffWorkflowSteps } from './workflow-diff';
 
@@ -17,6 +17,31 @@ interface StepState { status: Status; output?: unknown; ts?: number; ms?: number
 interface GNode { id: string; label: string; kind: string; statusKey: string } // statusKey = stepId in the journal
 
 const KIND_GLYPH: Record<string, string> = { parallel: '⇉', branch: '⌥', loop: '↻', foreach: '∀', step: '•', map: 'ƒ' };
+
+/**
+ * FLOW-08: derive a workflow name from a run's runId when the registry item doesn't carry one
+ * (`WorkflowRunRegistryItem.workflowName` is optional — see api.ts). The runId convention, confirmed
+ * from this file's own run() and runStepwise() (`` `${dry ? 'dry-' : ''}wf-${wf.name}-${Date.now()}` ``)
+ * and mirrored server-side in @gnl/durable's registry.ts (`` `wf-${name}-${Date.now()}` ``), is
+ * `wf-<name>-<timestamp>` (optionally `dry-` prefixed). Workflow names may themselves contain hyphens
+ * (e.g. 'order-fulfillment'), so a naive `split('-')[1]` would truncate them — instead every known
+ * name is tried as a `wf-<name>-<all-digit-timestamp>` prefix, and the LONGEST matching name wins
+ * (so 'order' doesn't shadow 'order-fulfillment' when both exist). Returns null when no known name
+ * matches — callers fall back to letting the user pick.
+ */
+export function deriveWorkflowName(runId: string, knownNames: string[]): string | null {
+  const candidateIds = runId.startsWith('dry-') ? [runId, runId.slice(4)] : [runId];
+  let best: string | null = null;
+  for (const name of knownNames) {
+    for (const id of candidateIds) {
+      const prefix = `wf-${name}-`;
+      if (!id.startsWith(prefix)) continue;
+      if (!/^\d+$/.test(id.slice(prefix.length))) continue; // must be followed by an all-digit timestamp
+      if (best === null || name.length > best.length) best = name;
+    }
+  }
+  return best;
+}
 
 // Graph from build() steps: parallel(a+b) → sub-node fan-out (status from the parent key); others are single nodes.
 function buildGraph(steps: { id: string; kind: string }[]): { nodes: GNode[]; edges: Edge[]; order: string[] } {
@@ -95,6 +120,10 @@ export function Workflows() {
   // D3-A: badge count on the sidebar toggle — fetched at this level (not just inside the inbox panel)
   // so it's visible while browsing the workflow list, same "needs attention" spirit as Approvals' badge.
   const suspendedRuns = useWorkflowRunsRegistry('suspended');
+  // Tracks whether WorkflowDetail has a run in flight — switching the selected workflow (remount via
+  // `key={selWf.name}`) or opening the inbox unmounts WorkflowDetail, whose cleanup effect aborts the
+  // stream. Surfaced from the child so navigation can be guarded instead of silently killing the run.
+  const [running, setRunning] = useState(false);
 
   const selWf = wfs.data?.find((w) => w.name === sel) ?? wfs.data?.[0];
   const canManage = !!caps.data?.workflowManage;
@@ -118,6 +147,9 @@ export function Workflows() {
   }
 
   if (wfs.isLoading) return <Spinner />;
+  // Query error (SEPARATE from the "no workflows" empty state): if the fetch fails, wfs.data stays
+  // undefined and the length check below would wrongly show "No workflows" — handle the real error first.
+  if (wfs.error) return <ErrorBox error={wfs.error} />;
 
   if (editing) {
     return (
@@ -147,7 +179,7 @@ export function Workflows() {
   }
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full flex-col md:flex-row">
       <ConfirmDialog
         open={deleting !== null}
         onOpenChange={(o) => { if (!o) setDeleting(null); }}
@@ -157,7 +189,11 @@ export function Workflows() {
         destructive
         onConfirm={() => { if (deleting) void handleDelete(deleting); }}
       />
-      <div className="w-56 flex flex-col border-r border-border">
+      {/* Master-detail on mobile (<768px), same pattern as Tools/Inspector: the workflow LIST and
+          the workflow DETAIL (graph + run controls) never fit side by side on a phone. Below md,
+          show ONE panel at a time based on `sel` (list until a workflow is tapped, then the detail
+          full-width with a back arrow); at md+, both panels stay side by side exactly as before. */}
+      <div className={cn('w-full flex-col border-r border-border md:flex md:w-56', sel ? 'hidden md:flex' : 'flex')}>
         {canManage && (
           <div className="p-1.5 border-b border-border">
             <button type="button" onClick={() => setEditing('new')}
@@ -167,8 +203,8 @@ export function Workflows() {
           </div>
         )}
         <div className="p-1.5 border-b border-border">
-          <button type="button" onClick={() => setShowInbox(true)}
-            className="inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
+          <button type="button" onClick={() => setShowInbox(true)} disabled={running} title={running ? t('runningGuardTitle') : undefined}
+            className="inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground">
             <Inbox size={13} /> {t('inboxToggleLabel')}
             {(suspendedRuns.data?.length ?? 0) > 0 && <Badge tone="warning">{suspendedRuns.data!.length}</Badge>}
           </button>
@@ -177,9 +213,14 @@ export function Workflows() {
           {!wfs.data?.length && <p className="px-2 py-3 text-xs text-muted-foreground">{t('noWorkflows')}</p>}
           {wfs.data?.map((w) => {
             const active = (sel ?? wfs.data![0].name) === w.name;
+            // Switching selection remounts WorkflowDetail (key={selWf.name}) and aborts an in-flight
+            // run — block navigation to a DIFFERENT workflow while one is running; re-clicking the
+            // active row is a no-op so it stays enabled.
+            const navBlocked = running && !active;
             return (
               <div key={w.name} className={cn('group mb-0.5 flex items-center rounded-md border-l-2 transition-colors', active ? 'border-l-brand bg-muted' : 'border-l-transparent hover:bg-muted/60')}>
-                <button type="button" onClick={() => setSel(w.name)} className="flex min-w-0 flex-1 items-center gap-1.5 px-2.5 py-2 text-left">
+                <button type="button" onClick={() => setSel(w.name)} disabled={navBlocked} title={navBlocked ? t('runningGuardTitle') : undefined}
+                  className="flex min-w-0 flex-1 items-center gap-1.5 px-2.5 py-2 text-left disabled:cursor-not-allowed disabled:opacity-40">
                   {w.source === 'managed'
                     ? <Cpu size={11} className="shrink-0 text-primary" />
                     : <Code2 size={11} className="shrink-0 text-muted-foreground" />}
@@ -199,7 +240,19 @@ export function Workflows() {
           })}
         </div>
       </div>
-      {selWf && <WorkflowDetail key={selWf.name} wf={selWf} canRun={!!caps.data?.workflowExec} canManage={canManage} onEdit={() => startEdit(selWf)} />}
+      <div className={cn('flex-1 overflow-hidden', !sel && 'hidden md:block')}>
+        {selWf && (
+          <WorkflowDetail
+            key={selWf.name}
+            wf={selWf}
+            canRun={!!caps.data?.workflowExec}
+            canManage={canManage}
+            onEdit={() => startEdit(selWf)}
+            onRunningChange={setRunning}
+            onBack={() => setSel(null)}
+          />
+        )}
+      </div>
     </div>
   );
 }
@@ -295,7 +348,13 @@ function savePreset(wf: string, input: string): string[] {
   return next;
 }
 
-function WorkflowDetail({ wf, canRun, canManage, onEdit }: { wf: WorkflowMeta; canRun: boolean; canManage: boolean; onEdit: () => void }) {
+function WorkflowDetail({ wf, canRun, canManage, onEdit, onRunningChange, onBack }: {
+  wf: WorkflowMeta; canRun: boolean; canManage: boolean; onEdit: () => void;
+  /** Reports run-in-flight status up to the parent so it can guard navigation that would abort it. */
+  onRunningChange?: (running: boolean) => void;
+  /** Mobile-only: returns to the workflow list (see Workflows' top-level master-detail layout). */
+  onBack?: () => void;
+}) {
   const { t } = useTranslation('workflows');
   const qc = useQueryClient();
   const runs = useWorkflowRuns(wf.name);
@@ -335,6 +394,10 @@ function WorkflowDetail({ wf, canRun, canManage, onEdit }: { wf: WorkflowMeta; c
 
   // Cancel the in-flight stream on unmount — otherwise monitoring keeps running in the background (a race/resource leak).
   useEffect(() => () => { abortRef.current?.abort(); }, []);
+
+  // Surface run-in-flight status to the parent (see onRunningChange doc) and clear it on unmount.
+  useEffect(() => { onRunningChange?.(busy); }, [busy, onRunningChange]);
+  useEffect(() => () => onRunningChange?.(false), []);
 
   const setStep = (id: string, st: Partial<StepState>) => setStatus((s) => ({ ...s, [id]: { ...(s[id] ?? { status: 'idle' }), ...st } }));
 
@@ -429,6 +492,16 @@ function WorkflowDetail({ wf, canRun, canManage, onEdit }: { wf: WorkflowMeta; c
   return (
     <div className="flex flex-1 flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2">
+        {/* Mobile-only back arrow: below md the list/detail panels are master-detail (see Workflows'
+            top-level layout, same pattern as Tools/Inspector) — this is the only way back to the
+            workflow list on a phone. Disabled while a run is in flight — same navigation guard as
+            switching workflows in the list (leaving now would abort the stream). */}
+        {onBack && (
+          <button type="button" onClick={onBack} disabled={busy} title={busy ? t('runningGuardTitle') : t('backToWorkflowsTitle')}
+            className="shrink-0 text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 md:hidden">
+            <ChevronLeft size={16} />
+          </button>
+        )}
         <span className="font-mono text-sm font-semibold">{wf.name}</span>
         {wf.source === 'managed' && canManage && (
           <Btn size="xs" variant="ghost" onClick={onEdit} title={t('editTitle')}><Pencil size={12} /></Btn>
@@ -595,19 +668,34 @@ function WorkflowEditor({ initial, onSave, onCancel }: {
   const [steps, setSteps] = useState<WorkflowStepDef[]>(initial?.steps ?? []);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Dirty tracking: any edit to name/description/steps flips this — used to gate the Cancel button
+  // behind a confirm dialog instead of silently discarding a filled-in form.
+  const [dirty, setDirty] = useState(false);
+  const [confirmCancel, setConfirmCancel] = useState(false);
 
   const agentNames = agents.data?.map((a) => a.name) ?? [];
+
+  function handleNameChange(v: string) { setName(v); setDirty(true); }
+  function handleDescChange(v: string) { setDesc(v); setDirty(true); }
 
   function addStep() {
     const id = t('stepIdPrefix', { n: steps.length + 1 });
     setSteps((s) => [...s, { id, agentName: agentNames[0] ?? '', prompt: '' }]);
+    setDirty(true);
   }
-  function removeStep(i: number) { setSteps((s) => s.filter((_, j) => j !== i)); }
+  function removeStep(i: number) { setSteps((s) => s.filter((_, j) => j !== i)); setDirty(true); }
   function updateStep(i: number, patch: Partial<WorkflowStepDef>) {
     setSteps((s) => s.map((st, j) => j === i ? { ...st, ...patch } : st));
+    setDirty(true);
   }
   function moveStep(i: number, dir: -1 | 1) {
     setSteps((s) => { const a = [...s]; [a[i], a[i + dir]] = [a[i + dir], a[i]]; return a; });
+    setDirty(true);
+  }
+
+  function handleCancel() {
+    if (dirty) setConfirmCancel(true);
+    else onCancel();
   }
 
   async function save() {
@@ -621,10 +709,19 @@ function WorkflowEditor({ initial, onSave, onCancel }: {
 
   return (
     <div className="flex flex-1 flex-col overflow-auto">
+      <ConfirmDialog
+        open={confirmCancel}
+        onOpenChange={setConfirmCancel}
+        title={t('discardChangesTitle')}
+        description={t('discardChangesDescription')}
+        confirmLabel={t('discardChangesConfirmLabel')}
+        destructive
+        onConfirm={onCancel}
+      />
       <div className="flex items-center gap-2 border-b border-border px-4 py-2">
         <span className="text-sm font-semibold">{initial ? t('editWorkflowHeading') : t('newWorkflow')}</span>
         <div className="ml-auto flex gap-2">
-          <Btn size="xs" variant="outline" onClick={onCancel} disabled={saving}>{t('cancelLabel')}</Btn>
+          <Btn size="xs" variant="outline" onClick={handleCancel} disabled={saving}>{t('cancelLabel')}</Btn>
           <Btn size="xs" onClick={save} disabled={saving}>{saving ? t('saving') : t('saveAction')}</Btn>
         </div>
       </div>
@@ -632,12 +729,12 @@ function WorkflowEditor({ initial, onSave, onCancel }: {
       <div className="mx-auto w-full max-w-2xl space-y-5 p-6">
         <div className="space-y-1.5">
           <label className="text-xs font-medium text-muted-foreground">{t('nameLabel')}</label>
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder={t('workflowNamePlaceholder')} disabled={!!initial} className={inputCls} />
+          <input value={name} onChange={(e) => handleNameChange(e.target.value)} placeholder={t('workflowNamePlaceholder')} disabled={!!initial} className={inputCls} />
           {initial && <p className="text-[11px] text-muted-foreground">{t('nameImmutableNote')}</p>}
         </div>
         <div className="space-y-1.5">
           <label className="text-xs font-medium text-muted-foreground">{t('descriptionLabel')}</label>
-          <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder={t('descriptionPlaceholder')} className={inputCls} />
+          <input value={desc} onChange={(e) => handleDescChange(e.target.value)} placeholder={t('descriptionPlaceholder')} className={inputCls} />
         </div>
 
         <div className="space-y-2">
@@ -680,10 +777,11 @@ function WorkflowEditor({ initial, onSave, onCancel }: {
 /**
  * D3-A (AUDIT-R2 yüzey): suspended-runs inbox — GET /workflows/runs?status=suspended lists
  * EVERY suspended run across ALL workflows (code + managed) in one registry scan, not just the
- * currently-selected workflow's history. The registry record does NOT carry the workflow's name (only
- * `wfrun:<runId>`, see WorkflowRunRegistryItem's JSDoc) — the workflow to resume against must be picked
- * from the existing workflows list rather than inferred; this is surfaced honestly in the resume form
- * instead of guessing. Auto-refreshes every 5s (same cadence as Approvals.tsx's inbox).
+ * currently-selected workflow's history. The registry record's `workflowName` is OPTIONAL (older
+ * records won't have it, see WorkflowRunRegistryItem's JSDoc) — when absent, the resume form falls back
+ * to deriving it from the runId convention (deriveWorkflowName) and, failing that, to the existing
+ * workflows-list picker, so the operator is never forced to guess without a signal. Auto-refreshes
+ * every 5s (same cadence as Approvals.tsx's inbox).
  */
 function SuspendedRunsInbox({ workflows, canResume, canCancel, onClose }: {
   workflows: WorkflowMeta[]; canResume: boolean; canCancel: boolean; onClose: () => void;
@@ -764,7 +862,20 @@ function SuspendedRunRow({ item, workflows, canResume, canCancel, busy, onCancel
 }) {
   const { t } = useTranslation('workflows');
   const [expanded, setExpanded] = useState(false);
-  const [wfName, setWfName] = useState(workflows.length === 1 ? workflows[0]!.name : '');
+  // FLOW-08: server-confirmed name wins outright; otherwise try to derive it from the runId
+  // convention; otherwise fall back to the old single-workflow default (unchanged behavior).
+  const guessedWfName = useMemo(
+    () => (item.workflowName ? null : deriveWorkflowName(item.runId, workflows.map((w) => w.name))),
+    [item.workflowName, item.runId, workflows],
+  );
+  const [wfName, setWfName] = useState(
+    () => item.workflowName ?? guessedWfName ?? (workflows.length === 1 ? workflows[0]!.name : ''),
+  );
+  // Confidence badge next to the select: stays attached to whichever value it's currently showing —
+  // if the operator edits the dropdown away from the derived/known name, the badge disappears (it
+  // would otherwise misrepresent a hand-picked value as confirmed/guessed).
+  const nameConfidence: 'known' | 'guessed' | null =
+    wfName && wfName === item.workflowName ? 'known' : wfName && wfName === guessedWfName ? 'guessed' : null;
   const [payload, setPayload] = useState('{}');
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -817,7 +928,15 @@ function SuspendedRunRow({ item, workflows, canResume, canCancel, busy, onCancel
         <div className="mt-2 space-y-2 border-t border-border/60 pt-2">
           {!item.waitId && <p className="text-[11px] text-warning">{t('inboxNoWaitIdNote')}</p>}
           <label className="flex flex-col gap-1 text-xs">
-            {t('inboxWorkflowLabel')}
+            <span className="flex items-center gap-1.5">
+              {t('inboxWorkflowLabel')}
+              {nameConfidence === 'known' && (
+                <span title={t('inboxWorkflowKnownTitle')}><Badge tone="success">{t('inboxWorkflowKnownBadge')}</Badge></span>
+              )}
+              {nameConfidence === 'guessed' && (
+                <span title={t('inboxWorkflowGuessedTitle')}><Badge tone="muted">{t('inboxWorkflowGuessedBadge')}</Badge></span>
+              )}
+            </span>
             <select
               aria-label={t('inboxWorkflowLabel')}
               value={wfName}
@@ -867,7 +986,12 @@ function NodePanel({ node, state, suspend, edges, gnodes, order, allStatus, runI
   const copy = (v: unknown) => { void navigator.clipboard?.writeText(typeof v === 'string' ? v : JSON.stringify(v, null, 2)).catch(() => {}); };
 
   return (
-    <div className="w-96 shrink-0 overflow-auto border-l border-border p-3">
+    // Below md the graph canvas has no room next to a 384px-wide inspector (see Workflows' VIS-02
+    // note) — it becomes a full-viewport overlay instead of a side panel; the existing X button
+    // above is the only way to dismiss it there too. z-30 stays under ConfirmDialog (z-40/z-50) so a
+    // confirm prompt opened from this view still renders on top of it. At md+, back to a normal
+    // in-flow side panel (unchanged from before).
+    <div className="fixed inset-0 z-30 overflow-auto bg-background p-3 md:static md:z-auto md:w-96 md:shrink-0 md:border-l md:border-border md:bg-transparent">
       <div className="mb-2 flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="font-mono text-sm font-semibold">{node.label}</div>

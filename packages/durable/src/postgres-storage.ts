@@ -634,6 +634,17 @@ class PgMemoryStore implements MemoryStore {
     const r = await this.q('SELECT * FROM gnl_messages WHERE thread_id = $1 ORDER BY seq LIMIT $2 OFFSET $3', [threadId, limit, start]);
     return pageOf(r.rows.map((x) => this.toMsg(x)), start, limit, total);
   }
+  /**
+   * FLOW-10: truncate a thread's tail — deletes every message with seq > afterSeq (afterSeq itself,
+   * and everything before it, is kept). See MemoryStore.deleteMessagesAfter (storage.ts) for the full
+   * contract. Same DELETE-then-rowCount pattern as PgRunJournal.deletePrefix above. Boundary cases fall
+   * out of the WHERE clause naturally: unknown threadId or afterSeq >= the thread's max seq → the WHERE
+   * matches no rows → 0; afterSeq below the thread's min seq → the WHERE matches every row for that thread.
+   */
+  async deleteMessagesAfter(threadId: string, afterSeq: number): Promise<number> {
+    const r = await this.q('DELETE FROM gnl_messages WHERE thread_id = $1 AND seq > $2', [threadId, afterSeq]);
+    return r.rowCount ?? 0;
+  }
   async recall(threadId: string, query: number[], opts: RecallOptions): Promise<MessageRecord[]> {
     if (!hasNorm(query)) return [];
     const r = opts.scope === 'resource' && opts.resourceId

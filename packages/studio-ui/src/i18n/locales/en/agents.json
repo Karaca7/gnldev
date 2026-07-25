@@ -56,6 +56,7 @@
   "prodNoneYet": "prod: none yet — promote a draft",
   "editingDraftLabel": "«{{name}}» being edited — saving creates a new version",
   "newAgentDraftLabel": "new version for a code-defined agent",
+  "startFreshDraftButton": "start fresh",
   "editToastVersioned": "«{{name}}» {{version}} being edited — saving creates a NEW version; current prod stays unchanged",
   "editToastUnversioned": "«{{name}}» managed version — saving puts it into prod",
   "managedAgentDeletedToast": "'{{name}}' managed agent record deleted",
@@ -88,5 +89,8 @@
   "registryBlockTitle": "Block this agent from serving (governance registry)",
   "registryApprovedToast": "'{{name}}' approved — it may now serve",
   "registryBlockedToast": "'{{name}}' blocked — it will no longer serve",
-  "registryActionFailedToast": "Couldn't update the approval registry: {{message}}"
+  "registryActionFailedToast": "Couldn't update the approval registry: {{message}}",
+  "discardDraftDialogTitle": "Discard the current draft?",
+  "discardDraftDescription": "You have an unsaved draft for '{{draftName}}'. Editing '{{name}}' will replace it — your unsaved changes will be lost.",
+  "discardDraftConfirmLabel": "Discard and edit"
 }

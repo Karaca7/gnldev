@@ -9,7 +9,7 @@ import { GitFork, Check, X, Play, Pause, ChevronLeft, ChevronRight, SkipBack, Sk
 import {
   useRunsPaged, useRun, useCost, useRunState, useDiff, useTrace, useRunNetwork, useCapabilities, useLiveRuns, useRunScores, useThreads,
   useProcessorReports, useRunIncidents, useMetrics, useMetricsRuns, type MetricsRun,
-  api, errMessage, type Capabilities, type RunSummary, type RegressionReport, type RegressionDiffEntry, type RunCost, type NetworkTrace,
+  api, errMessage, ApiError, type Capabilities, type RunSummary, type RegressionReport, type RegressionDiffEntry, type RunCost, type NetworkTrace,
   type ProcessorReport, type JournalEntry, type RunIncident,
 } from '../api';
 import { Btn, StatusBadge, StatStrip, Spinner, Empty, ErrorBox, JsonBlock, Tabs, Badge, cn } from '../components';
@@ -48,13 +48,35 @@ export function Inspector() {
   const { t } = useTranslation('inspector');
   useLiveRuns();
   const caps = useCapabilities();
-  const runs = useRunsPaged();
+  const [statusF, setStatusF] = useState<'all' | 'completed' | 'suspended'>('all');
+  const [filter, setFilter] = useState('');
+  // API-09: debounce the search box — filtering now happens server-side (GET /runs?q=), so keystrokes
+  // must not fire a request per character; the debounced value is what actually drives the query.
+  const [debouncedFilter, setDebouncedFilter] = useState('');
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedFilter(filter), 300);
+    return () => clearTimeout(id);
+  }, [filter]);
+  // API-09: status/q are pushed down to GET /runs (server-side) — `runs`/`runList`/`total` below already
+  // reflect the active filter, no client-side re-filtering happens anymore (see the old `filtered` memo,
+  // removed). `total` (shown in the search placeholder) is the server's FILTERED count.
+  const filters = useMemo(
+    () => ({ ...(statusF !== 'all' ? { status: statusF } : {}), ...(debouncedFilter ? { q: debouncedFilter } : {}) }),
+    [statusF, debouncedFilter],
+  );
+  const runs = useRunsPaged(filters);
   const runList = useMemo(() => (runs.data?.pages ?? []).flatMap((p) => p.items), [runs.data]);
   const total = runs.data?.pages.at(-1)?.total ?? 0;
+  // Fork lineage (ForkView/allRuns) and the currently-selected run's status badge intentionally stay
+  // UNFILTERED — a fork sibling, or the run the user has selected, may not match the active search/
+  // status filter but must still resolve (this was already the pre-API-09 behavior: `allRuns` was never
+  // routed through the client-side filter either). When no filter is active this is the exact SAME
+  // react-query key as `runs` above (see useRunsPaged) → deduped to a single request, no extra cost.
+  const allRunsQ = useRunsPaged();
+  const allRuns = useMemo(() => (allRunsQ.data?.pages ?? []).flatMap((p) => p.items), [allRunsQ.data]);
   const [params, setParams] = useSearchParams();
   const runParam = params.get('run');
   const [sel, setSel] = useState<string | null>(() => runParam || localStorage.getItem('gnl-insp-run'));
-  const [filter, setFilter] = useState('');
   // F5-resilient selection; when sel drops to null via purge/onPurged, clear the key too (so a stale runId doesn't come back on F5).
   useEffect(() => { if (sel) localStorage.setItem('gnl-insp-run', sel); else localStorage.removeItem('gnl-insp-run'); }, [sel]);
   // Select when arriving from Playground via ?run=<id>; one-time — clear it from the URL once consumed so F5/back doesn't break the persisted selection.
@@ -66,18 +88,10 @@ export function Inspector() {
     setParams(next, { replace: true });
   }, [runParam]);
 
-  const [statusF, setStatusF] = useState<'all' | 'completed' | 'suspended'>('all');
-  const filtered = useMemo(
-    () =>
-      runList
-        .filter((r) => statusF === 'all' || r.status === statusF)
-        .filter((r) => r.runId.toLowerCase().includes(filter.toLowerCase())),
-    [runList, filter, statusF],
-  );
   // Left list view: flat list (default, industry pattern: trace-first) or grouped by thread —
   // the selection (`sel`) is preserved when the mode changes, only the display shape changes.
   const [view, setView] = useState<'runs' | 'threads'>('runs');
-  const threadGroups = useMemo(() => groupRunsByThread(filtered), [filtered]);
+  const threadGroups = useMemo(() => groupRunsByThread(runList), [runList]);
   // Thread TITLES: names given in Playground (memory listThreads → title). The group header shows
   // that name instead of a bare UUID → same language as Playground (this is also the common observability-tool pattern: showing a name, not a bare UUID).
   const threads = useThreads();
@@ -130,8 +144,14 @@ export function Inspector() {
         <div className="flex-1 overflow-auto p-1.5">
           {runs.isLoading && <Spinner />}
           {runs.error && <ErrorBox error={runs.error} />}
-          {filtered.length === 0 && !runs.isLoading && <Empty>{t('noRunsEmpty')}</Empty>}
-          {view === 'runs' && filtered.map((r) => (
+          {/* API-09: distinguish "no runs at all" from "no runs match the active filter" — a filter
+              (status or search) active but zero server-side results is a different situation from an
+              empty journal (the old bug: this used to always say "No runs." even with a filter narrowing
+              a non-empty list down to nothing, which read as "your run was deleted"). */}
+          {runList.length === 0 && !runs.isLoading && (
+            <Empty>{statusF !== 'all' || debouncedFilter ? t('noMatchesEmpty') : t('noRunsEmpty')}</Empty>
+          )}
+          {view === 'runs' && runList.map((r) => (
             <RunRow key={r.runId} run={r} active={sel === r.runId} onClick={() => setSel(r.runId)} />
           ))}
           {view === 'threads' && threadGroups.map((g) => (
@@ -156,9 +176,9 @@ export function Inspector() {
           <RunDetail
             key={sel}
             runId={sel}
-            status={runList.find((r) => r.runId === sel)?.status}
+            status={allRuns.find((r) => r.runId === sel)?.status}
             caps={caps.data}
-            allRuns={runList}
+            allRuns={allRuns}
             onSelectRun={setSel}
             onPurged={() => setSel(null)}
             onBack={() => setSel(null)}
@@ -381,6 +401,12 @@ function RunDetail({ runId, status, caps, allRuns, onSelectRun, onPurged, onBack
     qc.invalidateQueries({ queryKey: ['run', runId] });
     qc.invalidateQueries({ queryKey: ['state', runId] });
   };
+  // After a fork, jump straight to the new run so its (paid, already-resumed) result is visible —
+  // otherwise a user staring at the old run may click "fork" again, spawning another paid run.
+  const onFork = (newRunId?: string) => {
+    refresh();
+    if (newRunId) onSelectRun(newRunId);
+  };
 
   return (
     <div className="flex h-full flex-col">
@@ -412,19 +438,19 @@ function RunDetail({ runId, status, caps, allRuns, onSelectRun, onPurged, onBack
           {/* D3-A: durable cancel (irreversible → confirm dialog, same treatment as Unwind): only when
               the host journal is writable (caps.runCancel — studio has no in-process abort here). */}
           {caps?.runCancel && (
-            <Btn variant="ghost" size="xs" title={t('cancelRunButtonTitle')} onClick={() => setCancelOpen(true)}>
-              <Ban size={13} className="text-warning" />
+            <Btn variant="outline" size="xs" title={t('cancelRunButtonTitle')} onClick={() => setCancelOpen(true)}>
+              <Ban size={13} className="text-warning" /> {t('cancelRunLabel')}
             </Btn>
           )}
           {/* Saga unwind (irreversible → confirm dialog): only when the host wired compensateRun. */}
           {caps?.compensate && (
-            <Btn variant="ghost" size="xs" title={t('unwindButtonTitle')} onClick={() => setUnwindOpen(true)}>
-              <Undo2 size={13} className="text-warning" />
+            <Btn variant="outline" size="xs" title={t('unwindButtonTitle')} onClick={() => setUnwindOpen(true)}>
+              <Undo2 size={13} className="text-warning" /> {t('unwindLabel')}
             </Btn>
           )}
           {caps?.purge && (
-            <Btn variant="ghost" size="xs" title={t('purgeButtonTitle')} onClick={() => setPurgeOpen(true)}>
-              <Trash2 size={13} className="text-destructive" />
+            <Btn variant="deny" size="xs" title={t('purgeButtonTitle')} onClick={() => setPurgeOpen(true)}>
+              <Trash2 size={13} /> {t('purgeLabel')}
             </Btn>
           )}
         </div>
@@ -507,7 +533,7 @@ function RunDetail({ runId, status, caps, allRuns, onSelectRun, onPurged, onBack
             {/* Journal step-timeline (mockup's primary Journal view) → then the message/time-travel view below. */}
             <JournalTimeline runId={runId} />
             <div className="border-t border-border pt-4">
-              <ConversationView runId={runId} steps={run.data?.length ?? 0} canFork={!!caps?.fork} onFork={refresh} />
+              <ConversationView runId={runId} steps={run.data?.length ?? 0} canFork={!!caps?.fork} onFork={onFork} />
             </div>
           </div>
         )}
@@ -515,7 +541,15 @@ function RunDetail({ runId, status, caps, allRuns, onSelectRun, onPurged, onBack
         {tab === 'cost' && cost.data && <CostSummary cost={cost.data} />}
         {tab === 'network' && <NetworkView runId={runId} />}
         {tab === 'forks' && <ForkView runId={runId} allRuns={allRuns} onSelectRun={onSelectRun} />}
-        {tab === 'regression' && <RegressionView runId={runId} />}
+        {/* Kept mounted (not conditionally rendered): a regression run is a REAL paid model call —
+            switching to another tab must not lose the report/inputs (FLOW-01). Hidden via CSS instead
+            of unmounting; RegressionView makes no request on mount, so this costs nothing until the
+            user clicks "Re-run"/"Diff". Only this tab needs this treatment. */}
+        {caps?.regression && (
+          <div className={cn(tab !== 'regression' && 'hidden')}>
+            <RegressionView runId={runId} />
+          </div>
+        )}
         {tab === 'processors' && <ProcessorsView runId={runId} />}
         {tab === 'incidents' && <IncidentsView incidents={incidents.data?.incidents ?? []} />}
       </div>
@@ -768,7 +802,7 @@ export function ChatBubble({ m, added, entry, latencyMs }: { m: any; added?: boo
  * mode renders the existing `Timeline` AS-IS (untouched) — the journal remains separately accessible
  * as the single source of truth.
  */
-function ConversationView({ runId, steps, canFork, onFork }: { runId: string; steps: number; canFork: boolean; onFork: () => void }) {
+function ConversationView({ runId, steps, canFork, onFork }: { runId: string; steps: number; canFork: boolean; onFork: (newRunId?: string) => void }) {
   const { t } = useTranslation('inspector');
   const [mode, setMode] = useState<'chat' | 'journal'>('chat');
   return (
@@ -799,7 +833,7 @@ function ConversationView({ runId, steps, canFork, onFork }: { runId: string; st
  * tool messages are mapped to `toolByCall` via `tool_call_id`/`toolCallId`; if the index overflows, the entry
  * silently stays undefined (usage/latency is shown optionally, it doesn't throw).
  */
-function ChatReplay({ runId, steps, canFork, onFork }: { runId: string; steps: number; canFork: boolean; onFork: () => void }) {
+function ChatReplay({ runId, steps, canFork, onFork }: { runId: string; steps: number; canFork: boolean; onFork: (newRunId?: string) => void }) {
   const { t } = useTranslation('inspector');
   const [step, setStep] = useState(steps);
   const eff = Math.min(step, steps);
@@ -824,7 +858,18 @@ function ChatReplay({ runId, steps, canFork, onFork }: { runId: string; steps: n
 
   const doFork = async () => {
     setForking(true);
-    try { await api.fork(runId, eff); onFork(); } finally { setForking(false); }
+    try {
+      // The server resumes the new run IMMEDIATELY after forking (real model call = real cost) — so a
+      // silently-swallowed error here would leave the user clicking again, spawning another paid fork
+      // each time. Surface success/failure and switch to the new run so a repeat click isn't tempting.
+      const res = await api.fork(runId, eff);
+      toast.success(t('forkSuccessToast', { runId: res?.newRunId ?? '?' }));
+      onFork(res?.newRunId);
+    } catch (e) {
+      toast.error(t('forkFailedToast', { message: errMessage(e) }));
+    } finally {
+      setForking(false);
+    }
   };
 
   const msgs = state.data?.messages ?? [];
@@ -1317,6 +1362,9 @@ function DiffPair({ a, b }: { a: string; b: string }) {
   const sa = useRunState(a);
   const sb = useRunState(b);
   if (sa.isLoading || sb.isLoading) return <Spinner />;
+  // A failed fetch on either side must NOT fall through to "0 common · A +0 · B +0" — this is a
+  // decision surface (fork vs. base comparison), and a silent-looking "no difference" is worse than an error.
+  if (sa.error || sb.error) return <ErrorBox error={sa.error ?? sb.error} />;
   const ma = sa.data?.messages ?? [];
   const mb = sb.data?.messages ?? [];
   let prefix = 0;
@@ -1677,7 +1725,22 @@ function Approvals({ runId, onDone }: { runId: string; onDone: () => void }) {
 
   const decide = async (approvals: Record<string, boolean>) => {
     setBusy(true);
-    try { await api.resume(runId, approvals); onDone(); } finally { setBusy(false); }
+    const approved = Object.values(approvals).some((v) => v === true);
+    try {
+      await api.resume(runId, approvals);
+      toast.success(approved ? t('approveSuccess') : t('denySuccess'));
+      onDone();
+    } catch (e) {
+      // Multi-tab race: another tab/user may have already resolved this approval (409) →
+      // show a clear message and still refresh so a stale 'pending' row doesn't linger in the UI.
+      const conflict = e instanceof ApiError && e.status === 409;
+      toast.error(conflict
+        ? t('conflictError', { error: errMessage(e) })
+        : t('actionError', { error: errMessage(e) }));
+      onDone();
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (

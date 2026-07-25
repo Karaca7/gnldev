@@ -56,6 +56,7 @@
   "prodNoneYet": "prod: henüz yok — taslağı promote et",
   "editingDraftLabel": "«{{name}}» düzenleniyor — kaydedince yeni sürüm oluşur",
   "newAgentDraftLabel": "kod-tanımlı agent için yeni sürüm",
+  "startFreshDraftButton": "sıfırdan başla",
   "editToastVersioned": "«{{name}}» {{version}} düzenleniyor — kaydedince YENİ sürüm oluşur; mevcut prod değişmez",
   "editToastUnversioned": "«{{name}}» için yönetilen sürüm — kaydedince prod'a alınır",
   "managedAgentDeletedToast": "'{{name}}' managed agent kaydı silindi",
@@ -88,5 +89,8 @@
   "registryBlockTitle": "Bu agent'ın çalışmasını engelle (governance registry)",
   "registryApprovedToast": "'{{name}}' onaylandı — artık çalışabilir",
   "registryBlockedToast": "'{{name}}' engellendi — artık çalışmayacak",
-  "registryActionFailedToast": "Onay kaydı güncellenemedi: {{message}}"
+  "registryActionFailedToast": "Onay kaydı güncellenemedi: {{message}}",
+  "discardDraftDialogTitle": "Mevcut taslak silinsin mi?",
+  "discardDraftDescription": "'{{draftName}}' için kaydedilmemiş bir taslağınız var. '{{name}}' düzenlenirse bu taslağın yerini alır — kaydedilmemiş değişiklikler kaybolur.",
+  "discardDraftConfirmLabel": "Sil ve düzenle"
 }

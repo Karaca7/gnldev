@@ -103,11 +103,20 @@
   "inboxActionFailed": "İşlem başarısız: {{error}}",
   "inboxNoWaitIdNote": "Bu run'ın kayıtlı bir waitId'si yok — registry hangi suspend noktasının hedefleneceğini söyleyemiyor. Devam ettirme doğru adıma ulaşmayabilir.",
   "inboxWorkflowLabel": "Workflow",
+  "inboxWorkflowKnownBadge": "sunucudan",
+  "inboxWorkflowKnownTitle": "Sunucu bu run'ın hangi workflow'a ait olduğunu kesin olarak kaydetti.",
+  "inboxWorkflowGuessedBadge": "run ID'den tahmin edildi",
+  "inboxWorkflowGuessedTitle": "Bu run için workflow adı kaydedilmemiş — run ID'nin adlandırma kalıbından çıkarıldı. Devam ettirmeden önce kontrol edin.",
   "inboxSelectWorkflowOption": "— workflow seçin —",
   "inboxSelectWorkflowError": "Bu run'ın ait olduğu workflow'u seçin",
   "inboxPayloadLabel": "\"{{waitId}}\" için devam ettirme payload'ı (JSON)",
   "inboxSubmitResume": "Devam ettirmeyi gönder",
   "inboxSubmitting": "Devam ettiriliyor…",
   "inboxResumeSuccess": "\"{{runId}}\" devam ettirildi",
-  "inboxUpdatedAtLabel": "güncellendi"
+  "inboxUpdatedAtLabel": "güncellendi",
+  "runningGuardTitle": "Bir workflow çalışması sürüyor — şimdi ayrılmak onu iptal eder",
+  "backToWorkflowsTitle": "Workflow listesine dön",
+  "discardChangesTitle": "Değişiklikler silinsin mi?",
+  "discardChangesDescription": "Bu workflow taslağında kaydedilmemiş değişiklikler var. Şimdi iptal etmek onları siler.",
+  "discardChangesConfirmLabel": "Sil"
 }

@@ -103,11 +103,20 @@
   "inboxActionFailed": "Action failed: {{error}}",
   "inboxNoWaitIdNote": "This run has no recorded waitId — the registry can't tell which suspend point to target. Resuming may not reach the right step.",
   "inboxWorkflowLabel": "Workflow",
+  "inboxWorkflowKnownBadge": "from server",
+  "inboxWorkflowKnownTitle": "The server recorded exactly which workflow this run belongs to.",
+  "inboxWorkflowGuessedBadge": "guessed from run ID",
+  "inboxWorkflowGuessedTitle": "No workflow name was recorded for this run — this was inferred from the run ID's naming pattern. Double-check before resuming.",
   "inboxSelectWorkflowOption": "— select workflow —",
   "inboxSelectWorkflowError": "Select the workflow this run belongs to",
   "inboxPayloadLabel": "Resume payload for \"{{waitId}}\" (JSON)",
   "inboxSubmitResume": "Submit resume",
   "inboxSubmitting": "Resuming…",
   "inboxResumeSuccess": "\"{{runId}}\" resumed",
-  "inboxUpdatedAtLabel": "updated"
+  "inboxUpdatedAtLabel": "updated",
+  "runningGuardTitle": "A workflow run is in progress — leaving now would cancel it",
+  "backToWorkflowsTitle": "Back to workflow list",
+  "discardChangesTitle": "Discard changes?",
+  "discardChangesDescription": "This workflow draft has unsaved changes. Canceling now discards them.",
+  "discardChangesConfirmLabel": "Discard"
 }

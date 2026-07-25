@@ -135,6 +135,16 @@ class InMemoryMemoryStore implements MemoryStore {
   async setWorkingMemory(scopeId: string, data: unknown) { this.wm.set(scopeId, data); }
   async getObservations(threadId: string) { return [...(this.obs.get(threadId) ?? [])]; }
   async putObservations(threadId: string, obs: Observation[]) { this.obs.set(threadId, [...obs]); }
+
+  /** FLOW-10 (reference behavior — see storage.ts JSDoc): keep seq <= afterSeq, drop the rest. */
+  async deleteMessagesAfter(threadId: string, afterSeq: number): Promise<number> {
+    const log = this.messages.get(threadId);
+    if (!log || log.length === 0) return 0;
+    const kept = log.filter((m) => m.seq <= afterSeq);
+    const removed = log.length - kept.length;
+    if (removed > 0) this.messages.set(threadId, kept);
+    return removed;
+  }
 }
 
 // ── VectorStore (cosine, same behavior as rag's InMemoryVectorStore) ───────────

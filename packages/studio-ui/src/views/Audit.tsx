@@ -128,7 +128,7 @@ export function Audit() {
       {items.length === 0 && <EmptyState icon={ScrollText} title={t('emptyTitle')} description={t('emptyDescription')} />}
 
       {items.length > 0 && (
-        <div className="overflow-hidden rounded-md border border-border bg-card">
+        <div className="overflow-x-auto rounded-md border border-border bg-card">
           <table className="w-full text-left text-xs">
             <thead className="bg-muted/30 text-muted-foreground">
               <tr>

@@ -364,6 +364,43 @@ for (const [name, make, caps] of storages) {
       expect((await b.memory!.getObservations('t1')).map((o) => o.text)).toEqual(['obs']);
     });
 
+    // FLOW-10 (optional capability): deleteMessagesAfter — same "typeof … === 'function'" skip
+    // pattern as applyBatch/deletePrefix above. Currently only InMemoryStorage implements this; the
+    // guard means the test is N/A (not failing) on storages that haven't added it yet, and starts
+    // exercising them automatically once they do — no test-file change needed on their side.
+    it('MemoryStore: deleteMessagesAfter — truncates the tail by seq (exclusive), keeps the anchor + before', async () => {
+      const b = make();
+      if (typeof b.memory!.deleteMessagesAfter !== 'function') return; // optional capability absent → N/A
+      await b.memory!.upsertThread(thread('t1', 'u1', 1));
+      await b.memory!.appendMessages('t1', [msg('t1', 0, 'a'), msg('t1', 1, 'b'), msg('t1', 2, 'c'), msg('t1', 3, 'd')]);
+
+      const removed = await b.memory!.deleteMessagesAfter!('t1', 1);
+      expect(removed).toBe(2); // seq 2 and 3 removed
+
+      const page = await b.memory!.getMessages('t1');
+      expect(page.items.map((m) => m.seq)).toEqual([0, 1]); // anchor (1) and everything before it kept, in order
+    });
+
+    it('MemoryStore: deleteMessagesAfter — unknown thread and out-of-range seq are no-ops (0, never throws)', async () => {
+      const b = make();
+      if (typeof b.memory!.deleteMessagesAfter !== 'function') return;
+      // Unknown thread → 0, no throw.
+      await expect(b.memory!.deleteMessagesAfter!('does-not-exist', 0)).resolves.toBe(0);
+
+      await b.memory!.upsertThread(thread('t2', 'u1', 1));
+      await b.memory!.appendMessages('t2', [msg('t2', 0, 'a'), msg('t2', 1, 'b')]);
+
+      // afterSeq at/above the highest existing seq → nothing to remove.
+      expect(await b.memory!.deleteMessagesAfter!('t2', 1)).toBe(0);
+      expect(await b.memory!.deleteMessagesAfter!('t2', 99)).toBe(0);
+      expect((await b.memory!.getMessages('t2')).items.map((m) => m.seq)).toEqual([0, 1]);
+
+      // afterSeq below the lowest existing seq → removes everything.
+      const removedAll = await b.memory!.deleteMessagesAfter!('t2', -1);
+      expect(removedAll).toBe(2);
+      expect((await b.memory!.getMessages('t2')).items).toEqual([]);
+    });
+
     } // /memory capability
 
     it('WorkStore: idempotent append + ackOnce CAS', async () => {

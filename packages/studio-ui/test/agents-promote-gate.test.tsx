@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 // Scope: the eval-gate (412) rich score table in Agents.tsx's promote flow.
-// On 412 the server returns { error, aggregate } (server.ts ~L1721-1739); api.ts's http() only puts
-// `.error` into ApiError.message, `aggregate` is lost (see api.ts ~L165-186). Agents.tsx bypasses this
-// and captures `aggregate` with a raw fetch (promoteWithGateInfo) — verified here.
+// On 412 the server returns { error, aggregate } (server.ts ~L1721-1739). API-05: ApiError now
+// carries the whole parsed JSON body (see api.ts's http()), so Agents.tsx reads `aggregate` straight
+// off `e.body` via the normal api.promoteAgentVersion() call — verified here.
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
@@ -36,10 +36,12 @@ function stubFetchWithGateRejection(aggregate: Record<string, number>, message: 
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     const u = String(url);
     if (u.endsWith('/promote') && init?.method === 'POST') {
+      const body = { error: message, aggregate };
       return {
         ok: false, status: 412, statusText: 'Precondition Failed',
         headers: { get: () => 'application/json' },
-        json: async () => ({ error: message, aggregate }),
+        json: async () => body,
+        clone() { return this; }, // http() reads the error body via res.clone().json()
       };
     }
     if (u.endsWith('/capabilities')) return jsonOk({ agentVersions: true, evalGate: true });

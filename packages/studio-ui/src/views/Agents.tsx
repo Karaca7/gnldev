@@ -3,50 +3,11 @@ import { Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Rocket, Plus, Trash2, Pencil, ShieldCheck, ShieldAlert, ShieldX, Clock } from 'lucide-react';
-import { useAgents, useManagedAgents, useCapabilities, useAgentRegistry, useMe, api, errMessage, type ManagedAgentRecord, type AgentRegistryRecord } from '../api';
-import { config } from '../config';
-import { authHeader } from '../auth';
-import { Spinner, Empty, Badge, Btn, Tabs, StatStrip, cn } from '../components';
+import { useAgents, useManagedAgents, useCapabilities, useAgentRegistry, useMe, api, errMessage, ApiError, type ManagedAgentRecord, type AgentRegistryRecord } from '../api';
+import { Spinner, Empty, ErrorBox, Badge, Btn, Tabs, StatStrip, cn } from '../components';
 import { ConfirmDialog, toast } from '../ui';
 import { Stagger, StaggerItem } from '../motion';
 import { PromptEditor } from './PromptEditor';
-
-/**
- * Bug-investigation finding: when a promote is rejected with 412 (eval gate BLOCKED), the server
- * body is `{ error, aggregate }` — `aggregate` carries the scorer→score records. api.ts's http()
- * (see api.ts ~L165-186) only puts `.error` into ApiError.message; `aggregate` is silently
- * dropped. Without touching api.ts (out of scope), we hit the same endpoint with a raw fetch using
- * this sibling error class of ApiError, capturing `aggregate` too — the success shape matches
- * api.promoteAgentVersion exactly.
- */
-class GateRejection extends Error {
-  status: number;
-  aggregate?: Record<string, number>;
-  constructor(status: number, message: string, aggregate?: Record<string, number>) {
-    super(message);
-    this.name = 'GateRejection';
-    this.status = status;
-    this.aggregate = aggregate;
-  }
-}
-
-async function promoteWithGateInfo(
-  name: string,
-  version: number,
-): Promise<{ ok: boolean; name: string; active: number; previous: number | null }> {
-  const res = await fetch(`${config.apiBase}/managed-agents/${encodeURIComponent(name)}/promote`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...authHeader() },
-    body: JSON.stringify({ version }),
-  });
-  const body = await res.json().catch(() => null);
-  if (!res.ok) {
-    const message = (body && typeof body.error === 'string' && body.error) || `${res.status} ${res.statusText}`;
-    const aggregate = body && body.aggregate && typeof body.aggregate === 'object' ? (body.aggregate as Record<string, number>) : undefined;
-    throw new GateRejection(res.status, message, aggregate);
-  }
-  return body;
-}
 
 /** A single scorer's gate-table row: score + threshold + pass/fail. */
 export interface GateScoreRow { scorer: string; score: number; threshold: number; passed: boolean; }
@@ -139,12 +100,14 @@ function VersionPanel({ rec, canManage, evalGate, onChanged, onEdit, onDelete }:
     setBusy(version);
     setGateFail(null);
     try {
-      const r = await promoteWithGateInfo(rec.name, version);
+      const r = await api.promoteAgentVersion(rec.name, version);
       toast.success(t('promotedToast', { name: rec.name, previous: r.previous ?? '—', active: r.active }));
       onChanged();
     } catch (e) {
-      if (e instanceof GateRejection && e.status === 412 && e.aggregate) {
-        setGateFail({ message: e.message, rows: parseGateScores(e.message, e.aggregate) });
+      // API-05: 412 (eval gate BLOCKED) carries `aggregate` (scorer→score) in the JSON body —
+      // ApiError now keeps the whole parsed body, not just `.error`, so this reads straight off it.
+      if (e instanceof ApiError && e.status === 412 && e.body?.aggregate && typeof e.body.aggregate === 'object') {
+        setGateFail({ message: e.message, rows: parseGateScores(e.message, e.body.aggregate as Record<string, number>) });
       }
       toast.error(t('promoteFailedToast', { message: errMessage(e) }));
     } finally {
@@ -241,15 +204,21 @@ function GateFailureTable({ message, rows }: { message: string; rows: GateScoreR
     NOT a no-code agent factory). The name is chosen from the code-agent list, never free text, so a
     version can't be created for a name that has no code (which could never run). When arriving via
     "edit" from a card, the name is fixed to that agent and its CURRENT version (model+system) is
-    pre-filled (remounted via key); `note` is deliberately left empty (the change note for THIS version). */
-function NewVersionForm({ onCreated, agentNames, initialName = '', initialModel = '', initialSystem = '', initialNote = '' }: {
-  onCreated: () => void; agentNames: string[]; initialName?: string; initialModel?: string; initialSystem?: string; initialNote?: string;
+    pre-filled; `note` is deliberately left empty (the change note for THIS version).
+    Controlled by the parent (`draft`/`setDraft`, see Agents()) rather than owning its own field
+    state — FORM-02: local state used to vanish whenever this component unmounted (switching to the
+    'list' tab), silently discarding whatever the user had typed. */
+function NewVersionForm({ onCreated, agentNames, draft, setDraft, nameFixed }: {
+  onCreated: () => void; agentNames: string[]; nameFixed: boolean;
+  draft: { name: string; model: string; system: string; note: string };
+  setDraft: (updater: (d: { name: string; model: string; system: string; note: string }) => { name: string; model: string; system: string; note: string }) => void;
 }) {
   const { t } = useTranslation('agents');
-  const [name, setName] = useState(initialName);
-  const [model, setModel] = useState(initialModel);
-  const [system, setSystem] = useState(initialSystem);
-  const [note, setNote] = useState(initialNote);
+  const { name, model, system, note } = draft;
+  const setName = (v: string) => setDraft((d) => ({ ...d, name: v }));
+  const setModel = (v: string) => setDraft((d) => ({ ...d, model: v }));
+  const setSystem = (v: string) => setDraft((d) => ({ ...d, system: v }));
+  const setNote = (v: string) => setDraft((d) => ({ ...d, note: v }));
   const [busy, setBusy] = useState(false);
   const submit = async () => {
     if (!name.trim() || !model.trim() || busy) return;
@@ -264,7 +233,7 @@ function NewVersionForm({ onCreated, agentNames, initialName = '', initialModel 
       toast.success(r.active === r.version
         ? t('createdAndPromotedToast', { name: r.name, version: r.version })
         : t('createdDraftToast', { name: r.name, version: r.version }));
-      setSystem(''); setNote('');
+      setDraft((d) => ({ ...d, system: '', note: '' }));
       onCreated();
     } catch (e) {
       toast.error(t('versionAddFailedToast', { message: errMessage(e) }));
@@ -276,7 +245,7 @@ function NewVersionForm({ onCreated, agentNames, initialName = '', initialModel 
   return (
     <div className="space-y-2 rounded-md border border-border bg-muted/10 p-2.5">
       <div className="flex flex-wrap items-end gap-2">
-        {initialName ? (
+        {nameFixed ? (
           // Editing a specific code agent → the name is FIXED (you're adding a version to IT).
           <label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground">{t('agentNameLabel')}
             <span className={cn(cls, 'inline-block w-40 truncate bg-muted/40 font-mono text-foreground')}>{name}</span>
@@ -308,7 +277,7 @@ function NewVersionForm({ onCreated, agentNames, initialName = '', initialModel 
         <div className="mb-1 text-[10px] text-muted-foreground">{t('systemPromptFieldLabel')}</div>
         <PromptEditor value={system} onChange={setSystem} />
       </div>
-      {!initialName && agentNames.length === 0 && (
+      {!nameFixed && agentNames.length === 0 && (
         <p className="text-[10px] text-warning">{t('noCodeAgentsForVersion')}</p>
       )}
       <p className="text-[10px] text-muted-foreground">
@@ -437,23 +406,37 @@ export function Agents() {
     }
   };
 
-  // Tabs: 'list' (cards) · 'create' (create/edit). Switching tabs manually gives an EMPTY form (new agent);
-  // arriving via "edit" from a card pre-fills that agent's CURRENT version (draft + remount via formKey).
+  // Tabs: 'list' (cards) · 'create' (create/edit). The draft (name/model/system/note) lives HERE —
+  // NewVersionForm is a controlled child — so switching tabs no longer discards in-progress typing
+  // (FORM-02): 'list' just unmounts the form, it doesn't touch `draft`.
   const [tab, setTab] = useState<'list' | 'create'>('list');
   const BLANK = { name: '', model: '', system: '', note: '' };
   const [draft, setDraft] = useState<{ name: string; model: string; system: string; note: string }>(BLANK);
-  const [formKey, setFormKey] = useState(0);
+  // Whether the name field is pinned to a specific code agent (came from "edit") vs a free select
+  // (fresh draft — pick which code agent to version). Can't be derived from `draft.name` alone since
+  // picking an agent from the select also makes it non-empty.
+  const [nameFixed, setNameFixed] = useState(false);
+  const isDraftFilled = (d: typeof BLANK) => !!(d.name || d.model || d.system || d.note);
+  // "edit" from a card would silently overwrite an in-progress draft for a DIFFERENT agent — gated
+  // behind a confirm dialog (below) instead of the old unwarned overwrite.
+  const [pendingEdit, setPendingEdit] = useState<{ name: string; model: string; system: string; note: string; versionLabel?: string } | null>(null);
   // Edit from card: load the current version's content (including the note) into the form + inform the user (versions are immutable → this becomes a new version).
-  const startEdit = (name: string, model: string, system: string, note = '', versionLabel?: string) => {
+  const applyEdit = (name: string, model: string, system: string, note = '', versionLabel?: string) => {
     setDraft({ name, model, system, note });
-    setFormKey((k) => k + 1);
+    setNameFixed(true);
     setTab('create');
     toast.info(versionLabel
       ? t('editToastVersioned', { name, version: versionLabel })
       : t('editToastUnversioned', { name }));
   };
-  // Switching to 'create' from the tab bar: a brand-new agent from scratch → clear the form.
-  const onTab = (tabId: 'list' | 'create') => { if (tabId === 'create') { setDraft(BLANK); setFormKey((k) => k + 1); } setTab(tabId); };
+  const startEdit = (name: string, model: string, system: string, note = '', versionLabel?: string) => {
+    if (isDraftFilled(draft) && draft.name !== name) {
+      setPendingEdit({ name, model, system, note, versionLabel });
+      return;
+    }
+    applyEdit(name, model, system, note, versionLabel);
+  };
+  const onTab = (tabId: 'list' | 'create') => setTab(tabId);
 
   // Delete the managed agent record (with ALL its versions) — only removes the managed record; a
   // code-defined agent (if defined in createGnl agents) is unaffected and keeps showing up as-is.
@@ -497,11 +480,14 @@ export function Agents() {
   };
 
   if (agents.isLoading) return <Spinner />;
+  if (agents.error) return <ErrorBox error={agents.error} />;
   return (
     <>
     <StatStrip items={[
-      { label: t('statAgents'), value: totalCount.toLocaleString() },
-      { label: t('statManaged'), value: String(managed.data?.agents?.length ?? 0) },
+      // `managed.error` degrades these to "—" instead of a fabricated "0" — totalCount also depends
+      // on managed.data (via managedOnly), so it's unreliable whenever managed errored, same as statManaged.
+      { label: t('statAgents'), value: managed.error ? '—' : totalCount.toLocaleString() },
+      { label: t('statManaged'), value: managed.error ? '—' : String(managed.data?.agents?.length ?? 0) },
       { label: t('statCodeDefined'), value: String(agents.data?.length ?? 0) },
     ]} />
     <div className="space-y-5 p-5">
@@ -532,6 +518,15 @@ export function Agents() {
         confirmLabel={t('deleteConfirmLabel')}
         destructive
         onConfirm={() => void handleDeleteVersion()}
+      />
+      <ConfirmDialog
+        open={pendingEdit !== null}
+        onOpenChange={(o) => { if (!o) setPendingEdit(null); }}
+        title={t('discardDraftDialogTitle')}
+        description={pendingEdit ? t('discardDraftDescription', { draftName: draft.name, name: pendingEdit.name }) : ''}
+        confirmLabel={t('discardDraftConfirmLabel')}
+        destructive
+        onConfirm={() => { if (pendingEdit) applyEdit(pendingEdit.name, pendingEdit.model, pendingEdit.system, pendingEdit.note, pendingEdit.versionLabel); }}
       />
       {canManage ? (
         <Tabs<'list' | 'create'>
@@ -690,12 +685,20 @@ export function Agents() {
 
       {tab === 'create' && canManage && (
         <div>
-          <div className="microlabel mb-1.5 text-muted-foreground">
-            {draft.name ? t('editingDraftLabel', { name: draft.name }) : t('newAgentDraftLabel')}
+          {/* The draft now SURVIVES tab switches (FORM-02), so the old "clicking Create resets the form"
+              shortcut is gone — this gives it back explicitly, and is the only way to unpin `nameFixed`. */}
+          <div className="microlabel mb-1.5 flex items-center gap-2 text-muted-foreground">
+            <span>{draft.name ? t('editingDraftLabel', { name: draft.name }) : t('newAgentDraftLabel')}</span>
+            {(isDraftFilled(draft) || nameFixed) && (
+              <button type="button" onClick={() => { setDraft(BLANK); setNameFixed(false); }}
+                className="rounded px-1.5 py-0.5 text-muted-foreground underline-offset-2 transition-colors hover:text-foreground hover:underline">
+                {t('startFreshDraftButton')}
+              </button>
+            )}
           </div>
-          <NewVersionForm key={formKey} agentNames={agents.data?.map((a) => a.name) ?? []}
-            initialName={draft.name} initialModel={draft.model} initialSystem={draft.system}
-            initialNote={draft.note} onCreated={() => { refresh(); setTab('list'); }} />
+          <NewVersionForm agentNames={agents.data?.map((a) => a.name) ?? []}
+            draft={draft} setDraft={setDraft} nameFixed={nameFixed}
+            onCreated={() => { refresh(); setTab('list'); }} />
         </div>
       )}
     </div>

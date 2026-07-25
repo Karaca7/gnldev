@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -11,10 +11,29 @@ import { Approvals } from '../src/views/Approvals';
 import { Organizations } from '../src/views/Organizations';
 import { Playground } from '../src/views/Playground';
 import { diffWorkflowSteps } from '../src/views/workflow-diff';
+import enPlayground from '../src/i18n/locales/en/playground.json';
+
+// FLOW-10: submitEdit/regenerate's server-truncate fallback calls toast(...) / toast.error(...) —
+// stub it (rest of '../src/ui' passes through untouched, e.g. Dialog/ConfirmDialog used elsewhere
+// in this file) so those calls can be asserted on without needing a real <Toaster/> in the tree.
+const { toastMock } = vi.hoisted(() => {
+  const fn = vi.fn() as unknown as { (msg: string): void; error: ReturnType<typeof vi.fn> };
+  (fn as any).error = vi.fn();
+  return { toastMock: fn };
+});
+vi.mock('../src/ui', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/ui')>();
+  return { ...actual, toast: toastMock };
+});
 
 afterEach(() => {
   cleanup();
   localStorage.clear(); // don't let persistent selections like gnl-insp-run leak across tests
+});
+
+beforeEach(() => {
+  toastMock.mockClear();
+  toastMock.error.mockClear();
 });
 
 // recharts' ResponsiveContainer needs ResizeObserver; not present in jsdom → no-op stub.
@@ -24,8 +43,10 @@ vi.stubGlobal('ResizeObserver', class {
   disconnect() {}
 });
 
-// Playground's smart auto-scroll calls scrollIntoView; jsdom doesn't implement it → no-op stub.
+// Playground's smart auto-scroll drives the transcript box's own scrollTo (and scrollIntoView is what
+// it must NOT use — see the containing-block regression guard below); jsdom implements neither.
 Element.prototype.scrollIntoView = vi.fn();
+Element.prototype.scrollTo = vi.fn() as unknown as Element['scrollTo'];
 
 // framer-motion's Reveal (viewport) feature needs IntersectionObserver; not present in jsdom → no-op stub.
 vi.stubGlobal('IntersectionObserver', class {
@@ -198,6 +219,192 @@ describe('studio-ui components', () => {
     // Switch agents → the previous agent's conversation must NOT linger.
     fireEvent.change(screen.getByLabelText('Agent'), { target: { value: 'beta' } });
     await waitFor(() => expect(screen.queryByText('message from the old thread')).toBeNull());
+  });
+
+  // REGRESSION GUARD — "messages vanished, huge blank area below the last visible line".
+  // The transcript used to be a <Stagger>/<StaggerItem> list. Stagger propagates its "hidden" → "show"
+  // variant to children only when the PARENT's animate state changes, i.e. once, at mount — and this
+  // list mounts EMPTY (`msgs` starts as []). Every message appended afterwards (stream delta, thread
+  // load, regenerate) therefore mounted as a late child and stayed on the `hidden` variant forever:
+  // framer-motion wrote `opacity: 0; transform: translateY(6px)` inline, so the bubble was invisible
+  // while still occupying its full height — a blank scroll area that scrolled as if content were there.
+  // A chat transcript must not be gated behind an entrance animation, so: no motion-driven inline
+  // opacity anywhere in it. Also pins the scroll container's shape (nothing between the transcript
+  // and the end of the scroll box may take flow space) so auto-scroll stays correct.
+  it('Playground: the transcript renders unconditionally visible (no motion-gated opacity)', async () => {
+    stubFetch({
+      '/capabilities': { ...CAPS, playground: true, memory: true },
+      '/agents': [{ name: 'alpha', model: 'm', hasTools: false }],
+      '/me': { id: null, roles: [], orgId: null, operator: true, platformAdmin: false, scope: 'none' },
+      '/threads?resourceId=studio-user': [{ id: 't-1', title: 'Old chat', resourceId: 'studio-user', createdAt: 1, updatedAt: 1 }],
+      '/threads/t-1/messages': [
+        { role: 'user', content: 'question from the restored thread' },
+        { role: 'assistant', content: 'answer from the restored thread' },
+      ],
+    });
+    const { container } = wrap(<Playground />);
+    fireEvent.click(await screen.findByText('Old chat'));
+    await waitFor(() => expect(screen.getByText('question from the restored thread')).toBeTruthy());
+    expect(screen.getByText('answer from the restored thread')).toBeTruthy();
+
+    const scroller = container.querySelector('.h-full.space-y-2.overflow-auto') as HTMLElement;
+    expect(scroller).toBeTruthy();
+    const transcript = scroller.children[0] as HTMLElement;
+
+    // (a) Nothing inside the transcript may hide itself behind an animation — a bubble at opacity 0
+    //     is invisible but still occupies its height, which is exactly the reported bug.
+    const withInlineOpacity = Array.from(transcript.querySelectorAll<HTMLElement>('[style]'))
+      .concat(transcript)
+      .filter((el) => /opacity/.test(el.getAttribute('style') ?? ''));
+    expect(withInlineOpacity.map((el) => el.getAttribute('style'))).toEqual([]);
+
+    // (b) With neither an error nor a pending approval, the only thing after the transcript is the
+    //     out-of-flow sr-only live region.
+    const kids = Array.from(scroller.children) as HTMLElement[];
+    expect(kids).toHaveLength(2);
+    expect(kids[0].className).toContain('space-y-2'); // the transcript
+    expect(kids[1].className).toContain('sr-only');   // position:absolute → takes no flow space
+  });
+
+  // REGRESSION GUARD — "the chat area is blank apart from a clipped fragment at the top".
+  // Measured in a real browser (Chrome, 1440x900, a thread with tool calls → 4.4k px of transcript):
+  //   wrapper (`relative flex-1 overflow-hidden`): scrollHeight 4438 vs clientHeight 572  → SCROLLABLE
+  //   scroll box: getBoundingClientRect().top = -454px instead of 102px                   → pushed out of view
+  // Cause: `.sr-only` is `position:absolute`. An absolutely positioned box is laid out and clipped by
+  // its CONTAINING BLOCK and contributes to THAT block's scrollable overflow; an `overflow:auto`
+  // ancestor in between does NOT clip it unless it is itself the containing block. While the scroll box
+  // was `position:static`, the live region's containing block was the outer wrapper, and since its
+  // static position sits at the very end of the transcript it stretched the WRAPPER's scroll height to
+  // the full transcript height (4437px offsetTop + 1px = the 4438 measured above). `overflow:hidden`
+  // still scrolls programmatically, so the auto-scroll then scrolled the wrapper and shifted the whole
+  // scroll box out of view. Removing the live region from the DOM dropped the wrapper back to 572px and
+  // restored the layout; putting it back reproduced the bug — that isolates it to this one element.
+  // Two invariants keep it fixed, and this test pins both:
+  //   1. the scroll box is POSITIONED → it is the containing block for its absolute descendants;
+  //   2. auto-scroll drives that box's own scrollTop, never scrollIntoView (which walks the ancestor
+  //      chain and scrolls every scrollable ancestor it finds — the mechanism that did the damage).
+  it('Playground: the scroll box is positioned and auto-scroll never walks the ancestor chain', async () => {
+    stubFetch({
+      '/capabilities': { ...CAPS, playground: true, memory: true },
+      '/agents': [{ name: 'alpha', model: 'm', hasTools: false }],
+      '/me': { id: null, roles: [], orgId: null, operator: true, platformAdmin: false, scope: 'none' },
+      '/threads?resourceId=studio-user': [{ id: 't-1', title: 'Old chat', resourceId: 'studio-user', createdAt: 1, updatedAt: 1 }],
+      '/threads/t-1/messages': [
+        { role: 'user', content: 'question from the restored thread' },
+        { role: 'assistant', content: 'answer from the restored thread' },
+      ],
+    });
+    const scrollIntoViewSpy = Element.prototype.scrollIntoView as unknown as ReturnType<typeof vi.fn>;
+    const scrollToSpy = Element.prototype.scrollTo as unknown as ReturnType<typeof vi.fn>;
+    scrollIntoViewSpy.mockClear();
+    scrollToSpy.mockClear();
+
+    const { container } = wrap(<Playground />);
+    fireEvent.click(await screen.findByText('Old chat'));
+    await waitFor(() => expect(screen.getByText('question from the restored thread')).toBeTruthy());
+
+    const scroller = container.querySelector('.h-full.space-y-2.overflow-auto') as HTMLElement;
+    const wrapper = scroller.parentElement as HTMLElement;
+    expect(wrapper.className).toContain('overflow-hidden');
+
+    // 1. The scroll box must establish a containing block, otherwise absolute descendants escape it
+    //    and inflate the outer wrapper's scrollable overflow.
+    expect(scroller.className).toMatch(/(^|\s)relative(\s|$)/);
+
+    // Every absolutely positioned descendant must resolve to a containing block AT OR BELOW the
+    // scroll box — nothing may resolve to the wrapper. (`sr-only` is `position:absolute` too.)
+    const abs = Array.from(scroller.querySelectorAll<HTMLElement>('.absolute, .sr-only'));
+    expect(abs.length).toBeGreaterThan(0); // the live region at minimum — the check must not pass vacuously
+    const escaped = abs.filter((el) => {
+      for (let p: HTMLElement | null = el.parentElement; p; p = p.parentElement) {
+        if (/(^|\s)(relative|absolute|fixed|sticky)(\s|$)/.test(p.className)) return false; // contained
+        if (p === scroller) return true; // reached the scroll box without a positioned ancestor
+      }
+      return true;
+    });
+    expect(escaped.map((el) => el.className)).toEqual([]);
+
+    // The a11y live region itself must still be there (the fix must not "solve" this by deleting it).
+    const live = scroller.querySelector('[aria-live="polite"]');
+    expect(live).toBeTruthy();
+    expect(live!.className).toContain('sr-only');
+
+    // 2. Auto-scroll moved the scroll box directly and did NOT use scrollIntoView.
+    expect(scrollIntoViewSpy).not.toHaveBeenCalled();
+    expect(scrollToSpy).toHaveBeenCalled();
+    expect(scrollToSpy.mock.instances[0]).toBe(scroller);
+    expect(scrollToSpy.mock.calls[0][0]).toMatchObject({ behavior: 'smooth' });
+  });
+
+  // FLOW-10: edit & resend must also truncate the PERSISTED thread on the server, not just the local
+  // view — otherwise the next run sees both the abandoned original message and the corrected one.
+  // A method-aware fetch stub is needed here (unlike stubFetch above) because the truncate DELETE and
+  // the history-reload GET hit the exact same URL (/threads/:id/messages).
+  function stubFetchWithTruncate(opts: { truncateOk: boolean }) {
+    const routes: Record<string, unknown> = {
+      '/capabilities': { ...CAPS, playground: true, memory: true },
+      '/agents': [{ name: 'alpha', model: 'm', hasTools: false }],
+      '/me': { id: null, roles: [], orgId: null, operator: true, platformAdmin: false, scope: 'none' },
+      '/threads?resourceId=studio-user': [{ id: 't-1', title: 'Old chat', resourceId: 'studio-user', createdAt: 1, updatedAt: 1 }],
+      '/threads/t-1/messages': [
+        { role: 'user', content: 'first' },
+        { role: 'assistant', content: 'first answer' },
+      ],
+      '/agents/alpha/run': { text: 'edited answer' },
+      '/cost': { inputTokens: 0, outputTokens: 0, totalTokens: 0, costUsd: 0 },
+    };
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const u = String(url);
+      const method = init?.method ?? 'GET';
+      if (u.endsWith('/threads/t-1/messages') && method === 'DELETE') {
+        return opts.truncateOk
+          ? { ok: true, status: 200, headers: { get: () => 'application/json' }, json: async () => ({ ok: true, removed: 1 }) }
+          : {
+              ok: false, status: 501,
+              headers: { get: () => 'application/json' },
+              json: async () => ({ error: 'truncateMessages is not supported' }),
+              clone() { return this; },
+            };
+      }
+      const key = Object.keys(routes).find((k) => u.endsWith(k));
+      return { ok: true, status: 200, headers: { get: () => 'application/json' }, json: async () => (key ? routes[key] : []) };
+    }));
+  }
+
+  async function openAndSubmitEdit() {
+    fireEvent.click(await screen.findByText('Old chat'));
+    await waitFor(() => expect(screen.getByText('first')).toBeTruthy());
+    fireEvent.click(screen.getByTitle('Edit & resend'));
+    fireEvent.change(screen.getByLabelText('Edit message'), { target: { value: 'first edited' } });
+    fireEvent.click(screen.getByText('Save & send'));
+  }
+
+  it('Playground submitEdit: truncates the server thread (DELETE with the correct afterIndex) before re-running the edited message', async () => {
+    stubFetchWithTruncate({ truncateOk: true });
+    wrap(<Playground />);
+    await openAndSubmitEdit();
+
+    // The edited message (local index 0) is also server index 0 (a plain 2-message history, 1:1 here) →
+    // "keep through index -1" = drop everything, since the edited turn replaces the very first turn.
+    await waitFor(() => {
+      const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+      const del = calls.find(([u, init]: any[]) => String(u).endsWith('/threads/t-1/messages') && init?.method === 'DELETE');
+      expect(del).toBeTruthy();
+      expect(JSON.parse((del![1] as any).body)).toEqual({ afterIndex: -1 });
+    });
+    // Truncate succeeded (200) → the old "stale history" fallback toast must NOT fire.
+    expect(toastMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByText('edited answer')).toBeTruthy());
+  });
+
+  it('Playground submitEdit: a 501 (adapter has no truncateMessages) falls back to the old "stale history" toast, and the run still proceeds', async () => {
+    stubFetchWithTruncate({ truncateOk: false });
+    wrap(<Playground />);
+    await openAndSubmitEdit();
+
+    await waitFor(() => expect(toastMock).toHaveBeenCalledWith(enPlayground.staleHistoryWarning));
+    // Not blocked by the 501 — the edited prompt still ran and produced a response.
+    await waitFor(() => expect(screen.getByText('edited answer')).toBeTruthy());
   });
 
   it('Approvals: lists the pending approval, Approve/Deny buttons are visible', async () => {

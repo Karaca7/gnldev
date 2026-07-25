@@ -212,7 +212,9 @@ export interface WorkflowLike {
     ctx: { runId: string; journal: Journal },
     // P0.4 (AUDIT-R2): resume delivers typed HITL payloads (consumed via ctx.resumeData/
     // waitForResume); signal is the in-process cancel/disconnect path, checked between steps.
-    opts?: { maxSteps?: number; resume?: Record<string, unknown>; signal?: AbortSignal },
+    // FLOW-08: workflowName is mirrored into the `wfrun:` status record (see @gnl/workflow's
+    // runResumable) so the run registry can show which workflow a run belongs to.
+    opts?: { maxSteps?: number; resume?: Record<string, unknown>; signal?: AbortSignal; workflowName?: string },
   ): Promise<
     | { status: 'completed'; output: any }
     | { status: 'suspended'; stepId: string; reason?: unknown }
@@ -637,6 +639,9 @@ export function createGnl(config: CreateGnlConfig) {
         ...(opts?.maxSteps != null ? { maxSteps: opts.maxSteps } : {}),
         ...(opts?.resume ? { resume: opts.resume } : {}),
         ...(opts?.signal ? { signal: opts.signal } : {}),
+        // FLOW-08: `name` is known here (the registry key) — mirrored into the `wfrun:` status
+        // record so the run registry/studio can display the workflow's name.
+        workflowName: name,
       };
       const r = await wf.runResumable(input, ctx, Object.keys(rOpts).length ? rOpts : undefined);
       if (r.status === 'suspended') { suspended = true; stepId = r.stepId; reason = r.reason; }

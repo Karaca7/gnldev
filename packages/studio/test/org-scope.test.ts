@@ -23,6 +23,23 @@ describe('@gnl/studio org scope (read-only)', () => {
     expect(shared.map((r: any) => r.runId)).toContain('r-shared');
   });
 
+  it('API-01: GET /runs?limit= in an org context does not crash and stays isolated (countRunsByStatus is not bridged per-org)', async () => {
+    // InMemoryJournal offers BOTH listRunsPaged and countRunsByStatus, so the org-scoped reader here
+    // hits the listRunsPaged push-down branch (see server.ts GET /runs) — but under an active org the
+    // countRunsByStatus bridge resolves to `undefined` SYNCHRONOUSLY (organization.ts deliberately
+    // doesn't bridge it per-org), which must be handled without throwing (regression guard for the
+    // `.catch()`-on-undefined crash).
+    const journal = new InMemoryJournal();
+    await seed(journal);
+    const app = createStudioApi({ reader: journal, org: {} });
+
+    const res = await app.request('/runs?limit=10', { headers: { 'x-gnl-org': 'acme' } });
+    expect(res.status).toBe(200);
+    const page = await res.json();
+    expect(page.items.map((r: any) => r.runId)).toEqual(['r-acme']);
+    expect(page.total).toBe(1);
+  });
+
   it('a write (POST) in an org context returns 403; orgless write behavior is unchanged', async () => {
     const journal = new InMemoryJournal();
     await seed(journal);

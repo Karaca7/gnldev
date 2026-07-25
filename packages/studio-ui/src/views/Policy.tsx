@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2, Save, RotateCcw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { usePolicy, useCapabilities, usePermissionsCatalog, api, errMessage, type PolicyRule } from '../api';
+import { usePolicy, useCapabilities, usePermissionsCatalog, api, errMessage, ApiError, type PolicyRule } from '../api';
 import { Spinner, Empty, Badge, Btn, ErrorBox, cn } from '../components';
 import { toast, ConfirmDialog } from '../ui';
 // i18n init side effect: so that useTranslation also works if this view is rendered directly
@@ -76,6 +76,10 @@ export function Policy() {
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [removeIdx, setRemoveIdx] = useState<number | null>(null);
+  // FORM-05: indices of rows whose tool name is blank — save() refuses to submit while any are
+  // set, instead of silently dropping those rows (the old behavior: filter().filter((r) => r.tool)
+  // dropped them without telling the admin, then still showed "saved").
+  const [emptyToolIdx, setEmptyToolIdx] = useState<Set<number>>(new Set());
   useEffect(() => {
     if (policy.data && !dirty) setRules(policy.data.policy?.rules ?? []);
   }, [policy.data, dirty]);
@@ -88,13 +92,29 @@ export function Policy() {
   const update = (i: number, patch: Partial<PolicyRule>) => {
     setRules((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
     setDirty(true);
+    // Clear the empty-tool highlight the moment the user edits the tool field (same pattern as
+    // Tools.tsx's setField: don't wait for save() to re-validate, clear as they start fixing it).
+    if ('tool' in patch) setEmptyToolIdx((s) => (s.has(i) ? new Set([...s].filter((x) => x !== i)) : s));
   };
-  const remove = (i: number) => { setRules((rs) => rs.filter((_, j) => j !== i)); setDirty(true); };
+  const remove = (i: number) => {
+    setRules((rs) => rs.filter((_, j) => j !== i));
+    setEmptyToolIdx((s) => new Set([...s].filter((x) => x !== i).map((x) => (x > i ? x - 1 : x))));
+    setDirty(true);
+  };
   const add = () => { setRules((rs) => [...rs, { tool: '', action: 'require-approval' }]); setDirty(true); };
-  const discard = () => { setRules(policy.data?.policy?.rules ?? []); setDirty(false); };
+  const discard = () => { setRules(policy.data?.policy?.rules ?? []); setDirty(false); setEmptyToolIdx(new Set()); };
 
   const save = async () => {
-    const clean = rules.map((r) => ({ ...r, tool: r.tool.trim() })).filter((r) => r.tool);
+    const trimmed = rules.map((r) => ({ ...r, tool: r.tool.trim() }));
+    // FORM-05: block the save entirely if any row has a blank tool name — refuse silently dropping
+    // it. Highlight the offending rows instead of sending the request.
+    const empties = new Set(trimmed.reduce<number[]>((acc, r, i) => (r.tool ? acc : (acc.push(i), acc)), []));
+    if (empties.size) {
+      setEmptyToolIdx(empties);
+      toast.error(t('emptyToolError'));
+      return;
+    }
+    const clean = trimmed;
     const seen = new Set<string>();
     const dup = clean.find((r) => (seen.has(r.tool) ? true : (seen.add(r.tool), false)));
     if (dup) {
@@ -103,12 +123,22 @@ export function Policy() {
     }
     setBusy(true);
     try {
-      const r = await api.savePolicy(clean);
+      // API-08: send the version we loaded → the server rejects a lost update if another admin
+      // saved in the meantime (409) instead of silently overwriting their rules.
+      const r = await api.savePolicy(clean, policy.data?.policy?.version ?? 0);
       toast.success(t('saveSuccess', { version: r.version }));
       setDirty(false);
       qc.invalidateQueries({ queryKey: ['policy'] });
     } catch (e) {
-      toast.error(t('saveError', { error: errMessage(e) }));
+      if (e instanceof ApiError && e.status === 409) {
+        // Don't silently drop the user's edits, but don't keep them staged against stale rules
+        // either: surface the conflict and refetch so they can re-apply their change on top of
+        // the current version.
+        toast.error(t('saveConflictError', { error: errMessage(e) }));
+        qc.invalidateQueries({ queryKey: ['policy'] });
+      } else {
+        toast.error(t('saveError', { error: errMessage(e) }));
+      }
     } finally {
       setBusy(false);
     }
@@ -144,16 +174,23 @@ export function Policy() {
       {rules.length === 0 && <Empty>{t('emptyPart1')}<code>chargeCard</code>{t('emptyPart2')}</Empty>}
 
       <div className="space-y-1.5">
-        {rules.map((r, i) => (
+        {rules.map((r, i) => {
+          const toolInvalid = emptyToolIdx.has(i);
+          return (
           <div key={i} className={cn('flex flex-wrap items-center gap-2 rounded-md border p-2', r.tool === '*' ? 'border-info/40' : 'border-border')}>
-            <input
-              value={r.tool}
-              onChange={(e) => update(i, { tool: e.target.value })}
-              placeholder={t('toolPlaceholder')}
-              aria-label={t('toolAriaLabel')}
-              disabled={!canManage}
-              className={cn(inputCls, 'w-40 font-mono')}
-            />
+            <div className="flex flex-col gap-0.5">
+              <input
+                value={r.tool}
+                onChange={(e) => update(i, { tool: e.target.value })}
+                placeholder={t('toolPlaceholder')}
+                aria-label={t('toolAriaLabel')}
+                aria-invalid={toolInvalid}
+                required
+                disabled={!canManage}
+                className={cn(inputCls, 'w-40 font-mono', toolInvalid && 'border-destructive focus:border-destructive')}
+              />
+              {toolInvalid && <span className="text-[11px] text-destructive">{t('emptyToolInlineError')}</span>}
+            </div>
             <select
               value={r.action}
               onChange={(e) => update(i, { action: e.target.value as PolicyRule['action'] })}
@@ -180,7 +217,8 @@ export function Policy() {
               </button>
             )}
           </div>
-        ))}
+          );
+        })}
       </div>
 
       <ConfirmDialog

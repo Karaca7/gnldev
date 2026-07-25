@@ -1,6 +1,6 @@
 // Governance endpoints: /approvals (approval inbox), /audit (audit log), /organizations (org counters + budget).
-import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnl/durable';
+import { describe, it, expect, vi } from 'vitest';
+import { InMemoryJournal, recordRunMetrics, withOrg } from '@gnl/durable';
 import { createStudioApi } from '../src/server.js';
 
 /** Seeds a suspended run: the model produced a tool-call, the tool is waiting on the suspended sentinel. */
@@ -308,5 +308,63 @@ describe('governance: /organizations (CRUD + audit)', () => {
     expect(caps.orgManage).toBe(true);
     expect(caps.tenants).toBeUndefined();
     expect(caps.tenantManage).toBeUndefined();
+  });
+});
+
+// API-02: GET /organizations used to sequentially run listRuns()+getRunCost (full readRun per run) for
+// EVERY run of EVERY organization on EVERY call (the endpoint is polled every 10s from Organizations.tsx/
+// Users.tsx) — an N+1 that reads the whole journal repeatedly. It now prefers the SAME materialized-counter
+// shortcut GET /metrics already uses (readMetricsSummary → O(1) getCounters point-read per org), falling
+// back to the legacy per-run scan only when no materialized data exists yet (mirrors metrics-endpoint.test.ts).
+describe('governance: /organizations (perf — materialized fast path, API-02)', () => {
+  it('materialized counters: tokens/costUsd come from readMetricsSummary and readRun is NEVER called', async () => {
+    const journal = new InMemoryJournal();
+    const view = withOrg(journal, 'acme');
+    // Seed a model step (so readRun/getRunCost WOULD see it if the scan path ran) then record it into
+    // the materialized per-org counters — the same way registry.ts's post-run hook does in production.
+    await view.put('r1:model:0', { usage: { inputTokens: 60, outputTokens: 40, totalTokens: 100 } });
+    await recordRunMetrics(view, view, 'r1');
+
+    const readRunSpy = vi.spyOn(journal, 'readRun');
+    const app = createStudioApi({ reader: journal });
+    const res = await (await app.request('/organizations')).json();
+
+    const acme = res.organizations.find((o: any) => o.id === 'acme');
+    expect(acme).toMatchObject({ id: 'acme', runs: 1, tokens: 100, source: 'materialized' });
+    expect(acme.costUsd).toBe(0); // 'unknown' modelId has no pricing entry — still exercises the derive-cost path
+    expect(readRunSpy).not.toHaveBeenCalled();
+  });
+
+  it('no materialized counters (plain journal.put, no recordRunMetrics): legacy scan path gives the SAME result as before', async () => {
+    const journal = new InMemoryJournal();
+    await journal.put('org:acme:r1:model:0', {
+      content: [{ type: 'text', text: 'ok' }],
+      finishReason: 'stop',
+      usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+    });
+    await journal.put('org:acme:r2:model:0', {
+      content: [{ type: 'text', text: 'ok' }],
+      finishReason: 'stop',
+      usage: { inputTokens: 20, outputTokens: 10, totalTokens: 30 },
+    });
+
+    const app = createStudioApi({ reader: journal });
+    const res = await (await app.request('/organizations')).json();
+    const acme = res.organizations.find((o: any) => o.id === 'acme');
+    expect(acme).toMatchObject({ id: 'acme', runs: 2, tokens: 45, source: 'scan' });
+  });
+
+  it('org-scoped view has no countRunsByStatus (withOrg deliberately omits it) — GET /organizations does not crash', async () => {
+    const journal = new InMemoryJournal();
+    const view = withOrg(journal, 'acme');
+    await view.put('r1:model:0', { usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } });
+    await recordRunMetrics(view, view, 'r1');
+    expect((view as any).countRunsByStatus).toBeUndefined(); // sanity: confirms the trap this test guards against
+
+    const app = createStudioApi({ reader: journal });
+    const res = await app.request('/organizations');
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.organizations.find((o: any) => o.id === 'acme')).toMatchObject({ runs: 1, source: 'materialized' });
   });
 });

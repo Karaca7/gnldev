@@ -36,4 +36,40 @@ describe('policy editor API', () => {
     expect((await put(app, { rules: [{ tool: '', action: 'allow' }] })).status).toBe(400);
     expect((await (await app.request('/capabilities')).json()).policy).toBe(true);
   });
+
+  // API-08: PUT carried no version → two admins editing concurrently could silently overwrite each
+  // other's rules (the version kept incrementing either way, so nothing looked wrong). `ifVersion`
+  // turns a stale write into a 409 instead of a lost update.
+  it('optimistic lock: ifVersion matching → saves; stale ifVersion → 409 + rules untouched; omitted → old last-write-wins behavior', async () => {
+    const journal = new InMemoryJournal();
+    const app = createStudioApi({ reader: journal });
+
+    // First save with the correct ifVersion (0, since there's no doc yet) → succeeds.
+    const rulesA = [{ tool: 'chargeCard', action: 'deny', reason: 'guard' }];
+    expect(await (await put(app, { rules: rulesA, ifVersion: 0 })).json()).toMatchObject({ ok: true, version: 1 });
+
+    // A second admin edits based on the SAME stale version (still thinks it's v0/v1... here v1 is current,
+    // but the caller believes v0 like before A's save) → 409, current rules are NOT clobbered.
+    const rulesB = [{ tool: 'chargeCard', action: 'allow' }];
+    const conflict = await put(app, { rules: rulesB, ifVersion: 0 });
+    expect(conflict.status).toBe(409);
+    const conflictBody = await conflict.json();
+    expect(conflictBody.code).toBe('version_conflict');
+    expect(conflictBody.error).toMatch(/expected v0, current v1/);
+    expect(conflictBody.current).toMatchObject({ version: 1 });
+
+    // The journal still has A's rules — B's write never landed.
+    const afterConflict = await (await app.request('/policy')).json();
+    expect(afterConflict.policy.version).toBe(1);
+    expect(afterConflict.policy.rules).toEqual(rulesA);
+
+    // Retrying with the CURRENT version succeeds and bumps the version.
+    expect(await (await put(app, { rules: rulesB, ifVersion: 1 })).json()).toMatchObject({ ok: true, version: 2 });
+    const afterRetry = await (await app.request('/policy')).json();
+    expect(afterRetry.policy.rules).toEqual(rulesB);
+
+    // Omitting ifVersion entirely → unchanged (backward-compatible) last-write-wins behavior.
+    const rulesC = [{ tool: '*', action: 'require-approval' }];
+    expect(await (await put(app, { rules: rulesC })).json()).toMatchObject({ ok: true, version: 3 });
+  });
 });

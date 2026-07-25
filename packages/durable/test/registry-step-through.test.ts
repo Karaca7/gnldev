@@ -28,14 +28,16 @@ describe('registry: workflow step-through pass-through', () => {
     const gnl = createGnl({ journal, workflows: { w: stubWorkflow(received) } });
 
     const r1 = await gnl.runWorkflow('w', {}, { runId: 'st-api-1', maxSteps: 1 });
-    expect(received.opts[0]).toEqual({ maxSteps: 1 });
+    expect(received.opts[0]).toEqual({ maxSteps: 1, workflowName: 'w' });
     expect(r1.paused).toBe(true);
     expect(r1.stepId).toBe('b');
     expect(r1.steps.find((s) => s.id === 'a')?.output).toBe('a-output');
     expect(r1.steps.find((s) => s.id === 'b')?.output).toBeUndefined();
 
     const r2 = await gnl.runWorkflow('w', {}, { runId: 'st-api-1' }); // continue: without opts → runs to completion
-    expect(received.opts[1]).toBeUndefined();
+    // FLOW-08: workflowName is always forwarded (the registry always knows the name) — the only
+    // field left in opts once maxSteps/resume/signal are all absent.
+    expect(received.opts[1]).toEqual({ workflowName: 'w' });
     expect(r2.paused).toBe(false);
     expect(r2.output).toBe('b-output');
   });

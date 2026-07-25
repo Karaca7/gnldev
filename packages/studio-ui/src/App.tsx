@@ -400,10 +400,12 @@ function Login({ sso, onAuthed }: { sso?: boolean; onAuthed: () => void }) {
         </div>
         <h1 className="mb-1 text-lg font-bold tracking-tight text-foreground">{t('signInTitle')}</h1>
         <p className="mb-5 text-xs text-muted-foreground">{t('signInSubtitle')}</p>
-        <label className="mb-1 block text-xs font-medium text-muted-foreground">{t('accessTokenLabel')}</label>
+        <label htmlFor="gnl-token" className="mb-1 block text-xs font-medium text-muted-foreground">{t('accessTokenLabel')}</label>
         <input
+          id="gnl-token"
           type="password"
           autoFocus
+          autoComplete="current-password"
           value={value}
           onChange={(e) => setValue(e.target.value)}
           placeholder="Bearer token"

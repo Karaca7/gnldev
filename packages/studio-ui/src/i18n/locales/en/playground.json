@@ -49,6 +49,7 @@
   "copyTitle": "Copy",
   "runningLabel": "running",
   "respondingSrOnly": "response is being written",
+  "responseCompleteSrOnly": "Response complete — {{tokens}} tokens, ${{cost}}",
   "editAndResendTitle": "Edit & resend",
   "pendingApprovalTool": "⏸ Waiting for approval: {{count}} tool",
   "approveButton": "Approve",

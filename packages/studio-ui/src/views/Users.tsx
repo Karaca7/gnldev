@@ -291,10 +291,13 @@ function EditUser({ user, catalog, open, onOpenChange }: {
   );
 }
 
-/** Panel that shows the token once (copy). The server does not store the plaintext token → if it's lost, a new user is needed. */
+/** Panel that shows the token once (copy). The server does not store the plaintext token → if it's lost, a new user is needed.
+ *  Closing WITHOUT having copied it first is irreversible, so `onClose` is gated behind a confirmation
+ *  (ConfirmDialog) in that case; once `copied` is true (the copy button succeeded), Close is direct. */
 function TokenBanner({ id, token, onClose }: { id: string; token: string; onClose: () => void }) {
   const { t } = useTranslation('users');
   const [copied, setCopied] = useState(false);
+  const [confirmClose, setConfirmClose] = useState(false);
   const copy = async () => {
     try { await navigator.clipboard.writeText(token); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* ignore if clipboard is unavailable */ }
   };
@@ -304,8 +307,17 @@ function TokenBanner({ id, token, onClose }: { id: string; token: string; onClos
       <div className="flex items-center gap-2">
         <code className="flex-1 overflow-x-auto rounded bg-muted px-2 py-1 font-mono">{token}</code>
         <Btn size="xs" variant="outline" onClick={copy}>{copied ? <Check size={12} /> : <Copy size={12} />} {t('copyButton')}</Btn>
-        <Btn size="xs" variant="ghost" onClick={onClose}>{t('closeButton')}</Btn>
+        <Btn size="xs" variant="ghost" onClick={() => (copied ? onClose() : setConfirmClose(true))}>{t('closeButton')}</Btn>
       </div>
+      <ConfirmDialog
+        open={confirmClose}
+        onOpenChange={setConfirmClose}
+        title={t('confirmCloseTokenTitle')}
+        description={t('confirmCloseTokenDesc')}
+        confirmLabel={t('confirmCloseTokenButton')}
+        destructive
+        onConfirm={onClose}
+      />
     </div>
   );
 }
@@ -319,7 +331,9 @@ export function Users() {
   const caps = useCapabilities();
   const catalog = usePermissionsCatalog();
   const qc = useQueryClient();
-  const [freshToken, setFreshToken] = useState<{ id: string; token: string } | null>(null);
+  // One-time access tokens from CreateUser — a LIST (not a single slot): adding a second member must
+  // not silently discard the first one's still-unread token (it can never be retrieved again once gone).
+  const [freshTokens, setFreshTokens] = useState<{ id: string; token: string }[]>([]);
   const [delId, setDelId] = useState<string | null>(null);
   const [revokeId, setRevokeId] = useState<string | null>(null);
   const [editUser, setEditUser] = useState<StudioUser | null>(null);
@@ -380,13 +394,27 @@ export function Users() {
           ? <Badge tone="info">{t('orgBadge', { org: ownOrg })}</Badge>
           : <Badge tone="muted">{t('platformOperatorBadge')}</Badge>}
       </div>
-      {canManage && <CreateUser orgs={orgIds} ownOrg={ownOrg} onToken={setFreshToken} catalog={permCatalog} />}
-      {freshToken && <TokenBanner id={freshToken.id} token={freshToken.token} onClose={() => setFreshToken(null)} />}
+      {canManage && (
+        <CreateUser
+          orgs={orgIds}
+          ownOrg={ownOrg}
+          onToken={(tok) => setFreshTokens((prev) => [...prev, tok])}
+          catalog={permCatalog}
+        />
+      )}
+      {freshTokens.map((ft) => (
+        <TokenBanner
+          key={ft.id}
+          id={ft.id}
+          token={ft.token}
+          onClose={() => setFreshTokens((prev) => prev.filter((x) => x !== ft))}
+        />
+      ))}
 
       {rows.length === 0 ? (
         <Empty>{t('empty')}</Empty>
       ) : (
-        <Reveal className="overflow-hidden rounded-md border border-border bg-card">
+        <Reveal className="overflow-x-auto rounded-md border border-border bg-card">
           <table className="w-full text-left text-xs">
             <thead className="bg-muted/30 text-muted-foreground">
               <tr>

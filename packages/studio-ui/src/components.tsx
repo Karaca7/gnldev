@@ -163,7 +163,7 @@ export function EmptyState({
 
 export function ErrorBox({ error }: { error: unknown }) {
   const { t } = useTranslation('common');
-  return <div className="m-3 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{t('errorPrefix')}: {String(error)}</div>;
+  return <div role="alert" className="m-3 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{t('errorPrefix')}: {String(error)}</div>;
 }
 
 // Collapsible JSON node: object/array → <details> (open below depth 2), primitives get color tinting.

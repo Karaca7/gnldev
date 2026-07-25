@@ -4,8 +4,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { Check, X, Wrench, Plus, Trash2, Pencil, Ban, Copy, Database, Activity, RotateCw, ArrowDown, Settings, Paperclip, FileText, PanelLeft, ChevronDown } from 'lucide-react';
-import { useAgents, useCapabilities, useMe, useThreads, useWorkingMemory, streamAgent, api, errMessage, type Interrupt, type ThreadRecord, type AgentRunBody, type RunCost } from '../api';
-import { Btn, Spinner, Empty, Badge, JsonBlock, cn } from '../components';
+import { useAgents, useCapabilities, useMe, useThreads, useWorkingMemory, streamAgent, api, errMessage, ApiError, type Interrupt, type ThreadRecord, type AgentRunBody, type RunCost } from '../api';
+import { Btn, Spinner, Empty, ErrorBox, Badge, JsonBlock, cn } from '../components';
 import { Markdown } from '../markdown';
 import { Stagger, StaggerItem, Reveal } from '../motion';
 import { toast } from '../ui';
@@ -73,6 +73,16 @@ const savedOverrides: {
   try { return JSON.parse(localStorage.getItem(OV_KEY) ?? '{}'); } catch { return {}; }
 })();
 
+// Shared by mapMessages and userMessageServerIndex (FLOW-10): extracts a user message's text the
+// SAME way in both places, so the server-index lookup lines up with what mapMessages would have
+// rendered as a user bubble (a user entry with no text is skipped by mapMessages, and must be
+// skipped here too, or the ordinal count would drift).
+function extractUserText(m: any): string {
+  return typeof m.content === 'string' ? m.content
+    : Array.isArray(m.content) ? m.content.filter((p: any) => p?.type === 'text' && p.text).map((p: any) => p.text).join(' ')
+    : (m.text ?? '');
+}
+
 // Convert messages coming from the server (AI SDK core-message format — response.messages) to the
 // Playground's Msg type. content is an array of parts: 'text' → user/assistant bubble; a 'tool-call'
 // inside an assistant message → opens a tool Msg (same fields as the live streamAgent's tool-call
@@ -85,9 +95,7 @@ export function mapMessages(data: any[]): Msg[] {
   for (const m of data ?? []) {
     const role = m.role ?? m.__source;
     if (role === 'user') {
-      const text = typeof m.content === 'string' ? m.content
-        : Array.isArray(m.content) ? m.content.filter((p: any) => p?.type === 'text' && p.text).map((p: any) => p.text).join(' ')
-        : (m.text ?? '');
+      const text = extractUserText(m);
       if (text) out.push({ role: 'user', text });
       continue;
     }
@@ -122,6 +130,48 @@ export function mapMessages(data: any[]): Msg[] {
     }
   }
   return out;
+}
+
+// FLOW-10 — PURE functions (testable): translate a LOCAL `msgs` index (edit/regenerate target) into
+// the matching index on the SERVER's GET /threads/:id/messages array, so DELETE
+// /threads/:id/messages can truncate the persisted thread, not just the local view.
+//
+// `msgs` and the server array are NOT 1:1: mapMessages fans a single assistant server entry out into
+// several local Msg entries (interleaved text/tool-call blocks), and a role:'tool' server entry
+// merges into an EXISTING tool Msg's `output` rather than adding one. A user server entry, however,
+// ALWAYS maps to exactly 0 or 1 local Msg (0 only when its text is empty — which can't happen here,
+// since both submitEdit and regenerate only ever target a non-empty user turn). So instead of
+// tracking per-Msg source indices through both the history-load path AND every live-append call site
+// (send/streamAgent callbacks/decide), we anchor on a stable, cheap-to-compute quantity both sides
+// agree on: "this is the Nth user turn in the conversation" — that ordinal is the same on the local
+// `msgs` array and on the freshly-fetched server array, because every user turn sent through this UI
+// is exactly the one persisted server-side (edit/regenerate are both `!busy`-gated, so by the time
+// either runs, every prior turn has already finished streaming and been persisted).
+
+/** 0-based ordinal of the user message at local `msgs` index `i` among all user messages in `msgs`
+ *  up to and including `i` (i.e. "this is the Nth user turn"). `msgs[i]` must be a user message. */
+export function userOrdinalAt(msgs: Msg[], i: number): number {
+  let n = -1;
+  for (let k = 0; k <= i && k < msgs.length; k++) if (msgs[k].role === 'user') n++;
+  return n;
+}
+
+/** The SERVER array index (matching GET /threads/:id/messages' order) of the `ordinal`-th (0-based)
+ *  user turn with non-empty text — mirrors mapMessages' user branch exactly via extractUserText, so
+ *  the result lines up with the ordinal computed by userOrdinalAt. Returns -1 when there's no such
+ *  turn (out of range / the two sides couldn't be lined up) — callers must treat that as "can't
+ *  safely truncate", not guess an index. */
+export function userMessageServerIndex(data: any[], ordinal: number): number {
+  let n = -1;
+  for (let idx = 0; idx < (data?.length ?? 0); idx++) {
+    const m = data[idx];
+    const role = m.role ?? m.__source;
+    if (role !== 'user') continue;
+    if (!extractUserText(m)) continue;
+    n++;
+    if (n === ordinal) return idx;
+  }
+  return -1;
 }
 
 // Relative time label (for the thread row). `t` is passed in by the caller (HistorySidebar).
@@ -178,15 +228,18 @@ export function Playground() {
   }, [modelOv, systemOv, tempOn, tempOv, topPOn, topPOv]);
   const runIdRef = useRef<string>('');
   const abortRef = useRef<AbortController | null>(null);
-  const endRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { if (!agent && agents.data?.[0]) setAgent(agents.data[0].name); }, [agents.data, agent]);
   // Smart auto-scroll: only follow while the user is pinned to the bottom.
-  useEffect(() => { if (pinned) endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [msgs, pending, pinned]);
+  useEffect(() => { if (pinned) scrollTranscriptToBottom(); }, [msgs, pending, pinned]);
+  // Unmount cleanup: abort any in-flight stream when navigating away (e.g. to Inspector) so it
+  // doesn't keep burning tokens invisibly — same pattern as Workflows.tsx.
+  useEffect(() => () => { abortRef.current?.abort(); }, []);
 
   if (caps.data && !caps.data.playground) return <Empty>{t('playgroundDisabled')}</Empty>;
   if (agents.isLoading) return <Spinner />;
+  if (agents.error) return <ErrorBox error={agents.error} />;
 
   const canStream = !!caps.data?.stream;
   const currentMeta = agents.data?.find((a) => a.name === agent);
@@ -195,7 +248,15 @@ export function Playground() {
     const el = scrollRef.current; if (!el) return;
     setPinned(el.scrollHeight - el.scrollTop - el.clientHeight < 80);
   }
-  function scrollToBottom() { setPinned(true); endRef.current?.scrollIntoView({ behavior: 'smooth' }); }
+  // Scroll ONLY the transcript box. `endRef.scrollIntoView()` used to do this, but scrollIntoView walks
+  // the WHOLE ancestor chain and scrolls every scrollable ancestor it finds — which is how a stray 1px
+  // out-of-flow element (see the `relative` note on the scroll box) turned into a fully blank chat area.
+  // Driving scrollTop directly can only ever move this one element, whatever the surrounding layout does.
+  function scrollTranscriptToBottom() {
+    const el = scrollRef.current; if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+  }
+  function scrollToBottom() { setPinned(true); scrollTranscriptToBottom(); }
 
   function pushAssistantDelta(text: string) {
     setMsgs((m) => {
@@ -302,6 +363,28 @@ export function Playground() {
     }))).then((atts) => setFiles((p) => [...p, ...atts]));
   }
 
+  // FLOW-10: truncates the SERVER-side thread to match a local edit/regenerate, so the next run
+  // doesn't see both the abandoned turn AND the corrected one. `i` is the LOCAL msgs index of the
+  // user message being replaced/re-run — translated to a server array index via the ordinal anchor
+  // described above userOrdinalAt. MUST be called (and awaited) BEFORE runPrompt appends the new
+  // turn: computing the ordinal→index mapping from data that already includes the new turn would
+  // resolve to the same server index, and afterIndex = srcIdx - 1 would then also wipe out the turn
+  // we just ran.
+  async function truncateServerThread(i: number) {
+    if (!caps.data?.memory || !thread) return;
+    try {
+      const ordinal = userOrdinalAt(msgs, i);
+      const data = await api.messages(thread);
+      const srcIdx = userMessageServerIndex(data, ordinal);
+      if (srcIdx < 0) { warnStaleServerHistory(); return; } // couldn't line the turn up — be honest instead of guessing
+      await api.truncateThreadMessages(thread, srcIdx - 1);
+      // success → the server thread now matches the local trim, no "stale history" warning needed.
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 501) { warnStaleServerHistory(); return; } // adapter doesn't support truncateMessages → old behavior
+      toast.error(errMessage(e)); // any other error: inform, but don't block the run
+    }
+  }
+
   // Regenerate the last response: drop everything after the last user message, re-run the same prompt (with its attachments).
   async function regenerate() {
     if (busy) return;
@@ -312,8 +395,8 @@ export function Playground() {
     const u = msgs[lastUser] as Extract<Msg, { role: 'user' }>;
     const atts = u.files ?? [];
     if (!u.text.trim() && atts.length === 0) return; // can't be re-run → keep the existing response
+    await truncateServerThread(lastUser);
     setMsgs((m) => m.slice(0, lastUser + 1));
-    warnStaleServerHistory();
     await runPrompt(u.text, atts);
   }
 
@@ -322,16 +405,18 @@ export function Playground() {
     const p = editVal.trim();
     setEditing(null);
     if (!p || busy) return;
-    setMsgs((m) => [...m.slice(0, i), { role: 'user', text: p }]);
-    warnStaleServerHistory();
-    await runPrompt(p);
+    const u = msgs[i] as Extract<Msg, { role: 'user' }>;
+    const atts = u.files ?? [];
+    await truncateServerThread(i);
+    setMsgs((m) => [...m.slice(0, i), { role: 'user', text: p, files: atts.length ? atts : undefined }]);
+    await runPrompt(p, atts);
   }
 
-  // There is NO "drop everything after this point" (thread truncate) endpoint on the server — the
-  // /threads/:id routes in server.ts only offer rename (PATCH) and delete (DELETE). So edit/regenerate
-  // only trims the LOCAL view; with memory on, the thread history on the server still contains the old
-  // turn, and it reappears once the page is reloaded and restored via loadThread. To avoid misleading
-  // the user, we surface this explicitly (rather than calling a made-up "truncate" API).
+  // Fallback for FLOW-10's truncateServerThread: the host's memory adapter doesn't implement
+  // truncateMessages (DELETE /threads/:id/messages → 501), or the local edit/regenerate target
+  // couldn't be safely lined up with a server index. Either way, the LOCAL trim above still happens,
+  // but the server-side thread history still contains the old turn, and it reappears once the page is
+  // reloaded and restored via loadThread — so we surface this explicitly rather than pretending it worked.
   function warnStaleServerHistory() {
     if (caps.data?.memory && thread) toast(t('staleHistoryWarning'));
   }
@@ -368,6 +453,10 @@ export function Playground() {
     setFiles([]);
     setEditing(null);
     setEditVal('');
+    // Re-pin: `pinned` tracks how far the user had scrolled in the PREVIOUS conversation. Left at
+    // false, a freshly opened thread would render parked at its oldest message with the "scroll to
+    // bottom" affordance already showing. A conversation always opens on its newest turn.
+    setPinned(true);
     try {
       setMsgs(mapMessages(await api.messages(t.id)));
     } catch (e) {
@@ -401,6 +490,7 @@ export function Playground() {
     setFiles([]);
     setEditing(null);
     setEditVal('');
+    setPinned(true); // empty transcript → the next reply must be followed (see loadThread)
   }
 
   // Configuration fields (agent · model · temperature · top-p · system · tools) — rendered in BOTH the
@@ -449,7 +539,7 @@ export function Playground() {
             {currentMeta.tools.map((tool) => {
               const on = !toolsOff.has(tool.name);
               return (
-                <button key={tool.name} type="button" title={tool.description}
+                <button key={tool.name} type="button" title={tool.description} role="switch" aria-checked={on}
                   onClick={() => setToolsOff((s) => { const n = new Set(s); if (on) n.add(tool.name); else n.delete(tool.name); return n; })}
                   className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted/60">
                   <span className="truncate font-mono text-sm text-foreground">{tool.name}</span>
@@ -521,7 +611,7 @@ export function Playground() {
           {msgs.some((m) => m.role === 'user') && !busy && <Btn variant="ghost" size="xs" onClick={regenerate}><RotateCw size={14} /> {t('regenerateButton')}</Btn>}
           {caps.data?.memory && thread && <Btn variant="ghost" size="xs" onClick={() => setShowWm((s) => !s)}><Database size={14} /> {t('memoryButton')}</Btn>}
           {lastRunId && (
-            <Link to={`/inspector?run=${encodeURIComponent(lastRunId)}`} title={t('inspectLinkTitle')}
+            <Link to={`/inspector?run=${encodeURIComponent(lastRunId)}`} title={t('inspectLinkTitle')} target="_blank" rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground">
               <Activity size={14} /> {t('inspectButton')}
             </Link>
@@ -534,7 +624,19 @@ export function Playground() {
         {showWm && thread && <WorkingMemoryPanel id={thread} />}
 
         <div className="relative flex-1 overflow-hidden">
-          <div ref={scrollRef} onScroll={onScroll} className="h-full space-y-2 overflow-auto p-4">
+          {/* `relative` on the SCROLL BOX is load-bearing, not decoration — do not drop it.
+              An absolutely positioned descendant is sized/clipped by its CONTAINING BLOCK, and it
+              contributes to THAT block's scrollable overflow — an `overflow:auto` ancestor in between
+              does not clip it unless it is itself the containing block. The `.sr-only` live region
+              below is `position:absolute`; with this box left `static`, its containing block was the
+              outer `relative … overflow-hidden` wrapper, and because its static position sits at the
+              very END of the transcript it inflated THAT wrapper's scrollHeight to the full transcript
+              height (measured: 4438px against a 572px clientHeight). `overflow:hidden` still scrolls
+              programmatically, so the auto-scroll below then scrolled the wrapper itself and shifted
+              this entire 572px box up out of view (measured: getBoundingClientRect().top = -454px) —
+              the "chat area is blank except for a clipped fragment at the top" bug. Making the scroll
+              box positioned keeps every absolute descendant contained AND clipped by it. */}
+          <div ref={scrollRef} onScroll={onScroll} className="relative h-full space-y-2 overflow-auto p-4">
             {msgs.length === 0 && (
               <div className="space-y-2">
                 <Empty>{t('emptyPrompt')}</Empty>
@@ -548,34 +650,54 @@ export function Playground() {
                 </Stagger>
               </div>
             )}
-            <Stagger className="space-y-2">
+            {/* The transcript is a PLAIN container on purpose — do NOT wrap it in <Stagger>/<StaggerItem>.
+                Stagger's variant orchestration ("hidden" → "show") only reaches children when the PARENT's
+                animate state CHANGES, which happens exactly once: at mount. This list mounts EMPTY (`msgs`
+                starts as []), so every message appended afterwards — stream delta, thread load, regenerate,
+                edit&resend — mounted as a late child and stayed on the `hidden` variant forever
+                (opacity: 0; translateY(6px)): invisible, yet still occupying its full height. That is the
+                "messages vanished, huge blank area below, scroll position acts as if content were there" bug.
+                A chat transcript must never depend on an entrance animation firing in order to be readable.
+                (The starters block above keeps Stagger — it mounts together with its children, so it's safe.) */}
+            <div className="space-y-2">
               {msgs.map((m, i) => (
                 editing === i && m.role === 'user'
                   ? <EditRow key={i} value={editVal} onChange={setEditVal} onSave={() => submitEdit(i)} onCancel={() => setEditing(null)} />
                   : (
-                    <StaggerItem key={i}>
-                      <MsgBlock
-                        msg={m}
-                        canEdit={m.role === 'user' && !busy}
-                        onEdit={() => { setEditing(i); setEditVal((m as Extract<Msg, { role: 'user' }>).text); }}
-                        streaming={busy && i === msgs.length - 1 && m.role === 'assistant'}
-                      />
-                    </StaggerItem>
+                    <MsgBlock
+                      key={i}
+                      msg={m}
+                      canEdit={m.role === 'user' && !busy}
+                      onEdit={() => { setEditing(i); setEditVal((m as Extract<Msg, { role: 'user' }>).text); }}
+                      streaming={busy && i === msgs.length - 1 && m.role === 'assistant'}
+                    />
                   )
               ))}
-            </Stagger>
+            </div>
+            {/* Live region: a SHORT status summary for screen-reader users (busy/pending-approval/complete) —
+                NOT per-delta text (that would flood the screen reader with every streamed token). */}
+            <div aria-live="polite" aria-atomic="true" className="sr-only">
+              {pending.length > 0
+                ? t('pendingApprovalTool', { count: pending.length })
+                : busy
+                ? t('respondingSrOnly')
+                : cost
+                ? t('responseCompleteSrOnly', { tokens: cost.totalTokens, cost: cost.costUsd.toFixed(4) })
+                : ''}
+            </div>
             {pending.length > 0 && (
               <Reveal>
                 <ApprovalCards interrupts={pending} busy={busy} onDecide={decide} />
               </Reveal>
             )}
             {error && (
-              <Reveal className="flex items-center justify-between gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                <span className="min-w-0 break-words">⚠ {error}</span>
-                {msgs.some((m) => m.role === 'user') && <Btn variant="ghost" size="xs" onClick={regenerate}><RotateCw size={13} /> {t('retryButton')}</Btn>}
-              </Reveal>
+              <div role="alert">
+                <Reveal className="flex items-center justify-between gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                  <span className="min-w-0 break-words">⚠ {error}</span>
+                  {msgs.some((m) => m.role === 'user') && <Btn variant="ghost" size="xs" onClick={regenerate}><RotateCw size={13} /> {t('retryButton')}</Btn>}
+                </Reveal>
+              </div>
             )}
-            <div ref={endRef} />
           </div>
           {!pinned && (
             <button type="button" onClick={scrollToBottom} title={t('scrollToBottomTitle')}
@@ -616,7 +738,7 @@ export function Playground() {
               />
               <span aria-hidden className="brand-caret mt-1.5" />
             </div>
-            <Btn arrow onClick={() => send()} disabled={busy || (!input.trim() && files.length === 0)}>{t('sendButton')}</Btn>
+            <Btn arrow onClick={() => send()} disabled={busy || !agent || (!input.trim() && files.length === 0)}>{t('sendButton')}</Btn>
           </div>
         </div>
       </div>
@@ -682,6 +804,8 @@ function HistorySidebar({ open, activeId, busy, onSelect, onNew, onDeleted, conf
       <div className="flex-1 min-h-0 overflow-auto p-1.5">
         {threads.isLoading ? (
           <Spinner />
+        ) : threads.error ? (
+          <ErrorBox error={threads.error} />
         ) : !threads.data?.length ? (
           <div className="px-2.5 py-3 text-xs text-muted-foreground">{t('noConversationsYet')}</div>
         ) : (
@@ -758,7 +882,7 @@ function WorkingMemoryPanel({ id }: { id: string }) {
   return (
     <div className="border-b border-border bg-muted/20 px-4 py-2">
       <div className="mb-1 text-xs font-medium text-muted-foreground">Working Memory</div>
-      {wm.isLoading ? <Spinner /> : value != null && value !== '' ? <JsonBlock value={value} max={600} /> : <div className="text-xs text-muted-foreground">{t('emptyDot')}</div>}
+      {wm.isLoading ? <Spinner /> : wm.error ? <ErrorBox error={wm.error} /> : value != null && value !== '' ? <JsonBlock value={value} max={600} /> : <div className="text-xs text-muted-foreground">{t('emptyDot')}</div>}
     </div>
   );
 }
