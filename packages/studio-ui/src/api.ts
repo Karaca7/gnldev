@@ -538,10 +538,31 @@ export const api = {
 export interface AgentRunBody { runId: string; prompt?: string; messages?: unknown[]; threadId?: string; resourceId?: string; approvals?: Record<string, boolean>; model?: string; temperature?: number; topP?: number; system?: string; }
 
 // ── POST-SSE: agent streaming (EventSource can't POST → fetch + manual SSE parsing) ──
+// The FULL wire protocol, kept in sync with packages/studio/src/sse.ts (and its twin,
+// packages/server/src/sse.ts). This used to declare only 6 of the 18 events the server actually
+// sends, which made the other 12 untypeable and therefore unhandled — including `tool-error`, whose
+// absence left a failed tool pulsing "running" forever in the Playground. An event the UI chooses
+// to ignore is a decision; an event it cannot even name is an accident waiting to happen.
 export type StreamEvent =
   | { type: 'text-delta'; data: { text: string } }
   | { type: 'tool-call'; data: { toolCallId: string; toolName: string; input: unknown } }
   | { type: 'tool-result'; data: { toolCallId: string; toolName: string; output: unknown } }
+  | { type: 'tool-error'; data: { toolCallId: string; toolName: string; error: string } }
+  // Model reasoning (only emitted by models that expose it) — start/end bracket a thinking phase.
+  | { type: 'reasoning-start'; data: { id?: string } }
+  | { type: 'reasoning-delta'; data: { id?: string; text: string } }
+  | { type: 'reasoning-end'; data: { id?: string } }
+  // The model is streaming the ARGUMENTS of a call it is about to make.
+  | { type: 'tool-input-start'; data: { toolCallId: string; toolName: string } }
+  | { type: 'tool-input-delta'; data: { toolCallId: string; delta: string } }
+  | { type: 'tool-input-end'; data: { toolCallId: string } }
+  // Agent-loop boundaries: one step = one model call plus the tools it triggers.
+  | { type: 'step-start'; data: Record<string, never> }
+  | { type: 'step-finish'; data: { finishReason?: string; usage?: unknown } }
+  | { type: 'source'; data: { sourceType?: string; id?: string; url?: string; title?: string } }
+  | { type: 'file'; data: { mediaType?: string; base64?: string } }
+  /** Unknown stream part — carries its type only, so a protocol addition is visible, never silent. */
+  | { type: 'raw'; data: { type: string } }
   | { type: 'interrupt'; data: { interrupts: Interrupt[] } }
   | { type: 'error'; data: { error: string } }
   | { type: 'done'; data: { runId: string; finishReason?: string; usage?: unknown } };

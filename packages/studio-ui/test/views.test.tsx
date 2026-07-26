@@ -26,6 +26,15 @@ vi.mock('../src/ui', async (importOriginal) => {
   return { ...actual, toast: toastMock };
 });
 
+// The live SSE path can't be driven through the fetch stub (streamAgent parses a ReadableStream), so
+// the function itself is replaced and the test scripts the event sequence. Nothing else in this file
+// streams, so the rest of the api module passes through untouched.
+const { streamAgentMock } = vi.hoisted(() => ({ streamAgentMock: vi.fn() }));
+vi.mock('../src/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/api')>();
+  return { ...actual, streamAgent: streamAgentMock };
+});
+
 afterEach(() => {
   cleanup();
   localStorage.clear(); // don't let persistent selections like gnl-insp-run leak across tests
@@ -450,5 +459,91 @@ describe('studio-ui components', () => {
     expect(screen.getByText('Approve')).toBeTruthy();
     expect(screen.getByText('Deny')).toBeTruthy();
     expect(screen.getByText(/high amount/)).toBeTruthy();
+  });
+});
+
+// The Playground used to express "a run is in flight" ONLY by disabling the Send button, so a slow
+// turn and a hung one looked the same. The server was already streaming the answer — reasoning-*,
+// tool-input-*, tool-call, step-* — and the client dropped all of it. These cover both halves: the
+// indicator now reports the real phase, and a failing tool actually ends.
+describe('Playground — live progress', () => {
+  const STREAM_CAPS = { ...CAPS, playground: true, stream: true };
+
+  function stubPlayground() {
+    stubFetch({
+      '/capabilities': STREAM_CAPS,
+      '/agents': [{ name: 'alpha', model: 'm', hasTools: true }],
+      '/me': { id: null, roles: [], orgId: null, operator: true, platformAdmin: false, scope: 'none' },
+      // The run's finally block fetches this; without a real shape the stub's [] fallback used to
+      // reach the token readout as `undefined.toFixed(4)`.
+      '/cost': { totalTokens: 12, costUsd: 0.0034 },
+    });
+  }
+
+  async function sendPrompt() {
+    const box = await screen.findByPlaceholderText(enPlayground.messagePlaceholder);
+    fireEvent.change(box, { target: { value: 'go' } });
+    fireEvent.click(screen.getByText(enPlayground.sendButton));
+  }
+
+  it('names the tool it is executing, instead of just greying out the button', async () => {
+    stubPlayground();
+    // Hold the stream open after the tool-call so the mid-run UI can be inspected.
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    streamAgentMock.mockImplementation(async (_n: string, _b: unknown, on: (e: unknown) => void) => {
+      on({ type: 'step-start', data: {} });
+      on({ type: 'tool-call', data: { toolCallId: 'c1', toolName: 'searchDocs', input: { q: 'x' } } });
+      await held;
+    });
+    wrap(<Playground />);
+    await sendPrompt();
+
+    await waitFor(() => expect(screen.getByText(/Running searchDocs/)).toBeTruthy());
+    release();
+  });
+
+  it('reports thinking while the model reasons and produces no output at all', async () => {
+    stubPlayground();
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    streamAgentMock.mockImplementation(async (_n: string, _b: unknown, on: (e: unknown) => void) => {
+      on({ type: 'reasoning-start', data: {} });
+      await held;
+    });
+    wrap(<Playground />);
+    await sendPrompt();
+
+    // Nothing is written to the transcript during this phase — it is the emptiest, most alarming
+    // stretch of a run, and previously the screen showed no sign of life whatsoever.
+    await waitFor(() => expect(screen.getByText(enPlayground.activityThinking)).toBeTruthy());
+    release();
+  });
+
+  it('REGRESSION: a tool that FAILS stops claiming to be running', async () => {
+    stubPlayground();
+    streamAgentMock.mockImplementation(async (_n: string, _b: unknown, on: (e: unknown) => void) => {
+      on({ type: 'tool-call', data: { toolCallId: 'c1', toolName: 'searchDocs', input: { q: 'x' } } });
+      on({ type: 'tool-error', data: { toolCallId: 'c1', toolName: 'searchDocs', error: 'boom' } });
+    });
+    wrap(<Playground />);
+    await sendPrompt();
+
+    // The tool card stays on screen, but as a FINISHED (failed) one. Before the fix the tool-error
+    // event had no handler at all, so `output` stayed undefined and the card pulsed "running" for
+    // the rest of the session, long after the run had ended.
+    await waitFor(() => expect(screen.getByText('searchDocs')).toBeTruthy());
+    await waitFor(() => expect(screen.queryByText(enPlayground.runningLabel)).toBeNull());
+    expect(screen.getAllByText(/boom/).length).toBeGreaterThan(0);
+  });
+
+  it('clears the indicator once the run ends', async () => {
+    stubPlayground();
+    streamAgentMock.mockImplementation(async (_n: string, _b: unknown, on: (e: unknown) => void) => {
+      on({ type: 'reasoning-start', data: {} });
+    });
+    wrap(<Playground />);
+    await sendPrompt();
+    await waitFor(() => expect(screen.queryByText(enPlayground.activityThinking)).toBeNull());
   });
 });

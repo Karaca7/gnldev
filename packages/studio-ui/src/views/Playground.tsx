@@ -28,6 +28,68 @@ export function matchToolResult(msgs: Msg[], toolCallId: string | undefined): nu
   return -1;
 }
 
+// PURE function (testable): write a tool's outcome onto the message it belongs to. Shared by
+// tool-result and tool-error so the LIVE transcript ends up in the same shape mapMessages produces
+// when the thread is reloaded from the journal — MsgBlock reads "still running" as
+// `output === undefined`, so a failed tool has to land an output in both paths or it pulses forever.
+//
+// Replaces the element instead of assigning through it. The old `(copy[i] as any).output = …`
+// mutated the very object still held by the previous state, so the message's identity never
+// changed — harmless while nothing is memoized, and a silent stale render the moment something is.
+export function applyToolOutcome(msgs: Msg[], toolCallId: string | undefined, output: unknown): Msg[] {
+  const i = matchToolResult(msgs, toolCallId);
+  if (i < 0) return msgs;
+  const copy = [...msgs];
+  copy[i] = { ...(copy[i] as Extract<Msg, { role: 'tool' }>), output };
+  return copy;
+}
+
+/** What the agent is doing at this instant. `null` = idle. */
+export type Activity =
+  /** Request is open but the model has produced nothing yet — the state a long turn sits in. */
+  | { kind: 'waiting' }
+  /** Between reasoning-start and reasoning-end: the model is thinking, not writing. */
+  | { kind: 'reasoning' }
+  /** Between tool-input-start and tool-call: the model is composing the arguments. */
+  | { kind: 'tool-input'; name?: string }
+  /** Between tool-call and its result: OUR code is executing, the model is idle. */
+  | { kind: 'tool-run'; name: string }
+  /** text-delta is flowing — the answer is being written. */
+  | { kind: 'writing' }
+  | null;
+
+// PURE function (testable): fold one stream event into the current activity. Returns `undefined`
+// when the event says nothing about what is happening now, so the caller can leave the state alone
+// instead of flickering through a spurious update.
+//
+// The distinction that matters to a waiting user is reasoning vs tool-run: "thinking" is the model
+// burning time, "running X" is our tool doing so. Those have completely different expected
+// durations and completely different things to do about them, and until now both looked identical —
+// a greyed-out button.
+export function activityFromEvent(type: string, data?: unknown): Activity | undefined {
+  const toolName = (data as { toolName?: string } | undefined)?.toolName;
+  switch (type) {
+    // A new step of the agent loop begins: the model is called again and has said nothing yet.
+    case 'step-start': return { kind: 'waiting' };
+    case 'reasoning-start': return { kind: 'reasoning' };
+    // Thinking is over; the model will now either write or call a tool, and we don't know which yet.
+    case 'reasoning-end': return { kind: 'waiting' };
+    case 'tool-input-start': return { kind: 'tool-input', name: toolName };
+    case 'tool-call': return { kind: 'tool-run', name: toolName ?? '' };
+    // The tool answered (or failed) — control is back with the model.
+    case 'tool-result': case 'tool-error': return { kind: 'waiting' };
+    case 'text-delta': return { kind: 'writing' };
+    default: return undefined;
+  }
+}
+
+// PURE function (testable): "8s", "1:07". Seconds up to a minute, then m:ss — long enough to be
+// reassuring, short enough not to look like a countdown.
+export function fmtElapsed(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
 // Attachment size limit: unbounded uploads bloat both the browser and the base64-encoded prompt body.
 export const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024; // 5MB
 
@@ -200,6 +262,13 @@ export function Playground() {
   const [files, setFiles] = useState<Attachment[]>([]);
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [busy, setBusy] = useState(false);
+  // What the run is doing RIGHT NOW, and since when. `busy` alone only ever said "a request is open",
+  // which is why a long turn was indistinguishable from a hung one: the send button greyed out and
+  // nothing else moved. The server already streams the answer — reasoning-*, tool-input-*, tool-call,
+  // step-* — the UI just dropped every one of those events on the floor. See `activityFromEvent`.
+  const [activity, setActivity] = useState<Activity>(null);
+  const [step, setStep] = useState(0);
+  const [startedAt, setStartedAt] = useState(0);
   const [pending, setPending] = useState<Interrupt[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [lastRunId, setLastRunId] = useState('');
@@ -289,6 +358,12 @@ export function Playground() {
     setCost(null);
     setPending([]);
     setBusy(true);
+    // 'waiting' from the very first millisecond, before any event arrives. That gap — request sent,
+    // model not yet answering — is precisely the one that used to look like a frozen screen, and on
+    // a slow model it is the longest part of the turn.
+    setActivity({ kind: 'waiting' });
+    setStep(0);
+    setStartedAt(Date.now());
     const memoryOn = !!caps.data?.memory;
     // With memory on, every conversation gets a persistent threadId + resourceId → shows up in the history list.
     let tid = thread;
@@ -321,14 +396,21 @@ export function Playground() {
     try {
       if (canStream) {
         await streamAgent(agent, body, (ev) => {
+          // Every event first updates "what is happening now". Events that say nothing about it
+          // (interrupt, done, source, …) return undefined and leave the indicator untouched.
+          const next = activityFromEvent(ev.type, ev.data);
+          if (next !== undefined) setActivity(next);
+          if (ev.type === 'step-start') setStep((n) => n + 1);
+
           if (ev.type === 'text-delta') pushAssistantDelta(ev.data.text);
           else if (ev.type === 'tool-call') setMsgs((m) => [...m, { role: 'tool', name: ev.data.toolName, input: ev.data.input, toolCallId: ev.data.toolCallId }]);
-          else if (ev.type === 'tool-result')
-            setMsgs((m) => {
-              const i = matchToolResult(m, ev.data.toolCallId);
-              if (i < 0) return m;
-              const c = [...m]; (c[i] as any).output = ev.data.output; return c;
-            });
+          else if (ev.type === 'tool-result') setMsgs((m) => applyToolOutcome(m, ev.data.toolCallId, ev.data.output));
+          // A failing tool used to be dropped here entirely — the event had no case, and the client
+          // type did not even declare it. MsgBlock derives "running" from `output === undefined`, so
+          // that tool card pulsed "running" FOREVER: the run had long since moved on and the UI
+          // still claimed work was in flight. {error} is the same shape mapMessages writes for a
+          // 'tool-error' part, so live and reloaded transcripts now agree.
+          else if (ev.type === 'tool-error') setMsgs((m) => applyToolOutcome(m, ev.data.toolCallId, { error: ev.data.error }));
           else if (ev.type === 'interrupt') setPending(ev.data.interrupts);
           else if (ev.type === 'error') setError(ev.data.error);
         }, ac.signal);
@@ -342,6 +424,7 @@ export function Playground() {
       if (!ac.signal.aborted) setError(String(e));
     } finally {
       setBusy(false);
+      setActivity(null);
       abortRef.current = null;
       // Fetch the turn's cost/tokens (the journal is written synchronously → ready immediately). Don't let a stale run overwrite the current one.
       try { const c = await api.cost(runId); if (runIdRef.current === runId) setCost(c); } catch { /* silent if there's no cost */ }
@@ -633,7 +716,13 @@ export function Playground() {
           {/* Live stream: pulse only while busy+streaming — double-coded with the "streaming" text (WCAG 1.4.1). */}
           <span className="flex items-center gap-1.5 text-xs text-muted-foreground md:ml-auto">
             {busy && canStream && <span className="live-dot" aria-hidden />}
-            {canStream ? 'streaming' : 'sync'}{cost ? ` · ${cost.totalTokens} tok · $${cost.costUsd.toFixed(4)}` : ''}
+            {/* Guarded per field, not by `cost ?` alone: a /cost response missing costUsd made this
+                `undefined.toFixed(4)` and unmounted the ENTIRE Playground — the whole transcript
+                replaced by an error boundary because a token counter came back short. A cosmetic
+                readout must never be able to do that; each half now renders only if it has a number. */}
+            {canStream ? 'streaming' : 'sync'}
+            {typeof cost?.totalTokens === 'number' ? ` · ${cost.totalTokens} tok` : ''}
+            {typeof cost?.costUsd === 'number' ? ` · $${cost.costUsd.toFixed(4)}` : ''}
           </span>
           {msgs.some((m) => m.role === 'user') && !busy && <Btn variant="ghost" size="xs" onClick={regenerate}><RotateCw size={14} /> {t('regenerateButton')}</Btn>}
           {caps.data?.memory && thread && <Btn variant="ghost" size="xs" onClick={() => setShowWm((s) => !s)}><Database size={14} /> {t('memoryButton')}</Btn>}
@@ -701,6 +790,12 @@ export function Playground() {
                   )
               ))}
             </div>
+            {/* Suppressed while the answer is being written: the streaming cursor on the assistant
+                bubble already says that, and a "Writing…" line under visibly appearing text is noise.
+                Every other phase produces NOTHING on screen, which is the whole problem this solves. */}
+            {busy && activity?.kind !== 'writing' && (
+              <ActivityRow activity={activity} step={step} startedAt={startedAt} />
+            )}
             {/* Live region: a SHORT status summary for screen-reader users (busy/pending-approval/complete) —
                 NOT per-delta text (that would flood the screen reader with every streamed token). */}
             <div aria-live="polite" aria-atomic="true" className="sr-only">
@@ -1030,6 +1125,44 @@ function MsgBlock({ msg, canEdit, onEdit, streaming }: { msg: Msg; canEdit?: boo
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * "What is happening right now", rendered where the next message will appear — the place the user is
+ * already looking. Replaces inferring liveness from a greyed-out Send button.
+ *
+ * Mounted only while a run is open, so its 1s tick has no life outside that: the interval starts and
+ * stops with the row instead of being a timer Playground has to remember to clear. The elapsed
+ * counter is the load-bearing part — it keeps moving when the stream is silent, which is exactly the
+ * stretch (model thinking before the first token) that used to be indistinguishable from a hang.
+ */
+function ActivityRow({ activity, step, startedAt }: { activity: Activity; step: number; startedAt: number }) {
+  const { t } = useTranslation('playground');
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  if (!activity) return null;
+
+  const label =
+    activity.kind === 'reasoning' ? t('activityThinking')
+    : activity.kind === 'tool-input' ? t('activityPreparingTool', { name: activity.name ?? t('activityToolFallback') })
+    : activity.kind === 'tool-run' ? t('activityRunningTool', { name: activity.name || t('activityToolFallback') })
+    : activity.kind === 'writing' ? t('activityWriting')
+    : t('activityWaiting');
+
+  return (
+    <div className="flex items-center gap-2 px-1 py-1.5 text-xs text-muted-foreground">
+      <span className="record-dot record-dot--live" aria-hidden />
+      <span className="text-foreground">{label}</span>
+      <span className="ml-auto flex items-center gap-2 tabular-nums">
+        {/* Only from the second step on: "step 1" on a single-step turn is noise. */}
+        {step > 1 && <span className="microlabel">{t('activityStep', { n: step })}</span>}
+        <span>{fmtElapsed(now - startedAt)}</span>
+      </span>
     </div>
   );
 }

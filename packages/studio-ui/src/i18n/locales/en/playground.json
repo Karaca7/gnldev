@@ -53,5 +53,12 @@
   "editAndResendTitle": "Edit & resend",
   "pendingApprovalTool": "⏸ Waiting for approval: {{count}} tool",
   "approveButton": "Approve",
-  "rejectButton": "Reject"
+  "rejectButton": "Reject",
+  "activityWaiting": "Waiting for the model…",
+  "activityThinking": "Thinking…",
+  "activityPreparingTool": "Preparing {{name}}…",
+  "activityRunningTool": "Running {{name}}…",
+  "activityWriting": "Writing…",
+  "activityToolFallback": "tool",
+  "activityStep": "step {{n}}"
 }

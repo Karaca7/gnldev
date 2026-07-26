@@ -53,5 +53,12 @@
   "editAndResendTitle": "Düzenle & yeniden gönder",
   "pendingApprovalTool": "⏸ Onay bekleyen {{count}} tool",
   "approveButton": "Onayla",
-  "rejectButton": "Reddet"
+  "rejectButton": "Reddet",
+  "activityWaiting": "Model bekleniyor…",
+  "activityThinking": "Düşünüyor…",
+  "activityPreparingTool": "{{name}} hazırlanıyor…",
+  "activityRunningTool": "{{name}} çalışıyor…",
+  "activityWriting": "Yazıyor…",
+  "activityToolFallback": "araç",
+  "activityStep": "adım {{n}}"
 }

@@ -1,7 +1,7 @@
 // @vitest-environment node
 // F6.5: Playground attachment size limit + extracting tool parts from history, Knowledge minScore threshold — PURE functions.
 import { describe, it, expect } from 'vitest';
-import { MAX_ATTACHMENT_BYTES, validateAttachment, mapMessages, matchToolResult, userOrdinalAt, userMessageServerIndex, type Msg } from '../src/views/Playground';
+import { MAX_ATTACHMENT_BYTES, validateAttachment, mapMessages, matchToolResult, applyToolOutcome, activityFromEvent, fmtElapsed, userOrdinalAt, userMessageServerIndex, type Msg } from '../src/views/Playground';
 import { filterByMinScore, clampTopK, clampMinScore } from '../src/views/Knowledge';
 import { validateToolInput, coerceToolField } from '../src/views/Tools';
 
@@ -239,5 +239,111 @@ describe('coerceToolField / validateToolInput — Tools form validation', () => 
   it('validateToolInput: an empty optional field is silently dropped (not included in input)', () => {
     const fields = [{ key: 'name', type: 'string', required: true }, { key: 'note', type: 'string', required: false }];
     expect(validateToolInput(fields, { name: 'x', note: '' })).toEqual({ ok: true, input: { name: 'x' } });
+  });
+});
+
+describe('activityFromEvent — what the run is doing right now', () => {
+  it('brackets a thinking phase with reasoning-start/end', () => {
+    expect(activityFromEvent('reasoning-start')).toEqual({ kind: 'reasoning' });
+    // Thinking is over, but nothing has been produced yet — back to waiting, NOT to idle.
+    expect(activityFromEvent('reasoning-end')).toEqual({ kind: 'waiting' });
+  });
+
+  it('separates composing a tool call from executing it', () => {
+    // These are different waits: the first is the model, the second is our own code.
+    expect(activityFromEvent('tool-input-start', { toolName: 'search' })).toEqual({ kind: 'tool-input', name: 'search' });
+    expect(activityFromEvent('tool-call', { toolName: 'search' })).toEqual({ kind: 'tool-run', name: 'search' });
+  });
+
+  it('returns to waiting when a tool finishes, whether it succeeded or failed', () => {
+    expect(activityFromEvent('tool-result', { toolName: 'search' })).toEqual({ kind: 'waiting' });
+    expect(activityFromEvent('tool-error', { toolName: 'search' })).toEqual({ kind: 'waiting' });
+  });
+
+  it('reports writing on text, and a new step as waiting', () => {
+    expect(activityFromEvent('text-delta')).toEqual({ kind: 'writing' });
+    expect(activityFromEvent('step-start')).toEqual({ kind: 'waiting' });
+  });
+
+  it('returns undefined — not null — for events that say nothing about the current phase', () => {
+    // null would mean "idle" and blank the indicator mid-run; undefined tells the caller to leave
+    // the current state alone. The difference is a flicker to "nothing is happening" on every
+    // interrupt/done/source event.
+    for (const t of ['interrupt', 'done', 'source', 'file', 'raw', 'step-finish', 'reasoning-delta']) {
+      expect(activityFromEvent(t)).toBeUndefined();
+    }
+  });
+
+  it('survives a tool event with no toolName rather than throwing', () => {
+    expect(activityFromEvent('tool-call', {})).toEqual({ kind: 'tool-run', name: '' });
+    expect(activityFromEvent('tool-input-start')).toEqual({ kind: 'tool-input', name: undefined });
+  });
+});
+
+describe('fmtElapsed', () => {
+  it('counts in seconds below a minute', () => {
+    expect(fmtElapsed(0)).toBe('0s');
+    expect(fmtElapsed(8_400)).toBe('8s');      // truncates, never rounds up past the real elapsed
+    expect(fmtElapsed(59_999)).toBe('59s');
+  });
+
+  it('switches to m:ss at a minute, zero-padding the seconds', () => {
+    expect(fmtElapsed(60_000)).toBe('1:00');
+    expect(fmtElapsed(67_000)).toBe('1:07');
+    expect(fmtElapsed(600_000)).toBe('10:00');
+  });
+
+  it('clamps a negative delta to zero instead of printing "-1s"', () => {
+    // Reachable if the clock steps backwards between startedAt and the first tick.
+    expect(fmtElapsed(-5_000)).toBe('0s');
+  });
+});
+
+describe('applyToolOutcome — a finished tool must leave the "running" state', () => {
+  const base: Msg[] = [
+    { role: 'user', text: 'search please' },
+    { role: 'tool', name: 'search', input: { q: 'x' }, toolCallId: 'c1' },
+    { role: 'tool', name: 'fetch', input: { u: 'y' }, toolCallId: 'c2' },
+  ];
+
+  it('writes a successful result onto the matching call', () => {
+    const out = applyToolOutcome(base, 'c1', { hits: 3 });
+    expect((out[1] as any).output).toEqual({ hits: 3 });
+    expect((out[2] as any).output).toBeUndefined(); // the other call is untouched
+  });
+
+  it('REGRESSION: a tool ERROR also lands an output, so the card stops pulsing "running"', () => {
+    // MsgBlock renders the live pulse from `output === undefined`. Before the fix the tool-error
+    // event was dropped entirely, so this stayed undefined and the tool claimed to be running for
+    // the rest of the session — the single worst version of "I can't tell if it's still working".
+    const out = applyToolOutcome(base, 'c2', { error: 'boom' });
+    expect((out[2] as any).output).toEqual({ error: 'boom' });
+    expect((out[2] as any).output).toBeDefined();
+  });
+
+  it('matches the shape mapMessages produces for a reloaded tool-error, so both paths agree', () => {
+    const reloaded = mapMessages([
+      { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'c9', toolName: 'search', input: { q: 'x' } }] },
+      { role: 'tool', content: [{ type: 'tool-error', toolCallId: 'c9', toolName: 'search', error: 'boom' }] },
+    ]);
+    const live = applyToolOutcome(
+      [{ role: 'tool', name: 'search', input: { q: 'x' }, toolCallId: 'c9' }],
+      'c9',
+      { error: 'boom' },
+    );
+    const reloadedTool = reloaded.find((m) => m.role === 'tool') as any;
+    expect(reloadedTool.output).toEqual((live[0] as any).output);
+  });
+
+  it('leaves the list alone (same reference) when the id matches nothing', () => {
+    expect(applyToolOutcome(base, 'nope', { x: 1 })).toBe(base);
+    expect(applyToolOutcome(base, undefined, { x: 1 })).toBe(base);
+  });
+
+  it('does not mutate the previous state — the updated message is a NEW object', () => {
+    const out = applyToolOutcome(base, 'c1', { hits: 3 });
+    expect(out).not.toBe(base);
+    expect(out[1]).not.toBe(base[1]);            // identity changes → memoized children re-render
+    expect((base[1] as any).output).toBeUndefined(); // the old state stays as it was
   });
 });
