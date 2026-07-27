@@ -115,6 +115,7 @@ export async function purgeRun(
 
   total += await del(`${runId}:`);
   total += await del(runKeys.memAppended(runId)); // full key = its own prefix
+  total += await del(runKeys.memUserAppended(runId)); // write-ahead marker — same lifecycle as memAppended
   total += await del(`net:${runId}:`); // blanket cascade for journals without listKeys (direct level)
   return total;
 }

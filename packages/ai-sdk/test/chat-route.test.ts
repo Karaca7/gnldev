@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import { tool } from 'ai';
 import { z } from 'zod';
-import { InMemoryJournal } from '@gnldev/durable';
+import { InMemoryJournal, BasicMemory } from '@gnldev/durable';
 import { createChatRoute } from '../src/index.js';
 
 const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
@@ -154,6 +154,61 @@ describe('@gnldev/ai-sdk createChatRoute', () => {
     expect(textOf(t2)).toBe('answer-2'); // fresh run — the old body.id fallback would have replayed 'answer-1'
     expect(textOf(retry)).toBe('answer-2'); // idempotent retry: same runId → journal replay
     expect(calls).toBe(2); // the retry did NOT hit the model
+  });
+
+  // F1 (RISK-AUDIT-DURABILITY): useChat POSTs the ENTIRE client history every turn; with memory+threadId
+  // that whole history used to become `incoming` → compounded duplication in memory AND in the prompt.
+  // The core now strips client-echoed turns by role (durable run.ts dropEchoedHistory) — this is the
+  // previously-missing two-turn coverage for the chat-route + memory combination.
+  it('two turns with MEMORY: the full-history POST does not compound messages', async () => {
+    const journal = new InMemoryJournal();
+    const memory = new BasicMemory(journal);
+    const seenPrompts: any[] = [];
+    let calls = 0;
+    const countingMock: any = {
+      specificationVersion: 'v2',
+      provider: 'mock',
+      modelId: 'm',
+      supportedUrls: {},
+      doGenerate: async () => { throw new Error('no gen'); },
+      doStream: async ({ prompt }: any) => {
+        calls++;
+        seenPrompts.push(prompt);
+        return {
+          stream: mkStream([
+            { type: 'stream-start', warnings: [] },
+            { type: 'text-start', id: '1' },
+            { type: 'text-delta', id: '1', delta: `answer-${calls}` },
+            { type: 'text-end', id: '1' },
+            { type: 'finish', finishReason: 'stop', usage },
+          ]),
+        };
+      },
+    };
+    const app = createChatRoute({ journal, memory, agents: { chat: { model: countingMock, maxSteps: 4 } } });
+    const post = (msgs: any[]) =>
+      app.request('/agents/chat/chat', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id: 'conv-mem', threadId: 'th-mem', messages: msgs }),
+      });
+
+    // Turn 1: just the first user message.
+    await readChunks(await post([{ id: 'm1', role: 'user', parts: [{ type: 'text', text: 'first' }] }]));
+    // Turn 2: useChat's real behavior — the WHOLE history including the assistant echo.
+    await readChunks(await post([
+      { id: 'm1', role: 'user', parts: [{ type: 'text', text: 'first' }] },
+      { id: 'a1', role: 'assistant', parts: [{ type: 'text', text: 'answer-1' }] },
+      { id: 'm2', role: 'user', parts: [{ type: 'text', text: 'second' }] },
+    ]));
+
+    // Memory stays linear: first, answer-1, second, answer-2 — the echoed turns were NOT re-persisted.
+    const saved = await memory.getMessages('th-mem');
+    expect(saved.filter((m: any) => m?.role === 'user').length).toBe(2);
+    expect(saved.length).toBe(4);
+    // Turn 2's prompt carries 'first' exactly once (from server memory), not doubled by the echo.
+    const t2users = (seenPrompts[1] ?? []).filter((m: any) => m?.role === 'user');
+    expect(t2users.length).toBe(2);
   });
 
   it('POST /agents/:name/chat → UI message stream reconstructs the answer text', async () => {

@@ -55,7 +55,7 @@ describe('retry-with-feedback ladder (D4-retry)', () => {
     expect(decision?.v?.processor).toBe('strictness');
   });
 
-  it('maxRetries exhaustion -> typed RetryExhaustedByProcessorError; memory is NOT appended', async () => {
+  it('maxRetries exhaustion -> typed RetryExhaustedByProcessorError; memory keeps the QUESTION, never the rejected answer', async () => {
     const journal = new InMemoryJournal();
     let calls = 0;
     const model = createMockModel(async () => { calls++; return finalTextResult('bad'); });
@@ -73,7 +73,9 @@ describe('retry-with-feedback ladder (D4-retry)', () => {
     ).rejects.toThrow(RetryExhaustedByProcessorError);
     // default maxRetries=1: attempt 0 throws (retried once), attempt 1 throws again (exhausted) → 2 model calls.
     expect(calls).toBe(2);
-    expect(appended.length).toBe(0);
+    // WRITE-AHEAD (run.ts writeAheadIncoming): the user's message went in pre-model — so a failed turn
+    // keeps its question in the thread. The PRODUCED half (the rejected answer) is never appended.
+    expect(appended).toEqual([{ role: 'user', content: 'go' }]);
   });
 
   it('replay determinism: re-running the SAME runId reproduces the retry sequence from the journal without re-calling the model', async () => {

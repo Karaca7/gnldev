@@ -446,31 +446,82 @@ type PreparedInput = { prompt?: unknown; messages?: any[]; system?: string };
  * Updates `rest` in place; called BEFORE persistInput → the entire context freezes into `:input` = replayable.
  * The SINGLE shared path for runDurable and streamDurable — parity must not be broken.
  */
+/**
+ * WRITE-AHEAD dedupe input: does the tail of the loaded history already END with exactly the
+ * incoming message(s)? True on a retry of a turn whose write-ahead append (see writeAheadIncoming)
+ * already stored them — SAME runId (crash between append and completion) or a NEW runId re-sending
+ * the identical text (studio playground's retry generates a fresh runId per attempt).
+ * Compared by JSON shape: both sides come from the same construction (the caller's message object,
+ * roundtripped through the store), so key order is stable. Best-effort on purpose — a false NEGATIVE
+ * merely reproduces the pre-write-ahead behavior for that turn (a duplicate row), never worse.
+ */
+function historyEndsWithIncoming(history: any[], incoming: any[]): boolean {
+  if (incoming.length === 0 || history.length < incoming.length) return false;
+  const tail = history.slice(-incoming.length);
+  for (let i = 0; i < incoming.length; i++) {
+    if (JSON.stringify(tail[i]) !== JSON.stringify(incoming[i])) return false;
+  }
+  return true;
+}
+
+/**
+ * F1 (RISK-AUDIT-DURABILITY): server-owned-history contract, enforced at the core. useChat-style
+ * clients POST their ENTIRE message history every turn (see @gnldev/ai-sdk chat-route.ts — the
+ * client's UIMessage[] is converted wholesale); with memory+threadId that whole history became
+ * `incoming`, so every turn re-persisted and re-prompted the echoed early turns — compounding
+ * duplication. Exact-equality dedupe can't catch it: the client's echo of an assistant turn
+ * (UIMessage→ModelMessage) is structurally different from the `response.messages` shape memory
+ * stored, so JSON comparison never matches.
+ *
+ * The rule instead keys off ROLES: once a thread HAS stored history, any assistant/tool message
+ * inside `incoming` can only be an echo of a previous server turn (in a server-memory conversation
+ * the client is not a source of assistant output) — so the genuinely NEW input is the block after
+ * the LAST non-user message. A first turn (empty history) is left untouched on purpose: seeding a
+ * new thread with a few-shot transcript is legitimate and still persists wholesale.
+ */
+function dropEchoedHistory(history: any[], incoming: any[]): any[] {
+  if (history.length === 0) return incoming;
+  for (let i = incoming.length - 1; i >= 0; i--) {
+    const role = incoming[i]?.role;
+    if (role === 'assistant' || role === 'tool') return incoming.slice(i + 1);
+  }
+  return incoming;
+}
+
 async function prepareMemoryContext(
   memory: Memory,
   threadId: string,
   resourceId: string | undefined,
   rest: PreparedInput,
-): Promise<{ incoming: any[]; wmTool?: Record<string, any> }> {
-  const incoming: any[] = rest.messages ?? (rest.prompt != null ? [{ role: 'user', content: rest.prompt }] : []);
+): Promise<{ incoming: any[]; wmTool?: Record<string, any>; alreadyStored: boolean }> {
+  const rawIncoming: any[] = rest.messages ?? (rest.prompt != null ? [{ role: 'user', content: rest.prompt }] : []);
   delete rest.prompt;
   const rid = resourceId ?? (memory.getThreadResource ? await memory.getThreadResource(threadId) : undefined);
 
   if (typeof memory.loadContext === 'function') {
     // Rich path (Phase 14 AgentMemory): composes recall + WM + OM + tool in a single pass.
-    const mc = await memory.loadContext(threadId, { query: lastUserText(incoming), resourceId: rid, incoming });
-    rest.messages = [...(mc.messages ?? []), ...incoming];
+    const mc = await memory.loadContext(threadId, { query: lastUserText(rawIncoming), resourceId: rid, incoming: rawIncoming });
+    const history = mc.messages ?? [];
+    // F1: strip client-echoed history first (full-history POSTing clients), THEN the retry dedupe.
+    const incoming = dropEchoedHistory(history, rawIncoming);
+    // Retry dedupe (see historyEndsWithIncoming): when the loaded history already ends with this
+    // turn's incoming (a prior attempt write-ahead-appended it), do NOT concat it again — the model
+    // would see the user message twice and writeAheadIncoming would store it twice.
+    const alreadyStored = historyEndsWithIncoming(history, incoming);
+    rest.messages = alreadyStored ? [...history] : [...history, ...incoming];
     if (mc.system) rest.system = [rest.system, mc.system].filter(Boolean).join('\n\n');
-    return { incoming, wmTool: mc.tools };
+    return { incoming, wmTool: mc.tools, alreadyStored };
   }
   // Legacy path (BasicMemory / SemanticMemory).
-  const history = await memory.getMessages(threadId, { query: lastUserText(incoming), resourceId: rid });
-  rest.messages = [...history, ...incoming];
+  const history = await memory.getMessages(threadId, { query: lastUserText(rawIncoming), resourceId: rid });
+  const incoming = dropEchoedHistory(history, rawIncoming);
+  const alreadyStored = historyEndsWithIncoming(history, incoming);
+  rest.messages = alreadyStored ? [...history] : [...history, ...incoming];
   if (memory.getWorkingMemory) {
     const wm = await memory.getWorkingMemory(threadId);
     if (wm) rest.system = [rest.system, `# Working Memory\n${wm}`].filter(Boolean).join('\n\n');
   }
-  return { incoming };
+  return { incoming, alreadyStored };
 }
 
 /**
@@ -571,6 +622,76 @@ async function markMemoryAppendDone(
     return;
   }
   await journal.put(marker, true);
+}
+
+/**
+ * WRITE-AHEAD user-message append: persist this turn's `incoming` message(s) to memory BEFORE the
+ * first model call. The thread ROW was already write-ahead (AgentMemory.loadContext →
+ * ensureThreadIndexed creates it, titled from the first user message, before any token arrives) —
+ * but the MESSAGES only landed at completion, so a run that died before its first token left a
+ * titled-but-EMPTY thread: the user's own message was gone from every read surface even though the
+ * journal's `:input` still held it. Appending `incoming` here closes that asymmetry; the
+ * completion-time append (both call sites below) then persists only the PRODUCED messages.
+ *
+ * Idempotency is two-layered, mirroring the completion marker:
+ *  - `alreadyStored` (prepareMemoryContext's tail-dedupe) — covers retries across DIFFERENT runIds
+ *    re-sending the identical text (the playground mints a fresh runId per attempt).
+ *  - the `memUserAppended` two-phase marker — covers SAME-runId retries racing concurrently, where
+ *    the tail check can't see the other worker's in-flight append.
+ *
+ * DELIBERATELY NOT try/caught: this runs pre-model, so failing the run here is cheap (no tokens
+ * spent) and honest — completing a turn whose user message could not be persisted would produce a
+ * transcript with an answer but no question.
+ */
+async function writeAheadIncoming(
+  journal: Journal,
+  memory: Memory,
+  threadId: string,
+  runId: string,
+  incoming: any[],
+  alreadyStored: boolean,
+  limits: RunLimits | undefined,
+): Promise<void> {
+  if (alreadyStored || incoming.length === 0) return;
+  const marker = runKeys.memUserAppended(runId);
+  const pending = await claimMemoryAppend(journal, marker);
+  if (!pending) return;
+  await memory.append(threadId, incoming);
+  // PHASE 3: provenance stamp for the incoming half — the completion append stamps only `produced`.
+  await recordAppendedTaintProvenance(journal, runId, threadId, limits, incoming);
+  await markMemoryAppendDone(journal, marker, pending);
+}
+
+/**
+ * F4 (RISK-AUDIT-DURABILITY): a SAME-runId re-entry (resume after suspension, retry) whose
+ * write-ahead already landed, but where OTHER turns were appended to the thread in between — the
+ * tail-dedupe no longer matches (this run's incoming isn't the thread tail anymore), so the prompt
+ * would carry the question twice: once inside the loaded history, once re-concatenated at the end.
+ * Memory itself was never at risk (the memUserAppended marker blocks the re-append); this is purely
+ * a prompt-fidelity fix. Keyed off the marker being DONE plus an explicit containment check — if
+ * compaction/windowing dropped the stored copy out of the loaded context, the re-concatenated one is
+ * KEPT (prompt correctness beats deduplication when the two conflict). Returns the updated
+ * `alreadyStored`.
+ */
+async function dropIncomingIfAppendedEarlier(
+  journal: Journal,
+  runId: string,
+  rest: PreparedInput,
+  incoming: any[],
+  alreadyStored: boolean,
+): Promise<boolean> {
+  if (alreadyStored || incoming.length === 0 || !rest.messages) return alreadyStored;
+  if ((await journal.get(runKeys.memUserAppended(runId))) !== true) return alreadyStored;
+  const history = rest.messages.slice(0, rest.messages.length - incoming.length);
+  const needle = incoming.map((m) => JSON.stringify(m));
+  outer: for (let i = 0; i + needle.length <= history.length; i++) {
+    for (let j = 0; j < needle.length; j++) {
+      if (JSON.stringify(history[i + j]) !== needle[j]) continue outer;
+    }
+    rest.messages = history; // stored copy is visible in the loaded context → drop the re-concat
+    return true;
+  }
+  return alreadyStored;
 }
 
 /**
@@ -770,8 +891,11 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   // Memory: load thread history (prepend to messages) + inject working memory into the system prompt.
   let incoming: any[] = [];
   let wmTool: Record<string, any> | undefined; // Phase 14: rich memory's updateWorkingMemory tool
+  let incomingStored = false; // retry dedupe — see prepareMemoryContext/writeAheadIncoming
   if (memory && threadId) {
-    ({ incoming, wmTool } = await prepareMemoryContext(memory, threadId, resourceId, rest));
+    ({ incoming, wmTool, alreadyStored: incomingStored } = await prepareMemoryContext(memory, threadId, resourceId, rest));
+    // F4: same-runId re-entry with interleaved turns — drop the re-concat if the stored copy is visible.
+    incomingStored = await dropIncomingIfAppendedEarlier(journal, runId, rest, incoming, incomingStored);
   }
 
   if (procCtx) await applyInputProcessors(processors!, procCtx, journal, runId, rest);
@@ -781,6 +905,9 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   // run's limits win, a later resume never overwrites them). resumeRun reads this back when the caller
   // doesn't re-supply `limits`, so a resumed run keeps its cost cap / loop / duplicate / taint gates.
   if (limits) await claim(journal, runKeys.cfgLimits(runId), limits);
+  // WRITE-AHEAD user message (see writeAheadIncoming): journal `:input` first (the WAL), then memory —
+  // a run that fails before its first token keeps the user's message visible in the thread.
+  if (memory && threadId) await writeAheadIncoming(journal, memory, threadId, runId, incoming, incomingStored, limits);
   // AUDIT A4 (opt-in `taintScope: 'thread'`): if a prior turn on this thread was tainted, mark THIS
   // run tainted BEFORE the agent loop — the taint gate then fires for this run's side effects.
   // PHASE 3: `rest.messages` here is the FINAL visible context (memory + processors already applied)
@@ -835,11 +962,25 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
     const marker = runKeys.memAppended(runId);
     const pending = await claimMemoryAppend(journal, marker);
     if (pending) {
+      // PRODUCED only — `incoming` was already persisted pre-model by writeAheadIncoming (or was
+      // found already stored by the tail-dedupe); re-appending it here would duplicate the turn.
+      // F3 note (deliberate): under CONCURRENT turns on one thread, messages land in SEND order and
+      // answers in COMPLETION order — the transcript reflects what actually happened, rather than the
+      // old atomic-pair append that reordered reality into adjacent Q/A pairs.
       const produced = (result as any).response?.messages ?? [];
-      const appended = [...incoming, ...produced];
+      // F5: if this run's write-ahead was skipped over ANOTHER worker's pending claim and that claim
+      // has since gone STALE (crashed before appending), take it over now — the question rides along
+      // with the answer instead of being lost. A still-FRESH claim keeps the safe-side skip (the
+      // owner may yet land it); that sub-TTL window is the documented residual.
+      let userPending: { status: 'pending'; startedAt: number } | undefined;
+      if (!incomingStored && incoming.length > 0) {
+        userPending = await claimMemoryAppend(journal, runKeys.memUserAppended(runId));
+      }
+      const appended = userPending ? [...incoming, ...produced] : produced;
       await memory.append(threadId, appended);
       // PHASE 3: stamp content provenance for directly-tainted runs (content-window expiry input).
       await recordAppendedTaintProvenance(journal, runId, threadId, limits, appended);
+      if (userPending) await markMemoryAppendDone(journal, runKeys.memUserAppended(runId), userPending);
       await markMemoryAppendDone(journal, marker, pending);
     }
   }
@@ -990,8 +1131,11 @@ export async function streamDurable(args: StreamDurableArgs) {
   // Memory: load thread history + inject into system (BEFORE persistInput → replayable).
   let incoming: any[] = [];
   let wmTool: Record<string, any> | undefined;
+  let incomingStored = false; // retry dedupe — see prepareMemoryContext/writeAheadIncoming
   if (memory && threadId) {
-    ({ incoming, wmTool } = await prepareMemoryContext(memory, threadId, resourceId, rest));
+    ({ incoming, wmTool, alreadyStored: incomingStored } = await prepareMemoryContext(memory, threadId, resourceId, rest));
+    // F4: same-runId re-entry with interleaved turns — parity with runDurableInner.
+    incomingStored = await dropIncomingIfAppendedEarlier(journal, runId, rest, incoming, incomingStored);
   }
 
   if (procCtx) await applyInputProcessors(processors!, procCtx, journal, runId, rest);
@@ -999,6 +1143,9 @@ export async function streamDurable(args: StreamDurableArgs) {
   await persistInput(journal, runId, rest, threadId, agentName);
   // AUDIT B2: freeze `limits` on the first run (parity with runDurableInner) — idempotent via `claim`.
   if (limits) await claim(journal, runKeys.cfgLimits(runId), limits);
+  // WRITE-AHEAD user message (parity with runDurableInner — see writeAheadIncoming). Pre-model, so a
+  // memory failure rejects gnl.stream() itself (a clean JSON error) instead of surfacing mid-SSE.
+  if (memory && threadId) await writeAheadIncoming(journal, memory, threadId, runId, incoming, incomingStored, limits);
   // AUDIT A4: same run-start thread-taint inheritance as runDurableInner (opt-in; parity).
   // PHASE 3: same content-window visibility input as runDurableInner (parity).
   await inheritThreadTaint(journal, runId, threadId, limits, { messages: rest.messages, memory });
@@ -1078,10 +1225,17 @@ export async function streamDurable(args: StreamDurableArgs) {
             const marker = runKeys.memAppended(runId);
             const pending = await claimMemoryAppend(journal, marker);
             if (pending) {
-              const appended = [...incoming, ...produced];
+              // PRODUCED only — `incoming` went in pre-model via writeAheadIncoming (parity with
+              // runDurableInner's completion append above, including the F3/F5 notes there).
+              let userPending: { status: 'pending'; startedAt: number } | undefined;
+              if (!incomingStored && incoming.length > 0) {
+                userPending = await claimMemoryAppend(journal, runKeys.memUserAppended(runId));
+              }
+              const appended = userPending ? [...incoming, ...produced] : produced;
               await memory.append(threadId, appended);
               // PHASE 3: provenance stamp — parity with runDurableInner (shared helper).
               await recordAppendedTaintProvenance(journal, runId, threadId, limits, appended);
+              if (userPending) await markMemoryAppendDone(journal, runKeys.memUserAppended(runId), userPending);
               await markMemoryAppendDone(journal, marker, pending);
             }
           }

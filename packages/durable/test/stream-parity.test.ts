@@ -129,7 +129,8 @@ describe('stream-parity: processor pipeline within streamDurable', () => {
     expect(await r.text).toContain('TOKEN');
     // Persisted messages ARE transformed (onFinish is async → wait for the ACTUAL content; the marker
     // is now written BEFORE the claim: it's a "claimed" signal, not "finished").
-    await waitFor(async () => (await memory.getMessages('t1')).length > 0);
+    // Write-ahead makes the thread non-empty pre-model — wait for the PRODUCED (assistant) half.
+    await waitFor(async () => (await memory.getMessages('t1')).some((m: any) => m?.role === 'assistant'));
     const saved = await memory.getMessages('t1');
     const flat = JSON.stringify(saved);
     expect(flat).toContain('[CONFIDENTIAL]');
@@ -159,7 +160,9 @@ describe('stream-parity: processor pipeline within streamDurable', () => {
     await r1.text; // drain the stream (triggers onFinish)
     await new Promise((r) => setTimeout(r, 30)); // onFinish is async — let it run
     expect(await journal.get(runKeys.memAppended('sp4'))).toBeUndefined(); // marker NOT locked
-    expect(await memory.getMessages('t4')).toEqual([]); // half-finished conversation NOT written
+    // WRITE-AHEAD: the user's QUESTION is persisted pre-model (see run.ts writeAheadIncoming) — a
+    // suspended turn shows what was asked; only the PRODUCED half waits for the approved resume.
+    expect(await memory.getMessages('t4')).toEqual([{ role: 'user', content: 'pay' }]);
     expect(await journal.get('sp4:usage-counted')).toBeUndefined(); // usage NOT counted while suspended
 
     // Run 2 — approved resume: step-0 stream replays from the journal, the tool ACTUALLY runs, the final is live.
@@ -169,9 +172,12 @@ describe('stream-parity: processor pipeline within streamDurable', () => {
       approvals: { 'call-charge': true }, stopWhen: stepCountIs(4),
     });
     await r2.text;
-    await waitFor(async () => (await memory.getMessages('t4')).length > 0);
-    const flat4 = JSON.stringify(await memory.getMessages('t4'));
+    await waitFor(async () => (await memory.getMessages('t4')).length > 1);
+    const saved4 = await memory.getMessages('t4');
+    const flat4 = JSON.stringify(saved4);
     expect(flat4).toContain('Charged'); // FINAL answer is in memory — impossible under the old behavior
+    // The resume's tail-dedupe saw the write-ahead'ed question → exactly ONE user row, never two.
+    expect(saved4.filter((m: any) => m?.role === 'user').length).toBe(1);
     expect(await journal.get(runKeys.memAppended('sp4'))).toBeDefined();
   });
 });

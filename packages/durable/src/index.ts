@@ -6,7 +6,7 @@ export { InMemoryJournal, parseJournalKey, summarizeRun, claim, frozenGet, runKe
 export { JOURNAL_FORMAT_VERSION, JournalFormatError, registerFormatUpgrade, stampFormat, upgradeFormat, isVersionedKey } from './format.js';
 export { acquireRunLock } from './run-lock.js';
 export type { RunLock } from './run-lock.js';
-export { reconstructState, forkRun } from './time-travel.js';
+export { reconstructState, forkRun, settleModelContent } from './time-travel.js';
 export { appendLog, listLog, consumeOnce } from './durable-log.js';
 export type { LogItem } from './durable-log.js';
 export type { ReconstructedState, ReconstructSeed, ForkResult } from './time-travel.js';

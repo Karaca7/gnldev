@@ -129,10 +129,11 @@ describe('streaming fidelity (journal = single source of truth)', () => {
       model: fidelityModel({ calls: 0 }), tools, prompt: 'search', stopWhen: stepCountIs(4),
     });
     await res.text;
-    // onFinish is async → wait for the ACTUAL content (the marker is now written BEFORE the claim: it
-    // means "append was claimed", not "append finished" — the completion signal is the content itself).
+    // onFinish is async → wait for the PRODUCED half. `length > 0` is no longer a completion signal:
+    // the write-ahead (run.ts writeAheadIncoming) puts the user message in memory pre-model, so the
+    // thread is non-empty from the very start — wait for an assistant row instead.
     const t0 = Date.now();
-    while ((await memory.getMessages('th-1')).length === 0) {
+    while (!(await memory.getMessages('th-1')).some((m: any) => m?.role === 'assistant')) {
       if (Date.now() - t0 > 1000) throw new Error('memory append timed out');
       await new Promise((r) => setTimeout(r, 10));
     }

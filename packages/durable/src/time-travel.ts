@@ -45,6 +45,49 @@ function parseModelInput(input: unknown): unknown {
 }
 
 /**
+ * Settles a RAW `model` journal entry's value into an ordered content-part array, whichever of the
+ * TWO shapes wrote it:
+ *  - non-streaming (`runDurable`/`generateText`, durable-model.ts wrapGenerate): `{ content: [...] }`
+ *    — already settled, returned as-is.
+ *  - streaming (`streamDurable`/`streamText`, wrapStream): `{ parts: LanguageModelV2StreamPart[], rest }`
+ *    — raw provider chunks, where text/reasoning arrive as `*-start`/`*-delta` pairs that have to be
+ *    accumulated before they read as content. `tool-call` arrives whole (the LanguageModelV2StreamPart
+ *    `tool-call` variant already carries the full `input` string), so the partial
+ *    `tool-input-start/-delta/-end` chunks are deliberately ignored — the terminal `tool-call`
+ *    supersedes them.
+ *
+ * WHY THIS EXISTS: reconstructState used to read `value.content` directly, so a STREAMED run
+ * reconstructed to nothing — no assistant text and no tool-calls, which also left every tool-call
+ * stuck in `pending`. In Studio's Inspector that surfaced as every assistant bubble saying "(no text)"
+ * while the run had plainly succeeded. Both shapes are legitimate and both are written by
+ * durable-model.ts, so settling them here (rather than at each read site) is what keeps the two paths
+ * from drifting apart again. `@gnldev/ai-sdk`'s messages.ts carries the same mapping for UIMessage
+ * conversion — that copy is the one place allowed to diverge, since it additionally emits `reasoning`.
+ */
+export function settleModelContent(value: unknown): any[] {
+  const v = value as { content?: unknown; parts?: unknown } | undefined;
+  if (Array.isArray(v?.content)) return v!.content as any[];
+  if (!Array.isArray(v?.parts)) return [];
+  const out: any[] = [];
+  const buffers = new Map<string, { type: 'text' | 'reasoning'; text: string }>();
+  for (const p of v!.parts as any[]) {
+    if (p?.type === 'text-start' || p?.type === 'reasoning-start') {
+      const o = { type: p.type === 'text-start' ? ('text' as const) : ('reasoning' as const), text: '' };
+      buffers.set(p.id, o);
+      out.push(o);
+    } else if (p?.type === 'text-delta' || p?.type === 'reasoning-delta') {
+      const o = buffers.get(p.id);
+      if (o) o.text += p.delta ?? '';
+    } else if (p?.type === 'tool-call') {
+      out.push({ type: 'tool-call', toolCallId: p.toolCallId, toolName: p.toolName, input: p.input });
+    }
+    // Everything else ('*-end', 'stream-start', 'response-metadata', 'finish', 'tool-input-*', 'raw',
+    // 'error', 'source', 'file') carries no conversation content and is dropped on purpose.
+  }
+  return out;
+}
+
+/**
  * Walks the ordered journal entries and materializes the state at step `uptoStep` (PURE; no journal
  * calls). If `seed` (the `:input` invisible to the reader) is given, the original user input is prepended.
  *
@@ -91,7 +134,7 @@ export function reconstructState(
   const argsKeyByToolCallId = new Map<string, string>();
   for (const e of window) {
     if (e.kind !== 'model') continue;
-    for (const p of ((e.value as any)?.content ?? []) as any[]) {
+    for (const p of settleModelContent(e.value)) {
       if (p?.type === 'tool-call') {
         toolCalls.push({ toolCallId: p.toolCallId, toolName: p.toolName });
         argsKeyByToolCallId.set(p.toolCallId, `args-${p.toolName}-${argsHash(parseModelInput(p.input))}`);
@@ -148,7 +191,7 @@ export function reconstructState(
   window.forEach((e, i) => {
     if (e.kind === 'model') {
       const assistant: any[] = [];
-      for (const p of ((e.value as any)?.content ?? []) as any[]) {
+      for (const p of settleModelContent(e.value)) {
         if (p?.type === 'text') assistant.push({ type: 'text', text: p.text ?? '' });
         else if (p?.type === 'tool-call') assistant.push({ type: 'tool-call', toolCallId: p.toolCallId, toolName: p.toolName, input: p.input });
       }

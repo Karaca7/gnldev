@@ -209,6 +209,12 @@ export const runKeys = {
    *  claimMemoryAppend/markMemoryAppendDone): `{status:'pending', startedAt}` (claimed but not yet
    *  finished — taken over via self-heal if stale) → promoted to `true` (done) once the append succeeds. */
   memAppended: (runId: string) => `mem-appended:${runId}`,
+  /** WRITE-AHEAD user-message append marker (see run.ts writeAheadIncoming): the run's `incoming`
+   *  user message(s) are appended to memory BEFORE the first model call — a run that dies before its
+   *  first token no longer leaves a titled-but-EMPTY thread (the thread row itself was already
+   *  write-ahead via ensureThreadIndexed; this closes the asymmetry). Same two-phase record shape as
+   *  memAppended above; the completion-time append then persists only the PRODUCED messages. */
+  memUserAppended: (runId: string) => `mem-user-appended:${runId}`,
   /** Frozen model selection (the fallback winner) — invisible to parseJournalKey, resume sticks to the same model. */
   cfgModel: (runId: string) => `${runId}:cfg:model`,
   /**
