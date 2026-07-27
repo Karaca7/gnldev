@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Play, FlaskConical } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useScorers, useDatasets, useRuns, useCapabilities, api, errMessage, type EvalDatasetResult } from '../api';
-import { Btn, Spinner, Empty, EmptyState, ErrorBox, Badge, JsonBlock } from '../components';
+import { Btn, Spinner, Empty, EmptyState, ErrorBox, Badge, JsonBlock, PageHeader } from '../components';
 
 export function Evals() {
   const { t } = useTranslation('evals');
@@ -25,6 +25,7 @@ export function Evals() {
 
   return (
     <div className="space-y-6 p-5">
+      <PageHeader title={t('title')} description={t('description')} />
       {hasDatasets && <DatasetsPanel datasets={datasets.data ?? []} scorerNames={scorers.data ?? []} />}
       {hasScorers && <ScoreRunPanel scorerNames={scorers.data ?? []} />}
     </div>

@@ -114,7 +114,7 @@ describe('Cache view', () => {
 
     fireEvent.change(screen.getByLabelText('Invalidate key'), { target: { value: 'embeds:refund' } });
     fireEvent.click(screen.getByText('Clear'));
-    await screen.findByText("Invalidate 'embeds:refund'?"); // dialog opened
+    await screen.findByText("Clear 'embeds:refund'?"); // dialog opened
     // the confirm button in the dialog also carries the "Clear" text — the last one is the dialog's
     const confirmBtn = (await screen.findAllByText('Clear')).at(-1)!;
     fireEvent.click(confirmBtn);

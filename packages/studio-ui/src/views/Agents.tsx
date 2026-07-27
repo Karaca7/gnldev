@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Rocket, Plus, Trash2, Pencil, ShieldCheck, ShieldAlert, ShieldX, Clock } from 'lucide-react';
 import { useAgents, useManagedAgents, useCapabilities, useAgentRegistry, useMe, api, errMessage, ApiError, type ManagedAgentRecord, type AgentRegistryRecord } from '../api';
-import { Spinner, Empty, ErrorBox, Badge, Btn, Tabs, StatStrip, cn } from '../components';
+import { Spinner, Empty, ErrorBox, Badge, Btn, Tabs, StatStrip, PageHeader, cn } from '../components';
 import { ConfirmDialog, toast } from '../ui';
 import { Stagger, StaggerItem } from '../motion';
 import { PromptEditor } from './PromptEditor';
@@ -104,9 +104,15 @@ function VersionPanel({ rec, canManage, evalGate, onChanged, onEdit, onDelete }:
     if (busy != null) return; // panel-wide lock: prevent a second click from racing while a promote is in flight
     setBusy(version);
     setGateFail(null);
+    // D4-1: direction matters for the toast text — a rollback (version < current active) must NOT
+    // read "promoted" (that told the user the opposite of what they just confirmed). Derived the same
+    // way as confirmIsOld above, from rec.active BEFORE the request lands (react-query hasn't refetched yet).
+    const isRollback = rec.active != null && version < rec.active;
     try {
       const r = await api.promoteAgentVersion(rec.name, version);
-      toast.success(t('promotedToast', { name: rec.name, previous: r.previous ?? '—', active: r.active }));
+      toast.success(isRollback
+        ? t('rolledBackToast', { name: rec.name, version: r.active, previous: r.previous ?? '—' })
+        : t('promotedToast', { name: rec.name, previous: r.previous ?? '—', active: r.active }));
       onChanged();
     } catch (e) {
       // API-05: 412 (eval gate BLOCKED) carries `aggregate` (scorer→score) in the JSON body —
@@ -161,17 +167,17 @@ function VersionPanel({ rec, canManage, evalGate, onChanged, onEdit, onDelete }:
                   {!isActive && (
                     <Btn size="xs" variant="outline" disabled={busy !== null} onClick={() => setConfirmPromote(v.version)}
                       title={isOld ? t('rollbackTitle') : t('promoteVersionTitle')}>
-                      <Rocket size={11} /> {isOld ? 'Rollback' : 'Promote'}
+                      <Rocket size={11} /> {isOld ? t('rollbackButtonLabel') : t('promoteButtonLabel')}
                     </Btn>
                   )}
                   <button type="button" title={t('editBasedOnTitle')}
-                    onClick={() => onEdit(v)} className="rounded p-1 text-muted-foreground hover:text-brand">
+                    onClick={() => onEdit(v)} className="rounded-sm p-1 text-muted-foreground hover:text-brand">
                     <Pencil size={11} />
                   </button>
                   {!isActive && (
                     <button type="button" title={t('deleteVersionTitle')}
                       disabled={busy !== null} onClick={() => onDelete(v)}
-                      className="rounded p-1 text-muted-foreground hover:text-destructive disabled:opacity-50">
+                      className="rounded-sm p-1 text-muted-foreground hover:text-destructive disabled:opacity-50">
                       <Trash2 size={11} />
                     </button>
                   )}
@@ -294,8 +300,14 @@ function NewVersionForm({ onCreated, agentNames, draft, setDraft, nameFixed }: {
         </Btn>
       </div>
       <div>
-        <div className="mb-1 text-[10px] text-muted-foreground">{t('systemPromptFieldLabel')}</div>
-        <PromptEditor value={system} onChange={setSystem} />
+        {/* D4-8: label labels, help explains — was one line doing both. `htmlFor`/`id` ties the label
+            to the textarea (PromptEditor forwards `id`). NOTE: full aria-describedby wiring (so the
+            help paragraph below is also announced as the textarea's description) would need
+            PromptEditor.tsx to accept+forward an `aria-describedby` prop — out of scope here (file not
+            in this wave's edit list), left for the next pass; the `id` below is ready for it to attach to. */}
+        <label htmlFor="agent-system-prompt" className="mb-1 block text-[10px] text-muted-foreground">{t('systemPromptFieldLabel')}</label>
+        <PromptEditor value={system} onChange={setSystem} id="agent-system-prompt" />
+        <p id="agent-system-prompt-help" className="mt-1 text-xs text-muted-foreground">{t('systemPromptFieldHelp')}</p>
       </div>
       {!nameFixed && agentNames.length === 0 && (
         <p className="text-[10px] text-warning">{t('noCodeAgentsForVersion')}</p>
@@ -502,7 +514,16 @@ export function Agents() {
   if (agents.isLoading) return <Spinner />;
   if (agents.error) return <ErrorBox error={agents.error} />;
   return (
-    <>
+    // D3-6: same StatStrip-stays-pinned layout as Jobs/Tools/Mcp/Scheduler/Inspector — `flex h-full
+    // flex-col` outer + PageHeader/StatStrip (both shrink-0, see components.tsx) + a SINGLE `min-h-0
+    // flex-1 overflow-auto` scroll container below them. Agents.tsx has no other overflow-auto/overflow-y
+    // container inside (verified by grep), so this doesn't nest scrollboxes — it's the page's only one.
+    <div className="flex h-full flex-col">
+    {/* D3-8/PageHeader migration: the page's identity used to be an in-scroll <h1> gated by
+        `canManage` (it vanished whenever the caller could manage agents, replaced by the Tabs) — first
+        made unconditional, now migrated to the shared PageHeader (shrink-0, above StatStrip) so it
+        never depends on an unrelated permission level and never scrolls out of view alongside it. */}
+    <PageHeader title={t('agentsHeading')} description={t('description')} />
     <StatStrip items={[
       // `managed.error` degrades these to "—" instead of a fabricated "0" — totalCount also depends
       // on managed.data (via managedOnly), so it's unreliable whenever managed errored, same as statManaged.
@@ -510,7 +531,7 @@ export function Agents() {
       { label: t('statManaged'), value: managed.error ? '—' : String(managed.data?.agents?.length ?? 0) },
       { label: t('statCodeDefined'), value: String(agents.data?.length ?? 0) },
     ]} />
-    <div className="space-y-5 p-5">
+    <div className="min-h-0 flex-1 overflow-auto space-y-5 p-5">
       <ConfirmDialog
         open={deleting !== null}
         onOpenChange={(o) => { if (!o) setDeleting(null); }}
@@ -548,7 +569,7 @@ export function Agents() {
         destructive
         onConfirm={() => { if (pendingEdit) applyEdit(pendingEdit.name, pendingEdit.model, pendingEdit.system, pendingEdit.note, pendingEdit.versionLabel); }}
       />
-      {canManage ? (
+      {canManage && (
         <Tabs<'list' | 'create'>
           active={tab}
           onChange={onTab}
@@ -557,8 +578,6 @@ export function Agents() {
             { id: 'create', label: draft.name ? t('editTab', { name: draft.name }) : t('createEditTab') },
           ]}
         />
-      ) : (
-        <h1 className="text-lg font-bold text-foreground">{t('agentsHeading')}</h1>
       )}
 
       {tab === 'list' && (
@@ -634,7 +653,7 @@ export function Agents() {
                       {canManage && (
                         <button type="button" title={t('managedOnlyDeleteTitle')}
                           disabled={deleteBusy} onClick={() => setDeleting({ name: a.name, hasCode: true })}
-                          className="rounded p-0.5 text-muted-foreground hover:text-destructive disabled:opacity-50 disabled:pointer-events-none">
+                          className="rounded-sm p-0.5 text-muted-foreground hover:text-destructive disabled:opacity-50 disabled:pointer-events-none">
                           <Trash2 size={11} />
                         </button>
                       )}
@@ -672,7 +691,7 @@ export function Agents() {
                       <div className="ml-auto flex shrink-0 items-center gap-1">
                         <button type="button" title={t('managedOnlyDeleteTitleNoCode')}
                           disabled={deleteBusy} onClick={() => setDeleting({ name: m.name, hasCode: false })}
-                          className="rounded p-0.5 text-muted-foreground hover:text-destructive disabled:opacity-50 disabled:pointer-events-none">
+                          className="rounded-sm p-0.5 text-muted-foreground hover:text-destructive disabled:opacity-50 disabled:pointer-events-none">
                           <Trash2 size={11} />
                         </button>
                       </div>
@@ -711,7 +730,7 @@ export function Agents() {
             <span>{draft.name ? t('editingDraftLabel', { name: draft.name }) : t('newAgentDraftLabel')}</span>
             {(isDraftFilled(draft) || nameFixed) && (
               <button type="button" onClick={() => { setDraft(BLANK); setNameFixed(false); }}
-                className="rounded px-1.5 py-0.5 text-muted-foreground underline-offset-2 transition-colors hover:text-foreground hover:underline">
+                className="rounded-sm px-1.5 py-0.5 text-muted-foreground underline-offset-2 transition-colors hover:text-foreground hover:underline">
                 {t('startFreshDraftButton')}
               </button>
             )}
@@ -722,6 +741,6 @@ export function Agents() {
         </div>
       )}
     </div>
-    </>
+    </div>
   );
 }

@@ -6,7 +6,7 @@ import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, Cell, CartesianGrid,
 } from 'recharts';
 import { useMetrics, useMetricsRuns, type MetricsRun, type MetricsDayEntry } from '../api';
-import { Spinner, StatusBadge, Empty, ErrorBox } from '../components';
+import { Spinner, StatusBadge, Empty, ErrorBox, PageHeader } from '../components';
 import { Stagger, StaggerItem, Reveal } from '../motion';
 
 // RFC4180-like CSV field escaping: fields containing a comma/quote/newline are wrapped in double
@@ -74,9 +74,14 @@ function fmtMs(ms: number | null): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+// h-full is load-bearing. Only some cards take a `hint`, and the grid row sizes itself to the
+// tallest one — but the STRETCHED grid item is the StaggerItem wrapper, not this box, so without
+// h-full every card without a hint drew its border short of the row and the one with a hint stuck
+// out below the strip. min-w-0 keeps a long hint from widening its own column past the others,
+// since a grid track's automatic minimum is its content.
 function Card({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
-    <div className="rounded-md border border-border bg-card p-3">
+    <div className="h-full min-w-0 rounded-md border border-border bg-card p-3">
       <div className="microlabel text-muted-foreground">{label}</div>
       <div className="mt-1 text-xl font-semibold tabular-nums">{value}</div>
       {hint && <div className="mt-0.5 text-[11px] text-muted-foreground">{hint}</div>}
@@ -186,12 +191,19 @@ export function Observability() {
 
   return (
     <div className="space-y-4 p-5">
+      {/* Header only — deliberately not touching this file's scroll/height structure (recharts'
+          ResponsiveContainer below depends on it); see the PageHeader migration notes. */}
+      <PageHeader title={t('title')} description={t('description')} />
       {/* NOT live (not SSE): useMetrics/useMetricsRuns refresh themselves via periodic polling
           (5s/10s respectively — see api.ts refetchInterval). useLiveRuns()'s SSE invalidation
           only targets the ['runs'] key and does NOT COVER the ['metrics']/['metrics-runs']
           queries here — that's why it isn't used here (it would be misleading). */}
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <span className="live-dot" aria-hidden />
+        {/* record-dot, not live-dot: this is a standalone freshness note, not a colored status
+            badge — .live-dot is reserved for the pulse rendered inside Badge/StatusBadge (see
+            index.css), so a bare span next to muted text uses the same standalone mark as
+            Spinner/Btn's busy state instead. */}
+        <span className="record-dot record-dot--live" aria-hidden />
         {t('autoRefreshNote')}
       </div>
       <Stagger className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
@@ -303,8 +315,8 @@ export function Observability() {
           />
           <select aria-label={t('statusFilterAriaLabel')} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="rounded-md border border-input bg-background px-2 py-1 text-xs">
             <option value="all">{t('statusAll')}</option>
-            <option value="completed">completed</option>
-            <option value="suspended">suspended</option>
+            <option value="completed">{t('completed')}</option>
+            <option value="suspended">{t('suspended')}</option>
           </select>
           <button
             type="button"
@@ -319,13 +331,13 @@ export function Observability() {
           <table className="w-full text-left text-xs">
             <thead className="sticky top-0 bg-card text-muted-foreground">
               <tr>
-                <th className="px-3 py-2 font-medium">runId</th>
-                <th className="px-3 py-2 font-medium">status</th>
+                <th className="px-3 py-2 font-medium">{t('colRunId')}</th>
+                <th className="px-3 py-2 font-medium">{t('colStatus')}</th>
                 <th className="px-3 py-2 font-medium">{t('colStart')}</th>
                 <th className="px-3 py-2 text-right font-medium">{t('colDuration')}</th>
-                <th className="px-3 py-2 text-right font-medium">model</th>
-                <th className="px-3 py-2 text-right font-medium">tool</th>
-                <th className="px-3 py-2 text-right font-medium">token</th>
+                <th className="px-3 py-2 text-right font-medium">{t('colModel')}</th>
+                <th className="px-3 py-2 text-right font-medium">{t('colTool')}</th>
+                <th className="px-3 py-2 text-right font-medium">{t('colToken')}</th>
                 <th className="px-3 py-2 text-right font-medium">{t('costLabel')}</th>
               </tr>
             </thead>

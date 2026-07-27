@@ -1,4 +1,6 @@
 {
+  "title": "Observability",
+  "description": "Monitor run volume, cost, and duration trends, then filter or export individual runs.",
   "autoRefreshNote": "auto-refreshes (every 5–10s)",
   "totalRuns": "Total runs",
   "completed": "Completed",
@@ -19,8 +21,13 @@
   "statusFilterAriaLabel": "status filter",
   "statusAll": "all",
   "downloadCsv": "Download CSV",
+  "colRunId": "runId",
+  "colStatus": "status",
   "colStart": "start",
   "colDuration": "duration",
+  "colModel": "model",
+  "colTool": "tool",
+  "colToken": "token",
   "openInInspector": "Open in Inspector",
   "noMatchingRuns": "No matching runs"
 }

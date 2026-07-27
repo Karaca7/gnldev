@@ -7,12 +7,15 @@ import type { ComponentType, ReactNode } from 'react';
  * Signature principle (frontend-design + uipro): not a generic fade, but a single orchestrated
  * moment from GNL's "journal" world — page entry appears with a subtle upward slide like a
  * terminal prompt, list/table rows arrive as if being appended to the journal in sequence.
- * Durations stay in the 150-300ms band, ONLY transform/opacity (no layout thrash, GPU-friendly).
+ * Stagger/Reveal stay in the 150-300ms band; PageTransition is deliberately quicker (see below —
+ * it fires on every nav click, so it must never feel like it's blocking the next page). All of
+ * it is ONLY transform/opacity (no layout thrash, GPU-friendly).
  *
- * prefers-reduced-motion: the global `* { transition-duration: 0.01ms }` in index.css only
- * stops CSS transitions — since framer-motion runs on JS/WAAPI it doesn't see that rule.
- * That's why EVERY wrapper here makes its own decision via `useReducedMotion()`: it renders a
- * plain `<div>` while reduced motion is on (no animation, no jump, DOM structure unaffected).
+ * prefers-reduced-motion: index.css's `@media (prefers-reduced-motion: reduce)` block only
+ * targets CSS transitions/animations (the pulse dots, transform-carrying transitions) — since
+ * framer-motion runs on JS/WAAPI it doesn't see that rule at all. That's why EVERY wrapper here
+ * makes its own decision via `useReducedMotion()`: it renders a plain `<div>` while reduced
+ * motion is on (no animation, no jump, DOM structure unaffected).
  *
  * Usage (for POLISH layers):
  *   <PageTransition routeKey={pathname}>...</PageTransition>   → App.tsx route/view transition
@@ -24,21 +27,26 @@ import type { ComponentType, ReactNode } from 'react';
 const EASE_OUT = [0.16, 1, 0.3, 1] as const;
 
 // ---- PageTransition: route/view transition (wraps App.tsx main content) --------------------
+// Kept short and overlapping on purpose: this fires on every sidebar click, so back-to-back
+// navigation (3 pages in a row) must not stack up a felt delay. y-offset is small — just enough
+// to read as "a page changed", not a slide worth waiting on.
 const pageVariants: Variants = {
-  initial: { opacity: 0, y: 8 },
-  animate: { opacity: 1, y: 0, transition: { duration: 0.22, ease: EASE_OUT } },
-  exit: { opacity: 0, y: -6, transition: { duration: 0.14, ease: EASE_OUT } },
+  initial: { opacity: 0, y: 4 },
+  animate: { opacity: 1, y: 0, transition: { duration: 0.15, ease: EASE_OUT } },
+  exit: { opacity: 0, y: -3, transition: { duration: 0.09, ease: EASE_OUT } },
 };
 
 /** When the route changes, the current view fades subtly upward while the new one appears from
  *  below like a terminal prompt. When `routeKey` changes (e.g. `location.pathname`) it triggers
- *  the AnimatePresence exit→enter. `mode="wait"`: the new one doesn't enter until the old one
- *  has fully exited → no layout jump. */
+ *  the AnimatePresence exit→enter. `mode="popLayout"`: the exiting view is pulled out of layout
+ *  flow (position: absolute) for its exit animation, so the incoming view renders immediately
+ *  instead of queuing behind it — exit and enter overlap instead of running back-to-back, without
+ *  the two views fighting over the same layout space in the meantime. */
 export function PageTransition({ routeKey, children }: { routeKey: string; children: ReactNode }) {
   const reduce = useReducedMotion();
   if (reduce) return <>{children}</>;
   return (
-    <AnimatePresence mode="wait" initial={false}>
+    <AnimatePresence mode="popLayout" initial={false}>
       <motion.div key={routeKey} variants={pageVariants} initial="initial" animate="animate" exit="exit" style={{ height: '100%' }}>
         {children}
       </motion.div>

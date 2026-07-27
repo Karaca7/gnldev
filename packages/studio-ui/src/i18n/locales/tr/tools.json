@@ -11,5 +11,8 @@
   "rawJsonInputAriaLabel": "Ham JSON girdi",
   "running": "Çalışıyor…",
   "runTest": "Test çalıştır",
-  "backToToolsTitle": "Tool listesine dön"
+  "backToToolsTitle": "Tool listesine dön",
+  "guardedBadge": "guard'lı",
+  "durableCheckboxLabel": "durable (journal'a yazar)",
+  "blockedByGuard": "guard: {{value}}"
 }

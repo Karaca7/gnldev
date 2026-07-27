@@ -2,7 +2,7 @@ import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { Clock } from 'lucide-react';
 import { useCapabilities, useSchedulerTriggers, type SchedulerTrigger } from '../api';
-import { Spinner, Empty, EmptyState, ErrorBox, Badge, StatStrip } from '../components';
+import { Spinner, EmptyState, ErrorBox, Badge, StatStrip, PageHeader } from '../components';
 import { Stagger, StaggerItem } from '../motion';
 // i18n init side effect: so useTranslation still works if this view is rendered directly
 // (without App) (see src/i18n/index.ts) — main.tsx already does this, this re-guarantees it here.
@@ -72,7 +72,11 @@ export function Scheduler() {
 
   if (caps.isLoading || triggers.isLoading) return <Spinner />;
   if (caps.error) return <ErrorBox error={caps.error} />;
-  if (!caps.data?.scheduler) return <Empty>{t('disabled')}</Empty>;
+  // Whole canvas is empty here (the host has the feature turned off), not a note inside a
+  // populated view — EmptyState is the right primitive per components.tsx's own rule (Empty is
+  // for inline notes inside an otherwise-full view). A configuration state, not an error: the
+  // copy stays calm/informative, matching Playground's disabled-capability wording.
+  if (!caps.data?.scheduler) return <EmptyState icon={Clock} title={t('disabledTitle')} description={t('disabledDescription')} />;
   if (triggers.error) return <ErrorBox error={triggers.error} />;
   if (!triggers.data?.length) return <EmptyState icon={Clock} title={t('emptyTitle')} description={t('emptyDescription')} />;
 
@@ -82,6 +86,10 @@ export function Scheduler() {
 
   return (
     <div className="flex h-full flex-col">
+    {/* PageHeader stays a shrink-0 sibling above StatStrip — the scroll cab below it is what shrinks. */}
+    <div className="shrink-0">
+      <PageHeader title={t('title')} description={t('description')} />
+    </div>
     <StatStrip items={[
       { label: t('statSchedules'), value: String(triggers.data.length) },
       { label: t('statActive'), value: String(pending.length) },
@@ -90,18 +98,20 @@ export function Scheduler() {
     ]} />
     <div className="min-h-0 flex-1 overflow-auto p-4">
       <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
-        <span className="live-dot" aria-hidden />
+        {/* record-dot, not live-dot: standalone freshness note (not inside a Badge), same mark as
+            Jobs' equivalent row — .live-dot is reserved for the pulse inside Badge/StatusBadge. */}
+        <span className="record-dot record-dot--live" aria-hidden />
         {t('liveStatus', { count: triggers.data.length })}
       </div>
       <div className="overflow-x-auto rounded-md border border-border bg-background">
         <table className="w-full font-mono text-sm">
           <thead>
             <tr className="border-b border-border text-left text-xs text-muted-foreground">
-              <th className="py-1.5 pl-3 pr-3 font-medium">ID</th>
-              <th className="py-1.5 pr-3 font-medium">Workflow</th>
+              <th className="py-1.5 pl-3 pr-3 font-medium">{t('colId')}</th>
+              <th className="py-1.5 pr-3 font-medium">{t('colWorkflow')}</th>
               <th className="py-1.5 pr-3 font-medium">{t('colTrigger')}</th>
               <th className="py-1.5 pr-3 font-medium">{t('colNextRun')}</th>
-              <th className="py-1.5 pr-3 font-medium">Misfire</th>
+              <th className="py-1.5 pr-3 font-medium">{t('colMisfire')}</th>
               <th className="py-1.5 pr-3 font-medium">{t('colStatusAttempts')}</th>
             </tr>
           </thead>

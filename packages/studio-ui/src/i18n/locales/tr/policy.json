@@ -10,6 +10,7 @@
   "saveError": "Kaydedilemedi: {{error}}",
   "saveConflictError": "{{error}} — hiçbir şey kaydedilmedi, yazdıkların duruyor. Güncel kuralları yüklemek için \"Değişiklikleri at\", kendi kurallarını üzerine uygulamak için yeniden kaydet.",
   "title": "Guard / Policy kuralları",
+  "description": "Her rolün hangi izinleri verdiğini gör, tool başına guard kuralı belirle — izin ver, reddet ya da onay iste.",
   "unsavedBadge": "kaydedilmemiş değişiklik",
   "readOnlyBadge": "salt-okunur (yazma izniniz yok)",
   "discardButton": "Değişiklikleri geri al",
@@ -30,7 +31,7 @@
   "reasonAriaLabel": "Gerekçe",
   "deleteRuleTitle": "Kuralı sil",
   "confirmDeleteTitle": "Kural silinsin mi?",
-  "confirmDeleteDesc": "'{{tool}}' kuralı listeden kaldırılır — Kaydet'e basana dek yürürlüğe girmez.",
+  "confirmDeleteDesc": "'{{tool}}' kuralı listeden silinir — Kaydet'e basana dek yürürlüğe girmez.",
   "emptyToolPlaceholder": "(boş)",
-  "removeButton": "Kaldır"
+  "removeButton": "Sil"
 }

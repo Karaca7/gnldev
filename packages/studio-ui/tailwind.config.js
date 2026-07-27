@@ -1,5 +1,5 @@
-/** "Local Influence" brand tokens (index.css) → Tailwind colors hsl(var(--x)).
- *  brand/primary = Fluo Lime (sparse, high-impact accent); accent/success = Neon Green (secondary). */
+/** GNL Studio theme tokens (index.css :root/[data-theme='light']) → Tailwind colors hsl(var(--x)).
+ *  brand/primary = the single identity accent (sparse, high-impact); accent/success = the secondary accent. */
 export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   darkMode: ['class', '[data-theme="dark"]'],
@@ -25,6 +25,16 @@ export default {
         // Deepest shell/sidebar background (App shell — will connect to D3).
         'surface-deep': 'hsl(var(--surface-deep))',
         'surface-1': 'hsl(var(--surface-1))',
+      },
+      // Additive only — `xs`/`sm`/`base`/`lg`/`xl`/`2xl` below are Tailwind's untouched defaults
+      // (229 call sites rely on those exact values; overriding them would be a silent visual
+      // regression jsdom can't catch). These two fill the gap for the two arbitrary sizes actually
+      // in heavy use across the codebase (`text-[11px]` × 74, `text-[10px]` × 40) so future call
+      // sites can reach for a named step instead of another one-off arbitrary value. Not a
+      // migration of the existing 114 call sites — that's a separate, deliberate pass.
+      fontSize: {
+        '2xs': ['11px', { lineHeight: '16px' }],
+        '3xs': ['10px', { lineHeight: '14px' }],
       },
       borderRadius: { lg: 'var(--radius)', md: 'calc(var(--radius) - 2px)', sm: 'calc(var(--radius) - 4px)' },
       fontFamily: {

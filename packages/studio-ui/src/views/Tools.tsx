@@ -34,17 +34,17 @@ export function Tools() {
           md+, both panels stay side by side exactly as before (first tool auto-selected via the
           selTool fallback above). */}
       <div className={cn('w-full flex-col overflow-auto border-r border-border p-1.5 md:flex md:w-60', sel ? 'hidden md:flex' : 'flex')}>
-        {tools.data.map((t) => (
+        {tools.data.map((tool) => (
           <button
-            key={t.name}
-            onClick={() => setSel(t.name)}
+            key={tool.name}
+            onClick={() => setSel(tool.name)}
             className={cn(
               'mb-0.5 flex w-full flex-col items-start gap-0.5 rounded-md border-l-2 px-2.5 py-2 text-left transition-colors',
-              (sel ?? tools.data![0].name) === t.name ? 'border-l-brand bg-muted' : 'border-l-transparent hover:bg-muted/60',
+              (sel ?? tools.data![0].name) === tool.name ? 'border-l-brand bg-muted' : 'border-l-transparent hover:bg-muted/60',
             )}
           >
-            <div className="flex w-full items-center gap-1.5"><span className="truncate font-mono text-xs">{t.name}</span>{t.guarded && <Badge tone="warning">guard</Badge>}</div>
-            {t.description && <span className="line-clamp-1 text-[11px] text-muted-foreground">{t.description}</span>}
+            <div className="flex w-full items-center gap-1.5"><span className="truncate font-mono text-xs">{tool.name}</span>{tool.guarded && <Badge tone="warning">{t('guardedBadge')}</Badge>}</div>
+            {tool.description && <span className="line-clamp-1 text-[11px] text-muted-foreground">{tool.description}</span>}
           </button>
         ))}
       </div>
@@ -142,7 +142,7 @@ function ToolRunner({ tool, canExec, durableAvail, onBack }: { tool: ToolListIte
         {/* break-all (not truncate): a long mono tool name with no spaces would otherwise force
             horizontal overflow on a narrow viewport — this lets it wrap instead. */}
         <h2 className="break-all font-mono text-sm font-semibold">{tool.name}</h2>
-        {tool.guarded && <Badge tone="warning">guarded</Badge>}
+        {tool.guarded && <Badge tone="warning">{t('guardedBadge')}</Badge>}
         {tool.agents?.length > 0 && <span className="text-[11px] text-muted-foreground">{tool.agents.join(', ')}</span>}
       </div>
       {tool.description && <p className="mb-3 text-sm text-muted-foreground">{tool.description}</p>}
@@ -153,7 +153,11 @@ function ToolRunner({ tool, canExec, durableAvail, onBack }: { tool: ToolListIte
         <>
           <div className="mb-2 flex items-center gap-3 text-xs">
             <button className="text-muted-foreground underline" onClick={() => setRaw((r) => !r)}>{raw ? t('switchToFormMode') : t('switchToRawJsonMode')}</button>
-            {durableAvail && <label className="flex items-center gap-1.5"><input type="checkbox" checked={durable} onChange={(e) => setDurable(e.target.checked)} /> durable (journal + guard)</label>}
+            {/* D4-10: the checkbox only toggles journal writes — the guard itself already runs on every
+                test execution (durable or not, see runner.ts's runTool: the non-durable path applies the
+                guard manually). The old "(journal + guard)" label implied guard was gated by this
+                checkbox, which isn't true — it only describes what "durable" adds. */}
+            {durableAvail && <label className="flex items-center gap-1.5"><input type="checkbox" checked={durable} onChange={(e) => setDurable(e.target.checked)} /> {t('durableCheckboxLabel')}</label>}
           </div>
 
           {raw || fields.length === 0 ? (
@@ -191,7 +195,7 @@ function ToolRunner({ tool, canExec, durableAvail, onBack }: { tool: ToolListIte
           {err && <div className="mt-3 text-sm text-destructive">{err}</div>}
           {res && (
             <div className="mt-3">
-              {res.blocked && <Badge tone={res.blocked === 'deny' ? 'destructive' : 'warning'}>guard: {res.blocked}</Badge>}
+              {res.blocked && <Badge tone={res.blocked === 'deny' ? 'destructive' : 'warning'}>{t('blockedByGuard', { value: res.blocked })}</Badge>}
               {res.error && !res.blocked && <div className="text-sm text-destructive">{res.error}</div>}
               {res.runId && <div className="mt-1 text-[11px] text-muted-foreground">runId: {res.runId}</div>}
               {res.result !== undefined && <JsonBlock value={res.result} />}

@@ -1,4 +1,6 @@
 {
+  "title": "Observability",
+  "description": "Run hacmini, maliyeti ve süre trendini izle; run'ları filtrele ya da dışa aktar.",
   "autoRefreshNote": "otomatik güncellenir (5–10sn'de bir)",
   "totalRuns": "Toplam run",
   "completed": "Tamamlanan",
@@ -19,8 +21,13 @@
   "statusFilterAriaLabel": "Status filtresi",
   "statusAll": "tümü",
   "downloadCsv": "CSV indir",
+  "colRunId": "runId",
+  "colStatus": "durum",
   "colStart": "başlangıç",
   "colDuration": "süre",
+  "colModel": "model",
+  "colTool": "tool",
+  "colToken": "token",
   "openInInspector": "Inspector'da aç",
   "noMatchingRuns": "Eşleşen run yok"
 }

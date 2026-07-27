@@ -8,7 +8,7 @@ import {
   useWorkflows, useWorkflowRuns, useWorkflowRunsRegistry, useCapabilities, useAgents, runWorkflowStream, api, errMessage, useWorkflowRunState,
   type WorkflowMeta, type WorkflowRunResult, type WorkflowRunSummary, type WorkflowRunRegistryItem, type WorkflowDef, type WorkflowStepDef,
 } from '../api';
-import { Btn, Spinner, Badge, EmptyState, ErrorBox, JsonBlock, cn } from '../components';
+import { Btn, Spinner, Badge, StatusBadge, EmptyState, ErrorBox, JsonBlock, cn } from '../components';
 import { ConfirmDialog, toast } from '../ui';
 import { diffWorkflowSteps } from './workflow-diff';
 
@@ -84,10 +84,16 @@ const STATUS_STYLE: Record<Status, { bg: string; bd: string }> = {
   cancelled: { bg: 'muted', bd: 'border' },
 };
 
-// MiniMap node color: CSS vars don't resolve in SVG fill → use a CONCRETE color per status (visible in both themes).
-// done/failed are aligned to the GNL brand identity hex colors (Neon Green #39FF88 / soft red #ff7a7a).
+// MiniMap node color: react-flow's MiniMap paints nodes into an SVG, where `hsl(var(--x))` doesn't
+// resolve (no cascade into the generated <rect>) — so this needs a CONCRETE hex per status instead
+// of the token references STATUS_STYLE uses above. These hex values are hand-copied from this file's
+// dark theme (the default theme, index.css `:root`) tokens and MUST be kept in sync by hand if those
+// tokens ever change — there's no build-time or runtime link between them:
+//   running → --info #6bb6f7 · done → --success #3be38b · suspended → --warning #f2c14e ·
+//   failed → --destructive #ff6b6b · idle → --muted-foreground #9a9aa3 · cancelled → --border #35353d
+// (idle/cancelled intentionally reuse existing neutral tokens rather than a fifth ad hoc gray.)
 const MINIMAP_COLOR: Record<Status, string> = {
-  idle: '#94a3b8', running: '#3b82f6', done: '#39ff88', suspended: '#f59e0b', failed: '#ff7a7a', cancelled: '#cbd5e1',
+  idle: '#9a9aa3', running: '#6bb6f7', done: '#3be38b', suspended: '#f2c14e', failed: '#ff6b6b', cancelled: '#35353d',
 };
 
 function toFlowNodes(gnodes: GNode[], edges: Edge[], status: Record<string, StepState>): Node[] {
@@ -237,8 +243,8 @@ export function Workflows() {
                 </button>
                 {canManage && w.source === 'managed' ? (
                   <div className="flex shrink-0 gap-0.5 pr-1">
-                    <button type="button" title={t('editTitle')} onClick={() => startEdit(w)} className="rounded p-0.5 text-muted-foreground hover:text-foreground"><Pencil size={11} /></button>
-                    <button type="button" title={t('deleteTitle')} onClick={() => setDeleting(w.name)} className="rounded p-0.5 text-muted-foreground hover:text-destructive"><Trash2 size={11} /></button>
+                    <button type="button" title={t('editTitle')} onClick={() => startEdit(w)} className="rounded-sm p-0.5 text-muted-foreground hover:text-foreground"><Pencil size={11} /></button>
+                    <button type="button" title={t('deleteTitle')} onClick={() => setDeleting(w.name)} className="rounded-sm p-0.5 text-muted-foreground hover:text-destructive"><Trash2 size={11} /></button>
                   </div>
                 ) : (
                   // VIS-06: this label is the ONLY visual signal that a workflow is code-defined
@@ -562,7 +568,14 @@ function WorkflowDetail({ wf, canRun, canManage, onEdit, onRunningChange, onBack
             <RotateCw size={13} /> Retry
           </Btn>
         )}
-        {busy && <Badge tone="success" live>{t('runningBadge')}</Badge>}
+        {/* Run status, not a data tag → the pill-shaped StatusBadge (components.tsx), same visual
+            language as any other status chip in the app — not the square/mono Badge used for data
+            tags (model/tool names) elsewhere in this toolbar. Also fixes a color mismatch: this used
+            to be tone="success" (green) while every other "running" indicator in this file (canvas
+            node fill via STATUS_STYLE, NodeStatusBadge below) is info (blue). StatusBadge matches
+            "running" case-insensitively and adds its own live pulse, so no separate `live` prop is
+            needed here. */}
+        {busy && <StatusBadge status="running" />}
         {attempt > 1 && <Badge tone="muted">{t('attemptBadge', { n: attempt })}</Badge>}
         {result?.suspended && <Badge tone="warning">{t('suspendedAtBadge', { stepId: result.stepId })}</Badge>}
         {pausedInfo && <Badge tone="info">{t('pausedAtBadge', { stepId: pausedInfo.stepId })}</Badge>}
@@ -581,7 +594,7 @@ function WorkflowDetail({ wf, canRun, canManage, onEdit, onRunningChange, onBack
           {wf.input.description && <span className="text-muted-foreground">{wf.input.description}</span>}
           {params.length > 0
             ? params.map((p) => (
-                <span key={p.key} className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 font-mono" title={p.description}>
+                <span key={p.key} className="inline-flex items-center gap-1 rounded-sm bg-muted px-1.5 py-0.5 font-mono" title={p.description}>
                   {p.key}<span className="text-muted-foreground">: {p.type}</span>{p.required && <span className="text-warning" title={t('requiredTitle')}>*</span>}
                 </span>
               ))
@@ -602,7 +615,7 @@ function WorkflowDetail({ wf, canRun, canManage, onEdit, onRunningChange, onBack
               type="button"
               onClick={() => setInput(p)}
               title={p}
-              className="max-w-56 truncate rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground transition-colors hover:border-brand/50 hover:text-foreground"
+              className="max-w-56 truncate rounded-sm border border-border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground transition-colors hover:border-brand/50 hover:text-foreground"
             >
               {p}
             </button>
@@ -738,7 +751,7 @@ function WorkflowEditor({ initial, onSave, onCancel }: {
           <Btn size="xs" onClick={save} disabled={saving}>{saving ? t('saving') : t('saveAction')}</Btn>
         </div>
       </div>
-      {err && <div className="mx-4 mt-3 rounded bg-destructive/10 px-3 py-2 text-xs text-destructive">{err}</div>}
+      {err && <div className="mx-4 mt-3 rounded-sm bg-destructive/10 px-3 py-2 text-xs text-destructive">{err}</div>}
       <div className="mx-auto w-full max-w-2xl space-y-5 p-6">
         <div className="space-y-1.5">
           <label className="text-xs font-medium text-muted-foreground">{t('nameLabel')}</label>
@@ -754,7 +767,7 @@ function WorkflowEditor({ initial, onSave, onCancel }: {
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-muted-foreground">{t('stepsLabel')}</span>
             <button type="button" onClick={addStep}
-              className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs text-primary hover:bg-muted">
+              className="inline-flex items-center gap-1 rounded-sm px-2 py-0.5 text-xs text-primary hover:bg-muted">
               <Plus size={12} /> {t('addStepAction')}
             </button>
           </div>
@@ -768,9 +781,9 @@ function WorkflowEditor({ initial, onSave, onCancel }: {
                 </div>
                 <span className="text-[11px] text-muted-foreground font-mono shrink-0">#{i + 1}</span>
                 <input value={step.id} onChange={(e) => updateStep(i, { id: e.target.value })}
-                  placeholder={t('stepIdPlaceholder')} aria-label={t('stepIdAriaLabel')} className="w-32 rounded border border-input bg-background px-2 py-1 text-xs font-mono outline-none transition-colors" />
+                  placeholder={t('stepIdPlaceholder')} aria-label={t('stepIdAriaLabel')} className="w-32 rounded-sm border border-input bg-background px-2 py-1 text-xs font-mono outline-none transition-colors" />
                 <select title={t('selectAgentTitle')} value={step.agentName} onChange={(e) => updateStep(i, { agentName: e.target.value })}
-                  className="flex-1 rounded border border-input bg-background px-2 py-1 text-xs outline-none transition-colors">
+                  className="flex-1 rounded-sm border border-input bg-background px-2 py-1 text-xs outline-none transition-colors">
                   {agentNames.length === 0 && <option value={step.agentName}>{step.agentName || t('selectAgentOption')}</option>}
                   {agentNames.map((n) => <option key={n} value={n}>{n}</option>)}
                 </select>
@@ -778,7 +791,12 @@ function WorkflowEditor({ initial, onSave, onCancel }: {
               </div>
               <textarea value={step.prompt ?? ''} onChange={(e) => updateStep(i, { prompt: e.target.value })}
                 placeholder={t('promptTemplatePlaceholder')}
-                rows={2} className="w-full resize-none rounded border border-input bg-background px-2 py-1.5 text-xs font-mono outline-none transition-colors" />
+                aria-describedby={`step-prompt-help-${i}`}
+                rows={2} className="w-full resize-none rounded-sm border border-input bg-background px-2 py-1.5 text-xs font-mono outline-none transition-colors" />
+              {/* D4-8: the placeholder-only behavior note (empty = pass-through, {{input}}/{{prev}} meaning)
+                  used to vanish the instant the operator started typing — exactly when it's most needed.
+                  Kept as a permanent help line instead; the placeholder itself is now just a concrete example. */}
+              <p id={`step-prompt-help-${i}`} className="text-[11px] text-muted-foreground">{t('promptTemplateHelp')}</p>
             </div>
           ))}
         </div>
@@ -1015,7 +1033,7 @@ function NodePanel({ node, state, suspend, edges, gnodes, order, allStatus, runI
 
       <div className="space-y-1.5 text-xs">
         <Row k="kind"><Badge tone="info">{KIND_GLYPH[node.kind] ?? '•'} {node.kind}</Badge></Row>
-        <Row k={t('statusRowLabel')}><StatusBadge s={state?.status ?? 'idle'} /></Row>
+        <Row k={t('statusRowLabel')}><NodeStatusBadge s={state?.status ?? 'idle'} /></Row>
         {idx >= 0 && <Row k={t('orderRowLabel')}>{idx + 1} / {order.length}</Row>}
         {state?.ms != null && <Row k={t('stepDurationRowLabel')}>{Math.max(0, Math.round(state.ms))} ms</Row>}
         {state?.ts != null && <Row k={t('timeRowLabel')}>{new Date(state.ts).toLocaleTimeString()}</Row>}
@@ -1050,7 +1068,7 @@ function NodePanel({ node, state, suspend, edges, gnodes, order, allStatus, runI
       {journalKey && (
         <Section title={t('journalKeySectionTitle')}>
           <div className="flex items-center gap-1.5">
-            <code className="min-w-0 flex-1 truncate rounded bg-muted/40 px-1.5 py-1 font-mono text-[10px]" title={journalKey}>{journalKey}</code>
+            <code className="min-w-0 flex-1 truncate rounded-sm bg-muted/40 px-1.5 py-1 font-mono text-[10px]" title={journalKey}>{journalKey}</code>
             <button type="button" title={t('copyTitle')} onClick={() => copy(journalKey)} className="shrink-0 text-muted-foreground hover:text-foreground"><Copy size={12} /></button>
           </div>
         </Section>
@@ -1067,7 +1085,7 @@ function NodePanel({ node, state, suspend, edges, gnodes, order, allStatus, runI
 
       {state?.error && (
         <Section title={t('errorSectionTitle')} tone="destructive">
-          <div className="break-words rounded bg-destructive/10 p-2 font-mono text-[11px] text-destructive">{state.error}</div>
+          <div className="break-words rounded-sm bg-destructive/10 p-2 font-mono text-[11px] text-destructive">{state.error}</div>
         </Section>
       )}
 
@@ -1114,7 +1132,12 @@ function PinRow({ icon, label, items }: { icon: React.ReactNode; label: string; 
 function Row({ k, children }: { k: string; children: React.ReactNode }) {
   return <div className="flex items-center gap-2"><span className="w-14 text-muted-foreground">{k}</span>{children}</div>;
 }
-function StatusBadge({ s }: { s: Status }) {
+// NodeStatusBadge: intentionally the square/mono data-tag `Badge` (not the pill-shaped `StatusBadge`
+// imported from components.tsx) — this renders inside NodePanel's technical key/value rows (kind,
+// order, journal key…), all styled as data tags, so the step status stays visually part of that
+// family. Named distinctly from the imported `StatusBadge` to avoid shadowing it in this file (see
+// the real StatusBadge's use for the run-level indicator above, a different, higher-level concept).
+function NodeStatusBadge({ s }: { s: Status }) {
   const tone = s === 'done' ? 'success' : s === 'running' ? 'info' : s === 'suspended' ? 'warning' : s === 'failed' ? 'destructive' : 'muted';
   return <Badge tone={tone as any}>{s}</Badge>;
 }
@@ -1148,7 +1171,7 @@ function WorkflowRunDiff({ a, b, onClose }: { a: string; b: string; onClose: () 
         {/* Hidden on error: a stale/zeroed "0 identical · 0 diverged" would misreport a fetch
             failure as "the two runs have no differences". */}
         {!loadError && <span className="text-muted-foreground">{t('diffSummary', { same: rows.length - diffCount, diff: diffCount })}</span>}
-        <button type="button" onClick={onClose} className="ml-auto rounded p-0.5 text-muted-foreground hover:text-foreground" aria-label={t('closeAriaLabel')}>
+        <button type="button" onClick={onClose} className="ml-auto rounded-sm p-0.5 text-muted-foreground hover:text-foreground" aria-label={t('closeAriaLabel')}>
           <X size={13} />
         </button>
       </div>
@@ -1195,9 +1218,9 @@ function HistMenu({ runs, active, onOpen, onDiff }: {
       {open && (
         <div className="absolute right-0 z-10 mt-1 max-h-80 w-80 overflow-auto rounded-md border border-border bg-popover p-1 shadow-lg">
           {runs.map((h) => (
-            <div key={h.runId} className={`flex items-center gap-1 rounded px-1 ${active === h.runId ? 'bg-muted' : ''}`}>
+            <div key={h.runId} className={`flex items-center gap-1 rounded-sm px-1 ${active === h.runId ? 'bg-muted' : ''}`}>
               <button type="button" onClick={() => { onOpen(h.runId); setOpen(false); }}
-                className="flex min-w-0 flex-1 items-center justify-between gap-2 rounded px-1 py-1.5 text-left text-xs hover:bg-muted">
+                className="flex min-w-0 flex-1 items-center justify-between gap-2 rounded-sm px-1 py-1.5 text-left text-xs hover:bg-muted">
                 <span className="flex min-w-0 items-center gap-1.5">
                   <Badge tone={h.suspended ? 'warning' : 'success'}>{h.suspended ? 'susp' : 'ok'}</Badge>
                   <span className="truncate font-mono">{h.runId}</span>
@@ -1206,7 +1229,7 @@ function HistMenu({ runs, active, onOpen, onDiff }: {
               </button>
               {onDiff && active !== h.runId && (
                 <button type="button" title={t('compareWithActiveTitle')} onClick={() => { onDiff(h.runId); setOpen(false); }}
-                  className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground">
+                  className="shrink-0 rounded-sm p-1 text-muted-foreground hover:bg-muted hover:text-foreground">
                   <Columns2 size={12} />
                 </button>
               )}

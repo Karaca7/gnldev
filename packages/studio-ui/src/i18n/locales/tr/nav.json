@@ -19,5 +19,11 @@
   "policy": "Policy",
   "groupRuns": "Çalışmalar",
   "groupBuild": "Geliştirme",
-  "groupGovernance": "Yönetişim"
+  "groupOperate": "Operasyon",
+  "groupGovernance": "Yönetişim",
+  "apiSwagger": "API (Swagger)",
+  "pendingApprovalsBadge_one": "{{count}} bekleyen onay",
+  "pendingApprovalsBadge_other": "{{count}} bekleyen onay",
+  "failedJobsBadge_one": "{{count}} başarısız iş",
+  "failedJobsBadge_other": "{{count}} başarısız iş"
 }

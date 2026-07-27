@@ -1,9 +1,12 @@
 {
+  "title": "Knowledge",
+  "description": "Vektör store'a karşı benzerlik araması çalıştırır — topK ve minScore'u ayarlayarak kaç sonuç döneceğini ve eşleşmenin ne kadar sıkı olacağını kontrol edersin.",
   "searchPlaceholder": "Vektör store'da ara…",
   "topKTitle": "En yakın kaç sonuç getirilsin (sunucuya geçirilir)",
   "minScoreTitle": "Bu skorun altındaki sonuçlar elenir (client-side — API minScore almıyor)",
   "searchAction": "Ara",
-  "emptyPrompt": "Bir sorgu yaz → en yakın chunk'lar (skor + metadata).",
-  "noResults": "Sonuç yok.",
+  "emptyTitle": "Bilgi tabanında arayın",
+  "emptyDescription": "Eşleşen pasajları bulmak için bir sorgu yazın. Gezilecek bir katalog yok — sonuçlar benzerlik aramasından gelir.",
+  "noResults": "Sonuç yok. Farklı bir sorgu deneyin ya da minScore'u düşürün.",
   "scoreLabel": "skor {{score}}"
 }

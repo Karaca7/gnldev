@@ -3,12 +3,12 @@ import { Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
-import { Check, X, Wrench, Plus, Trash2, Pencil, Ban, Copy, Database, Activity, RotateCw, ArrowDown, Settings, Paperclip, FileText, PanelLeft, ChevronDown } from 'lucide-react';
+import { Check, X, Wrench, Plus, Trash2, Pencil, Ban, Copy, Database, Activity, RotateCw, ArrowDown, Settings, Paperclip, FileText, PanelLeft, ChevronDown, MessageSquare } from 'lucide-react';
 import { useAgents, useCapabilities, useMe, useThreads, useWorkingMemory, streamAgent, api, errMessage, ApiError, type Interrupt, type ThreadRecord, type AgentRunBody, type RunCost } from '../api';
-import { Btn, Spinner, Empty, ErrorBox, Badge, JsonBlock, cn } from '../components';
+import { Btn, Spinner, Empty, EmptyState, ErrorBox, Badge, JsonBlock, cn } from '../components';
 import { Markdown } from '../markdown';
 import { Stagger, StaggerItem, Reveal } from '../motion';
-import { toast } from '../ui';
+import { toast, ConfirmDialog } from '../ui';
 
 type Attachment = { name: string; type: string; dataUrl: string };
 export type Msg =
@@ -319,7 +319,11 @@ export function Playground() {
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [showSettings]);
 
-  if (caps.data && !caps.data.playground) return <Empty>{t('playgroundDisabled')}</Empty>;
+  // D3-9: this is a whole-canvas configuration state (the host turned the capability off), not an
+  // inline note inside an otherwise-populated view — EmptyState is the primitive for that (icon +
+  // title + description), matching Cache/Evals/Mcp/Jobs/Networks/Audit/Approvals/Workflows. Icon is
+  // Playground's own nav icon (see NAV_GROUPS in App.tsx) so it reads as "this exact feature", not a generic blank.
+  if (caps.data && !caps.data.playground) return <EmptyState icon={MessageSquare} title={t('playgroundDisabledTitle')} description={t('playgroundDisabledDescription')} />;
   if (agents.isLoading) return <Spinner />;
   if (agents.error) return <ErrorBox error={agents.error} />;
 
@@ -713,9 +717,13 @@ export function Playground() {
               )}
             </div>
           )}
-          {/* Live stream: pulse only while busy+streaming — double-coded with the "streaming" text (WCAG 1.4.1). */}
+          {/* Live stream: pulse only while busy+streaming — double-coded with the "streaming" text (WCAG 1.4.1).
+              record-dot, not live-dot: this isn't a badge's enduring state pill (there's no colored chip
+              here), it's the same "content is actively flowing into the journal right now" signal as the
+              streaming cursor (MsgBlock) / tool-running marker / ActivityRow below — same plain
+              dot+label shape as those three, so it takes the same square mark for consistency. */}
           <span className="flex items-center gap-1.5 text-xs text-muted-foreground md:ml-auto">
-            {busy && canStream && <span className="live-dot" aria-hidden />}
+            {busy && canStream && <span className="record-dot record-dot--live" aria-hidden />}
             {/* Guarded per field, not by `cost ?` alone: a /cost response missing costUsd made this
                 `undefined.toFixed(4)` and unmounted the ENTIRE Playground — the whole transcript
                 replaced by an error boundary because a token counter came back short. A cosmetic
@@ -834,7 +842,7 @@ export function Playground() {
             <div className="mb-2 flex flex-wrap gap-1.5">
               {files.map((f, i) => (
                 <span key={i} className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/40 px-2 py-1 text-xs">
-                  {f.type.startsWith('image/') ? <img src={f.dataUrl} alt={f.name} className="h-6 w-6 rounded object-cover" /> : <FileText size={13} className="text-muted-foreground" />}
+                  {f.type.startsWith('image/') ? <img src={f.dataUrl} alt={f.name} className="h-6 w-6 rounded-sm object-cover" /> : <FileText size={13} className="text-muted-foreground" />}
                   <span className="max-w-[140px] truncate">{f.name}</span>
                   <button type="button" title={t('removeTitle')} onClick={() => setFiles((p) => p.filter((_, k) => k !== i))} className="text-muted-foreground hover:text-foreground"><X size={12} /></button>
                 </span>
@@ -962,8 +970,8 @@ function HistorySidebar({ open, activeId, busy, onSelect, onNew, onDeleted, conf
                   <div className="flex items-center gap-0.5">
                     {/* onMouseDown preventDefault: keeps focus on the input through the click so onBlur's
                         save-on-blur path doesn't race this button's own (guarded) action. */}
-                    <button type="button" title={t('rename')} onMouseDown={(e) => e.preventDefault()} onClick={() => closeRenaming(true, th.id)} disabled={working} className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"><Check size={13} /></button>
-                    <button type="button" title={t('cancel')} onMouseDown={(e) => e.preventDefault()} onClick={() => closeRenaming(false, th.id)} className="rounded p-1 text-muted-foreground hover:bg-muted"><X size={13} /></button>
+                    <button type="button" title={t('rename')} onMouseDown={(e) => e.preventDefault()} onClick={() => closeRenaming(true, th.id)} disabled={working} className="rounded-sm p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"><Check size={13} /></button>
+                    <button type="button" title={t('cancel')} onMouseDown={(e) => e.preventDefault()} onClick={() => closeRenaming(false, th.id)} className="rounded-sm p-1 text-muted-foreground hover:bg-muted"><X size={13} /></button>
                   </div>
                 </div>
               );
@@ -979,22 +987,30 @@ function HistorySidebar({ open, activeId, busy, onSelect, onNew, onDeleted, conf
                   <span className="w-full truncate text-sm">{th.title || th.id}</span>
                   <span className="w-full truncate text-[10px] text-muted-foreground">{relTime(th.updatedAt ?? th.createdAt, t)}{allRes && th.resourceId ? ` · ${th.resourceId}` : ''}</span>
                 </button>
-                {confirmDel === th.id ? (
-                  <div className="flex items-center gap-0.5">
-                    <button type="button" title={t('delete')} onClick={() => doDelete(th.id)} disabled={working} className="rounded p-1 text-destructive hover:bg-destructive/15 disabled:opacity-50"><Check size={13} /></button>
-                    <button type="button" title={t('cancel')} onClick={() => setConfirmDel(null)} className="rounded p-1 text-muted-foreground hover:bg-muted"><X size={13} /></button>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-                    <button type="button" title={t('rename')} onClick={() => { setRenaming(th.id); setRenameVal(th.title || ''); }} className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"><Pencil size={13} /></button>
-                    <button type="button" title={t('delete')} onClick={() => setConfirmDel(th.id)} className="rounded p-1 text-muted-foreground hover:bg-destructive/15 hover:text-destructive"><Trash2 size={13} /></button>
-                  </div>
-                )}
+                {/* D5-7: deletion confirmation is the shared ConfirmDialog (below), not an inline
+                    Check/X pair — this app has ONE interaction language for "permanently destroy
+                    something", not two. */}
+                <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                  <button type="button" title={t('rename')} onClick={() => { setRenaming(th.id); setRenameVal(th.title || ''); }} className="rounded-sm p-1 text-muted-foreground hover:bg-muted hover:text-foreground"><Pencil size={13} /></button>
+                  <button type="button" title={t('deleteThreadTitle')} onClick={() => setConfirmDel(th.id)} className="rounded-sm p-1 text-muted-foreground hover:bg-destructive/15 hover:text-destructive"><Trash2 size={13} /></button>
+                </div>
               </div>
             );
           })
         )}
       </div>
+      {/* D5-7: shared destructive-confirm pattern (same ConfirmDialog Inspector's purge/unwind/cancel
+          dialogs use) — deletion has no restore path (api.ts has no undelete/restore for threads), so
+          the description says that explicitly, same wording as Inspector's purge dialog. */}
+      <ConfirmDialog
+        open={confirmDel != null}
+        onOpenChange={(o) => { if (!o) setConfirmDel(null); }}
+        title={t('deleteThreadDialogTitle', { name: threads.data?.find((x) => x.id === confirmDel)?.title || confirmDel || '' })}
+        description={t('deleteThreadDialogDescription')}
+        confirmLabel={t('deleteThreadConfirmLabel')}
+        destructive
+        onConfirm={() => { if (confirmDel) doDelete(confirmDel); }}
+      />
       {/* Configuration — a collapsible section pinned UNDER the thread list. The thread list above scrolls
           (flex-1 min-h-0); this section has its own bounded scroll so it never crowds the list out. */}
       {configSlot && (
@@ -1060,7 +1076,7 @@ function CopyButton({ text, isUser }: { text: string; isUser: boolean }) {
       title={t('copyTitle')}
       onClick={() => { navigator.clipboard?.writeText(text).then(() => { setDone(true); setTimeout(() => setDone(false), 1200); }).catch((e) => toast.error(errMessage(e))); }}
       className={cn(
-        'absolute -top-2 rounded border border-border bg-background p-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100',
+        'absolute -top-2 rounded-sm border border-border bg-background p-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100',
         isUser ? '-left-2' : '-right-2',
       )}
     >
@@ -1106,8 +1122,8 @@ function MsgBlock({ msg, canEdit, onEdit, streaming }: { msg: Msg; canEdit?: boo
         {msg.role === 'user' && msg.files && msg.files.length > 0 && (
           <div className="mb-1.5 flex flex-wrap gap-1.5">
             {msg.files.map((f, i) => f.type.startsWith('image/')
-              ? <img key={i} src={f.dataUrl} alt={f.name} className="max-h-32 rounded border border-border" />
-              : <span key={i} className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[11px]"><FileText size={11} /> {f.name}</span>)}
+              ? <img key={i} src={f.dataUrl} alt={f.name} className="max-h-32 rounded-sm border border-border" />
+              : <span key={i} className="inline-flex items-center gap-1 rounded-sm bg-muted px-1.5 py-0.5 text-[11px]"><FileText size={11} /> {f.name}</span>)}
           </div>
         )}
         {isUser ? msg.text : <Markdown text={msg.text} />}
@@ -1120,7 +1136,7 @@ function MsgBlock({ msg, canEdit, onEdit, streaming }: { msg: Msg; canEdit?: boo
         {msg.text && <CopyButton text={msg.text} isUser={isUser} />}
         {canEdit && onEdit && (
           <button type="button" title={t('editAndResendTitle')} onClick={onEdit}
-            className="absolute -bottom-2 -left-2 rounded border border-border bg-background p-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100">
+            className="absolute -bottom-2 -left-2 rounded-sm border border-border bg-background p-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100">
             <Pencil size={11} />
           </button>
         )}
@@ -1174,7 +1190,7 @@ function ApprovalCards({ interrupts, busy, onDecide }: { interrupts: Interrupt[]
       <div className="mb-2 text-xs font-medium text-warning">{t('pendingApprovalTool', { count: interrupts.length })}</div>
       <div className="space-y-1.5">
         {interrupts.map((it) => (
-          <div key={it.toolCallId} className="flex items-center justify-between gap-2 rounded bg-background/60 px-2 py-1.5">
+          <div key={it.toolCallId} className="flex items-center justify-between gap-2 rounded-sm bg-background/60 px-2 py-1.5">
             <div className="min-w-0">
               <span className="font-mono text-xs">{it.toolName}</span>
               {it.reason && <span className="ml-2 text-[11px] text-muted-foreground">{it.reason}</span>}

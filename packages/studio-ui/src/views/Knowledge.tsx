@@ -1,7 +1,8 @@
 import { useState } from 'react';
+import { Library } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { api, type VectorMatch } from '../api';
-import { Btn, Spinner, Empty, Badge, JsonBlock } from '../components';
+import { Btn, Spinner, Empty, EmptyState, Badge, JsonBlock, PageHeader } from '../components';
 
 const DEFAULT_TOP_K = 5;
 
@@ -61,6 +62,12 @@ export function Knowledge() {
 
   return (
     <div className="flex h-full flex-col">
+      {/* PageHeader stays a shrink-0 sibling above the search bar; the search+params+submit combo
+          below is a single bound form, kept in place rather than split into an `actions` slot
+          (same reasoning as Cache's InvalidatePanel). */}
+      <div className="shrink-0">
+        <PageHeader title={t('title')} description={t('description')} />
+      </div>
       <div className="flex flex-wrap items-center gap-2 border-b border-border p-3">
         {/* GNL Input recipe: a static "›" prefix in the identity green, mono text, and the shared focus
             ring — carried by the WRAPPER (.field-ring), since the border is on the wrapper not the input. */}
@@ -109,7 +116,11 @@ export function Knowledge() {
         ) : err ? (
           <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">⚠ {err}</div>
         ) : results == null ? (
-          <Empty>{t('emptyPrompt')}</Empty>
+          // This IS the view's whole canvas at rest (search bar above stays put) — EmptyState, not
+          // Empty. Copy is deliberately honest about there being no catalog to browse (the server
+          // only exposes /knowledge/search, no list/browse endpoint — see api.ts), so it invites a
+          // query instead of implying a list will appear.
+          <EmptyState icon={Library} title={t('emptyTitle')} description={t('emptyDescription')} />
         ) : results.length === 0 ? (
           <Empty>{t('noResults')}</Empty>
         ) : (

@@ -1,6 +1,6 @@
 import { Component, lazy, Suspense, useEffect, useState, type ComponentType, type FormEvent, type ReactNode } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import {
@@ -9,7 +9,7 @@ import {
   AlertTriangle, Database, Clock, Menu, Search,
 } from 'lucide-react';
 import { useCapabilities, useMe, api, ApiError, shouldForceReauth, type Capabilities } from './api';
-import { Spinner, Btn, ErrorBox, cn } from './components';
+import { Spinner, ViewSkeleton, Btn, ErrorBox, Badge, cn } from './components';
 import { CommandPalette, type CommandItem } from './ui';
 import { getToken, setToken, clearToken } from './auth';
 import { PageTransition } from './motion';
@@ -63,28 +63,47 @@ const Policy = lazy(() => named(import('./views/Policy'), 'Policy'));
 // `t(labelKey)` at render time (see AppShell). This way nav returns the correct language on a
 // language switch without a special-case re-render (i18next already triggers a re-render on change).
 //
-// `group` — three logical sections rendered with a divider + microlabel header (see NAV_GROUPS):
-//   runs        = watching/interacting with live agent execution (Inspector/Observability/Playground)
-//   build       = everything that defines/executes the platform's building blocks (agents, tools,
-//                 workflows + their supporting infra: jobs/cache/scheduler/knowledge/evals/networks/mcp)
+// `group` — four logical sections rendered with a divider + microlabel header (see NAV_GROUPS):
+//   runs        = watching/interacting with live agent execution AND its observation surfaces
+//                 (Inspector/Observability/Playground + Networks — a read-only past-A2A-routing
+//                 graph, not something authored — see views/Networks.tsx)
+//   build       = authoring surfaces for the platform's building blocks — agents/tools/workflows/
+//                 knowledge/evals/mcp, things a developer DEFINES
+//   operate     = operational health of already-running infra — jobs/cache/scheduler, things a
+//                 developer MONITORS, not builds (D1-2/D1-5: split out of `build`, which used to
+//                 lump these in together; the TR label "Geliştirme"/"Development" actively
+//                 mis-promised what a cache hit-rate panel or job queue actually is)
 //   governance  = access control + compliance surfaces (the pre-existing "Governance" grouping below,
 //                 now made visible in the UI, not just in this comment)
-type NavGroupKey = 'runs' | 'build' | 'governance';
+type NavGroupKey = 'runs' | 'build' | 'operate' | 'governance';
 type NavItem = { to: string; labelKey: string; icon: any; cap?: keyof Capabilities; group: NavGroupKey };
+/** D1-3: an inbox-style attention counter attached to a nav row (see SidebarContent's `badges` prop). */
+type NavBadge = { count: number; toneKey: 'pendingApprovalsBadge' | 'failedJobsBadge'; tone: 'warning' | 'destructive' };
 const NAV: NavItem[] = [
   { to: '/inspector', labelKey: 'inspector', icon: Activity, group: 'runs' },
   { to: '/observability', labelKey: 'observability', icon: Gauge, group: 'runs' },
   { to: '/playground', labelKey: 'playground', icon: MessageSquare, cap: 'playground', group: 'runs' },
-  { to: '/agents', labelKey: 'agents', icon: Boxes, cap: 'playground', group: 'build' },
+  // Networks: read-only observation of past A2A routing (D1-2/D1-5) — moved out of `build`, it
+  // doesn't author anything, it's an observability surface like Inspector/Observability.
+  { to: '/networks', labelKey: 'networks', icon: Network, cap: 'a2a', group: 'runs' },
+  // Agents: deliberately NO `cap` (D1-1) — views/Agents.tsx renders off useAgents()/
+  // useManagedAgents()/useAgentRegistry(); none of those (nor the base agent list itself) is gated
+  // by `playground` — only the in-view version-management actions are, behind `agentVersions`
+  // (checked locally in Agents.tsx). Gating this NAV ROW on `playground` made the entire agent
+  // list vanish from the sidebar on any install with interactive Playground off but agents defined
+  // — a pure read surface disappearing for an unrelated reason. There is no Capabilities field for
+  // "can list agents" to gate on instead, so — like Inspector/Observability/Evals — this row is
+  // unconditional.
+  { to: '/agents', labelKey: 'agents', icon: Boxes, group: 'build' },
   { to: '/tools', labelKey: 'tools', icon: Wrench, cap: 'tools', group: 'build' },
   { to: '/workflows', labelKey: 'workflows', icon: Workflow, cap: 'workflows', group: 'build' },
-  { to: '/jobs', labelKey: 'jobs', icon: ListChecks, cap: 'queue', group: 'build' },
-  { to: '/cache', labelKey: 'cache', icon: Database, cap: 'cache', group: 'build' },
-  { to: '/scheduler', labelKey: 'scheduler', icon: Clock, cap: 'scheduler', group: 'build' },
   { to: '/knowledge', labelKey: 'knowledge', icon: Library, cap: 'knowledge', group: 'build' },
   { to: '/evals', labelKey: 'evals', icon: FlaskConical, group: 'build' },
-  { to: '/networks', labelKey: 'networks', icon: Network, cap: 'a2a', group: 'build' },
   { to: '/mcp', labelKey: 'mcp', icon: Plug, cap: 'mcp', group: 'build' },
+  // Operate: live health of already-running infra, not authoring (D1-2/D1-5).
+  { to: '/jobs', labelKey: 'jobs', icon: ListChecks, cap: 'queue', group: 'operate' },
+  { to: '/cache', labelKey: 'cache', icon: Database, cap: 'cache', group: 'operate' },
+  { to: '/scheduler', labelKey: 'scheduler', icon: Clock, cap: 'scheduler', group: 'operate' },
   // Governance: approvals inbox / audit log / organizations (enabled via server capability flags).
   { to: '/approvals', labelKey: 'approvals', icon: Inbox, cap: 'approvals', group: 'governance' },
   { to: '/audit', labelKey: 'audit', icon: ScrollText, cap: 'audit', group: 'governance' },
@@ -95,12 +114,26 @@ const NAV: NavItem[] = [
 const NAV_GROUPS: { key: NavGroupKey; titleKey: string }[] = [
   { key: 'runs', titleKey: 'groupRuns' },
   { key: 'build', titleKey: 'groupBuild' },
+  { key: 'operate', titleKey: 'groupOperate' },
   { key: 'governance', titleKey: 'groupGovernance' },
 ];
+// D5-10: command-palette hint per nav item — the item's GROUP name instead of one generic "view"
+// string shared by all 18 rows. Derived from NAV_GROUPS (not hand-duplicated) so the two stay in
+// sync. CommandItem.value in ui.tsx is `${label} ${hint}`, so this also makes group names searchable.
+const NAV_GROUP_TITLE_KEY = Object.fromEntries(NAV_GROUPS.map((g) => [g.key, g.titleKey])) as Record<NavGroupKey, string>;
 
 // Nav-like rows (theme/logout/Swagger) share the same alignment+weight as active nav items (DRY).
+// D3-10: `py-2.5 md:py-1.5` — ~44px touch target in the mobile drawer (WCAG 2.5.5), same `py-1.5`
+// (~32px) density as before at md+ where this is a mouse-driven desktop sidebar, not a touch target.
 const NAV_ITEM_CLASS =
-  'flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:bg-muted/60 focus-visible:text-foreground';
+  'flex items-center gap-2 rounded-md px-3 py-2.5 md:py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:bg-muted/60 focus-visible:text-foreground';
+
+// D4/hardcoded-text: "Ctrl K" → "Cmd K" on macOS. Purely cosmetic — ui.tsx's palette shortcut
+// listener already accepts metaKey OR ctrlKey (unchanged); this only fixes the label macOS users
+// see. navigator.platform is deprecated but only read here for copy, never behavior; guarded so it
+// degrades to the Ctrl label (not a crash) under jsdom, where platform/userAgent don't contain "Mac".
+const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || '');
+const KBD_HINT = IS_MAC ? 'Cmd K' : 'Ctrl K';
 
 function useTheme() {
   const [dark, setDark] = useState(() => localStorage.getItem('gnl-theme') !== 'light');
@@ -157,10 +190,10 @@ function WorkspaceChip({ plan }: { plan?: string }) {
  * nav click; the desktop sidebar has no such need (nothing to close) so it's omitted there.
  */
 function SidebarContent({
-  visible, t, tc, lang, toggleLang, dark, toggle, onLogout, onNavigate, plan,
+  visible, t, tc, lang, toggleLang, dark, toggle, onLogout, onNavigate, plan, badges,
 }: {
   visible: NavItem[];
-  t: (key: string) => string;
+  t: (key: string, opts?: Record<string, unknown>) => string;
   tc: (key: string) => string;
   lang: SupportedLang;
   toggleLang: () => void;
@@ -169,6 +202,10 @@ function SidebarContent({
   onLogout?: () => void;
   onNavigate?: () => void;
   plan?: string;
+  /** D1-3: inbox-style attention counters for nav rows that poll in the background (Approvals/
+      Jobs) but whose data otherwise only surfaces on their own page. Keyed by `to` path; a path
+      missing from this object (or 0) renders no badge — see the render loop below. */
+  badges: Partial<Record<string, NavBadge>>;
 }) {
   return (
     <>
@@ -187,6 +224,7 @@ function SidebarContent({
               <div className="microlabel px-3 pb-1 text-muted-foreground">{t(g.titleKey)}</div>
               {items.map(({ to, labelKey, icon: Icon }) => {
                 const label = t(labelKey);
+                const badge = badges[to];
                 return (
                   <NavLink
                     key={to}
@@ -195,7 +233,9 @@ function SidebarContent({
                     onClick={onNavigate}
                     className={({ isActive }) =>
                       cn(
-                        'flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                        // D3-10: py-2.5 md:py-1.5 → ~44px touch target in the mobile drawer (WCAG
+                        // 2.5.5), unchanged ~32px mouse-density at md+ (desktop <aside>).
+                        'flex items-center gap-2 rounded-md px-3 py-2.5 md:py-1.5 text-sm font-medium transition-colors',
                         // Active nav: lime tint background + lime text/icon (icon uses currentColor to follow the text).
                         isActive
                           ? 'bg-brand/15 text-brand'
@@ -204,19 +244,29 @@ function SidebarContent({
                     }
                   >
                     <Icon size={15} className="shrink-0" /> <span>{label}</span>
+                    {/* D1-3: pending/failed counter — number-bearing (not color-only) + a visually
+                        hidden label with full context for screen readers (the visible Badge is
+                        aria-hidden so its bare number isn't announced twice without context). */}
+                    {!!badge && badge.count > 0 && (
+                      <span className="ml-auto flex items-center">
+                        <span aria-hidden="true"><Badge tone={badge.tone}>{badge.count}</Badge></span>
+                        <span className="sr-only">{t(badge.toneKey, { count: badge.count })}</span>
+                      </span>
+                    )}
                   </NavLink>
                 );
               })}
             </div>
           );
         })}
-        {/* Swagger: a non-SPA server route (relative → resolved under the mount via <base href>). */}
-        <a href="swagger" title="API (Swagger)" className={cn(NAV_ITEM_CLASS, 'mt-3 border-t border-border/60 pt-3')} onClick={onNavigate}>
-          <BookOpen size={15} className="shrink-0" /> <span>API (Swagger)</span>
+        {/* Swagger: a non-SPA server route (relative → resolved under the mount via <base href>).
+            "Swagger" itself is a product name (kept, not translated) but the row's label is i18n'd. */}
+        <a href="swagger" title={t('apiSwagger')} className={cn(NAV_ITEM_CLASS, 'mt-3 border-t border-border/60 pt-3')} onClick={onNavigate}>
+          <BookOpen size={15} className="shrink-0" /> <span>{t('apiSwagger')}</span>
         </a>
       </nav>
       <div className="hidden px-4 pb-1 sm:block">
-        <kbd className="microlabel rounded border border-brand/25 bg-muted/50 px-1.5 py-0.5 text-brand">Ctrl K</kbd>
+        <kbd className="microlabel rounded-sm border border-brand/25 bg-muted/50 px-1.5 py-0.5 text-brand">{KBD_HINT}</kbd>
       </div>
       {/* Language switcher: EN default/TR secondary, in the same row group as the theme toggle (see useLanguage). */}
       <button type="button" onClick={toggleLang} title="Language / Dil" className={cn(NAV_ITEM_CLASS, 'm-2 mb-0')}>
@@ -250,9 +300,29 @@ function AppShell({ onLogout }: { onLogout?: () => void }) {
     n.to === '/evals' ? caps.data?.scorers || caps.data?.datasets : !n.cap || caps.data?.[n.cap],
   );
 
+  // D1-3: pending-approvals / failed-jobs nav counters. Built as plain useQuery calls (not the
+  // useApprovals/useJobs hooks from api.ts, which don't expose an `enabled` option to gate on) —
+  // SAME queryKey + queryFn as those hooks, so this shares react-query's cache with the Approvals/
+  // Jobs pages rather than double-fetching. `enabled` is the whole point: the request must not fire
+  // at all while the capability is off (no silent background poll against a disabled/absent surface).
+  const approvalsForBadge = useQuery({
+    queryKey: ['approvals'], queryFn: api.approvals, refetchInterval: 5000, enabled: !!caps.data?.approvals,
+  });
+  const jobsForBadge = useQuery({
+    queryKey: ['jobs'], queryFn: api.jobs, refetchInterval: 3000, enabled: !!caps.data?.queue,
+  });
+  const failedJobsCount = jobsForBadge.data?.filter((j) => j.status === 'failed').length ?? 0;
+  const navBadges: Partial<Record<string, NavBadge>> = {
+    '/approvals': { count: approvalsForBadge.data?.items.length ?? 0, toneKey: 'pendingApprovalsBadge', tone: 'warning' },
+    '/jobs': { count: failedJobsCount, toneKey: 'failedJobsBadge', tone: 'destructive' },
+  };
+
   // Ctrl/Cmd+K palette: views + theme/session actions in a single search box.
   const commands: CommandItem[] = [
-    ...visible.map((n) => ({ id: n.to, label: t(n.labelKey), hint: tc('viewHint'), onSelect: () => navigate(n.to) })),
+    // D5-10: hint = the item's group name (Runs/Build/Operate/Governance), not one generic "view"
+    // label shared by all 18 rows — lets a single flat list still cluster by category, and makes
+    // group names searchable too (CommandItem.value = `${label} ${hint}` in ui.tsx).
+    ...visible.map((n) => ({ id: n.to, label: t(n.labelKey), hint: t(NAV_GROUP_TITLE_KEY[n.group]), onSelect: () => navigate(n.to) })),
     { id: 'theme', label: dark ? tc('switchToLightTheme') : tc('switchToDarkTheme'), hint: tc('themeHint'), onSelect: toggle },
     ...(onLogout ? [{ id: 'logout', label: tc('logoutAction'), hint: tc('sessionHint'), onSelect: onLogout }] : []),
   ];
@@ -268,7 +338,7 @@ function AppShell({ onLogout }: { onLogout?: () => void }) {
           Swagger/lang/theme/logout) on every single page load. Visually hidden until focused. */}
       <a
         href="#main"
-        className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:m-2 focus:rounded focus:bg-popover focus:px-3 focus:py-2"
+        className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:m-2 focus:rounded-sm focus:bg-popover focus:px-3 focus:py-2"
       >
         {tc('skipToContent')}
       </a>
@@ -301,7 +371,7 @@ function AppShell({ onLogout }: { onLogout?: () => void }) {
             <DialogPrimitive.Title className="sr-only">{tc('navigationLabel')}</DialogPrimitive.Title>
             <SidebarContent
               visible={visible} t={t} tc={tc} lang={lang} toggleLang={toggleLang} dark={dark} toggle={toggle}
-              onLogout={onLogout} onNavigate={() => setMobileNavOpen(false)} plan={caps.data?.plan}
+              onLogout={onLogout} onNavigate={() => setMobileNavOpen(false)} plan={caps.data?.plan} badges={navBadges}
             />
           </DialogPrimitive.Content>
         </DialogPrimitive.Portal>
@@ -310,7 +380,7 @@ function AppShell({ onLogout }: { onLogout?: () => void }) {
       {/* Desktop sidebar (≥768px) — surface staircase: the sidebar is the deepest layer
           (--surface-deep/#0c0c0e) — main content sits one step above Ink. */}
       <aside className="hidden md:flex md:w-56 md:flex-col md:border-r md:border-border md:bg-surface-deep">
-        <SidebarContent visible={visible} t={t} tc={tc} lang={lang} toggleLang={toggleLang} dark={dark} toggle={toggle} onLogout={onLogout} plan={caps.data?.plan} />
+        <SidebarContent visible={visible} t={t} tc={tc} lang={lang} toggleLang={toggleLang} dark={dark} toggle={toggle} onLogout={onLogout} plan={caps.data?.plan} badges={navBadges} />
       </aside>
 
       <main id="main" tabIndex={-1} className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -318,13 +388,17 @@ function AppShell({ onLogout }: { onLogout?: () => void }) {
             The search box opens the SAME Ctrl/Cmd+K command palette (synthetic keydown) — no separate
             search implementation, it's the existing palette. "New run" jumps to the Playground. */}
         <header className="hidden shrink-0 items-center gap-4 border-b border-border bg-surface-1 px-5 py-2.5 md:flex">
-          <nav className="flex items-center gap-1.5 text-sm" aria-label="breadcrumb">
-            <span className="text-muted-foreground">Studio</span>
-            <span className="text-muted-foreground/40">/</span>
-            <span className="font-medium text-foreground">
-              {(() => { const a = NAV.find((n) => location.pathname.startsWith(n.to)); return a ? t(a.labelKey) : ''; })()}
-            </span>
-          </nav>
+          {/* D1-6: dropped the fake two-level "Studio / <page>" breadcrumb — the root was a hardcoded,
+              non-i18n brand label, every route sits at a single level (nothing to actually walk), and
+              the sidebar's active-item highlight already says "where am I". What's left is just the
+              current page name, kept visually SECONDARY (text-muted-foreground, not -foreground) on
+              purpose: a later wave is expected to add PageHeader's own per-view <h1>, and this label
+              would then sit directly above it — secondary here avoids two competing headings once that
+              lands. No `aria-label="breadcrumb"`/<nav> anymore either, since a single name isn't a
+              hierarchy. */}
+          <span className="text-sm font-medium text-muted-foreground">
+            {(() => { const a = NAV.find((n) => location.pathname.startsWith(n.to)); return a ? t(a.labelKey) : ''; })()}
+          </span>
           <button
             type="button"
             onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true }))}
@@ -332,19 +406,33 @@ function AppShell({ onLogout }: { onLogout?: () => void }) {
           >
             <Search size={14} className="shrink-0" />
             <span className="flex-1 text-left">{tc('searchStudio')}</span>
-            <kbd className="microlabel rounded border border-border px-1.5 py-0.5">Ctrl K</kbd>
+            <kbd className="microlabel rounded-sm border border-border px-1.5 py-0.5">{KBD_HINT}</kbd>
           </button>
-          {caps.data?.playground && (
+          {/* D3-7: hidden while already on /playground. It always just called navigate('/playground'),
+              but Playground.tsx doesn't read useLocation/useSearchParams, so re-navigating to the SAME
+              route is a silent no-op — no remount, no state reset — a user could easily read that as
+              "I started a new run" when nothing happened. The more correct fix is for Playground to
+              listen for an explicit "start new thread" signal (e.g. a dedicated query param or a
+              location.key change) and reset its own state, but that means touching views/Playground.tsx,
+              which is out of scope here; hiding the button is the honest interim behavior. */}
+          {caps.data?.playground && location.pathname !== '/playground' && (
             <Btn variant="primary" arrow onClick={() => navigate('/playground')}>{tc('newRun')}</Btn>
           )}
         </header>
         <div className="min-h-0 flex-1 overflow-auto">
-        <Suspense fallback={<Spinner />}>
-          {/* Signature motion: view transition (D-motion). BrandMark/tokens untouched — only
-              this render region is wrapped. `routeKey=pathname` triggers a subtle upward-sliding
-              fade with a terminal-prompt feel on every nav click; under prefers-reduced-motion,
-              PageTransition passes through plainly (see src/motion.tsx). */}
-          <PageTransition routeKey={location.pathname}>
+        {/* D5-4: PageTransition now OUTSIDE Suspense (was: Suspense > PageTransition > Routes).
+            Before, a cold chunk load suspended the WHOLE subtree including AnimatePresence, so the
+            transition only ever played when the chunk was already cached — inconsistent, sometimes
+            there/sometimes not. With Suspense moved inside the keyed motion.div, AnimatePresence
+            always has something real to mount/animate on every route change; the lazy chunk's loading
+            state (ViewSkeleton fallback) now plays out INSIDE that already-animating-in wrapper instead
+            of replacing it. `routeKey` (location.pathname) still drives AnimatePresence as before. */}
+        {/* D5-1: ViewSkeleton (components.tsx) replaces the old bare `<Spinner />` fallback here — a
+            single line of text with the rest of the canvas blank read as a layout jump on every route
+            change. This is the one and only route-level fallback; Spinner itself is untouched and
+            still used by views/Login/CapsError for their own in-page loading states. */}
+        <PageTransition routeKey={location.pathname}>
+          <Suspense fallback={<ViewSkeleton />}>
             <Routes>
               <Route path="/" element={<Navigate to="/inspector" replace />} />
               <Route path="/inspector" element={<Inspector />} />
@@ -367,8 +455,8 @@ function AppShell({ onLogout }: { onLogout?: () => void }) {
               <Route path="/policy" element={<Policy />} />
               <Route path="*" element={<Navigate to="/inspector" replace />} />
             </Routes>
-          </PageTransition>
-        </Suspense>
+          </Suspense>
+        </PageTransition>
         </div>
       </main>
     </div>
@@ -420,7 +508,7 @@ function Login({ sso, onAuthed }: { sso?: boolean; onAuthed: () => void }) {
           autoComplete="current-password"
           value={value}
           onChange={(e) => setValue(e.target.value)}
-          placeholder="Bearer token"
+          placeholder={t('accessTokenPlaceholder')}
           className="mb-3 w-full rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-foreground outline-none"
         />
         {error && <div className="mb-3 rounded-md border border-destructive/30 bg-destructive/10 p-2 text-xs text-destructive">{error}</div>}

@@ -1,7 +1,9 @@
 {
   "pendingLabel": "Bekleyen onaylar",
+  "description": "Bir run'ı duraklatan tool çağrılarını tek bir yerden, tüm run'lar genelinde onayla ya da reddet.",
   "emptyTitle": "Bekleyen onay yok",
-  "emptyDescription": "Bir policy kuralı require-approval işaretlediğinde ve run askıya alındığında tool çağrısı burada görünür.",
+  "emptyDescription": "Şu an onayınızı bekleyen bir şey yok. İnsan girdisi için duraklayan run'lar burada görünür.",
+  "decisionNotice": "Kararlar hemen uygulanır. Bu işlem geri alınamaz.",
   "openInInspector": "Inspector'da aç",
   "approve": "Onayla",
   "deny": "Reddet",

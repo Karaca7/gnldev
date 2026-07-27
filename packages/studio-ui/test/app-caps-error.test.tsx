@@ -38,7 +38,7 @@ describe('App — caps.isError fail-open CRITICAL fix', () => {
   it('when capabilities cannot be fetched, shows the "unable to reach" screen, NOT AppShell/Login', async () => {
     vi.stubGlobal('fetch', failingFetch());
     wrap();
-    await waitFor(() => expect(screen.getByText('Unable to reach the server')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/Unable to reach the server/)).toBeTruthy());
     // No Login form, no AppShell nav — an unknown authRequired must not fall through to a broken UI.
     expect(screen.queryByText('Sign in to Studio')).toBeNull();
     expect(screen.queryByText('Inspector')).toBeNull();
@@ -48,7 +48,7 @@ describe('App — caps.isError fail-open CRITICAL fix', () => {
     const fetchMock = failingFetch();
     vi.stubGlobal('fetch', fetchMock);
     wrap();
-    await waitFor(() => expect(screen.getByText('Unable to reach the server')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/Unable to reach the server/)).toBeTruthy());
     const callsBefore = fetchMock.mock.calls.length;
     fireEvent.click(screen.getByText('Retry'));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(callsBefore));

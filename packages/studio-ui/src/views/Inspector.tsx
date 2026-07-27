@@ -1,18 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { motion } from 'framer-motion';
 import { ReactFlow, Background, Controls, MiniMap, type Node, type Edge } from '@xyflow/react';
 import dagre from '@dagrejs/dagre';
-import { GitFork, Check, X, Play, Pause, ChevronLeft, ChevronRight, SkipBack, SkipForward, Columns2, FlaskConical, Trash2, Undo2, UploadCloud, Wrench, Ban } from 'lucide-react';
+import { GitFork, Check, X, Play, Pause, ChevronLeft, ChevronRight, SkipBack, SkipForward, Columns2, FlaskConical, Trash2, Undo2, UploadCloud, Wrench, Ban, Activity } from 'lucide-react';
 import {
   useRunsPaged, useRun, useRunState, useDiff, useTrace, useRunNetwork, useCapabilities, useLiveRuns, useRunScores, useThreads,
   useProcessorReports, useRunIncidents, useMetrics, useMetricsRuns, type MetricsRun,
   api, errMessage, ApiError, type Capabilities, type RunSummary, type RegressionReport, type RegressionDiffEntry, type RunCost, type NetworkTrace,
   type ProcessorReport, type JournalEntry, type RunIncident,
 } from '../api';
-import { Btn, StatusBadge, StatStrip, Spinner, Empty, ErrorBox, JsonBlock, Tabs, Badge, cn } from '../components';
+import { Btn, StatusBadge, StatStrip, Spinner, Empty, EmptyState, ErrorBox, JsonBlock, Tabs, Badge, cn } from '../components';
 import { toast, ConfirmDialog } from '../ui';
 import { TextDiff } from '../text-diff';
 import { MediaParts } from '../media';
@@ -47,6 +47,7 @@ export function parseOrgFromRunId(runId: string): { org: string | null; displayI
 
 export function Inspector() {
   const { t } = useTranslation('inspector');
+  const navigate = useNavigate();
   useLiveRuns();
   const caps = useCapabilities();
   const [statusF, setStatusF] = useState<'all' | 'completed' | 'suspended'>('all');
@@ -160,7 +161,10 @@ export function Inspector() {
                 onClick={() => setStatusF(s)}
                 className={cn(
                   'rounded-md border px-2 py-0.5 font-mono text-[10px] transition-colors',
-                  statusF === s ? 'border-brand/60 bg-brand/10 text-foreground' : 'border-border text-muted-foreground hover:text-foreground',
+                  // D6-4: this is a filter-toggle selection state, not the "live/primary" identity — brand/lime
+                  // was over-applied here (bucket "general accent"); a neutral filled pill (bg-muted + bold
+                  // text) marks the active filter without spending the brand accent on it.
+                  statusF === s ? 'border-border bg-muted text-foreground font-semibold' : 'border-border text-muted-foreground hover:text-foreground',
                 )}
               >
                 {s === 'all' ? t('all') : s}
@@ -178,8 +182,24 @@ export function Inspector() {
               STATE-11: also excludes `runs.error` — otherwise the red ErrorBox above is immediately
               followed by "No runs yet", which reads as "empty" rather than "the request failed", and
               since the list refetches every 5s the two flicker in and out together. */}
+          {/* D1-4: a brand-new/empty install lands here first (`/` and every unknown route redirect to
+              /inspector) — a bare "No runs." with no next step is a dead end for that first-run visitor.
+              Only the TRUE empty-journal case (no filter active) gets the full EmptyState treatment; a
+              filter narrowing a non-empty list to zero stays the plain inline `noMatchesEmpty` note —
+              that's a filter result, not a dead end, and doesn't need a CTA. */}
           {runList.length === 0 && !runs.isLoading && !runs.error && (
-            <Empty>{statusF !== 'all' || debouncedFilter ? t('noMatchesEmpty') : t('noRunsEmpty')}</Empty>
+            statusF !== 'all' || debouncedFilter ? (
+              <Empty>{t('noMatchesEmpty')}</Empty>
+            ) : (
+              <EmptyState
+                icon={Activity}
+                title={t('noRunsEmptyTitle')}
+                description={t('noRunsEmptyDescription')}
+                action={caps.data?.playground ? (
+                  <Btn variant="primary" arrow onClick={() => navigate('/playground')}>{t('noRunsEmptyAction')}</Btn>
+                ) : undefined}
+              />
+            )
           )}
           {view === 'runs' && runList.map((r) => (
             <RunRow key={r.runId} run={r} metricsById={metricsById} active={sel === r.runId} onClick={() => setSel(r.runId)} />
@@ -549,7 +569,9 @@ function RunDetail({ runId, status, caps, allRuns, allRunsLoading, metricsById, 
             {items.map((it) => (
               <div key={it.k} className="min-w-0">
                 <div className="microlabel text-muted-foreground">{it.k}</div>
-                <div className={cn('mt-0.5 truncate font-mono text-sm', it.accent ? 'text-brand' : 'text-foreground')}>{it.v}</div>
+                {/* D6-4: the cost figure used to be brand/lime — a static data value isn't a "live" state
+                    nor a primary action, so the emphasis is now weight-only (no color spent on it). */}
+                <div className={cn('mt-0.5 truncate font-mono text-sm', it.accent ? 'font-semibold text-foreground' : 'text-foreground')}>{it.v}</div>
               </div>
             ))}
           </div>
@@ -681,7 +703,8 @@ function Timeline({ runId }: { runId: string }) {
             onClick={() => setKind(k)}
             className={cn(
               'rounded-md border px-2 py-1 font-mono text-[11px] transition-colors',
-              kind === k ? 'border-brand/60 bg-brand/10 text-foreground' : 'border-border text-muted-foreground hover:text-foreground',
+              // D6-4: filter-toggle selection state — see the status filter above for the same reasoning.
+              kind === k ? 'border-border bg-muted text-foreground font-semibold' : 'border-border text-muted-foreground hover:text-foreground',
             )}
           >
             {k === 'all' ? t('all') : k}
@@ -695,17 +718,20 @@ function Timeline({ runId }: { runId: string }) {
         />
         <span className="text-[11px] text-muted-foreground">{entries.length} entry</span>
       </div>
-      {/* Console/log pattern: ink background + JetBrains Mono; model=lime "›" (step/command), tool=green "✓"
+      {/* Console/log pattern: ink background + JetBrains Mono; model=info "›" (step/command), tool=green "✓"
           (executed action) — the Badge already gives the kind as text too (color+text double-coding).
+          D6-4: model kind used to be lime/brand here — now info, matching the SAME model/tool coloring
+          JournalTimeline (this file's primary Journal view) and TraceView already use, so "model" reads
+          the same color everywhere in Inspector instead of competing with the sparse brand accent.
           Journal-append feel: entries appear in sequence — as if being written to the journal. */}
       <Stagger as={motion.ol} className="space-y-2 rounded-md border border-border bg-background p-2">
         {entries.map((e) => (
           <StaggerItem as={motion.li} key={e.key} className="rounded-md border border-border/60 bg-card p-2.5 font-mono">
             <div className="mb-1 flex items-center gap-2 text-xs">
-              <span aria-hidden className={e.kind === 'model' ? 'text-brand' : 'text-success'}>
+              <span aria-hidden className={e.kind === 'model' ? 'text-info' : 'text-success'}>
                 {e.kind === 'model' ? '›' : '✓'}
               </span>
-              <Badge tone={e.kind === 'model' ? 'brand' : 'success'}>{e.kind}</Badge>
+              <Badge tone={e.kind === 'model' ? 'info' : 'success'}>{e.kind}</Badge>
               <span className="text-muted-foreground">#{e.seq}</span>
               <span className="truncate text-[10px] text-muted-foreground">{e.key}</span>
               {e.relMs != null && (
@@ -764,9 +790,12 @@ export function ToolCallChips({ content }: { content: any }) {
       {calls.map((p: any, i: number) => {
         const args = fmtToolArgs(p.input ?? p.args);
         return (
-          <div key={i} className="rounded-md border border-brand/30 bg-brand/5 px-2.5 py-1.5">
+          // D6-4: this chip identifies a TOOL call — recolored from brand/lime to the same success/green
+          // used for "tool" everywhere else in Inspector (Timeline, TraceView, JournalTimeline), instead
+          // of spending the sparse brand accent on a kind label.
+          <div key={i} className="rounded-md border border-success/30 bg-success/5 px-2.5 py-1.5">
             <div className="flex items-center gap-1.5 text-[13px]">
-              <Wrench size={12} className="text-brand" />
+              <Wrench size={12} className="text-success" />
               <span className="font-mono font-semibold text-foreground">{p.toolName}</span>
             </div>
             {Array.isArray(args) && args.length > 0 && (
@@ -793,8 +822,21 @@ export function ChatBubble({ m, added, entry, latencyMs }: { m: any; added?: boo
   const role = m?.role ?? '?';
   const body = bodyText(m); // only the real text — no [tool-call]/[tool-result] noise
   const tokens = (entry?.value as any)?.usage?.totalTokens;
-  const toolOut = (entry?.value as any)?.output;
-  const toolFailed = role === 'tool' && ['failed', 'error'].includes(String((entry?.value as any)?.status));
+  // Tool output: the message's OWN tool-result part is the primary source — reconstructState
+  // (durable time-travel.ts) always carries `output` there. The journal `entry` is an ENRICHMENT
+  // (status/usage/raw record); reading output only from it made every bubble whose entry
+  // correlation missed say "(no result)" while the result sat unread in m.content[0].output.
+  const resultPart = Array.isArray(m?.content) ? m.content.find((p: any) => p?.type === 'tool-result') : undefined;
+  const toolOut = (entry?.value as any)?.output ?? resultPart?.output;
+  // Failure: primarily the journal record's status (unchanged); when the entry correlation misses
+  // (legacy args-mode records without resolvedToolCallIds), fall back to the shape of the message's
+  // own output — reconstructState's unmatched branch emits the WHOLE record (with `status`) as
+  // `output`, so a failed legacy tool no longer wears a green check over an error payload.
+  const entryFailed = ['failed', 'error'].includes(String((entry?.value as any)?.status));
+  const partOut = resultPart?.output as any;
+  const partFailed = !entry && partOut != null && typeof partOut === 'object'
+    && (partOut.error !== undefined || ['failed', 'error'].includes(String(partOut.status)));
+  const toolFailed = role === 'tool' && (entryFailed || partFailed);
   const hasToolCalls = Array.isArray(m?.content) && m.content.some((p: any) => p?.type === 'tool-call');
 
   const rawDetails = (
@@ -882,7 +924,8 @@ function ConversationView({ runId, steps, canFork, onFork }: { runId: string; st
             onClick={() => setMode(k)}
             className={cn(
               'rounded-md border px-2 py-1 font-mono text-[11px] transition-colors',
-              mode === k ? 'border-brand/60 bg-brand/10 text-foreground' : 'border-border text-muted-foreground hover:text-foreground',
+              // D6-4: same filter-toggle reasoning as the status/kind filters above.
+              mode === k ? 'border-border bg-muted text-foreground font-semibold' : 'border-border text-muted-foreground hover:text-foreground',
             )}
           >
             {k === 'chat' ? t('chatMode') : t('journalMode')}
@@ -945,7 +988,20 @@ function ChatReplay({ runId, steps, canFork, onFork }: { runId: string; steps: n
   // ── message ↔ raw journal entry correlation (display purposes only) ──
   const entries = run.data ?? [];
   const modelEntries = useMemo(() => entries.filter((e) => e.kind === 'model'), [entries]);
-  const toolByCall = useMemo(() => new Map(entries.filter((e) => e.kind === 'tool').map((e) => [e.key.split(':').pop(), e])), [entries]);
+  // 'call'-mode keys end in the real toolCallId, but 'args'-mode keys end in `args-<tool>-<hash>` —
+  // there the record's own `resolvedToolCallIds` (stamped by durable-tool.ts) carries the REAL id(s),
+  // so index those too. Before this, args-mode tool bubbles never found their journal entry.
+  const toolByCall = useMemo(() => {
+    const map = new Map<string, JournalEntry>();
+    for (const e of entries) {
+      if (e.kind !== 'tool') continue;
+      const suffix = e.key.split(':').pop();
+      if (suffix) map.set(suffix, e);
+      const resolved = (e.value as any)?.resolvedToolCallIds;
+      if (Array.isArray(resolved)) for (const id of resolved) map.set(String(id), e);
+    }
+    return map;
+  }, [entries]);
   let assistantIdx = 0;
 
   return (
@@ -996,7 +1052,10 @@ function ChatReplay({ runId, steps, canFork, onFork }: { runId: string; steps: n
                   if (prevTs != null) latencyMs = entry.ts - prevTs;
                 }
               } else if (m?.role === 'tool') {
-                const callId = m?.tool_call_id ?? m?.toolCallId;
+                // reconstructState puts the toolCallId INSIDE the tool-result content part, not on the
+                // message root — reading only the root made `entry` undefined for every tool bubble.
+                const part = Array.isArray(m?.content) ? m.content.find((p: any) => p?.type === 'tool-result') : undefined;
+                const callId = m?.tool_call_id ?? m?.toolCallId ?? part?.toolCallId;
                 entry = callId != null ? toolByCall.get(String(callId)) : undefined;
               }
               return <ChatBubble key={i} m={m} added={i >= msgs.length - addedCount} entry={entry} latencyMs={latencyMs} />;
@@ -1080,7 +1139,7 @@ function TraceView({ runId }: { runId: string }) {
                     <div key={tick} className="absolute top-0 h-full border-l border-border/30" style={{ left: `${tick * 100}%` }} />
                   ))}
                   <div
-                    className={`absolute top-1 h-4 rounded-[3px] ${failed ? 'bg-destructive/70' : isTool ? 'bg-success/60' : 'bg-brand/60'}`}
+                    className={`absolute top-1 h-4 rounded-[3px] ${failed ? 'bg-destructive/70' : isTool ? 'bg-success/60' : 'bg-info/60'}`}
                     style={{ left: `${left}%`, width: `${width}%` }}
                   />
                 </div>
@@ -1093,9 +1152,11 @@ function TraceView({ runId }: { runId: string }) {
         </div>
       </div>
 
-      {/* Color key: kind identity via color + text (not color alone). Model=lime (primary, drives the flow), tool=green (secondary). */}
+      {/* Color key: kind identity via color + text (not color alone). D6-4: model=info (was brand/lime —
+          that color is reserved for the live/record indicator and the primary action, see index.css),
+          tool=green — same mapping as JournalTimeline/Timeline elsewhere in this file. */}
       <div className="mt-2 flex items-center gap-4 text-[11px] text-muted-foreground">
-        <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-[2px] bg-brand/60" /> model</span>
+        <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-[2px] bg-info/60" /> model</span>
         <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-[2px] bg-success/60" /> tool</span>
         <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-[2px] bg-destructive/70" /> failed</span>
       </div>
@@ -1143,7 +1204,7 @@ function JournalTimeline({ runId }: { runId: string }) {
               failed ? 'bg-destructive' : isTool ? 'bg-success' : 'bg-info')} />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
-                <span className={cn('shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] font-medium tracking-wide',
+                <span className={cn('shrink-0 rounded-sm px-1.5 py-0.5 font-mono text-[10px] font-medium tracking-wide',
                   failed ? 'bg-destructive/15 text-destructive' : isTool ? 'bg-success/15 text-success' : 'bg-info/15 text-info')}>{chip}</span>
                 <span className="truncate font-medium text-foreground">{title}</span>
                 <span className="ml-auto shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">
@@ -1169,7 +1230,8 @@ function CostSummary({ cost }: { cost: RunCost }) {
     <span className="flex items-center gap-1 text-xs text-muted-foreground">
       <span>
         {cost.totalTokens} tok
-        {!!cost.cachedTokens && <span className="text-brand"> ({cost.cachedTokens} cache)</span>}
+        {/* D6-4: cache-hit count is a data callout, not a live/primary signal — dropped from brand to plain text. */}
+        {!!cost.cachedTokens && <span className="text-foreground"> ({cost.cachedTokens} cache)</span>}
         {' · '}${cost.costUsd.toFixed(4)}
       </span>
       {byModel && (
@@ -1238,7 +1300,11 @@ export function buildNetworkGraph(
   return { nodes, edges };
 }
 
-const NETWORK_KIND_STYLE: Record<NetworkGraphNode['kind'], string> = { router: 'brand', agent: 'info', final: 'success' };
+// D6-4: router used to be 'brand' (lime) here purely as a third distinguishing hue for the graph's node
+// kinds — not a live/primary signal — so it's now 'border' (the neutral border token, a structural
+// node), leaving agent/final on their existing info/success tones. `tone` feeds directly into
+// `hsl(var(--${tone}))` below, so 'border' resolves to the same --border CSS var used everywhere else.
+const NETWORK_KIND_STYLE: Record<NetworkGraphNode['kind'], string> = { router: 'border', agent: 'info', final: 'success' };
 
 // LR layout with dagre (same pattern as Workflows.tsx toFlowNodes) — purely visual, BROWSER VERIFICATION.
 function toFlowNetwork(nodes: NetworkGraphNode[], edges: NetworkGraphEdge[]): { flowNodes: Node[]; flowEdges: Edge[] } {
@@ -1303,11 +1369,13 @@ function NetworkRouteList({ trace }: { trace: NetworkTrace }) {
       {sorted.map((r, idx) => {
         const decision = r.decision;
         if (decision.action === 'final') {
+          // D6-4: matches NETWORK_KIND_STYLE's final=success above (was brand/lime here, an
+          // inconsistency with the graph view's own "final" node color).
           return (
-            <StaggerItem key={idx} className="rounded-md border border-brand/50 bg-brand/5 p-2.5">
+            <StaggerItem key={idx} className="rounded-md border border-success/50 bg-success/5 p-2.5">
               <div className="mb-1 flex items-center gap-2 font-mono text-xs">
                 <span className="text-muted-foreground">{t('turnLabel', { i: r.i })}</span>
-                <Badge tone="brand">final</Badge>
+                <Badge tone="success">final</Badge>
               </div>
               <div className="whitespace-pre-wrap break-words text-[13px] leading-relaxed">{decision.answer}</div>
             </StaggerItem>
@@ -1388,7 +1456,11 @@ function ForkView({ runId, allRuns, onSelectRun }: { runId: string; allRuns: Run
         <div
           className={cn(
             'flex items-center gap-2 rounded-md border px-2.5 py-1.5',
-            isCurrent ? 'border-brand/50 bg-brand/5' : 'border-border',
+            // D6-4: "the currently open run" in the lineage tree is a selected-row state, same species
+            // as RunRow's own `active ? 'bg-muted' : ...` in the left list — not the live/primary case.
+            // The record-dot right below still pulses (record-dot--live) for this node, so "current" is
+            // still double-coded (fill + pulsing dot), just without spending brand on the border/fill too.
+            isCurrent ? 'border-border bg-muted font-medium' : 'border-border',
           )}
           style={{ marginLeft: depth * 24 }}
         >
@@ -1426,9 +1498,11 @@ function ForkView({ runId, allRuns, onSelectRun }: { runId: string; allRuns: Run
 
 /**
  * Replay-diff: the conversations materialized from two runs' journals, side by side.
- * The common prefix is faded; diverging messages are highlighted lime on the left (A, primary/current branch)
- * and green on the right (B, secondary/compared branch) — coded not just by color but also by the
- * "A"/"B" letter and a "diverged" micro-label (color+text double-coding).
+ * The common prefix is faded; diverging messages are highlighted info-blue on the left (A, current
+ * branch) and green on the right (B, compared branch) — coded not just by color but also by the "A"/"B"
+ * letter and a "diverged" micro-label (color+text double-coding). D6-4: A used to be brand/lime; that
+ * accent is reserved for the live/record indicator and the primary action elsewhere in Inspector, so
+ * this two-way branch coding now uses info/success instead.
  * "What-if" analysis — shows after which decision point the branches diverge.
  */
 function DiffPair({ a, b }: { a: string; b: string }) {
@@ -1444,7 +1518,7 @@ function DiffPair({ a, b }: { a: string; b: string }) {
   let prefix = 0;
   while (prefix < ma.length && prefix < mb.length && JSON.stringify(ma[prefix]) === JSON.stringify(mb[prefix])) prefix++;
 
-  const col = (id: string, msgs: any[], tint: 'brand' | 'success') => (
+  const col = (id: string, msgs: any[], tint: 'info' | 'success') => (
     <div className="min-w-0">
       <div className="mb-2 truncate font-mono text-xs font-medium" title={id}>{id}</div>
       <div className="space-y-1.5">
@@ -1455,12 +1529,12 @@ function DiffPair({ a, b }: { a: string; b: string }) {
               'rounded-md border p-2',
               i < prefix
                 ? 'border-border opacity-55'
-                : tint === 'brand' ? 'border-brand/50 bg-brand/5' : 'border-success/50 bg-success/5',
+                : tint === 'info' ? 'border-info/50 bg-info/5' : 'border-success/50 bg-success/5',
             )}
           >
             <div className="mb-0.5 flex items-center gap-2">
               <Badge tone={ROLE_TONE[m?.role] ?? 'muted'}>{m?.role ?? '?'}</Badge>
-              {i >= prefix && <span className={cn('microlabel', tint === 'brand' ? 'text-brand' : 'text-success')}>{t('divergenceLabel')}</span>}
+              {i >= prefix && <span className={cn('microlabel', tint === 'info' ? 'text-info' : 'text-success')}>{t('divergenceLabel')}</span>}
             </div>
             <div className="whitespace-pre-wrap break-words text-xs leading-relaxed">{msgText(m) || <span className="text-muted-foreground">{t('noText')}</span>}</div>
             <MediaParts content={m?.content} />
@@ -1476,11 +1550,11 @@ function DiffPair({ a, b }: { a: string; b: string }) {
       <div className="mb-3 flex items-center gap-3 text-xs text-muted-foreground">
         <span className="microlabel">REPLAY-DIFF</span>
         <span><b className="text-foreground">{prefix}</b> {t('commonMessagesFaded')}</span>
-        <span className="text-brand">A +{ma.length - prefix}</span>
+        <span className="text-info">A +{ma.length - prefix}</span>
         <span className="text-success">B +{mb.length - prefix}</span>
       </div>
       <div className="grid grid-cols-2 gap-3">
-        {col(a, ma, 'brand')}
+        {col(a, ma, 'info')}
         {col(b, mb, 'success')}
       </div>
       {prefix < ma.length && prefix < mb.length && (
@@ -1496,8 +1570,11 @@ function DiffPair({ a, b }: { a: string; b: string }) {
 // ── W5: Regression — re-run a recorded run with a new model/system (replayRun) or compare it
 // against an existing run (without re-running); both paths return the SAME decision-point diff (durable
 // diffRuns) → the result display is consolidated into a single DecisionList component.
-const DURUM_TONE: Record<RegressionDiffEntry['durum'], 'muted' | 'brand' | 'destructive' | 'warning'> = {
-  same: 'muted', changed: 'brand', missing: 'destructive', added: 'warning',
+// D6-4: 'changed' used to map to 'brand' (lime) — recolored to 'info' (kept distinct from 'warning',
+// already used for 'added', and from 'destructive', already used for 'missing', so all four decision
+// outcomes stay visually distinguishable without spending the brand accent on a status label).
+const DURUM_TONE: Record<RegressionDiffEntry['durum'], 'muted' | 'info' | 'destructive' | 'warning'> = {
+  same: 'muted', changed: 'info', missing: 'destructive', added: 'warning',
 };
 
 /** Shows the detail of a single decision point (model: text+tool-calls · tool: status/argsHash/output). */
@@ -1511,14 +1588,15 @@ function DecisionDetail({ entry }: { entry: RegressionDiffEntry }) {
       <div className="grid grid-cols-2 gap-2">
         <div className="min-w-0 space-y-1">
           <div className="microlabel text-muted-foreground">{t('baseLabel')}</div>
-          {d.textA !== undefined && <div className="whitespace-pre-wrap break-words rounded bg-muted/40 p-1.5 font-mono text-[11px]">{d.textA || <span className="text-muted-foreground">{t('noText')}</span>}</div>}
+          {d.textA !== undefined && <div className="whitespace-pre-wrap break-words rounded-sm bg-muted/40 p-1.5 font-mono text-[11px]">{d.textA || <span className="text-muted-foreground">{t('noText')}</span>}</div>}
           {d.toolCallsA && d.toolCallsA.length > 0 && (
             <div className="flex flex-wrap gap-1">{d.toolCallsA.map((tc, i) => <Badge key={i} tone="model">{tc.toolName}·{tc.argsHash.slice(0, 8)}</Badge>)}</div>
           )}
         </div>
         <div className="min-w-0 space-y-1">
           <div className="microlabel text-muted-foreground">{t('newLabel')}</div>
-          {d.textB !== undefined && <div className="whitespace-pre-wrap break-words rounded bg-brand/5 p-1.5 font-mono text-[11px]">{d.textB || <span className="text-muted-foreground">{t('noText')}</span>}</div>}
+          {/* D6-4: was bg-brand/5 — recolored to info to match DURUM_TONE.changed below. */}
+          {d.textB !== undefined && <div className="whitespace-pre-wrap break-words rounded-sm bg-info/5 p-1.5 font-mono text-[11px]">{d.textB || <span className="text-muted-foreground">{t('noText')}</span>}</div>}
           {d.toolCallsB && d.toolCallsB.length > 0 && (
             <div className="flex flex-wrap gap-1">{d.toolCallsB.map((tc, i) => <Badge key={i} tone="model">{tc.toolName}·{tc.argsHash.slice(0, 8)}</Badge>)}</div>
           )}
@@ -1566,7 +1644,7 @@ function DecisionList({ report }: { report: RegressionReport }) {
           <span className="font-mono">{report.baseRunId} <span className="text-muted-foreground">↔</span> {report.newRunId}</span>
           <span className="ml-auto flex gap-1.5">
             <Badge tone="muted">{t('summarySame', { count: diff.summary.same })}</Badge>
-            <Badge tone="brand">{t('summaryChanged', { count: diff.summary.changed })}</Badge>
+            <Badge tone="info">{t('summaryChanged', { count: diff.summary.changed })}</Badge>
             {diff.summary.missing > 0 && <Badge tone="destructive">{t('summaryMissing', { count: diff.summary.missing })}</Badge>}
             {diff.summary.added > 0 && <Badge tone="warning">{t('summaryAdded', { count: diff.summary.added })}</Badge>}
           </span>
@@ -1576,7 +1654,8 @@ function DecisionList({ report }: { report: RegressionReport }) {
         {diff.divergentAt === undefined ? (
           <div className="rounded-md border border-success/40 bg-success/5 p-2.5 text-xs text-success">{t('allDecisionsSame')}</div>
         ) : (
-          <div className="rounded-md border border-brand/40 bg-brand/5 p-2.5 text-xs text-brand">{t('firstDivergence', { index: diff.divergentAt, kind: diff.steps[diff.divergentAt]?.kind })}</div>
+          // D6-4: was border/bg/text-brand — recolored to info, matching DURUM_TONE.changed above.
+          <div className="rounded-md border border-info/40 bg-info/5 p-2.5 text-xs text-info">{t('firstDivergence', { index: diff.divergentAt, kind: diff.steps[diff.divergentAt]?.kind })}</div>
         )}
       </Reveal>
       {diff.steps.length === 0 ? (
@@ -1588,7 +1667,7 @@ function DecisionList({ report }: { report: RegressionReport }) {
               key={i}
               className={cn(
                 'rounded-md border p-2.5',
-                i === diff.divergentAt ? 'border-brand/60' : 'border-border',
+                i === diff.divergentAt ? 'border-info/60' : 'border-border',
                 s.durum === 'same' && 'opacity-70',
               )}
             >
@@ -1637,7 +1716,9 @@ function ProcessorReportCard({ r }: { r: ProcessorReport }) {
   return (
     <div className="rounded-md border border-border p-3">
       <div className="flex items-center gap-2">
-        <Badge tone="brand">{r.name}</Badge>
+        {/* D6-4: processor name was tone="brand" — just a data label, not live/primary; "info" keeps it
+            visually distinct from the neutral phase chip beside it without spending the brand accent. */}
+        <Badge tone="info">{r.name}</Badge>
         <Badge tone="muted">{PROCESSOR_PHASE_LABEL[r.phase]}</Badge>
         {r.ts != null && <span className="ml-auto font-mono text-[10px] text-muted-foreground">{new Date(r.ts).toLocaleString()}</span>}
       </div>
@@ -1734,8 +1815,10 @@ function RegressionView({ runId }: { runId: string }) {
   return (
     <div className="space-y-4">
       <div className="rounded-md border border-border p-3">
+        {/* D6-4: section-heading icon, not the actual action — the real "Re-run" Btn below stays
+            variant="primary" (brand); this icon no longer needs its own brand tint. */}
         <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-foreground">
-          <FlaskConical size={13} className="text-brand" /> {t('rerun')}
+          <FlaskConical size={13} className="text-foreground" /> {t('rerun')}
         </div>
         <p className="mb-2 text-xs text-muted-foreground">
           {t('rerunDescription')}
@@ -1822,7 +1905,7 @@ function Approvals({ runId, onDone }: { runId: string; onDone: () => void }) {
       <div className="mb-2 text-xs font-medium text-warning">{t('pendingApprovalTool', { count: pending.length })}</div>
       <div className="space-y-1.5">
         {pending.map((p) => (
-          <div key={p.toolCallId} className="flex items-center justify-between gap-2 rounded bg-background/60 px-2 py-1.5">
+          <div key={p.toolCallId} className="flex items-center justify-between gap-2 rounded-sm bg-background/60 px-2 py-1.5">
             <span className="font-mono text-xs">{p.toolName}</span>
             <div className="flex gap-1.5">
               <Btn variant="ok" size="xs" disabled={busy} onClick={() => decide({ [p.toolCallId]: true })}><Check size={13} /> {t('approve')}</Btn>

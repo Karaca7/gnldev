@@ -10,6 +10,7 @@
   "saveError": "Could not save: {{error}}",
   "saveConflictError": "{{error}} — nothing was saved and your edits are kept. Use \"Discard changes\" to load the current rules, or save again to apply yours on top.",
   "title": "Guard / Policy rules",
+  "description": "See which permissions each role grants, and set per-tool guard rules — allow, deny, or require approval.",
   "unsavedBadge": "unsaved changes",
   "readOnlyBadge": "read-only (you don't have write access)",
   "discardButton": "Discard changes",
@@ -30,7 +31,7 @@
   "reasonAriaLabel": "Reason",
   "deleteRuleTitle": "Delete rule",
   "confirmDeleteTitle": "Delete rule?",
-  "confirmDeleteDesc": "The rule '{{tool}}' will be removed from the list — it won't take effect until you press Save.",
+  "confirmDeleteDesc": "The rule '{{tool}}' will be deleted from the list — it won't take effect until you press Save.",
   "emptyToolPlaceholder": "(empty)",
-  "removeButton": "Remove"
+  "removeButton": "Delete"
 }

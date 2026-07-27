@@ -4,7 +4,7 @@ import { motion, useReducedMotion } from 'framer-motion';
 import { Pencil, Save, X, Plus, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useOrganizations, useCapabilities, api, errMessage, type BudgetLimit, type SweepResult } from '../api';
-import { Spinner, Empty, ErrorBox, Badge, Btn, StatStrip, cn } from '../components';
+import { Spinner, Empty, ErrorBox, Badge, Btn, StatStrip, PageHeader, cn } from '../components';
 import { toast, ConfirmDialog } from '../ui';
 import { Reveal } from '../motion';
 // Note: unlike other views, there is deliberately NO '../i18n' side-effect import here —
@@ -51,9 +51,9 @@ function BudgetMeter({ label, used, limit, unit, exceeded }: { label: string; us
         <span className="text-foreground">{fmt(used)} / {fmt(limit)}</span>
         <span className={exceeded ? 'text-destructive' : 'text-brand'}>%{pct}</span>
       </div>
-      <div className="h-1.5 overflow-hidden rounded bg-background">
+      <div className="h-1.5 overflow-hidden rounded-sm bg-background">
         <motion.div
-          className={cn('h-full rounded', exceeded ? 'bg-destructive' : 'bg-brand')}
+          className={cn('h-full rounded-sm', exceeded ? 'bg-destructive' : 'bg-brand')}
           initial={reduce ? false : { width: 0 }}
           animate={{ width: `${ratio * 100}%` }}
           transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
@@ -247,25 +247,30 @@ export function Organizations() {
   const totals = rows.reduce((a, r) => ({ runs: a.runs + r.runs, tokens: a.tokens + r.tokens, cost: a.cost + r.costUsd }), { runs: 0, tokens: 0, cost: 0 });
   const fmtNum = (n: number) => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n));
   return (
-    <>
+    <div className="flex h-full flex-col">
+    <PageHeader
+      title={t('title')}
+      description={t('description')}
+      meta={
+        <>
+          <Badge tone="muted">{rows.length}</Badge>
+          {/* EE license badge: plan + expiry (flows from auth-ee capabilities). */}
+          {plan && <Badge tone="info">{t('planBadge', { plan })}</Badge>}
+          {licenseExp != null && (
+            <Badge tone={licenseExp < Date.now() + 14 * 86_400_000 ? 'warning' : 'muted'}>
+              {t('licenseExpiry')} {new Date(licenseExp).toLocaleDateString('tr-TR')}
+            </Badge>
+          )}
+        </>
+      }
+    />
     <StatStrip items={[
       { label: t('statOrgs'), value: rows.length.toLocaleString() },
       { label: t('statRuns'), value: totals.runs.toLocaleString() },
       { label: t('statTokens'), value: fmtNum(totals.tokens) },
       { label: t('statSpend'), value: '$' + totals.cost.toFixed(4) },
     ]} />
-    <div className="space-y-3 p-5">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="microlabel text-muted-foreground">{t('title', { count: rows.length })}</span>
-        {/* EE license badge: plan + expiry (flows from auth-ee capabilities). */}
-        {plan && <Badge tone="info">{t('planBadge', { plan })}</Badge>}
-        {licenseExp != null && (
-          <Badge tone={licenseExp < Date.now() + 14 * 86_400_000 ? 'warning' : 'muted'}>
-            {t('licenseExpiry')} {new Date(licenseExp).toLocaleDateString('tr-TR')}
-          </Badge>
-        )}
-      </div>
-
+    <div className="min-h-0 flex-1 overflow-auto space-y-3 p-5">
       {canManageOrgs && <CreateOrganization />}
 
       {/* Default budget: fallback applied to EVERYONE without an org-specific document. */}
@@ -289,7 +294,7 @@ export function Organizations() {
 
       {rows.length === 0 && (
         <Empty>
-          {t('emptyPart1')}<code className="rounded bg-muted px-1">x-gnl-org</code>{t('emptyPart2')}
+          {t('emptyPart1')}<code className="rounded-sm bg-muted px-1">x-gnl-org</code>{t('emptyPart2')}
         </Empty>
       )}
 
@@ -398,7 +403,7 @@ export function Organizations() {
         onConfirm={() => { if (delId) doDelete(delId); setDelId(null); }}
       />
     </div>
-    </>
+    </div>
   );
 }
 

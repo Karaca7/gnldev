@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Trash2, Database } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { api, useCapabilities, useCacheStats, errMessage } from '../api';
-import { Spinner, Empty, EmptyState, ErrorBox, Btn, cn } from '../components';
+ÇÇ&*import { Spinner, Empty, EmptyState, ErrorBox, Btn, cn, PageHeader } from '../components';
 import { toast, ConfirmDialog } from '../ui';
 import { Stagger, StaggerItem } from '../motion';
 // i18n init side effect: so useTranslation still works if this view is rendered directly
@@ -34,7 +34,10 @@ function Card({ label, value, hint, tone = 'muted' }: {
     success: 'text-success', warning: 'text-warning', destructive: 'text-destructive', muted: 'text-foreground',
   }[tone];
   return (
-    <div className="rounded-md border border-border bg-card p-3">
+    // h-full / min-w-0: same reason as the identical card in Observability — only some of these take
+    // a `hint`, the grid row sizes to the tallest, and the stretched grid item is the StaggerItem
+    // wrapper rather than this box, so the hint-less cards ended short of the row.
+    <div className="h-full min-w-0 rounded-md border border-border bg-card p-3">
       <div className="microlabel text-muted-foreground">{label}</div>
       <div className={cn('mt-1 text-xl font-semibold tabular-nums', toneCls)}>{value}</div>
       {hint && <div className="mt-0.5 text-[11px] text-muted-foreground">{hint}</div>}
@@ -72,13 +75,19 @@ function InvalidatePanel() {
     <div className="mt-4 rounded-md border border-border bg-card px-3 py-2">
       <div className="flex flex-wrap items-center gap-3">
         <span className="text-xs font-medium">{t('manualInvalidate')}</span>
-        <input
-          value={key}
-          onChange={(e) => setKey(e.target.value)}
-          placeholder={t('keyPlaceholder')}
-          aria-label={t('keyAriaLabel')}
-          className="w-56 rounded-md border border-input bg-background px-2 py-1 font-mono text-xs outline-none"
-        />
+        <div className="flex flex-col gap-0.5">
+          <input
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+            placeholder={t('keyPlaceholder')}
+            aria-label={t('keyAriaLabel')}
+            aria-describedby="cache-invalidate-key-help"
+            className="w-56 rounded-md border border-input bg-background px-2 py-1 font-mono text-xs outline-none"
+          />
+          {/* [D4-5] Persistent help line, not a placeholder: the placeholder used to carry the "empty =
+              clear all known keys" behavior note, which disappears the moment the admin starts typing. */}
+          <span id="cache-invalidate-key-help" className="text-xs text-muted-foreground">{t('keyHelp')}</span>
+        </div>
         <Btn size="xs" variant="outline" disabled={busy} onClick={() => setConfirmOpen(true)}>
           <Trash2 size={12} className="text-destructive" /> {busy ? t('clearing') : t('clearButton')}
         </Btn>
@@ -112,25 +121,31 @@ export function Cache() {
   const total = s.hits + s.misses;
 
   return (
-    <div className="h-full overflow-auto p-4">
-      <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
-        <span className="live-dot" aria-hidden />
-        {t('liveStatus')}
+    <div className="flex h-full flex-col">
+      {/* PageHeader stays a shrink-0 sibling above the scroll cab below it. */}
+      <div className="shrink-0">
+        <PageHeader title={t('title')} description={t('description')} />
       </div>
-      <Stagger className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StaggerItem><Card label={t('hitLabel')} value={String(s.hits)} tone="success" /></StaggerItem>
-        <StaggerItem><Card label={t('missLabel')} value={String(s.misses)} tone="destructive" /></StaggerItem>
-        <StaggerItem>
-          <Card label={t('hitRateLabel')} value={formatHitRate(s.hitRate)} tone={hitRateTone(s.hitRate, total)} hint={t('requestsHint', { count: total })} />
-        </StaggerItem>
-        <StaggerItem>
-          <Card label={t('knownKeysLabel')} value={String(s.size)} hint={t('knownKeysHint')} />
-        </StaggerItem>
-      </Stagger>
-      {total === 0 && s.size === 0 && (
-        <div className="mt-3"><Empty>{t('emptyStats')}</Empty></div>
-      )}
-      {caps.data?.cacheManage && <InvalidatePanel />}
+      <div className="min-h-0 flex-1 overflow-auto p-4">
+        <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
+          <span className="live-dot" aria-hidden />
+          {t('liveStatus')}
+        </div>
+        <Stagger className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <StaggerItem><Card label={t('hitLabel')} value={String(s.hits)} tone="success" /></StaggerItem>
+          <StaggerItem><Card label={t('missLabel')} value={String(s.misses)} tone="destructive" /></StaggerItem>
+          <StaggerItem>
+            <Card label={t('hitRateLabel')} value={formatHitRate(s.hitRate)} tone={hitRateTone(s.hitRate, total)} hint={t('requestsHint', { count: total })} />
+          </StaggerItem>
+          <StaggerItem>
+            <Card label={t('knownKeysLabel')} value={String(s.size)} hint={t('knownKeysHint')} />
+          </StaggerItem>
+        </Stagger>
+        {total === 0 && s.size === 0 && (
+          <div className="mt-3"><Empty>{t('emptyStats')}</Empty></div>
+        )}
+        {caps.data?.cacheManage && <InvalidatePanel />}
+      </div>
     </div>
   );
 }

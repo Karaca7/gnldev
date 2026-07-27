@@ -82,7 +82,9 @@ describe('Users: permission catalog gating (free tier vs RBAC)', () => {
       route('/users', 'GET', { users: [{ id: 'u1', email: 'a@b.com', roles: ['viewer'] }] }),
     ]);
     wrap(<Users />);
-    await waitFor(() => expect(screen.getByText('Users (1)')).toBeTruthy());
+    // D3-2: the "Users (1)" line split into a PageHeader <h1> plus a separate count badge,
+    // so the view has loaded once the heading is on screen.
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Users' })).toBeTruthy());
     // The role select from before this feature is still there…
     expect(screen.getByLabelText('Role')).toBeTruthy();
     // …but nothing permission-related is rendered.

@@ -1,4 +1,6 @@
 {
+  "title": "Scheduler",
+  "description": "Her zamanlanmış trigger'ın canlı durumu — sonraki çalışma zamanı, misfire politikası ve deneme sayısı, otomatik yenilenir.",
   "statSchedules": "Zamanlama",
   "statActive": "Aktif",
   "statNextRun": "Sonraki",
@@ -12,11 +14,15 @@
   "relativeNow": "şimdi",
   "relativeIn": "{{duration}} sonra",
   "relativeAgo": "{{duration}} gecikti",
-  "disabled": "Scheduler görünümü etkin değil (journal writable/listKeys desteklemiyor).",
+  "disabledTitle": "Scheduler kapalı",
+  "disabledDescription": "Sunucuda scheduler bağlı değil. Tetikleyicileri ve sonraki çalışmalarını burada görmek için scheduler yeteneğini açın.",
   "emptyTitle": "Henüz trigger yok",
   "emptyDescription": "Trigger'lar, uygulamanız kod içinde scheduleWorkflow() (cron / every / at) çağırdığında burada görünür — Studio yalnızca canlı durumlarını gösterir.",
   "liveStatus": "{{count}} trigger · 5sn'de bir yenilenir",
+  "colId": "ID",
+  "colWorkflow": "Workflow",
   "colTrigger": "Tetikleme",
   "colNextRun": "Sonraki çalışma",
+  "colMisfire": "Misfire",
   "colStatusAttempts": "Durum / deneme"
 }

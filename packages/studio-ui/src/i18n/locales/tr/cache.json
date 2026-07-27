@@ -1,4 +1,6 @@
 {
+  "title": "Cache",
+  "description": "Cache için canlı hit/miss ve anahtar istatistikleri; yönetme yetkiniz varsa aşağıdan belirli ya da bilinen tüm anahtarları invalidate edebilirsiniz.",
   "disabledTitle": "Cache kapalı",
   "disabledDescription": "Bu görünümü açmak için stats() içeren bir @gnldev/cache store'unu `cache` opsiyonu olarak createStudioApi'ye ver.",
   "liveStatus": "otomatik güncellenir (5sn'de bir)",
@@ -10,15 +12,16 @@
   "knownKeysHint": "enumerasyon yok — yalnız bu instance'ın gördükleri",
   "emptyStats": "Henüz hit/miss yok — cache kullanılmayı bekliyor.",
   "manualInvalidate": "Manuel invalidate",
-  "keyPlaceholder": "anahtar (boş = bilinen tümü)",
+  "keyPlaceholder": "ör. agent:summarize",
+  "keyHelp": "Tümünü temizlemek için boş bırakın.",
   "keyAriaLabel": "Invalidate anahtarı",
   "clearing": "siliniyor…",
   "clearButton": "Temizle",
-  "confirmTitleKey": "'{{key}}' invalidate edilsin mi?",
-  "confirmTitleAll": "Bilinen tüm anahtarlar invalidate edilsin mi?",
+  "confirmTitleKey": "'{{key}}' temizlensin mi?",
+  "confirmTitleAll": "Bilinen tüm anahtarlar temizlensin mi?",
   "confirmDescKey": "Bu anahtar cache'ten silinir; sonraki istek yeniden hesaplanır.",
   "confirmDescAll": "Store anahtar enumerasyonu desteklemediğinden bu YALNIZCA host cache instance'ının bu süreçte BİLDİĞİ anahtarları kapsar — store'un tamamı garantili şekilde temizlenmeyebilir.",
-  "invalidateSuccessKey": "'{{key}}' invalidate edildi ({{count}} anahtar)",
-  "invalidateSuccessAll": "Bilinen anahtarlar invalidate edildi ({{count}} anahtar)",
-  "invalidateError": "Invalidate başarısız: {{error}}"
+  "invalidateSuccessKey": "'{{key}}' temizlendi ({{count}} anahtar)",
+  "invalidateSuccessAll": "Bilinen anahtarlar temizlendi ({{count}} anahtar)",
+  "invalidateError": "Temizleme başarısız: {{error}}"
 }

@@ -1,7 +1,9 @@
 {
+  "title": "Evals",
+  "description": "Run a scored dataset end-to-end, or score any past run against selected scorers.",
   "disabledTitle": "Evals disabled",
   "disabledDescription": "Wrap @gnldev/evals' scoreRun/evalDataset and pass them as `scorers`/`datasets` to createStudioApi to enable this view.",
-  "noDatasets": "No datasets.",
+  "noDatasets": "No datasets returned yet. The `datasets` adapter passed to createStudioApi isn't returning any entries — add cases to its `list()`.",
   "running": "Running…",
   "runAction": "Run",
   "scoreRunHeading": "Score a run",

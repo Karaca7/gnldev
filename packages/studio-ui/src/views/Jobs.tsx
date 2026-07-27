@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 import { ListChecks, RotateCcw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useJobs, useCapabilities, api, errMessage } from '../api';
-import { Spinner, EmptyState, ErrorBox, Badge, Btn, StatStrip } from '../components';
+import { Spinner, EmptyState, ErrorBox, Badge, Btn, StatStrip, PageHeader } from '../components';
 import { toast } from '../ui';
 import { Stagger, StaggerItem } from '../motion';
 // i18n init side effect: so useTranslation still works if this view is rendered directly
@@ -55,6 +55,10 @@ export function Jobs() {
   const jc = (...sts: string[]) => jobs.data!.filter((j) => sts.includes(j.status)).length;
   return (
     <div className="flex h-full flex-col">
+    {/* PageHeader stays a shrink-0 sibling above StatStrip — the scroll cab below it is what shrinks. */}
+    <div className="shrink-0">
+      <PageHeader title={t('title')} description={t('description')} />
+    </div>
     <StatStrip items={[
       { label: t('statQueued'), value: String(jc('queued', 'pending')) },
       { label: t('statRunning'), value: String(jc('running', 'active')) },
@@ -63,15 +67,17 @@ export function Jobs() {
     ]} />
     <div className="min-h-0 flex-1 overflow-auto p-4">
       <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
-        {/* Live: the list auto-refreshes every 3s — the pulse is decorative, status is also shown as text. */}
-        <span className="live-dot" aria-hidden />
+        {/* record-dot, not live-dot: standalone freshness note (not inside a Badge) — the list
+            auto-refreshes every 3s, the pulse is decorative, status is also shown as text.
+            .live-dot is reserved for the pulse inside Badge/StatusBadge (see index.css). */}
+        <span className="record-dot record-dot--live" aria-hidden />
         {t('liveStatus', { count: jobs.data.length })}
       </div>
       <div className="overflow-x-auto rounded-md border border-border bg-background">
         <table className="w-full font-mono text-sm">
           <thead>
             <tr className="border-b border-border text-left text-xs text-muted-foreground">
-              <th className="py-1.5 pl-3 pr-3 font-medium">ID</th>
+              <th className="py-1.5 pl-3 pr-3 font-medium">{t('colId')}</th>
               <th className="py-1.5 pr-3 font-medium">{t('colType')}</th>
               <th className="py-1.5 pr-3 font-medium">{t('colStatus')}</th>
               <th className="py-1.5 pr-3 font-medium">{t('colAttempts')}</th>

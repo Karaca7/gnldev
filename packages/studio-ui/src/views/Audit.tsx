@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ScrollText } from 'lucide-react';
 import { useAudit, type AuditItem } from '../api';
-import { Spinner, EmptyState, ErrorBox, Badge, StatStrip, JsonBlock } from '../components';
+import { Spinner, EmptyState, ErrorBox, Badge, StatStrip, JsonBlock, PageHeader } from '../components';
 // Note: unlike the other views, this one deliberately has NO '../i18n' side-effect import —
 // this file's pure functions (auditToCsv/ACTIONS) are imported directly in a node environment
 // (without jsdom, see test/observability-audit.test.ts); i18n/index.ts's getStoredLang()
@@ -95,16 +95,33 @@ export function Audit() {
   const nRej = items.filter((i) => i.action === 'deny').length;
   const nPolicy = items.filter((i) => i.action.includes('policy')).length;
   return (
-    <>
+    <div className="flex h-full flex-col">
+    {/* PageHeader stays a shrink-0 sibling above StatStrip — the scroll cab below it is what shrinks. */}
+    <div className="shrink-0">
+      <PageHeader
+        title={t('title')}
+        description={t('description')}
+        meta={<Badge tone="muted">{items.length}{mayHaveMore ? '+' : ''}</Badge>}
+        actions={(
+          <button
+            type="button"
+            onClick={() => downloadText(`gnl-audit-${Date.now()}.csv`, auditToCsv(items), 'text/csv;charset=utf-8;')}
+            disabled={items.length === 0}
+            className="rounded-md border border-input px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+          >
+            {t('downloadCsv')}
+          </button>
+        )}
+      />
+    </div>
     <StatStrip items={[
       { label: t('statEvents'), value: `${items.length}${mayHaveMore ? '+' : ''}` },
       { label: t('statApprovals'), value: String(nAppr) },
       { label: t('statRejections'), value: String(nRej) },
       { label: t('statPolicyChanges'), value: String(nPolicy) },
     ]} />
-    <div className="space-y-3 p-5">
+    <div className="min-h-0 flex-1 overflow-auto space-y-3 p-5">
       <div className="flex items-center gap-2">
-        <span className="microlabel text-muted-foreground">{t('title', { count: items.length })}{mayHaveMore ? '+' : ''}</span>
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
@@ -116,14 +133,6 @@ export function Audit() {
           <option value="">{t('allActions')}</option>
           {ACTIONS.map((a) => <option key={a} value={a}>{a}</option>)}
         </select>
-        <button
-          type="button"
-          onClick={() => downloadText(`gnl-audit-${Date.now()}.csv`, auditToCsv(items), 'text/csv;charset=utf-8;')}
-          disabled={items.length === 0}
-          className="rounded-md border border-input px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-        >
-          {t('downloadCsv')}
-        </button>
       </div>
 
       {items.length === 0 && <EmptyState icon={ScrollText} title={t('emptyTitle')} description={t('emptyDescription')} />}
@@ -183,6 +192,6 @@ export function Audit() {
         </div>
       )}
     </div>
-    </>
+    </div>
   );
 }

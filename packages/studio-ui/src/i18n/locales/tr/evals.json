@@ -1,7 +1,9 @@
 {
+  "title": "Evals",
+  "description": "Bir dataset'i uçtan uca skorlayarak çalıştır, ya da geçmiş bir run'ı seçili scorer'lara göre skorla.",
   "disabledTitle": "Evals kapalı",
   "disabledDescription": "Bu görünümü açmak için @gnldev/evals'ın scoreRun/evalDataset'ini sarmalayıp `scorers`/`datasets` olarak createStudioApi'ye ver.",
-  "noDatasets": "Dataset yok.",
+  "noDatasets": "Henüz dataset dönmüyor. createStudioApi'ye geçirilen `datasets` adaptörü hiç kayıt döndürmüyor — `list()`'ine case ekleyin.",
   "running": "Çalışıyor…",
   "runAction": "Çalıştır",
   "scoreRunHeading": "Bir run'ı skorla",

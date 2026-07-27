@@ -106,10 +106,12 @@ describe('studio-ui components', () => {
     expect(screen.getByText(/2 model · 1 tool/)).toBeTruthy();
   });
 
-  it('Inspector shows "No runs." for an empty list', async () => {
+  it('Inspector shows the empty-state invitation for an empty list', async () => {
     stubFetch({ '/capabilities': CAPS, '/runs?limit=50': { items: [], total: 0 } });
     wrap(<Inspector />);
-    await waitFor(() => expect(screen.getByText('No runs.')).toBeTruthy());
+    // D1-4: the bare "No runs." line became a full EmptyState (title + description + a
+    // Playground CTA when that capability is on) — the first screen a fresh install lands on.
+    await waitFor(() => expect(screen.getByText('No runs yet')).toBeTruthy());
   });
 
   it('Inspector purge: with caps.purge, trash button → confirmation dialog → DELETE /runs/:id', async () => {
@@ -124,7 +126,9 @@ describe('studio-ui components', () => {
     fireEvent.click(screen.getByText('run-42')); // select the run → RunDetail opens
     const purgeBtn = await screen.findByTitle('Permanently delete this run (GDPR purge)');
     fireEvent.click(purgeBtn);
-    fireEvent.click(await screen.findByText('Permanently delete')); // confirm the dialog
+    // D4-2: one verb across the chain — trigger "Delete" → confirm "Delete permanently" → toast
+    // "Run permanently deleted". The trigger stays short so it fits beside Unwind/Cancel.
+    fireEvent.click(await screen.findByText('Delete permanently')); // confirm the dialog
     await waitFor(() => {
       const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
       const del = calls.find(([u, init]: any[]) => String(u).endsWith('/runs/run-42') && init?.method === 'DELETE');

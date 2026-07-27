@@ -6,7 +6,7 @@ import {
   useUsers, useOrganizations, useMe, useCapabilities, usePermissionsCatalog,
   api, errMessage, type StudioUser, type PermissionCatalog, type PermissionCatalogEntry,
 } from '../api';
-import { Spinner, Empty, ErrorBox, Badge, Btn, StatStrip } from '../components';
+import { Spinner, Empty, ErrorBox, Badge, Btn, StatStrip, PageHeader } from '../components';
 import { toast, ConfirmDialog, Dialog } from '../ui';
 import { Reveal } from '../motion';
 // i18n init side effect: so that useTranslation also works if this view is rendered directly
@@ -315,7 +315,7 @@ function TokenBanner({ id, token, onClose }: { id: string; token: string; onClos
     <div className="rounded-md border border-warning/40 bg-warning/10 p-3 text-xs">
       <div className="mb-1 font-medium">{t('tokenBannerText', { id })}</div>
       <div className="flex items-center gap-2">
-        <code className="flex-1 overflow-x-auto rounded bg-muted px-2 py-1 font-mono">{token}</code>
+        <code className="flex-1 overflow-x-auto rounded-sm bg-muted px-2 py-1 font-mono">{token}</code>
         <Btn size="xs" variant="outline" onClick={copy}>{copied ? <Check size={12} /> : <Copy size={12} />} {t('copyButton')}</Btn>
         <Btn size="xs" variant="ghost" onClick={() => (copied ? onClose() : setConfirmClose(true))}>{t('closeButton')}</Btn>
       </div>
@@ -391,19 +391,25 @@ export function Users() {
   const activeCount = rows.filter((u) => !u.revoked).length;
   const adminCount = rows.filter((u) => u.roles.some((r) => r === 'admin' || r === 'platform-admin')).length;
   return (
-    <>
+    <div className="flex h-full flex-col">
+    <PageHeader
+      title={t('title')}
+      description={t('description')}
+      meta={
+        <>
+          <Badge tone="muted">{rows.length}</Badge>
+          {ownOrg
+            ? <Badge tone="info">{t('orgBadge', { org: ownOrg })}</Badge>
+            : <Badge tone="muted">{t('platformOperatorBadge')}</Badge>}
+        </>
+      }
+    />
     <StatStrip items={[
       { label: t('statUsers'), value: rows.length.toLocaleString() },
       { label: t('statActive'), value: activeCount.toLocaleString() },
       { label: t('statAdmins'), value: adminCount.toLocaleString() },
     ]} />
-    <div className="space-y-3 p-5">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="microlabel text-muted-foreground">{t('title', { count: rows.length })}</span>
-        {ownOrg
-          ? <Badge tone="info">{t('orgBadge', { org: ownOrg })}</Badge>
-          : <Badge tone="muted">{t('platformOperatorBadge')}</Badge>}
-      </div>
+    <div className="min-h-0 flex-1 overflow-auto space-y-3 p-5">
       {canManage && (
         <CreateUser
           orgs={orgIds}
@@ -504,6 +510,6 @@ export function Users() {
         />
       )}
     </div>
-    </>
+    </div>
   );
 }

@@ -13,7 +13,8 @@
   "saveError": "Kaydedilemedi: {{error}}",
   "save": "Kaydet",
   "unlimited": "limitsiz",
-  "title": "Organizasyonlar ({{count}})",
+  "title": "Organizasyonlar",
+  "description": "Organizasyon oluştur, harcama ve kullanımını izle, bütçe limitlerini belirle.",
   "planBadge": "plan: {{plan}}",
   "licenseExpiry": "lisans bitişi:",
   "newOrgLabel": "Yeni organizasyon",
@@ -53,7 +54,7 @@
   "keptNoTsBadge": "{{count}} ts'siz korundu",
   "sweepSuccess": "Süpürme bitti: {{count}} run silindi ({{entries}} kayıt)",
   "sweepError": "Süpürülemedi: {{error}}",
-  "confirmSweepTitle": "{{days}} günden eski run'lar silinsin mi?",
+  "confirmSweepTitle": "{{days}} günden eski run'lar süpürülsün mü?",
   "confirmSweepDescKeep": " (askıdakiler korunur)",
   "confirmSweepDescAll": " — ASKIDAKİLER DAHİL",
   "confirmSweepDesc": "TÜM organizasyonlarda {{days}} günden eski run'ların journal kayıtları kalıcı silinir{{suffix}}. Geri alınamaz."

@@ -1,23 +1,35 @@
 // Radix-based primitives: Dialog/ConfirmDialog, DropdownMenu, Tooltip, Toast (sonner),
-// CommandPalette (cmdk). Visual language: flight-recorder tokens (index.css) + microlabel.
+// CommandPalette (cmdk). Visual language: theme tokens (index.css) + microlabel.
 // The lightweight pieces in components.tsx (Btn/Badge/…) stay as-is; this file is the overlay layer.
 import { type ReactNode, useEffect, useState } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import * as DropdownPrimitive from '@radix-ui/react-dropdown-menu';
 import * as TooltipPrimitive from '@radix-ui/react-tooltip';
 import { Command } from 'cmdk';
-import { Toaster as SonnerToaster, toast } from 'sonner';
+import { Toaster as SonnerToaster, toast as sonnerToast } from 'sonner';
 import { X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn, Btn } from './components';
 
-export { toast };
+// Every call site imports `toast` from here (not from 'sonner' directly), which is what lets this
+// wrapper apply a policy centrally instead of touching every `toast.error(...)` call site.
+// Error toasts default to `duration: Infinity` — unlike success toasts, they interpolate raw
+// server error messages, which can run long, and sonner's plain 4s default risks the message
+// being missed with no way to get it back. Callers can still override by passing their own
+// `duration`. Paired with `closeButton` on <Toaster> below, so an infinite-duration toast is
+// never one the user is stuck looking at.
+const sonnerError = sonnerToast.error;
+export const toast = Object.assign(sonnerToast, {
+  error: (message: Parameters<typeof sonnerToast.error>[0], data?: Parameters<typeof sonnerToast.error>[1]) =>
+    sonnerError(message, { duration: Infinity, ...data }),
+});
 
 /** App-wide toast bridge — colored using theme tokens (mounted once in main.tsx). */
 export function Toaster() {
   return (
     <SonnerToaster
       position="bottom-right"
+      closeButton
       toastOptions={{
         // Ink surface + a thin lime identity line (left edge) on all toasts; overridden with
         // success=Neon Green, error=destructive red (color + text double-coding is already preserved:
@@ -67,7 +79,7 @@ export function Dialog({
         >
           <div className="mb-3 flex items-start justify-between gap-4">
             <DialogPrimitive.Title className="text-sm font-bold">{title}</DialogPrimitive.Title>
-            <DialogPrimitive.Close className="rounded p-0.5 text-muted-foreground hover:text-brand" aria-label={t('close')}>
+            <DialogPrimitive.Close className="rounded-sm p-0.5 text-muted-foreground hover:text-brand" aria-label={t('close')}>
               <X size={14} />
             </DialogPrimitive.Close>
           </div>
@@ -130,7 +142,7 @@ export function Dropdown({
               disabled={it.disabled}
               onSelect={it.onSelect}
               className={cn(
-                'cursor-default select-none rounded border-l-2 border-l-transparent px-2 py-1.5 text-sm outline-none transition-colors',
+                'cursor-default select-none rounded-sm border-l-2 border-l-transparent px-2 py-1.5 text-sm outline-none transition-colors',
                 'data-[highlighted]:bg-muted data-[disabled]:opacity-50',
                 // Selected/highlighted row edge line: lime for a neutral action ("active/selected state" rule),
                 // red for a destructive action — color always matches its own meaning.
@@ -216,16 +228,39 @@ export function CommandPalette({ items }: { items: CommandItem[] }) {
               <Command.Empty className="px-3 py-6 text-center text-sm text-muted-foreground">
                 {t('noResults')}
               </Command.Empty>
-              {items.map((it) => (
-                <Command.Item
-                  key={it.id}
-                  value={`${it.label} ${it.hint ?? ''}`}
-                  onSelect={() => { setOpen(false); it.onSelect(); }}
-                  className="flex cursor-default select-none items-center justify-between rounded border-l-2 border-l-transparent px-2.5 py-1.5 text-sm transition-colors data-[selected=true]:border-l-brand data-[selected=true]:bg-muted"
+              {/* D5-10: group by `hint` — each nav item's hint is already its nav-group name
+                  ("Runs"/"Build"/"Operate"/"Governance", see App.tsx), and theme/logout carry their
+                  own single-item groups ("theme"/"session") — so no item is ever without a group.
+                  Grouping is built in first-seen order (a Map preserves insertion order), not sorted
+                  alphabetically, so it mirrors the sidebar's nav order rather than scrambling it.
+                  cmdk's Command.Group hides itself (and its heading) once filtering empties it out —
+                  verified in node_modules/cmdk/dist/index.mjs — so search still narrows correctly. */}
+              {Array.from(
+                items.reduce((groups, it) => {
+                  const key = it.hint ?? '';
+                  (groups.get(key) ?? groups.set(key, []).get(key)!).push(it);
+                  return groups;
+                }, new Map<string, CommandItem[]>()),
+              ).map(([key, groupItems]) => (
+                <Command.Group
+                  key={key || '_ungrouped'}
+                  value={key}
+                  heading={key ? <div className="microlabel px-2.5 pb-1 pt-2 text-muted-foreground">{key}</div> : undefined}
                 >
-                  <span>{it.label}</span>
-                  {it.hint && <span className="microlabel text-muted-foreground">{it.hint}</span>}
-                </Command.Item>
+                  {groupItems.map((it) => (
+                    <Command.Item
+                      key={it.id}
+                      value={`${it.label} ${it.hint ?? ''}`}
+                      onSelect={() => { setOpen(false); it.onSelect(); }}
+                      className="flex cursor-default select-none items-center rounded-sm border-l-2 border-l-transparent px-2.5 py-1.5 text-sm transition-colors data-[selected=true]:border-l-brand data-[selected=true]:bg-muted"
+                    >
+                      {/* The hint used to also render inline here — now redundant once the group
+                          heading above already names the group, so it's dropped to keep the row
+                          single-purpose (it still lives on in the search `value` above). */}
+                      <span>{it.label}</span>
+                    </Command.Item>
+                  ))}
+                </Command.Group>
               ))}
             </Command.List>
           </Command>

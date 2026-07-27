@@ -56,13 +56,14 @@ describe('JsonBlock (bug investigation #6)', () => {
   });
 });
 
-describe('ErrorBox (STATE-10)', () => {
+describe('ErrorBox (STATE-10, D4-11)', () => {
   it('shows the clean server message, not the "ApiError:" technical prefix', () => {
     render(<ErrorBox error={new ApiError(402, 'organization budget exceeded')} />);
-    // errMessage() strips the "ApiError:" prefix String(error) used to add — only ErrorBox's own
-    // t('errorPrefix') label ("Error") should appear, never doubled up with the class name.
-    expect(screen.getByText('Error: organization budget exceeded')).toBeTruthy();
+    // errMessage() strips the "ApiError:" prefix String(error) used to add. D4-11: the redundant
+    // "Error:" label was also dropped — role="alert" + red styling already conveys severity.
+    expect(screen.getByText('organization budget exceeded')).toBeTruthy();
     expect(screen.queryByText(/ApiError/)).toBeNull();
+    expect(screen.queryByText(/^Error:/)).toBeNull();
   });
 });
 

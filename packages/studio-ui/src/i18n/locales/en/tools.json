@@ -11,5 +11,8 @@
   "rawJsonInputAriaLabel": "Raw JSON input",
   "running": "Running…",
   "runTest": "Run test",
-  "backToToolsTitle": "Back to tool list"
+  "backToToolsTitle": "Back to tool list",
+  "guardedBadge": "guarded",
+  "durableCheckboxLabel": "durable (writes to the journal)",
+  "blockedByGuard": "guard: {{value}}"
 }

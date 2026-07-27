@@ -19,5 +19,11 @@
   "policy": "Policy",
   "groupRuns": "Runs",
   "groupBuild": "Build",
-  "groupGovernance": "Governance"
+  "groupOperate": "Operate",
+  "groupGovernance": "Governance",
+  "apiSwagger": "API (Swagger)",
+  "pendingApprovalsBadge_one": "{{count}} pending approval",
+  "pendingApprovalsBadge_other": "{{count}} pending approvals",
+  "failedJobsBadge_one": "{{count}} failed job",
+  "failedJobsBadge_other": "{{count}} failed jobs"
 }

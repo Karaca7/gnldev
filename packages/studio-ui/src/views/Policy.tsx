@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2, Save, RotateCcw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { usePolicy, useCapabilities, usePermissionsCatalog, api, errMessage, ApiError, type PolicyRule } from '../api';
-import { Spinner, Empty, Badge, Btn, ErrorBox, cn } from '../components';
+import { Spinner, Empty, Badge, Btn, ErrorBox, PageHeader, cn } from '../components';
 import { toast, ConfirmDialog } from '../ui';
 // i18n init side effect: so that useTranslation also works if this view is rendered directly
 // (without App) (see src/i18n/index.ts) — main.tsx already does this, this re-ensures it here.
@@ -162,25 +162,32 @@ export function Policy() {
 
   return (
     <div className="space-y-5 p-5">
-      {/* RBAC role→permission matrix (mockup's Policy view) — the guard rules editor follows below. */}
-      <RoleMatrix />
-      <div className="max-w-3xl space-y-3">
-      <div className="flex items-center gap-2">
-        <span className="microlabel text-muted-foreground">{t('title')}</span>
-        {policy.data?.policy && <Badge tone="info">v{policy.data.policy.version}</Badge>}
-        {dirty && <Badge tone="warning">{t('unsavedBadge')}</Badge>}
-        {!canManage && <Badge tone="muted">{t('readOnlyBadge')}</Badge>}
-        {canManage && (
-          <div className="ml-auto flex gap-1.5">
+      {/* Page-level identity for BOTH sections below (the read-only role matrix and the guard rules
+          editor) — not scoped to the max-w-3xl editor column, so it stays full-width and consistent
+          with RoleMatrix's own (unconstrained) width. */}
+      <PageHeader
+        title={t('title')}
+        description={t('description')}
+        meta={
+          <>
+            {policy.data?.policy && <Badge tone="info">v{policy.data.policy.version}</Badge>}
+            {dirty && <Badge tone="warning">{t('unsavedBadge')}</Badge>}
+            {!canManage && <Badge tone="muted">{t('readOnlyBadge')}</Badge>}
+          </>
+        }
+        actions={canManage && (
+          <>
             {dirty && <Btn size="xs" variant="outline" onClick={discard}><RotateCcw size={12} /> {t('discardButton')}</Btn>}
             <Btn size="xs" variant="outline" onClick={add}><Plus size={12} /> {t('addRuleButton')}</Btn>
             <Btn size="xs" onClick={save} disabled={busy || !dirty}><Save size={12} /> {t('saveButton')}</Btn>
-          </div>
+          </>
         )}
-      </div>
-
+      />
+      {/* RBAC role→permission matrix (mockup's Policy view) — the guard rules editor follows below. */}
+      <RoleMatrix />
+      <div className="max-w-3xl space-y-3">
       <p className="text-xs text-muted-foreground">
-        {t('descPart1')}<code className="rounded bg-muted px-1">*</code>{t('descPart2')}<b>allow</b>{t('descPart3')}
+        {t('descPart1')}<code className="rounded-sm bg-muted px-1">*</code>{t('descPart2')}<b>allow</b>{t('descPart3')}
       </p>
 
       {rules.length === 0 && <Empty>{t('emptyPart1')}<code>chargeCard</code>{t('emptyPart2')}</Empty>}
@@ -224,7 +231,7 @@ export function Policy() {
               className={cn(inputCls, 'min-w-40 flex-1')}
             />
             {canManage && (
-              <button type="button" title={t('deleteRuleTitle')} onClick={() => setRemoveIdx(i)} className="rounded p-1 text-muted-foreground hover:text-destructive">
+              <button type="button" title={t('deleteRuleTitle')} onClick={() => setRemoveIdx(i)} className="rounded-sm p-1 text-muted-foreground hover:text-destructive">
                 <Trash2 size={13} />
               </button>
             )}

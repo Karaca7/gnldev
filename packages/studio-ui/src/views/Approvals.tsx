@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Check, X, ExternalLink, Inbox } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useApprovals, api, errMessage, ApiError } from '../api';
-import { Btn, Spinner, EmptyState, ErrorBox, Badge, JsonBlock } from '../components';
+import { Btn, Spinner, EmptyState, ErrorBox, Badge, JsonBlock, PageHeader } from '../components';
 import { toast } from '../ui';
 // i18n init side effect: so useTranslation still works if this view is rendered directly
 // (without App) (see src/i18n/index.ts) — main.tsx already does this, this re-guarantees it here.
@@ -46,40 +46,51 @@ export function Approvals() {
   const items = approvals.data?.items ?? [];
 
   return (
-    <div className="space-y-3 p-5">
-      <div className="flex items-center gap-2">
-        <span className="microlabel text-muted-foreground">{t('pendingLabel')}</span>
-        <Badge tone="warning">{items.length}</Badge>
-      </div>
+    <div className="flex flex-col">
+      {/* PageHeader sits flush at the top, outside the padded content below — avoids double padding
+          (this view has no internal scroll cab, the whole page scrolls via the shell). */}
+      <PageHeader
+        title={t('pendingLabel')}
+        description={t('description')}
+        meta={<Badge tone="warning">{items.length}</Badge>}
+      />
+      <div className="space-y-3 p-5">
+        {/* Approve/Deny both call the SAME resume endpoint and are equally terminal — there is no
+            un-approve/un-deny (see @gnldev/durable's durable-tool.ts, which writes a terminal
+            'approved'/'denied' record on first decision). A modal on every row would make this inbox
+            unusable (that's the whole point of D3's "don't gate the primary action" lesson), so this
+            is a one-line, non-blocking disclosure instead of a per-click confirmation. */}
+        {items.length > 0 && <p className="text-xs text-muted-foreground">{t('decisionNotice')}</p>}
 
-      {items.length === 0 && <EmptyState icon={Inbox} title={t('emptyTitle')} description={t('emptyDescription')} />}
+        {items.length === 0 && <EmptyState icon={Inbox} title={t('emptyTitle')} description={t('emptyDescription')} />}
 
-      <div className="space-y-2">
-        {items.map((it) => (
-          <div key={`${it.runId}:${it.toolCallId}`} className="rounded-md border border-warning/40 bg-warning/5 p-3">
-            <div className="mb-2 flex items-center gap-3">
-              <span className="font-mono text-sm font-semibold">{it.toolName}</span>
-              <Link to={`/inspector?run=${encodeURIComponent(it.runId)}`} className="flex items-center gap-1 font-mono text-xs text-muted-foreground hover:text-foreground hover:underline" title={t('openInInspector')}>
-                {it.runId} <ExternalLink size={11} />
-              </Link>
-              <div className="ml-auto flex gap-1.5">
-                <Btn variant="ok" size="xs" disabled={busy === it.toolCallId} onClick={() => decide(it.runId, it.toolCallId, true)}>
-                  <Check size={13} /> {t('approve')}
-                </Btn>
-                <Btn variant="deny" size="xs" disabled={busy === it.toolCallId} onClick={() => decide(it.runId, it.toolCallId, false)}>
-                  <X size={13} /> {t('deny')}
-                </Btn>
+        <div className="space-y-2">
+          {items.map((it) => (
+            <div key={`${it.runId}:${it.toolCallId}`} className="rounded-md border border-warning/40 bg-warning/5 p-3">
+              <div className="mb-2 flex items-center gap-3">
+                <span className="font-mono text-sm font-semibold">{it.toolName}</span>
+                <Link to={`/inspector?run=${encodeURIComponent(it.runId)}`} className="flex items-center gap-1 font-mono text-xs text-muted-foreground hover:text-foreground hover:underline" title={t('openInInspector')}>
+                  {it.runId} <ExternalLink size={11} />
+                </Link>
+                <div className="ml-auto flex gap-1.5">
+                  <Btn variant="ok" size="xs" disabled={busy === it.toolCallId} onClick={() => decide(it.runId, it.toolCallId, true)}>
+                    <Check size={13} /> {t('approve')}
+                  </Btn>
+                  <Btn variant="deny" size="xs" disabled={busy === it.toolCallId} onClick={() => decide(it.runId, it.toolCallId, false)}>
+                    <X size={13} /> {t('deny')}
+                  </Btn>
+                </div>
               </div>
+              {it.reason && <div className="mb-1.5 text-xs text-muted-foreground">{t('reasonLabel', { reason: it.reason })}</div>}
+              {it.args !== undefined && (
+                <details>
+                  <summary className="cursor-pointer select-none text-[11px] text-muted-foreground hover:text-foreground">{t('toolArgsSummary')}</summary>
+                  <JsonBlock value={it.args} max={600} />
+                </details>
+              )}
             </div>
-            {it.reason && <div className="mb-1.5 text-xs text-muted-foreground">{t('reasonLabel', { reason: it.reason })}</div>}
-            {it.args !== undefined && (
-              <details>
-                <summary className="cursor-pointer select-none text-[11px] text-muted-foreground hover:text-foreground">{t('toolArgsSummary')}</summary>
-                <JsonBlock value={it.args} max={600} />
-              </details>
-            )}
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
     </div>
   );

@@ -13,7 +13,8 @@
   "saveError": "Could not save: {{error}}",
   "save": "Save",
   "unlimited": "unlimited",
-  "title": "Organizations ({{count}})",
+  "title": "Organizations",
+  "description": "Create organizations, track their spend and usage, and set budget limits.",
   "planBadge": "plan: {{plan}}",
   "licenseExpiry": "license expires:",
   "newOrgLabel": "New organization",
@@ -53,7 +54,7 @@
   "keptNoTsBadge": "{{count}} kept (no timestamp)",
   "sweepSuccess": "Sweep complete: {{count}} runs deleted ({{entries}} records)",
   "sweepError": "Could not sweep: {{error}}",
-  "confirmSweepTitle": "Delete runs older than {{days}} days?",
+  "confirmSweepTitle": "Sweep runs older than {{days}} days?",
   "confirmSweepDescKeep": " (suspended runs are kept)",
   "confirmSweepDescAll": " — INCLUDING SUSPENDED",
   "confirmSweepDesc": "In ALL organizations, the journal records of runs older than {{days}} days will be permanently deleted{{suffix}}. This cannot be undone."

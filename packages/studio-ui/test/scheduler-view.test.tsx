@@ -7,7 +7,7 @@ import { render, screen, waitFor, cleanup } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Scheduler, formatDurationMs, formatSchedule, relativeToNow, statusTone } from '../src/views/Scheduler';
-import '../src/i18n'; // ErrorBox now uses t('errorPrefix') — needs to be initialized in the test too (test-side counterpart of the side effect in main.tsx).
+import '../src/i18n'; // Scheduler uses translations — needs i18n initialized in the test too (test-side counterpart of the side effect in main.tsx).
 
 afterEach(() => {
   cleanup();
@@ -90,10 +90,12 @@ describe('statusTone (pure)', () => {
 const CAPS_NO_SCHED = { resume: false, chat: false, fork: false, playground: false, stream: false, tools: false, scheduler: false };
 
 describe('Scheduler view', () => {
-  it('when caps.scheduler is off, shows the "not enabled" message; endpoints are never called', async () => {
+  it('when caps.scheduler is off, shows the "turned off" EmptyState; endpoints are never called', async () => {
+    // Studio audit fix: the bare one-line "not enabled" message was replaced with a richer
+    // EmptyState (icon + title + description), same primitive as the "no triggers" case below.
     stubFetch({ '/capabilities': CAPS_NO_SCHED });
     wrap(<Scheduler />);
-    await waitFor(() => expect(screen.getByText(/Scheduler view is not enabled/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Scheduler is turned off')).toBeTruthy());
   });
 
   it('shows an empty-state message when there are no triggers', async () => {
@@ -134,6 +136,6 @@ describe('Scheduler view', () => {
       };
     }));
     wrap(<Scheduler />);
-    await waitFor(() => expect(screen.getByText(/Error:/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('boom')).toBeTruthy());
   });
 });

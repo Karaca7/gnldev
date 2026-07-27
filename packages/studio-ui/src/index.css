@@ -2,32 +2,19 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── GNL Studio identity: "Local Influence" (GNL Design System — exact hex) ──────────
-   Ground is ALWAYS Ink (dark) — that's the primary experience, and the :root default too.
-   Paper = text; Fluo Lime is the single identity color (--brand/--primary), a sparse/high-impact
-   accent (record/live/active indicator, primary action). Neon Green is the secondary accent
-   (--accent, --success). Text on a lime/green FILL is ALWAYS Ink — never white.
-   Light theme (data-theme=light) is kept as a graceful Paper-ground + Ink-text + lime-accent
-   variant (so the theme toggle + tests don't break). Token NAMES stay the same as the shadcn
-   convention → every existing view carries over automatically.
-
-   Surface ladder (hex → HSL, exact): shell/sidebar #0c0c0e (--surface-deep/--sidebar,
-   deepest) < ground Ink #101012 (--background) < card/panel Surface #17171b (--card,
-   --popover) < edge Border #2c2c32 (--border). Text: Paper #F5F5F5 (--foreground),
-   secondary #9a9a9f (--muted-foreground — an AA-safe readable tone for 170+ usage sites),
-   dimmest #5a5a5f (--muted-foreground-dim — decorative/disabled ONLY, NOT FOR body text:
-   ~2.8:1 against the Ink ground, doesn't meet AA). Accents: Fluo Lime #C6FF00
-   (--primary/--brand), Neon Green #39FF88 (--accent/--success) — text on top of either is
-   ALWAYS Ink (#101012). Error: soft red #ff7a7a (--destructive), used in code as
-   text-destructive for text color + bg-destructive/10..15 as a tint
-   (matches the spec's rgba(255,90,90,0.12) tint). */
+/* ── GNL Studio dark theme ────────────────────────────────────────────────────────────
+   The ground is always dark: :root below IS the dark theme, and it's the default — not a
+   fallback. [data-theme='light'] further down overrides the same token names for the light
+   variant, so the theme toggle + tests don't break.
+   --brand/--primary is the single identity color (a sparse, high-impact accent — record/live
+   indicator, primary action); --accent/--success is the secondary accent. Text placed on a
+   --brand or --accent FILL is always the matching --*-foreground (Ink), never white.
+   Surface ladder, deepest to shallowest: --sidebar/--surface-deep < --surface-1 < --background
+   < --card/--popover/--muted < --secondary < --border. Token NAMES follow the shadcn
+   convention, so every existing view resolves them automatically.
+   Exact hex values are documented once, inline next to each variable below — that's the single
+   source of truth; they are intentionally not repeated up here. */
 :root {
-  /* New design palette (Claude Design artifact → hex→HSL). A darker/cooler Ink ladder,
-     lime #b4ff00, soft status colors. Token NAMES unchanged → 18 views carry over automatically.
-     Ladder: sidebar #0a0a0c < ground #0e0e11 < muted #1b1b21 < card #15151a < secondary #232329
-     < border #35353d. Text: paper #f4f4f5, muted #9a9aa3, dim #5f5f68. */
-  /* Exact mockup hex values (hex→HSL with decimals, so rendering lands on the exact hex). Ladder:
-     sidebar/deep #0a0a0c < main/panel #15151a < muted #1b1b21 < card/secondary #232329 < border #35353d. */
   --background: 240 10.6% 9.2%; --foreground: 240 4.8% 95.9%;         /* #15151a / #f4f4f5 */
   --card: 240 10% 11.8%; --card-foreground: 240 4.8% 95.9%;           /* #1b1b21 (a slight lift above the main #15151a) */
   --popover: 240 10% 11.8%; --popover-foreground: 240 4.8% 95.9%;     /* #1b1b21 */
@@ -141,24 +128,48 @@ code, kbd, pre, samp { font-family: 'Geist Mono Variable', ui-monospace, SFMono-
   font-size: 10px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase;
 }
 
-/* Record indicator: live run / stream marker. Stays static under prefers-reduced-motion. */
+/* Record indicator: a discrete recording/stream event marker (square) — journal vocabulary for
+   "this is being written right now". Stays static under prefers-reduced-motion. */
 .record-dot { width: 7px; height: 7px; border-radius: 2px; background: hsl(var(--brand)); }
 .record-dot--live { animation: record-pulse 1.6s ease-in-out infinite; }
 @keyframes record-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
-/* Pulse dot: "running/live" status indicator (Badge/StatusBadge). A decorative indicator; the
+/* Pulse dot: the dot inside an ongoing-status badge (StatusBadge's running/live state) — round,
+   not square, so its shape still tells it apart from .record-dot above; everything else about
+   the pulse (duration, opacity range, easing) is shared via the same `record-pulse` keyframe so
+   the two "something is live" cues read as one visual language instead of two out-of-sync ones.
+   `currentColor` means the dot always takes the color of the badge text it sits next to (e.g.
+   blue for "running", green for "completed") — it must never assert a color of its own, or it
+   can contradict the very state the badge text names. A decorative indicator either way: the
    consuming component marks it aria-hidden, and the status must ALSO be expressed in text (e.g.
    "running") — color+dot alone isn't enough. */
 .live-dot {
   display: inline-block; width: 6px; height: 6px; border-radius: 999px;
-  background: hsl(var(--success)); animation: gnlPulse 1.4s ease-in-out infinite;
+  background: currentColor; animation: record-pulse 1.6s ease-in-out infinite;
 }
-@keyframes gnlPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+/* Skeleton loading placeholder (ViewSkeleton, components.tsx — route-level Suspense fallback):
+   a calmer, slower opacity pulse than record-pulse above. Named and paced differently on purpose —
+   record-pulse/live-dot mean "this is live right now", skeleton-pulse means "still loading", and
+   the two cues shouldn't read as the same language. */
+.skeleton-pulse { animation: skeleton-pulse 1.8s ease-in-out infinite; }
+@keyframes skeleton-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 
 @media (prefers-reduced-motion: reduce) {
   .record-dot--live { animation: none; }
   .live-dot { animation: none; opacity: 1; }
-  * { transition-duration: 0.01ms !important; }
+  .skeleton-pulse { animation: none; }
+
+  /* Movement (position/rotation), not feedback: Tailwind's `transition-all`/`transition-transform`
+     utilities carry actual motion here — the toggle-switch thumb sliding (Playground.tsx switch)
+     and the chevron rotating (Playground.tsx config disclosure) — so they're turned off outright. */
+  .transition-all, .transition-transform { transition: none; }
+
+  /* Feedback (color/opacity/shadow), not movement: hover/focus color changes on nav items, Btn,
+     Dropdown rows (53 `transition-colors` sites), opacity fades, and the form-field focus recipe
+     (border-color/box-shadow, above) still need to run — a reduced-motion user wants LESS motion,
+     not a UI that stops confirming clicks and hovers altogether. Shortened, not removed. */
+  .transition-colors, .transition-opacity, input, textarea, select { transition-duration: 60ms !important; }
 }
 
 /* Thin scrollbar — shouldn't crowd out the body in dense panels. */

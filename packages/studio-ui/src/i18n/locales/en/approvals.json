@@ -1,7 +1,9 @@
 {
   "pendingLabel": "Pending approvals",
+  "description": "Approve or deny tool calls that paused a run, in one place across all runs.",
   "emptyTitle": "No pending approvals",
-  "emptyDescription": "A tool call appears here once a policy rule marks it require-approval and its run suspends.",
+  "emptyDescription": "Nothing needs your approval right now. Runs that pause for human input show up here.",
+  "decisionNotice": "Decisions apply immediately. This cannot be undone.",
   "openInInspector": "Open in Inspector",
   "approve": "Approve",
   "deny": "Deny",

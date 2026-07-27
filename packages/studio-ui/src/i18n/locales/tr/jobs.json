@@ -1,4 +1,6 @@
 {
+  "title": "Job'lar",
+  "description": "@gnldev/queue'dan geçen her job'ın durumu — sırada, çalışıyor, tamamlandı ya da ölü-mektup; yeniden dene, bir ölü-mektup job'ı orijinal payload'ıyla yeniden kuyruğa alır.",
   "statQueued": "Sırada",
   "statRunning": "Çalışıyor",
   "statCompleted": "Tamamlandı",
@@ -8,6 +10,7 @@
   "emptyTitle": "Henüz job yok",
   "emptyDescription": "Job'lar, uygulamanız @gnldev/queue'nun enqueue() fonksiyonuyla arka plan işini kuyruğa aldığında burada görünür — Studio onları burada görüntüleyip yeniden deneyebilir, oluşturamaz.",
   "liveStatus": "{{count}} job · 3sn'de bir yenilenir",
+  "colId": "ID",
   "colType": "Tip",
   "colStatus": "Durum",
   "colAttempts": "Deneme",

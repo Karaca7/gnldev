@@ -64,13 +64,13 @@ describe('Markdown code block copy button (bug investigation #7)', () => {
     });
     render(<Markdown text={code} />);
     fireEvent.click(screen.getByTitle('Copy code'));
-    await waitFor(() => expect(screen.getByTitle('Copy failed')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTitle(/Couldn't copy/)).toBeTruthy());
   });
 
   it('when the clipboard API does not exist at all (unsupported), does not unconditionally show "success"', async () => {
     Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
     render(<Markdown text={code} />);
     fireEvent.click(screen.getByTitle('Copy code'));
-    await waitFor(() => expect(screen.getByTitle('Copy failed')).toBeTruthy());
+    await waitFor(() => expect(screen.getByTitle(/Couldn't copy/)).toBeTruthy());
   });
 });

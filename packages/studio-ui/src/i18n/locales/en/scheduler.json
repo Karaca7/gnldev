@@ -1,4 +1,6 @@
 {
+  "title": "Scheduler",
+  "description": "Live status of every scheduled trigger — next run time, misfire policy, and retry attempts, refreshed automatically.",
   "statSchedules": "Schedules",
   "statActive": "Active",
   "statNextRun": "Next run",
@@ -12,11 +14,15 @@
   "relativeNow": "now",
   "relativeIn": "in {{duration}}",
   "relativeAgo": "{{duration}} ago",
-  "disabled": "Scheduler view is not enabled (journal doesn't support writable/listKeys).",
+  "disabledTitle": "Scheduler is turned off",
+  "disabledDescription": "The server has no scheduler wired up. Enable the scheduler capability to see triggers and their next runs here.",
   "emptyTitle": "No triggers yet",
   "emptyDescription": "Triggers appear once your app calls scheduleWorkflow() (cron / every / at) in code — Studio only shows their live status here.",
   "liveStatus": "{{count}} trigger · refreshes every 5s",
+  "colId": "ID",
+  "colWorkflow": "Workflow",
   "colTrigger": "Trigger",
   "colNextRun": "Next run",
+  "colMisfire": "Misfire",
   "colStatusAttempts": "Status / attempts"
 }

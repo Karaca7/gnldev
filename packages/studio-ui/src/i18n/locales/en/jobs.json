@@ -1,4 +1,6 @@
 {
+  "title": "Jobs",
+  "description": "Status of every job moving through @gnldev/queue — queued, running, completed, or dead-letter; retry requeues a dead-letter job under its original payload.",
   "statQueued": "Queued",
   "statRunning": "Running",
   "statCompleted": "Completed",
@@ -8,6 +10,7 @@
   "emptyTitle": "No jobs yet",
   "emptyDescription": "Jobs appear once your app enqueues background work with @gnldev/queue's enqueue() — Studio can view and retry them here, not create them.",
   "liveStatus": "{{count}} job · refreshes every 3s",
+  "colId": "ID",
   "colType": "Type",
   "colStatus": "Status",
   "colAttempts": "Attempts",

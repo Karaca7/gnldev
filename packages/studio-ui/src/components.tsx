@@ -6,43 +6,46 @@ import { errMessage } from './api';
 export const cn = (...xs: (string | false | null | undefined)[]) => xs.filter(Boolean).join(' ');
 
 export function Btn({
-  children, onClick, variant = 'default', size = 'sm', disabled, title, arrow,
+  children, onClick, variant = 'default', size = 'sm', disabled, title, arrow, busy,
 }: {
   children: ReactNode; onClick?: () => void;
-  variant?: 'default' | 'primary' | 'secondary' | 'tertiary' | 'outline' | 'ghost' | 'ok' | 'deny';
+  variant?: 'default' | 'primary' | 'outline' | 'ghost' | 'ok' | 'deny';
   size?: 'sm' | 'xs' | 'icon'; disabled?: boolean; title?: string;
-  /** Optional "›" prefix icon used only on high-impact (primary) actions — decorative, aria-hidden. */
+  /** Optional "›" prefix icon used only on high-impact (primary) actions — decorative, aria-hidden.
+      Suppressed while `busy` is true so the two indicators don't stack. */
   arrow?: boolean;
+  /** Pending-action state: disables the button, sets aria-busy, and shows the same live-pulse
+      dot used elsewhere (record-dot, see Spinner) in place of the arrow — no separate spinner glyph. */
+  busy?: boolean;
 }) {
   const base = 'inline-flex items-center gap-1.5 rounded-md transition-colors disabled:opacity-50 disabled:pointer-events-none';
   const sz = size === 'icon'
     ? 'h-[42px] w-[42px] justify-center p-0 text-base'
     : size === 'xs' ? 'px-2 py-1 text-xs' : 'px-3 py-1.5 text-sm';
-  // GNL component recipe: primary/default = Fluo Lime fill + Ink text + Poppins 700 (both share
-  // the same class — "primary" is a more meaningful alias for callers). secondary = Neon
-  // Green OUTLINE (secondary emphasized action). tertiary = Ink surface + border + Paper text (neutral
-  // action) — "outline" is kept as a backward-compatible alias, an exact synonym for tertiary
-  // (40+ call sites in the codebase already use this neutral meaning, don't break it). ghost = just
-  // muted text ("text" recipe). ok/deny approve/reject pair is out of brand scope, kept since T1.
+  // GNL component recipe — 5 real visual recipes behind 6 variant names: primary = Fluo Lime fill +
+  // Ink text + Geist Bold (700); "default" is an alias for primary and also the prop default, so the
+  // ~20 call sites that omit `variant` get this look for free. outline = Ink surface + border + Paper
+  // text (neutral action — 25 call sites use this meaning; kept as the public name, "tertiary" was an
+  // unused synonym and has been removed). ghost = just muted text ("text" recipe, 22 call sites). ok/deny
+  // approve/reject pair is out of brand scope, kept since T1 ("secondary", an unused Neon Green outline
+  // variant, has also been removed — 0 call sites).
   // bg-BRAND, not bg-primary. In the dark theme the two tokens hold the same hex (#b4ff00), so this
   // changes nothing there. In the light theme --brand is the deeper step (#445e08) and --primary the
   // lighter one (#6d970c) — the deeper one takes WHITE text at 7.33:1, which is the look we want,
   // while the lighter one only worked with near-black and read as mud. See --brand-foreground.
   const PRIMARY = 'bg-brand text-brand-foreground hover:bg-brand/90 font-bold';
-  const TERTIARY = 'border border-border bg-transparent text-foreground hover:bg-muted font-medium';
+  const OUTLINE = 'border border-border bg-transparent text-foreground hover:bg-muted font-medium';
   const v = {
     default: PRIMARY,
     primary: PRIMARY,
-    secondary: 'border border-success bg-transparent text-success hover:bg-success/10 font-medium',
-    tertiary: TERTIARY,
-    outline: TERTIARY,
+    outline: OUTLINE,
     ghost: 'text-muted-foreground hover:bg-muted font-medium',
     ok: 'bg-success/15 text-success hover:bg-success/25 font-medium',
     deny: 'bg-destructive/15 text-destructive hover:bg-destructive/25 font-medium',
   }[variant];
   return (
-    <button className={cn(base, sz, v)} onClick={onClick} disabled={disabled} title={title}>
-      {arrow && <span aria-hidden>›</span>}
+    <button className={cn(base, sz, v)} onClick={onClick} disabled={disabled || busy} title={title} aria-busy={busy || undefined}>
+      {busy ? <span className="record-dot record-dot--live" aria-hidden /> : arrow && <span aria-hidden>›</span>}
       {children}
     </button>
   );
@@ -70,7 +73,7 @@ export function Badge({
   }[tone];
   // Tag-strip language: mono + squared — badge contents (status/model/tool name) are data.
   return (
-    <span className={cn('inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10px] font-medium tracking-wide', t)}>
+    <span className={cn('inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 font-mono text-[10px] font-medium tracking-wide', t)}>
       {live && <span className="live-dot" aria-hidden />}
       {children}
     </span>
@@ -100,14 +103,18 @@ export function StatusBadge({ status }: { status: string }) {
 }
 
 /** Stat-card summary strip (the Inspector's signature at-a-glance row) — reused across data pages so
-    they share one visual language. Each item is a labeled card with a big mono value. Desktop-only
-    (md+); pass only REAL, already-fetched values (no fabricated trend deltas). */
+    they share one visual language. Each item is a labeled card with a big mono value. Below md it's a
+    horizontally scrollable single row (cards keep a minimum width instead of being dropped from the
+    DOM); at md+ it becomes the equal-width grid. Pass only REAL, already-fetched values (no
+    fabricated trend deltas). */
 export function StatStrip({ items }: { items: { label: string; value: string }[] }) {
   if (!items.length) return null;
+  // gridTemplateColumns only takes effect once `md:grid` switches display to grid — under the
+  // mobile flex row it's inert (grid-* properties are no-ops outside display:grid).
   return (
-    <div className="hidden shrink-0 gap-3 border-b border-border p-3 md:grid" style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}>
+    <div className="flex shrink-0 gap-3 overflow-x-auto border-b border-border p-3 md:grid" style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}>
       {items.map((c) => (
-        <div key={c.label} className="rounded-lg border border-border bg-card px-4 py-3">
+        <div key={c.label} className="min-w-[132px] shrink-0 rounded-lg border border-border bg-card px-4 py-3 md:min-w-0">
           <div className="truncate text-xs text-muted-foreground">{c.label}</div>
           {/* VIS-04: title exposes the full value on hover when truncate clips it (this is the number
               itself, not a label — losing it silently would mislead a budget/cost read); text-xl at the
@@ -115,6 +122,37 @@ export function StatStrip({ items }: { items: { label: string; value: string }[]
           <div title={c.value} className="mt-1.5 truncate font-mono text-xl font-bold leading-none text-foreground lg:text-2xl">{c.value}</div>
         </div>
       ))}
+    </div>
+  );
+}
+
+/**
+ * Page-level header: the ONE place a view's <h1>, one-sentence description, and primary/secondary
+ * actions live. Use it at the top of a view's canvas in place of ad hoc microlabel-as-heading markup
+ * (or no heading at all) — `actions` is the single slot for a view's primary action, not one of
+ * several scattered spots. `meta` covers the existing "microlabel + count" pattern (e.g. a "12 runs"
+ * counter/badge next to the title) without duplicating that count into `description`. Title and
+ * description stack above actions on narrow viewports so actions never overflow the row.
+ * NOTE: this is a new primitive, not yet adopted by existing views (that migration is a separate pass).
+ */
+export function PageHeader({ title, description, actions, meta }: {
+  title: ReactNode;
+  description?: ReactNode;
+  /** Right-aligned actions (primary + any secondary) — the single place a view's primary action lives. */
+  actions?: ReactNode;
+  /** Optional counter/badge next to the title (the "microlabel + count" pattern). */
+  meta?: ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-3 border-b border-border px-4 py-3 md:flex-row md:items-center">
+      <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          <h1 className="truncate text-base font-bold tracking-tight text-foreground">{title}</h1>
+          {meta}
+        </div>
+        {description && <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>}
+      </div>
+      {actions && <div className="flex flex-wrap items-center gap-2 md:ml-auto">{actions}</div>}
     </div>
   );
 }
@@ -127,6 +165,36 @@ export function Spinner({ label }: { label?: string }) {
     <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
       <span className="record-dot record-dot--live" aria-hidden />
       {label ?? t('loading')}
+    </div>
+  );
+}
+
+/**
+ * Route-level loading placeholder for the top-level Suspense fallback (App.tsx) — shown while a
+ * lazy view chunk downloads, in place of what used to be a bare `<Spinner />` (a single line of
+ * text top-left while the rest of the canvas went blank, a visible layout jump). Approximates the
+ * shape most views now share since PageHeader landed: a header strip, then a few content rows.
+ * Deliberately coarse — an approximation to cut layout shift, not a pixel-accurate mimic of any
+ * one view's StatStrip/table/list, which would look "wrong" more often than it looked right.
+ * Decorative: the bars are aria-hidden, and `role="status"` + the sr-only text carry the actual
+ * "loading" announcement to screen readers instead (Spinner's visible label, preserved this way).
+ */
+export function ViewSkeleton() {
+  const { t } = useTranslation('common');
+  return (
+    <div role="status" className="flex h-full flex-col">
+      <span className="sr-only">{t('loading')}</span>
+      <div aria-hidden className="flex flex-col gap-3 border-b border-border px-4 py-3 md:flex-row md:items-center">
+        <div className="min-w-0 flex-1 space-y-2">
+          <div className="skeleton-pulse h-4 w-40 rounded-sm bg-muted" />
+          <div className="skeleton-pulse h-3 w-64 rounded-sm bg-muted/70" />
+        </div>
+      </div>
+      <div aria-hidden className="flex flex-col gap-3 p-4">
+        {[0, 1, 2, 3, 4, 5].map((i) => (
+          <div key={i} className="skeleton-pulse h-8 w-full shrink-0 rounded-sm bg-muted" />
+        ))}
+      </div>
     </div>
   );
 }
@@ -171,11 +239,11 @@ export function EmptyState({
 }
 
 export function ErrorBox({ error }: { error: unknown }) {
-  const { t } = useTranslation('common');
   // STATE-10: errMessage() strips the technical "ApiError:"/"Error:" prefix `String(error)` used to
-  // leak (see api.ts's errMessage JSDoc — "Use this in all views' toast/error display"); ErrorBox was
-  // the one central place still bypassing it, doubling up with its own t('errorPrefix') label.
-  return <div role="alert" className="m-3 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{t('errorPrefix')}: {errMessage(error)}</div>;
+  // leak (see api.ts's errMessage JSDoc — "Use this in all views' toast/error display"). The box is
+  // already role="alert" with a red border/text, so a redundant "Error:" label was dropped (D4-11) —
+  // the styling alone communicates the severity.
+  return <div role="alert" className="m-3 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{errMessage(error)}</div>;
 }
 
 // Collapsible JSON node: object/array → <details> (open below depth 2), primitives get color tinting.

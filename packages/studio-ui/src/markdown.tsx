@@ -39,7 +39,7 @@ function Pre({ children }: { children?: ReactNode }) {
           type="button"
           onClick={copy}
           title={state === 'error' ? t('copyFailed') : t('copyCode')}
-          className={cn('rounded p-0.5 hover:text-brand', state === 'error' ? 'text-destructive' : 'text-muted-foreground')}
+          className={cn('rounded-sm p-0.5 hover:text-brand', state === 'error' ? 'text-destructive' : 'text-muted-foreground')}
         >
           {state === 'done' ? <Check size={12} /> : state === 'error' ? <X size={12} /> : <Copy size={12} />}
         </button>
@@ -72,7 +72,7 @@ export function Markdown({ text }: { text: string }) {
             className ? (
               <code className={className} {...props}>{children}</code> // inside a block — wrapped by Pre
             ) : (
-              <code className="rounded bg-foreground/10 px-1 font-mono text-[0.85em]">{children}</code>
+              <code className="rounded-sm bg-foreground/10 px-1 font-mono text-[0.85em]">{children}</code>
             ),
           a: ({ href, children }) => {
             const safe = href && /^(https?:|mailto:)/i.test(href) ? href : undefined;
