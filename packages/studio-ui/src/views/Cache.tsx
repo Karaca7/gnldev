@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Trash2, Database } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { api, useCapabilities, useCacheStats, errMessage } from '../api';
-ÇÇ&*import { Spinner, Empty, EmptyState, ErrorBox, Btn, cn, PageHeader } from '../components';
+import { Spinner, Empty, EmptyState, ErrorBox, Btn, cn, PageHeader } from '../components';
 import { toast, ConfirmDialog } from '../ui';
 import { Stagger, StaggerItem } from '../motion';
 // i18n init side effect: so useTranslation still works if this view is rendered directly
