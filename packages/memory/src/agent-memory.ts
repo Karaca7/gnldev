@@ -497,13 +497,15 @@ export class AgentMemory {
     return this.store.getThread(threadId);
   }
   /** A resource's threads (createdAt ASC — parity). */
+  /** Newest conversation first (createdAt DESC) — the thread-list contract Studio's sidebar renders as-is. */
   async listThreads(opts: { resourceId: string }): Promise<ThreadRecord[]> {
     const page = await this.store.listThreads({ resourceId: opts.resourceId, limit: HUGE });
-    return page.items.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+    return page.items.sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
   }
-  /** All threads (studio global; updatedAt DESC). */
+  /** All threads (studio global) — same createdAt DESC contract as listThreads, independent of adapter order. */
   async listAllThreads(): Promise<ThreadRecord[]> {
-    return (await this.store.listThreads({ limit: HUGE })).items;
+    return (await this.store.listThreads({ limit: HUGE })).items
+      .sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
   }
   async updateThread(threadId: string, patch: { title?: string; metadata?: Record<string, unknown> }): Promise<ThreadRecord> {
     const rec = await this.store.getThread(threadId);

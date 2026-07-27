@@ -18,12 +18,25 @@ function observerModel(counter: { calls: number }): any {
 }
 
 describe('Track 3 thread management', () => {
+  it('thread lists come newest-created first (createdAt DESC — the sidebar contract)', async () => {
+    const storage = new InMemoryStorage();
+    const mem = new AgentMemory({ storage });
+    // Explicit timestamps via the store (createThread stamps Date.now(), which can tie within a ms).
+    await storage.memory.upsertThread({ id: 'old', resourceId: 'u1', createdAt: 1000, updatedAt: 5000 });
+    await storage.memory.upsertThread({ id: 'mid', resourceId: 'u1', createdAt: 2000, updatedAt: 2000 });
+    await storage.memory.upsertThread({ id: 'new', resourceId: 'u1', createdAt: 3000, updatedAt: 3000 });
+
+    // createdAt DESC — NOT updatedAt: 'old' was touched last (updatedAt 5000) but stays last.
+    expect((await mem.listThreads({ resourceId: 'u1' })).map((t) => t.id)).toEqual(['new', 'mid', 'old']);
+    expect((await mem.listAllThreads()).map((t) => t.id)).toEqual(['new', 'mid', 'old']);
+  });
+
   it('create/list/update + resource', async () => {
     const mem = new AgentMemory({ storage: new InMemoryStorage() });
     await mem.createThread({ id: 't1', resourceId: 'u1', title: 'first' });
     await mem.createThread({ id: 't2', resourceId: 'u1' });
     const list = await mem.listThreads({ resourceId: 'u1' });
-    expect(list.map((t) => t.id)).toEqual(['t1', 't2']);
+    expect(list.map((t) => t.id).sort()).toEqual(['t1', 't2']); // membership; ordering pinned below
     expect(await mem.getThreadResource('t1')).toBe('u1');
 
     const upd = await mem.updateThread('t1', { title: 'updated' });
