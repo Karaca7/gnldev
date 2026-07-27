@@ -31,6 +31,12 @@ describe('memory-context provenance (:memctx)', () => {
       ['user', 'u1'],
       ['assistant', 'reply'],
     ]);
+    // Structural preview: a tool-call/tool-result message no longer refs as an empty string.
+    const { messagePreview } = await import('../src/memory.js');
+    expect(messagePreview({ role: 'assistant', content: [{ type: 'tool-call', toolName: 'searchResource', input: '{"q":"x"}' }] }))
+      .toBe('→ searchResource({"q":"x"})');
+    expect(messagePreview({ role: 'tool', content: [{ type: 'tool-result', toolName: 'searchResource', output: { hits: 1 } }] }))
+      .toBe('searchResource → {"hits":1}');
   });
 
   it('rich loadContext memory: recall refs (with similarity) and WM chars flow into the record', async () => {

@@ -16,8 +16,16 @@ const REF_ROLE_TONE: Record<string, string> = { user: 'text-info', assistant: 't
 
 function refPreviewOf(m: any): string {
   const c = m?.content;
-  const s = typeof c === 'string' ? c : Array.isArray(c) ? c.map((p: any) => (typeof p?.text === 'string' ? p.text : '')).join(' ') : '';
-  return s.replace(/\s+/g, ' ').trim();
+  if (typeof c === 'string') return c.replace(/\s+/g, ' ').trim();
+  if (!Array.isArray(c)) return '';
+  const short = (v: unknown) => { try { return typeof v === 'string' ? v : JSON.stringify(v); } catch { return String(v); } };
+  const parts: string[] = [];
+  for (const p of c) {
+    if (typeof p?.text === 'string' && p.text) parts.push(p.text);
+    else if (p?.type === 'tool-call') parts.push(`→ ${p.toolName ?? 'tool'}(${short(p.input ?? p.args)})`);
+    else if (p?.type === 'tool-result') parts.push(`${p.toolName ?? 'tool'} → ${short(p.output ?? p.result)}`);
+  }
+  return parts.join(' ').replace(/\s+/g, ' ').trim();
 }
 
 /** Mirrors RunDetail's duration formatting (short mono forms — the ledger column stays narrow). */
@@ -34,9 +42,19 @@ function fmtDur(ms: number | null | undefined): string {
  * SDK terms, deliberately untranslated (the surrounding sentences are). An honest empty state for
  * runs without a record — never an error.
  */
-export function MemoryContextPanel({ runId }: { runId: string }) {
+export function MemoryContextPanel({ runId, threadId, threadMessages }: {
+  runId: string;
+  /** For backfilling empty previews: refs whose record predates structural previews (old "—" rows). */
+  threadId?: string;
+  threadMessages?: any[];
+}) {
   const { t } = useTranslation('inspector');
   const q = useMemoryContext(runId);
+  // Frozen records can't be rewritten — but their refs carry seq, and the thread messages are already
+  // loaded by the ledger: derive the preview live when the frozen one is empty (same-thread refs only;
+  // cross-thread recall refs can't be resolved from this thread's list).
+  const fill = (r: { threadId: string; seq: number; preview: string }): string =>
+    r.preview || (threadId && r.threadId === threadId && threadMessages?.[r.seq] ? refPreviewOf(threadMessages[r.seq]) : '');
   if (q.isLoading) return <div className="px-3 py-2 text-[11px] text-muted-foreground">{t('memLoading')}</div>;
   const ctx = q.data?.context ?? null;
   if (!ctx) return <div className="px-3 py-2 text-[11px] text-muted-foreground">{t('memNoProvenance')}</div>;
@@ -51,7 +69,7 @@ export function MemoryContextPanel({ runId }: { runId: string }) {
               {r.score.toFixed(2)}
             </span>
           )}
-          <span className="truncate text-muted-foreground">“{r.preview}”</span>
+          <span className="truncate text-muted-foreground">“{fill(r)}”</span>
         </div>
       ))}
       <div className="flex items-baseline gap-2 text-[11px]">
@@ -64,7 +82,7 @@ export function MemoryContextPanel({ runId }: { runId: string }) {
         <div key={`recent:${r.threadId}:${r.seq}`} className="flex items-baseline gap-2 pl-4 text-[11px]">
           <span className="shrink-0 font-mono text-muted-foreground">#{r.seq}</span>
           <span className={cn('microlabel shrink-0', REF_ROLE_TONE[r.role] ?? 'text-muted-foreground')}>{r.role}</span>
-          <span className="truncate text-muted-foreground">{r.preview ? `“${r.preview}”` : '—'}</span>
+          <span className="truncate text-muted-foreground">{fill(r) ? `“${fill(r)}”` : '—'}</span>
         </div>
       ))}
       {ctx.recent && ctx.recentCount > ctx.recent.length && (
@@ -93,8 +111,9 @@ export function MemoryContextPanel({ runId }: { runId: string }) {
 }
 
 /** One ledger row: mono turn number · status · duration · cost, plus the expandable Memory panel. */
-function TurnRow({ index, run, metric, onOpenRun }: {
+function TurnRow({ index, run, metric, onOpenRun, threadId, threadMessages }: {
   index: number; run: RunSummary; metric?: MetricsRun; onOpenRun: (id: string) => void;
+  threadId?: string; threadMessages?: any[];
 }) {
   const { t } = useTranslation('inspector');
   const [memOpen, setMemOpen] = useState(false);
@@ -126,7 +145,7 @@ function TurnRow({ index, run, metric, onOpenRun }: {
         <BrainCircuit size={11} className="shrink-0" />
         <span className="microlabel">{t('memoryContextToggle')}</span>
       </button>
-      {memOpen && <div className="pl-[1.75rem]"><MemoryContextPanel runId={run.runId} /></div>}
+      {memOpen && <div className="pl-[1.75rem]"><MemoryContextPanel runId={run.runId} threadId={threadId} threadMessages={threadMessages} /></div>}
     </div>
   );
 }
@@ -222,7 +241,7 @@ export function ThreadDetail({ threadId, title, runs, metricsById, onOpenRun, on
           : ledger.map((e) =>
               e.kind === 'ghost'
                 ? <GhostRow key={e.key} preview={e.preview} />
-                : <TurnRow key={e.run.runId} index={turnNo++} run={e.run} metric={metricsById.get(e.run.runId)} onOpenRun={onOpenRun} />,
+                : <TurnRow key={e.run.runId} index={turnNo++} run={e.run} metric={metricsById.get(e.run.runId)} onOpenRun={onOpenRun} threadId={threadId} threadMessages={msgs.data} />,
             )}
       </div>
     </div>

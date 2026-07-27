@@ -5,7 +5,7 @@
 // loadContext runs BEFORE persistInput, so the whole context freezes into `:input` = replayable.
 import { cosineSimilarity } from 'ai';
 import { requireCapability, durableProcessorStep } from '@gnldev/durable';
-import { PROVENANCE_RECENT_CAP } from '@gnldev/durable';
+import { PROVENANCE_RECENT_CAP, messagePreview } from '@gnldev/durable';
 import type { Storage, RunJournal, MemoryStore, MessageRecord, ThreadRecord, RecallOptions, MemoryContextProvenance, RecalledMessageRef } from '@gnldev/durable';
 import { messageText, hasNorm, type Embed } from './keys.js';
 import { deepMerge } from './deep-merge.js';
@@ -103,13 +103,16 @@ export class AgentMemory {
    * new read-model — which records semantic recall injected (hits with their similarity, range
    * neighbors unscored — see MessageRecord.score) vs how many came from the recent window.
    */
-  /** MessageRecord → provenance ref (short whitespace-collapsed preview; score only when present). */
+  /** MessageRecord → provenance ref. Preview: stored text first; when the message is STRUCTURAL
+      (tool-call/tool-result — no text parts), the shared messagePreview renders it structurally
+      instead of leaving an empty "—" row. */
   protected static toRef(r: MessageRecord): RecalledMessageRef {
+    const textual = (r.text ?? messageText(r.message) ?? '').replace(/\s+/g, ' ').trim().slice(0, 120);
     return {
       threadId: r.threadId,
       seq: r.seq,
       role: r.role,
-      preview: (r.text ?? messageText(r.message) ?? '').replace(/\s+/g, ' ').trim().slice(0, 120),
+      preview: textual || messagePreview(r.message),
       ...(r.score !== undefined ? { score: r.score } : {}),
     };
   }

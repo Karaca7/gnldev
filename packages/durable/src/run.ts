@@ -10,7 +10,7 @@ import { recordRunUsage } from './budget.js';
 import { recordRunMetrics } from './metrics.js';
 import type { Journal, JournalReader, DurableCtx } from './journal.js';
 import type { Guard, Interrupt } from './guard.js';
-import { PROVENANCE_RECENT_CAP } from './memory.js';
+import { PROVENANCE_RECENT_CAP, messagePreview } from './memory.js';
 import type { Memory, MemoryContextProvenance } from './memory.js';
 import type { Processor, ProcessorCtx, ProcessorInput, ProcessorOutput } from './processor.js';
 import type { ModelInput, ToolSet } from './types.js';
@@ -560,17 +560,12 @@ async function prepareMemoryContext(
       wmChars = String(wm).length;
     }
   }
-  // Legacy refs: plain message objects (no store seq) — seq is the array index, preview from the
-  // same whitespace-collapsed rule the rich path uses (AgentMemory.toRef).
-  const legacyPreview = (m: any): string => {
-    const c = m?.content;
-    const s = typeof c === 'string' ? c : Array.isArray(c) ? c.map((p: any) => (typeof p?.text === 'string' ? p.text : '')).join(' ') : '';
-    return s.replace(/\s+/g, ' ').trim().slice(0, 120);
-  };
+  // Legacy refs: plain message objects (no store seq) — seq is the array index; preview via the
+  // SHARED messagePreview (memory.ts) so tool-call/tool-result rows read structurally, not as "—".
   const provenance: MemoryContextRecord = {
     v: 1, threadId, recalled: [], recentCount: history.length,
     recent: history.slice(-PROVENANCE_RECENT_CAP).map((m: any, i: number) => ({
-      threadId, seq: Math.max(0, history.length - PROVENANCE_RECENT_CAP) + i, role: String(m?.role ?? '?'), preview: legacyPreview(m),
+      threadId, seq: Math.max(0, history.length - PROVENANCE_RECENT_CAP) + i, role: String(m?.role ?? '?'), preview: messagePreview(m),
     })),
     ...(wmChars !== undefined ? { workingMemoryChars: wmChars } : {}),
     incomingCount: incoming.length,

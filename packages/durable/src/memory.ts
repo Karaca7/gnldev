@@ -44,6 +44,32 @@ export interface MemoryContextProvenance {
 /** Ref cap for `provenance.recent` — keeps the ':memctx' record small on long windows. */
 export const PROVENANCE_RECENT_CAP = 24;
 
+/**
+ * Short human preview of ANY message — the single source both provenance ref builders use (run.ts
+ * legacy path + @gnldev/memory's AgentMemory.toRef; one source so the two can't drift). Plain text
+ * parts win; a message whose content is STRUCTURAL (tool-call / tool-result — the "—" rows in the
+ * first provenance UI) gets a structural preview instead of an empty string:
+ *   `→ searchResource({"resource":"films"…})`  (assistant tool-call)
+ *   `searchResource → {"hits":[…]}`            (tool result)
+ */
+export function messagePreview(message: any, max = 120): string {
+  const clip = (s: string) => s.replace(/\s+/g, ' ').trim().slice(0, max);
+  const c = message?.content;
+  if (typeof c === 'string') return clip(c);
+  if (!Array.isArray(c)) return '';
+  const short = (v: unknown) => {
+    const s = typeof v === 'string' ? v : (() => { try { return JSON.stringify(v); } catch { return String(v); } })();
+    return s ?? '';
+  };
+  const parts: string[] = [];
+  for (const p of c) {
+    if (typeof p?.text === 'string' && p.text) parts.push(p.text);
+    else if (p?.type === 'tool-call') parts.push(`→ ${p.toolName ?? 'tool'}(${short(p.input ?? p.args)})`);
+    else if (p?.type === 'tool-result') parts.push(`${p.toolName ?? 'tool'} → ${short(p.output ?? p.result)}`);
+  }
+  return clip(parts.join(' '));
+}
+
 export interface Memory {
   /**
    * A thread's prior messages (AI SDK ModelMessage[]). If `opts.query` is given, semantic memory

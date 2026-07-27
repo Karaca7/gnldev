@@ -19,7 +19,7 @@ export type {
   DurableCtx,
   ToolJournalRecord,
 } from './journal.js';
-export { BasicMemory, PROVENANCE_RECENT_CAP } from './memory.js';
+export { BasicMemory, PROVENANCE_RECENT_CAP, messagePreview } from './memory.js';
 export type { Memory, MemoryContextProvenance, RecalledMessageRef } from './memory.js';
 export { getRunCost, toTraceSpans } from './cost.js';
 export type { RunCost, RunCostOptions, TraceSpan } from './cost.js';
