@@ -45,6 +45,17 @@ class InMemoryRunJournal implements RunJournal {
   putIfMatch(k: string, e: unknown, v: unknown) { return this.journal.putIfMatch(k, e, v); }
   listKeys(p: string) { return this.journal.listKeys(p); }
   readRun(runId: string): Promise<JournalEntry[]> { return this.journal.readRun(runId); }
+  // Capability parity with the real adapters (sqlite/postgres expose these as extra methods and
+  // toJournal forwards whatever exists): the inner InMemoryJournal always had them, but this wrapper
+  // silently HID them — so recordRunMetrics bailed at its incrBy/applyBatch gate and InMemoryStorage
+  // users got NO materialized metrics rows at all (caught by metrics-stream.test.ts).
+  incrBy(k: string, f: Record<string, number>) { return this.journal.incrBy(k, f); }
+  getCounters(k: string) { return this.journal.getCounters(k); }
+  applyBatch(b: Parameters<InMemoryJournal['applyBatch']>[0]) { return this.journal.applyBatch(b); }
+  countRunsByStatus() { return this.journal.countRunsByStatus(); }
+  listStaleRuns(cutoffTs: number, opts?: { includeSuspended?: boolean }) { return this.journal.listStaleRuns(cutoffTs, opts); }
+  readRunStats(runId: string) { return this.journal.readRunStats(runId); }
+  deletePrefix(prefix: string) { return this.journal.deletePrefix(prefix); }
   // P0.3 (AUDIT-R2): filter BEFORE paginate() slices — same "filter before slicing, not
   // after" rule the real adapters follow (sqlite/postgres/redis-storage.ts), so a filtered page never
   // desyncs from an unfiltered scan or drops matching items off a page boundary.

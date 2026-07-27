@@ -8,7 +8,7 @@
 // bucketed per-day/per-agent instead of a single running total, plus a per-run "fast row" for the
 // runs table (avoids readRun+getRunCost for every already-finalized run).
 import type { Journal, JournalBatch, JournalReader } from './journal.js';
-import { summarizeRun } from './journal.js';
+import { summarizeRun, runKeys } from './journal.js';
 import { getRunCost } from './cost.js';
 
 /**
@@ -182,9 +182,14 @@ export async function recordRunMetrics(
   const summary = summarizeRun(runId, entries);
   const cost = await getRunCost(reader, runId);
   const tsValues = entries.map((e) => e.ts).filter((t): t is number => t != null);
-  const startTs = tsValues.length ? Math.min(...tsValues) : null;
+  // TRUE start = the ':input' freeze instant (persistInput stamps `at` before the first model call).
+  // The visible-entry minimum LIES for streamed runs: a step's `model:N` row is written when the step
+  // finishes, so a single-step stream has one row at the very end (duration read 0ms) and multi-step
+  // runs swallowed the whole first step. Runs recorded before the stamp fall back to the old span.
+  const inputAt = (await journal.get<{ at?: number }>(runKeys.input(runId)))?.at;
+  const startTs = inputAt ?? (tsValues.length ? Math.min(...tsValues) : null);
   const endTs = tsValues.length ? Math.max(...tsValues) : null;
-  const durationMs = startTs != null && endTs != null ? endTs - startTs : 0;
+  const durationMs = startTs != null && endTs != null ? Math.max(0, endTs - startTs) : 0;
 
   const now = (await journal.now?.()) ?? Date.now();
   const day = dayKeyFor(now);

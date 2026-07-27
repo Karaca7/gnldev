@@ -401,7 +401,12 @@ async function persistInput(
   // We freeze threadId + the agent NAME together with the input (both optional): studio /runs reads
   // this to group runs by thread and to LABEL each run with its agent (no per-run journal N+1). It
   // sits in the invisible `:input` entry → doesn't leak into reader/time-travel, doesn't affect step counting.
-  await journal.put(key, stampFormat({ prompt: input.prompt, messages: input.messages, system: input.system, ...(threadId ? { threadId } : {}), ...(agentName ? { agent: agentName } : {}) })); // H13
+  // `at` = the run's TRUE start (this write precedes the first model call). recordRunMetrics needs it
+  // because the visible entries can't carry it: a streamed step's `model:N` row is written when the
+  // step FINISHES — a single-step streamed run has exactly one visible row, at the very end, so a
+  // ts-span duration read 0ms (live repro: a 27s stream recorded as 0ms). Additive field; readers of
+  // the input blob ignore unknown fields.
+  await journal.put(key, stampFormat({ at: Date.now(), prompt: input.prompt, messages: input.messages, system: input.system, ...(threadId ? { threadId } : {}), ...(agentName ? { agent: agentName } : {}) })); // H13
 }
 
 /**
