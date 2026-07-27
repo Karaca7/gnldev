@@ -2,7 +2,7 @@
 // (MessageRecord.score, stamped per-call by the storage adapters) and loadContext exposes the full
 // "where did this context come from" breakdown (LoadedContext.provenance) — the memory-side half of
 // the ':memctx' journal record durable freezes per run. Before this, every adapter computed the
-// score and dropped it at the return boundary (a gap comparable pipelines still have).
+// score and dropped it at the return boundary (a gap most memory pipelines share today).
 import { describe, it, expect } from 'vitest';
 import { InMemoryStorage } from '@gnldev/durable';
 import { AgentMemory } from '../src/index.js';

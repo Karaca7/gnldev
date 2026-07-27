@@ -3,8 +3,7 @@
 // LEDGER. Turns are a real sequence, so they get real mono numbers (the one place the design system
 // allows numbering); the ledger stays quiet — the single bold element is the per-turn MEMORY CONTEXT
 // panel, because "what did memory inject into this turn, and why" is the question no competing tool
-// answers (they see only the finished prompt; the closest tools visualize budgets, not
-// provenance).
+// answers (trace-side tools see only the finished prompt).
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronLeft, ChevronDown, ChevronRight, BrainCircuit, Ghost } from 'lucide-react';
