@@ -10,6 +10,7 @@ import { BasicMemory } from '../src/memory.js';
 import type { Memory } from '../src/memory.js';
 import type { MemoryContextRecord } from '../src/run.js';
 import { runDurable, streamDurable } from '../src/run.js';
+import { replayRun } from '../src/regression.js';
 import { createMockModel, createMockStreamModel } from './mock.js';
 
 const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
@@ -87,6 +88,33 @@ describe('memory-context provenance (:memctx)', () => {
     await runDurable({ runId: 'mc4', journal, memory, threadId: 'tmc4', model: replyModel(), prompt: 'q' });
     const second = await journal.get<MemoryContextRecord>(runKeys.memoryContext('mc4'));
     expect(second).toEqual(first);
+  });
+
+  it('counterfactual memory-off replay: strips exactly the provably-injected history, keeps the turn', async () => {
+    const journal = new InMemoryJournal();
+    const memory = new BasicMemory(journal);
+    // Two turns → turn 2's frozen input = [q1, a1, q2] with memctx.incomingCount = 1.
+    await runDurable({ runId: 'cf-a', journal, memory, threadId: 'tcf', model: replyModel(), prompt: 'ilk soru' });
+    await runDurable({ runId: 'cf-b', journal, memory, threadId: 'tcf', model: replyModel(), prompt: 'ikinci soru' });
+
+    const prompts: any[] = [];
+    const probe = createMockModel(async ({ prompt }: any) => {
+      prompts.push(prompt);
+      return { content: [{ type: 'text', text: 'cf' }], finishReason: 'stop', usage, warnings: [] };
+    });
+    await replayRun({ journal: journal as any, runId: 'cf-b', model: probe, stripMemoryContext: true });
+
+    // The replayed model saw ONLY the turn's own message — the memory-composed history is gone.
+    const users = (prompts[0] ?? []).filter((m: any) => m?.role === 'user');
+    expect(users.length).toBe(1);
+    expect(JSON.stringify(users[0])).toContain('ikinci soru');
+    expect(JSON.stringify(prompts[0])).not.toContain('ilk soru');
+
+    // No provenance record → the strip refuses instead of guessing (memory-less run).
+    await runDurable({ runId: 'cf-plain', journal, model: replyModel(), prompt: 'x' });
+    await expect(
+      replayRun({ journal: journal as any, runId: 'cf-plain', model: probe, stripMemoryContext: true }),
+    ).rejects.toThrow('memctx');
   });
 
   it('streamDurable parity: the record is frozen pre-stream too; no memory/threadId → no record', async () => {

@@ -170,5 +170,7 @@
   "ghostTurnLabel": "unanswered",
   "ghostTurnTitle": "This question's run died before its first token — the write-ahead kept the message, but no run exists for it.",
   "ghostCount": "{{count}} unanswered",
-  "ghostCount_one": "{{count}} unanswered"
+  "ghostCount_one": "{{count}} unanswered",
+  "memoryOffLabel": "Re-run without memory (counterfactual)",
+  "memoryOffNote": "Strips exactly what the provenance record proves memory injected (recall/window/observations) and re-asks. Working-memory system text, if any, is not stripped. Requires a run with a recorded memory context."
 }

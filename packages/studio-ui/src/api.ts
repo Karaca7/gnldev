@@ -536,7 +536,7 @@ export const api = {
   deleteAgentVersion: (name: string, version: number) =>
     del<{ ok: boolean; name: string; version: number; active: number | null; remaining: number }>(`/managed-agents/${encodeURIComponent(name)}/versions/${version}`),
   // W5 regression: rerun a recorded run with a new model/system (replayRun) → returns the decision-point diff.
-  runRegression: (id: string, body: { model: string; system?: string }) =>
+  runRegression: (id: string, body: { model: string; system?: string; memoryOff?: boolean }) =>
     post<RegressionReport>(`/runs/${encodeURIComponent(id)}/regression`, body),
   // Diff two EXISTING runs (without rerunning) at the decision-point level.
   regressionDiff: (id: string, otherId: string) =>

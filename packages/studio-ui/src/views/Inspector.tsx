@@ -1838,6 +1838,7 @@ function RegressionView({ runId }: { runId: string }) {
   const { t } = useTranslation('inspector');
   const [model, setModel] = useState('');
   const [system, setSystem] = useState('');
+  const [memoryOff, setMemoryOff] = useState(false);
   const [otherRunId, setOtherRunId] = useState('');
   const [running, setRunning] = useState(false);
   const [report, setReport] = useState<RegressionReport | null>(null);
@@ -1846,7 +1847,7 @@ function RegressionView({ runId }: { runId: string }) {
   const runAgain = async () => {
     setRunning(true); setError(null);
     try {
-      const r = await api.runRegression(runId, { model: model.trim(), ...(system.trim() ? { system: system.trim() } : {}) });
+      const r = await api.runRegression(runId, { model: model.trim(), ...(system.trim() ? { system: system.trim() } : {}), ...(memoryOff ? { memoryOff: true } : {}) });
       setReport(r);
     } catch (e) {
       setError(String((e as Error)?.message ?? e));
@@ -1901,6 +1902,16 @@ function RegressionView({ runId }: { runId: string }) {
             {running ? t('running') : t('rerun')}
           </Btn>
         </div>
+        {/* Counterfactual memory-off replay: strips what the ':memctx' provenance PROVES was injected
+            (recall/window/observations) and re-asks — turning "it probably read it from memory" into
+            an experiment. The frozen system string (working memory, if any) is not edited; say so. */}
+        <label className="mt-2 flex items-start gap-2 text-xs text-muted-foreground">
+          <input type="checkbox" checked={memoryOff} onChange={(e) => setMemoryOff(e.target.checked)} className="mt-0.5 accent-primary" />
+          <span>
+            <span className="font-medium text-foreground">{t('memoryOffLabel')}</span>
+            <span className="block text-[11px]">{t('memoryOffNote')}</span>
+          </span>
+        </label>
       </div>
 
       <div className="rounded-md border border-border p-3">

@@ -246,6 +246,17 @@ export interface ReplayRunConfig {
   stopWhen?: RunDurableArgs['stopWhen'];
   /** Replay determinism mode (see DurableCtx.replay) — the new run is the first run in its own journal. */
   replay?: 'strict' | 'lenient';
+  /**
+   * COUNTERFACTUAL memory-off replay: re-run the turn WITHOUT what memory injected. Reads the run's
+   * ':memctx' provenance record (runKeys.memoryContext) and keeps only the turn's own incoming
+   * message(s) — the recalled/window/observation messages that memory composed in front of them are
+   * dropped. This turns "the model must have read it from the recall snippet" from an inference into
+   * an experiment: strip the injection, re-ask, diff the answers. Requires a ':memctx' record
+   * (throws otherwise — runs from before provenance existed can't be stripped honestly).
+   * HONEST BOUNDARY: the frozen `system` string is NOT surgically edited — if working memory was
+   * injected there (provenance.workingMemoryChars), it remains; callers should disclose that.
+   */
+  stripMemoryContext?: boolean;
 }
 
 export interface ReplayRunResult {
@@ -262,10 +273,24 @@ let replaySeq = 0;
  * or touches the original `runId`'s journal records (only writes under `newRunId`).
  */
 export async function replayRun(cfg: ReplayRunConfig): Promise<ReplayRunResult> {
-  const { journal, runId, newRunId, model, tools, system, guard, approvals, stopWhen, replay } = cfg;
+  const { journal, runId, newRunId, model, tools, system, guard, approvals, stopWhen, replay, stripMemoryContext } = cfg;
   const input = await journal.get<{ prompt?: unknown; messages?: unknown; system?: unknown }>(runKeys.input(runId));
   if (!input) {
     throw new Error(`@gnldev/durable: no recorded input for runId "${runId}" — cannot replay.`);
+  }
+
+  let messages = input.messages as any[] | undefined;
+  if (stripMemoryContext) {
+    const memctx = await journal.get<{ incomingCount?: number }>(runKeys.memoryContext(runId));
+    const incoming = memctx?.incomingCount ?? 0;
+    if (!memctx || incoming <= 0 || !Array.isArray(messages)) {
+      throw new Error(
+        `@gnldev/durable: run "${runId}" has no usable ':memctx' provenance — a memory-off replay can only strip what was provably injected.`,
+      );
+    }
+    // The frozen input is [ ...memory-composed history, ...incoming ] (see run.ts prepareMemoryContext)
+    // — the turn's own contribution is exactly the trailing incomingCount messages.
+    messages = messages.slice(-incoming);
   }
 
   const dst = newRunId ?? `${runId}:replay:${Date.now()}:${replaySeq++}`;
@@ -279,8 +304,8 @@ export async function replayRun(cfg: ReplayRunConfig): Promise<ReplayRunResult> 
     approvals,
     stopWhen,
     replay,
-    ...(input.messages ? { messages: input.messages } : {}),
-    ...(input.prompt ? { prompt: input.prompt } : {}),
+    ...(messages ? { messages } : {}),
+    ...(input.prompt && !messages ? { prompt: input.prompt } : {}),
     system: system ?? (input.system as string | undefined),
   } as any);
 

@@ -1854,7 +1854,7 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
     if (!(await allow(c, 'write'))) return deny(c, 'write');
     if (!writable) return c.json({ error: 'regression requires a writable journal' }, 501);
     const id = decodeURIComponent(c.req.param('id'));
-    const body = (await c.req.json().catch(() => ({}))) as { model?: string; system?: string; newRunId?: string };
+    const body = (await c.req.json().catch(() => ({}))) as { model?: string; system?: string; newRunId?: string; memoryOff?: boolean };
     if (!body.model) return c.json({ error: 'model is required (e.g. "openai/gpt-4o")' }, 400);
     let model: unknown;
     try {
@@ -1869,9 +1869,12 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
         model: model as any,
         ...(body.system != null ? { system: body.system } : {}),
         ...(body.newRunId ? { newRunId: body.newRunId } : {}),
+        // Counterfactual memory-off replay (see durable regression.ts stripMemoryContext): re-ask the
+        // turn WITHOUT what memory injected — provable causation instead of "it probably read it".
+        ...(body.memoryOff ? { stripMemoryContext: true } : {}),
       });
       const report = await regressionReport(reader, id, newRunId);
-      await audit(c, 'run.regression', id, { newRunId, model: body.model, divergentAt: report.diff.divergentAt });
+      await audit(c, 'run.regression', id, { newRunId, model: body.model, divergentAt: report.diff.divergentAt, ...(body.memoryOff ? { memoryOff: true } : {}) });
       return c.json({ ok: true, ...report });
     } catch (e: any) {
       return c.json({ error: String(e?.message ?? e) }, 400);

@@ -170,5 +170,7 @@
   "ghostTurnLabel": "cevapsız",
   "ghostTurnTitle": "Bu sorunun run'ı ilk token'dan önce öldü — write-ahead mesajı korudu ama ortada bir run yok.",
   "ghostCount": "{{count}} cevapsız",
-  "ghostCount_one": "{{count}} cevapsız"
+  "ghostCount_one": "{{count}} cevapsız",
+  "memoryOffLabel": "Hafızasız yeniden koş (kontrfaktüel)",
+  "memoryOffNote": "Provenance kaydının enjekte edildiğini kanıtladığı kısmı (recall/pencere/gözlemler) çıkarıp aynı soruyu yeniden sorar. Working memory system metni (varsa) çıkarılmaz. Memory kaydı olan bir run gerektirir."
 }
