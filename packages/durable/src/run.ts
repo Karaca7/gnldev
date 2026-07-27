@@ -10,7 +10,8 @@ import { recordRunUsage } from './budget.js';
 import { recordRunMetrics } from './metrics.js';
 import type { Journal, JournalReader, DurableCtx } from './journal.js';
 import type { Guard, Interrupt } from './guard.js';
-import type { Memory } from './memory.js';
+import { PROVENANCE_RECENT_CAP } from './memory.js';
+import type { Memory, MemoryContextProvenance } from './memory.js';
 import type { Processor, ProcessorCtx, ProcessorInput, ProcessorOutput } from './processor.js';
 import type { ModelInput, ToolSet } from './types.js';
 import { DuplicateSideEffectError, RunLimitExceededError, TaintedSideEffectError, ToolLoopDetectedError } from './limits.js';
@@ -375,6 +376,19 @@ async function resolveApprovals(
 }
 
 // Write the run input (prompt/messages/system) to the journal on the first call → resume becomes self-contained.
+/**
+ * Freeze the `:memctx` provenance next to `:input` — ONCE, first attempt wins (same semantics: it
+ * describes the attempt whose input was frozen). Best-effort read-model: a failure to read it later
+ * degrades a debugging panel, never the run — but the WRITE is on the run path and not try/caught,
+ * matching persistInput (a journal that can't write is a failed run anyway).
+ */
+async function persistMemoryContext(journal: Journal, runId: string, prov?: MemoryContextRecord): Promise<void> {
+  if (!prov) return;
+  const key = runKeys.memoryContext(runId);
+  if ((await journal.get(key)) !== undefined) return;
+  await journal.put(key, prov);
+}
+
 async function persistInput(
   journal: Journal,
   runId: string,
@@ -488,12 +502,22 @@ function dropEchoedHistory(history: any[], incoming: any[]): any[] {
   return incoming;
 }
 
+/** The `:memctx` journal record — MemoryContextProvenance plus the run-side counts (see runKeys.memoryContext). */
+export interface MemoryContextRecord extends MemoryContextProvenance {
+  v: 1;
+  threadId: string;
+  /** New message(s) this turn actually contributed (after echo-trim). */
+  incomingCount: number;
+  /** Client-echoed messages dropEchoedHistory stripped from the request (0 = delta-only client). */
+  echoTrimmed: number;
+}
+
 async function prepareMemoryContext(
   memory: Memory,
   threadId: string,
   resourceId: string | undefined,
   rest: PreparedInput,
-): Promise<{ incoming: any[]; wmTool?: Record<string, any>; alreadyStored: boolean }> {
+): Promise<{ incoming: any[]; wmTool?: Record<string, any>; alreadyStored: boolean; provenance?: MemoryContextRecord }> {
   const rawIncoming: any[] = rest.messages ?? (rest.prompt != null ? [{ role: 'user', content: rest.prompt }] : []);
   delete rest.prompt;
   const rid = resourceId ?? (memory.getThreadResource ? await memory.getThreadResource(threadId) : undefined);
@@ -510,18 +534,49 @@ async function prepareMemoryContext(
     const alreadyStored = historyEndsWithIncoming(history, incoming);
     rest.messages = alreadyStored ? [...history] : [...history, ...incoming];
     if (mc.system) rest.system = [rest.system, mc.system].filter(Boolean).join('\n\n');
-    return { incoming, wmTool: mc.tools, alreadyStored };
+    const provenance: MemoryContextRecord = {
+      v: 1, threadId,
+      recalled: mc.provenance?.recalled ?? [],
+      recentCount: mc.provenance?.recentCount ?? history.length,
+      ...(mc.provenance?.recent !== undefined ? { recent: mc.provenance.recent } : {}),
+      ...(mc.provenance?.observationCount !== undefined ? { observationCount: mc.provenance.observationCount } : {}),
+      ...(mc.provenance?.workingMemoryChars !== undefined ? { workingMemoryChars: mc.provenance.workingMemoryChars } : {}),
+      incomingCount: incoming.length,
+      echoTrimmed: rawIncoming.length - incoming.length,
+    };
+    return { incoming, wmTool: mc.tools, alreadyStored, provenance };
   }
-  // Legacy path (BasicMemory / SemanticMemory).
+  // Legacy path (BasicMemory / SemanticMemory) — provenance is the limited truth this path can see:
+  // everything loaded counts as the recent window (no recall refs, no OM).
   const history = await memory.getMessages(threadId, { query: lastUserText(rawIncoming), resourceId: rid });
   const incoming = dropEchoedHistory(history, rawIncoming);
   const alreadyStored = historyEndsWithIncoming(history, incoming);
   rest.messages = alreadyStored ? [...history] : [...history, ...incoming];
+  let wmChars: number | undefined;
   if (memory.getWorkingMemory) {
     const wm = await memory.getWorkingMemory(threadId);
-    if (wm) rest.system = [rest.system, `# Working Memory\n${wm}`].filter(Boolean).join('\n\n');
+    if (wm) {
+      rest.system = [rest.system, `# Working Memory\n${wm}`].filter(Boolean).join('\n\n');
+      wmChars = String(wm).length;
+    }
   }
-  return { incoming, alreadyStored };
+  // Legacy refs: plain message objects (no store seq) — seq is the array index, preview from the
+  // same whitespace-collapsed rule the rich path uses (AgentMemory.toRef).
+  const legacyPreview = (m: any): string => {
+    const c = m?.content;
+    const s = typeof c === 'string' ? c : Array.isArray(c) ? c.map((p: any) => (typeof p?.text === 'string' ? p.text : '')).join(' ') : '';
+    return s.replace(/\s+/g, ' ').trim().slice(0, 120);
+  };
+  const provenance: MemoryContextRecord = {
+    v: 1, threadId, recalled: [], recentCount: history.length,
+    recent: history.slice(-PROVENANCE_RECENT_CAP).map((m: any, i: number) => ({
+      threadId, seq: Math.max(0, history.length - PROVENANCE_RECENT_CAP) + i, role: String(m?.role ?? '?'), preview: legacyPreview(m),
+    })),
+    ...(wmChars !== undefined ? { workingMemoryChars: wmChars } : {}),
+    incomingCount: incoming.length,
+    echoTrimmed: rawIncoming.length - incoming.length,
+  };
+  return { incoming, alreadyStored, provenance };
 }
 
 /**
@@ -892,8 +947,9 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   let incoming: any[] = [];
   let wmTool: Record<string, any> | undefined; // Phase 14: rich memory's updateWorkingMemory tool
   let incomingStored = false; // retry dedupe — see prepareMemoryContext/writeAheadIncoming
+  let memCtx: MemoryContextRecord | undefined; // ':memctx' provenance — frozen next to ':input' below
   if (memory && threadId) {
-    ({ incoming, wmTool, alreadyStored: incomingStored } = await prepareMemoryContext(memory, threadId, resourceId, rest));
+    ({ incoming, wmTool, alreadyStored: incomingStored, provenance: memCtx } = await prepareMemoryContext(memory, threadId, resourceId, rest));
     // F4: same-runId re-entry with interleaved turns — drop the re-concat if the stored copy is visible.
     incomingStored = await dropIncomingIfAppendedEarlier(journal, runId, rest, incoming, incomingStored);
   }
@@ -901,6 +957,7 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   if (procCtx) await applyInputProcessors(processors!, procCtx, journal, runId, rest);
 
   await persistInput(journal, runId, rest, threadId, agentName);
+  await persistMemoryContext(journal, runId, memCtx);
   // AUDIT B2: freeze `limits` into the journal on the first run (idempotent via `claim` — the FIRST
   // run's limits win, a later resume never overwrites them). resumeRun reads this back when the caller
   // doesn't re-supply `limits`, so a resumed run keeps its cost cap / loop / duplicate / taint gates.
@@ -1132,8 +1189,9 @@ export async function streamDurable(args: StreamDurableArgs) {
   let incoming: any[] = [];
   let wmTool: Record<string, any> | undefined;
   let incomingStored = false; // retry dedupe — see prepareMemoryContext/writeAheadIncoming
+  let memCtx: MemoryContextRecord | undefined; // ':memctx' provenance — parity with runDurableInner
   if (memory && threadId) {
-    ({ incoming, wmTool, alreadyStored: incomingStored } = await prepareMemoryContext(memory, threadId, resourceId, rest));
+    ({ incoming, wmTool, alreadyStored: incomingStored, provenance: memCtx } = await prepareMemoryContext(memory, threadId, resourceId, rest));
     // F4: same-runId re-entry with interleaved turns — parity with runDurableInner.
     incomingStored = await dropIncomingIfAppendedEarlier(journal, runId, rest, incoming, incomingStored);
   }
@@ -1141,6 +1199,7 @@ export async function streamDurable(args: StreamDurableArgs) {
   if (procCtx) await applyInputProcessors(processors!, procCtx, journal, runId, rest);
 
   await persistInput(journal, runId, rest, threadId, agentName);
+  await persistMemoryContext(journal, runId, memCtx);
   // AUDIT B2: freeze `limits` on the first run (parity with runDurableInner) — idempotent via `claim`.
   if (limits) await claim(journal, runKeys.cfgLimits(runId), limits);
   // WRITE-AHEAD user message (parity with runDurableInner — see writeAheadIncoming). Pre-model, so a

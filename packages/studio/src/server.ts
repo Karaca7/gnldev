@@ -936,6 +936,19 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
     return c.json(reconstructState(entries, step, seed as any));
   });
 
+  // Memory-context provenance (':memctx', frozen next to ':input' by durable's persistMemoryContext):
+  // the frozen input says WHAT the model saw; this says WHERE each part came from — recall hits with
+  // similarity, recent-window count, OM observations, WM injection, echo-trim. `null` for runs
+  // without memory, pre-provenance runs, or a read-only journal — the UI renders that honestly as
+  // "no provenance recorded", never as an error.
+  app.get('/runs/:id/memory-context', async (c) => {
+    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!writable) return c.json({ context: null });
+    const id = decodeURIComponent(c.req.param('id'));
+    const ctx = await rw.get!(`${id}:memctx`).catch(() => undefined);
+    return c.json({ context: ctx ?? null });
+  });
+
   // Cost/token (getRunCost).
   app.get('/runs/:id/cost', async (c) => {
     if (!(await allow(c, 'read'))) return deny(c, 'read');

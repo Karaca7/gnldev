@@ -188,6 +188,15 @@ export interface MetricsRun {
   runId: string; status: string; modelSteps: number; toolCalls: number;
   startTs: number | null; durationMs: number | null; costUsd: number; totalTokens: number;
 }
+/** One recalled message ref from GET /runs/:id/memory-context — score present only on similarity HITS. */
+export interface RecalledMessageRef { threadId: string; seq: number; role: string; preview: string; score?: number }
+/** The ':memctx' provenance record durable freezes next to ':input' — WHERE each context part came from. */
+export interface MemoryContextRecord {
+  v: 1; threadId: string; recalled: RecalledMessageRef[]; recentCount: number;
+  /** The window messages themselves (capped) — absent on records written before the field existed. */
+  recent?: RecalledMessageRef[];
+  observationCount?: number; workingMemoryChars?: number; incomingCount: number; echoTrimmed: number;
+}
 export interface AgentMeta { name: string; model: string; system?: string; hasTools: boolean; maxSteps?: number; tools?: ToolMeta[]; orgs?: string[]; }
 // ── Agent approval registry (governance — structurally compatible with @gnldev/durable's agent-registry.ts) ──
 export type AgentApprovalStatus = 'pending' | 'approved' | 'changed' | 'blocked';
@@ -375,6 +384,8 @@ function workflowRunsRegistry(status?: 'suspended' | 'completed' | 'canceled', l
 export const api = {
   capabilities: () => get<Capabilities>('/capabilities'),
   runs: () => get<RunSummary[]>('/runs'),
+  /** Memory provenance for a turn ('null' = not recorded: old run, memory off, read-only journal). */
+  memoryContext: (id: string) => get<{ context: MemoryContextRecord | null }>(`/runs/${encodeURIComponent(id)}/memory-context`),
   // API-09: optional server-side filters — SAME parameter names as @gnldev/server's GET /runs (status/agent
   // are pushed down to the engine; q is a runId substring). Filtering is done on the server so `total`
   // (shown in the search placeholder) always describes the same set as `items`.
@@ -687,6 +698,12 @@ export const useRunIncidents = (id: string | null) =>
   useQuery({ queryKey: ['incidents', id], queryFn: () => api.runIncidents(id!), enabled: !!id });
 export const useRunNetwork = (id: string | null) => useQuery({ queryKey: ['run-network', id], queryFn: () => api.runNetwork(id!), enabled: !!id });
 export const useRunScores = (id: string | null) => useQuery({ queryKey: ['run-scores', id], queryFn: () => api.runScores(id!), enabled: !!id });
+/** Lazy per-turn provenance (ThreadDetail expands it on demand) — the record is frozen, cache it long. */
+export const useMemoryContext = (id: string | null) =>
+  useQuery({ queryKey: ['memctx', id], queryFn: () => api.memoryContext(id!), enabled: !!id, staleTime: 5 * 60_000 });
+/** Thread messages for the ledger's ghost-turn detection (unanswered questions have no run). */
+export const useThreadMessages = (id: string | null) =>
+  useQuery({ queryKey: ['thread-messages', id], queryFn: () => api.messages(id!), enabled: !!id });
 export const useProcessorReports = (id: string | null) => useQuery({ queryKey: ['processor-reports', id], queryFn: () => api.processorReports(id!), enabled: !!id });
 export const useWorkflowRunState = (id: string | null) =>
   useQuery({ queryKey: ['wf-run-state', id], queryFn: () => api.workflowRun(id!), enabled: !!id });

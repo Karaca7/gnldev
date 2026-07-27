@@ -31,6 +31,7 @@ export function openapiSpec(apiBase = '') {
       '/runs': P('get', 'Run summaries (paginated with ?limit; total reflects status/agent/q filters when set)', [q('limit', 'integer'), q('cursor', 'integer'), q('status'), q('agent'), q('q')]),
       '/runs/{id}': { ...P('get', 'Run journal entries', idParam), ...P('delete', 'GDPR/PII purge — permanently delete all trace of a run', idParam) },
       '/runs/{id}/state': P('get', 'Step N state (time-travel)', [...idParam, q('step', 'integer')]),
+      '/runs/{id}/memory-context': P('get', 'Memory provenance for the turn (recall hits + similarity, recent window, WM/OM, echo-trim) — null when not recorded', idParam),
       '/runs/{id}/diff': P('get', 'Step N vs N-1 diff', idParam),
       '/runs/{id}/cost': P('get', 'Cost/tokens', idParam),
       '/runs/{id}/scores': P('get', 'Runtime scorer results (memoized proc:eval records)', idParam),

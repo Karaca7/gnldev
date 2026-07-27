@@ -5,7 +5,8 @@
 // loadContext runs BEFORE persistInput, so the whole context freezes into `:input` = replayable.
 import { cosineSimilarity } from 'ai';
 import { requireCapability, durableProcessorStep } from '@gnldev/durable';
-import type { Storage, RunJournal, MemoryStore, MessageRecord, ThreadRecord, RecallOptions } from '@gnldev/durable';
+import { PROVENANCE_RECENT_CAP } from '@gnldev/durable';
+import type { Storage, RunJournal, MemoryStore, MessageRecord, ThreadRecord, RecallOptions, MemoryContextProvenance, RecalledMessageRef } from '@gnldev/durable';
 import { messageText, hasNorm, type Embed } from './keys.js';
 import { deepMerge } from './deep-merge.js';
 import { createWorkingMemoryTool, renderWorkingMemorySystem, type WorkingMemoryConfig } from './working-memory.js';
@@ -38,6 +39,8 @@ export interface LoadedContext {
   messages: any[];
   system?: string;
   tools?: Record<string, any>;
+  /** Memory-debugging read model: where each injected piece came from (see @gnldev/durable MemoryContextProvenance). */
+  provenance?: MemoryContextProvenance;
 }
 
 const HUGE = 1_000_000_000; // "fetch everything" page limit (parity; a real consumer uses pagination)
@@ -91,10 +94,40 @@ export class AgentMemory {
 
   /** Track 1: last N + query-based topK recall. */
   async getMessages(threadId: string, opts?: { query?: string; resourceId?: string; scope?: 'thread' | 'resource' }): Promise<any[]> {
+    return (await this.composeTrack1(threadId, opts)).messages;
+  }
+
+  /**
+   * Track 1 with PROVENANCE: the shared core of getMessages and loadContext's non-OM branch.
+   * Behavior of `messages` is byte-for-byte the old getMessages; `recalled`/`recentCount` are the
+   * new read-model — which records semantic recall injected (hits with their similarity, range
+   * neighbors unscored — see MessageRecord.score) vs how many came from the recent window.
+   */
+  /** MessageRecord → provenance ref (short whitespace-collapsed preview; score only when present). */
+  protected static toRef(r: MessageRecord): RecalledMessageRef {
+    return {
+      threadId: r.threadId,
+      seq: r.seq,
+      role: r.role,
+      preview: (r.text ?? messageText(r.message) ?? '').replace(/\s+/g, ' ').trim().slice(0, 120),
+      ...(r.score !== undefined ? { score: r.score } : {}),
+    };
+  }
+
+  protected async composeTrack1(
+    threadId: string,
+    opts?: { query?: string; resourceId?: string; scope?: 'thread' | 'resource' },
+  ): Promise<{ messages: any[]; recalled: RecalledMessageRef[]; recent: RecalledMessageRef[]; recentCount: number }> {
     const all = await this.allMessages(threadId);
     const recent = all.slice(-this.recentN);
     if (!opts?.query || !this.embed || all.length <= this.recentN) {
-      return (all.length <= this.recentN ? all : recent).map((e) => e.message);
+      const window = all.length <= this.recentN ? all : recent;
+      return {
+        messages: window.map((e) => e.message),
+        recalled: [],
+        recent: window.slice(-PROVENANCE_RECENT_CAP).map((e) => AgentMemory.toRef(e)),
+        recentCount: window.length,
+      };
     }
     const qEmb = await this.embed(opts.query);
     const recalled = await this.store.recall(threadId, qEmb, {
@@ -103,8 +136,13 @@ export class AgentMemory {
       resourceId: opts.resourceId,
     });
     const recentSeqs = new Set(recent.map((e) => e.seq));
-    const recalledMsgs = recalled.filter((r) => !(r.threadId === threadId && recentSeqs.has(r.seq))).map((r) => r.message);
-    return [...recalledMsgs, ...recent.map((e) => e.message)];
+    const injected = recalled.filter((r) => !(r.threadId === threadId && recentSeqs.has(r.seq)));
+    return {
+      messages: [...injected.map((r) => r.message), ...recent.map((e) => e.message)],
+      recalled: injected.map((r) => AgentMemory.toRef(r)),
+      recent: recent.slice(-PROVENANCE_RECENT_CAP).map((e) => AgentMemory.toRef(e)),
+      recentCount: recent.length,
+    };
   }
 
   /**
@@ -156,6 +194,7 @@ export class AgentMemory {
       await this.ensureThreadIndexed(threadId, opts.resourceId, fu ? messageText(fu) : undefined);
     }
     let messages: any[];
+    const provenance: MemoryContextProvenance = { recalled: [], recentCount: 0 };
     if (this.om?.enabled) {
       if (this.om.buffering) {
         if (this.om.onCompact && (await this.needsCompaction(threadId))) await this.om.onCompact(threadId);
@@ -164,16 +203,25 @@ export class AgentMemory {
       }
       const obs = (await this.store.getObservations(threadId)).filter((o) => !o.condensed);
       const observedSeq = (await this.runs.get<number>(omKey(threadId, 'observedSeq'))) ?? -1;
-      const unobserved = (await this.allMessages(threadId)).filter((m) => m.seq > observedSeq).map((m) => m.message);
+      const unobservedRecs = (await this.allMessages(threadId)).filter((m) => m.seq > observedSeq);
+      const unobserved = unobservedRecs.map((m) => m.message);
       messages = obs.length
         ? [{ role: 'system', content: `# Observations\n${obs.map((o) => o.text).join('\n')}` }, ...unobserved]
         : unobserved;
+      provenance.recentCount = unobserved.length;
+      provenance.recent = unobservedRecs.slice(-PROVENANCE_RECENT_CAP).map((m) => AgentMemory.toRef(m));
+      provenance.observationCount = obs.length;
     } else {
-      messages = await this.getMessages(threadId, { query: opts.query, resourceId: opts.resourceId });
+      const t1 = await this.composeTrack1(threadId, { query: opts.query, resourceId: opts.resourceId });
+      messages = t1.messages;
+      provenance.recalled = t1.recalled;
+      provenance.recent = t1.recent;
+      provenance.recentCount = t1.recentCount;
     }
-    const out: LoadedContext = { messages };
+    const out: LoadedContext = { messages, provenance };
     if (this.wm) {
       out.system = renderWorkingMemorySystem(await this.readWM(threadId, opts.resourceId), this.wm);
+      if (out.system) provenance.workingMemoryChars = out.system.length;
       if (!this.wm.readOnly) {
         out.tools = createWorkingMemoryTool({ apply: (patch) => this.applyWorkingMemoryUpdate(threadId, patch, opts.resourceId), schema: this.wm.schema });
       }

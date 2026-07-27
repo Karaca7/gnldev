@@ -128,6 +128,9 @@ class InMemoryMemoryStore implements MemoryStore {
       const hi = Math.min(rows.length - 1, h.idx + range.after);
       for (let i = lo; i <= hi; i++) picked.set(`${h.tid}:${rows[i]!.seq}`, rows[i]!);
     }
+    // Provenance parity with sqlite-storage.ts — the spread copy also keeps the STORED record
+    // unmutated (this adapter returns direct references for neighbors).
+    for (const h of hits) picked.set(`${h.tid}:${h.m.seq}`, { ...h.m, score: h.score });
     return [...picked.values()].sort((a, b) => a.ts - b.ts || a.seq - b.seq);
   }
 

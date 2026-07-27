@@ -76,6 +76,14 @@ export interface MessageRecord {
   ts: number;
   /** The raw AI SDK message object. */
   message: unknown;
+  /**
+   * Recall provenance (set ONLY on records returned by `recall()`, and only on the actual similarity
+   * HITS — `messageRange` context neighbors ride along unscored). Never persisted: the adapters stamp
+   * it on the per-call copy so callers can answer "WHY did this message enter the context" (see
+   * MemoryContextProvenance in memory.ts / the `:memctx` journal record). Before this, every adapter
+   * computed the cosine score, used it to rank, and dropped it at the return boundary.
+   */
+  score?: number;
 }
 
 export interface Observation {

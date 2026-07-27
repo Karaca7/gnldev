@@ -17,6 +17,7 @@ import { toast, ConfirmDialog } from '../ui';
 import { TextDiff } from '../text-diff';
 import { MediaParts } from '../media';
 import { Stagger, StaggerItem, Reveal } from '../motion';
+import { ThreadDetail } from './inspector-thread';
 
 type TabId = 'conversation' | 'trace' | 'network' | 'forks' | 'regression' | 'processors' | 'cost' | 'incidents';
 const ALL_TAB_IDS: readonly TabId[] = ['conversation', 'trace', 'network', 'forks', 'regression', 'processors', 'cost', 'incidents'];
@@ -93,6 +94,9 @@ export function Inspector() {
   const [params, setParams] = useSearchParams();
   const [sel, setSel] = useState<string | null>(() => params.get('run') || localStorage.getItem('gnl-insp-run'));
   const [tab, setTab] = useState<TabId>(() => (params.get('tab') as TabId | null) || 'conversation');
+  // Thread-level selection (ThreadDetail — see inspector-thread.tsx). A RUN selection wins the right
+  // pane; selThread stays set underneath it so RunDetail's back returns to the thread ledger.
+  const [selThread, setSelThread] = useState<string | null>(() => params.get('thread'));
   // F5-resilient selection; when sel drops to null via purge/onPurged, clear the key too (so a stale runId doesn't come back on F5).
   useEffect(() => { if (sel) localStorage.setItem('gnl-insp-run', sel); else localStorage.removeItem('gnl-insp-run'); }, [sel]);
   // Pull sel/tab FROM the URL when it changes from outside our own writes below — a new `?run=` link
@@ -101,8 +105,10 @@ export function Inspector() {
   useEffect(() => {
     const urlRun = params.get('run');
     const urlTab = params.get('tab') as TabId | null;
+    const urlThread = params.get('thread');
     if (urlRun !== null && urlRun !== sel) setSel(urlRun);
     if (urlTab !== null && urlTab !== tab) setTab(urlTab);
+    if (urlThread !== selThread && (urlThread !== null || selThread !== null)) setSelThread(urlThread);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params]);
   // Push sel/tab TO the URL so it always reflects the current selection (replace: this is in-app
@@ -111,9 +117,10 @@ export function Inspector() {
     const next = new URLSearchParams(params);
     if (sel) next.set('run', sel); else next.delete('run');
     if (tab !== 'conversation') next.set('tab', tab); else next.delete('tab');
+    if (selThread) next.set('thread', selThread); else next.delete('thread');
     if (next.toString() !== params.toString()) setParams(next, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sel, tab]);
+  }, [sel, tab, selThread]);
 
   // Left list view: flat list (default, industry pattern: trace-first) or grouped by thread —
   // the selection (`sel`) is preserved when the mode changes, only the display shape changes.
@@ -132,7 +139,7 @@ export function Inspector() {
           a phone (this used to squeeze the detail panel to near-zero width — the reported "text
           split into single letters" bug). Below md, show ONE panel at a time based on `sel`; at
           md+, both panels are always visible side by side exactly as before. */}
-      <div className={cn('w-full flex-col border-r border-border md:flex md:w-72', sel ? 'hidden md:flex' : 'flex')}>
+      <div className={cn('w-full flex-col border-r border-border md:flex md:w-72', (sel || selThread) ? 'hidden md:flex' : 'flex')}>
         {/* Runs/Threads: a REAL tab on its own row (industry pattern — several observability tools put
             Runs/Threads/Monitor, or Langfuse/Phoenix/Helicone Sessions, as a separate page/tab). NOT a
             small toggle crammed into the SAME cramped row as the status filter — that minority/exception
@@ -202,10 +209,19 @@ export function Inspector() {
             )
           )}
           {view === 'runs' && runList.map((r) => (
-            <RunRow key={r.runId} run={r} metricsById={metricsById} active={sel === r.runId} onClick={() => setSel(r.runId)} />
+            <RunRow key={r.runId} run={r} metricsById={metricsById} active={sel === r.runId} onClick={() => { setSel(r.runId); setSelThread(null); }} />
           ))}
           {view === 'threads' && threadGroups.map((g) => (
-            <ThreadGroupRow key={g.threadId ?? '__ungrouped__'} group={g} title={g.threadId ? threadTitles.get(g.threadId) : undefined} sel={sel} onSelect={setSel} metricsById={metricsById} />
+            <ThreadGroupRow
+              key={g.threadId ?? '__ungrouped__'}
+              group={g}
+              title={g.threadId ? threadTitles.get(g.threadId) : undefined}
+              sel={sel}
+              selThread={selThread}
+              onSelect={(id) => { setSel(id); setSelThread(null); }}
+              onSelectThread={(id) => { setSelThread(id); setSel(null); }}
+              metricsById={metricsById}
+            />
           ))}
           {runs.hasNextPage && (
             <button
@@ -219,10 +235,8 @@ export function Inspector() {
           )}
         </div>
       </div>
-      <div className={cn('flex-1 overflow-hidden', !sel && 'hidden md:block')}>
-        {!sel ? (
-          <Empty>{t('selectRunHint')}</Empty>
-        ) : (
+      <div className={cn('flex-1 overflow-hidden', !(sel || selThread) && 'hidden md:block')}>
+        {sel ? (
           <RunDetail
             key={sel}
             runId={sel}
@@ -237,6 +251,21 @@ export function Inspector() {
             onPurged={() => setSel(null)}
             onBack={() => setSel(null)}
           />
+        ) : selThread ? (
+          /* Thread ledger (inspector-thread.tsx): selecting a turn opens its RunDetail while keeping
+             selThread underneath — RunDetail's back chevron then returns HERE, not to the bare list. */
+          <ThreadDetail
+            key={selThread}
+            threadId={selThread}
+            title={threadTitles.get(selThread)}
+            runs={threadGroups.find((g) => g.threadId === selThread)?.runs ?? []}
+            metricsById={metricsById}
+            caps={caps.data}
+            onOpenRun={setSel}
+            onBack={() => setSelThread(null)}
+          />
+        ) : (
+          <Empty>{t('selectRunHint')}</Empty>
         )}
       </div>
       </div>
@@ -370,16 +399,42 @@ export function threadGroupLabel(threadId: string | null, title?: string, ungrou
   return threadId.length > 14 ? `${threadId.slice(0, 12)}…` : threadId;
 }
 
-function ThreadGroupRow({ group, title, sel, onSelect, metricsById }: { group: ThreadGroup; title?: string; sel: string | null; onSelect: (id: string) => void; metricsById: Map<string, MetricsRun> }) {
+function ThreadGroupRow({ group, title, sel, selThread, onSelect, onSelectThread, metricsById }: {
+  group: ThreadGroup; title?: string; sel: string | null; selThread: string | null;
+  onSelect: (id: string) => void; onSelectThread: (threadId: string) => void; metricsById: Map<string, MetricsRun>;
+}) {
   const { t } = useTranslation('inspector');
   const label = threadGroupLabel(group.threadId, title, t('ungrouped'));
   const named = group.threadId != null && !!title;
   const hasSuspended = group.runs.some((r) => r.status === 'suspended');
+
+  // Declutter (Threads-tab critique): a REAL thread is ONE row — the per-run nesting that used to
+  // render every run inline moved into ThreadDetail (the right pane), where the turns actually mean
+  // something. The list is for finding a conversation, the ledger is for reading it.
+  if (group.threadId != null) {
+    const totalCost = group.runs.reduce((n, r) => n + (metricsById.get(r.runId)?.costUsd ?? 0), 0);
+    return (
+      <button
+        type="button"
+        onClick={() => onSelectThread(group.threadId!)}
+        className={cn(
+          'mb-0.5 flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors',
+          selThread === group.threadId ? 'bg-muted' : 'hover:bg-muted/60',
+        )}
+      >
+        {/* A named thread uses the normal (readable) font, an unnamed id uses mono — same language as the Playground list. */}
+        <span className={cn('min-w-0 flex-1 truncate text-[13px]', named ? 'font-medium text-foreground' : 'font-mono text-muted-foreground')} title={group.threadId}>{label}</span>
+        {hasSuspended && <span className="shrink-0"><Badge tone="warning">{t('hasSuspended')}</Badge></span>}
+        <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">{group.runs.length}</span>
+        <span className="shrink-0 font-mono text-[10px] tabular-nums text-muted-foreground">${totalCost.toFixed(2)}</span>
+      </button>
+    );
+  }
+  // Ungrouped bucket: no thread to open — keep the expandable per-run list.
   return (
     <details className="mb-1" open>
       <summary className="flex cursor-pointer select-none items-center gap-2 rounded-md px-2.5 py-1.5 text-left hover:bg-muted/60">
-        {/* A named thread uses the normal (readable) font, an unnamed id uses mono — same language as the Playground list. */}
-        <span className={cn('truncate text-[13px]', named ? 'font-medium text-foreground' : 'font-mono text-muted-foreground')} title={group.threadId ?? undefined}>{label}</span>
+        <span className="truncate font-mono text-[13px] text-muted-foreground">{label}</span>
         <span className="shrink-0 text-[10px] text-muted-foreground">{group.runs.length} run</span>
         {hasSuspended && <span className="ml-auto shrink-0"><Badge tone="warning">{t('hasSuspended')}</Badge></span>}
       </summary>

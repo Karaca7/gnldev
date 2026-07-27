@@ -776,6 +776,9 @@ class SqliteMemoryStore implements MemoryStore {
       const hi = Math.min(msgs.length - 1, h.idx + range.after);
       for (let i = lo; i <= hi; i++) picked.set(`${h.tid}:${msgs[i]!.seq}`, msgs[i]!);
     }
+    // Provenance: stamp the similarity on the HITS (after the neighbor loop, so a message that is
+    // both a neighbor and a hit keeps its score). Per-call copies (rowToMsg) — nothing is persisted.
+    for (const h of hits) picked.set(`${h.tid}:${h.m.seq}`, { ...h.m, score: h.score });
     return [...picked.values()].sort((a, b) => a.ts - b.ts || a.seq - b.seq);
   }
   async getWorkingMemory(scopeId: string): Promise<unknown> {

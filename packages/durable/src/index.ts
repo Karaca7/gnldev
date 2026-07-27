@@ -19,8 +19,8 @@ export type {
   DurableCtx,
   ToolJournalRecord,
 } from './journal.js';
-export { BasicMemory } from './memory.js';
-export type { Memory } from './memory.js';
+export { BasicMemory, PROVENANCE_RECENT_CAP } from './memory.js';
+export type { Memory, MemoryContextProvenance, RecalledMessageRef } from './memory.js';
 export { getRunCost, toTraceSpans } from './cost.js';
 export type { RunCost, RunCostOptions, TraceSpan } from './cost.js';
 export { DEFAULT_PRICING, priceFor, costOf, PRICING_KEY, readPricing, effectivePricingTable } from './pricing.js';
@@ -43,7 +43,7 @@ export { withIdempotency } from './idempotent-tools.js';
 export type { WithIdempotencyOptions } from './idempotent-tools.js';
 export type { ModelInput, AnyTool, ToolSet } from './types.js';
 export { runDurable, resumeRun, streamDurable, limitBreachFromSteps, blockedFromSteps } from './run.js';
-export type { RunDurableArgs, StreamDurableArgs, DurableResult, ResumeAgentConfig, StreamBreach } from './run.js';
+export type { RunDurableArgs, StreamDurableArgs, DurableResult, ResumeAgentConfig, StreamBreach, MemoryContextRecord } from './run.js';
 // K1/GOREV W1 (B): sentinel→error conversion helper for code that consumes streamDurable directly.
 export { streamFinishError } from './run.js';
 // Greenfield storage contracts (ports + Storage + capability + composite).

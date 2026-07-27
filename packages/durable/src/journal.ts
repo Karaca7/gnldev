@@ -215,6 +215,14 @@ export const runKeys = {
    *  write-ahead via ensureThreadIndexed; this closes the asymmetry). Same two-phase record shape as
    *  memAppended above; the completion-time append then persists only the PRODUCED messages. */
   memUserAppended: (runId: string) => `mem-user-appended:${runId}`,
+  /**
+   * Memory-context provenance (`:memctx` — invisible to parseJournalKey, and the `${runId}:` purge
+   * prefix covers it). Written ONCE per run next to `:input` (first attempt wins, same freeze
+   * semantics): the frozen input says WHAT the model saw, this record says WHERE each part came from
+   * — recall hits with similarity, recent-window count, OM observations, WM injection, and the
+   * echo-trim/incoming counts run.ts adds. Read by studio's GET /runs/:id/memory-context.
+   */
+  memoryContext: (runId: string) => `${runId}:memctx`,
   /** Frozen model selection (the fallback winner) — invisible to parseJournalKey, resume sticks to the same model. */
   cfgModel: (runId: string) => `${runId}:cfg:model`,
   /**

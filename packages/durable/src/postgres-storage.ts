@@ -670,6 +670,8 @@ class PgMemoryStore implements MemoryStore {
       const lo = Math.max(0, h.idx - range.before), hi = Math.min(msgs.length - 1, h.idx + range.after);
       for (let i = lo; i <= hi; i++) picked.set(`${h.tid}:${msgs[i]!.seq}`, msgs[i]!);
     }
+    // Provenance parity with sqlite-storage.ts: hits carry their similarity, neighbors stay unscored.
+    for (const h of hits) picked.set(`${h.tid}:${h.m.seq}`, { ...h.m, score: h.score });
     return [...picked.values()].sort((a, b) => a.ts - b.ts || a.seq - b.seq);
   }
   async getWorkingMemory(scopeId: string): Promise<unknown> {
