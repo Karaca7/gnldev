@@ -374,6 +374,20 @@ assistant/tool mesajları ancak önceki sunucu turlarının ekosu olabilir ve ka
 önce kırpılır. *Yeni* bir thread'i hazır transkriptle tohumlamak (ilk turda few-shot geçmiş) olduğu
 gibi kaydedilmeye devam eder.
 
+**Memory provenance ("model bunu nereden bildi?").** Memory'li her tur, girdisinin yanına bir
+`:memctx` kaydı dondurur: semantic recall'un hangi mesajları (benzerlik skorlarıyla) enjekte ettiği,
+güncel pencerenin mesajları, working-memory/gözlem enjeksiyonları ve kaç istemci ekosunun
+kırpıldığı. Donmuş girdi modelin *ne* gördüğünü söyler; bu kayıt *her parçanın nereden geldiğini* —
+`GET /runs/:id/memory-context` ile ya da Studio Inspector'da: Threads → bir konuşma → turun
+**memory** satırı. Cevapsız kalan sorular (ilk token'dan önce ölen run) aynı defterde hayalet satır
+olarak görünür.
+
+**Kontrfaktüel yeniden koşma (çıkarım değil, kanıt).** "Model bunu recall parçasından okumuştur" bir
+çıkarımdır — Studio'nun Regression sekmesi bunu deneye çevirir: *hafızasız yeniden koş*, provenance
+kaydının enjekte edildiğini kanıtladığı kısmı çıkarıp aynı turu aynı modelle yeniden sorar ve iki
+cevabı diff'ler. Provenance kaydı olmayan turda neyi kırpacağını tahmin etmek yerine çalışmayı
+reddeder.
+
 ### 7.4 RAG — doküman arşivinden cevap
 
 ```ts

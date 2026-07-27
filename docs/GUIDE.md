@@ -384,6 +384,20 @@ messages inside the request can only be echoes of earlier server turns and are t
 persisting and prompting. Seeding a *new* thread with a prepared transcript (few-shot history on the
 first turn) still persists wholesale.
 
+**Memory provenance (why did the model know that?).** Every memory-enabled turn freezes a `:memctx`
+record next to its input: which messages semantic recall injected (with their similarity scores),
+the recent-window messages themselves, working-memory/observation injections, and how many
+client-echoed messages were trimmed. The frozen input says *what* the model saw; this record says
+*where each part came from* — read it via `GET /runs/:id/memory-context`, or in Studio's Inspector:
+Threads → a conversation → a turn's **memory** row. Unanswered questions (a run that died before its
+first token) appear in the same ledger as ghost rows.
+
+**Counterfactual replay (prove it, don't infer it).** "The model must have read it from the recall
+snippet" is an inference — Studio's Regression tab can turn it into an experiment: *re-run without
+memory* strips exactly what the provenance record proves was injected and re-asks the same turn with
+the same model, then diffs the answers. It refuses to run on turns without a provenance record
+rather than guessing what to strip.
+
 ### 7.4 RAG — answering from a document archive
 
 ```ts
