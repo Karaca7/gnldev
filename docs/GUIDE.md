@@ -371,6 +371,19 @@ Runs sharing the same `threadId` (conversation thread identifier) share history;
 recall** (finding past messages relevant to the current question via embeddings) and **working
 memory** (the running summary the agent keeps for itself) are both supported.
 
+**Write-ahead persistence.** The user's message is written to the thread *before* the first model
+call; the assistant's answer is appended at completion. A run that fails before its first token
+(provider outage, quota) therefore never loses the question — the thread shows what was asked, and
+a retry (same `runId` or a fresh one re-sending the same text) is deduplicated instead of doubling
+the message. A turn suspended for approval likewise shows its question while it waits.
+
+**Client contract (delta-only).** With memory active, the server owns the history: send only the
+*new* message(s) per turn — not the whole transcript. Clients that POST their full history anyway
+(the `useChat` wire format does this) are handled: once a thread has stored history, assistant/tool
+messages inside the request can only be echoes of earlier server turns and are trimmed before
+persisting and prompting. Seeding a *new* thread with a prepared transcript (few-shot history on the
+first turn) still persists wholesale.
+
 ### 7.4 RAG — answering from a document archive
 
 ```ts

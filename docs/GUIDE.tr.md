@@ -361,6 +361,19 @@ await gnl.run('asistan', { runId: 'r2', threadId: 'musteri-5', prompt: 'Adım ne
 (anlamsal anımsama: eski mesajlar arasından soruyla alakalı olanları embedding ile bulup getirme)
 ve **working memory** (çalışma notu: ajanın kendine tuttuğu güncel özet) desteklenir.
 
+**Write-ahead kalıcılık.** Kullanıcının mesajı ilk model çağrısından *önce* thread'e yazılır;
+asistanın cevabı tamamlanınca eklenir. İlk token gelmeden ölen bir koşu (sağlayıcı kesintisi, kota)
+soruyu asla kaybetmez — thread ne sorulduğunu gösterir; retry (aynı `runId` ya da aynı metni yeniden
+gönderen yeni bir tane) mesajı çiftlemek yerine deduplicate edilir. Onay için askıya alınan tur da
+beklerken sorusunu gösterir.
+
+**İstemci sözleşmesi (yalnız-delta).** Memory açıkken geçmişin sahibi sunucudur: tur başına yalnız
+*yeni* mesaj(lar)ı gönderin — tüm transkripti değil. Yine de tam geçmişi POST'layan istemciler
+(`useChat` tel formatı böyle yapar) ele alınır: thread'de kayıtlı geçmiş varken isteğin içindeki
+assistant/tool mesajları ancak önceki sunucu turlarının ekosu olabilir ve kaydetmeden/prompt'lamadan
+önce kırpılır. *Yeni* bir thread'i hazır transkriptle tohumlamak (ilk turda few-shot geçmiş) olduğu
+gibi kaydedilmeye devam eder.
+
 ### 7.4 RAG — doküman arşivinden cevap
 
 ```ts
