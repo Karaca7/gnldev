@@ -77,7 +77,20 @@ function collect(name, fromDir) {
 }
 
 const rootPkg = JSON.parse(readFileSync(join(PKG_DIR, 'package.json'), 'utf8'));
-for (const dep of Object.keys(rootPkg.dependencies ?? {})) collect(dep, PKG_DIR);
+// devDependencies, not dependencies: this package PUBLISHES only `dist` (Vite has already inlined
+// every library into the bundle), so nothing needs to be resolved at install time and the whole tree
+// is declared as dev. The attribution duty is unchanged — the code still travels inside dist — so the
+// walk must start from the dev tree. (Both are read, so the file stays correct either way.)
+const rootDeps = { ...(rootPkg.dependencies ?? {}), ...(rootPkg.devDependencies ?? {}) };
+// Build-only tooling is NOT redistributed (vite/vitest/tsc/postcss and friends never enter dist), so
+// attributing them would misstate what's actually shipped.
+const TOOLING = new Set([
+  'vite', '@vitejs/plugin-react', 'vitest', 'typescript', 'postcss', 'autoprefixer', 'tailwindcss',
+  'jsdom', '@testing-library/dom', '@testing-library/react', '@types/react', '@types/react-dom',
+]);
+for (const dep of Object.keys(rootDeps)) {
+  if (!TOOLING.has(dep)) collect(dep, PKG_DIR);
+}
 
 // A package with no license file AND no `license` field is a genuine unknown — someone has to look
 // at it. Failing here is deliberate: shipping a notices file that silently omits a package is worse
