@@ -11,14 +11,61 @@ const PROVIDER_PKG: Record<string, string> = {
   mistral: '@ai-sdk/mistral',
 };
 
+/**
+ * A host's own providers, by prefix.
+ *
+ * Four built-in packages used to be the whole world, and that made the same string mean two
+ * different things depending on which screen you typed it into: an app wired to an
+ * OpenAI-compatible endpoint (NVIDIA, Together, a gateway, a local server) could resolve
+ * `nvidia/…` in the lab — where a resolver hook already existed — and could not resolve it
+ * anywhere near an agent run, which goes through here. Reported from the Playground, where the
+ * agent's own model reads as "custom" and no string a user can type reproduces it.
+ *
+ * A host registers a factory and the prefix means the same thing everywhere.
+ */
+export type ModelProviderFactory = (modelId: string) => unknown;
+
+const CUSTOM: Map<string, ModelProviderFactory> = new Map();
+
+/**
+ * Teaches `resolveModel` a provider prefix.
+ *
+ * Returns an unregister function, so a test can add one without leaking it into the next test —
+ * a global that can only grow is a global that eventually explains a failure somewhere else.
+ */
+export function registerModelProvider(prefix: string, factory: ModelProviderFactory): () => void {
+  if (!prefix || prefix.includes('/')) {
+    throw new Error(`registerModelProvider: '${prefix}' is not a usable prefix (no slashes, not empty)`);
+  }
+  if (PROVIDER_PKG[prefix]) {
+    // Refused rather than shadowed: silently taking over 'openai' would make every other model
+    // string in the process mean something the person reading it cannot see.
+    throw new Error(`registerModelProvider: '${prefix}' is a built-in provider and cannot be replaced`);
+  }
+  CUSTOM.set(prefix, factory);
+  return () => { CUSTOM.delete(prefix); };
+}
+
+/** Every prefix `resolveModel` currently understands — built-ins first, then the host's. */
+export function knownModelProviders(): string[] {
+  return [...Object.keys(PROVIDER_PKG), ...CUSTOM.keys()];
+}
+
 export async function resolveModel(spec: string): Promise<any> {
   const i = spec.indexOf('/');
   if (i < 0) throw new Error(`model: expected 'provider/model', got '${spec}'`);
   const provider = spec.slice(0, i);
   const modelId = spec.slice(i + 1);
+  const custom = CUSTOM.get(provider);
+  if (custom) return custom(modelId);
+
   const pkg = PROVIDER_PKG[provider];
   if (!pkg) {
-    throw new Error(`Unknown provider '${provider}'. Supported: ${Object.keys(PROVIDER_PKG).join(', ')}`);
+    throw new Error(
+      `Unknown provider '${provider}'. Known: ${knownModelProviders().join(', ')}. `
+      + 'A host can teach this one more with registerModelProvider(prefix, factory) — '
+      + 'that is what an OpenAI-compatible endpoint (NVIDIA, Together, a gateway, a local server) needs.',
+    );
   }
   let mod: any;
   try {

@@ -24,6 +24,10 @@ export type { Memory, MemoryContextProvenance, RecalledMessageRef } from './memo
 export { getRunCost, toTraceSpans } from './cost.js';
 export type { RunCost, RunCostOptions, TraceSpan } from './cost.js';
 export { DEFAULT_PRICING, priceFor, costOf, PRICING_KEY, readPricing, effectivePricingTable } from './pricing.js';
+// Exported for consumers that need the usage/modelId of ONE model step and their own pricing
+// decision on top — `getRunCost` prices an unknown model at 0, which is right for a total and wrong
+// for a report that has to distinguish "free" from "we have no price for this".
+export { usageAndCostFromModelValue } from './cost.js';
 export type { ModelPricing, PricingDoc } from './pricing.js';
 export {
   DivergenceError, RunBusyError, SideEffectRetryBlockedError, RetryLimitExceededError,
@@ -64,6 +68,8 @@ export { durableProcessorStep, createProcessorCtx, ProcessorTripwire, recordProc
 // D4-retry (AUDIT-R2 follow-up): turn-level retry-with-feedback ladder (see run.ts).
 export { ProcessorRetry, RetryExhaustedByProcessorError } from './processor.js';
 export { recordIncident, readIncidents } from './incidents.js';
+export { acquireLease, releaseLease, readLease } from './lease.js';
+export type { Lease } from './lease.js';
 export type { RunIncident } from './incidents.js';
 export type { Processor, ProcessorInput, ProcessorOutput, ProcessorCtx, ProcessorToolResult, ProcessorReport, ProcessorStepInput, ProcessorStepOverride, ProcessorStepOutput } from './processor.js';
 export { createAgentTool, runSubAgent } from './agent-tool.js';
@@ -113,8 +119,8 @@ export {
 } from './agent-registry.js';
 export type { AgentRegistryRecord, AgentApprovalStatus } from './agent-registry.js';
 export type { RunLimits, RunLimitKind } from './limits.js';
-export { resolveModel, withModelFallback } from './model-router.js';
-export type { FallbackCandidate } from './model-router.js';
+export { resolveModel, withModelFallback, registerModelProvider, knownModelProviders } from './model-router.js';
+export type { FallbackCandidate, ModelProviderFactory } from './model-router.js';
 // W2: Replay-based regression core (diffRuns/replayRun/regressionReport) — see regression.ts.
 // buildDecisionSequence: also re-exported for P1.1 (AUDIT-R2) — @gnldev/evals' trajectory
 // scorer builds a run's tool-call sequence from this same primitive.
