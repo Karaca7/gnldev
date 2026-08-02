@@ -158,7 +158,7 @@ function CreateUser({ orgs, ownOrg, onToken, catalog }: {
             {orgs.map((o) => <option key={o} value={o}>{o}</option>)}
           </select>
         )}
-        <Btn size="xs" onClick={create} disabled={busy}><Plus size={12} /> {t('addButton')}</Btn>
+        <Btn size="xs" onClick={create} busy={busy}><Plus size={12} /> {t('addButton')}</Btn>
       </div>
       {catalog?.enabled && (
         <div className="rounded-md border border-border/60 bg-muted/20 p-2">
@@ -266,7 +266,7 @@ function EditUser({ user, catalog, open, onOpenChange }: {
       footer={
         <>
           <Btn variant="outline" onClick={() => onOpenChange(false)}>{t('cancelButton')}</Btn>
-          <Btn onClick={save} disabled={busy}>{t('saveButton')}</Btn>
+          <Btn onClick={save} busy={busy}>{t('saveButton')}</Btn>
         </>
       }
     >

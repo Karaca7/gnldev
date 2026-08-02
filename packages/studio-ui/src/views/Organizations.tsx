@@ -135,7 +135,7 @@ function BudgetEditor({ id, initial, onDone }: { id: string; initial?: BudgetLim
         </label>
         {errs.tok && <span className="text-[11px] text-destructive">{errs.tok}</span>}
       </div>
-      <Btn size="xs" onClick={save} disabled={busy}><Save size={12} /> {t('save')}</Btn>
+      <Btn size="xs" onClick={save} busy={busy}><Save size={12} /> {t('save')}</Btn>
       <Btn size="xs" variant="outline" onClick={onDone}><X size={12} /></Btn>
     </div>
   );
@@ -208,7 +208,7 @@ function CreateOrganization() {
         {idErr && <span className="text-[11px] text-destructive">{idErr}</span>}
       </div>
       <input className={inputCls} placeholder={t('labelPlaceholder')} value={label} onChange={(e) => setLabel(e.target.value)} />
-      <Btn size="xs" onClick={create} disabled={busy || !id.trim()}><Plus size={12} /> {t('addButton')}</Btn>
+      <Btn size="xs" onClick={create} busy={busy} disabled={!id.trim()}><Plus size={12} /> {t('addButton')}</Btn>
     </div>
   );
 }
@@ -454,7 +454,7 @@ function RetentionPanel() {
           <input type="checkbox" checked={keepSuspended} onChange={(e) => setKeepSuspended(e.target.checked)} />
           {t('keepSuspendedLabel')}
         </label>
-        <Btn size="xs" variant="outline" disabled={busy} onClick={() => setConfirmOpen(true)}>
+        <Btn size="xs" variant="outline" busy={busy} onClick={() => setConfirmOpen(true)}>
           <Trash2 size={12} className="text-destructive" /> {busy ? t('sweeping') : t('sweepButton')}
         </Btn>
         {result && (

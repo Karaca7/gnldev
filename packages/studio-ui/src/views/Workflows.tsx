@@ -748,7 +748,7 @@ function WorkflowEditor({ initial, onSave, onCancel }: {
         <span className="text-sm font-semibold">{initial ? t('editWorkflowHeading') : t('newWorkflow')}</span>
         <div className="ml-auto flex gap-2">
           <Btn size="xs" variant="outline" onClick={handleCancel} disabled={saving}>{t('cancelLabel')}</Btn>
-          <Btn size="xs" onClick={save} disabled={saving}>{saving ? t('saving') : t('saveAction')}</Btn>
+          <Btn size="xs" onClick={save} busy={saving}>{saving ? t('saving') : t('saveAction')}</Btn>
         </div>
       </div>
       {err && <div className="mx-4 mt-3 rounded-sm bg-destructive/10 px-3 py-2 text-xs text-destructive">{err}</div>}
@@ -943,7 +943,7 @@ function SuspendedRunRow({ item, workflows, canResume, canCancel, busy, onCancel
             </Btn>
           )}
           {canCancel && (
-            <Btn variant="deny" size="xs" disabled={busy} onClick={onCancelRequest}>
+            <Btn variant="deny" size="xs" busy={busy} onClick={onCancelRequest}>
               <Ban size={12} /> {t('inboxCancelAction')}
             </Btn>
           )}
@@ -988,7 +988,7 @@ function SuspendedRunRow({ item, workflows, canResume, canCancel, busy, onCancel
             />
           </label>
           {err && <p className="text-xs text-destructive">{err}</p>}
-          <Btn size="xs" onClick={() => void submit()} disabled={submitting || !item.waitId}>
+          <Btn size="xs" onClick={() => void submit()} busy={submitting} disabled={!item.waitId}>
             {submitting ? t('inboxSubmitting') : t('inboxSubmitResume')}
           </Btn>
         </div>

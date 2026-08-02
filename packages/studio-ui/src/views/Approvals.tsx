@@ -73,10 +73,10 @@ export function Approvals() {
                   {it.runId} <ExternalLink size={11} />
                 </Link>
                 <div className="ml-auto flex gap-1.5">
-                  <Btn variant="ok" size="xs" disabled={busy === it.toolCallId} onClick={() => decide(it.runId, it.toolCallId, true)}>
+                  <Btn variant="ok" size="xs" busy={busy === it.toolCallId} onClick={() => decide(it.runId, it.toolCallId, true)}>
                     <Check size={13} /> {t('approve')}
                   </Btn>
-                  <Btn variant="deny" size="xs" disabled={busy === it.toolCallId} onClick={() => decide(it.runId, it.toolCallId, false)}>
+                  <Btn variant="deny" size="xs" busy={busy === it.toolCallId} onClick={() => decide(it.runId, it.toolCallId, false)}>
                     <X size={13} /> {t('deny')}
                   </Btn>
                 </div>

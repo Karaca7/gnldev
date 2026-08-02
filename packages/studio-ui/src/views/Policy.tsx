@@ -179,7 +179,7 @@ export function Policy() {
           <>
             {dirty && <Btn size="xs" variant="outline" onClick={discard}><RotateCcw size={12} /> {t('discardButton')}</Btn>}
             <Btn size="xs" variant="outline" onClick={add}><Plus size={12} /> {t('addRuleButton')}</Btn>
-            <Btn size="xs" onClick={save} disabled={busy || !dirty}><Save size={12} /> {t('saveButton')}</Btn>
+            <Btn size="xs" onClick={save} busy={busy} disabled={!dirty}><Save size={12} /> {t('saveButton')}</Btn>
           </>
         )}
       />

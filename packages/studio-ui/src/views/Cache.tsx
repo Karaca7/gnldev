@@ -88,7 +88,7 @@ function InvalidatePanel() {
               clear all known keys" behavior note, which disappears the moment the admin starts typing. */}
           <span id="cache-invalidate-key-help" className="text-xs text-muted-foreground">{t('keyHelp')}</span>
         </div>
-        <Btn size="xs" variant="outline" disabled={busy} onClick={() => setConfirmOpen(true)}>
+        <Btn size="xs" variant="outline" busy={busy} onClick={() => setConfirmOpen(true)}>
           <Trash2 size={12} className="text-destructive" /> {busy ? t('clearing') : t('clearButton')}
         </Btn>
       </div>

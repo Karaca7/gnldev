@@ -108,7 +108,7 @@ export function Knowledge() {
             className="w-16 rounded-md border border-input bg-background px-1.5 py-1 text-sm outline-none"
           />
         </label>
-        <Btn arrow onClick={run} disabled={busy || !q.trim()}>{t('searchAction')}</Btn>
+        <Btn arrow onClick={run} busy={busy} disabled={!q.trim()}>{t('searchAction')}</Btn>
       </div>
       <div className="flex-1 overflow-auto p-4">
         {busy ? (

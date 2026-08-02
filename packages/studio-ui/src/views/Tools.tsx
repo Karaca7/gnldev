@@ -190,7 +190,7 @@ function ToolRunner({ tool, canExec, durableAvail, onBack }: { tool: ToolListIte
             </div>
           )}
 
-          <div className="mt-3"><Btn arrow onClick={run} disabled={busy}>{busy ? t('running') : t('runTest')}</Btn></div>
+          <div className="mt-3"><Btn arrow onClick={run} busy={busy}>{busy ? t('running') : t('runTest')}</Btn></div>
 
           {err && <div className="mt-3 text-sm text-destructive">{err}</div>}
           {res && (

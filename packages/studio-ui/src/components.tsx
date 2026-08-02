@@ -1,5 +1,6 @@
 import type { ComponentType, KeyboardEvent, ReactNode } from 'react';
 import { useRef } from 'react';
+import { Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { errMessage } from './api';
 
@@ -14,8 +15,15 @@ export function Btn({
   /** Optional "›" prefix icon used only on high-impact (primary) actions — decorative, aria-hidden.
       Suppressed while `busy` is true so the two indicators don't stack. */
   arrow?: boolean;
-  /** Pending-action state: disables the button, sets aria-busy, and shows the same live-pulse
-      dot used elsewhere (record-dot, see Spinner) in place of the arrow — no separate spinner glyph. */
+  /**
+   * Pending-action state: disables the button, sets aria-busy, and spins a loader in place of the
+   * arrow.
+   *
+   * A SPINNER, not the live-pulse dot it used to show. The dot reads as a status light — something
+   * about the system — where a button needs to say "your click landed and this is still going".
+   * Without it a slow action looks like a dead control: the button greys out and nothing moves,
+   * which is indistinguishable from a page that stopped responding.
+   */
   busy?: boolean;
 }) {
   const base = 'inline-flex items-center gap-1.5 rounded-md transition-colors disabled:opacity-50 disabled:pointer-events-none';
@@ -45,7 +53,7 @@ export function Btn({
   }[variant];
   return (
     <button className={cn(base, sz, v)} onClick={onClick} disabled={disabled || busy} title={title} aria-busy={busy || undefined}>
-      {busy ? <span className="record-dot record-dot--live" aria-hidden /> : arrow && <span aria-hidden>›</span>}
+      {busy ? <Loader2 size={size === 'xs' ? 12 : 14} className="animate-spin" aria-hidden /> : arrow && <span aria-hidden>›</span>}
       {children}
     </button>
   );

@@ -148,7 +148,7 @@ export function ScoreRunPanel({ scorerNames }: { scorerNames: string[] }) {
           ))}
         </div>
         <div className="flex flex-col items-start gap-1">
-          <Btn size="xs" onClick={score} disabled={busy || !runId || sel.size === 0}>{busy ? t('scoring') : t('scoreAction')}</Btn>
+          <Btn size="xs" onClick={score} busy={busy} disabled={!runId || sel.size === 0}>{busy ? t('scoring') : t('scoreAction')}</Btn>
           {sel.size === 0 && <span className="text-[11px] text-muted-foreground">{t('selectAtLeastOneScorer')}</span>}
         </div>
       </div>
