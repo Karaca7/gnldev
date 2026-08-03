@@ -418,6 +418,76 @@ export interface WorkflowRunStatus {
  * Returns `false` (no-op) if the run had already COMPLETED (nothing left to cancel); `true` otherwise
  * (idempotent — canceling an already-canceled run is `true` again).
  */
+/**
+ * Forks a workflow run at a step — the workflow twin of @gnldev/durable's `forkRun`.
+ *
+ * The substrate has carried this all along: every step's output already sits in the journal under
+ * `<runId>:wf:<stepId>`, exactly-once. What was missing was only the wiring, which put this frame
+ * behind its neighbours — comparable frameworks replay and fork from a checkpoint with the
+ * prefix served from storage, or resume a run from a chosen step off a snapshot. Same idea here:
+ * copy the recorded outputs of every step BEFORE the fork point to a new runId, run the workflow
+ * under that id, and `runStep`'s cache check replays the prefix while everything from `fromStepId`
+ * on executes for real.
+ *
+ * Honest bounds, stated rather than discovered:
+ *  · order comes from `build()`, so the copied prefix is exact for sequential flows; nested
+ *    sub-workflow keys (`asStep`) are swept in when the journal has `listKeys`, best-effort
+ *    without it.
+ *  · the ORIGINAL INPUT is not recorded by the engine, so the caller passes it again when running
+ *    the fork. For a fork past step 0 it only feeds already-cached steps and is inert.
+ *  · retry counters are deliberately NOT copied — a forked step deserves its full retry budget.
+ */
+export async function forkWorkflowRun(
+  journal: JournalLike,
+  wf: { build(): { id: string }[] },
+  srcRunId: string,
+  fromStepId: string,
+  dstRunId: string,
+): Promise<{ dstRunId: string; copiedSteps: string[] }> {
+  const order = wf.build().map((s) => s.id);
+  const at = order.indexOf(fromStepId);
+  if (at < 0) {
+    throw new Error(`forkWorkflowRun: step '${fromStepId}' is not in this workflow. Steps: ${order.join(' → ')}`);
+  }
+  // A destination that already has records would silently MERGE two histories — the reader of the
+  // forked run could no longer tell which parts came from where. Refused instead. Probed at the
+  // STEP keys, not only the registry record: a plain `run()` journals its steps without writing a
+  // `wfrun:` record, and the registry-only check sailed straight past exactly that case in test.
+  if ((await journal.get(statusKey(dstRunId))) !== undefined) {
+    throw new Error(`forkWorkflowRun: '${dstRunId}' already has a workflow run recorded — pick a fresh id`);
+  }
+  for (const id of order) {
+    if ((await journal.get(`${dstRunId}:wf:${id}`)) !== undefined) {
+      throw new Error(`forkWorkflowRun: '${dstRunId}' already has step records — a fork must start from a fresh id, not merge into an existing run`);
+    }
+  }
+
+  const prefixIds = order.slice(0, at);
+  const copiedSteps: string[] = [];
+  for (const id of prefixIds) {
+    const flat = await journal.get(`${srcRunId}:wf:${id}`);
+    if (flat !== undefined) {
+      await journal.put(`${dstRunId}:wf:${id}`, flat);
+      copiedSteps.push(id);
+    }
+    // Nested sub-workflow steps live under `<runId>:wf:<id>:<inner>` — sweep them when the journal
+    // can list, skipping control keys (`_suspend`, `_resume:*`, ...) and retry counters.
+    if (journal.listKeys) {
+      for (const key of await journal.listKeys(`${srcRunId}:wf:${id}:`)) {
+        const tail = key.slice(`${srcRunId}:wf:`.length);
+        if (tail.includes(':_') || tail.endsWith(':attempts')) continue;
+        const v = await journal.get(key);
+        if (v !== undefined) await journal.put(`${dstRunId}:wf:${tail}`, v);
+      }
+    }
+  }
+  // The registry record, so the fork is FINDABLE and says where it came from.
+  await journal.put(statusKey(dstRunId), {
+    runId: dstRunId, status: 'forked', forkedFrom: { runId: srcRunId, fromStepId }, at: Date.now(),
+  });
+  return { dstRunId, copiedSteps };
+}
+
 export async function cancelWorkflowRun(
   journal: JournalLike,
   runId: string,
