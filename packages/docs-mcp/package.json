@@ -26,11 +26,11 @@
   "author": "Karaca7 (https://gnl.dev)",
   "homepage": "https://gnl.dev",
   "bugs": {
-    "url": "https://github.com/Karaca7/gnl/issues"
+    "url": "https://github.com/Karaca7/gnl-framework/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Karaca7/gnl.git",
+    "url": "git+https://github.com/Karaca7/gnl-framework.git",
     "directory": "packages/docs-mcp"
   },
   "publishConfig": {
