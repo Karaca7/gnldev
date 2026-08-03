@@ -3,7 +3,7 @@
 // The frame always composed in one direction: a workflow CONTAINS agents (its steps call them), and
 // an agent can contain sub-agents (`agents` → `agent_<name>` tools). But an agent could not reach a
 // workflow at all, so "look this up, and if it needs the full onboarding pipeline, kick it off" was
-// not expressible — the question that surfaced it, verbatim: "bir agenta workflow bağlanamıyor mu?"
+// not expressible.
 //
 // `workflows: ['name']` closes it, mirroring the sub-agent contract piece for piece:
 //   · the child runId is derived from the toolCallId, so the SAME parent step maps to the SAME

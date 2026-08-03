@@ -1,10 +1,8 @@
 // Forking a workflow run at a step — the wiring the substrate was already carrying.
 //
 // Every step's output has always been journaled exactly-once under `<runId>:wf:<stepId>`; what was
-// missing was only the copy that makes a second timeline. The neighbours have had this for a while
-// (forking from a checkpoint with the prefix served from storage, or resuming a run from a
-// chosen step off a snapshot), and the question that surfaced it was fair: "bu neden
-// olmasın ki?" — there was no reason.
+// missing was only the copy that makes a second timeline: replay the recorded prefix under a fresh
+// runId, execute for real from the chosen step on.
 import { describe, it, expect } from 'vitest';
 import { workflow, step, forkWorkflowRun, type JournalLike } from '../src/index.js';
 

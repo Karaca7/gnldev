@@ -422,9 +422,7 @@ export interface WorkflowRunStatus {
  * Forks a workflow run at a step — the workflow twin of @gnldev/durable's `forkRun`.
  *
  * The substrate has carried this all along: every step's output already sits in the journal under
- * `<runId>:wf:<stepId>`, exactly-once. What was missing was only the wiring, which put this frame
- * behind its neighbours — comparable frameworks replay and fork from a checkpoint with the
- * prefix served from storage, or resume a run from a chosen step off a snapshot. Same idea here:
+ * `<runId>:wf:<stepId>`, exactly-once. What was missing was only the wiring:
  * copy the recorded outputs of every step BEFORE the fork point to a new runId, run the workflow
  * under that id, and `runStep`'s cache check replays the prefix while everything from `fromStepId`
  * on executes for real.
