@@ -1,4 +1,5 @@
-import { stepCountIs } from 'ai';
+import { stepCountIs, tool as aiTool } from 'ai';
+import { z } from 'zod';
 import { runDurable, streamDurable } from './run.js';
 import type { StreamBreach } from './run.js';
 import { resolveModel, withModelFallback, type FallbackCandidate } from './model-router.js';
@@ -157,6 +158,17 @@ export interface AgentConfig {
    * sub-agent is fully skipped on parent resume).
    */
   agents?: string[];
+  /**
+   * Workflows this agent may START, by registry name — the missing direction of composition.
+   *
+   * A workflow has always been able to contain agents (its steps call them); an agent could not
+   * reach a workflow at all, so "look this up, and if it needs the full onboarding pipeline, kick
+   * it off" was not expressible. Each name becomes a `workflow_<name>` tool. The nested workflow
+   * runs DURABLY on the same journal under a runId derived from the tool call
+   * (`wf:<toolCallId>`), so a parent resume does not start it twice — the same exactly-once
+   * contract `agents` already has.
+   */
+  workflows?: string[];
   /** C4 runtime scorers: automatic, journal-memoized (exactly-once) scoring when a run completes. */
   scorers?: ScorerLike[];
   /**
@@ -399,6 +411,42 @@ export function createGnl(config: CreateGnlConfig) {
     return withModelFallback(candidates, journal, runId);
   }
 
+  /**
+   * Converts `a.workflows` names into `workflow_<name>` tools.
+   *
+   * Mirrors `buildSubAgentTools` deliberately, contract for contract: the child runId comes from
+   * the toolCallId, so the SAME parent step always maps to the SAME workflow run — replaying the
+   * parent skips a completed workflow instead of launching a second one. A suspended workflow is
+   * returned as data (`suspended`, `stepId`, `reason`), not thrown: the agent asked a question and
+   * "it is waiting on a human" is an answer.
+   */
+  function buildWorkflowTools(names: string[] | undefined): ToolSet {
+    const out: ToolSet = {};
+    for (const wfName of names ?? []) {
+      if (!config.workflows?.[wfName]) {
+        // The same early, clear refusal `agent()` gives for an unknown sub-agent: at wiring time,
+        // naming what exists — not a mid-run "not registered" from inside a tool call.
+        throw new Error(
+          `agent config names workflow '${wfName}', but it is not registered. `
+          + `Registered workflows: ${Object.keys(config.workflows ?? {}).join(', ') || '(none)'}`,
+        );
+      }
+      out[`workflow_${wfName}`] = Object.assign(aiTool({
+        description: `Start the '${wfName}' workflow and return its output`,
+        inputSchema: z.object({
+          input: z.record(z.string(), z.any()).optional().describe('input object handed to the workflow'),
+        }),
+        execute: async ({ input }: { input?: Record<string, unknown> }, options: any) => {
+          const r = await runWorkflow(wfName, input ?? {}, { runId: `wf:${options?.toolCallId}` });
+          return r.suspended
+            ? { suspended: true, stepId: r.stepId, reason: r.reason, runId: r.runId }
+            : { output: r.output, runId: r.runId };
+        },
+      }), { idempotent: true });
+    }
+    return out;
+  }
+
   /** C5: converts `a.agents` names into `agent_<name>` tools (model factory that freezes fallback into the nested runId).
    *  GOREV W1: if `limits` is given (the parent's RunOptions.limits), it's inherited by the sub-agent AS-IS. */
   async function buildSubAgentTools(names: string[] | undefined, rc: RequestContext, limits?: RunLimits): Promise<ToolSet> {
@@ -433,9 +481,10 @@ export function createGnl(config: CreateGnlConfig) {
     const model = await materializeModel(opts.model ?? (await resolveDyn(a.model, rc)), opts.runId);
     const agentTools = a.tools ? await resolveDyn(a.tools, rc) : undefined;
     const subTools = await buildSubAgentTools(a.agents, rc, opts.limits);
+    const wfTools = buildWorkflowTools(a.workflows);
     const system = opts.system ?? (a.system ? await resolveDyn(a.system, rc) : undefined);
     const processors = [...(config.processors ?? []), ...(a.processors ?? [])];
-    const mergedTools = { ...config.tools, ...agentTools, ...subTools };
+    const mergedTools = { ...config.tools, ...agentTools, ...subTools, ...wfTools };
     // Playground tool allow-list: expose only the requested subset to the model (agent tools unchanged).
     const runTools = opts.tools ? Object.fromEntries(Object.entries(mergedTools).filter(([n]) => opts.tools!.includes(n))) : mergedTools;
     const result = await runDurable({
@@ -513,9 +562,10 @@ export function createGnl(config: CreateGnlConfig) {
     const model = await materializeModel(opts.model ?? (await resolveDyn(a.model, rc)), opts.runId);
     const agentTools = a.tools ? await resolveDyn(a.tools, rc) : undefined;
     const subTools = await buildSubAgentTools(a.agents, rc, opts.limits);
+    const wfTools = buildWorkflowTools(a.workflows);
     const system = opts.system ?? (a.system ? await resolveDyn(a.system, rc) : undefined);
     const processors = [...(config.processors ?? []), ...(a.processors ?? [])];
-    const mergedTools = { ...config.tools, ...agentTools, ...subTools };
+    const mergedTools = { ...config.tools, ...agentTools, ...subTools, ...wfTools };
     const runTools = opts.tools ? Object.fromEntries(Object.entries(mergedTools).filter(([n]) => opts.tools!.includes(n))) : mergedTools;
     return streamDurable({
       runId: opts.runId,
