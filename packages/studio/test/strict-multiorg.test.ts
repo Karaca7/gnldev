@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
 import { roleAuth, type AuthProvider, type Principal } from '@gnldev/auth';
 import { createStudioApi } from '../src/server.js';
+import { call } from './call.js';
 
 // A fake PAID provider: token → Principal, capabilities().multiOrganization = true (as real @gnldev/auth-ee
 // with a valid `multiOrg` license). Write requires admin OR platform-admin; read is open to any principal.
@@ -53,10 +54,10 @@ describe('@gnldev/studio strict multi-org (EE ON)', () => {
     await seed(journal);
     const app = createStudioApi({ reader: journal, auth: licensedAuth(PRINCIPALS), org: {} });
 
-    const runs = await (await app.request('/runs', { headers: H('a-adm') })).json();
+    const runs = await (await call(app, '/runs', { headers: H('a-adm') })).json();
     expect(runs.map((r: any) => r.runId)).toEqual(['r-acme']); // globex NOT visible
 
-    expect((await app.request('/runs', { headers: { ...H('a-adm'), 'x-gnl-org': 'globex' } })).status).toBe(403);
+    expect((await call(app, '/runs', { headers: { ...H('a-adm'), 'x-gnl-org': 'globex' } })).status).toBe(403);
   });
 
   it('(2) an EXPLICIT platform-admin sees ALL orgs and can create one', async () => {
@@ -64,13 +65,13 @@ describe('@gnldev/studio strict multi-org (EE ON)', () => {
     await seed(journal);
     const app = createStudioApi({ reader: journal, auth: licensedAuth(PRINCIPALS), org: {} });
 
-    const orgs = await (await app.request('/organizations', { headers: H('plat') })).json();
+    const orgs = await (await call(app, '/organizations', { headers: H('plat') })).json();
     expect(orgs.organizations.map((o: any) => o.id).sort()).toEqual(['acme', 'globex']);
 
     // create a new org → 200
-    expect((await app.request('/organizations', { method: 'POST', headers: JH('plat'), body: JSON.stringify({ id: 'initech' }) })).status).toBe(200);
+    expect((await call(app, '/organizations', { method: 'POST', headers: JH('plat'), body: JSON.stringify({ id: 'initech' }) })).status).toBe(200);
     // and it can also read root-scoped data (both orgs' prefixed runs)
-    const runs = await (await app.request('/runs', { headers: H('plat') })).json();
+    const runs = await (await call(app, '/runs', { headers: H('plat') })).json();
     expect(runs.length).toBe(2);
   });
 
@@ -80,12 +81,12 @@ describe('@gnldev/studio strict multi-org (EE ON)', () => {
     const app = createStudioApi({ reader: journal, auth: licensedAuth(PRINCIPALS), org: {} });
 
     // org data read → 403 (previously it saw the whole root journal)
-    expect((await app.request('/runs', { headers: H('lost') })).status).toBe(403);
+    expect((await call(app, '/runs', { headers: H('lost') })).status).toBe(403);
     // org management → 403
-    expect((await app.request('/organizations', { method: 'POST', headers: JH('lost'), body: JSON.stringify({ id: 'x' }) })).status).toBe(403);
-    expect((await app.request('/organizations', { headers: H('lost') })).status).toBe(403);
+    expect((await call(app, '/organizations', { method: 'POST', headers: JH('lost'), body: JSON.stringify({ id: 'x' }) })).status).toBe(403);
+    expect((await call(app, '/organizations', { headers: H('lost') })).status).toBe(403);
     // BUT /me still works (exempt) so the caller can learn its own (denied) scope
-    const me = await (await app.request('/me', { headers: H('lost') })).json();
+    const me = await (await call(app, '/me', { headers: H('lost') })).json();
     expect(me).toMatchObject({ platformAdmin: false, scope: 'none', strictMultiOrg: true });
   });
 
@@ -95,18 +96,18 @@ describe('@gnldev/studio strict multi-org (EE ON)', () => {
     const app = createStudioApi({ reader: journal, auth: licensedAuth(PRINCIPALS), org: {} });
 
     // its OWN org budget → 200 (a-adm is admin of acme)
-    expect((await app.request('/organizations/acme/budget', { method: 'PUT', headers: JH('a-adm'), body: JSON.stringify({ tokenLimit: 5 }) })).status).toBe(200);
+    expect((await call(app, '/organizations/acme/budget', { method: 'PUT', headers: JH('a-adm'), body: JSON.stringify({ tokenLimit: 5 }) })).status).toBe(200);
     // another org → 403
-    expect((await app.request('/organizations/globex/budget', { method: 'PUT', headers: JH('a-adm'), body: JSON.stringify({ tokenLimit: 5 }) })).status).toBe(403);
+    expect((await call(app, '/organizations/globex/budget', { method: 'PUT', headers: JH('a-adm'), body: JSON.stringify({ tokenLimit: 5 }) })).status).toBe(403);
     // and an org-bound identity can never create an org
-    expect((await app.request('/organizations', { method: 'POST', headers: JH('a-adm'), body: JSON.stringify({ id: 'z' }) })).status).toBe(403);
+    expect((await call(app, '/organizations', { method: 'POST', headers: JH('a-adm'), body: JSON.stringify({ id: 'z' }) })).status).toBe(403);
   });
 
   it('/me exposes the new scope + platformAdmin fields', async () => {
     const app = createStudioApi({ reader: new InMemoryJournal(), auth: licensedAuth(PRINCIPALS), org: {} });
-    expect(await (await app.request('/me', { headers: H('plat') })).json())
+    expect(await (await call(app, '/me', { headers: H('plat') })).json())
       .toMatchObject({ platformAdmin: true, scope: 'platform', operator: true, strictMultiOrg: true });
-    expect(await (await app.request('/me', { headers: H('a-adm') })).json())
+    expect(await (await call(app, '/me', { headers: H('a-adm') })).json())
       .toMatchObject({ platformAdmin: false, scope: 'org:acme', orgId: 'acme', operator: false });
   });
 });
@@ -119,9 +120,9 @@ describe('@gnldev/studio strict multi-org (EE OFF → legacy operator UNCHANGED)
     const app = createStudioApi({ reader: journal, auth: roleAuth({ admin: { token: 'op' } }), org: {} });
 
     // org-less operator reads the whole root journal (both orgs' prefixed runs) — NOT fail-closed
-    const runs = await (await app.request('/runs', { headers: H('op') })).json();
+    const runs = await (await call(app, '/runs', { headers: H('op') })).json();
     expect(runs.length).toBe(2);
     // and can create an org
-    expect((await app.request('/organizations', { method: 'POST', headers: JH('op'), body: JSON.stringify({ id: 'x' }) })).status).toBe(200);
+    expect((await call(app, '/organizations', { method: 'POST', headers: JH('op'), body: JSON.stringify({ id: 'x' }) })).status).toBe(200);
   });
 });

@@ -29,6 +29,11 @@ function echoModel(): any {
 }
 
 describe('buildDevApp', () => {
+  // Also the guard on mount ORDER, which is why this one asserts both halves rather than either.
+  // `.mount()` registers a single blanket wildcard per call — unlike the `.route()` it replaced,
+  // which unpacked a sub-app's individual routes — so a catch-all `/` mount registered first
+  // swallows `/studio/*` and Studio answers 404. That reads as "Studio is broken", not as "your
+  // mounts are in the wrong order", which is exactly why it is pinned rather than remembered.
   it('REST /agents + Studio /studio/api/capabilities are served in a single app', async () => {
     const journal = new InMemoryJournal();
     const app = buildDevApp({ journal, agents: { assistant: { model: echoModel(), maxSteps: 4 } } }, rt);

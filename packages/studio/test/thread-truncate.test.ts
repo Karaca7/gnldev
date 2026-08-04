@@ -6,6 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
 import { createStudioApi, type StudioMemory } from '../src/server.js';
+import { call } from './call.js';
 
 /** Simple fake memory: only truncateMessages matters here; listThreads/getMessages are stubs. */
 function fakeMemory(removedByCall: (number | null)[]): StudioMemory & { truncateCalls: { threadId: string; afterIndex: number }[] } {
@@ -25,7 +26,7 @@ function fakeMemory(removedByCall: (number | null)[]): StudioMemory & { truncate
 }
 
 const del = (app: any, path: string, body: unknown, headers: Record<string, string> = {}) =>
-  app.request(path, { method: 'DELETE', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
+  call(app, path, { method: 'DELETE', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
 
 describe('DELETE /threads/:id/messages', () => {
   it('truncates via memory.truncateMessages, returns removed count, lands in audit', async () => {
@@ -37,7 +38,7 @@ describe('DELETE /threads/:id/messages', () => {
     expect(await res.json()).toEqual({ ok: true, removed: 6 });
     expect(memory.truncateCalls).toEqual([{ threadId: 't1', afterIndex: 3 }]);
 
-    const audit = await (await app.request('/audit?action=thread.truncate')).json();
+    const audit = await (await call(app, '/audit?action=thread.truncate')).json();
     expect(audit.items).toHaveLength(1);
     expect(audit.items[0]).toMatchObject({ actor: 'ops@acme.co', target: 't1', detail: { afterIndex: 3, removed: 6 } });
   });
@@ -76,7 +77,7 @@ describe('DELETE /threads/:id/messages', () => {
     expect(await res.json()).toEqual({ error: 'truncateMessages is not supported' });
 
     // a null return is NOT a write failure — nothing lands in audit
-    const audit = await (await app.request('/audit?action=thread.truncate')).json();
+    const audit = await (await call(app, '/audit?action=thread.truncate')).json();
     expect(audit.items).toHaveLength(0);
   });
 

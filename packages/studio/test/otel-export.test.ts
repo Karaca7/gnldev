@@ -5,17 +5,18 @@
 import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
 import { createStudioApi } from '../src/server.js';
+import { call } from './call.js';
 
 const post = (app: any, path: string, body: unknown = {}, headers: Record<string, string> = {}) =>
-  app.request(path, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
+  call(app, path, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
 
 describe('capabilities.otelExport', () => {
   it('true only if the host gives opts.otelExport', async () => {
     const withFn = createStudioApi({ reader: new InMemoryJournal(), otelExport: async () => ({ ok: true, target: 'x' }) });
-    expect((await (await withFn.request('/capabilities')).json()).otelExport).toBe(true);
+    expect((await (await call(withFn, '/capabilities')).json()).otelExport).toBe(true);
 
     const without = createStudioApi({ reader: new InMemoryJournal() });
-    expect((await (await without.request('/capabilities')).json()).otelExport).toBe(false);
+    expect((await (await call(without, '/capabilities')).json()).otelExport).toBe(false);
   });
 });
 
@@ -34,7 +35,7 @@ describe('POST /runs/:id/otel-export', () => {
     expect(await res.json()).toEqual({ ok: true, target: 'https://cloud.langfuse.com' });
     expect(calls).toEqual(['run-1']);
 
-    const audit = await (await app.request('/audit?action=run.otel-export')).json();
+    const audit = await (await call(app, '/audit?action=run.otel-export')).json();
     expect(audit.items).toHaveLength(1);
     expect(audit.items[0]).toMatchObject({
       actor: 'ops@acme.co',
@@ -52,7 +53,7 @@ describe('POST /runs/:id/otel-export', () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: false, error: 'endpoint returned 500' });
 
-    const audit = await (await app.request('/audit?action=run.otel-export')).json();
+    const audit = await (await call(app, '/audit?action=run.otel-export')).json();
     expect(audit.items[0]).toMatchObject({ target: 'run-1', detail: { ok: false, error: 'endpoint returned 500' } });
   });
 

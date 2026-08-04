@@ -7,9 +7,10 @@
 import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
 import { createStudioApi } from '../src/server.js';
+import { call } from './call.js';
 
 const post = (app: any, path: string, body: unknown = {}) =>
-  app.request(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  call(app, path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
 describe('POST /runs/:id/cancel (durable-flag only)', () => {
   it('writes the cancelAgentRun flag, audits, reports capability — idempotent', async () => {
@@ -17,7 +18,7 @@ describe('POST /runs/:id/cancel (durable-flag only)', () => {
     await journal.put('r1:input', { prompt: 'hi', _v: 1 });
     const app = createStudioApi({ reader: journal });
 
-    expect((await (await app.request('/capabilities')).json()).runCancel).toBe(true);
+    expect((await (await call(app, '/capabilities')).json()).runCancel).toBe(true);
 
     const res = await post(app, '/runs/r1/cancel');
     expect(res.status).toBe(200);
@@ -28,7 +29,7 @@ describe('POST /runs/:id/cancel (durable-flag only)', () => {
     const { agentRunCanceled } = await import('@gnldev/durable');
     expect(await agentRunCanceled(journal, 'r1')).toMatchObject({ reason: 'studio-cancel' });
 
-    const audit = await (await app.request('/audit?action=run.cancel')).json();
+    const audit = await (await call(app, '/audit?action=run.cancel')).json();
     expect(audit.items).toHaveLength(1);
     expect(audit.items[0]).toMatchObject({ target: 'r1', detail: { durable: true } });
 
@@ -59,7 +60,7 @@ describe('POST /workflows/runs/:id/cancel (durable-flag only, mirrors @gnldev/se
     await journal.put('wfrun:wf-1', { runId: 'wf-1', status: 'suspended', stepId: 'step-b', waitId: 'step-b', updatedAt: 1 });
     const app = createStudioApi({ reader: journal });
 
-    expect((await (await app.request('/capabilities')).json()).workflowRunCancel).toBe(true);
+    expect((await (await call(app, '/capabilities')).json()).workflowRunCancel).toBe(true);
 
     const res = await post(app, '/workflows/runs/wf-1/cancel');
     expect(res.status).toBe(200);
@@ -71,10 +72,10 @@ describe('POST /workflows/runs/:id/cancel (durable-flag only, mirrors @gnldev/se
     expect(reg.stepId).toBe('step-b');
     expect(reg.waitId).toBe('step-b');
 
-    const listed = await (await app.request('/workflows/runs?status=canceled')).json();
+    const listed = await (await call(app, '/workflows/runs?status=canceled')).json();
     expect(listed.map((r: any) => r.runId)).toContain('wf-1');
 
-    const audit = await (await app.request('/audit?action=workflow.cancel')).json();
+    const audit = await (await call(app, '/audit?action=workflow.cancel')).json();
     expect(audit.items[0]).toMatchObject({ target: 'wf-1', detail: { cancelled: true } });
   });
 

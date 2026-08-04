@@ -5,6 +5,7 @@ import { describe, it, expect } from 'vitest';
 import { InMemoryJournal, GNL_ORG_ID_KEY, GNL_RESOURCE_ID_KEY } from '@gnldev/durable';
 import { roleAuth } from '@gnldev/auth';
 import { createRestApi } from '../src/index.js';
+import { call } from './call.js';
 
 const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
 const mkStream = (arr: any[]) =>
@@ -64,7 +65,7 @@ describe('@gnldev/server: request-context identity sealing (P1.7)', () => {
     const journal = new InMemoryJournal();
     const api = mkApi(journal);
 
-    const res = await api.request('/agents/a/run', {
+    const res = await call(api, '/agents/a/run', {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: basicAuthHeader },
       body: JSON.stringify({
@@ -87,7 +88,7 @@ describe('@gnldev/server: request-context identity sealing (P1.7)', () => {
     const journal = new InMemoryJournal();
     const api = mkApi(journal);
 
-    const res = await api.request('/agents/a/stream', {
+    const res = await call(api, '/agents/a/stream', {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: basicAuthHeader },
       body: JSON.stringify({
@@ -111,7 +112,7 @@ describe('@gnldev/server: request-context identity sealing (P1.7)', () => {
     const journal = new InMemoryJournal();
     const api = mkApi(journal);
 
-    const res = await api.request('/agents/a/run', {
+    const res = await call(api, '/agents/a/run', {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: basicAuthHeader },
       body: JSON.stringify({ runId: 'no-spoof-run', prompt: 'hi' }),

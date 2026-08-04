@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
 import { createStudioApi } from '../src/server.js';
+import { call } from './call.js';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -25,7 +26,7 @@ describe('approval webhook notification', () => {
     vi.stubGlobal('fetch', hook);
     const app = createStudioApi({ reader: journal, alerts: { webhook: 'http://hook.test/gnl' } });
 
-    const r1 = await (await app.request('/approvals')).json();
+    const r1 = await (await call(app, '/approvals')).json();
     expect(r1.items).toHaveLength(1);
     expect(hook).toHaveBeenCalledTimes(1);
     const [url, init] = hook.mock.calls[0]! as unknown as [string, RequestInit];
@@ -37,7 +38,7 @@ describe('approval webhook notification', () => {
     });
 
     // Second listing: the marker is in the journal → the webhook is NOT fired again (one-time only).
-    await app.request('/approvals');
+    await call(app, '/approvals');
     expect(hook).toHaveBeenCalledTimes(1);
     expect(await journal.get('__alert__:approval:sus-1:call-1')).toBeDefined();
   });
@@ -47,7 +48,7 @@ describe('approval webhook notification', () => {
     await seedSuspended(journal, 'sus-2');
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('down'); }));
     const app = createStudioApi({ reader: journal, alerts: { webhook: 'http://hook.test/gnl' } });
-    const res = await app.request('/approvals');
+    const res = await call(app, '/approvals');
     expect(res.status).toBe(200);
     expect((await res.json()).items).toHaveLength(1);
   });
@@ -58,7 +59,7 @@ describe('approval webhook notification', () => {
     const hook = vi.fn();
     vi.stubGlobal('fetch', hook);
     const app = createStudioApi({ reader: journal });
-    await app.request('/approvals');
+    await call(app, '/approvals');
     expect(hook).not.toHaveBeenCalled();
   });
 });

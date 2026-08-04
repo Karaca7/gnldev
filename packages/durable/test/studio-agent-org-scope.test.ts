@@ -9,6 +9,7 @@ import { InMemoryJournal } from '../src/journal.js';
 import { createGnl } from '../src/registry.js';
 import { createMockModel, finalTextResult } from './mock.js';
 import { roleAuth } from '../../studio/src/auth.js';
+import { call } from './call.js';
 
 const model = () => createMockModel(async () => finalTextResult('ok'));
 
@@ -32,14 +33,14 @@ const boundAdmin = () => roleAuth({ admin: { token: 'acme-adm', orgId: 'acme' } 
 const operator = () => roleAuth({ admin: { token: 'op' } });
 
 const run = (app: any, name: string, token?: string) =>
-  app.request(`/agents/${name}/run`, {
+  call(app, `/agents/${name}/run`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
     body: JSON.stringify({ runId: `r-${name}-${Math.random()}`, prompt: 'hi' }),
   });
 
 const list = async (app: any, token?: string) =>
-  (await (await app.request('/agents', { headers: token ? { authorization: `Bearer ${token}` } : {} })).json())
+  (await (await call(app, '/agents', { headers: token ? { authorization: `Bearer ${token}` } : {} })).json())
     .map((a: any) => a.name).sort();
 
 describe('@gnldev/studio org-scoped agents', () => {
@@ -87,7 +88,7 @@ describe('@gnldev/studio org-scoped agents', () => {
 
   it('agent meta carries `orgs` for org-scoped agents (UI chip); global agents omit it', async () => {
     const app = api(operator());
-    const metas = await (await app.request('/agents', { headers: { authorization: 'Bearer op' } })).json();
+    const metas = await (await call(app, '/agents', { headers: { authorization: 'Bearer op' } })).json();
     const byName = Object.fromEntries(metas.map((m: any) => [m.name, m]));
     expect(byName.acme.orgs).toEqual(['acme']);
     expect(byName.glbx.orgs).toEqual(['globex']);

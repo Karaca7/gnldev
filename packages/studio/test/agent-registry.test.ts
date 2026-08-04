@@ -7,6 +7,7 @@ import { describe, it, expect } from 'vitest';
 import { InMemoryJournal, recordAgent, fingerprintAgent, listLog } from '@gnldev/durable';
 import { roleAuth } from '@gnldev/auth';
 import { createStudioApi } from '../src/server.js';
+import { call } from './call.js';
 
 const JH = (t?: string) => ({ 'content-type': 'application/json', ...(t ? { authorization: `Bearer ${t}` } : {}) });
 
@@ -16,7 +17,7 @@ describe('@gnldev/studio agent approval registry', () => {
     await recordAgent(journal, 'a', fingerprintAgent('a', { model: 'openai/gpt-4o' } as any));
     await recordAgent(journal, 'b', fingerprintAgent('b', { model: 'openai/gpt-4o' } as any));
     const app = createStudioApi({ reader: journal });
-    const res = await app.request('/agents/registry');
+    const res = await call(app, '/agents/registry');
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.map((r: any) => r.name).sort()).toEqual(['a', 'b']);
@@ -28,7 +29,7 @@ describe('@gnldev/studio agent approval registry', () => {
     await recordAgent(journal, 'a', fingerprintAgent('a', { model: 'openai/gpt-4o' } as any));
     const app = createStudioApi({ reader: journal });
 
-    const approve = await app.request('/agents/registry/a/approve', {
+    const approve = await call(app, '/agents/registry/a/approve', {
       method: 'POST', headers: JH(), body: JSON.stringify({ note: 'reviewed' }),
     });
     expect(approve.status).toBe(200);
@@ -36,7 +37,7 @@ describe('@gnldev/studio agent approval registry', () => {
     expect(approveBody.record.status).toBe('approved');
     expect(approveBody.record.note).toBe('reviewed');
 
-    const block = await app.request('/agents/registry/a/block', {
+    const block = await call(app, '/agents/registry/a/block', {
       method: 'POST', headers: JH(), body: JSON.stringify({ note: 'incident' }),
     });
     expect(block.status).toBe(200);
@@ -56,18 +57,18 @@ describe('@gnldev/studio agent approval registry', () => {
     await recordAgent(journal, 'a', fingerprintAgent('a', { model: 'openai/gpt-4o' } as any));
     const app = createStudioApi({ reader: journal, auth: roleAuth({ admin: { token: 'adm' }, viewer: { token: 'viw' } }) });
 
-    const noAuth = await app.request('/agents/registry/a/approve', { method: 'POST' });
+    const noAuth = await call(app, '/agents/registry/a/approve', { method: 'POST' });
     expect(noAuth.status).toBe(403);
-    const viewer = await app.request('/agents/registry/a/approve', { method: 'POST', headers: JH('viw') });
+    const viewer = await call(app, '/agents/registry/a/approve', { method: 'POST', headers: JH('viw') });
     expect(viewer.status).toBe(403);
-    const admin = await app.request('/agents/registry/a/approve', { method: 'POST', headers: JH('adm') });
+    const admin = await call(app, '/agents/registry/a/approve', { method: 'POST', headers: JH('adm') });
     expect(admin.status).toBe(200);
   });
 
   it('capabilities.agentRegistry reflects a writable + listKeys-capable journal', async () => {
     const journal = new InMemoryJournal();
     const app = createStudioApi({ reader: journal });
-    const caps = await (await app.request('/capabilities')).json();
+    const caps = await (await call(app, '/capabilities')).json();
     expect(caps.agentRegistry).toBe(true);
   });
 });
@@ -91,8 +92,8 @@ describe('@gnldev/studio agent approval registry — strict multi-org platform-a
     };
     const app = createStudioApi({ reader: journal, auth: licensedAuth as any, org: {} });
     const H = JH('acme-adm');
-    expect((await app.request('/agents/registry', { headers: H })).status).toBe(403);
-    expect((await app.request('/agents/registry/a/approve', { method: 'POST', headers: H })).status).toBe(403);
-    expect((await app.request('/agents/registry/a/block', { method: 'POST', headers: H })).status).toBe(403);
+    expect((await call(app, '/agents/registry', { headers: H })).status).toBe(403);
+    expect((await call(app, '/agents/registry/a/approve', { method: 'POST', headers: H })).status).toBe(403);
+    expect((await call(app, '/agents/registry/a/block', { method: 'POST', headers: H })).status).toBe(403);
   });
 });

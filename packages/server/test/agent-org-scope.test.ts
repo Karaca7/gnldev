@@ -5,6 +5,7 @@ import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
 import { roleAuth } from '@gnldev/auth';
 import { createRestApi } from '../src/index.js';
+import { call } from './call.js';
 
 function mkModel(text: string): any {
   return {
@@ -40,14 +41,14 @@ const opApi = () => createRestApi(
 );
 
 const run = (api: any, name: string, token: string) =>
-  api.request(`/agents/${name}/run`, {
+  call(api, `/agents/${name}/run`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
     body: JSON.stringify({ runId: `r-${name}-${Math.random()}`, prompt: 'hi' }),
   });
 
 const list = async (api: any, token: string) =>
-  (await (await api.request('/agents', { headers: { authorization: `Bearer ${token}` } })).json())
+  (await (await call(api, '/agents', { headers: { authorization: `Bearer ${token}` } })).json())
     .map((a: any) => a.name).sort();
 
 describe('@gnldev/server org-scoped agents', () => {
@@ -90,14 +91,14 @@ describe('@gnldev/server org-scoped agents', () => {
 
   it('5. auth OFF → all agents run + full list (backward-compat)', async () => {
     const api = createRestApi({ journal: new InMemoryJournal(), agents: agents() }, { allowOpenAccess: true });
-    const runOpen = (name: string) => api.request(`/agents/${name}/run`, {
+    const runOpen = (name: string) => call(api, `/agents/${name}/run`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ runId: `r-${name}`, prompt: 'hi' }),
     });
     expect((await runOpen('glbx')).status).toBe(200);
     expect((await runOpen('acme')).status).toBe(200);
     expect((await runOpen('glob')).status).toBe(200);
-    const names = (await (await api.request('/agents')).json()).map((a: any) => a.name).sort();
+    const names = (await (await call(api, '/agents')).json()).map((a: any) => a.name).sort();
     expect(names).toEqual(['acme', 'glbx', 'glob']);
   });
 });

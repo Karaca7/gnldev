@@ -7,9 +7,10 @@ import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
 import { workflow, step, waitForResume } from '@gnldev/workflow';
 import { createStudioApi, type WorkflowDef } from '../src/server.js';
+import { call } from './call.js';
 
 const post = (app: any, path: string, body: unknown) =>
-  app.request(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  call(app, path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
 describe('studio: P0.4 workflow resume + canceled (code-defined workflow)', () => {
   it('forwards body.resume into gnl.runWorkflow; a canceled result surfaces in the response', async () => {
@@ -68,16 +69,16 @@ describe('studio: P0.4 workflow resume + canceled (managed workflow, real engine
     expect(r1.suspended).toBe(true);
     expect(r1.stepId).toBe('approval');
 
-    const listed = await (await app.request('/workflows/runs?status=suspended')).json();
+    const listed = await (await call(app, '/workflows/runs?status=suspended')).json();
     expect(listed.map((r: any) => r.runId)).toContain('m-1');
 
     const r2 = await (await post(app, '/workflows/approvewf/run', { input: 'hi', runId: 'm-1', resume: { approval: { ok: true } } })).json();
     expect(r2.output).toEqual({ ok: true });
     expect(r2.suspended).toBe(false);
 
-    const completedList = await (await app.request('/workflows/runs?status=completed')).json();
+    const completedList = await (await call(app, '/workflows/runs?status=completed')).json();
     expect(completedList.map((r: any) => r.runId)).toContain('m-1');
-    const suspendedAfter = await (await app.request('/workflows/runs?status=suspended')).json();
+    const suspendedAfter = await (await call(app, '/workflows/runs?status=suspended')).json();
     expect(suspendedAfter.find((r: any) => r.runId === 'm-1')).toBeUndefined();
   });
 
@@ -94,14 +95,14 @@ describe('studio: P0.4 workflow resume + canceled (managed workflow, real engine
     expect(r2.canceled).toBe(true);
     expect(r2.suspended).toBe(false);
 
-    const canceledList = await (await app.request('/workflows/runs?status=canceled')).json();
+    const canceledList = await (await call(app, '/workflows/runs?status=canceled')).json();
     expect(canceledList.map((r: any) => r.runId)).toContain('m-2');
   });
 
   it('invalid ?status= → 400; a reader without listKeys/get → 501', async () => {
     const journal = new InMemoryJournal();
     const app = makeApp(journal);
-    const res = await app.request('/workflows/runs?status=bogus');
+    const res = await call(app, '/workflows/runs?status=bogus');
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/invalid status/);
 
@@ -109,7 +110,7 @@ describe('studio: P0.4 workflow resume + canceled (managed workflow, real engine
       reader: { listRuns: async () => [], readRun: async () => [] } as any,
       gnl: { listAgents: () => [], run: async () => ({}) },
     });
-    const res2 = await noCapApp.request('/workflows/runs');
+    const res2 = await call(noCapApp, '/workflows/runs');
     expect(res2.status).toBe(501);
   });
 });

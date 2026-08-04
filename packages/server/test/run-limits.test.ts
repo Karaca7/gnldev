@@ -3,6 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
 import { createRestApi } from '../src/index.js';
+import { call } from './call.js';
 
 function mkModel(tokens = 15): any {
   let step = 0;
@@ -25,7 +26,7 @@ function mkModel(tokens = 15): any {
 }
 
 const run = (api: any, runId: string, limits?: any) =>
-  api.request('/agents/a/run', {
+  call(api, '/agents/a/run', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ runId, prompt: 'hi', ...(limits ? { limits } : {}) }),

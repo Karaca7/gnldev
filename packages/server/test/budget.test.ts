@@ -5,6 +5,7 @@ import { tool } from 'ai';
 import { z } from 'zod';
 import { InMemoryJournal, BUDGET_PRE } from '@gnldev/durable';
 import { createRestApi } from '../src/index.js';
+import { call } from './call.js';
 
 function mkModel(tokens = 10): any {
   return {
@@ -23,7 +24,7 @@ function mkModel(tokens = 10): any {
 }
 
 const run = (api: any, org: string | undefined, runId: string) =>
-  api.request('/agents/a/run', {
+  call(api, '/agents/a/run', {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...(org ? { 'x-gnl-org': org } : {}) },
     body: JSON.stringify({ runId, prompt: 'hi' }),
@@ -79,7 +80,7 @@ describe('@gnldev/server budget enforcement', () => {
     expect((await run(api, undefined as any, 'root1')).status).toBe(200);
 
     // /usage root scope: usage is reported but limit is null (root is not an org).
-    const usage = await (await api.request('/usage')).json();
+    const usage = await (await call(api, '/usage')).json();
     expect(usage.org).toBeNull();
     expect(usage.limit).toBeNull();
     expect(usage.exceeded).toBe(false);
@@ -106,7 +107,7 @@ describe('@gnldev/server budget enforcement', () => {
     expect(body.limit).toEqual({ tokenLimit: 15 });
 
     // /usage also reports the limit at the root scope (with org disabled, root == the single global scope).
-    const usage = await (await api.request('/usage')).json();
+    const usage = await (await call(api, '/usage')).json();
     expect(usage.org).toBeNull();
     expect(usage.limit).toEqual({ tokenLimit: 15 });
     expect(usage.exceeded).toBe(true);
@@ -118,14 +119,14 @@ describe('@gnldev/server budget enforcement', () => {
     const api = createRestApi({ journal, agents: { a: { model: mkModel(10) } } }, { org: {} });
     await run(api, 'acme', 'r1');
 
-    const res = await (await api.request('/usage', { headers: { 'x-gnl-org': 'acme' } })).json();
+    const res = await (await call(api, '/usage', { headers: { 'x-gnl-org': 'acme' } })).json();
     expect(res.org).toBe('acme');
     expect(res.usage.tokens).toBe(10);
     expect(res.limit).toEqual({ tokenLimit: 100 });
     expect(res.exceeded).toBe(false);
 
     // the org-less root scope also works (no limit → null)
-    const root = await (await api.request('/usage')).json();
+    const root = await (await call(api, '/usage')).json();
     expect(root.org).toBeNull();
     expect(root.limit).toBeNull();
   });
@@ -155,7 +156,7 @@ describe('@gnldev/server budget enforcement', () => {
         { org: {} },
       );
       const post = (path: string, body: any) =>
-        api.request(path, {
+        call(api, path, {
           method: 'POST',
           headers: { 'content-type': 'application/json', 'x-gnl-org': 'acme' },
           body: JSON.stringify(body),
@@ -239,7 +240,7 @@ describe('@gnldev/server budget enforcement', () => {
         { org: {} },
       );
       const stream = (body: any) =>
-        api.request('/agents/pay/stream', {
+        call(api, '/agents/pay/stream', {
           method: 'POST',
           headers: { 'content-type': 'application/json', 'x-gnl-org': 'acme' },
           body: JSON.stringify(body),
@@ -308,7 +309,7 @@ describe('@gnldev/server budget enforcement', () => {
         { org: {} },
       );
       const post = (path: string, body: any) =>
-        api.request(path, {
+        call(api, path, {
           method: 'POST',
           headers: { 'content-type': 'application/json', 'x-gnl-org': 'acme' },
           body: JSON.stringify(body),
@@ -355,7 +356,7 @@ describe('@gnldev/server budget enforcement', () => {
         { org: {} },
       );
       const post = (path: string, body: any) =>
-        api.request(path, {
+        call(api, path, {
           method: 'POST',
           headers: { 'content-type': 'application/json', 'x-gnl-org': 'acme' },
           body: JSON.stringify(body),

@@ -10,6 +10,7 @@
 import { describe, it, expect } from 'vitest';
 import { InMemoryJournal, RunLimitExceededError } from '@gnldev/durable';
 import { createStudioApp, type StudioAgentRunner } from '../src/server.js';
+import { call } from './call.js';
 
 function runnerThatThrowsOnStream(err: unknown): StudioAgentRunner {
   return {
@@ -27,7 +28,7 @@ describe('/agents/:name/stream — error taxonomy parity with /agents/:name/run 
     });
     const app = createStudioApp({ reader: journal, gnl: runnerThatThrowsOnStream(err) });
 
-    const res = await app.request('/api/agents/flaky/stream', {
+    const res = await call(app, '/api/agents/flaky/stream', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runId: 'r1', prompt: 'hi' }),
     });
 
@@ -43,7 +44,7 @@ describe('/agents/:name/stream — error taxonomy parity with /agents/:name/run 
     const journal = new InMemoryJournal();
     const app = createStudioApp({ reader: journal, gnl: runnerThatThrowsOnStream(new Error('boom')) });
 
-    const res = await app.request('/api/agents/flaky/stream', {
+    const res = await call(app, '/api/agents/flaky/stream', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runId: 'r2', prompt: 'hi' }),
     });
 

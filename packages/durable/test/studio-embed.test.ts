@@ -8,6 +8,7 @@ import { InMemoryJournal } from '../src/journal.js';
 import { runDurable, resumeRun } from '../src/run.js';
 import { createMockModel, countToolResults, toolCallResult, finalTextResult } from './mock.js';
 import type { Guard } from '../src/guard.js';
+import { call } from './call.js';
 
 function makeModel() {
   return createMockModel(async ({ prompt }: any) => {
@@ -49,16 +50,16 @@ describe('studio embed API', () => {
       },
     });
 
-    const caps = await (await app.request('/api/capabilities')).json();
+    const caps = await (await call(app, '/api/capabilities')).json();
     // M3: writable journal + resume → fork is open. Playground/stream are closed since gnl wasn't provided.
     // (the full capabilities shape returns 14 fields; verify the relevant subset → tolerant of added fields.)
     expect(caps).toMatchObject({ resume: true, chat: false, fork: true, playground: false, stream: false });
 
-    const runs = (await (await app.request('/api/runs')).json()) as any[];
+    const runs = (await (await call(app, '/api/runs')).json()) as any[];
     expect(runs[0].runId).toBe('o1');
     expect(runs[0].status).toBe('suspended');
 
-    const res = await app.request('/api/runs/o1/resume', {
+    const res = await call(app, '/api/runs/o1/resume', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ approvals: { 'call-c': true } }),
@@ -67,7 +68,7 @@ describe('studio embed API', () => {
     expect((await res.json()).ok).toBe(true);
     expect(counter.charges).toBe(1); // exactly-once preserved via the embed too
 
-    const chatRes = await app.request('/api/chat', {
+    const chatRes = await call(app, '/api/chat', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ message: 'hi' }),

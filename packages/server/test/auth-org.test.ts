@@ -5,6 +5,7 @@ import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
 import { roleAuth } from '@gnldev/auth';
 import { createRestApi } from '../src/index.js';
+import { call } from './call.js';
 
 function mkModel(text: string): any {
   return {
@@ -39,18 +40,18 @@ describe('@gnldev/server auth↔org', () => {
     await journal.put('org:globex:r-globex:model:0', { content: [{ type: 'text', text: 'y' }], finishReason: 'stop' });
     const api = mkApi(journal);
 
-    const runs = await (await api.request('/runs', { headers: { authorization: 'Bearer viw' } })).json();
+    const runs = await (await call(api, '/runs', { headers: { authorization: 'Bearer viw' } })).json();
     expect(runs.map((r: any) => r.runId)).toEqual(['r-acme']); // globex is NOT VISIBLE
   });
 
   it('bound identity requesting a different organization → 403; requesting its own organization is free', async () => {
     const api = mkApi(new InMemoryJournal());
-    const res = await api.request('/runs', {
+    const res = await call(api, '/runs', {
       headers: { authorization: 'Bearer viw', 'x-gnl-org': 'globex' },
     });
     expect(res.status).toBe(403);
 
-    const own = await api.request('/runs', {
+    const own = await call(api, '/runs', {
       headers: { authorization: 'Bearer viw', 'x-gnl-org': 'acme' },
     });
     expect(own.status).toBe(200);
@@ -58,13 +59,13 @@ describe('@gnldev/server auth↔org', () => {
 
   it('unbound (global) admin works in whatever organization it wants via the header (operator scenario)', async () => {
     const api = mkApi(new InMemoryJournal());
-    const res = await api.request('/agents/a/run', {
+    const res = await call(api, '/agents/a/run', {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: 'Bearer adm', 'x-gnl-org': 'globex' },
       body: JSON.stringify({ runId: 'r1', prompt: 'hi' }),
     });
     expect(res.status).toBe(200);
-    const runs = await (await api.request('/runs', {
+    const runs = await (await call(api, '/runs', {
       headers: { authorization: 'Bearer adm', 'x-gnl-org': 'globex' },
     })).json();
     expect(runs.map((r: any) => r.runId)).toEqual(['r1']);
@@ -77,14 +78,14 @@ describe('@gnldev/server auth↔org', () => {
       { journal: new InMemoryJournal(), agents: { a: { model: mkModel('ok') } } },
       { auth: { read: () => true, write: () => true }, org: {} },
     );
-    const res = await api.request('/runs', { headers: { 'x-gnl-org': 'globex' } });
+    const res = await call(api, '/runs', { headers: { 'x-gnl-org': 'globex' } });
     expect(res.status).toBe(403);
     // sanity: WITHOUT opts.org the same principal-less auth still works (single-scope, no isolation claim)
     const noOrg = createRestApi(
       { journal: new InMemoryJournal(), agents: { a: { model: mkModel('ok') } } },
       { auth: { read: () => true, write: () => true } },
     );
-    expect((await noOrg.request('/runs')).status).toBe(200);
+    expect((await call(noOrg, '/runs')).status).toBe(200);
   });
 
   it('F2: even without the org OPTION, Cred.orgId isolation is still enforced (via identity)', async () => {
@@ -98,14 +99,14 @@ describe('@gnldev/server auth↔org', () => {
     );
 
     // The bound viewer sees only acme (previously the entire root journal would leak).
-    const bound = await (await api.request('/runs', { headers: { authorization: 'Bearer viw' } })).json();
+    const bound = await (await call(api, '/runs', { headers: { authorization: 'Bearer viw' } })).json();
     expect(bound.map((r: any) => r.runId)).toEqual(['r-acme']);
 
     // A bound viewer requesting a different organization gets 403.
-    expect((await api.request('/runs', { headers: { authorization: 'Bearer viw', 'x-gnl-org': 'globex' } })).status).toBe(403);
+    expect((await call(api, '/runs', { headers: { authorization: 'Bearer viw', 'x-gnl-org': 'globex' } })).status).toBe(403);
 
     // An unbound admin sees the root view (all prefixed keys) — the existing operator behavior.
-    const adm = await (await api.request('/runs', { headers: { authorization: 'Bearer adm' } })).json();
+    const adm = await (await call(api, '/runs', { headers: { authorization: 'Bearer adm' } })).json();
     expect(adm.map((r: any) => r.runId).sort()).toEqual(['org:acme:r-acme', 'org:globex:r-globex']);
   });
 });

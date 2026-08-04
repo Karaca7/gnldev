@@ -4,6 +4,7 @@ import { tool } from 'ai';
 import { z } from 'zod';
 import { InMemoryJournal } from '@gnldev/durable';
 import { createRestApi } from '../src/index.js';
+import { call } from './call.js';
 
 const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
 const mkStream = (arr: any[]) =>
@@ -118,14 +119,14 @@ async function readSSE(res: Response): Promise<{ event: string; data: any }[]> {
 describe('@gnldev/server SSE', () => {
   it('GET /agents → lists registered agent metadata', async () => {
     const api = createRestApi({ journal: new InMemoryJournal(), agents: { chat: { model: textMock(), maxSteps: 4 } } });
-    const agents = (await (await api.request('/agents')).json()) as any[];
+    const agents = (await (await call(api, '/agents')).json()) as any[];
     expect(agents).toHaveLength(1);
     expect(agents[0]).toMatchObject({ name: 'chat', model: 'custom', hasTools: false, maxSteps: 4 });
   });
 
   it('POST /agents/:name/stream → text-delta events + done', async () => {
     const api = createRestApi({ journal: new InMemoryJournal(), agents: { chat: { model: textMock(), maxSteps: 4 } } });
-    const res = await api.request('/agents/chat/stream', {
+    const res = await call(api, '/agents/chat/stream', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ runId: 'r1', prompt: 'hi' }),
@@ -141,7 +142,7 @@ describe('@gnldev/server SSE', () => {
   // 4 cases and no default) — a reasoning model's whole thinking trace vanished with no error.
   it('P0.1: reasoning-delta + source + file events are emitted (no silent drop)', async () => {
     const api = createRestApi({ journal: new InMemoryJournal(), agents: { think: { model: reasoningMock(), maxSteps: 4 } } });
-    const res = await api.request('/agents/think/stream', {
+    const res = await call(api, '/agents/think/stream', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ runId: 'rt1', prompt: 'hi' }),
@@ -176,7 +177,7 @@ describe('@gnldev/server SSE', () => {
       toolName === 'chargeCard' && args.amount > 1000 ? { action: 'require-approval' as const } : { action: 'allow' as const };
     const api = createRestApi({ journal: new InMemoryJournal(), agents: { pay: { model: agentMock(), tools, guard, maxSteps: 6 } } });
 
-    const res = await api.request('/agents/pay/stream', {
+    const res = await call(api, '/agents/pay/stream', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ runId: 'o1', prompt: 'charge' }),
@@ -223,7 +224,7 @@ describe('@gnldev/server SSE', () => {
     };
     const api = createRestApi({ journal: new InMemoryJournal(), agents: { loop: { model: loopMock, tools, maxSteps: 10 } } });
 
-    const res = await api.request('/agents/loop/stream', {
+    const res = await call(api, '/agents/loop/stream', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ runId: 'l1', prompt: 'loop', limits: { loopDetection: { maxRepeats: 2 } } }),
@@ -246,7 +247,7 @@ describe('@gnldev/server SSE', () => {
 
   it('missing runId → 400', async () => {
     const api = createRestApi({ journal: new InMemoryJournal(), agents: { chat: { model: textMock() } } });
-    const bad = await api.request('/agents/chat/stream', {
+    const bad = await call(api, '/agents/chat/stream', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ prompt: 'x' }),

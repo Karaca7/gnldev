@@ -4,6 +4,7 @@ import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
 import { recordIncident } from '@gnldev/durable';
 import { createStudioApi } from '../src/server.js';
+import { call } from './call.js';
 
 describe('GET /runs/:id/incidents', () => {
   it('returns the run-scoped incidents oldest-first (and ONLY that run’s)', async () => {
@@ -22,7 +23,7 @@ describe('GET /runs/:id/incidents', () => {
     });
 
     const app = createStudioApi({ reader: journal });
-    const res = await app.request('/runs/r1/incidents');
+    const res = await call(app, '/runs/r1/incidents');
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.incidents).toHaveLength(2);
@@ -32,7 +33,7 @@ describe('GET /runs/:id/incidents', () => {
 
   it('a run with no incidents → empty list (not an error)', async () => {
     const app = createStudioApi({ reader: new InMemoryJournal() });
-    const body = await (await app.request('/runs/nope/incidents')).json();
+    const body = await (await call(app, '/runs/nope/incidents')).json();
     expect(body.incidents).toEqual([]);
   });
 });

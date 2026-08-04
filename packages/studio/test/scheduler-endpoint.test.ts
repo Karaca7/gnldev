@@ -7,6 +7,7 @@ import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
 import { scheduleWorkflow, pollScheduler } from '@gnldev/scheduler';
 import { createStudioApi } from '../src/server.js';
+import { call } from './call.js';
 
 describe('GET /scheduler/triggers', () => {
   it('reads triggers written to the journal (id, kind/value, nextRunAt, misfire, maxAttempts)', async () => {
@@ -15,7 +16,7 @@ describe('GET /scheduler/triggers', () => {
     await scheduleWorkflow(j, { id: 'poll', name: 'wf-sync', every: 60_000, misfire: 'catchup' }, 0);
 
     const app = createStudioApi({ reader: j });
-    const res = await app.request('/scheduler/triggers');
+    const res = await call(app, '/scheduler/triggers');
     expect(res.status).toBe(200);
     const list = await res.json();
     expect(list.map((t: any) => t.id)).toEqual(['daily', 'poll']); // alphabetical
@@ -29,7 +30,7 @@ describe('GET /scheduler/triggers', () => {
 
   it('an empty list if there are no triggers (not 500)', async () => {
     const app = createStudioApi({ reader: new InMemoryJournal() });
-    const res = await app.request('/scheduler/triggers');
+    const res = await call(app, '/scheduler/triggers');
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual([]);
   });
@@ -37,7 +38,7 @@ describe('GET /scheduler/triggers', () => {
   it('returns an empty list if the journal is not writable/listKeys (same pattern as queue/jobs)', async () => {
     const bareReader = { listRuns: async () => [], readRun: async () => undefined };
     const app = createStudioApi({ reader: bareReader as any });
-    const res = await app.request('/scheduler/triggers');
+    const res = await call(app, '/scheduler/triggers');
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual([]);
   });
@@ -48,25 +49,25 @@ describe('GET /scheduler/triggers', () => {
     await pollScheduler(j, { runWorkflow: async () => { throw new Error('connection dropped'); } }, 0);
 
     const app = createStudioApi({ reader: j });
-    const list = await (await app.request('/scheduler/triggers')).json();
+    const list = await (await call(app, '/scheduler/triggers')).json();
     expect(list[0]).toMatchObject({ id: 'f1', status: 'failed', attempts: 1 });
     expect(list[0].lastError).toMatch(/connection dropped/);
   });
 
   it('401 without read permission', async () => {
     const app = createStudioApi({ reader: new InMemoryJournal(), auth: { read: () => false } });
-    const res = await app.request('/scheduler/triggers');
+    const res = await call(app, '/scheduler/triggers');
     expect(res.status).toBe(401);
   });
 
   it('capabilities.scheduler: true for a writable + listKeys journal, false for a bare reader', async () => {
     const withJournal = createStudioApi({ reader: new InMemoryJournal() });
-    const capsWith = await (await withJournal.request('/capabilities')).json();
+    const capsWith = await (await call(withJournal, '/capabilities')).json();
     expect(capsWith.scheduler).toBe(true);
 
     const bareReader = { listRuns: async () => [], readRun: async () => undefined };
     const withoutJournal = createStudioApi({ reader: bareReader as any });
-    const capsWithout = await (await withoutJournal.request('/capabilities')).json();
+    const capsWithout = await (await call(withoutJournal, '/capabilities')).json();
     expect(capsWithout.scheduler).toBe(false);
   });
 });

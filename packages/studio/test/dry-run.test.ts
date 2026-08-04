@@ -4,6 +4,7 @@ import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
 import { createStudioApi, type WorkflowDef } from '../src/server.js';
 import { compileManagedWorkflow } from '../src/managed-workflow.js';
+import { call } from './call.js';
 
 function makeApp(journal: InMemoryJournal, realRuns: { n: number }) {
   const defs = new Map<string, WorkflowDef>([
@@ -31,7 +32,7 @@ function makeApp(journal: InMemoryJournal, realRuns: { n: number }) {
 }
 
 const post = (app: any, name: string, body: unknown) =>
-  app.request(`/workflows/${name}/run`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  call(app, `/workflows/${name}/run`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
 describe('workflow dry-run', () => {
   it('the real agent is never called, stub outputs flow through, the persistent journal stays clean', async () => {

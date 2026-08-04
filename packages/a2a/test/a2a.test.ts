@@ -4,6 +4,7 @@ import { describe, it, expect } from 'vitest';
 import { InMemoryJournal, runDurable } from '@gnldev/durable';
 import { createRestApi } from '@gnldev/server';
 import { createA2ATool, StepTimeoutError } from '../src/index.js';
+import { call } from './call.js';
 
 function chargeModel(counter: { gen: number }): any {
   return {
@@ -34,7 +35,7 @@ function remoteServer(a2aSecret?: string) {
     },
     a2aSecret ? { a2aSecret } : {},
   );
-  const fetchImpl = ((url: any, init: any) => app.request(String(url), init)) as unknown as typeof fetch;
+  const fetchImpl = ((url: any, init: any) => call(app, String(url), init)) as unknown as typeof fetch;
   return { remote, fetchImpl };
 }
 

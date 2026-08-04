@@ -3,6 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
 import { createStudioApi } from '../src/server.js';
+import { call } from './call.js';
 
 async function seed(journal: InMemoryJournal) {
   await journal.put('org:acme:r-acme:model:0', { content: [{ type: 'text', text: 'acme' }], finishReason: 'stop' });
@@ -15,10 +16,10 @@ describe('@gnldev/studio org scope (read-only)', () => {
     await seed(journal);
     const app = createStudioApi({ reader: journal, org: {} });
 
-    const acme = await (await app.request('/runs', { headers: { 'x-gnl-org': 'acme' } })).json();
+    const acme = await (await call(app, '/runs', { headers: { 'x-gnl-org': 'acme' } })).json();
     expect(acme.map((r: any) => r.runId)).toEqual(['r-acme']);
 
-    const shared = await (await app.request('/runs')).json();
+    const shared = await (await call(app, '/runs')).json();
     // The shared view is the raw journal: the acme-prefixed key also shows up as runId 'org:acme:r-acme'
     expect(shared.map((r: any) => r.runId)).toContain('r-shared');
   });
@@ -33,7 +34,7 @@ describe('@gnldev/studio org scope (read-only)', () => {
     await seed(journal);
     const app = createStudioApi({ reader: journal, org: {} });
 
-    const res = await app.request('/runs?limit=10', { headers: { 'x-gnl-org': 'acme' } });
+    const res = await call(app, '/runs?limit=10', { headers: { 'x-gnl-org': 'acme' } });
     expect(res.status).toBe(200);
     const page = await res.json();
     expect(page.items.map((r: any) => r.runId)).toEqual(['r-acme']);
@@ -45,7 +46,7 @@ describe('@gnldev/studio org scope (read-only)', () => {
     await seed(journal);
     const app = createStudioApi({ reader: journal, org: {} });
 
-    const res = await app.request('/runs/r-acme/fork', {
+    const res = await call(app, '/runs/r-acme/fork', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-gnl-org': 'acme' },
       body: JSON.stringify({ step: 0 }),
@@ -53,7 +54,7 @@ describe('@gnldev/studio org scope (read-only)', () => {
     expect(res.status).toBe(403);
 
     // An orgless POST doesn't hit the middleware (fork isn't configured with resume → 501, NOT 403)
-    const res2 = await app.request('/runs/r-shared/fork', {
+    const res2 = await call(app, '/runs/r-shared/fork', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ step: 0 }),
@@ -66,20 +67,20 @@ describe('@gnldev/studio org scope (read-only)', () => {
     await seed(journal);
     const app = createStudioApi({ reader: journal, org: {} });
 
-    const viaOrgHeader = await (await app.request('/runs', { headers: { 'x-gnl-org': 'acme' } })).json();
+    const viaOrgHeader = await (await call(app, '/runs', { headers: { 'x-gnl-org': 'acme' } })).json();
     expect(viaOrgHeader.map((r: any) => r.runId)).toEqual(['r-acme']);
   });
 
   it('capabilities reports the org flag; full backward-compat if org is not given', async () => {
     const journal = new InMemoryJournal();
     const withT = createStudioApi({ reader: journal, org: {} });
-    expect((await (await withT.request('/capabilities')).json()).org).toBe(true);
+    expect((await (await call(withT, '/capabilities')).json()).org).toBe(true);
 
     const without = createStudioApi({ reader: journal });
-    const caps = await (await without.request('/capabilities')).json();
+    const caps = await (await call(without, '/capabilities')).json();
     expect(caps.org).toBe(false);
     // even if the header is sent, it has no effect while org scoping is off (regression guard)
-    const runs = await (await without.request('/runs', { headers: { 'x-gnl-org': 'acme' } })).json();
+    const runs = await (await call(without, '/runs', { headers: { 'x-gnl-org': 'acme' } })).json();
     expect(Array.isArray(runs)).toBe(true);
   });
 });

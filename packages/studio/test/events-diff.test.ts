@@ -7,6 +7,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
 import { createStudioApi } from '../src/server.js';
+import { call } from './call.js';
 
 /** nextEvent's cross-call state: the decoded buffer, plus a `read()` call that may still be in
  *  flight when a previous call timed out — MUST be reused (never re-issued) so its eventual result
@@ -56,7 +57,7 @@ describe('GET /events (API-04 informative diff)', () => {
       await journal.put('run-2:model:0', { content: [{ type: 'text', text: 'b' }], finishReason: 'stop' });
       const app = createStudioApi({ reader: journal });
 
-      const res = await app.request('/events');
+      const res = await call(app, '/events');
       expect(res.status).toBe(200);
       const reader = res.body!.getReader();
       const bufRef: SseReadState = { buf: '', pending: null };
@@ -98,7 +99,7 @@ describe('GET /events (API-04 informative diff)', () => {
       // 2nd tick (~4s) instead.
       const app = createStudioApi({ reader: journal, __fullScanEveryTicks: 2 } as any);
 
-      const res = await app.request('/events');
+      const res = await call(app, '/events');
       expect(res.status).toBe(200);
       const reader = res.body!.getReader();
       const bufRef: SseReadState = { buf: '', pending: null };
@@ -133,7 +134,7 @@ describe('GET /events (API-04 informative diff)', () => {
       const listSpy = vi.spyOn(bareReader, 'listRuns');
       const app = createStudioApi({ reader: bareReader as any });
 
-      const res = await app.request('/events');
+      const res = await call(app, '/events');
       const reader = res.body!.getReader();
       const bufRef: SseReadState = { buf: '', pending: null };
 

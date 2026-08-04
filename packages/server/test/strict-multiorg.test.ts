@@ -6,6 +6,7 @@ import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
 import { type AuthProvider, type Principal } from '@gnldev/auth';
 import { createRestApi } from '../src/index.js';
+import { call } from './call.js';
 
 function mkModel(text: string): any {
   return {
@@ -53,36 +54,36 @@ describe('@gnldev/server strict multi-org (EE ON)', () => {
     await journal.put('org:globex:r-globex:model:0', { content: [{ type: 'text', text: 'y' }], finishReason: 'stop' });
     const api = mkApi(journal);
 
-    const runs = await (await api.request('/runs', { headers: H('a-adm') })).json();
+    const runs = await (await call(api, '/runs', { headers: H('a-adm') })).json();
     expect(runs.map((r: any) => r.runId)).toEqual(['r-acme']);
-    expect((await api.request('/runs', { headers: { ...H('a-adm'), 'x-gnl-org': 'globex' } })).status).toBe(403);
+    expect((await call(api, '/runs', { headers: { ...H('a-adm'), 'x-gnl-org': 'globex' } })).status).toBe(403);
   });
 
   it('(2) an EXPLICIT platform-admin acts as operator (works in any org via header, sees root)', async () => {
     const journal = new InMemoryJournal();
     const res = await api_run(mkApi(journal), 'plat', 'globex');
     expect(res.status).toBe(200);
-    const runs = await (await mkApi(journal).request('/runs', { headers: { ...H('plat'), 'x-gnl-org': 'globex' } })).json();
+    const runs = await (await call(mkApi(journal), '/runs', { headers: { ...H('plat'), 'x-gnl-org': 'globex' } })).json();
     expect(runs.map((r: any) => r.runId)).toEqual(['r1']);
   });
 
   it('(3) FAIL-CLOSED: an org-less identity WITHOUT a platform grant → 403 (was the operator)', async () => {
     const journal = new InMemoryJournal();
     const api = mkApi(journal);
-    expect((await api.request('/runs', { headers: H('lost') })).status).toBe(403);
+    expect((await call(api, '/runs', { headers: H('lost') })).status).toBe(403);
     expect((await api_run(api, 'lost')).status).toBe(403);
   });
 
   it('(3b) FAIL-CLOSED holds even WITHOUT the org option (isolation is identity-driven)', async () => {
     const api = mkApi(new InMemoryJournal(), /* withOrgOpt */ false);
-    expect((await api.request('/runs', { headers: H('lost') })).status).toBe(403);
+    expect((await call(api, '/runs', { headers: H('lost') })).status).toBe(403);
     // a platform-admin, org-less + no org option → shared/root scope (200)
-    expect((await api.request('/runs', { headers: H('plat') })).status).toBe(200);
+    expect((await call(api, '/runs', { headers: H('plat') })).status).toBe(200);
   });
 });
 
 async function api_run(api: ReturnType<typeof mkApi>, tok: string, org?: string) {
-  return api.request('/agents/a/run', {
+  return call(api, '/agents/a/run', {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...H(tok), ...(org ? { 'x-gnl-org': org } : {}) },
     body: JSON.stringify({ runId: 'r1', prompt: 'hi' }),

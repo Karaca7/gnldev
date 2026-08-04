@@ -3,6 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
 import { createStudioApi } from '../src/server.js';
+import { call } from './call.js';
 
 function appWith(journal: InMemoryJournal) {
   return createStudioApi({
@@ -24,7 +25,7 @@ describe('workflow what-if fork', () => {
     await journal.put('run-1:wf:approve', { approved: true }); // OUTSIDE upto — must NOT be copied
     const app = appWith(journal);
 
-    const res = await app.request('/workflows/order/runs/run-1/fork', {
+    const res = await call(app, '/workflows/order/runs/run-1/fork', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-gnl-actor': 'ops@acme.co' },
       body: JSON.stringify({ upto: 2, newRunId: 'run-1-whatif' }),
@@ -41,7 +42,7 @@ describe('workflow what-if fork', () => {
     expect(await journal.get('run-1:wf:approve')).toEqual({ approved: true });
 
     // an audit record landed
-    const audit = await (await app.request('/audit?action=fork')).json();
+    const audit = await (await call(app, '/audit?action=fork')).json();
     expect(audit.items[0]).toMatchObject({ actor: 'ops@acme.co', target: 'run-1', detail: { workflow: 'order', upto: 2 } });
   });
 
@@ -54,9 +55,9 @@ describe('workflow what-if fork', () => {
       gnl: { listAgents: () => [], run: async () => ({}), listWorkflows: () => [{ name: 'w', steps: [{ id: 'a' }, { id: 'ab' }] }] },
     });
 
-    expect((await app.request('/workflows/nope/runs/r/fork', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status).toBe(404);
+    expect((await call(app, '/workflows/nope/runs/r/fork', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status).toBe(404);
 
-    const res = await (await app.request('/workflows/w/runs/r/fork', {
+    const res = await (await call(app, '/workflows/w/runs/r/fork', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ upto: 1, newRunId: 'r2' }),
     })).json();
     expect(res.copied).toBe(1); // only 'a'; 'ab' is outside upto and was NOT mixed up by the prefix

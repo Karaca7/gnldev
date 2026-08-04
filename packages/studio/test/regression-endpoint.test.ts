@@ -4,6 +4,7 @@ import { describe, it, expect } from 'vitest';
 import { InMemoryJournal, runDurable } from '@gnldev/durable';
 import { roleAuth } from '@gnldev/auth';
 import { createStudioApi } from '../src/server.js';
+import { call } from './call.js';
 
 // A minimal LanguageModelV2 mock without depending on ai/test (and transitively msw) — same pattern as durable/test/mock.ts.
 const usage = { inputTokens: 10, outputTokens: 5, totalTokens: 15 };
@@ -26,7 +27,7 @@ describe('POST /runs/:id/regression', () => {
     // regressionModel: converts body.model's spec to a mock without hitting the real provider package (test injection).
     const app = createStudioApi({ reader: journal, regressionModel: () => mockModel('Hello') });
 
-    const res = await app.request('/runs/base/regression', {
+    const res = await call(app, '/runs/base/regression', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ model: 'mock/echo' }),
@@ -48,7 +49,7 @@ describe('POST /runs/:id/regression', () => {
     await runDurable({ runId: 'base2', journal, model: mockModel('A'), prompt: 'x' } as any);
     const app = createStudioApi({ reader: journal, regressionModel: () => mockModel('B') });
 
-    const res = await app.request('/runs/base2/regression', {
+    const res = await call(app, '/runs/base2/regression', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ model: 'mock/echo', system: 'new system prompt' }),
@@ -63,7 +64,7 @@ describe('POST /runs/:id/regression', () => {
     const journal = new InMemoryJournal();
     await runDurable({ runId: 'base3', journal, model: mockModel('A'), prompt: 'x' } as any);
     const app = createStudioApi({ reader: journal, regressionModel: () => mockModel('A') });
-    const res = await app.request('/runs/base3/regression', {
+    const res = await call(app, '/runs/base3/regression', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({}),
     });
     expect(res.status).toBe(400);
@@ -75,14 +76,14 @@ describe('POST /runs/:id/regression', () => {
     const auth = () => roleAuth({ admin: { token: 'adm' }, viewer: { token: 'viw' } });
     const app = createStudioApi({ reader: journal, auth: auth(), regressionModel: () => mockModel('A') });
 
-    const denied = await app.request('/runs/base4/regression', {
+    const denied = await call(app, '/runs/base4/regression', {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: 'Bearer viw' },
       body: JSON.stringify({ model: 'mock/echo' }),
     });
     expect(denied.status).toBe(403);
 
-    const allowed = await app.request('/runs/base4/regression', {
+    const allowed = await call(app, '/runs/base4/regression', {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: 'Bearer adm' },
       body: JSON.stringify({ model: 'mock/echo' }),
@@ -94,12 +95,12 @@ describe('POST /runs/:id/regression', () => {
     const journal = new InMemoryJournal();
     await runDurable({ runId: 'base5', journal, model: mockModel('A'), prompt: 'x' } as any);
     const app = createStudioApi({ reader: journal, regressionModel: () => mockModel('A') });
-    await app.request('/runs/base5/regression', {
+    await call(app, '/runs/base5/regression', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-gnl-actor': 'ops@acme.co' },
       body: JSON.stringify({ model: 'mock/echo' }),
     });
-    const audit = await (await app.request('/audit?action=run.regression')).json();
+    const audit = await (await call(app, '/audit?action=run.regression')).json();
     expect(audit.items[0]).toMatchObject({ actor: 'ops@acme.co', target: 'base5' });
   });
 });
@@ -111,7 +112,7 @@ describe('GET /runs/:id/regression/:otherId', () => {
     await runDurable({ runId: 'r2', journal, model: mockModel('same'), prompt: 'x' } as any);
     const app = createStudioApi({ reader: journal });
 
-    const res = await app.request('/runs/r1/regression/r2');
+    const res = await call(app, '/runs/r1/regression/r2');
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.baseRunId).toBe('r1');
@@ -124,7 +125,7 @@ describe('GET /runs/:id/regression/:otherId', () => {
     await runDurable({ runId: 'r3', journal, model: mockModel('a'), prompt: 'x' } as any);
     await runDurable({ runId: 'r4', journal, model: mockModel('a'), prompt: 'x' } as any);
     const app = createStudioApi({ reader: journal, auth: roleAuth({ admin: { token: 'adm' } }) });
-    const res = await app.request('/runs/r3/regression/r4');
+    const res = await call(app, '/runs/r3/regression/r4');
     expect(res.status).toBe(401);
   });
 });

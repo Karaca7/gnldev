@@ -6,6 +6,7 @@ import { describe, it, expect } from 'vitest';
 import { createHmac } from 'node:crypto';
 import { InMemoryJournal } from '@gnldev/durable';
 import { createRestApi } from '../src/index.js';
+import { call } from './call.js';
 
 function mkModel(): any {
   return {
@@ -38,7 +39,7 @@ describe('@gnldev/server A2A signature verification (a2aSecret)', () => {
     const api = mkApi(secret);
     const body = JSON.stringify({ runId: 'sig-1', prompt: 'hi' });
     const timestamp = String(Date.now());
-    const res = await api.request('/agents/a/run', {
+    const res = await call(api, '/agents/a/run', {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -55,7 +56,7 @@ describe('@gnldev/server A2A signature verification (a2aSecret)', () => {
 
   it('signature header missing → 401', async () => {
     const api = mkApi('secret-key');
-    const res = await api.request('/agents/a/run', {
+    const res = await call(api, '/agents/a/run', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ runId: 'sig-2', prompt: 'hi' }),
@@ -69,7 +70,7 @@ describe('@gnldev/server A2A signature verification (a2aSecret)', () => {
     const api = mkApi('correct-secret');
     const body = JSON.stringify({ runId: 'sig-3', prompt: 'hi' });
     const timestamp = String(Date.now());
-    const res = await api.request('/agents/a/run', {
+    const res = await call(api, '/agents/a/run', {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -89,7 +90,7 @@ describe('@gnldev/server A2A signature verification (a2aSecret)', () => {
     const timestamp = String(Date.now());
     const signedBody = JSON.stringify({ runId: 'sig-4', prompt: 'original' });
     const tamperedBody = JSON.stringify({ runId: 'sig-4', prompt: 'changed' });
-    const res = await api.request('/agents/a/run', {
+    const res = await call(api, '/agents/a/run', {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -106,7 +107,7 @@ describe('@gnldev/server A2A signature verification (a2aSecret)', () => {
     const api = mkApi(secret);
     const body = JSON.stringify({ runId: 'sig-5', prompt: 'hi' });
     const staleTimestamp = String(Date.now() - 10 * 60 * 1000); // 10 minutes ago
-    const res = await api.request('/agents/a/run', {
+    const res = await call(api, '/agents/a/run', {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -122,7 +123,7 @@ describe('@gnldev/server A2A signature verification (a2aSecret)', () => {
 
   it('if a2aSecret is NOT GIVEN, old behavior is preserved: an unsigned request is accepted with 200 (no regression)', async () => {
     const api = mkApi(); // no a2aSecret
-    const res = await api.request('/agents/a/run', {
+    const res = await call(api, '/agents/a/run', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ runId: 'sig-6', prompt: 'hi' }),
@@ -133,7 +134,7 @@ describe('@gnldev/server A2A signature verification (a2aSecret)', () => {
   it('F1: the signature gate covers /stream and /resume too (not just /run) — an unsigned request is 401', async () => {
     const api = mkApi('secret-key');
     // /stream — previously invocable UNSIGNED (full streamed execution), bypassing the gate
-    const stream = await api.request('/agents/a/stream', {
+    const stream = await call(api, '/agents/a/stream', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ runId: 'sig-stream', prompt: 'hi' }),
@@ -141,7 +142,7 @@ describe('@gnldev/server A2A signature verification (a2aSecret)', () => {
     expect(stream.status).toBe(401);
     expect((await stream.json()).code).toBe('a2a_signature_missing');
     // /resume — previously invocable UNSIGNED
-    const resume = await api.request('/agents/a/resume', {
+    const resume = await call(api, '/agents/a/resume', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ runId: 'sig-resume' }),
@@ -155,7 +156,7 @@ describe('@gnldev/server A2A signature verification (a2aSecret)', () => {
     const api = mkApi(secret);
     const body = JSON.stringify({ runId: 'sig-stream-ok', prompt: 'hi' });
     const timestamp = String(Date.now());
-    const res = await api.request('/agents/a/stream', {
+    const res = await call(api, '/agents/a/stream', {
       method: 'POST',
       headers: {
         'content-type': 'application/json',

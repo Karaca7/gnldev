@@ -4,9 +4,10 @@
 import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
 import { createStudioApi } from '../src/server.js';
+import { call } from './call.js';
 
 const post = (app: any, path: string, body: unknown) =>
-  app.request(path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-gnl-actor': 'ops@acme.co' }, body: JSON.stringify(body) });
+  call(app, path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-gnl-actor': 'ops@acme.co' }, body: JSON.stringify(body) });
 
 function makeApp(suite: { aggregate: Record<string, number> }) {
   return createStudioApi({
@@ -30,7 +31,7 @@ describe('eval gate (promote gate)', () => {
     const bBody = await blocked.json();
     expect(bBody.error).toContain('accuracy=0.60<0.8');
     // active is unchanged
-    const list1 = await (await app.request('/managed-agents')).json();
+    const list1 = await (await call(app, '/managed-agents')).json();
     expect(list1.agents[0].active).toBeNull();
 
     // suite improved → promote passes
@@ -38,7 +39,7 @@ describe('eval gate (promote gate)', () => {
     expect(await (await post(app, '/managed-agents/writer/promote', { version: 1 })).json()).toMatchObject({ ok: true, active: 1 });
 
     // audit: two gate decisions (failed + passed) — newest first
-    const gate = await (await app.request('/audit?action=agent.gate')).json();
+    const gate = await (await call(app, '/audit?action=agent.gate')).json();
     expect(gate.items).toHaveLength(2);
     expect(gate.items[0].detail).toMatchObject({ passed: true, datasetId: 'basic' });
     expect(gate.items[1].detail).toMatchObject({ passed: false, minAvg: 0.8 });
@@ -53,7 +54,7 @@ describe('eval gate (promote gate)', () => {
     await post(plain, '/managed-agents', { name: 'a', model: 'm/1' });
     expect((await post(plain, '/managed-agents/a/promote', { version: 1 })).status).toBe(200); // no gate → old behavior
 
-    const caps = await (await makeApp({ aggregate: {} }).request('/capabilities')).json();
+    const caps = await (await call(makeApp({ aggregate: {} }), '/capabilities')).json();
     expect(caps.evalGate).toBe(true);
   });
 });

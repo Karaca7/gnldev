@@ -9,6 +9,7 @@ import { createStudioRunner } from '../../studio/src/runner.js';
 import { InMemoryJournal } from '../src/journal.js';
 import { createGnl } from '../src/registry.js';
 import type { Guard } from '../src/guard.js';
+import { call } from './call.js';
 
 const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
 const mkStream = (arr: any[]) => new ReadableStream({ start(c) { for (const p of arr) c.enqueue(p); c.close(); } });
@@ -68,24 +69,24 @@ describe('studio playground', () => {
     const gnl = createGnl(config);
     const app = createStudioApp({ reader: journal, gnl: createStudioRunner(gnl, config) });
 
-    const caps = await (await app.request('/api/capabilities')).json();
+    const caps = await (await call(app, '/api/capabilities')).json();
     expect(caps.playground).toBe(true);
     expect(caps.stream).toBe(true);
 
-    const agents = (await (await app.request('/api/agents')).json()) as any[];
+    const agents = (await (await call(app, '/api/agents')).json()) as any[];
     // agent meta now also includes the tool list (for the studio Tools view) → verify the subset.
     expect(agents).toHaveLength(1);
     expect(agents[0]).toMatchObject({ name: 'pay', model: 'custom', hasTools: true, maxSteps: 6 });
 
     // run → suspend
-    const run = await (await app.request('/api/agents/pay/run', {
+    const run = await (await call(app, '/api/agents/pay/run', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runId: 'p1', prompt: 'charge' }),
     })).json();
     expect(run.interrupts.length).toBe(1);
     expect(charges.n).toBe(0);
 
     // approve via run (same runId + prompt + approvals) → charge exactly-once
-    const res = await (await app.request('/api/agents/pay/run', {
+    const res = await (await call(app, '/api/agents/pay/run', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runId: 'p1', prompt: 'charge', approvals: { 'call-c': true } }),
     })).json();
     expect(res.text).toContain('Done');
@@ -107,7 +108,7 @@ describe('studio playground', () => {
     };
     const app = createStudioApp({ reader: journal, gnl: createStudioRunner(createGnl(config), config) });
 
-    const res = await app.request('/api/agents/pay/stream', {
+    const res = await call(app, '/api/agents/pay/stream', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runId: 's1', prompt: 'charge' }),
     });
     const events = await readSSE(res);
@@ -120,8 +121,8 @@ describe('studio playground', () => {
   it('playground closed when gnl is absent (501) + /agents empty', async () => {
     const journal = new InMemoryJournal();
     const app = createStudioApp({ reader: journal });
-    expect((await (await app.request('/api/agents')).json())).toEqual([]);
-    const run = await app.request('/api/agents/x/run', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runId: 'z', prompt: 'h' }) });
+    expect((await (await call(app, '/api/agents')).json())).toEqual([]);
+    const run = await call(app, '/api/agents/x/run', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runId: 'z', prompt: 'h' }) });
     expect(run.status).toBe(501);
   });
 
@@ -133,7 +134,7 @@ describe('studio playground', () => {
       gnl: createStudioRunner(createGnl(config), config),
       auth: { write: (c) => c.req.header('x-admin') === 'secret' },
     });
-    const denied = await app.request('/api/agents/pay/run', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runId: 'a1', prompt: 'hi' }) });
+    const denied = await call(app, '/api/agents/pay/run', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runId: 'a1', prompt: 'hi' }) });
     expect(denied.status).toBe(403);
   });
 });

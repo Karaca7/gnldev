@@ -6,6 +6,7 @@ import { tool } from 'ai';
 import { z } from 'zod';
 import { InMemoryJournal } from '@gnldev/durable';
 import { createRestApi } from '../src/index.js';
+import { call } from './call.js';
 
 const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
 const mkStream = (arr: any[]) =>
@@ -92,7 +93,7 @@ describe('@gnldev/server SSE — resumable (W3)', () => {
   it('when lastEventId is not given, behavior is the same as before; id starts at 0 and increments', async () => {
     const execs = { n: 0 };
     const api = makeApi(execs);
-    const res = await api.request('/agents/echoAgent/stream', {
+    const res = await call(api, '/agents/echoAgent/stream', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ runId: 'rs1', prompt: 'go' }),
@@ -109,7 +110,7 @@ describe('@gnldev/server SSE — resumable (W3)', () => {
     const execs = { n: 0 };
     const api = makeApi(execs);
 
-    const res1 = await api.request('/agents/echoAgent/stream', {
+    const res1 = await call(api, '/agents/echoAgent/stream', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ runId: 'rs2', prompt: 'go' }),
@@ -117,7 +118,7 @@ describe('@gnldev/server SSE — resumable (W3)', () => {
     const events1 = await readSSE(res1);
     expect(execs.n).toBe(1);
 
-    const res2 = await api.request('/agents/echoAgent/stream', {
+    const res2 = await call(api, '/agents/echoAgent/stream', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ runId: 'rs2', prompt: 'go' }),
@@ -132,7 +133,7 @@ describe('@gnldev/server SSE — resumable (W3)', () => {
     const execs = { n: 0 };
     const api = makeApi(execs);
 
-    const res1 = await api.request('/agents/echoAgent/stream', {
+    const res1 = await call(api, '/agents/echoAgent/stream', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ runId: 'rs3', prompt: 'go' }),
@@ -141,7 +142,7 @@ describe('@gnldev/server SSE — resumable (W3)', () => {
     expect(events1.length).toBeGreaterThan(2);
     const cutoff = Number(events1[0].id);
 
-    const res2 = await api.request('/agents/echoAgent/stream', {
+    const res2 = await call(api, '/agents/echoAgent/stream', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'Last-Event-ID': String(cutoff) },
       body: JSON.stringify({ runId: 'rs3', prompt: 'go' }),
@@ -155,7 +156,7 @@ describe('@gnldev/server SSE — resumable (W3)', () => {
     const execs = { n: 0 };
     const api = makeApi(execs);
 
-    const res1 = await api.request('/agents/echoAgent/stream', {
+    const res1 = await call(api, '/agents/echoAgent/stream', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ runId: 'rs4', prompt: 'go' }),
@@ -163,7 +164,7 @@ describe('@gnldev/server SSE — resumable (W3)', () => {
     const events1 = await readSSE(res1);
     const lastSeen = Number(events1[events1.length - 2].id); // saw everything except the last event
 
-    const res2 = await api.request('/agents/echoAgent/stream', {
+    const res2 = await call(api, '/agents/echoAgent/stream', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ runId: 'rs4', prompt: 'go', lastEventId: lastSeen }),

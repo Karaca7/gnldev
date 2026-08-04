@@ -6,6 +6,7 @@ import { createStudioApp } from '../../studio/src/server.js';
 import { InMemoryJournal } from '../src/journal.js';
 import { runNetwork } from '../src/network.js';
 import { createMockModel, finalTextResult } from './mock.js';
+import { call } from './call.js';
 
 function scriptedRouter(answers: string[]) {
   let i = 0;
@@ -26,7 +27,7 @@ describe('studio network trace endpoint', () => {
     });
 
     const app = createStudioApp({ reader: journal });
-    const res = (await (await app.request('/api/runs/net-run/network')).json()) as any;
+    const res = (await (await call(app, '/api/runs/net-run/network')).json()) as any;
     expect(res.routes).toHaveLength(2);
     expect(res.routes[0].decision).toEqual({ action: 'route', agent: 'ara', task: 'find sources' });
     expect(res.routes[1].decision.action).toBe('final');
@@ -35,7 +36,7 @@ describe('studio network trace endpoint', () => {
 
   it('run with no network record → empty tree (not an error)', async () => {
     const app = createStudioApp({ reader: new InMemoryJournal() });
-    const res = (await (await app.request('/api/runs/none-at-all/network')).json()) as any;
+    const res = (await (await call(app, '/api/runs/none-at-all/network')).json()) as any;
     expect(res).toEqual({ routes: [], steps: [] });
   });
 });

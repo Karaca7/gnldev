@@ -7,6 +7,7 @@ import { describe, it, expect } from 'vitest';
 import { InMemoryJournal, listLog } from '@gnldev/durable';
 import { roleAuth } from '@gnldev/auth';
 import { createRestApi } from '../src/index.js';
+import { call } from './call.js';
 
 function mkModel(text: string): any {
   return {
@@ -25,7 +26,7 @@ function mkModel(text: string): any {
 }
 
 const run = (api: any, name: string, runId: string, headers: Record<string, string> = {}) =>
-  api.request(`/agents/${name}/run`, {
+  call(api, `/agents/${name}/run`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...headers },
     body: JSON.stringify({ runId, prompt: 'hi' }),
@@ -40,7 +41,7 @@ describe('@gnldev/server agent approval registry', () => {
     const body = await res.json();
     expect(body.text).toBe('ok');
     // Even though not enforced, boot recording still happened (best-effort governance visibility).
-    const reg = await (await api.request('/agents/registry')).json();
+    const reg = await (await call(api, '/agents/registry')).json();
     expect(reg.find((r: any) => r.name === 'a')?.status).toBe('pending');
   });
 
@@ -55,7 +56,7 @@ describe('@gnldev/server agent approval registry', () => {
     const deniedBody = await denied.json();
     expect(deniedBody.code).toBe('agent_not_approved');
 
-    const approveRes = await api.request('/agents/registry/a/approve', {
+    const approveRes = await call(api, '/agents/registry/a/approve', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ note: 'looks good' }),
@@ -76,7 +77,7 @@ describe('@gnldev/server agent approval registry', () => {
       { journal, agents: { a: { model: mkModel('ok') } } },
       { requireAgentApproval: true },
     );
-    const streamDenied = await api.request('/agents/a/stream', {
+    const streamDenied = await call(api, '/agents/a/stream', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ runId: 'rs1', prompt: 'hi' }),
@@ -84,7 +85,7 @@ describe('@gnldev/server agent approval registry', () => {
     expect(streamDenied.status).toBe(403);
     expect((await streamDenied.json()).code).toBe('agent_not_approved');
 
-    const resumeDenied = await api.request('/agents/a/resume', {
+    const resumeDenied = await call(api, '/agents/a/resume', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ runId: 'ru1' }),
@@ -111,7 +112,7 @@ describe('@gnldev/server agent approval registry', () => {
       { journal, agents: { a: { model: mkModel('v1'), maxSteps: 6 } } },
       { requireAgentApproval: true },
     );
-    await api1.request('/agents/registry/a/approve', { method: 'POST' });
+    await call(api1, '/agents/registry/a/approve', { method: 'POST' });
     expect((await run(api1, 'a', 'r1')).status).toBe(200);
 
     // Re-create the API against the SAME journal with a DIFFERENT config (maxSteps changed) — boot
@@ -124,18 +125,18 @@ describe('@gnldev/server agent approval registry', () => {
     expect(drifted.status).toBe(403);
     expect((await drifted.json()).code).toBe('agent_not_approved');
 
-    const reg = await (await api2.request('/agents/registry')).json();
+    const reg = await (await call(api2, '/agents/registry')).json();
     expect(reg.find((r: any) => r.name === 'a')?.status).toBe('changed');
 
     // Re-approve → serves again.
-    await api2.request('/agents/registry/a/approve', { method: 'POST' });
+    await call(api2, '/agents/registry/a/approve', { method: 'POST' });
     expect((await run(api2, 'a', 'r3')).status).toBe(200);
   });
 
   it('GET /agents/registry lists every recorded agent with its status', async () => {
     const journal = new InMemoryJournal();
     const api = createRestApi({ journal, agents: { a: { model: mkModel('a') }, b: { model: mkModel('b') } } });
-    const reg = await (await api.request('/agents/registry')).json();
+    const reg = await (await call(api, '/agents/registry')).json();
     expect(reg.map((r: any) => r.name).sort()).toEqual(['a', 'b']);
     expect(reg.every((r: any) => r.status === 'pending')).toBe(true);
   });
@@ -146,10 +147,10 @@ describe('@gnldev/server agent approval registry', () => {
       { journal, agents: { a: { model: mkModel('ok') } } },
       { requireAgentApproval: true },
     );
-    await api.request('/agents/registry/a/approve', { method: 'POST' });
+    await call(api, '/agents/registry/a/approve', { method: 'POST' });
     expect((await run(api, 'a', 'r1')).status).toBe(200);
 
-    const blockRes = await api.request('/agents/registry/a/block', {
+    const blockRes = await call(api, '/agents/registry/a/block', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ note: 'suspicious tool use' }),
@@ -176,14 +177,14 @@ describe('@gnldev/server agent approval registry', () => {
       { journal, agents: { a: { model: mkModel('ok') } } },
       { auth: roleAuth({ admin: { token: 'adm' }, viewer: { token: 'viw' } }), requireAgentApproval: true },
     );
-    const noAuth = await api.request('/agents/registry/a/approve', { method: 'POST' });
+    const noAuth = await call(api, '/agents/registry/a/approve', { method: 'POST' });
     expect(noAuth.status).toBe(403);
-    const viewer = await api.request('/agents/registry/a/approve', {
+    const viewer = await call(api, '/agents/registry/a/approve', {
       method: 'POST',
       headers: { authorization: 'Bearer viw' },
     });
     expect(viewer.status).toBe(403);
-    const admin = await api.request('/agents/registry/a/approve', {
+    const admin = await call(api, '/agents/registry/a/approve', {
       method: 'POST',
       headers: { authorization: 'Bearer adm' },
     });
@@ -197,8 +198,8 @@ describe('@gnldev/server agent approval registry', () => {
       { auth: roleAuth({ admin: { token: 'acme-adm', orgId: 'acme' } }), org: {}, requireAgentApproval: true },
     );
     const H = { authorization: 'Bearer acme-adm' };
-    expect((await api.request('/agents/registry', { headers: H })).status).toBe(403);
-    expect((await api.request('/agents/registry/a/approve', { method: 'POST', headers: H })).status).toBe(403);
-    expect((await api.request('/agents/registry/a/block', { method: 'POST', headers: H })).status).toBe(403);
+    expect((await call(api, '/agents/registry', { headers: H })).status).toBe(403);
+    expect((await call(api, '/agents/registry/a/approve', { method: 'POST', headers: H })).status).toBe(403);
+    expect((await call(api, '/agents/registry/a/block', { method: 'POST', headers: H })).status).toBe(403);
   });
 });

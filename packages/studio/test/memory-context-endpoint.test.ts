@@ -5,6 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { InMemoryJournal, runKeys } from '@gnldev/durable';
 import { createStudioApi } from '../src/server.js';
+import { call } from './call.js';
 
 describe('GET /runs/:id/memory-context', () => {
   it('serves the frozen provenance record', async () => {
@@ -17,14 +18,14 @@ describe('GET /runs/:id/memory-context', () => {
     await journal.put(runKeys.memoryContext('r1'), rec);
 
     const app = createStudioApi({ reader: journal });
-    const res = await app.request('/runs/r1/memory-context');
+    const res = await call(app, '/runs/r1/memory-context');
     expect(res.status).toBe(200);
     expect((await res.json()).context).toEqual(rec);
   });
 
   it('no record → { context: null }, still 200', async () => {
     const app = createStudioApi({ reader: new InMemoryJournal() });
-    const res = await app.request('/runs/unknown/memory-context');
+    const res = await call(app, '/runs/unknown/memory-context');
     expect(res.status).toBe(200);
     expect((await res.json()).context).toBeNull();
   });

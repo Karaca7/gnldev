@@ -5,6 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
 import { createRestApi, type ResourceAuthResource, type ResourceAuthAction } from '../src/index.js';
+import { call } from './call.js';
 
 function mkModel(): any {
   return {
@@ -33,7 +34,7 @@ function mkApi(resourceAuth?: (p: any, r: ResourceAuthResource, a: ResourceAuthA
 describe('@gnldev/server resourceAuth opt-in hook (D4-FGA)', () => {
   it('resourceAuth denies an agent run → 403 with code "resource_denied"', async () => {
     const api = mkApi(() => false);
-    const res = await api.request('/agents/a/run', {
+    const res = await call(api, '/agents/a/run', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ runId: 'ra-1', prompt: 'hi' }),
@@ -45,7 +46,7 @@ describe('@gnldev/server resourceAuth opt-in hook (D4-FGA)', () => {
 
   it('resourceAuth denies an agent stream → 403 with code "resource_denied"', async () => {
     const api = mkApi(() => false);
-    const res = await api.request('/agents/a/stream', {
+    const res = await call(api, '/agents/a/stream', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ runId: 'ra-2', prompt: 'hi' }),
@@ -60,7 +61,7 @@ describe('@gnldev/server resourceAuth opt-in hook (D4-FGA)', () => {
       calls.push({ resource, action });
       return true;
     });
-    const res = await api.request('/agents/a/run', {
+    const res = await call(api, '/agents/a/run', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ runId: 'ra-3', prompt: 'hi' }),
@@ -73,26 +74,26 @@ describe('@gnldev/server resourceAuth opt-in hook (D4-FGA)', () => {
     const journal = new InMemoryJournal();
     const openApi = createRestApi({ journal, agents: { a: { model: mkModel() } } });
     // create a real run first so the cancel endpoint's existence check passes
-    await openApi.request('/agents/a/run', {
+    await call(openApi, '/agents/a/run', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ runId: 'ra-cancel-1', prompt: 'hi' }),
     });
     const gatedApi = createRestApi({ journal, agents: { a: { model: mkModel() } } }, { resourceAuth: () => false });
-    const res = await gatedApi.request('/runs/ra-cancel-1/cancel', { method: 'POST' });
+    const res = await call(gatedApi, '/runs/ra-cancel-1/cancel', { method: 'POST' });
     expect(res.status).toBe(403);
     expect((await res.json()).code).toBe('resource_denied');
   });
 
   it('an UNKNOWN run still 404s (resourceAuth is never reached — the existence check runs first)', async () => {
     const api = mkApi(() => false);
-    const res = await api.request('/runs/does-not-exist/cancel', { method: 'POST' });
+    const res = await call(api, '/runs/does-not-exist/cancel', { method: 'POST' });
     expect(res.status).toBe(404);
   });
 
   it('if resourceAuth is NOT given, behavior is preserved EXACTLY AS IS (no regression)', async () => {
     const api = mkApi(); // no resourceAuth
-    const res = await api.request('/agents/a/run', {
+    const res = await call(api, '/agents/a/run', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ runId: 'ra-4', prompt: 'hi' }),

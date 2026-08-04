@@ -2,6 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
 import { createStudioApi } from '../src/server.js';
+import { call } from './call.js';
 
 describe('studio: workflow step-through API', () => {
   it('maxSteps is passed into gnl.runWorkflow opts; paused/stepId are in the response', async () => {
@@ -19,7 +20,7 @@ describe('studio: workflow step-through API', () => {
       },
     });
 
-    const res = await app.request('/workflows/w/run', {
+    const res = await call(app, '/workflows/w/run', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ input: {}, runId: 'st-1', maxSteps: 1 }),

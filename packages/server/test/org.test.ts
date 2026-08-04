@@ -3,6 +3,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
 import { createRestApi } from '../src/index.js';
+import { call } from './call.js';
 
 function mkModel(text: string, counter?: { calls: number }): any {
   return {
@@ -19,7 +20,7 @@ function mkModel(text: string, counter?: { calls: number }): any {
 }
 
 const run = (api: any, org?: string, runId = 'r1') =>
-  api.request('/agents/a/run', {
+  call(api, '/agents/a/run', {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...(org ? { 'x-gnl-org': org } : {}) },
     body: JSON.stringify({ runId, prompt: 'hi' }),
@@ -48,10 +49,10 @@ describe('@gnldev/server org', () => {
     await run(api, 'acme', 'r-acme');
     await run(api, undefined, 'r-shared');
 
-    const acmeRuns = await (await api.request('/runs', { headers: { 'x-gnl-org': 'acme' } })).json();
+    const acmeRuns = await (await call(api, '/runs', { headers: { 'x-gnl-org': 'acme' } })).json();
     expect(acmeRuns.map((r: any) => r.runId)).toEqual(['r-acme']); // an org only sees its own runs
     // Org-less view = raw journal (admin): its own runs + org runs appear PREFIXED
-    const sharedIds = (await (await api.request('/runs')).json()).map((r: any) => r.runId);
+    const sharedIds = (await (await call(api, '/runs')).json()).map((r: any) => r.runId);
     expect(sharedIds).toContain('r-shared');
     expect(sharedIds).toContain('org:acme:r-acme');
   });
@@ -136,13 +137,13 @@ describe('@gnldev/server org', () => {
       { journal: new InMemoryJournal(), agents: { a: { model: mkModel('ok') } } },
       { org: {} },
     );
-    const res = await api.request('/agents/a/run', {
+    const res = await call(api, '/agents/a/run', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-gnl-org': 'acme' },
       body: JSON.stringify({ runId: 'r-org', prompt: 'hi' }),
     });
     expect(res.status).toBe(200);
-    const acmeRuns = await (await api.request('/runs', { headers: { 'x-gnl-org': 'acme' } })).json();
+    const acmeRuns = await (await call(api, '/runs', { headers: { 'x-gnl-org': 'acme' } })).json();
     expect(acmeRuns.map((r: any) => r.runId)).toEqual(['r-org']); // written to acme
   });
 });

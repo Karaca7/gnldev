@@ -3,6 +3,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
 import { roleAuth } from '@gnldev/auth';
 import { createRestApi } from '../src/index.js';
+import { call } from './call.js';
 
 function mkModel(): any {
   return {
@@ -20,21 +21,21 @@ const cfg = () => ({ journal: new InMemoryJournal(), agents: { pay: { model: mkM
 describe('@gnldev/server opt-in auth', () => {
   it('if auth is not given, all endpoints are open (regression)', async () => {
     const api = createRestApi(cfg());
-    expect((await api.request('/agents')).status).toBe(200);
-    expect((await api.request('/openapi.json')).status).toBe(200);
+    expect((await call(api, '/agents')).status).toBe(200);
+    expect((await call(api, '/openapi.json')).status).toBe(200);
   });
 
   it('roleAuth: viewer reads, admin writes', async () => {
     const api = createRestApi(cfg(), { auth: roleAuth({ admin: { token: 'adm' }, viewer: { token: 'viw' } }) });
 
     // read (GET)
-    expect((await api.request('/agents')).status).toBe(401); // no header
-    expect((await api.request('/agents', { headers: { authorization: 'Bearer viw' } })).status).toBe(200);
-    expect((await api.request('/agents', { headers: { authorization: 'Bearer adm' } })).status).toBe(200);
-    expect((await api.request('/openapi.json')).status).toBe(401);
+    expect((await call(api, '/agents')).status).toBe(401); // no header
+    expect((await call(api, '/agents', { headers: { authorization: 'Bearer viw' } })).status).toBe(200);
+    expect((await call(api, '/agents', { headers: { authorization: 'Bearer adm' } })).status).toBe(200);
+    expect((await call(api, '/openapi.json')).status).toBe(401);
 
     // write (POST)
-    const post = (auth?: string) => api.request('/agents/pay/run', {
+    const post = (auth?: string) => call(api, '/agents/pay/run', {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...(auth ? { authorization: auth } : {}) },
       body: JSON.stringify({ runId: 'r1', prompt: 'hi' }),
@@ -60,7 +61,7 @@ describe('@gnldev/server opt-in auth', () => {
     it('production + allowOpenAccess: true → deliberate open access works', async () => {
       vi.stubEnv('NODE_ENV', 'production');
       const api = createRestApi(cfg(), { allowOpenAccess: true });
-      expect((await api.request('/agents')).status).toBe(200);
+      expect((await call(api, '/agents')).status).toBe(200);
     });
   });
 });

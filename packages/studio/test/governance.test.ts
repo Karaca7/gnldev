@@ -2,6 +2,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { InMemoryJournal, recordRunMetrics, withOrg } from '@gnldev/durable';
 import { createStudioApi } from '../src/server.js';
+import { call } from './call.js';
 
 /** Seeds a suspended run: the model produced a tool-call, the tool is waiting on the suspended sentinel. */
 async function seedSuspended(journal: InMemoryJournal, runId = 'sus-1') {
@@ -20,7 +21,7 @@ describe('governance: /approvals', () => {
     const journal = new InMemoryJournal();
     await seedSuspended(journal);
     const app = createStudioApi({ reader: journal });
-    const res = await (await app.request('/approvals')).json();
+    const res = await (await call(app, '/approvals')).json();
     expect(res.items).toHaveLength(1);
     expect(res.items[0]).toMatchObject({
       runId: 'sus-1', toolCallId: 'call-1', toolName: 'chargeCard',
@@ -31,7 +32,7 @@ describe('governance: /approvals', () => {
   it('capabilities reports the governance flags', async () => {
     const journal = new InMemoryJournal();
     const app = createStudioApi({ reader: journal, resume: async () => ({}), org: {} });
-    const caps = await (await app.request('/capabilities')).json();
+    const caps = await (await call(app, '/capabilities')).json();
     expect(caps.approvals).toBe(true);
     expect(caps.audit).toBe(true);
     expect(caps.organizations).toBe(true);
@@ -44,19 +45,19 @@ describe('governance: /audit', () => {
     await seedSuspended(journal);
     const app = createStudioApi({ reader: journal, resume: async () => ({ text: 'continue' }) });
 
-    const res = await app.request('/runs/sus-1/resume', {
+    const res = await call(app, '/runs/sus-1/resume', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-gnl-actor': 'ayse@acme.co' },
       body: JSON.stringify({ approvals: { 'call-1': true } }),
     });
     expect(res.status).toBe(200);
 
-    const audit = await (await app.request('/audit')).json();
+    const audit = await (await call(app, '/audit')).json();
     expect(audit.items).toHaveLength(1);
     expect(audit.items[0]).toMatchObject({ actor: 'ayse@acme.co', action: 'approve', target: 'sus-1' });
 
     // action filter: a deny search returns empty
-    const denies = await (await app.request('/audit?action=deny')).json();
+    const denies = await (await call(app, '/audit?action=deny')).json();
     expect(denies.items).toHaveLength(0);
   });
 
@@ -64,12 +65,12 @@ describe('governance: /audit', () => {
     const journal = new InMemoryJournal();
     await seedSuspended(journal, 'sus-2');
     const app = createStudioApi({ reader: journal, resume: async () => ({}) });
-    await app.request('/runs/sus-2/resume', {
+    await call(app, '/runs/sus-2/resume', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ approvals: { 'call-1': false } }),
     });
-    const audit = await (await app.request('/audit?action=deny')).json();
+    const audit = await (await call(app, '/audit?action=deny')).json();
     expect(audit.items).toHaveLength(1);
     expect(audit.items[0].actor).toBe('anon');
   });
@@ -82,16 +83,16 @@ describe('governance: DELETE /runs/:id (GDPR purge)', () => {
     await seedSuspended(journal, 'del-10'); // a prefix neighbor — must NOT be touched
     const app = createStudioApi({ reader: journal });
 
-    const res = await app.request('/runs/del-1', { method: 'DELETE', headers: { 'x-gnl-actor': 'dpo@acme.co' } });
+    const res = await call(app, '/runs/del-1', { method: 'DELETE', headers: { 'x-gnl-actor': 'dpo@acme.co' } });
     expect(res.status).toBe(200);
     expect((await res.json()).deleted).toBeGreaterThanOrEqual(2);
 
-    const runs = await (await app.request('/runs')).json();
+    const runs = await (await call(app, '/runs')).json();
     const ids = runs.map((r: any) => r.runId);
     expect(ids).not.toContain('del-1');
     expect(ids).toContain('del-10');
 
-    const audit = await (await app.request('/audit?action=run.purge')).json();
+    const audit = await (await call(app, '/audit?action=run.purge')).json();
     expect(audit.items[0]).toMatchObject({ actor: 'dpo@acme.co', target: 'del-1' });
   });
 });
@@ -102,7 +103,7 @@ describe('governance: /runs/:id/scores', () => {
     await journal.put('sc-run:proc:eval:len', { v: { score: 11 } });
     await journal.put('sc-run:proc:eval:judge', { v: { score: 0.9, reason: 'good' } });
     const app = createStudioApi({ reader: journal });
-    const res = await (await app.request('/runs/sc-run/scores')).json();
+    const res = await (await call(app, '/runs/sc-run/scores')).json();
     expect(res.scores.len).toEqual({ score: 11 });
     expect(res.scores.judge).toEqual({ score: 0.9, reason: 'good' });
   });
@@ -114,27 +115,27 @@ describe('governance: /runs/:id/processors (compliance reports)', () => {
     await journal.put('proc-run:procreport:pii-redactor:input', { v: { name: 'pii-redactor', phase: 'input', findings: { redactedCount: 2, types: ['email'] }, ts: 1 } });
     await journal.put('proc-run:procreport:prompt-injection:input', { v: { name: 'prompt-injection', phase: 'input', findings: { matched: ['ignore previous'] }, ts: 2 } });
     const app = createStudioApi({ reader: journal });
-    const res = await (await app.request('/runs/proc-run/processors')).json();
+    const res = await (await call(app, '/runs/proc-run/processors')).json();
     expect(res.reports).toHaveLength(2);
     expect(res.reports.map((r: any) => r.name).sort()).toEqual(['pii-redactor', 'prompt-injection']);
   });
 
   it('an empty list if there is no record (not 500)', async () => {
     const app = createStudioApi({ reader: new InMemoryJournal() });
-    const res = await (await app.request('/runs/no-such-run/processors')).json();
+    const res = await (await call(app, '/runs/no-such-run/processors')).json();
     expect(res.reports).toEqual([]);
   });
 
   it('returns an empty list if the journal is not writable/listKeys (same pattern as scores/scheduler)', async () => {
     const bareReader = { listRuns: async () => [], readRun: async () => undefined };
     const app = createStudioApi({ reader: bareReader as any });
-    const res = await (await app.request('/runs/x/processors')).json();
+    const res = await (await call(app, '/runs/x/processors')).json();
     expect(res.reports).toEqual([]);
   });
 
   it('capabilities.processors is on for a writable+listKeys journal', async () => {
     const app = createStudioApi({ reader: new InMemoryJournal() });
-    const caps = await (await app.request('/capabilities')).json();
+    const caps = await (await call(app, '/capabilities')).json();
     expect(caps.processors).toBe(true);
   });
 });
@@ -162,7 +163,7 @@ describe('governance: /organizations (counters + budget)', () => {
         budgets: { default: { tokenLimit: 200 } }, // acme: 300 tokens → exceeds; globex: 150 → doesn't
         alerts: { webhook: 'http://alarm.local/hook' },
       });
-      const res = await (await app.request('/organizations')).json();
+      const res = await (await call(app, '/organizations')).json();
       const acme = res.organizations.find((o: any) => o.id === 'acme');
       const globex = res.organizations.find((o: any) => o.id === 'globex');
       expect(acme).toMatchObject({ runs: 2, tokens: 300 });
@@ -171,7 +172,7 @@ describe('governance: /organizations (counters + budget)', () => {
       expect(hooks).toHaveLength(1); // only acme, once
       expect(hooks[0]).toMatchObject({ type: 'budget-exceeded', org: 'acme' });
 
-      await app.request('/organizations'); // second call → the marker means the webhook is NOT fired again
+      await call(app, '/organizations'); // second call → the marker means the webhook is NOT fired again
       expect(hooks).toHaveLength(1);
     } finally {
       globalThis.fetch = origFetch;
@@ -182,20 +183,20 @@ describe('governance: /organizations (counters + budget)', () => {
     const journal = new InMemoryJournal();
     await seedOrgRun(journal, 'acme', 'r1');
     const app = createStudioApi({ reader: journal, org: {} }); // POST /organizations requires multi-org
-    const create = await app.request('/organizations', {
+    const create = await call(app, '/organizations', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ id: 'acme', label: 'Acme Inc.' }),
     });
     expect(create.status).toBe(200);
 
-    const res = await (await app.request('/organizations')).json();
+    const res = await (await call(app, '/organizations')).json();
     const acme = res.organizations.find((o: any) => o.id === 'acme');
     expect(acme.label).toBe('Acme Inc.');
 
     // An unlabeled (only discovered, never POSTed) organization has no label field.
     await seedOrgRun(journal, 'globex', 'r1');
-    const res2 = await (await app.request('/organizations')).json();
+    const res2 = await (await call(app, '/organizations')).json();
     const globex = res2.organizations.find((o: any) => o.id === 'globex');
     expect(globex.label).toBeUndefined();
   });
@@ -208,7 +209,7 @@ describe('governance: /organizations (counters + budget)', () => {
     await journal.put('__budget__:acme', { tokenLimit: 500 }); // acme manages its own budget
     const app = createStudioApi({ reader: journal });
 
-    const res = await (await app.request('/organizations')).json();
+    const res = await (await call(app, '/organizations')).json();
     const acme = res.organizations.find((o: any) => o.id === 'acme');
     const globex = res.organizations.find((o: any) => o.id === 'globex');
     expect(acme.budget).toMatchObject({ tokenLimit: 500, inherited: false });
@@ -230,9 +231,9 @@ describe('governance: /organizations (CRUD + audit)', () => {
     const app = createStudioApi({ reader: journal, org: {} });
     const H = { 'content-type': 'application/json' };
 
-    const created = await (await app.request('/organizations', { method: 'POST', headers: H, body: JSON.stringify({ id: 'acme' }) })).json();
+    const created = await (await call(app, '/organizations', { method: 'POST', headers: H, body: JSON.stringify({ id: 'acme' }) })).json();
     expect(created).toMatchObject({ ok: true, organization: { id: 'acme' } });
-    const viaGet = await (await app.request('/organizations')).json();
+    const viaGet = await (await call(app, '/organizations')).json();
     expect(viaGet.organizations.map((o: any) => o.id)).toContain('acme');
   });
 
@@ -241,19 +242,19 @@ describe('governance: /organizations (CRUD + audit)', () => {
     await seedOrgRun(journal, 'acme', 'r1');
     const app = createStudioApi({ reader: journal, org: {} }); // DELETE requires multi-org
 
-    const put = await app.request('/organizations/acme/budget', {
+    const put = await call(app, '/organizations/acme/budget', {
       method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tokenLimit: 50 }),
     });
     expect(put.status).toBe(200);
     expect(await journal.get('__budget__:acme')).toMatchObject({ tokenLimit: 50 });
 
-    const del = await app.request('/organizations/acme', { method: 'DELETE' });
+    const del = await call(app, '/organizations/acme', { method: 'DELETE' });
     expect(del.status).toBe(200);
     expect(await journal.get('org:acme:r1:model:0')).toBeUndefined();
     expect(await journal.get('__budget__:acme')).toBeNull();
 
     // org.* action names land in audit.
-    const audit = await (await app.request('/audit')).json();
+    const audit = await (await call(app, '/audit')).json();
     const actions = audit.items.map((i: any) => i.action);
     expect(actions).toContain('org.budget');
     expect(actions).toContain('org.delete');
@@ -265,15 +266,15 @@ describe('governance: /organizations (CRUD + audit)', () => {
     const journal = new InMemoryJournal();
     const app = createStudioApi({ reader: journal, org: {} });
 
-    await app.request('/organizations', {
+    await call(app, '/organizations', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'blk1' }),
     });
-    await app.request('/organizations/blk1/budget', {
+    await call(app, '/organizations/blk1/budget', {
       method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tokenLimit: 50 }),
     });
-    await app.request('/organizations/blk1', { method: 'DELETE' });
+    await call(app, '/organizations/blk1', { method: 'DELETE' });
 
-    const audit = await (await app.request('/audit')).json();
+    const audit = await (await call(app, '/audit')).json();
     const byAction = Object.fromEntries(audit.items.map((i: any) => [i.action, i]));
     expect(byAction['org.create'].org).toBe('blk1');
     expect(byAction['org.budget'].org).toBe('blk1');
@@ -286,24 +287,24 @@ describe('governance: /organizations (CRUD + audit)', () => {
     const journal = new InMemoryJournal();
     const app = createStudioApi({ reader: journal, org: {} });
 
-    const create = await app.request('/organizations', {
+    const create = await call(app, '/organizations', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'blk1' }),
     });
     expect(create.status).toBe(200);
-    const before = await (await app.request('/organizations')).json();
+    const before = await (await call(app, '/organizations')).json();
     expect(before.organizations.map((o: any) => o.id)).toContain('blk1');
 
-    const del = await app.request('/organizations/blk1', { method: 'DELETE' });
+    const del = await call(app, '/organizations/blk1', { method: 'DELETE' });
     expect(del.status).toBe(200);
 
-    const after = await (await app.request('/organizations')).json();
+    const after = await (await call(app, '/organizations')).json();
     expect(after.organizations.map((o: any) => o.id)).not.toContain('blk1');
   });
 
   it('capabilities: organizations/orgManage flag names (old tenants/tenantManage REMOVED)', async () => {
     const journal = new InMemoryJournal();
     const app = createStudioApi({ reader: journal, org: {} });
-    const caps = await (await app.request('/capabilities')).json();
+    const caps = await (await call(app, '/capabilities')).json();
     expect(caps.organizations).toBe(true);
     expect(caps.orgManage).toBe(true);
     expect(caps.tenants).toBeUndefined();
@@ -327,7 +328,7 @@ describe('governance: /organizations (perf — materialized fast path, API-02)',
 
     const readRunSpy = vi.spyOn(journal, 'readRun');
     const app = createStudioApi({ reader: journal });
-    const res = await (await app.request('/organizations')).json();
+    const res = await (await call(app, '/organizations')).json();
 
     const acme = res.organizations.find((o: any) => o.id === 'acme');
     expect(acme).toMatchObject({ id: 'acme', runs: 1, tokens: 100, source: 'materialized' });
@@ -349,7 +350,7 @@ describe('governance: /organizations (perf — materialized fast path, API-02)',
     });
 
     const app = createStudioApi({ reader: journal });
-    const res = await (await app.request('/organizations')).json();
+    const res = await (await call(app, '/organizations')).json();
     const acme = res.organizations.find((o: any) => o.id === 'acme');
     expect(acme).toMatchObject({ id: 'acme', runs: 2, tokens: 45, source: 'scan' });
   });
@@ -362,7 +363,7 @@ describe('governance: /organizations (perf — materialized fast path, API-02)',
     expect((view as any).countRunsByStatus).toBeUndefined(); // sanity: confirms the trap this test guards against
 
     const app = createStudioApi({ reader: journal });
-    const res = await app.request('/organizations');
+    const res = await call(app, '/organizations');
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.organizations.find((o: any) => o.id === 'acme')).toMatchObject({ runs: 1, source: 'materialized' });

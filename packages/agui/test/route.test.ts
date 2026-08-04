@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { InMemoryJournal } from '@gnldev/durable';
 import { createAguiRoute } from '../src/route.js';
 import { EventType } from '../src/types.js';
+import { call } from './call.js';
 
 const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
 const mkStream = (arr: any[]) =>
@@ -90,7 +91,7 @@ async function readAguiSSE(res: Response): Promise<any[]> {
 describe('@gnldev/agui createAguiRoute + pipeAguiStream', () => {
   it('POST /agents/:name/run → RUN_STARTED ... TEXT_MESSAGE_* ... RUN_FINISHED', async () => {
     const app = createAguiRoute({ journal: new InMemoryJournal(), agents: { chat: { model: textMock(), maxSteps: 4 } } });
-    const res = await app.request('/agents/chat/run', {
+    const res = await call(app, '/agents/chat/run', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ runId: 'r1', prompt: 'hi' }),
@@ -109,7 +110,7 @@ describe('@gnldev/agui createAguiRoute + pipeAguiStream', () => {
 
   it('threadId is passed from the body (if not given, runId is used)', async () => {
     const app = createAguiRoute({ journal: new InMemoryJournal(), agents: { chat: { model: textMock(), maxSteps: 4 } } });
-    const res = await app.request('/agents/chat/run', {
+    const res = await call(app, '/agents/chat/run', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ runId: 'r2', threadId: 'thread-xyz', prompt: 'hi' }),
@@ -132,7 +133,7 @@ describe('@gnldev/agui createAguiRoute + pipeAguiStream', () => {
       }),
     };
     const app = createAguiRoute({ journal: new InMemoryJournal(), agents: { echoAgent: { model: agentMock(), tools, maxSteps: 6 } } });
-    const res = await app.request('/agents/echoAgent/run', {
+    const res = await call(app, '/agents/echoAgent/run', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ runId: 'r3', prompt: 'go' }),
@@ -180,7 +181,7 @@ describe('@gnldev/agui createAguiRoute + pipeAguiStream', () => {
       };
     }
     const app = createAguiRoute({ journal: new InMemoryJournal(), agents: { pay: { model: payMock(), tools, guard, maxSteps: 6 } } });
-    const res = await app.request('/agents/pay/run', {
+    const res = await call(app, '/agents/pay/run', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ runId: 'o1', prompt: 'charge' }),
@@ -196,7 +197,7 @@ describe('@gnldev/agui createAguiRoute + pipeAguiStream', () => {
 
   it('400 when runId is missing', async () => {
     const app = createAguiRoute({ journal: new InMemoryJournal(), agents: { chat: { model: textMock() } } });
-    const bad = await app.request('/agents/chat/run', {
+    const bad = await call(app, '/agents/chat/run', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ prompt: 'x' }),

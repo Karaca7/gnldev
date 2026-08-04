@@ -5,6 +5,7 @@ import { tool } from 'ai';
 import { z } from 'zod';
 import { InMemoryJournal } from '@gnldev/durable';
 import { createRestApi } from '../src/index.js';
+import { call } from './call.js';
 
 function mkModel(): any {
   return {
@@ -49,7 +50,7 @@ describe('8.9 auto-REST', () => {
 
     // run → gets suspended
     const run = await json(
-      await api.request('/agents/pay/run', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runId: 'o1', prompt: 'charge' }) }),
+      await call(api, '/agents/pay/run', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runId: 'o1', prompt: 'charge' }) }),
     );
     expect(run.ok).toBe(true);
     expect(run.interrupts.length).toBe(1);
@@ -57,21 +58,21 @@ describe('8.9 auto-REST', () => {
 
     // resume (approve) → charge exactly once
     const res = await json(
-      await api.request('/agents/pay/resume', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runId: 'o1', approvals: { 'call-c': true } }) }),
+      await call(api, '/agents/pay/resume', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runId: 'o1', approvals: { 'call-c': true } }) }),
     );
     expect(res.text).toContain('Done');
     expect(charges.n).toBe(1); // exactly-once holds over HTTP too
 
     // runs list + openapi
-    const runs = await json(await api.request('/runs'));
+    const runs = await json(await call(api, '/runs'));
     expect(runs[0].runId).toBe('o1');
-    const spec = await json(await api.request('/openapi.json'));
+    const spec = await json(await call(api, '/openapi.json'));
     expect(spec.openapi).toBe('3.1.0');
     expect(spec.paths['/agents/pay/run']).toBeDefined();
     expect(spec.paths['/agents/pay/resume']).toBeDefined();
 
     // missing runId → 400
-    const bad = await api.request('/agents/pay/run', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'x' }) });
+    const bad = await call(api, '/agents/pay/run', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'x' }) });
     expect(bad.status).toBe(400);
   });
 });

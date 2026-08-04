@@ -3,6 +3,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { InMemoryJournal, recordRunMetrics, metricsDayKey, METRICS_ALL_KEY } from '@gnldev/durable';
 import { createStudioApi } from '../src/server.js';
+import { call } from './call.js';
 
 async function seedRun(journal: InMemoryJournal, runId: string, tokens: number) {
   await journal.put(`${runId}:model:0`, { usage: { inputTokens: tokens / 2, outputTokens: tokens / 2, totalTokens: tokens } });
@@ -14,7 +15,7 @@ describe('GET /metrics', () => {
     await seedRun(journal, 'r1', 10);
     const app = createStudioApi({ reader: journal });
 
-    const res = await (await app.request('/metrics')).json();
+    const res = await (await call(app, '/metrics')).json();
     expect(res.source).toBe('scan');
     expect(res.total).toBe(1);
     expect(res.tokens).toBe(10);
@@ -27,7 +28,7 @@ describe('GET /metrics', () => {
     await recordRunMetrics(journal, journal, 'r1');
     const app = createStudioApi({ reader: journal });
 
-    const res = await (await app.request('/metrics')).json();
+    const res = await (await call(app, '/metrics')).json();
     expect(res.source).toBe('materialized');
     expect(res.total).toBe(1);
     expect(res.tokens).toBe(10);
@@ -41,13 +42,13 @@ describe('GET /metrics', () => {
     await recordRunMetrics(journal, journal, 'r1');
     const app = createStudioApi({ reader: journal });
 
-    const small = await (await app.request('/metrics?days=3')).json();
+    const small = await (await call(app, '/metrics?days=3')).json();
     expect(small.byDay).toHaveLength(3);
 
-    const tooBig = await (await app.request('/metrics?days=999')).json();
+    const tooBig = await (await call(app, '/metrics?days=999')).json();
     expect(tooBig.byDay).toHaveLength(90);
 
-    const tooSmall = await (await app.request('/metrics?days=0')).json();
+    const tooSmall = await (await call(app, '/metrics?days=0')).json();
     expect(tooSmall.byDay).toHaveLength(1);
   });
 
@@ -80,14 +81,14 @@ describe('GET /metrics', () => {
 
     const noAgg = withoutCountRunsByStatus(journal);
     const listRunsSpyNoAgg = vi.spyOn(noAgg, 'listRuns');
-    const resNoAgg = await (await createStudioApi({ reader: noAgg as any }).request('/metrics')).json();
+    const resNoAgg = await (await call(createStudioApi({ reader: noAgg as any }), '/metrics')).json();
     const callsNoAgg = listRunsSpyNoAgg.mock.calls.length;
     expect(resNoAgg.total).toBe(2);
     expect(resNoAgg.byStatus).toEqual({ completed: 1, suspended: 1 });
     expect(callsNoAgg).toBeGreaterThan(0); // confirms the fallback really did scan
 
     const listRunsSpyAgg = vi.spyOn(journal, 'listRuns');
-    const resAgg = await (await createStudioApi({ reader: journal }).request('/metrics')).json();
+    const resAgg = await (await call(createStudioApi({ reader: journal }), '/metrics')).json();
     const callsAgg = listRunsSpyAgg.mock.calls.length;
     expect(resAgg.total).toBe(2);
     expect(resAgg.byStatus).toEqual({ completed: 1, suspended: 1 });
@@ -101,7 +102,7 @@ describe('GET /metrics', () => {
     await recordRunMetrics(journal, journal, 'r1');
     const noAgg = withoutCountRunsByStatus(journal);
     const app = createStudioApi({ reader: noAgg as any });
-    const res = await (await app.request('/metrics')).json();
+    const res = await (await call(app, '/metrics')).json();
     expect(res.source).toBe('materialized');
     expect(res.total).toBe(1);
     expect(res.byStatus.completed).toBe(1);
@@ -122,7 +123,7 @@ describe('GET /metrics', () => {
     await journal.incrBy(METRICS_ALL_KEY, { 'score:quality:sumMilli': 800, 'score:quality:count': 1 });
 
     const app = createStudioApi({ reader: journal });
-    const res = await (await app.request('/metrics')).json();
+    const res = await (await call(app, '/metrics')).json();
     expect(res.source).toBe('materialized');
     const todayBucket = res.byDay.find((d: any) => d.day === today);
     expect(todayBucket.fields['score:quality:avg']).toBeCloseTo(0.8, 10);
@@ -137,7 +138,7 @@ describe('GET /metrics/runs', () => {
 
     const readRunSpy = vi.spyOn(journal, 'readRun');
     const app = createStudioApi({ reader: journal });
-    const res = await (await app.request('/metrics/runs')).json();
+    const res = await (await call(app, '/metrics/runs')).json();
 
     expect(res.runs).toHaveLength(1);
     expect(res.runs[0]).toMatchObject({ runId: 'r1', status: 'completed', totalTokens: 10, modelSteps: 1 });
@@ -149,7 +150,7 @@ describe('GET /metrics/runs', () => {
     await seedRun(journal, 'legacy', 20); // no recordRunMetrics call → no `__metrics__run:` row
     const readRunSpy = vi.spyOn(journal, 'readRun');
     const app = createStudioApi({ reader: journal });
-    const res = await (await app.request('/metrics/runs')).json();
+    const res = await (await call(app, '/metrics/runs')).json();
 
     expect(res.runs).toHaveLength(1);
     expect(res.runs[0]).toMatchObject({ runId: 'legacy', totalTokens: 20 });
@@ -163,7 +164,7 @@ describe('GET /metrics/runs', () => {
     await seedRun(journal, 'slow', 5); // no row → scan fallback
 
     const app = createStudioApi({ reader: journal });
-    const res = await (await app.request('/metrics/runs')).json();
+    const res = await (await call(app, '/metrics/runs')).json();
     const byId = Object.fromEntries(res.runs.map((r: any) => [r.runId, r]));
     expect(byId.fast.totalTokens).toBe(10);
     expect(byId.slow.totalTokens).toBe(5);
@@ -190,7 +191,7 @@ describe('GET /metrics/runs', () => {
     const getSpy = vi.spyOn(journal, 'get');
     const getManySpy = vi.spyOn(journal, 'getMany');
     const app = createStudioApi({ reader: journal });
-    const res = await (await app.request('/metrics/runs')).json();
+    const res = await (await call(app, '/metrics/runs')).json();
 
     expect(res.runs).toHaveLength(2);
     expect(getManySpy).toHaveBeenCalledTimes(1); // ONE batched round-trip for both rows
@@ -206,16 +207,16 @@ describe('GET /metrics/runs', () => {
     }
     const app = createStudioApi({ reader: journal });
 
-    const limited = await (await app.request('/metrics/runs?limit=2')).json();
+    const limited = await (await call(app, '/metrics/runs?limit=2')).json();
     expect(limited.runs).toHaveLength(2);
 
-    const zero = await (await app.request('/metrics/runs?limit=0')).json();
+    const zero = await (await call(app, '/metrics/runs?limit=0')).json();
     expect(zero.runs).toHaveLength(1); // clamped UP to 1
 
-    const huge = await (await app.request('/metrics/runs?limit=99999')).json();
+    const huge = await (await call(app, '/metrics/runs?limit=99999')).json();
     expect(huge.runs).toHaveLength(5); // clamped down to at most 1000 — only 5 runs exist anyway
 
-    const none = await (await app.request('/metrics/runs')).json();
+    const none = await (await call(app, '/metrics/runs')).json();
     expect(none.runs).toHaveLength(5); // no ?limit= → unchanged (all runs)
   });
 });

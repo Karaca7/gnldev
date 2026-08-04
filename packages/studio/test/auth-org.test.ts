@@ -6,6 +6,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
 import { roleAuth, type AuthProvider } from '@gnldev/auth';
 import { createStudioApi } from '../src/server.js';
+import { call } from './call.js';
 
 const AUTH = () => roleAuth({
   admin: { token: 'adm', user: 'ops' },
@@ -20,9 +21,9 @@ async function seed(journal: InMemoryJournal) {
 describe('@gnldev/studio auth↔org', () => {
   it('/events is auth-gated: 401 without identity, 200 with ?token= (EventSource fallback)', async () => {
     const app = createStudioApi({ reader: new InMemoryJournal(), auth: AUTH() });
-    expect((await app.request('/events')).status).toBe(401);
+    expect((await call(app, '/events')).status).toBe(401);
 
-    const ok = await app.request('/events?token=viw');
+    const ok = await call(app, '/events?token=viw');
     expect(ok.status).toBe(200);
     await ok.body?.cancel(); // close the infinite SSE stream
   });
@@ -31,14 +32,14 @@ describe('@gnldev/studio auth↔org', () => {
     const journal = new InMemoryJournal();
     const app = createStudioApi({ reader: journal, auth: AUTH() });
 
-    const put = (headers: Record<string, string>) => app.request('/policy', {
+    const put = (headers: Record<string, string>) => call(app, '/policy', {
       method: 'PUT',
       headers: { 'content-type': 'application/json', ...headers },
       body: JSON.stringify({ rules: [] }),
     });
 
     expect((await put({ authorization: 'Bearer adm', 'x-gnl-actor': 'fake-person' })).status).toBe(200);
-    const audit = await (await app.request('/audit?action=policy.update', {
+    const audit = await (await call(app, '/audit?action=policy.update', {
       headers: { authorization: 'Bearer adm' },
     })).json();
     expect(audit.items[0].actor).toBe('ops'); // NOT the header's 'fake-person'
@@ -50,11 +51,11 @@ describe('@gnldev/studio auth↔org', () => {
     const app = createStudioApi({ reader: journal, auth: AUTH(), org: {} });
 
     // no header: principal.orgId (acme) scopes it
-    const runs = await (await app.request('/runs', { headers: { authorization: 'Bearer viw' } })).json();
+    const runs = await (await call(app, '/runs', { headers: { authorization: 'Bearer viw' } })).json();
     expect(runs.map((r: any) => r.runId)).toEqual(['r-acme']);
 
     // requesting a different org → 403
-    const res = await app.request('/runs', {
+    const res = await call(app, '/runs', {
       headers: { authorization: 'Bearer viw', 'x-gnl-org': 'globex' },
     });
     expect(res.status).toBe(403);
@@ -65,10 +66,10 @@ describe('@gnldev/studio auth↔org', () => {
     await seed(journal);
     const app = createStudioApi({ reader: journal, auth: AUTH(), org: {} });
 
-    const all = await (await app.request('/organizations', { headers: { authorization: 'Bearer adm' } })).json();
+    const all = await (await call(app, '/organizations', { headers: { authorization: 'Bearer adm' } })).json();
     expect(all.organizations.map((t: any) => t.id)).toEqual(['acme', 'globex']);
 
-    const own = await (await app.request('/organizations', { headers: { authorization: 'Bearer viw' } })).json();
+    const own = await (await call(app, '/organizations', { headers: { authorization: 'Bearer viw' } })).json();
     expect(own.organizations.map((t: any) => t.id)).toEqual(['acme']);
   });
 
@@ -77,7 +78,7 @@ describe('@gnldev/studio auth↔org', () => {
     await seed(journal);
     const app = createStudioApi({ reader: journal, auth: AUTH() });
 
-    const put = (id: string, body: unknown, token: string) => app.request(`/organizations/${id}/budget`, {
+    const put = (id: string, body: unknown, token: string) => call(app, `/organizations/${id}/budget`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
       body: JSON.stringify(body),
@@ -90,7 +91,7 @@ describe('@gnldev/studio auth↔org', () => {
 
     // GET /organizations merges the journal budget + returns defaultBudget
     expect((await put('default', { usdLimit: 1 }, 'adm')).status).toBe(200);
-    const res = await (await app.request('/organizations', { headers: { authorization: 'Bearer adm' } })).json();
+    const res = await (await call(app, '/organizations', { headers: { authorization: 'Bearer adm' } })).json();
     const acme = res.organizations.find((t: any) => t.id === 'acme');
     expect(acme.budget).toMatchObject({ tokenLimit: 500, usdLimit: 2 });
     const globex = res.organizations.find((t: any) => t.id === 'globex'); // no own doc → default
@@ -98,7 +99,7 @@ describe('@gnldev/studio auth↔org', () => {
     expect(res.defaultBudget).toEqual({ usdLimit: 1 });
 
     // landed in audit + actor comes from the principal
-    const audit = await (await app.request('/audit?action=org.budget', { headers: { authorization: 'Bearer adm' } })).json();
+    const audit = await (await call(app, '/audit?action=org.budget', { headers: { authorization: 'Bearer adm' } })).json();
     expect(audit.items.length).toBe(2);
     expect(audit.items[0].actor).toBe('ops');
 
@@ -118,7 +119,7 @@ describe('@gnldev/studio auth↔org', () => {
     const boundAdmin = roleAuth({ admin: { token: 'acme-adm', orgId: 'acme' } });
     const app = createStudioApi({ reader: journal, auth: boundAdmin }); // no org → reaches the write handler
 
-    const put = (id: string, body: unknown) => app.request(`/organizations/${id}/budget`, {
+    const put = (id: string, body: unknown) => call(app, `/organizations/${id}/budget`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json', authorization: 'Bearer acme-adm' },
       body: JSON.stringify(body),
@@ -141,13 +142,13 @@ describe('@gnldev/studio auth↔org', () => {
     // WRITE: without a header, a budget PUT targeting ITS OWN org → 200 (previously binding locked out
     // all writes). NOTE: /policy is now root-level (global) management, so a bound identity ALWAYS gets
     // 403 (Phase 0.1) — that behavior is covered separately (see 'operator required').
-    const wr = await app.request('/organizations/acme/budget', {
+    const wr = await call(app, '/organizations/acme/budget', {
       method: 'PUT', headers: { 'content-type': 'application/json', ...H }, body: JSON.stringify({ tokenLimit: 10 }),
     });
     expect(wr.status).toBe(200);
 
     // READ: GET /runs without a header is scoped to the bound identity's org (acme only).
-    const runs = await (await app.request('/runs', { headers: H })).json();
+    const runs = await (await call(app, '/runs', { headers: H })).json();
     expect(runs.map((r: any) => r.runId)).toEqual(['r-acme']);
   });
 
@@ -157,22 +158,22 @@ describe('@gnldev/studio auth↔org', () => {
     const H = { 'content-type': 'application/json', authorization: 'Bearer adm' };
 
     // capabilities: orgManage is on
-    expect((await (await app.request('/capabilities')).json()).orgManage).toBe(true);
+    expect((await (await call(app, '/capabilities')).json()).orgManage).toBe(true);
 
     // POST /organizations → registers it; appears in GET /organizations even without any runs
-    expect((await app.request('/organizations', { method: 'POST', headers: H, body: JSON.stringify({ id: 'acme', label: 'Acme Inc.' }) })).status).toBe(200);
-    const list1 = await (await app.request('/organizations', { headers: { authorization: 'Bearer adm' } })).json();
+    expect((await call(app, '/organizations', { method: 'POST', headers: H, body: JSON.stringify({ id: 'acme', label: 'Acme Inc.' }) })).status).toBe(200);
+    const list1 = await (await call(app, '/organizations', { headers: { authorization: 'Bearer adm' } })).json();
     expect(list1.organizations.map((t: any) => t.id)).toContain('acme');
 
     // Creating again → 409; 'default' is reserved → 400; viewer can't write → 403
-    expect((await app.request('/organizations', { method: 'POST', headers: H, body: JSON.stringify({ id: 'acme' }) })).status).toBe(409);
-    expect((await app.request('/organizations', { method: 'POST', headers: H, body: JSON.stringify({ id: 'default' }) })).status).toBe(400);
-    expect((await app.request('/organizations', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer viw' }, body: JSON.stringify({ id: 'x' }) })).status).toBe(403);
+    expect((await call(app, '/organizations', { method: 'POST', headers: H, body: JSON.stringify({ id: 'acme' }) })).status).toBe(409);
+    expect((await call(app, '/organizations', { method: 'POST', headers: H, body: JSON.stringify({ id: 'default' }) })).status).toBe(400);
+    expect((await call(app, '/organizations', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer viw' }, body: JSON.stringify({ id: 'x' }) })).status).toBe(403);
 
     // Put data + budget under the org, then DELETE → everything should be gone
     await journal.put('org:acme:r1:model:0', { content: [{ type: 'text', text: 'a' }], finishReason: 'stop' });
     await journal.put('__budget__:acme', { tokenLimit: 5 });
-    const del = await app.request('/organizations/acme', { method: 'DELETE', headers: { authorization: 'Bearer adm' } });
+    const del = await call(app, '/organizations/acme', { method: 'DELETE', headers: { authorization: 'Bearer adm' } });
     expect(del.status).toBe(200);
     expect((await del.json()).deleted).toBeGreaterThan(0);
     expect(await journal.get('org:acme:r1:model:0')).toBeUndefined();
@@ -181,7 +182,7 @@ describe('@gnldev/studio auth↔org', () => {
 
     // create + delete landed in audit (new action names: org.create/org.delete — the old
     // tenant.create/tenant.delete were fully removed).
-    const audit = await (await app.request('/audit', { headers: { authorization: 'Bearer adm' } })).json();
+    const audit = await (await call(app, '/audit', { headers: { authorization: 'Bearer adm' } })).json();
     const actions = audit.items.map((i: any) => i.action);
     expect(actions).toContain('org.create');
     expect(actions).toContain('org.delete');
@@ -192,8 +193,8 @@ describe('@gnldev/studio auth↔org', () => {
     const boundAdmin = roleAuth({ admin: { token: 'acme-adm', orgId: 'acme' } });
     const app = createStudioApi({ reader: journal, auth: boundAdmin, org: {} });
     const H = { 'content-type': 'application/json', authorization: 'Bearer acme-adm' };
-    expect((await app.request('/organizations', { method: 'POST', headers: H, body: JSON.stringify({ id: 'globex' }) })).status).toBe(403);
-    expect((await app.request('/organizations/globex', { method: 'DELETE', headers: { authorization: 'Bearer acme-adm' } })).status).toBe(403);
+    expect((await call(app, '/organizations', { method: 'POST', headers: H, body: JSON.stringify({ id: 'globex' }) })).status).toBe(403);
+    expect((await call(app, '/organizations/globex', { method: 'DELETE', headers: { authorization: 'Bearer acme-adm' } })).status).toBe(403);
   });
 
   // Fake userStore (studio contract) — the real journal-backed store is covered in the auth-ee test.
@@ -221,31 +222,31 @@ describe('@gnldev/studio auth↔org', () => {
     const app = createStudioApi({ reader: journal, auth: AUTH(), users, org: {} }); // AUTH admin=ops (unbound operator)
     const H = { 'content-type': 'application/json', authorization: 'Bearer adm' };
 
-    expect((await (await app.request('/capabilities')).json()).userManage).toBe(true);
+    expect((await (await call(app, '/capabilities')).json()).userManage).toBe(true);
 
     // First CREATE the organization, then add a member to that organization.
-    await app.request('/organizations', { method: 'POST', headers: H, body: JSON.stringify({ id: 'acme' }) });
-    const cr = await (await app.request('/users', { method: 'POST', headers: H, body: JSON.stringify({ email: 'ayse@acme.co', roles: ['admin'], orgId: 'acme' }) })).json();
+    await call(app, '/organizations', { method: 'POST', headers: H, body: JSON.stringify({ id: 'acme' }) });
+    const cr = await (await call(app, '/users', { method: 'POST', headers: H, body: JSON.stringify({ email: 'ayse@acme.co', roles: ['admin'], orgId: 'acme' }) })).json();
     expect(cr.user.id).toBe('ayse@acme.co');
     expect(cr.token).toMatch(/^eeu_/);
 
     // Member of a GHOST organization → 400 (validates against an existing organization)
-    expect((await app.request('/users', { method: 'POST', headers: H, body: JSON.stringify({ email: 'x@ghost.co', orgId: 'ghost' }) })).status).toBe(400);
+    expect((await call(app, '/users', { method: 'POST', headers: H, body: JSON.stringify({ email: 'x@ghost.co', orgId: 'ghost' }) })).status).toBe(400);
 
     // Orgless (operator) member → 200 is legitimate
-    expect((await app.request('/users', { method: 'POST', headers: H, body: JSON.stringify({ email: 'op2@platform.co', roles: ['admin'] }) })).status).toBe(200);
+    expect((await call(app, '/users', { method: 'POST', headers: H, body: JSON.stringify({ email: 'op2@platform.co', roles: ['admin'] }) })).status).toBe(200);
 
     // list → no secret (no token)
-    const list = await (await app.request('/users', { headers: { authorization: 'Bearer adm' } })).json();
+    const list = await (await call(app, '/users', { headers: { authorization: 'Bearer adm' } })).json();
     expect(JSON.stringify(list)).not.toContain('eeu_');
     expect(list.users.map((u: any) => u.id).sort()).toEqual(['ayse@acme.co', 'op2@platform.co']);
 
     // viewer can't write
-    expect((await app.request('/users', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer viw' }, body: '{}' })).status).toBe(403);
+    expect((await call(app, '/users', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer viw' }, body: '{}' })).status).toBe(403);
 
     // delete → audit
-    expect((await app.request('/users/ayse@acme.co', { method: 'DELETE', headers: { authorization: 'Bearer adm' } })).status).toBe(200);
-    const audit = await (await app.request('/audit', { headers: { authorization: 'Bearer adm' } })).json();
+    expect((await call(app, '/users/ayse@acme.co', { method: 'DELETE', headers: { authorization: 'Bearer adm' } })).status).toBe(200);
+    const audit = await (await call(app, '/audit', { headers: { authorization: 'Bearer adm' } })).json();
     const actions = audit.items.map((i: any) => i.action);
     expect(actions).toContain('user.create');
     expect(actions).toContain('user.delete');
@@ -262,37 +263,37 @@ describe('@gnldev/studio auth↔org', () => {
     const H = { 'content-type': 'application/json', authorization: 'Bearer acme-adm' };
 
     // list → ONLY its own organization's members
-    const list = await (await app.request('/users', { headers: { authorization: 'Bearer acme-adm' } })).json();
+    const list = await (await call(app, '/users', { headers: { authorization: 'Bearer acme-adm' } })).json();
     expect(list.users.map((u: any) => u.id)).toEqual(['a@acme.co']);
 
     // create: even without orgId, it's assigned to ITS OWN organization
-    const cr = await (await app.request('/users', { method: 'POST', headers: H, body: JSON.stringify({ email: 'yeni@acme.co', roles: ['viewer'] }) })).json();
+    const cr = await (await call(app, '/users', { method: 'POST', headers: H, body: JSON.stringify({ email: 'yeni@acme.co', roles: ['viewer'] }) })).json();
     expect(cr.user.orgId).toBe('acme');
 
     // create: requesting ANOTHER organization → 403
-    expect((await app.request('/users', { method: 'POST', headers: H, body: JSON.stringify({ email: 'z@globex.co', orgId: 'globex' }) })).status).toBe(403);
+    expect((await call(app, '/users', { method: 'POST', headers: H, body: JSON.stringify({ email: 'z@globex.co', orgId: 'globex' }) })).status).toBe(403);
 
     // delete: its OWN member → 200, another organization's member → 403
-    expect((await app.request('/users/yeni@acme.co', { method: 'DELETE', headers: { authorization: 'Bearer acme-adm' } })).status).toBe(200);
-    expect((await app.request('/users/g@globex.co', { method: 'DELETE', headers: { authorization: 'Bearer acme-adm' } })).status).toBe(403);
+    expect((await call(app, '/users/yeni@acme.co', { method: 'DELETE', headers: { authorization: 'Bearer acme-adm' } })).status).toBe(200);
+    expect((await call(app, '/users/g@globex.co', { method: 'DELETE', headers: { authorization: 'Bearer acme-adm' } })).status).toBe(403);
     expect(users.mem.has('g@globex.co')).toBe(true); // not deleted
   });
 
   it('C3: /me returns the logged-in identity + the operator flag', async () => {
     const users = fakeUserStore();
     const app = createStudioApi({ reader: new InMemoryJournal(), auth: AUTH(), users });
-    const op = await (await app.request('/me', { headers: { authorization: 'Bearer adm' } })).json();
+    const op = await (await call(app, '/me', { headers: { authorization: 'Bearer adm' } })).json();
     expect(op).toMatchObject({ id: 'ops', operator: true, orgId: null });
 
     const boundApp = createStudioApi({ reader: new InMemoryJournal(), auth: roleAuth({ admin: { token: 't', orgId: 'acme' } }) });
-    const me = await (await boundApp.request('/me', { headers: { authorization: 'Bearer t' } })).json();
+    const me = await (await call(boundApp, '/me', { headers: { authorization: 'Bearer t' } })).json();
     expect(me).toMatchObject({ operator: false, orgId: 'acme' });
   });
 
   it('C4: if no userStore is given, userManage is off, /users is empty', async () => {
     const app = createStudioApi({ reader: new InMemoryJournal(), auth: AUTH() });
-    expect((await (await app.request('/capabilities')).json()).userManage).toBe(false);
-    const list = await (await app.request('/users', { headers: { authorization: 'Bearer adm' } })).json();
+    expect((await (await call(app, '/capabilities')).json()).userManage).toBe(false);
+    const list = await (await call(app, '/users', { headers: { authorization: 'Bearer adm' } })).json();
     expect(list.users).toEqual([]);
   });
 
@@ -302,18 +303,18 @@ describe('@gnldev/studio auth↔org', () => {
     const app = createStudioApi({ reader: journal, auth: AUTH(), users, org: {} });
     const H = { 'content-type': 'application/json', authorization: 'Bearer adm' };
 
-    await app.request('/organizations', { method: 'POST', headers: H, body: JSON.stringify({ id: 'acme' }) });
-    await app.request('/users', { method: 'POST', headers: H, body: JSON.stringify({ email: 'r@acme.co', orgId: 'acme' }) });
+    await call(app, '/organizations', { method: 'POST', headers: H, body: JSON.stringify({ id: 'acme' }) });
+    await call(app, '/users', { method: 'POST', headers: H, body: JSON.stringify({ email: 'r@acme.co', orgId: 'acme' }) });
 
     // viewer can't revoke
-    expect((await app.request('/users/r@acme.co/revoke', { method: 'POST', headers: { authorization: 'Bearer viw' } })).status).toBe(403);
+    expect((await call(app, '/users/r@acme.co/revoke', { method: 'POST', headers: { authorization: 'Bearer viw' } })).status).toBe(403);
 
-    const res = await app.request('/users/r@acme.co/revoke', { method: 'POST', headers: H });
+    const res = await call(app, '/users/r@acme.co/revoke', { method: 'POST', headers: H });
     expect(res.status).toBe(200);
     expect(users.mem.get('r@acme.co')).toBeTruthy(); // record NOT deleted
     expect(users.mem.get('r@acme.co')?.revoked).toBe(true);
 
-    const audit = await (await app.request('/audit', { headers: { authorization: 'Bearer adm' } })).json();
+    const audit = await (await call(app, '/audit', { headers: { authorization: 'Bearer adm' } })).json();
     expect(audit.items.map((i: any) => i.action)).toContain('user.revoke');
   });
 
@@ -325,9 +326,9 @@ describe('@gnldev/studio auth↔org', () => {
     const app = createStudioApi({ reader: new InMemoryJournal(), auth: boundAdmin, users });
     const H = { authorization: 'Bearer acme-adm' };
 
-    expect((await app.request('/users/g@globex.co/revoke', { method: 'POST', headers: H })).status).toBe(403);
+    expect((await call(app, '/users/g@globex.co/revoke', { method: 'POST', headers: H })).status).toBe(403);
     expect(users.mem.get('g@globex.co')?.revoked).toBeFalsy();
-    expect((await app.request('/users/a@acme.co/revoke', { method: 'POST', headers: H })).status).toBe(200);
+    expect((await call(app, '/users/a@acme.co/revoke', { method: 'POST', headers: H })).status).toBe(200);
     expect(users.mem.get('a@acme.co')?.revoked).toBe(true);
   });
 
@@ -335,27 +336,27 @@ describe('@gnldev/studio auth↔org', () => {
     const users = fakeUserStore(false); // NO revoke
     const app = createStudioApi({ reader: new InMemoryJournal(), auth: AUTH(), users });
     const H = { 'content-type': 'application/json', authorization: 'Bearer adm' };
-    await app.request('/users', { method: 'POST', headers: H, body: JSON.stringify({ email: 'x@y.co' }) });
-    expect((await app.request('/users/x@y.co/revoke', { method: 'POST', headers: H })).status).toBe(501);
+    await call(app, '/users', { method: 'POST', headers: H, body: JSON.stringify({ email: 'x@y.co' }) });
+    expect((await call(app, '/users/x@y.co/revoke', { method: 'POST', headers: H })).status).toBe(501);
   });
 
   it('FREE: when multi-org is off, the organization surface is HIDDEN (a single implicit organization)', async () => {
     // Free tier: no org + roleAuth (multiOrganization:false) → org flags are off, management is blocked.
     const app = createStudioApi({ reader: new InMemoryJournal(), auth: AUTH() });
-    const caps = await (await app.request('/capabilities')).json();
+    const caps = await (await call(app, '/capabilities')).json();
     expect(caps.organizations).toBe(false);       // the "Organizations" nav doesn't show up in the UI
     expect(caps.orgManage).toBe(false);
     expect(caps.budgetManage).toBe(false);
 
     // The endpoint is blocked too: creating an organization → 501 (single org)
-    const res = await app.request('/organizations', {
+    const res = await call(app, '/organizations', {
       method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer adm' }, body: JSON.stringify({ id: 'x' }),
     });
     expect(res.status).toBe(501);
 
     // PRO: opens up when org is enabled
     const pro = createStudioApi({ reader: new InMemoryJournal(), auth: AUTH(), org: {} });
-    const proCaps = await (await pro.request('/capabilities')).json();
+    const proCaps = await (await call(pro, '/capabilities')).json();
     expect(proCaps.organizations).toBe(true);
     expect(proCaps.orgManage).toBe(true);
   });
@@ -370,17 +371,17 @@ describe('@gnldev/studio auth↔org', () => {
     const H = (t: string) => ({ 'content-type': 'application/json', authorization: `Bearer ${t}` });
 
     // the acme admin creates a version in the acme namespace
-    expect((await acmeApp.request('/managed-agents', { method: 'POST', headers: H('acme-adm'), body: JSON.stringify({ name: 'bot', model: 'm-acme' }) })).status).toBe(200);
+    expect((await call(acmeApp, '/managed-agents', { method: 'POST', headers: H('acme-adm'), body: JSON.stringify({ name: 'bot', model: 'm-acme' }) })).status).toBe(200);
     // the operator creates a separate version in the root namespace
-    expect((await opApp.request('/managed-agents', { method: 'POST', headers: H('op'), body: JSON.stringify({ name: 'bot', model: 'm-root' }) })).status).toBe(200);
+    expect((await call(opApp, '/managed-agents', { method: 'POST', headers: H('op'), body: JSON.stringify({ name: 'bot', model: 'm-root' }) })).status).toBe(200);
 
     // ISOLATION: the acme admin sees only its own 'bot' (m-acme)
-    const acmeList = await (await acmeApp.request('/managed-agents', { headers: { authorization: 'Bearer acme-adm' } })).json();
+    const acmeList = await (await call(acmeApp, '/managed-agents', { headers: { authorization: 'Bearer acme-adm' } })).json();
     expect(acmeList.agents).toHaveLength(1);
     expect(acmeList.agents[0].versions[0].model).toBe('m-acme');
 
     // the operator sees the root 'bot' (m-root) — not acme's
-    const opList = await (await opApp.request('/managed-agents', { headers: { authorization: 'Bearer op' } })).json();
+    const opList = await (await call(opApp, '/managed-agents', { headers: { authorization: 'Bearer op' } })).json();
     expect(opList.agents).toHaveLength(1);
     expect(opList.agents[0].versions[0].model).toBe('m-root');
 
@@ -394,7 +395,7 @@ describe('@gnldev/studio auth↔org', () => {
     const tokenOnly = roleAuth({ admin: { token: 'adm' } }); // no user → no principal.id
     const app = createStudioApi({ reader: journal, auth: tokenOnly });
 
-    const putPolicy = (actor?: string) => app.request('/policy', {
+    const putPolicy = (actor?: string) => call(app, '/policy', {
       method: 'PUT',
       headers: { 'content-type': 'application/json', authorization: 'Bearer adm', ...(actor ? { 'x-gnl-actor': actor } : {}) },
       body: JSON.stringify({ rules: [] }),
@@ -403,7 +404,7 @@ describe('@gnldev/studio auth↔org', () => {
     expect((await putPolicy('ayse@acme.co')).status).toBe(200);
     expect((await putPolicy()).status).toBe(200); // no header → role:admin
 
-    const audit = await (await app.request('/audit?action=policy.update', { headers: { authorization: 'Bearer adm' } })).json();
+    const audit = await (await call(app, '/audit?action=policy.update', { headers: { authorization: 'Bearer adm' } })).json();
     const actors = audit.items.map((i: any) => i.actor).sort();
     // a write with a header lands as the person, a write without one lands as role:admin (no id since there's no user)
     expect(actors).toEqual(['ayse@acme.co', 'role:admin']);
@@ -417,15 +418,15 @@ describe('@gnldev/studio auth↔org', () => {
     const boundApp = createStudioApi({ reader: journal, auth: boundAdmin });
     const H = { 'content-type': 'application/json', authorization: 'Bearer acme-adm' };
 
-    const policyRes = await boundApp.request('/policy', { method: 'PUT', headers: H, body: JSON.stringify({ rules: [] }) });
+    const policyRes = await call(boundApp, '/policy', { method: 'PUT', headers: H, body: JSON.stringify({ rules: [] }) });
     expect(policyRes.status).toBe(403);
     expect((await policyRes.json()).error).toMatch(/operator required/);
 
-    const sweepRes = await boundApp.request('/retention/sweep', { method: 'POST', headers: H, body: JSON.stringify({ olderThanMs: 1 }) });
+    const sweepRes = await call(boundApp, '/retention/sweep', { method: 'POST', headers: H, body: JSON.stringify({ olderThanMs: 1 }) });
     expect(sweepRes.status).toBe(403);
     expect((await sweepRes.json()).error).toMatch(/operator required/);
 
-    const purgeRes = await boundApp.request('/runs/r-1', { method: 'DELETE', headers: { authorization: 'Bearer acme-adm' } });
+    const purgeRes = await call(boundApp, '/runs/r-1', { method: 'DELETE', headers: { authorization: 'Bearer acme-adm' } });
     expect(purgeRes.status).toBe(403);
     expect((await purgeRes.json()).error).toMatch(/operator required/);
     expect(await journal.get('r-1:model:0')).toBeTruthy(); // not deleted
@@ -433,9 +434,9 @@ describe('@gnldev/studio auth↔org', () => {
     // An unbound operator can do all of it.
     const opApp = createStudioApi({ reader: journal, auth: opAdmin });
     const opH = { 'content-type': 'application/json', authorization: 'Bearer op' };
-    expect((await opApp.request('/policy', { method: 'PUT', headers: opH, body: JSON.stringify({ rules: [] }) })).status).toBe(200);
-    expect((await opApp.request('/retention/sweep', { method: 'POST', headers: opH, body: JSON.stringify({ olderThanMs: 999999999 }) })).status).toBe(200);
-    expect((await opApp.request('/runs/r-1', { method: 'DELETE', headers: { authorization: 'Bearer op' } })).status).toBe(200);
+    expect((await call(opApp, '/policy', { method: 'PUT', headers: opH, body: JSON.stringify({ rules: [] }) })).status).toBe(200);
+    expect((await call(opApp, '/retention/sweep', { method: 'POST', headers: opH, body: JSON.stringify({ olderThanMs: 999999999 }) })).status).toBe(200);
+    expect((await call(opApp, '/runs/r-1', { method: 'DELETE', headers: { authorization: 'Bearer op' } })).status).toBe(200);
   });
 
   it('0.2: even if opts.org is NOT given, an org-bound identity\'s read surface is scoped to its own organization', async () => {
@@ -445,7 +446,7 @@ describe('@gnldev/studio auth↔org', () => {
     const boundViewer = roleAuth({ viewer: { token: 'viw', orgId: 'acme' } });
     const app = createStudioApi({ reader: journal, auth: boundViewer }); // no org option
 
-    const runs = await (await app.request('/runs', { headers: { authorization: 'Bearer viw' } })).json();
+    const runs = await (await call(app, '/runs', { headers: { authorization: 'Bearer viw' } })).json();
     expect(runs.map((r: any) => r.runId)).toEqual(['r-acme']);
   });
 
@@ -457,13 +458,13 @@ describe('@gnldev/studio auth↔org', () => {
     const app = createStudioApi({ reader: journal, auth: AUTH(), users, org: {} });
     const H = { authorization: 'Bearer adm' };
 
-    const del = await app.request('/organizations/acme', { method: 'DELETE', headers: H });
+    const del = await call(app, '/organizations/acme', { method: 'DELETE', headers: H });
     expect(del.status).toBe(200);
     expect((await del.json()).removedUsers).toBe(1);
     expect(users.mem.has('a@acme.co')).toBe(false);
     expect(users.mem.has('g@globex.co')).toBe(true); // another organization's member is UNTOUCHED
 
-    const audit = await (await app.request('/audit?action=org.delete', { headers: H })).json();
+    const audit = await (await call(app, '/audit?action=org.delete', { headers: H })).json();
     expect(audit.items[0].detail).toMatchObject({ removedUsers: 1 });
   });
 
@@ -479,21 +480,21 @@ describe('@gnldev/studio auth↔org', () => {
     const H = (t: string) => ({ 'content-type': 'application/json', authorization: `Bearer ${t}` });
 
     // The acme and globex bound admins each make a write in their own organization (not root-level).
-    await acmeApp.request('/organizations/acme/budget', { method: 'PUT', headers: H('acme-adm'), body: JSON.stringify({ tokenLimit: 10 }) });
-    await globexApp.request('/organizations/globex/budget', { method: 'PUT', headers: H('globex-adm'), body: JSON.stringify({ tokenLimit: 20 }) });
+    await call(acmeApp, '/organizations/acme/budget', { method: 'PUT', headers: H('acme-adm'), body: JSON.stringify({ tokenLimit: 10 }) });
+    await call(globexApp, '/organizations/globex/budget', { method: 'PUT', headers: H('globex-adm'), body: JSON.stringify({ tokenLimit: 20 }) });
 
     // Records have the org field.
-    const acmeAudit = await (await acmeApp.request('/audit', { headers: H('acme-adm') })).json();
+    const acmeAudit = await (await call(acmeApp, '/audit', { headers: H('acme-adm') })).json();
     expect(acmeAudit.items.every((i: any) => i.org === 'acme')).toBe(true);
     expect(acmeAudit.items.map((i: any) => i.target)).toEqual(['acme']); // globex's is ABSENT — its own context only
 
-    const globexAudit = await (await globexApp.request('/audit', { headers: H('globex-adm') })).json();
+    const globexAudit = await (await call(globexApp, '/audit', { headers: H('globex-adm') })).json();
     expect(globexAudit.items.map((i: any) => i.target)).toEqual(['globex']);
 
     // An unbound operator: sees all of them unfiltered; filters with ?org= as desired.
-    const opAll = await (await opApp.request('/audit', { headers: H('op') })).json();
+    const opAll = await (await call(opApp, '/audit', { headers: H('op') })).json();
     expect(opAll.items).toHaveLength(2);
-    const opAcme = await (await opApp.request('/audit?org=acme', { headers: H('op') })).json();
+    const opAcme = await (await call(opApp, '/audit?org=acme', { headers: H('op') })).json();
     expect(opAcme.items.map((i: any) => i.target)).toEqual(['acme']);
   });
 
@@ -504,10 +505,10 @@ describe('@gnldev/studio auth↔org', () => {
     await journal.put('__studio_agent__:bot', { name: 'bot', active: null, versions: [{ version: 1, model: 'm-root', createdAt: 1 }] });
     await journal.put('org:acme:__studio_agent__:bot', { name: 'bot', active: null, versions: [{ version: 1, model: 'm-acme', createdAt: 1 }] });
 
-    const acmeView = await (await app.request('/managed-agents', { headers: { 'x-gnl-org': 'acme' } })).json();
+    const acmeView = await (await call(app, '/managed-agents', { headers: { 'x-gnl-org': 'acme' } })).json();
     expect(acmeView.agents[0].versions[0].model).toBe('m-acme'); // its own organization, NOT root
 
-    const rootView = await (await app.request('/managed-agents')).json();
+    const rootView = await (await call(app, '/managed-agents')).json();
     expect(rootView.agents[0].versions[0].model).toBe('m-root'); // an orgless request sees the root namespace
   });
 
@@ -522,7 +523,7 @@ describe('@gnldev/studio auth↔org', () => {
     };
     const app = createStudioApi({ reader: new InMemoryJournal(), auth: licensedAuth }); // no org
 
-    const caps = await (await app.request('/capabilities', { headers: { authorization: 'Bearer lic-adm' } })).json();
+    const caps = await (await call(app, '/capabilities', { headers: { authorization: 'Bearer lic-adm' } })).json();
     expect(caps.organizations).toBe(true);
     expect(caps.orgManage).toBe(true);
     expect(caps.budgetManage).toBe(true);
@@ -538,7 +539,7 @@ describe('@gnldev/studio auth↔org', () => {
 
     expect(await journal.get('__org__:acme')).toBeUndefined(); // no explicit record
 
-    const res = await app.request('/users', {
+    const res = await call(app, '/users', {
       method: 'POST', headers: H, body: JSON.stringify({ email: 'x@acme.co', orgId: 'acme' }),
     });
     expect(res.status).toBe(200);
@@ -551,14 +552,14 @@ describe('@gnldev/studio auth↔org', () => {
 
     // Regular endpoints open up with the basic header (auth is working).
     const authB64 = 'Basic ' + Buffer.from('ops:secret').toString('base64');
-    expect((await app.request('/runs', { headers: { authorization: authB64 } })).status).toBe(200);
+    expect((await call(app, '/runs', { headers: { authorization: authB64 } })).status).toBe(200);
 
     // But EventSource can't send a header → it tries ?token=; this cred has NO bearer token, so
     // no ?token= value matches (the credValues tokens set stays empty) → 401.
-    expect((await app.request('/events')).status).toBe(401);
-    expect((await app.request('/events?token=ops')).status).toBe(401);
-    expect((await app.request('/events?token=secret')).status).toBe(401);
-    expect((await app.request(`/events?token=${encodeURIComponent(authB64)}`)).status).toBe(401);
+    expect((await call(app, '/events')).status).toBe(401);
+    expect((await call(app, '/events?token=ops')).status).toBe(401);
+    expect((await call(app, '/events?token=secret')).status).toBe(401);
+    expect((await call(app, `/events?token=${encodeURIComponent(authB64)}`)).status).toBe(401);
   });
 
   // Audit #2: createStudioApi without auth in production can only be set up with allowOpenAccess: true.
@@ -571,7 +572,7 @@ describe('@gnldev/studio auth↔org', () => {
       // error the gate throws, so it is deliberately kept as-is.
       expect(() => createStudioApi({ reader: new InMemoryJournal() })).toThrowError(/auth is required in production/);
       const app = createStudioApi({ reader: new InMemoryJournal(), allowOpenAccess: true });
-      expect((await app.request('/runs')).status).toBe(200);
+      expect((await call(app, '/runs')).status).toBe(200);
     } finally {
       vi.unstubAllEnvs();
     }

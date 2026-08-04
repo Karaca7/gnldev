@@ -3,6 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
 import { createRestApi } from '../src/index.js';
+import { call } from './call.js';
 
 // Minimal structural WorkflowLike (satisfies the registry's structural type): 2 steps, writes to the journal.
 function makeWorkflow() {
@@ -23,12 +24,12 @@ describe('#4 auto-REST — workflows', () => {
     const json = (r: Response) => r.json() as any;
 
     // GET /workflows → metadata (name + steps)
-    const wfs = await json(await api.request('/workflows'));
+    const wfs = await json(await call(api, '/workflows'));
     expect(wfs).toEqual([{ name: 'research', steps: [{ id: 'fetch', kind: 'step' }, { id: 'summarize', kind: 'step' }] }]);
 
     // POST /workflows/research/run → durable execution, step outputs collected from the journal
     const res = await json(
-      await api.request('/workflows/research/run', {
+      await call(api, '/workflows/research/run', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ runId: 'w1', input: { q: 'gnl' } }),
@@ -41,12 +42,12 @@ describe('#4 auto-REST — workflows', () => {
     expect(res.steps[0].output).toEqual({ fetched: 'gnl' });
 
     // OpenAPI includes the workflow paths
-    const spec = await json(await api.request('/openapi.json'));
+    const spec = await json(await call(api, '/openapi.json'));
     expect(spec.paths['/workflows']).toBeDefined();
     expect(spec.paths['/workflows/research/run']).toBeDefined();
 
     // unregistered workflow → 404
-    const missing = await api.request('/workflows/nope/run', {
+    const missing = await call(api, '/workflows/nope/run', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ input: {} }),
@@ -57,7 +58,7 @@ describe('#4 auto-REST — workflows', () => {
   it('does not generate an OpenAPI workflow path when there are no workflows', async () => {
     const journal = new InMemoryJournal();
     const api = createRestApi({ journal, agents: {} });
-    const spec = (await (await api.request('/openapi.json')).json()) as any;
+    const spec = (await (await call(api, '/openapi.json')).json()) as any;
     expect(spec.paths['/workflows']).toBeUndefined();
   });
 });

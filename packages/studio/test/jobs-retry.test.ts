@@ -6,6 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
 import { createStudioApi, type StudioJob, type StudioQueue } from '../src/server.js';
+import { call } from './call.js';
 
 /** Simple fake queue: id → status. retry only produces a new id for 'failed' jobs (mimics the
  *  real @gnldev/queue retryJob's no-op/double-run-protection semantics). */
@@ -27,7 +28,7 @@ function fakeQueue(jobs: StudioJob[]): StudioQueue & { retryCalls: string[] } {
 }
 
 const post = (app: any, path: string, headers: Record<string, string> = {}) =>
-  app.request(path, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: '{}' });
+  call(app, path, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: '{}' });
 
 describe('POST /jobs/:id/retry', () => {
   it('re-queues a failed job via queue.retry (enqueue was called), lands in audit', async () => {
@@ -41,12 +42,12 @@ describe('POST /jobs/:id/retry', () => {
     expect(queue.retryCalls).toEqual(['j1']); // queue.retry (→ @gnldev/queue enqueue in the real world) was called EXACTLY ONCE
 
     // the new job appears in the queue, the old one (dead-letter) still stands (append-only — not deleted)
-    const jobs = await (await app.request('/jobs')).json();
+    const jobs = await (await call(app, '/jobs')).json();
     expect(jobs.find((j: StudioJob) => j.id === 'j1')?.status).toBe('failed');
     expect(jobs.find((j: StudioJob) => j.id === 'j1-retry')?.status).toBe('pending');
 
     // audit: job.retry, actor + the new id in detail
-    const audit = await (await app.request('/audit?action=job.retry')).json();
+    const audit = await (await call(app, '/audit?action=job.retry')).json();
     expect(audit.items).toHaveLength(1);
     expect(audit.items[0]).toMatchObject({ actor: 'ops@acme.co', target: 'j1', detail: { newId: 'j1-retry' } });
   });
@@ -72,7 +73,7 @@ describe('POST /jobs/:id/retry', () => {
       expect(res.status).toBe(409);
     }
     // no new job was opened for any of them
-    const audit = await (await app.request('/audit?action=job.retry')).json();
+    const audit = await (await call(app, '/audit?action=job.retry')).json();
     expect(audit.items).toHaveLength(0);
   });
 

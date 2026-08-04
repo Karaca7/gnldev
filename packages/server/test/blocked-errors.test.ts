@@ -5,6 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { InMemoryJournal, runKeys } from '@gnldev/durable';
 import { createRestApi } from '../src/index.js';
+import { call } from './call.js';
 
 const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
 
@@ -43,7 +44,7 @@ describe('@gnldev/server — K1 blocked errors (side_effect_retry_blocked/run_bu
       },
     });
 
-    const res = await api.request('/agents/pay/run', {
+    const res = await call(api, '/agents/pay/run', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ runId: 'r1', prompt: 'process a refund' }),
@@ -71,7 +72,7 @@ describe('@gnldev/server — K1 blocked errors (side_effect_retry_blocked/run_bu
       },
     });
 
-    const res = await api.request('/agents/pay/resume', {
+    const res = await call(api, '/agents/pay/resume', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ runId: 'r2', approvals: {} }),

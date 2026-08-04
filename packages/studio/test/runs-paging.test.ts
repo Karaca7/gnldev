@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
 import type { RunSummary } from '@gnldev/durable';
 import { createStudioApi } from '../src/server.js';
+import { call } from './call.js';
 
 /** Seeds N ordered runs (journal append order = oldest → newest). */
 async function seedRuns(journal: InMemoryJournal, n: number) {
@@ -17,16 +18,16 @@ describe('GET /runs pagination', () => {
     await seedRuns(journal, 5);
     const app = createStudioApi({ reader: journal });
 
-    const p1 = await (await app.request('/runs?limit=2')).json();
+    const p1 = await (await call(app, '/runs?limit=2')).json();
     expect(p1.total).toBe(5);
     expect(p1.items.map((r: { runId: string }) => r.runId)).toEqual(['run-5', 'run-4']);
     expect(p1.nextCursor).toBe('2');
 
-    const p2 = await (await app.request(`/runs?limit=2&cursor=${p1.nextCursor}`)).json();
+    const p2 = await (await call(app, `/runs?limit=2&cursor=${p1.nextCursor}`)).json();
     expect(p2.items.map((r: { runId: string }) => r.runId)).toEqual(['run-3', 'run-2']);
     expect(p2.nextCursor).toBe('4');
 
-    const p3 = await (await app.request(`/runs?limit=2&cursor=${p2.nextCursor}`)).json();
+    const p3 = await (await call(app, `/runs?limit=2&cursor=${p2.nextCursor}`)).json();
     expect(p3.items.map((r: { runId: string }) => r.runId)).toEqual(['run-1']);
     expect(p3.nextCursor).toBeUndefined(); // last page
   });
@@ -39,7 +40,7 @@ describe('GET /runs pagination', () => {
     await journal.put('run-2:model:0', { content: [{ type: 'text', text: 'y' }], finishReason: 'stop' }); // no :input
     const app = createStudioApi({ reader: journal });
 
-    const p = await (await app.request('/runs?limit=10')).json();
+    const p = await (await call(app, '/runs?limit=10')).json();
     const byId = Object.fromEntries(p.items.map((r: any) => [r.runId, r]));
     expect(byId['run-1'].threadId).toBe('th-9');
     expect(byId['run-2'].threadId).toBeUndefined(); // falls into the ungrouped bucket
@@ -49,7 +50,7 @@ describe('GET /runs pagination', () => {
     const journal = new InMemoryJournal();
     await seedRuns(journal, 3);
     const app = createStudioApi({ reader: journal });
-    const res = await (await app.request('/runs')).json();
+    const res = await (await call(app, '/runs')).json();
     expect(Array.isArray(res)).toBe(true);
     expect(res).toHaveLength(3);
   });
@@ -59,7 +60,7 @@ describe('GET /runs pagination', () => {
     await seedRuns(journal, 3);
     const app = createStudioApi({ reader: journal });
     // limit=abc → clamped to a minimum of 1; cursor=-5 → clamped to 0
-    const res = await (await app.request('/runs?limit=abc&cursor=-5')).json();
+    const res = await (await call(app, '/runs?limit=abc&cursor=-5')).json();
     expect(res.items).toHaveLength(1);
     expect(res.items[0].runId).toBe('run-3');
     expect(res.total).toBe(3);
@@ -105,16 +106,16 @@ describe('GET /runs pagination', () => {
       const reader = makePagedReader(fixture);
       const app = createStudioApi({ reader: reader as any });
 
-      const p1 = await (await app.request('/runs?limit=2')).json();
+      const p1 = await (await call(app, '/runs?limit=2')).json();
       expect(p1.items.map((r: RunSummary) => r.runId)).toEqual(['run-5', 'run-4']);
       expect(p1.total).toBe(5);
       expect(p1.nextCursor).toBe('2');
 
-      const p2 = await (await app.request(`/runs?limit=2&cursor=${p1.nextCursor}`)).json();
+      const p2 = await (await call(app, `/runs?limit=2&cursor=${p1.nextCursor}`)).json();
       expect(p2.items.map((r: RunSummary) => r.runId)).toEqual(['run-3', 'run-2']);
       expect(p2.nextCursor).toBe('4');
 
-      const p3 = await (await app.request(`/runs?limit=2&cursor=${p2.nextCursor}`)).json();
+      const p3 = await (await call(app, `/runs?limit=2&cursor=${p2.nextCursor}`)).json();
       expect(p3.items.map((r: RunSummary) => r.runId)).toEqual(['run-1']);
       expect(p3.nextCursor).toBeUndefined();
 
@@ -132,16 +133,16 @@ describe('GET /runs pagination', () => {
       const listSpy = vi.spyOn(bareReader, 'listRuns');
       const app = createStudioApi({ reader: bareReader as any });
 
-      const p1 = await (await app.request('/runs?limit=2')).json();
+      const p1 = await (await call(app, '/runs?limit=2')).json();
       expect(p1.items.map((r: RunSummary) => r.runId)).toEqual(['run-5', 'run-4']);
       expect(p1.total).toBe(5);
       expect(p1.nextCursor).toBe('2');
 
-      const p2 = await (await app.request(`/runs?limit=2&cursor=${p1.nextCursor}`)).json();
+      const p2 = await (await call(app, `/runs?limit=2&cursor=${p1.nextCursor}`)).json();
       expect(p2.items.map((r: RunSummary) => r.runId)).toEqual(['run-3', 'run-2']);
       expect(p2.nextCursor).toBe('4');
 
-      const p3 = await (await app.request(`/runs?limit=2&cursor=${p2.nextCursor}`)).json();
+      const p3 = await (await call(app, `/runs?limit=2&cursor=${p2.nextCursor}`)).json();
       expect(p3.items.map((r: RunSummary) => r.runId)).toEqual(['run-1']);
       expect(p3.nextCursor).toBeUndefined();
 
@@ -162,11 +163,11 @@ describe('GET /runs pagination', () => {
       await journal.put('run-2:tool:0', { status: 'suspended', output: {} }); // run-2 becomes suspended
       const app = createStudioApi({ reader: journal });
 
-      const suspended = await (await app.request('/runs?limit=10&status=suspended')).json();
+      const suspended = await (await call(app, '/runs?limit=10&status=suspended')).json();
       expect(suspended.items.map((r: { runId: string }) => r.runId)).toEqual(['run-2']);
       expect(suspended.total).toBe(1);
 
-      const completed = await (await app.request('/runs?limit=10&status=completed')).json();
+      const completed = await (await call(app, '/runs?limit=10&status=completed')).json();
       expect(completed.items.map((r: { runId: string }) => r.runId).sort()).toEqual(['run-1', 'run-3']);
       expect(completed.total).toBe(2);
     });
@@ -175,7 +176,7 @@ describe('GET /runs pagination', () => {
       const journal = new InMemoryJournal();
       await seedRuns(journal, 1);
       const app = createStudioApi({ reader: journal });
-      const res = await app.request('/runs?limit=10&status=bogus');
+      const res = await call(app, '/runs?limit=10&status=bogus');
       expect(res.status).toBe(400);
     });
 
@@ -186,7 +187,7 @@ describe('GET /runs pagination', () => {
       await journal.put('alpha-2:model:0', { content: [{ type: 'text', text: 'c' }], finishReason: 'stop' });
       const app = createStudioApi({ reader: journal });
 
-      const res = await (await app.request('/runs?limit=10&q=alpha')).json();
+      const res = await (await call(app, '/runs?limit=10&q=alpha')).json();
       expect(res.items.map((r: { runId: string }) => r.runId).sort()).toEqual(['alpha-1', 'alpha-2']);
       expect(res.total).toBe(2);
     });
@@ -199,7 +200,7 @@ describe('GET /runs pagination', () => {
       await journal.put('run-2:input', { prompt: 'hi', agent: 'billing-bot', _v: 1 });
       const app = createStudioApi({ reader: journal });
 
-      const res = await (await app.request('/runs?limit=10&agent=support-bot')).json();
+      const res = await (await call(app, '/runs?limit=10&agent=support-bot')).json();
       expect(res.items.map((r: { runId: string }) => r.runId)).toEqual(['run-1']);
       expect(res.total).toBe(1);
     });
@@ -208,7 +209,7 @@ describe('GET /runs pagination', () => {
       const journal = new InMemoryJournal();
       await seedRuns(journal, 3);
       const app = createStudioApi({ reader: journal });
-      const res = await (await app.request('/runs?status=suspended')).json();
+      const res = await (await call(app, '/runs?status=suspended')).json();
       expect(Array.isArray(res)).toBe(true);
       expect(res).toHaveLength(3); // status ignored without `limit` — matches today's contract
     });
@@ -233,7 +234,7 @@ describe('GET /runs pagination', () => {
       };
       const app = createStudioApi({ reader: reader as any });
 
-      const res = await (await app.request('/runs?limit=10&status=suspended')).json();
+      const res = await (await call(app, '/runs?limit=10&status=suspended')).json();
       expect(res.items.map((r: RunSummary) => r.runId)).toEqual(['run-2']);
       expect(res.total).toBe(1);
       expect(reader.listRunsPaged).toHaveBeenCalledWith(expect.objectContaining({ status: 'suspended' }));
@@ -247,7 +248,7 @@ describe('GET /runs pagination', () => {
       const listSpy = vi.spyOn(journal, 'listRuns');
       const app = createStudioApi({ reader: journal });
 
-      const res = await (await app.request('/runs?limit=10&q=alpha')).json();
+      const res = await (await call(app, '/runs?limit=10&q=alpha')).json();
       expect(res.items.map((r: { runId: string }) => r.runId)).toEqual(['alpha-1']);
       expect(listSpy).toHaveBeenCalled(); // full scan — confirms the push-down branch is skipped for `q`
     });

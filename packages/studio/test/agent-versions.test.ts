@@ -4,11 +4,12 @@ import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
 import { roleAuth } from '@gnldev/auth';
 import { createStudioApi } from '../src/server.js';
+import { call } from './call.js';
 
 const post = (app: any, path: string, body: unknown, actor = 'dev@acme.co') =>
-  app.request(path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-gnl-actor': actor }, body: JSON.stringify(body) });
+  call(app, path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-gnl-actor': actor }, body: JSON.stringify(body) });
 const del = (app: any, path: string, actor = 'dev@acme.co') =>
-  app.request(path, { method: 'DELETE', headers: { 'x-gnl-actor': actor } });
+  call(app, path, { method: 'DELETE', headers: { 'x-gnl-actor': actor } });
 
 describe('managed agent versions', () => {
   it('first version is AUTOMATICALLY active; later versions are drafts; promote/rollback moves the pointer; audit is complete', async () => {
@@ -18,7 +19,7 @@ describe('managed agent versions', () => {
     expect((await (await post(app, '/managed-agents', { name: 'writer', model: 'anthropic/claude-sonnet-5', system: 'Write briefly.' })).json())).toMatchObject({ ok: true, version: 1, active: 1 });
     expect((await (await post(app, '/managed-agents', { name: 'writer', model: 'anthropic/claude-fable-5', system: 'Write in detail.', note: 'model upgrade' })).json())).toMatchObject({ ok: true, version: 2, active: 1 });
 
-    const list = await (await app.request('/managed-agents')).json();
+    const list = await (await call(app, '/managed-agents')).json();
     expect(list.agents).toHaveLength(1);
     expect(list.agents[0].versions.map((v: any) => v.version)).toEqual([1, 2]);
     expect(list.agents[0].active).toBe(1);
@@ -28,21 +29,21 @@ describe('managed agent versions', () => {
     expect(await (await post(app, '/managed-agents/writer/promote', { version: 1 })).json()).toMatchObject({ ok: true, active: 1, previous: 2 });
 
     // versions are UNCHANGED (immutable) — only the pointer moved
-    const after = await (await app.request('/managed-agents')).json();
+    const after = await (await call(app, '/managed-agents')).json();
     expect(after.agents[0].versions).toHaveLength(2);
     expect(after.agents[0].versions[1].model).toBe('anthropic/claude-fable-5');
     expect(after.agents[0].active).toBe(1);
 
     // audit: 2 version + 3 promote (1 automatic from:null→1 + 2 manual). Order-independent verification
     // (same-ms ties may preserve at-sort insertion order → match on content without assuming position).
-    const audit = await (await app.request('/audit?action=agent.promote')).json();
+    const audit = await (await call(app, '/audit?action=agent.promote')).json();
     expect(audit.items).toHaveLength(3);
     expect(audit.items.every((i: any) => i.actor === 'dev@acme.co' && i.target === 'writer')).toBe(true);
     const details = audit.items.map((i: any) => i.detail);
     expect(details).toContainEqual({ from: null, to: 1, auto: true }); // automatic first-promote
     expect(details).toContainEqual({ from: 1, to: 2 });
     expect(details).toContainEqual({ from: 2, to: 1 });
-    const versions = await (await app.request('/audit?action=agent.version')).json();
+    const versions = await (await call(app, '/audit?action=agent.version')).json();
     expect(versions.items).toHaveLength(2);
   });
 
@@ -87,7 +88,7 @@ describe('managed agent versions', () => {
     // NOT code-defined → 422, and no record is created
     const res = await post(app, '/managed-agents', { name: 'ghost', model: 'm/1' });
     expect(res.status).toBe(422);
-    const list = await (await app.request('/managed-agents')).json();
+    const list = await (await call(app, '/managed-agents')).json();
     expect(list.agents.map((a: any) => a.name)).toEqual(['writer']);
   });
 
@@ -98,7 +99,7 @@ describe('managed agent versions', () => {
     await post(app, '/managed-agents', { name: 'a', model: 'm/1' });
     expect((await post(app, '/managed-agents/a/promote', { version: 9 })).status).toBe(400);
 
-    const caps = await (await app.request('/capabilities')).json();
+    const caps = await (await call(app, '/capabilities')).json();
     expect(caps.agentVersions).toBe(true);
   });
 });
@@ -114,10 +115,10 @@ describe('DELETE /managed-agents/:name (PERMANENTLY delete a managed agent recor
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ ok: true, name: 'dd' });
 
-    const list = await (await app.request('/managed-agents')).json();
+    const list = await (await call(app, '/managed-agents')).json();
     expect(list.agents).toHaveLength(0);
 
-    const audit = await (await app.request('/audit?action=agent.delete')).json();
+    const audit = await (await call(app, '/audit?action=agent.delete')).json();
     expect(audit.items).toHaveLength(1);
     expect(audit.items[0]).toMatchObject({ actor: 'deleter@acme.co', target: 'dd', detail: { versions: 2, hadActive: true } });
   });
@@ -132,14 +133,14 @@ describe('DELETE /managed-agents/:name (PERMANENTLY delete a managed agent recor
       reader: new InMemoryJournal(),
       auth: roleAuth({ admin: { token: 'adm' }, viewer: { token: 'viw' } }),
     });
-    await app.request('/managed-agents', {
+    await call(app, '/managed-agents', {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: 'Bearer adm' },
       body: JSON.stringify({ name: 'a', model: 'm/1' }),
     });
-    const res = await app.request('/managed-agents/a', { method: 'DELETE', headers: { authorization: 'Bearer viw' } });
+    const res = await call(app, '/managed-agents/a', { method: 'DELETE', headers: { authorization: 'Bearer viw' } });
     expect(res.status).toBe(403);
-    const list = await (await app.request('/managed-agents', { headers: { authorization: 'Bearer viw' } })).json();
+    const list = await (await call(app, '/managed-agents', { headers: { authorization: 'Bearer viw' } })).json();
     expect(list.agents).toHaveLength(1);
   });
 
@@ -160,7 +161,7 @@ describe('DELETE /managed-agents/:name (PERMANENTLY delete a managed agent recor
     const res = await del(app, '/managed-agents/a');
     expect(res.status).toBe(501);
 
-    const list = await (await app.request('/managed-agents')).json();
+    const list = await (await call(app, '/managed-agents')).json();
     expect(list.agents).toHaveLength(1); // not deleted
   });
 
@@ -175,7 +176,7 @@ describe('DELETE /managed-agents/:name (PERMANENTLY delete a managed agent recor
 
     expect((await del(app, '/managed-agents/dd')).status).toBe(200);
 
-    const list = await (await app.request('/managed-agents')).json();
+    const list = await (await call(app, '/managed-agents')).json();
     expect(list.agents.map((a: any) => a.name)).toEqual(['dd2']);
     expect(list.agents[0].versions).toHaveLength(1); // the neighbor's own data is intact
   });
@@ -191,11 +192,11 @@ describe('DELETE /managed-agents/:name/versions/:version (delete a single versio
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ ok: true, name: 'a', version: 2, active: 1, remaining: 1 });
 
-    const list = await (await app.request('/managed-agents')).json();
+    const list = await (await call(app, '/managed-agents')).json();
     expect(list.agents[0].versions.map((v: any) => v.version)).toEqual([1]);
     expect(list.agents[0].active).toBe(1);
 
-    const audit = await (await app.request('/audit?action=agent.version-delete')).json();
+    const audit = await (await call(app, '/audit?action=agent.version-delete')).json();
     expect(audit.items[0]).toMatchObject({ actor: 'deleter@acme.co', target: 'a', detail: { version: 2, remaining: 1 } });
   });
 
@@ -207,7 +208,7 @@ describe('DELETE /managed-agents/:name/versions/:version (delete a single versio
     const res = await del(app, '/managed-agents/a/versions/1');
     expect(res.status).toBe(409);
 
-    const list = await (await app.request('/managed-agents')).json();
+    const list = await (await call(app, '/managed-agents')).json();
     expect(list.agents[0].versions).toHaveLength(2); // not deleted
   });
 
@@ -230,7 +231,7 @@ describe('DELETE /managed-agents/:name/versions/:version (delete a single versio
     expect(r2.status).toBe(200);
     expect(await r2.json()).toMatchObject({ remaining: 0 });
 
-    const list = await (await app.request('/managed-agents')).json();
+    const list = await (await call(app, '/managed-agents')).json();
     expect(list.agents).toHaveLength(0); // the record is completely gone
   });
 });
