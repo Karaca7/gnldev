@@ -3,6 +3,7 @@
 //   createStudioAdmin → HTML UI only (local/remote API via apiBase)
 //   createStudioApp   → convenience combining both (backward compatible)
 export { createStudioApi, createStudioAdmin, createStudioApp, PERMISSION_CATALOG, ROLE_PERMISSION_PRESETS } from './server.js';
+export type { FetchHandler } from './handler.js';
 export type {
   StudioApiOptions,
   StudioAppOptions,

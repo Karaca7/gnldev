@@ -18,6 +18,10 @@
     "./workflow": {
       "types": "./dist/managed-workflow.d.ts",
       "default": "./dist/managed-workflow.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "default": "./dist/node.js"
     }
   },
   "bin": {

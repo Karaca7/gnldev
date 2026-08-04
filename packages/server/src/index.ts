@@ -1,6 +1,7 @@
 // @gnldev/server — serves the createGnl registry over HTTP (auto-REST + OpenAPI). Every endpoint
 // descends into runDurable → exactly-once/durability inherited for free. (The durable counterpart of the common auto-REST pattern.)
 import { Hono, type Context } from 'hono';
+import { toFetchHandler, type FetchHandler } from './handler.js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { createGnl, agentVisibleToOrg, withOrg, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, blockedErrorCode, sealRequestContext, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry } from '@gnldev/durable';
 import type { CreateGnlConfig, Journal, JournalReader, BudgetLimit, UsageCostCache, RunLimits } from '@gnldev/durable';
@@ -252,7 +253,7 @@ function blockedErrorResponse(c: Context, e: unknown): Response | undefined {
   return code === 'retry_limit_exceeded' ? c.json(body, 422) : c.json({ ...body, resumable: true }, 409);
 }
 
-export function createRestApi(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
+function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   // storage.runs (RunJournal) returns paginated listRuns → toJournal bridges it to the old array contract
   // (routes /runs, /usage, withOrg, and the budget gate all see the same shape).
   const baseJournal = (config.storage ? toJournal(config.storage.runs) : config.journal) as Journal & JournalReader;
@@ -987,3 +988,14 @@ export function createRestApi(config: CreateGnlConfig, opts: RestApiOptions = {}
 
 export { buildOpenApi } from './openapi.js';
 export { pipeAgentStream, interruptsFromSteps } from './sse.js';
+
+/**
+ * The REST API as a fetch handler.
+ *
+ * Hono host:      app.mount('/api', createRestApi(config))
+ * Anything else:  bridge it (see @gnldev/studio/node for the same job on the Studio side)
+ * Standalone:     serve({ fetch: createRestApi(config).fetch })
+ */
+export function createRestApi(config: CreateGnlConfig, opts: RestApiOptions = {}): FetchHandler {
+  return toFetchHandler(restApiApp(config, opts));
+}

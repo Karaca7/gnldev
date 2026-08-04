@@ -11,6 +11,7 @@
 // two copies must be kept in sync with sse.ts; see test/route.test.ts (parallel tests with the same mock patterns).
 import { streamSSE } from 'hono/streaming';
 import type { Context } from 'hono';
+import { toFetchHandler, type FetchHandler } from './handler.js';
 import { Hono } from 'hono';
 import { limitBreachFromSteps, blockedFromSteps, BLOCKED_ERROR_CODES } from '@gnldev/durable';
 import type { CreateGnlConfig } from '@gnldev/durable';
@@ -148,7 +149,7 @@ export interface CreateAguiRouteOptions {
  * Deliberately kept small: NO auth/org/budget gates (if needed, use @gnldev/server's createRestApi
  * and pass its stream result to pipeAguiStream — see README).
  */
-export function createAguiRoute(config: CreateGnlConfig, opts: CreateAguiRouteOptions = {}): Hono {
+function aguiRouteApp(config: CreateGnlConfig, opts: CreateAguiRouteOptions = {}): Hono {
   const gnl = createGnl(config);
   const app = new Hono();
   app.post('/agents/:name/run', async (c) => {
@@ -172,4 +173,9 @@ export function createAguiRoute(config: CreateGnlConfig, opts: CreateAguiRouteOp
     return pipeAguiStream(c, body.runId, result, { threadId });
   });
   return app;
+}
+
+/** The AG-UI route as a fetch handler — mount with `app.mount(path, ...)` on a Hono host. */
+export function createAguiRoute(config: CreateGnlConfig, opts: CreateAguiRouteOptions = {}): FetchHandler {
+  return toFetchHandler(aguiRouteApp(config, opts));
 }

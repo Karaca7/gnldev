@@ -93,13 +93,15 @@ export async function resolveAuthProvider(config: GnlDevConfig, auth: typeof Aut
 export function buildDevApp(config: GnlDevConfig, rt: DevRuntimeModules, auth?: AuthProvider): HonoNs.Hono {
   const provider = auth ?? freeAuth(config, rt.auth);
   const app = new rt.hono.Hono();
-  app.route('/', rt.server.createRestApi(config, { title: config.title, auth: provider }));
+  // `.mount()` (unlike the old `.route()` with a Hono sub-app) registers one blanket wildcard route per
+  // call — a `/` mount would swallow every path, including `/studio/*`, if registered first. So the more
+  // specific `/studio` mount MUST be added before the catch-all `/` REST mount.
   if (config.studio !== false) {
     const storage = config.storage;
     if (storage && !rt.memory) throw new Error('gnl: config.storage is set but no @gnldev/memory module was loaded (loadDevRuntime bug)');
     // Dev default: if storage is present, derive memory → Playground conversations automatically become threads.
     const gnl = rt.durable.createGnl({ ...config, ...(storage ? { memoryFactory: config.memoryFactory ?? devMemoryFactory(rt.memory!) } : {}) });
-    app.route(
+    app.mount(
       '/studio',
       rt.studio.createStudioApp({
         reader: storage ? rt.durable.toJournal(storage.runs) : (config.journal as any),
@@ -110,6 +112,7 @@ export function buildDevApp(config: GnlDevConfig, rt: DevRuntimeModules, auth?: 
       }),
     );
   }
+  app.mount('/', rt.server.createRestApi(config, { title: config.title, auth: provider }));
   return app;
 }
 

@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
+import { toFetchHandler, type FetchHandler } from './handler.js';
 import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
 
@@ -439,7 +440,7 @@ function isReader (x: any): x is JournalReader {
  * **Studio API** (JSON only, no UI). Mount it on your own app (`app.route('/studio/api', createStudioApi(...))`),
  * auth-gate it (viewer/admin), use it programmatically. Routes are prefix-independent: /capabilities, /runs, /runs/:id, ...
  */
-export function createStudioApi (input: JournalReader | StudioApiOptions): Hono {
+function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   const opts: StudioApiOptions = isReader(input) ? { reader: input } : input;
   const { reader: rawReader, resume, compensate, chat, gnl, memory, workflows, scorers, datasets, mcp, a2a, queue, cache, vectors, workflowInputs, workflowStore: _wfStoreOpt, compileWorkflow, auth } = opts;
   const app = new Hono();
@@ -2833,7 +2834,7 @@ export function createStudioApi (input: JournalReader | StudioApiOptions): Hono 
 }
 
 /** **Studio Admin** (HTML UI only). Points at the local/remote API via `apiBase`; can be served statically/separately. */
-export function createStudioAdmin (opts: { apiBase?: string } = {}): Hono {
+function studioAdminApp (opts: { apiBase?: string } = {}): Hono {
   const app = new Hono();
   app.get('/openapi.json', (c) => c.json(openapiSpec(opts.apiBase ?? '')));
   app.get('/swagger', (c) => c.html(swaggerHtml(opts.apiBase ?? '')));
@@ -2846,15 +2847,32 @@ export function createStudioAdmin (opts: { apiBase?: string } = {}): Hono {
  * A convenience that combines Admin + API into a single app (backward compatible). Admin at '/', API at '/api/*'.
  * Pass `apiBase` for the prefix it will be mounted at (e.g. '/studio' → admin fetches against /studio/api).
  */
-export function createStudioApp (input: JournalReader | StudioAppOptions): Hono {
+function studioAppApp (input: JournalReader | StudioAppOptions): Hono {
   const opts: StudioAppOptions = isReader(input) ? { reader: input } : input;
   const app = new Hono();
-  app.route('/api', createStudioApi(opts));
+  app.route('/api', studioApiApp(opts));
   app.get('/openapi.json', (c) => c.json(openapiSpec(opts.apiBase ?? '')));
   app.get('/swagger', (c) => c.html(swaggerHtml(opts.apiBase ?? '')));
   // Prefer the prebuilt React SPA (@gnldev/studio-ui) first; fall back to the old single-file HTML if there's no build.
   if (!mountSpa(app, opts.apiBase ?? '')) app.get('/', (c) => c.html(notBuiltHtml()));
   return app;
+}
+
+/**
+ * The public factories. Each returns a fetch handler, not a Hono app — see `handler.ts` for why.
+ *
+ * Hono host:      app.mount('/studio', createStudioApp(...))
+ * Anything else:  toNodeHandler(createStudioApp(...))   // @gnldev/studio/node
+ * Standalone:     serve({ fetch: createStudioApp(...).fetch })
+ */
+export function createStudioApi (input: JournalReader | StudioApiOptions): FetchHandler {
+  return toFetchHandler(studioApiApp(input));
+}
+export function createStudioAdmin (opts: { apiBase?: string } = {}): FetchHandler {
+  return toFetchHandler(studioAdminApp(opts));
+}
+export function createStudioApp (input: JournalReader | StudioAppOptions): FetchHandler {
+  return toFetchHandler(studioAppApp(input));
 }
 
 // Backward-compatible type alias.
