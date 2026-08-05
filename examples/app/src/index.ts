@@ -19,7 +19,7 @@ const { app } = buildServer({ storage, gnl, resume, memory, state });
 // Embed Studio into the SAME app under /studio (no separate port). API/admin separation + write-auth:
 // if STUDIO_ADMIN is set, fork/resume require an `x-studio-admin` header (viewer read stays open).
 const ADMIN = process.env.STUDIO_ADMIN;
-app.route('/studio', createStudioApp({
+app.mount('/studio', createStudioApp({
   reader: toJournal(storage.runs),
   apiBase: '/studio',
   resume: async (runId, approvals) => { const r = await resume(runId, approvals); return { text: r.text, interrupts: r.interrupts }; },

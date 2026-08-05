@@ -91,7 +91,7 @@ const storage = composite({
     install: `npm install @gnldev/server @gnldev/durable hono`,
     apis: [`createRestApi(config, opts) — Hono router: run/resume/stream/usage/openapi.json`, `RestApiOptions — title, auth, org, budgets`, `buildOpenApi(...) — generates an OpenAPI 3.1 schema`, `pipeAgentStream(...) — converts a streamDurable result into an SSE event stream`],
     example: `const app = new Hono();
-app.route('/api', createRestApi(config, { title: 'SWAPI Free', auth }));
+app.mount('/api', createRestApi(config, { title: 'SWAPI Free', auth }));
 
 // POST /api/agents/starwars/run     {"runId":"demo-1","prompt":"..."}
 // POST /api/agents/starwars/stream  -> SSE (text-delta/tool-call/tool-result/interrupt/done)`,
@@ -213,7 +213,7 @@ import { createStudioApp } from '@gnldev/studio';`,
   admin: { token: process.env.GNL_ADMIN_TOKEN ?? 'free-admin' },
   viewer: { token: process.env.GNL_VIEWER_TOKEN ?? 'free-viewer' },
 });
-app.route('/api', createRestApi(config, { title: 'SWAPI Free', auth }));`,
+app.mount('/api', createRestApi(config, { title: 'SWAPI Free', auth }));`,
   },
   {
     slug: `studio-inspector`,
@@ -225,7 +225,7 @@ app.route('/api', createRestApi(config, { title: 'SWAPI Free', auth }));`,
     install: `import { createStudioApp, createStudioRunner } from '@gnldev/studio';
 import { aiToolSchema } from '@gnldev/studio/ai';`,
     apis: [`createStudioApp(opts) — Admin HTML UI + JSON API in a single app`, `createStudioApi / createStudioAdmin — JSON API only / HTML UI only`, `createStudioRunner(gnl, config, opts) — Playground/Tools/Workflows runner`, `GET /capabilities — discovers which Studio views are enabled`],
-    example: `app.route('/studio', createStudioApp({
+    example: `app.mount('/studio', createStudioApp({
   reader: toJournal(storage.runs),
   apiBase: '/studio',
   gnl: createStudioRunner(gnl, config, { toJsonSchema: aiToolSchema }),
@@ -287,7 +287,7 @@ await runDurable({ runId, journal, model, tools, guard, prompt });
 import type { StudioDatasets, EvalDatasetResultLike } from '@gnldev/studio';
 import { evalDataset } from '@gnldev/evals';`,
     apis: [`StudioAppOptions.evalGate — { datasetId, minAvg? } (if given, gates promote)`, `StudioDatasets — { list(), run(id) } contract supplied by the host`, `POST /managed-agents/:name/promote — 412 without passing the suite if evalGate is enabled`],
-    example: `app.route('/studio', createStudioApp({
+    example: `app.mount('/studio', createStudioApp({
   reader: toJournal(storage.runs),
   gnl: createStudioRunner(gnl, config, { toJsonSchema: aiToolSchema }),
   datasets,                                     // required — evalGate returns 501 without it
@@ -370,7 +370,7 @@ import { evalDataset } from '@gnldev/evals';`,
     package: `@gnldev/server`,
     install: `npm install @gnldev/server @gnldev/durable @gnldev/auth-ee`,
     apis: [`withOrg(journal, orgId) — scopes the journal with an 'org:<orgId>:' prefix`, `RestApiOptions.org — opt-in multi-organization (createRestApi option name; concept: organization scope)`, `OrgOptions — { resolve?, required? } (defaults to the x-gnl-org header)`],
-    example: `app.route('/api', createRestApi(config, {
+    example: `app.mount('/api', createRestApi(config, {
   title: 'SWAPI Pro',
   auth,
   org: {},   // every request lands on an organization journal scoped via withOrg
@@ -388,7 +388,7 @@ import { evalDataset } from '@gnldev/evals';`,
 import { createRestApi } from '@gnldev/server';
 import { checkBudget, assertBudget, getOrgUsage, BudgetExceededError } from '@gnldev/durable';`,
     apis: [`RestApiOptions.budgets — { default?, perOrg? } (journal __budget__ overrides this)`, `checkBudget / assertBudget — checks / throws on limit overage`, `getOrgUsage — returns the organization's total runs/tokens/costUsd (O(1))`, `recordRunUsage — adds to the __usage__ counter when a run completes (idempotent)`],
-    example: `app.route('/api', createRestApi(config, {
+    example: `app.mount('/api', createRestApi(config, {
   auth,
   org: {},
   budgets: { default: { tokenLimit: 100_000 }, perOrg: { 'acme-corp': { usdLimit: 25 } } },
