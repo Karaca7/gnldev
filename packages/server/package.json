@@ -10,6 +10,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "default": "./dist/node.js"
     }
   },
   "files": [
@@ -23,6 +27,7 @@
   "dependencies": {
     "@gnldev/auth": "workspace:^",
     "@gnldev/workflow": "workspace:^",
+    "@hono/node-server": "^1.13.0",
     "hono": "^4.6.0"
   },
   "peerDependencies": {

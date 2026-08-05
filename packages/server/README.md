@@ -17,8 +17,34 @@ const api = createRestApi({
 });
 serve({ fetch: api.fetch, port: 3000 });        // on its own port
 // app.mount('/api', api)                      // inside a Hono app
-// express().use('/api', toNodeHandler(api))   // or any Node host — @gnldev/studio/node
 ```
+
+## Binding it to a Node server
+
+`createRestApi` returns a fetch handler — callable, and carrying `.fetch`. On Node, bind it with the
+bridge on this package's own subpath:
+
+```ts
+import { toNodeHandler } from '@gnldev/server/node';
+
+express().use('/api', toNodeHandler(api));                            // Express
+await fastify.register(middie); fastify.use('/api', toNodeHandler(api));   // Fastify + @fastify/middie
+koa.use(c2k(mw));                                                     // Koa + koa-connect
+createServer(toNodeHandler(api));                                     // node:http
+nestApp.use('/api', toNodeHandler(api));                              // Nest (Express or Fastify)
+```
+
+Two rules, both measured on live servers rather than reasoned about:
+
+**Bind at the middleware layer, not as a route.** On Fastify the difference is the whole story:
+middleware runs before body parsing, a route runs after it. `fastify.all('/api/*', …)` looks correct,
+passes every GET, and answers 400 to a perfectly good POST — because Fastify's built-in JSON parser
+has already drained the stream.
+
+**Mount before whatever parses request bodies.** A parser that runs first reads the stream to the end
+and hands the result to the framework, not to us. Get it wrong and the bridge says so
+(`body_consumed_upstream`) instead of blaming your request. Your own routes keep the parser: it still
+runs for everything mounted after.
 
 ## Endpoints (per agent)
 | Method | Path | Description |

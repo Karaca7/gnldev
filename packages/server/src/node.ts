@@ -1,16 +1,18 @@
-// Binding the handler to a Node server — Express, Fastify, Nest, or bare `node:http`.
+// Binding the REST API to a Node server — Express, Fastify, Koa, Nest, or bare `node:http`.
 //
-// A thin facade, on purpose. Writing the bridge by hand is about ten lines and it works, right up
-// until it doesn't: measured on a real server, a hand-written bridge that omits `res.flushHeaders()`
-// serves SSE with the head withheld until the first chunk. A quiet event stream then hangs the
-// client forever, and NOTHING throws — the live screen simply never opens. That is the worst shape a
-// defect can take, and it is why this is a function rather than a snippet in a README: a snippet
-// lives in somebody else's repository and loses a line to a tidy-up; an import is either there or
-// it is not.
+// The twin of packages/studio/src/node.ts, and deliberately a copy rather than an import. A backend
+// that wants agents and no dashboard had to install @gnldev/studio just to reach this function,
+// which drags @gnldev/studio-ui — a React app — into a service that will never render a page. That
+// is backwards, and one subpath is a smaller price than that dependency.
 //
-// `@hono/node-server` already solves this correctly and this package already depends on it, so the
-// bridge is theirs. If this file ever grows its own request/response translation, the reason for it
-// existing is gone — take it out instead.
+// The alternative, importing it from the sibling package, was tried and is worse than it looks: a
+// cross-package runtime import resolves through the sibling's BUILT output, so a stale dist turns
+// the call into `undefined` with no error until something downstream fails on empty input. Measured
+// in this repo the same afternoon, in @gnldev/agui, where it emptied an SSE stream and every test in
+// the package failed on `JSON.parse('')`. This file follows the convention sse.ts already set here.
+//
+// KEEP IN SYNC with packages/studio/src/node.ts. If they drift, the two packages answer the same
+// misconfiguration differently, which is worse than either answer.
 //
 // Kept on a subpath so the root export stays runtime-neutral: importing the package must not drag
 // Node's types into a Workers or Deno build.
@@ -42,34 +44,32 @@ function bodyAlreadyConsumed(req: IncomingMessage): boolean {
 /**
  * Turns a fetch handler into a Node request listener.
  *
- * @experimental Closes the SSE/flush class of bug inside the Node bridge, and answers plainly when a
- * body parser upstream has already drained the request. `compression` no longer buffers our streams
- * either — that one is fixed at the source, in the SSE response's `Cache-Control: no-transform`
- * (see `sse.ts`), so it holds on every host rather than only the ones that come through here.
+ * @experimental Closes the SSE/flush class of bug inside the Node bridge — a hand-written bridge
+ * that omits `res.flushHeaders()` withholds the head until the first chunk, so a quiet event stream
+ * hangs the client forever and nothing throws. It also answers plainly when a body parser upstream
+ * has already drained the request, instead of letting the endpoint blame the caller.
  *
- * What it still does NOT do: audit the rest of your middleware chain, and touch path prefixes — a
- * host that mounts under a sub-path has already stripped it from `req.url` (Express) or has not
- * (Koa, Fastify, node:http), and only the host knows which.
+ * What it does NOT do: audit the rest of your middleware chain, or touch path prefixes — a host that
+ * mounts under a sub-path has already stripped it from `req.url` (Express) or has not (Koa, Fastify,
+ * node:http), and only the host knows which.
  *
  * ```ts
- * const studio = createStudioApp({ reader: journal });
+ * const api = createRestApi(config);
  *
- * express().use('/studio', toNodeHandler(studio));          // Express — before express.json()
- * await fastify.register(middie); fastify.use('/studio', toNodeHandler(studio));   // Fastify
+ * express().use('/api', toNodeHandler(api));                // Express — before express.json()
+ * await fastify.register(middie); fastify.use('/api', toNodeHandler(api));   // Fastify
  * koa.use(c2k(mw));                                         // Koa — koa-connect, before the parser
- * createServer(toNodeHandler(studio));                      // node:http
+ * createServer(toNodeHandler(api));                         // node:http
  * ```
  *
  * Bind at the MIDDLEWARE layer, never as a route, and put it ahead of the body parser. Measured:
- * `fastify.all('/studio/*', …)` runs AFTER Fastify's built-in JSON parser has drained the stream —
+ * `fastify.all('/api/*', …)` runs AFTER Fastify's built-in JSON parser has drained the stream —
  * every GET passes, a POST with a body answers 400. Through `@fastify/middie` the same handler runs
  * before parsing and works, with the host's own routes keeping their parsed bodies.
  */
 export function toNodeHandler(handler: FetchHandler) {
   const listener = getRequestListener(handler.fetch as any);
   return (req: IncomingMessage, res: ServerResponse) => {
-    // Say what actually happened, instead of letting the endpoint guess.
-    //
     // Deliberately NOT re-serialising `req.body` back into a stream. It would make the common case
     // work and quietly change the bytes — key order, unicode escaping, and nothing at all for
     // multipart or a raw payload — so a misordered chain would keep running until the day it
