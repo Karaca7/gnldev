@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { toFetchHandler, type FetchHandler } from './handler.js';
 import { Hono, type Context } from 'hono';
-import { streamSSE } from 'hono/streaming';
+import { sseResponse } from './sse.js';
 
 import { reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, purgeRun, purgeOrganization, sweepRuns, POLICY_KEY, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, blockedErrorCode, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent } from '@gnldev/durable';
 import type { PolicyDoc, PolicyRule, BudgetLimit } from '@gnldev/durable';
@@ -316,8 +316,8 @@ export const ROLE_PERMISSION_PRESETS: Record<string, string[]> = {
 
 /** Role-based access: `read` gates GET (viewer), `write` gates POST resume/fork/chat (admin). Open if not given. */
 export interface StudioAuth {
-  read?: (c: Context) => boolean | Promise<boolean>;
-  write?: (c: Context) => boolean | Promise<boolean>;
+  read?: (req: Request) => boolean | Promise<boolean>;
+  write?: (req: Request) => boolean | Promise<boolean>;
 }
 
 export interface StudioApiOptions {
@@ -387,7 +387,15 @@ export interface StudioApiOptions {
    * `org` option for the write path (the option name is KEPT for consistency with @gnldev/server). A request
    * without an org runs in the shared space.
    */
-  org?: { resolve?: (c: Context) => string | undefined | Promise<string | undefined> };
+  org?: {
+    /**
+     * Takes a web `Request`, not a Hono `Context` — the last place this package's public surface
+     * leaked its own HTTP library. A host that mounts the handler from Express or Fastify has a
+     * Request, never a Context, so the old signature made this option unusable exactly where the
+     * fetch handler was supposed to open the door.
+     */
+    resolve?: (req: Request) => string | undefined | Promise<string | undefined>;
+  };
   /**
    * Eval gate (governance): this dataset suite runs BEFORE an agent is promoted; if ANY aggregate score
    * fails to clear minAvg (default 0.5), the promote is rejected with 412. The gate decision
@@ -472,7 +480,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
    *  • free mode + org-less → allowed (legacy operator).  • platform-admin → allowed.
    */
   const requirePlatformAdmin = (c: Context, orgBoundMsg: string): Response | undefined => {
-    const p = principalOf(c);
+    const p = principalOf(c.req.raw);
     if (p?.orgId) return c.json({ error: orgBoundMsg }, 403);
     if (strictMultiOrg && !isPlatformAdmin(p)) {
       return c.json({ error: 'platform-admin required (fail-closed: no org scope and no platform-admin grant)' }, 403);
@@ -536,14 +544,14 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // produce an identity-bound org) exists; if neither exists, no request is scoped (existing shared behavior).
   if (opts.org || authProvider) {
     // Header-based resolution: `x-gnl-org`.
-    const resolveOrg = opts.org?.resolve ?? ((c: Context) => c.req.header('x-gnl-org'));
+    const resolveOrg = opts.org?.resolve ?? ((req: Request) => req.headers.get('x-gnl-org') ?? undefined);
     app.use('*', async (c, next) => {
       // Header-based org resolution only kicks in if opts.org is EXPLICITLY given (a header never implies
       // a non-opt-in org); the identity-bound org is always valid whenever an auth provider exists.
-      const requested = opts.org ? await resolveOrg(c) : undefined;
+      const requested = opts.org ? await resolveOrg(c.req.raw) : undefined;
       // An identity-bound org (Cred.orgId → Principal.orgId) OVERRIDES the header: if the bound identity
       // requests a different org, 403 — org scope is based on identity, not a spoofable header.
-      const principal = authProvider ? await authProvider.authenticate(c) : null;
+      const principal = authProvider ? await authProvider.authenticate(c.req.raw) : null;
       const bound = principal?.orgId;
       // STRICT (EE multi-org) FAIL-CLOSED NET: an AUTHENTICATED identity with no org binding AND no
       // explicit platform-admin grant may NOT reach org data/management surfaces — without this, an
@@ -665,14 +673,14 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
    * `by` argument without duplicating the derivation.
    */
   function actorOf (c: Context): string {
-    const p = principalOf(c);
+    const p = principalOf(c.req.raw);
     return p?.id ?? c.req.header('x-gnl-actor') ?? (p?.roles[0] ? `role:${p.roles[0]}` : 'anon');
   }
   async function audit (c: Context, action: AuditAction, target: string, detail?: unknown): Promise<void> {
     if (!writable) return;
     try {
       const actor = actorOf(c);
-      const p = principalOf(c);
+      const p = principalOf(c.req.raw);
       // Org context — the audit "org" column (see Audit.tsx it.org):
       //  (1) the bound identity's orgId (if any) → which org the work was done on behalf of.
       //  (2) for operator actions that MANAGE an org (org.create/delete/budget), the actor is unbound (no orgId),
@@ -751,7 +759,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     // context scoped by the org middleware) > root (shared) namespace. Without the former, header-based
     // org resolution (when there's no auth binding) would make GET /managed-agents return the root store
     // for EVERY org (a leak) — see Phase 0.4.
-    const bound = principalOf(c)?.orgId ?? orgALS.getStore();
+    const bound = principalOf(c.req.raw)?.orgId ?? orgALS.getStore();
     const base = rawReader as unknown as Journal;
     const j = (bound ? (withOrg(base, bound) as unknown as Partial<Journal>) : (base as unknown as Partial<Journal>));
     return makeAgentStore(j);
@@ -859,7 +867,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // falls through to the unfiltered flat array below, same as today — matches the "no params → identical
   // to today" backward-compat contract; the studio-ui client always sends `limit`, so this never bites it).
   app.get('/runs', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     const limitRaw = c.req.query('limit');
     if (limitRaw === undefined) return c.json(await reader.listRuns());
     const limit = Math.min(Math.max(Math.floor(Number(limitRaw)) || 0, 1), 500);
@@ -923,12 +931,12 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     return c.json({ items, nextCursor: next < newestFirst.length ? String(next) : undefined, total: newestFirst.length });
   });
   app.get('/runs/:id', async (c) =>
-    (await allow(c, 'read')) ? c.json(await reader.readRun(decodeURIComponent(c.req.param('id')))) : deny(c, 'read'),
+    (await allow(c.req.raw, 'read')) ? c.json(await reader.readRun(decodeURIComponent(c.req.param('id')))) : deny(c.req.raw, 'read'),
   );
 
   // Materialized state at step N (reconstructState).
   app.get('/runs/:id/state', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     const id = decodeURIComponent(c.req.param('id'));
     const entries = await reader.readRun(id);
     const q = Number(c.req.query('step'));
@@ -943,7 +951,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // without memory, pre-provenance runs, or a read-only journal — the UI renders that honestly as
   // "no provenance recorded", never as an error.
   app.get('/runs/:id/memory-context', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!writable) return c.json({ context: null });
     const id = decodeURIComponent(c.req.param('id'));
     const ctx = await rw.get!(`${id}:memctx`).catch(() => undefined);
@@ -952,14 +960,14 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // Cost/token (getRunCost).
   app.get('/runs/:id/cost', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     return c.json(await getRunCost(reader, decodeURIComponent(c.req.param('id'))));
   });
 
   // Runtime scorer results: the registry (AgentConfig.scorers) and the `${runId}:proc:eval:<name>`
   // records that scoreRun memoizes — the read surface for exactly-once scores.
   app.get('/runs/:id/scores', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!writable || typeof rw.listKeys !== 'function') return c.json({ scores: {} });
     const id = decodeURIComponent(c.req.param('id'));
     const prefix = `${id}:proc:eval:`;
@@ -976,7 +984,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // this run (`readProcessorReports` — @gnldev/durable, reads the `${runId}:procreport:...` prefix).
   // Empty list if the host doesn't use a processor / writable+listKeys is missing (SAME fallback as scores).
   app.get('/runs/:id/processors', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!writable || typeof rw.listKeys !== 'function') return c.json({ reports: [] });
     const id = decodeURIComponent(c.req.param('id'));
     const reports = await readProcessorReports(rw as any, id).catch(() => []);
@@ -987,7 +995,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // maxToolCalls — warn/reflect/block/suspend) as queryable telemetry. Same optional-capability
   // fallback as /processors: no listKeys → empty list (never an error).
   app.get('/runs/:id/incidents', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!writable || typeof rw.listKeys !== 'function') return c.json({ incidents: [] });
     const id = decodeURIComponent(c.req.param('id'));
     const incidents = await readIncidents(rw as any, id).catch(() => []);
@@ -997,7 +1005,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // Dynamic agent network trace (runNetwork): CAS-frozen routing decisions + step results —
   // the UI draws the dynamic tree (router → agent → result) from this. Nested run detail at /runs/net:<id>:<i>.
   app.get('/runs/:id/network', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!writable || typeof rw.listKeys !== 'function') return c.json({ routes: [], steps: [] });
     const id = decodeURIComponent(c.req.param('id'));
     // rw is Partial<Journal>; writable + listKeys was checked → the surface getNetworkTrace uses is complete.
@@ -1008,7 +1016,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // Enrichment: tool spans are named via the toolCallId→toolName mapping and linked to the model step
   // that called them via `parent` (span index) → the UI draws a real nested tree.
   app.get('/runs/:id/trace', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     const id = decodeURIComponent(c.req.param('id'));
     const entries = await reader.readRun(id);
     const cost = await getRunCost(reader, id);
@@ -1052,7 +1060,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // Per-step diff: messages added between step N and N-1 + the pending delta (time-travel drill-down).
   app.get('/runs/:id/diff', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     const id = decodeURIComponent(c.req.param('id'));
     const entries = await reader.readRun(id);
     const step = Math.max(1, Number(c.req.query('step') ?? entries.length));
@@ -1066,7 +1074,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // ── Governance endpoints: approval queue / audit / organizations ───────────────────
   // Approval queue (inbox): the pending tool approvals of ALL suspended runs in a single list.
   app.get('/approvals', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     const runs = await reader.listRuns();
     const items: { runId: string; toolCallId: string; toolName: string; args?: unknown; reason?: string }[] = [];
     for (const r of runs) {
@@ -1109,13 +1117,13 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // of the ALS-scoped `rw` (otherwise a bound identity's GET would be scoped by the org middleware to a
   // non-existent prefix like org:<id>:__audit__: and always return empty — see the rootRw pattern in /organizations).
   app.get('/audit', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     const rootRw = rawReader as Partial<Journal> & JournalReader;
     if (!writable || typeof rootRw.listKeys !== 'function') return c.json({ items: [] });
     const limit = Math.max(1, Math.min(1000, Number(c.req.query('limit') ?? 200)));
     const action = c.req.query('action');
     const q = c.req.query('q')?.toLowerCase();
-    const bound = principalOf(c)?.orgId;
+    const bound = principalOf(c.req.raw)?.orgId;
     const org = bound ?? (c.req.query('org') || undefined);
     const logs = await listLog<{ actor: string; action: string; target: string; org?: string; detail?: unknown }>(rootRw as Journal, '__audit__');
     const items = logs
@@ -1132,13 +1140,13 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // A SINGLE notification to opts.alerts.webhook on budget overrun (first-write-wins __alert__ marker).
   const ORG_KEY_PRE = 'org:';
   const listOrganizations = async (c: Context) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!writable || typeof rw.listKeys !== 'function') return c.json({ organizations: [] });
     // The scan always happens on the ROOT journal (org: prefixes aren't visible in the org-scoped view);
     // an identity-bound org sees ONLY itself — the global list is open only to unbound (operator) identities.
     const rootRw = rawReader as Partial<Journal> & JournalReader;
     const keys = await rootRw.listKeys!(ORG_KEY_PRE).catch(() => [] as string[]);
-    const bound = principalOf(c)?.orgId;
+    const bound = principalOf(c.req.raw)?.orgId;
     // Merge DISCOVERED orgs (with org:<id>: prefixed data) with EXPLICITLY REGISTERED ones (__org__:<id>) →
     // a newly created org with no runs yet also shows up in the list.
     const discovered = keys.map((k) => { const j = k.indexOf(':', ORG_KEY_PRE.length); return j > ORG_KEY_PRE.length ? k.slice(ORG_KEY_PRE.length, j) : ''; }).filter(Boolean);
@@ -1222,7 +1230,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // CREATE org (register): makes an org with no runs yet visible in the list → budget/users can be assigned.
   // Only an unbound (operator) identity can create; an org-bound identity cannot create another org.
   const createOrganization = async (c: Context) => {
-    if (!(await allowP(c, 'org:write'))) return deny(c, 'write');
+    if (!(await allowP(c.req.raw, 'org:write'))) return deny(c.req.raw, 'write');
     if (!writable) return c.json({ error: 'org management requires a writable journal' }, 501);
     if (!multiOrganizationEnabled) return c.json({ error: 'multi-org is not enabled (single org)' }, 501);
     { const denied = requirePlatformAdmin(c, 'an org-bound identity cannot create a new org'); if (denied) return denied; }
@@ -1242,7 +1250,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // DELETE org (GDPR/cleanup): PERMANENTLY delete ALL `org:<id>:` data + the record + the budget document (irreversible).
   const deleteOrganization = async (c: Context) => {
-    if (!(await allowP(c, 'org:write'))) return deny(c, 'write');
+    if (!(await allowP(c.req.raw, 'org:write'))) return deny(c.req.raw, 'write');
     if (!writable) return c.json({ error: 'org management requires a writable journal' }, 501);
     if (!multiOrganizationEnabled) return c.json({ error: 'multi-org is not enabled (single org)' }, 501);
     { const denied = requirePlatformAdmin(c, 'an org-bound identity cannot delete an org'); if (denied) return denied; }
@@ -1276,8 +1284,8 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // allow() attaches the principal to the context → principalOf reads it afterward. If auth is off,
   // allow is always true + principal null → anonymous (everything open); if auth is on with no token, 401.
   app.get('/me', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
-    const p = principalOf(c);
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    const p = principalOf(c.req.raw);
     // NEW fields for the (separate) UI iteration:
     //  • platformAdmin — the EXPLICIT cross-org grant (scope: 'platform').
     //  • scope — resolved scope tag: 'platform' | 'org:<id>' | 'none'. In strict mode 'none' means the
@@ -1304,7 +1312,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // doesn't offer a model the backend can't enforce. This endpoint is READ-ONLY: there is no create/edit/
   // delete of permission TYPES — the GNL team extends the catalog in code together with its enforcement.
   app.get('/permissions/catalog', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!rbacEnabled) return c.json({ enabled: false, permissions: [], rolePresets: {} });
     return c.json({ enabled: true, permissions: PERMISSION_CATALOG, rolePresets: ROLE_PERMISSION_PRESETS });
   });
@@ -1323,18 +1331,18 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   }
 
   app.get('/users', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!opts.users) return c.json({ users: [] });
-    const own = principalOf(c)?.orgId;
+    const own = principalOf(c.req.raw)?.orgId;
     const all = await opts.users.list();
     // Org-admin sees ONLY its own org's members; operator sees all.
     return c.json({ users: own ? all.filter((u) => u.orgId === own) : all });
   });
 
   app.post('/users', async (c) => {
-    if (!(await allowP(c, 'users:write'))) return deny(c, 'write');
+    if (!(await allowP(c.req.raw, 'users:write'))) return deny(c.req.raw, 'write');
     if (!opts.users) return c.json({ error: 'user management is not enabled (the host must provide a userStore)' }, 501);
-    const own = principalOf(c)?.orgId;
+    const own = principalOf(c.req.raw)?.orgId;
     const body = (await c.req.json().catch(() => ({}))) as { email?: string; name?: string; roles?: string[]; permissions?: string[]; orgId?: string; ttlMs?: number; expiresAt?: number };
     if (body.roles && (!Array.isArray(body.roles) || body.roles.some((r) => typeof r !== 'string'))) {
       return c.json({ error: 'roles must be a string array' }, 400);
@@ -1352,7 +1360,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     // MINT the reserved `platform-admin` role (or the `'*'` super-grant) — that would create a cross-org
     // super-admin out of an org-bound admin. Same-org checks below guard the target's org, not its privileges.
     {
-      const ceiling = assertAssignablePrivileges(principalOf(c), { roles: body.roles, permissions: body.permissions });
+      const ceiling = assertAssignablePrivileges(principalOf(c.req.raw), { roles: body.roles, permissions: body.permissions });
       if (!ceiling.ok) return c.json({ error: ceiling.reason }, 403);
     }
     let targetOrg = body.orgId?.trim() || undefined;
@@ -1385,10 +1393,10 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   });
 
   app.delete('/users/:id', async (c) => {
-    if (!(await allowP(c, 'users:write'))) return deny(c, 'write');
+    if (!(await allowP(c.req.raw, 'users:write'))) return deny(c.req.raw, 'write');
     if (!opts.users) return c.json({ error: 'user management is not enabled' }, 501);
     const id = decodeURIComponent(c.req.param('id'));
-    const own = principalOf(c)?.orgId;
+    const own = principalOf(c.req.raw)?.orgId;
     if (own) {
       // Org-admin can only delete a member of ITS OWN org.
       const target = (await opts.users.list()).find((u) => u.id === id);
@@ -1404,11 +1412,11 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // Invalidate the user's token WITHOUT deleting the user (audit/history remains). Only enabled if
   // opts.users.revoke is provided (501 if the host doesn't support it). SAME permission rule as DELETE /users/:id.
   app.post('/users/:id/revoke', async (c) => {
-    if (!(await allowP(c, 'users:write'))) return deny(c, 'write');
+    if (!(await allowP(c.req.raw, 'users:write'))) return deny(c.req.raw, 'write');
     if (!opts.users) return c.json({ error: 'user management is not enabled' }, 501);
     if (!opts.users.revoke) return c.json({ error: 'revoke is not enabled for this host' }, 501);
     const id = decodeURIComponent(c.req.param('id'));
-    const own = principalOf(c)?.orgId;
+    const own = principalOf(c.req.raw)?.orgId;
     if (own) {
       // Org-admin can only revoke a member of ITS OWN org.
       const target = (await opts.users.list()).find((u) => u.id === id);
@@ -1425,11 +1433,11 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // user via checkboxes). The token is unchanged; the next authenticate picks up the new grants. SAME
   // permission + org-scope rules as the other /users writes (org-admin: own org only; operator: any).
   app.patch('/users/:id', async (c) => {
-    if (!(await allowP(c, 'users:write'))) return deny(c, 'write');
+    if (!(await allowP(c.req.raw, 'users:write'))) return deny(c.req.raw, 'write');
     if (!opts.users) return c.json({ error: 'user management is not enabled' }, 501);
     if (!opts.users.update) return c.json({ error: 'user update is not enabled for this host' }, 501);
     const id = decodeURIComponent(c.req.param('id'));
-    const own = principalOf(c)?.orgId;
+    const own = principalOf(c.req.raw)?.orgId;
     if (own) {
       const target = (await opts.users.list()).find((u) => u.id === id);
       if (target && target.orgId !== own) {
@@ -1449,7 +1457,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     // PRIVILEGE CEILING (see POST /users): an admin cannot ELEVATE a user (or itself) to `platform-admin`
     // / `'*'` via PATCH either — this is the self-grant path (PATCH /users/<own-id> {roles:[...]}).
     {
-      const ceiling = assertAssignablePrivileges(principalOf(c), { roles: body.roles, permissions: body.permissions });
+      const ceiling = assertAssignablePrivileges(principalOf(c.req.raw), { roles: body.roles, permissions: body.permissions });
       if (!ceiling.ok) return c.json({ error: ceiling.reason }, 403);
     }
     try {
@@ -1468,7 +1476,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // id='default' is the fallback for all orgs. Empty body/null values → the budget is deleted.
   // @gnldev/server's write path reads this document LIVE → changes take effect without a redeploy.
   const putOrganizationBudget = async (c: Context) => {
-    if (!(await allowP(c, 'budget:write'))) return deny(c, 'write');
+    if (!(await allowP(c.req.raw, 'budget:write'))) return deny(c.req.raw, 'write');
     if (!writable) return c.json({ error: 'budget management requires a writable journal' }, 501);
     // Note: the standalone `const` handler uses the generic Hono `Context` type (no route-specific path
     // literal) → ':id' therefore needs `!` (see the note on the DELETE handler).
@@ -1476,7 +1484,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     // An identity-bound org can ONLY write ITS OWN budget — it cannot change someone else's or the
     // 'default' fallback (the write-side counterpart of the visibility restriction in GET /organizations).
     // An unbound (operator) identity manages all of them.
-    const bound = principalOf(c)?.orgId;
+    const bound = principalOf(c.req.raw)?.orgId;
     if (bound && id !== bound) {
       return c.json({ error: `unauthorized: identity is bound to org '${bound}', cannot manage the budget of '${id}'` }, 403);
     }
@@ -1505,7 +1513,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // counters (O(1 + days), see readMetricsSummary) — no per-run scan at all. `source` tells the caller
   // which path served the response (materialized vs the legacy full scan) so Studio's UI/tests can tell.
   app.get('/metrics', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (typeof rw.getCounters === 'function') {
       const daysParam = Number(c.req.query('days'));
       const days = Number.isFinite(daysParam) ? Math.trunc(daysParam) : undefined;
@@ -1553,7 +1561,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // Only runs WITHOUT that row (in-flight, or older than this feature / a journal without incrBy) fall
   // back to the readRun+getRunCost scan. Response shape is UNCHANGED (same field names as before).
   app.get('/metrics/runs', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     let runs = await reader.listRuns();
     // P1.6b: optional ?limit= — clamp 1..1000, slicing the run list BEFORE fetching any rows (a cheap
     // partial win). Full cursor-based pagination for this endpoint is P0.3's job — not attempted here.
@@ -1638,8 +1646,8 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // Getting a ticket also requires READ permission (viewer/admin) — if auth is off (no provider), allow()
   // already returns true, so the ticket is issued freely (consistent with the existing open behavior).
   app.post('/auth/sse-ticket', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
-    const { ticket, expiresAt } = issueSseTicket(principalOf(c));
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    const { ticket, expiresAt } = issueSseTicket(principalOf(c.req.raw));
     return c.json({ ticket, expiresAt });
   });
 
@@ -1703,10 +1711,10 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       // If the ticket is org-bound (multi-org), the read is scoped to that org — PARITY with the org
       // middleware's bound-principal behavior (see the app.use('*') block above).
       ticketOrg = principal?.orgId;
-    } else if (!(await allow(c, 'read'))) {
-      return deny(c, 'read');
+    } else if (!(await allow(c.req.raw, 'read'))) {
+      return deny(c.req.raw, 'read');
     }
-    const run = () => streamSSE(c, async (stream) => {
+    const run = () => sseResponse(c, async (stream) => {
       // API-04: the event body is now INFORMATIVE — `{"runIds":[...],"at":<epoch ms>}` naming exactly
       // which runs changed, instead of the old signal-only `data:'runs'` — so the client can patch just
       // those rows (see studio-ui/api.ts's useLiveRuns) instead of refetching every loaded page.
@@ -1767,7 +1775,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // "re-run from here" (admin).
   app.post('/runs/:id/fork', async (c) => {
-    if (!(await allowP(c, 'run:write'))) return deny(c, 'write');
+    if (!(await allowP(c.req.raw, 'run:write'))) return deny(c.req.raw, 'write');
     if (!resume) return c.json({ error: 'fork requires resume' }, 501);
     if (!writable) return c.json({ error: 'fork requires a writable journal' }, 501);
     const id = decodeURIComponent(c.req.param('id'));
@@ -1780,7 +1788,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // approval → resume (admin).
   app.post('/runs/:id/resume', async (c) => {
-    if (!(await allowP(c, 'run:write'))) return deny(c, 'write');
+    if (!(await allowP(c.req.raw, 'run:write'))) return deny(c.req.raw, 'write');
     if (!resume) return c.json({ error: 'resume is not enabled' }, 501);
     const id = decodeURIComponent(c.req.param('id'));
     const body = (await c.req.json().catch(() => ({}))) as { approvals?: Record<string, boolean> };
@@ -1803,7 +1811,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
    * `rw` (withOrg prefixes every key), so this returns the same 404 (no existence leak) as elsewhere.
    */
   app.post('/runs/:id/cancel', async (c) => {
-    if (!(await allowP(c, 'run:write'))) return deny(c, 'write');
+    if (!(await allowP(c.req.raw, 'run:write'))) return deny(c.req.raw, 'write');
     if (!writable) return c.json({ error: 'cancel requires a writable journal' }, 501);
     const id = decodeURIComponent(c.req.param('id'));
     const visible = await rw.get!(`${id}:input`).catch(() => undefined);
@@ -1818,7 +1826,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // is CONDEMNED first (never resumable again) → write-gated + audited with the report summary.
   // `dryRun: true` previews the work without condemning or executing anything.
   app.post('/runs/:id/compensate', async (c) => {
-    if (!(await allowP(c, 'run:write'))) return deny(c, 'write');
+    if (!(await allowP(c.req.raw, 'run:write'))) return deny(c.req.raw, 'write');
     if (!compensate) return c.json({ error: 'compensate is not enabled (pass the compensate option — see StudioApiOptions)' }, 501);
     const id = decodeURIComponent(c.req.param('id'));
     const body = (await c.req.json().catch(() => ({}))) as { dryRun?: boolean };
@@ -1834,7 +1842,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // GDPR/PII purge: PERMANENTLY delete ALL trace of a run (irreversible) — the one exception to the
   // journal's append-only philosophy; only for legal deletion. The decision is logged to audit (actor + deleted record count).
   app.delete('/runs/:id', async (c) => {
-    if (!(await allowP(c, 'run:delete'))) return deny(c, 'write');
+    if (!(await allowP(c.req.raw, 'run:delete'))) return deny(c.req.raw, 'write');
     // Root-level management: run purge runs ORG-UNSCOPED (rw = raw journal) → a bound identity could
     // otherwise also delete another org's run. Only an unbound operator can do this.
     { const denied = requirePlatformAdmin(c, 'an org-bound identity cannot purge a run (operator required)'); if (denied) return denied; }
@@ -1852,7 +1860,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // (replayRun — NOT forkRun, it never touches the original run's journal records), then
   // returns the decision-point diff (regressionReport → diffRuns).
   app.post('/runs/:id/regression', async (c) => {
-    if (!(await allow(c, 'write'))) return deny(c, 'write');
+    if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     if (!writable) return c.json({ error: 'regression requires a writable journal' }, 501);
     const id = decodeURIComponent(c.req.param('id'));
     const body = (await c.req.json().catch(() => ({}))) as { model?: string; system?: string; newRunId?: string; memoryOff?: boolean };
@@ -1884,7 +1892,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // Diffs two EXISTING runs (without re-running) at the decision-point level — read-only.
   app.get('/runs/:id/regression/:otherId', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     const id = decodeURIComponent(c.req.param('id'));
     const otherId = decodeURIComponent(c.req.param('otherId'));
     return c.json(await regressionReport(reader, id, otherId));
@@ -1894,7 +1902,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // NEVER holds the target endpoint/API key itself — the host CALLS opts.otelExport with its own
   // configured target (internally the host runs @gnldev/otel's `exportRunToOtlp` with its own preset); we only TRIGGER it.
   app.post('/runs/:id/otel-export', async (c) => {
-    if (!(await allow(c, 'write'))) return deny(c, 'write');
+    if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     if (!opts.otelExport) return c.json({ error: 'OTEL export is not enabled (the host must provide otelExport)' }, 501);
     const id = decodeURIComponent(c.req.param('id'));
     const result = await opts.otelExport(id);
@@ -1904,7 +1912,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // Retention sweep: PERMANENTLY clean up old runs per the policy (or the request body).
   app.post('/retention/sweep', async (c) => {
-    if (!(await allow(c, 'write'))) return deny(c, 'write');
+    if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     // Root-level management: the sweep scans runs across ALL orgs (org-unscoped) → a bound identity could
     // otherwise also delete other orgs' data. Only an unbound operator can do this.
     { const denied = requirePlatformAdmin(c, 'an org-bound identity cannot run a retention sweep (operator required)'); if (denied) return denied; }
@@ -1926,13 +1934,13 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // ── Guard/policy editor: rules live in the journal (__policy__), policyGuard reads them live ──────────
   app.get('/policy', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!writable) return c.json({ policy: null });
     return c.json({ policy: (await rw.get!(POLICY_KEY)) ?? null });
   });
 
   app.put('/policy', async (c) => {
-    if (!(await allowP(c, 'policy:write'))) return deny(c, 'write');
+    if (!(await allowP(c.req.raw, 'policy:write'))) return deny(c.req.raw, 'write');
     if (!writable) return c.json({ error: 'editing the policy requires a writable journal' }, 501);
     // Root-level management: the policy is a SINGLE GLOBAL rule set for ALL orgs (org-unscoped) → a
     // bound identity could otherwise change everyone's guard. Only an unbound operator can do this.
@@ -1968,7 +1976,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // live chat (admin).
   app.post('/chat', async (c) => {
-    if (!(await allow(c, 'write'))) return deny(c, 'write');
+    if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     if (!chat) return c.json({ error: 'chat is not enabled' }, 501);
     const body = (await c.req.json().catch(() => ({}))) as { message?: string; runId?: string };
     if (!body.message) return c.json({ error: 'message is required' }, 400);
@@ -2005,7 +2013,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
    * Principal.orgId (else the header-resolved org in ALS; operator/auth-off → undefined → everything visible).
    * A global agent (no orgs) is always visible → backward-compatible.
    */
-  const callerOrg = (c: Context): string | undefined => principalOf(c)?.orgId ?? orgALS.getStore();
+  const callerOrg = (c: Context): string | undefined => principalOf(c.req.raw)?.orgId ?? orgALS.getStore();
   /**
    * An org-invisible CODE-DEFINED agent → 404 (does NOT LEAK that it exists, same body as unknown-agent).
    * `orgs` is a property only of code-defined AgentConfig; names NOT IN listAgents (managed agent /
@@ -2022,7 +2030,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // Registered agent list (for the selector). Visible if read is open; running requires write.
   // Org-scoped: an org-bound caller only sees GLOBAL agents + agents whose `orgs` include their org.
   app.get('/agents', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!gnl) return c.json([]);
     const org = callerOrg(c);
     const list = await gnl.listAgents();
@@ -2036,7 +2044,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // and doesn't carry the real AgentConfig — see its JSDoc above). Platform-level (never per-org, same
   // as /organizations) → gated by requirePlatformAdmin regardless of the org middleware.
   app.get('/agents/registry', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     { const denied = requirePlatformAdmin(c, 'an org-bound identity cannot view the agent registry (operator required)'); if (denied) return denied; }
     if (!writable || typeof rw.listKeys !== 'function') return c.json([]);
     try {
@@ -2047,7 +2055,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   });
 
   app.post('/agents/registry/:name/approve', async (c) => {
-    if (!(await allow(c, 'write'))) return deny(c, 'write');
+    if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     { const denied = requirePlatformAdmin(c, 'an org-bound identity cannot approve an agent (operator required)'); if (denied) return denied; }
     if (!writable) return c.json({ error: 'agent registry requires a writable journal' }, 501);
     const name = decodeURIComponent(c.req.param('name'));
@@ -2058,7 +2066,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   });
 
   app.post('/agents/registry/:name/block', async (c) => {
-    if (!(await allow(c, 'write'))) return deny(c, 'write');
+    if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     { const denied = requirePlatformAdmin(c, 'an org-bound identity cannot block an agent (operator required)'); if (denied) return denied; }
     if (!writable) return c.json({ error: 'agent registry requires a writable journal' }, 501);
     const name = decodeURIComponent(c.req.param('name'));
@@ -2070,7 +2078,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // Run an agent (admin). The same runId as an approval → the suspended tool is released for free (resume for free).
   app.post('/agents/:name/run', async (c) => {
-    if (!(await allowP(c, 'agents:run'))) return deny(c, 'write');
+    if (!(await allowP(c.req.raw, 'agents:run'))) return deny(c.req.raw, 'write');
     if (!gnl) return c.json({ error: 'playground is not enabled' }, 501);
     const name = decodeURIComponent(c.req.param('name'));
     const gated = await agentGate(c, name);
@@ -2101,7 +2109,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // Run an agent with streaming (admin) — the same SSE schema as @gnldev/server.
   app.post('/agents/:name/stream', async (c) => {
-    if (!(await allowP(c, 'agents:run'))) return deny(c, 'write');
+    if (!(await allowP(c.req.raw, 'agents:run'))) return deny(c.req.raw, 'write');
     if (!gnl?.stream) return c.json({ error: 'streaming is not enabled' }, 501);
     const name = decodeURIComponent(c.req.param('name'));
     const gated = await agentGate(c, name);
@@ -2137,13 +2145,13 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // ── Tools (if gnl.listTools is given) ─────────────────────────────────────────
   // Flat tool list (name, description, JSON schema, which agents). For schema-driven form generation.
   app.get('/tools', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     return c.json(gnl?.listTools ? await gnl.listTools() : []);
   });
 
   // Run a tool for TEST purposes (admin) — NON-DURABLE: no journal/guard. Watch out for side effects.
   app.post('/tools/:name/execute', async (c) => {
-    if (!(await allow(c, 'write'))) return deny(c, 'write');
+    if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     if (!gnl?.runTool) return c.json({ error: 'tool execution is not enabled' }, 501);
     const name = decodeURIComponent(c.req.param('name'));
     const body = (await c.req.json().catch(() => ({}))) as { input?: unknown; durable?: boolean; approve?: { runId: string; toolCallId: string; approved: boolean } };
@@ -2154,23 +2162,23 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // ── Memory / Threads (if memory is given) ─────────────────────────────────────
   app.get('/threads', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!resolvedMemory) return c.json([]);
     const resourceId = c.req.query('resourceId') || undefined;
     return c.json(await resolvedMemory.listThreads(resourceId));
   });
   app.get('/threads/:id/messages', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!resolvedMemory) return c.json([]);
     return c.json(await resolvedMemory.getMessages(decodeURIComponent(c.req.param('id'))));
   });
   app.get('/threads/:id/working-memory', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!resolvedMemory?.getWorkingMemory) return c.json({ value: null });
     return c.json({ value: (await resolvedMemory.getWorkingMemory(decodeURIComponent(c.req.param('id')))) ?? null });
   });
   app.patch('/threads/:id', async (c) => {
-    if (!(await allow(c, 'write'))) return deny(c, 'write');
+    if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     if (!resolvedMemory?.updateThread) return c.json({ error: 'updateThread is not supported' }, 501);
     const patch = (await c.req.json().catch(() => ({}))) as { title?: string; metadata?: Record<string, unknown> };
     try {
@@ -2182,7 +2190,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     }
   });
   app.delete('/threads/:id', async (c) => {
-    if (!(await allow(c, 'write'))) return deny(c, 'write');
+    if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     if (!resolvedMemory?.deleteThread) return c.json({ error: 'deleteThread is not supported' }, 501);
     try {
       await resolvedMemory.deleteThread(decodeURIComponent(c.req.param('id')));
@@ -2198,7 +2206,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // 501 both when the adapter doesn't implement truncateMessages AND when it does but the underlying
   // store can't support it (signaled by a `null` return) — same externally-observable outcome either way.
   app.delete('/threads/:id/messages', async (c) => {
-    if (!(await allow(c, 'write'))) return deny(c, 'write');
+    if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     if (!resolvedMemory?.truncateMessages) return c.json({ error: 'truncateMessages is not supported' }, 501);
     const body = (await c.req.json().catch(() => ({}))) as { afterIndex?: unknown };
     if (typeof body.afterIndex !== 'number' || !Number.isFinite(body.afterIndex)) {
@@ -2217,7 +2225,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // ── Queue / Jobs (if queue is given) ──────────────────────────────────────────
   app.get('/jobs', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!queue) return c.json([]);
     return c.json(await queue.listJobs());
   });
@@ -2227,7 +2235,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // pending/locked would queue work the worker is ALREADY going to process a second time, causing a
   // DOUBLE-RUN — this protection lives on queue.retry's own side (returns null → 409).
   app.post('/jobs/:id/retry', async (c) => {
-    if (!(await allow(c, 'write'))) return deny(c, 'write');
+    if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     if (!queue?.retry) return c.json({ error: 'job retry is not supported (queue not given or retry not implemented)' }, 501);
     const id = decodeURIComponent(c.req.param('id'));
     const newId = await queue.retry(id);
@@ -2240,7 +2248,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // ── Cache (if cache is given): hit/miss ratio + manual invalidate (@gnldev/cache stats()/invalidate() duck-type) ──
   app.get('/cache/stats', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!cache) return c.json({ hits: 0, misses: 0, hitRate: 0, size: 0 });
     return c.json(await cache.stats());
   });
@@ -2248,7 +2256,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // Manual invalidate: if body.key is given, only that key; if not (best-effort — CacheStore doesn't
   // offer key enumeration), all keys the host knows about are removed (see StudioCache.invalidate).
   app.post('/cache/invalidate', async (c) => {
-    if (!(await allow(c, 'write'))) return deny(c, 'write');
+    if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     if (!cache?.invalidate) return c.json({ error: 'cache invalidate is not supported (cache not given or invalidate not implemented)' }, 501);
     const body = (await c.req.json().catch(() => ({}))) as { key?: unknown };
     const deleted = await cache.invalidate(body.key);
@@ -2261,14 +2269,14 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // sched:state:/sched:fail: keys as pollScheduler, never MUTATES any state). Returns an empty list if
   // the journal isn't writable + doesn't support listKeys (or the host doesn't use @gnldev/scheduler at all) (same pattern as queue/jobs).
   app.get('/scheduler/triggers', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!writable || typeof rw.listKeys !== 'function' || typeof rw.get !== 'function') return c.json([]);
     return c.json(await listTriggers(rw as unknown as Journal));
   });
 
   // ── Knowledge / vector search (if vectors is given) ────────────────────────────
   app.post('/knowledge/search', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!vectors) return c.json([]);
     const body = (await c.req.json().catch(() => ({}))) as { query?: string; topK?: number };
     if (!body.query?.trim()) return c.json([]);
@@ -2277,7 +2285,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // ── Workflows (if gnl.listWorkflows or the workflows option is given) ──────────
   app.get('/workflows', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     const rawCode = gnl?.listWorkflows ? await gnl.listWorkflows() : (workflows ? await workflows.listWorkflows() : []);
     const code: WorkflowMeta[] = rawCode.map((w) => ({ ...w, source: 'code' as const, ...(workflowInputs?.[w.name] ? { input: workflowInputs[w.name] } : {}) }));
     const managed: WorkflowMeta[] = resolvedWfStore
@@ -2289,7 +2297,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // Run a workflow durably (admin) — give input, get step results back.
   app.post('/workflows/:name/run', async (c) => {
-    if (!(await allow(c, 'write'))) return deny(c, 'write');
+    if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     const name = decodeURIComponent(c.req.param('name'));
     const body = (await c.req.json().catch(() => ({}))) as { input?: unknown; runId?: string; maxSteps?: number; dryRun?: boolean; resume?: Record<string, unknown> };
     // Try code-defined first.
@@ -2331,7 +2339,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // input, the copied ones REPLAY on resume, and the selected step onward re-runs. The workflow
   // counterpart of the agent fork (forkRun) — "what-if" analysis that can't be copied without a journal.
   app.post('/workflows/:name/runs/:id/fork', async (c) => {
-    if (!(await allow(c, 'write'))) return deny(c, 'write');
+    if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     if (!writable || typeof rw.listKeys !== 'function') return c.json({ error: 'fork requires a writable journal (listKeys)' }, 501);
     const name = decodeURIComponent(c.req.param('name'));
     const src = decodeURIComponent(c.req.param('id'));
@@ -2363,7 +2371,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   });
 
   app.post('/workflows/:name/run-stream', async (c) => {
-    if (!(await allow(c, 'write'))) return deny(c, 'write');
+    if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     if (!rw.listKeys || !rw.get) return c.json({ error: 'streaming requires a writable journal (listKeys+get)' }, 501);
     const name = decodeURIComponent(c.req.param('name'));
     const body = (await c.req.json().catch(() => ({}))) as { input?: unknown; runId?: string };
@@ -2390,7 +2398,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     const jkeys = rw.listKeys.bind(rw);
     const jget = rw.get.bind(rw);
     const start = begin;
-    return streamSSE(c, async (stream) => {
+    return sseResponse(c, async (stream) => {
       await stream.writeSSE({ event: 'start', data: JSON.stringify({ runId }) });
       const seen = new Set<string>();
       const emitNew = async () => {
@@ -2421,7 +2429,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // The status of a workflow RUN (step outputs + suspend, from the journal) — open a past run / replay.
   app.get('/workflows/run/:runId', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!rw.listKeys || !rw.get) return c.json({ error: 'wf run state requires listKeys+get' }, 501);
     const runId = decodeURIComponent(c.req.param('runId'));
     const pre = `${runId}:wf:`;
@@ -2440,7 +2448,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // Lists ALL runs of a workflow (persistent history; server-side instead of localStorage).
   // Extracts `wf-<name>-` prefixed runIds from the journal (pure-wf runs don't land in listRuns → listKeys).
   app.get('/workflows/:name/runs', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!rw.listKeys || !rw.get) return c.json({ error: 'wf run listing requires listKeys+get' }, 501);
     const name = decodeURIComponent(c.req.param('name'));
     const limit = Math.max(1, Math.min(500, Number(c.req.query('limit')) || 100));
@@ -2488,7 +2496,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
    * stable to read directly without importing the package.
    */
   app.get('/workflows/runs', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!rw.listKeys || !rw.get) return c.json({ error: 'workflow run listing requires listKeys+get' }, 501);
     const statusRaw = c.req.query('status');
     if (statusRaw != null && statusRaw !== 'suspended' && statusRaw !== 'completed' && statusRaw !== 'canceled') {
@@ -2561,7 +2569,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
    * marker must exist, otherwise this is a cross-org/nonexistent runId → 404 (no existence leak).
    */
   app.post('/workflows/runs/:id/cancel', async (c) => {
-    if (!(await allow(c, 'write'))) return deny(c, 'write');
+    if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     if (!writable || typeof rw.listKeys !== 'function' || typeof rw.get !== 'function' || typeof rw.put !== 'function') {
       return c.json({ error: 'workflow cancel requires a writable journal (listKeys+get+put)' }, 501);
     }
@@ -2588,7 +2596,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // ── Workflow CRUD (managed; if resolvedWfStore exists) ─────────────────────────
   app.get('/workflows/:name/def', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!resolvedWfStore) return c.json({ error: 'no workflow store is available' }, 501);
     const name = decodeURIComponent(c.req.param('name'));
     const def = await resolvedWfStore.get(name);
@@ -2597,7 +2605,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   });
 
   app.post('/workflows', async (c) => {
-    if (!(await allowP(c, 'workflow:write'))) return deny(c, 'write');
+    if (!(await allowP(c.req.raw, 'workflow:write'))) return deny(c.req.raw, 'write');
     if (!resolvedWfStore) return c.json({ error: 'no workflow store is available' }, 501);
     const body = (await c.req.json().catch(() => null)) as WorkflowDef | null;
     if (!body?.name?.trim()) return c.json({ error: 'name is required' }, 400);
@@ -2609,7 +2617,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   });
 
   app.put('/workflows/:name', async (c) => {
-    if (!(await allowP(c, 'workflow:write'))) return deny(c, 'write');
+    if (!(await allowP(c.req.raw, 'workflow:write'))) return deny(c.req.raw, 'write');
     if (!resolvedWfStore) return c.json({ error: 'no workflow store is available' }, 501);
     const name = decodeURIComponent(c.req.param('name'));
     const body = (await c.req.json().catch(() => null)) as Partial<WorkflowDef> | null;
@@ -2622,7 +2630,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   });
 
   app.delete('/workflows/:name', async (c) => {
-    if (!(await allowP(c, 'workflow:write'))) return deny(c, 'write');
+    if (!(await allowP(c.req.raw, 'workflow:write'))) return deny(c.req.raw, 'write');
     if (!resolvedWfStore) return c.json({ error: 'no workflow store is available' }, 501);
     const name = decodeURIComponent(c.req.param('name'));
     const codeNames = gnl?.listWorkflows ? (await gnl.listWorkflows()).map((w) => w.name) : [];
@@ -2634,20 +2642,20 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // ── Scorers / Evals (if scorers is given) ─────────────────────────────────────
   app.get('/scorers', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     return c.json(scorers ? await scorers.list() : []);
   });
   // Score a run with the selected scorers (read; deterministic, reads from a journaled run).
   // ── Managed agent versions: list / new version / promote (rollback = promoting an older version) ──
   app.get('/managed-agents', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     const store = agentStoreFor(c); // org-scoped: a bound identity sees only its own versions
     if (!store) return c.json({ agents: [] });
     return c.json({ agents: await store.list() });
   });
 
   app.post('/managed-agents', async (c) => {
-    if (!(await allow(c, 'write'))) return deny(c, 'write');
+    if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     const store = agentStoreFor(c); // a bound identity manages only ITS OWN org's versions
     if (!store) return c.json({ error: 'agent versioning requires a writable journal (listKeys)' }, 501);
     const body = (await c.req.json().catch(() => null)) as { name?: string; model?: string; system?: string; maxSteps?: number; note?: string } | null;
@@ -2687,7 +2695,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   });
 
   app.post('/managed-agents/:name/promote', async (c) => {
-    if (!(await allow(c, 'write'))) return deny(c, 'write');
+    if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     const store = agentStoreFor(c);
     if (!store) return c.json({ error: 'agent versioning requires a writable journal (listKeys)' }, 501);
     const name = decodeURIComponent(c.req.param('name'));
@@ -2729,7 +2737,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // a code-defined agent (createGnl agents) doesn't come from this store, so it can't be deleted/affected.
   // If code + managed share a name, deleting only removes the managed override — the code agent (registry) keeps showing as-is.
   app.delete('/managed-agents/:name', async (c) => {
-    if (!(await allow(c, 'write'))) return deny(c, 'write');
+    if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     const store = agentStoreFor(c); // a bound identity deletes only ITS OWN org's record
     if (!store) return c.json({ error: 'agent versioning requires a writable journal (listKeys)' }, 501);
     const name = decodeURIComponent(c.req.param('name'));
@@ -2745,7 +2753,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // (409). Since the active version is never deleted, the active pointer always stays valid. If the last
   // version is deleted too, the agent record is removed entirely (same as whole-agent delete — needs store.delete; only in that case).
   app.delete('/managed-agents/:name/versions/:version', async (c) => {
-    if (!(await allow(c, 'write'))) return deny(c, 'write');
+    if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     const store = agentStoreFor(c);
     if (!store) return c.json({ error: 'agent versioning requires a writable journal (listKeys)' }, 501);
     const name = decodeURIComponent(c.req.param('name'));
@@ -2770,7 +2778,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   });
 
   app.post('/runs/:id/score', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!scorers) return c.json({ error: 'scorers is not enabled' }, 501);
     const id = decodeURIComponent(c.req.param('id'));
     const body = (await c.req.json().catch(() => ({}))) as { scorers?: string[]; expected?: string };
@@ -2782,10 +2790,10 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   });
 
   // ── Evals / Datasets (if datasets is given) ───────────────────────────────────
-  app.get('/datasets', async (c) => ((await allow(c, 'read')) ? c.json(datasets ? await datasets.list() : []) : deny(c, 'read')));
+  app.get('/datasets', async (c) => ((await allow(c.req.raw, 'read')) ? c.json(datasets ? await datasets.list() : []) : deny(c.req.raw, 'read')));
   // Run a dataset suite (admin — runs the agent → LLM). Returns a result table + aggregate.
   app.post('/datasets/:id/run', async (c) => {
-    if (!(await allow(c, 'write'))) return deny(c, 'write');
+    if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     if (!datasets) return c.json({ error: 'datasets is not enabled' }, 501);
     const id = decodeURIComponent(c.req.param('id'));
     const body = (await c.req.json().catch(() => ({}))) as { scorers?: string[] };
@@ -2798,7 +2806,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // ── A2A Networks (if the a2a option is on) — extracts agent-to-agent edges from the journal ───────
   app.get('/a2a-network', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!a2a) return c.json([]);
     const runs = await reader.listRuns();
     const edges: { parentRunId: string; remoteAgent: string; remoteRunId?: string; status: string }[] = [];
@@ -2816,7 +2824,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // ── MCP Servers (if mcp is given) — list each client's tools ─────────
   app.get('/mcp-servers', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!mcp?.length) return c.json([]);
     const out: { id: string; name?: string; tools: unknown[]; error?: string }[] = [];
     for (const s of mcp) {

@@ -58,12 +58,12 @@ function makeStore() {
 
 function rbacAuth(store: ReturnType<typeof makeStore>): AuthProvider {
   return {
-    authenticate: (c) => {
-      const h = c.req.header('authorization');
-      const t = h?.startsWith('Bearer ') ? h.slice(7) : c.req.query('token');
+    authenticate: (req) => {
+      const h = req.headers.get('authorization');
+      const t = h?.startsWith('Bearer ') ? h.slice(7) : new URL(req.url).searchParams.get('token');
       return t ? store.principalFor(t) : null;
     },
-    authorize: (p, _c, ctx) => {
+    authorize: (p, _req, ctx) => {
       if (!p) return { allow: false, status: 401, reason: 'unauthenticated' };
       const required = ctx.permission ?? `${ctx.resource ?? 'x'}:${ctx.action}`;
       const eff: string[] = p.permissions?.length ? p.permissions : p.roles.flatMap((r: string) => GRANTS[r] ?? []);

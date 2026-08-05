@@ -78,12 +78,12 @@ describe('@gnldev/studio agent approval registry — strict multi-org platform-a
     const journal = new InMemoryJournal();
     await recordAgent(journal, 'a', fingerprintAgent('a', { model: 'openai/gpt-4o' } as any));
     const licensedAuth = {
-      authenticate: (c: any) => {
-        const h = c.req.header('authorization');
+      authenticate: (req: any) => {
+        const h = req.headers.get('authorization');
         const tok = h?.startsWith('Bearer ') ? h.slice(7) : undefined;
         return tok === 'acme-adm' ? { id: 'acme-adm', roles: ['admin'], orgId: 'acme' } : null;
       },
-      authorize: (p: any, _c: any, ctx: any) => {
+      authorize: (p: any, _req: any, ctx: any) => {
         if (!p) return { allow: false, status: 401 };
         if (ctx.action === 'write') return p.roles.includes('admin') ? { allow: true } : { allow: false, status: 403 };
         return { allow: true };

@@ -16,13 +16,52 @@ import { createGnl } from '@gnldev/durable';
 const config = { journal, agents: { support } };
 const gnl = createGnl(config);
 
-const app = createStudioApp({
+const studio = createStudioApp({
   reader: journal,
   gnl: makeStudioRunner(gnl, config),   // ← turns on the Playground (run/stream agents)
   // resume: ... (for timeline approval/fork, optional)
 });
-// mount with app.route('/studio', app) or serve it directly.
 ```
+
+`createStudioApp` returns a **web-standard fetch handler**, not a framework object, so it binds to
+whatever your app already runs on:
+
+```ts
+// Hono
+app.mount('/studio', studio);
+
+// Express, Fastify, Koa, Nest, bare node:http — anything on Node
+import { toNodeHandler } from '@gnldev/studio/node';
+express().use('/studio', toNodeHandler(studio));       // mount BEFORE express.json()
+await fastify.register(middie);                        // @fastify/middie
+fastify.use('/studio', toNodeHandler(studio));
+koa.use(c2k(mw));                                      // koa-connect, before koa-bodyparser
+createServer(toNodeHandler(studio));
+
+// On its own port
+serve({ fetch: studio.fetch, port: 4321 });
+```
+
+Mount it **before** whatever parses request bodies. A parser that runs first reads the stream to the
+end and hands the result to the framework, not to us — the handler then sees a POST with no body.
+It is the one ordering rule this package has, it is the same rule better-auth's Node handler carries,
+and getting it wrong now answers with `body_consumed_upstream` instead of blaming your request.
+Your own routes keep the parser: it still runs for everything mounted after.
+
+Bind at the **middleware** layer, not as a route. On Fastify that is the whole difference: middleware
+runs before body parsing, a route runs after it — which is why `fastify.all('/studio/*', ...)` looks
+correct, passes every GET, and answers 400 to a perfectly good POST.
+
+Two things that bite quietly, so they are worth reading once:
+
+**Mount order.** `app.mount()` registers one blanket wildcard per call, unlike `app.route()`. A
+catch-all mount at `/` swallows everything registered after it — mount the specific paths first, or
+Studio answers 404 and looks broken when it is only buried.
+
+**Sub-path prefixes.** A host that mounts under a prefix has already stripped it from the request;
+do not add it back when bridging by hand. `toNodeHandler` exists partly to keep you out of this, and
+partly because a hand-written Node bridge that forgets `res.flushHeaders()` serves SSE with the head
+withheld until the first chunk — a quiet event stream then hangs the browser and nothing throws.
 
 CLI (standalone):
 ```bash

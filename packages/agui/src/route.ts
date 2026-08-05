@@ -9,13 +9,13 @@
 // process-kill/exactly-once tests — rather than adding a "sink" parameter there, keeping a small,
 // independent copy here is safer (without touching the existing architecture). The event/data shape of the
 // two copies must be kept in sync with sse.ts; see test/route.test.ts (parallel tests with the same mock patterns).
-import { streamSSE } from 'hono/streaming';
 import type { Context } from 'hono';
 import { toFetchHandler, type FetchHandler } from './handler.js';
 import { Hono } from 'hono';
 import { limitBreachFromSteps, blockedFromSteps, BLOCKED_ERROR_CODES } from '@gnldev/durable';
 import type { CreateGnlConfig } from '@gnldev/durable';
 import { createGnl } from '@gnldev/durable';
+import { streamSSE } from 'hono/streaming';
 import { interruptsFromSteps } from '@gnldev/server';
 import { toAguiEvents, initialAguiConvertState, type GnlSseEvent } from './convert.js';
 import { EventType, type AguiEvent, type RunStartedEvent } from './types.js';
@@ -29,7 +29,17 @@ export interface PipeAguiStreamOptions {
 export function pipeAguiStream(c: Context, runId: string, result: any, opts?: PipeAguiStreamOptions) {
   const threadId = opts?.threadId ?? runId;
   const ctx = { threadId, runId };
-  return streamSSE(c, async (stream) => {
+  // The header patch, written out rather than imported from @gnldev/server: importing a runtime
+  // helper across packages resolves through that package's BUILT output, and a stale dist turns the
+  // call into `undefined` — measured, this exact swap emptied the stream and every test here failed
+  // on `JSON.parse('')`. Six lines of duplication beats a build-order dependency.
+  //
+  // Why the headers: Hono sets `Cache-Control: no-cache`, which says nothing about re-encoding, so a
+  // compression middleware in the host's chain buffers the stream into one chunk delivered at the
+  // end (measured on Express: 13 progressive chunks became 1). `no-transform` stops it;
+  // `X-Accel-Buffering: no` is the same instruction for nginx.
+  // Kept IN SYNC with packages/server/src/sse.ts and packages/studio/src/sse.ts.
+  const res = streamSSE(c, async (stream) => {
     // In AG-UI every SSE frame is a single JSON event; the type is inside the event JSON (the spec has
     // no event/data split of its own) → the SSE `event:` field is NOT USED, only `data:` is written.
     const write = async (event: AguiEvent) => {
@@ -136,6 +146,9 @@ export function pipeAguiStream(c: Context, runId: string, result: any, opts?: Pi
       await emit({ event: 'error', data: { error: String(e?.message ?? e) } });
     }
   });
+  res.headers.set('Cache-Control', 'no-cache, no-transform');
+  res.headers.set('X-Accel-Buffering', 'no');
+  return res;
 }
 
 export interface CreateAguiRouteOptions {

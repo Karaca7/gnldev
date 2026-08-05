@@ -26,11 +26,11 @@ describe('@gnldev/auth scope helpers', () => {
   it('roleAuth injects the platform-admin role ONLY when Cred.platformAdmin is set (back-compat otherwise)', () => {
     const plain = roleAuth({ admin: { token: 'a' } })!;
     const plat = roleAuth({ admin: { token: 'a', platformAdmin: true } })!;
-    // authenticate returns a Principal for a matching bearer via a fake Hono-ish context
-    const ctx = (tok: string): any => ({ req: { header: (h: string) => (h === 'authorization' ? `Bearer ${tok}` : undefined), query: () => undefined } });
-    expect((plain.authenticate(ctx('a')) as Principal).roles).toEqual(['admin']);
-    expect((plat.authenticate(ctx('a')) as Principal).roles).toEqual(['admin', PLATFORM_ADMIN_ROLE]);
-    expect(isPlatformAdmin(plat.authenticate(ctx('a')) as Principal)).toBe(true);
+    // authenticate returns a Principal for a matching bearer via a fake Request
+    const req = (tok: string): Request => new Request('http://x/', { headers: { authorization: `Bearer ${tok}` } });
+    expect((plain.authenticate(req('a')) as Principal).roles).toEqual(['admin']);
+    expect((plat.authenticate(req('a')) as Principal).roles).toEqual(['admin', PLATFORM_ADMIN_ROLE]);
+    expect(isPlatformAdmin(plat.authenticate(req('a')) as Principal)).toBe(true);
   });
 
   it('assertAssignablePrivileges: a non-platform-admin CANNOT mint platform-admin or "*" (privilege ceiling)', () => {

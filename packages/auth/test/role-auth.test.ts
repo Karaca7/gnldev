@@ -6,8 +6,8 @@ import { roleAuth, makeGate, principalOf, type Cred } from '../src/index.js';
 function appWith(cfg: { admin?: Cred; viewer?: Cred }): Hono {
   const { allow, deny } = makeGate(roleAuth(cfg));
   const app = new Hono();
-  app.get('/read', async (c) => ((await allow(c, 'read')) ? c.json({ ok: true }) : deny(c, 'read')));
-  app.post('/write', async (c) => ((await allow(c, 'write')) ? c.json({ ok: true }) : deny(c, 'write')));
+  app.get('/read', async (c) => ((await allow(c.req.raw, 'read')) ? c.json({ ok: true }) : deny(c.req.raw, 'read')));
+  app.post('/write', async (c) => ((await allow(c.req.raw, 'write')) ? c.json({ ok: true }) : deny(c.req.raw, 'write')));
   return app;
 }
 
@@ -48,7 +48,7 @@ describe('roleAuth (free default)', () => {
       viewer: { token: 'viw', orgId: 'acme' },
     }));
     const app = new Hono();
-    app.get('/who', async (c) => ((await allow(c, 'read')) ? c.json(principalOf(c)) : deny(c, 'read')));
+    app.get('/who', async (c) => ((await allow(c.req.raw, 'read')) ? c.json(principalOf(c.req.raw)) : deny(c.req.raw, 'read')));
 
     const v = await (await app.request('/who', { headers: { authorization: 'Bearer viw' } })).json();
     expect(v).toEqual({ roles: ['viewer'], orgId: 'acme' });
@@ -58,7 +58,7 @@ describe('roleAuth (free default)', () => {
 
     // no principal without calling allow() / on an unauthenticated request
     const anon = new Hono();
-    anon.get('/p', (c) => c.json({ p: principalOf(c) }));
+    anon.get('/p', (c) => c.json({ p: principalOf(c.req.raw) }));
     expect((await (await anon.request('/p')).json()).p).toBeNull();
   });
 });

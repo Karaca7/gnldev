@@ -15,7 +15,9 @@ const api = createRestApi({
   journal: new SqliteJournal('runs.db'),
   agents: { support: { model: 'anthropic/claude-opus-4-8', tools, guard, maxSteps: 8 } },
 });
-serve({ fetch: api.fetch, port: 3000 });
+serve({ fetch: api.fetch, port: 3000 });        // on its own port
+// app.mount('/api', api)                      // inside a Hono app
+// express().use('/api', toNodeHandler(api))   // or any Node host — @gnldev/studio/node
 ```
 
 ## Endpoints (per agent)

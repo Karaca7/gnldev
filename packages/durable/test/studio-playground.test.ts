@@ -132,7 +132,7 @@ describe('studio playground', () => {
     const app = createStudioApp({
       reader: journal,
       gnl: createStudioRunner(createGnl(config), config),
-      auth: { write: (c) => c.req.header('x-admin') === 'secret' },
+      auth: { write: (req) => req.headers.get('x-admin') === 'secret' },
     });
     const denied = await call(app, '/api/agents/pay/run', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runId: 'a1', prompt: 'hi' }) });
     expect(denied.status).toBe(403);

@@ -18,12 +18,12 @@ function mkModel(text: string): any {
 
 function licensedAuth(map: Record<string, Principal>): AuthProvider {
   return {
-    authenticate: (c) => {
-      const h = c.req.header('authorization');
-      const tok = h?.startsWith('Bearer ') ? h.slice(7) : c.req.query('token');
+    authenticate: (req) => {
+      const h = req.headers.get('authorization');
+      const tok = h?.startsWith('Bearer ') ? h.slice(7) : new URL(req.url).searchParams.get('token');
       return (tok && map[tok]) || null;
     },
-    authorize: (p, _c, ctx) => {
+    authorize: (p, _req, ctx) => {
       if (!p) return { allow: false, status: 401, reason: 'unauthenticated' };
       if (ctx.action === 'write') return p.roles.includes('admin') || p.roles.includes('platform-admin') ? { allow: true } : { allow: false, status: 403 };
       return { allow: true };

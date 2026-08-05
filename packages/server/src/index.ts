@@ -67,7 +67,11 @@ export type ResourceAuthAction = 'run' | 'read' | 'cancel' | 'resume' | (string 
 /** Per-request multi-organization (opt-in): resolve organization from the request → journal is scoped to that organization. */
 export interface OrgOptions {
   /** Resolve the organization from the request. If not given, the `x-gnl-org` header is read. */
-  resolve?: (c: Context) => string | undefined | Promise<string | undefined>;
+  /**
+   * Takes a web `Request`, not a Hono `Context` — kept in step with @gnldev/studio, and for the same
+   * reason: a host binding this handler from Express or Fastify has a Request and no Context.
+   */
+  resolve?: (req: Request) => string | undefined | Promise<string | undefined>;
   /** true → a request without an organization gets 400. false (default) → a request without an organization runs in the shared scope. */
   required?: boolean;
   /**
@@ -328,7 +332,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
    * a different organization, 403.
    */
   async function scope(c: Context): Promise<Instance | { error: string; status: 400 | 403 }> {
-    const principal = principalOf(c);
+    const principal = principalOf(c.req.raw);
     const bound = principal?.orgId;
     // B2 — tenant isolation must NOT depend on the paid license capability: when the host configured
     // per-request orgs (opts.org) with an auth provider that produces NO principal (e.g. legacy
@@ -349,8 +353,8 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     }
     // If neither the org option nor an identity-bound organization exists → shared default (existing behavior).
     if (!opts.org && !bound) return defaultInstance;
-    const resolve = opts.org?.resolve ?? ((ctx: Context) => ctx.req.header('x-gnl-org'));
-    const requested = await resolve(c);
+    const resolve = opts.org?.resolve ?? ((req: Request) => req.headers.get('x-gnl-org') ?? undefined);
+    const requested = await resolve(c.req.raw);
     if (bound && requested && requested !== bound) {
       return { error: `organization mismatch: identity is bound to organization '${bound}'`, status: 403 };
     }
@@ -436,7 +440,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
    * multi-org model an unbound identity additionally needs the EXPLICIT platform-admin grant.
    */
   function requirePlatformAdmin(c: Context, orgBoundMsg: string): Response | undefined {
-    const p = principalOf(c);
+    const p = principalOf(c.req.raw);
     if (p?.orgId) return c.json({ error: orgBoundMsg }, 403);
     if (strictMultiOrg && !isPlatformAdmin(p)) {
       return c.json({ error: 'platform-admin required (fail-closed: no org scope and no platform-admin grant)' }, 403);
@@ -515,7 +519,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
    * PERSON behind a shared token) > `role:<role>` > 'anon'.
    */
   function actorOf(c: Context): string {
-    const p = principalOf(c);
+    const p = principalOf(c.req.raw);
     return p?.id ?? c.req.header('x-gnl-actor') ?? (p?.roles[0] ? `role:${p.roles[0]}` : 'anon');
   }
 
@@ -531,7 +535,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   async function audit(c: Context, orgId: string | undefined, action: 'run.cancel' | 'workflow.cancel' | 'agent.approve' | 'agent.block', target: string, detail?: unknown): Promise<void> {
     try {
       const actor = actorOf(c);
-      const p = principalOf(c);
+      const p = principalOf(c.req.raw);
       const org = p?.orgId ?? orgId;
       // ALWAYS the ROOT journal (baseJournal), NEVER an org-scoped view — the `__audit__` contract
       // (see @gnldev/studio server.ts's /audit reader) is a SINGLE root-level trail with the organization
@@ -544,7 +548,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   app.post('/agents/:name/run', async (c) => {
     // Running an agent is the `agents:run` permission (member + admin; viewer denied). In the free tier
     // this reduces to 'write' → identical to the previous allow(c,'write') (admin only) → no regression.
-    if (!(await allowP(c, 'agents:run'))) return deny(c, 'write');
+    if (!(await allowP(c.req.raw, 'agents:run'))) return deny(c.req.raw, 'write');
     const name = c.req.param('name');
     // Signature verification operates on the raw body bytes (the SAME string HMAC'd on the client side).
     const parsed = await readSignedBody(c);
@@ -559,7 +563,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     if (approvalDenied) return approvalDenied;
     // P1.7: computed once here (was previously re-derived below) — also needed by the D4-FGA resourceGate
     // check right below, which runs AFTER the coarse allowP('agents:run') gate above.
-    const principal = principalOf(c);
+    const principal = principalOf(c.req.raw);
     const resourceDenied = await resourceGate(c, principal, { type: 'agent', id: name }, 'run');
     if (resourceDenied) return resourceDenied;
     // CONSISTENT with 1.3: continuing a suspended run from this endpoint with the SAME runId + approvals
@@ -605,7 +609,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   });
 
   app.post('/agents/:name/resume', async (c) => {
-    if (!(await allowP(c, 'agents:run'))) return deny(c, 'write');
+    if (!(await allowP(c.req.raw, 'agents:run'))) return deny(c.req.raw, 'write');
     const name = c.req.param('name');
     const parsed = await readSignedBody(c); // F1: A2A signature enforced here too
     if ('denied' in parsed) return parsed.denied;
@@ -644,7 +648,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   // Metadata list of registered agents (for the client/playground agent selector).
   // Org-scoped: an org-bound caller only sees GLOBAL agents + agents whose `orgs` include their org.
   app.get('/agents', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     const s = await scope(c);
     if ('error' in s) return c.json({ error: s.error }, s.status);
     return c.json(listAgentMeta(config, s.orgId));
@@ -655,7 +659,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   // here is platform-admin gated (requirePlatformAdmin) REGARDLESS of whether requireAgentApproval is
   // turned on — an operator can review/approve agents ahead of flipping the enforcement flag.
   app.get('/agents/registry', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     { const denied = requirePlatformAdmin(c, 'an org-bound identity cannot view the agent registry (operator required)'); if (denied) return denied; }
     await agentRegistryBoot;
     try {
@@ -666,7 +670,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   });
 
   app.post('/agents/registry/:name/approve', async (c) => {
-    if (!(await allow(c, 'write'))) return deny(c, 'write');
+    if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     { const denied = requirePlatformAdmin(c, 'an org-bound identity cannot approve an agent (operator required)'); if (denied) return denied; }
     await agentRegistryBoot;
     const name = decodeURIComponent(c.req.param('name'));
@@ -677,7 +681,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   });
 
   app.post('/agents/registry/:name/block', async (c) => {
-    if (!(await allow(c, 'write'))) return deny(c, 'write');
+    if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     { const denied = requirePlatformAdmin(c, 'an org-bound identity cannot block an agent (operator required)'); if (denied) return denied; }
     await agentRegistryBoot;
     const name = decodeURIComponent(c.req.param('name'));
@@ -689,7 +693,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
 
   // Streaming run: text-delta/tool-call/... SSE events, finally interrupt + done (same durability).
   app.post('/agents/:name/stream', async (c) => {
-    if (!(await allowP(c, 'agents:run'))) return deny(c, 'write');
+    if (!(await allowP(c.req.raw, 'agents:run'))) return deny(c.req.raw, 'write');
     const name = c.req.param('name');
     const parsed = await readSignedBody(c); // F1: A2A signature enforced here too
     if ('denied' in parsed) return parsed.denied;
@@ -703,7 +707,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     if (approvalDenied) return approvalDenied;
     // P1.7: computed once here (was previously re-derived below) — also needed by the D4-FGA resourceGate
     // check right below, which runs AFTER the coarse allowP('agents:run') gate above.
-    const principal = principalOf(c);
+    const principal = principalOf(c.req.raw);
     const resourceDenied = await resourceGate(c, principal, { type: 'agent', id: name }, 'run');
     if (resourceDenied) return resourceDenied;
     // 1.3: resume intent via approvals+runId (a pending tool approval) → the budget gate is skipped
@@ -762,11 +766,11 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   });
 
   // Metadata list of registered workflows (name + steps + kind).
-  app.get('/workflows', async (c) => ((await allow(c, 'read')) ? c.json(defaultInstance.gnl.listWorkflows()) : deny(c, 'read')));
+  app.get('/workflows', async (c) => ((await allow(c.req.raw, 'read')) ? c.json(defaultInstance.gnl.listWorkflows()) : deny(c.req.raw, 'read')));
 
   // Run the workflow durably: {runId?, input}. If runId is given, it can be resumed with the same runId.
   app.post('/workflows/:name/run', async (c) => {
-    if (!(await allow(c, 'write'))) return deny(c, 'write');
+    if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     const name = c.req.param('name');
     if (!workflowNames.includes(name)) return c.json({ error: `workflow '${name}' not registered` }, 404);
     const parsed = await readSignedBody(c); // F1: A2A signature enforced here too
@@ -775,7 +779,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     const s = await scope(c);
     if ('error' in s) return c.json({ error: s.error }, s.status);
     // D4-FGA: runs AFTER the coarse allow(c,'write') gate above.
-    const resourceDenied = await resourceGate(c, principalOf(c), { type: 'workflow', id: name }, 'run');
+    const resourceDenied = await resourceGate(c, principalOf(c.req.raw), { type: 'workflow', id: name }, 'run');
     if (resourceDenied) return resourceDenied;
     // H2: this endpoint with the same runId is the ONLY resume mechanism for a workflow. If runId is
     // given AND there's already a trace in the journal (suspended/paused) this is a resume → the budget
@@ -820,7 +824,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
    * studio's own listKeys-gated routes) rather than a silent empty list.
    */
   app.get('/workflows/runs', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     const s = await scope(c);
     if ('error' in s) return c.json({ error: s.error }, s.status);
     const statusRaw = c.req.query('status');
@@ -849,7 +853,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
    * multi-worker honesty caveat as `/runs/:id/cancel`.
    */
   app.post('/workflows/runs/:id/cancel', async (c) => {
-    if (!(await allow(c, 'write'))) return deny(c, 'write');
+    if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     const runId = decodeURIComponent(c.req.param('id'));
     const s = await scope(c);
     if ('error' in s) return c.json({ error: s.error }, s.status);
@@ -857,7 +861,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     const visible = status !== undefined || (await s.journal.get(`${runId}:wf:_suspend`)) !== undefined;
     if (!visible) return c.json({ error: `workflow run '${runId}' not found` }, 404);
     // D4-FGA: runs AFTER the coarse allow(c,'write') gate above.
-    const resourceDenied = await resourceGate(c, principalOf(c), { type: 'workflow', id: runId }, 'cancel');
+    const resourceDenied = await resourceGate(c, principalOf(c.req.raw), { type: 'workflow', id: runId }, 'cancel');
     if (resourceDenied) return resourceDenied;
     const cancelled = await cancelWorkflowRun(s.journal, runId, {});
     const wfKey = 'wf:' + inflightKey(s, runId);
@@ -879,7 +883,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
    *   ?agent=      exact match against RunSummary.agent
    */
   app.get('/runs', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     const s = await scope(c);
     if ('error' in s) return c.json({ error: s.error }, s.status);
     const limitRaw = c.req.query('limit');
@@ -934,7 +938,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
    * anything, it only stops NEW tokens/tool-calls from being produced on this instance).
    */
   app.post('/runs/:id/cancel', async (c) => {
-    if (!(await allow(c, 'write'))) return deny(c, 'write');
+    if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     const runId = decodeURIComponent(c.req.param('id'));
     const s = await scope(c);
     if ('error' in s) return c.json({ error: s.error }, s.status);
@@ -945,7 +949,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     const visible = await s.journal.get(`${runId}:input`);
     if (visible === undefined) return c.json({ error: `run '${runId}' not found` }, 404);
     // D4-FGA: runs AFTER the coarse allow(c,'write') gate above.
-    const resourceDenied = await resourceGate(c, principalOf(c), { type: 'run', id: runId }, 'cancel');
+    const resourceDenied = await resourceGate(c, principalOf(c.req.raw), { type: 'run', id: runId }, 'cancel');
     if (resourceDenied) return resourceDenied;
     const key = inflightKey(s, runId);
     const set = inflight.get(key);
@@ -964,7 +968,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   });
   // Token-based usage report: total usage of the request scope (organization/shared) + effective limit.
   app.get('/usage', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     const s = await scope(c);
     if ('error' in s) return c.json({ error: s.error }, s.status);
     // In root scope (org on), the per-org limit doesn't apply → only usage is reported, limit is null.
@@ -976,18 +980,18 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     return c.json({ org: s.orgId ?? null, usage, limit: check.limit ?? null, exceeded: check.exceeded });
   });
   app.get('/runs/:id', async (c) => {
-    if (!(await allow(c, 'read'))) return deny(c, 'read');
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     const s = await scope(c);
     if ('error' in s) return c.json({ error: s.error }, s.status);
     return c.json(await s.journal.readRun(decodeURIComponent(c.req.param('id'))));
   });
-  app.get('/openapi.json', async (c) => ((await allow(c, 'read')) ? c.json(buildOpenApi(names, workflowNames, opts.title)) : deny(c, 'read')));
+  app.get('/openapi.json', async (c) => ((await allow(c.req.raw, 'read')) ? c.json(buildOpenApi(names, workflowNames, opts.title)) : deny(c.req.raw, 'read')));
 
   return app;
 }
 
 export { buildOpenApi } from './openapi.js';
-export { pipeAgentStream, interruptsFromSteps } from './sse.js';
+export { pipeAgentStream, interruptsFromSteps, sseResponse } from './sse.js';
 
 /**
  * The REST API as a fetch handler.

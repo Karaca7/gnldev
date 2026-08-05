@@ -1,6 +1,5 @@
 // Free default auth provider: viewer/admin roles, bearer + basic, read/write.
 // (The paid @gnldev/auth-ee implements the same AuthProvider with SSO/RBAC.)
-import type { Context } from 'hono';
 import type { AuthProvider, Principal, Decision, AuthContext, Cred } from './types.js';
 import { safeEqual } from './safe-equal.js';
 import { PLATFORM_ADMIN_ROLE } from './scope.js';
@@ -34,8 +33,8 @@ export function roleAuth(cfg: { admin?: Cred; viewer?: Cred }): AuthProvider | u
 
   // safeEqual loop instead of Set.has (===): so the secret comparison is constant-time (the number of
   // accepted tokens/basics per role is small — loop cost is negligible).
-  const matchRole = (c: Context, role: { headers: Set<string>; tokens: Set<string> }): boolean => {
-    const h = c.req.header('authorization');
+  const matchRole = (req: Request, role: { headers: Set<string>; tokens: Set<string> }): boolean => {
+    const h = req.headers.get('authorization') ?? undefined;
     if (h && [...role.headers].some((v) => safeEqual(h, v))) return true;
     /**
      * EventSource can't send headers → ?token= bearer fallback (bearer tokens only).
@@ -46,7 +45,7 @@ export function roleAuth(cfg: { admin?: Cred; viewer?: Cred }): AuthProvider | u
      * possible (see the `/events` endpoint in packages/studio/src/server.ts) — the persistent secret
      * is never carried in the URL.
      */
-    const q = c.req.query('token');
+    const q = new URL(req.url).searchParams.get('token') ?? undefined;
     return !!q && [...role.tokens].some((v) => safeEqual(q, v));
   };
 
@@ -63,12 +62,12 @@ export function roleAuth(cfg: { admin?: Cred; viewer?: Cred }): AuthProvider | u
   });
 
   return {
-    authenticate(c: Context): Principal | null {
-      if (admin.headers.size && matchRole(c, admin)) return principalOfRole('admin', cfg.admin);
-      if (viewer.headers.size && matchRole(c, viewer)) return principalOfRole('viewer', cfg.viewer);
+    authenticate(req: Request): Principal | null {
+      if (admin.headers.size && matchRole(req, admin)) return principalOfRole('admin', cfg.admin);
+      if (viewer.headers.size && matchRole(req, viewer)) return principalOfRole('viewer', cfg.viewer);
       return null;
     },
-    authorize(principal: Principal | null, _c: Context, ctx: AuthContext): Decision {
+    authorize(principal: Principal | null, _req: Request, ctx: AuthContext): Decision {
       const roles = principal?.roles ?? [];
       if (ctx.action === 'write') {
         return roles.includes('admin') ? { allow: true } : { allow: false, status: 403, reason: 'unauthorized (admin required)' };

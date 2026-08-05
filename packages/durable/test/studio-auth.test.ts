@@ -32,8 +32,8 @@ describe('studio admin↔API split', () => {
         return { text: r.text, interrupts: r.interrupts };
       },
       auth: {
-        read: (c) => ['viewer', 'admin'].includes(c.req.header('x-role') ?? ''),
-        write: (c) => c.req.header('x-role') === 'admin',
+        read: (req) => ['viewer', 'admin'].includes(req.headers.get('x-role') ?? ''),
+        write: (req) => req.headers.get('x-role') === 'admin',
       },
     });
 

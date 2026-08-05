@@ -1,6 +1,5 @@
 // @gnldev/auth — stable auth contract. The free core defines this; @gnldev/auth-ee (paid) implements the
 // same interface → premium (RBAC/SSO/multi-organization/audit) plugs in without touching the core.
-import type { Context } from 'hono';
 
 /**
  * The authenticated subject. The free tier only uses `roles`; the `permissions`/`orgId` fields are
@@ -51,8 +50,8 @@ export interface AuthCapabilities {
  * `capabilities` is optional (the free tier declares all of them false).
  */
 export interface AuthProvider {
-  authenticate(c: Context): Promise<Principal | null> | Principal | null;
-  authorize(principal: Principal | null, c: Context, ctx: AuthContext): Promise<Decision> | Decision;
+  authenticate(req: Request): Promise<Principal | null> | Principal | null;
+  authorize(principal: Principal | null, req: Request, ctx: AuthContext): Promise<Decision> | Decision;
   capabilities?(): Partial<AuthCapabilities>;
 }
 

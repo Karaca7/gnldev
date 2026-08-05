@@ -9,6 +9,36 @@ import { streamSSE } from 'hono/streaming';
 import type { Context } from 'hono';
 import type { Interrupt } from '@gnldev/durable';
 
+/**
+ * `streamSSE` plus the two headers a live stream needs to survive the trip to the browser.
+ *
+ * Hono sets `Cache-Control: no-cache`, which says "don't serve this from cache" and says nothing
+ * about re-encoding. So a compression middleware in the host's chain happily takes the stream and
+ * buffers it: measured on a real Express app, `compression()` turned 13 progressive chunks with the
+ * first at 750ms into ONE chunk delivered at the end. Status 200, no error, no live screen —
+ * the failure is invisible from both sides. `no-transform` is the standard way to say don't, and
+ * `compression` honours it (measured: first byte 1520ms → 302ms with the flag on).
+ *
+ * `X-Accel-Buffering: no` is the same instruction for nginx, which buffers proxied responses by
+ * default and does not read `no-transform`. Untested here — we have no proxy in the rig — but it is
+ * the documented lever and costs a header.
+ *
+ * Set AFTER `streamSSE` on purpose: it writes `Cache-Control` itself, so anything set on the context
+ * beforehand is overwritten. Patching the returned Response is what actually survives.
+ *
+ * Kept IN SYNC with packages/server/src/sse.ts.
+ */
+export function sseResponse(
+  c: Context,
+  cb: Parameters<typeof streamSSE>[1],
+  onError?: Parameters<typeof streamSSE>[2],
+): Response {
+  const res = streamSSE(c, cb, onError);
+  res.headers.set('Cache-Control', 'no-cache, no-transform');
+  res.headers.set('X-Accel-Buffering', 'no');
+  return res;
+}
+
 function hasSuspend(part: any): boolean {
   return part?.type === 'tool-result' && !!part.output?.__gnl_suspend;
 }
@@ -24,7 +54,7 @@ export function interruptsFromSteps(steps: any[]): Interrupt[] {
 }
 
 export function pipeAgentStream(c: Context, runId: string, result: any) {
-  return streamSSE(c, async (stream) => {
+  return sseResponse(c, async (stream) => {
     const emit = async (event: string, data: unknown) => {
       await stream.writeSSE({ event, data: JSON.stringify(data) });
     };

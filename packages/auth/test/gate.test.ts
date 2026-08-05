@@ -20,7 +20,7 @@ describe('makeGate (fail-open audit)', () => {
     vi.stubEnv('NODE_ENV', 'production');
     const { allow, deny } = makeGate(undefined, { allowOpenAccess: true });
     const app = new Hono();
-    app.get('/read', async (c) => ((await allow(c, 'read')) ? c.json({ ok: true }) : deny(c, 'read')));
+    app.get('/read', async (c) => ((await allow(c.req.raw, 'read')) ? c.json({ ok: true }) : deny(c.req.raw, 'read')));
     expect((await app.request('/read')).status).toBe(200);
   });
 
@@ -28,7 +28,7 @@ describe('makeGate (fail-open audit)', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { allow, deny } = makeGate();
     const app = new Hono();
-    app.get('/read', async (c) => ((await allow(c, 'read')) ? c.json({ ok: true }) : deny(c, 'read')));
+    app.get('/read', async (c) => ((await allow(c.req.raw, 'read')) ? c.json({ ok: true }) : deny(c.req.raw, 'read')));
     expect((await app.request('/read')).status).toBe(200);
     expect((await app.request('/read')).status).toBe(200); // second request does NOT repeat the warning
     expect(warn).toHaveBeenCalledTimes(1);
@@ -61,7 +61,7 @@ describe('gate.allowP (fine-grained enforcement)', () => {
   it('auth OFF (no provider) → allowP always true', async () => {
     const { allowP, deny } = makeGate(undefined, { allowOpenAccess: true });
     const app = new Hono();
-    app.post('/x', async (c) => ((await allowP(c, 'users:write')) ? c.json({ ok: true }) : deny(c, 'write')));
+    app.post('/x', async (c) => ((await allowP(c.req.raw, 'users:write')) ? c.json({ ok: true }) : deny(c.req.raw, 'write')));
     expect((await app.request('/x', { method: 'POST' })).status).toBe(200);
   });
 
@@ -69,9 +69,9 @@ describe('gate.allowP (fine-grained enforcement)', () => {
     // member-like grants: can run agents + read, cannot manage.
     const { allowP, deny } = makeGate(rbacFake(['*:read', 'agents:run']));
     const app = new Hono();
-    app.post('/run', async (c) => ((await allowP(c, 'agents:run')) ? c.json({ ok: true }) : deny(c, 'write')));
-    app.post('/users', async (c) => ((await allowP(c, 'users:write')) ? c.json({ ok: true }) : deny(c, 'write')));
-    app.get('/read', async (c) => ((await allowP(c, '*:read')) ? c.json({ ok: true }) : deny(c, 'read')));
+    app.post('/run', async (c) => ((await allowP(c.req.raw, 'agents:run')) ? c.json({ ok: true }) : deny(c.req.raw, 'write')));
+    app.post('/users', async (c) => ((await allowP(c.req.raw, 'users:write')) ? c.json({ ok: true }) : deny(c.req.raw, 'write')));
+    app.get('/read', async (c) => ((await allowP(c.req.raw, '*:read')) ? c.json({ ok: true }) : deny(c.req.raw, 'read')));
 
     expect((await app.request('/run', { method: 'POST' })).status).toBe(200); // agents:run granted
     expect((await app.request('/users', { method: 'POST' })).status).toBe(403); // users:write NOT granted
@@ -81,7 +81,7 @@ describe('gate.allowP (fine-grained enforcement)', () => {
   it('EE/RBAC mode: full grant (*) allows everything', async () => {
     const { allowP, deny } = makeGate(rbacFake(['*']));
     const app = new Hono();
-    app.post('/users', async (c) => ((await allowP(c, 'users:write')) ? c.json({ ok: true }) : deny(c, 'write')));
+    app.post('/users', async (c) => ((await allowP(c.req.raw, 'users:write')) ? c.json({ ok: true }) : deny(c.req.raw, 'write')));
     expect((await app.request('/users', { method: 'POST' })).status).toBe(200);
   });
 
@@ -89,8 +89,8 @@ describe('gate.allowP (fine-grained enforcement)', () => {
     const provider = roleAuth({ admin: { token: 'adm' }, viewer: { token: 'viw' } })!;
     const { allowP, deny } = makeGate(provider);
     const app = new Hono();
-    app.post('/run', async (c) => ((await allowP(c, 'agents:run')) ? c.json({ ok: true }) : deny(c, 'write')));
-    app.get('/read', async (c) => ((await allowP(c, '*:read')) ? c.json({ ok: true }) : deny(c, 'read')));
+    app.post('/run', async (c) => ((await allowP(c.req.raw, 'agents:run')) ? c.json({ ok: true }) : deny(c.req.raw, 'write')));
+    app.get('/read', async (c) => ((await allowP(c.req.raw, '*:read')) ? c.json({ ok: true }) : deny(c.req.raw, 'read')));
 
     // agents:run reduces to 'write' → admin 200, viewer 403
     expect((await app.request('/run', { method: 'POST', headers: H('adm') })).status).toBe(200);
@@ -103,8 +103,8 @@ describe('gate.allowP (fine-grained enforcement)', () => {
     const provider = roleAuth({ admin: { token: 'adm' }, viewer: { token: 'viw' } })!;
     const { allow, allowP, deny } = makeGate(provider);
     const app = new Hono();
-    app.post('/coarse', async (c) => ((await allow(c, 'write')) ? c.json({ ok: true }) : deny(c, 'write')));
-    app.post('/fine', async (c) => ((await allowP(c, 'budget:write')) ? c.json({ ok: true }) : deny(c, 'write')));
+    app.post('/coarse', async (c) => ((await allow(c.req.raw, 'write')) ? c.json({ ok: true }) : deny(c.req.raw, 'write')));
+    app.post('/fine', async (c) => ((await allowP(c.req.raw, 'budget:write')) ? c.json({ ok: true }) : deny(c.req.raw, 'write')));
     for (const t of ['adm', 'viw']) {
       const coarse = (await app.request('/coarse', { method: 'POST', headers: H(t) })).status;
       const fine = (await app.request('/fine', { method: 'POST', headers: H(t) })).status;
