@@ -1,6 +1,6 @@
 // CORE-HARDENING §7.2: journal-based append-log (durable-log) + BasicMemory thread sweeping.
 // Continuation of sweepRuns' safety philosophy: a record/thread whose age cannot be measured is NOT DELETED, and is counted in the report.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   InMemoryJournal, BasicMemory, appendLog, listLog, consumeOnce, sweepLog, sweepThreads,
   createRetentionSweeper, runKeys,
@@ -150,36 +150,40 @@ describe('sweepThreads (BasicMemory retention)', () => {
 // Does NOT automatically START anything; no round runs until the user calls start().
 describe('createRetentionSweeper (Phase 8.3 — opt-in automatic retention)', () => {
   it('runOnce(): sweepRuns + (if given) sweepLog run together in a single round; fresh data is kept', async () => {
-    const journal = new InMemoryJournal();
-    await journal.put(runKeys.model('old-run', 0), { content: [] });
-    await appendLog(journal, 'auditlog', { msg: 'stale audit record' }); // 'at' = the Date.now() at write time
-    // DEFLAKE (was 20ms gap / 5ms threshold): under full-suite parallel load the event loop can stall
-    // longer than the threshold BETWEEN writing the "fresh" records and the sweep reading them — the
-    // fresh run then ages past the cutoff and gets purged too (purgedRuns 2, expected 1; seen as a
-    // recurring load-only flake). Asymmetric margins: stale age ≈200ms, threshold 120ms — the fresh
-    // records would need a >120ms stall to misage, while the stale ones sit comfortably past the cutoff.
-    await new Promise((r) => setTimeout(r, 200)); // real time gap — the above can now be considered 'stale'
+    // Virtual time: age here is measured against real Date.now() timestamps stamped at write time,
+    // so a real-clock gap between writing "stale" and "fresh" records made the THRESHOLD itself the
+    // thing under load — a stalled event loop between the two writes could age the "fresh" record
+    // past the cutoff too. Fake timers make Date.now() advance by exactly the requested gap.
+    vi.useFakeTimers();
+    try {
+      const journal = new InMemoryJournal();
+      await journal.put(runKeys.model('old-run', 0), { content: [] });
+      await appendLog(journal, 'auditlog', { msg: 'stale audit record' }); // 'at' = the Date.now() at write time
+      await vi.advanceTimersByTimeAsync(20); // real time gap — the above can now be considered 'stale'
 
-    // Fresh records: right before the runOnce call (age should stay under the threshold).
-    await journal.put(runKeys.model('fresh-run', 0), { content: [] });
-    await appendLog(journal, 'auditlog', { msg: 'fresh audit record' });
+      // Fresh records: right before the runOnce call (age should stay under the threshold).
+      await journal.put(runKeys.model('fresh-run', 0), { content: [] });
+      await appendLog(journal, 'auditlog', { msg: 'fresh audit record' });
 
-    const sweeper = createRetentionSweeper(journal, {
-      sweep: { olderThanMs: 120 },
-      logSweep: { ns: 'auditlog', olderThanMs: 120 },
-    });
-    const summary = await sweeper.runOnce();
+      const sweeper = createRetentionSweeper(journal, {
+        sweep: { olderThanMs: 5 },
+        logSweep: { ns: 'auditlog', olderThanMs: 5 },
+      });
+      const summary = await sweeper.runOnce();
 
-    expect(summary.purgedRuns).toBe(1);
-    expect(summary.deletedLog).toBe(1);
+      expect(summary.purgedRuns).toBe(1);
+      expect(summary.deletedLog).toBe(1);
 
-    const runs = await journal.listRuns();
-    const ids = (Array.isArray(runs) ? runs : (runs as any).items).map((r: any) => r.runId);
-    expect(ids).not.toContain('old-run');
-    expect(ids).toContain('fresh-run'); // fresh run kept
+      const runs = await journal.listRuns();
+      const ids = (Array.isArray(runs) ? runs : (runs as any).items).map((r: any) => r.runId);
+      expect(ids).not.toContain('old-run');
+      expect(ids).toContain('fresh-run'); // fresh run kept
 
-    const remainingLog = await listLog(journal, 'auditlog');
-    expect(remainingLog.map((i) => i.payload)).toEqual([{ msg: 'fresh audit record' }]); // only the fresh one remains
+      const remainingLog = await listLog(journal, 'auditlog');
+      expect(remainingLog.map((i) => i.payload)).toEqual([{ msg: 'fresh audit record' }]); // only the fresh one remains
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('no sweep round runs AUTOMATICALLY without calling start()', async () => {
@@ -196,18 +200,25 @@ describe('createRetentionSweeper (Phase 8.3 — opt-in automatic retention)', ()
   });
 
   it('start(): runs automatic rounds at intervalMs intervals (proof of createPollLoop usage); stop() halts it', async () => {
-    const journal = new InMemoryJournal();
-    await journal.put(runKeys.model('old-run', 0), { content: [] });
-    await new Promise((r) => setTimeout(r, 20));
+    // Virtual time: whether a round ran within the window is a tick-count question (at least one of
+    // several 15ms ticks in an 80ms window), unmeasurable on a loaded machine.
+    vi.useFakeTimers();
+    try {
+      const journal = new InMemoryJournal();
+      await journal.put(runKeys.model('old-run', 0), { content: [] });
+      await vi.advanceTimersByTimeAsync(20);
 
-    const sweeper = createRetentionSweeper(journal, { intervalMs: 15, sweep: { olderThanMs: 5 } });
-    sweeper.start();
-    await new Promise((r) => setTimeout(r, 80)); // let a few rounds pass
-    sweeper.stop();
+      const sweeper = createRetentionSweeper(journal, { intervalMs: 15, sweep: { olderThanMs: 5 } });
+      sweeper.start();
+      await vi.advanceTimersByTimeAsync(80); // let a few rounds pass
+      sweeper.stop();
 
-    const runs = await journal.listRuns();
-    const ids = (Array.isArray(runs) ? runs : (runs as any).items).map((r: any) => r.runId);
-    expect(ids).not.toContain('old-run'); // one of the automatic rounds swept it
+      const runs = await journal.listRuns();
+      const ids = (Array.isArray(runs) ? runs : (runs as any).items).map((r: any) => r.runId);
+      expect(ids).not.toContain('old-run'); // one of the automatic rounds swept it
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('onError is called if sweepRuns errors in a round; runOnce does not throw (the chain doesn\'t die)', async () => {

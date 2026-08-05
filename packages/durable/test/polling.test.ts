@@ -15,9 +15,16 @@ describe('createPollLoop', () => {
       },
       { pollMs: 15, maxPollMs: 120, backoff: true },
     );
-    loop.start();
-    await new Promise((r) => setTimeout(r, 320));
-    loop.stop();
+    // Virtual time: the assertion is about tick COUNT and gap ratios, unmeasurable on a loaded
+    // machine where the event loop can't deliver 320ms of real ticks on schedule.
+    vi.useFakeTimers();
+    try {
+      loop.start();
+      await vi.advanceTimersByTimeAsync(320); // same number, now virtual
+      loop.stop();
+    } finally {
+      vi.useRealTimers();
+    }
 
     expect(times.length).toBeGreaterThanOrEqual(4);
     const gaps: number[] = [];
@@ -37,14 +44,24 @@ describe('createPollLoop', () => {
       },
       { pollMs: 10, maxPollMs: 80, backoff: true },
     );
-    loop.start();
-    await new Promise((r) => setTimeout(r, 150)); // let a few backoff steps pass while idle (interval near cap)
-    calls.length = 0;
-    shouldWork = true;
-    // if reset happened (~pollMs=10ms), it's caught quickly; if still in backoff (cap ~80ms) it would
-    // not be caught in this short window.
-    await new Promise((r) => setTimeout(r, 40));
-    loop.stop();
+    // Virtual time: the assertion is a tick count in a short window, unmeasurable on a loaded machine.
+    // The flip to shouldWork=true must land BEFORE the tick due at t=150 (10+20+40+80), not after —
+    // on the real clock this was a genuine race between the test's own sleep and that tick, decided
+    // by machine load; on virtual time the boundary is exact, so it is placed deliberately at t=149
+    // to land on the same side of it the passing runs did (flag flips, THEN the pending tick reads it).
+    vi.useFakeTimers();
+    try {
+      loop.start();
+      await vi.advanceTimersByTimeAsync(149); // let a few backoff steps pass while idle (interval near cap)
+      calls.length = 0;
+      shouldWork = true;
+      // if reset happened (~pollMs=10ms), it's caught quickly; if still in backoff (cap ~80ms) it would
+      // not be caught in this short window.
+      await vi.advanceTimersByTimeAsync(41);
+      loop.stop();
+    } finally {
+      vi.useRealTimers();
+    }
     expect(calls.length).toBeGreaterThanOrEqual(2); // several ticks happened at the reset, fast interval
   });
 
@@ -57,9 +74,14 @@ describe('createPollLoop', () => {
       },
       { pollMs: 10, backoff: false },
     );
-    loop.start();
-    await new Promise((r) => setTimeout(r, 205)); // a ~20-tick window
-    loop.stop();
+    vi.useFakeTimers();
+    try {
+      loop.start();
+      await vi.advanceTimersByTimeAsync(205); // a ~20-tick window, now virtual
+      loop.stop();
+    } finally {
+      vi.useRealTimers();
+    }
     expect(calls).toBeGreaterThanOrEqual(15); // ticks at a regular constant interval, no backoff
   });
 
@@ -112,9 +134,15 @@ describe('createPollLoop', () => {
       },
       { pollMs: 10, backoff: false },
     );
-    loop.start();
-    await new Promise((r) => setTimeout(r, 60));
-    loop.stop();
+    // Virtual time: the assertion is a tick count in a short window, unmeasurable on a loaded machine.
+    vi.useFakeTimers();
+    try {
+      loop.start();
+      await vi.advanceTimersByTimeAsync(60);
+      loop.stop();
+    } finally {
+      vi.useRealTimers();
+    }
     expect(calls).toBeGreaterThanOrEqual(3); // the first tick threw but the following ones still ran
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();

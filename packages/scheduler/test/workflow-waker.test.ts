@@ -248,21 +248,27 @@ describe('@gnldev/scheduler — createWorkflowWaker', () => {
     });
 
     const waker = createWorkflowWaker({ journal, resume: async () => {}, intervalMs: 15 });
-    waker.start();
-    await new Promise((r) => setTimeout(r, 100));
-    waker.stop();
-    const scansAtStop = scans;
-    expect(scansAtStop).toBeGreaterThan(0);
+    // Virtual time: the assertions are scan counts in fixed windows, unmeasurable on a loaded machine.
+    vi.useFakeTimers();
+    try {
+      waker.start();
+      await vi.advanceTimersByTimeAsync(100); // same number, now virtual
+      waker.stop();
+      const scansAtStop = scans;
+      expect(scansAtStop).toBeGreaterThan(0);
 
-    await new Promise((r) => setTimeout(r, 100));
-    expect(scans).toBe(scansAtStop); // nothing fired after stop()
+      await vi.advanceTimersByTimeAsync(100);
+      expect(scans).toBe(scansAtStop); // nothing fired after stop()
 
-    // Idempotent stop()/restart safety: calling stop() again or start()ing fresh doesn't blow up.
-    waker.stop();
-    waker.start();
-    await new Promise((r) => setTimeout(r, 40));
-    waker.stop();
-    expect(scans).toBeGreaterThan(scansAtStop);
+      // Idempotent stop()/restart safety: calling stop() again or start()ing fresh doesn't blow up.
+      waker.stop();
+      waker.start();
+      await vi.advanceTimersByTimeAsync(40);
+      waker.stop();
+      expect(scans).toBeGreaterThan(scansAtStop);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('integration: a REAL @gnldev/workflow with sleep() — suspend → waker resumes → completes', async () => {

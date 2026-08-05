@@ -156,9 +156,15 @@ describe('@gnldev/events', () => {
         return (origList as any)(...args);
       });
       const c = createConsumer(work, 'empty-topic', () => {}, { name: 'A', pollMs: 15, maxPollMs: 120 });
-      c.start();
-      await new Promise((r) => setTimeout(r, 320));
-      c.stop();
+      // Virtual time: the assertion is about tick count and gap ratios, unmeasurable on a loaded machine.
+      vi.useFakeTimers();
+      try {
+        c.start();
+        await vi.advanceTimersByTimeAsync(320); // same number, now virtual
+        c.stop();
+      } finally {
+        vi.useRealTimers();
+      }
 
       expect(times.length).toBeGreaterThanOrEqual(4);
       const gaps: number[] = [];
@@ -174,21 +180,33 @@ describe('@gnldev/events', () => {
       const c = createConsumer(work, 'reset-topic', (p: any) => void seen.push(p.id), {
         name: 'A',
         pollMs: 10,
-        maxPollMs: 400, // DEFLAKE: cap widened (see the reset window comment below)
+        maxPollMs: 80,
       });
-      c.start();
-      await new Promise((r) => setTimeout(r, 450)); // DEFLAKE: let backoff approach the widened cap
-      await emit(work, 'reset-topic', { id: 'e1' }, { id: 'e1' });
-      await new Promise((r) => setTimeout(r, 450)); // DEFLAKE: worst-case backed-off tick is ≤400ms
-      expect(seen).toContain('e1');
+      // Virtual time: this used to need a widened cap + windows (real-clock DEFLAKE) to survive a
+      // loaded machine. On the virtual clock the schedule is exact: ticks land at 10,30,70,150
+      // (doubling, capped at 80), so 151ms puts us just past the 4th tick with the interval pinned
+      // at the 80ms cap and the next tick due at 230.
+      vi.useFakeTimers();
+      try {
+        c.start();
+        await vi.advanceTimersByTimeAsync(151);
+        await emit(work, 'reset-topic', { id: 'e1' }, { id: 'e1' });
+        // The next tick (due at 230, still at the 80ms cap) must still pick up e1 — being backed off
+        // doesn't mean deliveries are missed, only that they wait for the next tick.
+        await vi.advanceTimersByTimeAsync(90);
+        expect(seen).toContain('e1');
 
-      seen.length = 0;
-      await emit(work, 'reset-topic', { id: 'e2' }, { id: 'e2' });
-      // if it reset (~pollMs=10ms) it's caught quickly; if still in backoff (ceiling ~80ms) it wouldn't be caught.
-      // DEFLAKE margins: reset ≈10ms vs cap 400ms measured through a 150ms window (15× slack, 2.6× headroom).
-      await new Promise((r) => setTimeout(r, 150));
-      expect(seen).toContain('e2');
-      c.stop();
+        seen.length = 0;
+        await emit(work, 'reset-topic', { id: 'e2' }, { id: 'e2' });
+        // If delivery reset the interval to pollMs (10ms), e2 is caught within a 30ms window (the
+        // next tick after reset is due at most 20ms out). If the interval had stayed pinned at the
+        // 80ms cap instead, the next tick would land at 310 — well outside this window — and it wouldn't.
+        await vi.advanceTimersByTimeAsync(30);
+        expect(seen).toContain('e2');
+        c.stop();
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('backoff:false → fixed poll interval (old behavior)', async () => {
@@ -200,9 +218,15 @@ describe('@gnldev/events', () => {
         return (origList as any)(...args);
       });
       const c = createConsumer(work, 'const-topic', () => {}, { name: 'A', pollMs: 10, backoff: false });
-      c.start();
-      await new Promise((r) => setTimeout(r, 205));
-      c.stop();
+      // Virtual time: the assertion is a call count in a fixed window, unmeasurable on a loaded machine.
+      vi.useFakeTimers();
+      try {
+        c.start();
+        await vi.advanceTimersByTimeAsync(205); // same number, now virtual
+        c.stop();
+      } finally {
+        vi.useRealTimers();
+      }
       expect(calls).toBeGreaterThanOrEqual(15);
     });
 

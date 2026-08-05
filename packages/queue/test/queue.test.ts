@@ -430,9 +430,15 @@ describe('@gnldev/queue', () => {
         return (origList as any)(...args);
       });
       const worker = createWorker(storage, {}, { pollMs: 15, maxPollMs: 120 });
-      worker.start();
-      await new Promise((r) => setTimeout(r, 320));
-      worker.stop();
+      // Virtual time: the assertion is about tick count and gap ratios, unmeasurable on a loaded machine.
+      vi.useFakeTimers();
+      try {
+        worker.start();
+        await vi.advanceTimersByTimeAsync(320); // same number, now virtual
+        worker.stop();
+      } finally {
+        vi.useRealTimers();
+      }
 
       expect(times.length).toBeGreaterThanOrEqual(4); // a few ticks must have happened
       const gaps: number[] = [];
@@ -448,23 +454,33 @@ describe('@gnldev/queue', () => {
       const worker = createWorker(
         storage,
         { t: async (p: any) => void seen.push(p.tag) },
-        { pollMs: 10, maxPollMs: 400 }, // DEFLAKE: cap widened (see the reset test's window comment)
+        { pollMs: 10, maxPollMs: 80 },
       );
-      worker.start();
-      await new Promise((r) => setTimeout(r, 450)); // DEFLAKE: let backoff approach the widened cap
-      await enqueue(storage.work, 't', { tag: 'a' }, { id: 'a' });
-      await new Promise((r) => setTimeout(r, 450)); // DEFLAKE: worst-case backed-off tick is ≤400ms
-      expect(seen).toContain('a');
+      // Virtual time: this used to need a widened cap + windows (real-clock DEFLAKE) to survive a
+      // loaded machine. On the virtual clock the schedule is exact: ticks land at 10,30,70,150
+      // (doubling, capped at 80), so 151ms puts us just past the 4th tick with the interval pinned
+      // at the 80ms cap and the next tick due at 230.
+      vi.useFakeTimers();
+      try {
+        worker.start();
+        await vi.advanceTimersByTimeAsync(151);
+        await enqueue(storage.work, 't', { tag: 'a' }, { id: 'a' });
+        // The next tick (due at 230, still at the 80ms cap) must still pick up the job — being
+        // backed off doesn't mean claims are missed, only that they wait for the next tick.
+        await vi.advanceTimersByTimeAsync(90);
+        expect(seen).toContain('a');
 
-      seen.length = 0;
-      await enqueue(storage.work, 't', { tag: 'b' }, { id: 'b' });
-      // if it reset (~pollMs=10ms) it's caught quickly; if it had stayed in backoff (cap ~80ms) it
-      // wouldn't be caught in this short window.
-      // DEFLAKE margins: reset ≈10ms gets a 150ms window (15× slack under full-suite load); a
-      // non-reset interval sits near the 400ms cap — 2.6× above the window. Stronger discrimination.
-      await new Promise((r) => setTimeout(r, 150));
-      expect(seen).toContain('b');
-      worker.stop();
+        seen.length = 0;
+        await enqueue(storage.work, 't', { tag: 'b' }, { id: 'b' });
+        // If claiming reset the interval to pollMs (10ms), b is caught within a 30ms window (the
+        // next tick after reset is due at most 20ms out). If the interval had stayed pinned at the
+        // 80ms cap instead, the next tick would land at 310 — well outside this window — and it wouldn't.
+        await vi.advanceTimersByTimeAsync(30);
+        expect(seen).toContain('b');
+        worker.stop();
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     // DETERMINISM: fake timers. The real-time version counted ticks in a 205ms WALL-CLOCK window

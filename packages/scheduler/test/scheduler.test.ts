@@ -291,9 +291,15 @@ describe('@gnldev/scheduler', () => {
           throw new Error('budget exceeded');
         },
       });
-      sched.start();
-      await new Promise((r) => setTimeout(r, 60));
-      sched.stop();
+      // Virtual time: the assertion is a call count in a short window, unmeasurable on a loaded machine.
+      vi.useFakeTimers();
+      try {
+        sched.start();
+        await vi.advanceTimersByTimeAsync(60);
+        sched.stop();
+      } finally {
+        vi.useRealTimers();
+      }
       expect(guardCalls).toBeGreaterThan(0);
       expect(runner.calls).toHaveLength(0); // guard always throws → runWorkflow was never called
     });
@@ -386,9 +392,15 @@ describe('@gnldev/scheduler', () => {
         return (origListKeys as any)(...args);
       });
       const sched = createScheduler(j, runner, { pollMs: 15, maxPollMs: 120 }); // backoff not given → default false
-      sched.start();
-      await new Promise((r) => setTimeout(r, 200));
-      sched.stop();
+      // Virtual time: the assertion is a tick count in a fixed window, unmeasurable on a loaded machine.
+      vi.useFakeTimers();
+      try {
+        sched.start();
+        await vi.advanceTimersByTimeAsync(200); // same number, now virtual
+        sched.stop();
+      } finally {
+        vi.useRealTimers();
+      }
 
       expect(times.length).toBeGreaterThanOrEqual(8); // many polls at a constant ~15ms interval
       const gaps: number[] = [];
@@ -407,9 +419,15 @@ describe('@gnldev/scheduler', () => {
         return (origListKeys as any)(...args);
       });
       const sched = createScheduler(j, runner, { pollMs: 15, maxPollMs: 120, backoff: true });
-      sched.start();
-      await new Promise((r) => setTimeout(r, 320));
-      sched.stop();
+      // Virtual time: the assertion is about tick count and gap ratios, unmeasurable on a loaded machine.
+      vi.useFakeTimers();
+      try {
+        sched.start();
+        await vi.advanceTimersByTimeAsync(320); // same number, now virtual
+        sched.stop();
+      } finally {
+        vi.useRealTimers();
+      }
 
       expect(times.length).toBeGreaterThanOrEqual(4);
       const gaps: number[] = [];
@@ -422,20 +440,32 @@ describe('@gnldev/scheduler', () => {
     it('backoff:true + poll interval resets to pollMs once a trigger fires', async () => {
       const j = new InMemoryJournal();
       const runner = mockRunner(() => ({ output: 'ok' }));
-      const sched = createScheduler(j, runner, { pollMs: 10, maxPollMs: 400, backoff: true } /* DEFLAKE: cap widened */);
-      sched.start();
-      await new Promise((r) => setTimeout(r, 450)); // DEFLAKE: let backoff approach the widened cap
-      await scheduleWorkflow(j, { id: 'r1', name: 'wf', at: Date.now() }, Date.now());
-      await new Promise((r) => setTimeout(r, 450)); // DEFLAKE: worst-case backed-off tick is ≤400ms
-      expect(runner.calls.some((c) => c.runId === 'sched:r1:0')).toBe(true);
+      const sched = createScheduler(j, runner, { pollMs: 10, maxPollMs: 80, backoff: true });
+      // Virtual time: this used to need a widened cap + windows (real-clock DEFLAKE) to survive
+      // a loaded machine. On the virtual clock the schedule is exact: ticks land at 10,30,70,150
+      // (doubling, capped at 80), so 151ms puts us just past the 4th tick with the interval pinned
+      // at the 80ms cap and the next tick due at 230.
+      vi.useFakeTimers();
+      try {
+        sched.start();
+        await vi.advanceTimersByTimeAsync(151); // let a few backoff steps pass while idle
+        await scheduleWorkflow(j, { id: 'r1', name: 'wf', at: Date.now() }, Date.now());
+        // The next tick (due at 230, still at the 80ms cap) must still pick up r1 — being backed off
+        // doesn't mean triggers are missed, only that they wait for the next tick.
+        await vi.advanceTimersByTimeAsync(90);
+        expect(runner.calls.some((c) => c.runId === 'sched:r1:0')).toBe(true);
 
-      runner.calls.length = 0;
-      await scheduleWorkflow(j, { id: 'r2', name: 'wf', at: Date.now() }, Date.now());
-      // if it reset (~pollMs=10ms) it's caught quickly; if still in backoff (cap ~80ms) it wouldn't be caught.
-      // DEFLAKE margins: reset ≈10ms vs cap 400ms through a 150ms window (15× slack, 2.6× headroom).
-      await new Promise((r) => setTimeout(r, 150));
-      expect(runner.calls.some((c) => c.runId === 'sched:r2:0')).toBe(true);
-      sched.stop();
+        runner.calls.length = 0;
+        await scheduleWorkflow(j, { id: 'r2', name: 'wf', at: Date.now() }, Date.now());
+        // If firing reset the interval to pollMs (10ms), r2 is caught within a 30ms window (the next
+        // tick after reset is due at most 20ms out). If the interval had stayed pinned at the 80ms
+        // cap instead, the next tick would land at 310 — well outside this window — and it wouldn't.
+        await vi.advanceTimersByTimeAsync(30);
+        expect(runner.calls.some((c) => c.runId === 'sched:r2:0')).toBe(true);
+        sched.stop();
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('backoff:false (explicitly given, same behavior as default): constant poll interval', async () => {
@@ -448,9 +478,15 @@ describe('@gnldev/scheduler', () => {
         return (origListKeys as any)(...args);
       });
       const sched = createScheduler(j, runner, { pollMs: 10, backoff: false });
-      sched.start();
-      await new Promise((r) => setTimeout(r, 205));
-      sched.stop();
+      // Virtual time: the assertion is a call count in a fixed window, unmeasurable on a loaded machine.
+      vi.useFakeTimers();
+      try {
+        sched.start();
+        await vi.advanceTimersByTimeAsync(205); // same number, now virtual
+        sched.stop();
+      } finally {
+        vi.useRealTimers();
+      }
       expect(calls).toBeGreaterThanOrEqual(15);
     });
 
