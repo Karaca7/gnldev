@@ -445,8 +445,10 @@ function isReader (x: any): x is JournalReader {
 }
 
 /**
- * **Studio API** (JSON only, no UI). Mount it on your own app (`app.route('/studio/api', createStudioApi(...))`),
- * auth-gate it (viewer/admin), use it programmatically. Routes are prefix-independent: /capabilities, /runs, /runs/:id, ...
+ * **Studio API** (JSON only, no UI). Mount it on your own app — `app.mount('/studio/api', createStudioApi(...))`
+ * on Hono, `toNodeHandler(...)` anywhere else — auth-gate it (viewer/admin), use it programmatically.
+ * NOT `app.route()`: that takes a Hono sub-app and unpacks its routes, and what comes out of here is a
+ * fetch handler. Routes are prefix-independent: /capabilities, /runs, /runs/:id, ...
  */
 function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   const opts: StudioApiOptions = isReader(input) ? { reader: input } : input;

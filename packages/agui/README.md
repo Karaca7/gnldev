@@ -18,6 +18,15 @@ const app = createAguiRoute({
 serve({ fetch: app.fetch, port: 3001 }); // POST /agents/:name/run → AG-UI SSE
 ```
 
+`createAguiRoute` returns a fetch handler, so it binds to any Node server through the bridge in
+@gnldev/server — a package this one already depends on, so there is nothing extra to install:
+
+```ts
+import { toNodeHandler } from '@gnldev/server/node';
+
+express().use('/agui', toNodeHandler(route));   // mount BEFORE express.json()
+```
+
 ### Connecting to the CopilotKit side
 AG-UI's `HttpAgent` (`@ag-ui/client`) can POST directly to this endpoint:
 
