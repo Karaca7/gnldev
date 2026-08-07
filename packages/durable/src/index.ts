@@ -31,8 +31,9 @@ export { usageAndCostFromModelValue } from './cost.js';
 export type { ModelPricing, PricingDoc } from './pricing.js';
 export {
   DivergenceError, RunBusyError, SideEffectRetryBlockedError, RetryLimitExceededError,
-  ReplicationNotAcknowledgedError, SuiteVersionMismatchError, BLOCKED_ERROR_CODES, blockedErrorCode,
+  ReplicationNotAcknowledgedError, SuiteVersionMismatchError, BLOCKED_ERROR_CODES, blockedErrorCode, upstreamFailure,
 } from './errors.js';
+export type { UpstreamFailure } from './errors.js';
 // Task 3: opt-in sibling-suite version-skew guard (see suite-consistency.ts).
 export { assertSuiteConsistent, versionsEqual } from './suite-consistency.js';
 export type { AssertSuiteConsistentOptions } from './suite-consistency.js';

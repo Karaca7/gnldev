@@ -3,7 +3,7 @@
 import { Hono, type Context } from 'hono';
 import { toFetchHandler, type FetchHandler } from './handler.js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { createGnl, agentVisibleToOrg, withOrg, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, blockedErrorCode, sealRequestContext, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry } from '@gnldev/durable';
+import { createGnl, agentVisibleToOrg, withOrg, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, blockedErrorCode, upstreamFailure, sealRequestContext, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry } from '@gnldev/durable';
 import type { CreateGnlConfig, Journal, JournalReader, BudgetLimit, UsageCostCache, RunLimits } from '@gnldev/durable';
 import { makeGate, normalizeAuth, principalOf, isPlatformAdmin, type AuthProvider, type ReadWriteAuth, type Principal } from '@gnldev/auth';
 // P0.4 (AUDIT-R2): @gnldev/workflow is zero-dependency (see its package.json) — depending on it
@@ -255,6 +255,30 @@ function blockedErrorResponse(c: Context, e: unknown): Response | undefined {
   const err = e as { message?: string; detail?: unknown } | null | undefined;
   const body = { error: err?.message ?? String(e), code, detail: err?.detail };
   return code === 'retry_limit_exceeded' ? c.json(body, 422) : c.json({ ...body, resumable: true }, 409);
+}
+
+/**
+ * A failure that came from the model provider, answered as one.
+ *
+ * Without this the provider's failure fell through to the generic 400 — measured, a free endpoint
+ * answering 429 reached the caller as `400 "Failed after 3 attempts. Last error: Too Many Requests"`,
+ * which tells a retrying client to stop retrying at the exact moment it should wait. The status
+ * choices and their reasoning live in @gnldev/durable#upstreamFailure; this only renders them, plus
+ * `Retry-After` when the upstream named a delay.
+ */
+function upstreamErrorResponse(c: Context, e: unknown): Response | undefined {
+  const up = upstreamFailure(e);
+  if (!up) return undefined;
+  const err = e as { message?: string } | null | undefined;
+  const body = {
+    error: err?.message ?? String(e),
+    code: up.code,
+    ...(up.upstreamStatus !== undefined ? { upstreamStatus: up.upstreamStatus } : {}),
+    ...(up.retryAfter !== undefined ? { retryAfter: up.retryAfter } : {}),
+  };
+  const res = c.json(body, up.status);
+  if (up.retryAfter !== undefined) res.headers.set('Retry-After', String(up.retryAfter));
+  return res;
 }
 
 function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
@@ -600,9 +624,15 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
         // P0.3: OR an explicit cancel via POST /runs/:id/cancel (ctrl.signal) — same non-destructive semantics.
         abortSignal: AbortSignal.any([c.req.raw.signal, ctrl.signal]),
       });
-      return c.json({ ok: true, runId: body.runId, text: r.text, interrupts: r.interrupts });
+      // `finishReason` is here because without it an empty answer is unreadable. A run whose model
+      // returned nothing answers 200 with `text: ""` — identical, on the wire, to a model that
+      // legitimately chose to say nothing. Measured in the field: a provider returned an empty
+      // response with `finishReason: 'unknown'`, the run was journaled as completed, and the caller
+      // had no way to tell the two apart. The framework already knows which happened; it just was
+      // not saying. Additive field, so existing clients are unaffected.
+      return c.json({ ok: true, runId: body.runId, text: r.text, interrupts: r.interrupts, finishReason: r.finishReason });
     } catch (e: any) {
-      return limitErrorResponse(c, e) ?? blockedErrorResponse(c, e) ?? c.json({ error: String(e?.message ?? e) }, 400);
+      return limitErrorResponse(c, e) ?? blockedErrorResponse(c, e) ?? upstreamErrorResponse(c, e) ?? c.json({ error: String(e?.message ?? e) }, 400);
     } finally {
       unregisterInflight(key, ctrl);
     }
@@ -639,9 +669,15 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
         limits: clampLimits(opts.limits, body.limits),
         ...(input.messages ? { messages: input.messages } : { prompt: input.prompt }),
       });
-      return c.json({ ok: true, runId: body.runId, text: r.text, interrupts: r.interrupts });
+      // `finishReason` is here because without it an empty answer is unreadable. A run whose model
+      // returned nothing answers 200 with `text: ""` — identical, on the wire, to a model that
+      // legitimately chose to say nothing. Measured in the field: a provider returned an empty
+      // response with `finishReason: 'unknown'`, the run was journaled as completed, and the caller
+      // had no way to tell the two apart. The framework already knows which happened; it just was
+      // not saying. Additive field, so existing clients are unaffected.
+      return c.json({ ok: true, runId: body.runId, text: r.text, interrupts: r.interrupts, finishReason: r.finishReason });
     } catch (e: any) {
-      return limitErrorResponse(c, e) ?? blockedErrorResponse(c, e) ?? c.json({ error: String(e?.message ?? e) }, 400);
+      return limitErrorResponse(c, e) ?? blockedErrorResponse(c, e) ?? upstreamErrorResponse(c, e) ?? c.json({ error: String(e?.message ?? e) }, 400);
     }
   });
 
@@ -745,7 +781,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
       });
     } catch (e: any) {
       unregisterInflight(key, ctrl);
-      return limitErrorResponse(c, e) ?? blockedErrorResponse(c, e) ?? c.json({ error: String(e?.message ?? e) }, 400);
+      return limitErrorResponse(c, e) ?? blockedErrorResponse(c, e) ?? upstreamErrorResponse(c, e) ?? c.json({ error: String(e?.message ?? e) }, 400);
     }
     // P0.3 cleanup: `s.gnl.stream(...)` above only resolves the STREAM RESULT object — the actual
     // fullStream consumption (and hence "this generation is done") happens INSIDE pipeAgentStream's
@@ -808,7 +844,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
       const result = await s.gnl.runWorkflow(name, body.input, wfOpts);
       return c.json({ ok: true, ...result });
     } catch (e: any) {
-      return limitErrorResponse(c, e) ?? blockedErrorResponse(c, e) ?? c.json({ error: String(e?.message ?? e) }, 400);
+      return limitErrorResponse(c, e) ?? blockedErrorResponse(c, e) ?? upstreamErrorResponse(c, e) ?? c.json({ error: String(e?.message ?? e) }, 400);
     } finally {
       if (wfKey) unregisterInflight(wfKey, ctrl);
     }

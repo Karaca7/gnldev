@@ -54,3 +54,42 @@ describe('guard (general policy) — allow/deny', () => {
     expect(guardCalls).toBe(1); // 2nd call returned from journal, guard did not run again
   });
 });
+
+describe('guard — the denial names the tool it refused', () => {
+  it('journals toolName on a denied record', async () => {
+    // The entry an auditor most needs to identify used to carry the least: the key held the
+    // toolCallId, the output held `{__denied, reason}`, and the name appeared nowhere — answering
+    // "what was refused" meant correlating against the model step.
+    const journal = new InMemoryJournal();
+    const dt = durableTool(
+      { execute: async () => 'ran' },
+      { journal, runId: 'r1', guard: async () => ({ action: 'deny', reason: 'forbidden' }) },
+      'dangerous',
+    );
+    await dt.execute!({}, { toolCallId: 'c1' });
+
+    const rec = await journal.get<{ status: string; toolName?: string }>('r1:tool:c1');
+    expect(rec?.status).toBe('denied');
+    expect(rec?.toolName).toBe('dangerous');
+  });
+
+  it('a record written before the field existed still replays', async () => {
+    // Backward compatibility, asserted rather than assumed: `toolName` is optional, so a journal
+    // written by an older version has denied records without it. Replay must serve the SAME output
+    // from that record and must NOT re-run the tool — the field's absence is not a cache miss.
+    const journal = new InMemoryJournal();
+    await journal.put('r-old:tool:c1', { status: 'denied', output: { __denied: true, reason: 'eski' } });
+
+    let calls = 0;
+    const dt = durableTool(
+      { execute: async () => { calls++; return 'ran'; } },
+      { journal, runId: 'r-old', guard: async () => ({ action: 'allow' }) },
+      'dangerous',
+    );
+    const out: any = await dt.execute!({}, { toolCallId: 'c1' });
+
+    expect(calls).toBe(0);
+    expect(out.__denied).toBe(true);
+    expect(out.reason).toBe('eski');
+  });
+});

@@ -27,7 +27,14 @@ export type ToolJournalRecord =
   // reservation to release), and the hash alone can't reproduce them. Absent on other/older records →
   // compensateRun falls back to recovering args from the model steps' tool-call parts.
   | { status: 'succeeded'; output: unknown; argsHash?: string; toolName?: string; input?: unknown; resolvedToolCallIds?: string[] }
-  | { status: 'denied'; output: unknown; resolvedToolCallIds?: string[] }
+  // GOREV (audit trail): `toolName` on the NON-success statuses too. A denial is the entry an auditor
+  // most needs to identify — a human refused a tool — and it used to be the one carrying the least:
+  // the key holds the toolCallId, the output holds `{__denied, reason}`, and the name appeared
+  // nowhere, so answering "what was refused" meant correlating with the model step. 'suspended' got
+  // away with it only because its sentinel repeats the name inside the output. Stamped at the single
+  // choke point (writeToolTerminal) rather than per call site, so a new terminal path cannot forget.
+  // Inert for loop detection: applyToolOutcomeToChain reads toolName only for succeeded/reflected.
+  | { status: 'denied'; output: unknown; toolName?: string; resolvedToolCallIds?: string[] }
   // GOREV (loop reflection — `loopDetection.onRepeat: 'reflect'`): the call was NOT executed; instead a
   // "reconsider" nudge was returned to the model as this call's tool result (see limits.ts / durable-tool.ts).
   // Terminal like 'denied' (time-travel treats it as resolved: status !== suspended/running), and the
@@ -35,7 +42,7 @@ export type ToolJournalRecord =
   // argsHash/toolName are stamped like on 'succeeded' — seedFromHistory needs them to re-arm the chain's
   // `reflected` flag on the MATCHING chain after an internal-state loss (match-only, see limits.ts).
   | { status: 'reflected'; output: unknown; argsHash?: string; toolName?: string; resolvedToolCallIds?: string[] }
-  | { status: 'suspended'; output: unknown }
+  | { status: 'suspended'; output: unknown; toolName?: string }
   // GOREV 4.3: attempts — the number of FAILED attempts made so far for this key (to enforce the
   // retry limit). Optional: absent from old records → durable-tool.ts assumes 1.
   // GOREV (audit C3): `sideEffect` — whether this failed call was a SIDE-EFFECT tool (its execute was
@@ -43,8 +50,8 @@ export type ToolJournalRecord =
   // maxToolCalls (see limits.ts recordToolOutcome/seedFromHistory); a failed read-only tool does not.
   // Stored so seedFromHistory can reconstruct the SAME count from the journal on a first-encounter scan.
   // Optional: absent from old records → treated as not-a-side-effect (harmless, the pre-C3 behavior).
-  | { status: 'failed'; error: string; attempts?: number; sideEffect?: boolean }
-  | { status: 'running'; startedAt: number }; // M4: atomic claim marker (execute in-flight)
+  | { status: 'failed'; error: string; attempts?: number; sideEffect?: boolean; toolName?: string }
+  | { status: 'running'; startedAt: number; toolName?: string }; // M4: atomic claim marker (execute in-flight)
 
 /**
  * GOREV (distributed exactly-once — ADAPTER PARITY MATRIX): every optional concurrency primitive

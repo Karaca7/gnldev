@@ -30,7 +30,7 @@ export interface RunnerConfigLike {
   workflows?: Record<string, unknown>;
 }
 export interface GnlLike {
-  run(name: string, opts: any): Promise<{ text?: string; interrupts?: unknown[] }>;
+  run(name: string, opts: any): Promise<{ text?: string; interrupts?: unknown[]; finishReason?: string }>;
   stream?(name: string, opts: any): Promise<any>;
   /** createGnl provides these (Workflows view). */
   listWorkflows?(): WorkflowMeta[];

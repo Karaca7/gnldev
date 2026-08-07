@@ -83,10 +83,17 @@ async function writeToolTerminal(
   // pending tool-calls back to this record WITHOUT needing to re-derive the dedupe key (see
   // ToolJournalRecord.resolvedToolCallIds in journal.ts). 'suspended'/'failed'/'running' don't need it
   // (they never resolve a pending entry regardless — see reconstructState).
+  // Name every terminal record, not just the successful ones. The call sites that build a
+  // 'succeeded'/'reflected' record set `toolName` themselves (loop detection needs it there); the
+  // denied/suspended/failed paths did not, which left a denial — the most audit-relevant entry there
+  // is — identifiable only by correlating its toolCallId against the model step. Filled here because
+  // this is the one place every terminal write passes through.
+  const named: ToolJournalRecord =
+    (record as { toolName?: string }).toolName ? record : { ...record, toolName };
   const stamped: ToolJournalRecord =
-    record.status === 'succeeded' || record.status === 'denied' || record.status === 'reflected'
-      ? { ...record, resolvedToolCallIds: [toolCallId] }
-      : record;
+    named.status === 'succeeded' || named.status === 'denied' || named.status === 'reflected'
+      ? { ...named, resolvedToolCallIds: [toolCallId] }
+      : named;
   await ctx.journal.put(key, stampFormat(stamped));
   if (dupKey && record.status === 'succeeded') {
     await claim(ctx.journal, dupKey, { firstToolCallId: toolCallId, at: Date.now() } satisfies DupMarker);

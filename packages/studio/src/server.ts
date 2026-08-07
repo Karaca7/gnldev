@@ -4,7 +4,7 @@ import { toFetchHandler, type FetchHandler } from './handler.js';
 import { Hono, type Context } from 'hono';
 import { sseResponse } from './sse.js';
 
-import { reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, purgeRun, purgeOrganization, sweepRuns, POLICY_KEY, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, blockedErrorCode, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent } from '@gnldev/durable';
+import { reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, purgeRun, purgeOrganization, sweepRuns, POLICY_KEY, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent } from '@gnldev/durable';
 import type { PolicyDoc, PolicyRule, BudgetLimit } from '@gnldev/durable';
 import type { JournalReader, Journal, WorkflowLike, MetricsRunRow } from '@gnldev/durable';
 import { makeGate, normalizeAuth, principalOf, isPlatformAdmin, principalScope, assertAssignablePrivileges, type AuthProvider, type Principal } from '@gnldev/auth';
@@ -19,12 +19,12 @@ export type { TriggerInfo } from '@gnldev/scheduler';
 export type StudioResume = (
   runId: string,
   approvals: Record<string, boolean>,
-) => Promise<{ text?: string; interrupts?: unknown[] }>;
+) => Promise<{ text?: string; interrupts?: unknown[]; finishReason?: string }>;
 
 export type StudioChat = (
   message: string,
   opts?: { runId?: string },
-) => Promise<{ runId?: string; text?: string; interrupts?: unknown[] }>;
+) => Promise<{ runId?: string; text?: string; interrupts?: unknown[]; finishReason?: string }>;
 
 /** Metadata for a single tool (for the Tools view + agent context panel). */
 export interface ToolMeta {
@@ -61,7 +61,7 @@ export interface AgentMeta {
  */
 export interface StudioAgentRunner {
   listAgents (): Promise<AgentMeta[]> | AgentMeta[];
-  run (name: string, opts: { runId: string; prompt?: string; messages?: unknown; threadId?: string; resourceId?: string; approvals?: Record<string, boolean>; model?: string; temperature?: number; topP?: number; system?: string; tools?: string[] }): Promise<{ text?: string; interrupts?: unknown[] }>;
+  run (name: string, opts: { runId: string; prompt?: string; messages?: unknown; threadId?: string; resourceId?: string; approvals?: Record<string, boolean>; model?: string; temperature?: number; topP?: number; system?: string; tools?: string[] }): Promise<{ text?: string; interrupts?: unknown[]; finishReason?: string }>;
   stream?(name: string, opts: { runId: string; prompt?: string; messages?: unknown; threadId?: string; resourceId?: string; approvals?: Record<string, boolean>; model?: string; temperature?: number; topP?: number; system?: string; tools?: string[] }): Promise<any>;
   /** If given, the Tools view shows the tool list. */
   listTools?(): Promise<ToolListItem[]> | ToolListItem[];
@@ -1982,7 +1982,14 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     if (!chat) return c.json({ error: 'chat is not enabled' }, 501);
     const body = (await c.req.json().catch(() => ({}))) as { message?: string; runId?: string };
     if (!body.message) return c.json({ error: 'message is required' }, 400);
-    return c.json({ ok: true, ...(await chat(String(body.message), { runId: body.runId })) });
+    try {
+      return c.json({ ok: true, ...(await chat(String(body.message), { runId: body.runId })) });
+    } catch (e) {
+      // This endpoint had no catch at all, so the SAME upstream failure that other endpoints turned
+      // into a 400 became an unhandled 500 here — one fault, two answers, depending only on which
+      // path the caller took. Now it goes through the same taxonomy as the rest.
+      return runErrorResponse(c, e) ?? c.json({ error: String((e as Error)?.message ?? e) }, 400);
+    }
   });
 
   /**
@@ -2001,6 +2008,22 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     if (e instanceof ToolLoopDetectedError || (e as any)?.name === 'ToolLoopDetectedError') {
       const err = e as ToolLoopDetectedError;
       return c.json({ error: err.message, code: 'tool_loop_detected', detail: err.detail, resumable: true }, 422);
+    }
+    // A provider failure is not one of OURS — it matches nothing above and used to fall through to
+    // the generic 400, telling the caller its request was malformed when the request was fine.
+    // Measured: a free endpoint answering 429 arrived as `400 "Failed after 3 attempts…"`, which a
+    // client with retry logic reads as "never retry" at the exact moment it should wait.
+    const up = upstreamFailure(e);
+    if (up) {
+      const eu = e as { message?: string } | null | undefined;
+      const res = c.json({
+        error: eu?.message ?? String(e),
+        code: up.code,
+        ...(up.upstreamStatus !== undefined ? { upstreamStatus: up.upstreamStatus } : {}),
+        ...(up.retryAfter !== undefined ? { retryAfter: up.retryAfter } : {}),
+      }, up.status);
+      if (up.retryAfter !== undefined) res.headers.set('Retry-After', String(up.retryAfter));
+      return res;
     }
     const code = blockedErrorCode(e);
     if (!code) return undefined;
@@ -2103,7 +2126,13 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
         ...(Array.isArray(body.tools) ? { tools: body.tools as string[] } : {}),
       });
       await audit(c, 'agent.run', name, { runId: body.runId, ...(mo && body.model == null ? { managedVersion: true } : {}) });
-      return c.json({ ok: true, runId: body.runId, text: r.text, interrupts: r.interrupts ?? [] });
+      // `finishReason` is here because without it an empty answer is unreadable. A run whose model
+      // returned nothing answers 200 with `text: ""` — identical, on the wire, to a model that
+      // legitimately chose to say nothing. Measured in the field: a provider returned an empty
+      // response with `finishReason: 'unknown'`, the run was journaled as completed, and the caller
+      // had no way to tell the two apart. The framework already knows which happened; it just was
+      // not saying. Additive field, so existing clients are unaffected.
+      return c.json({ ok: true, runId: body.runId, text: r.text, interrupts: r.interrupts ?? [], finishReason: r.finishReason });
     } catch (e: any) {
       return runErrorResponse(c, e) ?? c.json({ error: String(e?.message ?? e) }, 400);
     }
