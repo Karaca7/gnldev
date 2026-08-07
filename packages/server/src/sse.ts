@@ -46,13 +46,18 @@ import type { Interrupt } from '@gnldev/durable';
  * failure is invisible from both sides. `no-transform` is the standard way to say don't, and
  * `compression` honours it (measured: first byte 1520ms -> 302ms with the flag on).
  *
- * `X-Accel-Buffering: no` is the nginx-specific half, and it earns its place only in one
- * configuration — measured, behind a real nginx: with proxy gzip OFF the stream arrives
- * progressively with or without the header (nginx forwards chunks as they come, so the header is
- * inert). Turn `gzip on; gzip_types text/event-stream` on — which ops teams do by default, without
- * thinking about event streams — and the stream collapses into ONE chunk delivered at the end;
- * with the header it stays progressive. So: dead weight in the common case, the difference between
- * a live screen and a frozen one in the case people actually deploy.
+ * `X-Accel-Buffering: no` is the nginx-specific half, and measurement narrowed where it matters to
+ * one square of a 2x2 — behind a real nginx, same stream dripping five deltas 300ms apart:
+ *
+ *   HTTP/1.1 + gzip, no header  → ONE chunk at 1511ms      (collapsed)
+ *   HTTP/1.1 + gzip, header     → 306, 606, 911, 1211, 1511
+ *   HTTP/2   + gzip, no header  → 316, 616, 916, 1217, 1518 (fine without it)
+ *   HTTP/2   + gzip, header     → 312, 612, 913, 1214, 1514
+ *
+ * So it is load-bearing exactly when the CLIENT speaks HTTP/1.1 to a proxy that gzips, and inert
+ * everywhere else — including HTTP/2, which is what a browser usually gets over TLS. That leaves
+ * plenty of real traffic in the square that breaks: internal clients on plain HTTP, curl's default,
+ * anything not a modern browser. Worth a header; not worth believing it covers more than it does.
  *
  * Set AFTER `streamSSE` on purpose: it writes `Cache-Control` itself, so anything set on the context
  * beforehand is overwritten. Patching the returned Response is what actually survives.
