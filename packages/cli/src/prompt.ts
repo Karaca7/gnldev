@@ -147,3 +147,22 @@ export async function checkboxPrompt(
     input.on('data', onData);
   });
 }
+
+/**
+ * Interactive single-select, built on the multi-select above rather than beside it.
+ *
+ * Same keys, same drawing, same cancel path — the only difference is that the answer is one id, and
+ * that is enforced by pre-checking nothing and taking the first selection. A second implementation
+ * would have been a second set of terminal escape bugs.
+ *
+ * ONLY call when stdin/stdout are a TTY (the caller guards on `process.stdin.isTTY`). Resolves to the
+ * chosen id, `null` when the user picked nothing, or `undefined` if cancelled.
+ */
+export async function selectPrompt(
+  items: PromptItem[],
+  opts: { title?: string } = {},
+): Promise<string | null | undefined> {
+  const picked = await checkboxPrompt(items, { title: opts.title ?? 'Select one' });
+  if (picked === undefined) return undefined;
+  return picked[0] ?? null;
+}

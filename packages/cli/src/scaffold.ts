@@ -7,6 +7,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, s
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { RECIPES, FEATURE_IDS, E2E_FEATURE, type Recipe } from './recipes.js';
+import { hostById, APP_FILE, hostReadme } from './hosts.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -37,6 +38,12 @@ export interface ScaffoldOptions {
   features?: string[];
   /** Add an end-to-end durability test (always on for 'full'; opt-in for 'minimal' / feature compose). */
   e2e?: boolean;
+  /**
+   * Which HTTP server this project will run on — writes `src/app.ts` + `src/server.ts` and adds the
+   * framework's dependency. Omitted means no server entry, which is the old behaviour: fine while
+   * `gnl dev` is serving, and nothing to deploy the day you want to.
+   */
+  host?: string;
 }
 
 export interface ScaffoldResult {
@@ -46,6 +53,31 @@ export interface ScaffoldResult {
   template: TemplateName | 'custom';
   /** The composed feature ids (only for the custom path). */
   features?: string[];
+}
+
+/**
+ * Writes the two-file server half: `src/app.ts` (no server attached) and `src/server.ts` (the chosen
+ * one), plus the framework dependency and a `start` script.
+ *
+ * Two files rather than one because the choice must not reach everywhere: the edge targets and the
+ * managed runtime consume `app.ts` and never see `server.ts`. Keeping them apart is what lets the
+ * question be answered honestly.
+ */
+function addHost(dir: string, hostId: string): void {
+  const host = hostById(hostId);
+  if (!host) throw new Error(`gnl: unknown host: ${hostId}`);
+  mkdirSync(join(dir, 'src'), { recursive: true });
+  writeFileSync(join(dir, 'src', 'app.ts'), APP_FILE);
+  writeFileSync(join(dir, 'src', 'server.ts'), host.server);
+  patchPkg(dir, (pkg) => {
+    pkg.dependencies = { ...pkg.dependencies, ...(host.deps ?? {}) };
+    // `@types/node` for every host: the server entry reads process.env and imports node: builtins,
+    // neither of which the base template ever did.
+    pkg.devDependencies = { ...pkg.devDependencies, '@types/node': '^22.0.0', ...(host.devDeps ?? {}) };
+    pkg.scripts = { ...pkg.scripts, start: 'tsx src/server.ts' };
+  });
+  const readme = join(dir, 'README.md');
+  if (existsSync(readme)) writeFileSync(readme, readFileSync(readme, 'utf8').trimEnd() + '\n' + hostReadme(host));
 }
 
 /** Reads, mutates, and writes back a project's package.json. */
@@ -170,7 +202,9 @@ export function scaffold(targetDir: string, opts: ScaffoldOptions = {}): Scaffol
   const name = opts.name ?? basename(dir);
 
   if (opts.features && opts.features.length) {
-    return scaffoldFeatures(dir, name, opts.features, !!opts.e2e);
+    const res = scaffoldFeatures(dir, name, opts.features, !!opts.e2e);
+    if (opts.host) { addHost(dir, opts.host); return { ...res, files: listFiles(dir).sort() }; }
+    return res;
   }
 
   const template: TemplateName = opts.template ?? 'minimal';
@@ -180,6 +214,7 @@ export function scaffold(targetDir: string, opts: ScaffoldOptions = {}): Scaffol
 
   // 'full' ships with an e2e test already; for 'minimal', add it on request.
   if (opts.e2e && template !== 'full') addE2e(dir, templatesDir('_e2e'));
+  if (opts.host) addHost(dir, opts.host);
 
   return { dir, files: listFiles(dir).sort(), template };
 }

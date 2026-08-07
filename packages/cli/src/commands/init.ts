@@ -7,6 +7,7 @@ import type { Command } from './types.js';
 import { positional, flag, flagBool } from '../args.js';
 import { TEMPLATES, type TemplateName } from '../scaffold.js';
 import { FEATURE_IDS, CHECKBOX_ITEMS } from '../recipes.js';
+import { HOSTS, HOST_IDS } from '../hosts.js';
 
 function parseFeatures(csv: string): string[] {
   const list = csv.split(',').map((s) => s.trim()).filter(Boolean);
@@ -23,16 +24,25 @@ export const initCommand: Command = {
   name: 'init',
   group: 'project',
   summary: 'Create a new project (interactive feature picker; mock model, no API key)',
-  usage: 'gnl init [dir] [--features a,b,c] [--template minimal|full] [--e2e] [--yes]',
+  usage: 'gnl init [dir] [--features a,b,c] [--host hono|node|express|fastify|koa|nest] [--template minimal|full] [--e2e] [--yes]',
   async run(ctx) {
     const dir = positional(ctx.argv, 0) ?? '.';
     const { scaffold } = await import('../scaffold.js');
 
     // 1. --features → non-interactive custom compose.
+    // The server flag is orthogonal to every path below: it may accompany --features, --template,
+    // --yes, or the interactive run. Validated once, here, so a typo fails before anything is written.
+    const hostFlag = flag(ctx.argv, 'host');
+    if (hostFlag !== undefined && !HOST_IDS.includes(hostFlag)) {
+      console.error(`gnl init: unknown host '${hostFlag}'`);
+      console.error(`  valid: ${HOST_IDS.join(', ')}`);
+      process.exit(1);
+    }
+
     const featuresFlag = flag(ctx.argv, 'features');
     if (featuresFlag !== undefined) {
       const features = parseFeatures(featuresFlag);
-      const res = scaffold(dir, { features, e2e: flagBool(ctx.argv, 'e2e') });
+      const res = scaffold(dir, { features, e2e: flagBool(ctx.argv, 'e2e'), host: hostFlag });
       report(res, dir);
       return;
     }
@@ -44,14 +54,15 @@ export const initCommand: Command = {
         console.error(`gnl: unknown template '${templateFlag}' (expected: ${TEMPLATES.join(' | ')})`);
         process.exit(1);
       }
-      const res = scaffold(dir, { template: templateFlag as TemplateName, e2e: flagBool(ctx.argv, 'e2e') });
+      const res = scaffold(dir, { template: templateFlag as TemplateName, e2e: flagBool(ctx.argv, 'e2e'), host: hostFlag });
       report(res, dir);
       return;
     }
 
     // 3. --yes or no TTY → minimal (never open the prompt without an interactive terminal → CI-safe).
     if (flagBool(ctx.argv, 'yes') || !process.stdin.isTTY) {
-      const res = scaffold(dir, { template: 'minimal', e2e: flagBool(ctx.argv, 'e2e') });
+      // No server file unless one was named: --yes must not silently pick a framework for you.
+      const res = scaffold(dir, { template: 'minimal', e2e: flagBool(ctx.argv, 'e2e'), host: hostFlag });
       report(res, dir);
       return;
     }
@@ -63,7 +74,20 @@ export const initCommand: Command = {
       console.log('cancelled');
       process.exit(0);
     }
-    const res = scaffold(dir, { features: selected });
+    // 5. Which server this will actually run on. Asked SECOND because it is the question people do
+    //    not know they need until they try to deploy — `gnl dev` serves the project without it, so
+    //    the gap only shows up on the day it is expensive.
+    const { selectPrompt } = await import('../prompt.js');
+    const host = hostFlag ?? await selectPrompt(
+      [...HOSTS.map((h) => ({ id: h.id, label: h.label, hint: h.hint })),
+       { id: '', label: 'none for now', hint: 'gnl dev serves it; add src/server.ts later' }],
+      { title: 'gnl init — which server will you run this on? (SPACE to pick, ENTER to confirm):' },
+    );
+    if (host === undefined) {
+      console.log('cancelled');
+      process.exit(0);
+    }
+    const res = scaffold(dir, { features: selected, host: host || undefined });
     report(res, dir);
   },
 };
