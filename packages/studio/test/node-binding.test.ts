@@ -3,9 +3,9 @@
 //
 // The rest of this suite calls the handler directly (`call(api, '/runs')`), which is the right shape
 // for testing endpoints and structurally cannot see any of this: the traps below all live between
-// the socket and the handler. Every one of them was found by hand on a live server
-// (`server-matrix`), not by a test, and each is silent — nothing throws, a status code just quietly
-// means something other than what it says. This file is the part of that rig that belongs in CI.
+// the socket and the handler. Every one of them was found by hand, on a live server bound to a real
+// framework, and every one of them is silent — nothing throws, a status code just quietly means
+// something other than what it says.
 //
 // Deliberately no Express/Fastify/Koa dependency. Their quirks are theirs; what has to hold here is
 // OUR bridge's behaviour, and `node:http` reproduces every case — including a body parser, which is
