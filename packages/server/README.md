@@ -29,7 +29,7 @@ import { toNodeHandler } from '@gnldev/server/node';
 
 express().use('/api', toNodeHandler(api));                            // Express
 await fastify.register(middie); fastify.use('/api', toNodeHandler(api));   // Fastify + @fastify/middie
-koa.use(c2k(mw));                                                     // Koa + koa-connect
+koa.use(c2k((req, res, _next) => toNodeHandler(api)(req, res)));      // Koa + koa-connect
 createServer(toNodeHandler(api));                                     // node:http
 nestApp.use('/api', toNodeHandler(api));                              // Nest (Express or Fastify)
 ```
@@ -40,6 +40,12 @@ Two rules, both measured on live servers rather than reasoned about:
 middleware runs before body parsing, a route runs after it. `fastify.all('/api/*', …)` looks correct,
 passes every GET, and answers 400 to a perfectly good POST — because Fastify's built-in JSON parser
 has already drained the stream.
+
+**On Koa, declare the third parameter.** `koa-connect` switches on `fn.length`: a middleware with
+fewer than three parameters is assumed not to terminate the response, so it calls `next()` straight
+after and Koa writes its own 404 over what was already sent — measured, `ERR_HTTP_HEADERS_SENT` and
+404 on every route. Naming `next` without calling it selects the branch that waits, which is what a
+handler that owns the response needs.
 
 **Mount before whatever parses request bodies.** A parser that runs first reads the stream to the end
 and hands the result to the framework, not to us. Get it wrong and the bridge says so

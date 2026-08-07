@@ -56,9 +56,15 @@ function bodyAlreadyConsumed(req: IncomingMessage): boolean {
  *
  * express().use('/studio', toNodeHandler(studio));          // Express — before express.json()
  * await fastify.register(middie); fastify.use('/studio', toNodeHandler(studio));   // Fastify
- * koa.use(c2k(mw));                                         // Koa — koa-connect, before the parser
+ * koa.use(c2k((rq, rs, _next) => toNodeHandler(studio)(rq, rs)));  // Koa — three params, see below
  * createServer(toNodeHandler(studio));                      // node:http
  * ```
+ *
+ * On Koa, the middleware must declare THREE parameters even though it never calls the third:
+ * `koa-connect` switches on `fn.length` and, below three, assumes the middleware does not terminate
+ * the response — it calls `next()` immediately and Koa writes its own 404 over what was already
+ * sent. Measured: `ERR_HTTP_HEADERS_SENT` and a 404 on every route, from a two-parameter version of
+ * the same working code.
  *
  * Bind at the MIDDLEWARE layer, never as a route, and put it ahead of the body parser. Measured:
  * `fastify.all('/studio/*', …)` runs AFTER Fastify's built-in JSON parser has drained the stream —
