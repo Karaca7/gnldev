@@ -19,9 +19,13 @@ import type { Interrupt } from '@gnldev/durable';
  * the failure is invisible from both sides. `no-transform` is the standard way to say don't, and
  * `compression` honours it (measured: first byte 1520ms → 302ms with the flag on).
  *
- * `X-Accel-Buffering: no` is the same instruction for nginx, which buffers proxied responses by
- * default and does not read `no-transform`. Untested here — we have no proxy in the rig — but it is
- * the documented lever and costs a header.
+ * `X-Accel-Buffering: no` is the nginx-specific half, and it earns its place only in one
+ * configuration — measured, behind a real nginx: with proxy gzip OFF the stream arrives
+ * progressively with or without the header (nginx forwards chunks as they come, so the header is
+ * inert). Turn `gzip on; gzip_types text/event-stream` on — which ops teams do by default, without
+ * thinking about event streams — and the stream collapses into ONE chunk delivered at the end;
+ * with the header it stays progressive. So: dead weight in the common case, the difference between
+ * a live screen and a frozen one in the case people actually deploy.
  *
  * Set AFTER `streamSSE` on purpose: it writes `Cache-Control` itself, so anything set on the context
  * beforehand is overwritten. Patching the returned Response is what actually survives.

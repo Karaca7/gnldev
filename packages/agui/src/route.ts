@@ -37,7 +37,8 @@ export function pipeAguiStream(c: Context, runId: string, result: any, opts?: Pi
   // Why the headers: Hono sets `Cache-Control: no-cache`, which says nothing about re-encoding, so a
   // compression middleware in the host's chain buffers the stream into one chunk delivered at the
   // end (measured on Express: 13 progressive chunks became 1). `no-transform` stops it;
-  // `X-Accel-Buffering: no` is the same instruction for nginx.
+  // `X-Accel-Buffering: no` is the nginx half — measured behind a real one: inert when the proxy
+  // does not gzip, and the difference between a live screen and a frozen one when it does.
   // Kept IN SYNC with packages/server/src/sse.ts and packages/studio/src/sse.ts.
   const res = streamSSE(c, async (stream) => {
     // In AG-UI every SSE frame is a single JSON event; the type is inside the event JSON (the spec has
