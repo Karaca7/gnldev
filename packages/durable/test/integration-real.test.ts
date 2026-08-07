@@ -15,6 +15,7 @@
 //      script (EVAL, not the fake-redis.ts simulation) — under real concurrent races AND a genuine
 //      mid-transaction failure; plus deletePrefix's GDPR counter-sweep fix and countRunsByStatus/getMany
 //      against real engines (storage-backend.test.ts only proves these against pg-mem/fake-redis).
+import { createRequire } from 'node:module';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { stepCountIs } from 'ai';
 import { PostgresStorage } from '../src/postgres-storage.js';
@@ -523,4 +524,43 @@ describe.skipIf(!RUN)('REAL Redis — SET NX / TTL / MGET (FakeRedis fidelity ch
     expect(vb).toBeUndefined();
     expect(vc).toEqual({ v: 3 });
   });
+});
+
+describe.skipIf(!RUN)('REAL Postgres — schema creation under a simultaneous boot', () => {
+  // `CREATE TABLE IF NOT EXISTS` is not safe against a concurrent copy of itself: both sessions pass
+  // the existence check, both proceed, and the loser dies inside Postgres' catalog with
+  // `duplicate key value violates unique constraint "pg_type_typname_nsp_index"` — a message about
+  // an internal index, telling the reader nothing they can act on.
+  //
+  // Which is the shape of a fleet boot: several instances starting together against a database
+  // created minutes ago, the normal case on a platform that scales by adding copies. Measured before
+  // the fix on a real Postgres — two storages opened in the same moment, one rejected exactly so.
+  //
+  // The race only exists on FIRST creation, so the test needs a genuinely empty namespace: a private
+  // schema per run, dropped afterwards. Pointing the storages at it via `search_path` is what makes
+  // their DDL land there and start from nothing — without that this would pass on an already-built
+  // database and prove nothing.
+  it('several instances against an EMPTY schema all come up', async () => {
+    const { Pool } = createRequire(import.meta.url)('pg') as { Pool: new (c: unknown) => { query: (q: string) => Promise<unknown>; end: () => Promise<void> } };
+    const admin = new Pool({ connectionString: PG_URL });
+    const schema = `boot_${Date.now().toString(36)}`;
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    const url = `${PG_URL}?options=-c%20search_path%3D${schema}`;
+
+    try {
+      const boots = await Promise.allSettled(
+        Array.from({ length: 6 }, async () => {
+          const s = new PostgresStorage({ connectionString: url });
+          await s.meta.set('boot', '1'); // any write — the point is that init() ran first
+          await s.close?.();
+        }),
+      );
+      const why = (boots.filter((b) => b.status === 'rejected') as PromiseRejectedResult[])
+        .map((r) => String((r.reason as Error)?.message)).join(' | ');
+      expect(why).toBe(''); // an empty string reads the failure back in the report
+    } finally {
+      await admin.query(`DROP SCHEMA "${schema}" CASCADE`);
+      await admin.end();
+    }
+  }, 40_000);
 });

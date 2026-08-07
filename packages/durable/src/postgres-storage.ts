@@ -125,8 +125,33 @@ export class PostgresStorage implements Storage {
   private ensureReady(): Promise<void> {
     if (!this.ready) {
       this.ready = (async () => {
-        for (const sql of DDL) await this._pool.query(sql);
-        await this._pool.query(`INSERT INTO gnl_meta (k, v) VALUES ('schema_version', $1) ON CONFLICT (k) DO NOTHING`, [SCHEMA_VERSION]);
+        // `CREATE TABLE IF NOT EXISTS` is not safe against a concurrent copy of itself. Two sessions
+        // both pass the existence check, both proceed, and the loser dies inside Postgres' catalog
+        // with `duplicate key value violates unique constraint "pg_type_typname_nsp_index"` — a
+        // message about an internal index, offering the reader nothing to act on.
+        //
+        // Measured, not theorised: two PostgresStorage instances opened against a fresh database in
+        // the same moment, one of them rejected exactly like that. Which is the shape of a fleet
+        // boot — several instances starting together against a database that was created minutes
+        // ago, the normal case on a managed platform that scales by adding copies.
+        //
+        // A session-level advisory lock serialises the whole block: the first arrival creates the
+        // schema, the others wait and then find it already there. The key is an arbitrary constant,
+        // scoped to this database and to us; `pg_advisory_lock` blocks rather than failing, so no
+        // caller has to retry. Released in `finally` — an error during DDL must not leave every
+        // other instance waiting forever.
+        // Best-effort, not required. The key is inlined rather than bound: a parameter makes the
+        // argument's type ambiguous and picks the `text` overload, which does not exist. And a
+        // backend without advisory locks at all — pg-mem, which this suite runs most of its Postgres
+        // tests against — must still come up: it has no second writer to race with, so losing the
+        // lock costs it nothing. Failing here instead would trade a rare boot race for a certain one.
+        const locked = await this._pool.query('SELECT pg_advisory_lock(47110001)').then(() => true, () => false);
+        try {
+          for (const sql of DDL) await this._pool.query(sql);
+          await this._pool.query(`INSERT INTO gnl_meta (k, v) VALUES ('schema_version', $1) ON CONFLICT (k) DO NOTHING`, [SCHEMA_VERSION]);
+        } finally {
+          if (locked) await this._pool.query('SELECT pg_advisory_unlock(47110001)').catch(() => {});
+        }
       })();
     }
     return this.ready;
