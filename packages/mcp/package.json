@@ -31,7 +31,7 @@
     "@gnldev/durable": "workspace:*",
     "ai": "^5.0.0"
   },
-  "author": "Karaca7 (https://gnl.dev)",
+  "author": "Karaca Yılmaz (https://gnl.dev)",
   "homepage": "https://gnl.dev",
   "bugs": {
     "url": "https://github.com/Karaca7/gnl-framework/issues"

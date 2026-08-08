@@ -71,7 +71,7 @@
     "zod": "^3.25.0",
     "esbuild": "^0.21.5"
   },
-  "author": "Karaca7 (https://gnl.dev)",
+  "author": "Karaca Yılmaz (https://gnl.dev)",
   "homepage": "https://gnl.dev",
   "bugs": {
     "url": "https://github.com/Karaca7/gnl-framework/issues"
