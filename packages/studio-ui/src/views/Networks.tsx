@@ -22,8 +22,10 @@ function PillNode({ data }: NodeProps) {
 const nodeTypes = { pill: PillNode };
 
 /** Build an agent graph from A2A edges: every unique name = one node, parent → remote directed edge.
-    Layout: layer via BFS from the roots (no incoming call); each layer is horizontally centered. */
-function build(edges: A2AEdge[]): { nodes: Node[]; edges: Edge[] } {
+    Layout: layer via BFS from the roots (no incoming call); each layer is horizontally centered.
+    Exported for direct unit testing (networks-view.test.tsx) — the rendered xyflow canvas itself
+    stays a browser check, but the layering/dedup/root logic is pure and asserted there. */
+export function buildAgentGraph(edges: A2AEdge[]): { nodes: Node[]; edges: Edge[] } {
   const names = new Set<string>();
   const incoming = new Set<string>();
   const adj = new Map<string, string[]>();
@@ -71,7 +73,7 @@ function build(edges: A2AEdge[]): { nodes: Node[]; edges: Edge[] } {
 export function Networks() {
   const { t } = useTranslation('networks');
   const a2a = useA2A();
-  const { nodes, edges } = useMemo(() => build(a2a.data ?? []), [a2a.data]);
+  const { nodes, edges } = useMemo(() => buildAgentGraph(a2a.data ?? []), [a2a.data]);
   // Call edges: aggregate parent → remote relationships by their REAL call count (each A2AEdge = one call).
   // Per-edge latency isn't tracked, so the mockup's "0.4s" mock value isn't shown — no making things up.
   const callEdges = useMemo(() => {
