@@ -110,7 +110,7 @@ const { text } = await gnl.run('assistant', { prompt: 'hello' });
 for await (const ev of gnl.stream('assistant', { prompt: 'streaming' })) { /* text-delta… */ }
 ```
 
-## Packages (25)
+## Packages (24)
 | Package | What |
 |---|---|
 | **`@gnldev/durable`** | Core: `runDurable`/`resumeRun`/`streamDurable` · `durableTool`/`withDurableModel` · journal (memory/**sqlite/postgres/redis**) · `createGnl` + model router · `createAgentTool` + **dynamic network (`runNetwork`, CAS-frozen routing)** · `getRunCost` · `reconstructState`/`forkRun` · run-lock (**atomic takeover: `putIfMatch`**) · `rolloverRun` (period rollover) · retention (`sweepRuns/sweepLog/sweepThreads`, recursive `purgeRun`, disk reclaim via the storage's `compact()`) · **`timeouts` (`modelStepMs`/`toolMs`/`claimTtlMs`) → `StepTimeoutError`** |
@@ -131,7 +131,7 @@ for await (const ev of gnl.stream('assistant', { prompt: 'streaming' })) { /* te
 | **`@gnldev/cli`** | project: `gnl init` (**interactive feature checkbox** — pick idempotency-tool/rag/mcp/memory/workflow/auth/e2e → a wired `gnl.config.ts` is generated; non-interactive via `--features a,b,c` / `--template minimal\|full` / `--yes`, prompt never opens without a TTY) / `add <idempotency-tool\|rag\|mcp\|memory\|workflow\|auth>` / `dev` / `studio` · inspect: `runs`/`run`/`inspect` (**time-travel in the terminal**) · operate: `fork`/`resume`/`sweep`/`rm` (all wired straight to `@gnldev/durable`'s own exports, nothing reimplemented) · **zero new runtime deps** (hand-rolled ANSI/table + a from-scratch raw-mode checkbox, no chalk/ora/commander/inquirer) · `create-gnl` (`npm create gnl`) |
 
 ## Examples (`examples/`)
-- **`showcase`** — a single self-verifying file exercising all 14 packages: `pnpm --filter @gnldev/showcase demo` → 22 sections, 22/22 ✓ (mock model, no API key needed) · `bench` (overhead measurement)
+- **`showcase`** — a single self-verifying file exercising the packages: `pnpm --filter @gnldev/showcase demo` → 22 sections, 22/22 ✓ (mock model, no API key needed) · `bench` (overhead measurement)
 - **`app`** — **Durable AI Support Desk** (web UI + API): `pnpm --filter @gnldev/app start` → :3100 (UI) + :3100/studio (ops). Ticket → message → approval → exactly-once refund + queue/events/otel.
 - **`react-client`** — a `@gnldev/client/react` demo (`useChat` + streaming + approval), API-key-free echo backend. `pnpm --filter @gnldev/react-client-example server` + `… dev`.
 
@@ -162,12 +162,15 @@ Peers: `ai`, `zod`. **No telemetry, no phone-home.**
 gnl is fully Hono-based, so a Node deploy is a few lines:
 ```ts
 import { createRestApi } from '@gnldev/server';
-const app = createRestApi(config);   // serve it with @hono/node-server, or any Hono adapter
+import { serve } from '@hono/node-server';
+serve({ fetch: createRestApi(config).fetch, port: Number(process.env.PORT ?? 3000) });
 ```
+`createRestApi` returns a plain fetch handler, so it also mounts straight into an existing server —
+`toNodeHandler` from `@gnldev/server/node` bridges it to Express, Fastify, Koa, Nest or bare
+`node:http`, and on Deno, Bun or Workers the handler is already the shape those runtimes expect.
 **Journal warning:** `node:sqlite` doesn't work on serverless/edge runtimes → use a network-backed journal
 (`@gnldev/durable/postgres` or `/redis`, D1 on Cloudflare). `SqliteStorage` is only for long-lived Node
-processes. For Vercel/Cloudflare/Netlify, deploy the Hono app the way that platform documents — nothing here
-needs a gnl-specific adapter.
+processes.
 
 ## Honest positioning
 Not "a full-featured agent-framework alternative" — a **durability/correctness layer for the AI SDK**: a solid core

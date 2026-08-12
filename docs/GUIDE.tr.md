@@ -250,7 +250,7 @@ tablo şeması eski sürümden kalmaysa güvenli göç (migration) kararını bu
 
 ---
 
-## 6. Paket haritası — 21 paket, 6 grup
+## 6. Paket haritası — 24 paket, 6 grup
 
 ```mermaid
 graph LR
@@ -824,7 +824,7 @@ Tek cümlelik özet: **resume = geçmişe sadakat (üretim güvenliği), replay/
 | Katman | Teknoloji | Bu projede ne işe yarar? |
 |---|---|---|
 | Dil / çalışma ortamı | TypeScript + Node.js | Tüm kod TypeScript (tip güvenliği: yanlış veri şekli derlemede yakalanır). Node 22'nin gömülü `node:sqlite`'ı sayesinde SQLite için ek paket bile gerekmez. |
-| Monorepo yönetimi | pnpm workspaces | 21 paketi tek depoda tutar (monorepo: çok paketli tek depo). |
+| Monorepo yönetimi | pnpm workspaces | 24 paketi tek depoda tutar (monorepo: çok paketli tek depo). |
 | LLM soyutlaması | **Vercel AI SDK** (`ai`) | En kritik bağımlılık: OpenAI/Anthropic/Google/Mistral'e TEK arayüz. `runDurable` aslında `generateText`'in dayanıklı sarmalayıcısıdır — sağlayıcı kilidi yok. |
 | Şema doğrulama | Zod | Araç girdi şemaları (LLM'in araca göndereceği parametrelerin biçim kontrolü). |
 | Web çatısı | **Hono** | Server/Studio/auth'un HTTP katmanı. Express yerine Hono: hem Node'da hem edge'de (Cloudflare Workers) aynen çalışır, çok küçüktür — "küçük edge bundle" iddiasının temeli. |

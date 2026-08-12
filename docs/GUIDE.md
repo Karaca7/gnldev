@@ -258,7 +258,7 @@ from here.
 
 ---
 
-## 6. Package map — 25 packages, 6 groups
+## 6. Package map — 24 packages, 6 groups
 
 ```mermaid
 graph LR
@@ -854,7 +854,7 @@ former; it's tested with the latter.
 | Layer | Technology | What's it for in this project? |
 |---|---|---|
 | Language / runtime | TypeScript + Node.js | All code is TypeScript (type safety: wrong data shapes are caught at compile time). Thanks to Node 22's built-in `node:sqlite`, SQLite doesn't even need an extra package. |
-| Monorepo management | pnpm workspaces | Keeps 25 packages in one repo (monorepo: a single repo holding many packages). |
+| Monorepo management | pnpm workspaces | Keeps 24 packages in one repo (monorepo: a single repo holding many packages). |
 | LLM abstraction | **Vercel AI SDK** (`ai`) | The most critical dependency: a SINGLE interface to OpenAI/Anthropic/Google/Mistral. `runDurable` is essentially a durable wrapper around `generateText` — no provider lock-in. |
 | Schema validation | Zod | Tool input schemas (shape-checking the parameters the LLM will send to a tool). |
 | Web framework | **Hono** | The HTTP layer for Server/Studio/auth. Hono instead of Express: runs identically on Node and at the edge (Cloudflare Workers), and is very small — the foundation of the "small edge bundle" claim. |

@@ -108,7 +108,7 @@ const { text } = await gnl.run('assistant', { prompt: 'merhaba' });
 for await (const ev of gnl.stream('assistant', { prompt: 'akış' })) { /* text-delta… */ }
 ```
 
-## Paketler (17)
+## Paketler (24)
 | Paket | Ne |
 |---|---|
 | **`@gnldev/durable`** | Çekirdek: `runDurable`/`resume`/`stream` · `durableTool`/`withDurableModel` · journal (memory/**sqlite/postgres/redis**) · `createGnl`+model-router · `createAgentTool` + **dinamik ağ (`runNetwork`, CAS-frozen routing)** · `getRunCost` · `reconstructState`/`forkRun` · run-lock (**atomik takeover: `putIfMatch`**) · `rolloverRun` (dönem devri) · retention (`sweepRuns/sweepLog/sweepThreads`, özyinelemeli `purgeRun`, disk geri kazanımı `compact`) · **`timeouts` (`modelStepMs`/`toolMs`/`claimTtlMs`) → `StepTimeoutError`** |
@@ -127,10 +127,9 @@ for await (const ev of gnl.stream('assistant', { prompt: 'akış' })) { /* text-
 | **`@gnldev/studio`** | inspector **+ Playground**: agent seç→prompt→streaming yanıt→onay · time-travel/fork + cost/trace/metrics/diff · admin↔API ayrımı + rol auth |
 | **`@gnldev/client`** | type-safe REST/SSE client (framework-agnostik core) + React hook'ları (`@gnldev/client/react`: `useGnlAgent`/`useChat`) |
 | **`@gnldev/cli`** | proje: `gnl init [--template minimal\|full] [--e2e]` (starter'lar — **`full`, `idempotency: 'args'` tool'u + tekrarlanan-toolCallId desenini yeniden üreten e2e testi taşır**) / `add <memory\|rag\|mcp\|workflow\|auth>` / `dev` / `studio` · inceleme: `runs`/`run`/`inspect` (**terminalde zaman yolculuğu**) · operasyon: `fork`/`resume`/`sweep`/`rm` (hepsi doğrudan `@gnldev/durable`'ın kendi export'larına bağlı, hiçbiri yeniden implement edilmedi) · **sıfır yeni runtime bağımlılığı** (elle yazılmış ANSI/tablo, chalk/ora/commander yok) · `create-gnl` (`npm create gnl`) |
-| **`@gnldev/deploy`** | `nodeAdapter`/`edgeAdapter` · `bundleApp` (esbuild, edge hedefi) · **`deployTargets`** (Cloudflare/Vercel/Netlify üreticileri) |
 
 ## Örnekler (`examples/`)
-- **`showcase`** — 14 paketi kendi kendini doğrulayan tek dosya: `pnpm --filter @gnldev/showcase demo` → 22 bölüm 22/22 ✓ (mock model, API key gerekmez) · `bench` (overhead ölçer)
+- **`showcase`** — paketleri kendi kendini doğrulayan tek dosya: `pnpm --filter @gnldev/showcase demo` → 22 bölüm 22/22 ✓ (mock model, API key gerekmez) · `bench` (overhead ölçer)
 - **`app`** — **Durable AI Support Desk** (web UI + API): `pnpm --filter @gnldev/app start` → :3100 (UI) + :3100/studio (ops). Ticket→mesaj→onay→exactly-once iade + queue/events/otel.
 - **`react-client`** — `@gnldev/client/react` demosu (`useChat` + streaming + onay), API key'siz echo backend. `pnpm --filter @gnldev/react-client-example server` + `… dev`.
 
@@ -158,10 +157,10 @@ TypeScript strict · 0 `@ts-ignore` (tip kaçışları sınırlı tutuldu; sın�
 gnl tamamen Hono tabanlı → Node deploy birkaç satır:
 ```ts
 import { createRestApi } from '@gnldev/server';
-import { nodeAdapter } from '@gnldev/deploy';                // ince @hono/node-server sarmalı
-nodeAdapter(createRestApi(config));   // reads PORT from the environment itself (default 3000)
+import { serve } from '@hono/node-server';
+serve({ fetch: createRestApi(config).fetch, port: Number(process.env.PORT ?? 3000) });
 ```
-**Journal uyarısı:** serverless/edge runtime'larda `node:sqlite` çalışmaz → ağ-tabanlı journal kullanın (`@gnldev/durable/postgres` veya `/redis`, Cloudflare'de D1). `SqliteStorage` yalnız uzun-ömürlü Node süreçleri içindir. Vercel/Cloudflare/Netlify hedefleri hazır: `deployTargets` (bkz. [`@gnldev/deploy`](packages/deploy)).
+**Journal uyarısı:** serverless/edge runtime'larda `node:sqlite` çalışmaz → ağ-tabanlı journal kullanın (`@gnldev/durable/postgres` veya `/redis`, Cloudflare'de D1). `SqliteStorage` yalnız uzun-ömürlü Node süreçleri içindir.
 
 ## Dürüst konumlandırma
 "Tam-donanımlı bir agent framework alternatifi" değil; **AI SDK için durability/correctness katmanı**: sağlam bir çekirdek (`@gnldev/durable`) +
