@@ -36,13 +36,13 @@
     "test": "vitest run"
   },
   "peerDependencies": {
-    "@gnldev/schema-compat": "workspace:^",
+    "@gnldev/tool-schema": "workspace:^",
     "ai": "^5.0.0",
     "ioredis": "^5.4.0",
     "pg": "^8.0.0"
   },
   "peerDependenciesMeta": {
-    "@gnldev/schema-compat": {
+    "@gnldev/tool-schema": {
       "optional": true
     },
     "ioredis": {
@@ -54,7 +54,7 @@
   },
   "devDependencies": {
     "@ai-sdk/provider": "^2.0.0",
-    "@gnldev/schema-compat": "workspace:*",
+    "@gnldev/tool-schema": "workspace:*",
     "ai": "^5.0.0",
     "ioredis": "^5.4.0",
     "pg": "^8.0.0",

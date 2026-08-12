@@ -1,4 +1,4 @@
-import type { SchemaCompatRule, JsonSchema } from '../types.js';
+import type { ToolSchemaRule, JsonSchema } from '../types.js';
 import { walk, stripStringFormats } from './util.js';
 
 /**
@@ -22,13 +22,13 @@ import { walk, stripStringFormats } from './util.js';
  *    reason and needs the same treatment. This is not an insight about groq; it is groq's published
  *    description of itself, and any implementation reading that documentation lands here. It is
  *    listed separately only because the provider string a user passes is `'groq'`, not `'openai'`,
- *    so neither term above catches it. Covered by `test/schema-compat.test.ts` ("groq provider is
+ *    so neither term above catches it. Covered by `test/tool-schema.test.ts` ("groq provider is
  *    also caught").
  *
  * Note that groq is not a dependency here and never has been: the term exists so a caller who
  * brings their own groq provider is handled, not because this package integrates one.
  */
-export const openaiStrict: SchemaCompatRule = {
+export const openaiStrict: ToolSchemaRule = {
   name: 'openai-strict',
   shouldApply: (m) =>
     m.provider.includes('openai') || m.modelId.includes('openai') || m.provider.includes('groq'),

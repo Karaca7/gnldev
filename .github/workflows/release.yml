@@ -89,7 +89,7 @@ jobs:
           echo "Version guard passed: ${#seen[@]} version across the workspace ($(printf '%s' "${!seen[@]}"))."
 
       # pnpm -r publish walks the workspace in topological order on its own (peers such as
-      # @gnldev/schema-compat and @gnldev/durable publish before their dependents), so no manual
+      # @gnldev/tool-schema and @gnldev/durable publish before their dependents), so no manual
       # --filter ordering is needed here.
       #
       # A package marked "private": true is skipped by `-r publish` automatically, so no --filter

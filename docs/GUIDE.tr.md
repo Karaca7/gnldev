@@ -280,7 +280,7 @@ graph LR
         mcp["@gnldev/mcp<br/>MCP araç protokolü"]
         a2a["@gnldev/a2a<br/>uzak ajan çağrısı"]
         otel["@gnldev/otel<br/>izleme (Langfuse vb.)"]
-        schema["@gnldev/schema-compat<br/>sağlayıcı şema uyumu"]
+        schema["@gnldev/tool-schema<br/>sağlayıcı şema uyumu"]
     end
     subgraph Operasyon
         auth["@gnldev/auth<br/>oturum, API anahtarı, RBAC"]

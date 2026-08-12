@@ -1,4 +1,4 @@
-// @gnldev/schema-compat — detect + default rules + applyToolCompat pipeline.
+// @gnldev/tool-schema — detect + default rules + applyToolCompat pipeline.
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
 import { tool, jsonSchema } from 'ai';
@@ -6,7 +6,7 @@ import {
   detectModel,
   applyToolCompat,
   defaultRules,
-  type SchemaCompatRule,
+  type ToolSchemaRule,
 } from '../src/index.js';
 
 // Builds a single-tool set; reads the JSON Schema after patching.
@@ -108,7 +108,7 @@ describe('applyToolCompat — general behavior', () => {
   });
 
   it('custom rule is added to the pipeline (composition)', () => {
-    const addTitle: SchemaCompatRule = {
+    const addTitle: ToolSchemaRule = {
       name: 'add-title',
       shouldApply: () => true,
       transform: (s) => {
@@ -122,7 +122,7 @@ describe('applyToolCompat — general behavior', () => {
   });
 
   it('a throwing rule does not drop the tool (the others still apply)', () => {
-    const boom: SchemaCompatRule = {
+    const boom: ToolSchemaRule = {
       name: 'boom',
       shouldApply: () => true,
       transform: () => {

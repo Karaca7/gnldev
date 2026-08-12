@@ -288,7 +288,7 @@ graph LR
         mcp["@gnldev/mcp<br/>MCP tool protocol"]
         a2a["@gnldev/a2a<br/>remote agent calls"]
         otel["@gnldev/otel<br/>tracing (Langfuse, etc.)"]
-        schema["@gnldev/schema-compat<br/>provider schema compatibility"]
+        schema["@gnldev/tool-schema<br/>provider schema compatibility"]
     end
     subgraph Operations
         auth["@gnldev/auth<br/>sessions, API keys, RBAC"]

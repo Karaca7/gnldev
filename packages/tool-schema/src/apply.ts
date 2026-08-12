@@ -1,6 +1,6 @@
 import { asSchema, jsonSchema } from 'ai';
 import { detectModel } from './detect.js';
-import type { JsonSchema, ModelInfo, SchemaCompatRule } from './types.js';
+import type { JsonSchema, ModelInfo, ToolSchemaRule } from './types.js';
 
 /**
  * Converts tool.inputSchema (zod | AI SDK Schema | raw JSON) into a JSON Schema COPY.
@@ -33,7 +33,7 @@ function toJsonSchema(input: unknown): JsonSchema | undefined {
 export function applyToolCompat(
   tools: Record<string, any>,
   model: unknown,
-  rules: SchemaCompatRule[],
+  rules: ToolSchemaRule[],
 ): Record<string, any> {
   const info: ModelInfo = detectModel(model);
   const active = rules.filter((r) => {

@@ -1,4 +1,4 @@
-import type { SchemaCompatRule, JsonSchema } from '../types.js';
+import type { ToolSchemaRule, JsonSchema } from '../types.js';
 import { walk, stripStringFormats } from './util.js';
 
 /**
@@ -8,7 +8,7 @@ import { walk, stripStringFormats } from './util.js';
  *  - `oneOf` → `anyOf` (oneOf is not supported)
  *  - `type: [..., 'null']` → `nullable: true` + single type (union-with-null OpenAPI form)
  */
-export const gemini: SchemaCompatRule = {
+export const gemini: ToolSchemaRule = {
   name: 'gemini',
   shouldApply: (m) => m.provider.includes('google') || m.modelId.includes('gemini'),
   transform(schema: JsonSchema) {

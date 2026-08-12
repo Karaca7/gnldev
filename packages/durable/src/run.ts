@@ -19,7 +19,7 @@ import { assertNotCompensated, CompensatedRunError } from './compensation.js';
 import { assertNotCanceled } from './cancel.js';
 import { markRunTainted, readThreadTaint, readDirectRunTaint, recordTaintProvenance, isThreadTaintExpired } from './taint.js';
 import type { RunLimits } from './limits.js';
-import type { SchemaCompatRule } from '@gnldev/schema-compat';
+import type { ToolSchemaRule } from '@gnldev/tool-schema';
 import type { LanguageModelV2 } from '@ai-sdk/provider';
 
 type GenerateTextOptions = Parameters<typeof generateText>[0];
@@ -68,7 +68,7 @@ export type RunDurableArgs = GenerateTextOptions & {
   /** 8.7 Processor pipeline: input/output/tool transformers (PII/moderation/tool-filter). */
   processors?: Processor[];
   /** 8.8 Provider-specific tool-schema compatibility (opt-in): true → default set; array → those rules. */
-  schemaCompat?: boolean | SchemaCompatRule[];
+  schemaCompat?: boolean | ToolSchemaRule[];
   /** W1 (opt-in): per-run cost cap + loop detection. If not provided, no check runs. */
   limits?: RunLimits;
   /**
@@ -104,7 +104,7 @@ export type StreamDurableArgs = StreamTextOptions & {
    */
   processors?: Processor[];
   /** 8.8 Provider-specific tool-schema compatibility (opt-in): true → default set; array → those rules. */
-  schemaCompat?: boolean | SchemaCompatRule[];
+  schemaCompat?: boolean | ToolSchemaRule[];
   /** W1 (opt-in): per-run cost cap + loop detection. If not provided, no check runs. */
   limits?: RunLimits;
   /** §5.3 (opt-in): model-step exclusivity — same semantics as runDurable (see RunDurableArgs). */
@@ -975,11 +975,11 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   let effectiveTools = wmTool ? { ...tools, ...wmTool } : tools;
   if (procCtx && effectiveTools) effectiveTools = await applyToolProcessors(processors!, procCtx, effectiveTools, rest);
 
-  // 8.8 Schema-compat (opt-in): provider-specific tool-schema transformation. PURE + BEFORE the model
+  // 8.8 Tool-schema compat (opt-in): provider-specific tool-schema transformation. PURE + BEFORE the model
   // call + BEFORE durableTools wraps it → doesn't touch the journal, argsHash/toolCallId/replay unaffected.
-  // Lazy import: if unused, @gnldev/schema-compat is never loaded (keeps the durable core thin).
+  // Lazy import: if unused, @gnldev/tool-schema is never loaded (keeps the durable core thin).
   if (schemaCompat && effectiveTools) {
-    const { applyToolCompat, defaultRules } = await import('@gnldev/schema-compat');
+    const { applyToolCompat, defaultRules } = await import('@gnldev/tool-schema');
     const rules = schemaCompat === true ? defaultRules : schemaCompat;
     effectiveTools = applyToolCompat(effectiveTools, model, rules);
   }
@@ -1083,7 +1083,7 @@ export interface ResumeAgentConfig {
   lock?: { owner: string; ttlMs: number };
   timeouts?: { modelStepMs?: number; toolMs?: number; claimTtlMs?: number };
   exclusiveModelStep?: { ttlMs?: number };
-  schemaCompat?: boolean | SchemaCompatRule[];
+  schemaCompat?: boolean | ToolSchemaRule[];
   toolPolicy?: 'strict';
 }
 
@@ -1212,9 +1212,9 @@ export async function streamDurable(args: StreamDurableArgs) {
   let effectiveTools = wmTool ? { ...tools, ...wmTool } : tools;
   if (procCtx && effectiveTools) effectiveTools = await applyToolProcessors(processors!, procCtx, effectiveTools, rest);
 
-  // 8.8 Schema-compat (opt-in): see runDurableInner — pure, before the model call + before durableTools.
+  // 8.8 Tool-schema compat (opt-in): see runDurableInner — pure, before the model call + before durableTools.
   if (schemaCompat && effectiveTools) {
-    const { applyToolCompat, defaultRules } = await import('@gnldev/schema-compat');
+    const { applyToolCompat, defaultRules } = await import('@gnldev/tool-schema');
     const rules = schemaCompat === true ? defaultRules : schemaCompat;
     effectiveTools = applyToolCompat(effectiveTools, model, rules);
   }

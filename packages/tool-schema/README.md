@@ -1,4 +1,4 @@
-# @gnldev/schema-compat
+# @gnldev/tool-schema
 
 Tool schemas that one provider accepts and another rejects, smoothed over.
 
@@ -9,7 +9,7 @@ schema for the model actually being called.
 ## Install
 
 ```bash
-npm i @gnldev/schema-compat
+npm i @gnldev/tool-schema
 ```
 
 ## Use
@@ -17,7 +17,7 @@ npm i @gnldev/schema-compat
 It is opt-in from `@gnldev/durable`:
 
 ```ts
-import { defaultRules } from '@gnldev/schema-compat';
+import { defaultRules } from '@gnldev/tool-schema';
 
 const gnl = createGnl({ ...config, schemaCompat: defaultRules });
 ```
@@ -25,7 +25,7 @@ const gnl = createGnl({ ...config, schemaCompat: defaultRules });
 Or directly:
 
 ```ts
-import { applyToolCompat, detectModel, defaultRules } from '@gnldev/schema-compat';
+import { applyToolCompat, detectModel, defaultRules } from '@gnldev/tool-schema';
 
 const safe = applyToolCompat(tools, detectModel(modelId), defaultRules);
 ```
@@ -37,7 +37,7 @@ const safe = applyToolCompat(tools, detectModel(modelId), defaultRules);
 | `detectModel` | Model id → which provider family it belongs to |
 | `applyToolCompat` | Applies the matching rules to a tool set |
 | `defaultRules` | The bundled rule set (OpenAI / Gemini / Anthropic) |
-| `SchemaCompatRule` | The rule interface — add your own for a provider not covered here |
+| `ToolSchemaRule` | The rule interface — add your own for a provider not covered here |
 
 Rules are ordinary objects, so a provider the default set does not know about is a rule you write
 rather than a fork you maintain.

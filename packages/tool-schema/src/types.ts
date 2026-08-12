@@ -1,4 +1,4 @@
-// @gnldev/schema-compat type surface — the core of the mechanism.
+// @gnldev/tool-schema type surface — the core of the mechanism.
 
 /** Tool input schema — JSON Schema node (loose; `any`-friendly across gnl). */
 export type JsonSchema = Record<string, any>;
@@ -12,11 +12,11 @@ export interface ModelInfo {
 }
 
 /**
- * Extensible schema-compatibility rule. Must be PURE: runs BEFORE the model call,
+ * Extensible tool-schema compatibility rule. Must be PURE: runs BEFORE the model call,
  * never touches the journal, and returns the same output for the same input. Developers can
  * write their own rule and add it to the pipeline (`[...defaultRules, myRule]`).
  */
-export interface SchemaCompatRule {
+export interface ToolSchemaRule {
   /** Stable, unique name (for logging/diagnostics). */
   name: string;
   /** Does this rule apply to the given model? */
