@@ -13,6 +13,17 @@ read and agree to the CLA. Tick it in your first PR and you're done — it carri
 contributions, so it's a one-time step per GitHub account. The CLA check has to pass before a pull
 request is reviewed.
 
+## About this repository's history
+
+The first commit here is a snapshot. Development happens in a private monorepo that also holds
+work not part of this project — a commercial tier, internal audits, unrelated experiments — so
+what is published is the subset that makes up the framework, taken at a point in time rather than
+replayed commit by commit.
+
+Two things follow, and both are the point of saying this out loud. The history above the first
+commit is not missing, it is simply not this repository's; and everything below it is real —
+every commit from here on is the actual change that was made, with the reasoning that produced it.
+
 ## Provenance commitment
 
 Before every major version release, an independent-development audit is re-run — this codebase is
