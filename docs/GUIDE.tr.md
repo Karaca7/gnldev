@@ -283,8 +283,7 @@ graph LR
         schema["@gnldev/schema-compat<br/>sağlayıcı şema uyumu"]
     end
     subgraph Operasyon
-        auth["@gnldev/auth (ücretsiz)<br/>@gnldev/auth-ee (kurumsal SSO)"]
-        deploy["@gnldev/deploy<br/>bundle + Vercel/CF/Netlify"]
+        auth["@gnldev/auth<br/>oturum, API anahtarı, RBAC"]
         cli["@gnldev/cli + create-gnl<br/>komut satırı + şablon"]
     end
     Yetenekler --> durable
@@ -474,11 +473,23 @@ await api.run('asistan', { prompt: '...' });
 
 ### 7.9 Yayınlama (deploy) ve izleme
 
-```ts
-import { deployTargets, writeDeployTarget, bundleApp } from '@gnldev/deploy';
-await writeDeployTarget(deployTargets.cloudflare({ entry: './src/server.ts' }), '.');
-// → worker.ts + wrangler.toml hazır; `npx wrangler deploy`
+Ayrı bir deploy paketi yok, ve bu bilinçli: `createRestApi()` web standardı bir `fetch` handler'ı
+döndürüyor, yani onu koşturacak şey platformunuzun zaten beklediği şey. Araya giren bir adaptör
+yok, bir sağlayıcının API'siyle ayak uydurması gereken bir şey yok.
 
+```ts
+import { createRestApi } from '@gnldev/server';
+const api = createRestApi(config);
+
+// Node — fetch handler konuşan hangi sunucuyu isterseniz
+import { serve } from '@hono/node-server';
+serve({ fetch: api.fetch, port: Number(process.env.PORT ?? 3000) });
+
+// Cloudflare Workers, Deno Deploy, Bun — handler modülün default export'unun kendisi
+export default { fetch: api.fetch };
+```
+
+```ts
 import { exportRunToOtlp, otlpPresets } from '@gnldev/otel';
 await exportRunToOtlp(journal, 'siparis-42', otlpPresets.langfuse({ publicKey, secretKey }));
 // koşunun tüm izi (trace) tek satırla Langfuse'a (LLM izleme servisi)

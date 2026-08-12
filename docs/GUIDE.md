@@ -291,8 +291,7 @@ graph LR
         schema["@gnldev/schema-compat<br/>provider schema compatibility"]
     end
     subgraph Operations
-        auth["@gnldev/auth (free)<br/>@gnldev/auth-ee (enterprise SSO)"]
-        deploy["@gnldev/deploy<br/>bundle + Vercel/CF/Netlify"]
+        auth["@gnldev/auth<br/>sessions, API keys, RBAC"]
         cli["@gnldev/cli + create-gnl<br/>CLI + scaffolding"]
     end
     Capabilities --> durable
@@ -488,11 +487,23 @@ await api.run('assistant', { prompt: '...' });
 
 ### 7.9 Deployment and observability
 
-```ts
-import { deployTargets, writeDeployTarget, bundleApp } from '@gnldev/deploy';
-await writeDeployTarget(deployTargets.cloudflare({ entry: './src/server.ts' }), '.');
-// → worker.ts + wrangler.toml ready; `npx wrangler deploy`
+There is no deployment package, and that is the design: `createRestApi()` returns a web-standard
+`fetch` handler, so what runs it is whatever your platform already expects. No adapter in between,
+nothing to keep in step with a provider's API.
 
+```ts
+import { createRestApi } from '@gnldev/server';
+const api = createRestApi(config);
+
+// Node — bring any server that speaks fetch handlers
+import { serve } from '@hono/node-server';
+serve({ fetch: api.fetch, port: Number(process.env.PORT ?? 3000) });
+
+// Cloudflare Workers, Deno Deploy, Bun — the handler *is* the module's default export
+export default { fetch: api.fetch };
+```
+
+```ts
 import { exportRunToOtlp, otlpPresets } from '@gnldev/otel';
 await exportRunToOtlp(journal, 'order-42', otlpPresets.langfuse({ publicKey, secretKey }));
 // the run's full trace to Langfuse (an LLM tracing service) in a single line
