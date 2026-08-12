@@ -158,7 +158,7 @@ export async function readTaintProvenance(journal: Journal, threadId: string): P
  * a thread can accumulate poison from several directly-tainted runs). CAS when the journal supports it
  * (two concurrent tainted runs on one thread must not lose each other's hashes; a lost hash could
  * expire the taint EARLY — the unsafe direction), otherwise best-effort get→put (the same documented
- * narrow window as the other fallbacks, CORE-HARDENING §2.2). Never throws (advisory-write discipline);
+ * narrow window as the other fallbacks, the core-hardening review). Never throws (advisory-write discipline);
  * on final failure it is LOUD: a MISSING record is the safe side (the expiry check treats it as
  * "cannot prove absence" and keeps the taint), but a PARTIAL record — this run's hashes lost while an
  * older run's survive — can expire the taint early, so we retry and surface the failure for operators.

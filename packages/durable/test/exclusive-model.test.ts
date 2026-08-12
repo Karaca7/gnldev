@@ -1,4 +1,4 @@
-// §5.3 OPT-IN MODEL-STEP EXCLUSIVITY — docs/CORE-HARDENING.md §3 + §5.3.
+// §5.3 OPT-IN MODEL-STEP EXCLUSIVITY — the core-hardening review + §5.3.
 //
 // FINDING (multi-worker.test.ts §3.1(c)): without a run-level lock, if two workers concurrently
 // resume the same run, the model's `doGenerate` can be called TWICE (not a side effect, but a token

@@ -484,7 +484,7 @@ function historyEndsWithIncoming(history: any[], incoming: any[]): boolean {
 }
 
 /**
- * F1 (RISK-AUDIT-DURABILITY): server-owned-history contract, enforced at the core. useChat-style
+ * F1 — durability review: server-owned-history contract, enforced at the core. useChat-style
  * clients POST their ENTIRE message history every turn (see @gnldev/ai-sdk chat-route.ts — the
  * client's UIMessage[] is converted wholesale); with memory+threadId that whole history became
  * `incoming`, so every turn re-persisted and re-prompted the echoed early turns — compounding
@@ -636,7 +636,7 @@ type MemAppendMarker = true | { status: 'pending'; startedAt: number };
  *    done, promote it to `true` with `markMemoryAppendDone(journal, marker, the-returned-object)`.
  * Takeover is atomic if putIfMatch(CAS) is available: even if two workers see the same stale pending
  * claim, only ONE takes it over. Otherwise falls back to a best-effort put — the SAME narrow window
- * as the old get→put (documented, CORE-HARDENING §2.2).
+ * as the old get→put (documented, the core-hardening review).
  */
 async function claimMemoryAppend(
   journal: Journal,
@@ -718,7 +718,7 @@ async function writeAheadIncoming(
 }
 
 /**
- * F4 (RISK-AUDIT-DURABILITY): a SAME-runId re-entry (resume after suspension, retry) whose
+ * F4 — durability review: a SAME-runId re-entry (resume after suspension, retry) whose
  * write-ahead already landed, but where OTHER turns were appended to the thread in between — the
  * tail-dedupe no longer matches (this run's incoming isn't the thread tail anymore), so the prompt
  * would carry the question twice: once inside the loaded history, once re-concatenated at the end.

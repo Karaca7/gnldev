@@ -23,7 +23,7 @@ import type { JournalReader } from './journal.js';
 type ModelClaimRecord = { status: 'running' | 'succeeded' | 'failed'; startedAt: number; reqHash?: string };
 
 /**
- * CORE-HARDENING §5.3 (opt-in): model-step exclusivity. When enabled, the worker that LOSES the
+ * the core-hardening review (opt-in): model-step exclusivity. When enabled, the worker that LOSES the
  * claim race gets a `RunBusyError` if the existing record is 'running' and FRESH (startedAt newer
  * than ttlMs ago) → prevents duplicate `doGenerate` (double token cost) under concurrent multi-resume.
  * STALE 'running' (crashed owner) continues with the existing behavior — the fast crash-resume window

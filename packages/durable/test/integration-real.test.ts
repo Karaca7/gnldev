@@ -2,7 +2,7 @@
 //   docker compose up -d && GNL_INTEGRATION=1 npx vitest run packages/durable/test/integration-real.test.ts
 // Default SKIP (unless GNL_INTEGRATION=1 is set) → the normal suite stays green without Docker.
 //
-// PURPOSE (closes the open item in CORE-HARDENING §5.4): prove on REAL engines what pg-mem and
+// PURPOSE (closes the open item in the core-hardening review): prove on REAL engines what pg-mem and
 // node:sqlite CANNOT PROVE:
 //   1. Postgres's `ON CONFLICT DO NOTHING RETURNING` boolean — pg-mem also returned a row on conflict
 //      (a fidelity limit) → putIfAbsent's "exactly one winner" contract is verified at the boolean

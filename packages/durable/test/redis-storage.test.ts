@@ -25,7 +25,7 @@ function countingSpy(inner: FakeRedis, withMget: boolean): { client: RedisLike; 
 
 const mk = (client = makeFakeRedis()) => new RedisStorage({ client });
 
-/** H11 (CORE-HARDENING §8.2 advisory) mock: wraps a real FakeRedis and adds an `info()` field ONLY if
+/** H11 (the core-hardening review advisory) mock: wraps a real FakeRedis and adds an `info()` field ONLY if
  *  `infoResult` is given (`undefined` → the `info` key is absent entirely, mimicking a custom/legacy
  *  RedisLike client that doesn't implement INFO). `infoResult` may be a string (INFO reply) or an Error
  *  (to exercise the fail-open/swallow-the-rejection path). Counts calls to `info` separately, so tests
@@ -344,7 +344,7 @@ describe('RedisStorage · N+1 efficiency (bulkGet — batched read after SCAN)',
   });
 });
 
-// AUDIT FINDING fix: when readRunStats was absent, loadReplayCache's RAM guardrail was disabled;
+// known limitation fix: when readRunStats was absent, loadReplayCache's RAM guardrail was disabled;
 // when listStaleRuns was absent, retention sweepRuns fell into the O(entire-keyspace) slow path.
 describe('RedisStorage · H8c readRunStats (cheap stats for the RAM guardrail)', () => {
   it('client supporting STRLEN (default FakeRedis): entries/bytes correct, input is not visible', async () => {
@@ -537,12 +537,12 @@ describe('RedisStorage · H8b touch pipeline (multi() — audit fix)', () => {
   });
 });
 
-// CORE-HARDENING §8.2 (AUDIT FINDING — made vocal): Redis replication is ALWAYS asynchronous — a claim
+// the core-hardening review (Known limitation — made vocal): Redis replication is ALWAYS asynchronous — a claim
 // (SET NX) acknowledged by the primary can be lost on the replica promoted during failover, so
 // exactly-once may be violated. Previously nothing checked or surfaced this. RedisRunJournal now does a
 // ONE-TIME, fire-and-forget `INFO replication` probe on the first putIfAbsent/putIfMatch call and warns
 // (once) if replicas are attached; the probe must NEVER be able to delay or break the claim itself.
-describe('RedisStorage · H11 replication advisory (CORE-HARDENING §8.2)', () => {
+describe('RedisStorage · H11 replication advisory (the core-hardening review)', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });

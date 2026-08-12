@@ -8,7 +8,7 @@
 //   2. Replay cost: EXACTLY 1 bulk `readRun` per resume (C2 replayCache) + a small number of point
 //      `get` calls INDEPENDENT of step count — i.e. replay is O(N) but in a SINGLE query; no get storm proportional to N.
 //   3. During replay, the LLM/tool NEVER run (the cost is read-only).
-// Analysis of the compaction/snapshot gap: docs/CORE-HARDENING.md §3.2.
+// Analysis of the compaction/snapshot gap: the core-hardening review.
 import { describe, it, expect } from 'vitest';
 import { stepCountIs } from 'ai';
 import { InMemoryJournal } from '../src/journal.js';

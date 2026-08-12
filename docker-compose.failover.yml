@@ -1,4 +1,4 @@
-# Postgres primary + SYNCHRONOUS replica for real FAILOVER verification (CORE-HARDENING §5.5 / §8).
+# Postgres primary + SYNCHRONOUS replica for real FAILOVER verification.
 # Live-tests the deployment prerequisite from the README ("synchronous_commit=on + standby"):
 #   docker compose -f docker-compose.failover.yml up -d
 #   GNL_FAILOVER=1 npx vitest run packages/durable/test/failover-real.test.ts

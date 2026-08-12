@@ -546,8 +546,8 @@ multi-channel demo, the second table is telling you honestly that this is not th
 
 ## 9. Proof — have these claims actually been tested?
 
-Yes; most of the claims are proven with **live tests against real engines** (details in
-`docs/CORE-HARDENING.md`):
+Yes; most of the claims are proven with **live tests against real engines** — the tests
+themselves live under `packages/durable/test/`:
 
 - **Multi-server CAS race:** two separate Postgres connection pools write to the same key at the
   same time → EXACTLY ONE winner every time (20 rounds + a 10-way burst). Same for Redis (SET NX).

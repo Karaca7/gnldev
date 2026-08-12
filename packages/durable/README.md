@@ -201,7 +201,7 @@ License: Apache-2.0 — see [LICENSE](../../LICENSE).
 ## Production deployment notes (exactly-once preconditions)
 
 The exactly-once guarantee rests on one precondition: **storage never loses an acknowledged write**
-(detailed analysis: `docs/CORE-HARDENING.md` §8). For multi-worker production:
+(detailed analysis: the core-hardening review). For multi-worker production:
 
 - **Postgres (recommended `runs` backend):** run it with `synchronous_commit = on` +
   `synchronous_standby_names` (quorum). Under **asynchronous replication**, a primary failover can lose

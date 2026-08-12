@@ -49,7 +49,7 @@ const lockKey = (runId: string) => `${runId}:lock`; // ':lock' does not match pa
  * H1 (takeover atomicity): if the journal supports `putIfMatch`, taking over an expired record is
  * done via CAS — even if two workers read the same expired record, only ONE can change it (NO
  * split-brain). If unsupported, falls back to the old best-effort get→put behavior (a documented
- * risk, CORE-HARDENING §2.2).
+ * risk, the core-hardening review).
  * H2 (clock-skew): if `now` isn't given and the journal supports `now()`, the TTL decision is made
  * with the storage's own clock → wall-clock skew between workers can't disrupt takeover timing.
  */
@@ -82,7 +82,7 @@ export async function acquireRunLock(
     return (await journal.putIfMatch(key, cur, rec)) ? mkLock(journal, runId, owner, token) : null;
   }
   // Fallback (adapter without putIfMatch): best-effort get→put — sufficient for single-process
-  // resume, split-brain risk in multi-worker is documented (CORE-HARDENING §2.2).
+  // resume, split-brain risk in multi-worker is documented (the core-hardening review).
   await journal.put(key, rec);
   return mkLock(journal, runId, owner, token);
 }
@@ -105,7 +105,7 @@ function mkLock(journal: Journal, runId: string, owner: string, token: string): 
       // SAME philosophy as the takeover CAS in acquireRunLock: atomic if putIfMatch is available
       // (change it if the record we read is still in place — if a takeover happened in between,
       // returns false, the record is not corrupted). Otherwise falls back to best-effort get→put
-      // (sufficient for single-process, CORE-HARDENING §2.2).
+      // (sufficient for single-process, the core-hardening review).
       if (journal.putIfMatch) return journal.putIfMatch(key, cur, next);
       await journal.put(key, next);
       return true;

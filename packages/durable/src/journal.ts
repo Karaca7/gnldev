@@ -68,7 +68,7 @@ export type ToolJournalRecord =
  *   claim (M4)    putIfAbsent     putIfAbsent                        putIfAbsent                     putIfAbsent
  *
  *   † a custom Redis client WITHOUT `eval` degrades putIfMatch to best-effort compare-then-set
- *     (documented, CORE-HARDENING §2.2); real ioredis always takes the atomic Lua path.
+ *     (documented, the core-hardening review); real ioredis always takes the atomic Lua path.
  *
  * PROOF, not prose: cross-PROCESS races on SQLite run in EVERY CI (multi-process-race.test.ts — two
  * OS processes, file barrier: run-lock / tool-claim / putIfAbsent grid / putIfMatch takeover / incrBy
@@ -103,7 +103,7 @@ export interface Journal {
    * workers read the same expired record, only ONE can replace it (split-brain becomes impossible, see run-lock.ts).
    * The comparison is over the serialized form; a false-negative (mismatch) is the SAFE side: the
    * takeover just doesn't happen this attempt, the next attempt reads the fresh record. If undefined,
-   * acquireRunLock falls back to the old best-effort get→put behavior (documented risk, CORE-HARDENING §2.2).
+   * acquireRunLock falls back to the old best-effort get→put behavior (documented risk, the core-hardening review).
    */
   putIfMatch?(key: string, expected: unknown, value: unknown): Promise<boolean>;
   /**

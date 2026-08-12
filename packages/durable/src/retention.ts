@@ -228,7 +228,7 @@ export async function sweepRuns(journal: Journal & Partial<JournalReader>, opts:
   return result;
 }
 
-// ── Journal-based append-log + BasicMemory sweeping (CORE-HARDENING §7.2) ─────────────
+// ── Journal-based append-log + BasicMemory sweeping (the core-hardening review) ─────────────
 // Run-focused retention (sweepRuns above) does NOT see durable-log namespaces (`${ns}:${id}`,
 // e.g. studio `__audit__`/`__alert__`) or BasicMemory threads (`mem:<threadId>:*`) — these grow
 // unbounded in a long-lived deployment. The two helpers below close that gap.

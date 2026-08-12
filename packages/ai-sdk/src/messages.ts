@@ -45,7 +45,7 @@ function textFromContent(content: unknown): string {
   return '';
 }
 
-// F2 (RISK-AUDIT-DURABILITY): the local `contentFromModelValue` copy was verified byte-for-byte
+// F2 — durability review: the local `contentFromModelValue` copy was verified byte-for-byte
 // semantically identical to durable's `settleModelContent` (both settle `{content}` AND streamed
 // `{parts,rest}` records, both emit text/reasoning/tool-call) — so the copy was deleted and the
 // shared implementation is imported above. One source; the two can no longer drift.

@@ -93,7 +93,7 @@ export interface RedisStorageOptions {
   client?: RedisLike;
   /** Namespace prefixed to all keys (default 'gnl:'). For multi-instance/isolation. */
   keyPrefix?: string;
-  /** CORE-HARDENING §8.2: Redis replication is ALWAYS asynchronous — a claim (SET NX) acknowledged by
+  /** the core-hardening review: Redis replication is ALWAYS asynchronous — a claim (SET NX) acknowledged by
    *  the primary can be lost on the replica promoted during failover → exactly-once may be VIOLATED.
    *  When `true` (default), RunJournal does a ONE-TIME, fire-and-forget `INFO replication` check on the
    *  first putIfAbsent/putIfMatch call and console.warn's ONCE if replicas are attached. Set `false` to
@@ -228,7 +228,7 @@ return 1
 
 class RedisRunJournal implements RunJournal {
   /**
-   * H8b (optional fast path — AUDIT FINDING fix): assigned in the constructor only if the client
+   * H8b (optional fast path — known limitation fix): assigned in the constructor only if the client
    * supports `zadd`+`zrangebyscore`; OTHERWISE the field stays UNDEFINED. Deliberate choice: it
    * would be WRONG to ALWAYS define the method and return an empty array on an unsupported client —
    * sweepRuns (retention.ts) does feature-detection via `typeof journal.listStaleRuns === 'function'`;
@@ -257,7 +257,7 @@ class RedisRunJournal implements RunJournal {
    */
   applyBatch?: (batch: JournalBatch) => Promise<boolean>;
 
-  /** CORE-HARDENING §8.2 advisory (see `checkReplicationOnce`) — flips true after the first check attempt
+  /** the core-hardening review advisory (see `checkReplicationOnce`) — flips true after the first check attempt
    *  (whether or not it warned) so it only ever runs ONCE per RedisRunJournal instance. */
   private replicationChecked = false;
   /** Task 2: flips true after the first `waitReplicas` ack-shortfall WARNING (onTimeout:'warn', the
@@ -356,7 +356,7 @@ class RedisRunJournal implements RunJournal {
   }
 
   /**
-   * CORE-HARDENING §8.2 (AUDIT FINDING — made VOCAL, same rationale as journal.ts claim()'s
+   * the core-hardening review (Known limitation — made VOCAL, same rationale as journal.ts claim()'s
    * putIfAbsent-fallback warning): Redis replication is ALWAYS asynchronous — a claim (SET NX)
    * acknowledged by the primary can be LOST on the replica promoted during failover → another worker
    * can win the SAME claim → exactly-once may be VIOLATED. Nothing checked or surfaced this before —
@@ -377,7 +377,7 @@ class RedisRunJournal implements RunJournal {
           console.warn(
             '@gnldev/durable redis: replicas are fed asynchronously — on failover, an acknowledged claim ' +
               '(SET NX) can be lost on the promoted replica, so exactly-once may be VIOLATED ' +
-              '(see CORE-HARDENING.md §8.2). Configure WAIT / min-replicas-to-write, or knowingly accept ' +
+              '(see the core-hardening review). Configure WAIT / min-replicas-to-write, or knowingly accept ' +
               'the risk (silence this warning via `replicationWarning: false`).',
           );
         }
@@ -405,7 +405,7 @@ class RedisRunJournal implements RunJournal {
     const message =
       `@gnldev/durable redis: WAIT requested ${replicas} replica ack(s) within ${timeoutMs}ms, only ${acked} ` +
       'acknowledged — the claim already happened, but on failover it may be LOST on a replica that never ' +
-      'caught up (see CORE-HARDENING.md §8.2).';
+      'caught up (see the core-hardening review).';
     if (onTimeout === 'throw') {
       throw new ReplicationNotAcknowledgedError(message, { requested: replicas, acknowledged: acked, timeoutMs });
     }
@@ -434,7 +434,7 @@ class RedisRunJournal implements RunJournal {
     // DELIBERATE 2-RTT (GET+SET) — NOT OPTIMIZED with bulkGet: put() operates on a single key,
     // there's no bulk read; the N+1 problem was in multi-key reads after SCAN (readRun/listRuns/list).
     // Alternatives that would improve atomicity (Lua script CAS / separate created_at key) were NOT
-    // IMPLEMENTED — see docs/CORE-HARDENING.md §5 (Recommendations) — this task's scope is only N+1 GET efficiency.
+    // IMPLEMENTED — see the core-hardening review (Recommendations) — this task's scope is only N+1 GET efficiency.
     const prev = await this.client.get(full);
     const t = prev != null ? deserialize<RjEnv>(prev).t : Date.now();
     const payload = serialize(rjEnv(value, p, isSuspended(p, value), t));
@@ -513,7 +513,7 @@ class RedisRunJournal implements RunJournal {
       return ok;
     }
     // custom client without eval: best-effort compare-then-set (equivalent to the old get→put behavior;
-    // documented risk, CORE-HARDENING §2.2 — a real ioredis always goes through the atomic eval path).
+    // documented risk, the core-hardening review — a real ioredis always goes through the atomic eval path).
     if (this.canPipe(p)) {
       // touch() is already UNCONDITIONAL here (the best-effort branch always returns true) → the
       // pipeline behavior is IDENTICAL, just 2 RTT → 1 RTT.
@@ -577,7 +577,7 @@ class RedisRunJournal implements RunJournal {
     return n;
   }
   /**
-   * H8c (AUDIT FINDING fix): CHEAP stats for a run — COUNT + total size, measured WITHOUT transferring
+   * H8c (known limitation fix): CHEAP stats for a run — COUNT + total size, measured WITHOUT transferring
    * the VALUES (where possible). loadReplayCache (journal.ts) uses this as a RAM guard rail: it checks
    * the journal's size before pulling it entirely into memory; the bulk cache is skipped if over the threshold.
    * Measurement path:

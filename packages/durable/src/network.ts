@@ -143,7 +143,7 @@ export const netKeys = {
   step: (runId: string, i: number) => `${runId}:net:step:${i}`,
   /** The runId of the sub-agent's own journal (deterministic — NOT tied to toolCallId).
    *  NOTE: this nested run appears in listRuns/Studio Runs as a SEPARATE top-level run
-   *  (nested-run ontology — see docs/CORE-HARDENING.md §9). */
+   *  (nested-run ontology — see the core-hardening review). */
   nestedRunId: (runId: string, i: number) => `net:${runId}:${i}`,
   /** P2-network: a delegation veto (`onAgentStart` returning `{skip:true}`) — claim-keyed, frozen
    *  BEFORE the step itself so a crash between the two claims still replays the SAME veto on resume

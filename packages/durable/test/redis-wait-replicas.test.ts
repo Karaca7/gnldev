@@ -1,5 +1,5 @@
 // Task 2 — Redis WAIT opt-in (RedisStorageOptions.waitReplicas): closes the async-replication gap
-// (CORE-HARDENING §8.2 — a claim acked only by the primary can be LOST on the replica promoted during
+// (the core-hardening review — a claim acked only by the primary can be LOST on the replica promoted during
 // failover) with an OPT-IN strong guarantee: after a GENUINE new claim (putIfAbsent/putIfMatch actually
 // wrote something new, not a lost race), call native Redis `WAIT replicas timeoutMs` and act on the ack
 // shortfall per `onTimeout`. Default (`waitReplicas` undefined) is BYTE-FOR-BYTE unchanged — `wait()` is

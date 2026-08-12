@@ -1,4 +1,4 @@
-// REAL FAILOVER verification — the live proof of CORE-HARDENING §5.5 / §8 (docker-compose.failover.yml).
+// REAL FAILOVER verification — the live proof of the core-hardening review (docker-compose.failover.yml).
 //   docker compose -f docker-compose.failover.yml up -d
 //   GNL_FAILOVER=1 npx vitest run packages/durable/test/failover-real.test.ts
 // Default SKIP. WARNING: the test KILLS the primary container and PROMOTES the replica — each run

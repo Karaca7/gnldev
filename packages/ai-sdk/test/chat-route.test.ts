@@ -156,7 +156,7 @@ describe('@gnldev/ai-sdk createChatRoute', () => {
     expect(calls).toBe(2); // the retry did NOT hit the model
   });
 
-  // F1 (RISK-AUDIT-DURABILITY): useChat POSTs the ENTIRE client history every turn; with memory+threadId
+  // F1 — durability review: useChat POSTs the ENTIRE client history every turn; with memory+threadId
   // that whole history used to become `incoming` → compounded duplication in memory AND in the prompt.
   // The core now strips client-echoed turns by role (durable run.ts dropEchoedHistory) — this is the
   // previously-missing two-turn coverage for the chat-route + memory combination.

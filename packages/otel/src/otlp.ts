@@ -158,7 +158,7 @@ export function toOtlpJson(spans: TraceSpan[], opts: ToOtlpJsonOptions): OtlpPay
   };
 }
 
-// P2 (AUDIT-R2): opt-in retry/backoff for the POST above. AUDIT FINDING: a 5xx or network
+// P2 (AUDIT-R2): opt-in retry/backoff for the POST above. known limitation: a 5xx or network
 // blip on the fetch call silently loses the export (no OTel SDK behind this to retry/batch for us —
 // that's the whole point of the zero-dep ~8KB path). Hand-rolled (no new dependency): a plain loop +
 // `setTimeout`. ZERO behavior change when `retry` is not given — exactly one fetch call, same as before.

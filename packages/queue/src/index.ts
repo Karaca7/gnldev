@@ -45,7 +45,7 @@ export interface QueueWorkerOptions {
    * persistent — e.g. journal/network is consistently unreachable), `lockLost=true` is assumed: a
    * persistent transient error is treated as the best available signal that the lock may have REALLY
    * expired via TTL — the worker can't know for certain, so this is the best approximation (until
-   * WorkStore CAS/fencing — see docs/YOL-HARITASI.md Phase 8). Default 3. The consecutive counter is
+   * WorkStore CAS/fencing lands — a tracked backlog item). Default 3. The consecutive counter is
    * reset by any SUCCESSFUL renew (a single hiccup never PRODUCES a lockLost — current behavior, see tests).
    */
   maxRenewFailures?: number;
@@ -254,7 +254,7 @@ export function createWorker(
         // retries. BUT (Phase 8 review leftover) if the throw repeats `maxRenewFailures` times IN A
         // ROW, the transient error has become PERSISTENT — this is the best approximation of the
         // lock having GENUINELY expired via TTL (the worker can't be certain since WorkStore lacks
-        // CAS/fencing here, see docs/YOL-HARITASI.md Phase 8 "WorkStore fencing" backlog item) → at
+        // CAS/fencing here — "WorkStore fencing" is a tracked backlog item) → at
         // that point `lockLost=true` is assumed. Any SUCCESSFUL renew (non-throwing) resets the
         // consecutive counter — a single hiccup never produces lockLost.
         const heartbeatOn = opts.heartbeat ?? true;

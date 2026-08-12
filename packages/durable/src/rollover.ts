@@ -1,5 +1,5 @@
 // Rollover — a first-class period-closing helper for the long-lived SINGLE run problem
-// (mitigation for CORE-HARDENING §7.3 risk #1). Since the journal is append-only it can't be
+// (mitigation for the core-hardening review risk #1). Since the journal is append-only it can't be
 // trimmed, and replay always starts from the beginning; for an agent that lives for weeks, the
 // solution is to split the run into LOGICAL PERIODS: at period close, the old run's materialized
 // final state (messages) is carried over into a new runId's `:input` seed, and the new period

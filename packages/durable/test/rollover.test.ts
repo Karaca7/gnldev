@@ -1,4 +1,4 @@
-// rolloverRun — epoch rollover for a long-lived run (CORE-HARDENING §7.3 mitigation).
+// rolloverRun — epoch rollover for a long-lived run (the core-hardening review mitigation).
 // What's tested: that context ACTUALLY carries over to the new epoch (verified from the model prompt),
 // that the old journal is left untouched, idempotency (marker + seed claims), and carry application.
 import { describe, it, expect } from 'vitest';

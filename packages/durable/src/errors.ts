@@ -58,7 +58,7 @@ export class RetryLimitExceededError extends Error {
  * GOREV (Task 2 — Redis WAIT opt-in, `RedisStorageOptions.waitReplicas`): after a successful claim
  * (putIfAbsent/putIfMatch genuinely wrote something new), fewer than the requested number of replicas
  * acknowledged the write within the timeout (native Redis `WAIT`). The claim itself already happened —
- * this only means the async-replication gap (CORE-HARDENING.md §8.2: a claim acked only by the primary
+ * this only means the async-replication gap (the core-hardening review: a claim acked only by the primary
  * can be lost on the replica promoted during failover) could not be ruled out within the deadline.
  * Thrown only when `waitReplicas.onTimeout === 'throw'` (default is 'warn' — see redis-storage.ts).
  */

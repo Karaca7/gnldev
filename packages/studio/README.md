@@ -91,7 +91,7 @@ intentional choice for open access.
 ## How it works
 **Runs view note:** nested runs (network steps `net:<parentRunId>:<i>`, agent-tool sub-agents
 `agent:<toolCallId>`) show up in the list as SEPARATE top-level runs — by design (two-level durability;
-details: `docs/CORE-HARDENING.md` §9). To see the network's dynamic tree hierarchically, use the Networks
+details: the core-hardening review). To see the network's dynamic tree hierarchically, use the Networks
 view (`getNetworkTrace`).
 
 The UI rewrites `./api` relative to `apiBase` (admin↔API separation, can be mounted under any prefix). The

@@ -1,4 +1,4 @@
-// CORE-HARDENING §7.2: journal-based append-log (durable-log) + BasicMemory thread sweeping.
+// the core-hardening review: journal-based append-log (durable-log) + BasicMemory thread sweeping.
 // Continuation of sweepRuns' safety philosophy: a record/thread whose age cannot be measured is NOT DELETED, and is counted in the report.
 import { describe, it, expect, vi } from 'vitest';
 import {

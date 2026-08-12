@@ -245,7 +245,7 @@ export interface WorkStore {
    * RIGHT BEFORE the terminal write, this method verifies on the same key "am I still the owner" — if
    * ownership has been taken over, the write is SKIPPED (the new owner will already write its own
    * result). If undefined (an old/custom WorkStore implementation) the queue falls back to the old
-   * `lockLost` approximation (a documented risk, the same CORE-HARDENING §2.2 philosophy).
+   * `lockLost` approximation (a documented risk, the same the core-hardening review philosophy).
    */
   putIfMatch?(key: string, expected: unknown, value: unknown): Promise<boolean>;
 }

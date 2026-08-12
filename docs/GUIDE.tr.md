@@ -532,7 +532,8 @@ ikinci tablo size dürüstçe bunun en kısa yol olmadığını söylüyor.
 
 ## 9. Kanıtlar — bu iddialar test edildi mi?
 
-Evet; iddiaların çoğu **gerçek motorlarda canlı testlerle** kanıtlı (ayrıntı: `docs/CORE-HARDENING.md`):
+Evet; iddiaların çoğu **gerçek motorlarda canlı testlerle** kanıtlı — testlerin kendisi
+`packages/durable/test/` altında:
 
 - **Çok-sunucu CAS yarışı:** iki ayrı Postgres bağlantı havuzu aynı anahtara aynı anda yazıyor →
   her seferinde TAM BİR kazanan (20 tur + 10'lu fırtına). Redis'te aynı (SET NX).

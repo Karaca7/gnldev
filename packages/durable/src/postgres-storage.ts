@@ -343,7 +343,7 @@ class PgRunJournal implements RunJournal {
   /**
    * H10a — DURABILITY REPORT: queries the setup ITSELF for the precondition of exactly-once ("an
    * acked write is never lost"). In multi-server production, asynchronous replication = a lost-write
-   * window on failover = exactly-once CAN BE VIOLATED (see CORE-HARDENING §8) — this method surfaces
+   * window on failover = exactly-once CAN BE VIOLATED (see the core-hardening review) — this method surfaces
    * that before the run starts. A single node (no replica) is safe for a single worker; noted as such.
    */
   async durabilityReport(): Promise<{

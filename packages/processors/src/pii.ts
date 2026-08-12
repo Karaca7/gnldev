@@ -11,7 +11,7 @@ export interface PiiRedactorOptions {
   on?: 'input' | 'output' | 'both';
   /**
    * Also redact the tool execute result (processToolResult hook) — default: false.
-   * AUDIT FINDING: tool output (external API/DB/file result) was being written to the journal as
+   * known limitation: tool output (external API/DB/file result) was being written to the journal as
    * PLAIN TEXT; it may contain PII. Left as opt-in so existing piiRedactor users' behavior does NOT
    * CHANGE — this option only masks tool output when explicitly set to `true`.
    */

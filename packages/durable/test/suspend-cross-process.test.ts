@@ -1,4 +1,4 @@
-// AUDIT FINDING: there was no REAL persistence test for the suspend/approval flow — suspend.test.ts
+// known limitation: there was no REAL persistence test for the suspend/approval flow — suspend.test.ts
 // only tested with the same InMemoryJournal instance (never covering a process restart); process-kill.test.ts
 // and exactly-once-intersection.test.ts only cover the CRASH path (process.exit mid-flight).
 //
