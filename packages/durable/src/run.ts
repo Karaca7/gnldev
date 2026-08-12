@@ -1265,7 +1265,7 @@ export async function streamDurable(args: StreamDurableArgs) {
           let produced: any[] = ev?.response?.messages ?? [];
           if (procCtx) {
             let pout: ProcessorOutput = { text: ev?.text ?? '', messages: produced, result: ev };
-            // TODO(D4-retry, honest bound): a ProcessorRetry thrown here is NOT retried — unlike
+            // NOTE (deliberate limitation): a ProcessorRetry thrown here is NOT retried — unlike
             // runDurableInner's retry ladder, this fires AFTER the stream has already flushed to the
             // client, so "let the model try again" would mean re-streaming a turn the caller already
             // saw — a different contract we deliberately do not contort this into. It is caught by the

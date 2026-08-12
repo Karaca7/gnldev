@@ -1,4 +1,4 @@
-# GNL v2 — The Complete Guide: What It Is, How It Works, Why It's Different
+# gnl — The Complete Guide: What It Is, How It Works, Why It's Different
 
 > This document is written for someone who **has never heard of GNL**. Technical terms are
 > explained in parentheses the first time they appear. Diagrams are in Mermaid format
@@ -43,7 +43,7 @@ Re-run the agent with the SAME runId.
 This is called **exactly-once** (each side effect runs neither too few nor too many times — exactly
 once) and **deterministic replay** (when the same run is repeated, the same outcome is reconstructed
 from the journal's records without going back to the LLM or the tools). **This is GNL's "moat"**
-(moat: a fundamental advantage competitors can't easily copy).
+(a moat: a structural advantage that is hard to copy without making the same design bet).
 
 ---
 
@@ -258,7 +258,7 @@ from here.
 
 ---
 
-## 6. Package map — 21 packages, 6 groups
+## 6. Package map — 25 packages, 6 groups
 
 ```mermaid
 graph LR
@@ -413,7 +413,7 @@ tools: { knowledgeBase: createRagTool({ store, embed, topK: 4 }) }
 ```
 Fine detail: since the RAG query is also written to the journal, **the search isn't repeated on
 resume** — even if new documents are added to the archive in the meantime, the run continues with
-the same evidence (deterministic RAG — competitors don't have this). `GraphRag` builds a
+the same evidence (deterministic RAG — rare, because it requires the retrieval itself to be journaled). `GraphRag` builds a
 similarity graph between chunks and also finds **indirectly related** chunks.
 
 ### 7.5 Multi-agent — static and dynamic
@@ -465,7 +465,7 @@ await m.runExperiment({ dataset, run: withOldModel, scorers, experimentId: 'v1' 
 await m.runExperiment({ datasetId: dataset.id, run: withNewModel, scorers, experimentId: 'v2' });
 const diff = await m.compare(dataset.id, 'v1', 'v2');  // which questions regressed, which improved
 ```
-If the suite crashes midway, completed test cases are skipped (**resumable evals** — competitors
+If the suite crashes midway, completed test cases are skipped (**resumable evals** — uncommon, because it needs the eval run to be journaled like any other
 don't have this); LLM-judge scores are also written to the journal, so repeated runs return the
 same score (and no money is burned again).
 
@@ -473,12 +473,12 @@ same score (and no money is burned again).
 
 ```ts
 // Server: turns a registry into an automatic REST API (with an OpenAPI schema):
-import { createServer } from '@gnldev/server';
-serve(createServer(gnl));                      // POST /agents/assistant/run, SSE stream, /metrics...
+import { createRestApi } from '@gnldev/server';
+serve(createRestApi(gnl));                      // POST /agents/assistant/run, SSE stream, /metrics...
 
 // Client (browser/React):
-import { createClient } from '@gnldev/client';
-const api = createClient('http://localhost:3000');
+import { GnlClient } from '@gnldev/client';
+const api = new GnlClient('http://localhost:3000');
 await api.run('assistant', { prompt: '...' });
 
 // Studio: web control panel — npx @gnldev/studio
@@ -510,27 +510,37 @@ const { newRunId } = await rolloverRun(journal, 'main-assistant');  // for an ag
 
 ---
 
-## 8. Real differences from competitors (an honest table)
+## 8. Design trade-offs — what GNL does, and what it deliberately doesn't
 
-| Feature | GNL | Other frameworks (typical) | Some frameworks (checkpoint-based) |
-|---|---|---|---|
-| **Exactly-once side effects** | ✅ via CAS, tested live in multi-server setups | ❌ | ❌ (checkpoints store state but don't prevent tool re-execution) |
-| **Deterministic replay** (reconstruct the same result without hitting the LLM) | ✅ | ❌ | Partial (state exists, but no recorded LLM response) |
-| **Time-travel + fork** (jump to a past step, branch from there) | ✅ visual, in Studio | ❌ | ❌ |
-| **Persistence of model fallback** (the winning model sticks to the run) | ✅ | ❌ (transient) | ❌ |
-| **Freezing dynamic agent-network decisions** | ✅ | ❌ (.network decisions are volatile) | ❌ |
-| **Resumable evals** (test suite continues where it left off) | ✅ | ❌ | ❌ |
-| **Governance Studio** (tenant/budget/policy/approval) | ✅ 15 views | Basic playground | ❌ |
-| **Edge bundle size** | ✅ (thin core, optional dependencies) | Medium | Heavy |
-| Built-in scorer count | 8 + judge infrastructure | 18 | Via separate packages |
-| Voice (TTS/STT), Slack/WhatsApp channels | ❌ (deliberately out of scope) | ✅ | Partial |
-| No-code agent editor | ❌ (deliberate: code-first) | ✅ | ❌ |
-| Number of storage adapters | 4 (+composite mixing) | ~16 | Many |
+Every framework spends its complexity budget somewhere. GNL spends nearly all of it on one thing:
+**a run that can be replayed, audited and resumed without repeating a side effect.** That choice
+buys the first list and costs the second.
 
-Summary: **typical full-featured frameworks are strong in breadth** (many integrations, channels,
-editors); **GNL is strong in depth** (durability, determinism, auditability). In domains like
-finance/legal/healthcare where "running twice is a disaster," GNL's guarantees have no rival; for
-quick demos or multi-channel bots, those other frameworks come more ready-made.
+**What the budget bought**
+
+| Capability | What it means in practice |
+|---|---|
+| **Exactly-once side effects** | A tool call that already ran is never charged twice — enforced with CAS, verified across two OS processes and against real Postgres/Redis in CI |
+| **Deterministic replay** | The same run reconstructs to the same result without calling the model again — the model's response is in the journal, not just the state |
+| **Time-travel + fork** | Jump to any past step and branch from there, visually in Studio |
+| **Model fallback is persistent** | The model that actually won is written to the journal; a resume sticks with it instead of re-rolling the dice |
+| **Dynamic agent-network decisions are frozen** | A routing decision made once is recorded, so a replay follows the same path |
+| **Resumable evals** | A test suite continues where it stopped instead of starting over |
+| **Governance surface** | Studio ships 15 views: approval queue, policy, budget, audit, regression comparison |
+| **Edge-native** | A thin core with optional dependencies, small enough to run inside a Workers-class bundle |
+
+**What it cost — deliberately, not by omission**
+
+| Not here | Why |
+|---|---|
+| Voice (TTS/STT), Slack/WhatsApp channels | Out of scope. These are integration surface, not durability; adding them would widen the core without making a single run safer. |
+| No-code agent editor | Code-first by design. An agent's behaviour lives in reviewable, testable, version-controlled code — a visual editor moves it somewhere a diff cannot follow it. |
+| A large catalogue of storage adapters | Four, plus composite mixing. Each adapter has to prove exactly-once against a real engine, and that proof is expensive; a long list of adapters that were never raced under load would be a liability, not a feature. |
+| A large catalogue of built-in scorers | Eight, plus the judge infrastructure to write your own. |
+
+If your workload is "running twice is a disaster" — payments, finance, legal, healthcare, anything
+long-running and distributed — the first table is the whole argument. If what you need is a quick
+multi-channel demo, the second table is telling you honestly that this is not the shortest path.
 
 ---
 
@@ -548,7 +558,7 @@ Yes; most of the claims are proven with **live tests against real engines** (det
 - **Lock takeover:** two servers tried to take over an expired lock at the same time → only one
   won (`putIfMatch` CAS; a race here was found and closed in an earlier version).
 - **Process-kill tests:** a child process is killed with a real `SIGKILL` and then resumed.
-- Total: **700+ tests**, plus real-infrastructure suites gated behind `GNL_INTEGRATION=1` and
+- Total: **2000+ tests**, plus real-infrastructure suites gated behind `GNL_INTEGRATION=1` and
   `GNL_FAILOVER=1`.
 
 ---
@@ -844,13 +854,13 @@ former; it's tested with the latter.
 | Layer | Technology | What's it for in this project? |
 |---|---|---|
 | Language / runtime | TypeScript + Node.js | All code is TypeScript (type safety: wrong data shapes are caught at compile time). Thanks to Node 22's built-in `node:sqlite`, SQLite doesn't even need an extra package. |
-| Monorepo management | pnpm workspaces | Keeps 21 packages in one repo (monorepo: a single repo holding many packages). |
+| Monorepo management | pnpm workspaces | Keeps 25 packages in one repo (monorepo: a single repo holding many packages). |
 | LLM abstraction | **Vercel AI SDK** (`ai`) | The most critical dependency: a SINGLE interface to OpenAI/Anthropic/Google/Mistral. `runDurable` is essentially a durable wrapper around `generateText` — no provider lock-in. |
 | Schema validation | Zod | Tool input schemas (shape-checking the parameters the LLM will send to a tool). |
 | Web framework | **Hono** | The HTTP layer for Server/Studio/auth. Hono instead of Express: runs identically on Node and at the edge (Cloudflare Workers), and is very small — the foundation of the "small edge bundle" claim. |
 | Storage | SQLite / PostgreSQL / Redis | The adapters from §5; all OPTIONAL dependencies (a driver you don't use is never loaded — lazy import). |
 | Serialization | superjson | Record-to-text conversion; unlike plain JSON, it doesn't lose types like `Date`. |
-| Testing | Vitest + pg-mem + Docker | 700+ tests; pg-mem = an in-memory fake Postgres (fast); Docker compose files = REAL PG/Redis integration + a live failover scenario. |
+| Testing | Vitest + pg-mem + Docker | 2000+ tests; pg-mem = an in-memory fake Postgres (fast); Docker compose files = REAL PG/Redis integration + a live failover scenario. |
 | Bundling | esbuild | `bundleApp`: compiles to a single file (used by deploy targets). |
 | Studio UI | React + TanStack Query + Recharts | The panel's front end: UI + data fetching/caching + charts. |
 | Observability | OTLP/HTTP (hand-rolled, ~8KB) | Sends traces to external tools; a hand-written translator instead of the massive OTel SDK (the stay-thin philosophy). Live mode also optionally uses the OTel SDK. |
@@ -860,7 +870,7 @@ former; it's tested with the latter.
 The common pattern across the stack: **keep the core thin; heavy things are optional/lazy; if
 it's built in, don't import it from outside.**
 
-### 13.1 "Why no ClickHouse?" — the OLTP/OLAP distinction and how competitors approach it
+### 13.1 "Why no ClickHouse?" — the OLTP/OLAP distinction and the road taken
 
 Note that two similar-looking acronyms mean DIFFERENT things: **OLTP** = a transactional database
 type (like Postgres — good at atomic single-row operations); **OTLP** = OpenTelemetry Protocol (the
@@ -879,10 +889,10 @@ There are two different questions over the same data:
   instance you plug into also runs ClickHouse under the hood — so your traces end up in
   ClickHouse anyway, you just don't have to operate it.
 
-**How competitors differ:** some frameworks write telemetry into their own official ClickHouse
-adapter and show bulk trends on their own dashboard — a "single-vendor" experience, at the cost of
-you having to operate ClickHouse (or pay for their managed cloud). GNL's bet runs the opposite
-direction: **what's critical isn't analytics, it's the RECORD** — if the record (the journal) is
+**The other direction:** a framework can ship its own analytics store and dashboard, which gives a
+single-vendor experience at the cost of operating that store (or paying for a managed one). GNL's
+bet runs the opposite way: **what's critical isn't analytics, it's the RECORD** — if the record
+(the journal) is
 in your hands and complete, you can pour analytics into any tool you like later; if you keep the
 record incomplete just to have a pretty dashboard, there's no coming back from that. That's why
 Studio isn't just a monitoring dashboard, it's an **operations/governance** panel (time-travel,

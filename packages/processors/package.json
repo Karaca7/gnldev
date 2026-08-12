@@ -2,6 +2,9 @@
   "name": "@gnldev/processors",
   "version": "0.1.0",
   "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.5.0"
+  },
   "description": "Input/output processors for @gnldev/durable agents: PII redaction, moderation, tool-filter. Durability-infused (journaled).",
   "type": "module",
   "main": "./dist/index.js",

@@ -15,7 +15,7 @@ npm i @gnldev/durable ai @ai-sdk/anthropic
 
 ```ts
 import { runDurable } from '@gnldev/durable';
-import { SqliteJournal } from '@gnldev/durable/sqlite';
+import { SqliteStorage } from '@gnldev/durable/sqlite';
 import { anthropic } from '@ai-sdk/anthropic';
 import { tool, stepCountIs } from 'ai';
 import { z } from 'zod';
@@ -28,7 +28,7 @@ const chargeCard = tool({
 
 const res = await runDurable({
   runId: 'order-123',                      // ← idempotency key (orderId/sessionId)
-  journal: new SqliteJournal('runs.db'),   // ← state lives here
+  journal: new SqliteStorage('runs.db').runs,   // ← state lives here
   model: anthropic('claude-opus-4-8'),
   tools: { chargeCard },
   stopWhen: stepCountIs(10),
@@ -61,7 +61,7 @@ If you know `generateText`, you already know this — same arguments, same retur
   **never runs again**.
 - **`withDurableModel`** — via a `wrapLanguageModel` middleware, records every model response to the
   journal and replays it on resume → the agent reproduces the same tool chain.
-- **`Journal`** — an append-only log. `InMemoryJournal` (dev) · `SqliteJournal` (prod, `node:sqlite`,
+- **`Journal`** — an append-only log. `InMemoryJournal` (dev) · `SqliteStorage().runs` (prod, `node:sqlite`,
   zero native dependencies).
 
 > Guarantee: a side effect is **never repeated for the same `toolCallId`** (call-scoped, replay/resume-safe).
@@ -193,7 +193,7 @@ npx tsx examples/no-double-charge.ts   # no API key needed (mock model) — exac
 | `runDurable(args) → DurableResult` | Drop-in `generateText` + `journal`/`runId`/`guard`/`approvals`. Adds `.interrupts`. Optional `timeouts: { modelStepMs, toolMs, claimTtlMs }` — on timeout `StepTimeoutError` flows through the existing failed/retry/recover paths (opt-in, behavior unchanged if not provided). |
 | `resume` | Alias for `runDurable`. |
 | `withDurableModel(model, ctx)` / `durableTools(tools, ctx)` | Composable wrappers. |
-| `InMemoryJournal` / `SqliteJournal` (`/sqlite`) | Journal adapters. |
+| `InMemoryJournal` / `SqliteStorage` (`/sqlite`, journal at `.runs`) | Journal adapters. |
 | `Guard`, `Interrupt`, `Journal`, `DurableResult` | Types. |
 
 License: Apache-2.0 — see [LICENSE](../../LICENSE).

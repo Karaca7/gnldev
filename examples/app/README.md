@@ -19,7 +19,7 @@ pnpm start
 | Package | Usage |
 |---|---|
 | `@gnldev/durable` | `createGnl` agent + a **durable run** per message (refund exactly-once) + `resumeRun` (approval) |
-| `@gnldev/memory` | `GnlMemory` per-customer recall (`scope:'resource'`) + schema working memory |
+| `@gnldev/memory` | `AgentMemory` per-customer recall (`scope:'resource'`) + schema working memory |
 | `@gnldev/rag` | policy knowledge base (`searchPolicy` tool) |
 | `@gnldev/cache` | embeddings cached cross-run |
 | `@gnldev/processors` | PII redaction + moderation (on every input) |

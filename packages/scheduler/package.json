@@ -2,7 +2,10 @@
   "name": "@gnldev/scheduler",
   "version": "0.1.0",
   "license": "Apache-2.0",
-  "description": "Durable workflow scheduler on @gnldev/durable: cron/interval/at triggers, exactly-once fire (run-lock), backoff/retry. Zaman = veri (resolve-then-freeze).",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "description": "Durable workflow scheduler on @gnldev/durable: cron/interval/at triggers, exactly-once fire (run-lock), backoff/retry. Time is data: the next fire time is resolved and frozen into the journal.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

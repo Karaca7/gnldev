@@ -1,5 +1,5 @@
 // M1 downstream exactly-once: durableTool, tool execute'a stabil idempotencyKey enjekte eder
-// (tool bunu dis odeme/HTTP API'sine Idempotency-Key olarak tasiyabilir).
+// (a tool can forward this to an external payment/HTTP API as an Idempotency-Key).
 import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '../src/journal.js';
 import { durableTool } from '../src/durable-tool.js';

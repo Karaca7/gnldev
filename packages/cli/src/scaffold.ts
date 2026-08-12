@@ -169,7 +169,10 @@ function scaffoldFeatures(dir: string, name: string, features: string[], forceE2
     const target = join(dir, r.file);
     mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, r.contents);
-    if (r.dep) deps[r.dep] = '^0.0.0';
+    // Must track the published range of the @gnldev packages: '^0.0.0' means '>=0.0.0 <0.0.1',
+    // which 0.1.0 never satisfies — inside the monorepo pnpm links by name and hides it, but a
+    // scaffolded project outside it would fail to install.
+    if (r.dep) deps[r.dep] = '^0.1.0';
   }
 
   // Merge new deps into package.json (skips any already present from the base template).

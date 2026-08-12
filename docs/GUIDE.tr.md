@@ -1,4 +1,4 @@
-# GNL v2 — Tam Rehber: Nedir, Nasıl Çalışır, Neden Farklı?
+# gnl — Tam Rehber: Nedir, Nasıl Çalışır, Neden Farklı?
 
 > Bu belge GNL'i **hiç bilmeyen birine** anlatmak için yazıldı. Teknik terimler ilk geçtikleri
 > yerde parantez içinde açıklanır. Şemalar Mermaid formatındadır (GitHub/VS Code otomatik çizer).
@@ -41,7 +41,7 @@ Ajanı AYNI runId ile tekrar çalıştır.
 Buna **exactly-once** (tam-bir-kez: her yan etki ne eksik ne fazla, tam olarak bir kez çalışır)
 ve **deterministic replay** (deterministik tekrar-oynatma: aynı koşu tekrar edildiğinde LLM'e ve
 araçlara yeniden gitmeden, defterdeki kayıtlardan aynı sonucun yeniden kurulması) denir.
-**GNL'in "moat"u** (hendek: rakiplerin kolay kopyalayamayacağı temel üstünlük) budur.
+**GNL'in "moat"u** (hendek: aynı tasarım bahsine girmeden kopyalanması zor, yapısal üstünlük) budur.
 
 ---
 
@@ -293,7 +293,7 @@ graph LR
 ```
 
 Kilit nokta: **her paket `@gnldev/durable`ın üstüne kurulur** — RAG sorgusu da, kuyruk işi de, uzak
-ajan çağrısı da otomatik olarak deftere yazılır ve exactly-once garantisini MİRAS alır. Rakiplerde
+ajan çağrısı da otomatik olarak deftere yazılır ve exactly-once garantisini MİRAS alır. Başka yerlerde
 bu özellikler ayrı ayrı vardır ama ortak bir dayanıklılık zemini yoktur.
 
 ---
@@ -402,7 +402,7 @@ await indexDocuments(store, embed, parcalar);
 tools: { bilgiBankasi: createRagTool({ store, embed, topK: 4 }) }
 ```
 İnce ayrıntı: RAG sorgusu da deftere yazıldığı için **resume'da arama tekrarlanmaz** — arşive o
-arada yeni doküman eklense bile koşu aynı kanıtlarla devam eder (deterministik RAG — rakiplerde yok).
+arada yeni doküman eklense bile koşu aynı kanıtlarla devam eder (deterministik RAG — nadirdir, çünkü getirme işleminin kendisinin journal'lanmasını gerektirir).
 `GraphRag` ise parçalar arası benzerlik grafı kurup **dolaylı ilgili** parçaları da bulur.
 
 ### 7.5 Çoklu ajan — statik ve dinamik
@@ -452,19 +452,19 @@ await m.runExperiment({ dataset, run: eskiModelle, scorers, experimentId: 'v1' }
 await m.runExperiment({ datasetId: dataset.id, run: yeniModelle, scorers, experimentId: 'v2' });
 const fark = await m.compare(dataset.id, 'v1', 'v2');  // hangi soruda geriledik, hangisinde iyileştik
 ```
-Suite ortasında çökerse tamamlanan test-case'ler atlanır (**resumable evals** — rakiplerde yok);
+Suite ortasında çökerse tamamlanan test-case'ler atlanır (**resumable evals** — nadirdir, çünkü eval koşusunun da her koşu gibi journal'lanmasını gerektirir);
 LLM-hakem puanları da deftere yazıldığından tekrar koşularda aynı puan döner (para da yanmaz).
 
 ### 7.8 Sunucu, istemci, Studio
 
 ```ts
 // Sunucu: registry'yi otomatik REST API yapar (OpenAPI şemasıyla):
-import { createServer } from '@gnldev/server';
-serve(createServer(gnl));                      // POST /agents/asistan/run, SSE stream, /metrics...
+import { createRestApi } from '@gnldev/server';
+serve(createRestApi(gnl));                      // POST /agents/asistan/run, SSE stream, /metrics...
 
 // İstemci (tarayıcı/React):
-import { createClient } from '@gnldev/client';
-const api = createClient('http://localhost:3000');
+import { GnlClient } from '@gnldev/client';
+const api = new GnlClient('http://localhost:3000');
 await api.run('asistan', { prompt: '...' });
 
 // Studio: web kontrol paneli — npx @gnldev/studio
@@ -496,27 +496,37 @@ const { newRunId } = await rolloverRun(journal, 'asistan-ana');  // haftalardır
 
 ---
 
-## 8. Rakiplerden GERÇEK farklar (dürüst tablo)
+## 8. Tasarım ödünleri — GNL ne yapar, neyi bilinçli olarak yapmaz
 
-| Özellik | GNL | Diğer framework'ler (tipik) | Bazı framework'ler (checkpoint-tabanlı) |
-|---|---|---|---|
-| **Exactly-once yan etki** | ✅ CAS ile, canlı çok-sunucu testli | ❌ | ❌ (checkpoint durumu saklar ama araç tekrarını engellemez) |
-| **Deterministic replay** (LLM'e gitmeden aynı sonucu kur) | ✅ | ❌ | Kısmen (durum var, kayıtlı LLM cevabı yok) |
-| **Time-travel + fork** (geçmiş adıma dön, oradan dallan) | ✅ Studio'da görsel | ❌ | ❌ |
-| **Model fallback'in kalıcılığı** (kazanan model koşuya yapışır) | ✅ | ❌ (anlık) | ❌ |
-| **Dinamik ajan ağı kararlarının dondurulması** | ✅ | ❌ (.network kararları uçucu) | ❌ |
-| **Resumable evals** (test paketi kaldığı yerden) | ✅ | ❌ | ❌ |
-| **Governance Studio** (tenant/bütçe/politika/onay) | ✅ 15 görünüm | Temel playground | ❌ |
-| **Edge bundle küçüklüğü** | ✅ (~ince çekirdek, bağımlılıklar opsiyonel) | Orta | Ağır |
-| Hazır scorer sayısı | 8 + hakem altyapısı | 18 | Ayrı paketlerle |
-| Ses (TTS/STT), Slack/WhatsApp kanalları | ❌ (bilinçli kapsam dışı) | ✅ | Kısmen |
-| No-code ajan editörü | ❌ (bilinçli: kod-öncelikli) | ✅ | ❌ |
-| Depolama adaptörü sayısı | 4 (+composite karışımı) | ~16 | Çok |
+Her framework karmaşıklık bütçesini bir yere harcar. GNL'inki neredeyse tamamen tek bir şeye gidiyor:
+**bir yan etkiyi tekrarlamadan yeniden oynatılabilen, denetlenebilen ve kaldığı yerden sürebilen bir
+koşu.** Bu tercih birinci listeyi kazandırıyor, ikincisine mal oluyor.
 
-Özet: **tipik tam-donanımlı framework'ler genişlikte** (çok entegrasyon, kanal, editör), **GNL derinlikte** (dayanıklılık,
-determinizm, denetlenebilirlik) güçlüdür. Para/hukuk/sağlık gibi "iki kez çalışırsa felaket"
-alanlarında GNL'in garantilerinin rakibi yok; hızlı demo/çok-kanallı bot içinse bu tür framework'ler daha
-hazır gelir.
+**Bütçenin aldıkları**
+
+| Yetenek | Pratikte ne demek |
+|---|---|
+| **Exactly-once yan etki** | Bir kez çalışmış araç çağrısı ikinci kez ücretlendirilmez — CAS ile zorlanır, iki ayrı işletim sistemi süreciyle ve CI'da gerçek Postgres/Redis'e karşı doğrulanır |
+| **Deterministic replay** | Aynı koşu, modele tekrar gitmeden aynı sonuca kurulur — modelin cevabı journal'da, sadece durum değil |
+| **Time-travel + fork** | Geçmişteki herhangi bir adıma dönüp oradan dallanma, Studio'da görsel olarak |
+| **Model fallback kalıcı** | Gerçekte kazanan model journal'a yazılır; resume zarı yeniden atmaz, ona yapışır |
+| **Dinamik ajan ağı kararları donar** | Bir kez verilen yönlendirme kararı kaydedilir, replay aynı yolu izler |
+| **Resumable evals** | Test paketi baştan başlamaz, durduğu yerden devam eder |
+| **Yönetişim yüzeyi** | Studio 15 görünümle gelir: onay kuyruğu, politika, bütçe, denetim, regresyon karşılaştırma |
+| **Edge-native** | İnce çekirdek + opsiyonel bağımlılıklar; Workers sınıfı bir bundle'a sığacak kadar küçük |
+
+**Maliyeti — eksiklikten değil, bilinçli olarak**
+
+| Burada yok | Neden |
+|---|---|
+| Ses (TTS/STT), Slack/WhatsApp kanalları | Kapsam dışı. Bunlar entegrasyon yüzeyi, dayanıklılık değil; eklemek çekirdeği genişletir ama tek bir koşuyu bile daha güvenli yapmaz. |
+| No-code ajan editörü | Tasarım gereği kod-öncelikli. Ajanın davranışı incelenebilir, test edilebilir, sürüm kontrollü kodda durur — görsel editör onu diff'in izleyemediği bir yere taşır. |
+| Geniş depolama adaptörü kataloğu | Dört tane, artı composite karışımı. Her adaptörün exactly-once'ı gerçek bir motora karşı kanıtlaması gerekir ve bu kanıt pahalıdır; yük altında hiç yarıştırılmamış uzun bir adaptör listesi özellik değil, yükümlülüktür. |
+| Geniş hazır scorer kataloğu | Sekiz tane, artı kendinizinkini yazabileceğiniz hakem altyapısı. |
+
+İş yükünüz "iki kez çalışırsa felaket" cinsindense — ödeme, finans, hukuk, sağlık, uzun-koşan ve
+dağıtık her şey — birinci tablo argümanın tamamıdır. İhtiyacınız hızlı ve çok-kanallı bir demoysa,
+ikinci tablo size dürüstçe bunun en kısa yol olmadığını söylüyor.
 
 ---
 
@@ -532,7 +542,7 @@ Evet; iddiaların çoğu **gerçek motorlarda canlı testlerle** kanıtlı (ayr�
 - **Kilit devralma:** süresi dolmuş kilidi iki sunucu aynı anda devralmaya kalktı → yalnız biri
   kazandı (`putIfMatch` CAS'i; eski sürümde buradaki yarış bulunmuş ve kapatılmıştı).
 - **Süreç öldürme testleri:** çocuk süreç gerçek `SIGKILL` ile öldürülüp resume ediliyor.
-- Toplam: **700+ test**, ayrıca `GNL_INTEGRATION=1` ve `GNL_FAILOVER=1` ile gerçek-altyapı paketleri.
+- Toplam: **2000+ test**, ayrıca `GNL_INTEGRATION=1` ve `GNL_FAILOVER=1` ile gerçek-altyapı paketleri.
 
 ---
 
@@ -819,7 +829,7 @@ Tek cümlelik özet: **resume = geçmişe sadakat (üretim güvenliği), replay/
 | Web çatısı | **Hono** | Server/Studio/auth'un HTTP katmanı. Express yerine Hono: hem Node'da hem edge'de (Cloudflare Workers) aynen çalışır, çok küçüktür — "küçük edge bundle" iddiasının temeli. |
 | Depolama | SQLite / PostgreSQL / Redis | §5'teki adaptörler; hepsi OPSİYONEL bağımlılık (kullanmadığın sürücü yüklenmez — lazy import). |
 | Serileştirme | superjson | Kayıt→metin çevirimi; düz JSON'dan farkı `Date` gibi tipleri kaybetmemesi. |
-| Test | Vitest + pg-mem + Docker | 700+ test; pg-mem = bellek-içi sahte Postgres (hızlı); Docker compose'ları = GERÇEK PG/Redis entegrasyonu + canlı failover senaryosu. |
+| Test | Vitest + pg-mem + Docker | 2000+ test; pg-mem = bellek-içi sahte Postgres (hızlı); Docker compose'ları = GERÇEK PG/Redis entegrasyonu + canlı failover senaryosu. |
 | Paketleme | esbuild | `bundleApp`: tek dosyaya derleme (deploy hedefleri kullanır). |
 | Studio arayüzü | React + TanStack Query + Recharts | Panel ön yüzü: arayüz + veri çekme/önbellek + grafikler. |
 | Gözlemlenebilirlik | OTLP/HTTP (elle, ~8KB) | İzleri dış araçlara gönderme; koca OTel SDK yerine elle yazılmış çevirici (ince-kal felsefesi). Canlı mod ayrıca OTel SDK'sını opsiyonel kullanır. |
@@ -828,7 +838,7 @@ Tek cümlelik özet: **resume = geçmişe sadakat (üretim güvenliği), replay/
 
 Yığındaki ortak desen: **çekirdek ince kalsın; ağır şeyler opsiyonel/lazy; gömülüsü varsa dışarıdan alma.**
 
-### 13.1 "Neden ClickHouse yok?" — OLTP/OLAP ayrımı ve rakip yaklaşım karşılaştırması
+### 13.1 "Neden ClickHouse yok?" — OLTP/OLAP ayrımı ve tercih edilen yol
 
 Dikkat, benzer iki kısaltma FARKLI şeyler: **OLTP** = işlemsel veritabanı türü (Postgres gibi —
 tek satırlık atomik işlemlerde usta); **OTLP** = OpenTelemetry Protocol (izleme verisinin evrensel
@@ -844,9 +854,8 @@ Aynı veri üzerinde iki farklı soru vardır:
   dış araca devreder (`otlpPresets`). Komik detay: fişi taktığın Langfuse'un kendisi de arkada
   ClickHouse çalıştırır — yani izlerin yine ClickHouse'a varır, sadece onu SEN işletmezsin.
 
-**Rakip yaklaşım farkı:** bazı framework'ler resmi bir ClickHouse adaptörüyle telemetriyi kendi ClickHouse'una
-yazar ve panosunda toplu trendleri kendisi gösterir — "tek marka" deneyimi, karşılığında ClickHouse
-işletme yükü sende (ya da ücretli bulutlarında). GNL'in bahsi ters yönde: **kritik olan analitik
+**Diğer yön:** bir framework kendi analitik deposunu ve panosunu da getirebilir — "tek marka"
+deneyimi, karşılığında o depoyu işletme yükü sende (ya da yönetilen bir hizmete ödeme). GNL'in bahsi ters yönde: **kritik olan analitik
 değil, KAYIT** — kayıt (journal) sende ve eksiksizse, analitiği istediğin araca sonradan bile
 dökebilirsin; kaydı eksik tutup panosu güzel olanın geri dönüş şansı yoktur. Studio bu yüzden
 salt izleme panosu değil, **operasyon/yönetişim** panosudur (time-travel, onay kuyruğu, regresyon

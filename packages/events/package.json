@@ -2,6 +2,9 @@
   "name": "@gnldev/events",
   "version": "0.1.0",
   "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.5.0"
+  },
   "description": "Durable event/notification bus on @gnldev/durable. Journal-backed exactly-once delivery per consumer; fan-out.",
   "type": "module",
   "main": "./dist/index.js",

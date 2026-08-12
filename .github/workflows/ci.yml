@@ -24,7 +24,7 @@ jobs:
       - run: pnpm test
 
   integration:
-    name: gerçek backend (Postgres + Redis)
+    name: real backend (Postgres + Redis)
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -56,6 +56,11 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # Kokten kosulur: kok vitest.config include'u 'packages/*/test/**' — paket dizininden
-      # kosunca "No test files found" verir (bilinen monorepo durumu).
+      # Packages resolve each other through dist/ (main points at ./dist/index.js), so the test
+      # cannot even be collected before a build: run.ts imports @gnldev/schema-compat and vite
+      # fails with "Failed to resolve entry for package". The typecheck job builds as part of its
+      # own flow; this one has to ask for it explicitly.
+      - run: pnpm -r build
+      # Run from the root: the root vitest.config include is 'packages/*/test/**', so running from
+      # inside a package directory reports "No test files found" (a known monorepo quirk).
       - run: pnpm exec vitest run packages/durable/test/integration-real.test.ts

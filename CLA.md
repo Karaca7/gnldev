@@ -72,7 +72,19 @@ of law principles.
 
 ## How this is enforced in practice
 
-You do not need to sign anything separately or in advance. When you open your **first** pull
-request, an automated CLA bot will comment on the PR with a link to accept this agreement
-electronically. The PR cannot be merged until you do. You only need to do this once per GitHub
-account.
+You do not need to sign anything separately or in advance. The pull request template carries a
+single line:
+
+```
+- [ ] I have read and agree to the CLA.
+```
+
+Ticking that box **is** the acceptance. A workflow (`.github/workflows/cla.yml`) reads the pull
+request description and fails its check while the box is unticked, so a change cannot land without
+it. No third-party service is involved and no application is granted access to this repository —
+the check only reads the description GitHub already hands it.
+
+The acceptance is recorded in the pull request itself: the ticked box, your account and a timestamp
+stay with the change for the life of the repository. `CONTRIBUTORS.md` indexes those records. It is
+a one-time step per GitHub account; the box is present on every pull request so that each change
+carries its own record, but you are only agreeing once.

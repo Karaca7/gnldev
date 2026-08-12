@@ -2,6 +2,9 @@
   "name": "@gnldev/studio-ui",
   "version": "0.1.0",
   "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.5.0"
+  },
   "description": "React+Vite SPA for @gnldev/studio (served as prebuilt static by @gnldev/studio).",
   "type": "module",
   "files": [

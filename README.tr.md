@@ -80,13 +80,20 @@ testler: `packages/durable/test/with-idempotency.test.ts`.
 
 | Sadece bizde | Parite (+durable twist) |
 |---|---|
-| exactly-once tool/model/MCP/RAG · **LLM-aware args-bazlı idempotency** (`idempotency: 'args'` / `idempotencyKey` — modelin aynı çağrıyı yeni `toolCallId` ile yeniden planlamasını dedup'lar) · deterministic replay (opt-in `replay: 'strict'` → `DivergenceError`; varsayılan lenient yalnız uyarır — replay dayatılan kısıt değil, **opt-in güvence**) · time-travel + fork · **deterministik model fallback** (kazanan journal'a yazılır, resume yapışır) · **org-scoped journal** (`withOrg` — organizasyon izolasyonu + exactly-once mirası) · **edge-native**: çekirdek **16,4 KiB gzip**, AI SDK dahil **62,2 KiB gzip** = CF Workers ücretsiz limitinin %2,0'ı (`pnpm bundle` ile ölçülür; tipik tam-donanımlı bir agent framework'ün build çıktısı ~17,58 MiB raw) · durable queue (heartbeat'li lock renew) · event bus (exactly-once işaretleme + at-least-once teslim) · network-ötesi A2A (opt-in HMAC-SHA256 imza) · idempotent OTEL · cross-run cache · dış-çağrı **zaman aşımları** (`timeouts: {modelStepMs,toolMs,claimTtlMs}` → `StepTimeoutError`) · **fail-closed auth** (production'da provider yoksa kurulum hata verir) · **onay (approval) kararları journal'da first-class** (onaylandı-ama-tool-çalışmadan-crash senaryosunda resume kararı `approvals` parametresi verilmese bile journal'dan uygular) | agent loop · **requestContext DI** (dinamik model/system/tools) · memory (recall/schema-WM/thread/OM) · workflows (evented) · MCP (client+server) · evals (+datasets) · auto-REST/OpenAPI (409/422 resumable sözleşmesi) · processors · RAG (+rerank) · cost ledger |
+| exactly-once tool/model/MCP/RAG · **LLM-aware args-bazlı idempotency** (`idempotency: 'args'` / `idempotencyKey` — modelin aynı çağrıyı yeni `toolCallId` ile yeniden planlamasını dedup'lar) · deterministic replay (opt-in `replay: 'strict'` → `DivergenceError`; varsayılan lenient yalnız uyarır — replay dayatılan kısıt değil, **opt-in güvence**) · time-travel + fork · **deterministik model fallback** (kazanan journal'a yazılır, resume yapışır) · **org-scoped journal** (`withOrg` — organizasyon izolasyonu + exactly-once mirası) · **edge-native**: çekirdek **26,3 KiB gzip**, AI SDK dahil **72,1 KiB gzip** = CF Workers ücretsiz limitinin %2,3'ü (`pnpm --filter @gnldev/showcase bundle` ile ölçülür; tipik tam-donanımlı bir agent framework'ün build çıktısı ~17,58 MiB raw) · durable queue (heartbeat'li lock renew) · event bus (exactly-once işaretleme + at-least-once teslim) · network-ötesi A2A (opt-in HMAC-SHA256 imza) · idempotent OTEL · cross-run cache · dış-çağrı **zaman aşımları** (`timeouts: {modelStepMs,toolMs,claimTtlMs}` → `StepTimeoutError`) · **fail-closed auth** (production'da provider yoksa kurulum hata verir) · **onay (approval) kararları journal'da first-class** (onaylandı-ama-tool-çalışmadan-crash senaryosunda resume kararı `approvals` parametresi verilmese bile journal'dan uygular) | agent loop · **requestContext DI** (dinamik model/system/tools) · memory (recall/schema-WM/thread/OM) · workflows (evented) · MCP (client+server) · evals (+datasets) · auto-REST/OpenAPI (409/422 resumable sözleşmesi) · processors · RAG (+rerank) · cost ledger |
+
+## Gereksinimler
+
+**Node.js 22.5 veya üstü.** Varsayılan depolama `node:sqlite` kullanıyor; bu modül 22.5 ile geldi —
+daha eski bir çalışma zamanında ilk koşu `Cannot find module 'node:sqlite'` ile başarısız olur.
+Node 20 LTS'teyseniz ya yükseltin ya da `journal`'ı `@gnldev/durable/postgres` veya `/redis`'e
+yönlendirin. Depo pnpm 10 ile geliştiriliyor ve test ediliyor.
 
 ## Hızlı başlangıç (DX)
 Paketler npm'e çıkana kadar starter klondan koşulur (dürüst not: `npm create gnl` tek-satırlığı
 ancak npm yayınından sonra çalışır):
 ```bash
-git clone https://github.com/Karaca7/gnldev.git gnl && cd gnl
+git clone https://github.com/Karaca7/gnl-framework.git gnl && cd gnl
 pnpm install && pnpm -r build
 cd examples && node ../packages/create-gnl/dist/index.js my-agent   # starter (mock model — API key gerekmez)
 cd my-agent && pnpm install       # examples/ içinde → @gnldev/* workspace linkiyle çözülür
@@ -104,8 +111,8 @@ for await (const ev of gnl.stream('assistant', { prompt: 'akış' })) { /* text-
 ## Paketler (17)
 | Paket | Ne |
 |---|---|
-| **`@gnldev/durable`** | Çekirdek: `runDurable`/`resume`/`stream` · `durableTool`/`withDurableModel` · journal (memory/**sqlite/postgres/redis**) · `createGnl`+model-router · `agentAsTool` + **dinamik ağ (`runNetwork`, CAS-frozen routing)** · `getRunCost` · `reconstructState`/`forkRun` · run-lock (**atomik takeover: `putIfMatch`**) · `rolloverRun` (dönem devri) · retention (`sweepRuns/sweepLog/sweepThreads`, özyinelemeli `purgeRun`, disk geri kazanımı `compact`) · **`timeouts` (`modelStepMs`/`toolMs`/`claimTtlMs`) → `StepTimeoutError`** |
-| **`@gnldev/memory`** | `GnlMemory`: recall (messageRange/threshold/filter/resource-scope) · schema WM + `updateWorkingMemory` tool · thread CRUD/clone · observational memory (Observer/Reflector, pluggable tokenizer) · MessageList |
+| **`@gnldev/durable`** | Çekirdek: `runDurable`/`resume`/`stream` · `durableTool`/`withDurableModel` · journal (memory/**sqlite/postgres/redis**) · `createGnl`+model-router · `createAgentTool` + **dinamik ağ (`runNetwork`, CAS-frozen routing)** · `getRunCost` · `reconstructState`/`forkRun` · run-lock (**atomik takeover: `putIfMatch`**) · `rolloverRun` (dönem devri) · retention (`sweepRuns/sweepLog/sweepThreads`, özyinelemeli `purgeRun`, disk geri kazanımı `compact`) · **`timeouts` (`modelStepMs`/`toolMs`/`claimTtlMs`) → `StepTimeoutError`** |
+| **`@gnldev/memory`** | `AgentMemory`: recall (messageRange/threshold/filter/resource-scope) · schema WM + `updateWorkingMemory` tool · thread CRUD/clone · observational memory (Observer/Reflector, pluggable tokenizer) · MessageList |
 | **`@gnldev/rag`** | vector store (dev: in-memory · **prod: pgvector**) · **`chunkText`/`chunkDocuments`** (recursive/markdown/character) · **`GraphRag`** (benzerlik-grafı retrieval) · `createRagTool` · `llmReranker` · `SemanticMemory` |
 | **`@gnldev/workflow`** | then/parallel/branch · foreach/loop · **`retry` (bildirimsel retry-policy, sayaç journal'da)** · `runResumable` + `sleep`/`waitFor` (evented/scheduled) |
 | **`@gnldev/processors`** | piiRedactor · moderation · toolFilter · **`toolSearch` (semantik tool seçimi, journal'lı)** · tokenLimit · promptInjection · outputLimit |
@@ -138,7 +145,7 @@ doğrulanabilir duruşu:
 ## Geliştirme
 ```bash
 pnpm install
-pnpm -r build && pnpm -r typecheck && pnpm test   # 230+ test
+pnpm -r build && pnpm -r typecheck && pnpm test   # 2000+ test
 
 # gerçek backend entegrasyon testi (opsiyonel):
 docker-compose up -d
@@ -152,7 +159,7 @@ gnl tamamen Hono tabanlı → Node deploy birkaç satır:
 ```ts
 import { createRestApi } from '@gnldev/server';
 import { nodeAdapter } from '@gnldev/deploy';                // ince @hono/node-server sarmalı
-nodeAdapter(createRestApi(config), { port: process.env.PORT });
+nodeAdapter(createRestApi(config));   // reads PORT from the environment itself (default 3000)
 ```
 **Journal uyarısı:** serverless/edge runtime'larda `node:sqlite` çalışmaz → ağ-tabanlı journal kullanın (`@gnldev/durable/postgres` veya `/redis`, Cloudflare'de D1). `SqliteStorage` yalnız uzun-ömürlü Node süreçleri içindir. Vercel/Cloudflare/Netlify hedefleri hazır: `deployTargets` (bkz. [`@gnldev/deploy`](packages/deploy)).
 
@@ -163,6 +170,38 @@ onun garantilerini miras alan değişken olgunlukta uydu paketler. Tipik tam-don
 üstüne kurar. "Exactly-once" burada mutlak bir fiziksel garanti değil — **çağrı-bazlı dedup + güvenli-varsayılan**
 demektir: aynı `toolCallId` bir daha çalışmaz, sonucu belirsiz kalan çağrı `recover()`/`idempotencyKey` ile
 sağlayıcıya kadar takip edilir, hâlâ belirsizse sistem **sessizce tekrar etmek yerine bloklanıp onay ister**
-(H7/H9, bkz. `docs/CORE-HARDENING.md`) — opak step-snapshot'lı bir durable agent'ın vermediği budur. Bu tür framework'ler
+(yeniden planlanmış bir çağrının sızmasını engelleyen sentinel `packages/durable/test/blocked-sentinel.test.ts`'te,
+recover merdiveni `packages/durable/test/crash-window.test.ts`'te) — opak step-snapshot'lı bir durable agent'ın vermediği budur. Bu tür framework'ler
 daha geniş/olgun (voice/deployer/editor/auth — bizde bilinçli pas) ama hiçbir özelliği bu garantilerle gelmiyor.
 Bizim kozumuz **correctness**; ödeme/finans/transaksiyonel ve uzun-koşan/dağıtık iş yüklerinde belirleyici.
+
+---
+
+## Dokümantasyon
+
+- **[docs/GUIDE.tr.md](./docs/GUIDE.tr.md)** — tam rehber: nedir, bir koşu nasıl işler, journal'ın
+  anahtar şeması, depolama portları ve bunların ardındaki tasarım ödünleri. Motoru sadece çağırmak
+  değil anlamak istiyorsanız buradan başlayın.
+- **[docs/GUIDE.md](./docs/GUIDE.md)** — aynı rehberin İngilizcesi.
+- **[examples/incident-proofs](./examples/incident-proofs)** — gerçek çift-yan-etki olaylarının
+  yeniden üretimi ve bu çerçevenin her birinde ne yaptığı.
+- **[examples/stripe-idempotency](./examples/stripe-idempotency)** — sahte Stripe'a karşı
+  sağlayıcı-taraflı exactly-once: journal'dan sağlayıcıya taşınan aynı anahtar.
+- **[examples/showcase](./examples/showcase)** — API anahtarı gerektirmeden paketleri uçtan uca
+  koşturan, kendini doğrulayan tek dosya: `pnpm --filter @gnldev/showcase demo`.
+
+## Katkı
+
+Pull request'lere açığız. Önce **[CONTRIBUTING.md](./CONTRIBUTING.md)**'i okuyun — derleme, bir
+değişikliğin geçmesi gereken kontroller ve tek satırlık **[CLA](./CLA.md)** kabulü orada. CLA,
+projenin lisansının ileride her katkıcıyı tek tek bulmak zorunda kalmadan evrilebilmesini sağlıyor.
+
+## Güvenlik
+
+Bir açık için lütfen herkese açık issue açmayın. **[SECURITY.md](./SECURITY.md)** açığı GitHub
+üzerinden özel olarak nasıl bildireceğinizi ve kapsamı anlatıyor — dayanıklılık, organizasyonlar
+arası izolasyon ve onay kapıları önce saldırılmaya değer garantiler.
+
+## Lisans
+
+[Apache-2.0](./LICENSE) — © 2026 Karaca Yılmaz.

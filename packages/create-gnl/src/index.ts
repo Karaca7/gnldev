@@ -11,7 +11,7 @@ try {
   console.log(`  cd ${dir}  &&  pnpm install  &&  pnpm dev`);
   console.log(
     '  NOTE: @gnldev/* packages are not yet published to npm — for now this template only works ' +
-      'INSIDE the gnl monorepo: create the project in a directory covered by the workspace (e.g. under examples/); ' +
+      'INSIDE this monorepo: create the project in a directory covered by the workspace (e.g. under examples/); ' +
       '@gnldev/* dependencies are linked locally via link-workspace-packages=true in .npmrc. ' +
       'To use it outside the monorepo, wait for the @gnldev/* packages to be published to npm.',
   );

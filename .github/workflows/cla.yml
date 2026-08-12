@@ -25,11 +25,14 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           PR_AUTHOR_TYPE: ${{ github.event.pull_request.user.type }}
-          REPO_OWNER: ${{ github.repository_owner }}
         run: |
-          # The maintainer already holds the copyright; bots submit no original authorship.
-          if [ "$PR_AUTHOR" = "$REPO_OWNER" ] || [ "$PR_AUTHOR_TYPE" = "Bot" ]; then
-            echo "::notice::$PR_AUTHOR does not need to accept the CLA — skipping."
+          # Bots submit no original authorship, so there is nothing for them to license. Everyone
+          # else ticks the box, the maintainer included: one rule with no exception is easier to
+          # trust than one with a carve-out, it stays correct if the project is ever transferred to
+          # a company (the "owner" changes, the rule does not), and it means the check can be
+          # verified from any account instead of only from a second one.
+          if [ "$PR_AUTHOR_TYPE" = "Bot" ]; then
+            echo "::notice::$PR_AUTHOR is a bot — nothing to license, skipping."
             exit 0
           fi
 

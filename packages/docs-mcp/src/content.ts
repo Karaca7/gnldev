@@ -209,9 +209,15 @@ await runDurable({ runId, journal, model, tools, prompt });`,
 import { createRestApi } from '@gnldev/server';
 import { createStudioApp } from '@gnldev/studio';`,
     apis: [`roleAuth({ admin?, viewer? }) — AuthProvider | undefined (opt-in)`, `AuthProvider — authenticate(c), authorize(principal, c, ctx)`, `Principal — { id?, roles, orgId?, permissions? }`, `makeGate — converts an AuthProvider into a Hono gate`],
-    example: `const auth = roleAuth({
-  admin: { token: process.env.GNL_ADMIN_TOKEN ?? 'free-admin' },
-  viewer: { token: process.env.GNL_VIEWER_TOKEN ?? 'free-viewer' },
+    example: `// In production, refuse to start rather than fall back to a token that is public knowledge.
+const required = (name: string) => {
+  const v = process.env[name];
+  if (!v && process.env.NODE_ENV === 'production') throw new Error(name + ' is not set');
+  return v ?? 'dev-only';
+};
+const auth = roleAuth({
+  admin: { token: required('GNL_ADMIN_TOKEN') },
+  viewer: { token: required('GNL_VIEWER_TOKEN') },
 });
 app.mount('/api', createRestApi(config, { title: 'SWAPI Free', auth }));`,
   },

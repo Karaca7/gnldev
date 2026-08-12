@@ -23,6 +23,18 @@ runs.db
 *.log
 
 # Demo/test SQLite artifacts
-*.db
 *.db-shm
 *.db-wal
+
+# Agent tooling / editor state (never part of the framework)
+.claude/
+.idea/
+.vscode/
+*.swp
+
+# Python bytecode (vendored tooling can drop these)
+__pycache__/
+*.pyc
+
+# npm pack output
+*.tgz

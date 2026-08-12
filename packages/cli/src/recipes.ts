@@ -201,9 +201,21 @@ export const checkout = workflow<{ orderId?: string }>()
 // Provide credentials only — the dev server calls roleAuth() for you. Omit \`auth\` → the API stays open.
 import type { Cred } from '@gnldev/auth';
 
+// The dev fallbacks below are convenience for local work ONLY. In production the process refuses
+// to start without real tokens: a default that ships in a public template is not a secret, and an
+// admin API guarded by one is effectively open.
+function credential(envVar: string, devFallback: string): string {
+  const value = process.env[envVar];
+  if (value) return value;
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(\`\${envVar} is not set — refusing to start with the development default.\`);
+  }
+  return devFallback;
+}
+
 export const auth: { admin?: Cred; viewer?: Cred } = {
-  admin: { token: process.env.GNL_ADMIN_TOKEN ?? 'admin-dev' },
-  viewer: { token: process.env.GNL_VIEWER_TOKEN ?? 'viewer-dev' },
+  admin: { token: credential('GNL_ADMIN_TOKEN', 'admin-dev') },
+  viewer: { token: credential('GNL_VIEWER_TOKEN', 'viewer-dev') },
 };
 `,
     wiring: {

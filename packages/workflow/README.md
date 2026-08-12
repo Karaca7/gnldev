@@ -8,14 +8,14 @@ npm i @gnldev/workflow   # journal: @gnldev/durable
 
 ```ts
 import { workflow, step } from '@gnldev/workflow';
-import { SqliteJournal } from '@gnldev/durable/sqlite';
+import { SqliteStorage } from '@gnldev/durable/sqlite';
 
 const fetchUser = step('fetchUser', async (id: number) => ({ id, name: 'Ada' }));
 const greet = step('greet', async (u: { name: string }) => `Hello ${u.name}`);
 
 const wf = workflow<number>().then(fetchUser).then(greet);
 
-const out = await wf.run(1, { runId: 'w1', journal: new SqliteJournal('runs.db') });
+const out = await wf.run(1, { runId: 'w1', journal: new SqliteStorage('runs.db').runs });
 // Crash → run again with the same runId → completed steps come back from the journal, continuing where it left off.
 ```
 

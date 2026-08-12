@@ -8,9 +8,9 @@ npm i @gnldev/queue   # peer: @gnldev/durable
 
 ```ts
 import { enqueue, createWorker } from '@gnldev/queue';
-import { SqliteJournal } from '@gnldev/durable/sqlite';
+import { SqliteStorage } from '@gnldev/durable/sqlite';
 
-const journal = new SqliteJournal('runs.db');
+const journal = new SqliteStorage('runs.db').runs;
 
 // Producer: idempotent enqueue (same id → single job).
 await enqueue(journal, 'send-email', { to: 'a@x.com' }, { id: 'email:order-1' });

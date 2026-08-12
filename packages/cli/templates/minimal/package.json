@@ -7,18 +7,18 @@
     "studio": "gnl studio"
   },
   "dependencies": {
-    "@gnldev/durable": "^0.0.0",
-    "@gnldev/server": "^0.0.0",
-    "@gnldev/studio": "^0.0.0",
-    "@gnldev/memory": "^0.0.0",
-    "@gnldev/auth": "^0.0.0",
+    "@gnldev/durable": "^0.1.0",
+    "@gnldev/server": "^0.1.0",
+    "@gnldev/studio": "^0.1.0",
+    "@gnldev/memory": "^0.1.0",
+    "@gnldev/auth": "^0.1.0",
     "@hono/node-server": "^1.13.0",
     "hono": "^4.6.0",
     "ai": "^5.0.0",
     "zod": "^3.25.0"
   },
   "devDependencies": {
-    "@gnldev/cli": "^0.0.0",
+    "@gnldev/cli": "^0.1.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
   }

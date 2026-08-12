@@ -2,6 +2,9 @@
   "name": "@gnldev/ai-sdk",
   "version": "0.1.0",
   "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.5.0"
+  },
   "description": "Vercel AI SDK `useChat` compatibility for @gnldev/durable agents: UI message stream conversion (with sentinel masking), journal→UIMessage history reconstruction, and a Hono chat route.",
   "type": "module",
   "main": "./dist/index.js",

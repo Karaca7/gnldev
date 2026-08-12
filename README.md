@@ -45,7 +45,7 @@ by the **arguments** instead:
 const tools = {
   charge: {
     idempotency: 'args',                       // default: 'call' (toolCallId-keyed, unchanged)
-    // or dedup by a logical key: idempotencyKey: (args) => args.orderId,
+    // or dedup by a logical key: idempotencyKey: (input) => (input as { orderId: string }).orderId,
     execute: chargeCard,
   },
 };
@@ -82,13 +82,20 @@ suspending. For those, use `runDurable`. Runnable example (no API key):
 
 | Only us | Parity (+ durable twist) |
 |---|---|
-| exactly-once tool/model/MCP/RAG · **LLM-aware args-based idempotency** (`idempotency: 'args'` / `idempotencyKey` — dedups the model re-planning the same call under a new `toolCallId`) · deterministic replay (opt-in `replay: 'strict'` → `DivergenceError`; the default is lenient and only warns — replay is an **opt-in assurance**, not an imposed constraint) · time-travel + fork · **deterministic model fallback** (the winner is written to the journal, resume sticks with it) · **org-scoped journal** (`withOrg` — organization isolation + inherits exactly-once) · **edge-native**: **16.4 KiB gzip** core, **62.2 KiB** gzip including the AI SDK = 2.0% of the CF Workers free-tier limit (measured with `pnpm bundle`; a typical full-featured agent framework's build output is ~17.58 MiB raw) · durable queue (lock renewal via heartbeat) · event bus (exactly-once marking + at-least-once delivery) · cross-network A2A (opt-in HMAC-SHA256 signing) · idempotent OTEL · cross-run cache · outbound-call **timeouts** (`timeouts: {modelStepMs,toolMs,claimTtlMs}` → `StepTimeoutError`) · **fail-closed auth** (setup errors out in production if no provider is configured) · **approval decisions are first-class in the journal** (in the approved-but-crashed-before-the-tool-ran scenario, resume applies the decision from the journal even if the `approvals` parameter isn't passed) | agent loop · **requestContext DI** (dynamic model/system/tools) · memory (recall/schema-WM/thread/OM) · workflows (evented) · MCP (client+server) · evals (+datasets) · auto-REST/OpenAPI (409/422 resumable contract) · processors · RAG (+rerank) · cost ledger |
+| exactly-once tool/model/MCP/RAG · **LLM-aware args-based idempotency** (`idempotency: 'args'` / `idempotencyKey` — dedups the model re-planning the same call under a new `toolCallId`) · deterministic replay (opt-in `replay: 'strict'` → `DivergenceError`; the default is lenient and only warns — replay is an **opt-in assurance**, not an imposed constraint) · time-travel + fork · **deterministic model fallback** (the winner is written to the journal, resume sticks with it) · **org-scoped journal** (`withOrg` — organization isolation + inherits exactly-once) · **edge-native**: **26.3 KiB gzip** core, **72.1 KiB** gzip including the AI SDK = 2.3% of the CF Workers free-tier limit (measured with `pnpm --filter @gnldev/showcase bundle`; a typical full-featured agent framework's build output is ~17.58 MiB raw) · durable queue (lock renewal via heartbeat) · event bus (exactly-once marking + at-least-once delivery) · cross-network A2A (opt-in HMAC-SHA256 signing) · idempotent OTEL · cross-run cache · outbound-call **timeouts** (`timeouts: {modelStepMs,toolMs,claimTtlMs}` → `StepTimeoutError`) · **fail-closed auth** (setup errors out in production if no provider is configured) · **approval decisions are first-class in the journal** (in the approved-but-crashed-before-the-tool-ran scenario, resume applies the decision from the journal even if the `approvals` parameter isn't passed) | agent loop · **requestContext DI** (dynamic model/system/tools) · memory (recall/schema-WM/thread/OM) · workflows (evented) · MCP (client+server) · evals (+datasets) · auto-REST/OpenAPI (409/422 resumable contract) · processors · RAG (+rerank) · cost ledger |
+
+## Requirements
+
+**Node.js 22.5 or newer.** The default storage uses `node:sqlite`, which landed in 22.5 — on an
+older runtime the first run fails with `Cannot find module 'node:sqlite'`. If you are on Node 20
+LTS, either upgrade or point `journal` at `@gnldev/durable/postgres` or `/redis` instead.
+pnpm 10 is what the repository is developed and tested against.
 
 ## Quickstart (DX)
 Until the packages land on npm, run the starter from a clone (honest note: `npm create gnl`
 becomes the one-liner only after the npm release):
 ```bash
-git clone https://github.com/Karaca7/gnldev.git gnl && cd gnl
+git clone https://github.com/Karaca7/gnl-framework.git gnl && cd gnl
 pnpm install && pnpm -r build
 cd examples && node ../packages/create-gnl/dist/index.js my-agent   # starter (mock model — no API key needed)
 cd my-agent && pnpm install       # inside examples/ → @gnldev/* resolve via workspace links
@@ -103,11 +110,11 @@ const { text } = await gnl.run('assistant', { prompt: 'hello' });
 for await (const ev of gnl.stream('assistant', { prompt: 'streaming' })) { /* text-delta… */ }
 ```
 
-## Packages (17)
+## Packages (25)
 | Package | What |
 |---|---|
-| **`@gnldev/durable`** | Core: `runDurable`/`resume`/`stream` · `durableTool`/`withDurableModel` · journal (memory/**sqlite/postgres/redis**) · `createGnl` + model router · `agentAsTool` + **dynamic network (`runNetwork`, CAS-frozen routing)** · `getRunCost` · `reconstructState`/`forkRun` · run-lock (**atomic takeover: `putIfMatch`**) · `rolloverRun` (period rollover) · retention (`sweepRuns/sweepLog/sweepThreads`, recursive `purgeRun`, disk reclaim via `compact`) · **`timeouts` (`modelStepMs`/`toolMs`/`claimTtlMs`) → `StepTimeoutError`** |
-| **`@gnldev/memory`** | `GnlMemory`: recall (messageRange/threshold/filter/resource-scope) · schema working memory + `updateWorkingMemory` tool · thread CRUD/clone · observational memory (Observer/Reflector, pluggable tokenizer) · MessageList |
+| **`@gnldev/durable`** | Core: `runDurable`/`resumeRun`/`streamDurable` · `durableTool`/`withDurableModel` · journal (memory/**sqlite/postgres/redis**) · `createGnl` + model router · `createAgentTool` + **dynamic network (`runNetwork`, CAS-frozen routing)** · `getRunCost` · `reconstructState`/`forkRun` · run-lock (**atomic takeover: `putIfMatch`**) · `rolloverRun` (period rollover) · retention (`sweepRuns/sweepLog/sweepThreads`, recursive `purgeRun`, disk reclaim via the storage's `compact()`) · **`timeouts` (`modelStepMs`/`toolMs`/`claimTtlMs`) → `StepTimeoutError`** |
+| **`@gnldev/memory`** | `AgentMemory`: recall (messageRange/threshold/filter/resource-scope) · schema working memory + `updateWorkingMemory` tool · thread CRUD/clone · observational memory (Observer/Reflector, pluggable tokenizer) · MessageList |
 | **`@gnldev/rag`** | vector store (dev: in-memory · **prod: pgvector**) · **`chunkText`/`chunkDocuments`** (recursive/markdown/character) · **`GraphRag`** (similarity-graph retrieval) · `createRagTool` · `llmReranker` · `SemanticMemory` |
 | **`@gnldev/workflow`** | then/parallel/branch · foreach/loop · **`retry` (declarative retry policy, counter kept in the journal)** · `runResumable` + `sleep`/`waitFor` (evented/scheduled) |
 | **`@gnldev/processors`** | piiRedactor · moderation · toolFilter · **`toolSearch` (semantic tool selection, journaled)** · tokenLimit · promptInjection · outputLimit |
@@ -140,7 +147,7 @@ this repo today:
 ## Development
 ```bash
 pnpm install
-pnpm -r build && pnpm -r typecheck && pnpm test   # 230+ tests
+pnpm -r build && pnpm -r typecheck && pnpm test   # 2000+ tests
 
 # real-backend integration test (optional):
 docker-compose up -d
@@ -148,15 +155,14 @@ GNL_INTEGRATION=1 npx vitest run packages/durable/test/integration-real.test.ts
 docker-compose down
 ```
 TypeScript strict · 0 `@ts-ignore` (type escapes are kept minimal; some `any` remains at boundary/
-serialization points) · ~920 KB total dist · dependency: `superjson` (+ optional hono/opentelemetry).
+serialization points) · dependency: `superjson` (+ optional hono/opentelemetry).
 Peers: `ai`, `zod`. **No telemetry, no phone-home.**
 
 ## Deployment
 gnl is fully Hono-based, so a Node deploy is a few lines:
 ```ts
 import { createRestApi } from '@gnldev/server';
-import { nodeAdapter } from '@gnldev/deploy';                // thin @hono/node-server wrapper
-nodeAdapter(createRestApi(config), { port: process.env.PORT });
+const app = createRestApi(config);   // serve it with @hono/node-server, or any Hono adapter
 ```
 **Journal warning:** `node:sqlite` doesn't work on serverless/edge runtimes → use a network-backed journal
 (`@gnldev/durable/postgres` or `/redis`, D1 on Cloudflare). `SqliteStorage` is only for long-lived Node
@@ -170,8 +176,40 @@ what a typical full-featured agent framework's core provides (memory/workflow/ra
 **call-scoped exactly-once effect + deterministic replay**. "Exactly-once" here isn't an absolute physical
 guarantee — it means **call-scoped dedup with a safe default**: the same `toolCallId` never runs again, a
 call whose outcome is unknown is tracked all the way to the provider via `recover()`/`idempotencyKey`, and
-if it's still unknown the system **blocks and asks for approval instead of silently retrying** (H7/H9, see
-`docs/CORE-HARDENING.md`) — which is exactly what an opaque step-snapshot durable agent doesn't give
-you. Full-featured agent frameworks are broader/more mature (voice/deployer/editor/auth — deliberately out of scope for us), but
+if it's still unknown the system **blocks and asks for approval instead of silently retrying** (the sentinel that
+keeps a re-planned call from slipping past is in `packages/durable/test/blocked-sentinel.test.ts`;
+the recover ladder is in `packages/durable/test/crash-window.test.ts`) — which is exactly what an
+opaque step-snapshot durable agent doesn't give you. Full-featured agent frameworks are broader/more mature (voice/deployer/editor/auth — deliberately out of scope for us), but
 none of their features ship with these guarantees. Our edge is **correctness**; it's decisive for
 payment/financial and transactional or long-running/distributed workloads.
+
+---
+
+## Documentation
+
+- **[docs/GUIDE.md](./docs/GUIDE.md)** — the complete walkthrough: what it is, how a run works, the
+  journal's key schema, the storage ports, and the design trade-offs behind them. Start here if you
+  want to understand the engine rather than just call it.
+- **[docs/GUIDE.tr.md](./docs/GUIDE.tr.md)** — the same guide, in Turkish.
+- **[examples/incident-proofs](./examples/incident-proofs)** — reproductions of real double-side-effect
+  incidents, and what this framework does differently in each.
+- **[examples/stripe-idempotency](./examples/stripe-idempotency)** — provider-side exactly-once against
+  a mock Stripe: the same key carried from the journal to the provider.
+- **[examples/showcase](./examples/showcase)** — one self-verifying file that exercises the packages
+  end to end with no API key: `pnpm --filter @gnldev/showcase demo`.
+
+## Contributing
+
+Pull requests are welcome. Read **[CONTRIBUTING.md](./CONTRIBUTING.md)** first — it covers the build,
+the checks a change has to pass, and the one-line **[CLA](./CLA.md)** acceptance that lets the
+project's license evolve later without tracking down every past contributor.
+
+## Security
+
+Please do not open a public issue for a vulnerability. **[SECURITY.md](./SECURITY.md)** explains how
+to report one privately through GitHub, and what is in scope — durability, cross-organization
+isolation, and the approval gates are the guarantees worth attacking first.
+
+## License
+
+[Apache-2.0](./LICENSE) — © 2026 Karaca Yılmaz.

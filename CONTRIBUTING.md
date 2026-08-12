@@ -14,11 +14,9 @@ contributions, so it's a one-time step per GitHub account. A PR can't be merged 
 
 ## Provenance commitment
 
-Before every major version release, an independent-development audit is re-run — this codebase is
-compared against prior art in the space by verbatim-overlap and distinctive-string-literal
-analysis, and the result is kept on file. The report itself is not published; it names
-third-party codebases and there is no reason to broadcast that. It can be produced if the
-question is ever put seriously.
+Before every major version release, we re-run an independent-development audit — comparing this
+codebase against prior art in the space using verbatim-overlap and distinctive-string-literal
+methods — to keep the project's provenance record current.
 
 ## Working in this repo
 

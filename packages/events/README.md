@@ -14,9 +14,9 @@ npm i @gnldev/events   # peer: @gnldev/durable
 
 ```ts
 import { emit, createConsumer } from '@gnldev/events';
-import { SqliteJournal } from '@gnldev/durable/sqlite';
+import { SqliteStorage } from '@gnldev/durable/sqlite';
 
-const journal = new SqliteJournal('runs.db');
+const journal = new SqliteStorage('runs.db').runs;
 
 // Publish (idempotent: same id → a single event).
 await emit(journal, 'refunds', { orderId: 'o1', amount: 50 }, { id: 'refund:o1' });

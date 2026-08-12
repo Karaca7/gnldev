@@ -10,7 +10,7 @@ npm i @gnldev/studio   # peer/dep: @gnldev/durable, hono, @hono/node-server
 ```
 
 ```ts
-import { createStudioApp, makeStudioRunner } from '@gnldev/studio';
+import { createStudioApp, createStudioRunner } from '@gnldev/studio';
 import { createGnl } from '@gnldev/durable';
 
 const config = { journal, agents: { support } };
@@ -18,7 +18,7 @@ const gnl = createGnl(config);
 
 const studio = createStudioApp({
   reader: journal,
-  gnl: makeStudioRunner(gnl, config),   // ← turns on the Playground (run/stream agents)
+  gnl: createStudioRunner(gnl, config),   // ← turns on the Playground (run/stream agents)
   // resume: ... (for timeline approval/fork, optional)
 });
 ```
@@ -36,7 +36,7 @@ express().use('/studio', toNodeHandler(studio));       // mount BEFORE express.j
 await fastify.register(middie);                        // @fastify/middie
 fastify.use('/studio', toNodeHandler(studio));
 koa.use(c2k(mw));                                      // koa-connect, before koa-bodyparser
-createServer(toNodeHandler(studio));
+createRestApi(toNodeHandler(studio));
 
 // On its own port
 serve({ fetch: studio.fetch, port: 4321 });
@@ -80,7 +80,7 @@ intentional choice for open access.
 - `createStudioApp(reader | options)` / `createStudioApi(options)` / `createStudioAdmin({ apiBase })`
 - `options`: `reader` · `resume?` · `chat?` · **`gnl?`** (Playground runner) · `auth?: { read, write }` ·
   `allowOpenAccess?` · `apiBase?`
-- `makeStudioRunner(gnl, config)` → Playground runner from a createGnl instance
+- `createStudioRunner(gnl, config)` → Playground runner from a createGnl instance
 - `bearerAuth(token)` · `basicAuth({ user, pass })`
 - `capabilities` → `{ resume, chat, fork, playground, stream }`
 

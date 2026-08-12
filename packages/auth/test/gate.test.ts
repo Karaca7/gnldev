@@ -12,7 +12,7 @@ afterEach(() => {
 describe('makeGate (fail-open audit)', () => {
   it('production + no provider → clear error at setup', () => {
     vi.stubEnv('NODE_ENV', 'production');
-    // Message stays Turkish for now: packages/studio/test asserts on this exact text (owned by another workstream).
+    // Asserted verbatim by packages/studio/test — keep the two in sync.
     expect(() => makeGate()).toThrowError(/auth is required in production.*allowOpenAccess: true/);
   });
 

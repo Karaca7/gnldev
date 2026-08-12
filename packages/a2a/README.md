@@ -7,10 +7,10 @@ npm i @gnldev/a2a   # peer: ai, zod
 ```
 
 ```ts
-import { a2aTool } from '@gnldev/a2a';
+import { createA2ATool } from '@gnldev/a2a';
 
 const tools = {
-  research: a2aTool({ endpoint: 'https://agents.internal', agentName: 'researcher' }),
+  research: createA2ATool({ endpoint: 'https://agents.internal', agentName: 'researcher' }),
 };
 
 // Router/parent agent calls the 'research' tool → POSTs to remote /agents/researcher/run.
@@ -18,7 +18,7 @@ await runDurable({ runId: 'parent-1', journal, model, tools, prompt: 'Research X
 ```
 
 ## API
-- `a2aTool({ endpoint, agentName, description?, headers?, fetchImpl? })` → AI SDK tool
+- `createA2ATool({ endpoint, agentName, description?, headers?, fetchImpl? })` → AI SDK tool
   - `fetchImpl`: for test/custom transport (e.g. Hono `app.request`).
 
 ## How it works

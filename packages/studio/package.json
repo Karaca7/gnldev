@@ -2,6 +2,9 @@
   "name": "@gnldev/studio",
   "version": "0.1.0",
   "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.5.0"
+  },
   "description": "Web inspector for @gnldev/durable runs: timeline, time-travel, approval queue.",
   "type": "module",
   "main": "./dist/index.js",

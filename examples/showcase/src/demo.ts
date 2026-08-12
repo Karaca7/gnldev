@@ -1,4 +1,4 @@
-// gnl-demo — a self-verifying showcase that runs ALL 14 packages like a real consumer
+// showcase — a self-verifying demo that runs the packages like a real consumer
 // (file: import). NO API key required. Writes to `gnl-demo.db` → inspect visually with `pnpm studio`.
 import { rmSync } from 'node:fs';
 import { z } from 'zod';
@@ -31,7 +31,7 @@ rmSync('gnl-demo.db', { force: true });
 const storage = new SqliteStorage('gnl-demo.db'); // all store ports (run+memory+cache+work)
 const journal = storage.runs; // low-level RunJournal (durable run/inspection)
 
-console.log('\n=== gnl-demo: 14 packages, no API key, durable showcase ===\n');
+console.log('\n=== showcase: no API key, durable end-to-end ===\n');
 
 await section('@gnldev/durable — exactly-once (charge→crash→resume)', async () => {
   const charges = { n: 0 };
@@ -144,7 +144,9 @@ await section('@gnldev/events — event bus (exactly-once marking + at-least-onc
 await section('@gnldev/a2a + @gnldev/server — remote agent (cross-network exactly-once)', async () => {
   const remote = { charges: 0 };
   const app = createRestApi({ journal: new (await import('@gnldev/durable')).InMemoryJournal(), agents: { billing: { model: agentModel('charge', 'rc', { amt: 20 }, 'charged'), tools: { charge: { execute: async () => (remote.charges++, { ok: true }) } }, maxSteps: 6 } } });
-  const fetchImpl = ((u: any, i: any) => app.request(String(u), i)) as any;
+  // createRestApi returns a FetchHandler (a callable taking a Request), not a Hono app —
+  // so build a real Request. The URL must be absolute; the host is irrelevant to the handler.
+  const fetchImpl = ((u: any, i: any) => app(new Request(new URL(String(u), 'http://demo.local'), i))) as any;
   const t = createA2ATool({ endpoint: 'http://x', agentName: 'billing', fetchImpl });
   await t.execute!({ task: 'charge' }, { toolCallId: 'a1' } as any);
   await t.execute!({ task: 'charge' }, { toolCallId: 'a1' } as any); // same toolCallId → idempotent remotely
@@ -187,11 +189,12 @@ await section('@gnldev/durable — time-travel + fork', async () => {
   return `step-1 state + fork (${fork.copiedModel} model, ${fork.copiedTool} tool copied)`;
 });
 
-await section('@gnldev/studio — state endpoint + fork (app.request)', async () => {
+await section('@gnldev/studio — state endpoint + fork', async () => {
   const app = createStudioApp({ reader: toJournal(journal), resume: async () => ({ text: 'ok' }) });
-  const caps = await (await app.request('/api/capabilities')).json();
+  const call = (path: string) => app(new Request(new URL(path, 'http://demo.local')));
+  const caps = await (await call('/api/capabilities')).json();
   assert(caps.fork === true, 'fork capability disabled');
-  const st = await (await app.request('/api/runs/order-1/state?step=1')).json();
+  const st = await (await call('/api/runs/order-1/state?step=1')).json();
   assert(st.step === 1, 'state endpoint incorrect');
   return `studio: fork enabled + state reconstruction works`;
 });
@@ -238,8 +241,10 @@ await section('@gnldev/workflow — retry(attempts) (fails twice → succeeds on
   const wf = workflow<{}>().then(retry(flaky, { attempts: 3 }));
   const out: any = await wf.run({}, { runId: 'retry-1', journal });
   assert(out.ok === true && tries.n === 3, `did not succeed on the 3rd attempt (tries=${tries.n})`);
-  // Journal proof of the counter: 2 failed attempts were counted (a successful attempt doesn't increment it).
-  const used = await journal.get<number>('retry-1:wf:charge:attempts');
+  // Journal proof of the counter: 2 failed attempts were counted (a successful attempt doesn't
+  // increment it). retry() keeps this in the journal's COUNTERS, not under a plain key — see
+  // bumpAttempts() in @gnldev/workflow, which leaves the plain field untouched by design.
+  const used = (await journal.getCounters('retry-1:wf:charge:attempts'))?.n;
   assert(used === 2, `attempts counter is ${used}, should be 2`);
   return `2 failed attempts (journal attempts=${used}) → 3rd attempt succeeded`;
 });

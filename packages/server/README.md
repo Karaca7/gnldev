@@ -9,10 +9,10 @@ npm i @gnldev/server   # peer: @gnldev/durable  ·  dep: hono
 ```ts
 import { createRestApi } from '@gnldev/server';
 import { serve } from '@hono/node-server';
-import { SqliteJournal } from '@gnldev/durable/sqlite';
+import { SqliteStorage } from '@gnldev/durable/sqlite';
 
 const api = createRestApi({
-  journal: new SqliteJournal('runs.db'),
+  journal: new SqliteStorage('runs.db').runs,
   agents: { support: { model: 'anthropic/claude-opus-4-8', tools, guard, maxSteps: 8 } },
 });
 serve({ fetch: api.fetch, port: 3000 });        // on its own port
@@ -30,7 +30,7 @@ import { toNodeHandler } from '@gnldev/server/node';
 express().use('/api', toNodeHandler(api));                            // Express
 await fastify.register(middie); fastify.use('/api', toNodeHandler(api));   // Fastify + @fastify/middie
 koa.use(c2k((req, res, _next) => toNodeHandler(api)(req, res)));      // Koa + koa-connect
-createServer(toNodeHandler(api));                                     // node:http
+createRestApi(toNodeHandler(api));                                     // node:http
 nestApp.use('/api', toNodeHandler(api));                              // Nest (Express or Fastify)
 ```
 

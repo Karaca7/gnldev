@@ -1,12 +1,12 @@
 # @gnldev/memory
 
-Rich semantic-recall memory for `@gnldev/durable` — **journaled, replayable, exactly-once.** One class: `GnlMemory`.
+Rich semantic-recall memory for `@gnldev/durable` — **journaled, replayable, exactly-once.** One class: `AgentMemory`.
 
 ```ts
-import { GnlMemory } from '@gnldev/memory';
+import { AgentMemory } from '@gnldev/memory';
 import { z } from 'zod';
 
-const mem = new GnlMemory({
+const mem = new AgentMemory({
   journal,
   embed,                                  // text → number[] (AI SDK embed or your own fn)
   recentN: 6,

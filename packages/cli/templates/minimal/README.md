@@ -53,5 +53,5 @@ React: `import { useChat } from '@gnldev/client/react'`.
 
 ## Note
 `@gnldev/*` packages are not yet published to npm. For now, this project only works inside the
-`gnl` monorepo (via the pnpm workspace link); to install it outside the monorepo you'll need
+monorepo (via the pnpm workspace link); to install it outside the monorepo you'll need
 to wait for the relevant packages to be published to npm, or link them with `pnpm link`.

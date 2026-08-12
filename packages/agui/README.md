@@ -9,10 +9,10 @@ npm i @gnldev/agui   # dep: @gnldev/server, hono  ·  peer: @gnldev/durable
 ```ts
 import { createAguiRoute } from '@gnldev/agui';
 import { serve } from '@hono/node-server';
-import { SqliteJournal } from '@gnldev/durable/sqlite';
+import { SqliteStorage } from '@gnldev/durable/sqlite';
 
 const app = createAguiRoute({
-  journal: new SqliteJournal('runs.db'),
+  journal: new SqliteStorage('runs.db').runs,
   agents: { support: { model: 'anthropic/claude-opus-4-8', tools, guard, maxSteps: 8 } },
 });
 serve({ fetch: app.fetch, port: 3001 }); // POST /agents/:name/run → AG-UI SSE

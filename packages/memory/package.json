@@ -2,6 +2,9 @@
   "name": "@gnldev/memory",
   "version": "0.1.0",
   "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.5.0"
+  },
   "description": "Rich semantic-recall memory for @gnldev/durable: schema working memory, thread/resource mgmt, observational memory — all journaled (replayable/exactly-once).",
   "type": "module",
   "main": "./dist/index.js",

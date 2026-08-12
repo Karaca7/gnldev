@@ -43,7 +43,7 @@ export function notBuiltHtml(): string {
 <body style="font-family:system-ui;max-width:560px;margin:80px auto;line-height:1.6;color:#333">
 <h1>🛠️ gnl studio UI not built</h1>
 <p><code>@gnldev/studio-ui</code> dist not found. Build it before running:</p>
-<pre style="background:#111;color:#0f0;padding:12px;border-radius:8px">cd gnl &amp;&amp; pnpm -r build</pre>
+<pre style="background:#111;color:#0f0;padding:12px;border-radius:8px">pnpm -r build</pre>
 <p>The API still works: <code>/api/*</code> · <a href="swagger">Swagger</a></p>
 </body></html>`;
 }

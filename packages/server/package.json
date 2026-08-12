@@ -2,6 +2,9 @@
   "name": "@gnldev/server",
   "version": "0.1.0",
   "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.5.0"
+  },
   "description": "Auto-REST + OpenAPI for @gnldev/durable agents: createGnl registry → HTTP router (run/resume/runs + openapi.json).",
   "type": "module",
   "main": "./dist/index.js",

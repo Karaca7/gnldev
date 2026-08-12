@@ -2,6 +2,9 @@
   "name": "@gnldev/docs-mcp",
   "version": "0.1.0",
   "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.5.0"
+  },
   "description": "MCP stdio server exposing GNL docs to AI coding assistants (any MCP-compatible CLI/editor): overview/feature/search tools. Hand-written JSON-RPC 2.0 (no SDK), embedded static content + optional live gnl.dev fetch.",
   "type": "module",
   "bin": {

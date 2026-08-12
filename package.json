@@ -1,8 +1,8 @@
 {
-  "name": "gnl",
+  "name": "gnl-framework",
   "private": true,
   "type": "module",
-  "description": "GNL v2 — agent-first TypeScript AI agent framework (monorepo)",
+  "description": "gnl — a durable execution substrate for AI agents (monorepo)",
   "scripts": {
     "build": "pnpm -r build",
     "test": "vitest run",

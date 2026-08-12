@@ -1,11 +1,11 @@
-# gnl-demo
+# showcase
 
-A self-verifying showcase that runs ALL 14 packages **like a real consumer** (`file:` import). **No API key required** (deterministic mock model).
+A self-verifying showcase that runs the packages **like a real consumer** (`file:` import). **No API key required** (deterministic mock model).
 
 ## Run
 ```bash
 # build the packages first (file: links point to dist)
-cd ../gnl && pnpm -r build && cd ../gnl-demo
+pnpm -r build   # from the repository root
 
 pnpm install
 pnpm demo      # prints 16 features in order with ✓/✗; produces gnl-demo.db; ends with "N/N ✓"
