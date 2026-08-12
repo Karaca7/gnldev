@@ -1,0 +1,59 @@
+name: CLA
+
+# Enforces the CLA checkbox in the pull request template. No third-party service, no OAuth app, no
+# token with write access — this reads the PR body that GitHub already hands the workflow and fails
+# the check if the box is unticked. The signed record is the PR itself: GitHub keeps the body, the
+# author, and the timestamp for the life of the repository.
+
+# `pull_request`, deliberately not `pull_request_target`: this only reads the event payload and
+# never checks out the contributor's code, so the fork-safe event is enough and there is no reason
+# to run with base-repo privileges.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  cla:
+    name: CLA accepted
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the CLA box in the PR description
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_AUTHOR_TYPE: ${{ github.event.pull_request.user.type }}
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: |
+          # The maintainer already holds the copyright; bots submit no original authorship.
+          if [ "$PR_AUTHOR" = "$REPO_OWNER" ] || [ "$PR_AUTHOR_TYPE" = "Bot" ]; then
+            echo "::notice::$PR_AUTHOR does not need to accept the CLA — skipping."
+            exit 0
+          fi
+
+          # Accept - [x] or - [X], any spacing, as long as the line mentions the CLA.
+          if printf '%s' "$PR_BODY" | grep -qiE '^[[:space:]]*[-*][[:space:]]*\[[xX]\].*\bCLA\b'; then
+            echo "CLA accepted by $PR_AUTHOR."
+            exit 0
+          fi
+
+          echo "::error::The CLA box in the pull request description is not ticked."
+          cat <<'MSG'
+
+          This project requires a Contributor License Agreement before a change can be merged.
+
+          To accept it: edit this pull request's description and tick
+
+              - [x] I have read and agree to the [CLA](../CLA.md).
+
+          Read CLA.md first — it grants the maintainer the right to relicense the contribution,
+          including under terms that are not open source. It is a one-time step per account, but
+          the box is checked on every pull request so the acceptance is recorded with the change.
+
+          If the box is missing entirely, your description was not created from the pull request
+          template; copy the line above into it.
+
+          MSG
+          exit 1
