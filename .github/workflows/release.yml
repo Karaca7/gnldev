@@ -17,7 +17,7 @@ on:
 
 permissions:
   contents: read
-  id-token: write # required for npm provenance (OIDC) — see docs/RELEASE.md
+  id-token: write # required for npm provenance: --provenance only attests from CI via OIDC
 
 # Avoid two release runs racing on the same set of npm publishes (e.g. a tag push and a
 # manual dispatch overlapping).
@@ -47,44 +47,54 @@ jobs:
       - run: pnpm -r typecheck
       - run: pnpm test
 
-      # All 25 packages ship as version 0.0.0 in the repo (single-version policy, see
-      # docs/RELEASE.md §3 Versioning). Publishing 0.0.0 is almost certainly a mistake —
-      # bump every non-private package to the same real version in one commit first, then
-      # tag. This step fails loudly instead of letting npm silently publish 0.0.0.
-      - name: Guard against unbumped (0.0.0) versions
+      # Every publishable package carries the same version (single-version policy), so there are
+      # three ways a release can be wrong and this step checks all three. The earlier version only
+      # rejected 0.0.0, which stopped catching anything the moment the packages were bumped to
+      # 0.1.0 — a guard that passes unconditionally is worse than none, because it reads as
+      # verification.
+      - name: Version guard
         run: |
           set -euo pipefail
+          declare -A seen=()
           bad=0
           for pkg in packages/*/package.json; do
-            private=$(jq -r '.private // false' "$pkg")
-            if [ "$private" = "true" ]; then
-              continue
-            fi
-            name=$(jq -r '.name' "$pkg")
-            version=$(jq -r '.version' "$pkg")
+            [ "$(jq -r '.private // false' "$pkg")" = "true" ] && continue
+            name=$(jq -r '.name' "$pkg"); version=$(jq -r '.version' "$pkg")
             if [ "$version" = "0.0.0" ]; then
-              echo "::error file=$pkg::$name is still at version 0.0.0"
+              echo "::error file=$pkg::$name is still at 0.0.0"; bad=1
+            fi
+            seen["$version"]+="$name "
+          done
+
+          # (1) one version across the workspace — a half-finished bump publishes a set of packages
+          # whose workspace:^ ranges resolve to versions that were never released together.
+          if [ "${#seen[@]}" -gt 1 ]; then
+            echo "::error::publishable packages disagree on the version:"
+            for v in "${!seen[@]}"; do echo "    $v — ${seen[$v]}"; done
+            bad=1
+          fi
+
+          # (2) on a tag push, the tag is the claim being made — v0.2.0 against packages still at
+          # 0.1.0 would publish 0.1.0 again and fail on npm as "cannot publish over existing".
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            want="${GITHUB_REF_NAME#v}"
+            have="$(printf '%s\n' "${!seen[@]}" | head -1)"
+            if [ "${#seen[@]}" -eq 1 ] && [ "$want" != "$have" ]; then
+              echo "::error::tag $GITHUB_REF_NAME asks for $want but the workspace is at $have"
               bad=1
             fi
-          done
-          if [ "$bad" -eq 1 ]; then
-            echo "Refusing to publish: one or more packages are unbumped (0.0.0)."
-            echo "Bump all package versions to the same real version first (docs/RELEASE.md §3), then re-tag."
-            exit 1
           fi
-          echo "Version guard passed: no publishable package is at 0.0.0."
+
+          [ "$bad" -eq 0 ] || { echo "Refusing to publish."; exit 1; }
+          echo "Version guard passed: ${#seen[@]} version across the workspace ($(printf '%s' "${!seen[@]}"))."
 
       # pnpm -r publish walks the workspace in topological order on its own (peers such as
       # @gnldev/schema-compat and @gnldev/durable publish before their dependents), so no manual
       # --filter ordering is needed here.
       #
-      # @gnldev/auth-ee is licensed Elastic-2.0 (everything else is Apache-2.0) and is marked
-      # "private": true in its package.json. pnpm skips private packages during `-r publish`
-      # automatically, so it is excluded from this release by default without any extra
-      # --filter flag. That is the current, intentional state of the codebase (open-core:
-      # free @gnldev/auth vs. paid @gnldev/auth-ee) — if that ever changes to "publish auth-ee to
-      # npm too", flip its `private` field and reconsider the --access/licensing implications
-      # before removing this note.
+      # A package marked "private": true is skipped by `-r publish` automatically, so no --filter
+      # is needed to hold one back. Flipping that field is what makes a package publishable; the
+      # version guard above then applies to it like any other.
       #
       # --no-git-checks is required because the tag ref is checked out detached (not on a
       # branch), which pnpm's default git-status checks would otherwise reject.
