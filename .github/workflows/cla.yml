@@ -5,12 +5,18 @@ name: CLA
 # the check if the box is unticked. The signed record is the PR itself: GitHub keeps the body, the
 # author, and the timestamp for the life of the repository.
 
-# `pull_request`, deliberately not `pull_request_target`: this only reads the event payload and
-# never checks out the contributor's code, so the fork-safe event is enough and there is no reason
-# to run with base-repo privileges.
+# `pull_request_target` on purpose, and this is the security-relevant choice. A `pull_request`
+# workflow is read from the PULL REQUEST's merge commit, so a fork can rewrite this very file inside
+# its own pull request — replace the check with `exit 0` and the CLA gate reports green. With
+# `pull_request_target` the definition comes from the base branch, which a contributor cannot touch.
+#
+# The usual danger of `pull_request_target` is the "pwn request": it runs with the base repository's
+# token, so checking out and executing contributor code hands that token away. This job never checks
+# out anything and never runs contributor code — it reads the event payload GitHub already gave it.
+# That is exactly the case `pull_request_target` is safe for, and the case where it is necessary.
 on:
-  pull_request:
-    types: [opened, edited, reopened, synchronize]
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize, ready_for_review]
 
 permissions:
   contents: read
@@ -25,19 +31,30 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           PR_AUTHOR_TYPE: ${{ github.event.pull_request.user.type }}
+          # The version in force. Raise this in the same commit that adds a new CLA version, so a
+          # contributor who accepted the old text is asked again rather than passing silently.
+          CLA_VERSION: '1.0'
         run: |
           # Bots submit no original authorship, so there is nothing for them to license. Everyone
           # else ticks the box, the maintainer included: one rule with no exception is easier to
           # trust than one with a carve-out, it stays correct if the project is ever transferred to
           # a company (the "owner" changes, the rule does not), and it means the check can be
           # verified from any account instead of only from a second one.
-          if [ "$PR_AUTHOR_TYPE" = "Bot" ]; then
-            echo "::notice::$PR_AUTHOR is a bot — nothing to license, skipping."
-            exit 0
-          fi
+          # Only dependency bots are exempt, by name. "Is a bot" is no longer a safe proxy for
+          # "submits no original authorship" — agentic coding bots open pull requests carrying
+          # substantial code, and a blanket type check would let all of it in unaccepted.
+          case "$PR_AUTHOR" in
+            dependabot\[bot\]|renovate\[bot\]|github-actions\[bot\])
+              echo "::notice::$PR_AUTHOR is a dependency bot — nothing to license, skipping."
+              exit 0
+              ;;
+          esac
 
-          # Accept - [x] or - [X], any spacing, as long as the line mentions the CLA.
-          if printf '%s' "$PR_BODY" | grep -qiE '^[[:space:]]*[-*][[:space:]]*\[[xX]\].*\bCLA\b'; then
+          # The canonical sentence AND the version in force, not merely a ticked line mentioning
+          # "CLA". A loose match accepted things it should not: "- [x] not sure the CLA applies"
+          # passed, and after a v1.1 the stale v1.0 line would keep passing while the contributor
+          # had never seen the new terms.
+          if printf '%s' "$PR_BODY" | grep -qE "^[[:space:]]*[-*][[:space:]]*\[[xX]\][[:space:]]*I have read and agree to the \[CLA, v${CLA_VERSION}\]"; then
             echo "CLA accepted by $PR_AUTHOR."
             exit 0
           fi

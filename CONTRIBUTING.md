@@ -10,13 +10,15 @@ track down every past contributor for consent).
 
 Accepting it is a single checkbox: the pull request template includes a line confirming you have
 read and agree to the CLA. Tick it in your first PR and you're done — it carries over to your later
-contributions, so it's a one-time step per GitHub account. A PR can't be merged with it unticked.
+contributions, so it's a one-time step per GitHub account. The CLA check has to pass before a pull
+request is reviewed.
 
 ## Provenance commitment
 
-Before every major version release, we re-run an independent-development audit — comparing this
-codebase against prior art in the space using verbatim-overlap and distinctive-string-literal
-methods — to keep the project's provenance record current.
+Before every major version release, an independent-development audit is re-run — this codebase is
+compared against prior art in the space by verbatim-overlap and distinctive-string-literal analysis,
+and the result is kept on file. The report itself is not published; it names third-party codebases
+and there is no reason to broadcast that. It can be produced if the question is ever put seriously.
 
 ## Working in this repo
 

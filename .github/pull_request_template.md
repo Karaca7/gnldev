@@ -17,7 +17,7 @@
 <!--
 Ticking the box above is how the CLA is accepted — it grants the Maintainer the rights described in
 CLA.md, including the right to relicense the contribution. It is a one-time step per GitHub account;
-later PRs from the same account are already covered. A PR cannot be merged with the box unticked.
+later PRs from the same account are already covered. The CLA check fails while the box is unticked.
 
 The link is absolute on purpose: a relative path like ../CLA.md resolves against the pull request
 URL, not the file tree, and lands on a 404.

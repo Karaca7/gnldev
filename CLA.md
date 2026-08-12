@@ -23,6 +23,16 @@ By submitting a Contribution, you agree to the following terms.
 - **"Contribution"** means any original work of authorship, including modifications to existing
   work, intentionally submitted by you to the Maintainer for inclusion in the Project.
 
+You consent in advance, and irrevocably, to the Maintainer transferring the rights and licences
+granted here to a legal entity the Maintainer controls or which is the Maintainer's successor —
+typically a company formed to hold the Project. Turkish law (Law No. 5846, Article 49) requires the
+author's written consent before a licence obtained from them is passed on, and this paragraph is
+that consent: without it, incorporating the Project later would mean asking every past contributor
+again, which is the exact problem this Agreement exists to avoid.
+
+If that consent is held ineffective for any reason, the Maintainer's authority to sublicense under
+Section 2 stands on its own and is unaffected.
+
 ## 2. Grant of Copyright License
 
 You grant the Maintainer **and to recipients of software distributed by the Maintainer** a
@@ -35,6 +45,21 @@ whether open source, source-available, or proprietary.
 This right to relicense is the specific problem this agreement solves: without it, changing the
 Project's license later would require tracking down and obtaining consent from every past
 contributor, which is impractical at any scale.
+
+For the purposes of Turkish law, which governs this Agreement under Section 7, the licence granted
+above covers each of the following economic rights under Law No. 5846 on Intellectual and Artistic
+Works **separately and individually**, as Article 52 of that Law requires:
+
+- **Article 21** — the right of adaptation (*işleme hakkı*)
+- **Article 22** — the right of reproduction (*çoğaltma hakkı*)
+- **Article 23** — the right of distribution (*yayma hakkı*)
+- **Article 24** — the right of performance (*temsil hakkı*)
+- **Article 25** — the right of communication to the public and of making available by means of
+  devices enabling the transmission of signs, sounds and/or images (*işaret, ses ve/veya görüntü
+  nakline yarayan araçlarla umuma iletim ve erişime sunma hakkı*) — this is the right under which
+  the Project is published to package registries and served over the internet
+
+The licence is granted for an unlimited term and without territorial restriction.
 
 ## 3. Grant of Patent License
 
@@ -53,11 +78,19 @@ You represent that:
 
 - You are legally entitled to grant the above licenses. If your employer has rights to intellectual
   property you create, you represent that you have received permission to make the Contribution on
-  behalf of that employer, or that your employer has waived such rights.
+  behalf of that employer, or that your employer has waived such rights. Note that under Turkish
+  law (Law No. 5846, Article 18/2) an employer exercises the economic rights in work an employee
+  creates in the course of their duties — so if you are contributing work made on an employer's
+  time, it is your employer, not you, who is able to grant the licence in Section 2.
 - Each Contribution is your original creation, or you have identified any third-party material and
   its license terms in the Contribution itself.
 - You are not aware of any claim that your Contribution infringes a third party's intellectual
   property rights.
+
+If any of these representations turns out to be untrue and the Maintainer suffers loss as a result,
+you will indemnify the Maintainer for that loss. This matters because a licence granted by someone
+who was not entitled to grant it conveys nothing: the Maintainer would have to remove the
+Contribution from every published version, and the representation alone is not a remedy.
 
 ## 5. Moral Rights
 
@@ -66,6 +99,14 @@ Intellectual and Artistic Works, or equivalent laws elsewhere) in your Contribut
 assigned or waived under applicable law, you agree not to assert such rights against the Maintainer
 or downstream users of the Project in a manner that would restrict the licenses granted in
 Sections 2 and 3.
+
+Where Turkish law permits it (Law No. 5846, Article 19), you additionally grant the Maintainer the
+authority to exercise the rights under Articles 14 (disclosure to the public), 15 (attribution) and
+16/1 (modification) on your behalf.
+
+Attribution is not something this Agreement asks you to give up. Your name stays on your work: the
+commit history records it permanently, and `CONTRIBUTORS.md` names you. The Maintainer treats that
+record as how the attribution right is honoured, not waived.
 
 ## 6. No Obligation, No Warranty
 
