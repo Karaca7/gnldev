@@ -67,7 +67,9 @@ export function selection(state: SelectState): string[] {
   return state.items.filter((it) => state.checked.has(it.id)).map((it) => it.id);
 }
 
-// ---- Impure shell (TTY render + raw stdin) — cannot be unit-tested; exercised by hand. ----
+// ---- Impure shell (TTY render + raw stdin) — covered by prompt-shell.test.ts, which swaps
+//      process.stdin/stdout for fakes and asserts the terminal contract (raw mode restored to its
+//      PREVIOUS value, cursor re-shown, stdin paused, no leaked 'data' listener). ----
 
 const ESC = '\x1b';
 
