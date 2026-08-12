@@ -1,5 +1,12 @@
 # Contributor License Agreement (CLA)
 
+> **Version 1.0** — effective 12 August 2026.
+>
+> This document is versioned on purpose. What you accept is the text of the version named above, not
+> whatever this file happens to say later: if the terms are ever revised, the version number is
+> raised and earlier acceptances stay bound to the version that was in force when they were given.
+> The exact wording of any version can be read out of this repository's history.
+
 This is the Contributor License Agreement for **gnl-framework** (source repository, npm scope
 `@gnldev`). It applies to any Contribution (code, documentation, or other material) you submit to
 this project, whether by pull request or any other means.
@@ -18,9 +25,10 @@ By submitting a Contribution, you agree to the following terms.
 
 ## 2. Grant of Copyright License
 
-You grant the Maintainer a perpetual, worldwide, non-exclusive, royalty-free, irrevocable copyright
-license to reproduce, prepare derivative works of, publicly display, publicly perform, sublicense,
-and distribute your Contribution and derivative works thereof, **including the right to relicense**
+You grant the Maintainer **and to recipients of software distributed by the Maintainer** a
+perpetual, worldwide, non-exclusive, royalty-free, irrevocable copyright license to reproduce,
+prepare derivative works of, publicly display, publicly perform, sublicense, and distribute your
+Contribution and derivative works thereof, **including the right to relicense**
 the Contribution — alone or as part of the Project — under any license terms the Maintainer chooses,
 whether open source, source-available, or proprietary.
 
@@ -30,9 +38,10 @@ contributor, which is impractical at any scale.
 
 ## 3. Grant of Patent License
 
-You grant the Maintainer a perpetual, worldwide, non-exclusive, royalty-free, irrevocable
-(except as stated in this section) patent license to make, have made, use, offer to sell, sell,
-import, and otherwise transfer your Contribution, where such license applies only to those patent
+You grant the Maintainer **and to recipients of software distributed by the Maintainer** a
+perpetual, worldwide, non-exclusive, royalty-free, irrevocable (except as stated in this section)
+patent license to make, have made, use, offer to sell, sell, import, and otherwise transfer your
+Contribution, where such license applies only to those patent
 claims licensable by you that are necessarily infringed by your Contribution alone or in
 combination with the Project. If any entity institutes patent litigation alleging that the
 Contribution or the Project infringes a patent, any patent licenses granted to that entity under
@@ -76,7 +85,7 @@ You do not need to sign anything separately or in advance. The pull request temp
 single line:
 
 ```
-- [ ] I have read and agree to the CLA.
+- [ ] I have read and agree to the CLA, v1.0.
 ```
 
 Ticking that box **is** the acceptance. A workflow (`.github/workflows/cla.yml`) reads the pull

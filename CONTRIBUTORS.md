@@ -21,9 +21,9 @@ The maintainer adds one row when a contributor's **first** pull request is merge
 contributions from the same account are already covered — the CLA is accepted once per account,
 even though the checkbox is ticked on every PR so that each change carries its own record.
 
-| Contributor | Accepted in | Date |
-|---|---|---|
-| [@Karaca7](https://github.com/Karaca7) | original author — holds the copyright, does not sign | — |
+| Contributor | Accepted in | CLA version | Date |
+|---|---|---|---|
+| [@Karaca7](https://github.com/Karaca7) | original author — holds the copyright, does not sign | — | — |
 
 <!--
 Row format for the next entry:

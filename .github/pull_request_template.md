@@ -12,7 +12,7 @@
 
 ## Contributor License Agreement
 
-- [ ] I have read and agree to the [CLA](https://github.com/Karaca7/gnl-framework/blob/main/CLA.md).
+- [ ] I have read and agree to the [CLA, v1.0](https://github.com/Karaca7/gnl-framework/blob/main/CLA.md).
 
 <!--
 Ticking the box above is how the CLA is accepted — it grants the Maintainer the rights described in
