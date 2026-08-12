@@ -8,7 +8,7 @@ A self-verifying showcase that runs the packages **like a real consumer** (`file
 pnpm -r build   # from the repository root
 
 pnpm install
-pnpm demo      # prints 16 features in order with ✓/✗; produces gnl-demo.db; ends with "N/N ✓"
+pnpm demo      # prints each feature in order with ✓/✗; produces gnl-demo.db; ends with "N/N ✓"
 pnpm studio    # http://localhost:4321 → time-travel + fork + approval queue (visual)
 ```
 

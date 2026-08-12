@@ -1,4 +1,4 @@
-// GOREV (argument-based idempotency, opt-in `idempotency: 'args'`): proof test + supporting
+// Proof test + supporting
 // scenarios for the dominant double-side-effect case in the field (a documented AI SDK pattern — the model
 // calls a tool multiple times in a single turn with the SAME arguments, EACH TIME with a
 // DIFFERENT toolCallId). Uses the SAME harness/mock-model pattern as the existing tests
@@ -62,7 +62,7 @@ describe('duplicate-toolCallId proof test — model calls the same tool 5x in a 
 
     await runDurable({ runId: 'r7261-call', journal, model: multiCallModel(), tools, stopWhen: stepCountIs(6), prompt: 'x' });
 
-    expect(calls).toBe(5); // behavior BEFORE/AFTER the GOREV is IDENTICAL — no regression
+    expect(calls).toBe(5); // behavior BEFORE/AFTER the is IDENTICAL — no regression
   });
 });
 

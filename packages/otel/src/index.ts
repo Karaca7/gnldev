@@ -116,7 +116,7 @@ export async function exportRun(
 
 export { traceIdFor, spanIdFor, mapEntry } from './spans.js';
 
-// GOREV W5 — zero-dependency OTLP/HTTP JSON exporter (no OTel SDK, fetch only). Added alongside
+// Zero-dependency OTLP/HTTP JSON exporter (no OTel SDK, fetch only). Added alongside
 // exportRun; does not change the existing API.
 export { toOtlpJson, exportRunToOtlp, otlpTraceId, otlpSpanId } from './otlp.js';
 export type {

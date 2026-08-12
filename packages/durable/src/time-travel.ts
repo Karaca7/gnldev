@@ -26,7 +26,7 @@ function toolIdFromKey(key: string): string {
 }
 
 /**
- * GOREV (args-based idempotency fidelity): a tool-call content part's `input` is the RAW provider
+ * A tool-call content part's `input` is the RAW provider
  * value — per the AI SDK `LanguageModelV2` spec this is a JSON-STRING (verified against
  * durable-model.ts: the journaled model record is `doGenerate()`'s result, untouched). durable-tool.ts,
  * however, computes `argsHash` over the PARSED object it receives in `execute(input, …)` (the AI SDK
@@ -142,7 +142,7 @@ export function reconstructState(
     }
   }
 
-  // PASS 2 (GOREV — time-travel fidelity, args-mode custom idempotencyKey): decide, PER TOOL ENTRY,
+  // PASS 2 (— time-travel fidelity, args-mode custom idempotencyKey): decide, PER TOOL ENTRY,
   // which toolCallId(s) it resolves — independent of the entry's OWN position in `window`.
   //
   // WHY POSITION-INDEPENDENT: the journal stores ONE row per key, overwritten in place at ITS FIRST
@@ -242,7 +242,7 @@ export async function forkRun(
   step: number,
   newRunId?: string,
 ): Promise<ForkResult> {
-  // GOREV (saga): a fork of a COMPENSATED run is the same hazard class as resuming it — the copy
+  // A fork of a COMPENSATED run is the same hazard class as resuming it — the copy
   // would replay memoized successes of side effects that were UNWOUND (the tombstone is a proc key,
   // invisible to readRun, so the copy itself would silently drop it) → refuse at the source.
   await assertNotCompensated(journal, srcRunId);

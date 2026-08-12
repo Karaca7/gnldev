@@ -31,7 +31,7 @@ describe('createGnl + model router (8.6)', () => {
     await expect(resolveModel('bogus/x')).rejects.toThrow(/Unknown provider/);
   });
 
-  // GOREV (distributed exactly-once — caught by a real-model chaos test): RunOptions.lock MUST be
+  // RunOptions.lock MUST be
   // forwarded to runDurable through gnl.run. If it isn't, two concurrent runs of the same runId emit
   // DIFFERENT toolCallIds (this test mimics that: call-A vs call-B) → the toolCallId-keyed claim lets
   // both through → DOUBLE side-effect. The lock serializes the run: only one runs, the other gets RunBusyError.

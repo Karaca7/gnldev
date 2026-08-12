@@ -8,11 +8,11 @@ import { stableStringify } from './hash.js';
 import { isVersionedKey, upgradeFormat } from './format.js';
 
 export type ToolJournalRecord =
-  // GOREV W1: toolName — carried so loop detection (checkToolLoop) can match SUCCEEDED records by
+  // ToolName — carried so loop detection (checkToolLoop) can match SUCCEEDED records by
   // tool. Optional: absent from old records → checks that require a toolName match (which only run
   // WHEN limits.loopDetection IS ON) simply treat those records as "a different tool" (harmless, breaks the streak).
   //
-  // GOREV (time-travel fidelity, args-mode custom idempotencyKey): `resolvedToolCallIds` — every REAL
+  // `resolvedToolCallIds` — every REAL
   // AI SDK toolCallId that has been SERVED this record's output (the winner that produced it, plus any
   // later toolCallId that consumed it via the exactly-once/dedup fast paths — same-turn duplicates,
   // the documented duplicate-toolCallId pattern, or a repeat call that a custom `idempotencyKey` collapses onto the same key). In
@@ -22,12 +22,12 @@ export type ToolJournalRecord =
   // definition, not the journal, so reconstructState (pure, journal-only) cannot recompute it (see
   // time-travel.ts). Optional: absent from records written before this field existed → reconstructState
   // falls back to its previous (best-effort) hash-recompute matching for those.
-  // GOREV (saga/compensation): `input` — the tool's RAW arguments, stored ONLY for tools that declare
+  // `input` — the tool's RAW arguments, stored ONLY for tools that declare
   // a `compensate` hook (opt-in journal cost): the unwind needs the original args (e.g. which
   // reservation to release), and the hash alone can't reproduce them. Absent on other/older records →
   // compensateRun falls back to recovering args from the model steps' tool-call parts.
   | { status: 'succeeded'; output: unknown; argsHash?: string; toolName?: string; input?: unknown; resolvedToolCallIds?: string[] }
-  // GOREV (audit trail): `toolName` on the NON-success statuses too. A denial is the entry an auditor
+  // `toolName` on the NON-success statuses too. A denial is the entry an auditor
   // most needs to identify — a human refused a tool — and it used to be the one carrying the least:
   // the key holds the toolCallId, the output holds `{__denied, reason}`, and the name appeared
   // nowhere, so answering "what was refused" meant correlating with the model step. 'suspended' got
@@ -35,7 +35,7 @@ export type ToolJournalRecord =
   // choke point (writeToolTerminal) rather than per call site, so a new terminal path cannot forget.
   // Inert for loop detection: applyToolOutcomeToChain reads toolName only for succeeded/reflected.
   | { status: 'denied'; output: unknown; toolName?: string; resolvedToolCallIds?: string[] }
-  // GOREV (loop reflection — `loopDetection.onRepeat: 'reflect'`): the call was NOT executed; instead a
+  // The call was NOT executed; instead a
   // "reconsider" nudge was returned to the model as this call's tool result (see limits.ts / durable-tool.ts).
   // Terminal like 'denied' (time-travel treats it as resolved: status !== suspended/running), and the
   // nudge output must replay IDENTICALLY on resume → hence a journaled terminal record, not a transient.
@@ -43,9 +43,9 @@ export type ToolJournalRecord =
   // `reflected` flag on the MATCHING chain after an internal-state loss (match-only, see limits.ts).
   | { status: 'reflected'; output: unknown; argsHash?: string; toolName?: string; resolvedToolCallIds?: string[] }
   | { status: 'suspended'; output: unknown; toolName?: string }
-  // GOREV 4.3: attempts — the number of FAILED attempts made so far for this key (to enforce the
+  // Attempts — the number of FAILED attempts made so far for this key (to enforce the
   // retry limit). Optional: absent from old records → durable-tool.ts assumes 1.
-  // GOREV (audit C3): `sideEffect` — whether this failed call was a SIDE-EFFECT tool (its execute was
+  // `sideEffect` — whether this failed call was a SIDE-EFFECT tool (its execute was
   // actually invoked and may have posted an effect). A failed side-effect ATTEMPT counts toward
   // maxToolCalls (see limits.ts recordToolOutcome/seedFromHistory); a failed read-only tool does not.
   // Stored so seedFromHistory can reconstruct the SAME count from the journal on a first-encounter scan.
@@ -54,7 +54,7 @@ export type ToolJournalRecord =
   | { status: 'running'; startedAt: number; toolName?: string }; // M4: atomic claim marker (execute in-flight)
 
 /**
- * GOREV (distributed exactly-once — ADAPTER PARITY MATRIX): every optional concurrency primitive
+ * Every optional concurrency primitive
  * below, per first-party adapter, with its ATOMICITY MECHANISM. All four first-party adapters
  * implement all four primitives ENGINE-ATOMICALLY on their primary paths — the "single-process safe
  * fallback" bounds documented in limits.ts/budget.ts/claim() apply ONLY to custom third-party
@@ -164,7 +164,7 @@ export interface JournalBatch {
 // Use these builders instead of hand-rolled template strings → a single source of truth, the format changes in one place.
 
 /**
- * GOREV (cross-run dedup): both `toolByArgs` and `toolCrossRun` embed `toolName` VERBATIM into a key
+ * Both `toolByArgs` and `toolCrossRun` embed `toolName` VERBATIM into a key
  * that is later parsed by matching the LITERAL `:tool:`/`:model:` substrings (parseJournalKey) — a
  * toolName containing ':' could fabricate a fake `:tool:`/`:model:` boundary and corrupt the runId
  * parse (toolByArgs) or accidentally masquerade as run-scoped (toolCrossRun, which relies on NOT
@@ -184,7 +184,7 @@ export const runKeys = {
   /** Tool call record (exactly-once; the key is the AI SDK toolCallId). */
   tool: (runId: string, toolCallId: string) => `${runId}:tool:${toolCallId}`,
   /**
-   * GOREV (args-based idempotency, opt-in `idempotency: 'args'`): the journal key is NOT the
+   * The journal key is NOT the
    * toolCallId, but a `hash` derived from the tool arguments (or the user's `idempotencyKey`).
    * To PRESERVE the `${runId}:tool:${toolCallId}` format CONTRACT (parseJournalKey + the adapters +
    * time-travel), the dedupeId has NO ':' INSIDE it (an 'args-' prefix, joined with dashes) →
@@ -197,7 +197,7 @@ export const runKeys = {
     return `${runId}:tool:args-${toolName}-${hash}`;
   },
   /**
-   * GOREV (cross-run dedup, opt-in `idempotencyWindow: 'cross-run'`): like `toolByArgs`, but WITHOUT a
+   * Like `toolByArgs`, but WITHOUT a
    * `${runId}:` prefix — the dedup window SPANS RUNS instead of being scoped to one. Because the key
    * does NOT contain the `:tool:`/`:model:` pattern, it is INVISIBLE to `parseJournalKey` (and therefore
    * to the reader/time-travel/forkRun) — INTENTIONAL: this record isn't part of any single run's
@@ -324,7 +324,7 @@ export interface DurableCtx {
    * (concurrency/new writes are always read from the live journal).
    */
   replayCache?: Map<string, unknown>;
-  /** GOREV W1 (opt-in): per-run cost ceiling + loop detection. If not given, no check runs. */
+  /** W1 (opt-in): per-run cost ceiling + loop detection. If not given, no check runs. */
   limits?: RunLimits;
   /**
    * H10b (opt-in production mode): 'strict' → every tool MUST DECLARE ITS SIDE-EFFECT INTENT

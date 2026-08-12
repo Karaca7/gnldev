@@ -1,4 +1,4 @@
-// Tests for GOREV 4.1 (model-step write-ahead claim + replay divergence) and GOREV 4.4 (stream
+// Tests for 4.1 (model-step write-ahead claim + replay divergence) and 4.4 (stream
 // mid-checkpoint). Purpose: (a) make the claim-crash window visible + retry doesn't shift the step,
 // (b) the divergence check is ONLY opt-in (`replay:'strict'`) and ALWAYS soft (never throws) —
 // a legitimate resume (request differences seen in memory/processor flows) is NEVER BROKEN,
@@ -11,7 +11,7 @@ import { withDurableModel } from '../src/durable-model.js';
 import { runDurable } from '../src/run.js';
 import { createMockModel, countToolResults, toolCallResult, finalTextResult } from './mock.js';
 
-describe('GOREV 4.1 — model-step write-ahead claim', () => {
+describe('Model-step write-ahead claim', () => {
   it('claim: running BEFORE the live call, succeeded on success, failed on error → a retry reclaims IMMEDIATELY (the step does not shift)', async () => {
     const journal = new InMemoryJournal();
     let attempt = 0;
@@ -62,7 +62,7 @@ describe('GOREV 4.1 — model-step write-ahead claim', () => {
   });
 });
 
-describe('GOREV 4.1(b) — replay divergence: opt-in + ALWAYS soft', () => {
+describe('Replay divergence: opt-in + ALWAYS soft', () => {
   function seed(journal: InMemoryJournal, runId: string) {
     return Promise.all([
       journal.put(`${runId}:model:0`, {
@@ -116,7 +116,7 @@ describe('GOREV 4.1(b) — replay divergence: opt-in + ALWAYS soft', () => {
   });
 });
 
-describe('GOREV 4.4 — streaming mid-checkpoint', () => {
+describe('Streaming mid-checkpoint', () => {
   function makeChunkedStreamModel(deltaCount: number) {
     const parts: any[] = [{ type: 'stream-start', warnings: [] }, { type: 'text-start', id: '0' }];
     for (let i = 0; i < deltaCount; i++) parts.push({ type: 'text-delta', id: '0', delta: `p${i}` });

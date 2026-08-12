@@ -1,4 +1,4 @@
-// GOREV (audit E2 — entry-point switch breaks replay silently): a model step journaled by the NON-streaming
+// A model step journaled by the NON-streaming
 // path (wrapGenerate: a raw doGenerate result, NO `.parts`) replayed through streamDurable feeds
 // `hit.parts === undefined` to simulateReadableStream → a broken/empty replay stream, with no signal. And
 // vice-versa (a `{parts,rest}` stream record replayed through generate). The guard now THROWS a clear

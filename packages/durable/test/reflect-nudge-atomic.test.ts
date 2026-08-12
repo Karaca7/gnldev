@@ -1,4 +1,4 @@
-// GOREV (audit E4 — atomic reflect-nudge markers): the reflect NUDGE (duplicate guard + taint guard)
+// The reflect NUDGE (duplicate guard + taint guard)
 // must be delivered by EXACTLY ONE writer even when two workers race the same (tool,args). The markers
 // used to be non-atomic check-then-act (`if (await get(k)===undefined) put(k)` / a plain `put` over a
 // prior read), so two concurrent duplicate calls could both read an un-nudged marker and BOTH deliver

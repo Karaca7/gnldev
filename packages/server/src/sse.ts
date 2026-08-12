@@ -17,7 +17,7 @@
 // `raw {type}` marker (type only, payload withheld — future/unknown parts can never silently vanish
 // again, and can never leak internal payloads either).
 //
-// GOREV W3 — RESUMABLE SSE: a deterministic, increasing `id:` starting from 0 is attached to every written event
+// RESUMABLE SSE: a deterministic, increasing `id:` starting from 0 is attached to every written event
 // (the SSE `id:` field — see https://html.spec.whatwg.org/multipage/server-sent-events.html). Calling the
 // stream AGAIN with the same runId is deterministic journal replay (withDurableModel/durableTools
 // read from the journal, model/tool do NOT actually re-run) → fullStream produces the same sequence of

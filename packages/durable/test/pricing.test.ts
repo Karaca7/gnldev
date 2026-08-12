@@ -1,4 +1,4 @@
-// GOREV 5.3: pricing table lives in the journal (policy/budget pattern) + priceFor's real exact/prefix matching.
+// Pricing table lives in the journal (policy/budget pattern) + priceFor's real exact/prefix matching.
 import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '../src/journal.js';
 import {

@@ -1,4 +1,4 @@
-// GOREV (saga/compensation): exactly-once prevented the DUPLICATE; this module undoes what DID
+// Exactly-once prevented the DUPLICATE; this module undoes what DID
 // happen when the overall transaction can't complete (charge ✓ → reserve ✓ → ship ✗ → refund+release).
 //
 // PRINCIPLES (each one a deliberate decision — see the design discussion):

@@ -1,4 +1,4 @@
-// GOREV (taint-aware guard): the runtime's conservative answer to prompt injection. The model is a
+// The runtime's conservative answer to prompt injection. The model is a
 // black box — once attacker-authorable content (an `untrusted: true` tool's output, or anything a
 // processor flags) enters the conversation, there is NO sound way to know which later decision it
 // influenced. So we don't pretend to: the run is marked TAINTED once, monotonically, and every

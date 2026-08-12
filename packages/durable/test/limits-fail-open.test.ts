@@ -1,4 +1,4 @@
-// GOREV (audit C4 — limits fail OPEN on a journal without readRun): maxCost/maxTokens/maxToolCalls/
+// MaxCost/maxTokens/maxToolCalls/
 // loopDetection can only be enforced on a store that implements `readRun` (JournalReader). A hand-written
 // `Journal` with only get/put/putIfAbsent used to SILENTLY skip enforcement — the user thinks the run is
 // capped, it is not. The fix: (a) a LOUD one-time console.warn naming exactly which protections are

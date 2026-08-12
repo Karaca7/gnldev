@@ -1,4 +1,4 @@
-// GOREV (taint-aware guard — CAUSALITY suite): the runtime's conservative prompt-injection answer.
+// The runtime's conservative prompt-injection answer.
 // What it claims: once untrusted content enters a run, every SUBSEQUENT side-effect call goes through
 // the `taintedSideEffects` ladder — journaled, replay-safe, approval-integrated. What it does NOT
 // claim (tested as such): model-internal flow tracking, or gating anything BEFORE the taint entered.

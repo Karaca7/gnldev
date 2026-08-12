@@ -1,4 +1,4 @@
-// K1/GOREV W1 (B) — streamFinishError: helper exported so code that consumes streamDurable directly
+// K1/W1 (B) — streamFinishError: helper exported so code that consumes streamDurable directly
 // (manually reading fullStream, NOT @gnldev/server sse.ts / @gnldev/agui) can convert the blocked/limit
 // sentinel into a TYPED error on its own. Uses the SAME scan order as blockedFromSteps/limitBreachFromSteps
 // (runDurableInner calls this same function too — the conversion logic lives in one place).
@@ -36,7 +36,7 @@ function limitStep(kind: 'loop' | 'maxToolCalls') {
   };
 }
 
-describe('streamFinishError (K1/GOREV W1 — B)', () => {
+describe('streamFinishError (K1/B)', () => {
   it('__gnl_blocked sentinel (SideEffectRetryBlockedError) → converted to a typed error', () => {
     const err = streamFinishError([blockedStep('SideEffectRetryBlockedError')]);
     expect(err).toBeInstanceOf(SideEffectRetryBlockedError);

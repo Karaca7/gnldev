@@ -1,4 +1,4 @@
-// GOREV (audit — the O(steps³) finding) performance proof: limits.ts used to pull the run's ENTIRE
+// (audit — the O(steps³) finding) performance proof: limits.ts used to pull the run's ENTIRE
 // record set via `readRun(runId)` on EVERY call to `checkToolGate`/`enforceStepLimits`/`scopedUsage`
 // (+ RECURSIVELY for sub-runs) → in an N-step run, O(N) scan per step × N steps = O(N²) (worse with
 // fan-out). This file PROVES that the NEW implementation (a single per-run limit-state key, see the
@@ -47,7 +47,7 @@ function buildAgent(k: number) {
   return { work, model, calls: () => realRuns };
 }
 
-describe('GOREV performance proof — limits O(1) readRun (independent of step count)', () => {
+describe('performance proof — limits O(1) readRun (independent of step count)', () => {
   it('a 60-step run: with limits ON, total readRun count is ≤2 per run (seeding only), SAME as a 10-step run', async () => {
     // We keep ALL limit types (maxTokens/maxCostUsd/maxToolCalls/loopDetection) ON at the same time
     // — previously, checkToolGate ITSELF did 2 separate readRuns (loop scan + scopedUsage), and

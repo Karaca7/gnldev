@@ -1,4 +1,4 @@
-// GOREV (audit: A2A unsigned) — opt-in a2aSecret verification: if given, x-gnl-signature/x-gnl-timestamp
+// (audit: A2A unsigned) — opt-in a2aSecret verification: if given, x-gnl-signature/x-gnl-timestamp
 // become REQUIRED on /agents/:name/run POSTs (signature = HMAC-SHA256(secret, timestamp + '.' + rawBody) hex).
 // This file tests the HTTP layer directly (with a manually signed request) — for a round-trip
 // with the @gnldev/a2a package see packages/a2a/test/a2a.test.ts.

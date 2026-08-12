@@ -325,7 +325,7 @@ export interface StudioApiOptions {
   /** If given, approval/fork → resume works. */
   resume?: StudioResume;
   /**
-   * GOREV (saga): if given, POST /runs/:id/compensate works — the operator's "unwind this abandoned
+   * If given, POST /runs/:id/compensate works — the operator's "unwind this abandoned
    * run" action. The host wires it to @gnldev/durable compensateRun with ITS tool set (the compensate
    * hooks live in code): `compensate: (runId, o) => compensateRun(runId, { journal, tools, ...o })`.
    * IRREVERSIBLE (a condemned run never resumes) → the endpoint is write-gated and audited.
@@ -993,7 +993,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     return c.json({ reports });
   });
 
-  // GOREV (incident journaling): the run's guard incidents (duplicate guard / loop detection /
+  // The run's guard incidents (duplicate guard / loop detection /
   // maxToolCalls — warn/reflect/block/suspend) as queryable telemetry. Same optional-capability
   // fallback as /processors: no listKeys → empty list (never an error).
   app.get('/runs/:id/incidents', async (c) => {
@@ -1823,7 +1823,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     return c.json({ ok: true, durable: true });
   });
 
-  // GOREV (saga): unwind an abandoned run — every executed side effect whose tool declares a
+  // Unwind an abandoned run — every executed side effect whose tool declares a
   // `compensate` hook is undone in reverse order, exactly-once (@gnldev/durable compensateRun). The run
   // is CONDEMNED first (never resumable again) → write-gated + audited with the report summary.
   // `dryRun: true` previews the work without condemning or executing anything.

@@ -54,7 +54,7 @@ function blockedOrThrow(
  * SINGLE CHOKE POINT: write to the journal, THEN (if ctx.limits is defined) trigger the limits hook —
  * the order/condition is IDENTICAL to the previous 6 call sites, behavior did NOT change.
  */
-/** GOREV (safe-by-default duplicate guard): per-(tool,args) first-success marker — see the guard block
+/** Per-(tool,args) first-success marker — see the guard block
  *  in `durableTool` below. Lives under runKeys.proc (invisible to reader/time-travel, purged with the
  *  run). `nudged` = the reconsider nudge has been delivered for this (tool,args) → escalate to block. */
 interface DupMarker {
@@ -78,7 +78,7 @@ async function writeToolTerminal(
    *  writer wins; a repeat's success never overwrites the original firstToolCallId). */
   dupKey?: string,
 ): Promise<void> {
-  // GOREV (time-travel fidelity): stamp the ORIGINAL toolCallId onto succeeded/denied records here —
+  // Stamp the ORIGINAL toolCallId onto succeeded/denied records here —
   // the single choke point every fresh terminal write goes through — so reconstructState can match
   // pending tool-calls back to this record WITHOUT needing to re-derive the dedupe key (see
   // ToolJournalRecord.resolvedToolCallIds in journal.ts). 'suspended'/'failed'/'running' don't need it
@@ -98,7 +98,7 @@ async function writeToolTerminal(
   if (dupKey && record.status === 'succeeded') {
     await claim(ctx.journal, dupKey, { firstToolCallId: toolCallId, at: Date.now() } satisfies DupMarker);
   }
-  // GOREV (audit C3): a FAILED side-effect tool counts toward maxToolCalls (the effect may have executed
+  // A FAILED side-effect tool counts toward maxToolCalls (the effect may have executed
   // before the throw). The flag is read off the failed record itself (stamped at the failure site below)
   // so this single choke point stays the only place recordToolOutcome is called — and seedFromHistory
   // reconstructs the identical count from the same journaled flag.
@@ -109,7 +109,7 @@ async function writeToolTerminal(
 }
 
 /**
- * GOREV (time-travel fidelity): a LATER call that consumes an ALREADY-succeeded/denied record under a
+ * A LATER call that consumes an ALREADY-succeeded/denied record under a
  * DIFFERENT toolCallId (args-mode same-turn duplicates, or a custom `idempotencyKey` collapsing
  * separate turns onto the same key) doesn't go through `writeToolTerminal` — it just reads and
  * returns. Without this, reconstructState would never learn that toolCallId was resolved by this
@@ -137,7 +137,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
   // AnyTool.idempotency/idempotencyKey). Providing `idempotencyKey` IMPLIES 'args' mode — no need to
   // also write `idempotency: 'args'`. Default is 'call' — behavior DOES NOT CHANGE (the existing
   // toolCallId-keyed path, unchanged).
-  // GOREV (cross-run dedup): `idempotencyWindow: 'cross-run'` ALSO IMPLIES 'args' mode (even if neither
+  // `idempotencyWindow: 'cross-run'` ALSO IMPLIES 'args' mode (even if neither
   // `idempotency` nor `idempotencyKey` is given) — a cross-run dedup window only makes sense keyed by
   // arguments, never by the AI SDK's per-call toolCallId. Default window is 'run' — behavior for
   // EVERY EXISTING caller (who never sets this field) is BYTE-FOR-BYTE unchanged.
@@ -157,7 +157,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       const hash = mode === 'args' && typeof tool.idempotencyKey === 'function'
         ? argsHash(tool.idempotencyKey(input))
         : argsHash(input);
-      // GOREV (cross-run dedup): in the 'cross-run' window the journal key drops the `${runId}:` prefix
+      // In the 'cross-run' window the journal key drops the `${runId}:` prefix
       // (runKeys.toolCrossRun) — the SAME arguments from ANY run land on the SAME record. 'run' window
       // (default) is UNCHANGED (runKeys.toolByArgs, run-scoped).
       const key = mode !== 'args'
@@ -219,7 +219,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
 
       // 2) Suspended call: if it was previously suspended and there's no approval, return the sentinel again (still suspended).
       if (record && record.status === 'suspended') {
-        // GOREV (two-phase deny — caught by guard-interactions.test.ts): a resume that DENIES an
+        // A resume that DENIES an
         // already-suspended call used to fall into the `approved !== true` re-suspend return below —
         // the deny was a SILENT NO-OP (the record stayed 'suspended', the approval stayed pending
         // forever; the Studio Deny button did nothing). Only the FRESH-call guard branch handled
@@ -268,8 +268,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       // The exactly-once promise rests on the default rather than on discipline.
       const sideEffect = tool.sideEffect ?? tool.idempotent !== true;
 
-      // GOREV (safe-by-default duplicate guard — `limits.sideEffectDuplicates`, DEFAULT 'warn'):
-      // closes the window H7's crash-gate does not cover: the MODEL ITSELF issuing a FRESH identical
+      // // closes the window H7's crash-gate does not cover: the MODEL ITSELF issuing a FRESH identical
       // call (new toolCallId, same args) of a side-effect tool that already SUCCEEDED in this run.
       // In default 'call' mode that duplicate would silently re-execute (double charge) unless the
       // developer remembered `idempotency: 'args'` — the journal KNOWS it's a duplicate, so the
@@ -358,7 +357,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
         }
       }
 
-      // GOREV (saga, MID-FLIGHT condemnation gate): runDurable's entry check only covers runs that
+      // RunDurable's entry check only covers runs that
       // START after the condemnation — a worker already INSIDE the loop when the operator ran
       // compensateRun would keep producing NEW side effects while the unwind reverts the old ones.
       // Close that window at the last responsible moment: a side-effect execution in a condemned run
@@ -369,7 +368,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
         return blockedOrThrow(ctx, toolCallId, toolName, new CompensatedRunError(ctx.runId));
       }
 
-      // GOREV (taint-aware guard — `limits.taintedSideEffects`, DEFAULT 'warn'): the prompt-injection
+      // The prompt-injection
       // enforcement point. If untrusted content already entered this run (see taint.ts — an
       // `untrusted: true` tool succeeded, or a processor flagged content), a side-effect call from
       // here on is suspect: the runtime cannot know whether the model is serving the USER or the
@@ -457,7 +456,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       // once the limit is raised / on replay (deterministic, approval NOT required).
       if (ctx.limits) {
         const gate = await checkToolGate(ctx.journal as unknown as JournalReader, ctx.runId, toolName, hash, ctx.limits);
-        // GOREV (loop reflection — `onRepeat: 'reflect'`): NOT a stop. The nudge is returned to the model
+        // NOT a stop. The nudge is returned to the model
         // AS THIS CALL'S TOOL RESULT (the same mechanical shape as the guard's 'denied' path: journal a
         // terminal record, return the output, the loop CONTINUES and the model can self-correct). The
         // record write ALSO sets chain.reflected via recordToolOutcome → an identical repeat AFTER this
@@ -570,7 +569,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
               const output = probe.output;
               await writeToolTerminal(ctx, key, {
                 status: 'succeeded', output, argsHash: hash, toolName,
-                // GOREV (saga): a compensate-bearing tool's success stores the RAW args — the unwind needs them.
+                // A compensate-bearing tool's success stores the RAW args — the unwind needs them.
                 ...(typeof tool.compensate === 'function' ? { input } : {}),
               }, toolCallId, toolName, hash, dupKey);
               if (tool.untrusted) {
@@ -662,7 +661,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
         }
         await writeToolTerminal(ctx, key, {
           status: 'succeeded', output, argsHash: hash, toolName,
-          // GOREV (saga): a compensate-bearing tool's success stores the RAW args — the unwind needs them.
+          // A compensate-bearing tool's success stores the RAW args — the unwind needs them.
           ...(typeof tool.compensate === 'function' ? { input } : {}),
         }, toolCallId, toolName, hash, dupKey);
         // NOTE: taint for `untrusted` tools is now marked at INVOCATION (see AUDIT A1 above), not here —
@@ -672,7 +671,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
         const prevAttempts = record && record.status === 'failed' ? (record.attempts ?? 1) : 0;
         await writeToolTerminal(
           ctx, key,
-          // GOREV (audit C3): stamp `sideEffect` so this failed ATTEMPT counts toward maxToolCalls (its
+          // Stamp `sideEffect` so this failed ATTEMPT counts toward maxToolCalls (its
           // effect may have posted before the throw) and seedFromHistory can reconstruct the same count.
           { status: 'failed', error: String(error?.message ?? error), attempts: prevAttempts + 1, sideEffect },
           toolCallId, toolName, hash,

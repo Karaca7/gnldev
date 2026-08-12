@@ -1,4 +1,4 @@
-// GOREV (guard-stack interaction suite): the loop/duplicate/taint guards and the approvals flow are
+// The loop/duplicate/taint guards and the approvals flow are
 // individually proven — THIS file proves they compose. It exists because writing it caught REAL BUG
 // #3: two-phase deny (suspend first → deny on RESUME) was a silent no-op — the resume fell into the
 // `approved !== true` re-suspend return, the record stayed 'suspended' forever and the Studio Deny

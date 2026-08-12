@@ -1,4 +1,4 @@
-// GOREV (loop reflection — `loopDetection.onRepeat: 'reflect'`): at the repeat threshold the model
+// At the repeat threshold the model
 // first gets ONE "reconsider" nudge AS THE TOOL RESULT (the call is NOT executed, the run CONTINUES)
 // — it can reuse the previous result, take a different action, or make a genuinely NEW call with
 // distinguishing arguments. Only an IDENTICAL repeat AFTER the nudge falls back to the existing hard

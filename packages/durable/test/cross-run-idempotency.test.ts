@@ -1,4 +1,4 @@
-// GOREV (cross-run dedup, opt-in `idempotencyWindow: 'cross-run'`): proof test for the widened dedup
+// Proof test for the widened dedup
 // window — "orderId=X gets charged exactly ONCE no matter which run/retry it comes from". Uses the
 // SAME harness pattern as args-idempotency.test.ts (durableTool wired directly against an
 // InMemoryJournal, no need for the full runDurable loop for most scenarios).

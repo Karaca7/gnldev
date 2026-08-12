@@ -69,7 +69,7 @@ export type RunDurableArgs = GenerateTextOptions & {
   processors?: Processor[];
   /** 8.8 Provider-specific tool-schema compatibility (opt-in): true → default set; array → those rules. */
   schemaCompat?: boolean | SchemaCompatRule[];
-  /** GOREV W1 (opt-in): per-run cost cap + loop detection. If not provided, no check runs. */
+  /** W1 (opt-in): per-run cost cap + loop detection. If not provided, no check runs. */
   limits?: RunLimits;
   /**
    * Y1/Y3 (opt-in): external call timeouts + claim TTL. `modelStepMs` applies to every model step
@@ -105,7 +105,7 @@ export type StreamDurableArgs = StreamTextOptions & {
   processors?: Processor[];
   /** 8.8 Provider-specific tool-schema compatibility (opt-in): true → default set; array → those rules. */
   schemaCompat?: boolean | SchemaCompatRule[];
-  /** GOREV W1 (opt-in): per-run cost cap + loop detection. If not provided, no check runs. */
+  /** W1 (opt-in): per-run cost cap + loop detection. If not provided, no check runs. */
   limits?: RunLimits;
   /** §5.3 (opt-in): model-step exclusivity — same semantics as runDurable (see RunDurableArgs). */
   exclusiveModelStep?: { ttlMs?: number };
@@ -147,7 +147,7 @@ function hasSuspend(part: any): boolean {
   return part?.type === 'tool-result' && !!part.output?.__gnl_suspend;
 }
 
-// GOREV W1: the sentinel returned when durable-tool.ts's loop/maxToolCalls gate is blocked
+// The sentinel returned when durable-tool.ts's loop/maxToolCalls gate is blocked
 // (see the limits.ts header — since the AI SDK swallows tool-execute errors, this sentinel is
 // used instead of THROWING; the SAME mechanism as suspend, composeStopWhen stops the loop).
 function hasLimitExceeded(part: any): boolean {
@@ -193,14 +193,14 @@ export function blockedFromSteps(steps: any[]): { toolCallId: string; toolName: 
 function errorFromBlocked(b: { code: string; message: string; detail?: any }): Error {
   if (b.code === 'SideEffectRetryBlockedError') return new SideEffectRetryBlockedError(b.message, b.detail);
   if (b.code === 'RetryLimitExceededError') return new RetryLimitExceededError(b.message, b.detail);
-  // GOREV (saga, mid-flight condemnation): a worker already inside the loop when the operator
+  // A worker already inside the loop when the operator
   // condemned the run — durable-tool refuses the NEW side effect via this sentinel (see the gate there).
   if (b.code === 'CompensatedRunError') return new CompensatedRunError(b.detail?.runId ?? 'unknown');
   return new RunBusyError(b.message);
 }
 
 /**
- * K1/GOREV W1 (B): converts the FIRST blocked/limit sentinel in the `steps` array into a real
+ * K1/W1 (B): converts the FIRST blocked/limit sentinel in the `steps` array into a real
  * typed error. runDurableInner uses this; it is also EXPORTED for code that consumes streamDurable
  * DIRECTLY (manually reading fullStream, not @gnldev/server sse.ts / @gnldev/agui) — pass it onFinish's
  * `ev.steps`: if a sentinel exists, it returns the TYPED error, otherwise `undefined` (the sentinel
@@ -857,7 +857,7 @@ async function runGenerateWithRetryLadder(
       throw err;
     }
 
-    // K1 + GOREV W1: a block sentinel OR a tool-step limit stopped the composeStopWhen loop → convert
+    // K1 + A block sentinel OR a tool-step limit stopped the composeStopWhen loop → convert
     // to a real typed error and throw (unrelated to the retry ladder — never retried).
     const finishError = streamFinishError((result as any).steps ?? []);
     if (finishError) throw finishError;
@@ -901,7 +901,7 @@ async function runGenerateWithRetryLadder(
  * `resume` = call again with the same `runId` + `journal` (+ `approvals`) → replay from the journal.
  */
 export async function runDurable(args: RunDurableArgs): Promise<DurableResult> {
-  // GOREV (saga): a COMPENSATED (unwound) run refuses to run/resume — replaying memoized successes
+  // A COMPENSATED (unwound) run refuses to run/resume — replaying memoized successes
   // on top of an already-reverted world would silently "complete" a transaction that was undone.
   await assertNotCompensated(args.journal, args.runId);
   // P2-cancel: same terminal-refusal contract as compensation — a durably-canceled run never
@@ -1003,7 +1003,7 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
 
   // D4-retry: generateText + finishError/suspend handling + the output-processor gate, wrapped in the
   // bounded retry-with-feedback ladder (see runGenerateWithRetryLadder above for the full contract —
-  // includes the K1/GOREV W1 sentinel-to-error conversion and the 8.7 output-processor pass, byte-for-
+  // includes the K1/W1 sentinel-to-error conversion and the 8.7 output-processor pass, byte-for-
   // byte unchanged for a run with no ProcessorRetry-throwing processor).
   const { result: ladderResult, interrupts } = await runGenerateWithRetryLadder(options, processors, procCtx, journal, runId);
   let result = ladderResult;
@@ -1067,7 +1067,7 @@ export interface ResumeAgentConfig {
   stopWhen?: unknown;
   replay?: 'strict' | 'lenient';
   /**
-   * GOREV (safety-config parity on resume — caught by taint-guard.test.ts): resumeRun used to FORWARD
+   * ResumeRun used to FORWARD
    * ONLY model/tools/guard/approvals — a resumed run silently LOST its entire protection config
    * (maxCostUsd/maxTokens ceilings, loopDetection, sideEffectDuplicates, taintedSideEffects all
    * reverted to defaults). The most dangerous shape of that hole: an approvals resume of a SUSPENDED
@@ -1142,7 +1142,7 @@ export async function resumeRun(
  * the only difference: output processors are applied only to messages being persisted (streamed
  * deltas cannot be transformed).
  *
- * K1/GOREV W1 NOTE (B) — AUDIT B3(b), READ THIS IF YOU CONSUME `fullStream` DIRECTLY: a
+ * K1/W1 NOTE (B) — AUDIT B3(b), READ THIS IF YOU CONSUME `fullStream` DIRECTLY: a
  * loop/maxToolCalls/duplicate/tainted BLOCK does NOT throw from the stream — the blocked/limit/suspend
  * SENTINEL (`__gnl_blocked`/`__gnl_limit_exceeded`) leaks into `fullStream` as an internal tool-result
  * part. This is DELIBERATE: @gnldev/server sse.ts / @gnldev/agui rely on it — they skip the sentinel part in
@@ -1167,7 +1167,7 @@ export async function resumeRun(
  * Prefer `runDurable` if you don't want to own any of this.
  */
 export async function streamDurable(args: StreamDurableArgs) {
-  // GOREV (saga): same refusal as runDurable — a compensated run never streams either.
+  // Same refusal as runDurable — a compensated run never streams either.
   await assertNotCompensated(args.journal, args.runId);
   // P2-cancel: same terminal-refusal contract as compensation — a durably-canceled run never
   // (re)starts or resumes (the per-step mid-flight gate lives in durable-model.ts).

@@ -1,4 +1,4 @@
-// GOREV (thread-scoped taint — audit A4, memory-recall half): taint is per-run by default, but memory
+// Taint is per-run by default, but memory
 // recall injects prior-thread messages into a NEW run (new runId, same threadId) with a CLEAN taint
 // slate — a turn-1 injection that tainted run A did not gate turn-2's side effects. The opt-in
 // `limits.taintScope: 'thread'` closes that: the untrusted mark ALSO claims a thread-scoped key

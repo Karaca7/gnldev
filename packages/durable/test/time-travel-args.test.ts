@@ -1,4 +1,4 @@
-// GOREV (time-travel/fork fidelity for `idempotency: 'args'`): args-mode tool records are journaled
+// Args-mode tool records are journaled
 // under `runKeys.toolByArgs` (dedupeId = `args-${toolName}-${hash}`, NOT the AI SDK toolCallId — see
 // journal.ts runKeys.toolByArgs). Before this fix, reconstructState/forkRun only knew how to match the
 // `runKeys.tool` (toolCallId-keyed) form → an args-keyed record never cleared `pending` (a resolved
@@ -83,7 +83,7 @@ describe('reconstructState — documented same-turn duplicate (5 distinct toolCa
   });
 });
 
-// GOREV (Task 1 — reconstructState "pending tool in a completed run" fix): a tool with a CUSTOM
+// A tool with a CUSTOM
 // `idempotencyKey` function (e.g. `chargeOrder` from the `full` CLI template — dedup by orderId, not
 // the full args) derives its journal dedupe key from a function that lives in the TOOL DEFINITION, not
 // the journal — reconstructState (pure, journal-only) can never recompute it. Before the fix, this made

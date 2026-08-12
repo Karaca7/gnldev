@@ -1,4 +1,4 @@
-// GOREV (AUDIT A4 — taint crosses the sub-agent runId boundary): taint is keyed per-run
+// Taint is keyed per-run
 // (`${runId}:proc:__gnl_taint`), and a sub-agent runs under its OWN nested runId
 // (`agent:${toolCallId}`). Without propagation, a TAINTED parent spawns a sub-agent that starts with a
 // CLEAN taint slate → a side effect INSIDE the sub-agent bypasses the parent's taintedSideEffects ladder.

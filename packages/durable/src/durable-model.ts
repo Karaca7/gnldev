@@ -18,7 +18,7 @@ import type { JournalReader } from './journal.js';
  * key is reused → retries do not shift the replay key.
  */
 
-// GOREV 4.1: model-step write-ahead claim record — SAME IDEA as durableTool's 'running'/'succeeded'/'failed'
+// Model-step write-ahead claim record — SAME IDEA as durableTool's 'running'/'succeeded'/'failed'
 // claim pattern, but carries a model-specific field (reqHash).
 type ModelClaimRecord = { status: 'running' | 'succeeded' | 'failed'; startedAt: number; reqHash?: string };
 
@@ -107,7 +107,7 @@ const DETERMINISTIC_PARAM_KEYS = [
 ] as const;
 
 /**
- * GOREV 4.1(b): hash of the model request's determining input (parity with argsHash — the same
+ * Hash of the model request's determining input (parity with argsHash — the same
  * stableStringify+sha256 pattern). If a field is not serializable (e.g. a circular reference),
  * SILENTLY returns `undefined` → the check is SKIPPED, the run is never BROKEN because of this
  * (PROTECTIVE).
@@ -126,7 +126,7 @@ function safeRequestHash(params: LanguageModelV2CallOptions): string | undefined
 }
 
 /**
- * GOREV 4.1(b) — replay divergence check: DELIBERATELY soft.
+ * Replay divergence check: DELIBERATELY soft.
  *
  * Observation (discovered while making this change, by running the full test suite): in flows using
  * memory/input-processor, when the caller calls `runDurable` again with the SAME raw arguments
@@ -198,10 +198,10 @@ export function withDurableModel(model: LanguageModelV2, ctx: DurableCtx, opts?:
         // AUDIT E2: reject a stream-shaped record replayed through the generate path (clear error, not a
         // silent missing-content result).
         assertReplayEntryPoint(hit, 'generate', key);
-        // GOREV 4.1(b): replay divergence — see warnOnModelDivergence documentation (opt-in, soft).
+        // Replay divergence — see warnOnModelDivergence documentation (opt-in, soft).
         await warnOnModelDivergence(ctx, claimKey, key, reqHash, 'model step');
         step++;
-        // GOREV W1: check on REPLAY too (not just on a fresh call) — if the same runId is called
+        // Check on REPLAY too (not just on a fresh call) — if the same runId is called
         // repeatedly without the limit CHANGING, it re-throws IMMEDIATELY at the SAME step (progress
         // does NOT LEAK); deterministic (same result) since the journal did NOT CHANGE. If the limit
         // is raised, this point is passed through.
@@ -209,7 +209,7 @@ export function withDurableModel(model: LanguageModelV2, ctx: DurableCtx, opts?:
         return hit as Awaited<ReturnType<typeof doGenerate>>;
       }
 
-      // GOREV 4.1(a): write-ahead 'running' claim BEFORE the model call. Purpose: the crash window
+      // Write-ahead 'running' claim BEFORE the model call. Purpose: the crash window
       // BETWEEN the model response and journaling it becomes VISIBLE on resume (studio/time-travel can
       // read this record and say "this step was left half-done") + reqHash is FIXED here (the
       // divergence check above uses it). DELIBERATELY: unlike durableTool, there is NO TTL-based
@@ -239,7 +239,7 @@ export function withDurableModel(model: LanguageModelV2, ctx: DurableCtx, opts?:
         throw error;
       }
       step++;
-      // GOREV W1: checked AFTER the step is SUCCESSFULLY journaled (journal is already consistent) —
+      // Checked AFTER the step is SUCCESSFULLY journaled (journal is already consistent) —
       // RunLimitExceededError is thrown from here on breach; since it's OUTSIDE the try/catch, it does
       // NOT MARK the claim as 'failed' (the step genuinely succeeded, only the run's CONTINUATION is being stopped).
       if (ctx.limits) await enforceStepLimits(ctx.journal as unknown as JournalReader, ctx.runId, ctx.limits);
@@ -256,17 +256,17 @@ export function withDurableModel(model: LanguageModelV2, ctx: DurableCtx, opts?:
         // AUDIT E2: reject a generate-shaped record (no `.parts`) replayed through the stream path —
         // otherwise simulateReadableStream chokes on `undefined` chunks (silent/cryptic broken stream).
         assertReplayEntryPoint(hit, 'stream', key);
-        // GOREV 4.1(b): SAME divergence check as generate (see warnOnModelDivergence).
+        // SAME divergence check as generate (see warnOnModelDivergence).
         await warnOnModelDivergence(ctx, claimKey, key, reqHash, 'model stream step');
         step++;
-        // GOREV W1: SAME replay-recheck as generate (see wrapGenerate) — does not leak progress.
+        // SAME replay-recheck as generate (see wrapGenerate) — does not leak progress.
         if (ctx.limits) await enforceStepLimits(ctx.journal as unknown as JournalReader, ctx.runId, ctx.limits);
         return {
           stream: simulateReadableStream({ chunks: hit.parts, initialDelayInMs: 0, chunkDelayInMs: 0 }),
           ...hit.rest,
         } as any;
       }
-      // GOREV 4.1(a): SAME write-ahead claim as generate (see above — rationale there).
+      // SAME write-ahead claim as generate (see above — rationale there).
       // §5.3: SAME opt-in exclusivity gate as generate (see acquireModelClaim).
       // P2-cancel: durable cross-worker cancel gate — checked ONLY on the FRESH path (a replayed step
       // above returns untouched: replay reconstructs work that already happened, cancel stops NEW
@@ -288,7 +288,7 @@ export function withDurableModel(model: LanguageModelV2, ctx: DurableCtx, opts?:
       const myStep = step;
       step++;
       const parts: any[] = [];
-      // GOREV 4.4: periodic PARTIAL checkpoint so a crash in long streams doesn't lose the WHOLE step.
+      // Periodic PARTIAL checkpoint so a crash in long streams doesn't lose the WHOLE step.
       // The happy-path (flush) RESULT stays EXACTLY THE SAME — the checkpoint is only an ADDITIONAL
       // write for observability/forward-recovery purposes; it does NOT CHANGE the CONTENT of the final
       // `key` or the MOMENT it is written.
@@ -312,7 +312,7 @@ export function withDurableModel(model: LanguageModelV2, ctx: DurableCtx, opts?:
           // Happy path: EXACTLY the same as the behavior so far — the final record is written with the full `parts`.
           await ctx.journal.put(runKeys.model(ctx.runId, myStep), stampFormat({ parts, rest })); // H13
           await ctx.journal.put(claimKey, { status: 'succeeded', startedAt: Date.now(), reqHash });
-          // GOREV W1: SAME post-hoc check as generate (see wrapGenerate) — the step is already journaled.
+          // SAME post-hoc check as generate (see wrapGenerate) — the step is already journaled.
           if (ctx.limits) await enforceStepLimits(ctx.journal as unknown as JournalReader, ctx.runId, ctx.limits);
         },
       });

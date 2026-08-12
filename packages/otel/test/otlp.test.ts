@@ -1,4 +1,4 @@
-// GOREV W5 — zero-dependency OTLP/HTTP JSON exporter: toOtlpJson (PURE, no network) shape validation +
+// Zero-dependency OTLP/HTTP JSON exporter: toOtlpJson (PURE, no network) shape validation +
 // exportRunToOtlp (fetch mocked). Does not touch the OTel SDK — index.test (otel.test.ts) covers exportRun.
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { InMemoryJournal, runDurable, toTraceSpans } from '@gnldev/durable';

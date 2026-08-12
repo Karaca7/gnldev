@@ -1,4 +1,4 @@
-// GOREV (loop reflection — CAUSALITY/SOUNDNESS suite): run-limits-reflect.test.ts proves the happy
+// Run-limits-reflect.test.ts proves the happy
 // paths; THIS file proves the mechanism is CAUSAL and sound, not incidental:
 //   A. Counterfactual triple — the SAME self-correcting model under (off | block | reflect) configs
 //      produces three different outcomes; the ONLY variable is the config → the nudge is the CAUSE of

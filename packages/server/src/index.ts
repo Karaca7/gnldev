@@ -15,7 +15,7 @@ import type { WorkflowRunStatus } from '@gnldev/workflow';
 import { buildOpenApi } from './openapi.js';
 import { pipeAgentStream } from './sse.js';
 
-/** GOREV (audit: A2A unsigned) — signature window: a request with a timestamp this old/future is rejected (replay resistance). */
+/** (audit: A2A unsigned) — signature window: a request with a timestamp this old/future is rejected (replay resistance). */
 const A2A_TIMESTAMP_WINDOW_MS = 300_000; // ±300s
 
 /**
@@ -117,7 +117,7 @@ export interface RestApiOptions {
    */
   budgets?: { default?: BudgetLimit; perOrg?: Record<string, BudgetLimit> };
   /**
-   * GOREV W1: SERVER-SIDE UPPER BOUND (opt-in) for per-run cost cap + loop detection. The `limits` in the
+   * SERVER-SIDE UPPER BOUND (opt-in) for per-run cost cap + loop detection. The `limits` in the
    * request body (client request) CANNOT EXCEED this cap — the effective limit for each field is computed
    * as `min(server, client)` (see `clampLimits`); if the client doesn't specify a field, the server cap
    * applies, and if neither server nor client specifies it, that field is never enforced. If neither is
@@ -125,7 +125,7 @@ export interface RestApiOptions {
    */
   limits?: RunLimits;
   /**
-   * GOREV (audit: A2A unsigned) — opt-in A2A request verification: if given, the `x-gnl-signature`/
+   * (audit: A2A unsigned) — opt-in A2A request verification: if given, the `x-gnl-signature`/
    * `x-gnl-timestamp` header pair produced by `@gnldev/a2a`'s `createA2ATool({ secret })` becomes REQUIRED on
    * `/agents/:name/run` POSTs (see verifyA2ASignature) — missing/wrong signature or a timestamp outside
    * ±300s → 401. If not given, behavior is preserved EXACTLY AS IS (unsigned requests are accepted as
@@ -159,7 +159,7 @@ export interface RestApiOptions {
 }
 
 /**
- * GOREV W1: merge the server cap with the client request — the STRICTER one (smaller number) wins, the
+ * Merge the server cap with the client request — the STRICTER one (smaller number) wins, the
  * client can NEVER loosen the server cap. If neither side gives a field, that field ends up absent (never
  * enforced) — the existing unlimited behavior is preserved.
  */
@@ -794,7 +794,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     // completion hook — use it. Swallowed on rejection (a stream error already produces its own `error`
     // SSE event in pipeAgentStream); this is ONLY registry bookkeeping.
     void Promise.resolve(result.finishReason).catch(() => {}).finally(() => unregisterInflight(key, ctrl));
-    // GOREV W3: disconnect-recovery — if there's a Last-Event-ID header (sent automatically by
+    // Disconnect-recovery — if there's a Last-Event-ID header (sent automatically by
     // EventSource) or body.lastEventId, events the client has already seen are not rewritten (see the note in sse.ts).
     const lastEventIdRaw = c.req.header('Last-Event-ID') ?? body.lastEventId;
     const lastEventId = lastEventIdRaw != null && lastEventIdRaw !== '' ? Number(lastEventIdRaw) : undefined;

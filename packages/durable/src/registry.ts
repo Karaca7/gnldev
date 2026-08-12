@@ -336,10 +336,10 @@ export interface RunOptions {
   /** Playground tool allow-list: if given, only these tool NAMES are exposed to the model this run
    *  (a subset of the agent's resolved tools). Names not in the resolved set are ignored. */
   tools?: string[];
-  /** GOREV W1 (opt-in): per-run cost cap + loop detection — INHERITED by sub-agents. */
+  /** W1 (opt-in): per-run cost cap + loop detection — INHERITED by sub-agents. */
   limits?: RunLimits;
   /**
-   * GOREV (distributed exactly-once — caught by a real-model chaos test): run-lock for multiple workers
+   * Run-lock for multiple workers
    * running the SAME runId concurrently. `runDurable` supported this, but the registry (createGnl/
    * gnl.run) did NOT forward it → the lock was silently dropped in the high-level API. Without the lock,
    * different workers' distinct toolCallIds bypass the toolCallId-keyed tool-claim (two LIVE runs of the
@@ -448,7 +448,7 @@ export function createGnl(config: CreateGnlConfig) {
   }
 
   /** C5: converts `a.agents` names into `agent_<name>` tools (model factory that freezes fallback into the nested runId).
-   *  GOREV W1: if `limits` is given (the parent's RunOptions.limits), it's inherited by the sub-agent AS-IS. */
+   *  If `limits` is given (the parent's RunOptions.limits), it's inherited by the sub-agent AS-IS. */
   async function buildSubAgentTools(names: string[] | undefined, rc: RequestContext, limits?: RunLimits): Promise<ToolSet> {
     const out: ToolSet = {};
     for (const subName of names ?? []) {
@@ -504,7 +504,7 @@ export function createGnl(config: CreateGnlConfig) {
       ...(opts.topP != null ? { topP: opts.topP } : {}),
       ...(processors.length ? { processors } : {}),
       ...(opts.limits ? { limits: opts.limits } : {}),
-      ...(opts.lock ? { lock: opts.lock } : {}), // GOREV: forward the distributed run-lock to runDurable (see the RunOptions.lock note)
+      ...(opts.lock ? { lock: opts.lock } : {}), // : forward the distributed run-lock to runDurable (see the RunOptions.lock note)
       // AUDIT E1: forward the protections that were previously runDurable-only.
       ...(opts.toolPolicy ? { toolPolicy: opts.toolPolicy } : {}),
       ...(opts.replay ? { replay: opts.replay } : {}),

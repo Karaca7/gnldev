@@ -1,4 +1,4 @@
-// GOREV (saga/compensation — CAUSALITY suite): exactly-once prevented duplicates; compensateRun
+// Exactly-once prevented duplicates; compensateRun
 // undoes what DID happen. Deep checks: reverse order with the ORIGINAL args+output delivered to the
 // hook; the compensations' OWN exactly-once (re-run, crash-retry); condemn-then-refuse (resume after
 // unwind is impossible, dryRun condemns nothing); uncertainty resolved by recover, never guessed;

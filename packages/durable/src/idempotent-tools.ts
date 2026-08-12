@@ -1,4 +1,4 @@
-// GOREV (AI SDK drop-in): `withIdempotency` — LLM-aware idempotency for a PLAIN AI SDK loop.
+// `withIdempotency` — LLM-aware idempotency for a PLAIN AI SDK loop.
 //
 // The exactly-once mechanism already lives in durableTool (args-keyed journal records, the
 // claim/poll ladder, cross-run windowing). But today it's reached through runDurable/streamDurable's

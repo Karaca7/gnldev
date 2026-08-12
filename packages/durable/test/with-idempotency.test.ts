@@ -1,4 +1,4 @@
-// GOREV (AI SDK drop-in): proof tests for `withIdempotency` — the thin public wrapper that adds
+// Proof tests for `withIdempotency` — the thin public wrapper that adds
 // LLM-aware idempotency to a PLAIN AI SDK loop (no runDurable). Mirrors the harness of
 // args-idempotency.test.ts / cross-run-idempotency.test.ts: durableTool-wrapped tools driven directly
 // against an InMemoryJournal, so no full generateText loop is needed to prove the dedup contract.

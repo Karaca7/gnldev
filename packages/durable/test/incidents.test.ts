@@ -1,4 +1,4 @@
-// GOREV (incident journaling): guard decisions must not evaporate into the console — every one lands
+// Guard decisions must not evaporate into the console — every one lands
 // as a queryable journal record. Causality-grade checks: the record exists WITH the verbatim message,
 // key-identity DEDUPES replays/re-blocks (no spam), and incidents stay INVISIBLE to the run reader
 // (time-travel/replay untouched — advisory telemetry, never load-bearing).

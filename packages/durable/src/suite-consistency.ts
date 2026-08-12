@@ -91,7 +91,7 @@ export interface AssertSuiteConsistentOptions {
 }
 
 /**
- * GOREV (Task 3, opt-in — see module header): compares every INSTALLED sibling @gnldev/* package's version
+ * Compares every INSTALLED sibling @gnldev/* package's version
  * against @gnldev/durable's OWN version; if any differ, warns (default) or throws
  * (`onMismatch: 'throw'`) — surfacing a `--force`/overrides-installed incompatible suite instead of
  * letting it fail silently at runtime later.

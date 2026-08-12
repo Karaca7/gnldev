@@ -1,4 +1,4 @@
-// GOREV (safe-by-default duplicate guard — `limits.sideEffectDuplicates`, DEFAULT 'warn'): the
+// The
 // runtime's answer for the developer who FORGETS `idempotency: 'args'` on a side-effect tool. In
 // default 'call' mode the model issuing a FRESH identical call (new toolCallId, same args) would
 // silently re-execute (double charge); the journal KNOWS it's a duplicate, so silence is complicity.

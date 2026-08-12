@@ -1,4 +1,4 @@
-// GOREV (incident journaling): the guard decisions in durable-tool.ts (duplicate guard, loop
+// The guard decisions in durable-tool.ts (duplicate guard, loop
 // detection, maxToolCalls) used to be visible ONLY as a console line, a nudge in the conversation, or
 // a thrown error — nothing an operator can query after the fact ("the runtime must at minimum SAY so"
 // is weak if the saying evaporates). Every such decision now ALSO lands as a small, queryable

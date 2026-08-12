@@ -172,7 +172,7 @@ export class SqliteStorage implements Storage {
     // Every statement below (and in every store class) goes through the SQLITE_BUSY retry wrapper —
     // see BusyRetryDatabase. Transient lock contention is absorbed; anything else still throws.
     this.db = new BusyRetryDatabase(new DatabaseSync(path));
-    // GOREV (multi-process cold start — caught by multi-process-race.test.ts): busy_timeout MUST be
+    // Busy_timeout MUST be
     // the FIRST pragma, in its OWN try. It used to be the LAST statement of the shared try below —
     // when two processes cold-started the same file simultaneously, the WAL switch raced with
     // busy_timeout STILL AT 0, threw SQLITE_BUSY, and the shared catch swallowed the error TOGETHER
@@ -200,7 +200,7 @@ export class SqliteStorage implements Storage {
     // old table + backfill existing rows with a ONE-TIME recount (init cost; O(1) afterward).
     const cols = this.db.prepare(`PRAGMA table_info(gnl_runs)`).all() as { name: string }[];
     if (!cols.some((c) => c.name === 'suspended_count')) {
-      // GOREV (multi-process cold start): two processes can BOTH see the column missing and BOTH try
+      // Two processes can BOTH see the column missing and BOTH try
       // the ALTER — the loser gets "duplicate column name" (the winner already migrated) → benign,
       // swallow ONLY that; any other error is real and must surface.
       try {
@@ -211,7 +211,7 @@ export class SqliteStorage implements Storage {
       this.db.exec(`UPDATE gnl_runs SET suspended_count = (
         SELECT COUNT(*) FROM gnl_run_journal j WHERE j.run_id = gnl_runs.run_id AND j.suspended = 1)`);
     }
-    // GOREV (multi-process cold start — caught by multi-process-race.test.ts): the seed used to be
+    // The seed used to be
     // check-then-INSERT (SELECT → INSERT if absent) — a TOCTOU: two simultaneous booters both saw no
     // row, both inserted, and the loser CRASHED ON BOOT with a UNIQUE constraint. `INSERT OR IGNORE`
     // is the engine-atomic form of the same intent (write only if absent; an existing version row —

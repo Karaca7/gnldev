@@ -1,4 +1,4 @@
-// GOREV (saga × everything — interaction suite): the highest-yield test class in this codebase (the
+// The highest-yield test class in this codebase (the
 // resumeRun-limits, two-phase-deny and cold-start bugs all came from INTERSECTIONS). Writing this
 // file drove three hardenings, each tested here:
 //  - MID-FLIGHT condemnation: runDurable's entry check only covers runs that START after the

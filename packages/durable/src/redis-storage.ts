@@ -100,8 +100,7 @@ export interface RedisStorageOptions {
    *  silence the advisory (e.g. single-node dev, or the risk is already knowingly accepted). */
   replicationWarning?: boolean;
   /**
-   * GOREV (Task 2 — opt-in STRONG replication guarantee, closes the gap `replicationWarning` above only
-   * WARNS about): if given, EVERY SUCCESSFUL claim (putIfAbsent/putIfMatch returning `true` — i.e. this
+   * If given, EVERY SUCCESSFUL claim (putIfAbsent/putIfMatch returning `true` — i.e. this
    * call genuinely wrote a NEW record, not a no-op loss) is followed by a native Redis `WAIT
    * replicas timeoutMs` call, requiring at least `replicas` replicas to have acknowledged the write
    * before the claim is considered final. Default: `undefined` — BYTE-FOR-BYTE unchanged behavior (no

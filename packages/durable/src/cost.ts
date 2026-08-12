@@ -43,7 +43,7 @@ export interface ModelStepUsage {
 export function usageAndCostFromModelValue(value: unknown, opts: RunCostOptions = {}): ModelStepUsage | undefined {
   const v: any = value;
   const table = opts.pricing ?? DEFAULT_PRICING;
-  // GOREV W1: a streamDurable record has the shape `{ parts, rest }` (durable-model.ts wrapStream) —
+  // A streamDurable record has the shape `{ parts, rest }` (durable-model.ts wrapStream) —
   // `usage` is NOT at the top level, it's in the 'finish' part inside `parts`. The generateText shape
   // (top-level `usage`) is tried FIRST, otherwise it's extracted from the stream shape (backward
   // compatible — the behavior of existing generateText records does NOT CHANGE).

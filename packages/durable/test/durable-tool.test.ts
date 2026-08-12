@@ -58,7 +58,7 @@ describe('durableTool — exactly-once', () => {
   });
 });
 
-describe('durableTool — GOREV 4.3: bounded retry + side-effect distinction', () => {
+describe('durableTool — Bounded retry + side-effect distinction', () => {
   it('when maxRetries is unspecified, the default (3) limit results in a permanent failed — no infinite retry', async () => {
     const journal = new InMemoryJournal();
     let calls = 0;

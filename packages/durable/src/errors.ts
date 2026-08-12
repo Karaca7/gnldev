@@ -26,7 +26,7 @@ export class RunBusyError extends Error {
 }
 
 /**
- * GOREV 4.3: a `failed` record for a side-effectful (non-idempotent) tool is NOT automatically
+ * A `failed` record for a side-effectful (non-idempotent) tool is NOT automatically
  * RETRIED unless the user explicitly grants permission via `approvals[toolCallId]=true` (closes off
  * the double side-effect risk — e.g. double charging). Unmarked tools never throw this error (backward compatible).
  */
@@ -41,7 +41,7 @@ export class SideEffectRetryBlockedError extends Error {
 }
 
 /**
- * GOREV 4.3: a tool's `failed` record reached the `maxRetries` limit → left permanently failed
+ * A tool's `failed` record reached the `maxRetries` limit → left permanently failed
  * instead of an infinite automatic retry loop (the record stays 'failed' in the journal, not retried again).
  */
 export class RetryLimitExceededError extends Error {
@@ -55,7 +55,7 @@ export class RetryLimitExceededError extends Error {
 }
 
 /**
- * GOREV (Task 2 — Redis WAIT opt-in, `RedisStorageOptions.waitReplicas`): after a successful claim
+ * After a successful claim
  * (putIfAbsent/putIfMatch genuinely wrote something new), fewer than the requested number of replicas
  * acknowledged the write within the timeout (native Redis `WAIT`). The claim itself already happened —
  * this only means the async-replication gap (the core-hardening review: a claim acked only by the primary
@@ -73,7 +73,7 @@ export class ReplicationNotAcknowledgedError extends Error {
 }
 
 /**
- * GOREV (Task 3 — suite-consistency guard, `assertSuiteConsistent`/`createGnl({ checkSuiteConsistency })`):
+ * (Task 3 — suite-consistency guard, `assertSuiteConsistent`/`createGnl({ checkSuiteConsistency })`):
  * an INSTALLED sibling @gnldev/* package's version differs from @gnldev/durable's own — a project that
  * bypassed the package manager's caret range (--force/overrides/manual node_modules edits) ended up
  * with an incompatible suite. Thrown only when `onMismatch: 'throw'` was requested (default is 'warn' —

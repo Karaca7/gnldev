@@ -21,7 +21,7 @@ export interface AnyTool {
   /** The synonymous inverse of `sideEffect`: `idempotent === false` ⇔ `sideEffect === true`. */
   idempotent?: boolean;
   /**
-   * GOREV (taint-aware guard): this tool's OUTPUT is EXTERNAL/UNTRUSTED content (web fetch, inbox
+   * This tool's OUTPUT is EXTERNAL/UNTRUSTED content (web fetch, inbox
    * read, RAG retrieval — anything an attacker could have authored). Once such an output enters the
    * conversation, the run is marked TAINTED (journaled, monotonic for the rest of the run) and every
    * SUBSEQUENT side-effect tool call goes through the `limits.taintedSideEffects` action ladder —
@@ -32,7 +32,7 @@ export interface AnyTool {
    */
   untrusted?: boolean;
   /**
-   * GOREV 4.3: total number of attempts allowed after `failed` for this tool (retry limit).
+   * Total number of attempts allowed after `failed` for this tool (retry limit).
    * If unspecified, the reasonable default (3) in durable-tool.ts is used. Once the limit is
    * reached, the record stays permanently 'failed' — there is NO infinite automatic retry loop.
    */
@@ -48,7 +48,7 @@ export interface AnyTool {
    */
   recover?(input: any, opts: { idempotencyKey: string; toolCallId: string }): Promise<{ done: true; output: unknown } | { done: false }>;
   /**
-   * GOREV (saga/compensation — `recover`'s twin, in the reverse direction): HOW TO UNDO this tool's side effect
+   * HOW TO UNDO this tool's side effect
    * (refund the charge, release the reservation, delete the created record). Called ONLY by an
    * EXPLICIT `compensateRun(runId, …)` — NEVER automatically on failure (a transient failure +
    * resume is GNL's whole point; auto-unwinding would refund a charge the resume then re-charges).
@@ -75,7 +75,7 @@ export interface AnyTool {
    */
   claimTtlMs?: number;
   /**
-   * GOREV (argument-based idempotency, opt-in): the TYPE of the exactly-once key.
+   * The TYPE of the exactly-once key.
    *   - 'call' (DEFAULT): today's behavior — the journal key is the `toolCallId` given by the AI SDK.
    *   - 'args': the journal key is derived from the tool's ARGUMENTS (argsHash, or the hash of
    *     `idempotencyKey` if given). Even if the model produces a NEW `toolCallId` with the SAME
@@ -93,7 +93,7 @@ export interface AnyTool {
    */
   idempotency?: 'call' | 'args';
   /**
-   * GOREV (optional custom dedup key, e.g. `(args) => args.orderId`): IF GIVEN, it FORCES 'args'
+   * (optional custom dedup key, e.g. `(args) => args.orderId`): IF GIVEN, it FORCES 'args'
    * mode even if the `idempotency` field isn't separately specified. The returned string is embedded
    * into the journal key NOT AS-IS but HASHED (so characters like ':' don't break the
    * `${runId}:tool:args-...` key SCHEMA). If different arguments (e.g. different incidental fields)
@@ -101,7 +101,7 @@ export interface AnyTool {
    */
   idempotencyKey?: (input: unknown) => string;
   /**
-   * GOREV (cross-run dedup, opt-in): the DEDUP WINDOW's scope.
+   * The DEDUP WINDOW's scope.
    *   - 'run' (DEFAULT): today's behavior UNCHANGED — the args-idempotency journal key is prefixed
    *     with `${runId}:`, so the SAME arguments in a DIFFERENT run execute again (see `idempotency`
    *     field's SCOPE BOUNDARY note above).

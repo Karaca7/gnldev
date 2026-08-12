@@ -1,4 +1,4 @@
-// GOREV (audit A2 — armed-but-can-never-fire lint): `untrusted` defaults to falsy, so a run that sets
+// `untrusted` defaults to falsy, so a run that sets
 // limits.taintedSideEffects but marks NO tool `untrusted: true` (and wires no tool-result processor) has a
 // taint ladder that can never fire — configured, armed, inert. durableTools now emits a LOUD one-time warn
 // naming exactly this, so the misconfiguration is visible instead of silently ineffective.

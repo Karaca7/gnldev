@@ -1,10 +1,10 @@
-// GOREV W1: per-run COST CAP + RUNAWAY protection. Competitive report (Dalga1-#2): 63 budget-overrun
+// Per-run COST CAP + RUNAWAY protection. Competitive report (Dalga1-#2): 63 budget-overrun
 // incidents, a single retry loop costing thousands of dollars, sub-agent fan-out bypassing the budget.
 // `budget.ts` enforces the TENANT-scoped (long-term) quota; this file enforces the RUN-scoped (single
 // run) cap — the TWO COMPLEMENT each other, neither replaces the other. FULLY OPT-IN: if `limits` is
 // not provided (undefined/unset fields), no check runs → existing tests/behavior are preserved AS-IS.
 //
-// GOREV (audit — O(step³) finding): previously `checkToolGate`/`enforceStepLimits`/`scopedUsage` fetched
+// (audit — O(step³) finding): previously `checkToolGate`/`enforceStepLimits`/`scopedUsage` fetched
 // ALL of the run's records (+ RECURSIVELY the sub-runs) via `readRun(runId)` on EVERY call — for an
 // N-step run that's O(N) scan per step × N steps = O(N²) (even worse with fan-out). This file now keeps
 // CUMULATIVE counters in a SINGLE per-run "limit state" key (`runKeys.proc(runId, '__gnl_limits_state')`
@@ -140,7 +140,7 @@ export interface RunLimits {
    */
   loopDetection?: { maxRepeats?: number; onRepeat?: 'block' | 'reflect' };
   /**
-   * GOREV (safe-by-default duplicate guard): what to do when a SIDE-EFFECT tool (H7 signal —
+   * What to do when a SIDE-EFFECT tool (H7 signal —
    * `tool.sideEffect ?? tool.idempotent !== true`, i.e. everything not explicitly marked safe) in
    * DEFAULT 'call' mode is about to EXECUTE AGAIN with arguments identical to an earlier SUCCESSFUL
    * call of the same run. This is the exact window `idempotency: 'args'` closes when the developer
@@ -169,7 +169,7 @@ export interface RunLimits {
    */
   sideEffectDuplicates?: 'off' | 'warn' | 'reflect' | 'block' | 'suspend';
   /**
-   * GOREV (taint-aware guard — prompt-injection answer): what to do when a SIDE-EFFECT tool (H7
+   * What to do when a SIDE-EFFECT tool (H7
    * signal) is about to execute AFTER untrusted external content entered the conversation (an
    * `untrusted: true` tool's output landed, or a processor called markRunTainted). The model is a
    * black box — the runtime CANNOT know which tokens influenced which decision, so it enforces the
@@ -309,8 +309,7 @@ export class ToolLoopDetectedError extends Error {
 }
 
 /**
- * GOREV (safe-by-default duplicate guard, `sideEffectDuplicates: 'block'` — or 'reflect' whose nudge
- * was ignored): a side-effect tool was about to EXECUTE AGAIN with arguments identical to an earlier
+ * A side-effect tool was about to EXECUTE AGAIN with arguments identical to an earlier
  * successful call of the same run, and the policy stopped it. Thrown via the same sentinel path as
  * ToolLoopDetectedError (nothing written for the blocked call → journal stays consistent; relaxing
  * the policy and resuming re-evaluates from scratch).
@@ -326,7 +325,7 @@ export class DuplicateSideEffectError extends Error {
 }
 
 /**
- * GOREV (taint-aware guard, `taintedSideEffects: 'block'` — or 'reflect' whose nudge was ignored): a
+ * A
  * side-effect tool was about to execute after untrusted content entered the conversation, and the
  * policy stopped it. Same sentinel path/consistency contract as DuplicateSideEffectError.
  */
@@ -365,7 +364,7 @@ interface LimitChain {
   lastToolName?: string;
   lastArgsHash?: string;
   consecutiveRepeats: number;
-  /** GOREV (loop reflection): the reconsider nudge has been DELIVERED for THIS chain (see
+  /** The reconsider nudge has been DELIVERED for THIS chain (see
    *  RunLimits.loopDetection.onRepeat) — the next identical repeat escalates to the hard block. Reset
    *  together with the chain (any different/failed call builds a fresh object without the flag).
    *  Absent on records written before this field existed → false (backward compatible). */
@@ -452,7 +451,7 @@ async function incrCounters(store: LimitsStore, runId: string, delta: Partial<Li
   });
 }
 
-/** GOREV (distributed honesty — mirrors journal.ts claim()'s warn-once): the get→put fallbacks below
+/** (distributed honesty — mirrors journal.ts claim()'s warn-once): the get→put fallbacks below
  *  are SILENT degradations on custom journals that omit a CAS primitive (all first-party adapters
  *  provide them — see the parity matrix in journal.ts). Single-process they are safe; multi-worker
  *  they can lose updates. A degradation this consequential must be SAID once, not discovered in prod. */
@@ -541,7 +540,7 @@ function applyToolOutcomeToChain(
     }
     return { lastToolName: toolName, lastArgsHash: argsHash, consecutiveRepeats: 1, subRunIds };
   }
-  // GOREV (loop reflection): a 'reflected' record must NOT break the chain — the nudge is ABOUT this
+  // A 'reflected' record must NOT break the chain — the nudge is ABOUT this
   // very chain; resetting it would hand the model a fresh window of maxRepeats identical executions
   // right after being warned (the nudge would never escalate). Counts are PRESERVED, only the
   // "delivered" flag is set → checkToolGate escalates the next identical repeat to the hard block.
@@ -587,7 +586,7 @@ async function seedFromHistory(
     if (!e.key.startsWith(prefix)) continue; // unexpected key shape — skip (defensive, same as old behavior)
     const toolCallId = e.key.slice(prefix.length);
     const v = e.value as ToolJournalRecord | undefined;
-    // GOREV (audit C3): MUST match recordToolOutcome's live-increment rule EXACTLY so a first-encounter
+    // MUST match recordToolOutcome's live-increment rule EXACTLY so a first-encounter
     // seed reconstructs the SAME count — a succeeded call OR a failed SIDE-EFFECT attempt (the failed
     // record carries `sideEffect`; older records without it fall back to not-counted, matching pre-C3).
     if (v?.status === 'succeeded' || (v?.status === 'failed' && v.sideEffect === true)) counters.succeededToolCalls++;
@@ -624,7 +623,7 @@ async function ensureSeeded(
 }
 
 /**
- * FAN-OUT INHERITANCE (GOREV W1 design decision — see apiOrNotes): RECURSIVELY sums the usage of a
+ * FAN-OUT INHERITANCE (W1 design decision — see apiOrNotes): RECURSIVELY sums the usage of a
  * runId's sub-agent (agent-tool.ts `createAgentTool`/`runSubAgent`) runs. Sub-agent runIds are
  * DETERMINISTICALLY derived (`agent:${toolCallId}`, the SAME pattern as agent-tool.ts). O(1) `get`(s)
  * are read from EACH sub-run's OWN counter/chain key (since the sub-run inherits the SAME `limits`
@@ -838,7 +837,7 @@ export async function checkToolGate(
   if (maxRepeats != null && maxRepeats > 0) {
     const priorRepeats = chain.lastToolName === toolName && chain.lastArgsHash === hash ? chain.consecutiveRepeats : 0;
     if (priorRepeats >= maxRepeats) {
-      // GOREV (loop reflection, opt-in `onRepeat: 'reflect'`): at the threshold the model first gets ONE
+      // At the threshold the model first gets ONE
       // "reconsider" nudge (kind 'reflect' — the run continues); ONLY an identical repeat AFTER the nudge
       // (chain.reflected — set via recordToolOutcome/seedFromHistory) falls through to the hard block.
       // Note the reflected flag only matters while the chain MATCHES this tool+hash — a different call
@@ -905,7 +904,7 @@ export async function recordToolOutcome(
   toolName: string,
   hash: string,
   status: ToolJournalRecord['status'],
-  // GOREV (audit C3): whether the tool is a SIDE EFFECT (its execute was actually invoked). A side-effect
+  // Whether the tool is a SIDE EFFECT (its execute was actually invoked). A side-effect
   // tool that ended 'failed' still counts toward maxToolCalls — the effect may have executed BEFORE the
   // throw (chargeCard posts the charge then errors on the response). A read-only ('failed') tool does not
   // count (it did no effect). Default `false` → direct callers that omit it keep the old success-only

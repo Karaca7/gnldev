@@ -49,7 +49,7 @@ export type { WithIdempotencyOptions } from './idempotent-tools.js';
 export type { ModelInput, AnyTool, ToolSet } from './types.js';
 export { runDurable, resumeRun, streamDurable, limitBreachFromSteps, blockedFromSteps } from './run.js';
 export type { RunDurableArgs, StreamDurableArgs, DurableResult, ResumeAgentConfig, StreamBreach, MemoryContextRecord } from './run.js';
-// K1/GOREV W1 (B): sentinel→error conversion helper for code that consumes streamDurable directly.
+// K1/W1 (B): sentinel→error conversion helper for code that consumes streamDurable directly.
 export { streamFinishError } from './run.js';
 // Greenfield storage contracts (ports + Storage + capability + composite).
 export { CapabilityError, requireCapability, composite, toJournal, matchFilter } from './storage.js';

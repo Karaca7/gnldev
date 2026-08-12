@@ -1,4 +1,4 @@
-// GOREV W1: per-run cost ceiling + runaway protection. `limits` is OPT-IN — if not given, the old behavior
+// Per-run cost ceiling + runaway protection. `limits` is OPT-IN — if not given, the old behavior
 // is preserved EXACTLY. The count is computed deterministically from the step records in the journal (see limits.ts) →
 // on overflow the journal stays CONSISTENT (no half-step) and the limit can be raised and the SAME runId resumed.
 import { describe, it, expect } from 'vitest';
@@ -11,7 +11,7 @@ import { getRunCost } from '../src/cost.js';
 import { RunLimitExceededError, ToolLoopDetectedError } from '../src/limits.js';
 import { createMockModel, countToolResults, toolCallResult, finalTextResult } from './mock.js';
 
-describe('GOREV W1 — run limits (cost ceiling + loop detection + fan-out inheritance)', () => {
+describe('Run limits (cost ceiling + loop detection + fan-out inheritance)', () => {
   it('RunLimitExceededError on maxTokens overflow; journal stays consistent; limit can be raised and the SAME runId resumed', async () => {
     const journal = new InMemoryJournal();
     const calls: string[] = [];

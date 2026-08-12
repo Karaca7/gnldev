@@ -1,4 +1,4 @@
-// GOREV (audit C5 — budget fails OPEN on a journal without `listRuns`): getOrgUsage returns zero usage
+// GetOrgUsage returns zero usage
 // when it can't list runs, so isBudgetExceeded is always false — a configured budget silently never fires.
 // Mirror of C4: checkBudget now emits a LOUD one-time warn (once per store) naming the disabled cap.
 import { describe, it, expect, vi, afterEach } from 'vitest';
