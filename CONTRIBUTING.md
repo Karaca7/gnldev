@@ -30,7 +30,8 @@ pnpm test
 ```
 
 All four must pass before a PR is reviewed. See [docs/GUIDE.md](./docs/GUIDE.md) for the
-architecture walkthrough and [docs/RELEASE.md](./docs/RELEASE.md) for the release process.
+architecture walkthrough. Releases are cut by the maintainer from CI, so there is nothing a
+contributor needs to run for one.
 
 ## Reporting issues
 
