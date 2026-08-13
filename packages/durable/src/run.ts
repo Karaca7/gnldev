@@ -5,6 +5,9 @@ import { acquireRunLock } from './run-lock.js';
 import { RunBusyError, SideEffectRetryBlockedError, RetryLimitExceededError } from './errors.js';
 import { createProcessorCtx, composePrepareStep, composeOnStepFinish, durableProcessorStep, ProcessorRetry, RetryExhaustedByProcessorError } from './processor.js';
 import { loadReplayCache, runKeys, claim } from './journal.js';
+// Statically safe: model-router imports only ./journal, and the provider packages it can reach are
+// behind dynamic import(), so this costs the core bundle nothing.
+import { resolveModel } from './model-router.js';
 import { stampFormat, upgradeFormat } from './format.js';
 import { recordRunUsage } from './budget.js';
 import { recordRunMetrics } from './metrics.js';
@@ -933,8 +936,13 @@ export async function runDurable(args: RunDurableArgs): Promise<DurableResult> {
 }
 
 async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
-  const { journal, runId, guard, approvals, memory, threadId, resourceId, agentName, replay, lock: _lock, processors, schemaCompat, limits, exclusiveModelStep, replayCacheMaxBytes, toolPolicy, timeouts, model, tools, stopWhen, ...rest } =
+  const { journal, runId, guard, approvals, memory, threadId, resourceId, agentName, replay, lock: _lock, processors, schemaCompat, limits, exclusiveModelStep, replayCacheMaxBytes, toolPolicy, timeouts, model: modelInput, tools, stopWhen, ...rest } =
     args as RunDurableArgs & Record<string, any>;
+  // `ModelInput` is `LanguageModelV2 | string`, and until now only createGnl honoured the string
+  // half: passing 'nvidia/…' straight to runDurable type-checked and then died inside the AI SDK
+  // with "model.doGenerate is not a function", which tells a newcomer nothing about what they did
+  // wrong. Resolve it here so the published type is true wherever it appears.
+  const model = typeof modelInput === 'string' ? await resolveModel(modelInput) : modelInput;
   // AUDIT (approval first-class): BEFORE ctx is set up — claim the parameter's approvals into the
   // journal + merge with the journal's existing approvals (see the resolveApprovals header).
   const resolvedApprovals = await resolveApprovals(journal, runId, approvals);
