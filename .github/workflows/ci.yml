@@ -18,7 +18,14 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      # --frozen-lockfile only when there is a lockfile to be frozen against. This repository's
+      # history starts as a snapshot, and the lockfile is regenerated for the published package set
+      # at the tip — so a checkout of an older commit has none, and an unconditional --frozen-lockfile
+      # turns every historical revision permanently red for a reason that has nothing to do with it.
+      - run: |
+          if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile
+          else echo "::notice::no pnpm-lock.yaml at this revision — installing without --frozen-lockfile"
+               pnpm install --no-frozen-lockfile; fi
       - run: pnpm -r build
       - run: pnpm -r typecheck
       - run: pnpm test
@@ -56,7 +63,14 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      # --frozen-lockfile only when there is a lockfile to be frozen against. This repository's
+      # history starts as a snapshot, and the lockfile is regenerated for the published package set
+      # at the tip — so a checkout of an older commit has none, and an unconditional --frozen-lockfile
+      # turns every historical revision permanently red for a reason that has nothing to do with it.
+      - run: |
+          if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile
+          else echo "::notice::no pnpm-lock.yaml at this revision — installing without --frozen-lockfile"
+               pnpm install --no-frozen-lockfile; fi
       # Packages resolve each other through dist/ (main points at ./dist/index.js), so the test
       # cannot even be collected before a build: run.ts imports @gnldev/tool-schema and vite
       # fails with "Failed to resolve entry for package". The typecheck job builds as part of its

@@ -13,13 +13,28 @@ retrying. If you know the AI SDK, you already know this.
 ```ts
 import { runDurable } from '@gnldev/durable';
 import { SqliteStorage } from '@gnldev/durable/sqlite';
+import { openai } from '@ai-sdk/openai';
+import { tool } from 'ai';
+import { z } from 'zod';
+
+const chargeCard = tool({
+  description: "Charge the customer's card",
+  inputSchema: z.object({ amount: z.number() }),
+  sideEffect: true,                           // money moves: the journal gates it
+  execute: async ({ amount }) => payments.charge(amount),
+});
 
 const res = await runDurable({
   runId: 'order-123',                       // idempotency key (typically an orderId/sessionId)
   journal: new SqliteStorage('runs.db').runs,
-  model, tools: { chargeCard }, prompt: 'Cancel the order, suggest a similar product',
+  model: openai('gpt-4o'),
+  tools: { chargeCard },
+  prompt: 'Cancel the order, suggest a similar product',
 });
-// After a crash: call again with the SAME runId → the card is never charged a 2nd time, the loop resumes where it left off.
+// After a crash: call again with the SAME runId → the card is never charged a 2nd time.
+// Completed steps replay from the journal; only what never finished runs again. If the crash landed
+// in the window after the charge but before it was journaled, the resume THROWS
+// SideEffectRetryBlockedError rather than guess — see "What exactly-once actually means" below.
 ```
 
 ## Why? (the edge — code-verified)
@@ -82,7 +97,7 @@ suspending. For those, use `runDurable`. Runnable example (no API key):
 
 | Only us | Parity (+ durable twist) |
 |---|---|
-| exactly-once tool/model/MCP/RAG · **LLM-aware args-based idempotency** (`idempotency: 'args'` / `idempotencyKey` — dedups the model re-planning the same call under a new `toolCallId`) · deterministic replay (opt-in `replay: 'strict'` → `DivergenceError`; the default is lenient and only warns — replay is an **opt-in assurance**, not an imposed constraint) · time-travel + fork · **deterministic model fallback** (the winner is written to the journal, resume sticks with it) · **org-scoped journal** (`withOrg` — organization isolation + inherits exactly-once) · **edge-native**: **26.3 KiB gzip** core, **72.1 KiB** gzip including the AI SDK = 2.3% of the CF Workers free-tier limit (measured with `pnpm --filter @gnldev/showcase bundle`; a typical full-featured agent framework's build output is ~17.58 MiB raw) · durable queue (lock renewal via heartbeat) · event bus (exactly-once marking + at-least-once delivery) · cross-network A2A (opt-in HMAC-SHA256 signing) · idempotent OTEL · cross-run cache · outbound-call **timeouts** (`timeouts: {modelStepMs,toolMs,claimTtlMs}` → `StepTimeoutError`) · **fail-closed auth** (setup errors out in production if no provider is configured) · **approval decisions are first-class in the journal** (in the approved-but-crashed-before-the-tool-ran scenario, resume applies the decision from the journal even if the `approvals` parameter isn't passed) | agent loop · **requestContext DI** (dynamic model/system/tools) · memory (recall/schema-WM/thread/OM) · workflows (evented) · MCP (client+server) · evals (+datasets) · auto-REST/OpenAPI (409/422 resumable contract) · processors · RAG (+rerank) · cost ledger |
+| exactly-once tool/model/MCP/RAG · **LLM-aware args-based idempotency** (`idempotency: 'args'` / `idempotencyKey` — dedups the model re-planning the same call under a new `toolCallId`) · deterministic replay (opt-in `replay: 'strict'` → `DivergenceError`; the default is lenient and only warns — replay is an **opt-in assurance**, not an imposed constraint) · time-travel + fork · **deterministic model fallback** (the winner is written to the journal, resume sticks with it) · **org-scoped journal** (`withOrg` — organization isolation + inherits exactly-once) · **edge-native**: **26.4 KiB gzip** core, **72.3 KiB** gzip including the AI SDK = 2.4% of the CF Workers free-tier limit (measured with `pnpm --filter @gnldev/showcase bundle`; a typical full-featured agent framework's build output is ~17.58 MiB raw) · durable queue (lock renewal via heartbeat) · event bus (exactly-once marking + at-least-once delivery) · cross-network A2A (opt-in HMAC-SHA256 signing) · idempotent OTEL · cross-run cache · outbound-call **timeouts** (`timeouts: {modelStepMs,toolMs,claimTtlMs}` → `StepTimeoutError`) · **fail-closed auth** (setup errors out in production if no provider is configured) · **approval decisions are first-class in the journal** (in the approved-but-crashed-before-the-tool-ran scenario, resume applies the decision from the journal even if the `approvals` parameter isn't passed) | agent loop · **requestContext DI** (dynamic model/system/tools) · memory (recall/schema-WM/thread/OM) · workflows (evented) · MCP (client+server) · evals (+datasets) · auto-REST/OpenAPI (409/422 resumable contract) · processors · RAG (+rerank) · cost ledger |
 
 ## Requirements
 
@@ -118,7 +133,7 @@ for await (const ev of gnl.stream('assistant', { prompt: 'streaming' })) { /* te
 | **`@gnldev/rag`** | vector store (dev: in-memory · **prod: pgvector**) · **`chunkText`/`chunkDocuments`** (recursive/markdown/character) · **`GraphRag`** (similarity-graph retrieval) · `createRagTool` · `llmReranker` · `SemanticMemory` |
 | **`@gnldev/workflow`** | then/parallel/branch · foreach/loop · **`retry` (declarative retry policy, counter kept in the journal)** · `runResumable` + `sleep`/`waitFor` (evented/scheduled) |
 | **`@gnldev/processors`** | piiRedactor · moderation · toolFilter · **`toolSearch` (semantic tool selection, journaled)** · tokenLimit · promptInjection · outputLimit |
-| **`@gnldev/evals`** | **8 built-in scorers** (faithfulness/hallucination/…) · llmJudge · `scoreRun` · `evalDataset` (resumable) · **`createDatasetsManager`** (version history + experiment `compare`) |
+| **`@gnldev/evals`** | **16 built-in scorers** — 8 LLM-judge (faithfulness/hallucination/…), 4 model-free text, 4 rule-based · llmJudge · `scoreRun` · `evalDataset` (resumable) · **`createDatasetsManager`** (version history + experiment `compare`) |
 | **`@gnldev/mcp`** | MCP client (`mcpTools`) **+ server** (`createMcpServer`, server-side exactly-once) |
 | **`@gnldev/server`** | `createRestApi` + OpenAPI · **fail-closed auth** (setup errors out in production if no provider is configured; opt in explicitly with `allowOpenAccess: true`) · **409/422 resumable contract** (blocked/limit errors return `resumable`/`retry` from a single `BLOCKED_ERROR_CODES` source of truth) |
 | **`@gnldev/otel`** | `exportRunToOtlp` + **`otlpPresets`** (Langfuse/Braintrust/Honeycomb/Datadog/Collector + generic API-key OTLP) · **live mode** (`@gnldev/otel/live`) |

@@ -25,12 +25,13 @@ serve({ fetch: api.fetch, port: 3000 });        // on its own port
 bridge on this package's own subpath:
 
 ```ts
+import { createServer } from 'node:http';
 import { toNodeHandler } from '@gnldev/server/node';
 
 express().use('/api', toNodeHandler(api));                            // Express
 await fastify.register(middie); fastify.use('/api', toNodeHandler(api));   // Fastify + @fastify/middie
 koa.use(c2k((req, res, _next) => toNodeHandler(api)(req, res)));      // Koa + koa-connect
-createRestApi(toNodeHandler(api));                                     // node:http
+createServer(toNodeHandler(api)).listen(3000);                        // node:http
 nestApp.use('/api', toNodeHandler(api));                              // Nest (Express or Fastify)
 ```
 

@@ -44,15 +44,15 @@ describe('gnl init --host', () => {
   });
 
   it('says where the choice applies — and where it does not', () => {
-    // Asking "which server?" is a promise. It does not hold on the managed cloud, where the runtime
-    // is ours, and it does not apply on the edge, where no Node framework runs. A user who picks
-    // Fastify, deploys to a managed host and finds the choice ignored was mis-sold by the question.
+    // Asking "which server?" is a promise, and it does not apply on the edge, where no Node
+    // framework runs at all. A user who picks Fastify, deploys to Workers and finds the choice
+    // ignored was mis-sold by the question.
     const dir = fresh();
     scaffold(dir, { template: 'minimal', host: 'fastify' });
     const readme = readFileSync(join(dir, 'README.md'), 'utf8');
     expect(readme).toContain('Fastify');
-    expect(readme).toMatch(/a managed host.*(does not|Hono)/s);
     expect(readme).toMatch(/edge/i);
+    expect(readme).toMatch(/fetch handler/i);
   });
 
   it('writes nothing server-shaped when no host is chosen', () => {

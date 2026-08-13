@@ -23,7 +23,7 @@ Picture an agent: it charges $20 from a customer's card, then sends an invoice e
 a note in the CRM (customer relationship system). Three steps, three **side effects** (side effect:
 an operation that changes the outside world and cannot be undone).
 
-Scenario: card charged ✅ → email sent ✅ → **server crashes** 💥 right while writing to the CRM.
+Scenario: card charged ✅ → email sent ✅ → **server crashes** 💥 before the CRM note is written.
 
 Now what?
 
@@ -37,13 +37,43 @@ Most frameworks don't fully answer this question. GNL's answer:
 Re-run the agent with the SAME runId.
 → Card charge: found in the journal → SKIPPED (not charged again, the recorded result is used)
 → Email:       found in the journal → SKIPPED
-→ CRM note:    NOT recorded → runs now ✅
+→ CRM note:    never started → runs now ✅
 ```
 
-This is called **exactly-once** (each side effect runs neither too few nor too many times — exactly
-once) and **deterministic replay** (when the same run is repeated, the same outcome is reconstructed
-from the journal's records without going back to the LLM or the tools). **This is GNL's "moat"**
+This is **deterministic replay**: the same run repeated reconstructs the same outcome from the
+journal's records, without going back to the LLM or the tools. Steps that finished are skipped;
+steps that never began run.
+
+### The case that sentence quietly skipped
+
+The crash above lands *between* steps, which is the easy half. The hard half is a crash **inside**
+one — the CRM write goes out, and the process dies before its result reaches the journal. Resume
+now faces a step it cannot classify: it may have happened, it may not.
+
+GNL does not guess in either direction. For a tool that has side effects it **blocks and asks**,
+throwing `SideEffectRetryBlockedError`:
+
+```ts
+import { SideEffectRetryBlockedError } from '@gnldev/durable';
+
+try {
+  await runDurable({ runId: 'order-42', journal, model, tools, prompt });
+} catch (e) {
+  if (!(e instanceof SideEffectRetryBlockedError)) throw e;
+  // e.detail.key names the call in doubt. Resolve it one of three ways:
+  //   1. tool.recover()  — re-check the provider; returns {done:true, output} or {done:false}
+  //   2. tool.idempotent: true — safe to repeat, so just repeat it
+  //   3. approvals: { [toolCallId]: true } — a human decided
+}
+```
+
+So the honest name for the guarantee is **at-most-once**: a side effect never runs twice, and where
+the framework cannot tell, it stops rather than risk it. That is a deliberate trade — correctness
+over seamlessness — and it is why the resume is not always invisible. **This is GNL's "moat"**
 (a moat: a structural advantage that is hard to copy without making the same design bet).
+
+Every tool is treated as side-effecting unless it says otherwise (`durable-tool.ts`:
+`tool.sideEffect ?? tool.idempotent !== true`), so this is the default path, not an edge case.
 
 ---
 
@@ -172,7 +202,7 @@ const storage = composite({
 
 ### 5.3 Concrete table structures — which table is used for what, and when?
 
-The SQLite and Postgres adapters create **11 tables** with identical names on first startup
+The SQLite and Postgres adapters create **12 tables** with identical names on first startup
 (`init()` — idempotent: if a table exists, it's left untouched). How the ports map to tables:
 
 ```mermaid
@@ -471,18 +501,22 @@ same score (and no money is burned again).
 ### 7.8 Server, client, Studio
 
 ```ts
-// Server: turns a registry into an automatic REST API (with an OpenAPI schema):
+// Server: turns the CONFIG (not the registry instance) into an automatic REST API + OpenAPI schema.
 import { createRestApi } from '@gnldev/server';
-serve(createRestApi(gnl));                      // POST /agents/assistant/run, SSE stream, /metrics...
+import { serve } from '@hono/node-server';
+const api = createRestApi(config);              // the same object you passed to createGnl
+serve({ fetch: api.fetch, port: 3000 });        // POST /agents/assistant/run, SSE stream, /metrics...
 
 // Client (browser/React):
 import { GnlClient } from '@gnldev/client';
-const api = new GnlClient('http://localhost:3000');
-await api.run('assistant', { prompt: '...' });
+const client = new GnlClient({ baseUrl: 'http://localhost:3000' });
+await client.run('assistant', { runId: 'order-42', prompt: '...' });
+// runId is optional — omit it and the client generates one, which means a retry is a NEW run and
+// gets no exactly-once protection. Pass your own whenever the call has a side effect.
 
 // Studio: web control panel — npx @gnldev/studio --db runs.db
 // (or --config gnl.config.ts, which also serves the Playground; it needs one or the other)
-// 15 views: run timeline, TIME-TRAVEL (jump back to a past step and FORK from there),
+// 18 views: run timeline, TIME-TRAVEL (jump back to a past step and FORK from there),
 // approval queue, cost, traces, tenant/budget management, network tree, playground...
 ```
 
@@ -538,7 +572,7 @@ buys the first list and costs the second.
 | **Model fallback is persistent** | The model that actually won is written to the journal; a resume sticks with it instead of re-rolling the dice |
 | **Dynamic agent-network decisions are frozen** | A routing decision made once is recorded, so a replay follows the same path |
 | **Resumable evals** | A test suite continues where it stopped instead of starting over |
-| **Governance surface** | Studio ships 15 views: approval queue, policy, budget, audit, regression comparison |
+| **Governance surface** | Studio ships 18 views: approval queue, policy, budget, audit, regression comparison |
 | **Edge-native** | A thin core with optional dependencies, small enough to run inside a Workers-class bundle |
 
 **What it cost — deliberately, not by omission**
@@ -873,7 +907,7 @@ former; it's tested with the latter.
 | Storage | SQLite / PostgreSQL / Redis | The adapters from §5; all OPTIONAL dependencies (a driver you don't use is never loaded — lazy import). |
 | Serialization | superjson | Record-to-text conversion; unlike plain JSON, it doesn't lose types like `Date`. |
 | Testing | Vitest + pg-mem + Docker | 2000+ tests; pg-mem = an in-memory fake Postgres (fast); Docker compose files = REAL PG/Redis integration + a live failover scenario. |
-| Bundling | esbuild | `bundleApp`: compiles to a single file (used by deploy targets). |
+| Bundling | — | Not needed: `createRestApi()` returns a web-standard fetch handler, so each platform bundles it the way it already bundles anything else. |
 | Studio UI | React + TanStack Query + Recharts | The panel's front end: UI + data fetching/caching + charts. |
 | Observability | OTLP/HTTP (hand-rolled, ~8KB) | Sends traces to external tools; a hand-written translator instead of the massive OTel SDK (the stay-thin philosophy). Live mode also optionally uses the OTel SDK. |
 | Protocols | MCP · A2A · AG-UI · OpenAPI | Attaching external tools · remote agent calls · CopilotKit bridge · machine-readable API schema. |

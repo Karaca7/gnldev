@@ -9,7 +9,7 @@ instead and open `/studio`.
 
 ## What it renders
 
-Fifteen views over a run journal, including:
+Eighteen views over a run journal, including:
 
 - **Playground** — talk to an agent and watch the journal fill in
 - **Inspector** — a run step by step, with time-travel and fork from any point

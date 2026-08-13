@@ -168,7 +168,7 @@ const storage = composite({
 
 ### 5.3 Somut tablo yapıları — hangi tablo ne için, ne zaman kullanılır?
 
-SQLite ve Postgres adaptörleri ilk açılışta AYNI adlarla **11 tablo** kurar (`init()` — idempotent:
+SQLite ve Postgres adaptörleri ilk açılışta AYNI adlarla **12 tablo** kurar (`init()` — idempotent:
 tablo varsa dokunmaz). Limanların tablolara dağılımı:
 
 ```mermaid
@@ -843,7 +843,7 @@ Tek cümlelik özet: **resume = geçmişe sadakat (üretim güvenliği), replay/
 | Depolama | SQLite / PostgreSQL / Redis | §5'teki adaptörler; hepsi OPSİYONEL bağımlılık (kullanmadığın sürücü yüklenmez — lazy import). |
 | Serileştirme | superjson | Kayıt→metin çevirimi; düz JSON'dan farkı `Date` gibi tipleri kaybetmemesi. |
 | Test | Vitest + pg-mem + Docker | 2000+ test; pg-mem = bellek-içi sahte Postgres (hızlı); Docker compose'ları = GERÇEK PG/Redis entegrasyonu + canlı failover senaryosu. |
-| Paketleme | esbuild | `bundleApp`: tek dosyaya derleme (deploy hedefleri kullanır). |
+| Paketleme | — | Gerekmiyor: `createRestApi()` web standardı bir fetch handler döndürüyor, her platform onu zaten kendi yöntemiyle paketliyor. |
 | Studio arayüzü | React + TanStack Query + Recharts | Panel ön yüzü: arayüz + veri çekme/önbellek + grafikler. |
 | Gözlemlenebilirlik | OTLP/HTTP (elle, ~8KB) | İzleri dış araçlara gönderme; koca OTel SDK yerine elle yazılmış çevirici (ince-kal felsefesi). Canlı mod ayrıca OTel SDK'sını opsiyonel kullanır. |
 | Protokoller | MCP · A2A · AG-UI · OpenAPI | Dış araç takma · uzak ajan · CopilotKit köprüsü · makine-okur API şeması. |

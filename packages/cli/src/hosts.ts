@@ -30,9 +30,9 @@ export interface HostRecipe {
 
 const APP_TS = `// The GNL surface, with no server attached.
 //
-// Kept separate from src/server.ts on purpose: this file is what runs on the edge (Workers, Vercel)
-// none of which uses a Node HTTP framework. Your server
-// choice lives next door and does not reach in here.
+// Kept separate from src/server.ts on purpose: this file is what runs on the edge (Workers, Vercel,
+// Deno, Bun), none of which uses a Node HTTP framework. Your server choice lives next door and does
+// not reach in here.
 import { createGnl, toJournal } from '@gnldev/durable';
 import type { CreateGnlConfig } from '@gnldev/durable';
 import { createRestApi } from '@gnldev/server';
@@ -284,10 +284,10 @@ export function hostReadme(host: HostRecipe): string {
     'gnl dev                   # development: REST + Studio on one port, no server file involved',
     '```',
     '',
-    '**Where the choice applies.** On your own machine, VPS, container or Fly — entirely: the file above',
-    'is what runs. On **edge targets** no Node framework runs at all',
-    'supplies the agents and config, and `src/server.ts` is not used. On **edge targets** (Workers,',
-    'Vercel, Netlify) no Node framework runs at all — `src/app.ts` is exported directly.',
+    '**Where the choice applies.** On your own machine, VPS, container or any Node host — entirely:',
+    'the file above is what runs. On **edge targets** (Workers, Vercel, Netlify, Deno, Bun) no Node',
+    'framework runs at all — `src/app.ts` is exported directly, because createRestApi() returns a',
+    'web-standard fetch handler and that is all those platforms need.',
     '',
   ].join('\n');
 }

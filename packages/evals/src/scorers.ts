@@ -1,4 +1,5 @@
-// Built-in LLM-judge scorers (18 built-in scorers — see internal audit notes §1.3).
+// The 8 built-in LLM-judge scorers. @gnldev/evals also ships 4 model-free text scorers
+// (text-scorers.ts) and 4 rule-based ones (exactMatch/contains/regexScore/embeddingSimilarity).
 // Each factory WRAPS `llmJudge` with a suitable rubric — it does NOT call generateText directly. This
 // means `scoreRun`/journal memoization (see score-run.ts) and dataset resume (see dataset.ts) work
 // identically for these scorers with no extra work.

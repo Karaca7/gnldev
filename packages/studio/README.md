@@ -3,7 +3,7 @@
 Durable run **inspector + Playground**. Run history from the journal: timeline, time-travel, reconstructed
 state, cost, an OTEL-like trace waterfall, fork, approval (resume). **Playground** (when `gnl` is given):
 pick an agent from the browser → prompt → **streaming** response → interrupt approval → that run's trace.
-Single-file inline UI (no build step).
+The UI is @gnldev/studio-ui — a React + Vite build, served as prebuilt static assets. It must be built before running; without it the server answers with a "dist not found" page.
 
 ```bash
 npm i @gnldev/studio   # peer/dep: @gnldev/durable, hono, @hono/node-server
@@ -31,12 +31,13 @@ whatever your app already runs on:
 app.mount('/studio', studio);
 
 // Express, Fastify, Koa, Nest, bare node:http — anything on Node
+import { createServer } from 'node:http';
 import { toNodeHandler } from '@gnldev/studio/node';
 express().use('/studio', toNodeHandler(studio));       // mount BEFORE express.json()
 await fastify.register(middie);                        // @fastify/middie
 fastify.use('/studio', toNodeHandler(studio));
 koa.use(c2k(mw));                                      // koa-connect, before koa-bodyparser
-createRestApi(toNodeHandler(studio));
+createServer(toNodeHandler(studio)).listen(4321);      // node:http
 
 // On its own port
 serve({ fetch: studio.fetch, port: 4321 });
