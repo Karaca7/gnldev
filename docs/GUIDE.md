@@ -480,7 +480,8 @@ import { GnlClient } from '@gnldev/client';
 const api = new GnlClient('http://localhost:3000');
 await api.run('assistant', { prompt: '...' });
 
-// Studio: web control panel — npx @gnldev/studio
+// Studio: web control panel — npx @gnldev/studio --db runs.db
+// (or --config gnl.config.ts, which also serves the Playground; it needs one or the other)
 // 15 views: run timeline, TIME-TRAVEL (jump back to a past step and FORK from there),
 // approval queue, cost, traces, tenant/budget management, network tree, playground...
 ```

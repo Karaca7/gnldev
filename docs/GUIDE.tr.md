@@ -466,7 +466,8 @@ import { GnlClient } from '@gnldev/client';
 const api = new GnlClient('http://localhost:3000');
 await api.run('asistan', { prompt: '...' });
 
-// Studio: web kontrol paneli — npx @gnldev/studio
+// Studio: web kontrol paneli — npx @gnldev/studio --db runs.db
+// (ya da --config gnl.config.ts; o zaman Playground da açılır. Biri mutlaka gerekir)
 // 15 görünüm: koşu zaman çizelgesi, TIME-TRAVEL (geçmiş bir adıma dönüp oradan ÇATALLAMA),
 // onay kuyruğu, maliyet, izler, tenant/bütçe yönetimi, ağ ağacı, playground...
 ```

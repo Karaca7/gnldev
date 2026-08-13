@@ -178,7 +178,9 @@ const tools = durableTools(myTools, { journal, runId });
 
 - **`gnl chat`** — durable agent terminal REPL (crash & resume, inline tool/cost). `gnl chat --db runs.db`
 - **`@gnldev/studio`** (separate package) — web UI: runs/timeline + **time-travel** + approval queue.
-  `npx @gnldev/studio`
+  `npx @gnldev/studio --db runs.db` — point it at the journal you passed to `runDurable`.
+  With a config file instead (`--config gnl.config.ts`) it also serves the Playground. Bare
+  `npx @gnldev/studio` has nothing to read and prints its usage.
 
 ## Examples
 
