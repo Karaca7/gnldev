@@ -2,9 +2,6 @@
   "name": "@gnldev/client",
   "version": "0.1.0",
   "license": "Apache-2.0",
-  "engines": {
-    "node": ">=22.5.0"
-  },
   "description": "Type-safe REST/SSE client for @gnldev/server agents: framework-agnostic core + React hooks.",
   "keywords": [
     "ai",

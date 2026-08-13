@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "license": "Apache-2.0",
   "engines": {
-    "node": ">=22.5.0"
+    "node": ">=22.13.0"
   },
   "description": "AG-UI (CopilotKit) protocol adapter: converts @gnldev/server SSE contract to AG-UI event sequences + Hono endpoint factory.",
   "keywords": [

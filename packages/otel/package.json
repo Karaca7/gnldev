@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "license": "Apache-2.0",
   "engines": {
-    "node": ">=22.5.0"
+    "node": ">=22.13.0"
   },
   "description": "OpenTelemetry trace exporter for @gnldev/durable. Journal → OTEL spans (deterministic ids = idempotent, crash-proof, exactly-once observability).",
   "keywords": [

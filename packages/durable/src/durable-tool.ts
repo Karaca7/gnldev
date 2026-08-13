@@ -565,6 +565,28 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
         if (sideEffect && uncertain && approved !== true && typeof tool.recover === 'function') {
           try {
             const probe = await tool.recover(input, { idempotencyKey, toolCallId });
+            // The contract is `{done:true, output} | {done:false}`, and the branch below reads
+            // `probe.done`. Anything else — `{ok:true, chargeId}` (what a payment SDK actually
+            // hands back), undefined, a string — is falsy there and would fall straight into
+            // "it never happened, run it again", charging the card a second time.
+            //
+            // Nothing upstream can stop that: `tools` is the AI SDK's ToolSet, which has no
+            // `recover` field, so a wrong shape (or a misspelt `recovr`) type-checks clean. So the
+            // shape is checked HERE, and an answer we cannot read is treated as what it is — the
+            // provider did not tell us — which is the same case as recover() throwing: the
+            // approval gate, never a silent re-run.
+            const answered =
+              typeof probe === 'object' && probe !== null &&
+              (('done' in probe && (probe as any).done === false) ||
+               ('done' in probe && (probe as any).done === true));
+            if (!answered) {
+              throw new TypeError(
+                `@gnldev/durable: '${toolName}' recover() must return {done:true, output} or {done:false}; ` +
+                `got ${probe === null ? 'null' : typeof probe}` +
+                (typeof probe === 'object' && probe !== null ? ` with keys [${Object.keys(probe).join(', ')}]` : '') +
+                `. Treating it as "could not determine" and asking for approval rather than re-running a side effect.`,
+              );
+            }
             if (probe.done) {
               const output = probe.output;
               await writeToolTerminal(ctx, key, {

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "license": "Apache-2.0",
   "engines": {
-    "node": ">=22.5.0"
+    "node": ">=22.13.0"
   },
   "description": "Remote agent-to-agent tool over @gnldev/server REST. Deterministic remote runId → exactly-once across the network.",
   "keywords": [

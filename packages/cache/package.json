@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "license": "Apache-2.0",
   "engines": {
-    "node": ">=22.5.0"
+    "node": ">=22.13.0"
   },
   "description": "Cross-run content-hash cache on @gnldev/durable. Within-run reuse = journal replay; across-run reuse = cache.",
   "keywords": [

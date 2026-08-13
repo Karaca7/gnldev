@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "license": "Apache-2.0",
   "engines": {
-    "node": ">=22.5.0"
+    "node": ">=22.13.0"
   },
   "description": "Auth contract (AuthProvider) + free role-based default (bearer/basic, read/write). Open-core seam: @gnldev/auth-ee plugs into the same interface.",
   "keywords": [

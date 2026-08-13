@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "license": "Apache-2.0",
   "engines": {
-    "node": ">=22.5.0"
+    "node": ">=22.13.0"
   },
   "description": "Durable background-task queue + worker on @gnldev/durable. Jobs run as durable runs → crash mid-job resumes exactly-once.",
   "keywords": [
