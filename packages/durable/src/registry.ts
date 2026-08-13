@@ -8,6 +8,7 @@ import { runNetwork as runNetworkCore, type NetworkResult, type NetworkTarget } 
 import { durableProcessorStep } from './processor.js';
 import { recordRunScores } from './metrics.js';
 import { assertSuiteConsistent } from './suite-consistency.js';
+import type { ToolSchemaRule } from '@gnldev/tool-schema';
 import type { Journal } from './journal.js';
 import type { Storage } from './storage.js';
 import type { Guard } from './guard.js';
@@ -283,6 +284,16 @@ export interface CreateGnlConfig {
    * a new opt-in check, not a new implicit requirement.
    */
   checkSuiteConsistency?: boolean | 'throw';
+  /**
+   * Provider-specific tool-schema compatibility, same meaning as runDurable's option: `true` for the
+   * default rule set, or an explicit list. Applies to every agent this registry runs.
+   *
+   * It is declared here because @gnldev/tool-schema's README documents exactly this call —
+   * `createGnl({ ...config, schemaCompat: defaultRules })` — and until now the registry forwarded a
+   * fixed allowlist of options to runDurable that did not include it, so the package's only
+   * documented integration was silently doing nothing.
+   */
+  schemaCompat?: boolean | ToolSchemaRule[];
 }
 
 /**
@@ -507,6 +518,7 @@ export function createGnl(config: CreateGnlConfig) {
       ...(opts.lock ? { lock: opts.lock } : {}), // : forward the distributed run-lock to runDurable (see the RunOptions.lock note)
       // AUDIT E1: forward the protections that were previously runDurable-only.
       ...(opts.toolPolicy ? { toolPolicy: opts.toolPolicy } : {}),
+      ...(config.schemaCompat ? { schemaCompat: config.schemaCompat } : {}),
       ...(opts.replay ? { replay: opts.replay } : {}),
       ...(opts.timeouts ? { timeouts: opts.timeouts } : {}),
       ...(opts.exclusiveModelStep ? { exclusiveModelStep: opts.exclusiveModelStep } : {}),

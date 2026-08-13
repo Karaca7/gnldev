@@ -10,21 +10,26 @@ npm i @gnldev/queue   # peer: @gnldev/durable
 import { enqueue, createWorker } from '@gnldev/queue';
 import { SqliteStorage } from '@gnldev/durable/sqlite';
 
-const journal = new SqliteStorage('runs.db').runs;
+const storage = new SqliteStorage('runs.db');
 
-// Producer: idempotent enqueue (same id → single job).
-await enqueue(journal, 'send-email', { to: 'a@x.com' }, { id: 'email:order-1' });
+// Producer: idempotent enqueue (same id → single job). Takes the WORK store, not the run journal.
+await enqueue(storage.work, 'send-email', { to: 'a@x.com' }, { id: 'email:order-1' });
 
-// Consumer: retried on handler crashes (dead-letter after maxAttempts).
-const worker = createWorker(journal, {
-  'send-email': async (payload, ctx) => { await sendEmail(payload); },
+// Consumer: retried on handler crashes (dead-letter after maxAttempts). Takes the whole storage —
+// it needs the work store to lock jobs and the run journal to make the side effect exactly-once.
+const worker = createWorker(storage, {
+  // A bare `await sendEmail(...)` here is AT-LEAST-once: a crash after the send but before the
+  // job is acked reclaims the lock and calls the handler again. Route through runDurable with a
+  // stable runId, and the send happens once.
+  'send-email': async (payload, ctx) =>
+    runDurable({ runId: ctx.runId, journal: storage.runs, model, tools, prompt: '...' }),
 });
 await worker.runOnce();   // or worker.start() (poll loop)
 ```
 
 ## API
-- `enqueue(journal, type, payload, { id? }) → jobId`
-- `createWorker(journal, handlers, opts?) → { runOnce, start, stop }` — `opts`: `owner`, `ttlMs` (stale lock reclaim), `pollMs`, `maxAttempts`, `onError`, `backoff`, `maxPollMs`, `heartbeat`
+- `enqueue(work, type, payload, { id? }) → jobId` — `work` is `storage.work`
+- `createWorker(storage, handlers, opts?) → { runOnce, start, stop }` — `opts`: `owner`, `ttlMs` (stale lock reclaim), `pollMs`, `maxAttempts`, `onError`, `backoff`, `maxPollMs`, `heartbeat`
 - `JobCtx` gives the handler `{ journal, jobId, runId }` — the handler typically calls `runDurable({ runId, ... })` to make the side effect exactly-once.
 
 ## How it works

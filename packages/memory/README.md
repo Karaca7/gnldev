@@ -7,7 +7,7 @@ import { AgentMemory } from '@gnldev/memory';
 import { z } from 'zod';
 
 const mem = new AgentMemory({
-  journal,
+  storage,                                // the Storage, not storage.runs — memory needs its own port
   embed,                                  // text → number[] (AI SDK embed or your own fn)
   recentN: 6,
   recall: { topK: 3, messageRange: 1, threshold: 0.2, scope: 'resource' },

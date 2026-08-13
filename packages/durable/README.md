@@ -47,9 +47,28 @@ const res = await runDurable({ runId: 'order-123', journal, model, tools, prompt
 > already completed, it's replayed and skipped. But if the crash lands in the narrow window *after* the
 > charge executed and *before* its success was journaled, resume can't know whether the charge went
 > through — so for a side-effect tool with no `recover()` and no `idempotent`/approval, it does **not**
-> silently re-run and does **not** silently continue: it **blocks and asks a human** (`SideEffectRetryBlockedError`,
-> surfaced in `result.interrupts`). Safe direction (never a double charge), but resume is not always seamless
-> — supply `tool.recover?()` (re-checks the provider) to auto-resolve that window without a human.
+> silently re-run and does **not** silently continue: it **blocks and asks a human**. Safe direction
+> (never a double charge), but resume is not always seamless.
+>
+> Concretely, `runDurable` **throws** `SideEffectRetryBlockedError` — it does not come back in
+> `result.interrupts`, which carries approval suspensions only. Catch it:
+>
+> ```ts
+> import { SideEffectRetryBlockedError } from '@gnldev/durable';
+>
+> try {
+>   await runDurable({ runId: 'order-123', journal, model, tools, prompt });
+> } catch (e) {
+>   if (e instanceof SideEffectRetryBlockedError) {
+>     // e.detail.key names the tool call that is in doubt. Ask an operator, then re-run with
+>     // approvals: { [toolCallId]: true } — or give the tool a recover() so this resolves itself.
+>   } else throw e;
+> }
+> ```
+>
+> `recover()` is the way to avoid the human: it re-checks the provider and must return
+> `{ done: true, output }` or `{ done: false }`. Any other shape is treated as "could not
+> determine" and lands back on this same gate rather than re-running the effect.
 
 If you know `generateText`, you already know this — same arguments, same return type. The only addition:
 `runId` + `journal`.

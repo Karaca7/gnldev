@@ -20,6 +20,7 @@ It is opt-in from `@gnldev/durable`:
 import { defaultRules } from '@gnldev/tool-schema';
 
 const gnl = createGnl({ ...config, schemaCompat: defaultRules });
+// or per call: runDurable({ runId, journal, model, tools, schemaCompat: true, prompt })
 ```
 
 Or directly:

@@ -17,11 +17,11 @@ import { scheduleWorkflow, createScheduler, pollScheduler } from '@gnldev/schedu
 await scheduleWorkflow(journal, {
   id: 'nightly-invoices',
   cron: '0 3 * * *',
-  workflow: 'invoices',
+  name: 'invoices',          // the workflow name handed to runner.runWorkflow
 });
 
-// in your worker loop
-setInterval(() => pollScheduler(journal, { run: runWorkflow }), 30_000);
+// in your worker loop. The runner is an object with runWorkflow — createGnl() is one.
+setInterval(() => pollScheduler(journal, gnl), 30_000);
 ```
 
 Two workers polling at the same moment do not both fire the job: the winner is decided by the same
