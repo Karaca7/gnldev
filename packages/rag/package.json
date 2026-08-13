@@ -6,6 +6,18 @@
     "node": ">=22.5.0"
   },
   "description": "Vector store + RAG tool for AI SDK agents. Used as a tool, it becomes replayable/exactly-once RAG with @gnldev/durable.",
+  "keywords": [
+    "ai",
+    "agent",
+    "llm",
+    "typescript",
+    "ai-sdk",
+    "durable",
+    "exactly-once",
+    "retrieval",
+    "embeddings",
+    "vector-search"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

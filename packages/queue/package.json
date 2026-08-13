@@ -6,6 +6,18 @@
     "node": ">=22.5.0"
   },
   "description": "Durable background-task queue + worker on @gnldev/durable. Jobs run as durable runs → crash mid-job resumes exactly-once.",
+  "keywords": [
+    "ai",
+    "agent",
+    "llm",
+    "typescript",
+    "ai-sdk",
+    "durable",
+    "exactly-once",
+    "jobs",
+    "worker",
+    "background-jobs"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

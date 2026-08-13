@@ -6,6 +6,17 @@
     "node": ">=22.5.0"
   },
   "description": "Vercel AI SDK `useChat` compatibility for @gnldev/durable agents: UI message stream conversion (with sentinel masking), journal→UIMessage history reconstruction, and a Hono chat route.",
+  "keywords": [
+    "ai",
+    "agent",
+    "llm",
+    "typescript",
+    "ai-sdk",
+    "durable",
+    "exactly-once",
+    "usechat",
+    "ui-stream"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

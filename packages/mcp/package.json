@@ -6,6 +6,17 @@
     "node": ">=22.5.0"
   },
   "description": "MCP client → AI SDK tools. With @gnldev/durable, external MCP tool calls become exactly-once + replayable.",
+  "keywords": [
+    "ai",
+    "agent",
+    "llm",
+    "typescript",
+    "ai-sdk",
+    "durable",
+    "exactly-once",
+    "model-context-protocol",
+    "tools"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

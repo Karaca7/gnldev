@@ -6,6 +6,18 @@
     "node": ">=22.5.0"
   },
   "description": "Rich semantic-recall memory for @gnldev/durable: schema working memory, thread/resource mgmt, observational memory — all journaled (replayable/exactly-once).",
+  "keywords": [
+    "ai",
+    "agent",
+    "llm",
+    "typescript",
+    "ai-sdk",
+    "durable",
+    "exactly-once",
+    "conversation-memory",
+    "threads",
+    "recall"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

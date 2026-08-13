@@ -6,6 +6,19 @@
     "node": ">=22.5.0"
   },
   "description": "Exactly-once + deterministic-replay durability layer for Vercel AI SDK agents. Drop-in: generateText -> runDurable.",
+  "keywords": [
+    "ai",
+    "agent",
+    "llm",
+    "typescript",
+    "ai-sdk",
+    "durable",
+    "exactly-once",
+    "journal",
+    "replay",
+    "idempotency",
+    "crash-recovery"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

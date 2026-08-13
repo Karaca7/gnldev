@@ -6,6 +6,17 @@
     "node": ">=22.5.0"
   },
   "description": "React+Vite SPA for @gnldev/studio (served as prebuilt static by @gnldev/studio).",
+  "keywords": [
+    "ai",
+    "agent",
+    "llm",
+    "typescript",
+    "ai-sdk",
+    "durable",
+    "exactly-once",
+    "react",
+    "dashboard"
+  ],
   "type": "module",
   "files": [
     "dist"

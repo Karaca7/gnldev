@@ -6,6 +6,17 @@
     "node": ">=22.5.0"
   },
   "description": "Scaffold a new gnl durable-agent project: npm create gnl",
+  "keywords": [
+    "ai",
+    "agent",
+    "llm",
+    "typescript",
+    "ai-sdk",
+    "durable",
+    "exactly-once",
+    "starter",
+    "scaffold"
+  ],
   "type": "module",
   "bin": {
     "create-gnl": "./dist/index.js"

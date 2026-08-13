@@ -6,6 +6,17 @@
     "node": ">=22.5.0"
   },
   "description": "Provider-specific tool-schema compatibility layer (OpenAI/Gemini/Anthropic). Extensible ToolSchemaRule + opt-in default set; opt-in with @gnldev/durable.",
+  "keywords": [
+    "ai",
+    "agent",
+    "llm",
+    "typescript",
+    "ai-sdk",
+    "durable",
+    "exactly-once",
+    "json-schema",
+    "provider-compatibility"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -6,6 +6,17 @@
     "node": ">=22.5.0"
   },
   "description": "AG-UI (CopilotKit) protocol adapter: converts @gnldev/server SSE contract to AG-UI event sequences + Hono endpoint factory.",
+  "keywords": [
+    "ai",
+    "agent",
+    "llm",
+    "typescript",
+    "ai-sdk",
+    "durable",
+    "exactly-once",
+    "ag-ui",
+    "copilotkit"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

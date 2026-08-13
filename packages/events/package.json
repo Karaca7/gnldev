@@ -6,6 +6,17 @@
     "node": ">=22.5.0"
   },
   "description": "Durable event/notification bus on @gnldev/durable. Journal-backed exactly-once delivery per consumer; fan-out.",
+  "keywords": [
+    "ai",
+    "agent",
+    "llm",
+    "typescript",
+    "ai-sdk",
+    "durable",
+    "exactly-once",
+    "pubsub",
+    "streaming"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -6,6 +6,18 @@
     "node": ">=22.5.0"
   },
   "description": "OpenTelemetry trace exporter for @gnldev/durable. Journal → OTEL spans (deterministic ids = idempotent, crash-proof, exactly-once observability).",
+  "keywords": [
+    "ai",
+    "agent",
+    "llm",
+    "typescript",
+    "ai-sdk",
+    "durable",
+    "exactly-once",
+    "opentelemetry",
+    "tracing",
+    "langfuse"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

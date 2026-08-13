@@ -6,6 +6,18 @@
     "node": ">=22.5.0"
   },
   "description": "Durable deterministic workflows: each step journaled exactly-once, crash→resume picks up where it left off.",
+  "keywords": [
+    "ai",
+    "agent",
+    "llm",
+    "typescript",
+    "ai-sdk",
+    "durable",
+    "exactly-once",
+    "orchestration",
+    "steps",
+    "saga"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

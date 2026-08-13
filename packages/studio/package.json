@@ -6,6 +6,18 @@
     "node": ">=22.5.0"
   },
   "description": "Web inspector for @gnldev/durable runs: timeline, time-travel, approval queue.",
+  "keywords": [
+    "ai",
+    "agent",
+    "llm",
+    "typescript",
+    "ai-sdk",
+    "durable",
+    "exactly-once",
+    "inspector",
+    "observability",
+    "playground"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

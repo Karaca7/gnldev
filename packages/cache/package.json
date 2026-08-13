@@ -6,6 +6,17 @@
     "node": ">=22.5.0"
   },
   "description": "Cross-run content-hash cache on @gnldev/durable. Within-run reuse = journal replay; across-run reuse = cache.",
+  "keywords": [
+    "ai",
+    "agent",
+    "llm",
+    "typescript",
+    "ai-sdk",
+    "durable",
+    "exactly-once",
+    "caching",
+    "ttl"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

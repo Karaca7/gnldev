@@ -6,6 +6,18 @@
     "node": ">=22.5.0"
   },
   "description": "Input/output processors for @gnldev/durable agents: PII redaction, moderation, tool-filter. Durability-infused (journaled).",
+  "keywords": [
+    "ai",
+    "agent",
+    "llm",
+    "typescript",
+    "ai-sdk",
+    "durable",
+    "exactly-once",
+    "guardrails",
+    "pii",
+    "moderation"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

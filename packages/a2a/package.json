@@ -6,6 +6,16 @@
     "node": ">=22.5.0"
   },
   "description": "Remote agent-to-agent tool over @gnldev/server REST. Deterministic remote runId → exactly-once across the network.",
+  "keywords": [
+    "ai",
+    "agent",
+    "llm",
+    "typescript",
+    "ai-sdk",
+    "durable",
+    "exactly-once",
+    "remote-agents"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
