@@ -2,7 +2,7 @@
 // faithful to gnl.dev's llms.txt / llms-full.txt format, so the tool output doesn't look
 // different in shape when the live fetch fails.
 import { DEFAULT_DOCS_URL } from './docs-source.js';
-import { FEATURES, FEATURES_BY_SLUG, OVERVIEW_DETAIL, OVERVIEW_SUMMARY, TIER_LABEL, type DocFeature } from './content.js';
+import { FEATURES, FEATURES_BY_SLUG, OVERVIEW_DETAIL, OVERVIEW_SUMMARY, TIER_LABEL, EE_NOTE, type DocFeature } from './content.js';
 
 /** gnl_docs_overview's embedded-content output: summary + ordered list of the 25 features. */
 export function buildOverviewText(docsUrl: string = DEFAULT_DOCS_URL): string {
@@ -34,6 +34,10 @@ export function buildFeatureText(f: DocFeature, docsUrl: string = DEFAULT_DOCS_U
   lines.push(`- Summary: ${f.oneLiner}`);
   lines.push('');
   lines.push('### Installation / import');
+  if (f.tier === 'ee') {
+    lines.push(EE_NOTE);
+    lines.push('');
+  }
   lines.push('```ts');
   lines.push(f.install);
   lines.push('```');

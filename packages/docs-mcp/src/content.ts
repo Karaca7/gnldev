@@ -19,6 +19,16 @@ export const TIER_LABEL: Record<DocTier, string> = {
   ee: `Enterprise (licensed)`,
 };
 
+/**
+ * Printed under every `ee` feature. Without it the install line for those recipes reads like any
+ * other — `npm install @gnldev/auth-ee` — for a package that is not on the public registry and will
+ * not be, so a reader following it gets E404 and no idea why.
+ */
+export const EE_NOTE =
+  `\`@gnldev/auth-ee\` is a commercial package and is not published to the public npm registry. ` +
+  `The APIs below are documented so the capability is discoverable; the package is distributed ` +
+  `separately under the Elastic License 2.0. See https://gnl.dev for terms and access.`;
+
 export interface DocFeature {
   /** URL fragment — lives under gnl.dev/docs/<slug>; used as the tools/call argument. */
   slug: string;

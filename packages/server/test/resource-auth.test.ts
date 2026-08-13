@@ -1,7 +1,7 @@
 // D4-FGA (EE-2) opt-in hook: RestApiOptions.resourceAuth, consulted AFTER the existing coarse gate.
 // This file tests the HTTP layer directly (a plain function stand-in for opts.resourceAuth) — an EE
-// user wires this to createEnterpriseAuth(...).checkResource (see @gnldev/auth-ee's fga.test.ts for the
-// license-gated createFga/checkResource behavior itself).
+// user wires this to createEnterpriseAuth(...).checkResource. The license-gated createFga /
+// checkResource behaviour itself is tested with the commercial package, not here.
 import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
 import { createRestApi, type ResourceAuthResource, type ResourceAuthAction } from '../src/index.js';
