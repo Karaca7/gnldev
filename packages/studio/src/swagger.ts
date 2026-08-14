@@ -113,12 +113,67 @@ export function openapiSpec(apiBase = '') {
   };
 }
 
-export function swaggerHtml(apiBase = '') {
+/**
+ * Swagger UI is third-party code executing on the SAME ORIGIN as the studio admin API, and the studio
+ * Keeps its bearer token in localStorage there (studio-ui/src/auth.ts). So whatever this page loads can
+ * Read that token and drive the admin API — purge runs, promote managed agents, invalidate caches.
+ *
+ * It used to load `swagger-ui-dist@5` — a FLOATING major — from unpkg, with no integrity check and no
+ * CSP. Anyone able to publish a 5.x, or to tamper with what unpkg served, would have been running code
+ * In that position. Pinned to an exact version and bound by SRI, the browser now refuses any bytes that
+ * Are not the ones these hashes describe; the CSP below then confines the page to that single origin.
+ *
+ * TO UPGRADE: change SWAGGER_UI_VERSION and recompute BOTH hashes, or the page will (correctly) refuse
+ * To load:
+ *   curl -sL https://unpkg.com/swagger-ui-dist@<version>/<file> | openssl dgst -sha384 -binary | openssl base64 -A
+ *
+ * Residual risk, stated plainly: this closes tampering, not availability — if unpkg is unreachable the
+ * Page does not render. A deployment that wants no third-party origin at all should vendor
+ * `swagger-ui-dist` and serve it locally; the spec at /openapi.json is complete on its own and can be
+ * Pointed at any external OpenAPI client.
+ */
+export const SWAGGER_UI_VERSION = '5.32.13';
+const SWAGGER_UI_CSS_SRI = 'sha384-tRpWwikYYdk1+1Mu0osh0Tz/Ay5xgS+s/Nf2Aa7GVAFtZLFdJlAbozfrq4g+xHBK';
+const SWAGGER_UI_JS_SRI = 'sha384-PsJla434CobCNv3y1K4wRavOqkUAvwGEQEfbUmI98CCqqGCJsmuDsgIjM6ZQQODP';
+const SWAGGER_UI_ORIGIN = 'https://unpkg.com';
+
+/**
+ * The page's own CSP, carried in a meta tag so it applies wherever the HTML is served from (the studio
+ * Mounts /swagger on two routes) without depending on a proxy to add a header. `script-src` admits only
+ * The pinned CDN plus the one inline bootstrap below — which is why that bootstrap carries a nonce.
+ * `connect-src 'self'` keeps the spec fetch (and any "try it out" call) on this origin: injected code
+ * Cannot exfiltrate to an outside host. `object-src`/`base-uri` 'none' close the usual bypasses.
+ */
+function swaggerCsp(nonce: string): string {
+  return [
+    "default-src 'none'",
+    `script-src ${SWAGGER_UI_ORIGIN} 'nonce-${nonce}'`,
+    `style-src ${SWAGGER_UI_ORIGIN} 'unsafe-inline'`,
+    "img-src 'self' data:",
+    "font-src 'self' data:",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+  ].join('; ');
+}
+
+export function swaggerHtml(apiBase = '', nonce = randomNonce()) {
   const specUrl = (apiBase ? apiBase.replace(/\/$/, '') : '') + '/openapi.json';
+  const base = `${SWAGGER_UI_ORIGIN}/swagger-ui-dist@${SWAGGER_UI_VERSION}`;
   return `<!doctype html><html><head><meta charset="utf-8"><title>gnl studio · API</title>
-<link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+<meta http-equiv="Content-Security-Policy" content="${swaggerCsp(nonce)}">
+<link rel="stylesheet" href="${base}/swagger-ui.css" integrity="${SWAGGER_UI_CSS_SRI}" crossorigin="anonymous">
 <style>body{margin:0}</style></head><body><div id="ui"></div>
-<script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
-<script>window.ui=SwaggerUIBundle({url:'${specUrl}',dom_id:'#ui'});</script>
+<script src="${base}/swagger-ui-bundle.js" integrity="${SWAGGER_UI_JS_SRI}" crossorigin="anonymous"></script>
+<script nonce="${nonce}">window.ui=SwaggerUIBundle({url:'${specUrl}',dom_id:'#ui'});</script>
 </body></html>`;
+}
+
+/** Per-response nonce — a constant would let injected markup simply reuse it. */
+function randomNonce(): string {
+  const b = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(b);
+  return btoa(String.fromCharCode(...b)).replace(/[^a-zA-Z0-9]/g, '');
 }

@@ -8,6 +8,7 @@ import type * as Durable from '@gnldev/durable';
 import type * as Studio from '@gnldev/studio';
 import type * as StudioAi from '@gnldev/studio/ai';
 import type * as Memory from '@gnldev/memory';
+import { resolveBind, exposureNotice } from './bind.js';
 import type { AuthProvider, Cred } from '@gnldev/auth';
 import type * as Auth from '@gnldev/auth';
 import { devMemoryFactory, devStudioMemory } from './memory.js';
@@ -117,16 +118,30 @@ export function buildDevApp(config: GnlDevConfig, rt: DevRuntimeModules, auth?: 
 }
 
 /** Boot the dev app (Node). `projectDir` = the directory containing the gnl.config that produced `config`. */
-export async function serveDev(config: GnlDevConfig, projectDir: string): Promise<void> {
+export async function serveDev(
+  config: GnlDevConfig,
+  projectDir: string,
+  bindOpts?: { host?: string; allowOpenNetwork?: boolean },
+): Promise<void> {
   const rt = await loadDevRuntime(projectDir, config);
   const { serve } = await loadNodeServer(projectDir);
   const provider = await resolveAuthProvider(config, rt.auth, projectDir);
   const app = buildDevApp(config, rt, provider);
   const port = config.port ?? 3000;
   const mode = provider ? 'protected' : 'open';
-  serve({ fetch: app.fetch, port }, (info: { port: number }) => {
-    console.log(`gnl dev → REST   http://localhost:${info.port}   (auth: ${mode})`);
-    console.log(`          OpenAPI http://localhost:${info.port}/openapi.json`);
-    if (config.studio !== false) console.log(`          Studio http://localhost:${info.port}/studio   (Playground)`);
+  // Previously `serve({ fetch, port })` — with no hostname @hono/node-server binds EVERY interface,
+  // While these very lines printed 'localhost'. See bind.ts.
+  const bind = resolveBind({
+    host: bindOpts?.host,
+    authed: !!provider,
+    allowOpenNetwork: !!bindOpts?.allowOpenNetwork,
+    command: 'gnl dev',
+  });
+  serve({ fetch: app.fetch, port, hostname: bind.hostname }, (info: { port: number }) => {
+    console.log(`gnl dev → REST   http://${bind.displayHost}:${info.port}   (auth: ${mode})`);
+    console.log(`          OpenAPI http://${bind.displayHost}:${info.port}/openapi.json`);
+    if (config.studio !== false) console.log(`          Studio http://${bind.displayHost}:${info.port}/studio   (Playground)`);
+    const notice = exposureNotice(bind, !!provider);
+    if (notice) console.log(notice);
   });
 }

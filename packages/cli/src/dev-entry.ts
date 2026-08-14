@@ -5,4 +5,7 @@ import { projectDirOf } from './runtime.js';
 
 const path = process.env.GNL_CONFIG ?? 'gnl.config.ts';
 const config = await loadConfig(path);
-await serveDev(config, projectDirOf(path));
+await serveDev(config, projectDirOf(path), {
+  host: process.env.GNL_HOST,
+  allowOpenNetwork: process.env.GNL_ALLOW_OPEN_NETWORK === '1',
+});

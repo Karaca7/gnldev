@@ -19,14 +19,36 @@ npm i -g @gnldev/cli   # or: npx @gnldev/cli <command>
 | `gnl init [dir] --template minimal\|full [--e2e]` | Preset static starters (non-interactive). `--template full` ships a durable `idempotency: 'args'` tool + an e2e test; `--e2e` adds the durability test to `minimal` too. |
 | `gnl init [dir] --yes` | Non-interactive `minimal`. The prompt also **never opens without a TTY** (`stdin` not a terminal → `minimal`), so CI is safe. |
 | `gnl add <idempotency-tool\|rag\|mcp\|memory\|workflow\|auth>` | Add a feature recipe to an existing project: writes `src/<feature>.ts` (never overwrites) + prints the `gnl.config.ts` wiring (the config is decoupled — you edit the plain config object, no `defineConfig`). |
-| `gnl dev [--config gnl.config.ts]` | Hot-reload dev server: REST API + Studio Playground on one port. Restarts when `gnl.config.ts` or `src/` changes. |
-| `gnl studio [--config ...] [--port 4747]` | Studio (inspector + Playground) standalone |
+| `gnl dev [--config gnl.config.ts] [--host] [--allow-open-network]` | Hot-reload dev server: REST API + Studio Playground on one port. Restarts when `gnl.config.ts` or `src/` changes. |
+| `gnl studio [--config ...] [--port 4747] [--host] [--allow-open-network]` | Studio (inspector + Playground) standalone |
 
 ```bash
 gnl init my-agent --template full && cd my-agent && pnpm install && pnpm test   # proves idempotency
 ```
 
 ### Templates
+### Where these listen
+
+Both commands bind `127.0.0.1` — reachable only from your machine. They previously passed no hostname
+at all, which made Node bind *every* interface while the startup line said `http://localhost:…`; on a
+shared network that published an admin surface (run purge, managed-agent promote, cache invalidation,
+and a Playground that spends your API keys) to anyone who could reach the port.
+
+To reach the server from elsewhere — a container, another machine — name the address:
+
+```bash
+gnl dev --host 0.0.0.0            # refused unless auth is configured
+GNL_ADMIN_TOKEN=… gnl dev --host 0.0.0.0
+gnl dev --host 0.0.0.0 --allow-open-network   # deliberately open, on a network you trust
+```
+
+Auth comes from `gnl.config` (`auth: { admin: { token: … } }`) or from `GNL_ADMIN_TOKEN` /
+`GNL_VIEWER_TOKEN`. `gnl studio` now reads it the same way `gnl dev` always has — it previously ignored
+auth entirely, so its admin API was open no matter what you had configured.
+
+**If you run `gnl dev` inside a container**, add `--host 0.0.0.0`; without it the port is no longer
+reachable from the host.
+
 - **`minimal`** (default) — one agent, mock model, SQLite storage, `gnl dev`. The smallest thing that runs.
 - **`full`** — the same, plus a side-effecting `chargeOrder` tool with `idempotency: 'args'`
   (`idempotencyKey: (a) => a.orderId`) and `test/e2e.test.ts` that reproduces a documented
