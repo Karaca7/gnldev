@@ -5,7 +5,7 @@
   "engines": {
     "node": ">=22.13.0"
   },
-  "description": "OpenTelemetry trace exporter for @gnldev/durable. Journal \u2192 OTEL spans (deterministic ids = idempotent, crash-proof, exactly-once observability).",
+  "description": "OpenTelemetry trace exporter for @gnldev/durable. Journal → OTEL spans (deterministic ids = idempotent, crash-proof, exactly-once observability).",
   "keywords": [
     "ai",
     "agent",
@@ -63,7 +63,7 @@
     "ai": "^5.0.0",
     "zod": "^3.25.0"
   },
-  "author": "Karaca Y\u0131lmaz (https://gnl.dev)",
+  "author": "Karaca Yılmaz (https://gnl.dev)",
   "homepage": "https://gnl.dev",
   "bugs": {
     "url": "https://github.com/Karaca7/gnl-framework/issues"

@@ -2,7 +2,7 @@
   "name": "gnl-framework",
   "private": true,
   "type": "module",
-  "description": "gnl \u2014 a durable execution substrate for AI agents (monorepo)",
+  "description": "gnl — a durable execution substrate for AI agents (monorepo)",
   "scripts": {
     "build": "pnpm -r build",
     "test": "vitest run",
