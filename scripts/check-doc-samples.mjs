@@ -1,0 +1,212 @@
+#!/usr/bin/env node
+// Typechecks every TypeScript code block in the documentation against the packages as built.
+//
+// Three consecutive review rounds found quickstarts that did not run: a package documenting a
+// parameter its function never had, an import of a package that is not published, an option the
+// registry silently dropped. Each was found by a person reading carefully, and each time the next
+// round found another one. A person reading carefully does not scale to 24 READMEs; a compiler does.
+//
+// What this catches: exports that do not exist, wrong argument counts, wrong option names, wrong
+// argument types. What it cannot catch: a sample that compiles and does the wrong thing at runtime.
+//
+// Fragments are the normal case in documentation — a block that says `const s = await scoreRun(...)`
+// with no imports is still worth checking, so ambient declarations stand in for the names a doc
+// block conventionally assumes. A block that is deliberately not real code (shell, pseudo-code, a
+// deliberate counter-example) opts out with `<!-- doccheck: skip -->` on the line before it.
+import { readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync, existsSync } from 'node:fs';
+import { join, relative, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const OUT = join(ROOT, '.doccheck');
+
+/** Names a doc block may use without defining them, declared GLOBALLY so a block that does define
+ *  one shadows it rather than colliding. Every entry is a hole in the check, so this holds only what
+ *  documentation genuinely elides: the object you already have, and the import line a fragment omits
+ *  because the surrounding prose just showed it. */
+const GLOBALS = `declare global {
+  const journal: any; const storage: any; const model: any; const tools: any;
+  const config: any; const cfg: any; const gnl: any; const embed: any;
+  const app: any; const api: any; const studio: any; const payments: any;
+  const stripe: any; const db: any; const notify: any; const sendEmail: any;
+  const chargeCard: any; const rawTools: any; const req: any; const res: any;
+  const express: any; const fastify: any; const koa: any; const nestApp: any;
+  const middie: any; const c2k: any; const mw: any; const runWorkflow: any;
+  const scorers: any; const dataset: any; const docs: any; const vectors: any;
+  const ADMIN_TOKEN: string; const publicKey: string; const secretKey: string;
+  const modelId: string; const support: any; const guard: any;
+  // Object-shorthand names: docs write them bare after the prose has already named them.
+  const runId: string; const threadId: string; const resourceId: string; const toolCallId: string;
+  const prompt: string; const messages: any; const input: any; const output: any;
+  const anthropic: any; const openai: any; const myTools: any; const log: any;
+  const lookupOrder: any; const observerModel: any; const rerank: any; const scorer: any;
+  const handler: any; const payload: any; const meta: any; const opts: any;
+  const paymentApi: any; const route: any; const hazirla: any; const siparis: any;
+  const eskiModelle: any; const yeniModelle: any; const emailer: any; const bus: any;
+  // Illustrative helpers a guide names in prose and then uses. Both language versions, so the
+  // Turkish translation is checked as strictly as the English original.
+  const prepare: any; const order: any; const check: any; const enqueue: any;
+  const approve: any; const pass: any; const longText: any; const withOldModel: any;
+  const withNewModel: any; const composite: any; const DAY: number; const GUN: number;
+  const kontrolEt: any; const kuyrugaAt: any; const onayla: any; const gecir: any;
+  const uzunMetin: any; const indexDocuments: any; const rolloverRun: any;
+  const purgeRun: any; const sweepRuns: any; const redis: any; const PostgresStorage: any;
+  const PG_URL: string;
+  type Order = any; type Siparis = any;
+}
+declare global {
+  // Framework entry points a fragment may use after the prose has shown the import.
+  const runDurable: any; const streamDurable: any; const createGnl: any;
+  const createRestApi: any; const createStudioApp: any; const createStudioRunner: any;
+  const serve: any; const createServer: any; const tool: any; const z: any;
+}
+export {};`;
+
+/** Where each external module a doc block imports actually lives in this pnpm tree.
+ *  `paths` must name the TYPE ENTRY, not the directory — a bare directory does not resolve under
+ *  NodeNext, which is why an earlier version of this script reported every external import missing. */
+function externalPaths() {
+  const wanted = ['ai', 'zod', 'hono', '@hono/node-server', '@ai-sdk/openai', '@ai-sdk/anthropic', '@ai-sdk/provider'];
+  const out = [];
+  for (const m of wanted) {
+    for (const p of readdirSync(join(ROOT, 'packages'))) {
+      const dir = join(ROOT, 'packages', p, 'node_modules', m);
+      const manifest = join(dir, 'package.json');
+      if (!existsSync(manifest)) continue;
+      const pkg = JSON.parse(readFileSync(manifest, 'utf8'));
+      const t = pkg.types ?? pkg.typings ?? pkg.exports?.['.']?.types ?? pkg.exports?.['.']?.import?.types;
+      if (!t) break;
+      out.push([m, [relative(OUT, join(dir, String(t))).replace(/\\/g, '/')]]);
+      break;
+    }
+  }
+  return out;
+}
+
+/** Every workspace package and each of its documented export subpaths, mapped to its BUILT types.
+ *  Against dist, not src: what a reader can call is what the published .d.ts says, and pointing at
+ *  src would additionally re-typecheck the whole source tree under this config — which reports
+ *  differences between two tsconfigs as if they were documentation defects. */
+function packagePaths() {
+  const out = [];
+  for (const p of readdirSync(join(ROOT, 'packages'))) {
+    const manifest = join(ROOT, 'packages', p, 'package.json');
+    if (!existsSync(manifest)) continue;
+    const pkg = JSON.parse(readFileSync(manifest, 'utf8'));
+    const base = `../packages/${p}`;
+    out.push([pkg.name, [`${base}/dist/index.d.ts`]]);
+    for (const [sub, target] of Object.entries(pkg.exports ?? {})) {
+      if (sub === '.' || !sub.startsWith('./')) continue;
+      // './sqlite' points at dist/sqlite-storage.js in the manifest; the source has the same name.
+      const dist = typeof target === 'string' ? target : (target?.types ?? target?.default ?? '');
+      const file = String(dist).replace(/^\.\/dist\//, '').replace(/\.d\.ts$|\.js$/, '');
+      out.push([`${pkg.name}/${sub.slice(2)}`, [`${base}/dist/${file || sub.slice(2)}.d.ts`]]);
+    }
+  }
+  return out;
+}
+
+function docFiles() {
+  const out = [];
+  for (const f of ['README.md', 'README.tr.md']) if (existsSync(join(ROOT, f))) out.push(join(ROOT, f));
+  for (const f of readdirSync(join(ROOT, 'docs'))) if (f.endsWith('.md')) out.push(join(ROOT, 'docs', f));
+  for (const p of readdirSync(join(ROOT, 'packages'))) {
+    const r = join(ROOT, 'packages', p, 'README.md');
+    if (existsSync(r)) out.push(r);
+  }
+  return out;
+}
+
+/** Fenced ```ts / ```typescript blocks, with the 1-based line where each starts. */
+function blocks(text) {
+  const lines = text.split('\n');
+  const found = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!/^```(ts|typescript)\s*$/.test(lines[i])) continue;
+    if (/doccheck:\s*skip/.test(lines[i - 1] ?? '')) continue;
+    const start = i + 1;
+    let j = i + 1;
+    while (j < lines.length && !/^```\s*$/.test(lines[j])) j++;
+    found.push({ line: start + 1, code: lines.slice(start, j).join('\n') });
+    i = j;
+  }
+  return found;
+}
+
+rmSync(OUT, { recursive: true, force: true });
+mkdirSync(OUT, { recursive: true });
+
+const cases = [];
+for (const file of docFiles()) {
+  const rel = relative(ROOT, file);
+  blocks(readFileSync(file, 'utf8')).forEach((b, n) => {
+    const name = `${rel.replace(/[^a-z0-9]/gi, '_')}__${n}.ts`;
+    // `export {}` keeps each block a module, so `const` in two blocks cannot collide.
+    const prefix = 'export {};\n';
+    writeFileSync(join(OUT, name), `${prefix}${b.code}\n`);
+    // Counted, not derived: a wrong offset points the reader at the wrong line, which is worse than
+    // pointing at none.
+    cases.push({ name, rel, line: b.line, prefixLines: prefix.split('\n').length - 1 });
+  });
+}
+
+writeFileSync(join(OUT, '_globals.d.ts'), GLOBALS);
+// Optional peers a doc block imports to show an integration. In a SCRIPT file (no import/export)
+// these are ambient declarations; inside a module they would be augmentations, and a package that is
+// not installed cannot be augmented. Keeps the check about OUR API rather than about which optional
+// packages happen to be present on this machine.
+writeFileSync(join(OUT, '_modules.d.ts'), [
+  "declare module '@ai-sdk/anthropic' { export const anthropic: any; }",
+  "declare module '@ai-sdk/openai' { export const openai: any; export const createOpenAI: any; }",
+  "declare module '@ag-ui/client' { export const HttpAgent: any; export const AbstractAgent: any; }",
+].join('\n'));
+writeFileSync(join(OUT, 'tsconfig.json'), JSON.stringify({
+  compilerOptions: {
+    target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext',
+    // Samples elide error handling and exhaustive types on purpose; the point is the API shape.
+    strict: false, noEmit: true, skipLibCheck: true, allowJs: true,
+    baseUrl: '.', types: ['node'],
+    paths: Object.fromEntries([...externalPaths(), ...packagePaths()]),
+  },
+  include: ['*.ts', '_globals.d.ts', '_modules.d.ts'],
+}, null, 2));
+
+console.log(`doc samples: ${cases.length} block(s) from ${docFiles().length} file(s)`);
+
+let raw = '';
+try {
+  execFileSync('npx', ['tsc', '-p', join(OUT, 'tsconfig.json')], { cwd: ROOT, encoding: 'utf8', stdio: 'pipe' });
+} catch (e) {
+  raw = `${e.stdout ?? ''}${e.stderr ?? ''}`;
+}
+
+if (!raw.trim()) {
+  console.log('  \x1b[32m✓\x1b[0m every documented sample typechecks against the packages as built');
+  process.exit(0);
+}
+
+// Report against the MARKDOWN location, not the generated file — the generated file is an artifact.
+const byCase = new Map(cases.map((c) => [c.name, c]));
+const seen = new Set();
+for (const line of raw.split('\n')) {
+  const m = line.match(/^(.+?)\((\d+),(\d+)\):\s*(error TS\d+:.*)$/);
+  if (!m) continue;
+  const c = byCase.get(m[1].split('/').pop());
+  if (!c) continue;
+  const docLine = c.line + Math.max(0, Number(m[2]) - c.prefixLines - 1);
+  const key = `${c.rel}:${docLine}:${m[4]}`;
+  if (seen.has(key)) continue;
+  seen.add(key);
+  console.log(`  \x1b[31m✗\x1b[0m ${c.rel}:${docLine}  ${m[4]}`);
+}
+if (seen.size === 0) {
+  // tsc failed but nothing mapped back to a doc block: that is a fault in this script or in the
+  // build, and silently reporting "0 problems" would be the worst possible outcome for a gate.
+  console.log('  \x1b[31m✗\x1b[0m tsc failed with output this script could not attribute to a sample:');
+  console.log(raw.split('\n').slice(0, 12).map((l) => `      ${l}`).join('\n'));
+  process.exit(1);
+}
+console.log(`\n${seen.size} problem(s) in documented samples.`);
+console.log('Fix the sample, or mark the block with an HTML comment `doccheck: skip` if it is not real code.');
+process.exit(1);

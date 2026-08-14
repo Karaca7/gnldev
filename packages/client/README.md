@@ -14,7 +14,7 @@ npm i @gnldev/client
 ```ts
 import { GnlClient } from '@gnldev/client';
 
-const api = new GnlClient('http://localhost:3000');
+const api = new GnlClient({ baseUrl: 'http://localhost:3000' });
 const result = await api.run('support', { prompt: 'where is my order?' });
 console.log(result.text, result.runId);
 ```

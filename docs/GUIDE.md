@@ -450,17 +450,18 @@ similarity graph between chunks and also finds **indirectly related** chunks.
 ### 7.5 Multi-agent — static and dynamic
 
 ```ts
-// STATIC: the parent agent sees sub-agents as tools (agent-as-tool):
-agents: {
-  manager: { model, agents: ['researcher', 'writer'] },   // agent_researcher, agent_writer tools
-  researcher: { model, description: 'does web research' },
-  writer: { model, description: 'writes text' },
-}
-
-// DYNAMIC NETWORK: a router LLM decides FOR ITSELF which agent runs each turn:
-networks: {
-  support: { router: 'openai/gpt-4o-mini', agents: ['researcher', 'writer'], maxIterations: 6 },
-}
+const cfg = {
+  // STATIC: the parent agent sees sub-agents as tools (agent-as-tool).
+  agents: {
+    manager: { model, agents: ['researcher', 'writer'] },   // agent_researcher, agent_writer tools
+    researcher: { model, description: 'does web research' },
+    writer: { model, description: 'writes text' },
+  },
+  // DYNAMIC NETWORK: a router LLM decides FOR ITSELF which agent runs each turn.
+  networks: {
+    support: { router: 'openai/gpt-4o-mini', agents: ['researcher', 'writer'], maxIterations: 6 },
+  },
+};
 const result = await gnl.runNetwork('support', { runId: 'ticket-9', task: 'Research and summarize topic X' });
 ```
 GNL's difference: routing decisions are also **frozen into the journal via CAS** → on resume, the

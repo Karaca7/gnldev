@@ -12,7 +12,8 @@ npm i @gnldev/cache   # peer: @gnldev/durable
 import { createCache } from '@gnldev/cache';
 import { SqliteStorage } from '@gnldev/durable/sqlite';
 
-const cache = createCache(new SqliteStorage('runs.db').runs, 'embeddings');
+const storage = new SqliteStorage('runs.db');
+const cache = createCache(storage.cache, 'embeddings');   // the CACHE port, not storage.runs
 
 // Same input → embed computed once; later runs get it back from the journal.
 const vec = await cache.getOrCompute({ text: 'hello' }, () => embed('hello'));

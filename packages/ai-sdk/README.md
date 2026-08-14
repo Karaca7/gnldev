@@ -14,7 +14,11 @@ npm i @gnldev/ai-sdk
 ```ts
 import { createChatRoute } from '@gnldev/ai-sdk';
 
-app.post('/api/chat', createChatRoute(gnl, 'support'));
+app.post('/api/chat', createChatRoute({ gnl }, {
+  // Both optional; without a resolveRunId the route generates one per request, which means a retry
+  // is a NEW run and gets no exactly-once protection.
+  resolveRunId: (_c, body) => body.id,
+}));
 ```
 
 The route streams back in the AI SDK's UI-message format, so an existing `useChat` frontend works

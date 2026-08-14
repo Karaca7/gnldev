@@ -12,7 +12,7 @@ npm i @gnldev/evals   # peer: @gnldev/durable, ai
 import { scoreRun, contains, llmJudge, evalDataset } from '@gnldev/evals';
 
 // Score a single run.
-const s = await scoreRun(journal, 'order-1', [contains('Charged'), llmJudge(model, { criteria: 'is it polite?' })]);
+const s = await scoreRun(journal, 'order-1', [contains('Charged'), llmJudge({ model, rubric: 'is it polite?' })]);
 
 // Dataset suite (resumable).
 const r = await evalDataset({

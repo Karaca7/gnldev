@@ -16,19 +16,19 @@ npm i @gnldev/events   # peer: @gnldev/durable
 import { emit, createConsumer } from '@gnldev/events';
 import { SqliteStorage } from '@gnldev/durable/sqlite';
 
-const journal = new SqliteStorage('runs.db').runs;
+const storage = new SqliteStorage('runs.db');   // emit/createConsumer take the WORK store
 
 // Publish (idempotent: same id → a single event).
-await emit(journal, 'refunds', { orderId: 'o1', amount: 50 }, { id: 'refund:o1' });
+await emit(storage.work, 'refunds', { orderId: 'o1', amount: 50 }, { id: 'refund:o1' });
 
 // Consume (each consumer name gets its own marker stream; the handler must be idempotent).
-const consumer = createConsumer(journal, 'refunds', (payload, meta) => notify(payload), { name: 'emailer' });
+const consumer = createConsumer(storage.work, 'refunds', (payload, meta) => notify(payload), { name: 'emailer' });
 await consumer.poll();   // or consumer.start()
 ```
 
 ## API
-- `emit(journal, topic, payload, { id? }) → eventId`
-- `createConsumer(journal, topic, handler, { name, pollMs?, backoff?, maxPollMs? }) → { poll, start, stop }`
+- `emit(work, topic, payload, { id? }) → eventId` — `work` is `storage.work`
+- `createConsumer(work, topic, handler, { name, pollMs?, backoff?, maxPollMs? }) → { poll, start, stop }`
   — `name` is required to separate fan-out acks.
 
 ## How it works

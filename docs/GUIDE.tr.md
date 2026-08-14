@@ -409,17 +409,18 @@ arada yeni doküman eklense bile koşu aynı kanıtlarla devam eder (determinist
 ### 7.5 Çoklu ajan — statik ve dinamik
 
 ```ts
-// STATİK: ana ajan, alt-ajanları birer araç gibi görür (agent-as-tool):
-agents: {
-  yonetici: { model, agents: ['arastirmaci', 'yazar'] },   // agent_arastirmaci, agent_yazar araçları
-  arastirmaci: { model, description: 'web araştırması yapar' },
-  yazar: { model, description: 'metin kaleme alır' },
-}
-
-// DİNAMİK AĞ: bir yönlendirici-LLM her turda hangi ajanın çalışacağına KENDİ karar verir:
-networks: {
-  destek: { router: 'openai/gpt-4o-mini', agents: ['arastirmaci', 'yazar'], maxIterations: 6 },
-}
+const cfg = {
+  // STATİK: ana ajan, alt-ajanları birer araç gibi görür (agent-as-tool).
+  agents: {
+    yonetici: { model, agents: ['arastirmaci', 'yazar'] },   // agent_arastirmaci, agent_yazar araçları
+    arastirmaci: { model, description: 'web araştırması yapar' },
+    yazar: { model, description: 'metin kaleme alır' },
+  },
+  // DİNAMİK AĞ: bir yönlendirici-LLM her turda hangi ajanın çalışacağına KENDİ karar verir.
+  networks: {
+    destek: { router: 'openai/gpt-4o-mini', agents: ['arastirmaci', 'yazar'], maxIterations: 6 },
+  },
+};
 const sonuc = await gnl.runNetwork('destek', { runId: 'talep-9', task: 'X konusunu araştır ve özetle' });
 ```
 GNL'in farkı: yönlendirme kararları da deftere **CAS ile dondurulur** → resume'da yönlendirici
@@ -465,8 +466,10 @@ serve(createRestApi(gnl));                      // POST /agents/asistan/run, SSE
 
 // İstemci (tarayıcı/React):
 import { GnlClient } from '@gnldev/client';
-const api = new GnlClient('http://localhost:3000');
-await api.run('asistan', { prompt: '...' });
+const api = new GnlClient({ baseUrl: 'http://localhost:3000' });
+await api.run('asistan', { runId: 'talep-42', prompt: '...' });
+// runId isteğe bağlı — vermezsen istemci üretir, yani her yeniden deneme YENİ bir koşu olur ve
+// exactly-once koruması almaz. Yan etkisi olan her çağrıda kendi runId'ni ver.
 
 // Studio: web kontrol paneli — npx @gnldev/studio --db runs.db
 // (ya da --config gnl.config.ts; o zaman Playground da açılır. Biri mutlaka gerekir)

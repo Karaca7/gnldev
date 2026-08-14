@@ -11,19 +11,23 @@ genuinely unknown (e.g. after a crash), the system **blocks and asks for approva
 retrying. If you know the AI SDK, you already know this.
 
 ```ts
-import { runDurable } from '@gnldev/durable';
+import { runDurable, gnlTool } from '@gnldev/durable';
 import { SqliteStorage } from '@gnldev/durable/sqlite';
 import { openai } from '@ai-sdk/openai';
 import { tool } from 'ai';
 import { z } from 'zod';
 
-const chargeCard = tool({
-  description: "Charge the customer's card",
-  inputSchema: z.object({ amount: z.number() }),
-  sideEffect: true,          // money moves — never replayed from the journal
-  idempotency: 'args',       // and never re-run when the model re-plans it under a new toolCallId
-  execute: async ({ amount }) => payments.charge(amount),
-});
+const chargeCard = gnlTool(
+  tool({
+    description: "Charge the customer's card",
+    inputSchema: z.object({ amount: z.number() }),
+    execute: async ({ amount }) => payments.charge(amount),
+  }),
+  {
+    sideEffect: true,      // money moves — never replayed from the journal
+    idempotency: 'args',   // and never re-run when the model re-plans it under a new toolCallId
+  },
+);
 
 const res = await runDurable({
   runId: 'order-123',                       // idempotency key (typically an orderId/sessionId)

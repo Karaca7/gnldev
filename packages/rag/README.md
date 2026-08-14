@@ -16,7 +16,7 @@ await indexDocuments(store, embed, [{ id: 'p1', text: 'Return policy: 30 days…
 
 const searchPolicy = createRagTool({
   store, embed, topK: 3,
-  rerank: llmReranker(model), rerankTopK: 2,   // optional LLM reranker
+  rerank: llmReranker({ model }), rerankTopK: 2,   // optional LLM reranker
 });
 
 await runDurable({ runId: 'r1', journal, model, tools: { searchPolicy }, prompt: '…' });
@@ -26,7 +26,7 @@ await runDurable({ runId: 'r1', journal, model, tools: { searchPolicy }, prompt:
 - `InMemoryVectorStore` · `indexDocuments(store, embed, docs)` · `VectorStore` interface (plug in your own
   backend)
 - `createRagTool({ store, embed, topK?, rerank?, rerankTopK?, description? })` → AI SDK tool
-- `llmReranker(model)` → `Reranker`
+- `llmReranker({ model })` → `Reranker`
 - `SemanticMemory` — vector-based recall (memory integration)
 
 ## How it works

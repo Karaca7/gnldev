@@ -29,6 +29,10 @@ jobs:
       - run: pnpm -r build
       - run: pnpm -r typecheck
       - run: pnpm test
+      # Every ```ts block in every README and doc, compiled against the packages as built. Three
+      # review rounds in a row found quickstarts that threw on their first line; a person reading
+      # carefully does not scale to 24 READMEs, and this does.
+      - run: pnpm check:docs
 
 
   integration:
