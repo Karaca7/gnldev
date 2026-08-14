@@ -49,6 +49,17 @@ would be worse than saying that.
   gained a failed count, which it could always have computed and never did.
 - `listRunsArray` / `asReaderJournal` / `runIdOfKey` / `deriveRunStatus` are exported from
   `@gnldev/durable` for hosts that read the journal directly.
+- **This changelog, and [VERSIONING.md](./VERSIONING.md).** `pnpm check:versions` enforces the lockstep
+  promise in CI, because the way lockstep breaks is quiet: someone bumps the one package they touched.
+
+### Fixed (continued)
+
+- **The third-party notices are reachable from the running Studio** (`/THIRD-PARTY-NOTICES.txt`, linked
+  in the sidebar). They were generated into `dist/` and served by nothing, so they 404'd — and the
+  bundle inlines ~220 packages whose licences, the Geist fonts' OFL-1.1 most explicitly, ask that the
+  notice travel with the copy. The generator also excluded `tailwindcss` and `vite` as build-only
+  tooling; both in fact write code into the output (preflight into the CSS, the modulepreload polyfill
+  into the JS), so both are attributed now.
 
 ### Fixed
 
