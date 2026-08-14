@@ -52,7 +52,7 @@ would be worse than saying that.
 - **This changelog, and [VERSIONING.md](./VERSIONING.md).** `pnpm check:versions` enforces the lockstep
   promise in CI, because the way lockstep breaks is quiet: someone bumps the one package they touched.
 
-### Fixed (continued)
+### Fixed
 
 - **The third-party notices are reachable from the running Studio** (`/THIRD-PARTY-NOTICES.txt`, linked
   in the sidebar). They were generated into `dist/` and served by nothing, so they 404'd — and the
@@ -60,9 +60,6 @@ would be worse than saying that.
   notice travel with the copy. The generator also excluded `tailwindcss` and `vite` as build-only
   tooling; both in fact write code into the output (preflight into the CSS, the modulepreload polyfill
   into the JS), so both are attributed now.
-
-### Fixed
-
 - **`GET /runs` with any query parameter returned 500** when the host passed `journal:
   new SqliteStorage(…).runs` — which is what the README's own first code block shows. Adapters answer
   `listRuns` with a `Page`; the array bridge was only applied when `storage` was configured, so the raw
