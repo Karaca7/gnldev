@@ -1,5 +1,5 @@
 // Command registry: cli.ts only dispatches through this map + prints grouped help — it doesn't know
-// any command's internals. Order here is also the order `gnl --help` lists commands within a group.
+// Any command's internals. Order here is also the order `gnl --help` lists commands within a group.
 import type { Command } from './types.js';
 import { initCommand } from './init.js';
 import { addCommand } from './add.js';

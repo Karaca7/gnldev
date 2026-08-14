@@ -18,8 +18,8 @@ export const DEFAULT_PRICING: Record<string, ModelPricing> = {
 };
 
 /**
- * TASK 5.3: a VERSIONED pricing document living in the journal (same pattern as policy.ts/budget.ts) —
- * editable from Studio, pricing is updated without requiring a deploy. Each write increments `version`
+ * A VERSIONED pricing document living in the journal (same pattern as policy.ts/budget.ts) —
+ * Editable from Studio, pricing is updated without requiring a deploy. Each write increments `version`
  * (full history via audit, see PolicyDoc).
  */
 export interface PricingDoc {
@@ -45,9 +45,9 @@ export async function effectivePricingTable(journal: Partial<Journal>): Promise<
 
 /**
  * Pricing for modelId: EXACT match FIRST, otherwise a REAL prefix match (`modelId.startsWith(p)` —
- * the previous `includes` was WRONG because it also counted any substring appearing anywhere as a
+ * The previous `includes` was WRONG because it also counted any substring appearing anywhere as a
  * "prefix"). If multiple prefixes match, the LONGEST (most specific) wins (e.g. for 'openai/gpt-4o-mini'
- * with no exact table entry, the 'openai/gpt-4o' prefix wins if it's shorter than the
+ * With no exact table entry, the 'openai/gpt-4o' prefix wins if it's shorter than the
  * 'openai/gpt-4o-mini-preview' prefix).
  */
 export function priceFor(

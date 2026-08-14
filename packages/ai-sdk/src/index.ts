@@ -1,6 +1,6 @@
 // @gnldev/ai-sdk — public export surface. Vercel AI SDK `useChat` (v5) compatibility for @gnldev/durable
-// agents: sentinel-masked UI message streaming, journal→UIMessage history reconstruction, and a Hono
-// chat route (parity with @gnldev/agui's AG-UI adapter, @gnldev/server's own SSE schema).
+// Agents: sentinel-masked UI message streaming, journal→UIMessage history reconstruction, and a Hono
+// Chat route (parity with @gnldev/agui's AG-UI adapter, @gnldev/server's own SSE schema).
 export { toUIMessageStream, toUIMessageStreamResponse } from './ui-stream.js';
 export type { GnlInterruptData, ToUIMessageStreamResponseOptions } from './ui-stream.js';
 

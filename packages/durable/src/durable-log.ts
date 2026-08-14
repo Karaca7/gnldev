@@ -1,6 +1,6 @@
 // Phase 12 — the shared durable-log primitive (queue + events are built on top of it).
 // Writes append-only items to the journal (idempotent), lists them by prefix, and places an
-// exactly-once consumption marker via putIfAbsent. Since the `${ns}:` prefix contains no ':model:'/':tool:', it's invisible to parseJournalKey (the run reader).
+// Exactly-once consumption marker via putIfAbsent. Since the `${ns}:` prefix contains no ':model:'/':tool:', it's invisible to parseJournalKey (the run reader).
 import { claim } from './journal.js';
 import type { Journal } from './journal.js';
 

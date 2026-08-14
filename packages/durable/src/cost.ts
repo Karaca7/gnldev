@@ -24,8 +24,8 @@ export interface RunCostOptions {
 }
 
 /** Usage+cost extracted from a single model-step record — factored out so `getRunCost`'s inner loop
- *  AND limits.ts's O(1) incremental counting (see limits.ts `applyModelStep`) SHARE the SAME pricing
- *  logic (single source of truth — duplicating price computation in two places would risk DRIFT). */
+ * AND limits.ts's O(1) incremental counting (see limits.ts `applyModelStep`) SHARE the SAME pricing
+ *  Logic (single source of truth — duplicating price computation in two places would risk DRIFT). */
 export interface ModelStepUsage {
   inputTokens: number;
   outputTokens: number;
@@ -37,8 +37,8 @@ export interface ModelStepUsage {
 
 /**
  * Returns `undefined` if the record has no `usage` at all (e.g. an unexpected/corrupt record) —
- * the caller should interpret this as "this step does not contribute to the count" (SAME as
- * getRunCost's existing `continue`).
+ * The caller should interpret this as "this step does not contribute to the count" (SAME as
+ * GetRunCost's existing `continue`).
  */
 export function usageAndCostFromModelValue(value: unknown, opts: RunCostOptions = {}): ModelStepUsage | undefined {
   const v: any = value;
@@ -46,7 +46,7 @@ export function usageAndCostFromModelValue(value: unknown, opts: RunCostOptions 
   // A streamDurable record has the shape `{ parts, rest }` (durable-model.ts wrapStream) —
   // `usage` is NOT at the top level, it's in the 'finish' part inside `parts`. The generateText shape
   // (top-level `usage`) is tried FIRST, otherwise it's extracted from the stream shape (backward
-  // compatible — the behavior of existing generateText records does NOT CHANGE).
+  // Compatible — the behavior of existing generateText records does NOT CHANGE).
   const usage = v?.usage ?? (Array.isArray(v?.parts) ? v.parts.find((p: any) => p?.type === 'finish')?.usage : undefined);
   if (!usage) return undefined;
   const inp = usage.inputTokens ?? 0;

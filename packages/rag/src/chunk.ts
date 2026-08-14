@@ -2,11 +2,11 @@
 // `chunkText` splits raw text into chunks; `chunkDocuments` splits VectorDocs and produces a new
 // VectorDoc list ready for `indexDocuments` (id: `<source>#<i>`, metadata inherited + source trail).
 // Strategies:
-//   - 'recursive' (default): splits preferring paragraph → line → sentence → word boundaries
+// 'recursive' (default): splits preferring paragraph → line → sentence → word boundaries
 //     (the general-purpose strategy with the highest semantic coherence).
-//   - 'markdown': splits by heading hierarchy; adds a `heading` breadcrumb metadata to each chunk
+// 'markdown': splits by heading hierarchy; adds a `heading` breadcrumb metadata to each chunk
 //     (for context display during retrieval), large text within a section is split recursively.
-//   - 'character': fixed window (fastest; when boundary quality doesn't matter).
+// 'character': fixed window (fastest; when boundary quality doesn't matter).
 import type { VectorDoc } from './vector-store.js';
 
 export interface ChunkOptions {
@@ -128,7 +128,7 @@ export function chunkText(text: string, opts?: ChunkOptions): Chunk[] {
 /**
  * Split documents → VectorDoc list ready for `indexDocuments`. Chunk id is `<docId>#<i>`
  * (deterministic → re-indexing upserts to the same ids, no duplicate records); metadata
- * is inherited + a `{ source, chunk }` trail is added (and a `heading` breadcrumb in markdown).
+ * Is inherited + a `{ source, chunk }` trail is added (and a `heading` breadcrumb in markdown).
  */
 export function chunkDocuments(docs: VectorDoc[], opts?: ChunkOptions): VectorDoc[] {
   const out: VectorDoc[] = [];

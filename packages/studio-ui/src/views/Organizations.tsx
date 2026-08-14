@@ -8,22 +8,22 @@ import { Spinner, Empty, ErrorBox, Badge, Btn, StatStrip, PageHeader, cn } from 
 import { toast, ConfirmDialog } from '../ui';
 import { Reveal } from '../motion';
 // Note: unlike other views, there is deliberately NO '../i18n' side-effect import here —
-// this file's pure functions (validateOrgId/orgDisplayName/fmtUsd/fmtTok) are imported directly
-// in a node environment (without jsdom, see test/org-id.test.ts); getStoredLang() in i18n/index.ts
-// accesses localStorage unconditionally and blows up in a node environment. In the real app,
-// main.tsx already imports './i18n' before App; in the test environment, this view is only
-// rendered via test/views.test.tsx, in the same module graph as Approvals — Approvals already
-// initializes global i18next through its own '../i18n' import.
+// This file's pure functions (validateOrgId/orgDisplayName/fmtUsd/fmtTok) are imported directly
+// In a node environment (without jsdom, see test/org-id.test.ts); getStoredLang() in i18n/index.ts
+// Accesses localStorage unconditionally and blows up in a node environment. In the real app,
+// Main.tsx already imports './i18n' before App; in the test environment, this view is only
+// Rendered via test/views.test.tsx, in the same module graph as Approvals — Approvals already
+// Initializes global i18next through its own '../i18n' import.
 import enOrganizations from '../i18n/locales/en/organizations.json';
 
 /** USD/token formatting (pure, tested). */
 export function fmtUsd(n: number): string { return '$' + n.toFixed(2); }
 export function fmtTok(n: number): string { return n.toLocaleString('tr-TR'); }
 
-// validateOrgId, like the pure functions in Scheduler, is also tested from outside the component;
+// ValidateOrgId, like the pure functions in Scheduler, is also tested from outside the component;
 // `t` is optional, and if not given, a fallback that reads from en/organizations.json (ENGLISH
-// default) is used. The real view passes its own `useTranslation('organizations')` t (tr/en
-// depending on the active language).
+// Default) is used. The real view passes its own `useTranslation('organizations')` t (tr/en
+// Depending on the active language).
 type Tx = (key: string, opts?: Record<string, unknown>) => string;
 function interpolate(s: string, vars?: Record<string, unknown>): string {
   return vars ? s.replace(/\{\{(\w+)\}\}/g, (_, k: string) => String(vars[k] ?? '')) : s;
@@ -32,8 +32,8 @@ const defaultT: Tx = (key, opts) => interpolate((enOrganizations as Record<strin
 
 /**
  * Budget meter: FULL information for one limit type (USD or token) — used / raw limit · percentage ·
- * remaining amount + fill bar. Lets the user read "$10 budget, 0% used, $10 left" without entering
- * edit mode (the old `BudgetBar` only showed % — it hid the actual limit).
+ * Remaining amount + fill bar. Lets the user read "$10 budget, 0% used, $10 left" without entering
+ * Edit mode (the old `BudgetBar` only showed % — it hid the actual limit).
  * On overage: destructive tone + "X exceeded". The fill animates from 0 to the real ratio (no jump under reduced-motion).
  */
 function BudgetMeter({ label, used, limit, unit, exceeded }: { label: string; used: number; limit: number; unit: 'usd' | 'token'; exceeded: boolean }) {
@@ -69,7 +69,7 @@ function BudgetMeter({ label, used, limit, unit, exceeded }: { label: string; us
 /**
  * Budget editor: writes the __budget__ document in the journal (the @gnldev/server write path reads it
  * LIVE → save = takes effect without a deploy). A field left empty means unlimited; if both are
- * empty, the budget is deleted.
+ * Empty, the budget is deleted.
  */
 function BudgetEditor({ id, initial, onDone }: { id: string; initial?: BudgetLimit | null; onDone: () => void }) {
   const { t } = useTranslation('organizations');
@@ -79,7 +79,7 @@ function BudgetEditor({ id, initial, onDone }: { id: string; initial?: BudgetLim
   const [busy, setBusy] = useState(false);
   // Field-level errors (FORM-09): a negative limit is flagged on the exact input that caused it
   // (aria-invalid + inline message right below), instead of a toast in the screen's opposite corner
-  // that leaves no trace once it fades — see validateOrgId/CreateOrganization for the same pattern.
+  // That leaves no trace once it fades — see validateOrgId/CreateOrganization for the same pattern.
   const [errs, setErrs] = useState<{ usd?: string; tok?: string }>({});
   const inputCls = 'w-28 rounded-md border border-input bg-background px-2 py-1 text-xs outline-none transition-colors';
 
@@ -143,9 +143,9 @@ function BudgetEditor({ id, initial, onDone }: { id: string; initial?: BudgetLim
 
 /**
  * Organization id validation (pure logic, tested): used in the journal as `org:<id>:` (storage
- * prefix) → only [a-z0-9_-] is allowed (':' is specifically FORBIDDEN, otherwise the prefix can be
- * escaped / collide with another organization's namespace). Returns null if valid, otherwise the
- * error text to show the user (depending on the active language — see the Tx fallback explanation above).
+ * Prefix) → only [a-z0-9_-] is allowed (':' is specifically FORBIDDEN, otherwise the prefix can be
+ * Escaped / collide with another organization's namespace). Returns null if valid, otherwise the
+ * Error text to show the user (depending on the active language — see the Tx fallback explanation above).
  */
 export function validateOrgId(id: string, t: Tx = defaultT): string | null {
   const v = id.trim();
@@ -156,7 +156,7 @@ export function validateOrgId(id: string, t: Tx = defaultT): string | null {
 
 /**
  * Primary/secondary text for the table identity cell (pure logic, tested): if a label EXISTS it's
- * primary (fixes the bug where the label was collected but never shown in the UI) + id is secondary
+ * Primary (fixes the bug where the label was collected but never shown in the UI) + id is secondary
  * (the `org:<id>:` storage identifier). If there's no label, the id alone is promoted to primary
  * (old behavior — backwards compatible).
  */
@@ -173,7 +173,7 @@ function CreateOrganization() {
   const [busy, setBusy] = useState(false);
   // Inline field error (FORM-09): validateOrgId's result is shown right below the id input
   // (aria-invalid + border-destructive) instead of a toast in the opposite screen corner — client-side
-  // validation no longer uses toast at all; toast stays reserved for actual server/network errors below.
+  // Validation no longer uses toast at all; toast stays reserved for actual server/network errors below.
   const [idErr, setIdErr] = useState<string | null>(null);
   const inputCls = 'rounded-md border border-input bg-background px-2 py-1 text-xs outline-none transition-colors';
 

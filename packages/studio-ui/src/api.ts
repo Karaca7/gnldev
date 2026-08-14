@@ -8,8 +8,8 @@ import { authHeader, getToken } from './auth';
 export interface Capabilities {
   // NOTE: `chat` = the host's optional POST /chat (non-streaming, embedder/programmatic) endpoint. It is
   // DELIBERATELY not surfaced in Studio UI — interactive chat is covered by Playground (streaming,
-  // thread/tool/approval); a separate Chat panel would just be redundant surface. The flag is kept
-  // for embedder endpoint discovery.
+  // Thread/tool/approval); a separate Chat panel would just be redundant surface. The flag is kept
+  // For embedder endpoint discovery.
   resume: boolean; chat: boolean; fork: boolean; playground: boolean; stream: boolean;
   /** Saga: the host wired compensateRun → the run detail offers the (irreversible) Unwind action. */
   compensate: boolean;
@@ -23,7 +23,7 @@ export interface Capabilities {
   /** Manual invalidate button in the Cache view (on if the host implements cache.invalidate). */
   cacheManage?: boolean;
   /** Scheduler view (@gnldev/scheduler trigger introspection) — on when the journal is writable + listKeys,
-   *  no separate host option required (list comes back empty if the host doesn't use @gnldev/scheduler). */
+   *  No separate host option required (list comes back empty if the host doesn't use @gnldev/scheduler). */
   scheduler?: boolean;
   // Auth (opt-in): authRequired → the UI requires login. The rest unlock premium surfaces if the paid @gnldev/auth-ee is active.
   authRequired?: boolean; sso?: boolean; rbac?: boolean; audit?: boolean; multiOrganization?: boolean; users?: boolean;
@@ -42,28 +42,28 @@ export interface Capabilities {
   /** OTEL export button (on if the host passed opts.otelExport — exports the run trace to an external APM). */
   otelExport?: boolean;
   /** Audit reports (PII/moderation/prompt-injection processor findings) — on when the journal is
-   *  writable+listKeys (same auto-detection pattern as scheduler/audit, no separate host option needed). */
+   *  Writable+listKeys (same auto-detection pattern as scheduler/audit, no separate host option needed). */
   processors?: boolean;
   /** D3-A: durable-flag-only agent run cancel (POST /runs/:id/cancel) — no in-process abort in studio,
-   *  the run stops at its NEXT fresh model step wherever it's running. */
+   *  The run stops at its NEXT fresh model step wherever it's running. */
   runCancel?: boolean;
   /** D3-A: durable workflow-run cancel (POST /workflows/runs/:id/cancel) — same registry surface as the
-   *  suspended-runs inbox (GET /workflows/runs). */
+   *  Suspended-runs inbox (GET /workflows/runs). */
   workflowRunCancel?: boolean;
   /** Agent approval registry (governance): review/approve/block code-defined agents — on when the host's
-   *  journal is writable + listKeys (same auto-detection pattern as audit/scheduler). */
+   *  Journal is writable + listKeys (same auto-detection pattern as audit/scheduler). */
   agentRegistry?: boolean;
 }
 
 /**
  * Fetch error: carries the HTTP status → the UI can redirect to login on 401/403.
  * API-05 fix: also carries the server's full JSON error body (when present) — `http()` used to
- * discard every field but `.error` (folded into `message`), so callers had no channel for
- * machine-readable fields like `code`/`resumable`/`detail`/`aggregate` (e.g. run_limit_exceeded's
+ * Discard every field but `.error` (folded into `message`), so callers had no channel for
+ * Machine-readable fields like `code`/`resumable`/`detail`/`aggregate` (e.g. run_limit_exceeded's
  * `resumable`, or the eval-gate 412's `aggregate`). `code` is pulled out as a convenience shortcut;
  * `body` carries the raw parsed object for anything else. Both stay optional/undefined when the
- * response wasn't valid JSON (unreadable body) — existing `new ApiError(status, msg)` call sites
- * keep compiling and behaving exactly as before.
+ * Response wasn't valid JSON (unreadable body) — existing `new ApiError(status, msg)` call sites
+ * Keep compiling and behaving exactly as before.
  */
 export class ApiError extends Error {
   status: number;
@@ -81,8 +81,8 @@ export class ApiError extends Error {
 /**
  * Bug-investigation fix: a clean message to show the USER for an error.
  * Returns the `message` of `ApiError`/`Error` (without the technical "ApiError:" prefix — `String(e)`
- * used to add that). Since `http()` now puts the server's error body (`{error}`) into the message,
- * toasts show meaningful text. Use this in all views' toast/error display.
+ * Used to add that). Since `http()` now puts the server's error body (`{error}`) into the message,
+ * Toasts show meaningful text. Use this in all views' toast/error display.
  */
 export function errMessage(e: unknown): string {
   if (e instanceof Error) return e.message;
@@ -99,8 +99,8 @@ export function isAuthError(err: unknown): boolean {
 /**
  * Mid-session 401/403 → should we fall back to a clean login?
  * Returns true ONLY when auth is ON (authRequired) AND a token is present. When there is no
- * token (we're already on the Login screen), always returns false to avoid a re-login loop —
- * the 401 there is shown by the Login component with its own error message.
+ * Token (we're already on the Login screen), always returns false to avoid a re-login loop —
+ * The 401 there is shown by the Login component with its own error message.
  */
 export function shouldForceReauth(input: { err: unknown; authRequired: boolean; hasToken: boolean }): boolean {
   return input.authRequired && input.hasToken && isAuthError(input.err);
@@ -108,8 +108,8 @@ export function shouldForceReauth(input: { err: unknown; authRequired: boolean; 
 
 /**
  * Bug-investigation fix #4: react-query retry — 401/403 (token invalid/revoked/unauthorized) isn't
- * worth retrying; App.tsx already falls back to a clean login via forceReauthIf, so a retry would
- * only delay that reauth trigger. For other errors (network/5xx) retry at most once.
+ * Worth retrying; App.tsx already falls back to a clean login via forceReauthIf, so a retry would
+ * Only delay that reauth trigger. For other errors (network/5xx) retry at most once.
  */
 export function queryRetry(failureCount: number, error: unknown): boolean {
   return !isAuthError(error) && failureCount < 1;
@@ -137,7 +137,7 @@ export interface SchedulerTrigger {
 export interface VectorMatch { id: string; text: string; score: number; metadata?: Record<string, unknown>; }
 export interface DatasetMeta { id: string; cases: number; description?: string; }
 export interface EvalDatasetResult { datasetId: string; cases: { caseId: string; output: string; scores: Record<string, { score: number; reason?: string }> }[]; aggregate: Record<string, number>; }
-// threadId is optional: only present on runs tied to a thread (backend ready — server /runs).
+// ThreadId is optional: only present on runs tied to a thread (backend ready — server /runs).
 export interface RunSummary { runId: string; status: 'completed' | 'suspended'; modelSteps: number; toolCalls: number; threadId?: string; agent?: string; }
 /** S4 pagination envelope: GET /runs?limit=&cursor= (newest first). */
 export interface RunsPage { items: RunSummary[]; nextCursor?: string; total: number; }
@@ -225,30 +225,30 @@ export interface WorkflowRunResult { ok?: boolean; runId: string; output?: unkno
 export interface WorkflowRunSummary { runId: string; startedAt?: number; steps: number; status: 'completed' | 'suspended'; suspended: boolean; }
 /**
  * D3-A: one record from the `wfrun:` run REGISTRY (GET /workflows/runs — P0.4), covering code AND
- * managed workflows in one scan. The registry key is only `wfrun:<runId>` — historically the record
- * carried no workflow `name`, so the workflow that produced a suspended run had to be picked by the
- * user (see Workflows.tsx's suspended-runs inbox) rather than inferred.
+ * Managed workflows in one scan. The registry key is only `wfrun:<runId>` — historically the record
+ * Carried no workflow `name`, so the workflow that produced a suspended run had to be picked by the
+ * User (see Workflows.tsx's suspended-runs inbox) rather than inferred.
  * FLOW-08: `workflowName` is an OPTIONAL server-side addition — OLDER registry records (written before
- * the server started stamping it) won't have it, so callers must keep working when it's absent (see
+ * The server started stamping it) won't have it, so callers must keep working when it's absent (see
  * Workflows.tsx's `deriveWorkflowName` fallback, which derives it from the runId's `wf-<name>-<ts>`
- * convention instead of forcing the user to guess from a flat dropdown).
+ * Convention instead of forcing the user to guess from a flat dropdown).
  */
 export interface WorkflowRunRegistryItem {
   runId: string;
   status: 'suspended' | 'completed' | 'canceled';
   /** FLOW-08: the workflow this run belongs to, when the server recorded it (optional — absent on
-   *  older records). When present, this is authoritative (not a guess). */
+   *  Older records). When present, this is authoritative (not a guess). */
   workflowName?: string;
   /** Suspended: the step waiting on resume. Canceled: the step that would have run next (if known). */
   stepId?: string;
   /** Suspended: the waitId to key the resume payload by (`{ [waitId]: payload }`) — absent means the
-   *  UI cannot address a precise resume target (honestly surfaced, see SuspendedRunsInbox). */
+   * UI cannot address a precise resume target (honestly surfaced, see SuspendedRunsInbox). */
   waitId?: string;
   reason?: unknown;
   updatedAt: number;
 }
 /** API-03: paged envelope for GET /workflows/runs?limit= (same shape as RunsPage, minus `total` — the
- *  registry doesn't have a cheap filtered-count aggregate, see server.ts's route JSDoc). */
+ *  Registry doesn't have a cheap filtered-count aggregate, see server.ts's route JSDoc). */
 export interface WorkflowRunRegistryPage { items: WorkflowRunRegistryItem[]; nextCursor?: string; }
 export interface WorkflowRunState { runId: string; steps: { stepId: string; output: unknown }[]; suspended: boolean; suspend?: unknown; }
 export type WfStreamEvent =
@@ -266,7 +266,7 @@ export interface AuditItem { id: string; at?: number; actor: string; action: str
 export interface OrganizationRow {
   id: string; label?: string; runs: number; tokens: number; costUsd: number;
   /** API-02: 'materialized' (counters served tokens/costUsd, O(1)) | 'scan' (legacy per-run readRun scan).
-   *  Absent on older servers. Mirrors Metrics.source. */
+   * Absent on older servers. Mirrors Metrics.source. */
   source?: 'materialized' | 'scan';
   /** inherited: true → the limit doesn't come from the organization's OWN document but from the default fallback. */
   budget?: { usdLimit?: number; tokenLimit?: number; exceeded: boolean; inherited: boolean };
@@ -284,10 +284,10 @@ export interface StudioUser {
   revoked?: boolean;
 }
 /** A single fine-grained permission the admin can ASSIGN to a user (checkbox in the UI). The catalog
- *  itself is GNL-team-owned/code-defined and read-only — customers assign, never invent, permission ids. */
+ *  Itself is GNL-team-owned/code-defined and read-only — customers assign, never invent, permission ids. */
 export interface PermissionCatalogEntry { id: string; label: string; group?: string; description?: string; }
 /** GET /permissions/catalog response. `enabled: false` → fine-grained RBAC is off (free tier / no license):
- *  the UI must not render the checkbox editor, only the existing role select applies. */
+ *  The UI must not render the checkbox editor, only the existing role select applies. */
 export interface PermissionCatalog {
   enabled: boolean;
   permissions: PermissionCatalogEntry[];
@@ -317,13 +317,13 @@ export interface RegressionReport { ok?: boolean; baseRunId: string; newRunId: s
 // ── fetch helpers ─────────────────────────────────────────────────────────
 /**
  * API-07: shared HTTP-error-body reader (this used to be `http()`-only logic; the SSE helpers
- * below — streamAgent/runWorkflowStream — duplicated a stripped-down `!res.ok` branch that never
- * read the body, so a server-side rejection like `{error:"writes are not supported in an org
- * context…"}` only ever showed up as "403 Forbidden" in the Playground). Starts from the generic
+ * Below — streamAgent/runWorkflowStream — duplicated a stripped-down `!res.ok` branch that never
+ * Read the body, so a server-side rejection like `{error:"writes are not supported in an org
+ * Context…"}` only ever showed up as "403 Forbidden" in the Playground). Starts from the generic
  * "<status> <statusText>[ @ context]" text, then tries `res.clone().json()` and uses `.error` as
- * the message when it's a non-empty string; non-JSON/empty bodies leave `body` undefined and keep
- * the generic message. `context` (the request path) is optional so the SSE call sites — which have
- * no meaningful path to report — get the same generic text `http()` always produced.
+ * The message when it's a non-empty string; non-JSON/empty bodies leave `body` undefined and keep
+ * The generic message. `context` (the request path) is optional so the SSE call sites — which have
+ * No meaningful path to report — get the same generic text `http()` always produced.
  */
 async function parseErrorResponse(res: Response, context?: string): Promise<{ message: string; body?: Record<string, unknown> }> {
   let message = context ? `${res.status} ${res.statusText} @ ${context}` : `${res.status} ${res.statusText}`;
@@ -339,7 +339,7 @@ async function parseErrorResponse(res: Response, context?: string): Promise<{ me
   return { message, body };
 }
 /** Message-only half of parseErrorResponse — used by streamAgent/runWorkflowStream, which report
- *  a plain string via `on({type:'error', data:{error}})` and have no `ApiError.body` to fill. */
+ *  A plain string via `on({type:'error', data:{error}})` and have no `ApiError.body` to fill. */
 async function errorMessageFromResponse(res: Response): Promise<string> {
   return (await parseErrorResponse(res)).message;
 }
@@ -347,12 +347,12 @@ async function errorMessageFromResponse(res: Response): Promise<string> {
 async function http<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(config.apiBase + path, {
     ...init,
-    // authHeader(): adds Authorization if a token exists (empty if auth is off → old behavior).
+    // AuthHeader(): adds Authorization if a token exists (empty if auth is off → old behavior).
     headers: { 'content-type': 'application/json', ...authHeader(), ...(init?.headers ?? {}) },
   });
   if (!res.ok) {
     // Bug-investigation fix: the server produces a meaningful error body ({error:'...'}) —
-    // this used to go unread, so the user only saw a generic "400 Bad Request".
+    // This used to go unread, so the user only saw a generic "400 Bad Request".
     const { message, body } = await parseErrorResponse(res, path);
     throw new ApiError(res.status, message, body);
   }
@@ -365,10 +365,10 @@ const del = <T>(p: string) => http<T>(p, { method: 'DELETE' });
 const patch = <T>(p: string, body: unknown) => http<T>(p, { method: 'PATCH', body: JSON.stringify(body) });
 
 /** D3-A: the cross-workflow `wfrun:` registry (GET /workflows/runs — P0.4), optionally filtered by
- *  status. API-03: passing `limit` opts into the paged `{items,nextCursor}` envelope (a BOUNDED scan
- *  server-side, see server.ts's route JSDoc); omitted → the legacy flat array. Overloaded (rather than a
- *  union return) so a call site that passes a definite `limit` gets a definite `WorkflowRunRegistryPage`
- *  back — no `Array.isArray` narrowing needed there, and react-query's `useQuery` overload resolution
+ *  Status. API-03: passing `limit` opts into the paged `{items,nextCursor}` envelope (a BOUNDED scan
+ *  Server-side, see server.ts's route JSDoc); omitted → the legacy flat array. Overloaded (rather than a
+ *  Union return) so a call site that passes a definite `limit` gets a definite `WorkflowRunRegistryPage`
+ *  Back — no `Array.isArray` narrowing needed there, and react-query's `useQuery` overload resolution
  *  (which chokes on a bare union queryFn return type) keeps working for useWorkflowRunsRegistry below. */
 function workflowRunsRegistry(status?: 'suspended' | 'completed' | 'canceled'): Promise<WorkflowRunRegistryItem[]>;
 function workflowRunsRegistry(status: 'suspended' | 'completed' | 'canceled' | undefined, limit: number): Promise<WorkflowRunRegistryPage>;
@@ -387,7 +387,7 @@ export const api = {
   /** Memory provenance for a turn ('null' = not recorded: old run, memory off, read-only journal). */
   memoryContext: (id: string) => get<{ context: MemoryContextRecord | null }>(`/runs/${encodeURIComponent(id)}/memory-context`),
   // API-09: optional server-side filters — SAME parameter names as @gnldev/server's GET /runs (status/agent
-  // are pushed down to the engine; q is a runId substring). Filtering is done on the server so `total`
+  // Are pushed down to the engine; q is a runId substring). Filtering is done on the server so `total`
   // (shown in the search placeholder) always describes the same set as `items`.
   runsPage: (limit: number, cursor?: string, filters?: RunsFilter) => {
     const params = new URLSearchParams({ limit: String(limit) });
@@ -420,9 +420,9 @@ export const api = {
   runNetwork: (id: string) => get<NetworkTrace>(`/runs/${encodeURIComponent(id)}/network`),
   metrics: () => get<Metrics>('/metrics'),
   // API-10: optional ?limit= (server clamps 1..1000, see server.ts's /metrics/runs) — without it the
-  // client used to download a metrics row for EVERY run in the journal on every 10s poll, no matter how
-  // many the UI actually renders. `undefined` keeps the old unlimited request (used nowhere currently,
-  // kept for API completeness / any future direct caller).
+  // Client used to download a metrics row for EVERY run in the journal on every 10s poll, no matter how
+  // Many the UI actually renders. `undefined` keeps the old unlimited request (used nowhere currently,
+  // Kept for API completeness / any future direct caller).
   metricsRuns: (limit?: number) => get<{ runs: MetricsRun[] }>(`/metrics/runs${limit != null ? `?limit=${limit}` : ''}`),
   agents: () => get<AgentMeta[]>('/agents'),
   tools: () => get<ToolListItem[]>('/tools'),
@@ -431,10 +431,10 @@ export const api = {
   messages: (id: string) => get<any[]>(`/threads/${encodeURIComponent(id)}/messages`),
   /**
    * FLOW-10: truncates a thread's PERSISTED history — `afterIndex` is INCLUSIVE (kept), everything
-   * after it is removed. Index space matches GET /threads/:id/messages' response order (the same
-   * array Playground's `mapMessages` consumes) — NOT the local, possibly-fanned-out `Msg[]` index.
+   * After it is removed. Index space matches GET /threads/:id/messages' response order (the same
+   * Array Playground's `mapMessages` consumes) — NOT the local, possibly-fanned-out `Msg[]` index.
    * 501 when the host's memory adapter doesn't implement truncateMessages (see Playground's
-   * warnStaleServerHistory fallback); 400 if `afterIndex` is missing/not a number.
+   * WarnStaleServerHistory fallback); 400 if `afterIndex` is missing/not a number.
    */
   truncateThreadMessages: (id: string, afterIndex: number) =>
     http<{ ok: boolean; removed: number }>(`/threads/${encodeURIComponent(id)}/messages`, { method: 'DELETE', body: JSON.stringify({ afterIndex }) }),
@@ -454,7 +454,7 @@ export const api = {
   retryJob: (id: string) => post<{ ok: boolean; id: string }>(`/jobs/${encodeURIComponent(id)}/retry`, {}),
   cacheStats: () => get<CacheStats>('/cache/stats'),
   /** If key is given, only that key is deleted; if not given, (best-effort) all keys known to the host
-   *  are deleted (only call when caps.cacheManage is on). */
+   *  Are deleted (only call when caps.cacheManage is on). */
   invalidateCache: (key?: unknown) => post<{ ok: boolean; deleted: number }>('/cache/invalidate', { key }),
   schedulerTriggers: () => get<SchedulerTrigger[]>('/scheduler/triggers'),
   knowledgeSearch: (query: string, topK?: number) => post<VectorMatch[]>('/knowledge/search', { query, topK }),
@@ -498,8 +498,8 @@ export const api = {
     http<{ ok: boolean; organization: { id: string; label?: string } }>('/organizations', { method: 'POST', body: JSON.stringify({ id, label }) }),
   deleteOrganization: (id: string) => del<{ ok: boolean; id: string; deleted: number }>(`/organizations/${encodeURIComponent(id)}`),
   // Users (paid): list/create/delete. create → token is returned ONCE.
-  // platformAdmin/scope/strictMultiOrg are optional — older servers may not send them yet (the UI
-  // treats a missing platformAdmin as false, see Agents.tsx's canSeeRegistry).
+  // PlatformAdmin/scope/strictMultiOrg are optional — older servers may not send them yet (the UI
+  // Treats a missing platformAdmin as false, see Agents.tsx's canSeeRegistry).
   me: () => get<{ id: string | null; roles: string[]; orgId: string | null; operator: boolean; platformAdmin?: boolean; scope?: string; strictMultiOrg?: boolean }>('/me'),
   users: () => get<{ users: StudioUser[] }>('/users'),
   /** Read-only permission catalog + role→preset map (RBAC, paid). `enabled:false` on free tier/no license. */
@@ -510,7 +510,7 @@ export const api = {
   /** Revoke a user's token WITHOUT deleting the user (501 if the host doesn't support revoke). */
   revokeUser: (id: string) => http<{ ok: boolean; id: string }>(`/users/${encodeURIComponent(id)}/revoke`, { method: 'POST' }),
   /** Update a user's roles and/or explicit permissions (token unchanged). An empty `permissions` array
-   *  CLEARS the explicit override → authorization falls back to the role's default grants. */
+   * CLEARS the explicit override → authorization falls back to the role's default grants. */
   updateUser: (id: string, body: { roles?: string[]; permissions?: string[] }) =>
     patch<{ ok: boolean; user: StudioUser }>(`/users/${encodeURIComponent(id)}`, body),
   managedAgents: () => get<{ agents: ManagedAgentRecord[] }>('/managed-agents'),
@@ -522,7 +522,7 @@ export const api = {
     post<{ ok: boolean; record: AgentRegistryRecord }>(`/agents/registry/${encodeURIComponent(name)}/block`, note ? { note } : {}),
   policy: () => get<{ policy: PolicyDoc | null }>('/policy'),
   /** `ifVersion`: the version the caller loaded — optimistic lock (API-08). Omit for the old
-   *  last-write-wins behavior. Mismatch → 409 ApiError (see `ApiError.status`). */
+   *  Last-write-wins behavior. Mismatch → 409 ApiError (see `ApiError.status`). */
   savePolicy: (rules: PolicyRule[], ifVersion?: number) =>
     http<{ ok: boolean; version: number }>('/policy', { method: 'PUT', body: JSON.stringify({ rules, ifVersion }) }),
   createAgentVersion: (body: { name: string; model: string; system?: string; maxSteps?: number; note?: string }) =>
@@ -530,7 +530,7 @@ export const api = {
   promoteAgentVersion: (name: string, version: number) =>
     post<{ ok: boolean; name: string; active: number; previous: number | null }>(`/managed-agents/${encodeURIComponent(name)}/promote`, { version }),
   /** PERMANENTLY deletes a managed agent record (with ALL its versions) — only the managed override goes
-   *  away; a code-defined agent (if any) keeps coming from the registry (501 if the host doesn't support deletePrefix). */
+   *  Away; a code-defined agent (if any) keeps coming from the registry (501 if the host doesn't support deletePrefix). */
   deleteManagedAgent: (name: string) => del<{ ok: boolean; name: string }>(`/managed-agents/${encodeURIComponent(name)}`),
   /** Deletes a single VERSION. The active (prod) version cannot be deleted (409); once the last version is gone the agent disappears entirely. */
   deleteAgentVersion: (name: string, version: number) =>
@@ -550,10 +550,10 @@ export interface AgentRunBody { runId: string; prompt?: string; messages?: unkno
 
 // ── POST-SSE: agent streaming (EventSource can't POST → fetch + manual SSE parsing) ──
 // The FULL wire protocol, kept in sync with packages/studio/src/sse.ts (and its twin,
-// packages/server/src/sse.ts). This used to declare only 6 of the 18 events the server actually
-// sends, which made the other 12 untypeable and therefore unhandled — including `tool-error`, whose
-// absence left a failed tool pulsing "running" forever in the Playground. An event the UI chooses
-// to ignore is a decision; an event it cannot even name is an accident waiting to happen.
+// Packages/server/src/sse.ts). This used to declare only 6 of the 18 events the server actually
+// Sends, which made the other 12 untypeable and therefore unhandled — including `tool-error`, whose
+// Absence left a failed tool pulsing "running" forever in the Playground. An event the UI chooses
+// To ignore is a decision; an event it cannot even name is an accident waiting to happen.
 export type StreamEvent =
   | { type: 'text-delta'; data: { text: string } }
   | { type: 'tool-call'; data: { toolCallId: string; toolName: string; input: unknown } }
@@ -581,7 +581,7 @@ export type StreamEvent =
 export async function streamAgent(name: string, body: AgentRunBody, on: (ev: StreamEvent) => void, signal?: AbortSignal): Promise<void> {
   // Bug-investigation fix #3: a fetch() network exception used to leak as a raw promise rejection
   // (a different error path than the HTTP-not-ok case). It's now caught and reported through the
-  // same on({type:'error'}) contract — the caller sees a single error path. Cancellation (AbortController) stays silent (same as before).
+  // Same on({type:'error'}) contract — the caller sees a single error path. Cancellation (AbortController) stays silent (same as before).
   let res: Response;
   try {
     res = await fetch(`${config.apiBase}/agents/${encodeURIComponent(name)}/stream`, {
@@ -594,7 +594,7 @@ export async function streamAgent(name: string, body: AgentRunBody, on: (ev: Str
   }
   if (!res.ok) {
     // API-07: read the server's {error} body (same helper http() uses) instead of showing just
-    // the HTTP status text — e.g. surfaces "writes are not supported in an org context…" on 403.
+    // The HTTP status text — e.g. surfaces "writes are not supported in an org context…" on 403.
     on({ type: 'error', data: { error: await errorMessageFromResponse(res) } });
     return;
   }
@@ -630,7 +630,7 @@ export async function runWorkflowStream(
   signal?: AbortSignal,
 ): Promise<void> {
   // Bug-investigation fix #3: same as streamAgent — catch the fetch() network exception and report
-  // it through the uniform on({type:'error'}) contract; cancellation stays silent.
+  // It through the uniform on({type:'error'}) contract; cancellation stays silent.
   let res: Response;
   try {
     res = await fetch(`${config.apiBase}/workflows/${encodeURIComponent(name)}/run-stream`, {
@@ -643,7 +643,7 @@ export async function runWorkflowStream(
   }
   if (!res.ok) {
     // API-07: same fix as streamAgent — read the server's {error} body instead of showing just
-    // the HTTP status text.
+    // The HTTP status text.
     on({ type: 'error', data: { error: await errorMessageFromResponse(res) } });
     return;
   }
@@ -675,11 +675,11 @@ export const useCapabilities = () => useQuery({ queryKey: ['capabilities'], quer
 export const useRuns = () => useQuery({ queryKey: ['runs'], queryFn: api.runs });
 /**
  * Paginated run list (newest first). ['runs',…] key → useLiveRuns invalidation still matches (prefix
- * match on ['runs']), regardless of the filter values appended below.
+ * Match on ['runs']), regardless of the filter values appended below.
  * API-09: `filters` (status/agent/q) is part of the query key — changing a filter is a genuinely
- * different result set, so react-query must re-fetch (not just re-render) when it changes. Two calls
- * with the SAME (or no) filters share the same key → react-query dedupes them to one request/cache
- * entry (used by Inspector.tsx to reuse the unfiltered list for fork lineage without doubling fetches).
+ * Different result set, so react-query must re-fetch (not just re-render) when it changes. Two calls
+ * With the SAME (or no) filters share the same key → react-query dedupes them to one request/cache
+ * Entry (used by Inspector.tsx to reuse the unfiltered list for fork lineage without doubling fetches).
  */
 export const RUNS_PAGE_SIZE = 50;
 export const useRunsPaged = (filters?: RunsFilter) =>
@@ -710,21 +710,21 @@ export const useWorkflowRunState = (id: string | null) =>
 export const useTrace = (id: string | null) => useQuery({ queryKey: ['trace', id], queryFn: () => api.trace(id!), enabled: !!id });
 export const useMetrics = () => useQuery({ queryKey: ['metrics'], queryFn: api.metrics, refetchInterval: 5000 });
 // API-10: the Inspector's run list only ever shows RUNS_PAGE_SIZE (50) rows at a time — 200 comfortably
-// covers a few loaded pages without re-downloading a metrics row for every run the journal has ever
-// seen. The limit is part of the query key: a caller that genuinely needs a different (e.g. larger)
-// window must pass an explicit `limit`, which gets its OWN cache entry — reusing this key with a
-// different limit would otherwise mix results from two different requests under one cache slot.
+// Covers a few loaded pages without re-downloading a metrics row for every run the journal has ever
+// Seen. The limit is part of the query key: a caller that genuinely needs a different (e.g. larger)
+// Window must pass an explicit `limit`, which gets its OWN cache entry — reusing this key with a
+// Different limit would otherwise mix results from two different requests under one cache slot.
 // Pass `null` to opt OUT of the cap and fetch the whole set — Observability's percentiles and CSV
-// export are only correct over ALL runs, so a silent 200-run window would quietly narrow the analytics.
+// Export are only correct over ALL runs, so a silent 200-run window would quietly narrow the analytics.
 export const useMetricsRuns = (limit: number | null = 200) =>
   useQuery({ queryKey: ['metrics-runs', limit], queryFn: () => api.metricsRuns(limit ?? undefined), refetchInterval: 10000 });
 export const useAgents = () => useQuery({ queryKey: ['agents'], queryFn: api.agents });
 // Governance: same 10s cadence as useOrganizations — this is a review surface, not a live feed.
 // `enabled` MUST be false for a caller who isn't expected to pass the server's platform-admin gate
 // (org-bound identity / strict-multi-org non-platform-admin) — GET /agents/registry is platform-admin
-// gated (same as approve/block, see server.ts), and this hook is BACKGROUND-POLLED: an always-on query
-// hitting a steady 403 would trip App.tsx's global "any 401/403 → force logout" handler and boot a
-// legitimate-but-unprivileged user back to the login screen on every poll tick. See Agents.tsx's
+// Gated (same as approve/block, see server.ts), and this hook is BACKGROUND-POLLED: an always-on query
+// Hitting a steady 403 would trip App.tsx's global "any 401/403 → force logout" handler and boot a
+// Legitimate-but-unprivileged user back to the login screen on every poll tick. See Agents.tsx's
 // `canSeeRegistry` for the exact (org-unbound OR platform-admin) condition this must be gated on.
 export const useAgentRegistry = (enabled: boolean) =>
   useQuery({ queryKey: ['agent-registry'], queryFn: api.agentRegistry, refetchInterval: 10000, enabled });
@@ -746,8 +746,8 @@ export const useApprovals = () => useQuery({ queryKey: ['approvals'], queryFn: a
 export const useAudit = (filters?: AuditFilters) =>
   useQuery({ queryKey: ['audit', filters], queryFn: () => api.audit(filters) });
 // API-02: this is a review surface, not a live feed — 30s (was 10s) avoids re-triggering a per-org
-// usage scan every 10s just because the Organizations/Users panel is left open (see server.ts's
-// listOrganizations for the O(1) materialized-counter fast path this interval now backs off).
+// Usage scan every 10s just because the Organizations/Users panel is left open (see server.ts's
+// ListOrganizations for the O(1) materialized-counter fast path this interval now backs off).
 export const useOrganizations = () => useQuery({ queryKey: ['organizations'], queryFn: api.organizations, refetchInterval: 30000 });
 export const useUsers = () => useQuery({ queryKey: ['users'], queryFn: api.users });
 export const usePermissionsCatalog = () => useQuery({ queryKey: ['permissions-catalog'], queryFn: api.permissionsCatalog });
@@ -757,21 +757,21 @@ export const usePolicy = () => useQuery({ queryKey: ['policy'], queryFn: api.pol
 export const useWorkflowRuns = (name: string | null, limit?: number) =>
   useQuery({ queryKey: ['wf-runs', name, limit], queryFn: () => api.workflowRuns(name!, limit), enabled: !!name });
 // API-03: the suspended-runs inbox is a review surface, not a live feed — 15s (was 5s) avoids
-// re-scanning the wfrun: registry every 5s just because the Workflows tab is left open. `limit`
-// defaults to 50 (an inbox, not a browsable list — see server.ts's route JSDoc for why no "load more"
-// was added) and is part of the query key so a caller that asks for a different window gets its own
-// cache entry instead of silently mixing pages.
+// Re-scanning the wfrun: registry every 5s just because the Workflows tab is left open. `limit`
+// Defaults to 50 (an inbox, not a browsable list — see server.ts's route JSDoc for why no "load more"
+// Was added) and is part of the query key so a caller that asks for a different window gets its own
+// Cache entry instead of silently mixing pages.
 export const useWorkflowRunsRegistry = (status?: 'suspended' | 'completed' | 'canceled', limit = 50) =>
   useQuery({ queryKey: ['wf-runs-registry', status, limit], queryFn: () => api.workflowRunsRegistry(status, limit), refetchInterval: 15000 });
 
 /**
  * Bug-investigation fix #2 — pure decision logic (tested): should we fall back to the persistent
- * bearer token when the ticket endpoint fails? ONLY when the ticket endpoint behaves as if it
+ * Bearer token when the ticket endpoint fails? ONLY when the ticket endpoint behaves as if it
  * TRULY doesn't exist — 404 (old server, endpoint not added yet) → the token fallback is acceptable
- * for backward compatibility. EVERYTHING ELSE (5xx, 429/rate-limit, 401/403, network exception) is
- * considered TRANSIENT — we do NOT put the persistent token in the URL via `?token=` (it could leak
- * into logs); an empty string is returned, and useLiveRuns already falls back to polling on an SSE
- * error/disconnect.
+ * For backward compatibility. EVERYTHING ELSE (5xx, 429/rate-limit, 401/403, network exception) is
+ * Considered TRANSIENT — we do NOT put the persistent token in the URL via `?token=` (it could leak
+ * Into logs); an empty string is returned, and useLiveRuns already falls back to polling on an SSE
+ * Error/disconnect.
  */
 export function sseTicketNeedsTokenFallback(status: number | 'network-error'): boolean {
   return status === 404;
@@ -780,11 +780,11 @@ export function sseTicketNeedsTokenFallback(status: number | 'network-error'): b
 /**
  * Auth query-suffix for the SSE URL (F6.6 — token hardening, aligned with server audit finding #2).
  * EventSource can't send headers; putting the persistent bearer token in the URL via `?token=` is a
- * log-leak risk. Instead we obtain a SINGLE-USE ticket with a 60s TTL from the authenticated
+ * Log-leak risk. Instead we obtain a SINGLE-USE ticket with a 60s TTL from the authenticated
  * `POST /auth/sse-ticket` and use `?ticket=` (the server consumes it immediately). If the ticket
- * endpoint returns 404 (old server, no endpoint) we fall BACK to the old `?token=` behavior for
- * compatibility; on TRANSIENT errors like 5xx/429/401/403/network exception the token is NOT put in
- * the URL (see sseTicketNeedsTokenFallback). Returns empty if auth is off (no token).
+ * Endpoint returns 404 (old server, no endpoint) we fall BACK to the old `?token=` behavior for
+ * Compatibility; on TRANSIENT errors like 5xx/429/401/403/network exception the token is NOT put in
+ * The URL (see sseTicketNeedsTokenFallback). Returns empty if auth is off (no token).
  */
 export async function sseAuthQuery(): Promise<string> {
   const token = getToken();
@@ -809,15 +809,15 @@ type RunsPagedData = InfiniteData<RunsPage, string | undefined>;
 
 /**
  * API-04: applies one /events change notification to the cached `['runs','paged',…]` pages WITHOUT
- * refetching every loaded page (the old behavior — a bare `invalidateQueries({queryKey:['runs']})`
- * matched every filter variant AND every page an infinite query had already loaded).
+ * Refetching every loaded page (the old behavior — a bare `invalidateQueries({queryKey:['runs']})`
+ * Matched every filter variant AND every page an infinite query had already loaded).
  * For each changed runId: a small existing-endpoint probe (`GET /runs?limit=1&q=<runId>` — the SAME
- * substring filter the search box already uses, API-09) fetches its current row. If that row is found
- * in an ALREADY-CACHED page (any loaded filter variant), it's patched in place via `setQueriesData`. If
- * the probe comes back empty, the run is gone (purge/retention sweep) and the row is dropped from every
- * cached page it was in. If the runId isn't in any cached page yet (a brand-new run), only the FIRST
- * page of each loaded list is reset + refetched — never the pages after it, so a user who has scrolled
- * down doesn't lose that work over one new run appearing at the top.
+ * Substring filter the search box already uses, API-09) fetches its current row. If that row is found
+ * In an ALREADY-CACHED page (any loaded filter variant), it's patched in place via `setQueriesData`. If
+ * The probe comes back empty, the run is gone (purge/retention sweep) and the row is dropped from every
+ * Cached page it was in. If the runId isn't in any cached page yet (a brand-new run), only the FIRST
+ * Page of each loaded list is reset + refetched — never the pages after it, so a user who has scrolled
+ * Down doesn't lose that work over one new run appearing at the top.
  */
 async function applyRunChanges(qc: QueryClient, runIds: string[]): Promise<void> {
   for (const runId of runIds) {
@@ -856,14 +856,14 @@ async function applyRunChanges(qc: QueryClient, runIds: string[]): Promise<void>
 /**
  * Live-tail: /events SSE (GET) → patch the runs cache on a 'change' event (live instead of polling).
  * API-04: the event body is now informative — `{"runIds":[...],"at":…}` — so only the changed rows are
- * patched (applyRunChanges above) instead of invalidating every loaded page. A body that fails to
+ * Patched (applyRunChanges above) instead of invalidating every loaded page. A body that fails to
  * JSON.parse, or has no `runIds` array (an older/incompatible server still sending the bare `'runs'`
- * string), falls back to the pre-API-04 blanket invalidation — this is the ONLY compat handling needed;
- * the server doesn't fork into two implementations for old vs new clients.
+ * String), falls back to the pre-API-04 blanket invalidation — this is the ONLY compat handling needed;
+ * The server doesn't fork into two implementations for old vs new clients.
  * If SSE can't be established/drops (e.g. under basic-auth setups EventSource can't send a token → 401),
- * we fall back to polling rather than SILENTLY HANGING: on error the connection is closed and periodic
- * invalidation starts. While auth is on, a short-lived ticket is put in the URL instead of the
- * persistent token (see sseAuthQuery).
+ * We fall back to polling rather than SILENTLY HANGING: on error the connection is closed and periodic
+ * Invalidation starts. While auth is on, a short-lived ticket is put in the URL instead of the
+ * Persistent token (see sseAuthQuery).
  */
 export function useLiveRuns() {
   const qc = useQueryClient();

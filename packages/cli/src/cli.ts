@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// gnl CLI: project (init/dev/studio) · inspect (runs/run/inspect) · operate (fork/resume/sweep/rm).
+// Gnl CLI: project (init/dev/studio) · inspect (runs/run/inspect) · operate (fork/resume/sweep/rm).
 // Dispatch only — every command's behavior lives in src/commands/<name>.ts (see commands/index.ts).
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -93,9 +93,9 @@ async function main(): Promise<void> {
   // Every command except init/add loads a gnl.config.ts — real projects write it with the standard
   // TS+NodeNext convention (relative imports end in `.js`, resolving to a sibling `.ts` source file).
   // Plain `node` can strip TS syntax but does not remap a `.js` specifier to `.ts` the way a bundler
-  // or tsx's loader does, so a compiled dist/cli.js run via plain `node` can't load such a config on
-  // its own. Registering tsx's loader here (once, whole-process) — the same mechanism `gnl dev`
-  // already spawns tsx for — makes config loading work without requiring the project to pre-build.
+  // Or tsx's loader does, so a compiled dist/cli.js run via plain `node` can't load such a config on
+  // Its own. Registering tsx's loader here (once, whole-process) — the same mechanism `gnl dev`
+  // Already spawns tsx for — makes config loading work without requiring the project to pre-build.
   if (command.name !== 'init' && command.name !== 'add') {
     const { register } = await import('tsx/esm/api');
     register();

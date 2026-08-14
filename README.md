@@ -20,7 +20,8 @@ import { z } from 'zod';
 const chargeCard = tool({
   description: "Charge the customer's card",
   inputSchema: z.object({ amount: z.number() }),
-  sideEffect: true,                           // money moves: the journal gates it
+  sideEffect: true,          // money moves — never replayed from the journal
+  idempotency: 'args',       // and never re-run when the model re-plans it under a new toolCallId
   execute: async ({ amount }) => payments.charge(amount),
 });
 
@@ -34,7 +35,7 @@ const res = await runDurable({
 // After a crash: call again with the SAME runId → the card is never charged a 2nd time.
 // Completed steps replay from the journal; only what never finished runs again. If the crash landed
 // in the window after the charge but before it was journaled, the resume THROWS
-// SideEffectRetryBlockedError rather than guess — see "What exactly-once actually means" below.
+// SideEffectRetryBlockedError rather than guess — see "Honest positioning" below.
 ```
 
 ## Why? (the edge — code-verified)
@@ -101,7 +102,7 @@ suspending. For those, use `runDurable`. Runnable example (no API key):
 
 ## Requirements
 
-**Node.js 22.5 or newer.** The default storage uses `node:sqlite`, which landed in 22.5 — on an
+**Node.js 22.13 or newer.** The default storage uses `node:sqlite`, which is only importable from 22.13 (it existed behind a flag from 22.5) — on an
 older runtime the first run fails with `Cannot find module 'node:sqlite'`. If you are on Node 20
 LTS, either upgrade or point `journal` at `@gnldev/durable/postgres` or `/redis` instead.
 pnpm 10 is what the repository is developed and tested against.

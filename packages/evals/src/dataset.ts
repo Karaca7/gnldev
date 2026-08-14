@@ -1,14 +1,14 @@
 // Batch eval over a dataset: run an agent on N test cases + score + aggregate. **Durable twist:**
-// each case is a durable run (`run` wraps runDurable) + the case result is memoized in the journal →
-// a **resumable eval suite** (crash mid-suite → completed cases are skipped, the rest run). Most eval
-// frameworks have no such determinism/resume.
+// Each case is a durable run (`run` wraps runDurable) + the case result is memoized in the journal →
+// A **resumable eval suite** (crash mid-suite → completed cases are skipped, the rest run). Most eval
+// Frameworks have no such determinism/resume.
 //
-// P1.4 (AUDIT-R2): concurrency/timeout/retry. `concurrency` defaults to 1 — EXACTLY the
-// previous sequential `for` loop's behaviour (same order, same one-at-a-time journal writes). Raising
-// it runs cases through a small in-house promise pool; per-case journal memoization is UNAFFECTED
-// because each case's `durableProcessorStep` key (`case:${c.id}`) is disjoint — concurrent cases never
-// contend on the same journal key, so "a completed case is skipped on the next run" still holds
-// exactly, at any concurrency.
+// P1.4 concurrency/timeout/retry. `concurrency` defaults to 1 — EXACTLY the
+// Previous sequential `for` loop's behaviour (same order, same one-at-a-time journal writes). Raising
+// It runs cases through a small in-house promise pool; per-case journal memoization is UNAFFECTED
+// Because each case's `durableProcessorStep` key (`case:${c.id}`) is disjoint — concurrent cases never
+// Contend on the same journal key, so "a completed case is skipped on the next run" still holds
+// Exactly, at any concurrency.
 import { durableProcessorStep } from '@gnldev/durable';
 import type { Journal } from '@gnldev/durable';
 import type { Scorer, ScoreResult } from './scorer.js';
@@ -34,7 +34,7 @@ export interface EvalCaseResult {
   /**
    * P1.4: present only if the case FAILED (timed out, or threw on every attempt including retries).
    * The case still gets an entry in `EvalCaseResult[]` (`output: ''`, `scores: {}`) — a failing case
-   * does NOT abort the suite, it degrades that case's contribution to `aggregate` to 0 per scorer
+   * Does NOT abort the suite, it degrades that case's contribution to `aggregate` to 0 per scorer
    * (see `evalDataset`'s aggregate loop, which already defaults a missing score to 0).
    */
   error?: string;
@@ -55,16 +55,16 @@ export interface EvalDatasetOptions {
   journal?: Journal;
   /**
    * Memoization scope (default `dataset.id`). If you're going to run the SAME dataset multiple times
-   * under DIFFERENT conditions (experiment/model), give each run a different scope — otherwise the
-   * second run replays the first run's journaled case results (DatasetsManager's runExperiment does
-   * this automatically per experiment).
+   * Under DIFFERENT conditions (experiment/model), give each run a different scope — otherwise the
+   * Second run replays the first run's journaled case results (DatasetsManager's runExperiment does
+   * This automatically per experiment).
    */
   scope?: string;
   /**
    * P1.4: how many cases run in parallel. Default 1 — identical to the original sequential `for` loop
    * (same order, same one-case-at-a-time journal writes). Values >1 run cases through a small
-   * in-house promise pool; `EvalCaseResult[]` stays in `dataset.cases` order regardless of completion
-   * order.
+   * In-house promise pool; `EvalCaseResult[]` stays in `dataset.cases` order regardless of completion
+   * Order.
    */
   concurrency?: number;
   /** P1.4: per-case wall-clock timeout (covers `run` + all scorers for that case). No timeout by default. */
@@ -133,16 +133,16 @@ export async function evalDataset(opts: EvalDatasetOptions): Promise<EvalDataset
     const r = await run(c.input, { runId, caseId: c.id });
     const output = typeof r === 'string' ? r : r.output;
     const scores: Record<string, ScoreResult> = {};
-    // runId is threaded into the sample so journal-backed scorers (e.g. trajectory.ts's
-    // trajectoryScorerFor) can be dropped into `scorers` with no extra wiring (P1.1, AUDIT-R2).
+    // RunId is threaded into the sample so journal-backed scorers (e.g. trajectory.ts's
+    // TrajectoryScorerFor) can be dropped into `scorers` with no extra wiring (P1.1, ).
     for (const s of scorers) scores[s.name] = await s.score({ output, expected: c.expected, runId });
     return { caseId: c.id, output, scores };
   };
 
   // Retries (P1.4) happen INSIDE evalCase, before journal memoization ever sees the result: a case
-  // only reaches durableProcessorStep once it has either succeeded or exhausted maxAttempts, and
-  // either way that final outcome (success or failure) is what gets memoized/skipped on resume —
-  // exactly like every other case result.
+  // Only reaches durableProcessorStep once it has either succeeded or exhausted maxAttempts, and
+  // Either way that final outcome (success or failure) is what gets memoized/skipped on resume —
+  // Exactly like every other case result.
   const evalCase = async (c: DatasetCase): Promise<EvalCaseResult> => {
     let lastError: unknown;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -158,12 +158,12 @@ export async function evalDataset(opts: EvalDatasetOptions): Promise<EvalDataset
   };
 
   const worker = async (c: DatasetCase): Promise<EvalCaseResult> =>
-    // resumable: a completed case returns from the journal (run + scoring do not run again).
+    // Resumable: a completed case returns from the journal (run + scoring do not run again).
     journal ? await durableProcessorStep(journal, `evalds:${scope}`, `case:${c.id}`, () => evalCase(c)) : await evalCase(c);
 
   const cases = await runPool(dataset.cases, concurrency, worker, signal);
 
-  // aggregation: average per scorer (a failed/timed-out case contributes 0 for every scorer it never scored)
+  // Aggregation: average per scorer (a failed/timed-out case contributes 0 for every scorer it never scored)
   const aggregate: Record<string, number> = {};
   for (const s of scorers) {
     const vals = cases.map((c) => c.scores[s.name]?.score ?? 0);

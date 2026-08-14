@@ -1,8 +1,8 @@
-// gnl init [dir] — scaffold a new project (mock model, no API key). Four ways to pick what goes in:
-//   --features a,b,c   non-interactive custom compose (skips the checkbox)
-//   --template full|minimal   a preset static starter
-//   --yes / non-TTY    minimal (the prompt NEVER opens without a TTY → CI-safe)
-//   otherwise (TTY)    interactive checkbox → compose the selected features
+// Gnl init [dir] — scaffold a new project (mock model, no API key). Four ways to pick what goes in:
+// -features a,b,c   non-interactive custom compose (skips the checkbox)
+// -template full|minimal   a preset static starter
+// -yes / non-TTY    minimal (the prompt NEVER opens without a TTY → CI-safe)
+//   Otherwise (TTY)    interactive checkbox → compose the selected features
 import type { Command } from './types.js';
 import { positional, flag, flagBool } from '../args.js';
 import { TEMPLATES, type TemplateName } from '../scaffold.js';
@@ -31,7 +31,7 @@ export const initCommand: Command = {
 
     // 1. --features → non-interactive custom compose.
     // The server flag is orthogonal to every path below: it may accompany --features, --template,
-    // --yes, or the interactive run. Validated once, here, so a typo fails before anything is written.
+    // -yes, or the interactive run. Validated once, here, so a typo fails before anything is written.
     const hostFlag = flag(ctx.argv, 'host');
     if (hostFlag !== undefined && !HOST_IDS.includes(hostFlag)) {
       console.error(`gnl init: unknown host '${hostFlag}'`);
@@ -75,8 +75,8 @@ export const initCommand: Command = {
       process.exit(0);
     }
     // 5. Which server this will actually run on. Asked SECOND because it is the question people do
-    //    not know they need until they try to deploy — `gnl dev` serves the project without it, so
-    //    the gap only shows up on the day it is expensive.
+    //    Not know they need until they try to deploy — `gnl dev` serves the project without it, so
+    //    The gap only shows up on the day it is expensive.
     const { selectPrompt } = await import('../prompt.js');
     const host = hostFlag ?? await selectPrompt(
       [...HOSTS.map((h) => ({ id: h.id, label: h.label, hint: h.hint })),

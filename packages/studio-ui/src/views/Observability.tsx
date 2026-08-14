@@ -10,7 +10,7 @@ import { Spinner, StatusBadge, Empty, ErrorBox, PageHeader } from '../components
 import { Stagger, StaggerItem, Reveal } from '../motion';
 
 // RFC4180-like CSV field escaping: fields containing a comma/quote/newline are wrapped in double
-// quotes (inner quotes are doubled) — pure function, edge cases are covered in test/observability-audit.test.ts.
+// Quotes (inner quotes are doubled) — pure function, edge cases are covered in test/observability-audit.test.ts.
 function csvField(v: string | number): string {
   const s = String(v);
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -50,7 +50,7 @@ const STATUS_COLOR: Record<string, string> = {
 const PRIMARY = 'hsl(var(--brand))';
 const SECONDARY = 'hsl(var(--success))';
 // P2-skor: fixed-order categorical palette for the score-trend chart's per-scorer lines — the app's
-// own semantic tokens (already contrast-checked for this product, light+dark), assigned by POSITION
+// Own semantic tokens (already contrast-checked for this product, light+dark), assigned by POSITION
 // (never by name/rank — a filtered-out scorer never repaints the survivors). A 6th+ scorer wraps
 // (rare in practice; scorer counts are small and operator-defined) rather than inventing new hues.
 const SCORE_SERIES_COLORS = [
@@ -74,11 +74,11 @@ function fmtMs(ms: number | null): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-// h-full is load-bearing. Only some cards take a `hint`, and the grid row sizes itself to the
-// tallest one — but the STRETCHED grid item is the StaggerItem wrapper, not this box, so without
-// h-full every card without a hint drew its border short of the row and the one with a hint stuck
-// out below the strip. min-w-0 keeps a long hint from widening its own column past the others,
-// since a grid track's automatic minimum is its content.
+// H-full is load-bearing. Only some cards take a `hint`, and the grid row sizes itself to the
+// Tallest one — but the STRETCHED grid item is the StaggerItem wrapper, not this box, so without
+// H-full every card without a hint drew its border short of the row and the one with a hint stuck
+// Out below the strip. min-w-0 keeps a long hint from widening its own column past the others,
+// Since a grid track's automatic minimum is its content.
 function Card({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
     <div className="h-full min-w-0 rounded-md border border-border bg-card p-3">
@@ -121,9 +121,9 @@ const SCORE_AVG_FIELD_RE = /^score:(.+):avg$/;
 /**
  * P2-skor trend: per-scorer daily average, derived from `byDay[].fields['score:<name>:avg']`.
  * Scorer NAMES are discovered dynamically (never hardcoded) by scanning every day bucket's field
- * keys — a day with no scored runs simply has no fields for that scorer (a gap in its line, not a
- * zero). `scorers` is returned in first-seen order (stable across renders as long as `byDay` order
- * is stable) so the fixed-order categorical palette above assigns colors by POSITION, not by name.
+ * Keys — a day with no scored runs simply has no fields for that scorer (a gap in its line, not a
+ * Zero). `scorers` is returned in first-seen order (stable across renders as long as `byDay` order
+ * Is stable) so the fixed-order categorical palette above assigns colors by POSITION, not by name.
  * Pure function (no chart/DOM dependency) — exported for a data-shape unit test.
  */
 export function buildScoreTrend(byDay: MetricsDayEntry[]): { scorers: string[]; points: Record<string, string | number>[] } {
@@ -152,7 +152,7 @@ export function Observability() {
   const { t } = useTranslation('observability');
   const metrics = useMetrics();
   // `null` = no limit: percentiles (p50/p95/p99), the chart series and the CSV export are only
-  // meaningful over the FULL run set — the default 200-run cap (API-10, sized for Inspector's
+  // Meaningful over the FULL run set — the default 200-run cap (API-10, sized for Inspector's
   // 50-row list) would silently truncate them. Its own cache key, so Inspector's capped query stands.
   const runRows = useMetricsRuns(null);
   const [statusFilter, setStatusFilter] = useState<string>('all');

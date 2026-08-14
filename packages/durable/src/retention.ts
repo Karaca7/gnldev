@@ -1,7 +1,7 @@
 // Retention/GDPR: PERMANENT deletion helpers from the journal. The one exception to the
-// journal's append-only philosophy — only for legal deletion (PII purge) and retention sweeps.
+// Journal's append-only philosophy — only for legal deletion (PII purge) and retention sweeps.
 // Requires the `deletePrefix` port (InMemory/Sqlite/Postgres adapters provide it); otherwise
-// throws a clear error.
+// Throws a clear error.
 import { runKeys, summarizeRun } from './journal.js';
 import type { Journal, JournalReader } from './journal.js';
 import { getRunCost } from './cost.js';
@@ -27,18 +27,18 @@ function requireListKeys(journal: Journal): NonNullable<Journal['listKeys']> {
 
 /**
  * 1.1: BEFORE the run is deleted, SUBTRACT any cost that may have been added to the counter (H4:
- * otherwise `__usage__` goes stale after purge — the deleted run's cost keeps being counted as a
- * ghost). Only subtracted if the `usage-counted` marker EXISTS (i.e. it was actually added to the
- * counter) — this avoids mistakenly pushing a never-counted run (e.g. still suspended) into the
- * negative. Best-effort: silently skipped if the journal read surface isn't supported (the purge
- * itself still runs).
+ * Otherwise `__usage__` goes stale after purge — the deleted run's cost keeps being counted as a
+ * Ghost). Only subtracted if the `usage-counted` marker EXISTS (i.e. it was actually added to the
+ * Counter) — this avoids mistakenly pushing a never-counted run (e.g. still suspended) into the
+ * Negative. Best-effort: silently skipped if the journal read surface isn't supported (the purge
+ * Itself still runs).
  */
 async function uncountUsage(journal: Journal & Partial<JournalReader>, runId: string): Promise<void> {
   if (typeof journal.get !== 'function' || typeof journal.put !== 'function' || typeof journal.readRun !== 'function') return;
   const marker = usageCountedKey(runId);
   if ((await journal.get(marker)) === undefined) return; // never counted → nothing to subtract
   // H8a fix: usage can live in the legacy USAGE_KEY OR in atomic counters — the old guard, which
-  // only looked at legacy, silently skipped the subtraction in the counter-only case (caught by a test).
+  // Only looked at legacy, silently skipped the subtraction in the counter-only case (caught by a test).
   const current = await journal.get<OrganizationUsage>(USAGE_KEY);
   const counters =
     typeof (journal as Journal).getCounters === 'function'
@@ -47,7 +47,7 @@ async function uncountUsage(journal: Journal & Partial<JournalReader>, runId: st
   if (!current && !counters) return; // no counter at all → nothing to subtract
   const cost = await getRunCost(journal as unknown as JournalReader, runId);
   // H8a: if incrBy exists, subtract ATOMICALLY with a negative delta (reads are clamped to 0 on
-  // the readUsageCounter side); otherwise legacy get→put + clamp (single-process safe).
+  // The readUsageCounter side); otherwise legacy get→put + clamp (single-process safe).
   if (typeof (journal as Journal).incrBy === 'function') {
     try {
       await (journal as Journal).incrBy!(USAGE_KEY, { runs: -1, tokens: -cost.totalTokens, costUsd: -cost.costUsd });
@@ -64,18 +64,18 @@ async function uncountUsage(journal: Journal & Partial<JournalReader>, runId: st
 
 /**
  * Permanently delete ALL traces of a run: `<runId>:*` (model/tool/input/wf/proc/cfg/net) + memory
- * marker + its sub-agents' own journals — RECURSIVE cascade (H5):
+ * Marker + its sub-agents' own journals — RECURSIVE cascade (H5):
  *
- * - **Network children** (`net:<runId>:<i>`, parent-prefixed): derived from listKeys as SEPARATE
- *   runIds, each recursed into → their OWN agent-tool children get caught too. If listKeys is
- *   unavailable, a blanket `net:<runId>:` prefix delete is still applied (at least the direct level).
- * - **Agent-tool children** (`agent:<toolCallId>`, NOT parent-prefixed): before deletion, toolCallIds
- *   are read from the parent's tool entries (readRun), and every `agent:<tcid>` child with a trace in
- *   the journal is recursed into. If readRun is unavailable, this discovery is skipped (best-effort —
- *   documented legacy behavior).
+ * **Network children** (`net:<runId>:<i>`, parent-prefixed): derived from listKeys as SEPARATE
+ *   RunIds, each recursed into → their OWN agent-tool children get caught too. If listKeys is
+ *   Unavailable, a blanket `net:<runId>:` prefix delete is still applied (at least the direct level).
+ * **Agent-tool children** (`agent:<toolCallId>`, NOT parent-prefixed): before deletion, toolCallIds
+ *   Are read from the parent's tool entries (readRun), and every `agent:<tcid>` child with a trace in
+ *   The journal is recursed into. If readRun is unavailable, this discovery is skipped (best-effort —
+ *   Documented legacy behavior).
  *
  * Cycle safety: the same runId is processed once per purge chain (`seen`). GDPR implication: parent
- * purge no longer orphans sub-agent output (which may contain PII) at ANY level.
+ * Purge no longer orphans sub-agent output (which may contain PII) at ANY level.
  */
 export async function purgeRun(
   journal: Journal & Partial<JournalReader>,
@@ -121,7 +121,7 @@ export async function purgeRun(
 }
 
 /** Permanently delete a thread's BasicMemory trace (`mem:<threadId>:*`). Rich memory stores use their
- *  own deletion API (AgentMemory.deleteThread) — this helper is for journal-based memory. */
+ *  Own deletion API (AgentMemory.deleteThread) — this helper is for journal-based memory. */
 export async function purgeThread(journal: Journal, threadId: string): Promise<number> {
   const del = requireDelete(journal);
   return del(`mem:${threadId}:`);
@@ -129,23 +129,23 @@ export async function purgeThread(journal: Journal, threadId: string): Promise<n
 
 /**
  * GDPR/KVKK deletion runbook, as ONE function — permanently deletes EVERYTHING an organization owns
- * in the ROOT journal: because `withOrg` prefixes every key unconditionally, ONE
+ * In the ROOT journal: because `withOrg` prefixes every key unconditionally, ONE
  * `deletePrefix('org:<id>:')` covers the org's runs + journals + memory + queue/events + usage/budget
- * counters (`gnl_counters`/`ctr:` — swept since the P1.6 deletePrefix fix; this function is the reason
- * that fix was load-bearing) + materialized metrics + workflow registry records (`org:<id>:wfrun:*`) +
- * cross-run dedup keys (`org:<id>:xrun:*`).
+ * Counters (`gnl_counters`/`ctr:` — swept since the P1.6 deletePrefix fix; this function is the reason
+ * That fix was load-bearing) + materialized metrics + workflow registry records (`org:<id>:wfrun:*`) +
+ * Cross-run dedup keys (`org:<id>:xrun:*`).
  *
  * PREFIX-BOUNDARY SAFETY: the trailing ':' makes the sweep exact — org 'acme' can never catch org
  * 'acme2' (`org:acme2:` does not start with `org:acme:`). Callers MUST reject org ids containing ':'
  * (the studio org-delete route already does).
  *
  * DELIBERATELY NOT DELETED (the honest rest of the runbook):
- *  - Root `__audit__` entries that carry this org as a PAYLOAD field: the audit trail is a root-level
- *    record with its own (usually legally-mandated) retention — sweep it on ITS schedule via
+ * Root `__audit__` entries that carry this org as a PAYLOAD field: the audit trail is a root-level
+ *    Record with its own (usually legally-mandated) retention — sweep it on ITS schedule via
  *    `sweepLog(journal, '__audit__', ...)`, don't couple it to org deletion.
- *  - Orgless/shared-scope data: if the deployment ran this org's work OUTSIDE withOrg (no prefix),
- *    this function cannot attribute it — that is a deployment-model choice, not a sweep gap.
- *  - EE user records (auth-ee's own store) — studio's DELETE /organizations/:id removes members when
+ * Orgless/shared-scope data: if the deployment ran this org's work OUTSIDE withOrg (no prefix),
+ *    This function cannot attribute it — that is a deployment-model choice, not a sweep gap.
+ * EE user records (auth-ee's own store) — studio's DELETE /organizations/:id removes members when
  *    `opts.users` is wired; call that surface (or the user store directly) alongside this.
  */
 export async function purgeOrganization(journal: Journal, orgId: string): Promise<number> {
@@ -188,8 +188,8 @@ export async function sweepRuns(journal: Journal & Partial<JournalReader>, opts:
   const keepSuspended = opts.keepSuspended !== false;
 
   // H8b FAST PATH: if the adapter provides an indexed age query (gnl_runs.updated_at), get stale
-  // ids directly without pulling ALL of every run's entries (the old O(entire-DB) scan). The result
-  // contract is the same; keptSuspended/keptNoTs are reported as 0 by definition on this path
+  // Ids directly without pulling ALL of every run's entries (the old O(entire-DB) scan). The result
+  // Contract is the same; keptSuspended/keptNoTs are reported as 0 by definition on this path
   // (SQL already filtered).
   if (typeof (journal as Journal).listStaleRuns === 'function') {
     const cutoff = now - opts.olderThanMs;
@@ -230,18 +230,18 @@ export async function sweepRuns(journal: Journal & Partial<JournalReader>, opts:
 
 // ── Journal-based append-log + BasicMemory sweeping (the core-hardening review) ─────────────
 // Run-focused retention (sweepRuns above) does NOT see durable-log namespaces (`${ns}:${id}`,
-// e.g. studio `__audit__`/`__alert__`) or BasicMemory threads (`mem:<threadId>:*`) — these grow
-// unbounded in a long-lived deployment. The two helpers below close that gap.
+// E.g. studio `__audit__`/`__alert__`) or BasicMemory threads (`mem:<threadId>:*`) — these grow
+// Unbounded in a long-lived deployment. The two helpers below close that gap.
 // Same safety philosophy as sweepRuns: a record whose age can't be measured is NOT deleted, and
-// is counted in the report.
+// Is counted in the report.
 
 export interface LogSweepOptions {
   /** Log entries older than this (ms) are deleted. Age = the entry's `at` field (written by appendLog). */
   olderThanMs: number;
   /**
    * Consume marker key(s) belonging to the deleted entry. HONEST NOTE: in journal-based durable-log,
-   * the marker schema is NOT FIXED — `consumeOnce(journal, marker)` leaves the marker key entirely up
-   * to the caller (qdone/evtack-like schemas live in the WorkStore layer, see @gnldev/queue, @gnldev/events).
+   * The marker schema is NOT FIXED — `consumeOnce(journal, marker)` leaves the marker key entirely up
+   * To the caller (qdone/evtack-like schemas live in the WorkStore layer, see @gnldev/queue, @gnldev/events).
    * Because of this, markers can't be auto-discovered; declare your own schema via this callback
    * (e.g. `(it) => \`ack:worker1:\${it.id}\``) — the markers of every deleted entry get cleaned up too.
    */
@@ -262,7 +262,7 @@ export interface LogSweepResult {
 
 /**
  * Sweeps a durable-log namespace: permanently deletes entries whose `at` (the epoch-ms written by
- * appendLog) is older than the threshold. Requires listKeys + deletePrefix (requireDelete pattern).
+ * AppendLog) is older than the threshold. Requires listKeys + deletePrefix (requireDelete pattern).
  * Safe side: entries without/with malformed `at` are not deleted (counted in keptNoTs).
  */
 export async function sweepLog(journal: Journal, ns: string, opts: LogSweepOptions): Promise<LogSweepResult> {
@@ -272,9 +272,9 @@ export async function sweepLog(journal: Journal, ns: string, opts: LogSweepOptio
   const prefix = `${ns}:`;
   // Ordered scan: the journal has no single-key `delete`, deletion is done via deletePrefix(fullKey).
   // A key can be a PREFIX of another key (custom ids, e.g. `approval:<runId>:<tc>` — one can be a
-  // prefix of another). In lexicographic order, a key's extensions come right after it → if one of
-  // the extensions is NOT going to be deleted, deletePrefix on the short key is unsafe, so that entry
-  // is skipped.
+  // Prefix of another). In lexicographic order, a key's extensions come right after it → if one of
+  // The extensions is NOT going to be deleted, deletePrefix on the short key is unsafe, so that entry
+  // Is skipped.
   const keys = (await list(prefix)).sort();
   const result: LogSweepResult = { scanned: 0, deleted: 0, keptNoTs: 0, deletedMarkers: 0 };
 
@@ -302,8 +302,8 @@ export async function sweepLog(journal: Journal, ns: string, opts: LogSweepOptio
       if (!records.get(keys[j])?.expired) { unsafe = true; break; }
     }
     if (unsafe) continue;
-    // deletePrefix(fullKey): extension-neighbors are also expired → deleting them together is
-    // correct behavior; when the loop reaches them, del returns 0 → deleted isn't double-counted.
+    // DeletePrefix(fullKey): extension-neighbors are also expired → deleting them together is
+    // Correct behavior; when the loop reaches them, del returns 0 → deleted isn't double-counted.
     const n = await del(key);
     result.deleted += n;
     if (n > 0 && opts.markerFor) {
@@ -333,7 +333,7 @@ export interface ThreadSweepResult {
 }
 
 // BasicMemory's known key suffixes (memory.ts schema): `mem:<threadId>:messages|:working`.
-// threadId itself may contain ':' → the extraction is done via known-suffix matching, NOT split.
+// ThreadId itself may contain ':' → the extraction is done via known-suffix matching, NOT split.
 const MEM_PREFIX = 'mem:';
 const MEM_SUFFIXES = [':messages', ':working'] as const;
 
@@ -356,7 +356,7 @@ function readMessageTs(msg: any): number | undefined {
 
 /**
  * Sweeps BasicMemory threads: threads whose last message ts is older than the threshold are
- * permanently deleted via purgeThread (`mem:<threadId>:` prefix — messages + working together).
+ * Permanently deleted via purgeThread (`mem:<threadId>:` prefix — messages + working together).
  * Safe side: threads whose ts can't be read (untimestamped messages or no messages at all) are NOT deleted.
  * Requires listKeys + deletePrefix (requireDelete pattern).
  */
@@ -366,8 +366,8 @@ export async function sweepThreads(journal: Journal, opts: ThreadSweepOptions): 
   const now = opts.now ?? Date.now();
 
   // Extract the thread set from keys under `mem:`. Keys with unrecognized suffixes don't contribute
-  // a threadId to the set (safe: only the recognized schema is swept), but if they belong to a
-  // recognized thread they still go with it via purgeThread's prefix delete.
+  // A threadId to the set (safe: only the recognized schema is swept), but if they belong to a
+  // Recognized thread they still go with it via purgeThread's prefix delete.
   const threadIds = new Set<string>();
   for (const key of await list(MEM_PREFIX)) {
     const rest = key.slice(MEM_PREFIX.length);
@@ -398,9 +398,9 @@ export async function sweepThreads(journal: Journal, opts: ThreadSweepOptions): 
 }
 
 // ── Phase 8.3: opt-in automatic retention scheduling ────────────────────────────────────────
-// sweepRuns/sweepLog/sweepThreads/compact were all called MANUALLY (from Studio or a script) —
-// none of them were triggered automatically. The helper below sets up a periodic sweep round
-// using @gnldev/durable/polling's createPollLoop (the SAME scheduler core SHARED with queue/events/scheduler).
+// SweepRuns/sweepLog/sweepThreads/compact were all called MANUALLY (from Studio or a script) —
+// None of them were triggered automatically. The helper below sets up a periodic sweep round
+// Using @gnldev/durable/polling's createPollLoop (the SAME scheduler core SHARED with queue/events/scheduler).
 // It does NOT start anything AUTOMATICALLY — the user must explicitly call `start()`.
 
 export interface LogSweepTarget extends LogSweepOptions {
@@ -415,7 +415,7 @@ export interface RetentionSweeperOptions {
   sweep: SweepOptions;
   /**
    * If given, sweepLog also runs after sweepRuns on every round (a single namespace or an array
-   * for multiple namespaces — e.g. `__audit__` + `__alert__` can be swept in the same round).
+   * For multiple namespaces — e.g. `__audit__` + `__alert__` can be swept in the same round).
    */
   logSweep?: LogSweepTarget | LogSweepTarget[];
   /** An error from a round (sweepRuns or sweepLog) is reported here — the chain doesn't die, the next round retries. */
@@ -436,11 +436,11 @@ export interface RetentionSweeper extends PollLoop {
 
 /**
  * Opt-in periodic retention sweeper: runs `sweepRuns` (+ `sweepLog` if given) at `intervalMs`
- * intervals. Uses createPollLoop with backoff DISABLED — retention should have a fixed cadence;
- * postponing the next round (backoff growth) just because "nothing was deleted this round" would
- * go against retention's purpose (we don't want a delayed scan of data accumulated after a long
- * quiet period). It does NOT start anything AUTOMATICALLY — no scan happens until the returned
- * object's `start()` is called.
+ * Intervals. Uses createPollLoop with backoff DISABLED — retention should have a fixed cadence;
+ * Postponing the next round (backoff growth) just because "nothing was deleted this round" would
+ * Go against retention's purpose (we don't want a delayed scan of data accumulated after a long
+ * Quiet period). It does NOT start anything AUTOMATICALLY — no scan happens until the returned
+ * Object's `start()` is called.
  */
 export function createRetentionSweeper(
   journal: Journal & Partial<JournalReader>,

@@ -1,11 +1,11 @@
 // Minimal JSON-RPC 2.0 layer — the MCP stdio transport is built on top of this (hand-written,
 // @modelcontextprotocol/sdk NOT USED: see the package README, wanted to avoid a lockfile race
-// with W1).
+// With W1).
 //
 // Transport: newline-delimited JSON — each line is a SINGLE JSON-RPC message (request/
-// notification/response), no line break within a message. Messages with an `id` field are
-// requests (a response is expected); no `id` means a notification (per JSON-RPC 2.0, NEVER
-// responded to — stays silent even on error).
+// Notification/response), no line break within a message. Messages with an `id` field are
+// Requests (a response is expected); no `id` means a notification (per JSON-RPC 2.0, NEVER
+// Responded to — stays silent even on error).
 
 export const JSON_RPC_VERSION = '2.0' as const;
 

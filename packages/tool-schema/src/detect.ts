@@ -2,8 +2,8 @@ import type { ModelInfo } from './types.js';
 
 /**
  * Extracts provider/modelId from a model. Handles both input shapes:
- *  - string `'provider/model'`  → split on '/' (gnl model-router format)
- *  - LanguageModelV2 object     → `.provider` ('openai.chat' → 'openai') + `.modelId`
+ * string `'provider/model'`  → split on '/' (gnl model-router format)
+ * LanguageModelV2 object     → `.provider` ('openai.chat' → 'openai') + `.modelId`
  *
  * Unknown/missing fields return an empty string → no rule matches (safe no-op).
  */

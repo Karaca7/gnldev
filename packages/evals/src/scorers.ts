@@ -1,27 +1,27 @@
 // The 8 built-in LLM-judge scorers. @gnldev/evals also ships 4 model-free text scorers
 // (text-scorers.ts) and 4 rule-based ones (exactMatch/contains/regexScore/embeddingSimilarity).
 // Each factory WRAPS `llmJudge` with a suitable rubric — it does NOT call generateText directly. This
-// means `scoreRun`/journal memoization (see score-run.ts) and dataset resume (see dataset.ts) work
-// identically for these scorers with no extra work.
+// Means `scoreRun`/journal memoization (see score-run.ts) and dataset resume (see dataset.ts) work
+// Identically for these scorers with no extra work.
 //
 // DIRECTION SEMANTICS (common to all scorers): a high SCORE = a GOOD result.
 // This can be CONFUSING for scorers whose name doesn't intuitively suggest that (hallucination,
-// toxicity, bias): e.g. a `hallucination` score of 1.0 means "NO hallucination", NOT "hallucination
-// present". Each rubric below states this direction explicitly.
+// Toxicity, bias): e.g. a `hallucination` score of 1.0 means "NO hallucination", NOT "hallucination
+// Present". Each rubric below states this direction explicitly.
 //
 // CONVENTION — scorers that require context (faithfulness, hallucination, contextPrecision) read
 // `sample.context` (string | string[], see scorer.ts); if it's missing/empty they do NOT silently
-// return 1.0, they return `{ score: 0, reason: 'context required: ...' }`. For the same reason,
+// Return 1.0, they return `{ score: 0, reason: 'context required: ...' }`. For the same reason,
 // `answerRelevancy`/`completeness` require `sample.input` (the question) and return 0 + a clear
-// reason the same way if it's missing.
+// Reason the same way if it's missing.
 //
 // CONVENTION — `sampleFields` (see llm-judge.ts): each factory EXPLICITLY declares to `llmJudge`
-// which extra sample fields (input/context) should be added to the prompt (it doesn't rely on the
-// default). This prevents scorers that should evaluate the output only (toxicity, bias,
-// toneConsistency) from getting contaminated by irrelevant context in shared RAG samples (where the
-// same sample can have both input and context populated) — e.g. these scorers use
+// Which extra sample fields (input/context) should be added to the prompt (it doesn't rely on the
+// Default). This prevents scorers that should evaluate the output only (toxicity, bias,
+// ToneConsistency) from getting contaminated by irrelevant context in shared RAG samples (where the
+// Same sample can have both input and context populated) — e.g. these scorers use
 // `sampleFields: []` so that a toxic context doesn't produce a wrong (low) toxicity score even
-// though the output itself is clean.
+// Though the output itself is clean.
 import type { Scorer, ScoreSample } from './scorer.js';
 import { llmJudge } from './llm-judge.js';
 
@@ -85,10 +85,10 @@ const FAITHFULNESS_RUBRIC =
 
 /**
  * Faithfulness: measures how faithful the output is to the GIVEN CONTEXT (fabrication/addition is
- * penalized).
+ * Penalized).
  * Requires `sample.context` (string | string[]) — score 0 + "context required" if missing.
  * `sampleFields: ['context']` — only context is added; `sample.input` does not enter the prompt (this
- * scorer only measures the context-output relationship, the question is irrelevant).
+ * Scorer only measures the context-output relationship, the question is irrelevant).
  * DIRECTION: 1.0 = fully faithful (good), 0.0 = not faithful at all (bad).
  */
 export function faithfulness(opts: JudgeScorerOptions): Scorer {
@@ -109,14 +109,14 @@ const HALLUCINATION_RUBRIC =
 
 /**
  * Hallucination: measures whether the output contains fabricated claims that are absent from or
- * contradict the context.
+ * Contradict the context.
  * Requires `sample.context` — score 0 + "context required" if missing.
  * DIRECTION (note it's counter-intuitive from the name): 1.0 = NO hallucination
  * (good), 0.0 = serious hallucination present (bad). Close to faithfulness but not its inverse — both
- * are "higher = better" but faithfulness measures GENERAL consistency with the context, while
- * hallucination specifically measures the presence of FABRICATION/CONTRADICTION.
+ * Are "higher = better" but faithfulness measures GENERAL consistency with the context, while
+ * Hallucination specifically measures the presence of FABRICATION/CONTRADICTION.
  * `sampleFields: ['context']` — only context is added; input is not added since the question is
- * irrelevant.
+ * Irrelevant.
  */
 export function hallucination(opts: JudgeScorerOptions): Scorer {
   const name = opts.name ?? 'hallucination';
@@ -134,7 +134,7 @@ const ANSWER_RELEVANCY_RUBRIC =
  * Answer-relevancy: measures how relevant/focused the output is to the given QUESTION (sample.input).
  * Requires `sample.input` — score 0 + "input required" if missing.
  * `sampleFields: ['input']` — only the question is added; the RAG context is irrelevant to what this
- * scorer measures, adding it would be an unnecessary/contaminating signal.
+ * Scorer measures, adding it would be an unnecessary/contaminating signal.
  * DIRECTION: 1.0 = fully relevant (good), 0.0 = irrelevant (bad).
  */
 export function answerRelevancy(opts: JudgeScorerOptions): Scorer {
@@ -154,9 +154,9 @@ const TOXICITY_RUBRIC =
  * Toxicity: measures whether the output contains harmful language such as insults/hate speech/harassment.
  * Requires no context/input — evaluates `sample.output` only.
  * `sampleFields: []` — deliberately does NOT add input/context in shared RAG samples (where
- * input/context are populated): otherwise, if the context is toxic, an irrelevant context could
- * produce a wrong (low) toxicity score even though the output itself is clean — this scorer should
- * evaluate ONLY the output.
+ * Input/context are populated): otherwise, if the context is toxic, an irrelevant context could
+ * Produce a wrong (low) toxicity score even though the output itself is clean — this scorer should
+ * Evaluate ONLY the output.
  * DIRECTION (note, counter-intuitive from the name): 1.0 = NOT toxic (good), 0.0 = very toxic (bad).
  */
 export function toxicity(opts: JudgeScorerOptions): Scorer {
@@ -176,8 +176,8 @@ const BIAS_RUBRIC =
  * Bias: measures whether the output contains group-based bias (gender/race/religion/age/political/etc).
  * Requires no context/input — evaluates `sample.output` only.
  * `sampleFields: []` — same rationale as toxicity: adding input/context in shared RAG samples could
- * contaminate it with irrelevant context and produce a wrong score; this scorer should see ONLY the
- * output.
+ * Contaminate it with irrelevant context and produce a wrong score; this scorer should see ONLY the
+ * Output.
  * DIRECTION (note, counter-intuitive from the name): 1.0 = NO bias (good), 0.0 = serious bias present
  * (bad).
  */
@@ -196,7 +196,7 @@ const COMPLETENESS_RUBRIC =
  * Completeness: measures whether the output fully covers all important aspects of the QUESTION
  * (sample.input). Requires `sample.input` — score 0 + "input required" if missing.
  * `sampleFields: ['input']` — only the question is added; context is irrelevant to what this scorer
- * measures.
+ * Measures.
  * DIRECTION: 1.0 = complete (good), 0.0 = substantially incomplete (bad).
  */
 export function completeness(opts: JudgeScorerOptions): Scorer {
@@ -214,11 +214,11 @@ const CONTEXT_PRECISION_RUBRIC =
 
 /**
  * Context-precision: measures how much of the RETRIEVED CONTEXT chunks (sample.context) in RAG is
- * actually relevant/necessary (retrieval quality — unlike faithfulness, this audits the retrieved
- * context itself, not the output). Requires `sample.context` — score 0 + "context required" if
- * missing. If `sample.input` (the question) is present, it's used as an extra signal.
+ * Actually relevant/necessary (retrieval quality — unlike faithfulness, this audits the retrieved
+ * Context itself, not the output). Requires `sample.context` — score 0 + "context required" if
+ * Missing. If `sample.input` (the question) is present, it's used as an extra signal.
  * `sampleFields: ['input', 'context']` — unlike other scorers, both are added: the question provides
- * an extra signal for evaluating whether the retrieved context chunks are relevant to that question.
+ * An extra signal for evaluating whether the retrieved context chunks are relevant to that question.
  * DIRECTION: 1.0 = the retrieved context is fully relevant (good), 0.0 = entirely noise (bad).
  */
 export function contextPrecision(opts: JudgeScorerOptions): Scorer {
@@ -228,12 +228,12 @@ export function contextPrecision(opts: JudgeScorerOptions): Scorer {
 
 /**
  * Tone-consistency: measures whether the tone/style is consistent throughout the output (and, if
- * given, whether it matches `expectedTone`). Requires no context/input — evaluates `sample.output`
- * only.
+ * Given, whether it matches `expectedTone`). Requires no context/input — evaluates `sample.output`
+ * Only.
  * `sampleFields: []` — same rationale as toxicity/bias: adding input/context in shared RAG samples
- * could contaminate the tone evaluation with irrelevant context.
+ * Could contaminate the tone evaluation with irrelevant context.
  * DIRECTION: 1.0 = tone is consistent/matches the expected tone (good), 0.0 = tone is inconsistent/
- * deviates from the expected tone (bad).
+ * Deviates from the expected tone (bad).
  */
 export function toneConsistency(opts: ToneConsistencyOptions): Scorer {
   const name = opts.name ?? 'tone-consistency';

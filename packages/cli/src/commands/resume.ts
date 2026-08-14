@@ -1,6 +1,6 @@
-// gnl resume <runId> --agent <name> — continue a suspended (or crashed mid-run) run live, using a
-// registered agent's model/tools/guard. This is durability's "pays the bills" command: resumeRun
-// self-contained reads the original input back from the journal (no need to re-supply the prompt).
+// Gnl resume <runId> --agent <name> — continue a suspended (or crashed mid-run) run live, using a
+// Registered agent's model/tools/guard. This is durability's "pays the bills" command: resumeRun
+// Self-contained reads the original input back from the journal (no need to re-supply the prompt).
 import type * as Durable from '@gnldev/durable';
 import type { Interrupt } from '@gnldev/durable';
 import type { Command } from './types.js';
@@ -56,8 +56,8 @@ export const resumeCommand: Command = {
     if (!agentName) throw new Error('--agent required: gnl resume <runId> --agent <name>');
     const json = flagBool(ctx.argv, 'json');
     const configPath = flag(ctx.argv, 'config') ?? 'gnl.config.ts';
-    // --approve/--deny: comma-separated toolCallIds for a suspended run's pending approval (Guard's
-    // require-approval interrupts) — resumeRun's `approvals` map, keyed by toolCallId.
+    // -approve/--deny: comma-separated toolCallIds for a suspended run's pending approval (Guard's
+    // Require-approval interrupts) — resumeRun's `approvals` map, keyed by toolCallId.
     const approvals: Record<string, boolean> = {};
     for (const id of (flag(ctx.argv, 'approve') ?? '').split(',').map((s) => s.trim()).filter(Boolean)) approvals[id] = true;
     for (const id of (flag(ctx.argv, 'deny') ?? '').split(',').map((s) => s.trim()).filter(Boolean)) approvals[id] = false;

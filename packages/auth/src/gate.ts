@@ -1,9 +1,9 @@
 // The shared gate: hosts (server/studio) don't rewrite allow/deny logic.
 //
 // Takes a web-standard `Request`, not a framework's context object. A host writing an auth callback
-// used to need Hono's `Context` type in its own signature, which quietly tied its Hono version to
-// ours — the same coupling the factories dropped when they stopped returning a Hono app. Everything
-// the gate reads (method, path, headers, query) is on `Request`; nothing was lost by narrowing.
+// Used to need Hono's `Context` type in its own signature, which quietly tied its Hono version to
+// Ours — the same coupling the factories dropped when they stopped returning a Hono app. Everything
+// The gate reads (method, path, headers, query) is on `Request`; nothing was lost by narrowing.
 import type { AuthProvider, Decision, Principal } from './types.js';
 
 export interface Gate {
@@ -13,9 +13,9 @@ export interface Gate {
    * Fine-grained variant of allow(): checks a SPECIFIC permission (e.g. 'agents:run', 'users:write').
    *   • No provider (auth off) → true (unchanged opt-in behavior).
    *   • EE / RBAC provider → the permission is passed through `AuthContext.permission` and matched against
-   *     the principal's EFFECTIVE permissions (explicit `permissions[]` ?? role grants) — see rbac.ts.
+   *     The principal's EFFECTIVE permissions (explicit `permissions[]` ?? role grants) — see rbac.ts.
    *   • Free / read-write provider → the permission is REDUCED to read/write (`:read` suffix → read, else
-   *     write) and evaluated coarsely. This makes `allowP(req,'X:write') ≡ allow(req,'write')` and
+   *     Write) and evaluated coarsely. This makes `allowP(req,'X:write') ≡ allow(req,'write')` and
    *     `allowP(req,'*:read') ≡ allow(req,'read')` in the free tier → no regression.
    * A denial records its decision against the request (like allow) so `deny()` can surface status/reason.
    */
@@ -25,14 +25,14 @@ export interface Gate {
 }
 
 // Per-request state, keyed by the request itself rather than stashed as a property on it. A Request
-// is somebody else's object; writing hidden fields onto it worked, but it also meant two libraries
-// could pick the same key. A WeakMap cannot collide and cannot leak — the entry dies with the request.
+// Is somebody else's object; writing hidden fields onto it worked, but it also meant two libraries
+// Could pick the same key. A WeakMap cannot collide and cannot leak — the entry dies with the request.
 const principals = new WeakMap<Request, Principal>();
 const decisions = new WeakMap<Request, Decision>();
 
 /**
  * The principal authenticated during allow() (within the same request). Hosts derive the organization
- * scope and audit actor from here → closed to header spoofing. Null if allow() hasn't been called yet.
+ * Scope and audit actor from here → closed to header spoofing. Null if allow() hasn't been called yet.
  */
 export function principalOf(req: Request): Principal | null {
   return principals.get(req) ?? null;
@@ -41,8 +41,8 @@ export function principalOf(req: Request): Principal | null {
 export interface GateOptions {
   /**
    * DELIBERATE permission for a providerless gate in production. Auth stays opt-in; but silent
-   * fail-open is impossible under NODE_ENV=production — either a provider is given or this flag is
-   * explicitly set to true (audit #2).
+   * Fail-open is impossible under NODE_ENV=production — either a provider is given or this flag is
+   * Explicitly set to true (audit #2).
    */
   allowOpenAccess?: boolean;
 }
@@ -93,7 +93,7 @@ export function makeGate(provider?: AuthProvider, opts?: GateOptions): Gate {
       const principal = await provider.authenticate(req);
       if (principal) principals.set(req, principal);
       // Free-tier reduction: anything ending in ':read' is a read, everything else is a write. An RBAC
-      // provider ignores `action` and matches `permission` exactly; a free provider uses this reduced action.
+      // Provider ignores `action` and matches `permission` exactly; a free provider uses this reduced action.
       const action: 'read' | 'write' = permission.endsWith(':read') ? 'read' : 'write';
       const decision = await provider.authorize(principal, req, {
         path: new URL(req.url).pathname,

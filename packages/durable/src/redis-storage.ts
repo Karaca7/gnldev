@@ -1,20 +1,20 @@
 // @gnldev/durable/redis — Redis implementation of RunJournal + WorkStore + CacheStore + MetaStore.
 // Ports where Redis is STRONG: KV + atomic CAS (SET NX) + native TTL (SET PX) + queue/log.
 // SAME serialization (serialize.ts / superjson) and SAME contracts (Page/ListQuery,
-// exactly-once CAS, readRun ORDER BY created_at,key) as Sqlite/Postgres. Injectable client + lazy `createRequire`
-// pattern (identical to PostgresStorage.pool and rag/PostgresVectorStore): `ioredis` is an OPTIONAL peer dependency;
-// it's only loaded when `client` is not provided → the bundler can't see it statically, a fake RedisLike is given in tests.
+// Exactly-once CAS, readRun ORDER BY created_at,key) as Sqlite/Postgres. Injectable client + lazy `createRequire`
+// Pattern (identical to PostgresStorage.pool and rag/PostgresVectorStore): `ioredis` is an OPTIONAL peer dependency;
+// It's only loaded when `client` is not provided → the bundler can't see it statically, a fake RedisLike is given in tests.
 //
 // CAPABILITY DECISION (honest matrix — see storage.ts CapabilityMatrix):
-//   runs='full', work='full', cache='ttl', memory='none', vectors='none'.
+//   Runs='full', work='full', cache='ttl', memory='none', vectors='none'.
 // Redis (WITHOUT the RediSearch/RedisJSON modules) is weak for queryable memory + vector recall:
-//   recall (MemoryStore) needs vector similarity; doing that brute-force in Redis would require pulling
-//   ALL messages into the app (no index) → contrary to the point of deploying Redis (memory pressure). The Sqlite
-//   adapter solves recall via a table scan and offers memory='full', but that's node-local; Redis is a
-//   networked cache/queue store. So the memory/vectors ports are NOT PROVIDED (undefined) and capability='none' →
-//   overridden to sqlite/postgres/pgvector via composite() (storage.ts composite philosophy). runs+meta+work+cache
-//   are provided locally; Redis is typically used in a composite as a cache/work override or as the
-//   runs+work+cache default.
+//   Recall (MemoryStore) needs vector similarity; doing that brute-force in Redis would require pulling
+// ALL messages into the app (no index) → contrary to the point of deploying Redis (memory pressure). The Sqlite
+//   Adapter solves recall via a table scan and offers memory='full', but that's node-local; Redis is a
+//   Networked cache/queue store. So the memory/vectors ports are NOT PROVIDED (undefined) and capability='none' →
+//   Overridden to sqlite/postgres/pgvector via composite() (storage.ts composite philosophy). runs+meta+work+cache
+//   Are provided locally; Redis is typically used in a composite as a cache/work override or as the
+//   Runs+work+cache default.
 import { createRequire } from 'node:module';
 import { parseJournalKey } from './journal.js';
 import { stableStringify } from './hash.js';
@@ -47,7 +47,7 @@ export interface RedisLike {
   /** OPTIONAL TIME (available in ioredis) — `[seconds, microseconds]` for H2 now(). Falls back to Date.now if absent. */
   time?(): Promise<[string, string]>;
   /** OPTIONAL STRLEN (available in ioredis) — for H8c readRunStats, measures length WITHOUT transferring
-   *  the value content. Falls back to the MGET fallback in readRunStats if absent (see readRunStats comment). */
+   *  The value content. Falls back to the MGET fallback in readRunStats if absent (see readRunStats comment). */
   strlen?(key: string): Promise<number>;
   /** OPTIONAL ZSET add (available in ioredis) — H8b last-activity index: score=epoch ms, member=runId. */
   zadd?(key: string, score: number, member: string): Promise<number>;
@@ -58,27 +58,27 @@ export interface RedisLike {
   zrem?(key: string, ...members: string[]): Promise<number>;
   /** OPTIONAL pipeline/transaction (SAME shape as ioredis multi() — ChainableCommander) — to fold the
    *  +1 round-trip (separate ZADD call) that the H8b touch ZSET adds to put/putIfAbsent/putIfMatch into
-   *  the SAME round-trip as the SET (or CAS). If absent (or zadd is absent), the existing separate-call
-   *  behavior (documented, see touch() JSDoc) is PRESERVED. */
+   *  The SAME round-trip as the SET (or CAS). If absent (or zadd is absent), the existing separate-call
+   *  Behavior (documented, see touch() JSDoc) is PRESERVED. */
   multi?(): RedisPipeline;
   quit?(): Promise<unknown>;
   /** OPTIONAL INFO (available in ioredis) — used ONLY for the one-time async-replication advisory
-   *  check in RedisRunJournal (see `checkReplicationOnce`). Absent on custom/legacy clients → the
-   *  check silently no-ops (fail-open, advisory only). */
+   *  Check in RedisRunJournal (see `checkReplicationOnce`). Absent on custom/legacy clients → the
+   *  Check silently no-ops (fail-open, advisory only). */
   info?(section?: string): Promise<string>;
   /** OPTIONAL native Redis WAIT (available in ioredis) — `WAIT numreplicas timeout` blocks until
    *  `numreplicas` replicas have acknowledged all writes issued by this connection so far, or until
    *  `timeout` ms elapse, returning the number that actually acknowledged. See
-   *  RedisStorageOptions.waitReplicas (Task 2 — opt-in strong replication guarantee). Absent on
-   *  custom/legacy clients → the check silently no-ops (fail-open). */
+   * RedisStorageOptions.waitReplicas (Task 2 — opt-in strong replication guarantee). Absent on
+   *  Custom/legacy clients → the check silently no-ops (fail-open). */
   wait?(numreplicas: number, timeout: number): Promise<number>;
 }
 
 /** Minimal ChainableCommander subset returned by RedisLike.multi() — only the three commands
  *  (SET/ZADD/EVAL) + exec that RedisRunJournal uses. ioredis's real ChainableCommander is much
- *  broader (every Redis command) but we only type the surface this task needs — consistent with
- *  the injectable client pattern (like RedisLike itself). exec() result matches the ioredis
- *  contract EXACTLY: order matches the commands one-to-one, each element is `[err, result]`. */
+ *  Broader (every Redis command) but we only type the surface this task needs — consistent with
+ *  The injectable client pattern (like RedisLike itself). exec() result matches the ioredis
+ *  Contract EXACTLY: order matches the commands one-to-one, each element is `[err, result]`. */
 export interface RedisPipeline {
   set(key: string, value: string, ...args: (string | number)[]): RedisPipeline;
   zadd(key: string, score: number, member: string): RedisPipeline;
@@ -94,25 +94,25 @@ export interface RedisStorageOptions {
   /** Namespace prefixed to all keys (default 'gnl:'). For multi-instance/isolation. */
   keyPrefix?: string;
   /** the core-hardening review: Redis replication is ALWAYS asynchronous — a claim (SET NX) acknowledged by
-   *  the primary can be lost on the replica promoted during failover → exactly-once may be VIOLATED.
-   *  When `true` (default), RunJournal does a ONE-TIME, fire-and-forget `INFO replication` check on the
-   *  first putIfAbsent/putIfMatch call and console.warn's ONCE if replicas are attached. Set `false` to
-   *  silence the advisory (e.g. single-node dev, or the risk is already knowingly accepted). */
+   *  The primary can be lost on the replica promoted during failover → exactly-once may be VIOLATED.
+   * When `true` (default), RunJournal does a ONE-TIME, fire-and-forget `INFO replication` check on the
+   *  First putIfAbsent/putIfMatch call and console.warn's ONCE if replicas are attached. Set `false` to
+   *  Silence the advisory (e.g. single-node dev, or the risk is already knowingly accepted). */
   replicationWarning?: boolean;
   /**
    * If given, EVERY SUCCESSFUL claim (putIfAbsent/putIfMatch returning `true` — i.e. this
-   * call genuinely wrote a NEW record, not a no-op loss) is followed by a native Redis `WAIT
-   * replicas timeoutMs` call, requiring at least `replicas` replicas to have acknowledged the write
-   * before the claim is considered final. Default: `undefined` — BYTE-FOR-BYTE unchanged behavior (no
+   * Call genuinely wrote a NEW record, not a no-op loss) is followed by a native Redis `WAIT
+   * Replicas timeoutMs` call, requiring at least `replicas` replicas to have acknowledged the write
+   * Before the claim is considered final. Default: `undefined` — BYTE-FOR-BYTE unchanged behavior (no
    * WAIT call, no extra latency on the claim path).
-   *   onTimeout ('warn', default): fewer than `replicas` acknowledged in time → logs ONCE per
-   *     RedisRunJournal instance and lets the (already-happened) claim stand.
-   *   onTimeout: 'throw': raises `ReplicationNotAcknowledgedError` instead — the claim already wrote
-   *     the record (WAIT cannot undo a write), this only surfaces the ack shortfall as a hard error so
-   *     the caller can decide how to react (e.g. treat this attempt as untrusted, alert, retry policy).
+   *   OnTimeout ('warn', default): fewer than `replicas` acknowledged in time → logs ONCE per
+   * RedisRunJournal instance and lets the (already-happened) claim stand.
+   *   OnTimeout: 'throw': raises `ReplicationNotAcknowledgedError` instead — the claim already wrote
+   *     The record (WAIT cannot undo a write), this only surfaces the ack shortfall as a hard error so
+   *     The caller can decide how to react (e.g. treat this attempt as untrusted, alert, retry policy).
    * FAIL-OPEN: if the client doesn't implement `wait` (custom/legacy `RedisLike`) or the WAIT call
-   * itself throws (network hiccup), this is swallowed SILENTLY — WAIT is an extra assurance layer, it
-   * must never turn a genuinely successful claim into a thrown error for an UNRELATED reason.
+   * Itself throws (network hiccup), this is swallowed SILENTLY — WAIT is an extra assurance layer, it
+   * Must never turn a genuinely successful claim into a thrown error for an UNRELATED reason.
    */
   waitReplicas?: { replicas: number; timeoutMs: number; onTimeout?: 'throw' | 'warn' };
 }
@@ -126,9 +126,9 @@ const CACHE = 'cache:';
 const META = 'meta:';
 // H8b: per-run last-activity ZSET — a SINGLE key (score=last write epoch ms, member=runId).
 // The Redis counterpart of gnl_runs.updated_at: RjEnv.t PRESERVES created_at (unchanged on put) → that
-// field is INSUFFICIENT for measuring "last activity" (if a tool is upserted suspended→succeeded, `t`
-// stays fixed, and a resumed run would INCORRECTLY look stale). So a separate index is needed, updated
-// on every model/tool write — RJT.
+// Field is INSUFFICIENT for measuring "last activity" (if a tool is upserted suspended→succeeded, `t`
+// Stays fixed, and a resumed run would INCORRECTLY look stale). So a separate index is needed, updated
+// On every model/tool write — RJT.
 const RJT = 'rjt:activity';
 
 // ── Common helpers ─────────────────────────────────────────────────────────
@@ -142,8 +142,8 @@ function globEscape(s: string): string {
   return s.replace(/[\\*?[\]]/g, (c) => '\\' + c);
 }
 /** Collect all matching keys by rolling SCAN forward until cursor '0' (NOT KEYS → doesn't block in prod).
- *  Redis SCAN's guarantee is at-least-once: the same key CAN come back MULTIPLE TIMES during a rehash →
- *  dedupe with a Set (otherwise readRun produces duplicate entries, listRuns produces double counts). */
+ * Redis SCAN's guarantee is at-least-once: the same key CAN come back MULTIPLE TIMES during a rehash →
+ *  Dedupe with a Set (otherwise readRun produces duplicate entries, listRuns produces double counts). */
 async function scanAll(client: RedisLike, match: string): Promise<string[]> {
   const out = new Set<string>();
   let cursor: string | number = '0';
@@ -157,9 +157,9 @@ async function scanAll(client: RedisLike, match: string): Promise<string[]> {
 function cmpStr(a: string, b: string): number { return a < b ? -1 : a > b ? 1 : 0; }
 
 // N+1 efficiency fix: instead of a sequential GET per key after SCAN, use a SINGLE (or a few chunked)
-// round-trip if the client supports `mget`. The returned array's ORDER matches `keys` one-to-one (mget
-// contract) → the caller can match by index. For very large key lists, split into MGET_CHUNK-sized
-// chunks to avoid a single MGET blocking Redis / hitting command-size limits.
+// Round-trip if the client supports `mget`. The returned array's ORDER matches `keys` one-to-one (mget
+// Contract) → the caller can match by index. For very large key lists, split into MGET_CHUNK-sized
+// Chunks to avoid a single MGET blocking Redis / hitting command-size limits.
 const MGET_CHUNK = 500;
 async function bulkGet(client: RedisLike, keys: string[]): Promise<(string | null)[]> {
   if (keys.length === 0) return [];
@@ -179,9 +179,9 @@ async function bulkGet(client: RedisLike, keys: string[]): Promise<(string | nul
 
 // ── RunJournal ──────────────────────────────────────────────────────────────────
 // Value envelope: value + derived meta (runId/kind/suspended/createdAt) in a single key → readRun/listRuns
-// are resolved via SCAN + JS-side grouping without maintaining a secondary index (Redis has no secondary
-// index; listRuns is an admin/observability path, NOT a hot path). The superjson envelope preserves the
-// type of the nested value.
+// Are resolved via SCAN + JS-side grouping without maintaining a secondary index (Redis has no secondary
+// Index; listRuns is an admin/observability path, NOT a hot path). The superjson envelope preserves the
+// Type of the nested value.
 interface RjEnv { v: unknown; r: string | null; k: 'model' | 'tool' | null; s: boolean; t: number }
 function rjEnv(value: unknown, p: { runId: string; kind: 'model' | 'tool' } | null, s: boolean, t: number): RjEnv {
   return { v: value, r: p?.runId ?? null, k: p?.kind ?? null, s, t };
@@ -191,19 +191,19 @@ function isSuspended(p: { kind: string } | null, value: unknown): boolean {
 }
 
 // H1 CAS Lua script: if GET==ARGV[1] then SET ARGV[2] → 1, else 0. The Redis script runs atomically →
-// this closes the race window between putIfMatch's JS-side comparison and the SET.
+// This closes the race window between putIfMatch's JS-side comparison and the SET.
 const CAS_LUA = `if redis.call('GET',KEYS[1])==ARGV[1] then redis.call('SET',KEYS[1],ARGV[2]) return 1 else return 0 end`;
 
 /**
  * P1.6b applyBatch Lua script: claim (putIfAbsent semantics) + HINCRBYFLOAT counters + SET puts, as ONE
- * atomic server-side script — claim key EXISTS → return 0 (nothing else runs); otherwise SET the claim,
- * apply every counter increment, SET every put, return 1. The whole batch is encoded as a SINGLE JSON
- * descriptor in ARGV[1] (cjson.decode, available in stock Redis) rather than a dynamic KEYS/ARGV layout —
- * the batch's shape (how many incrs/puts, how many fields per incr) is variable per call, and JSON keeps
- * both the real-Redis script and the fake-client mimic (fake-redis.ts) simple. All key names inside the
- * descriptor are ALREADY fully-prefixed by the caller (RedisRunJournal.applyBatch) — same envelope
+ * Atomic server-side script — claim key EXISTS → return 0 (nothing else runs); otherwise SET the claim,
+ * Apply every counter increment, SET every put, return 1. The whole batch is encoded as a SINGLE JSON
+ * Descriptor in ARGV[1] (cjson.decode, available in stock Redis) rather than a dynamic KEYS/ARGV layout —
+ * The batch's shape (how many incrs/puts, how many fields per incr) is variable per call, and JSON keeps
+ * Both the real-Redis script and the fake-client mimic (fake-redis.ts) simple. All key names inside the
+ * Descriptor are ALREADY fully-prefixed by the caller (RedisRunJournal.applyBatch) — same envelope
  * (`rjEnv`) as put()/putIfAbsent() for run-journal keys, plain values for counter/put keys outside that
- * namespace — so this script never needs to know about prefixes itself.
+ * Namespace — so this script never needs to know about prefixes itself.
  */
 const APPLY_BATCH_LUA = `
 local desc = cjson.decode(ARGV[1])
@@ -228,31 +228,31 @@ return 1
 class RedisRunJournal implements RunJournal {
   /**
    * H8b (optional fast path — known limitation fix): assigned in the constructor only if the client
-   * supports `zadd`+`zrangebyscore`; OTHERWISE the field stays UNDEFINED. Deliberate choice: it
-   * would be WRONG to ALWAYS define the method and return an empty array on an unsupported client —
-   * sweepRuns (retention.ts) does feature-detection via `typeof journal.listStaleRuns === 'function'`;
-   * if the method exists but incorrectly returns empty, sweepRuns thinks "there are no stale runs" and
+   * Supports `zadd`+`zrangebyscore`; OTHERWISE the field stays UNDEFINED. Deliberate choice: it
+   * Would be WRONG to ALWAYS define the method and return an empty array on an unsupported client —
+   * SweepRuns (retention.ts) does feature-detection via `typeof journal.listStaleRuns === 'function'`;
+   * If the method exists but incorrectly returns empty, sweepRuns thinks "there are no stale runs" and
    * SILENTLY skips retention (it never falls back to the real O(full-DB) scan fallback) → that would be
    * WORSE behavior than not defining the method at all. So the method's PRESENCE (or absence) is
-   * controlled based on capability.
+   * Controlled based on capability.
    *
    * KNOWN LIMITATION (documented risk): the ZSET is only populated by put/putIfAbsent/putIfMatch calls
-   * made AFTER this code is deployed. Runs written BEFORE the upgrade and never touched AGAIN never
-   * enter the ZSET → the fast-path listStaleRuns will never see them as "stale" (sweepRuns's fast path
-   * won't clean up these old runs). If needed, a one-time backfill script (SCANning existing
+   * Made AFTER this code is deployed. Runs written BEFORE the upgrade and never touched AGAIN never
+   * Enter the ZSET → the fast-path listStaleRuns will never see them as "stale" (sweepRuns's fast path
+   * Won't clean up these old runs). If needed, a one-time backfill script (SCANning existing
    * `rj:*:model:*`/`rj:*:tool:*` keys and ZADDing them) could be run; that is out of scope for this task.
    */
   listStaleRuns?: (cutoffTs: number, opts?: { includeSuspended?: boolean }) => Promise<string[]>;
 
   /**
    * P1.6b (optional — SAME conditional-presence idiom as `listStaleRuns` above): assigned in the
-   * constructor ONLY if the client supports `eval` (the atomic batch script needs server-side Lua);
-   * otherwise the field stays UNDEFINED (recordRunMetrics/callers fall back to the sequential
-   * claim→incrBy path, which is correct — just without the atomicity closing the crash window).
+   * Constructor ONLY if the client supports `eval` (the atomic batch script needs server-side Lua);
+   * Otherwise the field stays UNDEFINED (recordRunMetrics/callers fall back to the sequential
+   * Claim→incrBy path, which is correct — just without the atomicity closing the crash window).
    * NOT implemented: `countRunsByStatus` — Redis has no cheap indexed status aggregate here (the
    * `rj:` keyspace has no secondary index by status, only a brute-force SCAN would produce it, which is
-   * exactly the O(all runs) cost this capability exists to AVOID) — left undefined rather than faked with
-   * a full scan; callers fall back to `listRuns`.
+   * Exactly the O(all runs) cost this capability exists to AVOID) — left undefined rather than faked with
+   * A full scan; callers fall back to `listRuns`.
    */
   applyBatch?: (batch: JournalBatch) => Promise<boolean>;
 
@@ -260,9 +260,9 @@ class RedisRunJournal implements RunJournal {
    *  (whether or not it warned) so it only ever runs ONCE per RedisRunJournal instance. */
   private replicationChecked = false;
   /** Task 2: flips true after the first `waitReplicas` ack-shortfall WARNING (onTimeout:'warn', the
-   *  default) — like `replicationChecked` above, this keeps the console quiet after the first hit
-   *  instead of warning on every claim in a degraded cluster. Does NOT gate 'throw' mode (every
-   *  shortfall there raises — the caller asked to be told every time). */
+   *  Default) — like `replicationChecked` above, this keeps the console quiet after the first hit
+   *  Instead of warning on every claim in a degraded cluster. Does NOT gate 'throw' mode (every
+   *  Shortfall there raises — the caller asked to be told every time). */
   private waitReplicasWarned = false;
 
   constructor(
@@ -276,7 +276,7 @@ class RedisRunJournal implements RunJournal {
         const desc: { claim?: { key: string; value: string }; incrs?: { key: string; fields: Record<string, number> }[]; puts?: { key: string; value: string }[]; zadds?: { key: string; score: number; member: string }[] } = {};
         // H8b parity: run-shaped keys written through applyBatch must ALSO touch the activity ZSET
         // (put/putIfAbsent do — see touch()); otherwise listStaleRuns would treat a run written only via
-        // applyBatch as never-active and sweep it as stale. Collected here, applied inside the SAME Lua unit.
+        // ApplyBatch as never-active and sweep it as stale. Collected here, applied inside the SAME Lua unit.
         const zadds: { key: string; score: number; member: string }[] = [];
         const now = Date.now();
         const touchOf = (p: ReturnType<typeof parseJournalKey>) => {
@@ -321,8 +321,8 @@ class RedisRunJournal implements RunJournal {
   private full(key: string) { return this.ns() + key; }
   private activityKey(): string { return this.pfx + RJT; }
   /** H8b helper: does this run have a tool record that is CURRENTLY suspended? Only that run's OWN
-   *  keys are scanned (unlike listRuns's full-keyspace scan) — listStaleRuns only calls this for
-   *  stale CANDIDATES, so it does NOT incur full-keyspace cost. */
+   *  Keys are scanned (unlike listRuns's full-keyspace scan) — listStaleRuns only calls this for
+   *  Stale CANDIDATES, so it does NOT incur full-keyspace cost. */
   private async isRunSuspended(runId: string): Promise<boolean> {
     const keys = await scanAll(this.client, this.ns() + globEscape(runId + ':') + '*');
     const values = await bulkGet(this.client, keys);
@@ -335,35 +335,35 @@ class RedisRunJournal implements RunJournal {
   }
   /** H8b: refreshes the run's last-activity ZSET score whenever a model/tool key is written. Cost:
    *  +1 round-trip per write (ZADD) — ADDED to put()'s existing GET+SET, putIfAbsent's SET NX,
-   *  or putIfMatch's GET+(eval|SET). O(1) constant cost, in the same spirit as sqlite/pg's
-   *  touchRunDelta upsert that runs on every write. NO-OP (skipped) if client.zadd is absent →
-   *  listStaleRuns is already left undefined in that case, so this call adds no cost at all.
+   *  Or putIfMatch's GET+(eval|SET). O(1) constant cost, in the same spirit as sqlite/pg's
+   *  TouchRunDelta upsert that runs on every write. NO-OP (skipped) if client.zadd is absent →
+   *  ListStaleRuns is already left undefined in that case, so this call adds no cost at all.
    *  `this.now()` is used (NOT Date.now()) — with H2 server-time support this stays independent of
-   *  worker wall-clock skew (in tests the fake clock also flows through here via `client.time()`).
-   *  PIPELINE (audit fix): if the client ALSO supports `multi()`, this +1 RTT is folded into the SAME
-   *  round-trip as put/putIfAbsent/putIfMatch's write command (SET / SET NX / eval) — see `canPipe()`
-   *  and the pipeline branches inside those three methods. `touch()` itself is only used on the
-   *  separate-call path for clients without pipelining (no multi support); its behavior is UNCHANGED. */
+   *  Worker wall-clock skew (in tests the fake clock also flows through here via `client.time()`).
+   * PIPELINE (audit fix): if the client ALSO supports `multi()`, this +1 RTT is folded into the SAME
+   *  Round-trip as put/putIfAbsent/putIfMatch's write command (SET / SET NX / eval) — see `canPipe()`
+   *  And the pipeline branches inside those three methods. `touch()` itself is only used on the
+   *  Separate-call path for clients without pipelining (no multi support); its behavior is UNCHANGED. */
   private async touch(p: { runId: string; kind: 'model' | 'tool' } | null): Promise<void> {
     if (p && this.client.zadd) await this.client.zadd(this.activityKey(), await this.now(), p.runId);
   }
   /** Is pipelining (sending SET/eval + ZADD in a single round-trip) possible? The run key (`p`) must
-   *  EXIST and the client must support BOTH `multi()` and `zadd` — if either is missing, the
-   *  separate-call (touch()) path is used. */
+   * EXIST and the client must support BOTH `multi()` and `zadd` — if either is missing, the
+   *  Separate-call (touch()) path is used. */
   private canPipe(p: { runId: string; kind: 'model' | 'tool' } | null): p is { runId: string; kind: 'model' | 'tool' } {
     return !!(p && this.client.multi && this.client.zadd);
   }
 
   /**
-   * the core-hardening review (Known limitation — made VOCAL, same rationale as journal.ts claim()'s
-   * putIfAbsent-fallback warning): Redis replication is ALWAYS asynchronous — a claim (SET NX)
-   * acknowledged by the primary can be LOST on the replica promoted during failover → another worker
-   * can win the SAME claim → exactly-once may be VIOLATED. Nothing checked or surfaced this before —
-   * a silent risk in a correctness product. This does a ONE-TIME (per instance), FIRE-AND-FORGET
+   * The core-hardening review (Known limitation — made VOCAL, same rationale as journal.ts claim()'s
+   * PutIfAbsent-fallback warning): Redis replication is ALWAYS asynchronous — a claim (SET NX)
+   * Acknowledged by the primary can be LOST on the replica promoted during failover → another worker
+   * Can win the SAME claim → exactly-once may be VIOLATED. Nothing checked or surfaced this before —
+   * A silent risk in a correctness product. This does a ONE-TIME (per instance), FIRE-AND-FORGET
    * `INFO replication` probe on the first putIfAbsent/putIfMatch call: it is NEVER awaited by the
-   * caller (must never delay or be able to break the claim path) and any error (client doesn't
-   * implement `info`, network failure, parse miss) is swallowed SILENTLY — fail-open, this is an
-   * advisory only, not a gate. Silenced entirely via `replicationWarning: false`.
+   * Caller (must never delay or be able to break the claim path) and any error (client doesn't
+   * Implement `info`, network failure, parse miss) is swallowed SILENTLY — fail-open, this is an
+   * Advisory only, not a gate. Silenced entirely via `replicationWarning: false`.
    */
   private checkReplicationOnce(): void {
     if (this.replicationChecked || !this.replicationWarning || !this.client.info) return;
@@ -386,10 +386,10 @@ class RedisRunJournal implements RunJournal {
 
   /**
    * Task 2 (opt-in strong replication guarantee): AWAITED (unlike `checkReplicationOnce` above, which is
-   * fire-and-forget advisory) — called AFTER a claim already succeeded (putIfAbsent/putIfMatch about to
-   * return `true`), so it can only ever ADD a delay or a thrown ack-shortfall error, never change
-   * whether the write happened. No-op if `waitReplicas` wasn't configured, or the client doesn't
-   * implement `wait` (fail-open — see RedisStorageOptions.waitReplicas JSDoc).
+   * Fire-and-forget advisory) — called AFTER a claim already succeeded (putIfAbsent/putIfMatch about to
+   * Return `true`), so it can only ever ADD a delay or a thrown ack-shortfall error, never change
+   * Whether the write happened. No-op if `waitReplicas` wasn't configured, or the client doesn't
+   * Implement `wait` (fail-open — see RedisStorageOptions.waitReplicas JSDoc).
    */
   private async waitForReplicas(): Promise<void> {
     if (!this.waitReplicas || !this.client.wait) return;
@@ -419,8 +419,8 @@ class RedisRunJournal implements RunJournal {
     return s == null ? undefined : (deserialize<RjEnv>(s).v as T);
   }
   /** P1.6b: batch point-read — reuses `bulkGet` (the SAME N+1 fix readRun/listRuns already rely on),
-   *  order-preserving, `undefined` for misses (getMany contract, journal.ts); decodes the SAME RjEnv
-   *  envelope as `get`. */
+   *  Order-preserving, `undefined` for misses (getMany contract, journal.ts); decodes the SAME RjEnv
+   *  Envelope as `get`. */
   async getMany<T = unknown>(keys: string[]): Promise<(T | undefined)[]> {
     if (keys.length === 0) return [];
     const values = await bulkGet(this.client, keys.map((k) => this.full(k)));
@@ -431,14 +431,14 @@ class RedisRunJournal implements RunJournal {
     const full = this.full(key);
     // Preserve created_at (sqlite ON CONFLICT DO UPDATE doesn't update created_at) → readRun order stays stable.
     // DELIBERATE 2-RTT (GET+SET) — NOT OPTIMIZED with bulkGet: put() operates on a single key,
-    // there's no bulk read; the N+1 problem was in multi-key reads after SCAN (readRun/listRuns/list).
+    // There's no bulk read; the N+1 problem was in multi-key reads after SCAN (readRun/listRuns/list).
     // Alternatives that would improve atomicity (Lua script CAS / separate created_at key) were NOT
     // IMPLEMENTED — see the core-hardening review (Recommendations) — this task's scope is only N+1 GET efficiency.
     const prev = await this.client.get(full);
     const t = prev != null ? deserialize<RjEnv>(prev).t : Date.now();
     const payload = serialize(rjEnv(value, p, isSuspended(p, value), t));
     // PIPELINE (audit fix — H8b touch +1 RTT): touch() is already UNCONDITIONAL here (it would run on
-    // every put whenever p exists) → sending SET+ZADD in the SAME round-trip does NOT CHANGE behavior
+    // Every put whenever p exists) → sending SET+ZADD in the SAME round-trip does NOT CHANGE behavior
     // (both would run in every case; it just drops from 2 RTT to 1 RTT). If canPipe() is false
     // (client.multi/zadd absent), the separate-call path below (old behavior, documented) runs UNCHANGED.
     if (this.canPipe(p)) {
@@ -456,13 +456,13 @@ class RedisRunJournal implements RunJournal {
     const payload = serialize(rjEnv(value, p, isSuspended(p, value), Date.now()));
     if (this.canPipe(p)) {
       // PIPELINE — DOCUMENTED BEHAVIOR DIFFERENCE (in the SAFE DIRECTION): commands in a pipeline can't
-      // be conditioned on each other's RESULT (without Lua) → the ZADD runs even if SET NX LOSES (the
-      // key already existed) — a deviation from the original "touch only if OK" behavior. The deviation
-      // is in the SAFE direction: marking activity earlier/more than warranted only DELAYS when
-      // listStaleRuns triggers (it NEVER LEADS TO early/false-positive deletion — see the "safe side"
-      // principle at the top of the file) and it DOES reflect the fact that the losing worker was ALSO
-      // attempting to write to this run at that moment. The round-trip count does NOT get WORSE: on a
-      // win it drops from 2→1 RTT, on a loss it was already 1 RTT (the ZADD rides in the same packet).
+      // Be conditioned on each other's RESULT (without Lua) → the ZADD runs even if SET NX LOSES (the
+      // Key already existed) — a deviation from the original "touch only if OK" behavior. The deviation
+      // Is in the SAFE direction: marking activity earlier/more than warranted only DELAYS when
+      // ListStaleRuns triggers (it NEVER LEADS TO early/false-positive deletion — see the "safe side"
+      // Principle at the top of the file) and it DOES reflect the fact that the losing worker was ALSO
+      // Attempting to write to this run at that moment. The round-trip count does NOT get WORSE: on a
+      // Win it drops from 2→1 RTT, on a loss it was already 1 RTT (the ZADD rides in the same packet).
       const results = await this.client.multi!().set(full, payload, 'NX').zadd(this.activityKey(), await this.now(), p.runId).exec();
       const ok = results?.[0]?.[1] === 'OK';
       if (ok) await this.waitForReplicas(); // Task 2: only after a GENUINE new claim (NX won)
@@ -480,10 +480,10 @@ class RedisRunJournal implements RunJournal {
    * H1: atomic conditional replace (expired run-lock takeover, see journal.ts JSDoc).
    * The STORED FORM is the RjEnv envelope (v + derived meta, including `t`=createdAt) — the caller's
    * `expected` is only the inner value (`v`), and the envelope has `t` → a byte-for-byte serialize match
-   * is IMPOSSIBLE. Hence the pattern: (1) raw GET, (2) JS-side env.v ↔ expected stableStringify
-   * comparison, (3) if it matches, run the Lua CAS with the RAW OLD STRING (ARGV[1] = the raw we read)
+   * Is IMPOSSIBLE. Hence the pattern: (1) raw GET, (2) JS-side env.v ↔ expected stableStringify
+   * Comparison, (3) if it matches, run the Lua CAS with the RAW OLD STRING (ARGV[1] = the raw we read)
    * → the GET↔SET TOCTOU window is closed inside Lua (atomic server-side). The new value is wrapped
-   * with rjEnv, `t` is PRESERVED (readRun order stays stable — same as put()'s created_at preservation behavior).
+   * With rjEnv, `t` is PRESERVED (readRun order stays stable — same as put()'s created_at preservation behavior).
    */
   async putIfMatch(key: string, expected: unknown, value: unknown): Promise<boolean> {
     this.checkReplicationOnce(); // fire-and-forget — never awaited, never delays the claim
@@ -497,7 +497,7 @@ class RedisRunJournal implements RunJournal {
     if (this.client.eval) {
       if (this.canPipe(p)) {
         // PIPELINE — same "safe-direction deviation" (see putIfAbsent comment): eval (CAS) + ZADD go in
-        // the SAME round-trip; the ZADD runs even if the CAS loses (safe direction: late cleanup, never early).
+        // The SAME round-trip; the ZADD runs even if the CAS loses (safe direction: late cleanup, never early).
         const results = await this.client.multi!().eval(CAS_LUA, 1, full, raw, next).zadd(this.activityKey(), await this.now(), p.runId).exec();
         const ok = Number(results?.[0]?.[1]) === 1;
         if (ok) await this.waitForReplicas(); // Task 2: only after a GENUINE takeover (CAS won)
@@ -511,11 +511,11 @@ class RedisRunJournal implements RunJournal {
       }
       return ok;
     }
-    // custom client without eval: best-effort compare-then-set (equivalent to the old get→put behavior;
-    // documented risk, the core-hardening review — a real ioredis always goes through the atomic eval path).
+    // Custom client without eval: best-effort compare-then-set (equivalent to the old get→put behavior;
+    // Documented risk, the core-hardening review — a real ioredis always goes through the atomic eval path).
     if (this.canPipe(p)) {
-      // touch() is already UNCONDITIONAL here (the best-effort branch always returns true) → the
-      // pipeline behavior is IDENTICAL, just 2 RTT → 1 RTT.
+      // Touch() is already UNCONDITIONAL here (the best-effort branch always returns true) → the
+      // Pipeline behavior is IDENTICAL, just 2 RTT → 1 RTT.
       await this.client.multi!().set(full, next).zadd(this.activityKey(), await this.now(), p.runId).exec();
       await this.waitForReplicas(); // Task 2: this branch always writes (best-effort, no CAS) → always a genuine write
       return true;
@@ -526,8 +526,8 @@ class RedisRunJournal implements RunJournal {
     return true;
   }
   /** H8a: engine-internal atomic counter via HINCRBYFLOAT (if the client supports it; otherwise the
-   *  method is considered undefined — budget.ts falls back to the legacy path). Key lives in its own
-   *  sub-namespace (ctr:). */
+   *  Method is considered undefined — budget.ts falls back to the legacy path). Key lives in its own
+   *  Sub-namespace (ctr:). */
   async incrBy(key: string, fields: Record<string, number>): Promise<void> {
     if (!this.client.hincrbyfloat) throw new Error('@gnldev/durable redis: client does not support hincrbyfloat');
     for (const [f, d] of Object.entries(fields)) await this.client.hincrbyfloat(this.pfx + CTR + key, f, d);
@@ -552,13 +552,13 @@ class RedisRunJournal implements RunJournal {
     return keys.map((k) => k.slice(cut));
   }
   /** Retention/GDPR: PERMANENTLY delete keys starting with the prefix (parity with sqlite/pg deletePrefix).
-   *  H8b parity: sqlite/pg's deletePrefix(`<runId>:`) call also drops the gnl_runs summary row
+   * H8b parity: sqlite/pg's deletePrefix(`<runId>:`) call also drops the gnl_runs summary row
    *  (see sqlite-storage.ts/postgres-storage.ts deletePrefix) — the equivalent here is ZREMming the
-   *  ZSET member: otherwise the purged run's dead member stays in the ZSET FOREVER → every subsequent
-   *  listStaleRuns call thinks it's "stale" AGAIN and re-triggers purgeRun (harmless but unnecessary —
-   *  deletePrefix already returns 0) AND the ZSET grows like a leak. `rid` may not always be a real
-   *  runId (e.g. `mem-appended:<runId>` or `net:<runId>:` prefixes also pass through here) — in that
-   *  case ZREM deletes a non-matching member (no-op, a harmless extra round-trip). */
+   * ZSET member: otherwise the purged run's dead member stays in the ZSET FOREVER → every subsequent
+   *  ListStaleRuns call thinks it's "stale" AGAIN and re-triggers purgeRun (harmless but unnecessary —
+   *  DeletePrefix already returns 0) AND the ZSET grows like a leak. `rid` may not always be a real
+   *  RunId (e.g. `mem-appended:<runId>` or `net:<runId>:` prefixes also pass through here) — in that
+   *  Case ZREM deletes a non-matching member (no-op, a harmless extra round-trip). */
   async deletePrefix(prefix: string): Promise<number> {
     const keys = await scanAll(this.client, this.ns() + globEscape(prefix) + '*');
     const n = keys.length ? await this.client.del(...keys) : 0;
@@ -568,30 +568,30 @@ class RedisRunJournal implements RunJournal {
     }
     // Counters (incrBy/H8a) live in the `ctr:` sub-namespace (`<pfx>ctr:<key>` hashes), OUTSIDE the
     // `rj:` namespace scanned above — but they are keys too per the deletePrefix contract (journal.ts):
-    // an org purge (GDPR) must not leave `org:<id>:__usage__` behind, and rebuildMetrics's wipe must
-    // not keep stale `__metrics__:` counters. Not included in the return count (parity with sqlite/pg,
-    // which don't count the gnl_counters rows either).
+    // An org purge (GDPR) must not leave `org:<id>:__usage__` behind, and rebuildMetrics's wipe must
+    // Not keep stale `__metrics__:` counters. Not included in the return count (parity with sqlite/pg,
+    // Which don't count the gnl_counters rows either).
     const ctrKeys = await scanAll(this.client, this.pfx + CTR + globEscape(prefix) + '*');
     if (ctrKeys.length) await this.client.del(...ctrKeys);
     return n;
   }
   /**
    * H8c (known limitation fix): CHEAP stats for a run — COUNT + total size, measured WITHOUT transferring
-   * the VALUES (where possible). loadReplayCache (journal.ts) uses this as a RAM guard rail: it checks
-   * the journal's size before pulling it entirely into memory; the bulk cache is skipped if over the threshold.
+   * The VALUES (where possible). loadReplayCache (journal.ts) uses this as a RAM guard rail: it checks
+   * The journal's size before pulling it entirely into memory; the bulk cache is skipped if over the threshold.
    * Measurement path:
-   *  - if the client supports STRLEN: only the length is queried (the value CONTENT does NOT CROSS the
-   *    network). Cost: 1 round-trip per key — but SCAN is already LIMITED to `<runId>:*` (as many as
-   *    this run's entries, NOT the WHOLE keyspace) → typically small (as many as a run's model/tool step count).
-   *  - if STRLEN is absent (custom/legacy client — documented fallback): values are transferred via MGET
+   * if the client supports STRLEN: only the length is queried (the value CONTENT does NOT CROSS the
+   *    Network). Cost: 1 round-trip per key — but SCAN is already LIMITED to `<runId>:*` (as many as
+   *    This run's entries, NOT the WHOLE keyspace) → typically small (as many as a run's model/tool step count).
+   * if STRLEN is absent (custom/legacy client — documented fallback): values are transferred via MGET
    *    (there's a bandwidth cost) but ONLY for this run's keys — again NOT a full-keyspace scan, using
-   *    the same path as the bulkGet from the N+1 efficiency fix.
+   *    The same path as the bulkGet from the N+1 efficiency fix.
    */
   async readRunStats(runId: string): Promise<{ entries: number; bytes: number }> {
     const keys = await scanAll(this.client, this.ns() + globEscape(runId + ':') + '*');
     const cut = this.ns().length;
     // As in readRun, only this run's model/tool entries are counted (input/proc/cfg are EXCLUDED) —
-    // here, WITHOUT fetching the value, filtering is done via parseJournalKey on the key TEXT itself.
+    // Here, WITHOUT fetching the value, filtering is done via parseJournalKey on the key TEXT itself.
     const relevant = keys.filter((k) => {
       const p = parseJournalKey(k.slice(cut));
       return p != null && p.runId === runId;
@@ -626,16 +626,16 @@ class RedisRunJournal implements RunJournal {
   }
   async listRuns(q?: ListQuery): Promise<Page<RunSummary>> {
     // Brute-force: scan all rj: entries, summarize per run. Even if the same key is written twice (UPSERT)
-    // it's a SINGLE Redis key → NOT DOUBLE-COUNTED (same result as sqlite touchRun's recompute semantics).
+    // It's a SINGLE Redis key → NOT DOUBLE-COUNTED (same result as sqlite touchRun's recompute semantics).
     const keys = await scanAll(this.client, this.ns() + '*');
     const values = await bulkGet(this.client, keys);
     const cut = this.ns().length;
     const byRun = new Map<string, { m: number; t: number; s: boolean; c0: number }>();
     // AUDIT (threadId first-class): `:input` keys are not visible to parseJournalKey → the r/k fields
-    // in the RjEnv envelope they're written under are null (rjEnv(value, p=null, ...)). So runId is
-    // derived NOT from the ENVELOPE but from the raw key text itself (the `<runId>:input` suffix) —
-    // since SCAN already fetches ALL rj: keys in one pass (keys/values above), this is NOT a SEPARATE
-    // round-trip, it's part of the same scan.
+    // In the RjEnv envelope they're written under are null (rjEnv(value, p=null, ...)). So runId is
+    // Derived NOT from the ENVELOPE but from the raw key text itself (the `<runId>:input` suffix) —
+    // Since SCAN already fetches ALL rj: keys in one pass (keys/values above), this is NOT a SEPARATE
+    // Round-trip, it's part of the same scan.
     const threadIds = new Map<string, string>();
     const agents = new Map<string, string>();
     for (let i = 0; i < keys.length; i++) {
@@ -657,11 +657,11 @@ class RedisRunJournal implements RunJournal {
         if (inp?.agent) agents.set(runId, inp.agent);
       }
     }
-    // P0.3 (AUDIT-R2) filters: listRuns is ALREADY a full brute-force SCAN here (Redis has no
-    // secondary index by status/agent — same "no cheap indexed status aggregate" limitation documented
-    // on countRunsByStatus above) — so status/agent filtering costs nothing EXTRA beyond the scan this
-    // path already pays; the only requirement is applying it BEFORE the offset/limit slice (pageOf),
-    // never after.
+    // P0.3 filters: listRuns is ALREADY a full brute-force SCAN here (Redis has no
+    // Secondary index by status/agent — same "no cheap indexed status aggregate" limitation documented
+    // On countRunsByStatus above) — so status/agent filtering costs nothing EXTRA beyond the scan this
+    // Path already pays; the only requirement is applying it BEFORE the offset/limit slice (pageOf),
+    // Never after.
     let all = [...byRun.entries()]
       .sort(([ra, va], [rb, vb]) => (va.c0 - vb.c0) || cmpStr(ra, rb))
       .map(([runId, v]): RunSummary => {
@@ -688,7 +688,7 @@ class RedisWorkStore implements WorkStore {
 
   async append(ns: string, payload: unknown, id?: string): Promise<string> {
     const eid = id ?? `${ns}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
-    // idempotent: SET NX → the same (ns,id) is not written a second time (first-write-wins).
+    // Idempotent: SET NX → the same (ns,id) is not written a second time (first-write-wins).
     await this.client.set(this.logNs(ns) + eid, serialize({ id: eid, payload, ts: Date.now() }), 'NX');
     return eid;
   }
@@ -717,10 +717,10 @@ class RedisWorkStore implements WorkStore {
   }
   /**
    * 8.2: uses RunJournal's Lua CAS (CAS_LUA, defined in the same module — shared with RedisRunJournal) —
-   * but WorkStore has NO RjEnv envelope (put() writes plain `serialize(value)`) → unlike RunJournal, no
-   * pre-GET is needed: `expected`'s serialized form is passed directly as Lua's ARGV[1], the
+   * But WorkStore has NO RjEnv envelope (put() writes plain `serialize(value)`) → unlike RunJournal, no
+   * Pre-GET is needed: `expected`'s serialized form is passed directly as Lua's ARGV[1], the
    * GET==ARGV[1] check + SET happen in A SINGLE round-trip (a genuinely atomic CAS, NO TOCTOU window). On
-   * custom clients that don't support `eval`, it falls back to best-effort get→compare→set (documented risk).
+   * Custom clients that don't support `eval`, it falls back to best-effort get→compare→set (documented risk).
    */
   async putIfMatch(key: string, expected: unknown, value: unknown): Promise<boolean> {
     const full = this.kvKey(key);
@@ -750,7 +750,7 @@ class RedisCacheStore implements CacheStore {
   async set(key: string, value: unknown, opts?: { ttlMs?: number }): Promise<void> {
     const s = serialize(value);
     if (opts?.ttlMs != null) {
-      // ttlMs<=0 → Redis PX requires a positive value; immediate "expired" = delete the key (same result as sqlite/pg semantics).
+      // TtlMs<=0 → Redis PX requires a positive value; immediate "expired" = delete the key (same result as sqlite/pg semantics).
       if (opts.ttlMs <= 0) { await this.client.del(this.ck(key)); return; }
       await this.client.set(this.ck(key), s, 'PX', Math.ceil(opts.ttlMs));
       return;
@@ -779,7 +779,7 @@ export class RedisStorage implements Storage {
   readonly work: WorkStore;
   readonly cache: CacheStore;
   readonly meta: MetaStore;
-  // memory/vectors: NOT PROVIDED (undefined) — capability='none', overridden via composite() (see comment above).
+  // Memory/vectors: NOT PROVIDED (undefined) — capability='none', overridden via composite() (see comment above).
 
   constructor(opts: RedisStorageOptions = {}) {
     const pfx = opts.keyPrefix ?? 'gnl:';

@@ -14,6 +14,6 @@ export type { SelectState, Key, PromptItem } from './prompt.js';
 // TARGET PROJECT, not bundled with @gnldev/cli) — for embedding that needs to drive buildDevApp directly.
 export { projectDirOf, resolveFromProject, loadDurable, loadServer, loadStudio, loadStudioAi, loadMemory, loadAuth, loadHono, loadNodeServer } from './runtime.js';
 // Command registry (init/dev/studio · runs/run/inspect · fork/resume/sweep/rm) — for embedding/tests
-// that want to drive a command's Command.run() programmatically instead of spawning the `gnl` binary.
+// That want to drive a command's Command.run() programmatically instead of spawning the `gnl` binary.
 export { commands, commandList, GROUP_LABELS } from './commands/index.js';
 export type { Command, CommandCtx, CommandGroup } from './commands/index.js';

@@ -1,7 +1,7 @@
-// P1.3 (AUDIT-R2) — 4 free, deterministic, model-free text scorers (parity with the common
-// non-LLM-judge scorer set). Zero deps, zero I/O, same {name, score} Scorer shape as scorer.ts/
-// scorers.ts. Every scorer here is a pure function of (output, expected) → same inputs, same score,
-// every call — unlike llm-judge, there is no cost and no non-determinism to worry about.
+// P1.3 — 4 free, deterministic, model-free text scorers (parity with the common
+// Non-LLM-judge scorer set). Zero deps, zero I/O, same {name, score} Scorer shape as scorer.ts/
+// Scorers.ts. Every scorer here is a pure function of (output, expected) → same inputs, same score,
+// Every call — unlike llm-judge, there is no cost and no non-determinism to worry about.
 import type { Scorer } from './scorer.js';
 
 // ── shared primitives ───────────────────────────────────────────────────────
@@ -31,11 +31,11 @@ function bigramCounts(s: string): Map<string, number> {
 /**
  * Sørensen–Dice coefficient over character bigrams: 2*|intersection| / (|A|+|B|) (bigram multisets).
  * CHOSEN OVER Levenshtein for `contentSimilarity` because: (1) it's already bounded to [0,1] with no
- * extra normalization step (Levenshtein needs distance/maxLen, which itself is a judgment call — see
+ * Extra normalization step (Levenshtein needs distance/maxLen, which itself is a judgment call — see
  * `textualDifference` below, which uses Levenshtein deliberately, for contrast); (2) O(n+m) via two
- * count maps vs Levenshtein's O(n*m) DP; (3) bigram overlap is more forgiving of reordering/insertions
+ * Count maps vs Levenshtein's O(n*m) DP; (3) bigram overlap is more forgiving of reordering/insertions
  * (a moved clause barely moves the score), which suits "is this roughly the same content" better than
- * character-edit-distance, which is more suited to "how many edits away" (textualDifference's job).
+ * Character-edit-distance, which is more suited to "how many edits away" (textualDifference's job).
  */
 function diceBigramSimilarity(a: string, b: string): number {
   const A = (a ?? '').trim();
@@ -83,7 +83,7 @@ function levenshtein(a: string, b: string): number {
 /**
  * Content similarity: Dice's coefficient over character bigrams between `output` and `expected` (see
  * `diceBigramSimilarity` for why Dice over Levenshtein was picked here). 1.0 = identical/near-identical
- * content, 0.0 = no shared bigrams at all. Model-free, deterministic.
+ * Content, 0.0 = no shared bigrams at all. Model-free, deterministic.
  */
 export function contentSimilarity(opts?: { name?: string }): Scorer {
   const name = opts?.name ?? 'content-similarity';
@@ -104,8 +104,8 @@ export interface KeywordCoverageOptions {
 
 /**
  * Keyword coverage: fraction of expected keywords found (case-insensitive substring match) anywhere
- * in `output`. Keywords come from `opts.keywords` if given, else from `sample.expected` (tokenized —
- * see `tokenize`). 1.0 = every keyword present, 0.0 = none. 0 keywords available (no `opts.keywords`
+ * In `output`. Keywords come from `opts.keywords` if given, else from `sample.expected` (tokenized —
+ * See `tokenize`). 1.0 = every keyword present, 0.0 = none. 0 keywords available (no `opts.keywords`
  * AND no/empty `sample.expected`) → score 0 with a clear reason (not vacuously 1).
  */
 export function keywordCoverage(opts?: KeywordCoverageOptions): Scorer {
@@ -133,8 +133,8 @@ export function keywordCoverage(opts?: KeywordCoverageOptions): Scorer {
 /**
  * Textual difference: `1 - normalized Levenshtein distance` between `output` and `expected`
  * (distance / max(len(output), len(expected))). Deliberately edit-distance-based rather than
- * bigram-overlap-based (see `diceBigramSimilarity`'s JSDoc) — this scorer is meant to answer "how many
- * character-level edits away is this", which penalizes reordering/shifts that bigram overlap can mask.
+ * Bigram-overlap-based (see `diceBigramSimilarity`'s JSDoc) — this scorer is meant to answer "how many
+ * Character-level edits away is this", which penalizes reordering/shifts that bigram overlap can mask.
  * 1.0 = identical, 0.0 = maximally different (edit distance ≥ max length). Both empty → 1.0.
  */
 export function textualDifference(opts?: { name?: string }): Scorer {
@@ -156,10 +156,10 @@ export function textualDifference(opts?: { name?: string }): Scorer {
 
 /**
  * Answer similarity: token-overlap F1 between `output` and `expected` (precision = overlap/|output
- * tokens|, recall = overlap/|expected tokens|, score = harmonic mean). THE CI ground-truth scorer —
- * cheap/deterministic stand-in for "does this answer match the reference answer" without needing an
+ * Tokens|, recall = overlap/|expected tokens|, score = harmonic mean). THE CI ground-truth scorer —
+ * Cheap/deterministic stand-in for "does this answer match the reference answer" without needing an
  * LLM judge or exact string match (robust to reordering/paraphrasing at the token-multiset level,
- * unlike `exactMatch`). Both empty → 1.0; exactly one empty → 0.0.
+ * Unlike `exactMatch`). Both empty → 1.0; exactly one empty → 0.0.
  */
 export function answerSimilarity(opts?: { name?: string }): Scorer {
   const name = opts?.name ?? 'answer-similarity';

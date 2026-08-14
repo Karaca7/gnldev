@@ -1,15 +1,15 @@
 // EMBEDDED static GNL doc content — the fallback single source of truth for @gnldev/docs-mcp.
 //
 // Compiled 1:1 from components/docs/nav-data.ts (ordered list of the 25 features:
-// slug/title/oneLiner/tier/package) and lib/llms-content.ts (per-slug install/apis/example)
-// on the gnl.dev site — content mirrors the official docs, not invented here.
+// Slug/title/oneLiner/tier/package) and lib/llms-content.ts (per-slug install/apis/example)
+// On the gnl.dev site — content mirrors the official docs, not invented here.
 // It is embedded here so this package can work on its own even if the site
 // (https://gnl.dev) is down/unreachable; falls back to this if live content can't be
-// fetched via GNL_DOCS_URL.
+// Fetched via GNL_DOCS_URL.
 //
 // If the site content changes, this file must be synced by hand (no automatic sync —
-// no runtime dependency was set up between the site and this package, to avoid a
-// lockfile race).
+// No runtime dependency was set up between the site and this package, to avoid a
+// Lockfile race).
 
 export type DocTier = 'core' | 'studio' | 'ee';
 
@@ -21,8 +21,8 @@ export const TIER_LABEL: Record<DocTier, string> = {
 
 /**
  * Printed under every `ee` feature. Without it the install line for those recipes reads like any
- * other — `npm install @gnldev/auth-ee` — for a package that is not on the public registry and will
- * not be, so a reader following it gets E404 and no idea why.
+ * Other — `npm install @gnldev/auth-ee` — for a package that is not on the public registry and will
+ * Not be, so a reader following it gets E404 and no idea why.
  */
 export const EE_NOTE =
   `\`@gnldev/auth-ee\` is a commercial package and is not published to the public npm registry. ` +
@@ -124,7 +124,7 @@ await runDurable({
   prompt: 'charge',
   stopWhen: stepCountIs(6),
 });
-// calling again with the same runId does NOT re-run chargeCard (exactly-once)`,
+// Calling again with the same runId does NOT re-run chargeCard (exactly-once)`,
   },
   {
     slug: `deterministic-replay`,
@@ -142,7 +142,7 @@ await runDurable({
   approvals: { 'call-c': true },
   stopWhen: stepCountIs(6),
 });
-// the prompt is NOT given again — it's read from the journal`,
+// The prompt is NOT given again — it's read from the journal`,
   },
   {
     slug: `human-in-loop-approvals`,
@@ -160,7 +160,7 @@ import type { Guard, GuardCall, GuardDecision, Interrupt } from '@gnldev/durable
     : { action: 'allow' };
 
 await runDurable({ runId: 'o1', journal, model, tools, guard, prompt: 'Charge 5000', stopWhen: stepCountIs(6) });
-// r1.interrupts.length === 1 -> a call awaiting approval; resume with resumeRun(..., { approvals: { 'call-c': true } })`,
+// R1.interrupts.length === 1 -> a call awaiting approval; resume with resumeRun(..., { approvals: { 'call-c': true } })`,
   },
   {
     slug: `durable-workflows`,
@@ -259,7 +259,7 @@ import { aiToolSchema } from '@gnldev/studio/ai';`,
 import { runDurable, resumeRun } from '@gnldev/durable';`,
     apis: [`reconstructState(entries, uptoStep, seed?) — materializes state at a given step`, `forkRun(journal, srcRunId, step, newRunId) — copies the first N steps to a new runId`, `ForkResult — { newRunId, copiedModel, copiedTool }`],
     example: `const fork = await forkRun(journal, 'r', 1, 'fork1');
-// fork => { newRunId: 'fork1', copiedModel: 1, copiedTool: 1 }
+// Fork => { newRunId: 'fork1', copiedModel: 1, copiedTool: 1 }
 const r2 = await resumeRun('fork1', { journal, model: forkModel(), tools: tools(), stopWhen: stepCountIs(6) });`,
   },
   {
@@ -274,7 +274,7 @@ const r2 = await resumeRun('fork1', { journal, model: forkModel(), tools: tools(
     example: `const guard = policyGuard(journal, { fallback: 'allow' });
 await runDurable({ runId, journal, model, tools, guard, prompt });
 
-// live update from Studio:
+// Live update from Studio:
 // PUT /policy { "rules": [{ "tool": "send_email", "action": "require-approval" }] }`,
   },
   {
@@ -290,7 +290,7 @@ await runDurable({ runId, journal, model, tools, guard, prompt });
   exactMatch(),
   llmJudge({ model, rubric: 'Is the answer correct and short?' }),
 ], { expected: 'Paris' });
-// res.scores -> { 'exact-match': { score, reason }, 'llm-judge': { score, reason } }`,
+// Res.scores -> { 'exact-match': { score, reason }, 'llm-judge': { score, reason } }`,
   },
   {
     slug: `eval-gate`,
@@ -322,7 +322,7 @@ import { evalDataset } from '@gnldev/evals';`,
     apis: [`POST /managed-agents — { name, model, system?, maxSteps?, note? } adds a new version`, `POST /managed-agents/:name/promote — { version } changes the active version`, `GET /managed-agents — version history + active version number`],
     example: `// POST /studio/api/managed-agents
 { "name": "support-bot", "model": "gpt-4o-mini", "system": "Give short and polite answers.", "maxSteps": 4 }
-// -> { ok: true, name: "support-bot", version: 2, active: 1 }
+// > { ok: true, name: "support-bot", version: 2, active: 1 }
 
 // POST /studio/api/managed-agents/support-bot/promote
 { "version": 2 } // -> { ok: true, active: 2, previous: 1 }`,
@@ -337,7 +337,7 @@ import { evalDataset } from '@gnldev/evals';`,
     install: `import { sweepRuns } from '@gnldev/durable';`,
     apis: [`sweepRuns(journal, { olderThanMs, keepSuspended? }) — bulk-deletes old runs`, `SweepResult — { scanned, purged, keptSuspended, keptNoTs, deletedEntries }`, `purgeRun — the single-run deletion helper used internally by sweepRuns`],
     example: `const result = await sweepRuns(journal, { olderThanMs: 30 * 86_400_000 }); // 30 days
-// suspended (awaiting approval) runs are kept via keepSuspended (default true)
+// Suspended (awaiting approval) runs are kept via keepSuspended (default true)
 
 // Studio: POST /retention/sweep { "olderThanMs": 2592000000 }`,
   },
@@ -351,7 +351,7 @@ import { evalDataset } from '@gnldev/evals';`,
     install: `import { purgeRun, purgeThread } from '@gnldev/durable';`,
     apis: [`purgeRun(journal, runId) — permanently deletes ALL trace of a run (the only exception to append-only)`, `purgeThread(journal, threadId) — deletes a thread's BasicMemory trace`, `sweepRuns — bulk purgeRun based on retention policy`],
     example: `const removed = await purgeRun(journal, 'run-123');
-// removed: number of journal keys deleted
+// Removed: number of journal keys deleted
 
 // Studio: DELETE /runs/:id -> { ok: true, deleted: <count> }`,
   },
@@ -391,7 +391,7 @@ import { evalDataset } from '@gnldev/evals';`,
   auth,
   org: {},   // every request lands on an organization journal scoped via withOrg
 }));
-// identity tied to an organization (Cred.orgId) overrides the header, 403 on mismatch`,
+// Identity tied to an organization (Cred.orgId) overrides the header, 403 on mismatch`,
   },
   {
     slug: `budget-quota`,
@@ -409,7 +409,7 @@ import { checkBudget, assertBudget, getOrgUsage, BudgetExceededError } from '@gn
   org: {},
   budgets: { default: { tokenLimit: 100_000 }, perOrg: { 'acme-corp': { usdLimit: 25 } } },
 }));
-// new run/stream/workflow requests get 402 when exceeded (resume is free)`,
+// New run/stream/workflow requests get 402 when exceeded (resume is free)`,
   },
   {
     slug: `rbac`,
@@ -423,7 +423,7 @@ import type { Permission, RbacProvider } from '@gnldev/auth-ee';`,
     apis: [`createRbac(roleGrants?) — defaults to { admin: ['*'], viewer: ['*:read'] }`, `Permission — 'resource:action' pattern (e.g. 'runs:read', '*:read', '*')`, `permissionMatches(granted, required) — wildcard (*)-supported matching`],
     example: `const rbac = createRbac({ editor: ['runs:read', 'runs:write'], viewer: ['*:read'] });
 const auth = createEnterpriseAuth({ licenseKey, rbac, fallback });
-// authorize(principal, ctx) -> { allow: true } | { allow: false, status: 403 }`,
+// Authorize(principal, ctx) -> { allow: true } | { allow: false, status: 403 }`,
   },
   {
     slug: `sso`,
@@ -453,7 +453,7 @@ import { toJournal } from '@gnldev/durable';`,
     apis: [`createJournalUserStore(journal) — bearer token → Principal, hashed in the journal`, `JournalUserStore — authenticate(token), list(), create(input), revoke(id)`, `EeUserRecord/EeUserPublic — record shape (token only appears once, in the create() return)`],
     example: `const userStore = createJournalUserStore(toJournal(storage.runs));
 const { token } = await userStore.create({ email: 'acme-viewer@example.com', roles: ['viewer'], orgId: 'acme' });
-// token: 'eeu_...' — returned ONLY HERE`,
+// Token: 'eeu_...' — returned ONLY HERE`,
   },
   {
     slug: `audit-log`,

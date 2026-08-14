@@ -9,7 +9,7 @@ import {
 import { Spinner, Empty, ErrorBox, Badge, Btn, StatStrip, PageHeader } from '../components';
 import { toast, ConfirmDialog, Dialog } from '../ui';
 import { Reveal } from '../motion';
-// i18n init side effect: so that useTranslation also works if this view is rendered directly
+// I18n init side effect: so that useTranslation also works if this view is rendered directly
 // (without App) (see src/i18n/index.ts) — main.tsx already does this, this re-ensures it here.
 import '../i18n';
 
@@ -17,10 +17,10 @@ import '../i18n';
 const ROLES = ['admin', 'viewer'] as const;
 // RBAC (paid) role ladder — mirrors @gnldev/studio's ROLE_PERMISSION_PRESETS keys (viewer/member/admin).
 // Only offered once the permission catalog reports enabled:true (a 'member'-only user under the free
-// roleAuth provider would be a dead end — it isn't 'admin' or 'viewer' there).
+// RoleAuth provider would be a dead end — it isn't 'admin' or 'viewer' there).
 const RBAC_ROLES = ['viewer', 'member', 'admin'] as const;
 // TTL shortcuts: value in ms, '' = unlimited. Labels are resolved via the i18n key (based on the
-// active language at render time) — since this array lives outside the component, it holds no direct translated text.
+// Active language at render time) — since this array lives outside the component, it holds no direct translated text.
 const TTL_OPTIONS: { key: string; ms: number | '' }[] = [
   { key: 'ttlUnlimited', ms: '' },
   { key: 'ttl1Day', ms: 24 * 60 * 60 * 1000 },
@@ -33,7 +33,7 @@ const fmtDate = (ms?: number) => (ms ? new Date(ms).toLocaleString() : undefined
 /**
  * Presentational-only checkbox grid for the (read-only, GNL-owned) permission catalog — grouped by
  * `group` when present. No "add permission" affordance anywhere: the catalog is code-defined, the
- * admin only ASSIGNS existing entries. `title` carries the optional description as a native tooltip
+ * Admin only ASSIGNS existing entries. `title` carries the optional description as a native tooltip
  * (same lightweight pattern as the icon buttons' `title` elsewhere in this view).
  */
 function PermissionCheckboxGrid({ entries, checked, onToggle }: {
@@ -71,13 +71,13 @@ function PermissionCheckboxGrid({ entries, checked, onToggle }: {
 }
 
 /** New MEMBER form. Organization = chosen from EXISTING organizations (no phantom organizations).
- *  An operator can also create a member without an organization (platform-level); for an
- *  organization-admin the selector is hidden, and the organization is always pinned to their own.
- *  If the permission catalog is enabled (paid RBAC), a checkbox editor is offered too: picking a role
- *  seeds the checkboxes from `rolePresets[role]`; the admin can then tick/untick individual boxes. As
- *  long as the admin never touches a checkbox the form stays "pure role" — `permissions` is simply
- *  omitted from the request and the server's role-based defaults apply. The moment ANY checkbox is
- *  toggled, the (possibly edited) set is sent explicitly as the user's permission override. */
+ * An operator can also create a member without an organization (platform-level); for an
+ *  Organization-admin the selector is hidden, and the organization is always pinned to their own.
+ * If the permission catalog is enabled (paid RBAC), a checkbox editor is offered too: picking a role
+ *  Seeds the checkboxes from `rolePresets[role]`; the admin can then tick/untick individual boxes. As
+ *  Long as the admin never touches a checkbox the form stays "pure role" — `permissions` is simply
+ *  Omitted from the request and the server's role-based defaults apply. The moment ANY checkbox is
+ *  Toggled, the (possibly edited) set is sent explicitly as the user's permission override. */
 function CreateUser({ orgs, ownOrg, onToken, catalog }: {
   orgs: string[]; ownOrg: string | null; onToken: (t: { id: string; token: string }) => void;
   catalog?: PermissionCatalog;
@@ -95,10 +95,10 @@ function CreateUser({ orgs, ownOrg, onToken, catalog }: {
   const inputCls = 'rounded-md border border-input bg-background px-2 py-1 text-xs outline-none transition-colors';
 
   // Reseed the checkbox set from the CURRENT role whenever the catalog (re)loads, as long as the admin
-  // hasn't customized anything yet — keeps the default in sync if the catalog data arrives after mount.
+  // Hasn't customized anything yet — keeps the default in sync if the catalog data arrives after mount.
   useEffect(() => {
     if (catalog?.enabled && !customized) setChecked(new Set(catalog.rolePresets[role] ?? []));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Eslint-disable-next-line react-hooks/exhaustive-deps
   }, [catalog]);
 
   const selectRole = (r: string) => {
@@ -175,12 +175,12 @@ function CreateUser({ orgs, ownOrg, onToken, catalog }: {
 
 /**
  * Edit an EXISTING user's role + fine-grained permissions (PATCH /users/:id). Only rendered when the
- * permission catalog is enabled — pre-fills the role from the user's first role (single-role UI, same
- * convention as CreateUser) and the checkboxes from the user's EXPLICIT override if one exists,
- * otherwise from that role's preset (shown as "role defaults", not yet an override). Switching the
- * role re-seeds the checkboxes from the new role's preset (a template, not a merge). "Reset to role
- * defaults" clears any override — on save this sends `permissions: []`, which the server treats as
- * clearing the explicit override (falls back to role-based grants).
+ * Permission catalog is enabled — pre-fills the role from the user's first role (single-role UI, same
+ * Convention as CreateUser) and the checkboxes from the user's EXPLICIT override if one exists,
+ * Otherwise from that role's preset (shown as "role defaults", not yet an override). Switching the
+ * Role re-seeds the checkboxes from the new role's preset (a template, not a merge). "Reset to role
+ * Defaults" clears any override — on save this sends `permissions: []`, which the server treats as
+ * Clearing the explicit override (falls back to role-based grants).
  */
 function EditUser({ user, catalog, open, onOpenChange }: {
   user: StudioUser; catalog: PermissionCatalog; open: boolean; onOpenChange: (o: boolean) => void;
@@ -196,8 +196,8 @@ function EditUser({ user, catalog, open, onOpenChange }: {
   const [busy, setBusy] = useState(false);
   // Tracks in-SESSION edits only (role switch, checkbox toggle, or "reset to defaults") — distinct from
   // `customized`, which can start true just because the user already HAD a saved override. Drives the
-  // dialog's `dismissible` gate: an untouched dialog (even one pre-filled from an existing override) may
-  // still be dismissed by an outside click/Escape; the moment something is edited, that stops (see [FORM-06]).
+  // Dialog's `dismissible` gate: an untouched dialog (even one pre-filled from an existing override) may
+  // Still be dismissed by an outside click/Escape; the moment something is edited, that stops (see [FORM-06]).
   const [touched, setTouched] = useState(false);
 
   // Re-derive local state whenever the dialog (re)opens — possibly for a different user/row.
@@ -209,7 +209,7 @@ function EditUser({ user, catalog, open, onOpenChange }: {
     setCustomized(!!user.permissions?.length);
     setClearedOverride(false);
     setTouched(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, user.id]);
 
   const selectRole = (r: string) => {
@@ -241,9 +241,9 @@ function EditUser({ user, catalog, open, onOpenChange }: {
     try {
       await api.updateUser(user.id, {
         roles: [role],
-        // customized → send the (possibly edited) explicit set. clearedOverride (and nothing customized
-        // since) → send [] so the server clears a PRE-EXISTING override. Otherwise omit permissions
-        // entirely — nothing to change (role-derived grants, as before).
+        // Customized → send the (possibly edited) explicit set. clearedOverride (and nothing customized
+        // Since) → send [] so the server clears a PRE-EXISTING override. Otherwise omit permissions
+        // Entirely — nothing to change (role-derived grants, as before).
         ...(customized ? { permissions: [...checked] } : clearedOverride ? { permissions: [] } : {}),
       });
       toast.success(t('updateSuccess', { id: user.id }));
@@ -302,7 +302,7 @@ function EditUser({ user, catalog, open, onOpenChange }: {
 }
 
 /** Panel that shows the token once (copy). The server does not store the plaintext token → if it's lost, a new user is needed.
- *  Closing WITHOUT having copied it first is irreversible, so `onClose` is gated behind a confirmation
+ * Closing WITHOUT having copied it first is irreversible, so `onClose` is gated behind a confirmation
  *  (ConfirmDialog) in that case; once `copied` is true (the copy button succeeded), Close is direct. */
 function TokenBanner({ id, token, onClose }: { id: string; token: string; onClose: () => void }) {
   const { t } = useTranslation('users');
@@ -342,7 +342,7 @@ export function Users() {
   const catalog = usePermissionsCatalog();
   const qc = useQueryClient();
   // One-time access tokens from CreateUser — a LIST (not a single slot): adding a second member must
-  // not silently discard the first one's still-unread token (it can never be retrieved again once gone).
+  // Not silently discard the first one's still-unread token (it can never be retrieved again once gone).
   const [freshTokens, setFreshTokens] = useState<{ id: string; token: string }[]>([]);
   const [delId, setDelId] = useState<string | null>(null);
   const [revokeId, setRevokeId] = useState<string | null>(null);
@@ -354,12 +354,12 @@ export function Users() {
   const ownOrg = me.data?.orgId ?? null; // if organization-admin, their own organization; null for an operator
   const orgIds = (organizations.data?.organizations ?? []).map((o) => o.id);
   // Fine-grained permission editor (role + checkbox assignment) — only offered when the catalog reports
-  // enabled:true (paid RBAC / a valid license). Free tier keeps the existing role-only surface untouched:
-  // no checkbox editor, no "Edit" button (there was no per-user edit affordance before this feature).
+  // Enabled:true (paid RBAC / a valid license). Free tier keeps the existing role-only surface untouched:
+  // No checkbox editor, no "Edit" button (there was no per-user edit affordance before this feature).
   const permCatalog = catalog.data?.enabled ? catalog.data : undefined;
   // Hidden from Nav via the 'userManage' capability, but this view is still reachable via URL (the route
-  // is always registered); without the permission the management UI (add/delete/revoke) is hidden — the
-  // server already enforces allow(c,'write'), this is UX-only.
+  // Is always registered); without the permission the management UI (add/delete/revoke) is hidden — the
+  // Server already enforces allow(c,'write'), this is UX-only.
   const canManage = !!caps.data?.userManage;
 
   const doDelete = async (id: string) => {

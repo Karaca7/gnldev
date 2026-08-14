@@ -1,5 +1,5 @@
 // @gnldev/agui — public export surface. AG-UI (CopilotKit) protocol adapter: zero @ag-ui/* dependency,
-// event types hand-defined (see types.ts header note).
+// Event types hand-defined (see types.ts header note).
 export { EventType } from './types.js';
 export type {
   BaseAguiEvent,

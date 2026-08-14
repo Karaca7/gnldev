@@ -1,31 +1,31 @@
 // Rollover — a first-class period-closing helper for the long-lived SINGLE run problem
 // (mitigation for the core-hardening review risk #1). Since the journal is append-only it can't be
-// trimmed, and replay always starts from the beginning; for an agent that lives for weeks, the
-// solution is to split the run into LOGICAL PERIODS: at period close, the old run's materialized
-// final state (messages) is carried over into a new runId's `:input` seed, and the new period
-// continues from that context with a fresh journal. This file turns that user pattern into a
-// deterministic + idempotent API. IT DELETES NOTHING — the old journal remains as-is
+// Trimmed, and replay always starts from the beginning; for an agent that lives for weeks, the
+// Solution is to split the run into LOGICAL PERIODS: at period close, the old run's materialized
+// Final state (messages) is carried over into a new runId's `:input` seed, and the new period
+// Continues from that context with a fresh journal. This file turns that user pattern into a
+// Deterministic + idempotent API. IT DELETES NOTHING — the old journal remains as-is
 // (purge/sweep is a separate decision, see retention.ts).
 //
 // PATTERN (long-lived agent):
 //   1. Period N runs:              await runDurable({ runId: 'agent', journal, model, tools, ... })
 //   2. Period close:               const r = await rolloverRun(journal, 'agent')          // → 'agent@2'
 //   3. Period N+1 continuation (plain): await resumeRun(r.newRunId, { journal, model, tools }) // from :input seed
-//      — or explicitly:            await runDurable({ runId: r.newRunId, journal, model, tools, messages: r.messages })
+// or explicitly:            await runDurable({ runId: r.newRunId, journal, model, tools, messages: r.messages })
 //
 // INPUT-SEED CONTRACT: the seed is written to `runKeys.input(newRunId)` in the shape run.ts's
 // `persistInput` writes (`{ messages, system? }`) → WITHOUT BREAKING `resumeRun`/`persistInput`
-// semantics, the new run naturally inherits the input (persistInput sees the key already filled
-// and skips it; resumeRun reads from there). IMPORTANT LIMIT: do NOT pass `messages` DIFFERENT
-// from the seed to the new period's FIRST call — since `:input` is already filled, the difference
-// is not written to the journal and a subsequent resume won't see those messages. If the new
-// period needs extra instructions/a summary, do it inside `carry` (the seed and the live call
-// always stay the same). For convenience, the seed messages are also returned in `RolloverResult.messages`.
+// Semantics, the new run naturally inherits the input (persistInput sees the key already filled
+// And skips it; resumeRun reads from there). IMPORTANT LIMIT: do NOT pass `messages` DIFFERENT
+// From the seed to the new period's FIRST call — since `:input` is already filled, the difference
+// Is not written to the journal and a subsequent resume won't see those messages. If the new
+// Period needs extra instructions/a summary, do it inside `carry` (the seed and the live call
+// Always stay the same). For convenience, the seed messages are also returned in `RolloverResult.messages`.
 //
 // FORMAT NOTE (honest deviation): reconstructState's raw output is in journal-record shape —
-// tool-result parts have no `toolName` and `output` is untyped; AI SDK v5's `generateText`
+// Tool-result parts have no `toolName` and `output` is untyped; AI SDK v5's `generateText`
 // VALIDATES messages against a schema (missing toolName → InvalidPromptError). Therefore the
-// carried-over messages are normalized into ModelMessage shape while preserving CONTENT exactly
+// Carried-over messages are normalized into ModelMessage shape while preserving CONTENT exactly
 // (filling in toolName, typing `output` as `{type:'json'|'text', value}`, parsing the tool-call
 // `input` JSON string into an object). "Carried over exactly" is at the content level, not the byte level.
 import { runKeys, claim } from './journal.js';
@@ -124,19 +124,19 @@ export function toModelMessages(raw: unknown[]): unknown[] {
  * Period handoff: carries the old run's FINAL state (`reconstructState`) into a new runId's
  * `:input` seed. Deterministic + idempotent + non-destructive:
  *
- * - **Deterministic target:** a `${runId}:rollover` → `{ to, at }` marker is written to the old run
- *   via `claim`. The same old run CANNOT be handed off a SECOND time (even with a different
+ * **Deterministic target:** a `${runId}:rollover` → `{ to, at }` marker is written to the old run
+ *   Via `claim`. The same old run CANNOT be handed off a SECOND time (even with a different
  *   `newRunId`) — the EXISTING target in the marker is returned. Of two concurrent rollovers, only
- *   one determines the target.
- * - **Idempotent seed:** `runKeys.input(newRunId)` is written via `claim`; if the key already
- *   exists, the EXISTING seed is preserved (not overwritten), and the second call returns the same
- *   result as a no-op. This also freezes the non-deterministic `carry` (e.g. an LLM summary) exactly once.
- * - **No deletion:** the old journal is untouched; trimming/purge is a separate decision (retention.ts).
+ *   One determines the target.
+ * **Idempotent seed:** `runKeys.input(newRunId)` is written via `claim`; if the key already
+ *   Exists, the EXISTING seed is preserved (not overwritten), and the second call returns the same
+ *   Result as a no-op. This also freezes the non-deterministic `carry` (e.g. an LLM summary) exactly once.
+ * **No deletion:** the old journal is untouched; trimming/purge is a separate decision (retention.ts).
  *
  * The old run's `system` (if present, from its `:input`) is carried over to the new seed exactly.
  * `journal` must provide a read surface (`readRun`) — the SQLite/Postgres/InMemory adapters provide
- * it; a journal that doesn't provide it throws a clear error. Handing off a period that has a
- * suspended tool works structurally but is not recommended — do the handoff at period close (when nothing is suspended).
+ * It; a journal that doesn't provide it throws a clear error. Handing off a period that has a
+ * Suspended tool works structurally but is not recommended — do the handoff at period close (when nothing is suspended).
  */
 export async function rolloverRun(journal: Journal, runId: string, opts?: RolloverOptions): Promise<RolloverResult> {
   const readRun = (journal as Partial<JournalReader>).readRun;

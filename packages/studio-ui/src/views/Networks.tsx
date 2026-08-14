@@ -90,12 +90,12 @@ export function Networks() {
   if (!a2a.data?.length) return <EmptyState icon={Network} title={t('emptyTitle')} description={t('emptyDescription')} />;
   return (
     // D3-5: below md the graph and the call-edges list used to compete for the same viewport — the
-    // list was `hidden` outright, silently deleting the only numeric view of the data (no back-arrow
-    // or alternate view like Tools/Mcp have). Fix: stack list BELOW the graph on mobile (single natural
-    // page scroll, inherited from App's `<main>` overflow-auto wrapper) instead of a toggle — a toggle
-    // would show/hide the ReactFlow container itself, and resizing/remounting its box after `fitView`
-    // already ran is the riskier path. At md+ this is unchanged: fixed-height row, graph flex-1, list
-    // in its own scrollable aside.
+    // List was `hidden` outright, silently deleting the only numeric view of the data (no back-arrow
+    // Or alternate view like Tools/Mcp have). Fix: stack list BELOW the graph on mobile (single natural
+    // Page scroll, inherited from App's `<main>` overflow-auto wrapper) instead of a toggle — a toggle
+    // Would show/hide the ReactFlow container itself, and resizing/remounting its box after `fitView`
+    // Already ran is the riskier path. At md+ this is unchanged: fixed-height row, graph flex-1, list
+    // In its own scrollable aside.
     <div className="flex flex-col gap-4 p-4 md:h-full md:flex-row">
       {/* Graph card: a clean dark card (no minimap/controls/dot-background — exact mockup match).
           Fixed viewport-relative height on mobile (so ReactFlow has a stable box to fitView into);

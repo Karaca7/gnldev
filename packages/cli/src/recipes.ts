@@ -1,11 +1,11 @@
 // Shared feature recipes — the single source used by BOTH `gnl add <feature>` (writes the src file +
-// prints hand-wiring) and `gnl init` feature-composition (writes the src file + GENERATES gnl.config.ts).
+// Prints hand-wiring) and `gnl init` feature-composition (writes the src file + GENERATES gnl.config.ts).
 //
 // Each recipe is a real, type-correct src file against the current package APIs (@gnldev/rag,
 // @gnldev/memory, @gnldev/mcp, @gnldev/workflow, @gnldev/auth, @gnldev/durable) plus a structured `wiring` describing
-// how it slots into the decoupled gnl.config.ts (agentTool → an agent's `tools`; configField → a
-// top-level config property). `humanWire` is the corrected instruction `gnl add` prints (the config is
-// decoupled now — NO `defineConfig({ … })`; you edit the plain config object).
+// How it slots into the decoupled gnl.config.ts (agentTool → an agent's `tools`; configField → a
+// Top-level config property). `humanWire` is the corrected instruction `gnl add` prints (the config is
+// Decoupled now — NO `defineConfig({ … })`; you edit the plain config object).
 
 /** Where a recipe's export slots into the generated gnl.config.ts. */
 export type WiringPlace = 'agentTool' | 'configField';
@@ -15,7 +15,7 @@ export interface RecipeWiring {
   import: string;
   place: WiringPlace;
   /** agentTool → an entry inside an agent's `tools: { … }` (e.g. `searchDocs`, or a spread `...mcpToolset`).
-   *  configField → a top-level config property (e.g. `memoryFactory`, `workflows: { checkout }`). */
+   *  ConfigField → a top-level config property (e.g. `memoryFactory`, `workflows: { checkout }`). */
   code: string;
 }
 
@@ -38,7 +38,7 @@ export interface Recipe {
   /** Honesty note about maturity / required setup, if any. */
   note?: string;
   /** When the wired field lives on the dev-server config (GnlDevConfig) rather than CreateGnlConfig,
-   *  the generated `satisfies` clause must be widened with this type literal (e.g. auth). */
+   *  The generated `satisfies` clause must be widened with this type literal (e.g. auth). */
   configTypeExt?: string;
 }
 
@@ -52,11 +52,11 @@ export const RECIPES: Record<string, Recipe> = {
     contents: `// A side-effecting durable tool that showcases GNL's edge: LLM-aware idempotency.
 //
 // \`idempotency: 'args'\` keys the journal by the tool's ARGUMENTS instead of the AI SDK's
-// per-call \`toolCallId\`. So even when the model re-plans the same call under a brand-new
+// Per-call \`toolCallId\`. So even when the model re-plans the same call under a brand-new
 // \`toolCallId\` — the dominant real-world double-charge case (a documented AI SDK pattern) — the tool
-// runs exactly once and every duplicate gets the journaled result. \`idempotencyKey\` narrows
-// the dedup to a logical key (here: \`orderId\`), so two calls with the same orderId but
-// otherwise different args still collapse to one execution.
+// Runs exactly once and every duplicate gets the journaled result. \`idempotencyKey\` narrows
+// The dedup to a logical key (here: \`orderId\`), so two calls with the same orderId but
+// Otherwise different args still collapse to one execution.
 
 // A stand-in "ledger" so the demo/e2e can observe how many times the side effect really ran.
 // In a real app this would be a DB write / a Stripe charge / an email send.
@@ -67,7 +67,7 @@ export const chargeOrder = {
   idempotency: 'args' as const,
   idempotencyKey: (args: any) => String(args.orderId),
   // Uncomment to dedup across runs too (retried jobs / re-triggered agents):
-  // idempotencyWindow: 'cross-run' as const,
+  // IdempotencyWindow: 'cross-run' as const,
   execute: async ({ orderId, amount }: { orderId: string; amount: number }) => {
     ledger.charges.push({ orderId, amount });
     return { charged: amount, orderId, receipt: \`rcpt_\${orderId}\` };
@@ -124,13 +124,13 @@ export const searchDocs = createRagTool({ store, embed, topK: 3 });
     dep: '@gnldev/mcp',
     contents: `// Connect an MCP server and expose its tools to your agent.
 // \`mcpTools(...)\` opens no connection until \`.tools()\` is called; we resolve the toolset here (top-level
-// await) so it can be spread into an agent's \`tools\`. Until you point it at a real server this is empty,
-// so the app still boots — replace the export below with the two commented lines once you have one.
+// Await) so it can be spread into an agent's \`tools\`. Until you point it at a real server this is empty,
+// So the app still boots — replace the export below with the two commented lines once you have one.
 import { mcpTools } from '@gnldev/mcp';
 import type { ToolSet } from 'ai';
 
-// const handle = mcpTools({ transport: { kind: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', '.'] } });
-// export const mcpToolset: ToolSet = await handle.tools();
+// Const handle = mcpTools({ transport: { kind: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', '.'] } });
+// Export const mcpToolset: ToolSet = await handle.tools();
 export const mcpToolset: ToolSet = {};
 `,
     wiring: {
@@ -153,7 +153,7 @@ export const mcpToolset: ToolSet = {};
 import { AgentMemory } from '@gnldev/memory';
 import type { Storage, CreateGnlConfig } from '@gnldev/durable';
 
-// memoryFactory receives the config's storage (or journal). AgentMemory needs a Storage with the
+// MemoryFactory receives the config's storage (or journal). AgentMemory needs a Storage with the
 // \`memory\` capability — SqliteStorage (the default in gnl.config.ts) has it.
 export const memoryFactory: NonNullable<CreateGnlConfig['memoryFactory']> = (storage) =>
   new AgentMemory({ storage: storage as Storage });
@@ -202,8 +202,8 @@ export const checkout = workflow<{ orderId?: string }>()
 import type { Cred } from '@gnldev/auth';
 
 // The dev fallbacks below are convenience for local work ONLY. In production the process refuses
-// to start without real tokens: a default that ships in a public template is not a secret, and an
-// admin API guarded by one is effectively open.
+// To start without real tokens: a default that ships in a public template is not a secret, and an
+// Admin API guarded by one is effectively open.
 function credential(envVar: string, devFallback: string): string {
   const value = process.env[envVar];
   if (value) return value;

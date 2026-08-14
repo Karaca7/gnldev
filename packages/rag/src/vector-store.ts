@@ -56,7 +56,7 @@ export function tokenize(s: string): string[] {
 /**
  * BM25-lite keyword score (0..1): the ratio of query terms MATCHED in the document.
  * Not full BM25 (no IDF/length normalization) — deliberately simple, "lite": a cheap,
- * deterministic keyword signal meant to be blended with the vector score. 0 if the query is empty.
+ * Deterministic keyword signal meant to be blended with the vector score. 0 if the query is empty.
  */
 export function keywordScore(query: string, doc: string): number {
   const q = tokenize(query);

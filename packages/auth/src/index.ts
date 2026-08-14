@@ -1,8 +1,8 @@
 // @gnldev/auth — open-core auth seam:
-//   AuthProvider  → stable contract (server + studio gate against this)
-//   roleAuth      → free default (bearer/basic, viewer/admin)
-//   makeGate      → shared Hono gate (allow/deny)
-//   normalizeAuth → AuthProvider | {read,write} backward-compat bridge
+// AuthProvider  → stable contract (server + studio gate against this)
+//   RoleAuth      → free default (bearer/basic, viewer/admin)
+//   MakeGate      → shared Hono gate (allow/deny)
+//   NormalizeAuth → AuthProvider | {read,write} backward-compat bridge
 export type { Principal, AuthContext, Decision, AuthCapabilities, AuthProvider, Cred } from './types.js';
 export { roleAuth } from './role-auth.js';
 export { makeGate, principalOf, type Gate, type GateOptions } from './gate.js';

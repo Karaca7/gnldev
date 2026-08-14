@@ -1,36 +1,36 @@
 // Pumps the streamDurable result (AI SDK StreamTextResult) into SSE.
 // Schema (event → JSON data):
-//   text-delta {text} · tool-call {toolCallId,toolName,input} · tool-result {toolCallId,toolName,output}
-//   reasoning-start {id} · reasoning-delta {id,text} · reasoning-end {id}         (P0.1: thinking models)
-//   tool-input-start {toolCallId,toolName} · tool-input-delta {toolCallId,delta} · tool-input-end {toolCallId}
-//   source {sourceType,id,url,title} · file {mediaType,base64} · step-start {} · step-finish {finishReason,usage}
-//   tool-error {toolCallId,toolName,error} (NON-terminal — the loop may continue; distinct from `error`)
-//   raw {type} (unrecognized part marker — see the default case) · error {error} (terminal)
-//   interrupt {interrupts[]} (derived when the stream ends) · done {runId,finishReason,usage}
+//   Text-delta {text} · tool-call {toolCallId,toolName,input} · tool-result {toolCallId,toolName,output}
+//   Reasoning-start {id} · reasoning-delta {id,text} · reasoning-end {id}         (P0.1: thinking models)
+//   Tool-input-start {toolCallId,toolName} · tool-input-delta {toolCallId,delta} · tool-input-end {toolCallId}
+//   Source {sourceType,id,url,title} · file {mediaType,base64} · step-start {} · step-finish {finishReason,usage}
+//   Tool-error {toolCallId,toolName,error} (NON-terminal — the loop may continue; distinct from `error`)
+//   Raw {type} (unrecognized part marker — see the default case) · error {error} (terminal)
+//   Interrupt {interrupts[]} (derived when the stream ends) · done {runId,finishReason,usage}
 // The same schema is also used in the @gnldev/studio playground → @gnldev/client can connect to either endpoint.
 //
-// P0.1 (AUDIT-R2): the old switch knew only 4 part types and had NO default — every
-// reasoning-*/source/file/step-*/tool-input-* part from the AI SDK fullStream was SILENTLY DROPPED
+// P0.1 the old switch knew only 4 part types and had NO default — every
+// Reasoning-*/source/file/step-*/tool-input-* part from the AI SDK fullStream was SILENTLY DROPPED
 // (a reasoning model's entire thinking trace vanished with no error). Now every known part has a case,
-// a few are DELIBERATELY not events ('start'/'finish' → covered by done; 'text-start'/'text-end' → the
-// schema's text framing is delta-only; 'abort'/'raw' → transport-internal), and anything else emits a
+// A few are DELIBERATELY not events ('start'/'finish' → covered by done; 'text-start'/'text-end' → the
+// Schema's text framing is delta-only; 'abort'/'raw' → transport-internal), and anything else emits a
 // `raw {type}` marker (type only, payload withheld — future/unknown parts can never silently vanish
-// again, and can never leak internal payloads either).
+// Again, and can never leak internal payloads either).
 //
 // RESUMABLE SSE: a deterministic, increasing `id:` starting from 0 is attached to every written event
 // (the SSE `id:` field — see https://html.spec.whatwg.org/multipage/server-sent-events.html). Calling the
-// stream AGAIN with the same runId is deterministic journal replay (withDurableModel/durableTools
-// read from the journal, model/tool do NOT actually re-run) → fullStream produces the same sequence of
-// parts, so the emitted event sequence (and its ids) is also IDENTICAL from start to finish. That's why
-// id numbering needs no EXTRA state — it's just a "which event number is this" counter.
+// Stream AGAIN with the same runId is deterministic journal replay (withDurableModel/durableTools
+// Read from the journal, model/tool do NOT actually re-run) → fullStream produces the same sequence of
+// Parts, so the emitted event sequence (and its ids) is also IDENTICAL from start to finish. That's why
+// Id numbering needs no EXTRA state — it's just a "which event number is this" counter.
 //
 // Client disconnect-recovery: the browser's EventSource automatically sends the last `id:` it saw via
-// the `Last-Event-ID` header when reconnecting (spec behavior). If `lastEventId` is given to
+// The `Last-Event-ID` header when reconnecting (spec behavior). If `lastEventId` is given to
 // `pipeAgentStream`, events with id <= lastEventId are still PRODUCED (fullStream still runs from the
-// start — replay is cheap, no model/tool call) but are NOT WRITTEN TO THE CLIENT; only those with id >
-// lastEventId are sent. This is opt-in behavior: if lastEventId isn't given (existing callers), all
-// events are written — behavior stays identical apart from the addition of id (existing sse.test.ts
-// assertions look at the event/data fields, they don't care about id).
+// Start — replay is cheap, no model/tool call) but are NOT WRITTEN TO THE CLIENT; only those with id >
+// LastEventId are sent. This is opt-in behavior: if lastEventId isn't given (existing callers), all
+// Events are written — behavior stays identical apart from the addition of id (existing sse.test.ts
+// Assertions look at the event/data fields, they don't care about id).
 import { streamSSE } from 'hono/streaming';
 import type { Context } from 'hono';
 import { limitBreachFromSteps, blockedFromSteps, BLOCKED_ERROR_CODES } from '@gnldev/durable';
@@ -40,27 +40,27 @@ import type { Interrupt } from '@gnldev/durable';
  * `streamSSE` plus the two headers a live stream needs to survive the trip to the browser.
  *
  * Hono sets `Cache-Control: no-cache`, which says "don't serve this from cache" and says nothing
- * about re-encoding. So a compression middleware in the host's chain happily takes the stream and
- * buffers it: measured on a real Express app, `compression()` turned 13 progressive chunks with the
- * first at 750ms into ONE chunk delivered at the end. Status 200, no error, no live screen — the
- * failure is invisible from both sides. `no-transform` is the standard way to say don't, and
+ * About re-encoding. So a compression middleware in the host's chain happily takes the stream and
+ * Buffers it: measured on a real Express app, `compression()` turned 13 progressive chunks with the
+ * First at 750ms into ONE chunk delivered at the end. Status 200, no error, no live screen — the
+ * Failure is invisible from both sides. `no-transform` is the standard way to say don't, and
  * `compression` honours it (measured: first byte 1520ms -> 302ms with the flag on).
  *
  * `X-Accel-Buffering: no` is the nginx-specific half, and measurement narrowed where it matters to
- * one square of a 2x2 — behind a real nginx, same stream dripping five deltas 300ms apart:
+ * One square of a 2x2 — behind a real nginx, same stream dripping five deltas 300ms apart:
  *
- *   HTTP/1.1 + gzip, no header  → ONE chunk at 1511ms      (collapsed)
- *   HTTP/1.1 + gzip, header     → 306, 606, 911, 1211, 1511
- *   HTTP/2   + gzip, no header  → 316, 616, 916, 1217, 1518 (fine without it)
- *   HTTP/2   + gzip, header     → 312, 612, 913, 1214, 1514
+ * HTTP/1.1 + gzip, no header  → ONE chunk at 1511ms      (collapsed)
+ * HTTP/1.1 + gzip, header     → 306, 606, 911, 1211, 1511
+ * HTTP/2   + gzip, no header  → 316, 616, 916, 1217, 1518 (fine without it)
+ * HTTP/2   + gzip, header     → 312, 612, 913, 1214, 1514
  *
  * So it is load-bearing exactly when the CLIENT speaks HTTP/1.1 to a proxy that gzips, and inert
- * everywhere else — including HTTP/2, which is what a browser usually gets over TLS. That leaves
- * plenty of real traffic in the square that breaks: internal clients on plain HTTP, curl's default,
- * anything not a modern browser. Worth a header; not worth believing it covers more than it does.
+ * Everywhere else — including HTTP/2, which is what a browser usually gets over TLS. That leaves
+ * Plenty of real traffic in the square that breaks: internal clients on plain HTTP, curl's default,
+ * Anything not a modern browser. Worth a header; not worth believing it covers more than it does.
  *
  * Set AFTER `streamSSE` on purpose: it writes `Cache-Control` itself, so anything set on the context
- * beforehand is overwritten. Patching the returned Response is what actually survives.
+ * Beforehand is overwritten. Patching the returned Response is what actually survives.
  *
  * Kept IN SYNC with packages/studio/src/sse.ts.
  */
@@ -104,7 +104,7 @@ export function pipeAgentStream(c: Context, runId: string, result: any, opts?: P
   const lastEventId = opts?.lastEventId;
   return sseResponse(c, async (stream) => {
     // Deterministic counter starting from 0: on replay with the same runId, fullStream produces the
-    // same sequence → the same events are emitted in the same order → the same ids come out (see the note at the top of the file).
+    // Same sequence → the same events are emitted in the same order → the same ids come out (see the note at the top of the file).
     let nextId = 0;
     const emit = async (event: string, data: unknown) => {
       const id = nextId++;
@@ -172,7 +172,7 @@ export function pipeAgentStream(c: Context, runId: string, result: any, opts?: P
             await emit('error', { error: String((part as any).error?.message ?? (part as any).error) });
             break;
           // Deliberately no event: 'start'/'finish' (covered by done), 'text-start'/'text-end' (text
-          // framing is delta-only in this schema), 'abort' (the client aborted — it isn't listening),
+          // Framing is delta-only in this schema), 'abort' (the client aborted — it isn't listening),
           // 'raw' (provider-internal passthrough, opt-in AI SDK debug surface).
           case 'start': case 'finish': case 'text-start': case 'text-end': case 'abort': case 'raw':
             break;

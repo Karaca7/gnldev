@@ -84,7 +84,7 @@ testler: `packages/durable/test/with-idempotency.test.ts`.
 
 ## Gereksinimler
 
-**Node.js 22.5 veya üstü.** Varsayılan depolama `node:sqlite` kullanıyor; bu modül 22.5 ile geldi —
+**Node.js 22.13 veya üstü.** Varsayılan depolama `node:sqlite` kullanıyor; modül 22.5'te bayrak arkasındaydı, import edilebilir hâle 22.13'te geldi —
 daha eski bir çalışma zamanında ilk koşu `Cannot find module 'node:sqlite'` ile başarısız olur.
 Node 20 LTS'teyseniz ya yükseltin ya da `journal`'ı `@gnldev/durable/postgres` veya `/redis`'e
 yönlendirin. Depo pnpm 10 ile geliştiriliyor ve test ediliyor.

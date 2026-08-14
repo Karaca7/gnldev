@@ -1,10 +1,10 @@
 // @gnldev/durable/storage — Greenfield persistence contracts.
 // TYPED store ports + an explicit capability matrix + composite storage, instead of "a single generic journal".
 // PRESERVED moat: RunJournal = append-only journal (replay/time-travel). Other concerns are connected to
-// whichever store fits best (composite), as needed. Contracts (pagination/cursor, mandatory CAS) are baked in from day one.
+// Whichever store fits best (composite), as needed. Contracts (pagination/cursor, mandatory CAS) are baked in from day one.
 //
 // NOTE: this file contains ONLY the INTERFACE + pure helpers (NO storage implementation) → the @gnldev/durable
-// core stays thin; concrete impls (in-memory/sqlite/postgres-storage) implement these ports.
+// Core stays thin; concrete impls (in-memory/sqlite/postgres-storage) implement these ports.
 
 import type { Journal, JournalEntry, RunSummary, JournalReader } from './journal.js';
 
@@ -21,13 +21,13 @@ export interface ListQuery {
   limit?: number;
   cursor?: string;
   /**
-   * P0.3 (AUDIT-R2, RunJournal.listRuns only — MemoryStore/WorkStore ports ignore these):
-   * optional run filters. Semantics MUST match `summarizeRun`'s status derivation (journal.ts:
+   * P0.3 (RunJournal.listRuns only — MemoryStore/WorkStore ports ignore these):
+   * Optional run filters. Semantics MUST match `summarizeRun`'s status derivation (journal.ts:
    * 'suspended' iff the run has ANY tool record with status:'suspended', else 'completed') and the
    * `agent` field `listRuns` already surfaces on `RunSummary` (from the run's invisible `:input`
-   * entry — see the "listRuns surfaces threadId + agent" conformance test). Adapters MUST filter
+   * Entry — see the "listRuns surfaces threadId + agent" conformance test). Adapters MUST filter
    * BEFORE slicing to `limit`/`cursor` — filtering after slicing silently drops matching items off a
-   * page and desyncs `nextCursor`.
+   * Page and desyncs `nextCursor`.
    */
   status?: 'completed' | 'suspended';
   agent?: string;
@@ -79,9 +79,9 @@ export interface MessageRecord {
   /**
    * Recall provenance (set ONLY on records returned by `recall()`, and only on the actual similarity
    * HITS — `messageRange` context neighbors ride along unscored). Never persisted: the adapters stamp
-   * it on the per-call copy so callers can answer "WHY did this message enter the context" (see
+   * It on the per-call copy so callers can answer "WHY did this message enter the context" (see
    * MemoryContextProvenance in memory.ts / the `:memctx` journal record). Before this, every adapter
-   * computed the cosine score, used it to rank, and dropped it at the return boundary.
+   * Computed the cosine score, used it to rank, and dropped it at the return boundary.
    */
   score?: number;
 }
@@ -99,15 +99,15 @@ export interface RecallOptions {
   topK?: number;
   threshold?: number;
   /**
-   * P1.5 (AUDIT-R2): expand each recalled hit with its surrounding messages BY SEQ within the
-   * same thread — `n` is sugar for `{before: n, after: n}` (asymmetric windows supported). Adapters
+   * P1.5 expand each recalled hit with its surrounding messages BY SEQ within the
+   * Same thread — `n` is sugar for `{before: n, after: n}` (asymmetric windows supported). Adapters
    * (in-memory/sqlite/postgres-storage) apply this AFTER topK selection, dedup overlapping windows, and
-   * return the union in seq order.
+   * Return the union in seq order.
    */
   messageRange?: number | { before: number; after: number };
   /**
-   * P1.5 (AUDIT-R2): metadata filter, applied BEFORE topK selection (a filtered-out message
-   * must not consume a topK slot). `{field: value}` is sugar for `{field: {$eq: value}}`. See
+   * P1.5 metadata filter, applied BEFORE topK selection (a filtered-out message
+   * Must not consume a topK slot). `{field: value}` is sugar for `{field: {$eq: value}}`. See
    * `matchFilter` for the full operator subset ($eq/$ne/$gt/$gte/$lt/$lte/$in/$nin).
    */
   filter?: Record<string, unknown>;
@@ -116,12 +116,12 @@ export interface RecallOptions {
 }
 
 /**
- * P1.5 (AUDIT-R2): metadata filter matcher shared by in-memory/sqlite/postgres-storage's
+ * P1.5 metadata filter matcher shared by in-memory/sqlite/postgres-storage's
  * `MemoryStore.recall` (previously three independent copies of a plain exact-equality matcher — unified
- * here so the operator set can't drift between adapters). ALL top-level fields in `filter` must match
+ * Here so the operator set can't drift between adapters). ALL top-level fields in `filter` must match
  * (AND). A bare value is sugar for `$eq`: `{lang: 'tr'}` === `{lang: {$eq: 'tr'}}`.
  * Operators: $eq, $ne, $gt, $gte, $lt, $lte, $in, $nin (a common filter-operator subset — the two extra
- * operators some other implementations have beyond this, $contains/$exists, are deferred; not table-stakes per the P1.5 audit finding).
+ * Operators some other implementations have beyond this, $contains/$exists, are deferred; not table-stakes per the P1.5 audit finding).
  */
 export function matchFilter(meta: Record<string, unknown> | undefined, filter: Record<string, unknown>): boolean {
   if (!meta) return false;
@@ -148,7 +148,7 @@ function matchFilterOp(val: unknown, op: string, target: unknown): boolean {
   }
 }
 // $gt/$gte/$lt/$lte only make sense between values of the SAME orderable type (number/string) — a type
-// mismatch (e.g. comparing a string field against a number target) is a non-match, not a coerced compare.
+// Mismatch (e.g. comparing a string field against a number target) is a non-match, not a coerced compare.
 function comparable(a: unknown, b: unknown): boolean {
   return (typeof a === 'number' || typeof a === 'string') && typeof a === typeof b;
 }
@@ -177,21 +177,21 @@ export interface MemoryStore {
   /**
    * FLOW-10 (optional capability): truncate a thread's tail — deletes every message with
    * `seq > afterSeq`; `afterSeq` itself, and everything before it, is KEPT (afterSeq is EXCLUSIVE
-   * as a delete boundary, INCLUSIVE as a keep boundary). Anchored on `MessageRecord.seq` — a stable
-   * per-thread sequence number — rather than a list index, because an index can shift under a
-   * concurrent append while `seq` cannot.
+   * As a delete boundary, INCLUSIVE as a keep boundary). Anchored on `MessageRecord.seq` — a stable
+   * Per-thread sequence number — rather than a list index, because an index can shift under a
+   * Concurrent append while `seq` cannot.
    * Use case: "edit & resend" / "regenerate" in a chat UI. Today those flows only truncate the
    * CLIENT's view; the server-side thread keeps both the abandoned and the corrected turn, so the
-   * next run replays both back to the model. This method lets a caller make the server's history
-   * match what the user sees after such an edit.
+   * Next run replays both back to the model. This method lets a caller make the server's history
+   * Match what the user sees after such an edit.
    * Returns the number of messages actually removed, so a caller can surface e.g. "6 messages
-   * removed" to the user.
+   * Removed" to the user.
    * Boundary behavior: unknown/nonexistent threadId → 0, never throws. `afterSeq` at or above the
-   * thread's highest existing seq (nothing to remove) → 0. `afterSeq` below the thread's lowest
-   * existing seq → removes ALL of the thread's messages and returns that count.
+   * Thread's highest existing seq (nothing to remove) → 0. `afterSeq` below the thread's lowest
+   * Existing seq → removes ALL of the thread's messages and returns that count.
    * OPTIONAL: adapters that don't implement this leave the method `undefined`. Callers MUST treat an
-   * absent method as "capability not available" (e.g. respond 501 / fall back) — never call it
-   * unconditionally.
+   * Absent method as "capability not available" (e.g. respond 501 / fall back) — never call it
+   * Unconditionally.
    */
   deleteMessagesAfter?(threadId: string, afterSeq: number): Promise<number>;
 }
@@ -236,15 +236,15 @@ export interface WorkStore {
    * 8.2 (optional): atomic CONDITIONAL replace — the SAME spirit as RunJournal.putIfMatch (H1), adapted to
    * WorkStore's OWN KV schema (in WorkStore there's no separate ns+key parameter, just a single flat
    * `key` — the same addressing as get/put/ackOnce). If the key's CURRENT value matches `expected`, it
-   * writes `value` + returns `true`; otherwise (different/changed/absent) it returns `false` WITHOUT
-   * touching anything.
+   * Writes `value` + returns `true`; otherwise (different/changed/absent) it returns `false` WITHOUT
+   * Touching anything.
    * Usage: @gnldev/queue's terminal writes (qdone/qfail/qatt). Until now these writes were a PLAIN
-   * overwrite via `put` — there was NO fencing (only the client-side `lockLost` flag, a DELAYED
-   * approximation on the order of the heartbeat tick). `putIfMatch` provides an engine-internal
+   * Overwrite via `put` — there was NO fencing (only the client-side `lockLost` flag, a DELAYED
+   * Approximation on the order of the heartbeat tick). `putIfMatch` provides an engine-internal
    * (engine-level) CAS: when a worker claims a job it writes the lock's fencing token to WorkStore;
    * RIGHT BEFORE the terminal write, this method verifies on the same key "am I still the owner" — if
-   * ownership has been taken over, the write is SKIPPED (the new owner will already write its own
-   * result). If undefined (an old/custom WorkStore implementation) the queue falls back to the old
+   * Ownership has been taken over, the write is SKIPPED (the new owner will already write its own
+   * Result). If undefined (an old/custom WorkStore implementation) the queue falls back to the old
    * `lockLost` approximation (a documented risk, the same the core-hardening review philosophy).
    */
   putIfMatch?(key: string, expected: unknown, value: unknown): Promise<boolean>;
@@ -293,11 +293,11 @@ export interface Storage {
   close?(): Promise<void>;
   /**
    * H12 (optional): reclaiming DELETED space back to DISK (compaction). purge/sweep rows are logically
-   * deleted but the engine does NOT RETURN empty pages to the OS (it reuses them → doesn't grow
-   * unbounded, but the file doesn't shrink after a big purge). `compact` reclaims this space: SQLite
+   * Deleted but the engine does NOT RETURN empty pages to the OS (it reuses them → doesn't grow
+   * Unbounded, but the file doesn't shrink after a big purge). `compact` reclaims this space: SQLite
    * `wal_checkpoint(TRUNCATE)` + `VACUUM`; Postgres's default `VACUUM` (non-locking, returns free space
-   * to the freelist — for OS-level reclaiming use `{ full: true }` → `VACUUM FULL`, which LOCKS the
-   * table, only during a maintenance window). Should be called rarely, via cron (NOT on every write).
+   * To the freelist — for OS-level reclaiming use `{ full: true }` → `VACUUM FULL`, which LOCKS the
+   * Table, only during a maintenance window). Should be called rarely, via cron (NOT on every write).
    * `reclaimedBytes` is the approximate disk reclaimed (-1 if unknown).
    */
   compact?(opts?: { full?: boolean }): Promise<{ reclaimedBytes: number }>;
@@ -307,8 +307,8 @@ export type StoreName = keyof CapabilityMatrix;
 
 /**
  * Wraps a RunJournal into the old `Journal & JournalReader` contract (array `listRuns` + get/put) — a
- * bridge for consumers like studio that expect a non-paginated reader. get/put/putIfAbsent/listKeys are
- * forwarded → studio sees it as "writable" (fork/resume works). (A true paginated studio integration is a later step.)
+ * Bridge for consumers like studio that expect a non-paginated reader. get/put/putIfAbsent/listKeys are
+ * Forwarded → studio sees it as "writable" (fork/resume works). (A true paginated studio integration is a later step.)
  */
 export function toJournal(runs: RunJournal): Journal & JournalReader {
   const j: Journal & JournalReader = {
@@ -320,20 +320,20 @@ export function toJournal(runs: RunJournal): Journal & JournalReader {
     listRuns: async () => (await runs.listRuns({ limit: 1_000_000_000 })).items,
     // P0.3: RunJournal.listRuns is MANDATORY (unlike the optional methods forwarded in the loop below)
     // → this bridge is unconditional. Delegates straight through — every RunJournal (in-memory/sqlite/
-    // postgres/redis) already implements the filter+pagination contract itself (see each adapter's
-    // listRuns), so there's nothing extra to do here beyond exposing it under the paged capability name.
+    // Postgres/redis) already implements the filter+pagination contract itself (see each adapter's
+    // ListRuns), so there's nothing extra to do here beyond exposing it under the paged capability name.
     listRunsPaged: (q) => runs.listRuns(q),
   };
   // Bug: previously the optional Journal methods (deletePrefix/putIfMatch/now/incrBy/getCounters/
-  // listStaleRuns/readRunStats) were NOT forwarded → even if the underlying SqliteStorage/Postgres
-  // provided them, the reader capabilities wrapped by toJournal were SILENTLY DROPPED (studio
-  // organization-deletion, retention/purge, budget incrBy, CAS-based paths were falling back to
+  // ListStaleRuns/readRunStats) were NOT forwarded → even if the underlying SqliteStorage/Postgres
+  // Provided them, the reader capabilities wrapped by toJournal were SILENTLY DROPPED (studio
+  // Organization-deletion, retention/purge, budget incrBy, CAS-based paths were falling back to
   // 501/fallback). Forward every existing optional method at runtime (leave it alone if absent — old behavior preserved).
   const anyJ = j as unknown as Record<string, unknown>;
   const anyRuns = runs as unknown as Record<string, unknown>;
   // P1.6b: applyBatch/getMany/countRunsByStatus forwarded the SAME way — SqliteRunJournal/PgRunJournal/
   // RedisRunJournal expose them as EXTRA (non-RunJournal-interface) methods; without this they'd be
-  // silently dropped here exactly like the other optional methods were before the bug fix above.
+  // Silently dropped here exactly like the other optional methods were before the bug fix above.
   for (const m of ['deletePrefix', 'putIfMatch', 'now', 'incrBy', 'getCounters', 'listStaleRuns', 'readRunStats', 'applyBatch', 'getMany', 'countRunsByStatus']) {
     if (typeof anyRuns[m] === 'function') anyJ[m] = (...args: unknown[]) => (anyRuns[m] as (...a: unknown[]) => unknown).call(runs, ...args);
   }
@@ -364,7 +364,7 @@ export function requireCapability(storage: Storage, store: StoreName): void {
 }
 
 function storePortKey(store: StoreName): keyof Storage {
-  // capability name → Storage port field (all under the same name; a helper for narrowing the type).
+  // Capability name → Storage port field (all under the same name; a helper for narrowing the type).
   return store as keyof Storage;
 }
 
@@ -379,8 +379,8 @@ export interface CompositeConfig {
 
 /**
  * Composite storage: takes each port from override?.[port] ?? default; recomputes the capability matrix.
- * runs + meta always come from default (replay must live in a single RunJournal). The init/close of an
- * overridden port is also called (init: all of them; close: unique storages, once each).
+ * Runs + meta always come from default (replay must live in a single RunJournal). The init/close of an
+ * Overridden port is also called (init: all of them; close: unique storages, once each).
  */
 export function composite(cfg: CompositeConfig): Storage {
   const ov = cfg.overrides ?? {};

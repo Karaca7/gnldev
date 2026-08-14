@@ -1,6 +1,6 @@
 // Model router: converts a 'provider/model' string into an AI SDK model (lazy import → no provider lock-in).
 // + withModelFallback: a multi-model chain — the winner is written to the journal via CAS → DETERMINISTIC
-// fallback (resume and subsequent steps stick to the same model; in most model-fallback implementations the decision isn't persistent).
+// Fallback (resume and subsequent steps stick to the same model; in most model-fallback implementations the decision isn't persistent).
 import { claim, runKeys } from './journal.js';
 import type { Journal } from './journal.js';
 
@@ -15,11 +15,11 @@ const PROVIDER_PKG: Record<string, string> = {
  * A host's own providers, by prefix.
  *
  * Four built-in packages used to be the whole world, and that made the same string mean two
- * different things depending on which screen you typed it into: an app wired to an
+ * Different things depending on which screen you typed it into: an app wired to an
  * OpenAI-compatible endpoint (NVIDIA, Together, a gateway, a local server) could resolve
  * `nvidia/…` in the lab — where a resolver hook already existed — and could not resolve it
- * anywhere near an agent run, which goes through here. Reported from the Playground, where the
- * agent's own model reads as "custom" and no string a user can type reproduces it.
+ * Anywhere near an agent run, which goes through here. Reported from the Playground, where the
+ * Agent's own model reads as "custom" and no string a user can type reproduces it.
  *
  * A host registers a factory and the prefix means the same thing everywhere.
  */
@@ -31,7 +31,7 @@ const CUSTOM: Map<string, ModelProviderFactory> = new Map();
  * Teaches `resolveModel` a provider prefix.
  *
  * Returns an unregister function, so a test can add one without leaking it into the next test —
- * a global that can only grow is a global that eventually explains a failure somewhere else.
+ * A global that can only grow is a global that eventually explains a failure somewhere else.
  */
 export function registerModelProvider(prefix: string, factory: ModelProviderFactory): () => void {
   if (!prefix || prefix.includes('/')) {
@@ -39,7 +39,7 @@ export function registerModelProvider(prefix: string, factory: ModelProviderFact
   }
   if (PROVIDER_PKG[prefix]) {
     // Refused rather than shadowed: silently taking over 'openai' would make every other model
-    // string in the process mean something the person reading it cannot see.
+    // String in the process mean something the person reading it cannot see.
     throw new Error(`registerModelProvider: '${prefix}' is a built-in provider and cannot be replaced`);
   }
   CUSTOM.set(prefix, factory);
@@ -88,9 +88,9 @@ export interface FallbackCandidate {
 
 /**
  * Deterministic model fallback: tries the candidates in order; the spec of the FIRST SUCCESSFUL call is
- * written to `<runId>:cfg:model` via CAS → the same run's subsequent steps and resumes (even after a
- * transient failure clears) use the SAME model. withDurableModel wraps AROUND this: on replay the
- * response from the journal is returned, the fallback logic never runs at all.
+ * Written to `<runId>:cfg:model` via CAS → the same run's subsequent steps and resumes (even after a
+ * Transient failure clears) use the SAME model. withDurableModel wraps AROUND this: on replay the
+ * Response from the journal is returned, the fallback logic never runs at all.
  */
 export function withModelFallback(candidates: FallbackCandidate[], journal: Journal, runId: string): any {
   if (candidates.length === 0) throw new Error('withModelFallback: at least one candidate is required');

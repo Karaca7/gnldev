@@ -42,12 +42,12 @@ export interface MakeRunnerOptions {
   /**
    * Converts a zod (or other) input schema to JSON Schema — so the Tools view can generate a form.
    * If not given, no schema is exposed (UI shows "no schema"). Since the runner does not import `ai`,
-   * the conversion is supplied externally; a ready-made helper: `@gnldev/studio/ai` → `aiToolSchema`.
+   * The conversion is supplied externally; a ready-made helper: `@gnldev/studio/ai` → `aiToolSchema`.
    */
   toJsonSchema?: (schema: unknown) => unknown;
   /**
-   * true → tools can be run from studio for TEST purposes (NON-DURABLE: no journal). If a guard exists
-   * it IS APPLIED (won't run deny/require-approval). Still enable with care for tools with side effects.
+   * True → tools can be run from studio for TEST purposes (NON-DURABLE: no journal). If a guard exists
+   * It IS APPLIED (won't run deny/require-approval). Still enable with care for tools with side effects.
    */
   toolExec?: boolean;
 }
@@ -154,7 +154,7 @@ export function createStudioRunner(
   if (hasWorkflows && gnl.runWorkflow) runner.runWorkflow = (name, input, opts) => gnl.runWorkflow!(name, input, opts);
 
   // TEST execution (opt-in + requires a tool): GUARD IS APPLIED. opts.durable + journal → writes to the
-  // journal (exactly-once, visible in the Inspector); otherwise a fast NON-DURABLE sandbox.
+  // Journal (exactly-once, visible in the Inspector); otherwise a fast NON-DURABLE sandbox.
   if (hasAnyTool && toolExec) {
     runner.toolExecDurable = !!config.journal; // durable test-run is possible if a journal exists
     runner.runTool = async (name, input, runOpts) => {

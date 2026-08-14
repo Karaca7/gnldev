@@ -1,15 +1,15 @@
 // @gnldev/server — serves the createGnl registry over HTTP (auto-REST + OpenAPI). Every endpoint
-// descends into runDurable → exactly-once/durability inherited for free. (The durable counterpart of the common auto-REST pattern.)
+// Descends into runDurable → exactly-once/durability inherited for free. (The durable counterpart of the common auto-REST pattern.)
 import { Hono, type Context } from 'hono';
 import { toFetchHandler, type FetchHandler } from './handler.js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { createGnl, agentVisibleToOrg, withOrg, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, blockedErrorCode, upstreamFailure, sealRequestContext, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry } from '@gnldev/durable';
 import type { CreateGnlConfig, Journal, JournalReader, BudgetLimit, UsageCostCache, RunLimits } from '@gnldev/durable';
 import { makeGate, normalizeAuth, principalOf, isPlatformAdmin, type AuthProvider, type ReadWriteAuth, type Principal } from '@gnldev/auth';
-// P0.4 (AUDIT-R2): @gnldev/workflow is zero-dependency (see its package.json) — depending on it
-// from @gnldev/server is a clean one-way edge (server→workflow), NOT circular: @gnldev/durable's registry.ts
-// deliberately stays workflow-agnostic (WorkflowLike is a structural type, no import) to avoid a
-// durable→workflow edge; server has no such constraint and needs the real functions at runtime.
+// P0.4 @gnldev/workflow is zero-dependency (see its package.json) — depending on it
+// From @gnldev/server is a clean one-way edge (server→workflow), NOT circular: @gnldev/durable's registry.ts
+// Deliberately stays workflow-agnostic (WorkflowLike is a structural type, no import) to avoid a
+// Durable→workflow edge; server has no such constraint and needs the real functions at runtime.
 import { listWorkflowRuns, getWorkflowRunStatus, cancelWorkflowRun } from '@gnldev/workflow';
 import type { WorkflowRunStatus } from '@gnldev/workflow';
 import { buildOpenApi } from './openapi.js';
@@ -21,9 +21,9 @@ const A2A_TIMESTAMP_WINDOW_MS = 300_000; // ±300s
 /**
  * Verifies the `x-gnl-signature`/`x-gnl-timestamp` header pair produced by @gnldev/a2a's
  * `createA2ATool({ secret })`: signature = HMAC-SHA256(secret, timestamp + '.' + rawBody) hex, compared
- * with `timingSafeEqual` (closed to timing attacks). A second layer INDEPENDENT of the existing auth gate
+ * With `timingSafeEqual` (closed to timing attacks). A second layer INDEPENDENT of the existing auth gate
  * (makeGate/opts.auth) — one asks identity/permission, the other verifies message integrity/origin; both
- * are opt-in and don't affect each other.
+ * Are opt-in and don't affect each other.
  * Invalid/missing → Response (401); valid → undefined.
  */
 function verifyA2ASignature(c: Context, rawBody: string, secret: string): Response | undefined {
@@ -55,7 +55,7 @@ function parseJsonBody(raw: string): any {
 
 /**
  * D4-FGA (EE-2): structural mirror of @gnldev/auth-ee's `FgaResource`/`FgaAction` — @gnldev/server does NOT
- * depend on the paid @gnldev/auth-ee package, so these are typed here rather than imported (see
+ * Depend on the paid @gnldev/auth-ee package, so these are typed here rather than imported (see
  * `RestApiOptions.resourceAuth` below).
  */
 export interface ResourceAuthResource {
@@ -69,7 +69,7 @@ export interface OrgOptions {
   /** Resolve the organization from the request. If not given, the `x-gnl-org` header is read. */
   /**
    * Takes a web `Request`, not a Hono `Context` — kept in step with @gnldev/studio, and for the same
-   * reason: a host binding this handler from Express or Fastify has a Request and no Context.
+   * Reason: a host binding this handler from Express or Fastify has a Request and no Context.
    */
   resolve?: (req: Request) => string | undefined | Promise<string | undefined>;
   /** true → a request without an organization gets 400. false (default) → a request without an organization runs in the shared scope. */
@@ -77,11 +77,11 @@ export interface OrgOptions {
   /**
    * HARDENING (opt-in): reject any request whose resolved organization is NOT explicitly REGISTERED
    * (an `__org__:<id>` record written by studio's `POST /organizations`; a DELETED org is a `null`
-   * tombstone → also rejected → its ghost tokens stop working). Default false = the legacy IMPLICIT-org
-   * behavior (an org springs into existence on first activity, no registration needed) — byte-for-byte
-   * unchanged. Turn ON for strict provisioning: only orgs you deliberately created may run. NOTE: requires
-   * a registration PATH in the deployment (studio's org management, or a direct `__org__:<id>` write);
-   * with it on and no such path, every org-scoped request is rejected. */
+   * Tombstone → also rejected → its ghost tokens stop working). Default false = the legacy IMPLICIT-org
+   * Behavior (an org springs into existence on first activity, no registration needed) — byte-for-byte
+   * Unchanged. Turn ON for strict provisioning: only orgs you deliberately created may run. NOTE: requires
+   * A registration PATH in the deployment (studio's org management, or a direct `__org__:<id>` write);
+   * With it on and no such path, every org-scoped request is rejected. */
   requireRegistration?: boolean;
 }
 
@@ -97,31 +97,31 @@ export interface RestApiOptions {
   /**
    * DELIBERATE permission for a provider-less API in production. Auth remains opt-in; but in
    * NODE_ENV=production, calling createRestApi without `auth` throws a setup ERROR — silent fail-open is
-   * disabled (audit #2). Set this flag to true if open access is genuinely intended. Outside production:
-   * only a single console.warn on the first request.
+   * Disabled (audit #2). Set this flag to true if open access is genuinely intended. Outside production:
+   * Only a single console.warn on the first request.
    */
   allowOpenAccess?: boolean;
   /**
    * Opt-in multi-organization support: each request descends into that organization's journal (withOrg)
    * → runs, memory, and exactly-once guarantees are isolated per organization. The resolved organization
-   * is injected into requestContext as `org` (visible to dynamic agents). The registry is lazily built
-   * and cached per organization.
+   * Is injected into requestContext as `org` (visible to dynamic agents). The registry is lazily built
+   * And cached per organization.
    */
   org?: OrgOptions;
   /**
    * Budget/quota FALLBACK limits (ENFORCED on the write path): an organization's effective limit is
-   * journal's `__budget__:<id>`/`__budget__:default` (managed from Studio) > `perOrg[id]` > `default`.
+   * Journal's `__budget__:<id>`/`__budget__:default` (managed from Studio) > `perOrg[id]` > `default`.
    * A new run/stream/workflow request from an organization that is over budget gets 402 (resume remains
-   * free — suspended work can finish). Even without this option, budgets written to the journal are
-   * enforced (no limit → cost-free early exit).
+   * Free — suspended work can finish). Even without this option, budgets written to the journal are
+   * Enforced (no limit → cost-free early exit).
    */
   budgets?: { default?: BudgetLimit; perOrg?: Record<string, BudgetLimit> };
   /**
    * SERVER-SIDE UPPER BOUND (opt-in) for per-run cost cap + loop detection. The `limits` in the
-   * request body (client request) CANNOT EXCEED this cap — the effective limit for each field is computed
-   * as `min(server, client)` (see `clampLimits`); if the client doesn't specify a field, the server cap
-   * applies, and if neither server nor client specifies it, that field is never enforced. If neither is
-   * given (default), behavior is preserved EXACTLY AS IS (unlimited).
+   * Request body (client request) CANNOT EXCEED this cap — the effective limit for each field is computed
+   * As `min(server, client)` (see `clampLimits`); if the client doesn't specify a field, the server cap
+   * Applies, and if neither server nor client specifies it, that field is never enforced. If neither is
+   * Given (default), behavior is preserved EXACTLY AS IS (unlimited).
    */
   limits?: RunLimits;
   /**
@@ -129,39 +129,39 @@ export interface RestApiOptions {
    * `x-gnl-timestamp` header pair produced by `@gnldev/a2a`'s `createA2ATool({ secret })` becomes REQUIRED on
    * `/agents/:name/run` POSTs (see verifyA2ASignature) — missing/wrong signature or a timestamp outside
    * ±300s → 401. If not given, behavior is preserved EXACTLY AS IS (unsigned requests are accepted as
-   * before). Works TOGETHER WITH the existing auth gate (opts.auth) — the two are independent layers,
-   * both must pass.
+   * Before). Works TOGETHER WITH the existing auth gate (opts.auth) — the two are independent layers,
+   * Both must pass.
    */
   a2aSecret?: string;
   /**
    * D4-FGA (EE-2) opt-in hook: fine-grained (resource-scoped) authorization, consulted AFTER the existing
-   * coarse gate (opts.auth) already allowed the request — on agents run/stream, workflows run, and the
-   * two cancel endpoints (`/runs/:id/cancel`, `/workflows/runs/:id/cancel`). A denial → 403
+   * Coarse gate (opts.auth) already allowed the request — on agents run/stream, workflows run, and the
+   * Two cancel endpoints (`/runs/:id/cancel`, `/workflows/runs/:id/cancel`). A denial → 403
    * `{error, code: 'resource_denied'}`, distinct from the coarse gate's 403 (which carries no `code`).
    * Structurally typed (`ResourceAuthResource`/`ResourceAuthAction` above) — @gnldev/server does NOT import
    * @gnldev/auth-ee; an EE user wires this to `createEnterpriseAuth(...).checkResource` (see @gnldev/auth-ee's
    * `createFga`/`EnterpriseAuthProvider.checkResource`), e.g.:
-   *   resourceAuth: (p, r, a) => enterpriseAuth.checkResource!(p, r, a).then((res) => res.allowed)
+   *   ResourceAuth: (p, r, a) => enterpriseAuth.checkResource!(p, r, a).then((res) => res.allowed)
    * If NOT given, behavior is preserved EXACTLY AS IS (no resource-level gate — existing coarse auth only).
    */
   resourceAuth?: (principal: Principal | null, resource: ResourceAuthResource, action: ResourceAuthAction) => Promise<boolean> | boolean;
   /**
    * Agent approval registry (opt-in governance gate, default false — BACKWARD COMPAT: existing
-   * deployments are byte-for-byte unchanged). When true, run/resume/stream ALSO require the target
-   * agent to be `approved` in the journal-backed registry (@gnldev/durable's `isAgentServable`) — a
-   * pending/changed/blocked agent gets 403 `{error, code: 'agent_not_approved'}`. Every `config.agents`
-   * entry is recorded (idempotent, fingerprinted) once at construction so a platform-admin can review
-   * it via `GET /agents/registry` and approve/block it (see the `/agents/registry*` endpoints below) —
-   * those endpoints are ALWAYS available (regardless of this flag) so approval can be set up ahead of
-   * turning the gate on.
+   * Deployments are byte-for-byte unchanged). When true, run/resume/stream ALSO require the target
+   * Agent to be `approved` in the journal-backed registry (@gnldev/durable's `isAgentServable`) — a
+   * Pending/changed/blocked agent gets 403 `{error, code: 'agent_not_approved'}`. Every `config.agents`
+   * Entry is recorded (idempotent, fingerprinted) once at construction so a platform-admin can review
+   * It via `GET /agents/registry` and approve/block it (see the `/agents/registry*` endpoints below) —
+   * Those endpoints are ALWAYS available (regardless of this flag) so approval can be set up ahead of
+   * Turning the gate on.
    */
   requireAgentApproval?: boolean;
 }
 
 /**
  * Merge the server cap with the client request — the STRICTER one (smaller number) wins, the
- * client can NEVER loosen the server cap. If neither side gives a field, that field ends up absent (never
- * enforced) — the existing unlimited behavior is preserved.
+ * Client can NEVER loosen the server cap. If neither side gives a field, that field ends up absent (never
+ * Enforced) — the existing unlimited behavior is preserved.
  */
 function clampLimits(server?: RunLimits, client?: RunLimits): RunLimits | undefined {
   if (!server && !client) return undefined;
@@ -207,24 +207,24 @@ function listAgentMeta(config: CreateGnlConfig, callerOrgId?: string): AgentMeta
 
 /**
  * Produces a Hono router from a createGnl configuration:
- *   POST /agents/:name/run       {runId, prompt|messages, threadId?, approvals?}
- *   POST /agents/:name/resume    {runId, approvals?}   (input is read from the journal)
- *   POST /agents/:name/stream    SSE
- *   GET  /agents                 agent metadata
- *   POST /workflows/:name/run    {runId?, input, resume?}  (suspend/resume/cancel safe)
- *   GET  /workflows              workflow metadata (name + steps)
- *   GET  /workflows/runs         P0.4: wfrun: registry query (?status=suspended|completed|canceled)
- *   POST /workflows/runs/:id/cancel  P0.4: durable cross-process workflow cancel
- *   GET  /runs/:id               journal timeline
- *   GET  /runs                   run summaries
- *   GET  /usage                  scope's token/cost usage + effective budget limit
- *   GET  /openapi.json           generated schema (agent + workflow)
+ * POST /agents/:name/run       {runId, prompt|messages, threadId?, approvals?}
+ * POST /agents/:name/resume    {runId, approvals?}   (input is read from the journal)
+ * POST /agents/:name/stream    SSE
+ * GET  /agents                 agent metadata
+ * POST /workflows/:name/run    {runId?, input, resume?}  (suspend/resume/cancel safe)
+ * GET  /workflows              workflow metadata (name + steps)
+ * GET  /workflows/runs         P0.4: wfrun: registry query (?status=suspended|completed|canceled)
+ * POST /workflows/runs/:id/cancel  P0.4: durable cross-process workflow cancel
+ * GET  /runs/:id               journal timeline
+ * GET  /runs                   run summaries
+ * GET  /usage                  scope's token/cost usage + effective budget limit
+ * GET  /openapi.json           generated schema (agent + workflow)
  */
 /**
  * Decision #1: run-limit errors return 422 (Unprocessable Content) with a machine-readable body — the
- * request is valid but couldn't be processed under the given `limits` instruction. NOT 429 (SDKs
- * auto-retry 429, whereas the error is deterministic; Retry-After can't be computed), NOT 402 (402 is
- * specific to ORGANIZATION budget — remediation differs: raise budget ≠ raise limits + resume with the
+ * Request is valid but couldn't be processed under the given `limits` instruction. NOT 429 (SDKs
+ * Auto-retry 429, whereas the error is deterministic; Retry-After can't be computed), NOT 402 (402 is
+ * Specific to ORGANIZATION budget — remediation differs: raise budget ≠ raise limits + resume with the
  * SAME runId). If it doesn't match, returns undefined → the caller falls through to the generic 400 path.
  */
 function limitErrorResponse(c: Context, e: unknown): Response | undefined {
@@ -244,10 +244,10 @@ function limitErrorResponse(c: Context, e: unknown): Response | undefined {
  * (see errorFromBlocked, run.ts) consistent with the `BLOCKED_CODES` mapping on the SSE path (sse.ts).
  * The code comes from @gnldev/durable#blockedErrorCode (the ONE source of truth, based on err.name); the
  * HTTP status/`resumable` choice is IDENTICAL to the `onError` in examples/app/src/server.ts:
- * side_effect_retry_blocked/run_busy → 409 + resumable:true (resolved via approval/retry);
- * retry_limit_exceeded → 422, NO resumable (a permanent 'failed' is left in the journal, the same runId
- * won't resume). If it doesn't match, returns undefined → the caller falls through to the generic 400
- * path.
+ * Side_effect_retry_blocked/run_busy → 409 + resumable:true (resolved via approval/retry);
+ * Retry_limit_exceeded → 422, NO resumable (a permanent 'failed' is left in the journal, the same runId
+ * Won't resume). If it doesn't match, returns undefined → the caller falls through to the generic 400
+ * Path.
  */
 function blockedErrorResponse(c: Context, e: unknown): Response | undefined {
   const code = blockedErrorCode(e);
@@ -261,9 +261,9 @@ function blockedErrorResponse(c: Context, e: unknown): Response | undefined {
  * A failure that came from the model provider, answered as one.
  *
  * Without this the provider's failure fell through to the generic 400 — measured, a free endpoint
- * answering 429 reached the caller as `400 "Failed after 3 attempts. Last error: Too Many Requests"`,
- * which tells a retrying client to stop retrying at the exact moment it should wait. The status
- * choices and their reasoning live in @gnldev/durable#upstreamFailure; this only renders them, plus
+ * Answering 429 reached the caller as `400 "Failed after 3 attempts. Last error: Too Many Requests"`,
+ * Which tells a retrying client to stop retrying at the exact moment it should wait. The status
+ * Choices and their reasoning live in @gnldev/durable#upstreamFailure; this only renders them, plus
  * `Retry-After` when the upstream named a delay.
  */
 function upstreamErrorResponse(c: Context, e: unknown): Response | undefined {
@@ -282,7 +282,7 @@ function upstreamErrorResponse(c: Context, e: unknown): Response | undefined {
 }
 
 function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
-  // storage.runs (RunJournal) returns paginated listRuns → toJournal bridges it to the old array contract
+  // Storage.runs (RunJournal) returns paginated listRuns → toJournal bridges it to the old array contract
   // (routes /runs, /usage, withOrg, and the budget gate all see the same shape).
   const baseJournal = (config.storage ? toJournal(config.storage.runs) : config.journal) as Journal & JournalReader;
   const defaultInstance = { gnl: createGnl(config), journal: baseJournal, orgId: undefined as string | undefined };
@@ -292,13 +292,13 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
 
   /**
    * Agent approval registry: every `config.agents` entry is recorded into `baseJournal` ONCE at
-   * construction (idempotent — recordAgent handles first-sight/drift/unchanged). `createRestApi` itself
-   * stays SYNCHRONOUS (returns the Hono app directly, existing callers `const api = createRestApi(...)`
-   * would break if this returned a Promise) — so boot recording is fire-and-forget from here, but the
-   * promise is CACHED and every request path that depends on registry state (the approval gate below,
+   * Construction (idempotent — recordAgent handles first-sight/drift/unchanged). `createRestApi` itself
+   * Stays SYNCHRONOUS (returns the Hono app directly, existing callers `const api = createRestApi(...)`
+   * Would break if this returned a Promise) — so boot recording is fire-and-forget from here, but the
+   * Promise is CACHED and every request path that depends on registry state (the approval gate below,
    * `GET /agents/registry`, approve/block) `await`s it first, so no request can race ahead of boot.
    * A failure (e.g. a non-writable journal) is warned, not thrown — the registry becomes best-effort
-   * stale rather than breaking the server (mirrors the budget/warn patterns elsewhere in this file).
+   * Stale rather than breaking the server (mirrors the budget/warn patterns elsewhere in this file).
    */
   const agentRegistryBoot: Promise<void> = (async () => {
     for (const [agentName, cfg] of Object.entries(config.agents ?? {})) {
@@ -308,14 +308,14 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     console.warn('@gnldev/server: agent registry boot recording failed (approval state may be stale):', e);
   });
   // Opt-in auth gate: endpoints are open without a provider; in production this is only possible with
-  // allowOpenAccess: true (otherwise makeGate throws at setup), outside production a single warning is issued on the first request.
+  // AllowOpenAccess: true (otherwise makeGate throws at setup), outside production a single warning is issued on the first request.
   const authProvider = normalizeAuth(opts.auth);
   const { allow, allowP, deny } = makeGate(authProvider, { allowOpenAccess: opts.allowOpenAccess });
 
   // F1 — read the raw body and, when an a2aSecret is configured, verify the A2A HMAC signature over it
   // BEFORE parsing. Applied to EVERY agent-invoking endpoint (run/resume/stream + workflow run), not
-  // just /run — otherwise the same agents were invocable UNSIGNED via /stream or /resume, bypassing the
-  // replay/integrity gate by changing the endpoint. Returns the parsed body, or a deny Response.
+  // Just /run — otherwise the same agents were invocable UNSIGNED via /stream or /resume, bypassing the
+  // Replay/integrity gate by changing the endpoint. Returns the parsed body, or a deny Response.
   async function readSignedBody(c: Context): Promise<{ body: any } | { denied: Response }> {
     const rawBody = await c.req.text();
     if (opts.a2aSecret) {
@@ -325,10 +325,10 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     return { body: parseJsonBody(rawBody) };
   }
   // STRICT multi-org model = PAID gate: on ONLY when the auth provider (paid @gnldev/auth-ee, valid
-  // license) reports the `multiOrganization` capability. When on, an unbound identity is NO LONGER a
-  // super-admin by default — it must carry the EXPLICIT platform-admin grant (scope: 'platform'),
-  // otherwise it is fail-closed. When OFF (free/host-org/no-auth) behavior is preserved EXACTLY: an
-  // org-less identity is the legacy operator (sees the shared/root scope).
+  // License) reports the `multiOrganization` capability. When on, an unbound identity is NO LONGER a
+  // Super-admin by default — it must carry the EXPLICIT platform-admin grant (scope: 'platform'),
+  // Otherwise it is fail-closed. When OFF (free/host-org/no-auth) behavior is preserved EXACTLY: an
+  // Org-less identity is the legacy operator (sees the shared/root scope).
   const strictMultiOrg = authProvider?.capabilities?.().multiOrganization === true;
   // HARDENING: one-time warn when a multi-org deployment serves an org-less request in the shared scope (see scope()).
   let warnedSharedOrgFallback = false;
@@ -336,8 +336,8 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   const ORG_RECORD_PRE = '__org__:';
 
   // Multi-organization: lazy registry per organization (same agent config, journal scoped to the
-  // organization). Since the registry is per-org, model-fallback freezing and memory are also isolated
-  // per organization.
+  // Organization). Since the registry is per-org, model-fallback freezing and memory are also isolated
+  // Per organization.
   type Instance = typeof defaultInstance;
   const orgs = new Map<string, Instance>();
   function orgInstance(id: string): Instance {
@@ -351,25 +351,25 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   }
   /**
    * Resolve the request scope. An organization bound to identity (Principal.orgId, verified during
-   * allow()) OVERRIDES the header and enforces isolation even if the org option is NOT SET UP (the
+   * Allow()) OVERRIDES the header and enforces isolation even if the org option is NOT SET UP (the
    * Cred.orgId promise: "organization isolation is enforced by identity"). If the bound identity requests
-   * a different organization, 403.
+   * A different organization, 403.
    */
   async function scope(c: Context): Promise<Instance | { error: string; status: 400 | 403 }> {
     const principal = principalOf(c.req.raw);
     const bound = principal?.orgId;
     // B2 — tenant isolation must NOT depend on the paid license capability: when the host configured
-    // per-request orgs (opts.org) with an auth provider that produces NO principal (e.g. legacy
+    // Per-request orgs (opts.org) with an auth provider that produces NO principal (e.g. legacy
     // {read,write} auth whose authenticate()=null), the raw `x-gnl-org` header would drive the scope
-    // with ZERO identity binding — cross-tenant read/write. There is no identity to isolate on, so this
-    // combination is unsafe regardless of the license → fail closed. (An ABSENT auth provider is the
-    // deliberate single-operator/no-auth mode and is unaffected.)
+    // With ZERO identity binding — cross-tenant read/write. There is no identity to isolate on, so this
+    // Combination is unsafe regardless of the license → fail closed. (An ABSENT auth provider is the
+    // Deliberate single-operator/no-auth mode and is unaffected.)
     if ((strictMultiOrg || !!opts.org) && authProvider && !principal) {
       return { error: 'access denied: tenant isolation is configured but this auth provider binds no identity to an organization (fail-closed)', status: 403 };
     }
     // STRICT (EE multi-org) FAIL-CLOSED: an authenticated identity with NO org binding AND NO explicit
-    // platform-admin grant gets 403 — it is NOT the accidental super-admin. Kept license-gated on
-    // purpose: the FREE tier's contract is that an unbound admin is the legacy cross-org OPERATOR
+    // Platform-admin grant gets 403 — it is NOT the accidental super-admin. Kept license-gated on
+    // Purpose: the FREE tier's contract is that an unbound admin is the legacy cross-org OPERATOR
     // (see auth-org.test 'operator scenario'); a host wanting strict isolation binds every token's
     // Cred.orgId or runs the paid strict-multi-org model.
     if (strictMultiOrg && principal && !bound && !isPlatformAdmin(principal)) {
@@ -386,12 +386,12 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     if (!id) {
       if (opts.org?.required) return { error: 'organization required (x-gnl-org header)', status: 400 };
       // HARDENING (silent cross-tenant mixing): multi-org IS configured (`opts.org` set — we passed the
-      // single-tenant early-return above) yet this request carries NO org and NO org-bound identity, so
-      // it lands in the SHARED (unprefixed) scope alongside every other org-less request. That is a
-      // potential data-mixing footgun a misconfigured client (missing x-gnl-org header) hits SILENTLY.
+      // Single-tenant early-return above) yet this request carries NO org and NO org-bound identity, so
+      // It lands in the SHARED (unprefixed) scope alongside every other org-less request. That is a
+      // Potential data-mixing footgun a misconfigured client (missing x-gnl-org header) hits SILENTLY.
       // Behavior is unchanged (still served in shared scope — an operator who set `required:false`
-      // opted into this), but it is no longer silent: warn ONCE so the operator discovers they likely
-      // want `org.required = true` for strict tenant isolation.
+      // Opted into this), but it is no longer silent: warn ONCE so the operator discovers they likely
+      // Want `org.required = true` for strict tenant isolation.
       if (!warnedSharedOrgFallback) {
         warnedSharedOrgFallback = true;
         console.warn('@gnldev/server: multi-org is configured but a request resolved NO organization → served in the SHARED scope (its data mixes with other org-less requests). Set `org.required = true` to reject such requests instead (fail-closed). This warning fires once.');
@@ -399,11 +399,11 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
       return defaultInstance;
     }
     // HARDENING (opt-in): the resolved org must be EXPLICITLY REGISTERED. Without this, an org-bound
-    // identity (or an x-gnl-org header) runs under `org:<id>:` whether or not that org was ever created
-    // — a deleted org's still-valid tokens keep working, and a typo'd header silently forks a new
-    // namespace. The `__org__:<id>` record (studio POST /organizations) is the registration; a `null`
-    // value is a deletion tombstone → also rejected. Root-level read (records live on baseJournal, not
-    // org-prefixed). Default off → legacy implicit-org behavior unchanged.
+    // Identity (or an x-gnl-org header) runs under `org:<id>:` whether or not that org was ever created
+    // a deleted org's still-valid tokens keep working, and a typo'd header silently forks a new
+    // Namespace. The `__org__:<id>` record (studio POST /organizations) is the registration; a `null`
+    // Value is a deletion tombstone → also rejected. Root-level read (records live on baseJournal, not
+    // Org-prefixed). Default off → legacy implicit-org behavior unchanged.
     if (opts.org?.requireRegistration) {
       const reg = await baseJournal.get(ORG_RECORD_PRE + id);
       if (reg == null) return { error: `organization '${id}' is not registered`, status: 403 };
@@ -418,7 +418,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   /**
    * D4-FGA (EE-2): consults `opts.resourceAuth` (if configured) AFTER the caller's existing coarse gate
    * (allow/allowP) — a distinct, ADDITIVE narrowing layer, never a replacement for it. No-op (undefined)
-   * when `resourceAuth` is unset → existing behavior is preserved exactly.
+   * When `resourceAuth` is unset → existing behavior is preserved exactly.
    */
   async function resourceGate(
     c: Context,
@@ -435,7 +435,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
    * Org-scoped agent gate (run/resume/stream). An unknown agent AND an org-invisible agent return the
    * EXACT SAME 404 → a non-owning org cannot even learn the agent EXISTS (no existence leak). Runs
    * AFTER the write gate, BEFORE execute. Global agents (no `orgs`) and operators (orgId undefined /
-   * auth off) always pass → full backward-compat.
+   * Auth off) always pass → full backward-compat.
    */
   function agentGate(c: Context, name: string, orgId: string | undefined): Response | undefined {
     const cfg = config.agents?.[name];
@@ -446,9 +446,9 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   /**
    * Agent approval gate (opt-in via `opts.requireAgentApproval`) — a SEPARATE async check called RIGHT
    * AFTER `agentGate` in run/resume/stream (visibility 404 stays first: an org that can't even see the
-   * agent gets 404, not a 403 about its approval status). No-op when the flag is off → byte-for-byte
-   * existing behavior. Awaits `agentRegistryBoot` first so a request can never race ahead of the
-   * construction-time registry recording (see its JSDoc above).
+   * Agent gets 404, not a 403 about its approval status). No-op when the flag is off → byte-for-byte
+   * Existing behavior. Awaits `agentRegistryBoot` first so a request can never race ahead of the
+   * Construction-time registry recording (see its JSDoc above).
    */
   async function agentApprovalGate(c: Context, name: string): Promise<Response | undefined> {
     if (!opts.requireAgentApproval) return undefined;
@@ -460,8 +460,8 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   /**
    * PLATFORM-ADMIN gate for the agent registry endpoints below — mirrors @gnldev/studio's
    * `requirePlatformAdmin` (packages/studio/src/server.ts). Approval is a PLATFORM decision (should this
-   * code-agent serve AT ALL), never per-org, so an org-bound identity is always denied; in the strict
-   * multi-org model an unbound identity additionally needs the EXPLICIT platform-admin grant.
+   * Code-agent serve AT ALL), never per-org, so an org-bound identity is always denied; in the strict
+   * Multi-org model an unbound identity additionally needs the EXPLICIT platform-admin grant.
    */
   function requirePlatformAdmin(c: Context, orgBoundMsg: string): Response | undefined {
     const p = principalOf(c.req.raw);
@@ -473,12 +473,12 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   }
 
   // Budget/quota WRITE PATH gate. Budgets are PER-ORG:
-  //  - org ON + a request without an organization (root) → the root scope is NOT an organization, it
-  //    spans the total across all organizations; the per-org `default` limit does not apply to it
+  // org ON + a request without an organization (root) → the root scope is NOT an organization, it
+  //    Spans the total across all organizations; the per-org `default` limit does not apply to it
   //    (otherwise it would produce a false 402).
-  //  - org OFF → a single global scope can use the `default` limit (a legitimate global cap).
+  // org OFF → a single global scope can use the `default` limit (a legitimate global cap).
   // Effective limit: journal `__budget__:*` (managed from Studio) > opts.budgets fallback. Completed run
-  // costs are memoized in costCache → a full deep journal read isn't repeated on every write.
+  // Costs are memoized in costCache → a full deep journal read isn't repeated on every write.
   const usageCostCache: UsageCostCache = new Map();
   const budgetsConfigured = !!(opts.budgets?.default || opts.budgets?.perOrg);
   if (budgetsConfigured && !budgetsEnforceable(baseJournal)) {
@@ -497,12 +497,12 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
 
   /**
    * "Resume intent" test (H2/1.3): if state ALREADY exists in the journal for the given runId (a
-   * pending tool approval, a suspended/paused workflow, or the exactly-once repeat of a completed run),
-   * this is NOT new work, it's a continuation of existing work — budgetGate is SKIPPED (otherwise
-   * suspended work in an over-budget organization could NEVER be finished, an exactly-once violation).
+   * Pending tool approval, a suspended/paused workflow, or the exactly-once repeat of a completed run),
+   * This is NOT new work, it's a continuation of existing work — budgetGate is SKIPPED (otherwise
+   * Suspended work in an over-budget organization could NEVER be finished, an exactly-once violation).
    * For new-work requests (where the runId has no trace at all in the journal) the gate is ENFORCED
-   * normally — no regression. `listKeys` is an optional Journal capability; without it, intent can't be
-   * detected and it fails closed (the gate behaves normally; only this optimization is missed).
+   * Normally — no regression. `listKeys` is an optional Journal capability; without it, intent can't be
+   * Detected and it fails closed (the gate behaves normally; only this optimization is missed).
    */
   async function isResumeIntent(journal: Journal, runId: string): Promise<boolean> {
     if (typeof journal.listKeys !== 'function') return false;
@@ -514,13 +514,13 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   }
 
   /**
-   * P0.3 (AUDIT-R2): in-process registry of the AbortControllers backing CURRENTLY IN-FLIGHT
+   * P0.3 in-process registry of the AbortControllers backing CURRENTLY IN-FLIGHT
    * `/run` and `/stream` generations, keyed by an ORG-SCOPED key (NOT the raw runId — two different
-   * organizations may legitimately use the SAME client-supplied runId for unrelated work; a flat
+   * Organizations may legitimately use the SAME client-supplied runId for unrelated work; a flat
    * `runId → controllers` map would let org A's cancel abort org B's generation, a cross-tenant
-   * correctness/security bug). `POST /runs/:id/cancel` below aborts every controller registered under
-   * an id. Deliberately per-INSTANCE (a plain Map, not journal-backed) — see the cancel handler's JSDoc
-   * for the honest multi-worker limitation.
+   * Correctness/security bug). `POST /runs/:id/cancel` below aborts every controller registered under
+   * An id. Deliberately per-INSTANCE (a plain Map, not journal-backed) — see the cancel handler's JSDoc
+   * For the honest multi-worker limitation.
    */
   const inflight = new Map<string, Set<AbortController>>();
   const inflightKey = (s: Instance, runId: string): string => (s.orgId ? `org:${s.orgId}:${runId}` : runId);
@@ -538,8 +538,8 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
 
   /**
    * Actor attribution — the SAME derivation `audit()` below uses, extracted so the agent-registry
-   * approve/block endpoints can pass it as `approveAgent`/`blockAgent`'s `by` argument without
-   * duplicating the logic. Priority: an authenticated principal.id > the `x-gnl-actor` header (the
+   * Approve/block endpoints can pass it as `approveAgent`/`blockAgent`'s `by` argument without
+   * Duplicating the logic. Priority: an authenticated principal.id > the `x-gnl-actor` header (the
    * PERSON behind a shared token) > `role:<role>` > 'anon'.
    */
   function actorOf(c: Context): string {
@@ -550,11 +550,11 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   /**
    * P0.3: minimal governance log for this package's own mutating endpoints — mirrors @gnldev/studio's
    * `audit()` helper (packages/studio/src/server.ts) but scoped down: @gnldev/server has no broader
-   * governance surface (org/user CRUD, agent versioning, …) to log — `run.cancel`/`workflow.cancel` plus
-   * the agent-registry `agent.approve`/`agent.block` actions. Writes to the SAME `__audit__` journal
-   * namespace studio uses (via the shared `appendLog` primitive) so a consumer reading either surface's
-   * journal sees one merged trail. Best-effort: a journal write failure never breaks the request that
-   * triggered it.
+   * Governance surface (org/user CRUD, agent versioning, …) to log — `run.cancel`/`workflow.cancel` plus
+   * The agent-registry `agent.approve`/`agent.block` actions. Writes to the SAME `__audit__` journal
+   * Namespace studio uses (via the shared `appendLog` primitive) so a consumer reading either surface's
+   * Journal sees one merged trail. Best-effort: a journal write failure never breaks the request that
+   * Triggered it.
    */
   async function audit(c: Context, orgId: string | undefined, action: 'run.cancel' | 'workflow.cancel' | 'agent.approve' | 'agent.block', target: string, detail?: unknown): Promise<void> {
     try {
@@ -563,15 +563,15 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
       const org = p?.orgId ?? orgId;
       // ALWAYS the ROOT journal (baseJournal), NEVER an org-scoped view — the `__audit__` contract
       // (see @gnldev/studio server.ts's /audit reader) is a SINGLE root-level trail with the organization
-      // carried as a PAYLOAD FIELD for filtering. An org-prefixed write (`org:<id>:__audit__:…`) would
-      // be invisible to studio's audit view (it deliberately reads the root journal for exactly this reason).
+      // Carried as a PAYLOAD FIELD for filtering. An org-prefixed write (`org:<id>:__audit__:…`) would
+      // Be invisible to studio's audit view (it deliberately reads the root journal for exactly this reason).
       await appendLog(baseJournal, '__audit__', { actor, action, target, ...(org ? { org } : {}), ...(detail !== undefined ? { detail } : {}) });
     } catch { /* audit is best-effort — swallow */ }
   }
 
   app.post('/agents/:name/run', async (c) => {
     // Running an agent is the `agents:run` permission (member + admin; viewer denied). In the free tier
-    // this reduces to 'write' → identical to the previous allow(c,'write') (admin only) → no regression.
+    // This reduces to 'write' → identical to the previous allow(c,'write') (admin only) → no regression.
     if (!(await allowP(c.req.raw, 'agents:run'))) return deny(c.req.raw, 'write');
     const name = c.req.param('name');
     // Signature verification operates on the raw body bytes (the SAME string HMAC'd on the client side).
@@ -586,27 +586,27 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     const approvalDenied = await agentApprovalGate(c, name);
     if (approvalDenied) return approvalDenied;
     // P1.7: computed once here (was previously re-derived below) — also needed by the D4-FGA resourceGate
-    // check right below, which runs AFTER the coarse allowP('agents:run') gate above.
+    // Check right below, which runs AFTER the coarse allowP('agents:run') gate above.
     const principal = principalOf(c.req.raw);
     const resourceDenied = await resourceGate(c, principal, { type: 'agent', id: name }, 'run');
     if (resourceDenied) return resourceDenied;
     // CONSISTENT with 1.3: continuing a suspended run from this endpoint with the SAME runId + approvals
     // (like stream does) is also resume intent → if there's a trace in the journal the budget gate is
-    // skipped; new runIds are still ENFORCED (no regression).
+    // Skipped; new runIds are still ENFORCED (no regression).
     if (!(await isResumeIntent(s.journal, body.runId))) {
       const over = await budgetGate(c, s);
       if (over) return over;
     }
     // P0.3: register an org-scoped AbortController so POST /runs/:id/cancel can stop THIS generation.
     // Composed with the client's own disconnect signal (P0.2) via AbortSignal.any — whichever fires
-    // first wins; either way the journal keeps whatever prefix already completed (resumable, same as P0.2).
+    // First wins; either way the journal keeps whatever prefix already completed (resumable, same as P0.2).
     const ctrl = new AbortController();
     const key = inflightKey(s, body.runId);
     registerInflight(key, ctrl);
     try {
-      // P1.7 (AUDIT-R2): seal the AUTHENTICATED identity into context — a body-supplied
+      // P1.7 seal the AUTHENTICATED identity into context — a body-supplied
       // `context.__gnl_orgId`/`__gnl_resourceId`/`__gnl_threadId` (spoof attempt) is stripped and
-      // replaced by (or removed in favor of) the server-derived value. See sealRequestContext.
+      // Replaced by (or removed in favor of) the server-derived value. See sealRequestContext.
       const r = await s.gnl.run(name, {
         runId: body.runId,
         prompt: body.prompt,
@@ -618,18 +618,18 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
           { orgId: s.orgId ?? principal?.orgId, resourceId: principal?.id },
         ),
         limits: clampLimits(opts.limits, body.limits),
-        // P0.2 (AUDIT-R2): a client disconnect stops generation instead of billing tokens to
-        // completion — an abort mid-run does NOT break resumable behavior, the journal keeps whatever
-        // prefix already completed and a later call with the SAME runId resumes/replays as before.
+        // P0.2 a client disconnect stops generation instead of billing tokens to
+        // Completion — an abort mid-run does NOT break resumable behavior, the journal keeps whatever
+        // Prefix already completed and a later call with the SAME runId resumes/replays as before.
         // P0.3: OR an explicit cancel via POST /runs/:id/cancel (ctrl.signal) — same non-destructive semantics.
         abortSignal: AbortSignal.any([c.req.raw.signal, ctrl.signal]),
       });
       // `finishReason` is here because without it an empty answer is unreadable. A run whose model
-      // returned nothing answers 200 with `text: ""` — identical, on the wire, to a model that
-      // legitimately chose to say nothing. Measured in the field: a provider returned an empty
-      // response with `finishReason: 'unknown'`, the run was journaled as completed, and the caller
-      // had no way to tell the two apart. The framework already knows which happened; it just was
-      // not saying. Additive field, so existing clients are unaffected.
+      // Returned nothing answers 200 with `text: ""` — identical, on the wire, to a model that
+      // Legitimately chose to say nothing. Measured in the field: a provider returned an empty
+      // Response with `finishReason: 'unknown'`, the run was journaled as completed, and the caller
+      // Had no way to tell the two apart. The framework already knows which happened; it just was
+      // Not saying. Additive field, so existing clients are unaffected.
       return c.json({ ok: true, runId: body.runId, text: r.text, interrupts: r.interrupts, finishReason: r.finishReason });
     } catch (e: any) {
       return limitErrorResponse(c, e) ?? blockedErrorResponse(c, e) ?? upstreamErrorResponse(c, e) ?? c.json({ error: String(e?.message ?? e) }, 400);
@@ -652,9 +652,9 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     const approvalDenied = await agentApprovalGate(c, name);
     if (approvalDenied) return approvalDenied;
     // CONSISTENT with H2/1.3: only a REAL resume (there's a trace in the journal) skips the budget
-    // gate — otherwise this endpoint would be an unlimited backdoor (bypassing the quota with a
-    // traceless/made-up runId). Without a trace (typo/abuse) it's ENFORCED normally; input also comes
-    // back empty and the request fails harmlessly.
+    // Gate — otherwise this endpoint would be an unlimited backdoor (bypassing the quota with a
+    // Traceless/made-up runId). Without a trace (typo/abuse) it's ENFORCED normally; input also comes
+    // Back empty and the request fails harmlessly.
     if (!(await isResumeIntent(s.journal, body.runId))) {
       const over = await budgetGate(c, s);
       if (over) return over;
@@ -670,11 +670,11 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
         ...(input.messages ? { messages: input.messages } : { prompt: input.prompt }),
       });
       // `finishReason` is here because without it an empty answer is unreadable. A run whose model
-      // returned nothing answers 200 with `text: ""` — identical, on the wire, to a model that
-      // legitimately chose to say nothing. Measured in the field: a provider returned an empty
-      // response with `finishReason: 'unknown'`, the run was journaled as completed, and the caller
-      // had no way to tell the two apart. The framework already knows which happened; it just was
-      // not saying. Additive field, so existing clients are unaffected.
+      // Returned nothing answers 200 with `text: ""` — identical, on the wire, to a model that
+      // Legitimately chose to say nothing. Measured in the field: a provider returned an empty
+      // Response with `finishReason: 'unknown'`, the run was journaled as completed, and the caller
+      // Had no way to tell the two apart. The framework already knows which happened; it just was
+      // Not saying. Additive field, so existing clients are unaffected.
       return c.json({ ok: true, runId: body.runId, text: r.text, interrupts: r.interrupts, finishReason: r.finishReason });
     } catch (e: any) {
       return limitErrorResponse(c, e) ?? blockedErrorResponse(c, e) ?? upstreamErrorResponse(c, e) ?? c.json({ error: String(e?.message ?? e) }, 400);
@@ -692,8 +692,8 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
 
   // ── Agent approval registry (governance surface — see RestApiOptions.requireAgentApproval) ──────
   // Platform-level: "should this code-agent serve AT ALL" is never a per-org decision, so every endpoint
-  // here is platform-admin gated (requirePlatformAdmin) REGARDLESS of whether requireAgentApproval is
-  // turned on — an operator can review/approve agents ahead of flipping the enforcement flag.
+  // Here is platform-admin gated (requirePlatformAdmin) REGARDLESS of whether requireAgentApproval is
+  // Turned on — an operator can review/approve agents ahead of flipping the enforcement flag.
   app.get('/agents/registry', async (c) => {
     if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     { const denied = requirePlatformAdmin(c, 'an org-bound identity cannot view the agent registry (operator required)'); if (denied) return denied; }
@@ -742,13 +742,13 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     const approvalDenied = await agentApprovalGate(c, name);
     if (approvalDenied) return approvalDenied;
     // P1.7: computed once here (was previously re-derived below) — also needed by the D4-FGA resourceGate
-    // check right below, which runs AFTER the coarse allowP('agents:run') gate above.
+    // Check right below, which runs AFTER the coarse allowP('agents:run') gate above.
     const principal = principalOf(c.req.raw);
     const resourceDenied = await resourceGate(c, principal, { type: 'agent', id: name }, 'run');
     if (resourceDenied) return resourceDenied;
     // 1.3: resume intent via approvals+runId (a pending tool approval) → the budget gate is skipped
     // CONSISTENTLY with /agents/:name/resume (otherwise a pending interrupt in an over-budget
-    // organization would never finish).
+    // Organization would never finish).
     if (!(await isResumeIntent(s.journal, body.runId))) {
       const over = await budgetGate(c, s);
       if (over) return over;
@@ -771,10 +771,10 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
           { orgId: s.orgId ?? principal?.orgId, resourceId: principal?.id },
         ),
         limits: clampLimits(opts.limits, body.limits),
-        // P0.2 (AUDIT-R2): same as /agents/:name/run above — stop generation (and its token
-        // billing) on client disconnect. Deliberately compatible with W3 resumable SSE just below: an
-        // abort only stops THIS response's fullStream early: the journal still has whatever prefix
-        // completed before the abort, so a resumed/replayed call with the SAME runId (with or without
+        // P0.2 same as /agents/:name/run above — stop generation (and its token
+        // Billing) on client disconnect. Deliberately compatible with W3 resumable SSE just below: an
+        // Abort only stops THIS response's fullStream early: the journal still has whatever prefix
+        // Completed before the abort, so a resumed/replayed call with the SAME runId (with or without
         // Last-Event-ID) sees the same journal state it would have without the abort.
         // P0.3: OR an explicit cancel via POST /runs/:id/cancel (ctrl.signal) — same non-destructive semantics.
         abortSignal: AbortSignal.any([c.req.raw.signal, ctrl.signal]),
@@ -784,14 +784,14 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
       return limitErrorResponse(c, e) ?? blockedErrorResponse(c, e) ?? upstreamErrorResponse(c, e) ?? c.json({ error: String(e?.message ?? e) }, 400);
     }
     // P0.3 cleanup: `s.gnl.stream(...)` above only resolves the STREAM RESULT object — the actual
-    // fullStream consumption (and hence "this generation is done") happens INSIDE pipeAgentStream's
-    // streamSSE callback below, which Hono drives independently of this handler's return (it doesn't
-    // block on the SSE body finishing). Reaching INTO the streaming path to unregister exactly when the
-    // response body closes would mean contorting sse.ts's generic event loop for one caller's
-    // bookkeeping — not worth it. Instead: `result.finishReason` (a Vercel AI SDK StreamTextResult
-    // promise — see sse.ts's own `await Promise.resolve(result.finishReason)`) settles exactly when
-    // fullStream is fully drained (success OR error), which is a genuinely reachable, non-contorting
-    // completion hook — use it. Swallowed on rejection (a stream error already produces its own `error`
+    // FullStream consumption (and hence "this generation is done") happens INSIDE pipeAgentStream's
+    // StreamSSE callback below, which Hono drives independently of this handler's return (it doesn't
+    // Block on the SSE body finishing). Reaching INTO the streaming path to unregister exactly when the
+    // Response body closes would mean contorting sse.ts's generic event loop for one caller's
+    // Bookkeeping — not worth it. Instead: `result.finishReason` (a Vercel AI SDK StreamTextResult
+    // Promise — see sse.ts's own `await Promise.resolve(result.finishReason)`) settles exactly when
+    // FullStream is fully drained (success OR error), which is a genuinely reachable, non-contorting
+    // Completion hook — use it. Swallowed on rejection (a stream error already produces its own `error`
     // SSE event in pipeAgentStream); this is ONLY registry bookkeeping.
     void Promise.resolve(result.finishReason).catch(() => {}).finally(() => unregisterInflight(key, ctrl));
     // Disconnect-recovery — if there's a Last-Event-ID header (sent automatically by
@@ -818,17 +818,17 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     const resourceDenied = await resourceGate(c, principalOf(c.req.raw), { type: 'workflow', id: name }, 'run');
     if (resourceDenied) return resourceDenied;
     // H2: this endpoint with the same runId is the ONLY resume mechanism for a workflow. If runId is
-    // given AND there's already a trace in the journal (suspended/paused) this is a resume → the budget
-    // gate is skipped (new work is still ENFORCED).
+    // Given AND there's already a trace in the journal (suspended/paused) this is a resume → the budget
+    // Gate is skipped (new work is still ENFORCED).
     if (!(body.runId && (await isResumeIntent(s.journal, body.runId)))) {
       const over = await budgetGate(c, s);
       if (over) return over;
     }
     // P0.4: register an org-scoped AbortController in the SAME `inflight` map used by agent runs, but
-    // under a `wf:` sub-namespace — a client-supplied workflow runId and an agent runId could collide,
-    // so keying them into the SAME bucket would let `/runs/:id/cancel` (agent-only) abort a workflow run
-    // by accident. Only `POST /workflows/runs/:id/cancel` below targets this namespace; only registered
-    // when body.runId is known (an auto-generated runId has no addressable key for a future cancel).
+    // Under a `wf:` sub-namespace — a client-supplied workflow runId and an agent runId could collide,
+    // So keying them into the SAME bucket would let `/runs/:id/cancel` (agent-only) abort a workflow run
+    // By accident. Only `POST /workflows/runs/:id/cancel` below targets this namespace; only registered
+    // When body.runId is known (an auto-generated runId has no addressable key for a future cancel).
     const ctrl = new AbortController();
     const wfKey = body.runId ? 'wf:' + inflightKey(s, body.runId) : undefined;
     if (wfKey) registerInflight(wfKey, ctrl);
@@ -838,7 +838,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
         // P0.4 typed resume: `{ [waitId]: payload }` — journaled before any step runs (see waitForResume).
         ...(body.resume ? { resume: body.resume } : {}),
         // Composed with the client's disconnect signal — same non-destructive semantics as P0.2/P0.3 for
-        // agent runs: an abort just stops new steps, the journal keeps whatever prefix already completed.
+        // Agent runs: an abort just stops new steps, the journal keeps whatever prefix already completed.
         signal: AbortSignal.any([c.req.raw.signal, ctrl.signal]),
       };
       const result = await s.gnl.runWorkflow(name, body.input, wfOpts);
@@ -851,13 +851,13 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   });
 
   /**
-   * P0.4 (AUDIT-R2): the suspended/completed/canceled workflow-run REGISTRY query — every run
-   * in ONE `wfrun:` prefix scan (see @gnldev/workflow's listWorkflowRuns). Org-scoped via `scope(c)`/
+   * P0.4 the suspended/completed/canceled workflow-run REGISTRY query — every run
+   * In ONE `wfrun:` prefix scan (see @gnldev/workflow's listWorkflowRuns). Org-scoped via `scope(c)`/
    * `s.journal`: `wfrun:<runId>` keys are NOT runId-prefixed but `withOrg` still prefixes them
-   * unconditionally (prefixes EVERY key), so organization isolation holds automatically — see the
+   * Unconditionally (prefixes EVERY key), so organization isolation holds automatically — see the
    * `statusKey` JSDoc in workflow.ts. `listKeys` is an optional Journal capability; without it
    * `listWorkflowRuns` throws a clear error — surfaced as 501 (capability-missing, same pattern as
-   * studio's own listKeys-gated routes) rather than a silent empty list.
+   * Studio's own listKeys-gated routes) rather than a silent empty list.
    */
   app.get('/workflows/runs', async (c) => {
     if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
@@ -881,12 +881,12 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   /**
    * P0.4: durably cancels a workflow run — reaches it on OTHER workers at its next step boundary (the
    * `_canceled` flag is checked before EVERY step by runResumable), terminal (a canceled run refuses to
-   * resume forever). Visibility: EITHER the `wfrun:` registry record exists OR the `_suspend` marker does
+   * Resume forever). Visibility: EITHER the `wfrun:` registry record exists OR the `_suspend` marker does
    * (a run mid-flight whose advisory registry write failed still leaves this trace) — neither existing
-   * means the run doesn't exist IN THIS SCOPE (cross-org 404, same no-existence-leak pattern as
-   * agentGate/`/runs/:id/cancel`). ALSO aborts any in-flight controller registered for this workflow run
+   * Means the run doesn't exist IN THIS SCOPE (cross-org 404, same no-existence-leak pattern as
+   * AgentGate/`/runs/:id/cancel`). ALSO aborts any in-flight controller registered for this workflow run
    * (the `wf:`-namespaced bucket registered by POST /workflows/:name/run above) — best-effort, same
-   * multi-worker honesty caveat as `/runs/:id/cancel`.
+   * Multi-worker honesty caveat as `/runs/:id/cancel`.
    */
   app.post('/workflows/runs/:id/cancel', async (c) => {
     if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
@@ -910,9 +910,9 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   });
 
   /**
-   * P0.3 (AUDIT-R2): GET /runs — paginated + filtered when any query param is given;
+   * P0.3 GET /runs — paginated + filtered when any query param is given;
    * EXACTLY the legacy array response with NO params (backward compat — existing clients/tests that
-   * assert on `runs[0].runId` etc. see byte-identical behavior).
+   * Assert on `runs[0].runId` etc. see byte-identical behavior).
    *   ?limit=      clamped to [1, 1000] (default 50 — same default every adapter's own listRuns uses)
    *   ?cursor=     opaque — pass back a page's `nextCursor` verbatim
    *   ?status=     'completed' | 'suspended' — else 400
@@ -949,10 +949,10 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     }
     // P0.3 fallback: the scoped journal doesn't offer the paged capability (e.g. a bare custom
     // JournalReader) — apply the SAME filter+limit semantics over the legacy array instead of failing
-    // the request. Honest cost: this materializes EVERY run before filtering/slicing (the array method
-    // already does that internally); acceptable since it only triggers when the paged capability is
-    // genuinely absent. `source` is intentionally NOT stamped on the response — the shape stays
-    // identical to the paged branch above ({items, nextCursor}) so callers don't need to branch on it.
+    // The request. Honest cost: this materializes EVERY run before filtering/slicing (the array method
+    // Already does that internally); acceptable since it only triggers when the paged capability is
+    // Genuinely absent. `source` is intentionally NOT stamped on the response — the shape stays
+    // Identical to the paged branch above ({items, nextCursor}) so callers don't need to branch on it.
     const all = await s.journal.listRuns();
     const filtered = all.filter((r) => (status ? r.status === status : true) && (agent ? r.agent === agent : true));
     const start = cursor ? Number(cursor) || 0 : 0;
@@ -963,15 +963,15 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   });
 
   /**
-   * P0.3 (AUDIT-R2): cancel in-flight generation for a run on THIS server instance.
+   * P0.3 cancel in-flight generation for a run on THIS server instance.
    * HONESTY (multi-worker): `inflight` is a plain in-process Map — this endpoint can only abort
-   * controllers registered on the SAME process that received THIS request. Behind a load balancer with
-   * multiple workers, a run's `/stream` may be in-flight on a DIFFERENT worker than the one that
-   * receives the cancel → `cancelled: 0` even though the run is genuinely still running elsewhere.
+   * Controllers registered on the SAME process that received THIS request. Behind a load balancer with
+   * Multiple workers, a run's `/stream` may be in-flight on a DIFFERENT worker than the one that
+   * Receives the cancel → `cancelled: 0` even though the run is genuinely still running elsewhere.
    * Closing that gap needs a journal-level cancel FLAG that every worker polls during generation
-   * (deliberately deferred — see AUDIT-R2 P0.4/P2). The run itself is UNAFFECTED by this
-   * limitation: it stays resumable either way (the journal prefix is intact — cancel never deletes
-   * anything, it only stops NEW tokens/tool-calls from being produced on this instance).
+   * (deliberately deferred — see P0.4/P2). The run itself is UNAFFECTED by this
+   * Limitation: it stays resumable either way (the journal prefix is intact — cancel never deletes
+   * Anything, it only stops NEW tokens/tool-calls from being produced on this instance).
    */
   app.post('/runs/:id/cancel', async (c) => {
     if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
@@ -979,9 +979,9 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     const s = await scope(c);
     if ('error' in s) return c.json({ error: s.error }, s.status);
     // Org-scope visibility: a run from another organization is invisible through THIS scope's prefixed
-    // journal (withOrg strips/prefixes every key) — `:input` is written by every run() /stream() call
+    // Journal (withOrg strips/prefixes every key) — `:input` is written by every run() /stream() call
     // (persistInput, run.ts) so its absence means either the run never existed or it belongs to a
-    // different organization; both cases return the SAME 404 (no existence leak, same pattern as agentGate).
+    // Different organization; both cases return the SAME 404 (no existence leak, same pattern as agentGate).
     const visible = await s.journal.get(`${runId}:input`);
     if (visible === undefined) return c.json({ error: `run '${runId}' not found` }, 404);
     // D4-FGA: runs AFTER the coarse allow(c,'write') gate above.
@@ -991,10 +991,10 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     const set = inflight.get(key);
     const cancelled = set ? set.size : 0;
     if (set) for (const ctrl of set) ctrl.abort();
-    // P2-cancel (Dalga-2, opt-in `?durable=true`): ALSO write the journal cancel flag — reaches runs
-    // in-flight on OTHER workers (they stop at their next fresh model step) and makes the run refuse
-    // every future resume (terminal, like a compensated run; recovery = forkRun). WITHOUT the flag the
-    // default behavior is byte-identical to P0.3: in-process abort only, run stays resumable.
+    // P2-cancel (wave 2, opt-in `?durable=true`): ALSO write the journal cancel flag — reaches runs
+    // In-flight on OTHER workers (they stop at their next fresh model step) and makes the run refuse
+    // Every future resume (terminal, like a compensated run; recovery = forkRun). WITHOUT the flag the
+    // Default behavior is byte-identical to P0.3: in-process abort only, run stays resumable.
     const durable = c.req.query('durable') === 'true';
     if (durable) await cancelAgentRun(s.journal, runId, { reason: 'api-cancel' });
     await audit(c, s.orgId, 'run.cancel', runId, { cancelled, durable });

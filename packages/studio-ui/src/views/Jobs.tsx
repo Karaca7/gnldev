@@ -7,12 +7,12 @@ import { useJobs, useCapabilities, api, errMessage } from '../api';
 import { Spinner, EmptyState, ErrorBox, Badge, Btn, StatStrip, PageHeader } from '../components';
 import { toast } from '../ui';
 import { Stagger, StaggerItem } from '../motion';
-// i18n init side effect: so useTranslation still works if this view is rendered directly
+// I18n init side effect: so useTranslation still works if this view is rendered directly
 // (without App) (see src/i18n/index.ts) — main.tsx already does this, this re-guarantees it here.
 import '../i18n';
 
 // GNL console/log pattern: lime›/green✓/muted→ glyphs per status (decorative, double-coded
-// with the Badge text — doesn't rely on color+icon alone). done=done, failed=error, pending=queued.
+// With the Badge text — doesn't rely on color+icon alone). done=done, failed=error, pending=queued.
 function tone(s: string) {
   return s === 'done' ? 'success' : s === 'failed' ? 'destructive' : 'warning';
 }
@@ -29,8 +29,8 @@ export function Jobs() {
   const caps = useCapabilities();
   const qc = useQueryClient();
   // Panel-wide lock (same busy pattern as Agents/Organizations): while a retry is in flight, a second
-  // click (on the same or another row) shouldn't race — retryJob is already one-shot (the server turns
-  // a dead-letter job into a NEW job), but the button is still locked so back-to-back clicks don't open two separate new jobs.
+  // Click (on the same or another row) shouldn't race — retryJob is already one-shot (the server turns
+  // A dead-letter job into a NEW job), but the button is still locked so back-to-back clicks don't open two separate new jobs.
   const [busyId, setBusyId] = useState<string | null>(null);
   const canRetry = !!caps.data?.queueManage;
 

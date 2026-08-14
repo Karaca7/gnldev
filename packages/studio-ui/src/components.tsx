@@ -17,12 +17,12 @@ export function Btn({
   arrow?: boolean;
   /**
    * Pending-action state: disables the button, sets aria-busy, and spins a loader in place of the
-   * arrow.
+   * Arrow.
    *
    * A SPINNER, not the live-pulse dot it used to show. The dot reads as a status light — something
-   * about the system — where a button needs to say "your click landed and this is still going".
+   * About the system — where a button needs to say "your click landed and this is still going".
    * Without it a slow action looks like a dead control: the button greys out and nothing moves,
-   * which is indistinguishable from a page that stopped responding.
+   * Which is indistinguishable from a page that stopped responding.
    */
   busy?: boolean;
 }) {
@@ -33,14 +33,14 @@ export function Btn({
   // GNL component recipe — 5 real visual recipes behind 6 variant names: primary = Fluo Lime fill +
   // Ink text + Geist Bold (700); "default" is an alias for primary and also the prop default, so the
   // ~20 call sites that omit `variant` get this look for free. outline = Ink surface + border + Paper
-  // text (neutral action — 25 call sites use this meaning; kept as the public name, "tertiary" was an
-  // unused synonym and has been removed). ghost = just muted text ("text" recipe, 22 call sites). ok/deny
-  // approve/reject pair is out of brand scope, kept since T1 ("secondary", an unused Neon Green outline
-  // variant, has also been removed — 0 call sites).
-  // bg-BRAND, not bg-primary. In the dark theme the two tokens hold the same hex (#b4ff00), so this
-  // changes nothing there. In the light theme --brand is the deeper step (#445e08) and --primary the
-  // lighter one (#6d970c) — the deeper one takes WHITE text at 7.33:1, which is the look we want,
-  // while the lighter one only worked with near-black and read as mud. See --brand-foreground.
+  // Text (neutral action — 25 call sites use this meaning; kept as the public name, "tertiary" was an
+  // Unused synonym and has been removed). ghost = just muted text ("text" recipe, 22 call sites). ok/deny
+  // Approve/reject pair is out of brand scope, kept since T1 ("secondary", an unused Neon Green outline
+  // Variant, has also been removed — 0 call sites).
+  // Bg-BRAND, not bg-primary. In the dark theme the two tokens hold the same hex (#b4ff00), so this
+  // Changes nothing there. In the light theme --brand is the deeper step (#445e08) and --primary the
+  // Lighter one (#6d970c) — the deeper one takes WHITE text at 7.33:1, which is the look we want,
+  // While the lighter one only worked with near-black and read as mud. See --brand-foreground.
   const PRIMARY = 'bg-brand text-brand-foreground hover:bg-brand/90 font-bold';
   const OUTLINE = 'border border-border bg-transparent text-foreground hover:bg-muted font-medium';
   const v = {
@@ -67,9 +67,9 @@ export function Badge({
   live?: boolean;
 }) {
   // GNL recipe: success=Neon Green tint ("running/live" — a pulse dot is added while live=true),
-  // brand=Fluo Lime tint ("active" — rare/high-impact), muted=Ink+border+muted text ("draft"/neutral),
-  // destructive=soft red tint ("error"), model=Ink+border+MONO text (data badges like a model
-  // name). warning/info keep their original tones outside brand scope (T1 decision: deliberate).
+  // Brand=Fluo Lime tint ("active" — rare/high-impact), muted=Ink+border+muted text ("draft"/neutral),
+  // Destructive=soft red tint ("error"), model=Ink+border+MONO text (data badges like a model
+  // Name). warning/info keep their original tones outside brand scope (T1 decision: deliberate).
   const t = {
     muted: 'border border-border bg-muted/40 text-muted-foreground',
     brand: 'bg-brand/15 text-brand',
@@ -91,8 +91,8 @@ export function Badge({
 export function StatusBadge({ status }: { status: string }) {
   // Pill-shaped status chip. Running is INFO (cool blue) + a live pulse, deliberately distinct from
   // Completed (success green) — before, both were green and read as the same state. Needs-approval /
-  // suspended = warning (amber); failed/error/cancelled = destructive (red). Unknown → neutral (never
-  // fail-open to green). Squared mono `Badge` above is kept for DATA tags (model/tool names).
+  // Suspended = warning (amber); failed/error/cancelled = destructive (red). Unknown → neutral (never
+  // Fail-open to green). Squared mono `Badge` above is kept for DATA tags (model/tool names).
   const s = status.toLowerCase();
   const info = 'bg-info/15 text-info';
   const cls =
@@ -117,8 +117,8 @@ export function StatusBadge({ status }: { status: string }) {
     fabricated trend deltas). */
 export function StatStrip({ items }: { items: { label: string; value: string }[] }) {
   if (!items.length) return null;
-  // gridTemplateColumns only takes effect once `md:grid` switches display to grid — under the
-  // mobile flex row it's inert (grid-* properties are no-ops outside display:grid).
+  // GridTemplateColumns only takes effect once `md:grid` switches display to grid — under the
+  // Mobile flex row it's inert (grid-* properties are no-ops outside display:grid).
   return (
     <div className="flex shrink-0 gap-3 overflow-x-auto border-b border-border p-3 md:grid" style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}>
       {items.map((c) => (
@@ -136,11 +136,11 @@ export function StatStrip({ items }: { items: { label: string; value: string }[]
 
 /**
  * Page-level header: the ONE place a view's <h1>, one-sentence description, and primary/secondary
- * actions live. Use it at the top of a view's canvas in place of ad hoc microlabel-as-heading markup
+ * Actions live. Use it at the top of a view's canvas in place of ad hoc microlabel-as-heading markup
  * (or no heading at all) — `actions` is the single slot for a view's primary action, not one of
- * several scattered spots. `meta` covers the existing "microlabel + count" pattern (e.g. a "12 runs"
- * counter/badge next to the title) without duplicating that count into `description`. Title and
- * description stack above actions on narrow viewports so actions never overflow the row.
+ * Several scattered spots. `meta` covers the existing "microlabel + count" pattern (e.g. a "12 runs"
+ * Counter/badge next to the title) without duplicating that count into `description`. Title and
+ * Description stack above actions on narrow viewports so actions never overflow the row.
  * NOTE: this is a new primitive, not yet adopted by existing views (that migration is a separate pass).
  */
 export function PageHeader({ title, description, actions, meta }: {
@@ -167,7 +167,7 @@ export function PageHeader({ title, description, actions, meta }: {
 
 export function Spinner({ label }: { label?: string }) {
   const { t } = useTranslation('common');
-  // record-dot (index.css): the same live-pulse pattern is shared with the playback indicator in
+  // Record-dot (index.css): the same live-pulse pattern is shared with the playback indicator in
   // Inspector — reuses the existing lime accent language instead of inventing a new indicator.
   return (
     <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
@@ -179,11 +179,11 @@ export function Spinner({ label }: { label?: string }) {
 
 /**
  * Route-level loading placeholder for the top-level Suspense fallback (App.tsx) — shown while a
- * lazy view chunk downloads, in place of what used to be a bare `<Spinner />` (a single line of
- * text top-left while the rest of the canvas went blank, a visible layout jump). Approximates the
- * shape most views now share since PageHeader landed: a header strip, then a few content rows.
+ * Lazy view chunk downloads, in place of what used to be a bare `<Spinner />` (a single line of
+ * Text top-left while the rest of the canvas went blank, a visible layout jump). Approximates the
+ * Shape most views now share since PageHeader landed: a header strip, then a few content rows.
  * Deliberately coarse — an approximation to cut layout shift, not a pixel-accurate mimic of any
- * one view's StatStrip/table/list, which would look "wrong" more often than it looked right.
+ * One view's StatStrip/table/list, which would look "wrong" more often than it looked right.
  * Decorative: the bars are aria-hidden, and `role="status"` + the sr-only text carry the actual
  * "loading" announcement to screen readers instead (Spinner's visible label, preserved this way).
  */
@@ -213,18 +213,18 @@ export function Empty({ children }: { children: ReactNode }) {
 
 /**
  * Full-canvas empty state: icon + title + one-sentence description + optional action — for views
- * whose ENTIRE canvas is empty (Scheduler/Tools/Jobs/Audit and similar), replacing what used to be
- * a single bare line of text (skeleton feel) with a deliberate "nothing here yet, here's why /
- * what to do" card. `Empty` above stays for small INLINE notes inside an already-populated view
+ * Whose ENTIRE canvas is empty (Scheduler/Tools/Jobs/Audit and similar), replacing what used to be
+ * A single bare line of text (skeleton feel) with a deliberate "nothing here yet, here's why /
+ * What to do" card. `Empty` above stays for small INLINE notes inside an already-populated view
  * (e.g. "no messages this step") — that plain one-liner is still the right weight there.
  * (Formerly `views/Placeholder.tsx`'s unused `Placeholder({title,note})` — repurposed here since
- * this is a shared UI primitive, not a route view; the old file was deleted.)
+ * This is a shared UI primitive, not a route view; the old file was deleted.)
  */
 export function EmptyState({
   icon: Icon, title, description, action,
 }: {
   // `size`/`className` loose enough to accept lucide-react icon components directly (their real
-  // prop type is broader — string|number size, SVG attrs, etc. — this is just the subset EmptyState uses).
+  // Prop type is broader — string|number size, SVG attrs, etc. — this is just the subset EmptyState uses).
   icon?: ComponentType<{ size?: number | string; className?: string }>;
   title: ReactNode;
   description?: ReactNode;
@@ -248,9 +248,9 @@ export function EmptyState({
 
 export function ErrorBox({ error }: { error: unknown }) {
   // STATE-10: errMessage() strips the technical "ApiError:"/"Error:" prefix `String(error)` used to
-  // leak (see api.ts's errMessage JSDoc — "Use this in all views' toast/error display"). The box is
-  // already role="alert" with a red border/text, so a redundant "Error:" label was dropped (D4-11) —
-  // the styling alone communicates the severity.
+  // Leak (see api.ts's errMessage JSDoc — "Use this in all views' toast/error display"). The box is
+  // Already role="alert" with a red border/text, so a redundant "Error:" label was dropped (D4-11) —
+  // The styling alone communicates the severity.
   return <div role="alert" className="m-3 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{errMessage(error)}</div>;
 }
 
@@ -308,15 +308,15 @@ export function JsonBlock({ value, max = 1200 }: { value: unknown; max?: number 
 }
 
 export function Tabs<T extends string>({ tabs, active, onChange }: { tabs: { id: T; label: string }[]; active: T; onChange: (t: T) => void }) {
-  // overflow-x-auto + shrink-0 buttons: on a narrow (mobile) viewport a long tab strip scrolls
-  // horizontally IN PLACE instead of wrapping/overflowing the page (common mobile tab-strip pattern).
+  // Overflow-x-auto + shrink-0 buttons: on a narrow (mobile) viewport a long tab strip scrolls
+  // Horizontally IN PLACE instead of wrapping/overflowing the page (common mobile tab-strip pattern).
   const btnRefs = useRef<(HTMLButtonElement | null)[]>([]);
   // A11Y-06: real ARIA APG tabs pattern — role="tablist" on the wrapper, role="tab" + aria-selected
-  // on each button, roving tabindex (only the active tab is Tab-key reachable; ArrowLeft/Right both
-  // move selection AND move focus, per the APG "automatic activation" tabs pattern). This is the
-  // correct semantics for a real tab strip (screen readers announce "tab, selected, N of M"), unlike
-  // a toggle-button group (aria-pressed). Call-site tests were updated to query by role="tab" instead
-  // of role="button" for these tab strips (agents-tabs.test.tsx, network-view.test.tsx).
+  // On each button, roving tabindex (only the active tab is Tab-key reachable; ArrowLeft/Right both
+  // Move selection AND move focus, per the APG "automatic activation" tabs pattern). This is the
+  // Correct semantics for a real tab strip (screen readers announce "tab, selected, N of M"), unlike
+  // A toggle-button group (aria-pressed). Call-site tests were updated to query by role="tab" instead
+  // Of role="button" for these tab strips (agents-tabs.test.tsx, network-view.test.tsx).
   const onKeyDown = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {
     let next = -1;
     if (e.key === 'ArrowRight') next = (i + 1) % tabs.length;

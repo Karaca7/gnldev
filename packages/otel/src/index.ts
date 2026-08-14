@@ -1,6 +1,6 @@
 // @gnldev/otel — converts the journal into a real OpenTelemetry trace and sends it to a SpanExporter (or an
 // OTLP endpoint). Deterministic ids → idempotent; post-hoc from the journal → complete even after a crash,
-// consistent across replays = exactly-once / crash-proof observability (frameworks that live-instrument cannot offer this).
+// Consistent across replays = exactly-once / crash-proof observability (frameworks that live-instrument cannot offer this).
 import {
   BasicTracerProvider,
   SimpleSpanProcessor,
@@ -40,8 +40,8 @@ async function otlpExporter(endpoint: string): Promise<SpanExporter> {
 
 /**
  * Exports a run from the journal as an OTEL trace: 1 root span `agent.run` + one child span per
- * model/tool entry. trace_id/span_id are deterministic (hash of runId/seq) → exporting the same run
- * twice yields the SAME trace (idempotent). Duration is derived from each entry's `ts` (created_at).
+ * Model/tool entry. trace_id/span_id are deterministic (hash of runId/seq) → exporting the same run
+ * Twice yields the SAME trace (idempotent). Duration is derived from each entry's `ts` (created_at).
  */
 export async function exportRun(
   reader: JournalReader,
@@ -108,7 +108,7 @@ export async function exportRun(
   root.end(lastTs > firstTs ? lastTs : firstTs);
 
   // Guarantee the export via forceFlush; DO NOT call shutdown (the caller owns the exporter; on InMemory,
-  // shutdown would reset the finished spans). SimpleSpanProcessor already exports synchronously on span.end.
+  // Shutdown would reset the finished spans). SimpleSpanProcessor already exports synchronously on span.end.
   await provider.forceFlush();
 
   return { traceId, spans: entries.length + 1, exporter };
@@ -117,7 +117,7 @@ export async function exportRun(
 export { traceIdFor, spanIdFor, mapEntry } from './spans.js';
 
 // Zero-dependency OTLP/HTTP JSON exporter (no OTel SDK, fetch only). Added alongside
-// exportRun; does not change the existing API.
+// ExportRun; does not change the existing API.
 export { toOtlpJson, exportRunToOtlp, otlpTraceId, otlpSpanId } from './otlp.js';
 export type {
   OtlpPayload,

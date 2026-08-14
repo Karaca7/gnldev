@@ -1,11 +1,11 @@
 // DatasetsManager — dataset VERSION HISTORY + experiment
-// records + experiment COMPARISON (regression/improvement deltas). Journal-based → persistence comes
-// free from the storage layer, and the studio can read from the same journal.
+// Records + experiment COMPARISON (regression/improvement deltas). Journal-based → persistence comes
+// Free from the storage layer, and the studio can read from the same journal.
 //
 // Key schema (':' is FORBIDDEN in ids so they stay invisible to parseJournalKey — validated below):
-//   ds:def:<dsId>:v<N>      → the Nth version of the dataset definition ({ dataset, at, hash })
-//   ds:def:<dsId>:latest    → { version: N }
-//   ds:exp:<dsId>:<expId>   → experiment record ({ result, at, label, datasetVersion })
+//   Ds:def:<dsId>:v<N>      → the Nth version of the dataset definition ({ dataset, at, hash })
+//   Ds:def:<dsId>:latest    → { version: N }
+//   Ds:exp:<dsId>:<expId>   → experiment record ({ result, at, label, datasetVersion })
 import { claim, stableStringify } from '@gnldev/durable';
 import type { Journal } from '@gnldev/durable';
 import type { Scorer } from './scorer.js';
@@ -107,8 +107,8 @@ export function createDatasetsManager(journal: Journal) {
 
   /**
    * Run and record an experiment. If `experimentId` is given, it's IDEMPOTENT: a second call with the
-   * same id does NOT re-run evalDataset, it returns the saved result (evalDataset's own
-   * case-memoization is already journaled; this layer also deduplicates the experiment META record).
+   * Same id does NOT re-run evalDataset, it returns the saved result (evalDataset's own
+   * Case-memoization is already journaled; this layer also deduplicates the experiment META record).
    */
   async function runExperiment(opts: RunExperimentOptions): Promise<ExperimentRecord> {
     const now = opts.now ?? Date.now();
@@ -123,8 +123,8 @@ export function createDatasetsManager(journal: Journal) {
     const existing = await journal.get<ExperimentRecord>(key);
     if (existing) return existing;
 
-    // scope = dataset+experiment: DIFFERENT experiments on the same dataset don't see each other's
-    // memoized cases; a crash-resume of the SAME experiment does (resumable suite is preserved).
+    // Scope = dataset+experiment: DIFFERENT experiments on the same dataset don't see each other's
+    // Memoized cases; a crash-resume of the SAME experiment does (resumable suite is preserved).
     const result = await evalDataset({ dataset: dsv.dataset, run: opts.run, scorers: opts.scorers, journal, scope: `${dsv.dataset.id}:exp:${expId}` });
     const rec: ExperimentRecord = {
       id: expId, datasetId: dsv.dataset.id, datasetVersion: dsv.version, at: now,

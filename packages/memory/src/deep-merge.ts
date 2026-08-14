@@ -1,5 +1,5 @@
 // Working memory deep-merge (common working-memory semantics): objects merge recursively, array/scalar values are replaced,
-// a `null` value DELETES the corresponding key.
+// A `null` value DELETES the corresponding key.
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
 

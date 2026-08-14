@@ -1,6 +1,6 @@
-// gnl runs — list runs from the configured storage/journal. Read-only.
+// Gnl runs — list runs from the configured storage/journal. Read-only.
 // Core logic (listRunsCore) is a pure function of (config, durable, options) → data, same testability
-// pattern as dev-server.ts's buildDevApp: no console I/O, so tests can assert on the returned rows directly.
+// Pattern as dev-server.ts's buildDevApp: no console I/O, so tests can assert on the returned rows directly.
 import type * as Durable from '@gnldev/durable';
 import type { Command } from './types.js';
 import { flag, flagBool } from '../args.js';
@@ -32,8 +32,8 @@ export async function listRunsCore(config: GnlDevConfig, d: typeof Durable, opts
   if (opts.limit !== undefined) summaries = summaries.slice(0, opts.limit);
   return Promise.all(
     summaries.map(async (r) => {
-      // getRunCost is best-effort per row: it never throws on missing/unknown usage (returns 0s), so a
-      // single malformed record can't blow up the whole listing.
+      // GetRunCost is best-effort per row: it never throws on missing/unknown usage (returns 0s), so a
+      // Single malformed record can't blow up the whole listing.
       const cost = await d.getRunCost(journal, r.runId).catch(() => undefined);
       return { runId: r.runId, status: r.status, modelSteps: r.modelSteps, toolCalls: r.toolCalls, costUsd: cost?.costUsd, threadId: r.threadId };
     }),

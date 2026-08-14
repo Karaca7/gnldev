@@ -1,6 +1,6 @@
-// gnl dev [--config gnl.config.ts] — hot-reload dev: REST API + Studio Playground on one port.
+// Gnl dev [--config gnl.config.ts] — hot-reload dev: REST API + Studio Playground on one port.
 // Behavior unchanged from the original cli.ts switch-statement version, only moved into the
-// command-module shape (devEntry path adjusted: this file now lives one directory deeper, in dist/commands/).
+// Command-module shape (devEntry path adjusted: this file now lives one directory deeper, in dist/commands/).
 import type { Command } from './types.js';
 import { flag } from '../args.js';
 

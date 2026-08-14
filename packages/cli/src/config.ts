@@ -1,4 +1,4 @@
-// gnl.config convention: defineConfig (type helper) + loadConfig (dynamic loader).
+// Gnl.config convention: defineConfig (type helper) + loadConfig (dynamic loader).
 import type { CreateGnlConfig } from '@gnldev/durable';
 import type { Cred } from '@gnldev/auth';
 

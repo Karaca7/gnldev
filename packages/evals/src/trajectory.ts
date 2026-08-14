@@ -1,19 +1,19 @@
-// P1.1 (AUDIT-R2) — Trajectory/tool-call scorer: "did the agent call the right tools, in
-// the right order, without calling the wrong ones, within budget?" — the scorer at the centre of the
-// governance thesis. Built directly on `buildDecisionSequence` (@gnldev/durable/regression.ts), which was
+// P1.1 — Trajectory/tool-call scorer: "did the agent call the right tools, in
+// The right order, without calling the wrong ones, within budget?" — the scorer at the centre of the
+// Governance thesis. Built directly on `buildDecisionSequence` (@gnldev/durable/regression.ts), which was
 // PRIVATE until now (exported for exactly this purpose) — no duplicate decision-sequence logic here.
 //
 // PURE/DETERMINISTIC: no model call, unlike llm-judge. Same decision sequence → same score, always.
 //
 // Three ways to use it, cheapest-to-richest:
-//  - `createTrajectoryScorer(opts)` — pure core: scores `sample.toolCalls` (string[]) or
+// `createTrajectoryScorer(opts)` — pure core: scores `sample.toolCalls` (string[]) or
 //    `sample.decisionPoints` (DecisionPoint[]) directly. No @gnldev/durable I/O — usable in unit tests
-//    with a hand-built sequence.
-//  - `scoreTrajectory(reader, runId, opts)` — reads `runId`'s journal via `reader.readRun`, rebuilds
-//    the decision sequence, scores it. One-shot, not a Scorer.
-//  - `trajectoryScorerFor(reader, opts)` — Scorer adapter: `score(sample)` reads `sample.runId` and
-//    delegates to `scoreTrajectory`. Drop straight into `scoreRun`/`evalDataset`'s scorer list — both
-//    populate `sample.runId` (see score-run.ts / dataset.ts) so this works with zero extra wiring.
+//    With a hand-built sequence.
+// `scoreTrajectory(reader, runId, opts)` — reads `runId`'s journal via `reader.readRun`, rebuilds
+//    The decision sequence, scores it. One-shot, not a Scorer.
+// `trajectoryScorerFor(reader, opts)` — Scorer adapter: `score(sample)` reads `sample.runId` and
+//    Delegates to `scoreTrajectory`. Drop straight into `scoreRun`/`evalDataset`'s scorer list — both
+//    Populate `sample.runId` (see score-run.ts / dataset.ts) so this works with zero extra wiring.
 import type { DecisionPoint, JournalReader } from '@gnldev/durable';
 import { buildDecisionSequence } from '@gnldev/durable';
 import type { Scorer, ScoreResult, ScoreSample } from './scorer.js';
@@ -32,7 +32,7 @@ export interface TrajectoryWeights {
 export interface TrajectoryScorerOptions {
   /**
    * Ordered SUBSEQUENCE match: do these tools all occur, in this relative order? Extra tool calls in
-   * between (or around) are fine — this is not a strict prefix/exact-sequence match.
+   * Between (or around) are fine — this is not a strict prefix/exact-sequence match.
    */
   expectedTools?: string[];
   /** Must occur SOMEWHERE in the run, in any order (unlike `expectedTools`, order is not checked). */
@@ -115,8 +115,8 @@ function dimBudget(toolNames: string[], maxToolCalls: number | undefined): Dim |
  * Scoring core (pure function, no Scorer wrapper) — shared by `createTrajectoryScorer` and
  * `scoreTrajectory`. Composite = weighted average over whichever dimensions are configured in `opts`
  * (a dimension not configured does not enter the composite at all — it's not "vacuously 1", it's
- * simply absent, which is why omitted dimensions don't skew the weighted average). `reason` lists
- * every active dimension's contribution + violations, joined by ` | `.
+ * Simply absent, which is why omitted dimensions don't skew the weighted average). `reason` lists
+ * Every active dimension's contribution + violations, joined by ` | `.
  */
 export function scoreToolSequence(toolNames: string[], opts: TrajectoryScorerOptions): ScoreResult {
   const dims = [
@@ -160,7 +160,7 @@ function toolNamesOf(sample: TrajectorySample): string[] | undefined {
  * Pure/deterministic trajectory Scorer — NO model call, NO journal I/O. Reads `sample.toolCalls`
  * (ordered tool-call names, preferred) or `sample.decisionPoints` (raw `DecisionPoint[]`, e.g. from
  * `buildDecisionSequence`). Use this directly when you already have the tool sequence in hand (tests,
- * hand-built trajectories); use `scoreTrajectory`/`trajectoryScorerFor` to score from a run's journal.
+ * Hand-built trajectories); use `scoreTrajectory`/`trajectoryScorerFor` to score from a run's journal.
  */
 export function createTrajectoryScorer(opts: TrajectoryScorerOptions = {}): Scorer {
   const name = opts.name ?? 'trajectory';
@@ -192,9 +192,9 @@ export async function scoreTrajectory(reader: JournalReader, runId: string, opts
 
 /**
  * Scorer adapter over `scoreTrajectory`: `score(sample)` reads `sample.runId` (populated
- * automatically by `scoreRun` and `evalDataset` — see score-run.ts/dataset.ts) and looks the run up in
+ * Automatically by `scoreRun` and `evalDataset` — see score-run.ts/dataset.ts) and looks the run up in
  * `reader`. Drop into any `Scorer[]` list (`scoreRun`, `evalDataset`) alongside llm-judge/rule-based
- * scorers — no special-casing needed at the call site.
+ * Scorers — no special-casing needed at the call site.
  */
 export function trajectoryScorerFor(reader: JournalReader, opts: TrajectoryScorerOptions = {}): Scorer {
   const name = opts.name ?? 'trajectory';

@@ -11,11 +11,11 @@ export interface LlmJudgeOptions {
    * Controls which extra fields (beyond `sample.output`) are added to the prompt.
    * DEFAULT (if not given): existing behavior is preserved for backward compatibility — if
    * `sample.input` and `sample.context` are non-empty (excluding empty string/empty array), both are
-   * added.
+   * Added.
    * Scorers that should evaluate the OUTPUT ONLY (e.g. toxicity/bias/toneConsistency in `scorers.ts`)
-   * should pass `[]` — otherwise, in shared RAG samples (where input/context are populated), they can
-   * get contaminated by irrelevant context and produce a wrong score (e.g. if the context is toxic,
-   * the toxicity score could come out low even though the output itself is clean).
+   * Should pass `[]` — otherwise, in shared RAG samples (where input/context are populated), they can
+   * Get contaminated by irrelevant context and produce a wrong score (e.g. if the context is toxic,
+   * The toxicity score could come out low even though the output itself is clean).
    */
   sampleFields?: ('input' | 'context')[];
 }
@@ -34,7 +34,7 @@ function hasContext(sample: ScoreSample): boolean {
 /**
  * LLM-judge scorer: asks the model to score the output 0.0–1.0 against `rubric`.
  * When called via `scoreRun`, it's memoized in the journal → the SAME score on resume (no duplicate
- * judge call).
+ * Judge call).
  *
  * Whether `sample.input` (question/input) and `sample.context` (RAG context, string | string[] — see
  * ScoreSample.context in `scorer.ts`) are added to the prompt is controlled by `opts.sampleFields`

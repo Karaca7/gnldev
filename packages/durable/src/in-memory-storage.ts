@@ -27,8 +27,8 @@ function paginate<T>(items: T[], q?: ListQuery): Page<T> {
   return { items: slice, nextCursor: next < items.length ? String(next) : undefined };
 }
 
-// P1.5 (AUDIT-R2): matchFilter is now shared (storage.ts) — see its JSDoc for the operator
-// subset ($eq/$ne/$gt/$gte/$lt/$lte/$in/$nin). Import above (was a local exact-equality-only copy).
+// P1.5 matchFilter is now shared (storage.ts) — see its JSDoc for the operator
+// Subset ($eq/$ne/$gt/$gte/$lt/$lte/$in/$nin). Import above (was a local exact-equality-only copy).
 function normRange(r?: number | { before: number; after: number }): { before: number; after: number } {
   if (r == null) return { before: 0, after: 0 };
   return typeof r === 'number' ? { before: r, after: r } : r;
@@ -46,9 +46,9 @@ class InMemoryRunJournal implements RunJournal {
   listKeys(p: string) { return this.journal.listKeys(p); }
   readRun(runId: string): Promise<JournalEntry[]> { return this.journal.readRun(runId); }
   // Capability parity with the real adapters (sqlite/postgres expose these as extra methods and
-  // toJournal forwards whatever exists): the inner InMemoryJournal always had them, but this wrapper
-  // silently HID them — so recordRunMetrics bailed at its incrBy/applyBatch gate and InMemoryStorage
-  // users got NO materialized metrics rows at all (caught by metrics-stream.test.ts).
+  // ToJournal forwards whatever exists): the inner InMemoryJournal always had them, but this wrapper
+  // Silently HID them — so recordRunMetrics bailed at its incrBy/applyBatch gate and InMemoryStorage
+  // Users got NO materialized metrics rows at all (caught by metrics-stream.test.ts).
   incrBy(k: string, f: Record<string, number>) { return this.journal.incrBy(k, f); }
   getCounters(k: string) { return this.journal.getCounters(k); }
   applyBatch(b: Parameters<InMemoryJournal['applyBatch']>[0]) { return this.journal.applyBatch(b); }
@@ -56,9 +56,9 @@ class InMemoryRunJournal implements RunJournal {
   listStaleRuns(cutoffTs: number, opts?: { includeSuspended?: boolean }) { return this.journal.listStaleRuns(cutoffTs, opts); }
   readRunStats(runId: string) { return this.journal.readRunStats(runId); }
   deletePrefix(prefix: string) { return this.journal.deletePrefix(prefix); }
-  // P0.3 (AUDIT-R2): filter BEFORE paginate() slices — same "filter before slicing, not
-  // after" rule the real adapters follow (sqlite/postgres/redis-storage.ts), so a filtered page never
-  // desyncs from an unfiltered scan or drops matching items off a page boundary.
+  // P0.3 filter BEFORE paginate() slices — same "filter before slicing, not
+  // After" rule the real adapters follow (sqlite/postgres/redis-storage.ts), so a filtered page never
+  // Desyncs from an unfiltered scan or drops matching items off a page boundary.
   async listRuns(q?: ListQuery): Promise<Page<RunSummary>> {
     let all = await this.journal.listRuns();
     if (q?.status) all = all.filter((r) => r.status === q.status);
@@ -140,7 +140,7 @@ class InMemoryMemoryStore implements MemoryStore {
       for (let i = lo; i <= hi; i++) picked.set(`${h.tid}:${rows[i]!.seq}`, rows[i]!);
     }
     // Provenance parity with sqlite-storage.ts — the spread copy also keeps the STORED record
-    // unmutated (this adapter returns direct references for neighbors).
+    // Unmutated (this adapter returns direct references for neighbors).
     for (const h of hits) picked.set(`${h.tid}:${h.m.seq}`, { ...h.m, score: h.score });
     return [...picked.values()].sort((a, b) => a.ts - b.ts || a.seq - b.seq);
   }
@@ -199,7 +199,7 @@ class InMemoryWorkStore implements WorkStore {
     return true;
   }
   /** 8.2: SAME pattern as RunJournal.putIfMatch (stableStringify comparison) — there is NO await
-   *  between has→compare→set → structurally atomic in single-threaded JS. */
+   *  Between has→compare→set → structurally atomic in single-threaded JS. */
   async putIfMatch(key: string, expected: unknown, value: unknown): Promise<boolean> {
     if (!this.kv.has(key)) return false;
     if (stableStringify(this.kv.get(key)) !== stableStringify(expected)) return false;

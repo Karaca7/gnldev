@@ -1,5 +1,5 @@
 // Governance: general policy that gates tool EXECUTION. Does not cage the LLM's
-// reasoning (it sees all tools); it only gates the side effect.
+// Reasoning (it sees all tools); it only gates the side effect.
 
 import type { RunTaint } from './taint.js';
 
@@ -14,8 +14,8 @@ export interface GuardCall {
   toolCallId: string;
   runId: string;
   /** TAINT PHASE 2 (taint-aware guard): the run's taint mark, populated by the runtime at the guard
-   *  call site (durable-tool.ts) — undefined on a clean run. Lets a guard make content-provenance-aware
-   *  decisions (see `taintGuardian`). Additive/optional: existing guards that ignore it are unaffected. */
+   *  Call site (durable-tool.ts) — undefined on a clean run. Lets a guard make content-provenance-aware
+   *  Decisions (see `taintGuardian`). Additive/optional: existing guards that ignore it are unaffected. */
   tainted?: RunTaint;
 }
 
@@ -37,11 +37,11 @@ export type Guard = (call: GuardCall) => GuardDecision | Promise<GuardDecision>;
 
 /**
  * TAINT PHASE 2 — ready-made Guard factory: "put a guardian in front of sensitive tools that inspects
- * context when they're called." Routes ONLY the taint × sensitive-tool INTERSECTION to `onTainted`
+ * Context when they're called." Routes ONLY the taint × sensitive-tool INTERSECTION to `onTainted`
  * (the developer's decision — a plain `{ action: 'require-approval' }`, or an expensive LLM-judge over
  * `call.args`/`call.tainted` that runs exactly at this intersection and nowhere else). Everything else
  * (clean runs, non-sensitive tools) goes to `otherwise` (default: allow) — so the guardian costs
- * nothing until untrusted content has actually entered AND a sensitive tool is being called.
+ * Nothing until untrusted content has actually entered AND a sensitive tool is being called.
  * Works with plain single-run taint (an `untrusted: true` tool in THIS run marks it) — the Phase 1
  * `taintScope: 'thread'` opt-in is NOT required, it just widens where the taint can come from.
  */

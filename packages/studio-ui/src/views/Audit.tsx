@@ -4,23 +4,23 @@ import { ScrollText } from 'lucide-react';
 import { useAudit, type AuditItem } from '../api';
 import { Spinner, EmptyState, ErrorBox, Badge, StatStrip, JsonBlock, PageHeader } from '../components';
 // Note: unlike the other views, this one deliberately has NO '../i18n' side-effect import —
-// this file's pure functions (auditToCsv/ACTIONS) are imported directly in a node environment
+// This file's pure functions (auditToCsv/ACTIONS) are imported directly in a node environment
 // (without jsdom, see test/observability-audit.test.ts); i18n/index.ts's getStoredLang()
-// accesses localStorage unconditionally and blows up in a node environment. In the real app,
-// main.tsx already imports './i18n' before App, so the `Audit` component works fine in real usage.
+// Accesses localStorage unconditionally and blows up in a node environment. In the real app,
+// Main.tsx already imports './i18n' before App, so the `Audit` component works fine in real usage.
 
 // Shared class for form/filter inputs. The focus recipe (ring + halo) lives in index.css and applies
-// to every input/textarea/select — do not re-declare it here.
+// To every input/textarea/select — do not re-declare it here.
 const inputCls = 'rounded-md border border-input bg-background px-2 py-1 text-xs outline-none transition-colors';
 
 // The server's /audit does NOT take cursor/offset, only `limit` (newest first, trimmed to
-// limit — see packages/studio/src/server.ts). There's no real pagination (cursor); "load more"
-// increases the limit and refetches. Server-side upper bound is 1000 (server.ts: Math.min(1000, …)).
+// Limit — see packages/studio/src/server.ts). There's no real pagination (cursor); "load more"
+// Increases the limit and refetches. Server-side upper bound is 1000 (server.ts: Math.min(1000, …)).
 const AUDIT_PAGE = 200;
 const AUDIT_MAX = 1000;
 
 // RFC4180-like CSV field escaping: fields containing comma/quote/newline are wrapped in double
-// quotes (inner quotes are doubled) — pure function, edge cases covered in test/observability-audit.test.ts.
+// Quotes (inner quotes are doubled) — pure function, edge cases covered in test/observability-audit.test.ts.
 function csvField(v: string | number): string {
   const s = String(v);
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -54,7 +54,7 @@ function downloadText(filename: string, text: string, mime: string): void {
 
 // Must match the server's full `AuditAction` union exactly (see packages/studio/src/server.ts,
 // `type AuditAction`) — otherwise the user can't filter by some actions. The match is
-// verified in test/observability-audit.test.ts via a plain constant comparison.
+// Verified in test/observability-audit.test.ts via a plain constant comparison.
 export const ACTIONS = [
   'approve', 'deny', 'fork',
   'thread.rename', 'thread.delete',
@@ -85,10 +85,10 @@ export function Audit() {
   if (audit.error) return <ErrorBox error={audit.error} />;
   const items = audit.data?.items ?? [];
   // The server trims to limit and returns; if items.length === limit (and we haven't hit the cap)
-  // there are likely older records not shown — the exact count is unknown (no cursor/total), hence "≥".
+  // There are likely older records not shown — the exact count is unknown (no cursor/total), hence "≥".
   const mayHaveMore = items.length >= limit && limit < AUDIT_MAX;
   // Upper bound reached: limit was clamped to AUDIT_MAX and the server still returned exactly
-  // limit items — the "load more" button can no longer grow (don't stop silently, inform the user).
+  // Limit items — the "load more" button can no longer grow (don't stop silently, inform the user).
   const atCap = limit >= AUDIT_MAX && items.length >= AUDIT_MAX;
 
   const nAppr = items.filter((i) => i.action === 'approve').length;

@@ -3,10 +3,10 @@ import { walk, stripStringFormats } from './util.js';
 
 /**
  * Gemini accepts an OpenAPI 3.0 subset, not full JSON Schema:
- *  - `$schema` and `additionalProperties` keywords are stripped (rejected)
- *  - unsupported string `format`/`pattern` → moved into the description
- *  - `oneOf` → `anyOf` (oneOf is not supported)
- *  - `type: [..., 'null']` → `nullable: true` + single type (union-with-null OpenAPI form)
+ * `$schema` and `additionalProperties` keywords are stripped (rejected)
+ * unsupported string `format`/`pattern` → moved into the description
+ * `oneOf` → `anyOf` (oneOf is not supported)
+ * `type: [..., 'null']` → `nullable: true` + single type (union-with-null OpenAPI form)
  */
 export const gemini: ToolSchemaRule = {
   name: 'gemini',

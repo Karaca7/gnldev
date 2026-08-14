@@ -150,8 +150,8 @@ export function buildOpenApi(agentNames: string[], workflowNames: string[] = [],
       responses: { '200': { description: 'Journal entry list' } },
     },
   };
-  // P0.3 (AUDIT-R2): documents the opt-in pagination/filter query params — with none given
-  // the response is still the legacy RunSummary array (see createRestApi's GET /runs JSDoc).
+  // P0.3 documents the opt-in pagination/filter query params — with none given
+  // The response is still the legacy RunSummary array (see createRestApi's GET /runs JSDoc).
   paths['/runs'] = {
     get: {
       summary: 'Run summaries — legacy array with no params, or a {items,nextCursor} page when ?limit/?cursor/?status/?agent is given',

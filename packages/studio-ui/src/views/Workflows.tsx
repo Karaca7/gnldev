@@ -21,13 +21,13 @@ const KIND_GLYPH: Record<string, string> = { parallel: '⇉', branch: '⌥', loo
 /**
  * FLOW-08: derive a workflow name from a run's runId when the registry item doesn't carry one
  * (`WorkflowRunRegistryItem.workflowName` is optional — see api.ts). The runId convention, confirmed
- * from this file's own run() and runStepwise() (`` `${dry ? 'dry-' : ''}wf-${wf.name}-${Date.now()}` ``)
- * and mirrored server-side in @gnldev/durable's registry.ts (`` `wf-${name}-${Date.now()}` ``), is
+ * From this file's own run() and runStepwise() (`` `${dry ? 'dry-' : ''}wf-${wf.name}-${Date.now()}` ``)
+ * And mirrored server-side in @gnldev/durable's registry.ts (`` `wf-${name}-${Date.now()}` ``), is
  * `wf-<name>-<timestamp>` (optionally `dry-` prefixed). Workflow names may themselves contain hyphens
  * (e.g. 'order-fulfillment'), so a naive `split('-')[1]` would truncate them — instead every known
- * name is tried as a `wf-<name>-<all-digit-timestamp>` prefix, and the LONGEST matching name wins
+ * Name is tried as a `wf-<name>-<all-digit-timestamp>` prefix, and the LONGEST matching name wins
  * (so 'order' doesn't shadow 'order-fulfillment' when both exist). Returns null when no known name
- * matches — callers fall back to letting the user pick.
+ * Matches — callers fall back to letting the user pick.
  */
 export function deriveWorkflowName(runId: string, knownNames: string[]): string | null {
   const candidateIds = runId.startsWith('dry-') ? [runId, runId.slice(4)] : [runId];
@@ -44,7 +44,7 @@ export function deriveWorkflowName(runId: string, knownNames: string[]): string 
 }
 
 // API-03: useWorkflowRunsRegistry now always passes a `limit`, so api.workflowRunsRegistry returns the
-// paged `{items,nextCursor}` envelope in practice — but its declared type stays the union it always was
+// Paged `{items,nextCursor}` envelope in practice — but its declared type stays the union it always was
 // (the legacy flat array is still what a bare, limit-less call returns), so callers narrow at the edge.
 function registryItems(data: WorkflowRunRegistryItem[] | { items: WorkflowRunRegistryItem[] } | undefined): WorkflowRunRegistryItem[] {
   if (!data) return [];
@@ -85,12 +85,12 @@ const STATUS_STYLE: Record<Status, { bg: string; bd: string }> = {
 };
 
 // MiniMap node color: react-flow's MiniMap paints nodes into an SVG, where `hsl(var(--x))` doesn't
-// resolve (no cascade into the generated <rect>) — so this needs a CONCRETE hex per status instead
-// of the token references STATUS_STYLE uses above. These hex values are hand-copied from this file's
-// dark theme (the default theme, index.css `:root`) tokens and MUST be kept in sync by hand if those
-// tokens ever change — there's no build-time or runtime link between them:
-//   running → --info #6bb6f7 · done → --success #3be38b · suspended → --warning #f2c14e ·
-//   failed → --destructive #ff6b6b · idle → --muted-foreground #9a9aa3 · cancelled → --border #35353d
+// Resolve (no cascade into the generated <rect>) — so this needs a CONCRETE hex per status instead
+// Of the token references STATUS_STYLE uses above. These hex values are hand-copied from this file's
+// Dark theme (the default theme, index.css `:root`) tokens and MUST be kept in sync by hand if those
+// Tokens ever change — there's no build-time or runtime link between them:
+//   Running → --info #6bb6f7 · done → --success #3be38b · suspended → --warning #f2c14e ·
+//   Failed → --destructive #ff6b6b · idle → --muted-foreground #9a9aa3 · cancelled → --border #35353d
 // (idle/cancelled intentionally reuse existing neutral tokens rather than a fifth ad hoc gray.)
 const MINIMAP_COLOR: Record<Status, string> = {
   idle: '#9a9aa3', running: '#6bb6f7', done: '#3be38b', suspended: '#f2c14e', failed: '#ff6b6b', cancelled: '#35353d',
@@ -132,11 +132,11 @@ export function Workflows() {
   const [deleting, setDeleting] = useState<string | null>(null);
   const [showInbox, setShowInbox] = useState(false);
   // D3-A: badge count on the sidebar toggle — fetched at this level (not just inside the inbox panel)
-  // so it's visible while browsing the workflow list, same "needs attention" spirit as Approvals' badge.
+  // So it's visible while browsing the workflow list, same "needs attention" spirit as Approvals' badge.
   const suspendedRuns = useWorkflowRunsRegistry('suspended');
   // Tracks whether WorkflowDetail has a run in flight — switching the selected workflow (remount via
   // `key={selWf.name}`) or opening the inbox unmounts WorkflowDetail, whose cleanup effect aborts the
-  // stream. Surfaced from the child so navigation can be guarded instead of silently killing the run.
+  // Stream. Surfaced from the child so navigation can be guarded instead of silently killing the run.
   const [running, setRunning] = useState(false);
 
   const selWf = wfs.data?.find((w) => w.name === sel) ?? wfs.data?.[0];
@@ -162,7 +162,7 @@ export function Workflows() {
 
   if (wfs.isLoading) return <Spinner />;
   // Query error (SEPARATE from the "no workflows" empty state): if the fetch fails, wfs.data stays
-  // undefined and the length check below would wrongly show "No workflows" — handle the real error first.
+  // Undefined and the length check below would wrongly show "No workflows" — handle the real error first.
   if (wfs.error) return <ErrorBox error={wfs.error} />;
 
   if (editing) {
@@ -228,8 +228,8 @@ export function Workflows() {
           {wfs.data?.map((w) => {
             const active = (sel ?? wfs.data![0].name) === w.name;
             // Switching selection remounts WorkflowDetail (key={selWf.name}) and aborts an in-flight
-            // run — block navigation to a DIFFERENT workflow while one is running; re-clicking the
-            // active row is a no-op so it stays enabled.
+            // Run — block navigation to a DIFFERENT workflow while one is running; re-clicking the
+            // Active row is a no-op so it stays enabled.
             const navBlocked = running && !active;
             return (
               <div key={w.name} className={cn('group mb-0.5 flex items-center rounded-md border-l-2 transition-colors', active ? 'border-l-brand bg-muted' : 'border-l-transparent hover:bg-muted/60')}>
@@ -249,7 +249,7 @@ export function Workflows() {
                 ) : (
                   // VIS-06: this label is the ONLY visual signal that a workflow is code-defined
                   // (not editable from the UI) — was a hand-rolled text-[9px]/60 span (~3.1:1
-                  // contrast, the app's one 9px usage). Badge tone="muted" matches the mono
+                  // Contrast, the app's one 9px usage). Badge tone="muted" matches the mono
                   // 10px + full muted-foreground contrast already used for data tags elsewhere
                   // (e.g. the "from server"/"guessed" badges in the resume form below).
                   <span className="shrink-0 pr-2" title={t('codeDefinedTitle')}><Badge tone="muted">{t('codeLabel')}</Badge></span>
@@ -292,8 +292,8 @@ function paramsOf(schema: any): { key: string; type: string; required: boolean; 
 /**
  * Schema-driven input form: turns the fields in `workflowInputs.schema` into inputs.
  * The single source of truth is the JSON string — the form is derived from it on every
- * render, and the JSON is updated whenever a field changes (this doesn't conflict with
- * manual JSON editing; the form is disabled when the JSON is invalid).
+ * Render, and the JSON is updated whenever a field changes (this doesn't conflict with
+ * Manual JSON editing; the form is disabled when the JSON is invalid).
  */
 function InputForm({ params, input, onChange }: {
   params: { key: string; type: string; required: boolean; description?: string }[];
@@ -477,7 +477,7 @@ function WorkflowDetail({ wf, canRun, canManage, onEdit, onRunningChange, onBack
           setResult(ev.data); order.forEach((id) => setStep(id, { status: 'done' }));
         } else if (ev.type === 'error') {
           setErr(ev.data.error);
-          // mark the step that errored: whichever step was "running" becomes failed + gets the error message.
+          // Mark the step that errored: whichever step was "running" becomes failed + gets the error message.
           setStatus((s) => { const c = { ...s }; for (const k of order) if (c[k]?.status === 'running') c[k] = { status: 'failed', error: ev.data.error }; return c; });
         }
       }, ac.signal);
@@ -664,7 +664,7 @@ function WorkflowDetail({ wf, canRun, canManage, onEdit, onRunningChange, onBack
               canRun && lastRunId && !busy
                 ? async (idx) => {
                     // What-if fork: outputs UP TO this step are copied into a new run; running it
-                    // with the same input replays the copied steps, and this step onward re-runs.
+                    // With the same input replays the copied steps, and this step onward re-runs.
                     try {
                       const r = await api.forkWorkflowRun(wf.name, lastRunId!, idx);
                       toast.success(t('forkSuccess', { count: r.copied }));
@@ -695,7 +695,7 @@ function WorkflowEditor({ initial, onSave, onCancel }: {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   // Dirty tracking: any edit to name/description/steps flips this — used to gate the Cancel button
-  // behind a confirm dialog instead of silently discarding a filled-in form.
+  // Behind a confirm dialog instead of silently discarding a filled-in form.
   const [dirty, setDirty] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
 
@@ -806,13 +806,13 @@ function WorkflowEditor({ initial, onSave, onCancel }: {
 }
 
 /**
- * D3-A (AUDIT-R2 yüzey): suspended-runs inbox — GET /workflows/runs?status=suspended lists
+ * D3-A suspended-runs inbox — GET /workflows/runs?status=suspended lists
  * EVERY suspended run across ALL workflows (code + managed) in one registry scan, not just the
- * currently-selected workflow's history. The registry record's `workflowName` is OPTIONAL (older
- * records won't have it, see WorkflowRunRegistryItem's JSDoc) — when absent, the resume form falls back
- * to deriving it from the runId convention (deriveWorkflowName) and, failing that, to the existing
- * workflows-list picker, so the operator is never forced to guess without a signal. Auto-refreshes
- * every 5s (same cadence as Approvals.tsx's inbox).
+ * Currently-selected workflow's history. The registry record's `workflowName` is OPTIONAL (older
+ * Records won't have it, see WorkflowRunRegistryItem's JSDoc) — when absent, the resume form falls back
+ * To deriving it from the runId convention (deriveWorkflowName) and, failing that, to the existing
+ * Workflows-list picker, so the operator is never forced to guess without a signal. Auto-refreshes
+ * Every 5s (same cadence as Approvals.tsx's inbox).
  */
 function SuspendedRunsInbox({ workflows, canResume, canCancel, onClose }: {
   workflows: WorkflowMeta[]; canResume: boolean; canCancel: boolean; onClose: () => void;
@@ -894,7 +894,7 @@ function SuspendedRunRow({ item, workflows, canResume, canCancel, busy, onCancel
   const { t } = useTranslation('workflows');
   const [expanded, setExpanded] = useState(false);
   // FLOW-08: server-confirmed name wins outright; otherwise try to derive it from the runId
-  // convention; otherwise fall back to the old single-workflow default (unchanged behavior).
+  // Convention; otherwise fall back to the old single-workflow default (unchanged behavior).
   const guessedWfName = useMemo(
     () => (item.workflowName ? null : deriveWorkflowName(item.runId, workflows.map((w) => w.name))),
     [item.workflowName, item.runId, workflows],
@@ -903,8 +903,8 @@ function SuspendedRunRow({ item, workflows, canResume, canCancel, busy, onCancel
     () => item.workflowName ?? guessedWfName ?? (workflows.length === 1 ? workflows[0]!.name : ''),
   );
   // Confidence badge next to the select: stays attached to whichever value it's currently showing —
-  // if the operator edits the dropdown away from the derived/known name, the badge disappears (it
-  // would otherwise misrepresent a hand-picked value as confirmed/guessed).
+  // If the operator edits the dropdown away from the derived/known name, the badge disappears (it
+  // Would otherwise misrepresent a hand-picked value as confirmed/guessed).
   const nameConfidence: 'known' | 'guessed' | null =
     wfName && wfName === item.workflowName ? 'known' : wfName && wfName === guessedWfName ? 'guessed' : null;
   const [payload, setPayload] = useState('{}');
@@ -1018,10 +1018,10 @@ function NodePanel({ node, state, suspend, edges, gnodes, order, allStatus, runI
 
   return (
     // Below md the graph canvas has no room next to a 384px-wide inspector (see Workflows' VIS-02
-    // note) — it becomes a full-viewport overlay instead of a side panel; the existing X button
-    // above is the only way to dismiss it there too. z-30 stays under ConfirmDialog (z-40/z-50) so a
-    // confirm prompt opened from this view still renders on top of it. At md+, back to a normal
-    // in-flow side panel (unchanged from before).
+    // Note) — it becomes a full-viewport overlay instead of a side panel; the existing X button
+    // Above is the only way to dismiss it there too. z-30 stays under ConfirmDialog (z-40/z-50) so a
+    // Confirm prompt opened from this view still renders on top of it. At md+, back to a normal
+    // In-flow side panel (unchanged from before).
     <div className="fixed inset-0 z-30 overflow-auto bg-background p-3 md:static md:z-auto md:w-96 md:shrink-0 md:border-l md:border-border md:bg-transparent">
       <div className="mb-2 flex items-start justify-between gap-2">
         <div className="min-w-0">
@@ -1133,10 +1133,10 @@ function Row({ k, children }: { k: string; children: React.ReactNode }) {
   return <div className="flex items-center gap-2"><span className="w-14 text-muted-foreground">{k}</span>{children}</div>;
 }
 // NodeStatusBadge: intentionally the square/mono data-tag `Badge` (not the pill-shaped `StatusBadge`
-// imported from components.tsx) — this renders inside NodePanel's technical key/value rows (kind,
-// order, journal key…), all styled as data tags, so the step status stays visually part of that
-// family. Named distinctly from the imported `StatusBadge` to avoid shadowing it in this file (see
-// the real StatusBadge's use for the run-level indicator above, a different, higher-level concept).
+// Imported from components.tsx) — this renders inside NodePanel's technical key/value rows (kind,
+// Order, journal key…), all styled as data tags, so the step status stays visually part of that
+// Family. Named distinctly from the imported `StatusBadge` to avoid shadowing it in this file (see
+// The real StatusBadge's use for the run-level indicator above, a different, higher-level concept).
 function NodeStatusBadge({ s }: { s: Status }) {
   const tone = s === 'done' ? 'success' : s === 'running' ? 'info' : s === 'suspended' ? 'warning' : s === 'failed' ? 'destructive' : 'muted';
   return <Badge tone={tone as any}>{s}</Badge>;
@@ -1144,8 +1144,8 @@ function NodeStatusBadge({ s }: { s: Status }) {
 
 /**
  * Side-by-side step outputs for two workflow runs (what-if fork analysis):
- * identical outputs are dimmed (the replayed common prefix), and divergent ones are
- * highlighted with A=info, B=brand.
+ * Identical outputs are dimmed (the replayed common prefix), and divergent ones are
+ * Highlighted with A=info, B=brand.
  */
 function WorkflowRunDiff({ a, b, onClose }: { a: string; b: string; onClose: () => void }) {
   const { t } = useTranslation('workflows');
@@ -1157,9 +1157,9 @@ function WorkflowRunDiff({ a, b, onClose }: { a: string; b: string; onClose: () 
   );
   const diffCount = rows.filter((r) => !r.equal).length;
   // STATE-08: sa.error/sb.error were never read — a failed GET /workflows/run/:runId left `rows`
-  // empty, which read exactly like "both runs have identical steps" (0/0 in the header, then
-  // noStepsToCompareNote). For a what-if-fork comparison that's the one message that must never
-  // appear on a fetch failure: it reads as "the fork changed nothing" instead of "couldn't load".
+  // Empty, which read exactly like "both runs have identical steps" (0/0 in the header, then
+  // NoStepsToCompareNote). For a what-if-fork comparison that's the one message that must never
+  // Appear on a fetch failure: it reads as "the fork changed nothing" instead of "couldn't load".
   const loadError = sa.error ?? sb.error;
 
   return (

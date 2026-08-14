@@ -599,11 +599,14 @@ themselves live under `packages/durable/test/`:
   same time → EXACTLY ONE winner every time (20 rounds + a 10-way burst). Same for Redis (SET NX).
 - **Live failover** (server replacement): the primary Postgres was **killed with SIGKILL**, a
   replica was promoted → 30/30 acknowledged writes preserved, exactly-once held. (Precondition:
-  synchronous replication — noted in the deployment section of the README; this guarantee does
+  synchronous replication (`synchronous_commit = on` with a synchronous standby); this guarantee does
   NOT hold under asynchronous setups, documented honestly.)
 - **Lock takeover:** two servers tried to take over an expired lock at the same time → only one
   won (`putIfMatch` CAS; a race here was found and closed in an earlier version).
-- **Process-kill tests:** a child process is killed with a real `SIGKILL` and then resumed.
+- **Process-kill tests:** a child process hard-exits mid-run (`process.exit(1)`, after the effect
+  and before the run finishes) and the parent resumes against the same SQLite file. The only
+  `SIGKILL` in this suite is aimed at Postgres, in the failover test above — the distinction
+  matters, because `process.exit` still unwinds less than a signal but more than a power cut.
 - Total: **2000+ tests**, plus real-infrastructure suites gated behind `GNL_INTEGRATION=1` and
   `GNL_FAILOVER=1`.
 

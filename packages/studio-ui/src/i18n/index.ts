@@ -1,17 +1,17 @@
-// i18n setup: EN default, TR secondary — persistence follows the same pattern as the theme toggle
+// I18n setup: EN default, TR secondary — persistence follows the same pattern as the theme toggle
 // (localStorage key, see App.tsx useTheme/'gnl-theme'). This file initializes as a side effect when
-// imported (once, in main.tsx); if it's imported again (e.g. in test files rendering App.tsx
-// directly) the `isInitialized` guard prevents re-init.
+// Imported (once, in main.tsx); if it's imported again (e.g. in test files rendering App.tsx
+// Directly) the `isInitialized` guard prevents re-init.
 //
 // Namespace rule (for the next wave — the agent that will extract view strings):
-//   - Each view uses its own namespace file: locales/{en,tr}/<view>.json
+// Each view uses its own namespace file: locales/{en,tr}/<view>.json
 //     (e.g. Inspector.tsx → 'inspector' namespace → locales/en/inspector.json + locales/tr/inspector.json)
-//   - Inside a view: `const { t } = useTranslation('inspector');` then `t('someKey')`.
-//   - Shared/cross-view strings (if any) go into the 'common' namespace: `useTranslation('common')`.
-//   - Nav/governance labels stay in the 'nav' namespace (App.tsx already uses it) — view files
-//     don't write to this namespace.
-//   - Key naming: camelCase, short and view-local (e.g. "runList", "emptyState", "confirmDelete").
-//     Since the namespace already identifies the view, don't re-prefix the key with the view name.
+// Inside a view: `const { t } = useTranslation('inspector');` then `t('someKey')`.
+// Shared/cross-view strings (if any) go into the 'common' namespace: `useTranslation('common')`.
+// Nav/governance labels stay in the 'nav' namespace (App.tsx already uses it) — view files
+//     Don't write to this namespace.
+// Key naming: camelCase, short and view-local (e.g. "runList", "emptyState", "confirmDelete").
+// Since the namespace already identifies the view, don't re-prefix the key with the view name.
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
 
@@ -64,8 +64,8 @@ export const SUPPORTED_LANGS = ['en', 'tr'] as const;
 export type SupportedLang = (typeof SUPPORTED_LANGS)[number];
 
 export function getStoredLang(): SupportedLang {
-  // localStorage doesn't exist in a jsdom-less (node) test environment — read defensively
-  // so views imported at init time (e.g. Audit) don't crash when they pull in this file.
+  // LocalStorage doesn't exist in a jsdom-less (node) test environment — read defensively
+  // So views imported at init time (e.g. Audit) don't crash when they pull in this file.
   if (typeof localStorage === 'undefined') return 'en';
   const stored = localStorage.getItem(LANG_STORAGE_KEY);
   return stored === 'tr' ? 'tr' : 'en';

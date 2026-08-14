@@ -2,7 +2,7 @@
 //   • static template  — copies templates/minimal|full verbatim (create-gnl + `gnl init --template`).
 //   • feature compose  — copies templates/minimal as the base, drops in the chosen feature recipes
 //                         (src files + package.json deps) and GENERATES a decoupled gnl.config.ts that
-//                         wires them together (`gnl init` interactive checkbox / `--features a,b,c`).
+//                         Wires them together (`gnl init` interactive checkbox / `--features a,b,c`).
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -40,7 +40,7 @@ export interface ScaffoldOptions {
   e2e?: boolean;
   /**
    * Which HTTP server this project will run on — writes `src/app.ts` + `src/server.ts` and adds the
-   * framework's dependency. Omitted means no server entry, which is the old behaviour: fine while
+   * Framework's dependency. Omitted means no server entry, which is the old behaviour: fine while
    * `gnl dev` is serving, and nothing to deploy the day you want to.
    */
   host?: string;
@@ -57,11 +57,11 @@ export interface ScaffoldResult {
 
 /**
  * Writes the two-file server half: `src/app.ts` (no server attached) and `src/server.ts` (the chosen
- * one), plus the framework dependency and a `start` script.
+ * One), plus the framework dependency and a `start` script.
  *
  * Two files rather than one because the choice must not reach everywhere: the edge targets and the
- * managed runtime consume `app.ts` and never see `server.ts`. Keeping them apart is what lets the
- * question be answered honestly.
+ * Managed runtime consume `app.ts` and never see `server.ts`. Keeping them apart is what lets the
+ * Question be answered honestly.
  */
 function addHost(dir: string, hostId: string): void {
   const host = hostById(hostId);
@@ -72,7 +72,7 @@ function addHost(dir: string, hostId: string): void {
   patchPkg(dir, (pkg) => {
     pkg.dependencies = { ...pkg.dependencies, ...(host.deps ?? {}) };
     // `@types/node` for every host: the server entry reads process.env and imports node: builtins,
-    // neither of which the base template ever did.
+    // Neither of which the base template ever did.
     pkg.devDependencies = { ...pkg.devDependencies, '@types/node': '^22.0.0', ...(host.devDeps ?? {}) };
     pkg.scripts = { ...pkg.scripts, start: 'tsx src/server.ts' };
   });
@@ -104,7 +104,7 @@ function copyTemplate(dir: string, template: TemplateName, name: string): void {
   if (!existsSync(src)) throw new Error(`gnl: template not found: ${src}`);
   cpSync(src, dir, { recursive: true });
 
-  // npm tarballs drop .gitignore → the template keeps it as 'gitignore', converted to .gitignore on copy.
+  // Npm tarballs drop .gitignore → the template keeps it as 'gitignore', converted to .gitignore on copy.
   const gi = join(dir, 'gitignore');
   if (existsSync(gi)) renameSync(gi, join(dir, '.gitignore'));
 
@@ -170,8 +170,8 @@ function scaffoldFeatures(dir: string, name: string, features: string[], forceE2
     mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, r.contents);
     // Must track the published range of the @gnldev packages: '^0.0.0' means '>=0.0.0 <0.0.1',
-    // which 0.1.0 never satisfies — inside the monorepo pnpm links by name and hides it, but a
-    // scaffolded project outside it would fail to install.
+    // Which 0.1.0 never satisfies — inside the monorepo pnpm links by name and hides it, but a
+    // Scaffolded project outside it would fail to install.
     if (r.dep) deps[r.dep] = '^0.1.0';
   }
 
@@ -185,7 +185,7 @@ function scaffoldFeatures(dir: string, name: string, features: string[], forceE2
   // Generate the wired-together gnl.config.ts (overwrites the base minimal one).
   writeFileSync(join(dir, 'gnl.config.ts'), generateConfig(recipes));
 
-  // e2e: idempotency-tool selected → the idempotency e2e (imports ../src/tools.js); else the replay test.
+  // E2e: idempotency-tool selected → the idempotency e2e (imports ../src/tools.js); else the replay test.
   if (wantE2e) {
     const testSrc = codeFeatures.includes('idempotency-tool') ? templatesDir('full') : templatesDir('_e2e');
     addE2e(dir, testSrc);
@@ -196,8 +196,8 @@ function scaffoldFeatures(dir: string, name: string, features: string[], forceE2
 
 /**
  * Scaffold a new project.
- *  - `features` given  → compose templates/minimal + those recipes + a generated gnl.config.ts.
- *  - otherwise         → copy templates/<template> verbatim (minimal|full), optionally add the e2e test.
+ * `features` given  → compose templates/minimal + those recipes + a generated gnl.config.ts.
+ * otherwise         → copy templates/<template> verbatim (minimal|full), optionally add the e2e test.
  */
 export function scaffold(targetDir: string, opts: ScaffoldOptions = {}): ScaffoldResult {
   const dir = resolve(targetDir);

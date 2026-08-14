@@ -5,9 +5,9 @@ import type { Journal } from './journal.js';
 
 /**
  * One recalled message, as provenance: WHERE it came from and WHY it was selected. `score` is present
- * only on actual similarity hits — a `messageRange` context neighbor rides along unscored. `preview`
- * is a truncated text sample (the full message is already visible in the thread itself); keeping it
- * short keeps the `:memctx` journal record small.
+ * Only on actual similarity hits — a `messageRange` context neighbor rides along unscored. `preview`
+ * Is a truncated text sample (the full message is already visible in the thread itself); keeping it
+ * Short keeps the `:memctx` journal record small.
  */
 export interface RecalledMessageRef {
   threadId: string;
@@ -19,10 +19,10 @@ export interface RecalledMessageRef {
 
 /**
  * "What did memory inject into this turn's context, and why" — assembled by the rich memory's
- * loadContext (recall/OM/WM breakdown) and journaled per run by runDurable/streamDurable under
+ * LoadContext (recall/OM/WM breakdown) and journaled per run by runDurable/streamDurable under
  * `runKeys.memoryContext` (run.ts). This is the read-model for memory debugging: the frozen `:input`
- * says WHAT the model saw; this record says WHERE each part came from. Every field is a count or a
- * short ref — never full message bodies.
+ * Says WHAT the model saw; this record says WHERE each part came from. Every field is a count or a
+ * Short ref — never full message bodies.
  */
 export interface MemoryContextProvenance {
   /** Semantic-recall selections (hits scored, neighbors unscored). Empty when recall didn't run. */
@@ -31,8 +31,8 @@ export interface MemoryContextProvenance {
   recentCount: number;
   /**
    * The recent-window messages THEMSELVES, as refs (capped at PROVENANCE_RECENT_CAP — `recentCount`
-   * stays the true count). This is the "WHAT went to the model" half the counts alone couldn't
-   * answer; absent on records written before the field existed (readers fall back to the count).
+   * Stays the true count). This is the "WHAT went to the model" half the counts alone couldn't
+   * Answer; absent on records written before the field existed (readers fall back to the count).
    */
   recent?: RecalledMessageRef[];
   /** OM path only: number of non-condensed observations injected as a system message. */
@@ -46,9 +46,9 @@ export const PROVENANCE_RECENT_CAP = 24;
 
 /**
  * Short human preview of ANY message — the single source both provenance ref builders use (run.ts
- * legacy path + @gnldev/memory's AgentMemory.toRef; one source so the two can't drift). Plain text
- * parts win; a message whose content is STRUCTURAL (tool-call / tool-result — the "—" rows in the
- * first provenance UI) gets a structural preview instead of an empty string:
+ * Legacy path + @gnldev/memory's AgentMemory.toRef; one source so the two can't drift). Plain text
+ * Parts win; a message whose content is STRUCTURAL (tool-call / tool-result — the "—" rows in the
+ * First provenance UI) gets a structural preview instead of an empty string:
  *   `→ searchResource({"resource":"films"…})`  (assistant tool-call)
  *   `searchResource → {"hits":[…]}`            (tool result)
  */
@@ -73,7 +73,7 @@ export function messagePreview(message: any, max = 120): string {
 export interface Memory {
   /**
    * A thread's prior messages (AI SDK ModelMessage[]). If `opts.query` is given, semantic memory
-   * implementations may recall relevant (old but similar) messages; simple memory ignores the query.
+   * Implementations may recall relevant (old but similar) messages; simple memory ignores the query.
    * `resourceId`/`scope` (Phase 14): for resource-scope recall (a user's entire threads); simple memory ignores this.
    */
   getMessages(threadId: string, opts?: { query?: string; resourceId?: string; scope?: 'thread' | 'resource' }): Promise<any[]>;
@@ -86,9 +86,9 @@ export interface Memory {
   getThreadResource?(threadId: string): Promise<string | undefined>;
   /**
    * Rich path (optional — provided by @gnldev/memory's AgentMemory): composes recall + working memory +
-   * observational memory + the WM tool in ONE call. If defined, runDurable/streamDurable use this
-   * instead of `getMessages`/`getWorkingMemory`. `provenance` (optional, additive) is the memory-side
-   * half of the `:memctx` record — see MemoryContextProvenance above.
+   * Observational memory + the WM tool in ONE call. If defined, runDurable/streamDurable use this
+   * Instead of `getMessages`/`getWorkingMemory`. `provenance` (optional, additive) is the memory-side
+   * Half of the `:memctx` record — see MemoryContextProvenance above.
    */
   loadContext?(
     threadId: string,

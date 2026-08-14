@@ -4,7 +4,7 @@
 //
 // The platform scope is an EXPLICIT grant, expressed with the reserved `platform-admin` role. It is
 // NEVER derived from "the identity happens to have no orgId" — that inference is the classic
-// fail-OPEN footgun (forgetting an orgId accidentally minted a super-admin). Hosts that run the strict
+// Fail-OPEN footgun (forgetting an orgId accidentally minted a super-admin). Hosts that run the strict
 // (paid/EE multi-org) model treat an unbound identity WITHOUT this grant as fail-CLOSED (no access).
 //
 // This module is pure (no host/Hono coupling) → unit-testable in isolation and reusable by
@@ -17,7 +17,7 @@ export const PLATFORM_ADMIN_ROLE = 'platform-admin';
 /**
  * True if the principal carries the EXPLICIT platform-admin grant (the `platform-admin` role).
  * Being unbound (no `orgId`) alone is NOT enough — that is exactly the accidental-super-admin bug
- * the strict model closes.
+ * The strict model closes.
  */
 export function isPlatformAdmin(principal: Principal | null | undefined): boolean {
   return !!principal?.roles?.includes(PLATFORM_ADMIN_ROLE);
@@ -34,7 +34,7 @@ export type PrincipalScope =
 
 /**
  * Pure scope derivation. Precedence: an EXPLICIT platform grant wins over an org binding (a
- * platform-admin is intentionally cross-org); otherwise a bound `orgId` gives org scope; otherwise
+ * Platform-admin is intentionally cross-org); otherwise a bound `orgId` gives org scope; otherwise
  * `none` (which the strict EE model rejects, and the free model treats as the legacy operator).
  */
 export function principalScope(principal: Principal | null | undefined): PrincipalScope {
@@ -49,15 +49,15 @@ export type AssignabilityResult = { ok: true } | { ok: false; reason: string };
 
 /**
  * PRIVILEGE CEILING for user-management (create/update). An assigner must NEVER be able to hand out a
- * privilege it does not itself hold — otherwise an org-bound admin could mint itself (or a new user)
- * the reserved `platform-admin` role and walk out of its own org as a cross-org super-admin. The
- * user-management surfaces (@gnldev/studio POST/PATCH /users) validate only the target's ORG, not the
+ * Privilege it does not itself hold — otherwise an org-bound admin could mint itself (or a new user)
+ * The reserved `platform-admin` role and walk out of its own org as a cross-org super-admin. The
+ * User-management surfaces (@gnldev/studio POST/PATCH /users) validate only the target's ORG, not the
  * ROLE/PERMISSION VALUES; this closes that gap.
  *
  * Rule (deliberately minimal + scope-aware): a platform-admin may assign anything. Anyone else may
  * NOT grant the `platform-admin` role (a cross-org SCOPE escalation) nor the `'*'` all-permissions
- * grant (its permission-axis equivalent). Ordinary org roles/permissions stay inside the assigner's
- * org (the target keeps its `orgId`), so they are not a cross-org escalation and remain assignable.
+ * Grant (its permission-axis equivalent). Ordinary org roles/permissions stay inside the assigner's
+ * Org (the target keeps its `orgId`), so they are not a cross-org escalation and remain assignable.
  */
 export function assertAssignablePrivileges(
   assigner: Principal | null | undefined,

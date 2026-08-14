@@ -5,24 +5,24 @@ import { Badge } from '../components';
 import { ConfirmDialog } from '../ui';
 
 // Clear button: text longer than this requires confirmation before wiping (short drafts clear
-// instantly, no friction). Below or at this length, clearing is still instant but reversible.
+// Instantly, no friction). Below or at this length, clearing is still instant but reversible.
 const CLEAR_CONFIRM_THRESHOLD = 200;
 // Window during which a destructive clear can be undone (ms).
 const UNDO_WINDOW_MS = 10_000;
 
 // ── The consistent skeleton of a good agent system prompt: Role → Task → Context → Rules →
-//    Tool usage → Output format → Constraints → Tone → (optional Examples). Templates/snippets
-//    offer this structure and agentic best practices (don't guess → call the tool, grounding,
-//    loop prevention, authorization/privacy) as ready-made blocks. RULE snippets are SYNCED with
-//    SECTIONs: each snippet belongs to a section (SnippetGroup.section) and, when added, is placed
-//    under that section (auto-created if the section doesn't exist yet) → the prompt stays
-//    self-structuring.
+// Tool usage → Output format → Constraints → Tone → (optional Examples). Templates/snippets
+//    Offer this structure and agentic best practices (don't guess → call the tool, grounding,
+//    Loop prevention, authorization/privacy) as ready-made blocks. RULE snippets are SYNCED with
+// SECTIONs: each snippet belongs to a section (SnippetGroup.section) and, when added, is placed
+//    Under that section (auto-created if the section doesn't exist yet) → the prompt stays
+//    Self-structuring.
 //
-//    Template/section/rule TEXTS are now kept as i18n KEYs (since a hook can't be called at
-//    module scope); the actual text is resolved via `buildPromptTemplates`/`buildPromptSections`/
+// Template/section/rule TEXTS are now kept as i18n KEYs (since a hook can't be called at
+//    Module scope); the actual text is resolved via `buildPromptTemplates`/`buildPromptSections`/
 //    `buildSnippetGroups` — given the `t` from `useTranslation('promptEditor')` inside the
-//    component (see locales/{en,tr}/promptEditor.json → templates/sections/snippets). In tests,
-//    without the hook, it can be resolved the same way with `i18n.getFixedT(lng, 'promptEditor')`
+//    Component (see locales/{en,tr}/promptEditor.json → templates/sections/snippets). In tests,
+//    Without the hook, it can be resolved the same way with `i18n.getFixedT(lng, 'promptEditor')`
 //    (see test/prompt-editor.test.ts).
 
 export interface PromptTemplate { label: string; body: string }
@@ -46,7 +46,7 @@ export function buildPromptSections(t: TFunction): string[] {
 }
 
 // Each snippet group belongs to one SECTION (sectionKey) → when added, it's placed under that
-// section. This way "+ Section" and "+ Rule" stay in sync (same taxonomy, rules collect under the right heading).
+// Section. This way "+ Section" and "+ Rule" stay in sync (same taxonomy, rules collect under the right heading).
 export interface SnippetGroup { section: string; items: string[] }
 
 const SNIPPET_GROUP_KEYS = ['rules', 'toolUsage', 'outputFormat', 'constraints', 'tone'] as const;
@@ -121,9 +121,9 @@ export function PromptEditor({ value, onChange, id }: { value: string; onChange:
   });
 
   // Undo for "clear": the textarea is CONTROLLED, so a programmatic onChange('') never lands in the
-  // browser's native undo stack (Ctrl+Z does nothing) — this state stands in for that. Holds the text
-  // that was just wiped; the toolbar swaps the "clear" button for "undo" while it's non-null and the
-  // value is still empty (see the render condition below — typing new text naturally clears it too).
+  // Browser's native undo stack (Ctrl+Z does nothing) — this state stands in for that. Holds the text
+  // That was just wiped; the toolbar swaps the "clear" button for "undo" while it's non-null and the
+  // Value is still empty (see the render condition below — typing new text naturally clears it too).
   const [lastCleared, setLastCleared] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -137,7 +137,7 @@ export function PromptEditor({ value, onChange, id }: { value: string; onChange:
     undoTimerRef.current = setTimeout(() => { setLastCleared(null); undoTimerRef.current = null; }, UNDO_WINDOW_MS);
   };
   // Long prompts confirm first (destructive + irreversible-looking action next to constructive
-  // buttons); short drafts clear immediately but still get the undo window.
+  // Buttons); short drafts clear immediately but still get the undo window.
   const requestClear = () => {
     if (value.length > CLEAR_CONFIRM_THRESHOLD) setConfirmOpen(true);
     else performClear();

@@ -1,5 +1,5 @@
 // Command registry contract. Every `gnl <name>` subcommand is one module exporting an object shaped
-// like this — cli.ts only dispatches + prints global help/version, it doesn't know command internals.
+// Like this — cli.ts only dispatches + prints global help/version, it doesn't know command internals.
 export type CommandGroup = 'project' | 'inspect' | 'operate';
 
 export interface CommandCtx {

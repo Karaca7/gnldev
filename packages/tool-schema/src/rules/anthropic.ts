@@ -3,7 +3,7 @@ import { walk, stripStringFormats } from './util.js';
 
 /**
  * Anthropic (Claude) is lenient with tool schemas; a minimal touch is enough:
- * unsupported string `format`/`pattern` → moved into the description, `$schema` is stripped.
+ * Unsupported string `format`/`pattern` → moved into the description, `$schema` is stripped.
  */
 export const anthropic: ToolSchemaRule = {
   name: 'anthropic',

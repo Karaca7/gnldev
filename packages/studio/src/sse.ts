@@ -1,10 +1,10 @@
 // Pumps a streamDurable result (AI SDK StreamTextResult) into SSE — the SAME schema as @gnldev/server,
-// so @gnldev/client can connect to both the REST server and the studio playground.
+// So @gnldev/client can connect to both the REST server and the studio playground.
 // Schema: text-delta {text} · tool-call {toolCallId,toolName,input} · tool-result {...} · error {error}
-//         reasoning-start/delta/end · tool-input-start/delta/end · source · file · step-start/finish
-//         tool-error (non-terminal) · raw {type} (unknown-part marker) — P0.1, kept IN SYNC with
-//         packages/server/src/sse.ts (see its header for the per-event rationale)
-//         interrupt {interrupts[]} (once the stream ends) · done {runId,finishReason,usage}
+//         Reasoning-start/delta/end · tool-input-start/delta/end · source · file · step-start/finish
+//         Tool-error (non-terminal) · raw {type} (unknown-part marker) — P0.1, kept IN SYNC with
+//         Packages/server/src/sse.ts (see its header for the per-event rationale)
+//         Interrupt {interrupts[]} (once the stream ends) · done {runId,finishReason,usage}
 import { streamSSE } from 'hono/streaming';
 import type { Context } from 'hono';
 import type { Interrupt } from '@gnldev/durable';
@@ -13,27 +13,27 @@ import type { Interrupt } from '@gnldev/durable';
  * `streamSSE` plus the two headers a live stream needs to survive the trip to the browser.
  *
  * Hono sets `Cache-Control: no-cache`, which says "don't serve this from cache" and says nothing
- * about re-encoding. So a compression middleware in the host's chain happily takes the stream and
- * buffers it: measured on a real Express app, `compression()` turned 13 progressive chunks with the
- * first at 750ms into ONE chunk delivered at the end. Status 200, no error, no live screen —
- * the failure is invisible from both sides. `no-transform` is the standard way to say don't, and
+ * About re-encoding. So a compression middleware in the host's chain happily takes the stream and
+ * Buffers it: measured on a real Express app, `compression()` turned 13 progressive chunks with the
+ * First at 750ms into ONE chunk delivered at the end. Status 200, no error, no live screen —
+ * The failure is invisible from both sides. `no-transform` is the standard way to say don't, and
  * `compression` honours it (measured: first byte 1520ms → 302ms with the flag on).
  *
  * `X-Accel-Buffering: no` is the nginx-specific half, and measurement narrowed where it matters to
- * one square of a 2x2 — behind a real nginx, same stream dripping five deltas 300ms apart:
+ * One square of a 2x2 — behind a real nginx, same stream dripping five deltas 300ms apart:
  *
- *   HTTP/1.1 + gzip, no header  → ONE chunk at 1511ms      (collapsed)
- *   HTTP/1.1 + gzip, header     → 306, 606, 911, 1211, 1511
- *   HTTP/2   + gzip, no header  → 316, 616, 916, 1217, 1518 (fine without it)
- *   HTTP/2   + gzip, header     → 312, 612, 913, 1214, 1514
+ * HTTP/1.1 + gzip, no header  → ONE chunk at 1511ms      (collapsed)
+ * HTTP/1.1 + gzip, header     → 306, 606, 911, 1211, 1511
+ * HTTP/2   + gzip, no header  → 316, 616, 916, 1217, 1518 (fine without it)
+ * HTTP/2   + gzip, header     → 312, 612, 913, 1214, 1514
  *
  * So it is load-bearing exactly when the CLIENT speaks HTTP/1.1 to a proxy that gzips, and inert
- * everywhere else — including HTTP/2, which is what a browser usually gets over TLS. That leaves
- * plenty of real traffic in the square that breaks: internal clients on plain HTTP, curl's default,
- * anything not a modern browser. Worth a header; not worth believing it covers more than it does.
+ * Everywhere else — including HTTP/2, which is what a browser usually gets over TLS. That leaves
+ * Plenty of real traffic in the square that breaks: internal clients on plain HTTP, curl's default,
+ * Anything not a modern browser. Worth a header; not worth believing it covers more than it does.
  *
  * Set AFTER `streamSSE` on purpose: it writes `Cache-Control` itself, so anything set on the context
- * beforehand is overwritten. Patching the returned Response is what actually survives.
+ * Beforehand is overwritten. Patching the returned Response is what actually survives.
  *
  * Kept IN SYNC with packages/server/src/sse.ts.
  */

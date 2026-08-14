@@ -1,6 +1,6 @@
-// gnl rm <runId> [--yes] — permanently delete one run (purgeRun): the run's journal trace, its
-// sub-agent/network children (cascade), and its memory marker. Never runs without confirmation:
-// --yes skips the prompt; otherwise, in a TTY, a y/N prompt is shown; non-interactively it refuses.
+// Gnl rm <runId> [--yes] — permanently delete one run (purgeRun): the run's journal trace, its
+// Sub-agent/network children (cascade), and its memory marker. Never runs without confirmation:
+// -yes skips the prompt; otherwise, in a TTY, a y/N prompt is shown; non-interactively it refuses.
 import type * as Durable from '@gnldev/durable';
 import type { Command } from './types.js';
 import { flag, flagBool, positional } from '../args.js';
@@ -42,7 +42,7 @@ export const rmCommand: Command = {
     const configPath = flag(ctx.argv, 'config') ?? 'gnl.config.ts';
 
     // Confirmation gate BEFORE loadConfig: a destructive command should refuse/prompt without first
-    // requiring a valid storage config to even be reachable.
+    // Requiring a valid storage config to even be reachable.
     if (!yes) {
       if (process.stdin.isTTY && process.stdout.isTTY) {
         const ok = await confirmInteractively(runId);

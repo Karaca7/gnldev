@@ -1,7 +1,7 @@
 // @gnldev/scheduler — durable workflow scheduler on top of @gnldev/durable.
 // Keeps triggers in the journal (definition immutable, state mutable). The poll loop (now=Date.now())
-// fires due triggers exactly-once (acquireRunLock + per-fireCount runId). The workflow run carries its
-// own durable guarantee. Time = DATA (nextRunAt in the journal) → resolve-then-freeze, replay-safe.
+// Fires due triggers exactly-once (acquireRunLock + per-fireCount runId). The workflow run carries its
+// Own durable guarantee. Time = DATA (nextRunAt in the journal) → resolve-then-freeze, replay-safe.
 import { acquireRunLock, createPollLoop } from '@gnldev/durable';
 import type { Journal } from '@gnldev/durable';
 import { nextCronTime } from './cron.js';
@@ -68,10 +68,10 @@ const BUDGET_SKIP = (id: string) => `sched:budget-skip:${id}`;
  * CALLED). Throws on overage (typically `@gnldev/durable`'s `assertBudget` — `BudgetExceededError`);
  * `pollScheduler` does NOT RUN this trigger (skip + records/logs to `sched:budget-skip:<id>`,
  * `out.skipped` increments), state is DEFERRED to retry after `retryMs` but `attempts` DOES NOT
- * increase (a budget overage isn't the workflow's fault → doesn't count toward maxAttempts, `status`
- * stays 'pending'). IF NOT GIVEN (default) behavior is UNCHANGED — no quota check (backward compat).
+ * Increase (a budget overage isn't the workflow's fault → doesn't count toward maxAttempts, `status`
+ * Stays 'pending'). IF NOT GIVEN (default) behavior is UNCHANGED — no quota check (backward compat).
  * Typical host usage:
- *   budgetGuard: () => assertBudget(journal, { orgId, fallback })
+ *   BudgetGuard: () => assertBudget(journal, { orgId, fallback })
  * Kept simple: the scheduler does NOT EMBED quota logic itself, the host injects it (same pattern as limits/guard).
  */
 export type BudgetGuard = (ctx: { triggerId: string; workflowName: string; input: unknown; now: number }) => Promise<unknown> | unknown;
@@ -85,8 +85,8 @@ function firstRunAt(spec: ScheduleSpec, now: number): number {
 /**
  * Computes the next fire time. `prevSlot` = the PLANNED slot that just fired (state.nextRunAt) —
  * NOT `now` (poll time). This aligns the 'every' calculation to the planned grid rather than the actual
- * elapsed time → poll delay doesn't accumulate drift (part b). Missed occurrences are skipped or caught
- * up in sequence depending on policy (part a).
+ * Elapsed time → poll delay doesn't accumulate drift (part b). Missed occurrences are skipped or caught
+ * Up in sequence depending on policy (part a).
  */
 function computeNext(def: TriggerDef, prevSlot: number, now: number): number {
   if (def.kind === 'every') {
@@ -95,10 +95,10 @@ function computeNext(def: TriggerDef, prevSlot: number, now: number): number {
     const missed = Math.floor((now - prevSlot) / interval); // number of fully missed intervals (0 = on time)
     return prevSlot + interval * (missed + 1); // aligned to the planned grid, the first slot right after now
   }
-  // cron: nextCronTime already works off the absolute time grid (no drift). The policy difference is
-  // where the scan starts from: 'catchup' starts from the last planned slot (finds the next missed one,
-  // may be due immediately), 'skip' starts from the current time (skips everything missed, jumps to the
-  // next future match).
+  // Cron: nextCronTime already works off the absolute time grid (no drift). The policy difference is
+  // Where the scan starts from: 'catchup' starts from the last planned slot (finds the next missed one,
+  // May be due immediately), 'skip' starts from the current time (skips everything missed, jumps to the
+  // Next future match).
   return def.misfire === 'catchup' ? nextCronTime(def.value as string, prevSlot) : nextCronTime(def.value as string, now);
 }
 function backoff(attempts: number): number {
@@ -136,7 +136,7 @@ export interface PollResult {
 
 /**
  * Fires triggers that are due ('pending' && now≥nextRunAt). Double-firing is prevented via the run-lock;
- * the real exactly-once guarantee comes from the durable workflow run (per-fireCount runId).
+ * The real exactly-once guarantee comes from the durable workflow run (per-fireCount runId).
  */
 export async function pollScheduler(
   journal: Journal,
@@ -188,7 +188,7 @@ export async function pollScheduler(
       }
 
       if (result.suspended) {
-        // workflow suspended → the same runId should be resumed later (fireCount unchanged).
+        // Workflow suspended → the same runId should be resumed later (fireCount unchanged).
         await journal.put(STATE(id), { ...state, nextRunAt: now + retryMs });
         out.rescheduled++;
       } else if (def.kind === 'at') {
@@ -233,8 +233,8 @@ export interface TriggerInfo {
 /**
  * READ-ONLY trigger listing from the journal, WITHOUT needing a scheduler INSTANCE or a runner (for
  * Studio introspection). Reads the SAME `sched:def:`/`sched:state:` keys (+ `sched:fail:` for 'failed')
- * as `pollScheduler`; does NOT change any state, does not take a lock, does not run a workflow. Returns
- * results sorted alphabetically by id (stable list order).
+ * As `pollScheduler`; does NOT change any state, does not take a lock, does not run a workflow. Returns
+ * Results sorted alphabetically by id (stable list order).
  */
 export async function listTriggers(journal: Journal): Promise<TriggerInfo[]> {
   if (!journal.listKeys) throw new Error('@gnldev/scheduler: listTriggers requires journal.listKeys (trigger enumeration)');
@@ -279,12 +279,12 @@ export interface Scheduler {
 /**
  * Scheduler that manages the poll loop (a self-rescheduling setTimeout chain) — the same pattern as
  * @gnldev/queue's createWorker. `backoff` (default OFF — timing is the scheduler's core contract, see the
- * trade-off below): IF ENABLED, when a poll fires NO triggers at all (`fired === 0`) the next poll
- * interval grows ×2 (cap: `maxPollMs ?? pollMs*32`) → prevents tens of thousands of empty queries per
- * second (poll storm) on an empty schedule table; the interval resets to `pollMs` once a trigger fires.
+ * Trade-off below): IF ENABLED, when a poll fires NO triggers at all (`fired === 0`) the next poll
+ * Interval grows ×2 (cap: `maxPollMs ?? pollMs*32`) → prevents tens of thousands of empty queries per
+ * Second (poll storm) on an empty schedule table; the interval resets to `pollMs` once a trigger fires.
  * Trade-off: `backoff: true` cuts idle poll load by ~32x but can delay a trigger that becomes due after
- * a quiet period by up to `maxPollMs` — for timing-critical use (e.g. minute-level cron) the default
- * should stay OFF; only enable it for deployments with many idle-poller instances that can tolerate delay.
+ * A quiet period by up to `maxPollMs` — for timing-critical use (e.g. minute-level cron) the default
+ * Should stay OFF; only enable it for deployments with many idle-poller instances that can tolerate delay.
  */
 export function createScheduler(
   journal: Journal,
@@ -299,10 +299,10 @@ export function createScheduler(
 
   // Phase 8.1: the tick/backoff/"polling" flag loop now lives in @gnldev/durable's shared createPollLoop
   // (it used to be triplicated across queue/events/scheduler) — behavior is identical: pollScheduler only
-  // catches runWorkflow errors internally; the rest (journal I/O etc.) are logged and swallowed by
-  // createPollLoop (the chain doesn't die). While `fired === 0` and backoffOn, the interval grows ×2
+  // Catches runWorkflow errors internally; the rest (journal I/O etc.) are logged and swallowed by
+  // CreatePollLoop (the chain doesn't die). While `fired === 0` and backoffOn, the interval grows ×2
   // (cap maxPollMs); it resets to pollMs once something fires. Default backoff is OFF (see the comment
-  // above — timing-critical).
+  // Above — timing-critical).
   const loop = createPollLoop(async () => (await poll()).fired > 0, { pollMs, backoff: backoffOn, maxPollMs });
 
   return {

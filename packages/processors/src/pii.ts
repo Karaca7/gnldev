@@ -11,7 +11,7 @@ export interface PiiRedactorOptions {
   on?: 'input' | 'output' | 'both';
   /**
    * Also redact the tool execute result (processToolResult hook) — default: false.
-   * known limitation: tool output (external API/DB/file result) was being written to the journal as
+   * Known limitation: tool output (external API/DB/file result) was being written to the journal as
    * PLAIN TEXT; it may contain PII. Left as opt-in so existing piiRedactor users' behavior does NOT
    * CHANGE — this option only masks tool output when explicitly set to `true`.
    */
@@ -22,10 +22,10 @@ const DEFAULT_TYPES: PiiType[] = ['email', 'phone', 'creditCard', 'ssn', 'ip'];
 
 /**
  * For the audit report (`recordProcessorReport`): follows the SAME order/regexes as `redactString`
- * to count how many matches were masked — does not change the transformation ITSELF (redactString/
- * redactMessages remain the single source of truth), it only derives "how many + which type" info.
+ * To count how many matches were masked — does not change the transformation ITSELF (redactString/
+ * RedactMessages remain the single source of truth), it only derives "how many + which type" info.
  * Order MATTERS: after a type is masked, the text is updated so later (broader) patterns don't
- * re-count the already-masked portion (same behavior as `redactString` itself).
+ * Re-count the already-masked portion (same behavior as `redactString` itself).
  */
 function countRedactions(text: string, types: PiiType[], mask: (t: PiiType) => string): { total: number; types: PiiType[] } {
   let out = text;
@@ -44,7 +44,7 @@ function countRedactions(text: string, types: PiiType[], mask: (t: PiiType) => s
 }
 
 /** Aggregates redactions across ALL text fields of a ProcessorInput/ProcessorOutput (system/prompt/messages
- *  are counted separately — same granularity as redactMessages, which redacts each message/part INDEPENDENTLY). */
+ *  Are counted separately — same granularity as redactMessages, which redacts each message/part INDEPENDENTLY). */
 function countInputRedactions(
   fields: { system?: unknown; prompt?: unknown; messages?: any[] },
   types: PiiType[],
@@ -66,16 +66,16 @@ function countInputRedactions(
 
 /**
  * PII redaction processor — pure regex (email/phone/credit-card/ssn/ip). Deterministic, so no
- * journaling is needed: produces the same masking on resume. The input side runs BEFORE persistInput
+ * Journaling is needed: produces the same masking on resume. The input side runs BEFORE persistInput
  * → masked content is written to the journal, the model NEVER sees raw PII.
  *
  * HONEST WARNING (naive regex matching): These regexes are best-effort, they do NOT provide an
  * AUDIT/COMPLIANCE-grade (GDPR/HIPAA/PCI-DSS etc.) PII DETECTION GUARANTEE. Known limits: only
- * matches specific formats (e.g. US/generic-format phone numbers, plain 16-digit card numbers) —
- * international/local formats, unstructured PII like name/address, or unusual formatting (line
- * breaks, different separators) can slip through; it can also produce false positives (e.g. a
- * random 16-digit number). Use it as a noise-reduction / first-line-of-defense layer, not as a real
- * compliance/security boundary.
+ * Matches specific formats (e.g. US/generic-format phone numbers, plain 16-digit card numbers) —
+ * International/local formats, unstructured PII like name/address, or unusual formatting (line
+ * Breaks, different separators) can slip through; it can also produce false positives (e.g. a
+ * Random 16-digit number). Use it as a noise-reduction / first-line-of-defense layer, not as a real
+ * Compliance/security boundary.
  */
 export function piiRedactor(opts: PiiRedactorOptions = {}): Processor {
   const types = opts.types ?? DEFAULT_TYPES;
@@ -86,8 +86,8 @@ export function piiRedactor(opts: PiiRedactorOptions = {}): Processor {
 
   if (on === 'input' || on === 'both') {
     // NOT async (behavior must stay the same — callers may call processInput synchronously and
-    // read the returned object directly). The audit report (recordProcessorReport) is BEST-EFFORT +
-    // fire-and-forget: it does NOT CHANGE the transform/synchronous-return contract, it's only an
+    // Read the returned object directly). The audit report (recordProcessorReport) is BEST-EFFORT +
+    // Fire-and-forget: it does NOT CHANGE the transform/synchronous-return contract, it's only an
     // EXTRA record.
     proc.processInput = (input: ProcessorInput, ctx: ProcessorCtx) => {
       const out: ProcessorInput = {
@@ -117,14 +117,14 @@ export function piiRedactor(opts: PiiRedactorOptions = {}): Processor {
   }
 
   // AUDIT TASK: opt-in hook so tool output doesn't write plain PII to the journal. String output is
-  // redacted directly; object output is redacted via the JSON.stringify → redact → JSON.parse chain —
-  // if stringify/parse fails (circular structure or JSON broken by redaction), the original output is
+  // Redacted directly; object output is redacted via the JSON.stringify → redact → JSON.parse chain —
+  // If stringify/parse fails (circular structure or JSON broken by redaction), the original output is
   // NOT TOUCHED (same "deterministic, pure transform only" principle as processInput/processOutput;
-  // the raw value still gets written to the journal, but at least the framework doesn't silently
-  // corrupt data).
+  // The raw value still gets written to the journal, but at least the framework doesn't silently
+  // Corrupt data).
   if (opts.redactToolResults) {
-    // durable-tool.ts ALWAYS awaits THIS HOOK (`await proc.processToolResult(...)`) →
-    // making it async doesn't break the existing contract (existing tests already await it too).
+    // Durable-tool.ts ALWAYS awaits THIS HOOK (`await proc.processToolResult(...)`) →
+    // Making it async doesn't break the existing contract (existing tests already await it too).
     proc.processToolResult = async (res: ProcessorToolResult, ctx: ProcessorCtx) => {
       const { output } = res;
       const report = (r: { total: number; types: PiiType[] }) => {

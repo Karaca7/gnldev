@@ -1,5 +1,5 @@
 // GFM markdown + syntax highlight: react-markdown (does NOT render HTML → XSS-safe) +
-// remark-gfm (tables/strikethrough/task lists) + rehype-highlight (hljs classes).
+// Remark-gfm (tables/strikethrough/task lists) + rehype-highlight (hljs classes).
 // Visual language: Local Influence — code is JetBrains Mono, tables use the card surface, links use brand.
 import { isValidElement, useState, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
@@ -14,7 +14,7 @@ import './markdown.css';
 function Pre({ children }: { children?: ReactNode }) {
   const { t } = useTranslation('common');
   // Bug-investigation fix #7: 'idle'/'done'/'error' — doesn't unconditionally show "success"
-  // without waiting for the clipboard-write RESULT (inside .then()); failure becomes visible in .catch().
+  // Without waiting for the clipboard-write RESULT (inside .then()); failure becomes visible in .catch().
   const [state, setState] = useState<'idle' | 'done' | 'error'>('idle');
   // <pre><code class="hljs language-ts">…</code></pre> — extract the language tag from the class.
   const codeEl = isValidElement(children) ? (children as any) : null;
@@ -58,7 +58,7 @@ function extractText(node: ReactNode): string {
 
 /**
  * Chat/markdown body. HTML input is not rendered (react-markdown's default) — raw HTML in the
- * model's output stays as harmless text. Links open in a new tab, http(s)/mailto only.
+ * Model's output stays as harmless text. Links open in a new tab, http(s)/mailto only.
  */
 export function Markdown({ text }: { text: string }) {
   return (

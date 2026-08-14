@@ -1,6 +1,6 @@
 // Data-driven guard: policy rules live in the journal (editable from Studio),
-// policyGuard reads them LIVE on every call and turns them into a Guard decision → a rule change
-// doesn't require a deploy. Since the document is small, simplicity without caching was preferred.
+// PolicyGuard reads them LIVE on every call and turns them into a Guard decision → a rule change
+// Doesn't require a deploy. Since the document is small, simplicity without caching was preferred.
 import type { Journal } from './journal.js';
 import type { Guard, GuardDecision } from './guard.js';
 
@@ -37,7 +37,7 @@ export function evaluatePolicy(
 /**
  * A Guard that applies the policy document from the journal. If there's no rule, `fallback` (default
  * 'allow') applies — i.e. behavior is unchanged while policyGuard is wired in but the document is
- * empty; rules take effect immediately (on the next tool call) as they're added from Studio.
+ * Empty; rules take effect immediately (on the next tool call) as they're added from Studio.
  */
 export function policyGuard(journal: Journal, opts: { key?: string; fallback?: GuardDecision['action'] } = {}): Guard {
   const key = opts.key ?? POLICY_KEY;

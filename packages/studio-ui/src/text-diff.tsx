@@ -11,7 +11,7 @@ const DP_CELL_LIMIT = 200_000;
 /**
  * Line-based diff: returns the `a` → `b` transformation as same/del/add ops.
  * The common prefix/suffix is trimmed first (a typical model-output diff spans a few lines),
- * the remaining core is aligned via LCS. Deterministic; on ties, deletion comes first.
+ * The remaining core is aligned via LCS. Deterministic; on ties, deletion comes first.
  */
 export function diffLines(a: string, b: string): DiffOp[] {
   const la = a.split('\n');

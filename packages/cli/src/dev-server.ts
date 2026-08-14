@@ -1,7 +1,7 @@
-// gnl dev server: REST API (@gnldev/server) + Studio Playground (@gnldev/studio) on a single port.
+// Gnl dev server: REST API (@gnldev/server) + Studio Playground (@gnldev/studio) on a single port.
 // All runtime packages (hono, @gnldev/server, @gnldev/durable, @gnldev/studio, @gnldev/auth, @gnldev/memory) are
-// resolved from the TARGET PROJECT (see runtime.ts) — this module itself only has `import type`s of
-// them (erased at compile time), so loading @gnldev/cli's own dist does not pull any runtime in.
+// Resolved from the TARGET PROJECT (see runtime.ts) — this module itself only has `import type`s of
+// Them (erased at compile time), so loading @gnldev/cli's own dist does not pull any runtime in.
 import type * as HonoNs from 'hono';
 import type * as Server from '@gnldev/server';
 import type * as Durable from '@gnldev/durable';
@@ -15,7 +15,7 @@ import type { GnlDevConfig } from './config.js';
 import { loadAuth, loadDurable, loadHono, loadMemory, loadNodeServer, loadServer, loadStudio, loadStudioAi } from './runtime.js';
 
 /** Runtime modules a dev app needs — all resolved from the project (see runtime.ts). `memory` is only
- *  loaded when `config.storage` is present (it's an optional feature). */
+ *  Loaded when `config.storage` is present (it's an optional feature). */
 export interface DevRuntimeModules {
   hono: typeof HonoNs;
   server: typeof Server;
@@ -58,8 +58,8 @@ function freeAuth(config: GnlDevConfig, auth: typeof Auth): AuthProvider | undef
 
 /**
  * Premium provider if EE is installed + a license is present; free otherwise. Dynamic import (resolved
- * from the SAME project as everything else — see runtime.ts) → in a free install, if @gnldev/auth-ee is
- * missing it silently falls back to free behavior (try/catch).
+ * From the SAME project as everything else — see runtime.ts) → in a free install, if @gnldev/auth-ee is
+ * Missing it silently falls back to free behavior (try/catch).
  */
 export async function resolveAuthProvider(config: GnlDevConfig, auth: typeof Auth, projectDir: string): Promise<AuthProvider | undefined> {
   const free = freeAuth(config, auth);
@@ -74,7 +74,7 @@ export async function resolveAuthProvider(config: GnlDevConfig, auth: typeof Aut
       if (config.licenseStrict) throw new Error('gnl: license key present but @gnldev/auth-ee is not installed (licenseStrict)');
     }
     if (ee) {
-      // failClosed throws on an invalid license → in strict paid deployments there's no silent boot without premium.
+      // FailClosed throws on an invalid license → in strict paid deployments there's no silent boot without premium.
       return ee.createEnterpriseAuth({
         licenseKey: license,
         fallback: free,
@@ -94,8 +94,8 @@ export function buildDevApp(config: GnlDevConfig, rt: DevRuntimeModules, auth?: 
   const provider = auth ?? freeAuth(config, rt.auth);
   const app = new rt.hono.Hono();
   // `.mount()` (unlike the old `.route()` with a Hono sub-app) registers one blanket wildcard route per
-  // call — a `/` mount would swallow every path, including `/studio/*`, if registered first. So the more
-  // specific `/studio` mount MUST be added before the catch-all `/` REST mount.
+  // Call — a `/` mount would swallow every path, including `/studio/*`, if registered first. So the more
+  // Specific `/studio` mount MUST be added before the catch-all `/` REST mount.
   if (config.studio !== false) {
     const storage = config.storage;
     if (storage && !rt.memory) throw new Error('gnl: config.storage is set but no @gnldev/memory module was loaded (loadDevRuntime bug)');

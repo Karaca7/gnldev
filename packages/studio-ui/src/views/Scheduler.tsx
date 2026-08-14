@@ -4,19 +4,19 @@ import { Clock } from 'lucide-react';
 import { useCapabilities, useSchedulerTriggers, type SchedulerTrigger } from '../api';
 import { Spinner, EmptyState, ErrorBox, Badge, StatStrip, PageHeader } from '../components';
 import { Stagger, StaggerItem } from '../motion';
-// i18n init side effect: so useTranslation still works if this view is rendered directly
+// I18n init side effect: so useTranslation still works if this view is rendered directly
 // (without App) (see src/i18n/index.ts) — main.tsx already does this, this re-guarantees it here.
 import '../i18n';
 import enScheduler from '../i18n/locales/en/scheduler.json';
 
 // ── Pure logic (tested) — the server already returns the raw trigger state (kind/value/nextRunAt
-// epoch ms); here only the PRESENTATION (readable duration/date/tone) is derived. See
-// packages/scheduler/src/index.ts `listTriggers` for the @gnldev/scheduler `TriggerInfo` shape. ──────
+// Epoch ms); here only the PRESENTATION (readable duration/date/tone) is derived. See
+// Packages/scheduler/src/index.ts `listTriggers` for the @gnldev/scheduler `TriggerInfo` shape. ──────
 //
 // These pure functions can also be called directly outside the component (from a test file); so
-// they're not hard-dependent on the i18next context — `t` is optional, and if not given, a fallback
-// that reads from en/scheduler.json (ENGLISH default) is used. The real view (the Scheduler
-// component) passes its own `useTranslation('scheduler')` t, so it produces correct output for the active language (tr/en).
+// They're not hard-dependent on the i18next context — `t` is optional, and if not given, a fallback
+// That reads from en/scheduler.json (ENGLISH default) is used. The real view (the Scheduler
+// Component) passes its own `useTranslation('scheduler')` t, so it produces correct output for the active language (tr/en).
 type Tx = (key: string, opts?: Record<string, unknown>) => string;
 function interpolate(s: string, vars?: Record<string, unknown>): string {
   return vars ? s.replace(/\{\{(\w+)\}\}/g, (_, k: string) => String(vars[k] ?? '')) : s;
@@ -53,7 +53,7 @@ export function relativeToNow(nextRunAt: number, now: number = Date.now(), t: Tx
 }
 
 /** Status badge tone: failed→destructive, done→success, pending+overdue→warning (so the delay is
- *  visible), pending+on-time→muted. */
+ *  Visible), pending+on-time→muted. */
 export function statusTone(
   trigger: Pick<SchedulerTrigger, 'status' | 'nextRunAt'>,
   now: number = Date.now(),
@@ -73,9 +73,9 @@ export function Scheduler() {
   if (caps.isLoading || triggers.isLoading) return <Spinner />;
   if (caps.error) return <ErrorBox error={caps.error} />;
   // Whole canvas is empty here (the host has the feature turned off), not a note inside a
-  // populated view — EmptyState is the right primitive per components.tsx's own rule (Empty is
-  // for inline notes inside an otherwise-full view). A configuration state, not an error: the
-  // copy stays calm/informative, matching Playground's disabled-capability wording.
+  // Populated view — EmptyState is the right primitive per components.tsx's own rule (Empty is
+  // For inline notes inside an otherwise-full view). A configuration state, not an error: the
+  // Copy stays calm/informative, matching Playground's disabled-capability wording.
   if (!caps.data?.scheduler) return <EmptyState icon={Clock} title={t('disabledTitle')} description={t('disabledDescription')} />;
   if (triggers.error) return <ErrorBox error={triggers.error} />;
   if (!triggers.data?.length) return <EmptyState icon={Clock} title={t('emptyTitle')} description={t('emptyDescription')} />;

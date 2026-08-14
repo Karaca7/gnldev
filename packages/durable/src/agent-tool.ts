@@ -8,11 +8,11 @@ import type { ModelInput, ToolSet } from './types.js';
 import type { RunLimits } from './limits.js';
 
 /**
- * AUDIT A4 — carry taint across the sub-agent runId boundary. Taint is keyed per-run, so a nested run
+ * carry taint across the sub-agent runId boundary. Taint is keyed per-run, so a nested run
  * (`agent:${toolCallId}`) starts CLEAN even when its parent is tainted — a side effect inside the
- * sub-agent would then bypass the parent's `taintedSideEffects` ladder. If the parent is tainted at the
- * moment it spawns the sub-agent, mark the nested run tainted BEFORE it executes any tools, preserving
- * the ORIGINAL provenance and noting it was inherited. Only-stricter / fail-safe: an un-tainted parent
+ * Sub-agent would then bypass the parent's `taintedSideEffects` ladder. If the parent is tainted at the
+ * Moment it spawns the sub-agent, mark the nested run tainted BEFORE it executes any tools, preserving
+ * The ORIGINAL provenance and noting it was inherited. Only-stricter / fail-safe: an un-tainted parent
  * (or an unknown parentRunId) changes nothing. First-wins/idempotent, so a resume re-marks harmlessly.
  */
 async function inheritParentTaint(journal: Journal, parentRunId: string | undefined, nestedRunId: string): Promise<void> {
@@ -37,19 +37,19 @@ export interface AgentToolConfig {
   maxSteps?: number;
   /**
    * TASK W1 fan-out inheritance: the parent's `limits` is passed to the sub-agent AS-IS → the sub-agent
-   * independently bounds its own execution against this same ceiling too (prevents a single sub-agent
-   * from spending without limit on its own). Also, the parent's OWN limit check (`limits.ts`
+   * Independently bounds its own execution against this same ceiling too (prevents a single sub-agent
+   * From spending without limit on its own). Also, the parent's OWN limit check (`limits.ts`
    * `scopedUsage`) RECURSIVELY sums this sub-agent's (nested `runId = agent:${toolCallId}`) usage in the
-   * journal too → the total (parent + all sub-agents) can NEVER bypass the parent's ceiling.
+   * Journal too → the total (parent + all sub-agents) can NEVER bypass the parent's ceiling.
    */
   limits?: RunLimits;
   /** require-approval decisions (passed to the nested run) — approvals flow from here during a network resume. */
   approvals?: Record<string, boolean>;
   /**
-   * AUDIT A4: the runId of the parent that spawned this sub-agent. When the parent is tainted, its taint
-   * is carried into the nested run so the sub-agent's side effects go through the SAME `taintedSideEffects`
-   * ladder. The agent-as-tool path (`createAgentTool`) reads this per-call from `options.parentRunId`; the
-   * network path (`runNetwork` → `runSubAgent`) passes the router's runId here.
+   * The runId of the parent that spawned this sub-agent. When the parent is tainted, its taint
+   * Is carried into the nested run so the sub-agent's side effects go through the SAME `taintedSideEffects`
+   * Ladder. The agent-as-tool path (`createAgentTool`) reads this per-call from `options.parentRunId`; the
+   * Network path (`runNetwork` → `runSubAgent`) passes the router's runId here.
    */
   parentRunId?: string;
 }
@@ -65,7 +65,7 @@ export async function runSubAgent(
   nestedRunId: string,
 ): Promise<{ text: string; interrupts: Interrupt[] }> {
   const model = typeof config.model === 'function' ? await config.model(nestedRunId) : config.model;
-  // AUDIT A4: carry the parent's taint into the nested run BEFORE it executes any tools.
+  // Carry the parent's taint into the nested run BEFORE it executes any tools.
   await inheritParentTaint(config.journal, config.parentRunId, nestedRunId);
   const res = await runDurable({
     runId: nestedRunId,
@@ -92,15 +92,15 @@ export async function runSubAgent(
  */
 export function createAgentTool(config: AgentToolConfig, opts?: { description?: string }) {
   // H7: the nested run is ITSELF durable → a repeated call replays from its own journal, produces
-  // no side effect → idempotent (smooth resume without getting stuck at the crash-window gate).
+  // No side effect → idempotent (smooth resume without getting stuck at the crash-window gate).
   return Object.assign(tool({
     description: opts?.description ?? 'Delegate a task to an expert sub-agent',
     inputSchema: z.object({ task: z.string().describe('the task/question to give the sub-agent') }),
     execute: async ({ task }, options: any) => {
       const nestedRunId = `agent:${options?.toolCallId}`;
       const model = typeof config.model === 'function' ? await config.model(nestedRunId) : config.model;
-      // AUDIT A4: the parent runId is injected into the tool's execute options by durable-tool.ts. If the
-      // parent is tainted, carry that taint into the nested run before it runs any side-effect tool.
+      // The parent runId is injected into the tool's execute options by durable-tool.ts. If the
+      // Parent is tainted, carry that taint into the nested run before it runs any side-effect tool.
       await inheritParentTaint(config.journal, config.parentRunId ?? options?.parentRunId, nestedRunId);
       const res = await runDurable({
         runId: nestedRunId,

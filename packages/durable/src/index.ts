@@ -25,8 +25,8 @@ export { getRunCost, toTraceSpans } from './cost.js';
 export type { RunCost, RunCostOptions, TraceSpan } from './cost.js';
 export { DEFAULT_PRICING, priceFor, costOf, PRICING_KEY, readPricing, effectivePricingTable } from './pricing.js';
 // Exported for consumers that need the usage/modelId of ONE model step and their own pricing
-// decision on top — `getRunCost` prices an unknown model at 0, which is right for a total and wrong
-// for a report that has to distinguish "free" from "we have no price for this".
+// Decision on top — `getRunCost` prices an unknown model at 0, which is right for a total and wrong
+// For a report that has to distinguish "free" from "we have no price for this".
 export { usageAndCostFromModelValue } from './cost.js';
 export type { ModelPricing, PricingDoc } from './pricing.js';
 export {
@@ -66,7 +66,7 @@ export type { RedisLike, RedisStorageOptions } from './redis-storage.js';
 export type { Guard, GuardCall, GuardDecision, Interrupt, SuspendSentinel } from './guard.js';
 export { taintGuardian } from './guard.js';
 export { durableProcessorStep, createProcessorCtx, ProcessorTripwire, recordProcessorReport, readProcessorReports } from './processor.js';
-// D4-retry (AUDIT-R2 follow-up): turn-level retry-with-feedback ladder (see run.ts).
+// D4-retry turn-level retry-with-feedback ladder (see run.ts).
 export { ProcessorRetry, RetryExhaustedByProcessorError } from './processor.js';
 export { recordIncident, readIncidents } from './incidents.js';
 export { acquireLease, releaseLease, readLease } from './lease.js';
@@ -97,8 +97,8 @@ export {
   BoundedUsageCostCache, createBoundedUsageCache,
 } from './budget.js';
 export type { BudgetLimit, OrganizationUsage, BudgetCheck, UsageCostCache } from './budget.js';
-// P1.6 (AUDIT-R2): materialized metrics layer (incremental per-day/per-agent counters +
-// per-run fast-path row, riding incrBy/getCounters/putIfAbsent/deletePrefix) — see metrics.ts.
+// P1.6 materialized metrics layer (incremental per-day/per-agent counters +
+// Per-run fast-path row, riding incrBy/getCounters/putIfAbsent/deletePrefix) — see metrics.ts.
 export {
   recordRunMetrics, recordRunScores, backfillMetrics, rebuildMetrics, readMetricsSummary,
   metricsDayKey, metricsAgentDayKey, metricsRunKey, metricsDoneKey, metricsScoresDoneKey,
@@ -111,7 +111,7 @@ export { markRunTainted, readRunTaint, readThreadTaint, readTaintProvenance } fr
 export type { RunTaint, TaintProvenance } from './taint.js';
 export { compensateRun, assertNotCompensated, runCompensated, CompensatedRunError } from './compensation.js';
 export type { CompensationEntry, CompensationReport } from './compensation.js';
-// P2-cancel (AUDIT-R2 Dalga-2): durable cross-worker agent-run cancel — see cancel.ts.
+// P2-cancel durable cross-worker agent-run cancel — see cancel.ts.
 export { cancelAgentRun, agentRunCanceled, assertNotCanceled, RunCanceledError } from './cancel.js';
 // Agent approval registry — governance gate for code-defined agents (opt-in via server requireAgentApproval).
 export {
@@ -123,8 +123,8 @@ export type { RunLimits, RunLimitKind } from './limits.js';
 export { resolveModel, withModelFallback, registerModelProvider, knownModelProviders } from './model-router.js';
 export type { FallbackCandidate, ModelProviderFactory } from './model-router.js';
 // W2: Replay-based regression core (diffRuns/replayRun/regressionReport) — see regression.ts.
-// buildDecisionSequence: also re-exported for P1.1 (AUDIT-R2) — @gnldev/evals' trajectory
-// scorer builds a run's tool-call sequence from this same primitive.
+// BuildDecisionSequence: also re-exported for P1.1 — @gnldev/evals' trajectory
+// Scorer builds a run's tool-call sequence from this same primitive.
 export { diffRuns, replayRun, regressionReport, buildDecisionSequence } from './regression.js';
 export type {
   DecisionPoint, DiffDetail, DiffEntry, RunDiff,
@@ -133,7 +133,7 @@ export type {
 } from './regression.js';
 // Persistent storage: `@gnldev/durable/sqlite` (SqliteStorage) · `@gnldev/durable/postgres`
 // (PostgresStorage) · `@gnldev/durable/redis` (RedisStorage — runs/work/cache/meta; memory/vectors are
-// overridden via composite). For a bare durable run use `new SqliteStorage(path).runs` (RunJournal = journal).
-// P2-migrate (AUDIT-R2 §4): schema introspection/migration façade — see migrate.ts.
+// Overridden via composite). For a bare durable run use `new SqliteStorage(path).runs` (RunJournal = journal).
+// P2-migrate schema introspection/migration façade — see migrate.ts.
 export { runMigrationCheck, tablesFromDDL } from './migrate.js';
 export type { SchemaCheckResult, SchemaMigrationResult, MissingColumn, MigratableStorage, MigrationCheckResult } from './migrate.js';

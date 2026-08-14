@@ -1,5 +1,5 @@
 // Minimal zero-dependency ANSI color + table rendering (no chalk/ora - see packages/cli/package.json:
-// the CLI ships with zero NEW runtime dependencies, colors are hand-rolled escape codes).
+// The CLI ships with zero NEW runtime dependencies, colors are hand-rolled escape codes).
 
 const ESC = '\x1b';
 

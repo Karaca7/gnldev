@@ -1,12 +1,12 @@
 // Multimodal part rendering (S4): extracts safely displayable content from AI SDK message parts
-// persisted in the journal — image parts become inline <img>, other file parts become a chip.
+// Persisted in the journal — image parts become inline <img>, other file parts become a chip.
 // Security: only data:image/* and http(s) sources; any other scheme (javascript: etc.) is not rendered.
 import { FileText, ImageOff } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 /** Produce a safe <img> src from a part; null if it can't be displayed. */
 export function mediaSrc(p: any): string | null {
-  // image part: {type:'image', image: string} · file part: {type:'file', data: string, mediaType}
+  // Image part: {type:'image', image: string} · file part: {type:'file', data: string, mediaType}
   const raw = typeof p?.image === 'string' ? p.image : typeof p?.data === 'string' ? p.data : null;
   if (!raw) return null;
   if (/^data:image\//i.test(raw)) return raw;
@@ -44,7 +44,7 @@ export function MediaParts({ content }: { content: unknown }) {
             </span>
           );
         }
-        // non-image file part: a mediaType chip; a download link if it's a data: URL.
+        // Non-image file part: a mediaType chip; a download link if it's a data: URL.
         const data = typeof p?.data === 'string' && p.data.startsWith('data:') ? p.data : null;
         const label = p.filename ?? p.mediaType ?? t('file');
         return (

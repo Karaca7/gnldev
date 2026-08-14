@@ -1,5 +1,5 @@
 // OpenAPI spec (compact, hand-written) + Swagger UI HTML (CDN). createStudioApp/Admin serves /openapi.json + /swagger.
-// apiBase is known (the mount prefix) → spec.servers + the swagger url get the correct prefix (e.g. /studio/api).
+// ApiBase is known (the mount prefix) → spec.servers + the swagger url get the correct prefix (e.g. /studio/api).
 
 const P = (method: string, summary: string, params: any[] = [], body = false) => ({
   [method]: {
@@ -60,8 +60,8 @@ export function openapiSpec(apiBase = '') {
       '/users/{id}/revoke': P('post', "Revoke a user's token without deleting the user", idParam),
       '/auth/sse-ticket': P('post', 'Issue a single-use SSE ticket (60s TTL, for /events)'),
       // API-04: informative payload — event `change`, data `{"runIds":[...],"at":<epoch ms>}` naming
-      // the runs that changed (added/edited/removed) since the last event; a legacy plain `data:'runs'`
-      // is still sent when the journal has no cheap countRunsByStatus aggregate to diff against.
+      // The runs that changed (added/edited/removed) since the last event; a legacy plain `data:'runs'`
+      // Is still sent when the journal has no cheap countRunsByStatus aggregate to diff against.
       '/events': P('get', "SSE — event 'change', data {runIds,at} naming the runs that changed (legacy plain 'runs' payload as a fallback)", [q('ticket')]),
       '/policy': { ...P('get', 'Get the global tool policy'), ...P('put', "Update the global tool policy ({ rules, ifVersion? }); 409 version_conflict if ifVersion is stale", [], true) },
       '/chat': P('post', 'Live chat (admin)', [], true),
@@ -81,7 +81,7 @@ export function openapiSpec(apiBase = '') {
       '/workflows/{name}/runs': P('get', 'Workflow run history', [...nameParam, q('limit', 'integer')]),
       // D3-A: cross-workflow run registry; items may carry an optional workflowName (mirrored from the wfrun: record).
       // API-03: `limit`/`cursor` opt into a bounded, paged `{items,nextCursor}` response; omitted → the
-      // legacy flat array (backward-compatible for older callers).
+      // Legacy flat array (backward-compatible for older callers).
       '/workflows/runs': P('get', 'Cross-workflow run registry (suspended/completed/canceled); items may include workflowName; paginated with ?limit (flat array when omitted)', [q('status'), q('limit', 'integer'), q('cursor', 'integer')]),
       '/workflows/runs/{id}/cancel': P('post', 'Durably cancel a workflow run', idParam),
       '/workflows/{name}/def': P('get', 'Managed workflow definition', nameParam),
@@ -90,7 +90,7 @@ export function openapiSpec(apiBase = '') {
       '/threads/{id}': { ...P('patch', 'Rename a thread', idParam, true), ...P('delete', 'Delete a thread', idParam) },
       '/threads/{id}/messages': {
         ...P('get', 'Thread messages', idParam),
-        // afterIndex is INCLUSIVE (the message at afterIndex + every one after it is deleted); -1 = the whole thread.
+        // AfterIndex is INCLUSIVE (the message at afterIndex + every one after it is deleted); -1 = the whole thread.
         ...P('delete', "Truncate a thread from a message index onward ({ afterIndex }, inclusive; -1 = all); 200 { ok, removed } / 400 if afterIndex missing / 501 if not supported", idParam, true),
       },
       '/threads/{id}/working-memory': P('get', 'Thread working memory', idParam),

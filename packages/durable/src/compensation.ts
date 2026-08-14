@@ -1,34 +1,34 @@
 // Exactly-once prevented the DUPLICATE; this module undoes what DID
-// happen when the overall transaction can't complete (charge ✓ → reserve ✓ → ship ✗ → refund+release).
+// Happen when the overall transaction can't complete (charge ✓ → reserve ✓ → ship ✗ → refund+release).
 //
 // PRINCIPLES (each one a deliberate decision — see the design discussion):
-//  - EXPLICIT trigger only. `compensateRun` is an operator/host DECISION ("this run is abandoned").
-//    NEVER automatic on failure: a transient failure + resume is GNL's whole point — auto-unwinding
-//    would refund a charge that the resume then re-charges.
-//  - CONDEMN FIRST, then unwind. The tombstone is claimed BEFORE any compensation runs; from that
-//    moment the run REFUSES to resume (see assertNotCompensated in run.ts) — otherwise a resume of a
-//    half-unwound run would replay memoized successes over an already-reverted world.
-//  - Compensations are side effects TOO: each one goes through the same claim → execute → terminal
-//    discipline as the original tool call (`${runId}:comp:<suffix>` mirrors `${runId}:tool:<suffix>`,
+// EXPLICIT trigger only. `compensateRun` is an operator/host DECISION ("this run is abandoned").
+// NEVER automatic on failure: a transient failure + resume is GNL's whole point — auto-unwinding
+//    Would refund a charge that the resume then re-charges.
+// CONDEMN FIRST, then unwind. The tombstone is claimed BEFORE any compensation runs; from that
+//    Moment the run REFUSES to resume (see assertNotCompensated in run.ts) — otherwise a resume of a
+//    Half-unwound run would replay memoized successes over an already-reverted world.
+// Compensations are side effects TOO: each one goes through the same claim → execute → terminal
+//    Discipline as the original tool call (`${runId}:comp:<suffix>` mirrors `${runId}:tool:<suffix>`,
 //    1:1 per EXECUTED record). Re-running compensateRun after a crash/failure continues exactly where
-//    it stopped — a refund can never run twice.
-//  - REVERSE order, STOP on failure. Later steps may depend on earlier ones (release the reservation
-//    before refunding the charge); on a failed compensation the remaining (earlier) ones are NOT
-//    attempted — fix the hook/world and re-run.
-//  - UNCERTAINTY is surfaced, not guessed. A stale 'running'/'failed' record might or might not have
-//    hit the provider: `recover` (H9) resolves it against the source of truth when declared;
-//    otherwise the entry is reported 'uncertain' for a human. Nothing is compensated on a guess.
-//  - SCOPE BOUND (deliberate): `idempotencyWindow: 'cross-run'` records live OUTSIDE any run's key
-//    space (xrun:*) and are NOT unwound here — a shared-window action belongs to no single run, and
-//    reverting it while unwinding ONE run could invalidate OTHER runs that legitimately deduped onto
-//    it. Sub-agent (agent:*) nested runs are also not recursed in v1 (documented; v1.1).
+//    It stopped — a refund can never run twice.
+// REVERSE order, STOP on failure. Later steps may depend on earlier ones (release the reservation
+//    Before refunding the charge); on a failed compensation the remaining (earlier) ones are NOT
+//    Attempted — fix the hook/world and re-run.
+// UNCERTAINTY is surfaced, not guessed. A stale 'running'/'failed' record might or might not have
+//    Hit the provider: `recover` (H9) resolves it against the source of truth when declared;
+//    Otherwise the entry is reported 'uncertain' for a human. Nothing is compensated on a guess.
+// SCOPE BOUND (deliberate): `idempotencyWindow: 'cross-run'` records live OUTSIDE any run's key
+//    Space (xrun:*) and are NOT unwound here — a shared-window action belongs to no single run, and
+//    Reverting it while unwinding ONE run could invalidate OTHER runs that legitimately deduped onto
+//    It. Sub-agent (agent:*) nested runs are also not recursed in v1 (documented; v1.1).
 import { claim, parseJournalKey, runKeys } from './journal.js';
 import { upgradeFormat } from './format.js';
 import type { Journal, JournalReader, ToolJournalRecord } from './journal.js';
 import type { AnyTool } from './types.js';
 
 /** The run was unwound (compensateRun condemned it) — it can never be resumed, forked, or allowed to
- *  execute further side effects (see assertNotCompensated call sites + the durable-tool mid-flight gate). */
+ *  Execute further side effects (see assertNotCompensated call sites + the durable-tool mid-flight gate). */
 export class CompensatedRunError extends Error {
   public readonly detail: { runId: string };
   constructor(runId: string) {
@@ -72,7 +72,7 @@ const tombstoneKey = (runId: string): string => runKeys.proc(runId, '__gnl_compe
 const compKey = (runId: string, suffix: string): string => `${runId}:comp:${suffix}`;
 
 /** True once the run has been condemned by compensateRun (tombstone present). Load-bearing read:
- *  runDurable/streamDurable/forkRun refuse on it, and durable-tool refuses NEW side effects mid-flight
+ *  RunDurable/streamDurable/forkRun refuse on it, and durable-tool refuses NEW side effects mid-flight
  *  (a still-running worker must not keep producing effects while an operator unwinds the run). */
 export async function runCompensated(journal: Journal, runId: string): Promise<boolean> {
   return (await journal.get(tombstoneKey(runId))) !== undefined;
@@ -84,9 +84,9 @@ export async function assertNotCompensated(journal: Journal, runId: string): Pro
 }
 
 /** Args AND toolName for records that never stored them, recovered from the model steps' tool-call
- *  parts (both generate `content` and stream `parts` shapes). Succeeded records of compensate-bearing
- *  tools carry `input` themselves; UNCERTAIN records ('running'/'failed') carry NEITHER input NOR
- *  toolName — this map is the only way to know which tool an uncertain call even belongs to. */
+ *  Parts (both generate `content` and stream `parts` shapes). Succeeded records of compensate-bearing
+ *  Tools carry `input` themselves; UNCERTAIN records ('running'/'failed') carry NEITHER input NOR
+ *  ToolName — this map is the only way to know which tool an uncertain call even belongs to. */
 function callsFromModelSteps(entries: { kind: string; value: unknown }[]): Map<string, { input: unknown; toolName?: string }> {
   const map = new Map<string, { input: unknown; toolName?: string }>();
   for (const e of entries) {
@@ -105,7 +105,7 @@ function callsFromModelSteps(entries: { kind: string; value: unknown }[]): Map<s
 }
 
 /** The ORIGINAL execution's downstream idempotencyKey (mirrors durable-tool.ts) — recover must probe
- *  the provider with the SAME key the execution carried. */
+ *  The provider with the SAME key the execution carried. */
 function originalIdempotencyKey(runId: string, suffix: string): string {
   const m = suffix.match(/^args-(.+)-([0-9a-f]{16})$/);
   return m ? `${runId}:${m[1]}:${m[2]}` : `${runId}:${suffix}`;
@@ -123,7 +123,7 @@ type CompRecord =
  * Unwinds an abandoned run: every EXECUTED side effect (succeeded record) whose tool declares
  * `compensate` is undone in REVERSE order, exactly-once. See the module header for the principles.
  * Re-runnable: continues past 'already-compensated', retries 'comp-failed'. `dryRun` previews the
- * work without condemning or executing anything.
+ * Work without condemning or executing anything.
  */
 export async function compensateRun(
   runId: string,
@@ -143,7 +143,7 @@ export async function compensateRun(
     if (e.kind !== 'tool' || !e.key.startsWith(prefix)) continue;
     const record = upgradeFormat(e.value as any, e.key) as ToolJournalRecord | undefined;
     if (!record) continue;
-    // denied/reflected/suspended never EXECUTED anything → nothing to unwind, not even reported.
+    // Denied/reflected/suspended never EXECUTED anything → nothing to unwind, not even reported.
     if (record.status === 'succeeded' || record.status === 'failed' || record.status === 'running') {
       work.push({ suffix: e.key.slice(prefix.length), record });
     }
@@ -201,7 +201,7 @@ export async function compensateRun(
     // 2) Exactly-once compensation: terminal check → claim → execute → terminal write.
     // The terminal check comes BEFORE the dryRun branch on purpose (honesty fix): a dryRun on a
     // PARTIALLY-unwound run must report the already-done entries as 'already-compensated', not
-    // pretend it 'would-compensate' work that has already happened.
+    // Pretend it 'would-compensate' work that has already happened.
     const ck = compKey(runId, suffix);
     const existing = await journal.get<CompRecord>(ck);
     if (existing?.status === 'compensated') {
@@ -214,7 +214,7 @@ export async function compensateRun(
     }
     if (existing?.status === 'running' && Date.now() - existing.startedAt <= COMP_CLAIM_TTL_MS) {
       // A live compensator owns this entry — proceeding to EARLIER steps would break the reverse
-      // ordering invariant, so stop here; a later re-run picks up whatever remains.
+      // Ordering invariant, so stop here; a later re-run picks up whatever remains.
       report.entries.push({ ...base, status: 'busy' });
       stopped = true;
       continue;
@@ -228,8 +228,8 @@ export async function compensateRun(
         continue;
       }
     } else {
-      // comp-failed retry / stale-running reclaim: single-operator overwrite (documented bound — the
-      // unwind action itself is an operator action; the claim above guards the common race).
+      // Comp-failed retry / stale-running reclaim: single-operator overwrite (documented bound — the
+      // Unwind action itself is an operator action; the claim above guards the common race).
       await journal.put(ck, { status: 'running', startedAt: Date.now() } satisfies CompRecord);
     }
     try {

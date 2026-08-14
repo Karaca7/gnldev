@@ -23,11 +23,11 @@ export interface PostgresVectorStoreOptions {
 /**
  * Production VectorStore: Postgres + pgvector. SAME interface as `InMemoryVectorStore` → drop-in.
  * `pg` is an optional peer dependency; it's only loaded lazily via `createRequire` when `pool` isn't
- * given (bundlers can't see it statically). Single table: (id PK, text, embedding vector(dim), metadata jsonb, created_at).
+ * Given (bundlers can't see it statically). Single table: (id PK, text, embedding vector(dim), metadata jsonb, created_at).
  * Cosine: pgvector `<=>` distance; score = `1 - distance` (higher = better, same as InMemoryVectorStore).
  *
  * Correctness: runs durable-wrapped inside `createRagTool` → the query result is journaled →
- * the pg query does NOT RE-RUN on resume/replay. Even if ANN/HNSW is approximate, the result comes back from the journal.
+ * The pg query does NOT RE-RUN on resume/replay. Even if ANN/HNSW is approximate, the result comes back from the journal.
  */
 export class PostgresVectorStore implements VectorStore {
   private pool: PoolLike;
@@ -102,9 +102,9 @@ export class PostgresVectorStore implements VectorStore {
 
   /**
    * 7.2: opts is backward compatible. namespace + metadata filter (jsonb `@>` containment) + minScore
-   * are applied in SQL. NOTE: hybrid keyword blending (`opts.text`/`keywordWeight`) is NOT SUPPORTED
-   * in pg (would require a tsvector/BM25 setup) — InMemoryVectorStore has full hybrid; pg here is
-   * limited to vector + minScore (keywordWeight is IGNORED even if given). This is a documented, deliberate limit.
+   * Are applied in SQL. NOTE: hybrid keyword blending (`opts.text`/`keywordWeight`) is NOT SUPPORTED
+   * In pg (would require a tsvector/BM25 setup) — InMemoryVectorStore has full hybrid; pg here is
+   * Limited to vector + minScore (keywordWeight is IGNORED even if given). This is a documented, deliberate limit.
    */
   async query(embedding: number[], topK: number, opts?: QueryOptions): Promise<VectorMatch[]> {
     await this.ensureReady(embedding.length);

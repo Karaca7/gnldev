@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// stdio entry point (bin: gnl-docs-mcp) — newline-delimited JSON-RPC 2.0 transport: reads stdin
-// line by line, hands each line to handleMessage, and writes non-notification responses to
-// stdout as a SINGLE line of JSON. No dependency beyond node:readline + process (no SDK).
+// Stdio entry point (bin: gnl-docs-mcp) — newline-delimited JSON-RPC 2.0 transport: reads stdin
+// Line by line, hands each line to handleMessage, and writes non-notification responses to
+// Stdout as a SINGLE line of JSON. No dependency beyond node:readline + process (no SDK).
 //
 // Lines are processed IN ARRIVAL ORDER (queued) — so that while a tools/call (which may involve
-// a fetch) is still in flight, the next line doesn't get written to stdout first; MCP clients
-// already match by id, but sequential processing is simpler/more deterministic.
+// A fetch) is still in flight, the next line doesn't get written to stdout first; MCP clients
+// Already match by id, but sequential processing is simpler/more deterministic.
 import { createInterface } from 'node:readline';
 import { ERR_PARSE, makeError, parseLine, serializeResponse } from './protocol.js';
 import { createDocsProvider, handleMessage } from './server.js';

@@ -7,8 +7,8 @@ import { Btn, Spinner, Empty, EmptyState, Badge, JsonBlock, PageHeader } from '.
 const DEFAULT_TOP_K = 5;
 
 // PURE function (testable): the minScore threshold is applied CLIENT-SIDE — the server /knowledge/search
-// only takes { query, topK } (packages/studio/src/server.ts app.post('/knowledge/search', …), and
-// the StudioVectors.search(query, topK) signature does NOT SUPPORT minScore). 0/undefined → no filter.
+// Only takes { query, topK } (packages/studio/src/server.ts app.post('/knowledge/search', …), and
+// The StudioVectors.search(query, topK) signature does NOT SUPPORT minScore). 0/undefined → no filter.
 export function filterByMinScore(results: VectorMatch[], minScore: number): VectorMatch[] {
   if (!(minScore > 0)) return results;
   return results.filter((r) => r.score >= minScore);
@@ -118,8 +118,8 @@ export function Knowledge() {
         ) : results == null ? (
           // This IS the view's whole canvas at rest (search bar above stays put) — EmptyState, not
           // Empty. Copy is deliberately honest about there being no catalog to browse (the server
-          // only exposes /knowledge/search, no list/browse endpoint — see api.ts), so it invites a
-          // query instead of implying a list will appear.
+          // Only exposes /knowledge/search, no list/browse endpoint — see api.ts), so it invites a
+          // Query instead of implying a list will appear.
           <EmptyState icon={Library} title={t('emptyTitle')} description={t('emptyDescription')} />
         ) : results.length === 0 ? (
           <Empty>{t('noResults')}</Empty>

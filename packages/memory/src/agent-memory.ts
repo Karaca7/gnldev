@@ -2,7 +2,7 @@
 // + a rich `loadContext` hook. GREENFIELD: storage is split into two ports —
 //   • MemoryStore (storage.memory): thread/message/working-memory/observations (derived, queryable).
 //   • RunJournal   (storage.runs):   OM's LLM memoization + durable progress (replay is deterministic).
-// loadContext runs BEFORE persistInput, so the whole context freezes into `:input` = replayable.
+// LoadContext runs BEFORE persistInput, so the whole context freezes into `:input` = replayable.
 import { cosineSimilarity } from 'ai';
 import { requireCapability, durableProcessorStep } from '@gnldev/durable';
 import { PROVENANCE_RECENT_CAP, messagePreview } from '@gnldev/durable';
@@ -21,12 +21,12 @@ export interface MemoryConfig {
   /** The last N messages, always included. */
   recentN?: number;
   /**
-   * P1.5 (AUDIT-R2): flows end-to-end into `store.recall` on every query-driven
+   * P1.5 flows end-to-end into `store.recall` on every query-driven
    * `getMessages`/`loadContext` call (see `getMessages` below — `{...this.recallDefaults, scope, resourceId}`).
    * `topK`/`threshold`/`scope` were already honored; `messageRange` (expand each hit with before/after
-   * neighbors by seq, deduped) and `filter` (now `$eq`/`$ne`/`$gt`/`$gte`/`$lt`/`$lte`/`$in`/`$nin`
-   * operators, not just bare-value equality — see `@gnldev/durable`'s `matchFilter`) are now honored by
-   * every first-party MemoryStore adapter (in-memory/sqlite/postgres). No default changed here.
+   * Neighbors by seq, deduped) and `filter` (now `$eq`/`$ne`/`$gt`/`$gte`/`$lt`/`$lte`/`$in`/`$nin`
+   * Operators, not just bare-value equality — see `@gnldev/durable`'s `matchFilter`) are now honored by
+   * Every first-party MemoryStore adapter (in-memory/sqlite/postgres). No default changed here.
    */
   recall?: RecallOptions;
   workingMemory?: WorkingMemoryConfig;
@@ -100,8 +100,8 @@ export class AgentMemory {
   /**
    * Track 1 with PROVENANCE: the shared core of getMessages and loadContext's non-OM branch.
    * Behavior of `messages` is byte-for-byte the old getMessages; `recalled`/`recentCount` are the
-   * new read-model — which records semantic recall injected (hits with their similarity, range
-   * neighbors unscored — see MessageRecord.score) vs how many came from the recent window.
+   * New read-model — which records semantic recall injected (hits with their similarity, range
+   * Neighbors unscored — see MessageRecord.score) vs how many came from the recent window.
    */
   /** MessageRecord → provenance ref. Preview: stored text first; when the message is STRUCTURAL
       (tool-call/tool-result — no text parts), the shared messagePreview renders it structurally
@@ -155,28 +155,28 @@ export class AgentMemory {
    * INDEX to the store's `seq`.
    *
    * INDEX BASE: `afterIndex` indexes into the SAME array `getMessages(threadId)` (no `opts`) would
-   * return — i.e. exactly what Studio's `GET /threads/:id/messages` route shows (it calls
+   * Return — i.e. exactly what Studio's `GET /threads/:id/messages` route shows (it calls
    * `resolvedMemory.getMessages(threadId)` with no query, see `packages/studio/src/server.ts`). Note
-   * this is NOT always the thread's full history: per `getMessages` above, when the thread has more
-   * than `recentN` messages, the no-query path returns only the LAST `recentN` — `afterIndex` is
-   * relative to that same (possibly windowed) list, matching what a Studio user actually sees.
+   * This is NOT always the thread's full history: per `getMessages` above, when the thread has more
+   * Than `recentN` messages, the no-query path returns only the LAST `recentN` — `afterIndex` is
+   * Relative to that same (possibly windowed) list, matching what a Studio user actually sees.
    *
    * `afterIndex === -1` is a special sentinel meaning "clear this thread's entire message history"
    * (from the very first message, seq 0 onward) — NOT just the displayed window's start. This bypasses
-   * the windowed-index mapping above entirely (maps straight to the store's "afterSeq < min seq ⇒
-   * removes all" boundary).
+   * The windowed-index mapping above entirely (maps straight to the store's "afterSeq < min seq ⇒
+   * Removes all" boundary).
    *
    * Any other out-of-range `afterIndex` (< -1, or >= the displayed list's length) is a no-op: returns
    * `0`, mirroring the port's own "afterSeq >= max seq → 0" boundary contract, rather than throwing.
    *
    * Returns `null` — distinct from `0` — when the underlying `MemoryStore` doesn't implement
    * `deleteMessagesAfter` at all (adapter capability gap), so a caller (e.g. Studio's route) can
-   * answer "not supported" (501) instead of reporting a silent no-op.
+   * Answer "not supported" (501) instead of reporting a silent no-op.
    *
    * NOT touched: observation records (`store.getObservations`/`putObservations`). After a truncation,
-   * an existing observation's `fromSeq`/`toSeq` range may now point partly or wholly at deleted
-   * messages (`expandObservation` would then return a partial/empty slice for that range). Reconciling
-   * observations with a truncated history is out of scope here.
+   * An existing observation's `fromSeq`/`toSeq` range may now point partly or wholly at deleted
+   * Messages (`expandObservation` would then return a partial/empty slice for that range). Reconciling
+   * Observations with a truncated history is out of scope here.
    */
   async truncateMessagesAfter(threadId: string, afterIndex: number): Promise<number | null> {
     const del = this.store.deleteMessagesAfter;
@@ -267,18 +267,18 @@ export class AgentMemory {
       await this.runs.put(omKey(threadId, 'observedSeq'), newObserved);
       // Explicit `Observation[]` (the LOCAL, P2-extended shape — see observational.ts): the durable
       // MemoryStore port's own Observation type has no fromSeq/toSeq/threadId; every durable Observation
-      // structurally satisfies the local (superset, all-optional-extras) type, so this widens the read
-      // without touching @gnldev/durable.
+      // Structurally satisfies the local (superset, all-optional-extras) type, so this widens the read
+      // Without touching @gnldev/durable.
       const obs: Observation[] = await this.store.getObservations(threadId);
-      // P2-memory (AUDIT-R2): `block` is a seq-ascending prefix of `unobserved` (pushed in
-      // order until keepBudget) → its first/last entries ARE the min/max seq — no extra scan needed.
+      // P2-memory `block` is a seq-ascending prefix of `unobserved` (pushed in
+      // Order until keepBudget) → its first/last entries ARE the min/max seq — no extra scan needed.
       const fromSeq = block[0]!.seq;
       const toSeq = block[block.length - 1]!.seq;
       const newObs: Observation = { id: `obs-${seq}`, text: summary, createdAt: Date.now(), sourceIds: block.map((m) => String(m.seq)), level: 0, fromSeq, toSeq, threadId };
       obs.push(newObs);
       await this.store.putObservations(threadId, obs);
       await this.runs.put(omKey(threadId, 'observeSeq'), seq + 1);
-      // D4-om (AUDIT-R2 follow-up): opt-in vector indexing — no-op when omVectors isn't configured.
+      // D4-om opt-in vector indexing — no-op when omVectors isn't configured.
       await this.indexObservationVector(threadId, 0, seq, newObs);
       await this.reflectIfNeeded(threadId);
     }
@@ -313,36 +313,36 @@ export class AgentMemory {
       () => reflect(this.om!.reflectionModel ?? this.om!.observerModel, active),
     );
     for (const o of obs) if (!o.condensed) o.condensed = true;
-    // P2-memory (AUDIT-R2): a reflect-level observation still covers a real source range —
-    // the min/max over the ranges of the observations it condenses. Pre-P2 (range-less) inputs are
-    // skipped so a partial mix never fabricates a bogus range.
+    // P2-memory a reflect-level observation still covers a real source range —
+    // The min/max over the ranges of the observations it condenses. Pre-P2 (range-less) inputs are
+    // Skipped so a partial mix never fabricates a bogus range.
     const ranged = active.filter((o) => o.fromSeq != null && o.toSeq != null);
     const range = ranged.length ? { fromSeq: Math.min(...ranged.map((o) => o.fromSeq!)), toSeq: Math.max(...ranged.map((o) => o.toSeq!)), threadId } : {};
     const newObs: Observation = { id: `obs-r${seq}`, text: condensedText, createdAt: Date.now(), sourceIds: active.map((o) => o.id), level: 1, ...range };
     obs.push(newObs);
     await this.store.putObservations(threadId, obs);
     await this.runs.put(omKey(threadId, 'reflectSeq'), seq + 1);
-    // D4-om (AUDIT-R2 follow-up): opt-in vector indexing — no-op when omVectors isn't configured.
+    // D4-om opt-in vector indexing — no-op when omVectors isn't configured.
     await this.indexObservationVector(threadId, 1, seq, newObs);
   }
 
   /**
-   * D4-om (AUDIT-R2 follow-up): opt-in vector indexing of a freshly (re)computed observation
+   * D4-om opt-in vector indexing of a freshly (re)computed observation
    * (called right after `compactIfNeeded`'s observe step [level 0] and `reflectIfNeeded`'s reflect step
    * [level 1] — see both above). No-op if `om.omVectors` isn't configured (the v1 keyword path in
    * `recallObservations` stays the only retrieval mode).
    *
    * EXACTLY-ONCE / idempotency: the embed call is journal-memoized the SAME way observe/reflect already
-   * are — `durableProcessorStep` under the SAME `om:<threadId>` runId, keyed `vec:<level>:<seqKey>` — so a
-   * replay that re-enters this seq (e.g. the "durable twist" cross-instance-replay scenario tested above)
-   * does NOT re-embed (no duplicate embedding cost/non-determinism). The vector id handed to
+   * Are — `durableProcessorStep` under the SAME `om:<threadId>` runId, keyed `vec:<level>:<seqKey>` — so a
+   * Replay that re-enters this seq (e.g. the "durable twist" cross-instance-replay scenario tested above)
+   * Does NOT re-embed (no duplicate embedding cost/non-determinism). The vector id handed to
    * `store.upsert` is DETERMINISTIC (`om:<threadId>:<level>:<seqKey>`, stable across re-compactions of the
    * SAME observation) so even if `upsert` itself ran twice (e.g. a crash between the memoized embed
-   * completing and the upsert landing, then a retry) it OVERWRITES the same row rather than creating a
-   * duplicate. Compaction as a whole is already only memoized at the coarser observe/reflect-text level,
-   * not specifically for indexing — but that's fine BY CONSTRUCTION here: memoized compute + a
-   * deterministic-id upsert is idempotent without any extra CAS/dedup machinery, so there's nothing
-   * further to journal.
+   * Completing and the upsert landing, then a retry) it OVERWRITES the same row rather than creating a
+   * Duplicate. Compaction as a whole is already only memoized at the coarser observe/reflect-text level,
+   * Not specifically for indexing — but that's fine BY CONSTRUCTION here: memoized compute + a
+   * Deterministic-id upsert is idempotent without any extra CAS/dedup machinery, so there's nothing
+   * Further to journal.
    */
   protected async indexObservationVector(threadId: string, level: number, seqKey: number, o: Observation): Promise<void> {
     const ov = this.om?.omVectors;
@@ -356,10 +356,10 @@ export class AgentMemory {
   }
 
   /**
-   * P2-memory (AUDIT-R2) — OM retrieval mode, v1 (scoped): case-insensitive substring/keyword
-   * match over a thread's stored observations (NO vector index — see observational.ts's module header for
-   * the honest follow-up). Returns each match with its source `range` (only present when the observation
-   * carries `fromSeq`/`toSeq`/`threadId` — pre-P2 records won't). Empty/blank query → `[]`.
+   * P2-memory — OM retrieval mode, v1 (scoped): case-insensitive substring/keyword
+   * Match over a thread's stored observations (NO vector index — see observational.ts's module header for
+   * The honest follow-up). Returns each match with its source `range` (only present when the observation
+   * Carries `fromSeq`/`toSeq`/`threadId` — pre-P2 records won't). Empty/blank query → `[]`.
    */
   async recallObservations(threadId: string, query: string): Promise<OmRecallMatch[]> {
     const q = query.trim().toLowerCase();
@@ -374,22 +374,22 @@ export class AgentMemory {
   }
 
   /**
-   * D4-om (AUDIT-R2 follow-up) — OM retrieval mode, vector-indexed: embeds `query` via the
+   * D4-om — OM retrieval mode, vector-indexed: embeds `query` via the
    * SAME `omVectors.embed` used at indexing time, vector-searches `omVectors.store`, and maps hits back to
-   * their stored `Observation` (via the `obsId` carried in each vector's metadata — see
+   * Their stored `Observation` (via the `obsId` carried in each vector's metadata — see
    * `indexObservationVector`), returning them WITH their source `range` exactly like v1's
    * `recallObservations`. FALLS BACK to the v1 keyword/substring match when `om.omVectors` isn't
-   * configured — no behavior change for existing callers who never set it up.
+   * Configured — no behavior change for existing callers who never set it up.
    *
    * Thread scoping: the `@gnldev/durable` `VectorStore` port's `query(embedding, topK)` has no metadata
-   * filter parameter (see `omVectors.store`'s doc in observational.ts), so `{threadId}` narrowing can't be
-   * pushed down to the store — this OVERFETCHES (`max(topK×20, 100)`) and filters by
+   * Filter parameter (see `omVectors.store`'s doc in observational.ts), so `{threadId}` narrowing can't be
+   * Pushed down to the store — this OVERFETCHES (`max(topK×20, 100)`) and filters by
    * `metadata.threadId === threadId` client-side before slicing to `topK`. Fine for the scoped v1 (small
-   * corpora, same spirit as `expandObservation`'s documented O(thread) scan below); a real filter
-   * push-down on the VectorStore port would be the natural follow-up if this becomes a hot path.
+   * Corpora, same spirit as `expandObservation`'s documented O(thread) scan below); a real filter
+   * Push-down on the VectorStore port would be the natural follow-up if this becomes a hot path.
    *
    * A hit whose `obsId` no longer resolves to a stored observation (e.g. condensed/removed since
-   * indexing) is silently skipped rather than fabricating a partial match.
+   * Indexing) is silently skipped rather than fabricating a partial match.
    */
   async recallObservationsSemantic(threadId: string, query: string, opts?: { topK?: number; threshold?: number }): Promise<OmRecallMatch[]> {
     const q = query.trim();
@@ -417,10 +417,10 @@ export class AgentMemory {
   /**
    * Expand an observation's source range back into the raw messages it was distilled from (inclusive
    * `seq` bounds, ascending order). v1 cost note: the MemoryStore port has no per-thread seq-range read —
-   * only a paginated full listing (`getMessages(threadId, {limit, cursor})`, see @gnldev/durable's
-   * storage.ts) — so this filters the thread's FULL message list client-side: O(thread size), not
+   * Only a paginated full listing (`getMessages(threadId, {limit, cursor})`, see @gnldev/durable's
+   * Storage.ts) — so this filters the thread's FULL message list client-side: O(thread size), not
    * O(range size). Fine for the scoped v1; a real seq-range read on MemoryStore would be the natural
-   * follow-up if this becomes a hot path on long threads.
+   * Follow-up if this becomes a hot path on long threads.
    */
   async expandObservation(threadId: string, fromSeq: number, toSeq: number): Promise<unknown[]> {
     const all = await this.allMessages(threadId);
@@ -437,21 +437,21 @@ export class AgentMemory {
   }
 
   /**
-   * P2-memory (AUDIT-R2): per-scopeId promise-chain mutex. `applyWorkingMemoryUpdate` does a
-   * read-merge-write with `await`s in between — two CONCURRENT calls for the same scope (two live WM tool
-   * calls racing in-process, e.g. parallel tool-calls in one step or two overlapping runs on one thread)
-   * could interleave and lose one update (classic read-modify-write race). This map holds, per scopeId,
-   * a promise chain: each call awaits the previous link before running its own critical section, so
-   * concurrent updates to the SAME scope serialize; different scopeIds have independent chains and never
-   * wait on each other. Each entry is GC'd once its chain drains (see the `.finally` below) — no unbounded
+   * P2-memory per-scopeId promise-chain mutex. `applyWorkingMemoryUpdate` does a
+   * Read-merge-write with `await`s in between — two CONCURRENT calls for the same scope (two live WM tool
+   * Calls racing in-process, e.g. parallel tool-calls in one step or two overlapping runs on one thread)
+   * Could interleave and lose one update (classic read-modify-write race). This map holds, per scopeId,
+   * A promise chain: each call awaits the previous link before running its own critical section, so
+   * Concurrent updates to the SAME scope serialize; different scopeIds have independent chains and never
+   * Wait on each other. Each entry is GC'd once its chain drains (see the `.finally` below) — no unbounded
    * Map growth across the process lifetime.
    *
    * HONEST LIMIT: this is IN-PROCESS ONLY. It does nothing for two separate processes/instances updating
-   * the same scope at the same time — that race is already partially mitigated by the durable WM tool path
+   * The same scope at the same time — that race is already partially mitigated by the durable WM tool path
    * (`createWorkingMemoryTool` marks the tool `idempotent: true` in working-memory.ts, so a *replayed*
-   * update from the SAME run doesn't double-apply), but a true cross-process compare-and-swap on working
-   * memory would need storage-level CAS support (MemoryStore has none today — `setWorkingMemory` is a
-   * plain overwrite). Not silently claimed solved here; a real cross-process fix is future work.
+   * Update from the SAME run doesn't double-apply), but a true cross-process compare-and-swap on working
+   * Memory would need storage-level CAS support (MemoryStore has none today — `setWorkingMemory` is a
+   * Plain overwrite). Not silently claimed solved here; a real cross-process fix is future work.
    */
   private wmLocks = new Map<string, Promise<void>>();
   private withWmLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
@@ -529,8 +529,8 @@ export class AgentMemory {
     const obs = await this.store.getObservations(srcThreadId);
     if (obs.length) await this.store.putObservations(dst, obs);
     // Also copy the OM RunJournal counters (observedSeq/observeSeq/reflectSeq). Otherwise the clone
-    // would re-observe the already-copied observations from scratch (double observation) AND the `obs-${seq}`
-    // ids would collide with the copied observations (observeSeq/reflectSeq start at 0 but the obs array is already full).
+    // Would re-observe the already-copied observations from scratch (double observation) AND the `obs-${seq}`
+    // Ids would collide with the copied observations (observeSeq/reflectSeq start at 0 but the obs array is already full).
     for (const k of ['observedSeq', 'observeSeq', 'reflectSeq']) {
       const v = await this.runs.get<number>(omKey(srcThreadId, k));
       if (v !== undefined) await this.runs.put(omKey(dst, k), v);

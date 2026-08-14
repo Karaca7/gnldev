@@ -14,10 +14,10 @@ export interface GateScoreRow { scorer: string; score: number; threshold: number
 
 /**
  * The server (server.ts ~L1724-1738) evaluates ALL scorers against a SINGLE global `minAvg` and
- * only embeds the FAILING ones in the message, formatted as `scorer=score<threshold` (passing ones
- * aren't in the message, only in `aggregate`). We extract the threshold from the message and apply
- * it to ALL scorers in `aggregate` — so passing scorers show up in the table too. Pure function:
- * tested as long as the server's text format doesn't change.
+ * Only embeds the FAILING ones in the message, formatted as `scorer=score<threshold` (passing ones
+ * Aren't in the message, only in `aggregate`). We extract the threshold from the message and apply
+ * It to ALL scorers in `aggregate` — so passing scorers show up in the table too. Pure function:
+ * Tested as long as the server's text format doesn't change.
  */
 export function parseGateScores(message: string, aggregate: Record<string, number>): GateScoreRow[] {
   const failing = new Map<string, number>();
@@ -36,7 +36,7 @@ export function parseGateScores(message: string, aggregate: Record<string, numbe
 }
 
 // Agent card: appears one by one in a stagger-entrance list, lifts slightly on hover (translateY+shadow) —
-// only transform/box-shadow, GPU-friendly; the global prefers-reduced-motion CSS rule already zeroes out the transition.
+// Only transform/box-shadow, GPU-friendly; the global prefers-reduced-motion CSS rule already zeroes out the transition.
 const CARD_HOVER = 'transition-[transform,box-shadow] duration-200 ease-out hover:-translate-y-1 hover:shadow-lg';
 
 /** Agent card avatar: lime "›G" — filled for agents with a managed+active (live in prod)
@@ -96,17 +96,17 @@ function VersionPanel({ rec, canManage, evalGate, onChanged, onEdit, onDelete }:
   const [busy, setBusy] = useState<number | null>(null);
   const [gateFail, setGateFail] = useState<{ message: string; rows: GateScoreRow[] } | null>(null);
   // FLOW-11: promote/rollback used to fire the API call on click, with no confirmation — a single
-  // misclick in a dense version list would immediately re-point prod at an untested draft (every new
-  // run picks up the new model/system prompt until someone notices and rolls back). Gated behind a
-  // confirm dialog, same primitive/pattern as the delete flows in Agents() below.
+  // Misclick in a dense version list would immediately re-point prod at an untested draft (every new
+  // Run picks up the new model/system prompt until someone notices and rolls back). Gated behind a
+  // Confirm dialog, same primitive/pattern as the delete flows in Agents() below.
   const [confirmPromote, setConfirmPromote] = useState<number | null>(null);
   const promote = async (version: number) => {
     if (busy != null) return; // panel-wide lock: prevent a second click from racing while a promote is in flight
     setBusy(version);
     setGateFail(null);
     // D4-1: direction matters for the toast text — a rollback (version < current active) must NOT
-    // read "promoted" (that told the user the opposite of what they just confirmed). Derived the same
-    // way as confirmIsOld above, from rec.active BEFORE the request lands (react-query hasn't refetched yet).
+    // Read "promoted" (that told the user the opposite of what they just confirmed). Derived the same
+    // Way as confirmIsOld above, from rec.active BEFORE the request lands (react-query hasn't refetched yet).
     const isRollback = rec.active != null && version < rec.active;
     try {
       const r = await api.promoteAgentVersion(rec.name, version);
@@ -255,7 +255,7 @@ function NewVersionForm({ onCreated, agentNames, draft, setDraft, nameFixed }: {
         ...(system.trim() ? { system: system.trim() } : {}),
         ...(note.trim() ? { note: note.trim() } : {}),
       });
-      // active === version → the first version was automatically taken to prod (backend); otherwise a draft was added, prod untouched.
+      // Active === version → the first version was automatically taken to prod (backend); otherwise a draft was added, prod untouched.
       toast.success(r.active === r.version
         ? t('createdAndPromotedToast', { name: r.name, version: r.version })
         : t('createdDraftToast', { name: r.name, version: r.version }));
@@ -398,12 +398,12 @@ export function Agents() {
   const totalCount = (agents.data?.length ?? 0) + managedOnly.length;
 
   // Agent APPROVAL registry (governance — see @gnldev/durable's agent-registry.ts): GET/approve/block are
-  // platform-admin gated server-side (approval is "may this code-agent serve AT ALL", never per-org —
-  // same reasoning as org create/delete). `canSeeRegistry` mirrors the server's own `requirePlatformAdmin`
-  // check (org-bound → never; strict multi-org → needs the explicit platform-admin grant; otherwise the
-  // legacy operator) so a caller who WOULD get 403 never even issues the request — this hook is
-  // background-polled (10s), and App.tsx force-logs-out on any 401/403, so an always-on query here would
-  // boot a legitimate-but-unprivileged user out on every tick. Held false until caps+me both resolve
+  // Platform-admin gated server-side (approval is "may this code-agent serve AT ALL", never per-org —
+  // Same reasoning as org create/delete). `canSeeRegistry` mirrors the server's own `requirePlatformAdmin`
+  // Check (org-bound → never; strict multi-org → needs the explicit platform-admin grant; otherwise the
+  // Legacy operator) so a caller who WOULD get 403 never even issues the request — this hook is
+  // Background-polled (10s), and App.tsx force-logs-out on any 401/403, so an always-on query here would
+  // Boot a legitimate-but-unprivileged user out on every tick. Held false until caps+me both resolve
   // (their `undefined` fields would otherwise evaluate "true" and fire one premature request).
   const identityKnown = !!caps.data && !!me.data;
   const canSeeRegistry = identityKnown && !!caps.data?.agentRegistry && !me.data?.orgId && (!caps.data?.multiOrganization || !!me.data?.platformAdmin);
@@ -446,11 +446,11 @@ export function Agents() {
   const [draft, setDraft] = useState<{ name: string; model: string; system: string; note: string }>(BLANK);
   // Whether the name field is pinned to a specific code agent (came from "edit") vs a free select
   // (fresh draft — pick which code agent to version). Can't be derived from `draft.name` alone since
-  // picking an agent from the select also makes it non-empty.
+  // Picking an agent from the select also makes it non-empty.
   const [nameFixed, setNameFixed] = useState(false);
   const isDraftFilled = (d: typeof BLANK) => !!(d.name || d.model || d.system || d.note);
   // "edit" from a card would silently overwrite an in-progress draft for a DIFFERENT agent — gated
-  // behind a confirm dialog (below) instead of the old unwarned overwrite.
+  // Behind a confirm dialog (below) instead of the old unwarned overwrite.
   const [pendingEdit, setPendingEdit] = useState<{ name: string; model: string; system: string; note: string; versionLabel?: string } | null>(null);
   // Edit from card: load the current version's content (including the note) into the form + inform the user (versions are immutable → this becomes a new version).
   const applyEdit = (name: string, model: string, system: string, note = '', versionLabel?: string) => {
@@ -471,7 +471,7 @@ export function Agents() {
   const onTab = (tabId: 'list' | 'create') => setTab(tabId);
 
   // Delete the managed agent record (with ALL its versions) — only removes the managed record; a
-  // code-defined agent (if defined in createGnl agents) is unaffected and keeps showing up as-is.
+  // Code-defined agent (if defined in createGnl agents) is unaffected and keeps showing up as-is.
   // `hasCode` determines the confirmation text.
   const [deleting, setDeleting] = useState<{ name: string; hasCode: boolean } | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
@@ -490,8 +490,8 @@ export function Agents() {
   };
 
   // Single version delete (trash icon in VersionPanel → confirm → DELETE .../versions/:v). The active
-  // version can't be deleted (button is already hidden + backend 409); when the last version goes, the
-  // agent disappears entirely.
+  // Version can't be deleted (button is already hidden + backend 409); when the last version goes, the
+  // Agent disappears entirely.
   const [deletingVer, setDeletingVer] = useState<{ name: string; version: number; remaining: number } | null>(null);
   const [verBusy, setVerBusy] = useState(false);
   const handleDeleteVersion = async () => {
@@ -515,9 +515,9 @@ export function Agents() {
   if (agents.error) return <ErrorBox error={agents.error} />;
   return (
     // D3-6: same StatStrip-stays-pinned layout as Jobs/Tools/Mcp/Scheduler/Inspector — `flex h-full
-    // flex-col` outer + PageHeader/StatStrip (both shrink-0, see components.tsx) + a SINGLE `min-h-0
-    // flex-1 overflow-auto` scroll container below them. Agents.tsx has no other overflow-auto/overflow-y
-    // container inside (verified by grep), so this doesn't nest scrollboxes — it's the page's only one.
+    // Flex-col` outer + PageHeader/StatStrip (both shrink-0, see components.tsx) + a SINGLE `min-h-0
+    // Flex-1 overflow-auto` scroll container below them. Agents.tsx has no other overflow-auto/overflow-y
+    // Container inside (verified by grep), so this doesn't nest scrollboxes — it's the page's only one.
     <div className="flex h-full flex-col">
     {/* D3-8/PageHeader migration: the page's identity used to be an in-scroll <h1> gated by
         `canManage` (it vanished whenever the caller could manage agents, replaced by the Tabs) — first
@@ -526,7 +526,7 @@ export function Agents() {
     <PageHeader title={t('agentsHeading')} description={t('description')} />
     <StatStrip items={[
       // `managed.error` degrades these to "—" instead of a fabricated "0" — totalCount also depends
-      // on managed.data (via managedOnly), so it's unreliable whenever managed errored, same as statManaged.
+      // On managed.data (via managedOnly), so it's unreliable whenever managed errored, same as statManaged.
       { label: t('statAgents'), value: managed.error ? '—' : totalCount.toLocaleString() },
       { label: t('statManaged'), value: managed.error ? '—' : String(managed.data?.agents?.length ?? 0) },
       { label: t('statCodeDefined'), value: String(agents.data?.length ?? 0) },

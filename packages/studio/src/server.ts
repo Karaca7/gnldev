@@ -57,7 +57,7 @@ export interface AgentMeta {
 
 /**
  * Playground runner (duck-typed): lets studio run an agent from the browser. Produced from a createGnl
- * instance via `createStudioRunner` — the studio core does not require createGnl at runtime.
+ * Instance via `createStudioRunner` — the studio core does not require createGnl at runtime.
  */
 export interface StudioAgentRunner {
   listAgents (): Promise<AgentMeta[]> | AgentMeta[];
@@ -66,7 +66,7 @@ export interface StudioAgentRunner {
   /** If given, the Tools view shows the tool list. */
   listTools?(): Promise<ToolListItem[]> | ToolListItem[];
   /** If given, tools can be run for TEST purposes (respects the guard; opts.durable → writes to the
-   *  journal; opts.approve → approve/deny and resume a suspended durable test). */
+   *  Journal; opts.approve → approve/deny and resume a suspended durable test). */
   runTool?(
     name: string,
     input: unknown,
@@ -77,8 +77,8 @@ export interface StudioAgentRunner {
   /** If given, the Workflows view lists workflow definitions. */
   listWorkflows?(): WorkflowMeta[] | Promise<WorkflowMeta[]>;
   /** If given, workflows can run durably; if opts.runId is given, RESUMES the SAME run.
-   *  P0.4 (AUDIT-R2): opts.resume delivers typed HITL payloads (see @gnldev/workflow's
-   *  waitForResume); a canceled run (durable cancel or an aborted signal upstream) reports `canceled`. */
+   * P0.4 opts.resume delivers typed HITL payloads (see @gnldev/workflow's
+   *  WaitForResume); a canceled run (durable cancel or an aborted signal upstream) reports `canceled`. */
   runWorkflow?(
     name: string,
     input: unknown,
@@ -99,9 +99,9 @@ export interface StudioMemory {
   /** Deletes the thread (soft-delete). Returns 501 from the route if the adapter doesn't support it. */
   deleteThread?(threadId: string): Promise<void> | void;
   /** Truncates the thread: deletes the message at `afterIndex` and every message after it (index base:
-   *  the `getMessages` list — i.e. matches the `/threads/:id/messages` response 1:1). `afterIndex === -1`
-   *  deletes every message. Returns the number of deleted messages, or `null` if the underlying store
-   *  doesn't support the capability. Returns 501 from the route if the adapter doesn't support it. */
+   *  The `getMessages` list — i.e. matches the `/threads/:id/messages` response 1:1). `afterIndex === -1`
+   *  Deletes every message. Returns the number of deleted messages, or `null` if the underlying store
+   *  Doesn't support the capability. Returns 501 from the route if the adapter doesn't support it. */
   truncateMessages?(threadId: string, afterIndex: number): Promise<number | null> | number | null;
 }
 
@@ -163,9 +163,9 @@ export interface StudioWorkflowStore {
 
 /**
  * Compiles a managed WorkflowDef into an executable WorkflowLike. The host passes `compileManagedWorkflow`
- * from `@gnldev/studio/workflow` (the @gnldev/workflow import is isolated there so the studio core stays decoupled).
+ * From `@gnldev/studio/workflow` (the @gnldev/workflow import is isolated there so the studio core stays decoupled).
  * If given, managed workflows run with the SAME engine as code workflows (each step is journaled → exactly-once,
- * suspend/resume, poll-to-stream/history/inspector all work the same way).
+ * Suspend/resume, poll-to-stream/history/inspector all work the same way).
  */
 export type CompileWorkflowFn = (
   def: WorkflowDef,
@@ -218,9 +218,9 @@ export interface StudioQueue {
   listJobs (): Promise<StudioJob[]> | StudioJob[];
   /**
    * If given, `POST /jobs/:id/retry` works (the host typically wraps @gnldev/queue's `retryJob(work, id)`):
-   * re-queues a failed (dead-letter/qfail) job as a NEW job with the original type/payload, and returns
-   * the new job id. Returns `null` if the job isn't found OR isn't yet terminal-failed (pending/done — to
-   * prevent DOUBLE-RUNNING it); the server reflects this as a 409.
+   * Re-queues a failed (dead-letter/qfail) job as a NEW job with the original type/payload, and returns
+   * The new job id. Returns `null` if the job isn't found OR isn't yet terminal-failed (pending/done — to
+   * Prevent DOUBLE-RUNNING it); the server reflects this as a 409.
    */
   retry?(id: string): Promise<string | null> | string | null;
 }
@@ -269,7 +269,7 @@ export interface StudioUserStore {
   revoke?: (id: string) => Promise<void>;
   /**
    * Updates a user's roles and/or explicit permissions in place (token unchanged). Optional — a host
-   * without it returns 501 from PATCH /users/:id. An empty `permissions` array clears the explicit override.
+   * Without it returns 501 from PATCH /users/:id. An empty `permissions` array clears the explicit override.
    */
   update?: (id: string, patch: { roles?: string[]; permissions?: string[] }) => Promise<StudioUser>;
 }
@@ -286,10 +286,10 @@ export interface PermissionCatalogEntry {
 /**
  * PERMISSION CATALOG — the GNL-team-owned, CODE-DEFINED source of truth for fine-grained permissions.
  * READ-ONLY on purpose: customers do NOT create permission TYPES from Studio. A permission only does
- * anything if a GNL endpoint actually ENFORCES it (via gate.allowP) — so the definition belongs to GNL,
- * not the customer. Extending the catalog = the GNL team adding a new entry HERE *plus* its enforcement
+ * Anything if a GNL endpoint actually ENFORCES it (via gate.allowP) — so the definition belongs to GNL,
+ * Not the customer. Extending the catalog = the GNL team adding a new entry HERE *plus* its enforcement
  * (an allowP call) in a release; it is never a runtime/customer action. The customer admin only ASSIGNS
- * these permissions to users (POST/PATCH /users). Exposed read-only at GET /permissions/catalog.
+ * These permissions to users (POST/PATCH /users). Exposed read-only at GET /permissions/catalog.
  */
 export const PERMISSION_CATALOG: PermissionCatalogEntry[] = [
   { id: 'agents:run', label: 'Run agents', group: 'run', description: 'Execute / stream / resume agents' },
@@ -305,8 +305,8 @@ export const PERMISSION_CATALOG: PermissionCatalogEntry[] = [
 
 /**
  * Role → pre-checked permissions. MIRRORS the @gnldev/auth-ee rbac.ts default grants (both are code, kept in
- * sync by the GNL team in one release). The UI seeds a role's checkboxes from this when a role is picked;
- * the customer admin can then tick/untick individual boxes and PATCH the user's explicit permissions.
+ * Sync by the GNL team in one release). The UI seeds a role's checkboxes from this when a role is picked;
+ * The customer admin can then tick/untick individual boxes and PATCH the user's explicit permissions.
  */
 export const ROLE_PERMISSION_PRESETS: Record<string, string[]> = {
   viewer: ['*:read'],
@@ -326,8 +326,8 @@ export interface StudioApiOptions {
   resume?: StudioResume;
   /**
    * If given, POST /runs/:id/compensate works — the operator's "unwind this abandoned
-   * run" action. The host wires it to @gnldev/durable compensateRun with ITS tool set (the compensate
-   * hooks live in code): `compensate: (runId, o) => compensateRun(runId, { journal, tools, ...o })`.
+   * Run" action. The host wires it to @gnldev/durable compensateRun with ITS tool set (the compensate
+   * Hooks live in code): `compensate: (runId, o) => compensateRun(runId, { journal, tools, ...o })`.
    * IRREVERSIBLE (a condemned run never resumes) → the endpoint is write-gated and audited.
    */
   compensate?: (runId: string, opts?: { dryRun?: boolean }) => Promise<unknown>;
@@ -374,38 +374,38 @@ export interface StudioApiOptions {
   auth?: StudioAuth | AuthProvider;
   /**
    * DELIBERATE opt-in to run Studio without a provider in production. Auth stays opt-in; but calling
-   * createStudioApi/createStudioApp without `auth` under NODE_ENV=production THROWS at setup — silent
-   * fail-open was removed (audit #2). Set this flag to true if open access is really intended.
+   * CreateStudioApi/createStudioApp without `auth` under NODE_ENV=production THROWS at setup — silent
+   * Fail-open was removed (audit #2). Set this flag to true if open access is really intended.
    * Outside production: just a single console.warn on the first request.
    */
   allowOpenAccess?: boolean;
   /**
    * Opt-in multi-org support (v1 = READ-ONLY audit): if an org resolves (default: the `x-gnl-org`
-   * header), the entire read surface (runs/state/diff/trace/metrics/threads) is scoped to that org via
-   * withOrg. In an org context, WRITES (POST/PATCH/DELETE) return 403 — since the runner/resume are tied
-   * to the caller's gnl instance, a half-scoped write would create data confusion; use @gnldev/server's
+   * Header), the entire read surface (runs/state/diff/trace/metrics/threads) is scoped to that org via
+   * WithOrg. In an org context, WRITES (POST/PATCH/DELETE) return 403 — since the runner/resume are tied
+   * To the caller's gnl instance, a half-scoped write would create data confusion; use @gnldev/server's
    * `org` option for the write path (the option name is KEPT for consistency with @gnldev/server). A request
-   * without an org runs in the shared space.
+   * Without an org runs in the shared space.
    */
   org?: {
     /**
      * Takes a web `Request`, not a Hono `Context` — the last place this package's public surface
-     * leaked its own HTTP library. A host that mounts the handler from Express or Fastify has a
+     * Leaked its own HTTP library. A host that mounts the handler from Express or Fastify has a
      * Request, never a Context, so the old signature made this option unusable exactly where the
-     * fetch handler was supposed to open the door.
+     * Fetch handler was supposed to open the door.
      */
     resolve?: (req: Request) => string | undefined | Promise<string | undefined>;
   };
   /**
    * Eval gate (governance): this dataset suite runs BEFORE an agent is promoted; if ANY aggregate score
-   * fails to clear minAvg (default 0.5), the promote is rejected with 412. The gate decision
+   * Fails to clear minAvg (default 0.5), the promote is rejected with 412. The gate decision
    * (passed/failed + aggregate) is always logged to audit. Requires the `datasets` option.
    */
   evalGate?: { datasetId: string; minAvg?: number };
   /**
    * Retention policy (POST /retention/sweep defaults): runs whose last activity is older than
-   * olderThanMs are deleted. Suspended and timestamp-less runs are always preserved (keepSuspended=false
-   * includes suspended ones in the sweep too). Sweeping is only triggered on request (the host can wire it to cron).
+   * OlderThanMs are deleted. Suspended and timestamp-less runs are always preserved (keepSuspended=false
+   * Includes suspended ones in the sweep too). Sweeping is only triggered on request (the host can wire it to cron).
    */
   retention?: { olderThanMs: number; keepSuspended?: boolean };
   /**
@@ -416,20 +416,20 @@ export interface StudioApiOptions {
   /**
    * Alert webhook: if defined, a SINGLE POST is fired for (1) an org that exceeds its budget and
    * (2) each tool call awaiting approval (via a first-write-wins `__alert__` marker; webhook errors are
-   * swallowed — never breaks the main flow). Payload.type: 'budget-exceeded' | 'approval-pending'.
+   * Swallowed — never breaks the main flow). Payload.type: 'budget-exceeded' | 'approval-pending'.
    */
   alerts?: { webhook?: string };
   /**
    * W5 regression: converts POST /runs/:id/regression body.model (a 'provider/model' spec) to a real
-   * model. If not given, @gnldev/durable's `resolveModel` is used (dynamically imports the relevant provider
-   * package → a real API call). Provide this on hosts with a test/mock model store.
+   * Model. If not given, @gnldev/durable's `resolveModel` is used (dynamically imports the relevant provider
+   * Package → a real API call). Provide this on hosts with a test/mock model store.
    */
   regressionModel?: (spec: string) => Promise<unknown> | unknown;
   /**
    * OTEL export (host-provided): the UI/client NEVER sends data to an arbitrary endpoint — the host
-   * itself CALLS @gnldev/otel's `exportRunToOtlp` with its configured target (Langfuse/Honeycomb/Datadog/
+   * Itself CALLS @gnldev/otel's `exportRunToOtlp` with its configured target (Langfuse/Honeycomb/Datadog/
    * Collector) + auth (API key); Studio only TRIGGERS it (POST /runs/:id/otel-export). If not given,
-   * the route returns 501 and the button (capabilities.otelExport) is hidden.
+   * The route returns 501 and the button (capabilities.otelExport) is hidden.
    */
   otelExport?: (runId: string) => Promise<{ ok: boolean; target?: string; error?: string }>;
 }
@@ -446,9 +446,9 @@ function isReader (x: any): x is JournalReader {
 
 /**
  * **Studio API** (JSON only, no UI). Mount it on your own app — `app.mount('/studio/api', createStudioApi(...))`
- * on Hono, `toNodeHandler(...)` anywhere else — auth-gate it (viewer/admin), use it programmatically.
+ * On Hono, `toNodeHandler(...)` anywhere else — auth-gate it (viewer/admin), use it programmatically.
  * NOT `app.route()`: that takes a Hono sub-app and unpacks its routes, and what comes out of here is a
- * fetch handler. Routes are prefix-independent: /capabilities, /runs, /runs/:id, ...
+ * Fetch handler. Routes are prefix-independent: /capabilities, /runs, /runs/:id, ...
  */
 function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   const opts: StudioApiOptions = isReader(input) ? { reader: input } : input;
@@ -458,25 +458,25 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // Opt-in auth: an AuthProvider (free roleAuth / paid @gnldev/auth-ee) or the backward-compatible {read,write}.
   // If there's no provider, endpoints are open; in production that's only possible with allowOpenAccess: true
   // (otherwise makeGate throws at setup), and outside production it's warned once. Since the org middleware
-  // needs the identity-bound org (Principal.orgId), the gate is set up HERE, before the middleware.
+  // Needs the identity-bound org (Principal.orgId), the gate is set up HERE, before the middleware.
   const authProvider = normalizeAuth(auth);
   const { allow, allowP, deny } = makeGate(authProvider, { allowOpenAccess: opts.allowOpenAccess });
   // RBAC (fine-grained permissions) is a PAID capability. When ON, allowP matches the exact permission
-  // against the principal's effective permissions; the permission catalog surface is also gated on this.
+  // Against the principal's effective permissions; the permission catalog surface is also gated on this.
   // When OFF (free tier), allowP transparently reduces to read/write → the coarse legacy behavior.
   const rbacEnabled = authProvider?.capabilities?.().rbac === true;
   // STRICT multi-org model = PAID gate: ON only when the auth provider (paid @gnldev/auth-ee, valid
-  // license) reports the `multiOrganization` capability. When ON, an org-less identity is NO LONGER the
-  // all-seeing operator by default — it must carry the EXPLICIT `platform-admin` grant (scope:
+  // License) reports the `multiOrganization` capability. When ON, an org-less identity is NO LONGER the
+  // All-seeing operator by default — it must carry the EXPLICIT `platform-admin` grant (scope:
   // 'platform'); otherwise it is fail-closed (403 on org data + org management). When OFF (free tier /
-  // host-provided `opts.org` without a paid license / no auth) behavior is preserved EXACTLY: an
-  // org-less identity is the legacy operator that sees & manages everything. NOTE: this is deliberately
+  // Host-provided `opts.org` without a paid license / no auth) behavior is preserved EXACTLY: an
+  // Org-less identity is the legacy operator that sees & manages everything. NOTE: this is deliberately
   // NARROWER than `multiOrganizationEnabled` below (which also turns on for a bare `opts.org`) — the
-  // strict fail-closed is a paid-only behavior change, gated on the license capability alone.
+  // Strict fail-closed is a paid-only behavior change, gated on the license capability alone.
   const strictMultiOrg = authProvider?.capabilities?.().multiOrganization === true;
   /**
    * Strict-model "operator" check for PLATFORM (cross-org) actions. Returns a 403 Response if the
-   * caller may NOT act platform-wide, else undefined.
+   * Caller may NOT act platform-wide, else undefined.
    *  • org-bound identity → NEVER a platform actor (its own `orgBoundMsg` is preserved for back-compat).
    *  • strict mode + org-less WITHOUT the platform-admin grant → fail-closed 403.
    *  • free mode + org-less → allowed (legacy operator).  • platform-admin → allowed.
@@ -491,9 +491,9 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   };
 
   // Multi-org (v1 read-only): the org middleware stores it in ALS; on every call `reader` delegates to
-  // the view scoped to the current org. A request without an org uses the raw reader. ALS is ALWAYS set
-  // up (not ONLY gated by opts.org): the identity-bound org (Principal.orgId) must scope the read surface
-  // even if opts.org isn't given (a contract from types.ts — see the middleware below).
+  // The view scoped to the current org. A request without an org uses the raw reader. ALS is ALWAYS set
+  // Up (not ONLY gated by opts.org): the identity-bound org (Principal.orgId) must scope the read surface
+  // Even if opts.org isn't given (a contract from types.ts — see the middleware below).
   const orgALS = new AsyncLocalStorage<string>();
   const orgViews = new Map<string, JournalReader>();
   function scopedNow (): JournalReader {
@@ -514,54 +514,54 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     ...(typeof (rawReader as any).put === 'function' ? { put: (k: string, v: unknown) => (scopedNow() as any).put(k, v) } : {}),
     ...(typeof (rawReader as any).putIfAbsent === 'function' ? { putIfAbsent: (k: string, v: unknown) => (scopedNow() as any).putIfAbsent(k, v) } : {}),
     ...(typeof (rawReader as any).listKeys === 'function' ? { listKeys: (p: string) => (scopedNow() as any).listKeys(p) } : {}),
-    // deletePrefix is bridged too (purge/retention call it via `rw`); since ALS is never set up on the
-    // write path (see the middleware), scopedNow() always falls through to the raw journal — behavior unchanged.
+    // DeletePrefix is bridged too (purge/retention call it via `rw`); since ALS is never set up on the
+    // Write path (see the middleware), scopedNow() always falls through to the raw journal — behavior unchanged.
     ...(typeof (rawReader as any).deletePrefix === 'function' ? { deletePrefix: (p: string) => (scopedNow() as any).deletePrefix(p) } : {}),
-    // P1.6 (AUDIT-R2): getCounters bridged the same way — GET /metrics reads the materialized
-    // per-org metrics counters (readMetricsSummary) through this SAME org-scoped accessor, so the
-    // isolation guarantee (withOrg prefixing) automatically covers it, same as every other bridge here.
+    // P1.6 getCounters bridged the same way — GET /metrics reads the materialized
+    // Per-org metrics counters (readMetricsSummary) through this SAME org-scoped accessor, so the
+    // Isolation guarantee (withOrg prefixing) automatically covers it, same as every other bridge here.
     ...(typeof (rawReader as any).getCounters === 'function' ? { getCounters: (k: string) => (scopedNow() as any).getCounters(k) } : {}),
     // P1.6b: getMany bridged the SAME way — withOrg mirrors it 1:1 with the underlying journal (every
-    // key inside is prefixed, just like get/put), so a plain delegation is safe here too.
+    // Key inside is prefixed, just like get/put), so a plain delegation is safe here too.
     ...(typeof (rawReader as any).getMany === 'function' ? { getMany: (ks: string[]) => (scopedNow() as any).getMany(ks) } : {}),
     // P1.6b: countRunsByStatus is NOT bridged 1:1 in withOrg (see organization.ts — an org-scoped view
-    // would otherwise leak every organization's counts, since the engine-level aggregate has no per-org
-    // filter). So unlike every other bridge here, this one uses optional chaining on the DELEGATE call
+    // Would otherwise leak every organization's counts, since the engine-level aggregate has no per-org
+    // Filter). So unlike every other bridge here, this one uses optional chaining on the DELEGATE call
     // (not just the setup-time typeof check) — under an active org, `scopedNow()` returns a view that
-    // genuinely lacks the method, and the call must resolve to `undefined` (→ GET /metrics falls back to
-    // its listRuns-based count) rather than throwing.
+    // Genuinely lacks the method, and the call must resolve to `undefined` (→ GET /metrics falls back to
+    // Its listRuns-based count) rather than throwing.
     ...(typeof (rawReader as any).countRunsByStatus === 'function'
       ? { countRunsByStatus: () => (scopedNow() as any).countRunsByStatus?.() }
       : {}),
     // API-01: listRunsPaged bridged the same way as every other optional capability above — withOrg
     // ALREADY handles org isolation for it (walks the underlying mixed-org pages and strips/filters by
-    // prefix, see organization.ts's own listRunsPaged bridge), so a plain delegation through
-    // scopedNow() is safe here too, same as listRuns/readRun.
+    // Prefix, see organization.ts's own listRunsPaged bridge), so a plain delegation through
+    // ScopedNow() is safe here too, same as listRuns/readRun.
     ...(typeof (rawReader as any).listRunsPaged === 'function'
       ? { listRunsPaged: (q: any) => (scopedNow() as any).listRunsPaged(q) }
       : {}),
   } as JournalReader;
 
   // The middleware is only set up if opts.org (header-based resolution) OR an auth provider (which can
-  // produce an identity-bound org) exists; if neither exists, no request is scoped (existing shared behavior).
+  // Produce an identity-bound org) exists; if neither exists, no request is scoped (existing shared behavior).
   if (opts.org || authProvider) {
     // Header-based resolution: `x-gnl-org`.
     const resolveOrg = opts.org?.resolve ?? ((req: Request) => req.headers.get('x-gnl-org') ?? undefined);
     app.use('*', async (c, next) => {
       // Header-based org resolution only kicks in if opts.org is EXPLICITLY given (a header never implies
-      // a non-opt-in org); the identity-bound org is always valid whenever an auth provider exists.
+      // A non-opt-in org); the identity-bound org is always valid whenever an auth provider exists.
       const requested = opts.org ? await resolveOrg(c.req.raw) : undefined;
       // An identity-bound org (Cred.orgId → Principal.orgId) OVERRIDES the header: if the bound identity
-      // requests a different org, 403 — org scope is based on identity, not a spoofable header.
+      // Requests a different org, 403 — org scope is based on identity, not a spoofable header.
       const principal = authProvider ? await authProvider.authenticate(c.req.raw) : null;
       const bound = principal?.orgId;
       // STRICT (EE multi-org) FAIL-CLOSED NET: an AUTHENTICATED identity with no org binding AND no
-      // explicit platform-admin grant may NOT reach org data/management surfaces — without this, an
-      // unbound principal would fall through unscoped and read the whole root journal (the accidental
-      // super-admin bug). `/me` + `/capabilities` are exempt so a denied caller can still learn its own
-      // scope and the auth mode. principal === null (no token) is NOT touched here → the per-endpoint
-      // gate returns the correct 401 (unauthenticated) instead of a misleading 403. Free mode: skipped
-      // entirely (strictMultiOrg=false) → behavior unchanged.
+      // Explicit platform-admin grant may NOT reach org data/management surfaces — without this, an
+      // Unbound principal would fall through unscoped and read the whole root journal (the accidental
+      // Super-admin bug). `/me` + `/capabilities` are exempt so a denied caller can still learn its own
+      // Scope and the auth mode. principal === null (no token) is NOT touched here → the per-endpoint
+      // Gate returns the correct 401 (unauthenticated) instead of a misleading 403. Free mode: skipped
+      // Entirely (strictMultiOrg=false) → behavior unchanged.
       if (
         strictMultiOrg && principal && !bound && !isPlatformAdmin(principal) &&
         !c.req.path.endsWith('/me') && !c.req.path.endsWith('/capabilities')
@@ -572,9 +572,9 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
         return c.json({ error: `org mismatch: identity is bound to org '${bound}'` }, 403);
       }
       // An identity-bound org ONLY scopes the READ (GET) surface. Management writes (fork/resume/
-      // policy/budget PUT) run against the root journal and are not org-scoped → a bound admin can still
-      // write (otherwise binding would lock out all Studio management). On non-GET, an org can only be
-      // requested via an EXPLICIT header, and that's rejected by the v1 read-only rule.
+      // Policy/budget PUT) run against the root journal and are not org-scoped → a bound admin can still
+      // Write (otherwise binding would lock out all Studio management). On non-GET, an org can only be
+      // Requested via an EXPLICIT header, and that's rejected by the v1 read-only rule.
       const org = c.req.method === 'GET' ? (bound ?? requested) : requested;
       if (!org) return next();
       if (org.includes(':')) return c.json({ error: "invalid org: cannot contain ':'" }, 400);
@@ -612,14 +612,14 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   const canRunManaged = !!resolvedWfStore && !!compileWorkflow && !!gnl?.run && writable && !!rw.get;
 
   /** Compiles a managed WorkflowDef and runs it with the SAME engine as code workflows (parity with registry.runWorkflow).
-   *  P0.4 (AUDIT-R2): `resume` forwards typed HITL payloads to wf.runResumable (only meaningful
-   *  when the compiled workflow supports it); a `{status:'canceled'}` result maps into `canceled` the
-   *  SAME way `suspended`/`paused` already do (mirrors registry.ts's runWorkflow mapping). */
+   * P0.4 `resume` forwards typed HITL payloads to wf.runResumable (only meaningful
+   *  When the compiled workflow supports it); a `{status:'canceled'}` result maps into `canceled` the
+   * SAME way `suspended`/`paused` already do (mirrors registry.ts's runWorkflow mapping). */
   async function runManaged (name: string, input: unknown, runId: string, maxSteps?: number, dryRun?: boolean, overridesFor?: (name: string) => Promise<{ model?: string; system?: string } | undefined>, resume?: Record<string, unknown>): Promise<{ runId: string; output?: unknown; suspended: boolean; paused?: boolean; canceled?: boolean; dryRun?: boolean; stepId?: string; reason?: unknown; steps: { id: string; kind: string; output: unknown }[] }> {
     const def = await resolvedWfStore!.get(name);
     if (!def) throw new Error(`workflow '${name}' not found`);
     // Dry-run: the real agent is NEVER CALLED (deterministic stub response) + the journal is TEMPORARY
-    // memory → zero LLM cost, zero persistent trace; validates flow/template/input wiring end-to-end.
+    // Memory → zero LLM cost, zero persistent trace; validates flow/template/input wiring end-to-end.
     const runAgent = dryRun
       ? async (agentName: string, o: { prompt?: string }) => ({ text: `[dry-run] ${agentName}: ${String(o.prompt ?? '').slice(0, 120)}` })
       : async (n2: string, o: { runId: string; prompt?: string }) => {
@@ -667,11 +667,11 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     | 'agent.approve' | 'agent.block';
   /**
    * Actor attribution — priority: an authenticated principal.id (e.g. a basic-auth user) > the
-   * x-gnl-actor header (the PERSON behind a shared token — cooperative attribution, like a git author) >
-   * role:<role> > anon. A token-only cred has no principal.id → the header is kept (so teams can keep a
-   * per-person trail); if there's no header either, it falls back to role:<role>. This makes spoofing
-   * pointless (token holders can already impersonate each other) while still preserving person-level
-   * info. Extracted so the agent-registry approve/block endpoints can pass it as approveAgent/blockAgent's
+   * X-gnl-actor header (the PERSON behind a shared token — cooperative attribution, like a git author) >
+   * Role:<role> > anon. A token-only cred has no principal.id → the header is kept (so teams can keep a
+   * Per-person trail); if there's no header either, it falls back to role:<role>. This makes spoofing
+   * Pointless (token holders can already impersonate each other) while still preserving person-level
+   * Info. Extracted so the agent-registry approve/block endpoints can pass it as approveAgent/blockAgent's
    * `by` argument without duplicating the derivation.
    */
   function actorOf (c: Context): string {
@@ -686,7 +686,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       // Org context — the audit "org" column (see Audit.tsx it.org):
       //  (1) the bound identity's orgId (if any) → which org the work was done on behalf of.
       //  (2) for operator actions that MANAGE an org (org.create/delete/budget), the actor is unbound (no orgId),
-      //      but the relevant org IS ALREADY the target → use target so the column doesn't stay empty.
+      //      But the relevant org IS ALREADY the target → use target so the column doesn't stay empty.
       //  (3) user.create: the new user's org is carried in detail.orgId.
       const orgFromTarget = action === 'org.create' || action === 'org.delete' || action === 'org.budget' ? target : undefined;
       const orgFromDetail = action === 'user.create' && detail && typeof detail === 'object'
@@ -699,7 +699,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // ── Managed agent versions: draft → promote/rollback (EE governance wave 2) ─────
   // Each agent has a single journal record: version list + active (prod) version number. Versions are
   // IMMUTABLE (a new record = a new version); promote only moves the 'active' pointer → rollback = promoting
-  // an older version. Every change is logged to audit.
+  // An older version. Every change is logged to audit.
   const AGENT_STORE_PRE = '__studio_agent__:';
   // Org record prefix: orgs that were EXPLICITLY created (may not have any runs yet) are kept here.
   const ORG_PRE = '__org__:';
@@ -709,8 +709,8 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     get(name: string): Promise<ManagedAgentRecord | undefined>;
     put(rec: ManagedAgentRecord): Promise<void>;
     /** Present if the journal supports deletePrefix — PERMANENTLY deletes the agent record (with ALL its
-     *  versions) (as OPPOSED TO the workflow store's tombstone/`put(key,null)` pattern — a real delete).
-     *  Otherwise the field is absent entirely (the caller must return 501, see DELETE /managed-agents/:name). */
+     *  Versions) (as OPPOSED TO the workflow store's tombstone/`put(key,null)` pattern — a real delete).
+     * Otherwise the field is absent entirely (the caller must return 501, see DELETE /managed-agents/:name). */
     delete?(name: string): Promise<void>;
   };
   /** Agent version store (list/get/put[/delete]) over the given journal. Requires listKeys+get+put. */
@@ -734,10 +734,10 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
         ? {
           async delete(name: string) {
             const key = AGENT_STORE_PRE + name;
-            // deletePrefix is RANGE-based (key >= prefix && key < prefix+'￿') — in our key format
+            // DeletePrefix is RANGE-based (key >= prefix && key < prefix+'￿') — in our key format
             // (`AGENT_STORE_PRE + name`, with NO trailing separator) `name` can be an EXACT string
-            // prefix of another agent's name (e.g. deleting 'dd' also catches 'dd2' in the range —
-            // see run purge using a `${runId}:` separator against the same class of bug, retention.ts).
+            // Prefix of another agent's name (e.g. deleting 'dd' also catches 'dd2' in the range —
+            // See run purge using a `${runId}:` separator against the same class of bug, retention.ts).
             // First read the colliding sibling keys, write them back after the sweep — only the
             // EXACTLY matching record is permanently deleted.
             const hits = await lk(key).catch(() => [] as string[]);
@@ -752,15 +752,15 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   }
   /**
    * ORG-SCOPED agent version store: a bound identity (Principal.orgId) only manages/sees/promotes ITS OWN
-   * org's versions (via the withOrg prefix); an unbound operator manages the root (shared) namespace.
+   * Org's versions (via the withOrg prefix); an unbound operator manages the root (shared) namespace.
    * Note: runtime enforcement (@gnldev/server's actual traffic) is a separate layer — this store brings org
-   * isolation to Studio playground/workflow runs and to management/visibility.
+   * Isolation to Studio playground/workflow runs and to management/visibility.
    */
   function agentStoreFor(c: Context): AgentStore | undefined {
     // Priority: identity-bound org (Principal.orgId) > org resolved from header/ALS (GET only; the read
-    // context scoped by the org middleware) > root (shared) namespace. Without the former, header-based
-    // org resolution (when there's no auth binding) would make GET /managed-agents return the root store
-    // for EVERY org (a leak) — see Phase 0.4.
+    // Context scoped by the org middleware) > root (shared) namespace. Without the former, header-based
+    // Org resolution (when there's no auth binding) would make GET /managed-agents return the root store
+    // For EVERY org (a leak) — see Phase 0.4.
     const bound = principalOf(c.req.raw)?.orgId ?? orgALS.getStore();
     const base = rawReader as unknown as Journal;
     const j = (bound ? (withOrg(base, bound) as unknown as Partial<Journal>) : (base as unknown as Partial<Journal>));
@@ -768,7 +768,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   }
 
   /** If an active (promoted) managed version exists, returns its model/system override (per the caller's org).
-   *  An explicit user override (body.model/system) OVERRIDES the managed version (playground experimentation). */
+   * An explicit user override (body.model/system) OVERRIDES the managed version (playground experimentation). */
   async function managedOverrides(name: string, c: Context): Promise<{ model?: string; system?: string } | undefined> {
     const store = agentStoreFor(c);
     if (!store) return undefined;
@@ -780,7 +780,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // Is multi-org ON? Only if the host gave org OR the auth provider reports multiOrganization (paid
   // @gnldev/auth-ee). Neither exists on the free tier → org surfaces are NEVER shown: it runs in a single
-  // implicit org, and the user is never aware multi-org exists.
+  // Implicit org, and the user is never aware multi-org exists.
   const multiOrganizationEnabled = !!opts.org || !!authProvider?.capabilities?.().multiOrganization;
 
   // PUBLIC (exempt from the read gate): lets the UI discover the auth mode + premium capabilities (sso/rbac...) BEFORE login.
@@ -805,16 +805,16 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       a2a: !!a2a,
       queue: !!queue,
       // "Retry" action in the Jobs view: on if the host implemented queue.retry (RBAC is also
-      // enforced server-side on every request via allow(c,'write') — this is only button visibility).
+      // Enforced server-side on every request via allow(c,'write') — this is only button visibility).
       queueManage: !!queue?.retry,
       // Cache view (@gnldev/cache hit/miss + size): on if the host gave a cache instance.
       cache: !!cache,
       // Manual invalidate button: on if the host implemented cache.invalidate (RBAC is again enforced
-      // server-side via allow(c,'write') — this is only button visibility, same pattern as queueManage).
+      // Server-side via allow(c,'write') — this is only button visibility, same pattern as queueManage).
       cacheManage: !!cache?.invalidate,
       // Scheduler (@gnldev/scheduler trigger introspection): the journal is READ-ONLY (see GET /scheduler/triggers),
-      // it needs neither a separate opts.scheduler surface nor a running instance — writable + listKeys
-      // is enough (same auto-detection pattern as audit/organizations; returns an empty list if the host doesn't use @gnldev/scheduler).
+      // It needs neither a separate opts.scheduler surface nor a running instance — writable + listKeys
+      // Is enough (same auto-detection pattern as audit/organizations; returns an empty list if the host doesn't use @gnldev/scheduler).
       scheduler: writable && typeof rw.listKeys === 'function',
       knowledge: !!vectors,
       workflowManage: !!resolvedWfStore,
@@ -823,11 +823,11 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       audit: writable && typeof rw.listKeys === 'function',
       // Agent approval registry (governance): review/approve/block code-defined agents recorded by
       // @gnldev/server's boot-time recording (see GET/POST /agents/registry* below) — SAME auto-detection
-      // pattern as audit/scheduler, no separate host option needed.
+      // Pattern as audit/scheduler, no separate host option needed.
       agentRegistry: writable && typeof rw.listKeys === 'function',
       // Compliance reports: findings produced in this run by the pii/moderation/prompt-injection
-      // processors (`${runId}:procreport:...`) — the SAME auto-detection pattern as audit/scheduler: writable +
-      // listKeys is enough, no separate host option is NEEDED (returns an empty list if the host doesn't use a processor).
+      // Processors (`${runId}:procreport:...`) — the SAME auto-detection pattern as audit/scheduler: writable +
+      // ListKeys is enough, no separate host option is NEEDED (returns an empty list if the host doesn't use a processor).
       processors: writable && typeof rw.listKeys === 'function',
       // The organizations surface is shown ONLY when multi-org is on (paid/opt-in). Hidden on free.
       organizations: multiOrganizationEnabled && writable && typeof rw.listKeys === 'function',
@@ -841,17 +841,17 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       evalGate: !!(opts.evalGate && datasets),
       purge: writable && typeof (rw as Partial<Journal>).deletePrefix === 'function',
       // W5: replay-based regression ("re-run" + decision-point diff). replayRun needs a writable
-      // journal since it writes a new run; diffing two EXISTING runs (GET) doesn't depend on that.
+      // Journal since it writes a new run; diffing two EXISTING runs (GET) doesn't depend on that.
       regression: writable,
       policy: writable,
       retention: !!opts.retention && writable && typeof (rw as Partial<Journal>).deletePrefix === 'function',
       // OTEL export button: on if the host gave opts.otelExport (RBAC is again enforced server-side
-      // via allow(c,'write') — this is only button visibility, same pattern as queueManage/cacheManage).
+      // Via allow(c,'write') — this is only button visibility, same pattern as queueManage/cacheManage).
       otelExport: !!opts.otelExport,
       // D3-A: durable run cancel (POST /runs/:id/cancel) — writes cancelAgentRun's cross-worker flag.
       // Studio has no in-process AbortController registry (unlike @gnldev/server's P0.3 in-flight abort),
-      // so this is the durable-flag path ONLY: a canceled run stops at its NEXT fresh model step,
-      // wherever it's running. Needs nothing but a writable journal (cancelAgentRun only get/put's a flag).
+      // So this is the durable-flag path ONLY: a canceled run stops at its NEXT fresh model step,
+      // Wherever it's running. Needs nothing but a writable journal (cancelAgentRun only get/put's a flag).
       runCancel: writable,
       // D3-A: durable workflow-run cancel (POST /workflows/runs/:id/cancel) — mirrors @gnldev/server's
       // P0.4 /workflows/runs/:id/cancel (reimplemented inline, see the route's own JSDoc for why).
@@ -863,11 +863,11 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     }),
   );
   // S4 pagination: if ?limit= is given, returns a Page envelope {items,nextCursor,total} (newest first);
-  // a call without the parameter stays a backward-compatible flat array (existing consumers don't break).
+  // A call without the parameter stays a backward-compatible flat array (existing consumers don't break).
   // API-09: optional status/agent/q filters — SAME parameter names as @gnldev/server's GET /runs (see
-  // packages/server/src/index.ts). Only honored together with `limit` (a bare filter with no `limit`
-  // falls through to the unfiltered flat array below, same as today — matches the "no params → identical
-  // to today" backward-compat contract; the studio-ui client always sends `limit`, so this never bites it).
+  // Packages/server/src/index.ts). Only honored together with `limit` (a bare filter with no `limit`
+  // Falls through to the unfiltered flat array below, same as today — matches the "no params → identical
+  // To today" backward-compat contract; the studio-ui client always sends `limit`, so this never bites it).
   app.get('/runs', async (c) => {
     if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     const limitRaw = c.req.query('limit');
@@ -882,29 +882,29 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     const agent = c.req.query('agent') || undefined;
     const q = c.req.query('q') || undefined;
     // API-01/API-09: prefer the engine push-down (listRunsPaged) — avoids materializing EVERY run (see
-    // journal.ts JournalReader.listRunsPaged / postgres-storage.ts's indexed `ORDER BY ... LIMIT`)
-    // just to slice out one page. listRunsPaged's own order is ASCENDING (oldest-first, mirroring the
-    // underlying `ORDER BY created_at`), but studio's contract here is "newest first" (see
-    // studio-ui/api.ts's RunsPage type) — so the requested newest-first window [start, start+limit) is
-    // converted into the matching ascending-order range using `total` (countRunsByStatus's push-down
-    // aggregate, the SAME source GET /metrics already uses below) and only that small (≤limit-sized)
-    // slice is reversed locally, never the whole table. Falls back to the legacy full-scan+reverse when
-    // either capability is missing (a bare custom JournalReader, or an adapter without a cheap status
-    // aggregate — e.g. Redis, see redis-storage.ts), when total couldn't be read, or (API-09) when an
+    // Journal.ts JournalReader.listRunsPaged / postgres-storage.ts's indexed `ORDER BY ... LIMIT`)
+    // Just to slice out one page. listRunsPaged's own order is ASCENDING (oldest-first, mirroring the
+    // Underlying `ORDER BY created_at`), but studio's contract here is "newest first" (see
+    // Studio-ui/api.ts's RunsPage type) — so the requested newest-first window [start, start+limit) is
+    // Converted into the matching ascending-order range using `total` (countRunsByStatus's push-down
+    // Aggregate, the SAME source GET /metrics already uses below) and only that small (≤limit-sized)
+    // Slice is reversed locally, never the whole table. Falls back to the legacy full-scan+reverse when
+    // Either capability is missing (a bare custom JournalReader, or an adapter without a cheap status
+    // Aggregate — e.g. Redis, see redis-storage.ts), when total couldn't be read, or (API-09) when an
     // `agent`/`q` filter is active: countRunsByStatus has no per-agent/per-substring count, so there is
-    // no cheap way to learn the FILTERED total upfront (needed for the newest-first↔ascending conversion
-    // above) — those filters fall through to the in-memory path below, no worse than the engine's own
-    // agent handling (postgres-storage.ts also full-scans for `agent` — there's no indexed column for it).
+    // No cheap way to learn the FILTERED total upfront (needed for the newest-first↔ascending conversion
+    // Above) — those filters fall through to the in-memory path below, no worse than the engine's own
+    // Agent handling (postgres-storage.ts also full-scans for `agent` — there's no indexed column for it).
     if (agent === undefined && q === undefined && typeof reader.listRunsPaged === 'function' && typeof rw.countRunsByStatus === 'function') {
       // NOTE: unlike a normal optional-capability call, this can't be `rw.countRunsByStatus().catch(...)`
-      // — under an active org (see the reader bridge above + organization.ts: countRunsByStatus is
-      // deliberately NOT bridged per-org), the call resolves SYNCHRONOUSLY to `undefined` (not a
-      // rejected promise, via `scopedNow().countRunsByStatus?.()`), and `.catch` on `undefined` throws.
+      // under an active org (see the reader bridge above + organization.ts: countRunsByStatus is
+      // Deliberately NOT bridged per-org), the call resolves SYNCHRONOUSLY to `undefined` (not a
+      // Rejected promise, via `scopedNow().countRunsByStatus?.()`), and `.catch` on `undefined` throws.
       let counted: Record<string, number> | undefined;
       try { counted = await rw.countRunsByStatus(); } catch { counted = undefined; }
       if (counted) {
         // API-09: total is the FILTERED count — countRunsByStatus's per-status breakdown already gives
-        // it for free when `status` is set; unfiltered, sum every status (unchanged from before).
+        // It for free when `status` is set; unfiltered, sum every status (unchanged from before).
         const total = status ? (counted[status] ?? 0) : Object.values(counted).reduce((a, b) => a + b, 0);
         const ascEnd = Math.max(0, total - start);
         const ascStart = Math.max(0, ascEnd - limit);
@@ -917,8 +917,8 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     }
     const all = await reader.listRuns();
     // API-09: status/agent/q filters applied server-side BEFORE reversing/slicing — `total` below
-    // therefore already reflects the FILTERED set, never the whole journal (the UI shows `total` in its
-    // search placeholder, and it must describe the same set as `items`).
+    // Therefore already reflects the FILTERED set, never the whole journal (the UI shows `total` in its
+    // Search placeholder, and it must describe the same set as `items`).
     const needle = q?.toLowerCase();
     const filtered = all.filter((r) =>
       (status === undefined || r.status === status) &&
@@ -926,8 +926,8 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       (needle === undefined || r.runId.toLowerCase().includes(needle)),
     );
     const newestFirst = [...filtered].reverse(); // journal append order is ascending → reversed = newest first
-    // threadId now comes from listRuns itself (every adapter surfaces it from the run's invisible `:input`
-    // entry in a SINGLE read, see journal.ts RunSummary.threadId) — no ADDITIONAL N+1 read happens here.
+    // ThreadId now comes from listRuns itself (every adapter surfaces it from the run's invisible `:input`
+    // Entry in a SINGLE read, see journal.ts RunSummary.threadId) — no ADDITIONAL N+1 read happens here.
     const items = newestFirst.slice(start, start + limit);
     const next = start + limit;
     return c.json({ items, nextCursor: next < newestFirst.length ? String(next) : undefined, total: newestFirst.length });
@@ -948,9 +948,9 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   });
 
   // Memory-context provenance (':memctx', frozen next to ':input' by durable's persistMemoryContext):
-  // the frozen input says WHAT the model saw; this says WHERE each part came from — recall hits with
-  // similarity, recent-window count, OM observations, WM injection, echo-trim. `null` for runs
-  // without memory, pre-provenance runs, or a read-only journal — the UI renders that honestly as
+  // The frozen input says WHAT the model saw; this says WHERE each part came from — recall hits with
+  // Similarity, recent-window count, OM observations, WM injection, echo-trim. `null` for runs
+  // Without memory, pre-provenance runs, or a read-only journal — the UI renders that honestly as
   // "no provenance recorded", never as an error.
   app.get('/runs/:id/memory-context', async (c) => {
     if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
@@ -967,7 +967,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   });
 
   // Runtime scorer results: the registry (AgentConfig.scorers) and the `${runId}:proc:eval:<name>`
-  // records that scoreRun memoizes — the read surface for exactly-once scores.
+  // Records that scoreRun memoizes — the read surface for exactly-once scores.
   app.get('/runs/:id/scores', async (c) => {
     if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!writable || typeof rw.listKeys !== 'function') return c.json({ scores: {} });
@@ -983,7 +983,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   });
 
   // Compliance reports: findings the pii-redactor/prompt-injection/moderation processors produced in
-  // this run (`readProcessorReports` — @gnldev/durable, reads the `${runId}:procreport:...` prefix).
+  // This run (`readProcessorReports` — @gnldev/durable, reads the `${runId}:procreport:...` prefix).
   // Empty list if the host doesn't use a processor / writable+listKeys is missing (SAME fallback as scores).
   app.get('/runs/:id/processors', async (c) => {
     if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
@@ -994,8 +994,8 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   });
 
   // The run's guard incidents (duplicate guard / loop detection /
-  // maxToolCalls — warn/reflect/block/suspend) as queryable telemetry. Same optional-capability
-  // fallback as /processors: no listKeys → empty list (never an error).
+  // MaxToolCalls — warn/reflect/block/suspend) as queryable telemetry. Same optional-capability
+  // Fallback as /processors: no listKeys → empty list (never an error).
   app.get('/runs/:id/incidents', async (c) => {
     if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!writable || typeof rw.listKeys !== 'function') return c.json({ incidents: [] });
@@ -1005,18 +1005,18 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   });
 
   // Dynamic agent network trace (runNetwork): CAS-frozen routing decisions + step results —
-  // the UI draws the dynamic tree (router → agent → result) from this. Nested run detail at /runs/net:<id>:<i>.
+  // The UI draws the dynamic tree (router → agent → result) from this. Nested run detail at /runs/net:<id>:<i>.
   app.get('/runs/:id/network', async (c) => {
     if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!writable || typeof rw.listKeys !== 'function') return c.json({ routes: [], steps: [] });
     const id = decodeURIComponent(c.req.param('id'));
-    // rw is Partial<Journal>; writable + listKeys was checked → the surface getNetworkTrace uses is complete.
+    // Rw is Partial<Journal>; writable + listKeys was checked → the surface getNetworkTrace uses is complete.
     return c.json(await getNetworkTrace(rw as any, id).catch(() => ({ routes: [], steps: [] })));
   });
 
   // OTEL-like trace: durations from entries' ts + cost (for the waterfall).
   // Enrichment: tool spans are named via the toolCallId→toolName mapping and linked to the model step
-  // that called them via `parent` (span index) → the UI draws a real nested tree.
+  // That called them via `parent` (span index) → the UI draws a real nested tree.
   app.get('/runs/:id/trace', async (c) => {
     if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     const id = decodeURIComponent(c.req.param('id'));
@@ -1024,7 +1024,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     const cost = await getRunCost(reader, id);
     const first = entries.find((e) => e.ts != null)?.ts ?? 0;
     const last = [...entries].reverse().find((e) => e.ts != null)?.ts ?? first;
-    // toolCallId → toolName from model steps' content (the journal's tool record has no name).
+    // ToolCallId → toolName from model steps' content (the journal's tool record has no name).
     const toolNames = new Map<string, string>();
     for (const e of entries) {
       if (e.kind !== 'model') continue;
@@ -1082,7 +1082,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     for (const r of runs) {
       if (r.status !== 'suspended') continue;
       const entries = await reader.readRun(r.runId);
-      // the sentinel in a suspended tool record carries args/reason → shows context in the inbox
+      // The sentinel in a suspended tool record carries args/reason → shows context in the inbox
       const meta = new Map<string, { args?: unknown; reason?: string }>();
       for (const e of entries) {
         const v: any = e.value;
@@ -1095,7 +1095,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       }
     }
     // Approval webhook: the SAME pattern as the budget alert — a SINGLE POST per pending approval via a
-    // first-write-wins __alert__ marker (webhook errors are swallowed, never breaks the inbox flow).
+    // First-write-wins __alert__ marker (webhook errors are swallowed, never breaks the inbox flow).
     // Lazy trigger: since the UI polls /approvals every 5s, a suspension is reported within ~5s.
     if (opts.alerts?.webhook && writable) {
       const rootRw = rawReader as Partial<Journal> & JournalReader;
@@ -1114,10 +1114,10 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // Audit trail: the __audit__ log — NEWEST FIRST; exact-match action + substring q filters.
   // Org filter: a bound identity (Principal.orgId) sees ONLY its own context (?org= is ignored — it
-  // can't read anyone else's record); an unbound (operator) identity can optionally filter with ?org=.
+  // Can't read anyone else's record); an unbound (operator) identity can optionally filter with ?org=.
   // NOTE: __audit__ lives in the ROOT (non-org-prefixed) journal → the raw `rawReader` is used instead
-  // of the ALS-scoped `rw` (otherwise a bound identity's GET would be scoped by the org middleware to a
-  // non-existent prefix like org:<id>:__audit__: and always return empty — see the rootRw pattern in /organizations).
+  // Of the ALS-scoped `rw` (otherwise a bound identity's GET would be scoped by the org middleware to a
+  // Non-existent prefix like org:<id>:__audit__: and always return empty — see the rootRw pattern in /organizations).
   app.get('/audit', async (c) => {
     if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     const rootRw = rawReader as Partial<Journal> & JournalReader;
@@ -1145,16 +1145,16 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!writable || typeof rw.listKeys !== 'function') return c.json({ organizations: [] });
     // The scan always happens on the ROOT journal (org: prefixes aren't visible in the org-scoped view);
-    // an identity-bound org sees ONLY itself — the global list is open only to unbound (operator) identities.
+    // An identity-bound org sees ONLY itself — the global list is open only to unbound (operator) identities.
     const rootRw = rawReader as Partial<Journal> & JournalReader;
     const keys = await rootRw.listKeys!(ORG_KEY_PRE).catch(() => [] as string[]);
     const bound = principalOf(c.req.raw)?.orgId;
     // Merge DISCOVERED orgs (with org:<id>: prefixed data) with EXPLICITLY REGISTERED ones (__org__:<id>) →
-    // a newly created org with no runs yet also shows up in the list.
+    // A newly created org with no runs yet also shows up in the list.
     const discovered = keys.map((k) => { const j = k.indexOf(':', ORG_KEY_PRE.length); return j > ORG_KEY_PRE.length ? k.slice(ORG_KEY_PRE.length, j) : ''; }).filter(Boolean);
-    // listKeys also returns tombstones (put(__org__:id, null) — see DELETE /organizations); the codebase's
-    // general convention is `get(...) != null` = "exists" (see ~line 972, ~1029). A deleted org would
-    // otherwise stay in the list (the "0 records deleted but still shows on screen" bug) → skip records with a null value.
+    // ListKeys also returns tombstones (put(__org__:id, null) — see DELETE /organizations); the codebase's
+    // General convention is `get(...) != null` = "exists" (see ~line 972, ~1029). A deleted org would
+    // Otherwise stay in the list (the "0 records deleted but still shows on screen" bug) → skip records with a null value.
     const registered: string[] = [];
     for (const k of await rootRw.listKeys!(ORG_PRE).catch(() => [] as string[])) {
       if ((await rootRw.get!(k).catch(() => undefined)) != null) registered.push(k.slice(ORG_PRE.length));
@@ -1168,10 +1168,10 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       let costUsd = 0;
       // API-02: fast path — the SAME materialized-counter shortcut GET /metrics already uses
       // (readMetricsSummary → O(1) getCounters point-read), instead of a SEQUENTIAL
-      // getRunCost/readRun scan over EVERY run in the organization. withOrg bridges getCounters
+      // GetRunCost/readRun scan over EVERY run in the organization. withOrg bridges getCounters
       // 1:1 (key-prefixed, see organization.ts) → this stays per-org isolated, same as /metrics'
-      // own use of it. `source` mirrors /metrics' honesty field so the UI/tests can tell which
-      // path served the response.
+      // Own use of it. `source` mirrors /metrics' honesty field so the UI/tests can tell which
+      // Path served the response.
       let source: 'materialized' | 'scan' = 'scan';
       if (typeof view.getCounters === 'function') {
         const summary = await readMetricsSummary(view as unknown as Journal);
@@ -1182,11 +1182,11 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
         }
       }
       // No materialized data yet (older data / a journal without getCounters) — fall back to the
-      // legacy per-run scan so behavior is IDENTICAL to before this fix. NOTE: `view.countRunsByStatus`
-      // is intentionally NOT used here — withOrg deliberately does not bridge it (an org-scoped
-      // aggregate would otherwise leak every organization's counts, see organization.ts) — run COUNT
-      // keeps coming from `runsList` above (already a cheap listRuns() summary pass, not a per-run
-      // readRun) in both the fast and the scan path, so it's unaffected either way.
+      // Legacy per-run scan so behavior is IDENTICAL to before this fix. NOTE: `view.countRunsByStatus`
+      // Is intentionally NOT used here — withOrg deliberately does not bridge it (an org-scoped
+      // Aggregate would otherwise leak every organization's counts, see organization.ts) — run COUNT
+      // Keeps coming from `runsList` above (already a cheap listRuns() summary pass, not a per-run
+      // ReadRun) in both the fast and the scan path, so it's unaffected either way.
       if (source === 'scan') {
         for (const r of runsList) {
           const rc = await getRunCost(view, r.runId);
@@ -1195,15 +1195,15 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
         }
       }
       // Label: from the __org__:<id> record document (collected via POST /organizations) — GET used to
-      // never read it, so the label was collected but never shown in the UI (see bug report #1). An
-      // implicit/discovered org (not yet registered) has no label.
+      // Never read it, so the label was collected but never shown in the UI (see bug report #1). An
+      // Implicit/discovered org (not yet registered) has no label.
       const orgRec = (await rootRw.get!(ORG_PRE + id).catch(() => undefined)) as { label?: string } | undefined;
       const label = orgRec?.label;
       // Effective limit: the journal's __budget__ document (managed from Studio, enforced by @gnldev/server)
       // > the host config fallback (opts.budgets). readBudget resolves the same way as @gnldev/server's enforcement.
-      // inherited: true if the ORG'S OWN __budget__:<id> document is missing/unlimited (inherited from the
-      // default) — distinguished so the UI doesn't pre-fill these inherited values on edit and accidentally
-      // create a per-org override (see bug report #3).
+      // Inherited: true if the ORG'S OWN __budget__:<id> document is missing/unlimited (inherited from the
+      // Default) — distinguished so the UI doesn't pre-fill these inherited values on edit and accidentally
+      // Create a per-org override (see bug report #3).
       const ownBudgetDoc = (await rootRw.get!(BUDGET_PRE + id).catch(() => undefined)) as { usdLimit?: number; tokenLimit?: number } | null | undefined;
       const hasOwnBudget = !!ownBudgetDoc && (ownBudgetDoc.usdLimit != null || ownBudgetDoc.tokenLimit != null);
       const lim = (await readBudget(rootRw, id)) ?? opts.budgets?.perOrg?.[id] ?? opts.budgets?.default;
@@ -1261,17 +1261,17 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       return c.json({ error: 'org deletion requires journal deletePrefix support (Sqlite/Postgres/InMemory provide it)' }, 501);
     }
     // Note: the standalone `const` handler uses the generic Hono `Context` type (no route-specific path
-    // literal) → ':id' therefore needs `!`.
+    // Literal) → ':id' therefore needs `!`.
     const id = decodeURIComponent(c.req.param('id')!);
     if (id.includes(':')) return c.json({ error: "invalid org: cannot contain ':'" }, 400);
     // GDPR runbook: purgeOrganization = the same org:<id>: sweep this line used to do inline, now the
     // ONE documented deletion surface (covers counters/metrics/wfrun/xrun too — see its JSDoc for what
-    // is deliberately NOT deleted: root __audit__ retention, orgless-scope data, EE users [handled below]).
+    // Is deliberately NOT deleted: root __audit__ retention, orgless-scope data, EE users [handled below]).
     const deleted = await purgeOrganization(rootJ, id);       // the org's entire run/memory/queue trail
     await rootJ.put(ORG_PRE + id, null);                     // remove the record
     await rootJ.put(BUDGET_PRE + id, null);                     // remove the budget document
     // Prevent orphaned EE users: if members bound to the org aren't also deleted when the org is
-    // deleted, their tokens still validate (a ghost of the deleted org remains). Remove members too if opts.users is given.
+    // Deleted, their tokens still validate (a ghost of the deleted org remains). Remove members too if opts.users is given.
     let removedUsers = 0;
     if (opts.users) {
       const members = (await opts.users.list()).filter((u) => u.orgId === id);
@@ -1283,15 +1283,15 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   app.delete('/organizations/:id', deleteOrganization);
 
   // ── Identity: the logged-in principal (UI "who am I logged in as" + org context) ───
-  // allow() attaches the principal to the context → principalOf reads it afterward. If auth is off,
-  // allow is always true + principal null → anonymous (everything open); if auth is on with no token, 401.
+  // Allow() attaches the principal to the context → principalOf reads it afterward. If auth is off,
+  // Allow is always true + principal null → anonymous (everything open); if auth is on with no token, 401.
   app.get('/me', async (c) => {
     if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     const p = principalOf(c.req.raw);
     // NEW fields for the (separate) UI iteration:
     //  • platformAdmin — the EXPLICIT cross-org grant (scope: 'platform').
     //  • scope — resolved scope tag: 'platform' | 'org:<id>' | 'none'. In strict mode 'none' means the
-    //    caller is fail-closed (org-less, no grant); in free mode 'none' is the legacy operator.
+    //    Caller is fail-closed (org-less, no grant); in free mode 'none' is the legacy operator.
     //  • strictMultiOrg — whether the paid strict model is active (so the UI can interpret 'none').
     // `operator` is kept UNCHANGED (legacy: org-less) for backward-compat.
     const s = principalScope(p);
@@ -1309,10 +1309,10 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // ── Permission catalog (read-only; the code-defined, GNL-team-owned list) ───────────────
   // Exposes the fine-grained permission catalog + the role→preset map so the UI can render assignment
-  // checkboxes and seed them from a role. Fine-grained permissions are a PAID (RBAC) capability → when
+  // Checkboxes and seed them from a role. Fine-grained permissions are a PAID (RBAC) capability → when
   // RBAC is OFF (free tier, coarse read/write only) the catalog is reported disabled/empty so the UI
-  // doesn't offer a model the backend can't enforce. This endpoint is READ-ONLY: there is no create/edit/
-  // delete of permission TYPES — the GNL team extends the catalog in code together with its enforcement.
+  // Doesn't offer a model the backend can't enforce. This endpoint is READ-ONLY: there is no create/edit/
+  // Delete of permission TYPES — the GNL team extends the catalog in code together with its enforcement.
   app.get('/permissions/catalog', async (c) => {
     if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!rbacEnabled) return c.json({ enabled: false, permissions: [], rolePresets: {} });
@@ -1321,7 +1321,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // ── User management (paid; if opts.users is given) ────────────────────────
   // ORG MODEL: org = organization, user = a MEMBER belonging to exactly 1 org, operator = a user with no
-  // org (platform-level). The token is returned ONCE on creation (the server never stores it in plaintext).
+  // Org (platform-level). The token is returned ONCE on creation (the server never stores it in plaintext).
   //  • Operator (org-less admin): creates/deletes members in any org + can create org-less (operator) users.
   //  • Org-admin (bound admin): manages ONLY its OWN org's members (orgId is forced to its own org).
   //  • Member assignment is validated against an EXISTING org (a member cannot be added to a ghost org).
@@ -1360,7 +1360,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     }
     // PRIVILEGE CEILING: `users:write` lets an admin manage users, but it must NOT let a non-platform-admin
     // MINT the reserved `platform-admin` role (or the `'*'` super-grant) — that would create a cross-org
-    // super-admin out of an org-bound admin. Same-org checks below guard the target's org, not its privileges.
+    // Super-admin out of an org-bound admin. Same-org checks below guard the target's org, not its privileges.
     {
       const ceiling = assertAssignablePrivileges(principalOf(c.req.raw), { roles: body.roles, permissions: body.permissions });
       if (!ceiling.ok) return c.json({ error: ceiling.reason }, 403);
@@ -1412,7 +1412,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   });
 
   // Invalidate the user's token WITHOUT deleting the user (audit/history remains). Only enabled if
-  // opts.users.revoke is provided (501 if the host doesn't support it). SAME permission rule as DELETE /users/:id.
+  // Opts.users.revoke is provided (501 if the host doesn't support it). SAME permission rule as DELETE /users/:id.
   app.post('/users/:id/revoke', async (c) => {
     if (!(await allowP(c.req.raw, 'users:write'))) return deny(c.req.raw, 'write');
     if (!opts.users) return c.json({ error: 'user management is not enabled' }, 501);
@@ -1432,8 +1432,8 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   });
 
   // PATCH a user's roles and/or explicit permissions (the customer admin ASSIGNS catalog permissions to a
-  // user via checkboxes). The token is unchanged; the next authenticate picks up the new grants. SAME
-  // permission + org-scope rules as the other /users writes (org-admin: own org only; operator: any).
+  // User via checkboxes). The token is unchanged; the next authenticate picks up the new grants. SAME
+  // Permission + org-scope rules as the other /users writes (org-admin: own org only; operator: any).
   app.patch('/users/:id', async (c) => {
     if (!(await allowP(c.req.raw, 'users:write'))) return deny(c.req.raw, 'write');
     if (!opts.users) return c.json({ error: 'user management is not enabled' }, 501);
@@ -1475,13 +1475,13 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   });
 
   // Write/clear an org's budget (management — admin): the `__budget__:<id>` document in the journal.
-  // id='default' is the fallback for all orgs. Empty body/null values → the budget is deleted.
+  // Id='default' is the fallback for all orgs. Empty body/null values → the budget is deleted.
   // @gnldev/server's write path reads this document LIVE → changes take effect without a redeploy.
   const putOrganizationBudget = async (c: Context) => {
     if (!(await allowP(c.req.raw, 'budget:write'))) return deny(c.req.raw, 'write');
     if (!writable) return c.json({ error: 'budget management requires a writable journal' }, 501);
     // Note: the standalone `const` handler uses the generic Hono `Context` type (no route-specific path
-    // literal) → ':id' therefore needs `!` (see the note on the DELETE handler).
+    // Literal) → ':id' therefore needs `!` (see the note on the DELETE handler).
     const id = decodeURIComponent(c.req.param('id')!);
     // An identity-bound org can ONLY write ITS OWN budget — it cannot change someone else's or the
     // 'default' fallback (the write-side counterpart of the visibility restriction in GET /organizations).
@@ -1509,11 +1509,11 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   };
   app.put('/organizations/:id/budget', putOrganizationBudget);
 
-  // P1.6 (AUDIT-R2): fast path — if the (org-scoped) journal has materialized counters
+  // P1.6 fast path — if the (org-scoped) journal has materialized counters
   // (`getCounters` bridged above + `__metrics__:all` has data), byStatus is STILL a cheap listRuns()
-  // summary pass (no readRun/getRunCost per run), and costUsd/tokens/byDay come straight off the
-  // counters (O(1 + days), see readMetricsSummary) — no per-run scan at all. `source` tells the caller
-  // which path served the response (materialized vs the legacy full scan) so Studio's UI/tests can tell.
+  // Summary pass (no readRun/getRunCost per run), and costUsd/tokens/byDay come straight off the
+  // Counters (O(1 + days), see readMetricsSummary) — no per-run scan at all. `source` tells the caller
+  // Which path served the response (materialized vs the legacy full scan) so Studio's UI/tests can tell.
   app.get('/metrics', async (c) => {
     if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (typeof rw.getCounters === 'function') {
@@ -1522,10 +1522,10 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       const summary = await readMetricsSummary(rw as unknown as Journal, { days });
       if (summary.all) {
         // P1.6b: when the (org-scoped) reader exposes `countRunsByStatus`, use the ENGINE-LEVEL push-down
-        // aggregate (O(distinct statuses), see journal.ts JournalReader.countRunsByStatus) instead of
-        // materializing every RunSummary via listRuns() just to count them. Falls back to the listRuns
-        // scan when unavailable (custom journal, or an org-scoped view — countRunsByStatus is
-        // deliberately NOT bridged per-org, see organization.ts).
+        // Aggregate (O(distinct statuses), see journal.ts JournalReader.countRunsByStatus) instead of
+        // Materializing every RunSummary via listRuns() just to count them. Falls back to the listRuns
+        // Scan when unavailable (custom journal, or an org-scoped view — countRunsByStatus is
+        // Deliberately NOT bridged per-org, see organization.ts).
         const counted = typeof rw.countRunsByStatus === 'function' ? await rw.countRunsByStatus().catch(() => undefined) : undefined;
         let total: number;
         let byStatus: Record<string, number>;
@@ -1559,22 +1559,22 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // Per-run metric rows (Observability: time-series + latency percentiles + a rich table).
   // P1.6: for a finalized run, the `__metrics__run:<runId>` row (written once at completion — see
-  // registry.ts's post-run hook / metrics.ts recordRunMetrics) is read directly — no readRun/getRunCost.
+  // Registry.ts's post-run hook / metrics.ts recordRunMetrics) is read directly — no readRun/getRunCost.
   // Only runs WITHOUT that row (in-flight, or older than this feature / a journal without incrBy) fall
-  // back to the readRun+getRunCost scan. Response shape is UNCHANGED (same field names as before).
+  // Back to the readRun+getRunCost scan. Response shape is UNCHANGED (same field names as before).
   app.get('/metrics/runs', async (c) => {
     if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     let runs = await reader.listRuns();
     // P1.6b: optional ?limit= — clamp 1..1000, slicing the run list BEFORE fetching any rows (a cheap
-    // partial win). Full cursor-based pagination for this endpoint is P0.3's job — not attempted here.
+    // Partial win). Full cursor-based pagination for this endpoint is P0.3's job — not attempted here.
     const limitRaw = c.req.query('limit');
     if (limitRaw !== undefined) {
       const limit = Math.min(Math.max(Math.floor(Number(limitRaw)) || 0, 1), 1000);
       runs = runs.slice(0, limit);
     }
     // P1.6b: ONE getMany round-trip for every fast-path row instead of N sequential rw.get calls, when
-    // the (org-scoped) reader exposes it; falls back to the per-run rw.get loop otherwise (custom
-    // journal, or a journal without getMany at all).
+    // The (org-scoped) reader exposes it; falls back to the per-run rw.get loop otherwise (custom
+    // Journal, or a journal without getMany at all).
     const fastRows: (MetricsRunRow | undefined)[] = typeof rw.getMany === 'function'
       ? await rw.getMany<MetricsRunRow>(runs.map((r) => metricsRunKey(r.runId))).catch(() => runs.map(() => undefined))
       : [];
@@ -1617,11 +1617,11 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   });
 
   // ── SSE ticket (opt-in, audit #2): since EventSource can't send headers, the roleAuth `?token=`
-  // fallback carries the persistent secret in the URL (a log-leak risk — see role-auth.ts's JSDoc). An
-  // alternative: authenticated `POST /auth/sse-ticket` generates a SINGLE-USE random ticket with a 60s TTL;
+  // Fallback carries the persistent secret in the URL (a log-leak risk — see role-auth.ts's JSDoc). An
+  // Alternative: authenticated `POST /auth/sse-ticket` generates a SINGLE-USE random ticket with a 60s TTL;
   // `GET /events?ticket=...` consumes it IMMEDIATELY (unusable again). An in-memory Map; TTL sweeping is
-  // done lazily on every issue/consume call (no separate timer needed, leaves no dangling handle at
-  // test/process shutdown). The existing `?token=` behavior is preserved UNCHANGED — this is only a safer
+  // Done lazily on every issue/consume call (no separate timer needed, leaves no dangling handle at
+  // Test/process shutdown). The existing `?token=` behavior is preserved UNCHANGED — this is only a safer
   // ADDITIONAL path (backward compatible).
   const SSE_TICKET_TTL_MS = 60_000;
   const sseTickets = new Map<string, { principal: Principal | null; expiresAt: number }>();
@@ -1646,7 +1646,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     return v.expiresAt > now ? v.principal : undefined;
   }
   // Getting a ticket also requires READ permission (viewer/admin) — if auth is off (no provider), allow()
-  // already returns true, so the ticket is issued freely (consistent with the existing open behavior).
+  // Already returns true, so the ticket is issued freely (consistent with the existing open behavior).
   app.post('/auth/sse-ticket', async (c) => {
     if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     const { ticket, expiresAt } = issueSseTicket(principalOf(c.req.raw));
@@ -1654,39 +1654,39 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   });
 
   // SSE: pushes when the run list changes (live instead of polling). EventSource can't send headers →
-  // gated with ?token= (roleAuth fallback) OR ?ticket= (the single-use ticket above).
+  // Gated with ?token= (roleAuth fallback) OR ?ticket= (the single-use ticket above).
   // API-04: poll interval — 2s (was 1s). The cheap-signal path below only pays for a full listRuns()
-  // scan when something has ACTUALLY changed (see readCheapEventsSignal), so this interval mostly gates
-  // the cheap probe itself (already O(distinct statuses) via the engine's countRunsByStatus push-down,
-  // or a single indexed page read for the newest run) — 2s keeps the UI feeling live while halving even
-  // that probe's frequency, with no user-visible latency cost worth calling out.
+  // Scan when something has ACTUALLY changed (see readCheapEventsSignal), so this interval mostly gates
+  // The cheap probe itself (already O(distinct statuses) via the engine's countRunsByStatus push-down,
+  // Or a single indexed page read for the newest run) — 2s keeps the UI feeling live while halving even
+  // That probe's frequency, with no user-visible latency cost worth calling out.
   const EVENTS_POLL_MS = 2000;
   /**
    * API-04-followup: the cheap signal (readCheapEventsSignal, below) only tracks per-status totals + the
-   * newest run's tuple, so an OLDER (non-newest) run's step progress can advance without moving it (see
-   * the KNOWN GAP note below). Rather than pay for a full listRuns() scan every tick to close that gap,
-   * a full listRuns() diff also runs unconditionally once every FULL_SCAN_EVERY_TICKS ticks — bounding
-   * the worst-case staleness for a non-newest run's progress to one full-scan period (~10s at the 2s poll
-   * interval) instead of "until its own status changes". Net cost: 1 full scan per ~10s instead of per
+   * Newest run's tuple, so an OLDER (non-newest) run's step progress can advance without moving it (see
+   * The KNOWN GAP note below). Rather than pay for a full listRuns() scan every tick to close that gap,
+   * A full listRuns() diff also runs unconditionally once every FULL_SCAN_EVERY_TICKS ticks — bounding
+   * The worst-case staleness for a non-newest run's progress to one full-scan period (~10s at the 2s poll
+   * Interval) instead of "until its own status changes". Net cost: 1 full scan per ~10s instead of per
    * 1s pre-API-04 (~10x cut) while every change is still surfaced within a bounded delay.
    * Not part of the public API (StudioApiOptions) — overridable only via an internal, untyped option so
-   * tests don't have to wait out the full 10s in real time.
+   * Tests don't have to wait out the full 10s in real time.
    */
   const FULL_SCAN_EVERY_TICKS: number = (opts as any).__fullScanEveryTicks ?? 5;
   /**
    * API-04: a CHEAP fingerprint of "has anything changed" — deliberately NOT a full listRuns() scan.
    * Combines countRunsByStatus()'s per-status totals (catches a run being added/removed, or any run
-   * transitioning completed↔suspended — O(distinct statuses), see journal.ts's JSDoc) with the newest
-   * run's own summary tuple, read via a single indexed listRunsPaged({limit:1}) tail slice — the SAME
-   * total→ascending-range conversion GET /runs already uses above (catches the common case: the
-   * most-recently-created run's modelSteps/toolCalls advancing while it's still mid-flight).
+   * Transitioning completed↔suspended — O(distinct statuses), see journal.ts's JSDoc) with the newest
+   * Run's own summary tuple, read via a single indexed listRunsPaged({limit:1}) tail slice — the SAME
+   * Total→ascending-range conversion GET /runs already uses above (catches the common case: the
+   * Most-recently-created run's modelSteps/toolCalls advancing while it's still mid-flight).
    * Returns undefined when the underlying reader doesn't support countRunsByStatus (a bare/custom
    * JournalReader, or an org-scoped view — countRunsByStatus is deliberately not bridged per-org, see
-   * the `reader` construction above) → callers fall back to the pre-API-04 full-scan behavior.
+   * The `reader` construction above) → callers fall back to the pre-API-04 full-scan behavior.
    * KNOWN GAP (bounded, not lost): an OLDER (non-newest) run advancing its steps while a newer run also
-   * exists won't move this fingerprint until ITS OWN status changes — but the periodic full scan below
+   * Exists won't move this fingerprint until ITS OWN status changes — but the periodic full scan below
    * (FULL_SCAN_EVERY_TICKS) still catches it within at most ~10s, so this is a bounded delay, not a
-   * missed event; the fallback path below has no such gap (or delay) at all.
+   * Missed event; the fallback path below has no such gap (or delay) at all.
    */
   async function readCheapEventsSignal(): Promise<string | undefined> {
     if (typeof rw.countRunsByStatus !== 'function') return undefined;
@@ -1711,17 +1711,17 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       const principal = consumeSseTicket(ticket);
       if (principal === undefined) return c.json({ error: 'invalid or expired ticket' }, 401);
       // If the ticket is org-bound (multi-org), the read is scoped to that org — PARITY with the org
-      // middleware's bound-principal behavior (see the app.use('*') block above).
+      // Middleware's bound-principal behavior (see the app.use('*') block above).
       ticketOrg = principal?.orgId;
     } else if (!(await allow(c.req.raw, 'read'))) {
       return deny(c.req.raw, 'read');
     }
     const run = () => sseResponse(c, async (stream) => {
       // API-04: the event body is now INFORMATIVE — `{"runIds":[...],"at":<epoch ms>}` naming exactly
-      // which runs changed, instead of the old signal-only `data:'runs'` — so the client can patch just
-      // those rows (see studio-ui/api.ts's useLiveRuns) instead of refetching every loaded page.
+      // Which runs changed, instead of the old signal-only `data:'runs'` — so the client can patch just
+      // Those rows (see studio-ui/api.ts's useLiveRuns) instead of refetching every loaded page.
       // BACKWARD COMPAT is handled CLIENT-SIDE (a JSON.parse failure there falls back to full
-      // invalidation) — this endpoint doesn't fork into two implementations for old vs new clients.
+      // Invalidation) — this endpoint doesn't fork into two implementations for old vs new clients.
       let cheapSig: string | undefined;
       let known = new Map<string, string>(); // runId -> `${status}|${modelSteps}|${toolCalls}`
       let baselined = false;
@@ -1732,16 +1732,16 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
         if (sig !== undefined) {
           if (!baselined) {
             // First tick: establish the baseline silently (no event) — a freshly-connected client just
-            // did its own initial fetch, so reporting every existing run as "changed" here would be a
-            // needless (and, at tens of thousands of runs, large) initial payload.
+            // Did its own initial fetch, so reporting every existing run as "changed" here would be a
+            // Needless (and, at tens of thousands of runs, large) initial payload.
             cheapSig = sig;
             known = new Map((await reader.listRuns()).map((r) => [r.runId, `${r.status}|${r.modelSteps}|${r.toolCalls}`]));
             baselined = true;
           } else {
             tick++;
             // Periodic full scan (FULL_SCAN_EVERY_TICKS): runs a full listRuns() diff even when the cheap
-            // signal DIDN'T change, so a non-newest run's progress (the KNOWN GAP above) is still caught
-            // within a bounded delay instead of only when its status flips.
+            // Signal DIDN'T change, so a non-newest run's progress (the KNOWN GAP above) is still caught
+            // Within a bounded delay instead of only when its status flips.
             const forceFullScan = tick % FULL_SCAN_EVERY_TICKS === 0;
             if (sig !== cheapSig || forceFullScan) {
               cheapSig = sig;
@@ -1754,7 +1754,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
                 if (known.get(r.runId) !== fp) changed.push(r.runId);
               }
               // A run disappearing (purge/retention sweep) also counts as "changed" — the client needs
-              // its id to drop the row from cached pages, not just to see growth/edits.
+              // Its id to drop the row from cached pages, not just to see growth/edits.
               for (const id of known.keys()) if (!nextKnown.has(id)) changed.push(id);
               known = nextKnown;
               if (changed.length > 0) {
@@ -1764,7 +1764,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
           }
         } else {
           // Fallback: no cheap aggregate available → PRESERVE the exact pre-API-04 behavior (full
-          // listRuns() scan every poll, diffed as one whole-list signature, old uninformative payload).
+          // ListRuns() scan every poll, diffed as one whole-list signature, old uninformative payload).
           const runs = await reader.listRuns();
           const fullSig = JSON.stringify(runs.map((r) => [r.runId, r.status, r.modelSteps, r.toolCalls]));
           if (fullSig !== legacyLast) { legacyLast = fullSig; await stream.writeSSE({ data: 'runs', event: 'change' }); }
@@ -1788,7 +1788,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     return c.json({ ok: true, ...fork, ...r });
   });
 
-  // approval → resume (admin).
+  // Approval → resume (admin).
   app.post('/runs/:id/resume', async (c) => {
     if (!(await allowP(c.req.raw, 'run:write'))) return deny(c.req.raw, 'write');
     if (!resume) return c.json({ error: 'resume is not enabled' }, 501);
@@ -1802,14 +1802,14 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   });
 
   /**
-   * D3-A (AUDIT-R2 surface): durably cancels an agent run — the studio-side counterpart of
+   * D3-A durably cancels an agent run — the studio-side counterpart of
    * @gnldev/server's POST /runs/:id/cancel. UNLIKE @gnldev/server, studio keeps no in-process AbortController
-   * registry for streamed generations (there is no equivalent of its `inflight` map here), so this is
+   * Registry for streamed generations (there is no equivalent of its `inflight` map here), so this is
    * ONLY the durable-flag path: `cancelAgentRun` writes a cross-worker flag every fresh model step
-   * checks (durable-model.ts) — a run in flight elsewhere stops at its NEXT step boundary, and every
-   * future resume attempt is refused (terminal, like a compensated run; recovery = fork). Visibility:
-   * the SAME `${id}:input` presence check @gnldev/server's cancel endpoint uses (persistInput is written by
-   * every run()/stream() call) — a run from another organization is invisible through the org-scoped
+   * Checks (durable-model.ts) — a run in flight elsewhere stops at its NEXT step boundary, and every
+   * Future resume attempt is refused (terminal, like a compensated run; recovery = fork). Visibility:
+   * The SAME `${id}:input` presence check @gnldev/server's cancel endpoint uses (persistInput is written by
+   * Every run()/stream() call) — a run from another organization is invisible through the org-scoped
    * `rw` (withOrg prefixes every key), so this returns the same 404 (no existence leak) as elsewhere.
    */
   app.post('/runs/:id/cancel', async (c) => {
@@ -1825,7 +1825,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // Unwind an abandoned run — every executed side effect whose tool declares a
   // `compensate` hook is undone in reverse order, exactly-once (@gnldev/durable compensateRun). The run
-  // is CONDEMNED first (never resumable again) → write-gated + audited with the report summary.
+  // Is CONDEMNED first (never resumable again) → write-gated + audited with the report summary.
   // `dryRun: true` previews the work without condemning or executing anything.
   app.post('/runs/:id/compensate', async (c) => {
     if (!(await allowP(c.req.raw, 'run:write'))) return deny(c.req.raw, 'write');
@@ -1842,11 +1842,11 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   });
 
   // GDPR/PII purge: PERMANENTLY delete ALL trace of a run (irreversible) — the one exception to the
-  // journal's append-only philosophy; only for legal deletion. The decision is logged to audit (actor + deleted record count).
+  // Journal's append-only philosophy; only for legal deletion. The decision is logged to audit (actor + deleted record count).
   app.delete('/runs/:id', async (c) => {
     if (!(await allowP(c.req.raw, 'run:delete'))) return deny(c.req.raw, 'write');
     // Root-level management: run purge runs ORG-UNSCOPED (rw = raw journal) → a bound identity could
-    // otherwise also delete another org's run. Only an unbound operator can do this.
+    // Otherwise also delete another org's run. Only an unbound operator can do this.
     { const denied = requirePlatformAdmin(c, 'an org-bound identity cannot purge a run (operator required)'); if (denied) return denied; }
     if (typeof (rw as Partial<Journal>).deletePrefix !== 'function') {
       return c.json({ error: 'purge requires journal deletePrefix support (Sqlite/Postgres/InMemory provide it)' }, 501);
@@ -1860,7 +1860,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // ── W5: Replay-based regression (durable regression.ts: replayRun + regressionReport) ────
   // Independently re-runs a recorded run's INPUT (runKeys.input) with a new model/system
   // (replayRun — NOT forkRun, it never touches the original run's journal records), then
-  // returns the decision-point diff (regressionReport → diffRuns).
+  // Returns the decision-point diff (regressionReport → diffRuns).
   app.post('/runs/:id/regression', async (c) => {
     if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     if (!writable) return c.json({ error: 'regression requires a writable journal' }, 501);
@@ -1881,7 +1881,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
         ...(body.system != null ? { system: body.system } : {}),
         ...(body.newRunId ? { newRunId: body.newRunId } : {}),
         // Counterfactual memory-off replay (see durable regression.ts stripMemoryContext): re-ask the
-        // turn WITHOUT what memory injected — provable causation instead of "it probably read it".
+        // Turn WITHOUT what memory injected — provable causation instead of "it probably read it".
         ...(body.memoryOff ? { stripMemoryContext: true } : {}),
       });
       const report = await regressionReport(reader, id, newRunId);
@@ -1902,7 +1902,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // Export a run's trace to an external APM (Langfuse/Honeycomb/Datadog/Collector). SECURITY: Studio
   // NEVER holds the target endpoint/API key itself — the host CALLS opts.otelExport with its own
-  // configured target (internally the host runs @gnldev/otel's `exportRunToOtlp` with its own preset); we only TRIGGER it.
+  // Configured target (internally the host runs @gnldev/otel's `exportRunToOtlp` with its own preset); we only TRIGGER it.
   app.post('/runs/:id/otel-export', async (c) => {
     if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     if (!opts.otelExport) return c.json({ error: 'OTEL export is not enabled (the host must provide otelExport)' }, 501);
@@ -1916,7 +1916,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   app.post('/retention/sweep', async (c) => {
     if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     // Root-level management: the sweep scans runs across ALL orgs (org-unscoped) → a bound identity could
-    // otherwise also delete other orgs' data. Only an unbound operator can do this.
+    // Otherwise also delete other orgs' data. Only an unbound operator can do this.
     { const denied = requirePlatformAdmin(c, 'an org-bound identity cannot run a retention sweep (operator required)'); if (denied) return denied; }
     if (typeof (rw as Partial<Journal>).deletePrefix !== 'function') {
       return c.json({ error: 'retention requires journal deletePrefix support' }, 501);
@@ -1945,7 +1945,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     if (!(await allowP(c.req.raw, 'policy:write'))) return deny(c.req.raw, 'write');
     if (!writable) return c.json({ error: 'editing the policy requires a writable journal' }, 501);
     // Root-level management: the policy is a SINGLE GLOBAL rule set for ALL orgs (org-unscoped) → a
-    // bound identity could otherwise change everyone's guard. Only an unbound operator can do this.
+    // Bound identity could otherwise change everyone's guard. Only an unbound operator can do this.
     { const denied = requirePlatformAdmin(c, 'an org-bound identity cannot update the global policy (operator required)'); if (denied) return denied; }
     const body = (await c.req.json().catch(() => null)) as { rules?: PolicyRule[]; ifVersion?: number } | null;
     if (!Array.isArray(body?.rules)) return c.json({ error: 'a rules array is required' }, 400);
@@ -1957,8 +1957,8 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     }
     const prev = (await rw.get!(POLICY_KEY)) as PolicyDoc | undefined;
     // Optimistic lock (API-08): if the caller tells us which version it edited, refuse a silent
-    // lost update when another admin has since saved. Omitted `ifVersion` → old behavior (backward
-    // compat for existing clients / @gnldev/server, which never sends it).
+    // Lost update when another admin has since saved. Omitted `ifVersion` → old behavior (backward
+    // Compat for existing clients / @gnldev/server, which never sends it).
     if (body.ifVersion != null) {
       const current = prev?.version ?? 0;
       if (body.ifVersion !== current) {
@@ -1976,7 +1976,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     return c.json({ ok: true, version: doc.version });
   });
 
-  // live chat (admin).
+  // Live chat (admin).
   app.post('/chat', async (c) => {
     if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     if (!chat) return c.json({ error: 'chat is not enabled' }, 501);
@@ -1986,8 +1986,8 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       return c.json({ ok: true, ...(await chat(String(body.message), { runId: body.runId })) });
     } catch (e) {
       // This endpoint had no catch at all, so the SAME upstream failure that other endpoints turned
-      // into a 400 became an unhandled 500 here — one fault, two answers, depending only on which
-      // path the caller took. Now it goes through the same taxonomy as the rest.
+      // Into a 400 became an unhandled 500 here — one fault, two answers, depending only on which
+      // Path the caller took. Now it goes through the same taxonomy as the rest.
       return runErrorResponse(c, e) ?? c.json({ error: String((e as Error)?.message ?? e) }, 400);
     }
   });
@@ -1996,9 +1996,9 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
    * K1/W1: the SAME mapping as `limitErrorResponse`/`blockedErrorResponse` in @gnldev/server — but Studio is
    * NOT dependent on @gnldev/server (no dependency in package.json, only @gnldev/durable) → it's set up
    * LOCALLY here. The code/HTTP status choices are IDENTICAL to packages/server/src/index.ts: run_limit_
-   * exceeded/tool_loop_detected → 422 + resumable:true; side_effect_retry_blocked/run_busy → 409 +
-   * resumable:true; retry_limit_exceeded → 422, NO resumable (permanently 'failed' in the journal). If
-   * nothing matches → undefined → the caller falls through to the generic 400 path (existing behavior).
+   * Exceeded/tool_loop_detected → 422 + resumable:true; side_effect_retry_blocked/run_busy → 409 +
+   * Resumable:true; retry_limit_exceeded → 422, NO resumable (permanently 'failed' in the journal). If
+   * Nothing matches → undefined → the caller falls through to the generic 400 path (existing behavior).
    */
   function runErrorResponse(c: Context, e: unknown): Response | undefined {
     if (e instanceof RunLimitExceededError || (e as any)?.name === 'RunLimitExceededError') {
@@ -2010,9 +2010,9 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       return c.json({ error: err.message, code: 'tool_loop_detected', detail: err.detail, resumable: true }, 422);
     }
     // A provider failure is not one of OURS — it matches nothing above and used to fall through to
-    // the generic 400, telling the caller its request was malformed when the request was fine.
+    // The generic 400, telling the caller its request was malformed when the request was fine.
     // Measured: a free endpoint answering 429 arrived as `400 "Failed after 3 attempts…"`, which a
-    // client with retry logic reads as "never retry" at the exact moment it should wait.
+    // Client with retry logic reads as "never retry" at the exact moment it should wait.
     const up = upstreamFailure(e);
     if (up) {
       const eu = e as { message?: string } | null | undefined;
@@ -2042,9 +2042,9 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   /**
    * An org-invisible CODE-DEFINED agent → 404 (does NOT LEAK that it exists, same body as unknown-agent).
    * `orgs` is a property only of code-defined AgentConfig; names NOT IN listAgents (managed agent /
-   * unknown) pass through the existing run path UNTOUCHED (managed agents are already org-isolated via
-   * the journal prefix, backward compat preserved). So the gate kicks in ONLY when: the name IS in the
-   * list AND is invisible to the caller.
+   * Unknown) pass through the existing run path UNTOUCHED (managed agents are already org-isolated via
+   * The journal prefix, backward compat preserved). So the gate kicks in ONLY when: the name IS in the
+   * List AND is invisible to the caller.
    */
   async function agentGate(c: Context, name: string): Promise<Response | undefined> {
     if (!gnl) return undefined; // playground off → caller already gets a 501
@@ -2064,10 +2064,10 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // ── Agent approval registry (governance) ────────────────────────────────────────────────────
   // @gnldev/server RECORDS each `config.agents` entry (fingerprinted) into the ROOT journal at its own
-  // boot — Studio only EXPOSES those same `__agent_registry__:<name>` records for review/approve/block;
-  // it never computes a fingerprint itself (the playground runner is duck-typed via StudioAgentRunner
-  // and doesn't carry the real AgentConfig — see its JSDoc above). Platform-level (never per-org, same
-  // as /organizations) → gated by requirePlatformAdmin regardless of the org middleware.
+  // Boot — Studio only EXPOSES those same `__agent_registry__:<name>` records for review/approve/block;
+  // It never computes a fingerprint itself (the playground runner is duck-typed via StudioAgentRunner
+  // And doesn't carry the real AgentConfig — see its JSDoc above). Platform-level (never per-org, same
+  // As /organizations) → gated by requirePlatformAdmin regardless of the org middleware.
   app.get('/agents/registry', async (c) => {
     if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     { const denied = requirePlatformAdmin(c, 'an org-bound identity cannot view the agent registry (operator required)'); if (denied) return denied; }
@@ -2127,11 +2127,11 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       });
       await audit(c, 'agent.run', name, { runId: body.runId, ...(mo && body.model == null ? { managedVersion: true } : {}) });
       // `finishReason` is here because without it an empty answer is unreadable. A run whose model
-      // returned nothing answers 200 with `text: ""` — identical, on the wire, to a model that
-      // legitimately chose to say nothing. Measured in the field: a provider returned an empty
-      // response with `finishReason: 'unknown'`, the run was journaled as completed, and the caller
-      // had no way to tell the two apart. The framework already knows which happened; it just was
-      // not saying. Additive field, so existing clients are unaffected.
+      // Returned nothing answers 200 with `text: ""` — identical, on the wire, to a model that
+      // Legitimately chose to say nothing. Measured in the field: a provider returned an empty
+      // Response with `finishReason: 'unknown'`, the run was journaled as completed, and the caller
+      // Had no way to tell the two apart. The framework already knows which happened; it just was
+      // Not saying. Additive field, so existing clients are unaffected.
       return c.json({ ok: true, runId: body.runId, text: r.text, interrupts: r.interrupts ?? [], finishReason: r.finishReason });
     } catch (e: any) {
       return runErrorResponse(c, e) ?? c.json({ error: String(e?.message ?? e) }, 400);
@@ -2166,7 +2166,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     } catch (e: any) {
       // Same taxonomy as the non-streaming /agents/:name/run handler above: this catch fires
       // BEFORE the SSE body starts (gnl.stream() only sets up the run — pipeAgentStream() below
-      // is what actually streams), so a normal JSON error response is still safe here.
+      // Is what actually streams), so a normal JSON error response is still safe here.
       return runErrorResponse(c, e) ?? c.json({ error: String(e?.message ?? e) }, 400);
     }
     await audit(c, 'agent.run', name, { runId: body.runId, stream: true });
@@ -2232,10 +2232,10 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     }
   });
   // Truncates a thread FROM a message index onward (destructive, e.g. for "retry from here"/branching
-  // flows) — deletes the message at afterIndex and everything after it (index base: getMessages, same
-  // list the /threads/:id/messages route returns). afterIndex===-1 deletes the whole thread's messages.
+  // Flows) — deletes the message at afterIndex and everything after it (index base: getMessages, same
+  // List the /threads/:id/messages route returns). afterIndex===-1 deletes the whole thread's messages.
   // 501 both when the adapter doesn't implement truncateMessages AND when it does but the underlying
-  // store can't support it (signaled by a `null` return) — same externally-observable outcome either way.
+  // Store can't support it (signaled by a `null` return) — same externally-observable outcome either way.
   app.delete('/threads/:id/messages', async (c) => {
     if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     if (!resolvedMemory?.truncateMessages) return c.json({ error: 'truncateMessages is not supported' }, 501);
@@ -2263,7 +2263,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // Re-queue a failed (dead-letter/qfail) job (if queue.retry is given — the host typically wraps
   // @gnldev/queue's retryJob). Only a TERMINAL-FAIL job can be retried: retrying a job that's still
-  // pending/locked would queue work the worker is ALREADY going to process a second time, causing a
+  // Pending/locked would queue work the worker is ALREADY going to process a second time, causing a
   // DOUBLE-RUN — this protection lives on queue.retry's own side (returns null → 409).
   app.post('/jobs/:id/retry', async (c) => {
     if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
@@ -2285,7 +2285,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   });
 
   // Manual invalidate: if body.key is given, only that key; if not (best-effort — CacheStore doesn't
-  // offer key enumeration), all keys the host knows about are removed (see StudioCache.invalidate).
+  // Offer key enumeration), all keys the host knows about are removed (see StudioCache.invalidate).
   app.post('/cache/invalidate', async (c) => {
     if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     if (!cache?.invalidate) return c.json({ error: 'cache invalidate is not supported (cache not given or invalidate not implemented)' }, 501);
@@ -2296,9 +2296,9 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   });
 
   // ── Scheduler (@gnldev/scheduler trigger introspection): the journal is READ-ONLY, it needs NO separate
-  // running scheduler instance (see @gnldev/scheduler's `listTriggers` — reads the SAME sched:def:/
-  // sched:state:/sched:fail: keys as pollScheduler, never MUTATES any state). Returns an empty list if
-  // the journal isn't writable + doesn't support listKeys (or the host doesn't use @gnldev/scheduler at all) (same pattern as queue/jobs).
+  // Running scheduler instance (see @gnldev/scheduler's `listTriggers` — reads the SAME sched:def:/
+  // Sched:state:/sched:fail: keys as pollScheduler, never MUTATES any state). Returns an empty list if
+  // The journal isn't writable + doesn't support listKeys (or the host doesn't use @gnldev/scheduler at all) (same pattern as queue/jobs).
   app.get('/scheduler/triggers', async (c) => {
     if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!writable || typeof rw.listKeys !== 'function' || typeof rw.get !== 'function') return c.json([]);
@@ -2367,8 +2367,8 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // Run a workflow LIVE (admin) — SSE: streams in real time as steps land in the journal (poll-to-stream).
   // Without changing the engine: start runWorkflow + poll the `<runId>:wf:*` keys. Requires listKeys+get.
   // What-if fork (workflow): copy the output of the first `upto` steps to a new runId → with the same
-  // input, the copied ones REPLAY on resume, and the selected step onward re-runs. The workflow
-  // counterpart of the agent fork (forkRun) — "what-if" analysis that can't be copied without a journal.
+  // Input, the copied ones REPLAY on resume, and the selected step onward re-runs. The workflow
+  // Counterpart of the agent fork (forkRun) — "what-if" analysis that can't be copied without a journal.
   app.post('/workflows/:name/runs/:id/fork', async (c) => {
     if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     if (!writable || typeof rw.listKeys !== 'function') return c.json({ error: 'fork requires a writable journal (listKeys)' }, 501);
@@ -2517,14 +2517,14 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   });
 
   /**
-   * P0.4 (AUDIT-R2): the suspended/completed/canceled workflow-run REGISTRY query — every run
+   * P0.4 the suspended/completed/canceled workflow-run REGISTRY query — every run
    * (code OR managed) in ONE `wfrun:` prefix scan. Deliberately reimplemented INLINE against `rw` rather
-   * than importing @gnldev/workflow's `listWorkflowRuns`: the studio CORE stays decoupled from @gnldev/workflow
+   * Than importing @gnldev/workflow's `listWorkflowRuns`: the studio CORE stays decoupled from @gnldev/workflow
    * (see WorkflowLike/managed-workflow.ts — only the optional `./workflow` compiler subpath depends on
-   * it), and `rw` here already goes through the org-scoped ALS bridge on GET (same isolation guarantee
-   * every other listKeys-based route in this file gets — see `reader`'s `scopedNow()` above). The
+   * It), and `rw` here already goes through the org-scoped ALS bridge on GET (same isolation guarantee
+   * Every other listKeys-based route in this file gets — see `reader`'s `scopedNow()` above). The
    * `wfrun:<runId>` key shape is a documented contract of @gnldev/workflow's workflow.ts (statusKey),
-   * stable to read directly without importing the package.
+   * Stable to read directly without importing the package.
    */
   app.get('/workflows/runs', async (c) => {
     if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
@@ -2538,7 +2538,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     const limitRaw = c.req.query('limit');
 
     // API-03: `limit` omitted → the legacy flat-array contract, UNCHANGED (older callers — e.g.
-    // packages/server — never send `limit` and must keep getting a bare array back).
+    // Packages/server — never send `limit` and must keep getting a bare array back).
     if (limitRaw === undefined) {
       const out: WfRunRow[] = [];
       for (const k of keys) {
@@ -2551,12 +2551,12 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
     // API-03: `limit` given → a paged `{items,nextCursor}` envelope (same shape GET /runs above uses)
     // AND a bounded scan. This route used to `get` EVERY `wfrun:*` key on every poll regardless of how
-    // few rows the caller actually wanted (Workflows.tsx refetches it repeatedly for the suspended-runs
-    // inbox) — a 20k-run registry meant ~20k reads just to show 3 suspended rows. `listKeys` returns keys
-    // oldest-first (created_at ASC — see journal.ts/postgres-storage.ts), so reversing gives newest-first;
+    // Few rows the caller actually wanted (Workflows.tsx refetches it repeatedly for the suspended-runs
+    // Inbox) — a 20k-run registry meant ~20k reads just to show 3 suspended rows. `listKeys` returns keys
+    // Oldest-first (created_at ASC — see journal.ts/postgres-storage.ts), so reversing gives newest-first;
     // `cursor` is an offset into that reversed order, and the scan stops as soon as `limit` matches are
-    // found (the `status` filter still can't be pushed into the key shape itself, so this is the cheapest
-    // bound available without changing the `wfrun:` record format).
+    // Found (the `status` filter still can't be pushed into the key shape itself, so this is the cheapest
+    // Bound available without changing the `wfrun:` record format).
     const limit = Math.min(Math.max(Math.floor(Number(limitRaw)) || 0, 1), 500);
     const start = Math.max(Math.floor(Number(c.req.query('cursor'))) || 0, 0);
     const window = [...keys].reverse().slice(start);
@@ -2565,8 +2565,8 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     let scanned = 0;
     if (typeof rw.getMany === 'function') {
       // ONE batched round-trip for the whole remaining window instead of a `get` call per key (same
-      // pattern as /metrics/runs above) — the early exit below still keeps the RESPONSE bounded even
-      // though the batch itself already happened.
+      // Pattern as /metrics/runs above) — the early exit below still keeps the RESPONSE bounded even
+      // Though the batch itself already happened.
       const values = await rw.getMany<WfRunRow>(window);
       for (; scanned < values.length; scanned++) {
         const st = values[scanned];
@@ -2586,18 +2586,18 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   });
 
   /**
-   * D3-A (AUDIT-R2 surface): durably cancels a workflow run — studio's counterpart of
+   * D3-A durably cancels a workflow run — studio's counterpart of
    * @gnldev/server's POST /workflows/runs/:id/cancel (P0.4). Reimplemented INLINE against `rw` rather than
-   * importing @gnldev/workflow's `cancelWorkflowRun` — same reason GET /workflows/runs above is inline
+   * Importing @gnldev/workflow's `cancelWorkflowRun` — same reason GET /workflows/runs above is inline
    * (the studio CORE stays decoupled from @gnldev/workflow; only the optional `./workflow` compiler
-   * subpath depends on it). Writes the SAME two keys `cancelWorkflowRun` does: the per-run
+   * Subpath depends on it). Writes the SAME two keys `cancelWorkflowRun` does: the per-run
    * `${runId}:wf:_canceled` flag (checked by runResumable before every step — reaches a run in flight
-   * on ANOTHER worker at its next step boundary) and the `wfrun:<runId>` registry record with
+   * On ANOTHER worker at its next step boundary) and the `wfrun:<runId>` registry record with
    * `status:'canceled'` (so it moves out of the suspended-runs inbox and GET /workflows/runs?status=canceled
-   * picks it up) — see workflow-p04.test.ts's own comment on this exact key shape. A run whose registry
-   * record already reports `completed` is a no-op (nothing left to cancel); visibility follows the SAME
-   * pattern GET /workflows/runs/:id (fork) uses elsewhere: EITHER the registry record OR the `_suspend`
-   * marker must exist, otherwise this is a cross-org/nonexistent runId → 404 (no existence leak).
+   * Picks it up) — see workflow-p04.test.ts's own comment on this exact key shape. A run whose registry
+   * Record already reports `completed` is a no-op (nothing left to cancel); visibility follows the SAME
+   * Pattern GET /workflows/runs/:id (fork) uses elsewhere: EITHER the registry record OR the `_suspend`
+   * Marker must exist, otherwise this is a cross-org/nonexistent runId → 404 (no existence leak).
    */
   app.post('/workflows/runs/:id/cancel', async (c) => {
     if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
@@ -2693,12 +2693,12 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     if (!body?.name?.trim() || !body?.model?.trim()) return c.json({ error: 'name and model are required' }, 400);
     const name = body.name.trim();
     // GOVERNANCE OVER CODE-DEFINED AGENTS (deliberate boundary — no-code builder is deferred):
-    // a managed version only OVERRIDES an existing code agent's model/system (see managedOverrides).
+    // A managed version only OVERRIDES an existing code agent's model/system (see managedOverrides).
     // Versioning a name with NO code counterpart would create a record that can never run (the registry
-    // throws "not registered"). Reject it at the source so the managed layer stays honest — it governs
-    // code agents; it is not a no-code agent factory. Enforced only when a runner is wired (`gnl`): with
-    // no runner the studio is store-only (nothing runs anyway) and the UI's agent dropdown is empty, so
-    // there's nothing to guard against. (An org-bound caller sees the same code registry.)
+    // Throws "not registered"). Reject it at the source so the managed layer stays honest — it governs
+    // Code agents; it is not a no-code agent factory. Enforced only when a runner is wired (`gnl`): with
+    // No runner the studio is store-only (nothing runs anyway) and the UI's agent dropdown is empty, so
+    // There's nothing to guard against. (An org-bound caller sees the same code registry.)
     const isCodeDefined = !gnl || (await gnl.listAgents()).some((a) => a.name === name);
     if (!isCodeDefined) return c.json({ error: `'${name}' is not a code-defined agent. Managed versions govern code-defined agents — define '${name}' in createGnl first.` }, 422);
     const rec = (await store.get(name)) ?? { name, active: null, versions: [] };
@@ -2712,11 +2712,11 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       createdAt: Date.now(),
     });
     // The first version is auto-promoted to prod: if there's no active version yet (active == null), the
-    // newly created version becomes prod → a new managed agent works immediately (no "I created it but
-    // why doesn't it run" friction). Subsequent versions stay drafts (active untouched) → require promote.
+    // Newly created version becomes prod → a new managed agent works immediately (no "I created it but
+    // Why doesn't it run" friction). Subsequent versions stay drafts (active untouched) → require promote.
     // EXCEPTION: if the eval gate (opts.evalGate) is configured, even the first version is NOT
-    // auto-promoted — otherwise it would land in prod without clearing the eval suite (a governance
-    // bypass). While the gate is on, the user promotes manually (the gate runs then).
+    // Auto-promoted — otherwise it would land in prod without clearing the eval suite (a governance
+    // Bypass). While the gate is on, the user promotes manually (the gate runs then).
     const autoPromoted = rec.active == null && !opts.evalGate;
     if (autoPromoted) rec.active = version;
     await store.put(rec);
@@ -2765,7 +2765,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   });
 
   // PERMANENTLY delete a managed agent record (with ALL its versions) — removes only the MANAGED record;
-  // a code-defined agent (createGnl agents) doesn't come from this store, so it can't be deleted/affected.
+  // A code-defined agent (createGnl agents) doesn't come from this store, so it can't be deleted/affected.
   // If code + managed share a name, deleting only removes the managed override — the code agent (registry) keeps showing as-is.
   app.delete('/managed-agents/:name', async (c) => {
     if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
@@ -2782,7 +2782,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // Delete a SINGLE VERSION. The ACTIVE (prod) version cannot be deleted → promote another version first
   // (409). Since the active version is never deleted, the active pointer always stays valid. If the last
-  // version is deleted too, the agent record is removed entirely (same as whole-agent delete — needs store.delete; only in that case).
+  // Version is deleted too, the agent record is removed entirely (same as whole-agent delete — needs store.delete; only in that case).
   app.delete('/managed-agents/:name/versions/:version', async (c) => {
     if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     const store = agentStoreFor(c);

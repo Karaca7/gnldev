@@ -1,7 +1,7 @@
 // W2 — Replay-based regression core. RERUNS a recorded run with a new model/prompt/tool version
 // (replayRun), diffs the DECISION POINTS (model step + tool call) of the two runs (diffRuns).
 // Scoring (LLM-judge etc.) lives in the evals package — only the interface is DEFINED here,
-// the diff logic has no dependency on evals whatsoever (dependency is one-directional: evals -> durable).
+// The diff logic has no dependency on evals whatsoever (dependency is one-directional: evals -> durable).
 import { runKeys } from './journal.js';
 import type { Journal, JournalEntry, JournalReader } from './journal.js';
 import { runDurable } from './run.js';
@@ -10,9 +10,9 @@ import { argsHash, stableStringify } from './hash.js';
 import type { Guard } from './guard.js';
 
 // ── Decision point sequence ────────────────────────────────────────────────────
-// toolCallIds CAN BE DIFFERENT across runs (the model/SDK assigns random ids) → alignment is based
-// not on toolCallId equality but on "model step + the content order of the tool-calls that step
-// produced". This makes the decision points of two independent runs comparable positionally.
+// ToolCallIds CAN BE DIFFERENT across runs (the model/SDK assigns random ids) → alignment is based
+// Not on toolCallId equality but on "model step + the content order of the tool-calls that step
+// Produced". This makes the decision points of two independent runs comparable positionally.
 export interface DecisionPoint {
   /** The model step this decision belongs to (for tool, the step of the model step that produced it). */
   step: number;
@@ -37,9 +37,9 @@ function modelStepFromKey(key: string): number {
 
 /**
  * Converts journal entries into a sequence of decision points: model steps in step order, followed
- * immediately by the tool-calls (if any) produced in that step's content — a PURE function.
- * Exported for P1.1 (AUDIT-R2): @gnldev/evals' trajectory scorer (`trajectory.ts`) reuses this
- * same primitive to build the tool-call sequence it scores against expectations — no duplicate logic.
+ * Immediately by the tool-calls (if any) produced in that step's content — a PURE function.
+ * Exported for P1.1 @gnldev/evals' trajectory scorer (`trajectory.ts`) reuses this
+ * Same primitive to build the tool-call sequence it scores against expectations — no duplicate logic.
  */
 export function buildDecisionSequence(entries: JournalEntry[]): DecisionPoint[] {
   const models = entries
@@ -189,10 +189,10 @@ function describePoint(side: 'A' | 'B', p: DecisionPoint): DiffDetail {
  * (only in A) or 'added' (only in B). `divergentAt` is the index of the first non-same point.
  *
  * TRUST BOUNDARY (Decision #3): if the tool-call COUNT changes at the divergence point, the tail
- * shifts positionally — the `durum` labels AND `summary` counts AFTER `divergentAt` may contain
- * noise (re-alignment is deliberately NOT DONE: LCS-style alignment produces a multi-solution/unstable
- * diff). The reliable signal is `divergentAt` and everything before it; read the `steps.slice(divergentAt)`
- * record with this caveat in mind for post-divergence analysis. Scorers should tie their score to
+ * Shifts positionally — the `durum` labels AND `summary` counts AFTER `divergentAt` may contain
+ * Noise (re-alignment is deliberately NOT DONE: LCS-style alignment produces a multi-solution/unstable
+ * Diff). The reliable signal is `divergentAt` and everything before it; read the `steps.slice(divergentAt)`
+ * Record with this caveat in mind for post-divergence analysis. Scorers should tie their score to
  * `divergentAt` (not to summary).
  */
 export async function diffRuns(reader: JournalReader, runIdA: string, runIdB: string): Promise<RunDiff> {
@@ -249,12 +249,12 @@ export interface ReplayRunConfig {
   /**
    * COUNTERFACTUAL memory-off replay: re-run the turn WITHOUT what memory injected. Reads the run's
    * ':memctx' provenance record (runKeys.memoryContext) and keeps only the turn's own incoming
-   * message(s) — the recalled/window/observation messages that memory composed in front of them are
-   * dropped. This turns "the model must have read it from the recall snippet" from an inference into
-   * an experiment: strip the injection, re-ask, diff the answers. Requires a ':memctx' record
+   * Message(s) — the recalled/window/observation messages that memory composed in front of them are
+   * Dropped. This turns "the model must have read it from the recall snippet" from an inference into
+   * An experiment: strip the injection, re-ask, diff the answers. Requires a ':memctx' record
    * (throws otherwise — runs from before provenance existed can't be stripped honestly).
    * HONEST BOUNDARY: the frozen `system` string is NOT surgically edited — if working memory was
-   * injected there (provenance.workingMemoryChars), it remains; callers should disclose that.
+   * Injected there (provenance.workingMemoryChars), it remains; callers should disclose that.
    */
   stripMemoryContext?: boolean;
 }
@@ -268,9 +268,9 @@ let replaySeq = 0;
 
 /**
  * Reads `runId`'s recorded input (`runKeys.input`) and runs it fresh, independently, under a NEW
- * runId (`runDurable`). This is NOT `forkRun`: it doesn't copy prefixes, doesn't replay any step
- * from the journal — it's a brand-new run with overridable model/tool/system. It never writes to
- * or touches the original `runId`'s journal records (only writes under `newRunId`).
+ * RunId (`runDurable`). This is NOT `forkRun`: it doesn't copy prefixes, doesn't replay any step
+ * From the journal — it's a brand-new run with overridable model/tool/system. It never writes to
+ * Or touches the original `runId`'s journal records (only writes under `newRunId`).
  */
 export async function replayRun(cfg: ReplayRunConfig): Promise<ReplayRunResult> {
   const { journal, runId, newRunId, model, tools, system, guard, approvals, stopWhen, replay, stripMemoryContext } = cfg;
@@ -289,7 +289,7 @@ export async function replayRun(cfg: ReplayRunConfig): Promise<ReplayRunResult> 
       );
     }
     // The frozen input is [ ...memory-composed history, ...incoming ] (see run.ts prepareMemoryContext)
-    // — the turn's own contribution is exactly the trailing incomingCount messages.
+    // the turn's own contribution is exactly the trailing incomingCount messages.
     messages = messages.slice(-incoming);
   }
 
@@ -316,8 +316,8 @@ export async function replayRun(cfg: ReplayRunConfig): Promise<ReplayRunResult> 
 
 /**
  * Optional function producing a score from a diff result. The concrete Scorer type is defined in
- * the evals package (@gnldev/evals -> @gnldev/durable dependency is one-directional); only a loose
- * interface is given here.
+ * The evals package (@gnldev/evals -> @gnldev/durable dependency is one-directional); only a loose
+ * Interface is given here.
  */
 export type RegressionScorer = (diff: RunDiff) => unknown | Promise<unknown>;
 
@@ -335,7 +335,7 @@ export interface RegressionReport {
 
 /**
  * A thin report skeleton around `diffRuns`: diffs the base/new run, runs `scorer` on the diff if
- * given. Scoring logic is NOT here — the evals side supplies `scorer`.
+ * Given. Scoring logic is NOT here — the evals side supplies `scorer`.
  */
 export async function regressionReport(
   reader: JournalReader,

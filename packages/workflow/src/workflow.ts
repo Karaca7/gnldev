@@ -7,15 +7,15 @@ export interface JournalLike {
   put(key: string, value: unknown): Promise<void>;
   /**
    * Optional (CAS): writes and returns `true` when the key is ABSENT, returns `false` without
-   * touching anything if it exists. Prevents the same step from running twice in multi-worker
-   * setups (structurally compatible with @gnldev/durable Journal.putIfAbsent). If undefined, falls
-   * back to get+put (single-process safe, behavior unchanged).
+   * Touching anything if it exists. Prevents the same step from running twice in multi-worker
+   * Setups (structurally compatible with @gnldev/durable Journal.putIfAbsent). If undefined, falls
+   * Back to get+put (single-process safe, behavior unchanged).
    */
   putIfAbsent?(key: string, value: unknown): Promise<boolean>;
   /**
    * Optional: field-based ATOMIC counter increment (structurally compatible with @gnldev/durable
    * Journal.incrBy). Saves the retry counter from get→put's lost-update race. If undefined,
-   * falls back to the existing path.
+   * Falls back to the existing path.
    */
   incrBy?(key: string, fields: Record<string, number>): Promise<void>;
   /** Optional: read counter fields written via incrBy (undefined if absent). */
@@ -23,7 +23,7 @@ export interface JournalLike {
   /**
    * P0.4 (optional): keys starting with a prefix — structurally compatible with @gnldev/durable
    * Journal.listKeys. Only `listWorkflowRuns` (the suspended-run registry query) needs it; every
-   * engine path works without it.
+   * Engine path works without it.
    */
   listKeys?(prefix: string): Promise<string[]>;
 }
@@ -42,10 +42,10 @@ export interface StepCtx {
    * P0.4 typed resume: reads the resume payload delivered for `waitId` (journaled under
    * `<runId>:wf:_resume:<waitId>` by `runResumable({ resume })`), or `undefined` if none arrived yet.
    * The payload lives in the JOURNAL → reading it is replay-deterministic: once the consuming step
-   * completes, its output is journaled and the payload is never re-read on replay.
+   * Completes, its output is journaled and the payload is never re-read on replay.
    * NOTE: `waitId`s share ONE per-run namespace (deliberately NOT keyPrefix-scoped — the operator
-   * resuming a run addresses a waitId without knowing which nested workflow hosts it); keep them
-   * unique across nested workflows the same way you already must for `_suspend`.
+   * Resuming a run addresses a waitId without knowing which nested workflow hosts it); keep them
+   * Unique across nested workflows the same way you already must for `_suspend`.
    */
   resumeData?<T = unknown>(waitId: string): Promise<T | undefined>;
 }
@@ -58,11 +58,11 @@ const canceledKey = (runId: string) => `${runId}:wf:_canceled`;
 /**
  * Top-level status registry key. Deliberately NOT under `<runId>:` — a `wfrun:` prefix scan
  * (`listKeys('wfrun:')`) enumerates every workflow run in ONE query, which a runId-prefixed key
- * cannot offer (no suffix scans). Same pattern precedent as @gnldev/durable's `xrun:` cross-run keys:
- * invisible to parseJournalKey (not part of any single run's timeline) and org-prefixed automatically
- * by `withOrg` (it prefixes ALL keys unconditionally) → organization isolation is preserved.
+ * Cannot offer (no suffix scans). Same pattern precedent as @gnldev/durable's `xrun:` cross-run keys:
+ * Invisible to parseJournalKey (not part of any single run's timeline) and org-prefixed automatically
+ * By `withOrg` (it prefixes ALL keys unconditionally) → organization isolation is preserved.
  * Cleanup note (same as xrun:): run-retention sweeps that delete `<runId>:*` do NOT touch this key —
- * purge explicitly via `deletePrefix('wfrun:')` (all) — but BEWARE the per-run form:
+ * Purge explicitly via `deletePrefix('wfrun:')` (all) — but BEWARE the per-run form:
  * `deletePrefix('wfrun:<runId>')` is PREFIX-matched, so runId 'r1' would also sweep 'r10'/'r1x'
  * (there is no trailing terminator in this key shape). Safe only when runIds cannot share prefixes
  * (UUIDs). Org deployments don't need it at all: the key is org-prefixed, so a GDPR
@@ -84,8 +84,8 @@ export function step<I = any, O = any>(
 }
 
 // Atomic claim — identical contract to `claim` in @gnldev/durable (packages/durable/src/journal.ts;
-// kept as a local copy since the package stays zero-dependency): CAS if putIfAbsent exists, else
-// get+put fallback (single-process safe). Returns `true` if this call created the key.
+// Kept as a local copy since the package stays zero-dependency): CAS if putIfAbsent exists, else
+// Get+put fallback (single-process safe). Returns `true` if this call created the key.
 async function claim(journal: JournalLike, key: string, value: unknown): Promise<boolean> {
   if (journal.putIfAbsent) return journal.putIfAbsent(key, value);
   if ((await journal.get(key)) !== undefined) return false;
@@ -94,10 +94,10 @@ async function claim(journal: JournalLike, key: string, value: unknown): Promise
 }
 
 // Runs a step exactly-once: if a record exists, returns it (replay); otherwise runs it and records
-// it via CAS — the loser of the race DISCARDS its own result and returns the winner's record (single
-// source of truth in multi-worker setups). This is @gnldev/durable's `frozenGet` adapted to workflow;
-// the ONLY difference is the record shape: existing workflow records are plain values WITHOUT a `{ v }`
-// wrapper, kept this way for backward compatibility (using frozenGet would make old records unreadable).
+// It via CAS — the loser of the race DISCARDS its own result and returns the winner's record (single
+// Source of truth in multi-worker setups). This is @gnldev/durable's `frozenGet` adapted to workflow;
+// The ONLY difference is the record shape: existing workflow records are plain values WITHOUT a `{ v }`
+// Wrapper, kept this way for backward compatibility (using frozenGet would make old records unreadable).
 // The plain shape's known limitation still holds: an `undefined` output cannot be distinguished from
 // "no record" (that step re-runs on replay) — behavior unchanged.
 async function runStep(s: Step, input: any, ctx: StepCtx): Promise<any> {
@@ -108,7 +108,7 @@ async function runStep(s: Step, input: any, ctx: StepCtx): Promise<any> {
   if (await claim(ctx.journal, key, out)) return out;
   // Race lost: the winner's record is the single source of truth. If the winner wrote `undefined`
   // (indistinguishable in the plain shape) we fall back to our own output — both results are products
-  // of the same step anyway.
+  // Of the same step anyway.
   const winner = await ctx.journal.get(key);
   return winner === undefined ? out : winner;
 }
@@ -196,7 +196,7 @@ export class Workflow<I = any, O = any> {
   }
 
   /** Common workflow-DSL `.dowhile` semantics: run `run` at least once, repeat while `cond` stays TRUE.
-   *  Each round journaled separately (`dowhile#<iter>`) → completed rounds don't re-run on crash/resume. */
+   * Each round journaled separately (`dowhile#<iter>`) → completed rounds don't re-run on crash/resume. */
   dowhile(
     run: (input: O, iter: number, ctx: StepCtx) => Promise<O>,
     cond: (output: O, iter: number) => boolean,
@@ -219,7 +219,7 @@ export class Workflow<I = any, O = any> {
   }
 
   /** Run the workflow durably. Calling again with the same runId = resume (completed steps don't re-run).
-   *  Note: if it contains a suspending step (sleep/waitFor), use `runResumable` (run() throws the suspend). */
+   * Note: if it contains a suspending step (sleep/waitFor), use `runResumable` (run() throws the suspend). */
   async run(input: I, ctx: StepCtx): Promise<O> {
     let cur: any = input;
     for (const s of this.steps) cur = await runStep(s, cur, ctx);
@@ -228,30 +228,30 @@ export class Workflow<I = any, O = any> {
 
   /**
    * Suspend-aware execution: if a step suspends via `suspendWorkflow` (sleep/waitFor/waitForResume),
-   * it writes to the journal and returns `{status:'suspended'}`. Calling again with the same runId =
-   * resume → completed steps replay, the suspended step is re-evaluated (continues if the event
-   * arrived / time elapsed / a resume payload was delivered). Evented + scheduled.
+   * It writes to the journal and returns `{status:'suspended'}`. Calling again with the same runId =
+   * Resume → completed steps replay, the suspended step is re-evaluated (continues if the event
+   * Arrived / time elapsed / a resume payload was delivered). Evented + scheduled.
    *
    * Step-through debug: if `opts.maxSteps` is given, only the FIRST maxSteps steps (position-based)
-   * run; if a step remains, it returns `{status:'paused', stepId}`. To continue, call again with the
-   * same runId and maxSteps+1: earlier steps REPLAY from the journal (don't re-run), only the next
-   * step actually runs.
+   * Run; if a step remains, it returns `{status:'paused', stepId}`. To continue, call again with the
+   * Same runId and maxSteps+1: earlier steps REPLAY from the journal (don't re-run), only the next
+   * Step actually runs.
    *
    * P0.4 additions:
-   * - `opts.resume` — typed resume payloads: `{ [waitId]: payload }` is journaled BEFORE any step
-   *   runs, then read by the suspended step via `ctx.resumeData(waitId)` / `waitForResume`. This is
-   *   the "resume step X with THIS approver decision" HITL primitive: the payload travels through the
-   *   journal, so a crash between delivery and consumption loses nothing, and replay is deterministic.
-   * - `opts.signal` — in-process cancellation: checked between steps (and exposed as `ctx.signal` for
-   *   steps to observe); an abort marks the run canceled DURABLY (see below).
-   * - Durable cancel: `cancelWorkflowRun()` writes a `_canceled` journal flag — checked here BEFORE
-   *   EVERY step, so cancellation reaches runs on OTHER workers at their next step boundary, and a
-   *   canceled run REFUSES to resume forever after (same terminal-refusal principle as
+   * `opts.resume` — typed resume payloads: `{ [waitId]: payload }` is journaled BEFORE any step
+   *   Runs, then read by the suspended step via `ctx.resumeData(waitId)` / `waitForResume`. This is
+   *   The "resume step X with THIS approver decision" HITL primitive: the payload travels through the
+   *   Journal, so a crash between delivery and consumption loses nothing, and replay is deterministic.
+   * `opts.signal` — in-process cancellation: checked between steps (and exposed as `ctx.signal` for
+   *   Steps to observe); an abort marks the run canceled DURABLY (see below).
+   * Durable cancel: `cancelWorkflowRun()` writes a `_canceled` journal flag — checked here BEFORE
+   * EVERY step, so cancellation reaches runs on OTHER workers at their next step boundary, and a
+   *   Canceled run REFUSES to resume forever after (same terminal-refusal principle as
    *   @gnldev/durable's compensated runs). Cancel never deletes journal state — completed steps stay
-   *   replayable/inspectable; the run just stops producing new work.
-   * - Status registry: every terminal/suspend transition is mirrored to a top-level `wfrun:<runId>`
-   *   record → `listWorkflowRuns` answers "which runs are suspended right now, on which step,
-   *   waiting for which waitId" in ONE prefix scan.
+   *   Replayable/inspectable; the run just stops producing new work.
+   * Status registry: every terminal/suspend transition is mirrored to a top-level `wfrun:<runId>`
+   *   Record → `listWorkflowRuns` answers "which runs are suspended right now, on which step,
+   *   Waiting for which waitId" in ONE prefix scan.
    */
   async runResumable(
     input: I,
@@ -263,10 +263,10 @@ export class Workflow<I = any, O = any> {
       /**
        * FLOW-08: the workflow's registered name, mirrored into the `wfrun:` status record (see
        * `putStatus`) so `listWorkflowRuns`/the studio run list can display it without the caller
-       * re-deriving it from the runId. Purely additive — the `Workflow` class itself still doesn't
-       * carry a name (its constructor stays name-less); callers that know the name (e.g.
+       * Re-deriving it from the runId. Purely additive — the `Workflow` class itself still doesn't
+       * Carry a name (its constructor stays name-less); callers that know the name (e.g.
        * @gnldev/durable's `runWorkflow`, which registers workflows by name) pass it here. Omitted =
-       * today's behavior exactly (no field written to the record).
+       * Today's behavior exactly (no field written to the record).
        */
       workflowName?: string;
     } = {},
@@ -274,7 +274,7 @@ export class Workflow<I = any, O = any> {
     const limit = opts.maxSteps ?? Infinity;
     const journal = ctx.journal;
     // Deliver typed resume payloads FIRST (plain put — before consumption an operator may overwrite a
-    // wrong payload with a corrected one; after consumption the step's journaled output wins anyway).
+    // Wrong payload with a corrected one; after consumption the step's journaled output wins anyway).
     for (const [waitId, payload] of Object.entries(opts.resume ?? {})) {
       await journal.put(resumeKey(ctx.runId, waitId), payload);
     }
@@ -287,8 +287,8 @@ export class Workflow<I = any, O = any> {
     let cur: any = input;
     for (let i = 0; i < this.steps.length; i++) {
       // P0.4 cancel — checked at EVERY step boundary: the durable flag (cross-process; one cheap point
-      // read per step) and the in-process signal. Order matters: the flag wins even if the signal is
-      // quiet (another worker/operator canceled), and an in-process abort is made durable immediately.
+      // Read per step) and the in-process signal. Order matters: the flag wins even if the signal is
+      // Quiet (another worker/operator canceled), and an in-process abort is made durable immediately.
       const flag = await journal.get<{ reason?: unknown }>(canceledKey(ctx.runId));
       if (flag !== undefined || opts.signal?.aborted) {
         if (flag === undefined) await journal.put(canceledKey(ctx.runId), { at: Date.now(), reason: 'signal' });
@@ -314,9 +314,9 @@ export class Workflow<I = any, O = any> {
   }
 
   /** Status-registry mirror — best-effort (a registry write failure must not fail the run itself).
-   *  FLOW-08: `workflowName` (from `runResumable`'s opts) is mirrored in ONLY when the caller passed
-   *  one — omitted entirely otherwise, so a `wfrun:` record written without a name is byte-for-byte
-   *  identical to pre-FLOW-08 records (backward compatible with readers of the old shape). */
+   * FLOW-08: `workflowName` (from `runResumable`'s opts) is mirrored in ONLY when the caller passed
+   *  One — omitted entirely otherwise, so a `wfrun:` record written without a name is byte-for-byte
+   *  Identical to pre-FLOW-08 records (backward compatible with readers of the old shape). */
   private async putStatus(
     journal: JournalLike,
     runId: string,
@@ -368,16 +368,16 @@ export function sleep(id: string, untilMs: number): Step {
 
 /**
  * P0.4 — typed HITL resume: a durable step that suspends until a resume payload for `id` (its waitId)
- * is delivered via `runResumable(input, ctx, { resume: { [id]: payload } })`, then returns that
- * payload as the step's output. THE "resume step X with THIS approver decision" primitive.
+ * Is delivered via `runResumable(input, ctx, { resume: { [id]: payload } })`, then returns that
+ * Payload as the step's output. THE "resume step X with THIS approver decision" primitive.
  *
  * `validate` (optional): parses/narrows the raw payload — pass e.g. a zod schema's `.parse` (the
- * package stays zero-dependency; any `(v: unknown) => T` works). A validation THROW fails the run
+ * Package stays zero-dependency; any `(v: unknown) => T` works). A validation THROW fails the run
  * WITHOUT consuming anything: the payload stays in the journal, the step has no journaled output, so
- * the operator can overwrite it with a corrected payload (`resume` again) and re-resume.
+ * The operator can overwrite it with a corrected payload (`resume` again) and re-resume.
  *
  * Determinism: the payload is read from the journal, and once this step completes its OUTPUT is
- * journaled — replay never re-reads (or re-validates) the payload.
+ * Journaled — replay never re-reads (or re-validates) the payload.
  */
 export function waitForResume<T = unknown>(
   id: string,
@@ -405,16 +405,16 @@ export interface WorkflowRunStatus {
   waitId?: string;
   reason?: unknown;
   /** FLOW-08: the workflow's registered name (from `runResumable`'s opts), when the caller provided
-   *  one. Absent on records written before FLOW-08 or when the caller didn't pass a name. */
+   *  One. Absent on records written before FLOW-08 or when the caller didn't pass a name. */
   workflowName?: string;
   updatedAt: number;
 }
 
 /**
  * Durably cancels a workflow run: writes the `_canceled` flag (checked by `runResumable` before EVERY
- * step — reaches runs in-flight on OTHER workers at their next step boundary) and mirrors the registry
- * record. Terminal: a canceled run refuses to resume forever after (same principle as @gnldev/durable's
- * compensated-run refusal). Never deletes journal state — completed steps stay replayable/inspectable.
+ * Step — reaches runs in-flight on OTHER workers at their next step boundary) and mirrors the registry
+ * Record. Terminal: a canceled run refuses to resume forever after (same principle as @gnldev/durable's
+ * Compensated-run refusal). Never deletes journal state — completed steps stay replayable/inspectable.
  * Returns `false` (no-op) if the run had already COMPLETED (nothing left to cancel); `true` otherwise
  * (idempotent — canceling an already-canceled run is `true` again).
  */
@@ -423,16 +423,16 @@ export interface WorkflowRunStatus {
  *
  * The substrate has carried this all along: every step's output already sits in the journal under
  * `<runId>:wf:<stepId>`, exactly-once. What was missing was only the wiring:
- * copy the recorded outputs of every step BEFORE the fork point to a new runId, run the workflow
- * under that id, and `runStep`'s cache check replays the prefix while everything from `fromStepId`
- * on executes for real.
+ * Copy the recorded outputs of every step BEFORE the fork point to a new runId, run the workflow
+ * Under that id, and `runStep`'s cache check replays the prefix while everything from `fromStepId`
+ * On executes for real.
  *
  * Honest bounds, stated rather than discovered:
  *  · order comes from `build()`, so the copied prefix is exact for sequential flows; nested
- *    sub-workflow keys (`asStep`) are swept in when the journal has `listKeys`, best-effort
- *    without it.
+ *    Sub-workflow keys (`asStep`) are swept in when the journal has `listKeys`, best-effort
+ *    Without it.
  *  · the ORIGINAL INPUT is not recorded by the engine, so the caller passes it again when running
- *    the fork. For a fork past step 0 it only feeds already-cached steps and is inert.
+ *    The fork. For a fork past step 0 it only feeds already-cached steps and is inert.
  *  · retry counters are deliberately NOT copied — a forked step deserves its full retry budget.
  */
 export async function forkWorkflowRun(
@@ -448,7 +448,7 @@ export async function forkWorkflowRun(
     throw new Error(`forkWorkflowRun: step '${fromStepId}' is not in this workflow. Steps: ${order.join(' → ')}`);
   }
   // A destination that already has records would silently MERGE two histories — the reader of the
-  // forked run could no longer tell which parts came from where. Refused instead. Probed at the
+  // Forked run could no longer tell which parts came from where. Refused instead. Probed at the
   // STEP keys, not only the registry record: a plain `run()` journals its steps without writing a
   // `wfrun:` record, and the registry-only check sailed straight past exactly that case in test.
   if ((await journal.get(statusKey(dstRunId))) !== undefined) {
@@ -469,7 +469,7 @@ export async function forkWorkflowRun(
       copiedSteps.push(id);
     }
     // Nested sub-workflow steps live under `<runId>:wf:<id>:<inner>` — sweep them when the journal
-    // can list, skipping control keys (`_suspend`, `_resume:*`, ...) and retry counters.
+    // Can list, skipping control keys (`_suspend`, `_resume:*`, ...) and retry counters.
     if (journal.listKeys) {
       for (const key of await journal.listKeys(`${srcRunId}:wf:${id}:`)) {
         const tail = key.slice(`${srcRunId}:wf:`.length);
@@ -499,7 +499,7 @@ export async function cancelWorkflowRun(
     status: 'canceled',
     ...(st?.stepId ? { stepId: st.stepId } : {}),
     // FLOW-08: carry the name forward from the existing record (same pattern as stepId above) —
-    // an external cancelWorkflowRun() call doesn't know the name itself, only runResumable does.
+    // An external cancelWorkflowRun() call doesn't know the name itself, only runResumable does.
     ...(st?.workflowName ? { workflowName: st.workflowName } : {}),
     ...(opts.reason !== undefined ? { reason: opts.reason } : {}),
     updatedAt: Date.now(),
@@ -514,9 +514,9 @@ export async function getWorkflowRunStatus(journal: JournalLike, runId: string):
 
 /**
  * The suspended-run registry query: every workflow run's registry record in ONE `wfrun:` prefix scan,
- * optionally filtered by status — answers "which runs are suspended right now, on which step, waiting
- * for which waitId" without touching any run's journal. Requires `listKeys` (throws a clear error
- * otherwise — no silent empty answer that would read as "nothing suspended").
+ * Optionally filtered by status — answers "which runs are suspended right now, on which step, waiting
+ * For which waitId" without touching any run's journal. Requires `listKeys` (throws a clear error
+ * Otherwise — no silent empty answer that would read as "nothing suspended").
  */
 export async function listWorkflowRuns(
   journal: JournalLike,
@@ -537,7 +537,7 @@ export async function listWorkflowRuns(
 
 /**
  * Durable step that waits until a condition (event) is satisfied. If `check` returns a value, that
- * becomes the step's output; if null/undefined, it suspends. `check` typically hooks into @gnldev/events
+ * Becomes the step's output; if null/undefined, it suspends. `check` typically hooks into @gnldev/events
  * (e.g. searching for an event via listLog).
  */
 export function waitFor<O = any>(
@@ -579,9 +579,9 @@ export class RetryExhaustedError extends Error {
 
 // ── Retry counter read/write ──
 // If the journal supports an atomic counter (incrBy + getCounters), use it: closes get→put's
-// lost-update race (two workers can't read the same value and overwrite each other; increments
-// accumulate). If not supported, falls back to the existing plain-value get→put path (single-process
-// safe, behavior unchanged). Backward compatibility: older runs may have a counter written via plain
+// Lost-update race (two workers can't read the same value and overwrite each other; increments
+// Accumulate). If not supported, falls back to the existing plain-value get→put path (single-process
+// Safe, behavior unchanged). Backward compatibility: older runs may have a counter written via plain
 // `put` → the LARGER of the two sources is taken (the attempt count never rewinds).
 const ATTEMPTS_FIELD = 'n';
 
@@ -599,12 +599,12 @@ async function bumpAttempts(journal: JournalLike, key: string, used: number): Pr
     const counters = await journal.getCounters(key);
     if (counters?.[ATTEMPTS_FIELD] === undefined) {
       // First incrBy transition: the counter has never been initialized. At this point `used`
-      // already includes legacy (if any) — readAttempts read Math.max(counter=0, legacy) at the
-      // start of the call, and used has only grown by +1's since then — so seed the counter
+      // Already includes legacy (if any) — readAttempts read Math.max(counter=0, legacy) at the
+      // Start of the call, and used has only grown by +1's since then — so seed the counter
       // DIRECTLY to `used` (one-time). That way subsequent resumes' Math.max(counter, legacy)
-      // always yields the true total (counter now sits above legacy, even if legacy stays frozen).
+      // Always yields the true total (counter now sits above legacy, even if legacy stays frozen).
       // The legacy FIELD itself is never written to — the "plain field untouched on the incrBy
-      // path" contract (cas.test.ts) is preserved.
+      // Path" contract (cas.test.ts) is preserved.
       await journal.incrBy(key, { [ATTEMPTS_FIELD]: used });
     } else {
       await journal.incrBy(key, { [ATTEMPTS_FIELD]: 1 });
@@ -617,19 +617,19 @@ async function bumpAttempts(journal: JournalLike, key: string, used: number): Pr
 /**
  * Wraps a step with a retry-policy — drop-in: carries the same `id`, used everywhere in
  * `then/branch/parallel` just like an unwrapped step; a SUCCESSFUL output is still journaled
- * under the step's own key.
+ * Under the step's own key.
  *
  * Determinism/durable notes:
- * - **The attempt counter lives in the journal** (`<runId>:wf:<id>:attempts`) → doesn't start over
- *   on crash-resume; the "total N attempts" guarantee is kept independent of process deaths. A step
- *   that was already exhausted in a previous run goes straight to the fallback (if any) on resume —
- *   it does NOT retry N more times.
- * - **Suspension (WorkflowSuspended) is not an error** — it propagates outward as-is without consuming
- *   an attempt (sleep/waitFor work correctly inside retry too).
- * - **The fallback is journaled separately** (`runStep(policy.fallback)`): if the fallback runs and
- *   then crashes, it does NOT re-run on resume. The step being retried must be idempotent if it has
- *   side effects, or use a durable tool internally (the INSIDE of an attempt is not journaled — only
- *   the counter and the final output are).
+ * **The attempt counter lives in the journal** (`<runId>:wf:<id>:attempts`) → doesn't start over
+ *   On crash-resume; the "total N attempts" guarantee is kept independent of process deaths. A step
+ *   That was already exhausted in a previous run goes straight to the fallback (if any) on resume —
+ *   It does NOT retry N more times.
+ * **Suspension (WorkflowSuspended) is not an error** — it propagates outward as-is without consuming
+ *   An attempt (sleep/waitFor work correctly inside retry too).
+ * **The fallback is journaled separately** (`runStep(policy.fallback)`): if the fallback runs and
+ *   Then crashes, it does NOT re-run on resume. The step being retried must be idempotent if it has
+ *   Side effects, or use a durable tool internally (the INSIDE of an attempt is not journaled — only
+ *   The counter and the final output are).
  */
 export function retry<I = any, O = any>(s: Step<I, O>, policy: RetryPolicy<I, O>): Step<I, O> {
   if (!(policy.attempts >= 1)) throw new Error(`@gnldev/workflow: retry('${s.id}') requires attempts >= 1`);
@@ -667,9 +667,9 @@ export function workflow<I = any>(): Workflow<I, I> {
 /**
  * Use a workflow as a NESTED step inside another workflow. Inner steps are namespaced via `keyPrefix`
  * (`${id}:`) → outer/inner steps with the same id don't collide. An inner suspend (sleep/waitFor)
- * propagates outward: the outer `runResumable` catches it, and on resume inner steps replay from
- * their prefixed keys.
- *   outer.then(asStep('payment', paymentWf))   // inner: ${runId}:wf:payment:checkFunds ...
+ * Propagates outward: the outer `runResumable` catches it, and on resume inner steps replay from
+ * Their prefixed keys.
+ *   Outer.then(asStep('payment', paymentWf))   // inner: ${runId}:wf:payment:checkFunds ...
  */
 export function asStep<I = any, O = any>(id: string, wf: Workflow<I, O>): Step<I, O> {
   return {

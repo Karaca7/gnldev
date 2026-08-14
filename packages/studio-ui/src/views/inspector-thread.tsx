@@ -1,9 +1,9 @@
 // ThreadDetail — the thread-level half of the Inspector (option B of the Threads-tab critique:
 // "the folder view solved nothing"). Design intent, in the product's own vocabulary: a CONVERSATION
 // LEDGER. Turns are a real sequence, so they get real mono numbers (the one place the design system
-// allows numbering); the ledger stays quiet — the single bold element is the per-turn MEMORY CONTEXT
-// panel, because "what did memory inject into this turn, and why" is the question no competing tool
-// answers (trace-side tools see only the finished prompt).
+// Allows numbering); the ledger stays quiet — the single bold element is the per-turn MEMORY CONTEXT
+// Panel, because "what did memory inject into this turn, and why" is the question no competing tool
+// Answers (trace-side tools see only the finished prompt).
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronLeft, ChevronDown, ChevronRight, BrainCircuit, Ghost } from 'lucide-react';
@@ -39,7 +39,7 @@ function fmtDur(ms: number | null | undefined): string {
  * Per-turn memory provenance: served lazily (only when the turn's Memory row is expanded).
  * Rows use the journal vocabulary as mono eyebrows (RECALL / RECENT / WM / OM / TRIM) — these are
  * SDK terms, deliberately untranslated (the surrounding sentences are). An honest empty state for
- * runs without a record — never an error.
+ * Runs without a record — never an error.
  */
 export function MemoryContextPanel({ runId, threadId, threadMessages }: {
   runId: string;
@@ -50,8 +50,8 @@ export function MemoryContextPanel({ runId, threadId, threadMessages }: {
   const { t } = useTranslation('inspector');
   const q = useMemoryContext(runId);
   // Frozen records can't be rewritten — but their refs carry seq, and the thread messages are already
-  // loaded by the ledger: derive the preview live when the frozen one is empty (same-thread refs only;
-  // cross-thread recall refs can't be resolved from this thread's list).
+  // Loaded by the ledger: derive the preview live when the frozen one is empty (same-thread refs only;
+  // Cross-thread recall refs can't be resolved from this thread's list).
   const fill = (r: { threadId: string; seq: number; preview: string }): string =>
     r.preview || (threadId && r.threadId === threadId && threadMessages?.[r.seq] ? refPreviewOf(threadMessages[r.seq]) : '');
   if (q.isLoading) return <div className="px-3 py-2 text-[11px] text-muted-foreground">{t('memLoading')}</div>;
@@ -151,8 +151,8 @@ function TurnRow({ index, run, metric, onOpenRun, threadId, threadMessages }: {
 
 /**
  * The thread-scoped detail pane. `runs` come in the left list's order (newest first) — the ledger
- * reads oldest→newest, so it reverses. Aggregates are one quiet line, not a card strip (Chanel rule:
- * this pane's single bold element is the provenance panel, nothing else competes).
+ * Reads oldest→newest, so it reverses. Aggregates are one quiet line, not a card strip (Chanel rule:
+ * This pane's single bold element is the provenance panel, nothing else competes).
  */
 /** A ghost row: a question whose run died before its first token — no run exists, only the
     write-ahead'ed message. Faded + dashed on purpose: this is an ABSENCE made visible. */
@@ -172,10 +172,10 @@ type LedgerEntry = { kind: 'turn'; run: RunSummary } | { kind: 'ghost'; preview:
 
 /**
  * Interleave completed turns (runs) with GHOST turns (unanswered questions — runs that died before
- * their first token are invisible to /runs, but their write-ahead'ed message survives in the
- * thread). Detection walks the thread messages: a user message immediately followed by another user
- * message never got its answer. Any structural mismatch (multi-message inputs, seeded transcripts)
- * falls back to the runs-only ledger — never guess an interleave that might lie.
+ * Their first token are invisible to /runs, but their write-ahead'ed message survives in the
+ * Thread). Detection walks the thread messages: a user message immediately followed by another user
+ * Message never got its answer. Any structural mismatch (multi-message inputs, seeded transcripts)
+ * Falls back to the runs-only ledger — never guess an interleave that might lie.
  */
 function buildLedger(messages: any[], orderedRuns: RunSummary[]): LedgerEntry[] {
   const runsOnly: LedgerEntry[] = orderedRuns.map((run) => ({ kind: 'turn', run }));

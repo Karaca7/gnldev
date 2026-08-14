@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { useApprovals, api, errMessage, ApiError } from '../api';
 import { Btn, Spinner, EmptyState, ErrorBox, Badge, JsonBlock, PageHeader } from '../components';
 import { toast } from '../ui';
-// i18n init side effect: so useTranslation still works if this view is rendered directly
+// I18n init side effect: so useTranslation still works if this view is rendered directly
 // (without App) (see src/i18n/index.ts) — main.tsx already does this, this re-guarantees it here.
 import '../i18n';
 
@@ -29,7 +29,7 @@ export function Approvals() {
       qc.invalidateQueries({ queryKey: ['runs'] });
     } catch (e) {
       // Multi-tab race: another tab/user may have already resolved this approval (409) →
-      // show a clear message + refresh the list (so a stale 'pending' row doesn't linger in the UI).
+      // Show a clear message + refresh the list (so a stale 'pending' row doesn't linger in the UI).
       const conflict = e instanceof ApiError && e.status === 409;
       toast.error(conflict
         ? t('conflictError', { error: errMessage(e) })

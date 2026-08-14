@@ -1,9 +1,9 @@
 // @gnldev/memory ergonomics: zero-dependency default embed + ready-made presets. Does NOT change existing
 // AgentMemory behavior (opt-in): defaultEmbed is not auto-wired (so it won't change recall), presets are a separate helper.
-// P2-memory (AUDIT-R2): OM retrieval mode (`AgentMemory.recallObservations`/`expandObservation`,
+// P2-memory OM retrieval mode (`AgentMemory.recallObservations`/`expandObservation`,
 // `createOmRecallTool`) is ALSO opt-in — neither preset below auto-registers the recall tool in
 // `loadContext`'s `out.tools` the way the WM update tool is, so turning on `observationalMemory` here does
-// not silently hand the model a new tool. Callers who want it wire `createOmRecallTool` themselves.
+// Not silently hand the model a new tool. Callers who want it wire `createOmRecallTool` themselves.
 import type { Storage } from '@gnldev/durable';
 import type { Embed } from './keys.js';
 import { AgentMemory } from './agent-memory.js';
@@ -53,9 +53,9 @@ export function memoryPreset(storage: Storage, kind: MemoryPresetKind = 'assista
   if (kind === 'chat') {
     return new AgentMemory({ storage, recentN: 10, ...(opts.embed ? { embed: opts.embed } : {}), ...common });
   }
-  // P1.5 (AUDIT-R2): callers of memoryPreset can pass `messageRange`/`filter` (operator
-  // subset: $eq/$ne/$gt/$gte/$lt/$lte/$in/$nin) via AgentMemory's own `recall` config directly — this
-  // preset doesn't default them (kept minimal), but they flow end-to-end once set (see agent-memory.ts).
+  // P1.5 callers of memoryPreset can pass `messageRange`/`filter` (operator
+  // Subset: $eq/$ne/$gt/$gte/$lt/$lte/$in/$nin) via AgentMemory's own `recall` config directly — this
+  // Preset doesn't default them (kept minimal), but they flow end-to-end once set (see agent-memory.ts).
   return new AgentMemory({
     storage,
     recentN: 8,

@@ -1,15 +1,15 @@
 // Task 3 — suite-consistency guard: packages/cli/src/runtime.ts already guards CLI↔runtime compatibility
 // (the CLI's own minimum version requirement against the PROJECT's installed @gnldev/durable). But a
-// project can bypass its package manager's caret (^) range entirely — `--force`, dependency
+// Project can bypass its package manager's caret (^) range entirely — `--force`, dependency
 // `overrides`, or hand-edited node_modules — and end up with a SIBLING @gnldev/* suite that is internally
 // INCOMPATIBLE (e.g. @gnldev/durable@0.2.0 next to @gnldev/memory@0.1.0), with no version-range mechanism to
-// stop it. That kind of skew fails SILENTLY at runtime (a stale export shape, a changed journal record
-// contract) rather than at install time. This module is an OPT-IN runtime check that closes that gap:
-// compare every installed sibling package's version against @gnldev/durable's OWN version and surface any
-// difference loudly (warn or throw) instead of letting it fail mysteriously later.
+// Stop it. That kind of skew fails SILENTLY at runtime (a stale export shape, a changed journal record
+// Contract) rather than at install time. This module is an OPT-IN runtime check that closes that gap:
+// Compare every installed sibling package's version against @gnldev/durable's OWN version and surface any
+// Difference loudly (warn or throw) instead of letting it fail mysteriously later.
 //
 // Zero-dep: no semver package — plain major.minor.patch parsing, same style as
-// packages/cli/src/runtime.ts's `gte()` (prerelease/build metadata ignored).
+// Packages/cli/src/runtime.ts's `gte()` (prerelease/build metadata ignored).
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -17,12 +17,12 @@ import { existsSync, readFileSync } from 'node:fs';
 import { SuiteVersionMismatchError } from './errors.js';
 
 /** The common suite packages checked when `packages` isn't given. Short names (WITHOUT the '@gnldev/'
- *  prefix) — resolved as `@gnldev/<name>`. A package that doesn't resolve (not installed in this project)
- *  is silently skipped — this guard only checks packages that are actually part of the running suite. */
+ *  Prefix) — resolved as `@gnldev/<name>`. A package that doesn't resolve (not installed in this project)
+ *  Is silently skipped — this guard only checks packages that are actually part of the running suite. */
 const DEFAULT_SIBLINGS = ['memory', 'server', 'studio', 'rag', 'workflow', 'evals', 'processors', 'mcp', 'auth'] as const;
 
 /** Zero-dep parse: major.minor.patch only (prerelease/build metadata after `-`/`+` is ignored) — same
- *  parsing style as packages/cli/src/runtime.ts's `gte()`. */
+ *  Parsing style as packages/cli/src/runtime.ts's `gte()`. */
 function parseCore(v: string): [number, number, number] {
   const core = v.split('-')[0]!.split('+')[0]!;
   const [maj, min, pat] = core.split('.');
@@ -32,9 +32,9 @@ function parseCore(v: string): [number, number, number] {
 /**
  * Pure, zero-dep version equality — major.minor.patch only (prerelease/build metadata ignored, e.g.
  * `1.2.3` and `1.2.3+build5` are equal). Exported for direct unit testing (see
- * suite-consistency.test.ts) independent of any filesystem/require.resolve setup. Unlike
- * cli/runtime.ts's `gte()` (a MINIMUM-version floor: "at least this new"), a co-versioned suite cares
- * about ANY drift — older OR newer siblings are both a skew signal — so this is equality, not `>=`.
+ * Suite-consistency.test.ts) independent of any filesystem/require.resolve setup. Unlike
+ * Cli/runtime.ts's `gte()` (a MINIMUM-version floor: "at least this new"), a co-versioned suite cares
+ * About ANY drift — older OR newer siblings are both a skew signal — so this is equality, not `>=`.
  */
 export function versionsEqual(a: string, b: string): boolean {
   const [a1, a2, a3] = parseCore(a);
@@ -43,8 +43,8 @@ export function versionsEqual(a: string, b: string): boolean {
 }
 
 /** Reads a package.json's `version` field. '0.0.0' if unreadable/malformed/absent — "don't know" is
- *  treated as a non-failure (mirrors cli/runtime.ts findPackageVersion's philosophy: false positives
- *  are worse than a missed check). */
+ *  Treated as a non-failure (mirrors cli/runtime.ts findPackageVersion's philosophy: false positives
+ *  Are worse than a missed check). */
 function readVersion(pkgJsonPath: string): string {
   try {
     const json = JSON.parse(readFileSync(pkgJsonPath, 'utf8')) as { version?: string };
@@ -55,9 +55,9 @@ function readVersion(pkgJsonPath: string): string {
 }
 
 /** Walks up from `startDir` looking for the nearest package.json named '@gnldev/durable' — this module's
- *  OWN installed version. Works both from `dist/` (published: package.json sits one level above
- *  dist/index.js) and `src/` (dev/tsx: one level above src/*.ts) — the walk (not a fixed relative
- *  path) makes it robust to either layout. '0.0.0' if not found within a few levels. */
+ * OWN installed version. Works both from `dist/` (published: package.json sits one level above
+ *  Dist/index.js) and `src/` (dev/tsx: one level above src/*.ts) — the walk (not a fixed relative
+ *  Path) makes it robust to either layout. '0.0.0' if not found within a few levels. */
 function findOwnVersion(startDir: string): string {
   let dir = startDir;
   for (let i = 0; i < 8; i++) {
@@ -67,7 +67,7 @@ function findOwnVersion(startDir: string): string {
         const json = JSON.parse(readFileSync(pj, 'utf8')) as { name?: string; version?: string };
         if (json.name === '@gnldev/durable') return json.version ?? '0.0.0';
       } catch {
-        // malformed package.json at this level — keep walking up.
+        // Malformed package.json at this level — keep walking up.
       }
     }
     const parent = dirname(dir);
@@ -79,28 +79,28 @@ function findOwnVersion(startDir: string): string {
 
 export interface AssertSuiteConsistentOptions {
   /** Sibling @gnldev/* short names to check (WITHOUT the '@gnldev/' prefix) — default: DEFAULT_SIBLINGS.
-   *  Only packages that actually RESOLVE (installed) are checked; the rest are skipped silently. */
+   * Only packages that actually RESOLVE (installed) are checked; the rest are skipped silently. */
   packages?: string[];
   /** 'warn' (default): a single console.warn listing every mismatch, does not throw. 'throw': raises
    *  `SuiteVersionMismatchError` instead (see errors.ts). */
   onMismatch?: 'throw' | 'warn';
   /** Resolution root for `require.resolve('@gnldev/<pkg>/package.json', { paths: [fromDir] })` — default
    *  `process.cwd()`. Same purpose as cli/runtime.ts's `projectDir`: points resolution at the actual
-   *  project root instead of wherever this code happens to be imported from. */
+   *  Project root instead of wherever this code happens to be imported from. */
   fromDir?: string;
 }
 
 /**
  * Compares every INSTALLED sibling @gnldev/* package's version
- * against @gnldev/durable's OWN version; if any differ, warns (default) or throws
+ * Against @gnldev/durable's OWN version; if any differ, warns (default) or throws
  * (`onMismatch: 'throw'`) — surfacing a `--force`/overrides-installed incompatible suite instead of
- * letting it fail silently at runtime later.
+ * Letting it fail silently at runtime later.
  *
  * NOTE (pre-release honesty): every @gnldev/* package currently ships at `0.0.0` — so this NEVER triggers
- * today (durableVersion === every resolvable sibling's version, always; no false positives). The
- * mechanism is in place and tested; it activates automatically the first time the suite ships real,
- * independent version numbers (same "activates on first real release" note as
- * packages/cli/src/runtime.ts's MIN_DURABLE/MIN_SERVER/MIN_STUDIO header comment).
+ * Today (durableVersion === every resolvable sibling's version, always; no false positives). The
+ * Mechanism is in place and tested; it activates automatically the first time the suite ships real,
+ * Independent version numbers (same "activates on first real release" note as
+ * Packages/cli/src/runtime.ts's MIN_DURABLE/MIN_SERVER/MIN_STUDIO header comment).
  */
 export function assertSuiteConsistent(opts: AssertSuiteConsistentOptions = {}): void {
   const fromDir = opts.fromDir ?? process.cwd();

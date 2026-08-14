@@ -61,20 +61,20 @@ const Policy = lazy(() => named(import('./views/Policy'), 'Policy'));
 
 // `labelKey` → a key into i18n/locales/{en,tr}/nav.json (not literal text); resolved via
 // `t(labelKey)` at render time (see AppShell). This way nav returns the correct language on a
-// language switch without a special-case re-render (i18next already triggers a re-render on change).
+// Language switch without a special-case re-render (i18next already triggers a re-render on change).
 //
 // `group` — four logical sections rendered with a divider + microlabel header (see NAV_GROUPS):
-//   runs        = watching/interacting with live agent execution AND its observation surfaces
+//   Runs        = watching/interacting with live agent execution AND its observation surfaces
 //                 (Inspector/Observability/Playground + Networks — a read-only past-A2A-routing
-//                 graph, not something authored — see views/Networks.tsx)
-//   build       = authoring surfaces for the platform's building blocks — agents/tools/workflows/
-//                 knowledge/evals/mcp, things a developer DEFINES
-//   operate     = operational health of already-running infra — jobs/cache/scheduler, things a
-//                 developer MONITORS, not builds (D1-2/D1-5: split out of `build`, which used to
-//                 lump these in together; the TR label "Geliştirme"/"Development" actively
-//                 mis-promised what a cache hit-rate panel or job queue actually is)
-//   governance  = access control + compliance surfaces (the pre-existing "Governance" grouping below,
-//                 now made visible in the UI, not just in this comment)
+//                 Graph, not something authored — see views/Networks.tsx)
+//   Build       = authoring surfaces for the platform's building blocks — agents/tools/workflows/
+//                 Knowledge/evals/mcp, things a developer DEFINES
+//   Operate     = operational health of already-running infra — jobs/cache/scheduler, things a
+//                 Developer MONITORS, not builds (D1-2/D1-5: split out of `build`, which used to
+//                 Lump these in together; the TR label "Geliştirme"/"Development" actively
+//                 Mis-promised what a cache hit-rate panel or job queue actually is)
+//   Governance  = access control + compliance surfaces (the pre-existing "Governance" grouping below,
+//                 Now made visible in the UI, not just in this comment)
 type NavGroupKey = 'runs' | 'build' | 'operate' | 'governance';
 type NavItem = { to: string; labelKey: string; icon: any; cap?: keyof Capabilities; group: NavGroupKey };
 /** D1-3: an inbox-style attention counter attached to a nav row (see SidebarContent's `badges` prop). */
@@ -84,16 +84,16 @@ const NAV: NavItem[] = [
   { to: '/observability', labelKey: 'observability', icon: Gauge, group: 'runs' },
   { to: '/playground', labelKey: 'playground', icon: MessageSquare, cap: 'playground', group: 'runs' },
   // Networks: read-only observation of past A2A routing (D1-2/D1-5) — moved out of `build`, it
-  // doesn't author anything, it's an observability surface like Inspector/Observability.
+  // Doesn't author anything, it's an observability surface like Inspector/Observability.
   { to: '/networks', labelKey: 'networks', icon: Network, cap: 'a2a', group: 'runs' },
   // Agents: deliberately NO `cap` (D1-1) — views/Agents.tsx renders off useAgents()/
-  // useManagedAgents()/useAgentRegistry(); none of those (nor the base agent list itself) is gated
-  // by `playground` — only the in-view version-management actions are, behind `agentVersions`
+  // UseManagedAgents()/useAgentRegistry(); none of those (nor the base agent list itself) is gated
+  // By `playground` — only the in-view version-management actions are, behind `agentVersions`
   // (checked locally in Agents.tsx). Gating this NAV ROW on `playground` made the entire agent
-  // list vanish from the sidebar on any install with interactive Playground off but agents defined
-  // — a pure read surface disappearing for an unrelated reason. There is no Capabilities field for
+  // List vanish from the sidebar on any install with interactive Playground off but agents defined
+  // a pure read surface disappearing for an unrelated reason. There is no Capabilities field for
   // "can list agents" to gate on instead, so — like Inspector/Observability/Evals — this row is
-  // unconditional.
+  // Unconditional.
   { to: '/agents', labelKey: 'agents', icon: Boxes, group: 'build' },
   { to: '/tools', labelKey: 'tools', icon: Wrench, cap: 'tools', group: 'build' },
   { to: '/workflows', labelKey: 'workflows', icon: Workflow, cap: 'workflows', group: 'build' },
@@ -118,8 +118,8 @@ const NAV_GROUPS: { key: NavGroupKey; titleKey: string }[] = [
   { key: 'governance', titleKey: 'groupGovernance' },
 ];
 // D5-10: command-palette hint per nav item — the item's GROUP name instead of one generic "view"
-// string shared by all 18 rows. Derived from NAV_GROUPS (not hand-duplicated) so the two stay in
-// sync. CommandItem.value in ui.tsx is `${label} ${hint}`, so this also makes group names searchable.
+// String shared by all 18 rows. Derived from NAV_GROUPS (not hand-duplicated) so the two stay in
+// Sync. CommandItem.value in ui.tsx is `${label} ${hint}`, so this also makes group names searchable.
 const NAV_GROUP_TITLE_KEY = Object.fromEntries(NAV_GROUPS.map((g) => [g.key, g.titleKey])) as Record<NavGroupKey, string>;
 
 // Nav-like rows (theme/logout/Swagger) share the same alignment+weight as active nav items (DRY).
@@ -129,9 +129,9 @@ const NAV_ITEM_CLASS =
   'flex items-center gap-2 rounded-md px-3 py-2.5 md:py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:bg-muted/60 focus-visible:text-foreground';
 
 // D4/hardcoded-text: "Ctrl K" → "Cmd K" on macOS. Purely cosmetic — ui.tsx's palette shortcut
-// listener already accepts metaKey OR ctrlKey (unchanged); this only fixes the label macOS users
-// see. navigator.platform is deprecated but only read here for copy, never behavior; guarded so it
-// degrades to the Ctrl label (not a crash) under jsdom, where platform/userAgent don't contain "Mac".
+// Listener already accepts metaKey OR ctrlKey (unchanged); this only fixes the label macOS users
+// See. navigator.platform is deprecated but only read here for copy, never behavior; guarded so it
+// Degrades to the Ctrl label (not a crash) under jsdom, where platform/userAgent don't contain "Mac".
 const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || '');
 const KBD_HINT = IS_MAC ? 'Cmd K' : 'Ctrl K';
 
@@ -185,9 +185,9 @@ function WorkspaceChip({ plan }: { plan?: string }) {
 
 /**
  * Sidebar contents (brand + grouped nav + swagger link + kbd hint + lang/theme/logout) — shared
- * between the desktop `<aside>` (always visible ≥768px) and the mobile slide-in drawer (<768px,
- * see MobileNavDrawer). `onNavigate` is only passed by the mobile drawer, to close itself on any
- * nav click; the desktop sidebar has no such need (nothing to close) so it's omitted there.
+ * Between the desktop `<aside>` (always visible ≥768px) and the mobile slide-in drawer (<768px,
+ * See MobileNavDrawer). `onNavigate` is only passed by the mobile drawer, to close itself on any
+ * Nav click; the desktop sidebar has no such need (nothing to close) so it's omitted there.
  */
 function SidebarContent({
   visible, t, tc, lang, toggleLang, dark, toggle, onLogout, onNavigate, plan, badges,
@@ -301,10 +301,10 @@ function AppShell({ onLogout }: { onLogout?: () => void }) {
   );
 
   // D1-3: pending-approvals / failed-jobs nav counters. Built as plain useQuery calls (not the
-  // useApprovals/useJobs hooks from api.ts, which don't expose an `enabled` option to gate on) —
+  // UseApprovals/useJobs hooks from api.ts, which don't expose an `enabled` option to gate on) —
   // SAME queryKey + queryFn as those hooks, so this shares react-query's cache with the Approvals/
   // Jobs pages rather than double-fetching. `enabled` is the whole point: the request must not fire
-  // at all while the capability is off (no silent background poll against a disabled/absent surface).
+  // At all while the capability is off (no silent background poll against a disabled/absent surface).
   const approvalsForBadge = useQuery({
     queryKey: ['approvals'], queryFn: api.approvals, refetchInterval: 5000, enabled: !!caps.data?.approvals,
   });
@@ -320,15 +320,15 @@ function AppShell({ onLogout }: { onLogout?: () => void }) {
   // Ctrl/Cmd+K palette: views + theme/session actions in a single search box.
   const commands: CommandItem[] = [
     // D5-10: hint = the item's group name (Runs/Build/Operate/Governance), not one generic "view"
-    // label shared by all 18 rows — lets a single flat list still cluster by category, and makes
-    // group names searchable too (CommandItem.value = `${label} ${hint}` in ui.tsx).
+    // Label shared by all 18 rows — lets a single flat list still cluster by category, and makes
+    // Group names searchable too (CommandItem.value = `${label} ${hint}` in ui.tsx).
     ...visible.map((n) => ({ id: n.to, label: t(n.labelKey), hint: t(NAV_GROUP_TITLE_KEY[n.group]), onSelect: () => navigate(n.to) })),
     { id: 'theme', label: dark ? tc('switchToLightTheme') : tc('switchToDarkTheme'), hint: tc('themeHint'), onSelect: toggle },
     ...(onLogout ? [{ id: 'logout', label: tc('logoutAction'), hint: tc('sessionHint'), onSelect: onLogout }] : []),
   ];
 
   // Close the mobile drawer automatically on a route change (e.g. via Ctrl/Cmd+K or a browser
-  // back/forward) so it doesn't stay stuck open over the newly-navigated view.
+  // Back/forward) so it doesn't stay stuck open over the newly-navigated view.
   useEffect(() => { setMobileNavOpen(false); }, [location.pathname]);
 
   return (
@@ -530,8 +530,8 @@ function Login({ sso, onAuthed }: { sso?: boolean; onAuthed: () => void }) {
 
 /**
  * F6.6 — ErrorBoundary: if a view's render throws, don't let the ENTIRE SPA go white-screen;
- * show an error card + "reload" instead. Only catches render/lifecycle errors (React boundary);
- * async/event errors flow through react-query. Tested under jsdom in `test/`.
+ * Show an error card + "reload" instead. Only catches render/lifecycle errors (React boundary);
+ * Async/event errors flow through react-query. Tested under jsdom in `test/`.
  */
 export class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state: { error: Error | null } = { error: null };
@@ -566,7 +566,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { error: E
 
 /**
  * Bug-investigation fix #1 (CRITICAL): on caps.isError, authRequired must not silently fall
- * back to false and skip Login to show a broken AppShell — use a separate "couldn't connect" screen instead.
+ * Back to false and skip Login to show a broken AppShell — use a separate "couldn't connect" screen instead.
  */
 function CapsError({ error, onRetry }: { error: unknown; onRetry: () => void }) {
   const { t } = useTranslation('common');
@@ -595,12 +595,12 @@ export default function App() {
   const qc = useQueryClient();
   const [token, setTok] = useState<string | null>(() => getToken());
   // Bug-investigation fix #1: authRequired is "unknown" (undefined) until caps data arrives —
-  // it's derived ONLY from a successful response, it does NOT fail-open to false on isError.
+  // It's derived ONLY from a successful response, it does NOT fail-open to false on isError.
   const authRequired: boolean | undefined = caps.data ? !!caps.data.authRequired : undefined;
 
   // F6.2 — Mid-session token revocation/expiry → if any query/mutation returns 401/403,
-  // fall back to a clean login (clear token + flush cache). shouldForceReauth already won't
-  // fire without a token → no 401 loop on the Login screen. (Hooks unconditional: BEFORE early returns.)
+  // Fall back to a clean login (clear token + flush cache). shouldForceReauth already won't
+  // Fire without a token → no 401 loop on the Login screen. (Hooks unconditional: BEFORE early returns.)
   useEffect(() => {
     const forceReauthIf = (err: unknown) => {
       if (shouldForceReauth({ err, authRequired: !!authRequired, hasToken: !!getToken() })) {

@@ -1,7 +1,7 @@
 // @gnldev/studio — durable run inspector. Admin↔API split:
-//   createStudioApi   → JSON only (mount/auth/programmatic)
-//   createStudioAdmin → HTML UI only (local/remote API via apiBase)
-//   createStudioApp   → convenience combining both (backward compatible)
+//   CreateStudioApi   → JSON only (mount/auth/programmatic)
+//   CreateStudioAdmin → HTML UI only (local/remote API via apiBase)
+//   CreateStudioApp   → convenience combining both (backward compatible)
 export { createStudioApi, createStudioAdmin, createStudioApp, PERMISSION_CATALOG, ROLE_PERMISSION_PRESETS } from './server.js';
 export type { FetchHandler } from './handler.js';
 export type {
