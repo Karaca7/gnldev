@@ -33,6 +33,8 @@ jobs:
       # review rounds in a row found quickstarts that threw on their first line; a person reading
       # carefully does not scale to 24 READMEs, and this does.
       - run: pnpm check:docs
+      # VERSIONING.md promises lockstep; a partial bump ships a mismatched pair silently.
+      - run: pnpm check:versions
 
 
   integration:

@@ -38,11 +38,19 @@ pnpm install
 pnpm -r build
 pnpm -r typecheck
 pnpm test
+pnpm check:docs      # every code sample in the docs is compiled against the built packages
+pnpm check:versions  # the published packages must stay in lockstep (see VERSIONING.md)
 ```
 
-All four must pass before a PR is reviewed. See [docs/GUIDE.md](./docs/GUIDE.md) for the
+All of these must pass before a PR is reviewed. See [docs/GUIDE.md](./docs/GUIDE.md) for the
 architecture walkthrough. Releases are cut by the maintainer from CI, so there is nothing a
 contributor needs to run for one.
+
+**If your change is user-visible, add a line to `[Unreleased]` in
+[CHANGELOG.md](./CHANGELOG.md).** Anything that breaks goes under `Breaking`, written as an
+instruction ("add `--host 0.0.0.0` if you run in a container") rather than a description of what
+changed. [VERSIONING.md](./VERSIONING.md) has the test for what counts as breaking — it is behavioural,
+not "did a type change".
 
 ## Reporting issues
 

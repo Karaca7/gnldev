@@ -1,0 +1,88 @@
+# Changelog
+
+All notable changes to the `@gnldev/*` packages, which are versioned and released together — see
+[VERSIONING.md](./VERSIONING.md).
+
+Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+---
+
+## [Unreleased]
+
+**Nothing has been published yet.** This will become `0.1.0`, the first release. There is no earlier
+version to diff against, so the entries below are the changes worth knowing about from the point this
+file was introduced — reconstructing a plausible-looking history for a project that has never shipped
+would be worse than saying that.
+
+### Security
+
+- **`gnl dev` and `gnl studio` now bind `127.0.0.1`.** They passed no hostname, so Node bound *every*
+  interface while the startup line printed `http://localhost:…`. On a shared network that offered an
+  admin surface — run purge, managed-agent promote, cache invalidation, and a Playground that spends
+  your API keys — to anyone who could reach the port. **If you run `gnl dev` in a container, add
+  `--host 0.0.0.0`**; exposing an *unauthenticated* server additionally requires
+  `--allow-open-network`, so the decision is recorded in the command line rather than inherited from a
+  default.
+- **`gnl studio` now applies your auth configuration.** It never called `resolveAuthProvider`, so its
+  admin API was open regardless of what `gnl.config` or `GNL_ADMIN_TOKEN` said. `gnl dev` was already
+  correct.
+- **`/swagger` no longer loads a floating dependency from a CDN.** It fetched `swagger-ui-dist@5` from
+  unpkg with no integrity attribute and no CSP, on the same origin whose `localStorage` holds the
+  Studio bearer token — so publishing any `5.x`, or tampering with what unpkg served, put attacker code
+  in reach of it. Pinned to an exact version with SRI on both assets, plus a page-level CSP whose
+  `connect-src 'self'` means injected code cannot post the token anywhere.
+
+### Added
+
+- **`RunStatus` gained `'failed'`.** A run that threw recorded nothing, so a 401 on the first model
+  call or a cost ceiling tripping mid-run read back as `'completed'` — and `exportRun` sent it to OTel
+  with `SpanStatusCode.OK`. Runs now write an outcome at each terminal boundary. A *suspended* run is
+  not a failed one, a run refused because another worker holds the lock is not a failure of that run,
+  and a run that failed and later resumed to success stops being failed. Surfaced through
+  `/runs?status=failed`, `gnl runs`, Studio, and OTel (which now reports `ERROR` with the reason).
+- **`GET /health` and `GET /ready`.** Liveness touches nothing, so a failing database cannot cause a
+  healthy process to be killed and restarted; readiness reads the journal with a 2s budget and returns
+  503 when storage is unreachable. Both are unauthenticated by design and report reachability only —
+  never the underlying error, which for a database failure carries the host, database and user.
+- **Status labels are translated (en/tr).** `StatusBadge` printed the raw enum, so every run row, table
+  and filter tab read `completed` / `suspended` in English regardless of language. Observability also
+  gained a failed count, which it could always have computed and never did.
+- `listRunsArray` / `asReaderJournal` / `runIdOfKey` / `deriveRunStatus` are exported from
+  `@gnldev/durable` for hosts that read the journal directly.
+
+### Fixed
+
+- **`GET /runs` with any query parameter returned 500** when the host passed `journal:
+  new SqliteStorage(…).runs` — which is what the README's own first code block shows. Adapters answer
+  `listRuns` with a `Page`; the array bridge was only applied when `storage` was configured, so the raw
+  page reached every array-assuming consumer. The same fault took `withOrg(…).listRuns()` down, and
+  with it per-org quota accounting. Affected every persistent adapter, not only Postgres.
+- **A run that died before its first model step was invisible.** It had written its prompt and a claim
+  marker, neither of which the run index recognised, so it appeared in no listing — and, more to the
+  point, `sweepRuns` never reached it, leaving that prompt outside every retention window
+  indefinitely. Fixed in all five adapters.
+- **Sub-agent runs are scoped to their parent.** The nested id was `agent:<toolCallId>`, and a
+  toolCallId is unique within one completion rather than across runs — so two unrelated parents whose
+  provider minted the same id shared a single nested run, and the second read the first's answer as its
+  own. Mainstream providers mint random ids, so this bit on OSS endpoints, proxies, replayed fixtures
+  and test harnesses with stable ids.
+- **A crash between "the tool ran" and "the stream ended" could run a side effect twice.** The streamed
+  model step was journaled in `flush()`, after tool execution, so a resume re-planned and a fresh
+  toolCallId slipped past the per-call gate.
+- **Claim staleness is measured against the shared clock** (`journal.now()`) rather than each worker's
+  local one, and against the tool's own declared `timeoutMs` rather than a flat 30s — a tool that
+  declared two minutes was being declared crashed at thirty seconds and its side effect run alongside
+  itself.
+- Every documented code sample is typechecked in CI (`pnpm check:docs`), which caught a quickstart that
+  had never compiled.
+
+### Changed
+
+- `RunSummary.status` is now `'completed' | 'suspended' | 'failed'`. A TypeScript `switch` over it with
+  no `default` will stop compiling — deliberately, since the alternative is silently labelling a failed
+  run as completed.
+- `limits.approvalScope: 'attempt'` (opt-in) spends a human approval on the attempt it unblocks, so a
+  later retry asks again instead of proceeding on an answer given about an earlier attempt. The default
+  is unchanged: the approval is journaled and survives a crash.
+- `sqlite`/`postgres` gained an indexed `failed` column on `gnl_runs`, migrated on startup like
+  `suspended_count`. Journals written before it read exactly as they did before.

@@ -220,6 +220,9 @@ payment/financial and transactional or long-running/distributed workloads.
   a mock Stripe: the same key carried from the journal to the provider.
 - **[examples/showcase](./examples/showcase)** — one self-verifying file that exercises the packages
   end to end with no API key: `pnpm --filter @gnldev/showcase demo`.
+- **[CHANGELOG.md](./CHANGELOG.md)** — what changed, with the migration notes for anything that breaks.
+- **[VERSIONING.md](./VERSIONING.md)** — the packages move in lockstep; what a minor bump means while
+  the project is 0.x, and what counts as breaking.
 
 ## Contributing
 
