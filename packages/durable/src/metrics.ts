@@ -7,7 +7,7 @@
 // Same shape as budget.ts's `__usage__` counter (H8a) and its get→put/warn-once fallback story, just
 // Bucketed per-day/per-agent instead of a single running total, plus a per-run "fast row" for the
 // Runs table (avoids readRun+getRunCost for every already-finalized run).
-import type { Journal, JournalBatch, JournalReader } from './journal.js';
+import type { Journal, JournalBatch, JournalReader, RunStatus } from './journal.js';
 import { summarizeRun, runKeys, listRunsArray } from './journal.js';
 import { getRunCost } from './cost.js';
 
@@ -130,7 +130,7 @@ function extractNumericScore(raw: number | { score: number } | unknown): number 
 export interface MetricsRunRow {
   runId: string;
   agentName?: string;
-  status: 'completed' | 'suspended';
+  status: RunStatus;
   costUsd: number;
   totalTokens: number;
   modelSteps: number;

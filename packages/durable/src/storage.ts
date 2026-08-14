@@ -6,7 +6,7 @@
 // NOTE: this file contains ONLY the INTERFACE + pure helpers (NO storage implementation) → the @gnldev/durable
 // Core stays thin; concrete impls (in-memory/sqlite/postgres-storage) implement these ports.
 
-import type { Journal, JournalEntry, RunSummary, JournalReader } from './journal.js';
+import type { Journal, JournalEntry, RunSummary, JournalReader, RunStatus } from './journal.js';
 
 // ── Common ──────────────────────────────────────────────────────────────────
 
@@ -29,7 +29,7 @@ export interface ListQuery {
    * BEFORE slicing to `limit`/`cursor` — filtering after slicing silently drops matching items off a
    * Page and desyncs `nextCursor`.
    */
-  status?: 'completed' | 'suspended';
+  status?: RunStatus;
   agent?: string;
 }
 

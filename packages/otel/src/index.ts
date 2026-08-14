@@ -49,6 +49,15 @@ export async function exportRun(
   opts: ExportRunOptions = {},
 ): Promise<ExportRunResult> {
   const entries = await reader.readRun(runId);
+  // The run's recorded outcome. Without it, a run that DIED — a 401 on the first call, a cost ceiling —
+  // Produced no error-bearing entry and was therefore exported as OK with $0 of cost: the single most
+  // Misleading signal this exporter could send. `get` is optional on a bare JournalReader, so this
+  // Degrades to the old derivation rather than throwing.
+  const outcome = typeof (reader as { get?: unknown }).get === 'function'
+    ? await (reader as unknown as { get<T>(k: string): Promise<T | undefined> })
+        .get<{ status?: string; error?: string }>(`${runId}:outcome`).catch(() => undefined)
+    : undefined;
+  const runFailed = outcome?.status === 'failed';
   const exporter = opts.exporter ?? (opts.endpoint ? await otlpExporter(opts.endpoint) : new InMemorySpanExporter());
 
   // Deterministic id queues: root traceId + (for the root + each entry) spanId.
@@ -103,8 +112,11 @@ export async function exportRun(
     span.end(end > start ? end : start);
   }
 
-  root.setStatus({ code: anyError ? SpanStatusCode.ERROR : SpanStatusCode.OK });
-  root.setAttribute('gnl.status', anySuspended ? 'suspended' : anyError ? 'failed' : 'completed');
+  const failed = anyError || runFailed;
+  root.setStatus(failed ? { code: SpanStatusCode.ERROR, ...(outcome?.error ? { message: outcome.error } : {}) } : { code: SpanStatusCode.OK });
+  // Same precedence as deriveRunStatus in @gnldev/durable: suspended is a live state and wins.
+  root.setAttribute('gnl.status', anySuspended ? 'suspended' : failed ? 'failed' : 'completed');
+  if (runFailed && outcome?.error) root.setAttribute('gnl.error', outcome.error);
   root.end(lastTs > firstTs ? lastTs : firstTs);
 
   // Guarantee the export via forceFlush; DO NOT call shutdown (the caller owns the exporter; on InMemory,

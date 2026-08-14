@@ -51,7 +51,7 @@ export function Inspector() {
   const navigate = useNavigate();
   useLiveRuns();
   const caps = useCapabilities();
-  const [statusF, setStatusF] = useState<'all' | 'completed' | 'suspended'>('all');
+  const [statusF, setStatusF] = useState<'all' | 'completed' | 'suspended' | 'failed'>('all');
   const [filter, setFilter] = useState('');
   // API-09: debounce the search box — filtering now happens server-side (GET /runs?q=), so keystrokes
   // Must not fire a request per character; the debounced value is what actually drives the query.
@@ -160,7 +160,7 @@ export function Inspector() {
             className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none"
           />
           <div className="flex items-center gap-1">
-            {(['all', 'completed', 'suspended'] as const).map((s) => (
+            {(['all', 'completed', 'suspended', 'failed'] as const).map((s) => (
               <button
                 key={s}
                 type="button"
@@ -328,6 +328,7 @@ function RunRow({ run, metricsById, active, onClick }: { run: RunSummary; metric
   const { t } = useTranslation('inspector');
   const metric = metricsById.get(run.runId);
   const suspended = run.status === 'suspended';
+  const failed = run.status === 'failed';
   const { org, displayId } = parseOrgFromRunId(run.runId);
   const label = run.agent ?? displayId; // agent name = primary label (mockup); runId falls to the meta line
   const meta = [run.agent ? displayId : `${run.modelSteps} model${run.toolCalls > 0 ? ` · ${run.toolCalls} tool` : ''}`,
@@ -339,7 +340,8 @@ function RunRow({ run, metricsById, active, onClick }: { run: RunSummary; metric
       className={cn('mb-0.5 flex w-full items-start gap-2.5 rounded-md px-2.5 py-2 text-left transition-colors',
         active ? 'bg-muted' : 'hover:bg-muted/60')}
     >
-      <span aria-hidden className={cn('mt-1.5 h-2 w-2 shrink-0 rounded-full', suspended ? 'bg-warning' : 'bg-success/60')} />
+      <span aria-hidden className={cn('mt-1.5 h-2 w-2 shrink-0 rounded-full',
+        failed ? 'bg-destructive' : suspended ? 'bg-warning' : 'bg-success/60')} />
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
           <span className="truncate text-[13px] font-semibold text-foreground">{label}</span>
@@ -348,7 +350,9 @@ function RunRow({ run, metricsById, active, onClick }: { run: RunSummary; metric
         <span className="mt-0.5 block truncate font-mono text-[11px] text-muted-foreground">{meta}</span>
       </span>
       <span className="flex shrink-0 flex-col items-end gap-1">
-        <StatusBadge status={suspended ? 'suspended' : 'completed'} />
+        {/* The run's OWN status — this used to be a two-way expression, so a failed run displayed as
+            'completed' even once the API had started reporting it correctly. */}
+        <StatusBadge status={run.status} />
         {metric && metric.costUsd > 0 && (
           <span className="font-mono text-[11px] text-muted-foreground">${metric.costUsd.toFixed(4)}</span>
         )}

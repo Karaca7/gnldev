@@ -274,7 +274,38 @@ export const runKeys = {
    * Applies it even if the `approvals` parameter isn't given.
    */
   approval: (runId: string, toolCallId: string) => `${runId}:approval:${toolCallId}`,
+  /**
+   * How the run ENDED. Written once at each terminal boundary — 'completed' on the success path,
+   * 'failed' when the run threw — and OVERWRITTEN (a plain put, not a claim) so a resume that finally
+   * Succeeds clears an earlier failure rather than carrying it forever.
+   *
+   * Suffix-anchored like `:input`, which is what keeps runIdOfKey able to claim it safely, and outside
+   * The `:model:`/`:tool:` pattern → invisible to parseJournalKey, so replay and time-travel are
+   * Unaffected. Purged with the run by the `${runId}:` prefix.
+   */
+  outcome: (runId: string) => `${runId}:outcome`,
 } as const;
+
+/**
+ * Is this write the run's outcome record, and does it say the run failed?
+ *
+ * Adapters index `failed` as a COLUMN rather than filtering on the serialized value, because the
+ * Obvious shortcut — `WHERE value LIKE '%failed%'` — matches any run whose error MESSAGE happens to
+ * Contain the word, which for a failure record is close to all of them.
+ *
+ * Returns null for every other key, so a caller can use it as "is this an outcome write at all".
+ */
+export function outcomeFlagOf(key: string, value: unknown): 0 | 1 | null {
+  if (!key.endsWith(':outcome')) return null;
+  return (value as { status?: string } | null)?.status === 'failed' ? 1 : 0;
+}
+
+/** What was recorded at a run's terminal boundary. `error` is present only on a failure. */
+export interface RunOutcomeRecord {
+  status: 'completed' | 'failed';
+  at: number;
+  error?: string;
+}
 
 // AUDIT (silent fallback → vocal): custom journals that don't offer `putIfAbsent` fall back to
 // Get→put — this is SAFE in a single process but exactly-once is NOT ATOMICALLY guaranteed under
@@ -452,9 +483,21 @@ export interface JournalEntry {
   ts?: number; // write time (created_at) — for OTEL trace timing (undefined if absent)
 }
 
+/**
+ * 'failed' exists because its absence was a lie: a run killed at step 0 by a 401, or stopped by a cost
+ * Ceiling, was reported as 'completed' — and exportRun sent it to OTel with SpanStatusCode.OK. Nothing
+ * Recorded that a run had ENDED BADLY, so nothing could say so.
+ *
+ * Derivation order is fixed and must be identical in every adapter: 'suspended' first (a run waiting on
+ * A human is a LIVE state, and it is derived from tool records that outlive any outcome), then the
+ * Recorded outcome, then 'completed'. A run with no outcome record — every run written before this
+ * Existed — reads exactly as it did before.
+ */
+export type RunStatus = 'completed' | 'suspended' | 'failed';
+
 export interface RunSummary {
   runId: string;
-  status: 'completed' | 'suspended';
+  status: RunStatus;
   modelSteps: number;
   toolCalls: number;
   /**
@@ -521,7 +564,7 @@ export interface JournalReader {
   listRunsPaged?(q?: {
     limit?: number;
     cursor?: string;
-    status?: 'completed' | 'suspended';
+    status?: RunStatus;
     agent?: string;
   }): Promise<{ items: RunSummary[]; nextCursor?: string }>;
 }
@@ -529,7 +572,7 @@ export interface JournalReader {
 export type RunListQuery = {
   limit?: number;
   cursor?: string;
-  status?: 'completed' | 'suspended';
+  status?: RunStatus;
   agent?: string;
 };
 
@@ -647,14 +690,34 @@ export function parseJournalKey(key: string): { runId: string; kind: JournalEntr
  * Same way in both.
  */
 export function runIdOfKey(key: string): string | null {
-  const suffixOnly = /^(.*):(input|memctx)$/.exec(key);
+  const suffixOnly = /^(.*):(input|memctx|outcome)$/.exec(key);
   if (suffixOnly) return suffixOnly[1]!;
   const withTail = /^(.*):(model|tool):.+$/.exec(key);
   return withTail ? withTail[1]! : null;
 }
 
-/** Derive a summary from a run's entries. */
-export function summarizeRun(runId: string, entries: JournalEntry[]): RunSummary {
+/**
+ * The ONE status rule. Every adapter derives status from its own storage shape, and four separate
+ * Copies of `suspended ? 'suspended' : 'completed'` is exactly how a third value silently becomes a
+ * Second value in three of them.
+ */
+export function deriveRunStatus(suspended: boolean, outcome?: Pick<RunOutcomeRecord, 'status'> | null): RunStatus {
+  if (suspended) return 'suspended';
+  return outcome?.status === 'failed' ? 'failed' : 'completed';
+}
+
+/**
+ * Derive a summary from a run's entries.
+ *
+ * `outcome` is optional and separate because it is NOT an entry — it lives in the invisible `:outcome`
+ * Key, exactly like threadId lives in `:input`. Callers that have it pass it; callers that do not get
+ * The pre-outcome behaviour, which is what every already-written run needs.
+ */
+export function summarizeRun(
+  runId: string,
+  entries: JournalEntry[],
+  outcome?: Pick<RunOutcomeRecord, 'status'> | null,
+): RunSummary {
   let modelSteps = 0;
   let toolCalls = 0;
   let suspended = false;
@@ -665,7 +728,7 @@ export function summarizeRun(runId: string, entries: JournalEntry[]): RunSummary
       if ((e.value as ToolJournalRecord | undefined)?.status === 'suspended') suspended = true;
     }
   }
-  return { runId, status: suspended ? 'suspended' : 'completed', modelSteps, toolCalls };
+  return { runId, status: deriveRunStatus(suspended, outcome), modelSteps, toolCalls };
 }
 
 /**
@@ -854,7 +917,10 @@ export class InMemoryJournal implements Journal, JournalReader {
     // MERGE threadId from the run's invisible `:input` entry. Map.get is O(1) — NOT N+1
     // (doesn't make a separate pass like readRun/listRuns, it's a single point-read from the store we already have).
     return [...byRun.entries()].map(([runId, entries]) => {
-      const s = summarizeRun(runId, entries);
+      // Same O(1) point-read as `:input` below — the outcome is not an entry, so summarizeRun cannot
+      // See it on its own.
+      const out = this.store.get(`${runId}:outcome`) as { status?: 'completed' | 'failed' } | undefined;
+      const s = summarizeRun(runId, entries, out as never);
       const inp = this.store.get(`${runId}:input`) as { threadId?: string; agent?: string } | undefined;
       return {
         ...s,
@@ -875,7 +941,7 @@ export class InMemoryJournal implements Journal, JournalReader {
   async listRunsPaged(q?: {
     limit?: number;
     cursor?: string;
-    status?: 'completed' | 'suspended';
+    status?: RunStatus;
     agent?: string;
   }): Promise<{ items: RunSummary[]; nextCursor?: string }> {
     let all = await this.listRuns();

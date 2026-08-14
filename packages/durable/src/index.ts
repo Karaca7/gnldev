@@ -1,7 +1,7 @@
 // @gnldev/durable — an exactly-once + deterministic-replay layer for Vercel AI SDK agents.
 // Drop-in: generateText -> runDurable. Composable: withDurableModel + durableTools.
 
-export { InMemoryJournal, parseJournalKey, summarizeRun, claim, frozenGet, runKeys, nestedAgentRunId, listRunsArray, asReaderJournal, runIdOfKey } from './journal.js';
+export { InMemoryJournal, parseJournalKey, summarizeRun, claim, frozenGet, runKeys, deriveRunStatus, nestedAgentRunId, listRunsArray, asReaderJournal, runIdOfKey } from './journal.js';
 // H13 — journal format versioning: an API that keeps old records readable across SDK-major transitions.
 export { JOURNAL_FORMAT_VERSION, JournalFormatError, registerFormatUpgrade, stampFormat, upgradeFormat, isVersionedKey } from './format.js';
 export { acquireRunLock } from './run-lock.js';
@@ -18,6 +18,8 @@ export type {
   RunSummary,
   DurableCtx,
   ToolJournalRecord,
+  RunStatus,
+  RunOutcomeRecord,
 } from './journal.js';
 export { BasicMemory, PROVENANCE_RECENT_CAP, messagePreview } from './memory.js';
 export type { Memory, MemoryContextProvenance, RecalledMessageRef } from './memory.js';
@@ -71,6 +73,7 @@ export { durableProcessorStep, createProcessorCtx, ProcessorTripwire, recordProc
 // D4-retry turn-level retry-with-feedback ladder (see run.ts).
 export { ProcessorRetry, RetryExhaustedByProcessorError } from './processor.js';
 export { recordIncident, readIncidents } from './incidents.js';
+export { readRunOutcome, recordRunOutcome, isRunFailure } from './outcome.js';
 export { acquireLease, releaseLease, readLease } from './lease.js';
 export type { Lease } from './lease.js';
 export type { RunIncident } from './incidents.js';

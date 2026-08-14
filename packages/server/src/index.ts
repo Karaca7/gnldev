@@ -926,7 +926,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
    * Assert on `runs[0].runId` etc. see byte-identical behavior).
    *   ?limit=      clamped to [1, 1000] (default 50 — same default every adapter's own listRuns uses)
    *   ?cursor=     opaque — pass back a page's `nextCursor` verbatim
-   *   ?status=     'completed' | 'suspended' — else 400
+   *   ?status=     'completed' | 'suspended' | 'failed' — else 400
    *   ?agent=      exact match against RunSummary.agent
    */
   app.get('/runs', async (c) => {
@@ -940,10 +940,10 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     if (limitRaw == null && cursor == null && statusRaw == null && agent == null) {
       return c.json(await s.journal.listRuns()); // no params → legacy array (unchanged)
     }
-    let status: 'completed' | 'suspended' | undefined;
+    let status: 'completed' | 'suspended' | 'failed' | undefined;
     if (statusRaw != null) {
-      if (statusRaw !== 'completed' && statusRaw !== 'suspended') {
-        return c.json({ error: `invalid status '${statusRaw}' (expected 'completed' or 'suspended')` }, 400);
+      if (statusRaw !== 'completed' && statusRaw !== 'suspended' && statusRaw !== 'failed') {
+        return c.json({ error: `invalid status '${statusRaw}' (expected 'completed', 'suspended' or 'failed')` }, 400);
       }
       status = statusRaw;
     }

@@ -5,7 +5,7 @@
 import { createRequire } from 'node:module';
 import { statSync, existsSync } from 'node:fs';
 import { cosineSimilarity } from 'ai';
-import { runIdOfKey, parseJournalKey } from './journal.js';
+import { runIdOfKey, parseJournalKey, outcomeFlagOf, deriveRunStatus } from './journal.js';
 import type { JournalBatch, JournalEntry, RunSummary, ToolJournalRecord } from './journal.js';
 import { serialize, deserialize } from './serialize.js';
 import { matchFilter } from './storage.js';
@@ -211,6 +211,17 @@ export class SqliteStorage implements Storage {
       this.db.exec(`UPDATE gnl_runs SET suspended_count = (
         SELECT COUNT(*) FROM gnl_run_journal j WHERE j.run_id = gnl_runs.run_id AND j.suspended = 1)`);
     }
+    // `failed` column: the same shape of migration as suspended_count above. Indexed rather than
+    // Derived at read time, because filtering on the serialized outcome value would mean matching the
+    // Word 'failed' inside error MESSAGES. Nothing to backfill — runs written before this have no
+    // Outcome record at all, and 0 is exactly right for them (they read as before).
+    if (!cols.some((c) => c.name === 'failed')) {
+      try {
+        this.db.exec(`ALTER TABLE gnl_runs ADD COLUMN failed INTEGER NOT NULL DEFAULT 0`);
+      } catch (e) {
+        if (!String((e as Error)?.message ?? e).includes('duplicate column')) throw e;
+      }
+    }
     // The seed used to be
     // Check-then-INSERT (SELECT → INSERT if absent) — a TOCTOU: two simultaneous booters both saw no
     // Row, both inserted, and the loser CRASHED ON BOOT with a UNIQUE constraint. `INSERT OR IGNORE`
@@ -260,6 +271,7 @@ export class SqliteStorage implements Storage {
     return [
       ...DDL.split(';').map((s) => s.trim()).filter(Boolean),
       'ALTER TABLE gnl_runs ADD COLUMN suspended_count INTEGER NOT NULL DEFAULT 0',
+      'ALTER TABLE gnl_runs ADD COLUMN failed INTEGER NOT NULL DEFAULT 0',
     ];
   }
 
@@ -336,7 +348,8 @@ CREATE TABLE IF NOT EXISTS gnl_run_journal (
 CREATE INDEX IF NOT EXISTS gnl_run_journal_run ON gnl_run_journal (run_id, created_at);
 CREATE TABLE IF NOT EXISTS gnl_runs (
   run_id TEXT PRIMARY KEY, model_steps INTEGER NOT NULL DEFAULT 0, tool_calls INTEGER NOT NULL DEFAULT 0,
-  suspended INTEGER NOT NULL DEFAULT 0, suspended_count INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+  suspended INTEGER NOT NULL DEFAULT 0, suspended_count INTEGER NOT NULL DEFAULT 0, failed INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS gnl_runs_created ON gnl_runs (created_at, run_id);
 CREATE INDEX IF NOT EXISTS gnl_runs_updated ON gnl_runs (updated_at);
@@ -421,7 +434,14 @@ class SqliteRunJournal implements RunJournal {
       // Worse, to sweepRuns — its persisted prompt then outlives every retention window.
       const owner = runIdOfKey(key);
       if (!owner) { upsert(); return; } // genuinely run-less key (queues, events, cache)
-      this.withTx(() => { upsert(); this.touchRunDelta(owner, null, false, 0); });
+      const failed = outcomeFlagOf(key, value);
+      this.withTx(() => {
+        upsert();
+        this.touchRunDelta(owner, null, false, 0);
+        // The outcome is OVERWRITTEN, never accumulated: a resume that finally succeeds clears the
+        // Earlier failure, so this sets the flag both ways.
+        if (failed !== null) this.db.prepare(`UPDATE gnl_runs SET failed = ? WHERE run_id = ?`).run(failed, owner);
+      });
       return;
     }
     this.withTx(() => {
@@ -601,31 +621,38 @@ class SqliteRunJournal implements RunJournal {
    */
   async listRuns(q?: ListQuery): Promise<Page<RunSummary>> {
     const { start, limit } = offset(q);
-    const statusWhere = q?.status ? ' WHERE suspended = ?' : '';
-    const statusParams: unknown[] = q?.status ? [q.status === 'suspended' ? 1 : 0] : [];
-    const toSummary = (r: { run_id: string; model_steps: number; tool_calls: number; suspended: number; input_val: string | null }): RunSummary => {
+    // Three-way, still entirely in SQL and still on indexed columns — 'suspended' wins over the
+    // Recorded outcome, matching deriveRunStatus exactly (see journal.ts), so a filtered page and an
+    // Unfiltered scan can never disagree about the same run.
+    const statusWhere =
+      q?.status === 'suspended' ? ' WHERE suspended = 1'
+      : q?.status === 'failed' ? ' WHERE suspended = 0 AND failed = 1'
+      : q?.status === 'completed' ? ' WHERE suspended = 0 AND failed = 0'
+      : '';
+    const statusParams: unknown[] = [];
+    const toSummary = (r: { run_id: string; model_steps: number; tool_calls: number; suspended: number; failed: number; input_val: string | null }): RunSummary => {
       const input = r.input_val ? deserialize<{ threadId?: string; agent?: string }>(r.input_val) : undefined;
       return {
-        runId: r.run_id, status: r.suspended ? 'suspended' : 'completed', modelSteps: r.model_steps, toolCalls: r.tool_calls,
+        runId: r.run_id, status: deriveRunStatus(!!r.suspended, r.failed ? { status: 'failed' } : null), modelSteps: r.model_steps, toolCalls: r.tool_calls,
         ...(input?.threadId ? { threadId: input.threadId } : {}),
         ...(input?.agent ? { agent: input.agent } : {}),
       };
     };
     if (q?.agent) {
       const rows = this.db.prepare(
-        `SELECT r.run_id, r.model_steps, r.tool_calls, r.suspended,
+        `SELECT r.run_id, r.model_steps, r.tool_calls, r.suspended, r.failed, r.failed,
                 (SELECT value FROM gnl_run_journal WHERE key = r.run_id || ':input') AS input_val
          FROM gnl_runs r${statusWhere} ORDER BY r.created_at, r.run_id`,
-      ).all(...statusParams) as { run_id: string; model_steps: number; tool_calls: number; suspended: number; input_val: string | null }[];
+      ).all(...statusParams) as { run_id: string; model_steps: number; tool_calls: number; suspended: number; failed: number; input_val: string | null }[];
       const all = rows.map(toSummary).filter((r) => r.agent === q.agent);
       return pageOf(all.slice(start, start + limit), start, limit, all.length);
     }
     const total = (this.db.prepare(`SELECT COUNT(*) AS n FROM gnl_runs${statusWhere}`).get(...statusParams) as { n: number }).n;
     const rows = this.db.prepare(
-      `SELECT r.run_id, r.model_steps, r.tool_calls, r.suspended,
+      `SELECT r.run_id, r.model_steps, r.tool_calls, r.suspended, r.failed, r.failed,
               (SELECT value FROM gnl_run_journal WHERE key = r.run_id || ':input') AS input_val
        FROM gnl_runs r${statusWhere} ORDER BY r.created_at, r.run_id LIMIT ? OFFSET ?`,
-    ).all(...statusParams, limit, start) as { run_id: string; model_steps: number; tool_calls: number; suspended: number; input_val: string | null }[];
+    ).all(...statusParams, limit, start) as { run_id: string; model_steps: number; tool_calls: number; suspended: number; failed: number; input_val: string | null }[];
     return pageOf(rows.map(toSummary), start, limit, total);
   }
 

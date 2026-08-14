@@ -24,6 +24,7 @@ import { markRunTainted, readThreadTaint, readDirectRunTaint, recordTaintProvena
 import type { RunLimits } from './limits.js';
 import type { ToolSchemaRule } from '@gnldev/tool-schema';
 import type { LanguageModelV2 } from '@ai-sdk/provider';
+import { runFailed, runSucceeded, isRunFailure } from './outcome.js';
 
 type GenerateTextOptions = Parameters<typeof generateText>[0];
 type StreamTextOptions = Parameters<typeof streamText>[0];
@@ -904,6 +905,18 @@ async function runGenerateWithRetryLadder(
  * `resume` = call again with the same `runId` + `journal` (+ `approvals`) → replay from the journal.
  */
 export async function runDurable(args: RunDurableArgs): Promise<DurableResult> {
+  // The failure half of the run's outcome record. The success half is written at the completion choke
+  // Point inside runDurableInner, where "did it actually finish" is already established (a suspended
+  // Run returns normally with interrupts and must NOT be recorded as completed).
+  try {
+    return await runDurableGuarded(args);
+  } catch (err) {
+    if (isRunFailure(err)) await runFailed(args.journal, args.runId, err, Date.now());
+    throw err;
+  }
+}
+
+async function runDurableGuarded(args: RunDurableArgs): Promise<DurableResult> {
   // A COMPENSATED (unwound) run refuses to run/resume — replaying memoized successes
   // On top of an already-reverted world would silently "complete" a transaction that was undone.
   await assertNotCompensated(args.journal, args.runId);
@@ -1062,6 +1075,10 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
     try {
       await recordRunMetrics(journal, journal as unknown as JournalReader, runId, agentName ? { agentName } : {});
     } catch { /* advisory aggregate — must not affect the run */ }
+    // Overwrites any 'failed' from an earlier attempt: a run that was fixed and resumed to success is
+    // Not a failed run. Inside the `interrupts.length === 0` branch, so a suspended run — which returns
+    // Normally, awaiting a human — is not mislabelled as finished.
+    await runSucceeded(journal, runId, Date.now());
   }
 
   return Object.assign(result, { interrupts });
@@ -1317,6 +1334,9 @@ export async function streamDurable(args: StreamDurableArgs) {
         try {
           await recordRunMetrics(journal, journal as unknown as JournalReader, runId, agentName ? { agentName } : {});
         } catch { /* advisory aggregate — must not affect the stream */ }
+        // Parity with runDurableInner: inside the completed branch only, so a suspended stream is not
+        // Recorded as finished, and overwriting any earlier 'failed'.
+        await runSucceeded(journal, runId, Date.now());
       }
       // (a): the stream has finished (completed OR suspended) → release the run-lock so a resume
       // Can proceed. Token-fenced + idempotent: a no-op if the lock was already taken over/released.
@@ -1325,13 +1345,15 @@ export async function streamDurable(args: StreamDurableArgs) {
     };
     // (a): also release on a stream error (onFinish may not fire on the error path). release()
     // Is idempotent, so a later onFinish release is harmless. On abandonment (neither fires), TTL reclaims.
-    if (lockHandle) {
-      const prevOnError = options.onError;
-      options.onError = async (ev: any) => {
-        try { await lockHandle.release(); } catch { /* best-effort; TTL reclaims */ }
-        if (prevOnError) await prevOnError(ev);
-      };
-    }
+    // Previously wrapped ONLY when a lock existed, so an unlocked stream that failed recorded nothing
+    // And read back as 'completed'. Now always wrapped; the release stays conditional.
+    const prevOnError = options.onError;
+    options.onError = async (ev: any) => {
+      const err = (ev as { error?: unknown })?.error ?? ev;
+      if (isRunFailure(err)) await runFailed(journal, runId, err, Date.now());
+      if (lockHandle) { try { await lockHandle.release(); } catch { /* best-effort; TTL reclaims */ } }
+      if (prevOnError) await prevOnError(ev);
+    };
   }
   try {
     // (b): wrap the result so the terminal promises (result.text & friends) REJECT with the

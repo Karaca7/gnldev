@@ -16,7 +16,7 @@
 //   Are provided locally; Redis is typically used in a composite as a cache/work override or as the
 //   Runs+work+cache default.
 import { createRequire } from 'node:module';
-import { runIdOfKey, parseJournalKey } from './journal.js';
+import { runIdOfKey, parseJournalKey, deriveRunStatus } from './journal.js';
 import { stableStringify } from './hash.js';
 import type { JournalBatch, JournalEntry, RunSummary, ToolJournalRecord } from './journal.js';
 import { serialize, deserialize } from './serialize.js';
@@ -650,6 +650,7 @@ class RedisRunJournal implements RunJournal {
     // Since SCAN already fetches ALL rj: keys in one pass (keys/values above), this is NOT a SEPARATE
     // Round-trip, it's part of the same scan.
     const threadIds = new Map<string, string>();
+    const failedRuns = new Set<string>();
     const agents = new Map<string, string>();
     for (let i = 0; i < keys.length; i++) {
       const s = values[i];
@@ -679,6 +680,13 @@ class RedisRunJournal implements RunJournal {
         if (!cur) byRun.set(owner, { m: 0, t: 0, s: false, c0: e.t });
         else if (e.t < cur.c0) cur.c0 = e.t;
       }
+      // The run's recorded outcome, from the same scan — Redis has no column to index, so it is read
+      // From the decoded value rather than matched as text (an error MESSAGE routinely contains the
+      // Word 'failed'; the record's own status field does not lie).
+      if (rawKey.endsWith(':outcome')) {
+        const runId = rawKey.slice(0, -':outcome'.length);
+        if ((e.v as { status?: string } | undefined)?.status === 'failed') failedRuns.add(runId);
+      }
     }
     // P0.3 filters: listRuns is ALREADY a full brute-force SCAN here (Redis has no
     // Secondary index by status/agent — same "no cheap indexed status aggregate" limitation documented
@@ -691,7 +699,7 @@ class RedisRunJournal implements RunJournal {
         const threadId = threadIds.get(runId);
         const agent = agents.get(runId);
         return {
-          runId, status: v.s ? 'suspended' : 'completed', modelSteps: v.m, toolCalls: v.t,
+          runId, status: deriveRunStatus(v.s, failedRuns.has(runId) ? { status: 'failed' } : null), modelSteps: v.m, toolCalls: v.t,
           ...(threadId ? { threadId } : {}),
           ...(agent ? { agent } : {}),
         };
