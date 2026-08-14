@@ -12,7 +12,7 @@
 // both defensible and only the operator knows whether a second click is cheaper than a second
 // effect. A denial is never spent under either setting.
 import { describe, it, expect } from 'vitest';
-import { runDurable, InMemoryStorage, SideEffectRetryBlockedError } from '../src/index.js';
+import { runDurable, InMemoryStorage, SideEffectRetryBlockedError, runKeys } from '../src/index.js';
 import { tool } from 'ai';
 import { z } from 'zod';
 
@@ -82,6 +82,42 @@ describe('limits.approvalScope', () => {
     const again = await run();
     expect(again).not.toBeInstanceOf(SideEffectRetryBlockedError);
     expect(charges()).toBe(3);
+  });
+
+  it("'attempt' spends the approval BEFORE the effect runs — a SIGKILL mid-execute cannot reuse it", async () => {
+    // The spend used to live in the catch, which only a CLEAN throw reaches. A process killed
+    // mid-execute never runs a catch: the journaled approval stayed live, and the next resume met
+    // "approved" and ran the effect again without asking — one click, two charges, the exact case
+    // the option exists to close. The distinguishing observable is WHEN the slot is spent, so the
+    // tool reads its own approval key from INSIDE execute: on the approved attempt, the answer must
+    // already be gone by the time the effect is running.
+    const journal = new InMemoryStorage().runs;
+    const reads: unknown[] = [];
+    let charges = 0;
+    const t = tool({
+      description: 'charge',
+      inputSchema: z.object({ amount: z.number() }),
+      execute: async () => {
+        reads.push(await journal.get(runKeys.approval('scope-kill', CALL)));
+        charges++;
+        // First attempt: the gateway times out on the way back — side-effect uncertainty, a human is asked.
+        if (charges === 1) throw new Error('ETIMEDOUT after the charge posted');
+        return { ok: true };
+      },
+    });
+    Object.assign(t, { sideEffect: true });
+
+    const run = (approvals?: Record<string, boolean>) =>
+      runDurable({ runId: 'scope-kill', journal, model: model(), tools: { chargeCard: t as any }, prompt: 'charge', limits: { approvalScope: 'attempt' }, ...(approvals ? { approvals } : {}) } as any).catch((e) => e);
+
+    await run();                 // attempt 1: charges, throws → blocked, a human is asked
+    await run({ [CALL]: true }); // attempt 2: the human approved → executes
+    expect(charges).toBe(2);
+
+    const duringApproved = reads[1] as { __gnl_approval_spent?: boolean } | boolean | undefined;
+    expect(duringApproved, 'a raw true here would survive a SIGKILL and approve a second, unasked attempt')
+      .not.toBe(true);
+    expect((duringApproved as any)?.__gnl_approval_spent, 'the slot holds the spent sentinel while the effect runs').toBe(true);
   });
 
   it("a denial is not spent under 'attempt' either — it keeps denying without re-asking", async () => {

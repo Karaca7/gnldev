@@ -661,8 +661,15 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
               return output; // RECOVERED from the provider — no retry, no approval, the run continues automatically
             }
             // Done:false → the provider said "it never happened" → safely re-executed below.
-          } catch {
-            // Couldn't reach the provider / couldn't decide → fall through to the approval gates below (safe side).
+          } catch (recoverErr) {
+            // Couldn't reach the provider / couldn't decide → fall through to the approval gates below
+            // (safe side). NOT silently: the operator then sees SideEffectRetryBlockedError telling
+            // them to "provide a recover() hook" — which they DID; it is unreachable or mis-shaped,
+            // and without this line nothing anywhere said so.
+            console.warn(
+              `@gnldev/durable: '${toolName}' has a recover() hook but it failed for ${key} — falling back to the approval gate:`,
+              recoverErr,
+            );
             tool = { ...tool, recover: undefined } as T; // don't retry recover again on this attempt
           }
         }
@@ -801,6 +808,16 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           console.warn(message);
         }
       }
+      // approvalScope: 'attempt' — spend the approval BEFORE the effect runs, not in the catch. The
+      // catch-path spend covered only a CLEAN throw: a SIGKILL mid-execute left the journaled
+      // approval alive, and the next resume met "approved" and ran the effect again without asking —
+      // one click, two charges, the precise case the option promises to close. Spending first means a
+      // crash at ANY later point re-asks, which is the safe direction (a second question, never a
+      // second unasked effect). A SENTINEL, not `put(key, undefined)`: the undefined write left the
+      // row behind, and resolveApprovals' claim of the human's NEXT decision silently lost to it.
+      if (ctx.limits?.approvalScope === 'attempt' && approved === true && sideEffect) {
+        await ctx.journal.put(runKeys.approval(ctx.runId, toolCallId), { __gnl_approval_spent: true, at: Date.now() });
+      }
       let output: unknown;
       try {
         const p = Promise.resolve(original(input, execOpts));
@@ -836,13 +853,6 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           { status: 'failed', error: String(error?.message ?? error), attempts: prevAttempts + 1, sideEffect },
           toolCallId, toolName, hash,
         );
-        // approvalScope: 'attempt' — spend the approval that unblocked THIS attempt, so the next
-        // resume asks again instead of proceeding on an answer about an earlier attempt. Opt-in:
-        // the default 'call' keeps the journaled approval, which is what makes it survive a crash.
-        // Only an approval is spent, and only for a side-effect tool: a denial must keep denying.
-        if (ctx.limits?.approvalScope === 'attempt' && approved === true && sideEffect) {
-          await ctx.journal.put(runKeys.approval(ctx.runId, toolCallId), undefined as any);
-        }
         // Release the duplicate marker this call claimed before executing. It was claimed to stop a
         // CONCURRENT twin, and the effect did not complete — leaving it would make every later
         // attempt with these arguments look like a duplicate of something that never happened.

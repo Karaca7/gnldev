@@ -55,7 +55,8 @@ const DDL = [
   `CREATE INDEX IF NOT EXISTS gnl_runs_updated ON gnl_runs (updated_at)`,
   // H11b migration: add the column if missing in an old setup (backfill once at init, below).
   `ALTER TABLE gnl_runs ADD COLUMN IF NOT EXISTS suspended_count INTEGER NOT NULL DEFAULT 0`,
-  // `failed`: indexed rather than derived at read time, because filtering on the serialized outcome
+  // `failed`: materialized at write time rather than derived at read time (no index — the status
+  // Filter is an operator path, not a hot one), because filtering on the serialized outcome
   // Value would mean matching the word 'failed' inside error MESSAGES. Nothing to backfill — a run
   // Written before outcomes existed has none, and false reads exactly as it did before.
   `ALTER TABLE gnl_runs ADD COLUMN IF NOT EXISTS failed BOOLEAN NOT NULL DEFAULT false`,

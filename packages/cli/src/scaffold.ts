@@ -6,6 +6,7 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { RECIPES, FEATURE_IDS, E2E_FEATURE, type Recipe } from './recipes.js';
 import { hostById, APP_FILE, hostReadme } from './hosts.js';
 
@@ -98,6 +99,20 @@ function addE2e(dir: string, testSrcDir: string): void {
   });
 }
 
+/**
+ * The version range a scaffolded project pins the framework to: the CLI's OWN version, read at
+ * Runtime. The templates and recipes used to hardcode '^0.1.0' — the packages move in lockstep
+ * (VERSIONING.md), so on the first minor bump every scaffold would have installed 0.1.x while the
+ * CLI that created it was 0.2.0: exactly the mixed install lockstep exists to prevent, invisible to
+ * check-versions because these manifests live INSIDE the cli package. The comment two functions down
+ * records the same bug in its '^0.0.0' incarnation; the mechanism, not another comment, is the fix.
+ */
+function frameworkRange(): string {
+  const require = createRequire(import.meta.url);
+  const { version } = require('../package.json') as { version: string };
+  return `^${version}`;
+}
+
 /** cpSync a template into an EMPTY targetDir + gitignore→.gitignore + fill the project-name placeholder. */
 function copyTemplate(dir: string, template: TemplateName, name: string): void {
   const src = templatesDir(template);
@@ -112,6 +127,20 @@ function copyTemplate(dir: string, template: TemplateName, name: string): void {
   for (const rel of ['package.json', 'README.md']) {
     const p = join(dir, rel);
     if (existsSync(p)) writeFileSync(p, readFileSync(p, 'utf8').replaceAll('__PROJECT_NAME__', name));
+  }
+
+  // Every @gnldev range in the template is re-stamped to the CLI's own version — the literal values
+  // In the template files are placeholders, not truth (see frameworkRange).
+  const pkgPath = join(dir, 'package.json');
+  if (existsSync(pkgPath)) {
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+    const range = frameworkRange();
+    for (const field of ['dependencies', 'devDependencies'] as const) {
+      for (const dep of Object.keys(pkg[field] ?? {})) {
+        if (dep.startsWith('@gnldev/')) pkg[field][dep] = range;
+      }
+    }
+    writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
   }
 }
 
@@ -169,10 +198,9 @@ function scaffoldFeatures(dir: string, name: string, features: string[], forceE2
     const target = join(dir, r.file);
     mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, r.contents);
-    // Must track the published range of the @gnldev packages: '^0.0.0' means '>=0.0.0 <0.0.1',
-    // Which 0.1.0 never satisfies — inside the monorepo pnpm links by name and hides it, but a
-    // Scaffolded project outside it would fail to install.
-    if (r.dep) deps[r.dep] = '^0.1.0';
+    // The CLI's own version, not a literal — the literal version of this line has been wrong twice
+    // ('^0.0.0', then '^0.1.0' about to be wrong at the first minor bump). See frameworkRange.
+    if (r.dep) deps[r.dep] = frameworkRange();
   }
 
   // Merge new deps into package.json (skips any already present from the base template).

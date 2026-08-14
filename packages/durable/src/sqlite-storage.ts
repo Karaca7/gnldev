@@ -211,8 +211,9 @@ export class SqliteStorage implements Storage {
       this.db.exec(`UPDATE gnl_runs SET suspended_count = (
         SELECT COUNT(*) FROM gnl_run_journal j WHERE j.run_id = gnl_runs.run_id AND j.suspended = 1)`);
     }
-    // `failed` column: the same shape of migration as suspended_count above. Indexed rather than
-    // Derived at read time, because filtering on the serialized outcome value would mean matching the
+    // `failed` column: the same shape of migration as suspended_count above. MATERIALIZED at write
+    // Time rather than derived at read time (there is no index on it — the status filter is an
+    // Operator path), because filtering on the serialized outcome value would mean matching the
     // Word 'failed' inside error MESSAGES. Nothing to backfill — runs written before this have no
     // Outcome record at all, and 0 is exactly right for them (they read as before).
     if (!cols.some((c) => c.name === 'failed')) {
@@ -633,7 +634,7 @@ class SqliteRunJournal implements RunJournal {
    * Of the single SELECT. Ordering (LIMIT/OFFSET) is already applied on `gnl_runs` → the subquery
    * Only runs for the rows on that page (the SQLite planner applies the subquery to the rows after LIMIT).
    *
-   * P0.3 filters: `status` is pushed down to SQL as a WHERE on the INDEXED
+   * P0.3 filters: `status` is pushed down to SQL as a WHERE on the materialized
    * `gnl_runs.suspended` column — same boolean `listRuns` already derives status FROM (`r.suspended ?
    * 'suspended' : 'completed'`), so it cannot drift from the unfiltered read. `agent` has NO indexed
    * Column of its own (it lives inside the superjson-serialized `:input` blob) — pushing it into SQL
@@ -664,7 +665,7 @@ class SqliteRunJournal implements RunJournal {
     };
     if (q?.agent) {
       const rows = this.db.prepare(
-        `SELECT r.run_id, r.model_steps, r.tool_calls, r.suspended, r.failed, r.failed,
+        `SELECT r.run_id, r.model_steps, r.tool_calls, r.suspended, r.failed,
                 (SELECT value FROM gnl_run_journal WHERE key = r.run_id || ':input') AS input_val
          FROM gnl_runs r${statusWhere} ORDER BY r.created_at, r.run_id`,
       ).all(...statusParams) as { run_id: string; model_steps: number; tool_calls: number; suspended: number; failed: number; input_val: string | null }[];
@@ -673,7 +674,7 @@ class SqliteRunJournal implements RunJournal {
     }
     const total = (this.db.prepare(`SELECT COUNT(*) AS n FROM gnl_runs${statusWhere}`).get(...statusParams) as { n: number }).n;
     const rows = this.db.prepare(
-      `SELECT r.run_id, r.model_steps, r.tool_calls, r.suspended, r.failed, r.failed,
+      `SELECT r.run_id, r.model_steps, r.tool_calls, r.suspended, r.failed,
               (SELECT value FROM gnl_run_journal WHERE key = r.run_id || ':input') AS input_val
        FROM gnl_runs r${statusWhere} ORDER BY r.created_at, r.run_id LIMIT ? OFFSET ?`,
     ).all(...statusParams, limit, start) as { run_id: string; model_steps: number; tool_calls: number; suspended: number; failed: number; input_val: string | null }[];

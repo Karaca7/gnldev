@@ -84,6 +84,21 @@ would be worse than saying that.
 - Every documented code sample is typechecked in CI (`pnpm check:docs`), which caught a quickstart that
   had never compiled.
 
+### Known limits, stated rather than implied
+
+- **In-flight nested runs do not survive the id-scheme change.** Scoping sub-agent/workflow runIds to
+  their parent means a run that crashed MID-nested-work under the old scheme resumes into a fresh
+  namespace: completed nested steps re-run, and the old `wf:`-shaped namespace becomes an unsweepable
+  orphan. Nothing is published, so this can only affect our own deployments — drain in-flight runs
+  before upgrading across this point.
+- **The step-0 visibility fix is forward-looking on sqlite/postgres.** Their run index is derived at
+  write time and there is no backfill: a run that died before its first step *under an older build*
+  stays outside listings and retention on those engines (redis/in-memory derive at read time and
+  self-heal). If this matters for a database, `checkSchema`/a manual `:input`-scan backfill is the
+  path.
+- **Workflow (`wf:`) children are not part of the purge cascade** — a pre-existing gap the audit
+  surfaced: purging a parent run does not purge a workflow-as-tool child's journal. On the backlog.
+
 ### Changed
 
 - `RunSummary.status` is now `'completed' | 'suspended' | 'failed'`. A TypeScript `switch` over it with
@@ -92,5 +107,9 @@ would be worse than saying that.
 - `limits.approvalScope: 'attempt'` (opt-in) spends a human approval on the attempt it unblocks, so a
   later retry asks again instead of proceeding on an answer given about an earlier attempt. The default
   is unchanged: the approval is journaled and survives a crash.
-- `sqlite`/`postgres` gained an indexed `failed` column on `gnl_runs`, migrated on startup like
+- `sqlite`/`postgres` gained a `failed` column on `gnl_runs` (materialized at write time — not
+  indexed; the status filter is an operator path, not a hot one), migrated on startup like
   `suspended_count`. Journals written before it read exactly as they did before.
+
+<!-- Once v0.1.0 is tagged, this becomes .../compare/v0.1.0...HEAD -->
+[Unreleased]: https://github.com/Karaca7/gnl-framework/commits/main

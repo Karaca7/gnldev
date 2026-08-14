@@ -347,9 +347,20 @@ async function resolveApprovals(
   approvals: Record<string, boolean> | undefined,
 ): Promise<Record<string, boolean> | undefined> {
   // (a) claim every decision from the parameter into the journal (idempotent — first decision wins).
+  // A SPENT slot (approvalScope:'attempt' consumed the previous answer before executing) is not a
+  // decision: the human's fresh answer takes it over by CAS. Without this, the claim silently lost to
+  // the leftover row and the new decision lived only in-process — a crash after this point forgot it.
   if (approvals) {
     for (const [toolCallId, decision] of Object.entries(approvals)) {
-      await claim(journal, runKeys.approval(runId, toolCallId), decision);
+      const key = runKeys.approval(runId, toolCallId);
+      const won = await claim(journal, key, decision);
+      if (!won) {
+        const raw = await journal.get(key);
+        if (typeof raw === 'object' && raw !== null && (raw as { __gnl_approval_spent?: boolean }).__gnl_approval_spent) {
+          if (journal.putIfMatch) await journal.putIfMatch(key, raw, decision);
+          else await journal.put(key, decision); // single-process fallback, same bound as claim()
+        }
+      }
     }
   }
 
@@ -365,7 +376,8 @@ async function resolveApprovals(
   for (const key of keys) {
     const toolCallId = key.slice(prefix.length);
     const journalDecision = await journal.get<boolean>(key);
-    if (journalDecision === undefined) continue;
+    // Only a boolean is a decision — a spent sentinel (or anything else) reads as "no answer yet".
+    if (typeof journalDecision !== 'boolean') continue;
     const paramDecision = approvals?.[toolCallId];
     if (paramDecision !== undefined && paramDecision !== journalDecision) {
       console.warn(

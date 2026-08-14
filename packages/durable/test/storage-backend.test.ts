@@ -270,12 +270,18 @@ for (const [name, make, caps] of storages) {
       await b.runs.put('crs2:model:0', { ok: true });
       await b.runs.put('crs2:tool:t1', { status: 'suspended', output: {} }); // makes crs2 a suspended run
       await b.runs.put('crs3:model:0', { ok: true });
+      // A FAILED run too. The audit reverted the aggregate's three-way CASE and this suite stayed
+      // green (92/92): nothing seeded a failure against countRunsByStatus, so a regression that
+      // re-collapses failed→completed would show "Failed: 0" above a list full of failed runs.
+      await b.runs.put('crs4:model:0', { ok: true });
+      await b.runs.put('crs4:outcome', { status: 'failed', at: Date.now(), error: '401' });
       const counted = await j.countRunsByStatus();
       const page = await b.runs.listRuns({ limit: 1_000_000 });
       const expected: Record<string, number> = {};
       for (const r of page.items) expected[r.status] = (expected[r.status] ?? 0) + 1;
       expect(counted).toEqual(expected);
       expect(expected.suspended).toBe(1); // sanity: the suspended run really is in there
+      expect(expected.failed, 'the failed run must be counted AS failed by both paths').toBe(1);
     });
 
     // MemoryStore conformance is skipped for storages that don't provide the memory port (Redis).

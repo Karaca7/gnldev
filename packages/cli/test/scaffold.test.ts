@@ -37,6 +37,25 @@ describe('scaffold', () => {
     expect(readme).not.toContain('__PROJECT_NAME__');
   });
 
+  it("pins every @gnldev range to the CLI's OWN version, not the template's literal", () => {
+    const dir = join(tmp(), 'my-agent');
+    scaffold(dir, { template: 'full' });
+    const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
+    const cliVersion = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'package.json'), 'utf8')).version;
+
+    // The literal in the template files is a placeholder. The audit's F1: those literals said
+    // '^0.1.0', the packages move in lockstep, so at the first minor bump every scaffold would have
+    // installed 0.1.x under a 0.2.0 CLI — the mixed install lockstep exists to prevent, and one this
+    // codebase already shipped once as '^0.0.0'. Asserting against the CLI's own manifest (not a
+    // hardcoded string) keeps this test meaningful at every future version.
+    const gnlDeps = Object.entries({ ...pkg.dependencies, ...pkg.devDependencies })
+      .filter(([name]) => name.startsWith('@gnldev/'));
+    expect(gnlDeps.length).toBeGreaterThan(0);
+    for (const [name, range] of gnlDeps) {
+      expect(range, `${name} must track the CLI version`).toBe(`^${cliVersion}`);
+    }
+  });
+
   it('minimal --e2e: adds the durability test + vitest + test script', () => {
     const dir = join(tmp(), 'a');
     const res = scaffold(dir, { e2e: true });
