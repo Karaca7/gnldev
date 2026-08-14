@@ -210,6 +210,8 @@ export function Observability() {
         <StaggerItem><Card label={t('totalRuns')} value={String(metrics.data?.total ?? 0)} /></StaggerItem>
         <StaggerItem><Card label={t('completed')} value={String(metrics.data?.byStatus.completed ?? 0)} /></StaggerItem>
         <StaggerItem><Card label={t('suspended')} value={String(metrics.data?.byStatus.suspended ?? 0)} /></StaggerItem>
+        {/* Failures were countable but never counted — the one number an operator scans this strip for. */}
+        <StaggerItem><Card label={t('failed')} value={String(metrics.data?.byStatus.failed ?? 0)} /></StaggerItem>
         <StaggerItem><Card label={t('cost')} value={`$${(metrics.data?.costUsd ?? 0).toFixed(4)}`} /></StaggerItem>
         <StaggerItem><Card label={t('tokens')} value={(metrics.data?.tokens ?? 0).toLocaleString('tr-TR')} /></StaggerItem>
         <StaggerItem><Card label={t('durationP95')} value={fmtMs(p95)} hint={t('durationHint', { p50: fmtMs(p50), p99: fmtMs(p99) })} /></StaggerItem>
@@ -317,6 +319,7 @@ export function Observability() {
             <option value="all">{t('statusAll')}</option>
             <option value="completed">{t('completed')}</option>
             <option value="suspended">{t('suspended')}</option>
+            <option value="failed">{t('failed')}</option>
           </select>
           <button
             type="button"

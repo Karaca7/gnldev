@@ -29,5 +29,6 @@
   "colTool": "tool",
   "colToken": "token",
   "openInInspector": "Inspector'da aç",
-  "noMatchingRuns": "Eşleşen run yok"
+  "noMatchingRuns": "Eşleşen run yok",
+  "failed": "Başarısız"
 }

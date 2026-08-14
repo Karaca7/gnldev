@@ -12,7 +12,7 @@ import {
   api, errMessage, ApiError, type Capabilities, type RunSummary, type RegressionReport, type RegressionDiffEntry, type RunCost, type NetworkTrace,
   type ProcessorReport, type JournalEntry, type RunIncident,
 } from '../api';
-import { Btn, StatusBadge, StatStrip, Spinner, Empty, EmptyState, ErrorBox, JsonBlock, Tabs, Badge, cn } from '../components';
+import { Btn, StatusBadge, StatStrip, Spinner, Empty, EmptyState, ErrorBox, JsonBlock, Tabs, Badge, cn, useStatusLabel } from '../components';
 import { toast, ConfirmDialog } from '../ui';
 import { TextDiff } from '../text-diff';
 import { MediaParts } from '../media';
@@ -52,6 +52,9 @@ export function Inspector() {
   useLiveRuns();
   const caps = useCapabilities();
   const [statusF, setStatusF] = useState<'all' | 'completed' | 'suspended' | 'failed'>('all');
+  // The filter tabs printed the raw enum ('completed', 'suspended') in every language — only 'all' was
+  // Ever translated. Same vocabulary as StatusBadge, so a tab and a row never disagree on a word.
+  const statusLabel = useStatusLabel();
   const [filter, setFilter] = useState('');
   // API-09: debounce the search box — filtering now happens server-side (GET /runs?q=), so keystrokes
   // Must not fire a request per character; the debounced value is what actually drives the query.
@@ -174,7 +177,7 @@ export function Inspector() {
                   statusF === s ? 'border-border bg-muted text-foreground font-semibold' : 'border-border text-muted-foreground hover:text-foreground',
                 )}
               >
-                {s === 'all' ? t('all') : s}
+                {statusLabel(s)}
               </button>
             ))}
           </div>

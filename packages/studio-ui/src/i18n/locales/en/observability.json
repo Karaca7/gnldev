@@ -29,5 +29,6 @@
   "colTool": "tool",
   "colToken": "token",
   "openInInspector": "Open in Inspector",
-  "noMatchingRuns": "No matching runs"
+  "noMatchingRuns": "No matching runs",
+  "failed": "Failed"
 }

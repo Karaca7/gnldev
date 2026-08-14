@@ -88,11 +88,38 @@ export function Badge({
   );
 }
 
+/**
+ * Maps a raw status string to its translated label, falling back to the string itself.
+ *
+ * The fallback is what makes this safe to put inside StatusBadge: the badge is fed statuses from runs,
+ * Jobs and workflows alike, and an unrecognised one must still render — as it always did — rather than
+ * Disappear or show a missing-key marker.
+ */
+export function useStatusLabel(): (status: string) => string {
+  const { t } = useTranslation('common');
+  return (status: string) => {
+    const key = STATUS_LABEL_KEYS[status.toLowerCase()];
+    return key ? t(key) : status;
+  };
+}
+
+const STATUS_LABEL_KEYS: Record<string, string> = {
+  running: 'statusRunning', in_progress: 'statusRunning',
+  completed: 'statusCompleted', done: 'statusCompleted', ok: 'statusCompleted', success: 'statusCompleted',
+  suspended: 'statusSuspended',
+  failed: 'statusFailed', error: 'statusFailed',
+  cancelled: 'statusCancelled', canceled: 'statusCancelled',
+  pending: 'statusPending',
+  'needs approval': 'statusNeedsApproval', needs_approval: 'statusNeedsApproval',
+  all: 'statusAll',
+};
+
 export function StatusBadge({ status }: { status: string }) {
   // Pill-shaped status chip. Running is INFO (cool blue) + a live pulse, deliberately distinct from
   // Completed (success green) — before, both were green and read as the same state. Needs-approval /
   // Suspended = warning (amber); failed/error/cancelled = destructive (red). Unknown → neutral (never
   // Fail-open to green). Squared mono `Badge` above is kept for DATA tags (model/tool names).
+  const label = useStatusLabel();
   const s = status.toLowerCase();
   const info = 'bg-info/15 text-info';
   const cls =
@@ -105,7 +132,7 @@ export function StatusBadge({ status }: { status: string }) {
   return (
     <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium capitalize', cls)}>
       {live && <span className="live-dot" aria-hidden />}
-      {status}
+      {label(status)}
     </span>
   );
 }

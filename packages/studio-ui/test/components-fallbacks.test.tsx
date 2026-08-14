@@ -10,23 +10,23 @@ import '../src/i18n'; // EN default language so JsonBlock's t('noData') call use
 afterEach(cleanup);
 
 describe('StatusBadge (bug investigation #5)', () => {
+  /** The badge's own span. Queried structurally, not by its text: the label is translated now, so
+   *  Matching on 'completed' would tie a COLOUR test to the English locale. */
+  const badgeClass = (container: HTMLElement) => container.querySelector('span')!.className;
+
   it('completed is green (success); running is a distinct cool blue (info), not green', () => {
-    render(<StatusBadge status="completed" />);
-    expect(screen.getByText('completed').className).toContain('text-success');
+    expect(badgeClass(render(<StatusBadge status="completed" />).container)).toContain('text-success');
     cleanup();
     // Running is deliberately INFO (blue) so it is not visually identical to completed (both were green before).
-    render(<StatusBadge status="running" />);
-    const running = screen.getByText('running').className;
+    const running = badgeClass(render(<StatusBadge status="running" />).container);
     expect(running).toContain('text-info');
     expect(running).not.toContain('text-success');
   });
 
   it('known error/warning statuses are unchanged', () => {
-    render(<StatusBadge status="suspended" />);
-    expect(screen.getByText('suspended').className).toContain('text-warning');
+    expect(badgeClass(render(<StatusBadge status="suspended" />).container)).toContain('text-warning');
     cleanup();
-    render(<StatusBadge status="failed" />);
-    expect(screen.getByText('failed').className).toContain('text-destructive');
+    expect(badgeClass(render(<StatusBadge status="failed" />).container)).toContain('text-destructive');
   });
 
   it('an unknown status does NOT fail-open to green — shown neutral (muted)', () => {

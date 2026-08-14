@@ -44,5 +44,13 @@
   "navigationLabel": "Navigation",
   "media": "media",
   "file": "file",
-  "code": "code"
+  "code": "code",
+  "statusRunning": "Running",
+  "statusCompleted": "Completed",
+  "statusSuspended": "Suspended",
+  "statusFailed": "Failed",
+  "statusCancelled": "Cancelled",
+  "statusPending": "Pending",
+  "statusNeedsApproval": "Needs approval",
+  "statusAll": "All"
 }

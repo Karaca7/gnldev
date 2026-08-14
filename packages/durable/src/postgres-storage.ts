@@ -654,7 +654,7 @@ class PgRunJournal implements RunJournal {
 
   /**
    * P1.6b: push-down status aggregate — a single `GROUP BY` over the indexed `gnl_runs.suspended`
-   * Column, MUST MATCH listRuns' own status derivation (`x.suspended ? 'suspended' : 'completed'`) —
+   * Column, MUST MATCH listRuns' own status derivation (deriveRunStatus: suspended, then failed) —
    * Same column, same boolean, mapped to the status string in JS (not in SQL) so it cannot drift.
    * Grouping by the RAW boolean column (not a `CASE WHEN ... THEN 'suspended' ...` computed expression) —
    * Pg-mem's query planner mis-groups a `GROUP BY` on a CASE-derived alias (verified experimentally: rows
@@ -662,10 +662,10 @@ class PgRunJournal implements RunJournal {
    * Correct on both pg-mem and real Postgres.
    */
   async countRunsByStatus(): Promise<Record<string, number>> {
-    const r = await this.q(`SELECT suspended, COUNT(*) AS n FROM gnl_runs GROUP BY suspended`);
+    const r = await this.q(`SELECT suspended, failed, COUNT(*) AS n FROM gnl_runs GROUP BY suspended, failed`);
     const out: Record<string, number> = {};
     for (const row of r.rows) {
-      const status = row.suspended ? 'suspended' : 'completed';
+      const status = deriveRunStatus(!!row.suspended, row.failed ? { status: 'failed' } : null);
       out[status] = (out[status] ?? 0) + Number(row.n);
     }
     return out;

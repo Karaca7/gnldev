@@ -44,5 +44,13 @@
   "navigationLabel": "Gezinme",
   "media": "medya",
   "file": "dosya",
-  "code": "kod"
+  "code": "kod",
+  "statusRunning": "Çalışıyor",
+  "statusCompleted": "Tamamlandı",
+  "statusSuspended": "Askıda",
+  "statusFailed": "Başarısız",
+  "statusCancelled": "İptal edildi",
+  "statusPending": "Bekliyor",
+  "statusNeedsApproval": "Onay bekliyor",
+  "statusAll": "Tümü"
 }

@@ -693,12 +693,12 @@ class SqliteRunJournal implements RunJournal {
 
   /**
    * P1.6b: push-down status aggregate — a single `GROUP BY` over the indexed `gnl_runs.suspended`
-   * Column, MUST MATCH listRuns' own status derivation (`r.suspended ? 'suspended' : 'completed'`) —
+   * Column, MUST MATCH listRuns' own status derivation (deriveRunStatus: suspended, then failed) —
    * Same column, same expression, so it cannot drift.
    */
   async countRunsByStatus(): Promise<Record<string, number>> {
     const rows = this.db.prepare(
-      `SELECT CASE WHEN suspended THEN 'suspended' ELSE 'completed' END AS status, COUNT(*) AS n FROM gnl_runs GROUP BY status`,
+      `SELECT CASE WHEN suspended THEN 'suspended' WHEN failed THEN 'failed' ELSE 'completed' END AS status, COUNT(*) AS n FROM gnl_runs GROUP BY status`,
     ).all() as { status: string; n: number }[];
     const out: Record<string, number> = {};
     for (const r of rows) out[r.status] = Number(r.n);
