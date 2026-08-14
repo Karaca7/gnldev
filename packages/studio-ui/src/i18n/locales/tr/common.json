@@ -52,5 +52,6 @@
   "statusCancelled": "İptal edildi",
   "statusPending": "Bekliyor",
   "statusNeedsApproval": "Onay bekliyor",
-  "statusAll": "Tümü"
+  "statusAll": "Tümü",
+  "openSourceLicenses": "Açık kaynak lisansları"
 }

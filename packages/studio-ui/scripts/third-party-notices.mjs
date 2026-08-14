@@ -55,7 +55,7 @@ function readLicenseText(dir) {
 const seen = new Map();   // "name@version" -> record
 const missing = [];       // packages with neither a license file nor an SPDX field
 
-function collect(name, fromDir) {
+function collect(name, fromDir, { recurse = true } = {}) {
   const dir = resolvePackageDir(name, fromDir);
   if (!dir) return;
 
@@ -73,7 +73,7 @@ function collect(name, fromDir) {
   seen.set(key, { name: pkg.name, version: pkg.version, spdx, text, homepage: pkg.homepage ?? null });
   if (!text && !spdx) missing.push(key);
 
-  for (const dep of Object.keys(pkg.dependencies ?? {})) collect(dep, dir);
+  if (recurse) for (const dep of Object.keys(pkg.dependencies ?? {})) collect(dep, dir);
 }
 
 const rootPkg = JSON.parse(readFileSync(join(PKG_DIR, 'package.json'), 'utf8'));
@@ -82,15 +82,25 @@ const rootPkg = JSON.parse(readFileSync(join(PKG_DIR, 'package.json'), 'utf8'));
 // is declared as dev. The attribution duty is unchanged — the code still travels inside dist — so the
 // walk must start from the dev tree. (Both are read, so the file stays correct either way.)
 const rootDeps = { ...(rootPkg.dependencies ?? {}), ...(rootPkg.devDependencies ?? {}) };
-// Build-only tooling is NOT redistributed (vite/vitest/tsc/postcss and friends never enter dist), so
-// attributing them would misstate what's actually shipped.
+// Build-only tooling is NOT redistributed, so attributing it would misstate what is shipped.
 const TOOLING = new Set([
-  'vite', '@vitejs/plugin-react', 'vitest', 'typescript', 'postcss', 'autoprefixer', 'tailwindcss',
+  '@vitejs/plugin-react', 'vitest', 'typescript', 'postcss', 'autoprefixer',
   'jsdom', '@testing-library/dom', '@testing-library/react', '@types/react', '@types/react-dom',
 ]);
+
+// Two build tools DO emit their own code into the output, which the exclusion above used to deny.
+// Measured against a real build rather than assumed:
+//   tailwindcss — preflight (its normalize-derived reset) is written verbatim into dist/assets/*.css
+//   vite        — the modulepreload polyfill is written into dist/assets/*.js
+// Both MIT, and MIT's one condition is that the notice travels with the copy. Collected WITHOUT
+// Recursing into their dependencies: rollup, esbuild and the rest genuinely do not ship, and listing a
+// Hundred packages that are not in the bundle would misstate this file in the other direction.
+const EMBEDS_OWN_CODE = ['tailwindcss', 'vite'];
+
 for (const dep of Object.keys(rootDeps)) {
-  if (!TOOLING.has(dep)) collect(dep, PKG_DIR);
+  if (!TOOLING.has(dep) && !EMBEDS_OWN_CODE.includes(dep)) collect(dep, PKG_DIR);
 }
+for (const dep of EMBEDS_OWN_CODE) collect(dep, PKG_DIR, { recurse: false });
 
 // A package with no license file AND no `license` field is a genuine unknown — someone has to look
 // at it. Failing here is deliberate: shipping a notices file that silently omits a package is worse

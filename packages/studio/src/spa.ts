@@ -48,11 +48,33 @@ export function notBuiltHtml(): string {
 </body></html>`;
 }
 
-/** Adds the SPA to the Hono app: '/' (injected index) + '/assets/*' (static, immutable). Returns false if no dist. */
+/** Adds the SPA to the Hono app: '/' (injected index) + '/assets/*' (static) + the notices. False if no dist. */
 export function mountSpa(app: Hono, apiBase = ''): boolean {
   const dist = distDir();
   if (!dist) return false;
   app.get('/', (c) => c.html(injectedIndex(dist, apiBase)));
+
+  /**
+   * The bundle's third-party notices, served from the running product.
+   *
+   * They were generated into dist/ and then reachable by nobody: only '/' and '/assets/*' were
+   * Mounted, so the file 404'd. That is not a tidiness problem. The bundle inlines ~220 packages,
+   * And every one of their licenses — MIT, ISC, BSD, and the fonts' OFL-1.1, which is the most
+   * Explicit of them — carries the same condition: the notice travels with the copy. A notice
+   * Shipped inside a tarball that the product never exposes does not travel with anything.
+   *
+   * Unauthenticated, deliberately. It is a legal notice about redistributed code, identical for
+   * Every deployment; putting it behind a login would defeat the point of publishing it.
+   */
+  app.get('/THIRD-PARTY-NOTICES.txt', (c) => {
+    const p = join(dist, 'THIRD-PARTY-NOTICES.txt');
+    if (!existsSync(p)) return c.notFound();
+    return c.body(readFileSync(p), 200, {
+      'content-type': 'text/plain; charset=utf-8',
+      // Not immutable like /assets/*: this filename has no content hash, so it must revalidate.
+      'cache-control': 'public,max-age=3600',
+    });
+  });
   app.get('/assets/*', (c) => {
     const rel = c.req.path.split('/assets/')[1] ?? '';
     if (!rel || rel.includes('..')) return c.notFound();

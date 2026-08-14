@@ -6,8 +6,7 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
 import {
   Activity, Boxes, Workflow, Network, Plug, Inbox, ScrollText, Building2, Shield,
   FlaskConical, Gauge, Wrench, Moon, Sun, Languages, MessageSquare, BookOpen, ListChecks, Library, LogOut, Users as UsersIcon,
-  AlertTriangle, Database, Clock, Menu, Search,
-} from 'lucide-react';
+  AlertTriangle, Database, Clock, Menu, Search, Scale } from 'lucide-react';
 import { useCapabilities, useMe, api, ApiError, shouldForceReauth, type Capabilities } from './api';
 import { Spinner, ViewSkeleton, Btn, ErrorBox, Badge, cn } from './components';
 import { CommandPalette, type CommandItem } from './ui';
@@ -263,6 +262,20 @@ function SidebarContent({
             "Swagger" itself is a product name (kept, not translated) but the row's label is i18n'd. */}
         <a href="swagger" title={t('apiSwagger')} className={cn(NAV_ITEM_CLASS, 'mt-3 border-t border-border/60 pt-3')} onClick={onNavigate}>
           <BookOpen size={15} className="shrink-0" /> <span>{t('apiSwagger')}</span>
+        </a>
+        {/* This bundle inlines ~220 packages, and every one of their licences — including the fonts'
+            OFL-1.1 — asks that the notice travel with the copy. It was generated into dist/ and
+            reachable by nobody; a notice the product never exposes has not travelled anywhere. Opens
+            in a new tab: it is a plain-text legal document, not a view of this app. */}
+        <a
+          href="THIRD-PARTY-NOTICES.txt"
+          target="_blank"
+          rel="noreferrer"
+          title={tc('openSourceLicenses')}
+          className={NAV_ITEM_CLASS}
+          onClick={onNavigate}
+        >
+          <Scale size={15} className="shrink-0" /> <span>{tc('openSourceLicenses')}</span>
         </a>
       </nav>
       <div className="hidden px-4 pb-1 sm:block">

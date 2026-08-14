@@ -52,5 +52,6 @@
   "statusCancelled": "Cancelled",
   "statusPending": "Pending",
   "statusNeedsApproval": "Needs approval",
-  "statusAll": "All"
+  "statusAll": "All",
+  "openSourceLicenses": "Open-source licenses"
 }
