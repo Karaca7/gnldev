@@ -54,7 +54,10 @@ describe('workflow dowhile/dountil', () => {
     expect(res).toEqual({ n: 3 });
     // round0 replayed (didn't run) + round1 and round2 ran → 4 real runs total
     expect(runs).toBe(4);
-    expect(journal.m.has('dw-2:wf:dowhile#0')).toBe(true);
-    expect(journal.m.has('dw-2:wf:dowhile#2')).toBe(true);
+    // The combinator's own default id now carries its POSITION (`dowhile#0` = first step), so a round
+    // key is `<combinator>#<iter>`. Before, every `.dowhile` in a workflow was called `dowhile` and a
+    // second one silently replayed the first — see test/combinator-ids.test.ts.
+    expect(journal.m.has('dw-2:wf:dowhile#0#0')).toBe(true);
+    expect(journal.m.has('dw-2:wf:dowhile#0#2')).toBe(true);
   });
 });

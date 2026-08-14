@@ -19,7 +19,14 @@ import type { SchemaCheckResult, SchemaMigrationResult, MissingColumn } from './
 
 type QueryResult = { rows: any[]; rowCount?: number | null };
 type PoolClient = { query: (sql: string, params?: unknown[]) => Promise<QueryResult>; release?: (destroy?: boolean) => void };
-type Pool = { query: (sql: string, params?: unknown[]) => Promise<QueryResult>; connect?: () => Promise<PoolClient>; end?: () => Promise<void> };
+type Pool = {
+  query: (sql: string, params?: unknown[]) => Promise<QueryResult>;
+  connect?: () => Promise<PoolClient>;
+  end?: () => Promise<void>;
+  /** EventEmitter surface — `pg` emits 'error' on idle clients; see the constructor. */
+  on?: (event: 'error', listener: (err: Error) => void) => unknown;
+  listenerCount?: (event: string) => number;
+};
 const SCHEMA_VERSION = '1';
 
 export interface PostgresStorageOptions {
@@ -88,6 +95,26 @@ export class PostgresStorage implements Storage {
     else {
       const { Pool } = createRequire(import.meta.url)('pg') as { Pool: new (c: any) => Pool };
       this._pool = new Pool(opts.connectionString ? { connectionString: opts.connectionString } : {});
+    }
+    // `pg` emits 'error' on IDLE clients — a server restart, a failover, a scale-to-zero, a PgBouncer
+    // idle reap. An EventEmitter 'error' with no listener is an uncaught exception, so without this
+    // the host process DIES, and it dies where no try/catch around a call site can reach: the pool is
+    // idle, nobody is awaiting it. Measured: `docker restart` on the database took down a plain
+    // `@hono/node-server` process behind ~200 lines of dumped Client internals.
+    //
+    // The right behaviour is to say so and carry on. `pg` evicts the broken client itself and the
+    // next checkout opens a fresh connection; in-flight queries still reject at their own call sites,
+    // which is where a caller can actually handle them. Attached only when no listener exists, so a
+    // caller who passed their own pool and their own handler keeps theirs.
+    if (this._pool.on && this._pool.listenerCount?.('error') === 0) {
+      this._pool.on('error', (err: Error) => {
+        console.error(
+          `@gnldev/durable: postgres pool error on an idle connection — ${err.message}. ` +
+            'The pool drops that connection and reconnects on the next query; in-flight queries reject ' +
+            'at their call sites. This is logged rather than thrown because an unhandled pool error ' +
+            'would terminate the process.',
+        );
+      });
     }
     const q = (sql: string, p?: unknown[]) => this.ensureReady().then(() => this._pool.query(sql, p));
     // T1 audit fix — transaction helper: all queries inside fn run within BEGIN/COMMIT (error →

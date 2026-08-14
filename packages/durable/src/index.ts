@@ -47,6 +47,8 @@ export { durableTool, durableTools } from './durable-tool.js';
 export { withIdempotency } from './idempotent-tools.js';
 export type { WithIdempotencyOptions } from './idempotent-tools.js';
 export type { ModelInput, AnyTool, ToolSet } from './types.js';
+export { gnlTool } from './types.js';
+export type { ToolDurability } from './types.js';
 export { runDurable, resumeRun, streamDurable, limitBreachFromSteps, blockedFromSteps } from './run.js';
 export type { RunDurableArgs, StreamDurableArgs, DurableResult, ResumeAgentConfig, StreamBreach, MemoryContextRecord } from './run.js';
 // K1/W1 (B): sentinel→error conversion helper for code that consumes streamDurable directly.

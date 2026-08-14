@@ -61,6 +61,8 @@ interface DupMarker {
   firstToolCallId: string;
   at: number;
   nudged?: boolean;
+  /** Set while the first caller is still executing; cleared on success, released on failure. */
+  inFlight?: boolean;
 }
 
 const dupMarkerKey = (runId: string, toolName: string, hash: string): string =>
@@ -278,6 +280,8 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       // Here (the fast-path returns the journaled record first).
       const dupAction = ctx.limits?.sideEffectDuplicates ?? 'warn';
       const dupKey = mode === 'call' && sideEffect && dupAction !== 'off' ? dupMarkerKey(ctx.runId, toolName, hash) : undefined;
+      // Visible at the same-step race check further down, just before execute.
+      let claimedDup = false;
       if (dupKey && approved !== true) {
         const marker = await ctx.journal.get<DupMarker>(dupKey);
         if (marker) {
@@ -642,7 +646,34 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
             ));
           }
         }
-        await ctx.journal.put(key, stampFormat({ status: 'running', startedAt: Date.now() }));
+        // Take over by COMPARE-AND-SET, the way acquireRunLock does. A blind write here meant two
+        // workers reaching a stale claim in the same moment both took it and both ran the side
+        // effect — measured as 1 execution for a fresh claim and 2 for a stale one, on all four
+        // adapters. The trigger is the remedy SideEffectRetryBlockedError itself recommends.
+        //
+        // Two details this depends on, both learned the hard way:
+        //   - `expected` must be the RAW value from journal.get(). Every adapter compares the
+        //     SERIALISED form (sqlite `value = ?`, postgres/redis serialize(expected), in-memory
+        //     stableStringify), so an upgradeFormat'ed copy never matches and the CAS always loses.
+        //   - Losing must not `continue` on a stale read: the loop would re-enter this branch and
+        //     spin. Only 'args' mode loops here, which is the invariant stated above the loop.
+        const rawBefore = await ctx.journal.get<ToolJournalRecord>(key);
+        const takeover = stampFormat({ status: 'running', startedAt: Date.now() });
+        const took = ctx.journal.putIfMatch
+          ? await ctx.journal.putIfMatch(key, rawBefore, takeover)
+          : (await ctx.journal.put(key, takeover), true);
+        if (!took) {
+          record = upgradeFormat(await ctx.journal.get<ToolJournalRecord>(key), key);
+          if (record && (record.status === 'succeeded' || record.status === 'denied' || record.status === 'reflected' || record.status === 'suspended')) {
+            await trackResolvedToolCallId(ctx.journal, key, record, toolCallId);
+            return record.output;
+          }
+          if (mode !== 'args') {
+            return blockedOrThrow(ctx, toolCallId, toolName,
+              new RunBusyError(`'${toolName}' (${key}) is being executed by another executor`));
+          }
+          continue claimLoop;
+        }
         break claimLoop; // reclaim complete → execute below
       }
 
@@ -662,6 +693,37 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       if (timeoutMs) {
         const tSignal = AbortSignal.timeout(timeoutMs);
         execOpts.abortSignal = execOpts.abortSignal ? AbortSignal.any([execOpts.abortSignal, tSignal]) : tSignal;
+      }
+      // SAME-STEP DUPLICATE RACE — claimed HERE, after every gate that can stop this call.
+      //
+      // The duplicate marker was read at the top (for the policy decision) and written only after a
+      // SUCCESS, so two identical calls in one model step — which the AI SDK runs with Promise.all —
+      // both read nothing, both passed, and both ran the side effect. Their per-toolCallId claims
+      // never collided either: differing ids is the whole premise. `sideEffectDuplicates: 'block'`
+      // therefore did not block, which is the worst shape this can take — the operator asked for a
+      // hard stop and was told they had one.
+      //
+      // The claim belongs here, not at the read: between the two sit the taint guard, the tool gate
+      // and the approval gate, any of which can return without executing. Claiming earlier left the
+      // marker held by a call that never ran, and the NEXT legitimate call was reported as its
+      // duplicate — which is how this landed on taint-guard.test.ts rather than staying theoretical.
+      if (dupKey && approved !== true) {
+        claimedDup = await claim(ctx.journal, dupKey, {
+          firstToolCallId: toolCallId, at: Date.now(), inFlight: true,
+        } satisfies DupMarker);
+        if (!claimedDup) {
+          // A twin got here first. 'warn' is documented as permissive and stays that way; every
+          // stricter policy means this call must not run.
+          const message =
+            `@gnldev/durable: side-effect tool '${toolName}' is already executing with identical ` +
+            `arguments in run '${ctx.runId}' — this concurrent duplicate was NOT EXECUTED`;
+          const detail = { toolName, argsHash: hash, toolCallId };
+          if (dupAction !== 'warn') {
+            await recordIncident(ctx.journal, ctx.runId, { at: Date.now(), source: 'duplicate-guard', action: 'block', toolName, toolCallId, message, detail });
+            return { __gnl_limit_exceeded: { toolCallId, toolName, kind: 'duplicateSideEffect', message, detail } };
+          }
+          console.warn(message);
+        }
       }
       let output: unknown;
       try {
@@ -698,6 +760,10 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           { status: 'failed', error: String(error?.message ?? error), attempts: prevAttempts + 1, sideEffect },
           toolCallId, toolName, hash,
         );
+        // Release the duplicate marker this call claimed before executing. It was claimed to stop a
+        // CONCURRENT twin, and the effect did not complete — leaving it would make every later
+        // attempt with these arguments look like a duplicate of something that never happened.
+        if (dupKey && claimedDup) await ctx.journal.put(dupKey, undefined as any);
         // NOTE: taint is marked at INVOCATION now (see ), so a FAILED untrusted tool is already
         // Tainted — its error body (also attacker-authorable) is covered without a post-hoc mark here.
         throw error;

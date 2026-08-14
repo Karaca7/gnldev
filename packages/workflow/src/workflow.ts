@@ -130,12 +130,18 @@ export class Workflow<I = any, O = any> {
 
   /** Parallel steps (all receive the same input; output is `{ [stepId]: output }`). Each sub-step is journaled separately. */
   parallel(steps: Step<O, any>[], id?: string): Workflow<I, Record<string, any>> {
-    const pid = id ?? `parallel(${steps.map((s) => s.id).join('+')})`;
+    // Position-unique, like `.map` above. A default derived only from CONTENT collides with itself:
+    // two `.parallel` over the same sub-steps produced one journal key, so the second never ran and
+    // the workflow returned the first one's output — silently.
+    const pid = id ?? `parallel#${this.steps.length}(${steps.map((s) => s.id).join('+')})`;
     const composite: Step<O, Record<string, any>> = {
       id: pid,
       run: async (input, ctx) => {
         const entries = await Promise.all(
-          steps.map(async (s) => [s.id, await runStep(s, input, ctx)] as const),
+          // Journal each leg under THIS parallel, for the same reason as branch above: the legs are
+          // the caller's steps and may appear in more than one parallel. The returned record is still
+          // keyed by the leg's own id, so the output shape does not change.
+          steps.map(async (s) => [s.id, await runStep({ id: `${pid}/${s.id}`, run: s.run }, input, ctx)] as const),
         );
         return Object.fromEntries(entries);
       },
@@ -145,10 +151,15 @@ export class Workflow<I = any, O = any> {
 
   /** Conditional branch: cond(input) ? ifStep : elseStep. */
   branch<NO>(cond: (input: O) => boolean, ifStep: Step<O, NO>, elseStep: Step<O, NO>, id?: string): Workflow<I, NO> {
-    const bid = id ?? `branch(${ifStep.id}|${elseStep.id})`;
+    const bid = id ?? `branch#${this.steps.length}(${ifStep.id}|${elseStep.id})`;
     const composite: Step<O, NO> = {
       id: bid,
-      run: async (input, ctx) => runStep(cond(input) ? ifStep : elseStep, input, ctx),
+      run: async (input, ctx) => {
+        // Scope the chosen arm under this branch. The arms are the caller's own steps, so reusing one
+        // step object in two branches would otherwise put both under its own id and replay the first.
+        const arm = cond(input) ? ifStep : elseStep;
+        return runStep({ id: `${bid}/${arm.id}`, run: arm.run }, input, ctx);
+      },
     };
     return new Workflow<I, NO>([...this.steps, composite]);
   }
@@ -157,15 +168,16 @@ export class Workflow<I = any, O = any> {
   foreach<IT, OT>(
     itemsOf: IT[] | ((input: O) => IT[]),
     run: (item: IT, index: number, ctx: StepCtx) => Promise<OT>,
-    id = 'foreach',
+    id?: string,
   ): Workflow<I, OT[]> {
+    const fid = id ?? `foreach#${this.steps.length}`;
     const composite: Step<O, OT[]> = {
-      id,
+      id: fid,
       run: async (input, ctx) => {
         const list = typeof itemsOf === 'function' ? (itemsOf as (i: O) => IT[])(input) : itemsOf;
         const out: OT[] = [];
         for (let i = 0; i < list.length; i++) {
-          out.push(await runStep({ id: `${id}[${i}]`, run: (it, c) => run(it, i, c) }, list[i], ctx));
+          out.push(await runStep({ id: `${fid}[${i}]`, run: (it, c) => run(it, i, c) }, list[i], ctx));
         }
         return out;
       },
@@ -179,7 +191,7 @@ export class Workflow<I = any, O = any> {
     cond: (output: O, iter: number) => boolean,
     opts: { id?: string; maxIters?: number } = {},
   ): Workflow<I, O> {
-    const id = opts.id ?? 'loop';
+    const id = opts.id ?? `loop#${this.steps.length}`;
     const max = opts.maxIters ?? 100;
     const composite: Step<O, O> = {
       id,
@@ -202,7 +214,7 @@ export class Workflow<I = any, O = any> {
     cond: (output: O, iter: number) => boolean,
     opts: { id?: string; maxIters?: number } = {},
   ): Workflow<I, O> {
-    return this.loop(run, cond, { id: opts.id ?? 'dowhile', maxIters: opts.maxIters });
+    return this.loop(run, cond, { id: opts.id ?? `dowhile#${this.steps.length}`, maxIters: opts.maxIters });
   }
 
   /** Common workflow-DSL `.dountil` semantics: run `run` at least once, repeat UNTIL `cond` becomes TRUE. */
@@ -211,7 +223,7 @@ export class Workflow<I = any, O = any> {
     cond: (output: O, iter: number) => boolean,
     opts: { id?: string; maxIters?: number } = {},
   ): Workflow<I, O> {
-    return this.loop(run, (o, i) => !cond(o, i), { id: opts.id ?? 'dountil', maxIters: opts.maxIters });
+    return this.loop(run, (o, i) => !cond(o, i), { id: opts.id ?? `dountil#${this.steps.length}`, maxIters: opts.maxIters });
   }
 
   build(): Step[] {

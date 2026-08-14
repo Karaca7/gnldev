@@ -123,7 +123,14 @@ export class AgentMemory {
   ): Promise<{ messages: any[]; recalled: RecalledMessageRef[]; recent: RecalledMessageRef[]; recentCount: number }> {
     const all = await this.allMessages(threadId);
     const recent = all.slice(-this.recentN);
-    if (!opts?.query || !this.embed || all.length <= this.recentN) {
+    // The "it all fits in the recent window, so there is nothing left to recall" short-circuit is
+    // sound for thread scope and WRONG for resource scope: `all` is THIS thread's history, while a
+    // resource-scoped recall reaches the user's OTHER threads. Applying it to both meant cross-thread
+    // recall never fired on a new conversation — exactly the turns it exists for. With the shipped
+    // `assistant` preset (recentN: 8) that silently disabled the feature for the first four exchanges.
+    const effectiveScope = opts?.scope ?? this.recallDefaults.scope;
+    const fitsInWindow = all.length <= this.recentN && effectiveScope !== 'resource';
+    if (!opts?.query || !this.embed || fitsInWindow) {
       const window = all.length <= this.recentN ? all : recent;
       return {
         messages: window.map((e) => e.message),

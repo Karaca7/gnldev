@@ -124,3 +124,36 @@ export interface AnyTool {
 
 /** Agent tool set (name → tool). */
 export type ToolSet = Record<string, AnyTool>;
+
+/**
+ * The durability options a tool can carry, without the AI SDK tool surface.
+ *
+ * These live on the tool object and are read by `durableTool`, but `runDurable`'s `tools` parameter
+ * is the AI SDK's `ToolSet`, whose type has no idea they exist. Writing them inline inside `tool({…})`
+ * is therefore an excess-property error — TypeScript rejects the CORRECT code — while writing them
+ * on a plain object literal type-checks a misspelling like `sideEffct` into silence. Neither
+ * direction is acceptable for the options that decide whether a card is charged twice.
+ */
+export type ToolDurability = Pick<
+  AnyTool,
+  | 'sideEffect' | 'idempotent' | 'idempotency' | 'idempotencyKey' | 'idempotencyWindow'
+  | 'untrusted' | 'maxRetries' | 'timeoutMs' | 'claimTtlMs' | 'recover' | 'compensate'
+>;
+
+/**
+ * Attaches durability options to an AI SDK tool, with both halves type-checked.
+ *
+ * ```ts
+ * const chargeCard = gnlTool(
+ *   tool({ description: '…', inputSchema: z.object({ amount: z.number() }), execute: charge }),
+ *   { sideEffect: true, idempotency: 'args' },
+ * );
+ * ```
+ *
+ * `tool()` is evaluated first, so its schema inference for `execute` is untouched; the second
+ * argument is checked against ToolDurability, so a misspelt option is a compile error rather than a
+ * field the runtime silently ignores.
+ */
+export function gnlTool<T>(t: T, durability: ToolDurability): T {
+  return Object.assign(t as any, durability) as T;
+}
