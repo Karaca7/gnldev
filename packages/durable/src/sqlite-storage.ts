@@ -5,7 +5,7 @@
 import { createRequire } from 'node:module';
 import { statSync, existsSync } from 'node:fs';
 import { cosineSimilarity } from 'ai';
-import { parseJournalKey } from './journal.js';
+import { runIdOfKey, parseJournalKey } from './journal.js';
 import type { JournalBatch, JournalEntry, RunSummary, ToolJournalRecord } from './journal.js';
 import { serialize, deserialize } from './serialize.js';
 import { matchFilter } from './storage.js';
@@ -414,7 +414,16 @@ class SqliteRunJournal implements RunJournal {
       `INSERT INTO gnl_run_journal (key, run_id, kind, suspended, value, created_at) VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, suspended = excluded.suspended`,
     ).run(key, p?.runId ?? null, p?.kind ?? null, suspended, serialize(value), Date.now());
-    if (!p) { upsert(); return; } // non-run key: no derived index → a single statement suffices
+    if (!p) {
+      // Not a replayable entry — so it gets NO run_id and NO kind in the journal table (readRun and
+      // Time-travel must not start seeing it). But if it belongs to a run, the run itself has to exist
+      // In the index, or a run that died before its first model step is invisible to listRuns and,
+      // Worse, to sweepRuns — its persisted prompt then outlives every retention window.
+      const owner = runIdOfKey(key);
+      if (!owner) { upsert(); return; } // genuinely run-less key (queues, events, cache)
+      this.withTx(() => { upsert(); this.touchRunDelta(owner, null, false, 0); });
+      return;
+    }
     this.withTx(() => {
       // H11b: an O(1) point read BEFORE writing → is-new-row + old suspended (for the incremental touch).
       // The old touchRun used to SUM ALL rows of the run on every write → write cost GREW with the
@@ -435,7 +444,15 @@ class SqliteRunJournal implements RunJournal {
       `INSERT INTO gnl_run_journal (key, run_id, kind, suspended, value, created_at) VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(key) DO NOTHING`,
     ).run(key, p?.runId ?? null, p?.kind ?? null, suspended, serialize(value), Date.now());
-    if (!p) return ins().changes === 1; // non-run key: no derived index
+    if (!p) {
+      const owner = runIdOfKey(key);
+      if (!owner) return ins().changes === 1; // genuinely run-less key
+      return this.withTx(() => {
+        const info = ins();
+        if (info.changes === 1) this.touchRunDelta(owner, null, false, 0);
+        return info.changes === 1;
+      });
+    }
     return this.withTx(() => {
       const info = ins();
       if (info.changes === 1) this.touchRunDelta(p.runId, p.kind, true, suspended); // fresh insert → O(1)
@@ -506,7 +523,7 @@ class SqliteRunJournal implements RunJournal {
    * (suspended_count) → it can correctly DECREASE on a suspended-to-succeeded transition (a boolean MAX
    * Couldn't do that). The `suspended` boolean is derived in the same expression (count+delta > 0).
    */
-  private touchRunDelta(runId: string, kind: 'model' | 'tool', isInsert: boolean, suspendedDelta: number): void {
+  private touchRunDelta(runId: string, kind: 'model' | 'tool' | null, isInsert: boolean, suspendedDelta: number): void {
     const m = isInsert && kind === 'model' ? 1 : 0;
     const t = isInsert && kind === 'tool' ? 1 : 0;
     const now = Date.now();

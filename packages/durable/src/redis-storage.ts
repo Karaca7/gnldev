@@ -16,7 +16,7 @@
 //   Are provided locally; Redis is typically used in a composite as a cache/work override or as the
 //   Runs+work+cache default.
 import { createRequire } from 'node:module';
-import { parseJournalKey } from './journal.js';
+import { runIdOfKey, parseJournalKey } from './journal.js';
 import { stableStringify } from './hash.js';
 import type { JournalBatch, JournalEntry, RunSummary, ToolJournalRecord } from './journal.js';
 import { serialize, deserialize } from './serialize.js';
@@ -279,19 +279,20 @@ class RedisRunJournal implements RunJournal {
         // ApplyBatch as never-active and sweep it as stale. Collected here, applied inside the SAME Lua unit.
         const zadds: { key: string; score: number; member: string }[] = [];
         const now = Date.now();
-        const touchOf = (p: ReturnType<typeof parseJournalKey>) => {
-          if (p && client.zadd) zadds.push({ key: this.activityKey(), score: now, member: p.runId });
+        const touchOf = (key: string, p: ReturnType<typeof parseJournalKey>) => {
+          const owner = p?.runId ?? runIdOfKey(key);
+          if (owner && client.zadd) zadds.push({ key: this.activityKey(), score: now, member: owner });
         };
         if (batch.claim) {
           const p = parseJournalKey(batch.claim.key);
           desc.claim = { key: this.full(batch.claim.key), value: serialize(rjEnv(batch.claim.value, p, isSuspended(p, batch.claim.value), now)) };
-          touchOf(p);
+          touchOf(batch.claim.key, p);
         }
         if (batch.incrs?.length) desc.incrs = batch.incrs.map(({ key, fields }) => ({ key: this.pfx + CTR + key, fields }));
         if (batch.puts?.length) {
           desc.puts = batch.puts.map(({ key, value }) => {
             const p = parseJournalKey(key);
-            touchOf(p);
+            touchOf(key, p);
             return { key: this.full(key), value: serialize(rjEnv(value, p, isSuspended(p, value), now)) };
           });
         }
@@ -344,14 +345,14 @@ class RedisRunJournal implements RunJournal {
    *  Round-trip as put/putIfAbsent/putIfMatch's write command (SET / SET NX / eval) — see `canPipe()`
    *  And the pipeline branches inside those three methods. `touch()` itself is only used on the
    *  Separate-call path for clients without pipelining (no multi support); its behavior is UNCHANGED. */
-  private async touch(p: { runId: string; kind: 'model' | 'tool' } | null): Promise<void> {
-    if (p && this.client.zadd) await this.client.zadd(this.activityKey(), await this.now(), p.runId);
+  private async touch(owner: string | null): Promise<void> {
+    if (owner && this.client.zadd) await this.client.zadd(this.activityKey(), await this.now(), owner);
   }
   /** Is pipelining (sending SET/eval + ZADD in a single round-trip) possible? The run key (`p`) must
    * EXIST and the client must support BOTH `multi()` and `zadd` — if either is missing, the
    *  Separate-call (touch()) path is used. */
-  private canPipe(p: { runId: string; kind: 'model' | 'tool' } | null): p is { runId: string; kind: 'model' | 'tool' } {
-    return !!(p && this.client.multi && this.client.zadd);
+  private canPipe(owner: string | null): owner is string {
+    return !!(owner && this.client.multi && this.client.zadd);
   }
 
   /**
@@ -428,6 +429,10 @@ class RedisRunJournal implements RunJournal {
   }
   async put(key: string, value: unknown): Promise<void> {
     const p = parseJournalKey(key);
+    // The ACTIVITY index must cover every run-scoped key, not just replayable entries: a run that died
+    // Before its first model step has only `:input` + a claim marker, and leaving those out of the ZSET
+    // Made it permanently invisible to listStaleRuns → sweepRuns never reached it.
+    const owner = p?.runId ?? runIdOfKey(key);
     const full = this.full(key);
     // Preserve created_at (sqlite ON CONFLICT DO UPDATE doesn't update created_at) → readRun order stays stable.
     // DELIBERATE 2-RTT (GET+SET) — NOT OPTIMIZED with bulkGet: put() operates on a single key,
@@ -441,20 +446,24 @@ class RedisRunJournal implements RunJournal {
     // Every put whenever p exists) → sending SET+ZADD in the SAME round-trip does NOT CHANGE behavior
     // (both would run in every case; it just drops from 2 RTT to 1 RTT). If canPipe() is false
     // (client.multi/zadd absent), the separate-call path below (old behavior, documented) runs UNCHANGED.
-    if (this.canPipe(p)) {
-      await this.client.multi!().set(full, payload).zadd(this.activityKey(), await this.now(), p.runId).exec();
+    if (this.canPipe(owner)) {
+      await this.client.multi!().set(full, payload).zadd(this.activityKey(), await this.now(), owner).exec();
       return;
     }
     await this.client.set(full, payload);
-    await this.touch(p);
+    await this.touch(owner);
   }
   /** REQUIRED (exactly-once): ATOMIC CAS via SET NX — no get-then-set. First writer gets 'OK', later ones get null. */
   async putIfAbsent(key: string, value: unknown): Promise<boolean> {
     this.checkReplicationOnce(); // fire-and-forget — never awaited, never delays the claim
     const p = parseJournalKey(key);
+    // The ACTIVITY index must cover every run-scoped key, not just replayable entries: a run that died
+    // Before its first model step has only `:input` + a claim marker, and leaving those out of the ZSET
+    // Made it permanently invisible to listStaleRuns → sweepRuns never reached it.
+    const owner = p?.runId ?? runIdOfKey(key);
     const full = this.full(key);
     const payload = serialize(rjEnv(value, p, isSuspended(p, value), Date.now()));
-    if (this.canPipe(p)) {
+    if (this.canPipe(owner)) {
       // PIPELINE — DOCUMENTED BEHAVIOR DIFFERENCE (in the SAFE DIRECTION): commands in a pipeline can't
       // Be conditioned on each other's RESULT (without Lua) → the ZADD runs even if SET NX LOSES (the
       // Key already existed) — a deviation from the original "touch only if OK" behavior. The deviation
@@ -463,7 +472,7 @@ class RedisRunJournal implements RunJournal {
       // Principle at the top of the file) and it DOES reflect the fact that the losing worker was ALSO
       // Attempting to write to this run at that moment. The round-trip count does NOT get WORSE: on a
       // Win it drops from 2→1 RTT, on a loss it was already 1 RTT (the ZADD rides in the same packet).
-      const results = await this.client.multi!().set(full, payload, 'NX').zadd(this.activityKey(), await this.now(), p.runId).exec();
+      const results = await this.client.multi!().set(full, payload, 'NX').zadd(this.activityKey(), await this.now(), owner).exec();
       const ok = results?.[0]?.[1] === 'OK';
       if (ok) await this.waitForReplicas(); // Task 2: only after a GENUINE new claim (NX won)
       return ok;
@@ -471,7 +480,7 @@ class RedisRunJournal implements RunJournal {
     const res = await this.client.set(full, payload, 'NX');
     const ok = res === 'OK';
     if (ok) {
-      await this.touch(p);
+      await this.touch(owner);
       await this.waitForReplicas(); // Task 2: only after a GENUINE new claim (NX won)
     }
     return ok;
@@ -493,12 +502,16 @@ class RedisRunJournal implements RunJournal {
     const env = deserialize<RjEnv>(raw);
     if (stableStringify(env.v) !== stableStringify(expected)) return false; // safe side: don't touch
     const p = parseJournalKey(key);
+    // The ACTIVITY index must cover every run-scoped key, not just replayable entries: a run that died
+    // Before its first model step has only `:input` + a claim marker, and leaving those out of the ZSET
+    // Made it permanently invisible to listStaleRuns → sweepRuns never reached it.
+    const owner = p?.runId ?? runIdOfKey(key);
     const next = serialize(rjEnv(value, p, isSuspended(p, value), env.t)); // t is preserved
     if (this.client.eval) {
-      if (this.canPipe(p)) {
+      if (this.canPipe(owner)) {
         // PIPELINE — same "safe-direction deviation" (see putIfAbsent comment): eval (CAS) + ZADD go in
         // The SAME round-trip; the ZADD runs even if the CAS loses (safe direction: late cleanup, never early).
-        const results = await this.client.multi!().eval(CAS_LUA, 1, full, raw, next).zadd(this.activityKey(), await this.now(), p.runId).exec();
+        const results = await this.client.multi!().eval(CAS_LUA, 1, full, raw, next).zadd(this.activityKey(), await this.now(), owner).exec();
         const ok = Number(results?.[0]?.[1]) === 1;
         if (ok) await this.waitForReplicas(); // Task 2: only after a GENUINE takeover (CAS won)
         return ok;
@@ -506,22 +519,22 @@ class RedisRunJournal implements RunJournal {
       const res = await this.client.eval(CAS_LUA, 1, full, raw, next);
       const ok = Number(res) === 1;
       if (ok) {
-        await this.touch(p); // a resume/takeover is ALSO "last activity" — prevents stale-false-positives
+        await this.touch(owner); // a resume/takeover is ALSO "last activity" — prevents stale-false-positives
         await this.waitForReplicas(); // Task 2: only after a GENUINE takeover (CAS won)
       }
       return ok;
     }
     // Custom client without eval: best-effort compare-then-set (equivalent to the old get→put behavior;
     // Documented risk, the core-hardening review — a real ioredis always goes through the atomic eval path).
-    if (this.canPipe(p)) {
+    if (this.canPipe(owner)) {
       // Touch() is already UNCONDITIONAL here (the best-effort branch always returns true) → the
       // Pipeline behavior is IDENTICAL, just 2 RTT → 1 RTT.
-      await this.client.multi!().set(full, next).zadd(this.activityKey(), await this.now(), p.runId).exec();
+      await this.client.multi!().set(full, next).zadd(this.activityKey(), await this.now(), owner).exec();
       await this.waitForReplicas(); // Task 2: this branch always writes (best-effort, no CAS) → always a genuine write
       return true;
     }
     await this.client.set(full, next);
-    await this.touch(p);
+    await this.touch(owner);
     await this.waitForReplicas(); // Task 2: this branch always writes (best-effort, no CAS) → always a genuine write
     return true;
   }
@@ -655,6 +668,16 @@ class RedisRunJournal implements RunJournal {
         const inp = e.v as { threadId?: string; agent?: string } | undefined;
         if (inp?.threadId) threadIds.set(runId, inp.threadId);
         if (inp?.agent) agents.set(runId, inp.agent);
+      }
+      // A run whose keys are ALL non-entry ones (it died before its first model step: `:input` plus a
+      // Claim marker) has nothing in the envelope's r/k fields, so it never reached byRun above and was
+      // Absent from every listing — and therefore from sweepRuns too, leaving its persisted prompt
+      // Outside the retention window. Register it from the key text, with genuinely zero counts.
+      const owner = runIdOfKey(rawKey);
+      if (owner) {
+        const cur = byRun.get(owner);
+        if (!cur) byRun.set(owner, { m: 0, t: 0, s: false, c0: e.t });
+        else if (e.t < cur.c0) cur.c0 = e.t;
       }
     }
     // P0.3 filters: listRuns is ALREADY a full brute-force SCAN here (Redis has no

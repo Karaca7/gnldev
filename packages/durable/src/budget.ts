@@ -2,7 +2,7 @@
 // Hosts (@gnldev/server) read them LIVE via checkBudget on the write path and return 402 on overrun → a
 // Limit change does not require a deploy. Usage is computed post-hoc/exactly from journaled usage (cost.ts).
 import type { Journal, JournalReader, RunSummary } from './journal.js';
-import { claim } from './journal.js';
+import { claim, listRunsArray } from './journal.js';
 import { getRunCost, type RunCost } from './cost.js';
 import { withOrg } from './organization.js';
 
@@ -146,19 +146,7 @@ type RunLike = Pick<RunSummary, 'runId' | 'status'>;
  * Back `storage.runs` directly).
  */
 async function listAllRuns(view: Pick<JournalReader, 'listRuns'>): Promise<RunLike[]> {
-  const first: unknown = await view.listRuns();
-  if (Array.isArray(first)) return first as RunLike[];
-  let page = first as { items?: RunLike[]; nextCursor?: string } | undefined;
-  const items: RunLike[] = [...(page?.items ?? [])];
-  let cursor = page?.nextCursor;
-  const listRunsFn = view.listRuns as unknown as (q?: { cursor?: string }) => Promise<unknown>;
-  while (cursor) {
-    const next: unknown = await listRunsFn({ cursor });
-    page = Array.isArray(next) ? { items: next as RunLike[], nextCursor: undefined } : (next as { items?: RunLike[]; nextCursor?: string });
-    items.push(...(page?.items ?? []));
-    cursor = page?.nextCursor;
-  }
-  return items;
+  return (await listRunsArray(view as { listRuns: (q?: unknown) => Promise<unknown> })) as unknown as RunLike[];
 }
 
 /**

@@ -4,7 +4,7 @@ import { toFetchHandler, type FetchHandler } from './handler.js';
 import { Hono, type Context } from 'hono';
 import { sseResponse } from './sse.js';
 
-import { reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, purgeRun, purgeOrganization, sweepRuns, POLICY_KEY, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent } from '@gnldev/durable';
+import { asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, purgeRun, purgeOrganization, sweepRuns, POLICY_KEY, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent } from '@gnldev/durable';
 import type { PolicyDoc, PolicyRule, BudgetLimit } from '@gnldev/durable';
 import type { JournalReader, Journal, WorkflowLike, MetricsRunRow } from '@gnldev/durable';
 import { makeGate, normalizeAuth, principalOf, isPlatformAdmin, principalScope, assertAssignablePrivileges, type AuthProvider, type Principal } from '@gnldev/auth';
@@ -452,7 +452,10 @@ function isReader (x: any): x is JournalReader {
  */
 function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   const opts: StudioApiOptions = isReader(input) ? { reader: input } : input;
-  const { reader: rawReader, resume, compensate, chat, gnl, memory, workflows, scorers, datasets, mcp, a2a, queue, cache, vectors, workflowInputs, workflowStore: _wfStoreOpt, compileWorkflow, auth } = opts;
+  const { reader: rawReaderIn, resume, compensate, chat, gnl, memory, workflows, scorers, datasets, mcp, a2a, queue, cache, vectors, workflowInputs, workflowStore: _wfStoreOpt, compileWorkflow, auth } = opts;
+  // The host may hand back `storage.runs` (a RunJournal → Page) rather than a bridged reader — the
+  // README's quickstart does exactly that. Every listRuns consumer below expects the array contract.
+  const rawReader = asReaderJournal(rawReaderIn as object) as typeof rawReaderIn;
   const app = new Hono();
 
   // Opt-in auth: an AuthProvider (free roleAuth / paid @gnldev/auth-ee) or the backward-compatible {read,write}.

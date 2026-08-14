@@ -1,7 +1,7 @@
 // @gnldev/durable — an exactly-once + deterministic-replay layer for Vercel AI SDK agents.
 // Drop-in: generateText -> runDurable. Composable: withDurableModel + durableTools.
 
-export { InMemoryJournal, parseJournalKey, summarizeRun, claim, frozenGet, runKeys } from './journal.js';
+export { InMemoryJournal, parseJournalKey, summarizeRun, claim, frozenGet, runKeys, nestedAgentRunId, listRunsArray, asReaderJournal, runIdOfKey } from './journal.js';
 // H13 — journal format versioning: an API that keeps old records readable across SDK-major transitions.
 export { JOURNAL_FORMAT_VERSION, JournalFormatError, registerFormatUpgrade, stampFormat, upgradeFormat, isVersionedKey } from './format.js';
 export { acquireRunLock } from './run-lock.js';

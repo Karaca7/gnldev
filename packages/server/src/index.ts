@@ -3,7 +3,7 @@
 import { Hono, type Context } from 'hono';
 import { toFetchHandler, type FetchHandler } from './handler.js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { createGnl, agentVisibleToOrg, withOrg, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, blockedErrorCode, upstreamFailure, sealRequestContext, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry } from '@gnldev/durable';
+import { createGnl, agentVisibleToOrg, withOrg, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, asReaderJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, blockedErrorCode, upstreamFailure, sealRequestContext, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry } from '@gnldev/durable';
 import type { CreateGnlConfig, Journal, JournalReader, BudgetLimit, UsageCostCache, RunLimits } from '@gnldev/durable';
 import { makeGate, normalizeAuth, principalOf, isPlatformAdmin, type AuthProvider, type ReadWriteAuth, type Principal } from '@gnldev/auth';
 // P0.4 @gnldev/workflow is zero-dependency (see its package.json) — depending on it
@@ -284,7 +284,12 @@ function upstreamErrorResponse(c: Context, e: unknown): Response | undefined {
 function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   // Storage.runs (RunJournal) returns paginated listRuns → toJournal bridges it to the old array contract
   // (routes /runs, /usage, withOrg, and the budget gate all see the same shape).
-  const baseJournal = (config.storage ? toJournal(config.storage.runs) : config.journal) as Journal & JournalReader;
+  // `storage` is bridged by toJournal; `journal` is whatever the host passed — and the README's own
+  // Quickstart passes `new SqliteStorage(...).runs`, a RunJournal whose listRuns returns a Page. Every
+  // Reader-side consumer here (GET /runs, /usage, withOrg, the budget gate) expects the array contract,
+  // So GET /runs?limit= died on `all.filter is not a function` and the bare GET /runs returned a page
+  // Object where its documented contract promises an array. asReaderJournal presents one shape for both.
+  const baseJournal = (config.storage ? toJournal(config.storage.runs) : asReaderJournal(config.journal as object)) as Journal & JournalReader;
   const defaultInstance = { gnl: createGnl(config), journal: baseJournal, orgId: undefined as string | undefined };
   const names = Object.keys(config.agents ?? {});
   const workflowNames = Object.keys(config.workflows ?? {});

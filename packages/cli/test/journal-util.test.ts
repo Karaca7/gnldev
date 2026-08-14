@@ -36,8 +36,12 @@ describe('parseDuration', () => {
   });
 });
 
-describe('getJournal', () => {
-  const fakeDurable = { toJournal: (runs: unknown) => ({ __fromStorage: runs }) } as any;
+describe('getJournal', async () => {
+  // Mirrors the real module: getJournal now also normalizes a directly-configured `journal`, because
+  // The documented way to configure one is `journal: new SqliteStorage(...).runs` — a RunJournal whose
+  // ListRuns answers with a Page, not the array every reader-side command here consumes.
+  const { asReaderJournal } = await import('@gnldev/durable');
+  const fakeDurable = { toJournal: (runs: unknown) => ({ __fromStorage: runs }), asReaderJournal } as any;
 
   it('prefers config.storage — wrapped through the CALLER-provided durable instance', () => {
     const runs = { id: 'runs-store' };
@@ -46,10 +50,21 @@ describe('getJournal', () => {
     expect(getJournal(config, fakeDurable)).toEqual({ __fromStorage: runs });
   });
 
-  it('falls back to config.journal when there is no storage', () => {
+  it('falls back to config.journal when there is no storage — untouched if it needs no bridging', () => {
     const journal = { id: 'plain-journal' };
     const config = { journal } as unknown as GnlDevConfig;
+    // Identity, not just equality: a journal that already satisfies the reader contract must not be
+    // Wrapped, or `storage === journal` checks elsewhere would start disagreeing.
     expect(getJournal(config, fakeDurable)).toBe(journal);
+  });
+
+  it('bridges a directly-configured journal that answers listRuns with a Page', async () => {
+    const { InMemoryStorage } = await import('@gnldev/durable');
+    const config = { journal: new InMemoryStorage().runs } as unknown as GnlDevConfig;
+    const j = getJournal(config, fakeDurable) as any;
+    // `gnl runs` does `[...(await journal.listRuns())].reverse()` — a Page is not iterable, so this
+    // Threw before the bridge; `gnl sweep` read `.length` off it and swept nothing.
+    expect(Array.isArray(await j.listRuns())).toBe(true);
   });
 
   it('storage wins when BOTH are configured', () => {

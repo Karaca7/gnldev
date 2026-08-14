@@ -4,7 +4,7 @@
 // Vector is 'scan' for now (brute-force cosine; pgvector deferred — pg-mem compatibility + lean first cut).
 import { createRequire } from 'node:module';
 import { cosineSimilarity } from 'ai';
-import { parseJournalKey } from './journal.js';
+import { runIdOfKey, parseJournalKey } from './journal.js';
 import type { JournalBatch, JournalEntry, RunSummary, ToolJournalRecord } from './journal.js';
 import { serialize, deserialize } from './serialize.js';
 import { matchFilter } from './storage.js';
@@ -291,7 +291,16 @@ class PgRunJournal implements RunJournal {
        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, suspended = EXCLUDED.suspended`,
       [key, p?.runId ?? null, p?.kind ?? null, !!suspended, serialize(value), Date.now()],
     );
-    if (!p) { await upsert(this.q); return; } // non-run key: no derived index → a single statement is enough
+    if (!p) {
+      // Not a replayable entry (no run_id / no kind in the journal table — readRun and time-travel must
+      // Not start seeing it), but it may still BELONG to a run. Register the run itself, or one that died
+      // Before its first model step never appears in listRuns and is never reached by sweepRuns — its
+      // Persisted prompt then outlives every retention window.
+      const owner = runIdOfKey(key);
+      if (!owner) { await upsert(this.q); return; } // genuinely run-less key (queues, events, cache)
+      await this.tx(async (q) => { await upsert(q); await this.touchRunDelta(q, owner, null, false, 0); });
+      return;
+    }
     // T1 audit fix: SELECT prev → journal UPSERT → gnl_runs delta triple, all in ONE transaction.
     // Under autocommit there were two hazards: (1) two workers on the same NEW key both see prev=none →
     // The counter double-increments; (2) a crash between the suspended write and the gnl_runs update →
@@ -315,7 +324,15 @@ class PgRunJournal implements RunJournal {
        ON CONFLICT (key) DO NOTHING RETURNING key`,
       [key, p?.runId ?? null, p?.kind ?? null, !!suspended, serialize(value), Date.now()],
     );
-    if (!p) return inserted1(await ins(this.q)); // non-run key: no derived index
+    if (!p) {
+      const owner = runIdOfKey(key);
+      if (!owner) return inserted1(await ins(this.q)); // genuinely run-less key
+      return await this.tx(async (q) => {
+        const ok = inserted1(await ins(q));
+        if (ok) await this.touchRunDelta(q, owner, null, false, 0);
+        return ok;
+      });
+    }
     // T1: INSERT + touchRunDelta in a single transaction (closes the crash window). lockRunRow uses the
     // SAME lock order as put() (gnl_runs first, then the journal row) → no deadlock possibility between put/putIfAbsent.
     return this.tx(async (q) => {
@@ -447,7 +464,7 @@ class PgRunJournal implements RunJournal {
   }
 
   /** H11b — O(1) incremental gnl_runs update (hot path; details: sqlite-storage.ts's equivalent method). */
-  private async touchRunDelta(q: Q, runId: string, kind: 'model' | 'tool', isInsert: boolean, suspendedDelta: number): Promise<void> {
+  private async touchRunDelta(q: Q, runId: string, kind: 'model' | 'tool' | null, isInsert: boolean, suspendedDelta: number): Promise<void> {
     const m = isInsert && kind === 'model' ? 1 : 0;
     const t = isInsert && kind === 'tool' ? 1 : 0;
     const now = Date.now();

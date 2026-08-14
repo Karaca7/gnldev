@@ -8,7 +8,7 @@
 // Bucketed per-day/per-agent instead of a single running total, plus a per-run "fast row" for the
 // Runs table (avoids readRun+getRunCost for every already-finalized run).
 import type { Journal, JournalBatch, JournalReader } from './journal.js';
-import { summarizeRun, runKeys } from './journal.js';
+import { summarizeRun, runKeys, listRunsArray } from './journal.js';
 import { getRunCost } from './cost.js';
 
 /**
@@ -335,7 +335,7 @@ export async function backfillMetrics(
   journal: Journal,
   reader: JournalReader,
 ): Promise<{ recorded: number; skipped: number; scoresRestored: number }> {
-  const runs = await reader.listRuns();
+  const runs = await listRunsArray(reader as { listRuns: (q?: unknown) => Promise<unknown> });
   let recorded = 0;
   let skipped = 0;
   let scoresRestored = 0;

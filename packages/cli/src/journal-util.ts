@@ -11,7 +11,10 @@ import type { GnlDevConfig } from './config.js';
  *  Come from the SAME @gnldev/durable instance the journal/storage objects themselves were built with. */
 export function getJournal(config: GnlDevConfig, d: typeof Durable): Journal & JournalReader {
   if (config.storage) return d.toJournal(config.storage.runs);
-  if (config.journal) return config.journal as Journal & JournalReader;
+  // A host that configures `journal` directly almost always passes `storage.runs` (that is what the
+  // README's quickstart shows) — a RunJournal, whose listRuns returns a Page, not the array every
+  // Reader-side caller here expects. asReaderJournal presents the reader contract for either shape.
+  if (config.journal) return d.asReaderJournal(config.journal) as Journal & JournalReader;
   throw new Error("gnl.config has no 'storage' or 'journal' — this command needs one to read/write runs.");
 }
 

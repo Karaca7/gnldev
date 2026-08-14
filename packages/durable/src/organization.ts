@@ -5,6 +5,7 @@
 // Journal supports them — are bridged → exactly-once/atomic-CAS/atomic-counter guarantees are also
 // PRESERVED in the organization view (the same Journal interface). A highly requested feature that has no
 // Counterpart in most agent frameworks.
+import { listRunsArray } from './journal.js';
 import type { Journal, JournalBatch, JournalReader, JournalEntry, RunSummary } from './journal.js';
 
 /** An organization-prefixed key. orgId must not contain ':' (it would break the key schema). */
@@ -94,8 +95,11 @@ export function withOrg(journal: Journal, orgId: string): Journal & Partial<Jour
       }));
   }
   if (typeof reader.listRuns === 'function') {
+    // listRunsArray, not a direct `.filter`: the underlying reader may hand back a Page (every
+    // First-party `storage.runs` does, and that is what the README's quickstart passes as `journal`).
+    // Calling `.filter` on it threw, which took the ORG USAGE/quota path down with it.
     out.listRuns = async (): Promise<RunSummary[]> =>
-      (await reader.listRuns!.call(journal))
+      (await listRunsArray({ listRuns: (q) => (reader.listRuns as (qq?: unknown) => Promise<unknown>).call(journal, q) }))
         .filter((r) => r.runId.startsWith(prefix))
         .map((r) => ({ ...r, runId: r.runId.slice(prefix.length) }));
   }

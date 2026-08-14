@@ -526,10 +526,131 @@ export interface JournalReader {
   }): Promise<{ items: RunSummary[]; nextCursor?: string }>;
 }
 
+export type RunListQuery = {
+  limit?: number;
+  cursor?: string;
+  status?: 'completed' | 'suspended';
+  agent?: string;
+};
+
+/**
+ * Read EVERY run as an array, from a view whose `listRuns` may return either shape.
+ *
+ * `JournalReader.listRuns()` is declared as an array, but every first-party adapter's RunJournal
+ * (`storage.runs`) returns a `Page` — and `journal: new SqliteStorage(...).runs` is what the README's
+ * Own quickstart teaches. `toJournal()` bridges the two, but only a host that passes `storage` gets it;
+ * A host that passes `journal` directly hands the raw Page shape to every array-assuming caller.
+ *
+ * Walking `nextCursor` matters: a single page is capped, so treating `page.items` as "all runs" quietly
+ * Undercounts — which for a usage/quota caller means a budget that never trips.
+ */
+export async function listRunsArray(
+  view: { listRuns: (q?: RunListQuery) => Promise<unknown> },
+): Promise<RunSummary[]> {
+  const first: unknown = await view.listRuns();
+  if (Array.isArray(first)) return first as RunSummary[];
+  let page = first as { items?: RunSummary[]; nextCursor?: string } | undefined;
+  const items: RunSummary[] = [...(page?.items ?? [])];
+  let cursor = page?.nextCursor;
+  const seen = new Set<string>();
+  while (cursor && !seen.has(cursor)) {
+    seen.add(cursor); // a backend that returns a fixed cursor must not spin forever
+    const next: unknown = await view.listRuns({ cursor });
+    page = Array.isArray(next) ? { items: next as RunSummary[], nextCursor: undefined } : (next as { items?: RunSummary[]; nextCursor?: string });
+    items.push(...(page?.items ?? []));
+    cursor = page?.nextCursor;
+  }
+  return items;
+}
+
+/** Filter + slice an array of runs with the SAME semantics listRunsPaged specifies. */
+function pageFromArray(all: RunSummary[], q?: RunListQuery): { items: RunSummary[]; nextCursor?: string } {
+  const filtered = all.filter(
+    (r) => (q?.status ? r.status === q.status : true) && (q?.agent ? r.agent === q.agent : true),
+  );
+  const start = q?.cursor ? Number(q.cursor) || 0 : 0;
+  const lim = q?.limit ?? 50;
+  const next = start + lim;
+  return { items: filtered.slice(start, next), nextCursor: next < filtered.length ? String(next) : undefined };
+}
+
+/**
+ * Accept a journal in EITHER shape and present the `JournalReader` contract: an array `listRuns()`
+ * Plus a real `listRunsPaged()`.
+ *
+ * This exists because the two shapes are indistinguishable by structure — a RunJournal and a bare
+ * Legacy JournalReader both have `listRuns` and neither has `listRunsPaged` — so the only honest test
+ * Is to call it and look at what comes back. Hence the per-call check rather than a guess at
+ * Construction. A journal that ALREADY has `listRunsPaged` (e.g. `toJournal`'s output) is returned
+ * Untouched.
+ *
+ * A Proxy rather than a spread or `Object.create`: adapters hold private state, and `this` must stay
+ * Bound to the original instance or a `#field` access throws.
+ */
+export function asReaderJournal<T extends object>(journal: T): T {
+  const j = journal as unknown as { listRuns?: (q?: RunListQuery) => Promise<unknown>; listRunsPaged?: unknown };
+  if (typeof j.listRuns !== 'function' || typeof j.listRunsPaged === 'function') return journal;
+  return new Proxy(journal, {
+    get(target, prop, receiver) {
+      if (prop === 'listRuns') return () => listRunsArray(j as { listRuns: (q?: RunListQuery) => Promise<unknown> });
+      if (prop === 'listRunsPaged') {
+        return async (q?: RunListQuery) => {
+          // A RunJournal applies the filters itself and hands back a real page; a legacy array reader
+          // Ignores the query, so the same semantics are applied here instead.
+          const res: unknown = await j.listRuns!(q);
+          return Array.isArray(res) ? pageFromArray(res as RunSummary[], q) : (res as { items: RunSummary[]; nextCursor?: string });
+        };
+      }
+      const v = Reflect.get(target, prop, receiver);
+      return typeof v === 'function' ? v.bind(target) : v;
+    },
+    has(target, prop) {
+      return prop === 'listRunsPaged' || Reflect.has(target, prop);
+    },
+  });
+}
+
 /** Parse a `<runId>:model:<step>` / `<runId>:tool:<toolCallId>` key (runId may contain colons). */
 export function parseJournalKey(key: string): { runId: string; kind: JournalEntryKind } | null {
   const m = /^(.*):(model|tool):.+$/.exec(key);
   return m ? { runId: m[1]!, kind: m[2] as JournalEntryKind } : null;
+}
+
+/**
+ * Which run does this key belong to — INDEPENDENT of whether it is a replayable journal entry.
+ *
+ * `parseJournalKey` answers a narrower question: is this a `:model:`/`:tool:` record, the two kinds
+ * ReadRun/reconstructState/time-travel replay. Every OTHER run-scoped key (`:input`, `:proc:`,
+ * `:memctx`, `:cfg:`, `:approval:`) is deliberately invisible to it, so those must NEVER gain a `kind`.
+ *
+ * But "not a journal entry" is not the same as "not part of a run", and the adapters conflated the
+ * Two: they derived the run index from parseJournalKey alone, so a run that died before its first
+ * Model step — an upstream 401, a guard rejection, a limit tripped at step 0 — wrote only `:input`
+ * And a claim marker and therefore produced NO run row at all. It was invisible to `listRuns`, to
+ * `gnl runs`, and (the part that actually costs something) to `sweepRuns`: the prompt it had already
+ * Persisted sat outside every retention window, indefinitely.
+ *
+ * DELIBERATELY NARROW, and the narrowness is the safety property. This function's answer feeds the
+ * Run index, and sweepRuns purges an indexed run by `${runId}:` PREFIX — so a key wrongly claimed for a
+ * Run means deleting a namespace that was never one. `<runId>:proc:<name>` would have been convenient
+ * And is exactly the wrong shape to accept: `mem:<threadId>:messages` has it too, and a thread named
+ * 'proc' would have made the whole `mem:` keyspace look like a run called 'mem' — one sweep from
+ * Erasing every stored memory. The same argument rules out `:cfg:`/`:approval:`/`:incident:` and any
+ * Other three-segment family.
+ *
+ * What is left is unambiguous: the two replayable kinds the adapters ALREADY index (no new surface at
+ * All), plus the two SUFFIX-anchored families. `:input` is the one that matters and the one that is
+ * Always there — run.ts writes it unconditionally, before the first model call, for every run. A run
+ * That persisted anything at all has it, so nothing is lost by refusing to guess from the rest.
+ *
+ * Greedy prefix, matching parseJournalKey's own convention, so a runId containing ':' resolves the
+ * Same way in both.
+ */
+export function runIdOfKey(key: string): string | null {
+  const suffixOnly = /^(.*):(input|memctx)$/.exec(key);
+  if (suffixOnly) return suffixOnly[1]!;
+  const withTail = /^(.*):(model|tool):.+$/.exec(key);
+  return withTail ? withTail[1]! : null;
 }
 
 /** Derive a summary from a run's entries. */
@@ -634,12 +755,16 @@ export class InMemoryJournal implements Journal, JournalReader {
     const last = new Map<string, { ts: number; suspended: boolean }>();
     for (const [key, value] of this.store) {
       const p = parseJournalKey(key);
-      if (!p) continue;
+      // A run's age is the age of its NEWEST key — including the non-entry ones. A run that died
+      // Before its first model step has only those, and skipping them left it undateable and so
+      // Never swept: its persisted prompt outlived every retention window.
+      const owner = p ? p.runId : runIdOfKey(key);
+      if (!owner) continue;
       const ts = this.times.get(key) ?? 0;
-      const cur = last.get(p.runId) ?? { ts: 0, suspended: false };
+      const cur = last.get(owner) ?? { ts: 0, suspended: false };
       cur.ts = Math.max(cur.ts, ts);
-      if (p.kind === 'tool' && (value as ToolJournalRecord | undefined)?.status === 'suspended') cur.suspended = true;
-      last.set(p.runId, cur);
+      if (p?.kind === 'tool' && (value as ToolJournalRecord | undefined)?.status === 'suspended') cur.suspended = true;
+      last.set(owner, cur);
     }
     return [...last.entries()]
       .filter(([, v]) => v.ts < cutoffTs && (opts?.includeSuspended ? true : !v.suspended))
@@ -711,7 +836,16 @@ export class InMemoryJournal implements Journal, JournalReader {
     let seq = 0;
     for (const [key, value] of this.store) {
       const p = parseJournalKey(key);
-      if (!p) continue;
+      if (!p) {
+        // Not a replayable entry, but possibly still part of a run. Register the run with NO entries
+        // Rather than skipping it, or a run that died before its first model step (which wrote only
+        // `:input` and a claim marker) never appears here — and so is never reached by sweepRuns,
+        // Leaving its persisted prompt outside every retention window. summarizeRun stays pure: the
+        // Entry list it is handed is genuinely empty.
+        const owner = runIdOfKey(key);
+        if (owner && !byRun.has(owner)) byRun.set(owner, []);
+        continue;
+      }
       const list = byRun.get(p.runId) ?? [];
       list.push({ key, runId: p.runId, kind: p.kind, value, seq: seq++ });
       byRun.set(p.runId, list);
