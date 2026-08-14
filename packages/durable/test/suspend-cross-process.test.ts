@@ -22,6 +22,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SqliteStorage } from '../src/sqlite-storage.js';
 import { summarizeRun, runKeys } from '../src/journal.js';
+import { spawnFixtureEnv } from './fixtures/watchdog.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const tsxBin = join(here, '..', '..', '..', 'node_modules', '.bin', 'tsx');
@@ -37,7 +38,7 @@ describe('real cross-process suspend/approval persistence', () => {
     writeFileSync(sePath, '0'); // tool hasn't run yet
     try {
       // ── 1) Child 1: no approval → suspended, the tool does NOT run, process exits NORMALLY (NOT a crash) ──
-      const child1 = spawnSync(tsxBin, [child1Script, dbPath, sePath, runId], { encoding: 'utf8' });
+      const child1 = spawnSync(tsxBin, [child1Script, dbPath, sePath, runId], { encoding: 'utf8', timeout: 50_000, env: spawnFixtureEnv() });
       expect(child1.stderr).toBe('');
       expect(child1.status).toBe(0); // normal exit — no crash, deliberate suspend
       expect(Number(readFileSync(sePath, 'utf8'))).toBe(0); // the tool never ran
@@ -72,7 +73,7 @@ describe('real cross-process suspend/approval persistence', () => {
       await b1.close();
 
       // ── 3) Child 2: separate execution, approvals via parameter → the tool runs EXACTLY once ──
-      const child2 = spawnSync(tsxBin, [child2Script, dbPath, sePath, runId], { encoding: 'utf8' });
+      const child2 = spawnSync(tsxBin, [child2Script, dbPath, sePath, runId], { encoding: 'utf8', timeout: 50_000, env: spawnFixtureEnv() });
       expect(child2.stderr).toBe('');
       expect(child2.status).toBe(0);
       expect(Number(readFileSync(sePath, 'utf8'))).toBe(1); // exactly once — it never ran during suspend

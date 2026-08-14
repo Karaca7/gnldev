@@ -13,6 +13,7 @@ import { z } from 'zod';
 import { runDurable } from '../src/run.js';
 import { SqliteStorage } from '../src/sqlite-storage.js';
 import { createMockModel, countToolResults, toolCallResult, finalTextResult } from './mock.js';
+import { spawnFixtureEnv } from './fixtures/watchdog.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const tsxBin = join(here, '..', '..', '..', 'node_modules', '.bin', 'tsx');
@@ -25,8 +26,10 @@ describe('real process-kill resume', () => {
     const sePath = join(dir, 'charges.txt');
     try {
       // Run 1 — child process: performs the charge, then process.exit(1)
-      const child = spawnSync(tsxBin, [childScript, dbPath, sePath], { encoding: 'utf8' });
+      const child = spawnSync(tsxBin, [childScript, dbPath, sePath], { encoding: 'utf8', timeout: 50_000, env: spawnFixtureEnv() });
       expect(child.status).not.toBe(0); // it really crashed
+      // ...by crashing, not by the fixture watchdog giving up — otherwise this passes for the wrong reason.
+      expect(child.stderr ?? '').not.toContain('fixture watchdog');
       expect(Number(readFileSync(sePath, 'utf8'))).toBe(1); // charge happened once
 
       // Run 2 — parent: resumes with the SAME SqliteJournal FILE

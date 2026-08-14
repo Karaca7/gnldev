@@ -37,6 +37,7 @@ import { SideEffectRetryBlockedError } from '../src/errors.js';
 import { SqliteStorage } from '../src/sqlite-storage.js';
 import { InMemoryJournal } from '../src/journal.js';
 import { createMockModel } from './mock.js';
+import { spawnFixtureEnv } from './fixtures/watchdog.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const tsxBin = join(here, '..', '..', '..', 'node_modules', '.bin', 'tsx');
@@ -52,7 +53,7 @@ describe('INTERSECTION — I (model-claim) + J (lock fencing) + K (tool retry): 
     try {
       // Run 1 — child process: acquires the lock (ttl=150ms), performs the charge (succeeded), then process.exit(1).
       // process.exit does NOT run the finally block → the lock stays 'alive' in the journal (owner=child).
-      const child = spawnSync(tsxBin, [childScript, dbPath, sePath, runId, '150'], { encoding: 'utf8' });
+      const child = spawnSync(tsxBin, [childScript, dbPath, sePath, runId, '150'], { encoding: 'utf8', timeout: 50_000, env: spawnFixtureEnv() });
       expect(child.status).not.toBe(0); // really crashed
       expect(Number(readFileSync(sePath, 'utf8'))).toBe(1); // the charge happened once (BEFORE the crash)
 

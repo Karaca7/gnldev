@@ -15,6 +15,7 @@ import { z } from 'zod';
 import { runDurable } from '../src/run.js';
 import { SqliteStorage } from '../src/sqlite-storage.js';
 import { createMockModel, countToolResults, toolCallResult, finalTextResult } from './mock.js';
+import { spawnFixtureEnv } from './fixtures/watchdog.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const tsxBin = join(here, '..', '..', '..', 'node_modules', '.bin', 'tsx');
@@ -27,7 +28,7 @@ async function runPair(mode: string, dir: string): Promise<{ a: any; b: any }> {
   const dbPath = join(dir, 'runs.db');
   const spawnOne = (id: string) =>
     new Promise<void>((resolve, reject) => {
-      const p = spawn(tsxBin, [workerScript, mode, dbPath, dir, id], { stdio: ['ignore', 'pipe', 'pipe'] });
+      const p = spawn(tsxBin, [workerScript, mode, dbPath, dir, id], { stdio: ['ignore', 'pipe', 'pipe'], env: spawnFixtureEnv() });
       let err = '';
       p.stderr.on('data', (d) => (err += d));
       p.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`worker ${id} exited ${code}: ${err}`))));

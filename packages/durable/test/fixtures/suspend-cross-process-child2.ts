@@ -9,6 +9,9 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { runDurable } from '../../src/run.js';
 import { SqliteStorage } from '../../src/sqlite-storage.js';
 import type { Guard } from '../../src/guard.js';
+import { armFixtureWatchdog } from './watchdog.js';
+
+armFixtureWatchdog(); // never outlive the test that spawned this — see watchdog.ts
 
 const dbPath = process.argv[2]!;
 const sePath = process.argv[3]!;

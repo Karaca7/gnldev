@@ -12,6 +12,9 @@ import { z } from 'zod';
 import { runDurable } from '../../src/run.js';
 import { compensateRun } from '../../src/compensation.js';
 import { SqliteStorage } from '../../src/sqlite-storage.js';
+import { armFixtureWatchdog } from './watchdog.js';
+
+armFixtureWatchdog(); // never outlive the test that spawned this — see watchdog.ts
 
 const [mode, dbPath, outDir, workerId] = process.argv.slice(2) as [string, string, string, string];
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
