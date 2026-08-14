@@ -55,6 +55,38 @@ describe('@gnldev/server resourceAuth opt-in hook (D4-FGA)', () => {
     expect((await res.json()).code).toBe('resource_denied');
   });
 
+  // The endpoint that needed the gate most was the one that did not have it. /resume carries
+  // `approvals` in its body, so a caller denied /run could resume a run somebody else started and
+  // approve the exact tool call the human gate had stopped — turning a denial into an execution.
+  it('resourceAuth denies a resume → 403, and the approval it carried is not applied', async () => {
+    const api = mkApi(() => false);
+    const res = await call(api, '/agents/a/resume', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ runId: 'ra-resume', approvals: { 'call-1': true } }),
+    });
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe('resource_denied');
+  });
+
+  it('every run-shaped endpoint consults resourceAuth — none is left open', async () => {
+    const seen: string[] = [];
+    const api = mkApi((_p, r) => { seen.push(r.type + ':' + r.id); return false; });
+    for (const [path, body] of [
+      ['/agents/a/run', { runId: 'x1', prompt: 'hi' }],
+      ['/agents/a/stream', { runId: 'x2', prompt: 'hi' }],
+      ['/agents/a/resume', { runId: 'x3', approvals: {} }],
+    ] as const) {
+      const res = await call(api, path, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      expect(res.status, path).toBe(403);
+    }
+    expect(seen).toEqual(['agent:a', 'agent:a', 'agent:a']);
+  });
+
   it('resourceAuth allows → request proceeds to 200 (round-trip), and receives the correct resource/action', async () => {
     const calls: Array<{ resource: ResourceAuthResource; action: ResourceAuthAction }> = [];
     const api = mkApi((_p, resource, action) => {

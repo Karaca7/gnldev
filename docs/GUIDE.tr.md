@@ -332,7 +332,9 @@ const gnl = createGnl({
     kasiyer: {
       model: 'openai/gpt-4o',
       tools: { chargeCard: tool({ /* kart çekme */ }) },
-      guard: { requireApproval: ['chargeCard'] },  // bu araç İNSAN ONAYI ister
+      // `guard` bir NESNE değil, FONKSİYON: her araç çağrısını görür ve bir karar döndürür.
+      guard: ({ toolName }) =>
+        toolName === 'chargeCard' ? { action: 'require-approval' } : { action: 'allow' },
     },
   },
 });

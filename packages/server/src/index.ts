@@ -651,6 +651,12 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     if (gated) return gated;
     const approvalDenied = await agentApprovalGate(c, name);
     if (approvalDenied) return approvalDenied;
+    // Resume needs the same resource gate the other five endpoints have, and it needs it MORE than
+    // they do: the body carries `approvals`, so a caller who is denied /run could otherwise resume a
+    // run someone else started and approve the exact tool call the human gate had stopped. Denying
+    // the cheap path while leaving the dangerous one open is the wrong way round.
+    const resourceDenied = await resourceGate(c, principalOf(c.req.raw), { type: 'agent', id: name }, 'run');
+    if (resourceDenied) return resourceDenied;
     // CONSISTENT with H2/1.3: only a REAL resume (there's a trace in the journal) skips the budget
     // Gate — otherwise this endpoint would be an unlimited backdoor (bypassing the quota with a
     // Traceless/made-up runId). Without a trace (typo/abuse) it's ENFORCED normally; input also comes

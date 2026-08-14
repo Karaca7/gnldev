@@ -372,7 +372,9 @@ const gnl = createGnl({
     cashier: {
       model: 'openai/gpt-4o',
       tools: { chargeCard: tool({ /* charge the card */ }) },
-      guard: { requireApproval: ['chargeCard'] },  // this tool requires HUMAN APPROVAL
+      // `guard` is a FUNCTION, not a config object: it sees every tool call and returns a decision.
+      guard: ({ toolName }) =>
+        toolName === 'chargeCard' ? { action: 'require-approval' } : { action: 'allow' },
     },
   },
 });
