@@ -506,14 +506,23 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       // Closes the get-then-put TOCTOU race (two concurrent resumes can't double-run the same tool).
       // Failed / approved-suspended / stale-running → single-owner reclaim (existing retry semantics preserved).
       // Y3: the staleness threshold is now configurable — legitimate tools running longer than 30s shouldn't be "assumed crashed".
-      const claimTtl = tool.claimTtlMs ?? ctx.claimTtlMs ?? CLAIM_TTL_MS;
+      // A claim must outlive the work it covers. A tool that declares timeoutMs: 120_000 is saying it
+      // may legitimately run for two minutes; with the 30s default it was declared crashed while
+      // still executing, and another worker took the claim and ran the side effect alongside it.
+      // An explicit claimTtlMs still wins — the caller may know better than the timeout does.
+      const declaredWork = tool.timeoutMs ?? ctx.toolTimeoutMs ?? 0;
+      const claimTtl = tool.claimTtlMs ?? ctx.claimTtlMs ?? Math.max(CLAIM_TTL_MS, declaredWork);
       // TASK (args idempotency — SAME-STEP PARALLEL DUPLICATE): the `for(;;)` below loops multiple times
       // (poll) ONLY in 'args' mode; in 'call' mode EVERY branch either ends with `break`/`return` or
       // (won===false/running-fresh) returns `blockedOrThrow` DIRECTLY — the behavior of the original
       // If/else-if/else chain is preserved IDENTICALLY, `continue` is used ONLY in the 'args' branches.
       let pollInterval = POLL_MIN_MS;
       claimLoop: for (;;) {
-        const nowTs = Date.now();
+        // The journal's clock, not this process's — run-lock.ts has always done it this way and
+        // durable-tool had not. `startedAt` is written by whichever worker claimed it, so comparing
+        // it against a LOCAL clock makes staleness a function of clock skew: a worker running 30s
+        // ahead sees every live claim as expired and takes over work that is still running.
+        const nowTs = ctx.journal.now ? await ctx.journal.now() : Date.now();
         if (record === undefined) {
           const won = await claim(ctx.journal, key, stampFormat({ status: 'running', startedAt: nowTs }));
           if (won) break claimLoop; // won → execute below
