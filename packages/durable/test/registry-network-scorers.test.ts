@@ -61,8 +61,8 @@ describe('registry: first-class agent network (C5)', () => {
     const r1: any = await gnl.run('router', { runId: 'net-1', prompt: 'research and report' });
     expect(r1.text).toBe('Report ready.');
     expect(subCalls.n).toBe(1);
-    // Nested run in its own journal namespace: agent:<toolCallId>
-    expect(await journal.get('agent:call-r1:model:0')).toBeDefined();
+    // Nested run in its own journal namespace, scoped to the parent: agent:<parentRunId>:<toolCallId>
+    expect(await journal.get('agent:net-1:call-r1:model:0')).toBeDefined();
     // Parent's tool record memoized the handoff output
     const toolRec: any = await journal.get('net-1:tool:call-r1');
     expect(toolRec?.status).toBe('succeeded');

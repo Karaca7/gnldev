@@ -176,6 +176,31 @@ function assertNoColonInToolName(toolName: string): void {
   }
 }
 
+/**
+ * The runId of a sub-agent run, derived from its PARENT.
+ *
+ * A toolCallId is unique within one completion, NOT across runs — so the original `agent:${toolCallId}`
+ * Meant two unrelated parents whose provider minted the same id shared one nested run, and the second
+ * Read the first's answer as its own. Naming the parent removes that.
+ *
+ * This MUST stay a pure function of (parentRunId, toolCallId): limits.ts (`sumSubRuns`, fan-out cost
+ * Inheritance) and retention.ts (purge cascade) do not observe the child being created — they
+ * RE-DERIVE its id from the parent's tool entries. Anything else here (an idempotencyKey, say) is
+ * Unreproducible there, and in the 'cross-run' window the idempotencyKey drops the runId entirely,
+ * Which is the very collision this exists to prevent.
+ *
+ * `parentRunId` is undefined only on a bare AI SDK loop with no durableTool wrapper; there the raw
+ * ToolCallId is all there is and its uniqueness is the caller's to guarantee. That is also the LEGACY
+ * Shape, so both derivation sites check it as a fallback for journals written before this change.
+ */
+export function nestedAgentRunId(
+  parentRunId: string | undefined,
+  toolCallId: string,
+  prefix: 'agent' | 'wf' = 'agent',
+): string {
+  return parentRunId ? `${prefix}:${parentRunId}:${toolCallId}` : `${prefix}:${toolCallId}`;
+}
+
 export const runKeys = {
   /** Run input (prompt/messages/system) — invisible to parseJournalKey. */
   input: (runId: string) => `${runId}:input`,

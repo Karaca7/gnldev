@@ -1,3 +1,4 @@
+import { nestedAgentRunId } from './journal.js';
 import { stepCountIs, tool as aiTool } from 'ai';
 import { z } from 'zod';
 import { runDurable, streamDurable } from './run.js';
@@ -448,7 +449,9 @@ export function createGnl(config: CreateGnlConfig) {
           input: z.record(z.string(), z.any()).optional().describe('input object handed to the workflow'),
         }),
         execute: async ({ input }: { input?: Record<string, unknown> }, options: any) => {
-          const r = await runWorkflow(wfName, input ?? {}, { runId: `wf:${options?.toolCallId}` });
+          // Parent-scoped, for the same reason as agent-tool's nested runId above: a toolCallId is
+          // unique within a completion, not across runs.
+          const r = await runWorkflow(wfName, input ?? {}, { runId: nestedAgentRunId(options?.parentRunId, options?.toolCallId, 'wf') });
           return r.suspended
             ? { suspended: true, stepId: r.stepId, reason: r.reason, runId: r.runId }
             : { output: r.output, runId: r.runId };

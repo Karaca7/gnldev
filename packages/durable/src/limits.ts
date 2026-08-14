@@ -88,7 +88,7 @@
 //    Returns normally (BEFORE memory/recordRunUsage). Because nothing was written to the journal, a
 //    Blocked call is re-evaluated FROM SCRATCH on the NEXT attempt once the limit is RAISED (replay
 //    Regenerates the same toolCallId) — no approval is REQUIRED (DIFFERENT from guard's require-approval).
-import { claim, runKeys } from './journal.js';
+import { claim, runKeys, nestedAgentRunId } from './journal.js';
 import { usageAndCostFromModelValue, type RunCostOptions } from './cost.js';
 import type { Journal, JournalReader, ToolJournalRecord } from './journal.js';
 
@@ -652,6 +652,7 @@ async function ensureSeeded(
  */
 async function sumSubRuns(
   store: LimitsStore,
+  parentRunId: string | undefined,
   subRunIds: string[],
   opts: RunCostOptions,
   seen: Set<string>,
@@ -660,20 +661,24 @@ async function sumSubRuns(
   let costUsd = 0;
   let succeededToolCalls = 0;
   for (const toolCallId of subRunIds) {
-    const nestedRunId = `agent:${toolCallId}`;
-    if (seen.has(nestedRunId)) continue;
-    seen.add(nestedRunId);
-    const nested = await readCounters(store, nestedRunId); // O(1) — the sub-run already kept this DURING its own run
-    if (!nested) continue; // the sub-agent never ran → harmless 0
-    totalTokens += nested.totalTokens;
-    costUsd += nested.costUsd;
-    succeededToolCalls += nested.succeededToolCalls;
-    const nestedChain = await readChain(store, nestedRunId);
-    if (nestedChain?.subRunIds.length) {
-      const grand = await sumSubRuns(store, nestedChain.subRunIds, opts, seen); // multi-level fan-out
-      totalTokens += grand.totalTokens;
-      costUsd += grand.costUsd;
-      succeededToolCalls += grand.succeededToolCalls;
+    // Both shapes: the parent-scoped id a sub-agent uses now, and the bare legacy one still present
+    // In journals written before it was scoped. A miss costs one O(1) `get` and sums 0.
+    const candidates = [nestedAgentRunId(parentRunId, toolCallId), `agent:${toolCallId}`];
+    for (const nestedRunId of new Set(candidates)) {
+      if (seen.has(nestedRunId)) continue;
+      seen.add(nestedRunId);
+      const nested = await readCounters(store, nestedRunId); // O(1) — the sub-run already kept this DURING its own run
+      if (!nested) continue; // the sub-agent never ran → harmless 0
+      totalTokens += nested.totalTokens;
+      costUsd += nested.costUsd;
+      succeededToolCalls += nested.succeededToolCalls;
+      const nestedChain = await readChain(store, nestedRunId);
+      if (nestedChain?.subRunIds.length) {
+        const grand = await sumSubRuns(store, nestedRunId, nestedChain.subRunIds, opts, seen); // multi-level fan-out
+        totalTokens += grand.totalTokens;
+        costUsd += grand.costUsd;
+        succeededToolCalls += grand.succeededToolCalls;
+      }
     }
   }
   return { totalTokens, costUsd, succeededToolCalls };
@@ -790,7 +795,7 @@ export async function enforceStepLimits(
   }
 
   const chain = (await readChain(store, runId)) ?? emptyChain();
-  const subtotal = await sumSubRuns(store, chain.subRunIds, opts, new Set([runId]));
+  const subtotal = await sumSubRuns(store, runId, chain.subRunIds, opts, new Set([runId]));
   const totalTokens = counters.totalTokens + subtotal.totalTokens;
   const costUsd = counters.costUsd + subtotal.costUsd;
 
@@ -887,7 +892,7 @@ export async function checkToolGate(
 
   if (limits.maxToolCalls != null) {
     const counters = (await readCounters(store, runId)) ?? emptyCounters();
-    const subtotal = await sumSubRuns(store, chain.subRunIds, {}, new Set([runId]));
+    const subtotal = await sumSubRuns(store, runId, chain.subRunIds, {}, new Set([runId]));
     const succeededToolCalls = counters.succeededToolCalls + subtotal.succeededToolCalls;
     if (succeededToolCalls >= limits.maxToolCalls) {
       return {

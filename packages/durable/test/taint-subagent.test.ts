@@ -75,7 +75,7 @@ describe('taint crosses the sub-agent boundary (AUDIT A4)', () => {
     // The sub-agent's side effect must NOT execute — the parent's taint reached the nested run.
     expect(counters.sends).toBe(0);
     // The nested run carries an INHERITED taint mark (provenance preserved from the parent source).
-    const nestedTaint = await readRunTaint(journal, 'agent:p-call-2');
+    const nestedTaint = await readRunTaint(journal, 'agent:a4-parent:p-call-2');
     expect(nestedTaint).toMatchObject({ toolName: 'fetchPage', toolCallId: 'p-call-1' });
     expect(String(nestedTaint?.reason ?? '')).toContain('inherited');
   });
@@ -98,6 +98,6 @@ describe('taint crosses the sub-agent boundary (AUDIT A4)', () => {
     });
 
     expect(counters.sends).toBe(1); // no taint anywhere → the sub-agent proceeds normally
-    expect(await readRunTaint(journal, 'agent:p-call-2')).toBeUndefined();
+    expect(await readRunTaint(journal, 'agent:a4-clean:p-call-2')).toBeUndefined();
   });
 });

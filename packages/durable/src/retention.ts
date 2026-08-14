@@ -2,7 +2,7 @@
 // Journal's append-only philosophy — only for legal deletion (PII purge) and retention sweeps.
 // Requires the `deletePrefix` port (InMemory/Sqlite/Postgres adapters provide it); otherwise
 // Throws a clear error.
-import { runKeys, summarizeRun } from './journal.js';
+import { runKeys, summarizeRun, nestedAgentRunId } from './journal.js';
 import type { Journal, JournalReader } from './journal.js';
 import { getRunCost } from './cost.js';
 import { USAGE_KEY, usageCountedKey } from './budget.js';
@@ -95,12 +95,15 @@ export async function purgeRun(
     for (const e of await rr.call(journal, runId)) {
       if (e.kind !== 'tool') continue;
       const tcid = e.key.slice(e.key.lastIndexOf(':tool:') + ':tool:'.length);
-      const child = `agent:${tcid}`;
-      const exists =
-        typeof lk === 'function'
-          ? (await lk.call(journal, `${child}:`)).length > 0
-          : (await rr.call(journal, child)).length > 0;
-      if (exists) total += await purgeRun(journal, child, seen);
+      // Both shapes: the parent-scoped id a sub-agent uses now, and the bare legacy one still in
+      // Journals written before it was scoped — a purge that misses either leaves orphaned PII.
+      for (const child of new Set([nestedAgentRunId(runId, tcid), `agent:${tcid}`])) {
+        const exists =
+          typeof lk === 'function'
+            ? (await lk.call(journal, `${child}:`)).length > 0
+            : (await rr.call(journal, child)).length > 0;
+        if (exists) total += await purgeRun(journal, child, seen);
+      }
     }
   }
   if (typeof lk === 'function') {

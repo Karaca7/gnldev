@@ -174,13 +174,13 @@ describe('purgeRun agent-tool cascade (H5)', () => {
     });
     await gnl.run('main', { runId: 'p1', prompt: 'task' });
 
-    // Nested journal really got created (agent:<toolCallId>).
-    expect((await journal.readRun('agent:call-uz1')).length).toBeGreaterThan(0);
+    // Nested journal really got created (agent:<parentRunId>:<toolCallId>).
+    expect((await journal.readRun('agent:p1:call-uz1')).length).toBeGreaterThan(0);
 
     await purgeRun(journal, 'p1');
     expect(await journal.readRun('p1')).toEqual([]);
-    expect(await journal.readRun('agent:call-uz1')).toEqual([]); // cascade: no orphaned PII
-    expect(await journal.listKeys('agent:call-uz1:')).toEqual([]);
+    expect(await journal.readRun('agent:p1:call-uz1')).toEqual([]); // cascade: no orphaned PII
+    expect(await journal.listKeys('agent:p1:call-uz1:')).toEqual([]);
   });
 
   it('deep chain: parent → agent → agent (grandchild) all deleted; neighboring agent run REMAINS', async () => {

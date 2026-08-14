@@ -1,3 +1,4 @@
+import { nestedAgentRunId } from './journal.js';
 import { tool, stepCountIs } from 'ai';
 import { z } from 'zod';
 import { runDurable } from './run.js';
@@ -97,11 +98,15 @@ export function createAgentTool(config: AgentToolConfig, opts?: { description?: 
     description: opts?.description ?? 'Delegate a task to an expert sub-agent',
     inputSchema: z.object({ task: z.string().describe('the task/question to give the sub-agent') }),
     execute: async ({ task }, options: any) => {
-      const nestedRunId = `agent:${options?.toolCallId}`;
+      // Scope the sub-agent's run to its PARENT — see nestedAgentRunId for why, and for why this
+      // must stay derivable from (parentRunId, toolCallId) alone. network.ts has always keyed on
+      // the parent (`net:${runId}:${i}`); this is the same shape.
+      const parentRunId = config.parentRunId ?? options?.parentRunId;
+      const nestedRunId = nestedAgentRunId(parentRunId, options?.toolCallId);
       const model = typeof config.model === 'function' ? await config.model(nestedRunId) : config.model;
       // The parent runId is injected into the tool's execute options by durable-tool.ts. If the
       // Parent is tainted, carry that taint into the nested run before it runs any side-effect tool.
-      await inheritParentTaint(config.journal, config.parentRunId ?? options?.parentRunId, nestedRunId);
+      await inheritParentTaint(config.journal, parentRunId, nestedRunId);
       const res = await runDurable({
         runId: nestedRunId,
         journal: config.journal,
