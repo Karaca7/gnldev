@@ -692,6 +692,55 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     }
   });
 
+  /**
+   * ── Liveness and readiness ──────────────────────────────────────────────────────────────────
+   *
+   * Deliberately UNAUTHENTICATED. Every orchestrator that would use these — Docker, Fly, Cloud Run,
+   * Kubernetes, a load balancer — probes before it has, or ever will have, a credential. A health
+   * Check behind auth is a health check nothing can call.
+   *
+   * That makes what they SAY the design question. They report reachability and nothing else: no agent
+   * Names, no org information, no counts, no configuration. In particular `/ready` never returns the
+   * Underlying error text — a Postgres connection failure routinely carries the host, database and
+   * User in its message, and this endpoint is world-readable. The operator gets the reason from the
+   * Logs; the probe gets a status code.
+   *
+   * TWO ROUTES, because they answer two different questions and conflating them causes the wrong
+   * Action:
+   *   /health  — is this process alive? No I/O at all. A failing DEPENDENCY must not make an
+   *              Orchestrator kill and restart a perfectly healthy process; restarting it does not
+   *              Reconnect anyone's database.
+   *   /ready   — can it serve? Touches the journal, so a process whose storage is unreachable is
+   *              Pulled OUT of the load balancer while staying alive to recover.
+   * Point liveness probes at the first and readiness/traffic probes at the second.
+   */
+  app.get('/health', (c) => c.json({ status: 'ok', uptimeSec: Math.floor(process.uptime()) }));
+
+  app.get('/ready', async (c) => {
+    // Bounded on purpose: an unreachable database usually HANGS rather than refusing, and a probe that
+    // Hangs is read as a timeout by some orchestrators and as success by others. Answer either way.
+    const budgetMs = 2_000;
+    const probe = (async () => {
+      // A read is enough to prove the connection is usable, and cannot disturb any run's state. The
+      // Key is deliberately one that never exists.
+      await baseJournal.get('__gnl_readiness_probe__');
+      return true;
+    })();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<false>((resolve) => { timer = setTimeout(() => resolve(false), budgetMs); });
+    try {
+      const ok = await Promise.race([probe.catch(() => false), timeout]);
+      if (!ok) {
+        // The reason stays in the logs; the response says only that storage is not reachable.
+        console.warn('@gnldev/server: readiness probe failed — the journal did not answer within ' + budgetMs + 'ms');
+        return c.json({ status: 'unavailable', storage: 'unreachable' }, 503);
+      }
+      return c.json({ status: 'ready' });
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  });
+
   // Metadata list of registered agents (for the client/playground agent selector).
   // Org-scoped: an org-bound caller only sees GLOBAL agents + agents whose `orgs` include their org.
   app.get('/agents', async (c) => {

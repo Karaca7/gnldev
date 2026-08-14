@@ -62,6 +62,31 @@ runs for everything mounted after.
 | POST | `/agents/:name/resume` | `{runId, approvals?}` — the input is read from the journal |
 | GET | `/runs` · `/runs/:id` | Run summaries / journal timeline |
 | GET | `/openapi.json` | Generated schema |
+| GET | `/health` | Liveness — process is alive. No storage access. **Unauthenticated** |
+| GET | `/ready` | Readiness — can serve traffic; 503 if the journal is unreachable. **Unauthenticated** |
+
+### Health checks
+
+`/health` and `/ready` answer two different questions, and pointing the wrong probe at the wrong one
+causes the wrong action:
+
+- **`/health`** — is the process alive? It touches nothing. A failing *dependency* must not make an
+  orchestrator kill and restart a healthy process: restarting it does not reconnect your database, it
+  only discards whatever the process still had in flight. Use this for liveness probes.
+- **`/ready`** — can it serve? It reads from the journal, with a 2s budget because an unreachable
+  database usually *hangs* rather than refusing. On failure the instance leaves the load balancer while
+  staying alive to recover. Use this for readiness/traffic probes.
+
+Both are deliberately unauthenticated — probes run before any credential exists, and usually never get
+one. For the same reason they report reachability and nothing else: no agent names, no counts, no
+configuration, and never the underlying error, which for a database failure routinely carries the host,
+database and user. That detail goes to your logs.
+
+```yaml
+# Kubernetes
+livenessProbe:  { httpGet: { path: /health, port: 3000 } }
+readinessProbe: { httpGet: { path: /ready,  port: 3000 } }
+```
 
 ### SSE schema (`/stream`)
 `event` + JSON `data`: `text-delta {text}` · `tool-call {toolCallId,toolName,input}` · `tool-result {...}` · `error {error}` · `interrupt {interrupts[]}` (when the stream ends) · `done {runId,finishReason,usage}`. The same schema is also used in the `@gnldev/studio` playground → [`@gnldev/client`](../client) connects to both ends.

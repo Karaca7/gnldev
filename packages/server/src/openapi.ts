@@ -57,6 +57,25 @@ export function buildOpenApi(agentNames: string[], workflowNames: string[] = [],
   };
 
   const paths: Record<string, any> = {};
+  // Documented as unauthenticated on purpose — see the route comments in index.ts. An orchestrator
+  // Reading this spec needs to know it can probe these without arranging a credential first.
+  paths['/health'] = {
+    get: {
+      summary: 'Liveness — is the process alive? No storage access; unauthenticated',
+      description: 'Point LIVENESS probes here. Deliberately independent of storage: a failing database must not cause a healthy process to be killed and restarted.',
+      responses: { '200': { description: '{ status: "ok", uptimeSec }' } },
+    },
+  };
+  paths['/ready'] = {
+    get: {
+      summary: 'Readiness — can it serve traffic? Touches storage; unauthenticated',
+      description: 'Point READINESS/traffic probes here. Returns 503 when the journal is unreachable or does not answer within the probe budget, so the instance leaves the load balancer while staying alive to recover. The underlying error is never returned (it can carry connection details) — it goes to the logs.',
+      responses: {
+        '200': { description: '{ status: "ready" }' },
+        '503': { description: '{ status: "unavailable", storage: "unreachable" }' },
+      },
+    },
+  };
   paths['/agents'] = {
     get: { summary: 'List of registered agent metadata', responses: { '200': { description: 'AgentMeta list' } } },
   };
