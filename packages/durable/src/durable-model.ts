@@ -249,7 +249,6 @@ export function withDurableModel(model: LanguageModelV2, ctx: DurableCtx, opts?:
     wrapStream: async ({ doStream, params }) => {
       const key = runKeys.model(ctx.runId, step);
       const claimKey = runKeys.proc(ctx.runId, `__gnl_model_claim:${step}`);
-      const checkpointKey = runKeys.proc(ctx.runId, `__gnl_stream_checkpoint:${step}`);
       const reqHash = safeRequestHash(params);
       const hit = await ctxGet<{ parts: any[]; rest: Record<string, unknown> }>(ctx, key);
       if (hit !== undefined) {
@@ -285,28 +284,49 @@ export function withDurableModel(model: LanguageModelV2, ctx: DurableCtx, opts?:
         throw error;
       }
       const { stream, ...rest } = result;
+      const checkpointKey = runKeys.proc(ctx.runId, `__gnl_stream_checkpoint:${step}`);
       const myStep = step;
       step++;
       const parts: any[] = [];
-      // Periodic PARTIAL checkpoint so a crash in long streams doesn't lose the WHOLE step.
-      // The happy-path (flush) RESULT stays EXACTLY THE SAME — the checkpoint is only an ADDITIONAL
-      // Write for observability/forward-recovery purposes; it does NOT CHANGE the CONTENT of the final
-      // `key` or the MOMENT it is written.
+      // Journal the step AS SOON AS IT CONTAINS A TOOL CALL, not only at flush.
+      //
+      // This is the difference between the two paths, and it decided how wide their crash windows
+      // were. wrapGenerate writes the step the moment doGenerate() returns — before any tool in it
+      // can run. The streaming path wrote it in flush(), after the stream had been fully consumed,
+      // while the AI SDK executes tool calls as they ARRIVE. So a crash between "the tool ran" and
+      // "the stream ended" left the tool record present and model:N absent; the resume re-called the
+      // model, it re-planned, and a real provider mints a fresh toolCallId every completion — so the
+      // per-toolCallId gate never matched and the side effect ran again.
+      //
+      // Writing on the tool-call part closes exactly that window: whatever the stream does
+      // afterwards, the ids that were about to execute are recoverable. flush() still writes the
+      // complete record over it, so a run that finishes normally journals precisely what it did
+      // before. A partial record is only ever read by a resume that would otherwise have re-planned,
+      // which is strictly the better of the two.
+      //
+      // The periodic checkpoint below stays as it was: it preserves partial progress on a long TEXT
+      // stream, which nothing reads today but which is the only trace a crash leaves. The tool-call
+      // write is additive, not a replacement — the two answer different questions.
       const CHECKPOINT_EVERY = 10;
       const recorder = new TransformStream<any, any>({
         async transform(chunk, controller) {
           parts.push(chunk);
-          controller.enqueue(chunk);
-          if (parts.length % CHECKPOINT_EVERY === 0) {
-            // Idempotent: each time, the SAME checkpointKey is overwritten with ALL chunks so far
-            // (overwrite, not append) → a half-finished write does NOT BREAK replay (only the
-            // Forensic/recovery data stays incomplete/stale, the stream itself is unaffected).
+          if (chunk?.type === 'tool-call') {
+            try {
+              await ctx.journal.put(runKeys.model(ctx.runId, myStep), stampFormat({ parts: parts.slice(), rest, partial: true }));
+            } catch {
+              /* best-effort: a journal hiccup must not stop the stream the caller is reading */
+            }
+          } else if (parts.length % CHECKPOINT_EVERY === 0) {
+            // Idempotent: the SAME key is overwritten with all chunks so far (overwrite, not append),
+            // so a half-finished write cannot break replay — only the forensic copy goes stale.
             try {
               await ctx.journal.put(checkpointKey, { parts: parts.slice(), rest, partial: true });
             } catch {
               /* checkpoint is best-effort — must never stop the stream */
             }
           }
+          controller.enqueue(chunk);
         },
         flush: async () => {
           // Happy path: EXACTLY the same as the behavior so far — the final record is written with the full `parts`.

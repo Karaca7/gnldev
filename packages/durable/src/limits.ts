@@ -169,6 +169,25 @@ export interface RunLimits {
    */
   sideEffectDuplicates?: 'off' | 'warn' | 'reflect' | 'block' | 'suspend';
   /**
+   * How far one human approval reaches.
+   *
+   * An approval answers a specific question — "this crashed mid-flight and the effect MAY have
+   * landed; attempt it anyway?" — and it is journaled per toolCallId so a crash cannot lose the
+   * decision. That is the default, `'call'`: the answer stands for that call, and further attempts
+   * are bounded by `maxRetries`.
+   *
+   * The cost of that convenience is that a later resume faces the SAME uncertainty afresh and
+   * proceeds on an answer the operator gave about an EARLIER attempt. For a payment that is one
+   * click authorising several charges, most of them unasked. `'attempt'` spends the approval on the
+   * attempt it unblocks: if that attempt fails, the next one asks again.
+   *
+   * A DENIAL is never spent under either setting — it keeps denying without re-asking.
+   *
+   * Default `'call'`, which is the behaviour that shipped; choose `'attempt'` where a repeat is
+   * expensive enough that a second click is cheaper than a second effect.
+   */
+  approvalScope?: 'call' | 'attempt';
+  /**
    * What to do when a SIDE-EFFECT tool (H7
    * Signal) is about to execute AFTER untrusted external content entered the conversation (an
    * `untrusted: true` tool's output landed, or a processor called markRunTainted). The model is a

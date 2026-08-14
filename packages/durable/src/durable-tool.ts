@@ -769,6 +769,13 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           { status: 'failed', error: String(error?.message ?? error), attempts: prevAttempts + 1, sideEffect },
           toolCallId, toolName, hash,
         );
+        // approvalScope: 'attempt' — spend the approval that unblocked THIS attempt, so the next
+        // resume asks again instead of proceeding on an answer about an earlier attempt. Opt-in:
+        // the default 'call' keeps the journaled approval, which is what makes it survive a crash.
+        // Only an approval is spent, and only for a side-effect tool: a denial must keep denying.
+        if (ctx.limits?.approvalScope === 'attempt' && approved === true && sideEffect) {
+          await ctx.journal.put(runKeys.approval(ctx.runId, toolCallId), undefined as any);
+        }
         // Release the duplicate marker this call claimed before executing. It was claimed to stop a
         // CONCURRENT twin, and the effect did not complete — leaving it would make every later
         // attempt with these arguments look like a duplicate of something that never happened.
