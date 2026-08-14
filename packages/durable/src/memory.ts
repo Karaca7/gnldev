@@ -100,23 +100,46 @@ export interface Memory {
  * Memory on top of the journal: messages are stored in the journal → durable via SqliteJournal, crash-resistant.
  * Give it the SAME journal as the run; this way memory is also part of durable state.
  */
+/**
+ * The thread id becomes a journal key segment (`mem:<threadId>:messages`), and the journal's key
+ * Schema gives `:model:` / `:tool:` structural meaning: `parseJournalKey` reads `<x>:model:<y>` as a
+ * Run named `<x>`. So a thread literally NAMED 'model' produces `mem:model:messages`, which the run
+ * Index reads as a run called 'mem' — and the next retention sweep deletes the ENTIRE `mem:` keyspace,
+ * Every thread of every user. Audit-measured: an unrelated user's messages went 1 → 0. A ':' inside
+ * The id opens the same door one level deeper (`mem:x:model:5`). threadId is caller-supplied on the
+ * Chat surfaces, so this is enforced here, at the single place the key is built — the same boundary
+ * Discipline orgId (organization.ts) and toolName (journal.ts) already get.
+ */
+function memKey(threadId: string, leaf: 'messages' | 'working'): string {
+  // Colons themselves are allowed — sweepThreads' suffix inference has always supported them, and a
+  // test pins that. What cannot appear is a SEGMENT named 'model' or 'tool': `mem:a:model:b:messages`
+  // parses as run 'mem:a' with a model step, exactly like the bare `mem:model:messages` case.
+  if (/(^|:)(model|tool)(:|$)/.test(threadId)) {
+    throw new Error(
+      `@gnldev/durable: thread id '${threadId}' would collide with the journal's key schema — ` +
+      `a ':'-delimited segment named 'model' or 'tool' reads as a run record (see parseJournalKey in journal.ts)`,
+    );
+  }
+  return `mem:${threadId}:${leaf}`;
+}
+
 export class BasicMemory implements Memory {
   constructor(private readonly journal: Journal) {}
 
   async getMessages(threadId: string): Promise<any[]> {
-    return (await this.journal.get<any[]>(`mem:${threadId}:messages`)) ?? [];
+    return (await this.journal.get<any[]>(memKey(threadId, 'messages'))) ?? [];
   }
 
   async append(threadId: string, messages: any[]): Promise<void> {
     const current = await this.getMessages(threadId);
-    await this.journal.put(`mem:${threadId}:messages`, [...current, ...messages]);
+    await this.journal.put(memKey(threadId, 'messages'), [...current, ...messages]);
   }
 
   async getWorkingMemory(threadId: string): Promise<string | undefined> {
-    return this.journal.get<string>(`mem:${threadId}:working`);
+    return this.journal.get<string>(memKey(threadId, 'working'));
   }
 
   async setWorkingMemory(threadId: string, value: string): Promise<void> {
-    await this.journal.put(`mem:${threadId}:working`, value);
+    await this.journal.put(memKey(threadId, 'working'), value);
   }
 }

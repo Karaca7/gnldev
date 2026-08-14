@@ -19,10 +19,12 @@ export const red = wrap('31');
 export const yellow = wrap('33');
 export const cyan = wrap('36');
 
-/** completed -> green, suspended -> yellow (anything else passes through uncolored). */
+/** completed -> green, suspended -> yellow, failed -> red (anything else passes through uncolored). */
 export function colorStatus(status: string): string {
   if (status === 'suspended') return yellow(status);
   if (status === 'completed') return green(status);
+  // The newest status and the one most worth noticing was the only one printed without colour.
+  if (status === 'failed') return red(status);
   return status;
 }
 

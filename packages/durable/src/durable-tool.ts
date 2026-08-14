@@ -8,7 +8,7 @@ import { recordIncident } from './incidents.js';
 import { markRunTainted, readRunTaint } from './taint.js';
 import { checkToolGate, recordToolOutcome } from './limits.js';
 import { createProcessorCtx } from './processor.js';
-import type { DurableCtx, ToolJournalRecord } from './journal.js';
+import type { DurableCtx, Journal, ToolJournalRecord } from './journal.js';
 import type { JournalReader } from './journal.js';
 import type { AnyTool } from './types.js';
 
@@ -61,8 +61,35 @@ interface DupMarker {
   firstToolCallId: string;
   at: number;
   nudged?: boolean;
-  /** Set while the first caller is still executing; cleared on success, released on failure. */
+  /** Set while the first caller is still executing; finalized on success, released on failure. */
   inFlight?: boolean;
+  /**
+   * The attempt that held this marker FAILED and gave the slot back. This is a real field rather
+   * Than a deletion because `put(key, undefined)` does not delete a row: `get` reads it as absent,
+   * But `putIfAbsent` still sees the row and loses — so the "release" poisoned every later claim,
+   * And a legitimate retry after a failed attempt was permanently reported as a concurrent
+   * Duplicate. Under `sideEffectDuplicates:'block'` that turned exactly-once into exactly-ZERO
+   * (audit-measured: executions=0 with no success anywhere). A released marker is claimable.
+   */
+  released?: boolean;
+}
+
+/**
+ * Claim the duplicate marker, honouring its lifecycle. Absent → normal first-writer claim. Released
+ * (a failed attempt gave it back) → taken over by CAS. In-flight but STALE by the shared clock (its
+ * Writer crashed without releasing) → also taken over, using the same TTL discipline as the tool
+ * Claim itself. A live marker — someone genuinely executing right now — loses.
+ */
+async function claimDupMarker(journal: Journal, dupKey: string, next: DupMarker, staleTtlMs: number): Promise<boolean> {
+  const raw = await journal.get<DupMarker>(dupKey);
+  if (raw === undefined) return claim(journal, dupKey, next);
+  const cur = raw as DupMarker;
+  const now = journal.now ? await journal.now() : Date.now();
+  const takeable = cur.released === true || (cur.inFlight === true && now - cur.at > staleTtlMs);
+  if (!takeable) return false;
+  if (journal.putIfMatch) return journal.putIfMatch(dupKey, raw, next);
+  await journal.put(dupKey, next); // single-process fallback — the same documented bound as claim()
+  return true;
 }
 
 const dupMarkerKey = (runId: string, toolName: string, hash: string): string =>
@@ -98,7 +125,21 @@ async function writeToolTerminal(
       : named;
   await ctx.journal.put(key, stampFormat(stamped));
   if (dupKey && record.status === 'succeeded') {
-    await claim(ctx.journal, dupKey, { firstToolCallId: toolCallId, at: Date.now() } satisfies DupMarker);
+    const success: DupMarker = { firstToolCallId: toolCallId, at: Date.now() };
+    const won = await claim(ctx.journal, dupKey, success);
+    if (!won) {
+      // The row exists. Two of the shapes it can hold are OURS to overwrite, and leaving either in
+      // Place is a live defect: our own in-flight claim from just before execute (never finalized,
+      // It would later read as stale and be taken over — re-running a SUCCEEDED side effect), or a
+      // Released slot from an earlier failed attempt (a later duplicate would take it over and run
+      // Again). A FOREIGN completed marker stays — first success wins, as before.
+      const raw = await ctx.journal.get<DupMarker>(dupKey);
+      const cur = raw as DupMarker | undefined;
+      if (cur && (cur.released === true || (cur.inFlight === true && cur.firstToolCallId === toolCallId))) {
+        if (ctx.journal.putIfMatch) await ctx.journal.putIfMatch(dupKey, raw, success);
+        else await ctx.journal.put(dupKey, success);
+      }
+    }
   }
   // A FAILED side-effect tool counts toward maxToolCalls (the effect may have executed
   // Before the throw). The flag is read off the failed record itself (stamped at the failure site below)
@@ -284,7 +325,13 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       let claimedDup = false;
       if (dupKey && approved !== true) {
         const marker = await ctx.journal.get<DupMarker>(dupKey);
-        if (marker) {
+        // Only a COMPLETED marker speaks here. A released one is a slot a failed attempt gave back —
+        // Not a duplicate of anything. An in-flight one is either a live concurrent executor or a
+        // Crashed one's leftover; both are arbitrated ATOMICALLY by claimDupMarker just before
+        // Execute, where live loses and stale is taken over — deciding it here from a plain read
+        // Would re-open the TOCTOU this gate exists to close, and it mislabelled a crashed attempt
+        // As "already succeeded", blocking the recover/approval ladder that owns that case.
+        if (marker && !marker.released && !marker.inFlight) {
           // ATOMIC one-time nudge (E4): the reflect nudge is delivered by exactly ONE writer. Claim a
           // Dedicated nudge key via CAS (`claim`) — the WINNER delivers the nudge; a concurrent LOSER (or
           // A later identical retry where `marker.nudged` is set) escalates to block, the safe direction.
@@ -667,7 +714,26 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
         //   - Losing must not `continue` on a stale read: the loop would re-enter this branch and
         //     spin. Only 'args' mode loops here, which is the invariant stated above the loop.
         const rawBefore = await ctx.journal.get<ToolJournalRecord>(key);
-        const takeover = stampFormat({ status: 'running', startedAt: Date.now() });
+        // The staleness verdict above was reached on an EARLIER read. A slow-but-alive worker can
+        // finish in the gap and write its terminal record before this re-read — and using that record
+        // as the CAS `expected` would make the takeover MATCH it and stamp 'running' over a completed
+        // call: the side effect runs a second time AND the original output record is destroyed.
+        // (Audit-measured: executions=1 but the journal ended holding the duplicate's output, the
+        // original lost.) So the re-read is inspected before it is used as a CAS operand — a terminal
+        // record at this point means there is nothing to take over.
+        const before = upgradeFormat(rawBefore, key);
+        // 'suspended' is deliberately NOT in this list: an approved resume reaches this branch to take
+        // over precisely a suspended record and execute it — treating it as terminal here returned the
+        // suspend sentinel instead of running the approved call, and every approval flow charged 0.
+        if (before && (before.status === 'succeeded' || before.status === 'denied' || before.status === 'reflected')) {
+          await trackResolvedToolCallId(ctx.journal, key, before, toolCallId);
+          return before.output;
+        }
+        // The shared clock, not the local one: staleness is measured via journal.now() (see the claim
+        // gate above), so a takeover stamped with a fast local clock would look instantly stale to
+        // every other worker — the exact skew class the clock fix removed, re-entering here.
+        const nowTakeover = ctx.journal.now ? await ctx.journal.now() : Date.now();
+        const takeover = stampFormat({ status: 'running', startedAt: nowTakeover });
         const took = ctx.journal.putIfMatch
           ? await ctx.journal.putIfMatch(key, rawBefore, takeover)
           : (await ctx.journal.put(key, takeover), true);
@@ -717,9 +783,10 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       // marker held by a call that never ran, and the NEXT legitimate call was reported as its
       // duplicate — which is how this landed on taint-guard.test.ts rather than staying theoretical.
       if (dupKey && approved !== true) {
-        claimedDup = await claim(ctx.journal, dupKey, {
+        const dupTtl = tool.claimTtlMs ?? ctx.claimTtlMs ?? Math.max(CLAIM_TTL_MS, tool.timeoutMs ?? ctx.toolTimeoutMs ?? 0);
+        claimedDup = await claimDupMarker(ctx.journal, dupKey, {
           firstToolCallId: toolCallId, at: Date.now(), inFlight: true,
-        } satisfies DupMarker);
+        }, dupTtl);
         if (!claimedDup) {
           // A twin got here first. 'warn' is documented as permissive and stays that way; every
           // stricter policy means this call must not run.
@@ -779,7 +846,11 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
         // Release the duplicate marker this call claimed before executing. It was claimed to stop a
         // CONCURRENT twin, and the effect did not complete — leaving it would make every later
         // attempt with these arguments look like a duplicate of something that never happened.
-        if (dupKey && claimedDup) await ctx.journal.put(dupKey, undefined as any);
+        // A SENTINEL, not `put(key, undefined)`: that never deleted the row, so putIfAbsent kept
+        // Losing against it and the "release" was a poison pill (see DupMarker.released).
+        if (dupKey && claimedDup) {
+          await ctx.journal.put(dupKey, { firstToolCallId: toolCallId, at: Date.now(), released: true } satisfies DupMarker);
+        }
         // NOTE: taint is marked at INVOCATION now (see ), so a FAILED untrusted tool is already
         // Tainted — its error body (also attacker-authorable) is covered without a post-hoc mark here.
         throw error;

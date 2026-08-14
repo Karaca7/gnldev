@@ -30,10 +30,33 @@ import { RunBusyError } from './errors.js';
  */
 const NOT_A_RUN_FAILURE = new Set(['CompensatedRunError', 'RunCanceledError']);
 
-export function isRunFailure(err: unknown): boolean {
-  if (err instanceof RunBusyError) return false;
+/**
+ * How a run's error relates to its outcome record. RunBusyError alone cannot answer this — it is
+ * Thrown at two very different moments, and the audit measured the blanket exclusion getting the
+ * Second one wrong:
+ *
+ *   'not-a-failure'  — terminal refusals (compensated/canceled) and the LOCK-ACQUISITION refusal:
+ *                      this caller never got in, the run belongs to whoever holds the lock, and
+ *                      stamping anything from here would overwrite a live run's story.
+ *   'contended'      — a MID-FLIGHT RunBusyError: this worker got in, ran, and was fenced out by a
+ *                      concurrent executor of the same run. Recording nothing left the run reading
+ *                      'completed'; recording 'failed' outright could bury the survivor's earlier
+ *                      Success. So the caller records a failure that may only FILL ABSENCE — if the
+ *                      Survivor has written (or later writes) a verdict, that verdict stands.
+ *   'failure'        — everything else: the run genuinely ended badly.
+ *
+ * The lock site marks its own throw (atLockAcquisition) — the one place that knows which case it is.
+ */
+export function classifyRunError(err: unknown): 'failure' | 'contended' | 'not-a-failure' {
+  if (err instanceof RunBusyError) {
+    return (err as { atLockAcquisition?: boolean }).atLockAcquisition ? 'not-a-failure' : 'contended';
+  }
   const name = (err as { name?: string } | null)?.name;
-  return !(name && NOT_A_RUN_FAILURE.has(name));
+  return name && NOT_A_RUN_FAILURE.has(name) ? 'not-a-failure' : 'failure';
+}
+
+export function isRunFailure(err: unknown): boolean {
+  return classifyRunError(err) === 'failure';
 }
 
 /** Message only — the stack can carry file paths and argument values into a record an operator reads. */
@@ -46,9 +69,40 @@ export async function recordRunOutcome(
   journal: Journal,
   runId: string,
   outcome: RunOutcomeRecord,
+  opts?: { fillOnly?: boolean },
 ): Promise<void> {
   try {
-    await journal.put(runKeys.outcome(runId), outcome);
+    const key = runKeys.outcome(runId);
+    // The shared clock when the journal has one: two workers' outcomes are ordered against each
+    // Other, and local clocks are exactly what cannot do that.
+    const at = journal.now ? await journal.now() : outcome.at;
+    const next: RunOutcomeRecord = { ...outcome, at };
+    // MONOTONIC, not last-writer-wins. The audit measured the failure: worker A dies on a 401 but its
+    // 'failed' put is slow; the lock is already free, worker B resumes the SAME run, succeeds, writes
+    // 'completed' — then A's stale put lands and a run that succeeded reads 'failed', permanently.
+    // A verdict may only be replaced by a NEWER one, and the replacement is CAS'd so a concurrent
+    // Newer write is never clobbered by this one. Three attempts, then yield — this is observability,
+    // Losing the race to a fresher verdict is the correct outcome.
+    for (let i = 0; i < 3; i++) {
+      const raw = await journal.get<RunOutcomeRecord>(key);
+      const cur = raw as RunOutcomeRecord | undefined;
+      if (cur !== undefined) {
+        if (opts?.fillOnly) return; // a verdict already stands, and this caller may only fill absence
+        if (typeof cur.at === 'number' && cur.at > next.at) return; // a newer verdict already stands
+        if (journal.putIfMatch) {
+          if (await journal.putIfMatch(key, raw, next)) return;
+          continue; // lost the CAS — re-read, the winner may be newer than us
+        }
+        await journal.put(key, next);
+        return;
+      }
+      if (journal.putIfAbsent) {
+        if (await journal.putIfAbsent(key, next)) return;
+        continue; // someone filled it first — re-read and compare
+      }
+      await journal.put(key, next);
+      return;
+    }
   } catch {
     // Advisory: the run's own result is already decided. Losing this costs an operator the reason,
     // Not the framework its correctness.
@@ -60,6 +114,10 @@ export const runSucceeded = (journal: Journal, runId: string, at: number): Promi
 
 export const runFailed = (journal: Journal, runId: string, err: unknown, at: number): Promise<void> =>
   recordRunOutcome(journal, runId, { status: 'failed', at, error: messageOf(err) });
+
+/** A fenced-out attempt's failure: only ever fills an ABSENT verdict — the surviving executor's wins. */
+export const runFailedIfUnrecorded = (journal: Journal, runId: string, err: unknown, at: number): Promise<void> =>
+  recordRunOutcome(journal, runId, { status: 'failed', at, error: messageOf(err) }, { fillOnly: true });
 
 /** The recorded outcome, or undefined for a run written before outcomes existed. */
 export async function readRunOutcome(journal: Journal, runId: string): Promise<RunOutcomeRecord | undefined> {

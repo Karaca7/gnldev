@@ -471,10 +471,19 @@ class SqliteRunJournal implements RunJournal {
     ).run(key, p?.runId ?? null, p?.kind ?? null, suspended, serialize(value), Date.now());
     if (!p) {
       const owner = runIdOfKey(key, value);
-      if (!owner) return ins().changes === 1; // genuinely run-less key
+      const failed = outcomeFlagOf(key, value);
+      if (!owner && failed === null) return ins().changes === 1; // genuinely run-less key
       return this.withTx(() => {
         const info = ins();
-        if (info.changes === 1) this.touchRunDelta(owner, null, false, 0);
+        if (info.changes === 1) {
+          if (owner) this.touchRunDelta(owner, null, false, 0);
+          // The outcome's first write arrives through putIfAbsent (recordRunOutcome's monotonic
+          // path); handling the flag only in put() left sqlite reading every failure as completed.
+          if (failed !== null) {
+            const runId = key.slice(0, -':outcome'.length);
+            this.db.prepare(`UPDATE gnl_runs SET failed = ? WHERE run_id = ?`).run(failed, runId);
+          }
+        }
         return info.changes === 1;
       });
     }
@@ -497,7 +506,17 @@ class SqliteRunJournal implements RunJournal {
     const upd = () => this.db.prepare(
       'UPDATE gnl_run_journal SET value = ?, suspended = ? WHERE key = ? AND value = ?',
     ).run(serialize(value), suspended, key, serialize(expected));
-    if (!p) return Number(upd().changes ?? 0) === 1; // lock key (e.g. ':lock') → no derived index
+    if (!p) {
+      const failed = outcomeFlagOf(key, value);
+      if (failed === null) return Number(upd().changes ?? 0) === 1; // lock key (e.g. ':lock') → no derived index
+      // The monotonic outcome REPLACEMENT (a later success clearing an earlier failure, or the
+      // reverse) arrives through putIfMatch — the flag must follow the record here too.
+      return this.withTx(() => {
+        const ok = Number(upd().changes ?? 0) === 1;
+        if (ok) this.db.prepare(`UPDATE gnl_runs SET failed = ? WHERE run_id = ?`).run(failed, key.slice(0, -':outcome'.length));
+        return ok;
+      });
+    }
     // T1 (symmetric with the Postgres side): there's already no await between UPDATE and recountRun in
     // JS (structurally atomic within a single process) but the CRASH window is a separate concern — if
     // The process dies between the two, gnl_runs stays stale (this rare path had been untested until

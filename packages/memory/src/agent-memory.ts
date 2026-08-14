@@ -44,7 +44,28 @@ export interface LoadedContext {
 }
 
 const HUGE = 1_000_000_000; // "fetch everything" page limit (parity; a real consumer uses pagination)
-const omKey = (tid: string, k: string) => `om:${tid}:${k}`; // RunJournal KV (contains no ':model:'/':tool:' → clean for the reader)
+/**
+ * The comment this line used to carry — "contains no ':model:'/':tool:' → clean for the reader" —
+ * Was true only while nobody named a thread 'model'. `om:model:observedSeq` parses as run 'om' with a
+ * Model step (parseJournalKey is text-based), which puts 'om' in the run index and hands the ENTIRE
+ * Observational-memory keyspace to the next retention sweep. Same class as the measured `mem:`
+ * Deletion in @gnldev/durable's BasicMemory, same boundary fix: the id is validated where the key is
+ * Built.
+ */
+function assertOmThreadId(tid: string): string {
+  // Segment-based, not colon-based: colons in thread ids are long-standing supported behaviour
+  // (sweepThreads suffix inference); the collision is a SEGMENT named 'model'/'tool'.
+  if (/(^|:)(model|tool)(:|$)/.test(tid)) {
+    throw new Error(
+      `@gnldev/memory: thread id '${tid}' would collide with the journal's key schema — ` +
+      `a ':'-delimited segment named 'model' or 'tool' reads as a run record (see parseJournalKey in @gnldev/durable)`,
+    );
+  }
+  return tid;
+}
+const omKey = (tid: string, k: string) => `om:${assertOmThreadId(tid)}:${k}`;
+/** The pseudo-runId OM's durable steps run under — validated for the same reason as omKey. */
+const omRunId = (tid: string) => `om:${assertOmThreadId(tid)}`;
 
 let idCounter = 0;
 function genId(prefix: string): string {
@@ -267,7 +288,7 @@ export class AgentMemory {
       const blockTokens = block.reduce((n, m) => n + tok(messageText(m.message) ?? ''), 0);
       // JOURNALED (RunJournal): the same seq again → the LLM does not run, identical summary (replayable). Observer token-tier.
       const summary = await durableProcessorStep(
-        this.runs as any, `om:${threadId}`, `observe:${seq}`,
+        this.runs as any, omRunId(threadId), `observe:${seq}`,
         () => observe(resolveModel(this.om!.observerModel, blockTokens), block.map((m) => m.message)),
       );
       const newObserved = block.reduce((mx, m) => Math.max(mx, m.seq), observedSeq);
@@ -316,7 +337,7 @@ export class AgentMemory {
     if (active.length <= obsThreshold) return;
     const seq = (await this.runs.get<number>(omKey(threadId, 'reflectSeq'))) ?? 0;
     const condensedText = await durableProcessorStep(
-      this.runs as any, `om:${threadId}`, `reflect:${seq}`,
+      this.runs as any, omRunId(threadId), `reflect:${seq}`,
       () => reflect(this.om!.reflectionModel ?? this.om!.observerModel, active),
     );
     for (const o of obs) if (!o.condensed) o.condensed = true;
@@ -354,9 +375,9 @@ export class AgentMemory {
   protected async indexObservationVector(threadId: string, level: number, seqKey: number, o: Observation): Promise<void> {
     const ov = this.om?.omVectors;
     if (!ov) return;
-    const id = `om:${threadId}:${level}:${seqKey}`;
+    const id = `${omRunId(threadId)}:${level}:${seqKey}`;
     const [embedding] = await durableProcessorStep(
-      this.runs as any, `om:${threadId}`, `vec:${level}:${seqKey}`,
+      this.runs as any, omRunId(threadId), `vec:${level}:${seqKey}`,
       () => ov.embed([o.text]),
     );
     await ov.store.upsert([{ id, text: o.text, embedding: embedding!, metadata: { threadId, level, fromSeq: o.fromSeq, toSeq: o.toSeq, obsId: o.id } }]);

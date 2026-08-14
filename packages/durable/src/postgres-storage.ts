@@ -340,10 +340,15 @@ class PgRunJournal implements RunJournal {
     );
     if (!p) {
       const owner = runIdOfKey(key, value);
-      if (!owner) return inserted1(await ins(this.q)); // genuinely run-less key
+      const failed = outcomeFlagOf(key, value);
+      if (!owner && failed === null) return inserted1(await ins(this.q)); // genuinely run-less key
       return await this.tx(async (q) => {
         const ok = inserted1(await ins(q));
-        if (ok) await this.touchRunDelta(q, owner, null, false, 0);
+        if (ok) {
+          if (owner) await this.touchRunDelta(q, owner, null, false, 0);
+          // First outcome write arrives via putIfAbsent (monotonic recordRunOutcome) — see sqlite twin.
+          if (failed !== null) await q(`UPDATE gnl_runs SET failed = $1 WHERE run_id = $2`, [failed === 1, key.slice(0, -':outcome'.length)]);
+        }
         return ok;
       });
     }
@@ -371,7 +376,15 @@ class PgRunJournal implements RunJournal {
       'UPDATE gnl_run_journal SET value = $1, suspended = $2 WHERE key = $3 AND value = $4',
       [serialize(value), !!suspended, key, serialize(expected)],
     );
-    if (!p) return Number((await upd(this.q)).rowCount ?? 0) === 1; // ':lock' etc. → no derived index
+    if (!p) {
+      const failed = outcomeFlagOf(key, value);
+      if (failed === null) return Number((await upd(this.q)).rowCount ?? 0) === 1; // ':lock' etc. → no derived index
+      return await this.tx(async (q) => {
+        const ok = Number((await upd(q)).rowCount ?? 0) === 1;
+        if (ok) await q(`UPDATE gnl_runs SET failed = $1 WHERE run_id = $2`, [failed === 1, key.slice(0, -':outcome'.length)]);
+        return ok;
+      });
+    }
     // T1: UPDATE + recountRun in one transaction (closes the crash → stale gnl_runs window). There is NO
     // LockRunRow here — so a failed match doesn't create a phantom row in gnl_runs (the lock order stays
     // Journal→runs; a theoretical deadlock with put requires the rare path × the same key, and PG detects

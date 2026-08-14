@@ -24,7 +24,7 @@ import { markRunTainted, readThreadTaint, readDirectRunTaint, recordTaintProvena
 import type { RunLimits } from './limits.js';
 import type { ToolSchemaRule } from '@gnldev/tool-schema';
 import type { LanguageModelV2 } from '@ai-sdk/provider';
-import { runFailed, runSucceeded, isRunFailure } from './outcome.js';
+import { runFailed, runFailedIfUnrecorded, runSucceeded, classifyRunError, isRunFailure } from './outcome.js';
 
 type GenerateTextOptions = Parameters<typeof generateText>[0];
 type StreamTextOptions = Parameters<typeof streamText>[0];
@@ -911,7 +911,12 @@ export async function runDurable(args: RunDurableArgs): Promise<DurableResult> {
   try {
     return await runDurableGuarded(args);
   } catch (err) {
-    if (isRunFailure(err)) await runFailed(args.journal, args.runId, err, Date.now());
+    const kind = classifyRunError(err);
+    if (kind === 'failure') await runFailed(args.journal, args.runId, err, Date.now());
+    // Fenced out MID-FLIGHT: this worker got in and lost to a concurrent executor. Fill-only, so the
+    // survivor's verdict — earlier or later — always stands; recording nothing left the run reading
+    // 'completed' while it was neither.
+    else if (kind === 'contended') await runFailedIfUnrecorded(args.journal, args.runId, err, Date.now());
     throw err;
   }
 }
@@ -926,7 +931,7 @@ async function runDurableGuarded(args: RunDurableArgs): Promise<DurableResult> {
   const lock = (args as any).lock;
   if (lock) {
     const handle = await acquireRunLock(args.journal, args.runId, lock.owner, lock.ttlMs);
-    if (!handle) throw new RunBusyError(`run '${args.runId}' is locked by another process`);
+    if (!handle) throw Object.assign(new RunBusyError(`run '${args.runId}' is locked by another process`), { atLockAcquisition: true });
     // B4 (heartbeat): the lock was acquired ONCE and never renewed — a run that legitimately outlives
     // `ttlMs` let a second worker take over mid-run (two live runs of the same runId). Renew on a beat
     // Shorter than the TTL (ttlMs/2, min 1ms) so the lock stays held for as long as the body runs.
@@ -1203,7 +1208,7 @@ export async function streamDurable(args: StreamDurableArgs) {
   // Same runId with RunBusyError). Released on stream finish/error (see the onFinish/onError wrappers).
   // No heartbeat by design (see StreamDurableArgs.lock) — a streamed lock relies on ttlMs for takeover.
   const lockHandle = lock ? await acquireRunLock(journal, runId, lock.owner, lock.ttlMs) : null;
-  if (lock && !lockHandle) throw new RunBusyError(`run '${runId}' is locked by another process`);
+  if (lock && !lockHandle) throw Object.assign(new RunBusyError(`run '${runId}' is locked by another process`), { atLockAcquisition: true });
   // AUDIT (approval first-class): SAME as runDurableInner — BEFORE ctx is set up (see resolveApprovals).
   const resolvedApprovals = await resolveApprovals(journal, runId, approvals);
   // C2: on resume, load the replay snapshot (same as runDurableInner).
@@ -1268,6 +1273,9 @@ export async function streamDurable(args: StreamDurableArgs) {
   // Conversation to memory and locked the marker → once resume completed, the FINAL answer never made
   // It into memory at all.
   {
+    // Set by the onError wrapper below; also derived from the finish event itself, because some
+    // Providers surface a mid-stream failure only as finishReason:'error' without an error part.
+    let streamFailed = false;
     const prevOnFinish = options.onFinish;
     options.onFinish = async (ev: any) => {
       const stepsArr: any[] = ev?.steps ?? [];
@@ -1335,8 +1343,13 @@ export async function streamDurable(args: StreamDurableArgs) {
           await recordRunMetrics(journal, journal as unknown as JournalReader, runId, agentName ? { agentName } : {});
         } catch { /* advisory aggregate — must not affect the stream */ }
         // Parity with runDurableInner: inside the completed branch only, so a suspended stream is not
-        // Recorded as finished, and overwriting any earlier 'failed'.
-        await runSucceeded(journal, runId, Date.now());
+        // Recorded as finished. NOT on an errored stream: onFinish fires after onError, and the
+        // Success write here was measured OVERWRITING the failure the error path had just recorded —
+        // ["failed","completed"], final record completed — on the SSE/chat path of all places.
+        const endedInError = streamFailed || ev?.finishReason === 'error'
+          || stepsArr.some((st: any) => st?.finishReason === 'error');
+        if (!endedInError) await runSucceeded(journal, runId, Date.now());
+        else await runFailed(journal, runId, new Error(String(ev?.finishReason ?? 'stream error')), Date.now());
       }
       // (a): the stream has finished (completed OR suspended) → release the run-lock so a resume
       // Can proceed. Token-fenced + idempotent: a no-op if the lock was already taken over/released.
@@ -1350,6 +1363,7 @@ export async function streamDurable(args: StreamDurableArgs) {
     const prevOnError = options.onError;
     options.onError = async (ev: any) => {
       const err = (ev as { error?: unknown })?.error ?? ev;
+      streamFailed = true; // onFinish still fires after an error — it must not record a success over this
       if (isRunFailure(err)) await runFailed(journal, runId, err, Date.now());
       if (lockHandle) { try { await lockHandle.release(); } catch { /* best-effort; TTL reclaims */ } }
       if (prevOnError) await prevOnError(ev);
