@@ -300,14 +300,18 @@ class PgRunJournal implements RunJournal {
       // Not start seeing it), but it may still BELONG to a run. Register the run itself, or one that died
       // Before its first model step never appears in listRuns and is never reached by sweepRuns — its
       // Persisted prompt then outlives every retention window.
-      const owner = runIdOfKey(key);
-      if (!owner) { await upsert(this.q); return; } // genuinely run-less key (queues, events, cache)
+      const owner = runIdOfKey(key, value);
       const failed = outcomeFlagOf(key, value);
+      if (!owner && failed === null) { await upsert(this.q); return; } // genuinely run-less key
       await this.tx(async (q) => {
         await upsert(q);
-        await this.touchRunDelta(q, owner, null, false, 0);
-        // Set BOTH ways: the outcome is overwritten, so a resume that succeeds clears the failure.
-        if (failed !== null) await q(`UPDATE gnl_runs SET failed = $1 WHERE run_id = $2`, [failed === 1, owner]);
+        if (owner) await this.touchRunDelta(q, owner, null, false, 0);
+        // Own path, not riding on run ownership (see the sqlite twin). The UPDATE only touches an
+        // Existing row, so it cannot invent a run. Set both ways so a later success clears the failure.
+        if (failed !== null) {
+          const runId = key.slice(0, -':outcome'.length);
+          await q(`UPDATE gnl_runs SET failed = $1 WHERE run_id = $2`, [failed === 1, runId]);
+        }
       });
       return;
     }
@@ -335,7 +339,7 @@ class PgRunJournal implements RunJournal {
       [key, p?.runId ?? null, p?.kind ?? null, !!suspended, serialize(value), Date.now()],
     );
     if (!p) {
-      const owner = runIdOfKey(key);
+      const owner = runIdOfKey(key, value);
       if (!owner) return inserted1(await ins(this.q)); // genuinely run-less key
       return await this.tx(async (q) => {
         const ok = inserted1(await ins(q));

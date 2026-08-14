@@ -34,17 +34,29 @@ async function seed(journal: any) {
 }
 
 describe('runIdOfKey', () => {
-  it('claims every run-scoped key family, and nothing else', () => {
-    expect(runIdOfKey('r1:input')).toBe('r1');
-    expect(runIdOfKey('r1:memctx')).toBe('r1');
+  // A run's frozen input is a VERSIONED record — stampFormat gives it `_v`. That marker, not the key
+  // Text, is what runIdOfKey accepts as proof of ownership.
+  const stamped = { _v: 1, at: 1, prompt: 'x' };
+
+  it('claims a versioned :input and the two replayable kinds, and nothing else', () => {
+    expect(runIdOfKey('r1:input', stamped)).toBe('r1');
     expect(runIdOfKey('r1:model:0')).toBe('r1');
     expect(runIdOfKey('r1:tool:call-1')).toBe('r1');
     // A runId may contain ':' — resolve it the same greedy way parseJournalKey does.
-    expect(runIdOfKey('agent:parent:call-1:input')).toBe('agent:parent:call-1');
+    expect(runIdOfKey('agent:parent:call-1:input', stamped)).toBe('agent:parent:call-1');
     // Keys that belong to no run keep returning null: queues, events, cache, cross-run dedupe.
     expect(runIdOfKey('qdone:worker1:job-3')).toBeNull();
     expect(runIdOfKey('mem-user-appended:r1')).toBeNull();
     expect(runIdOfKey('xrun:args-charge-abc')).toBeNull();
+  });
+
+  it('refuses an :input-shaped key whose record the engine did not write', () => {
+    // appendLog writes `${ns}:${id}` with a CALLER-supplied id. Before the record check, an audit
+    // Entry logged as id 'input' made `__audit__` an indexed run — and the next retention sweep
+    // Deleted the whole audit namespace. Measured, not imagined.
+    expect(runIdOfKey('__audit__:input', { id: 'input', payload: { who: 'alice' }, at: 1 })).toBeNull();
+    expect(runIdOfKey('r1:input')).toBeNull();          // no value at all → no proof
+    expect(runIdOfKey('r1:input', 'a string')).toBeNull();
   });
 
   it('refuses the three-segment families, because claiming one can DELETE a foreign namespace', () => {

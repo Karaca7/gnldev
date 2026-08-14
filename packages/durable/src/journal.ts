@@ -297,7 +297,12 @@ export const runKeys = {
  */
 export function outcomeFlagOf(key: string, value: unknown): 0 | 1 | null {
   if (!key.endsWith(':outcome')) return null;
-  return (value as { status?: string } | null)?.status === 'failed' ? 1 : 0;
+  // The key suffix alone is not proof: `appendLog(journal, ns, payload, 'outcome')` writes
+  // `${ns}:outcome` with a caller's payload. Only the engine's own record — whose status is exactly
+  // One of the two terminal values — is treated as an outcome.
+  const status = (value as { status?: unknown } | null)?.status;
+  if (status !== 'failed' && status !== 'completed') return null;
+  return status === 'failed' ? 1 : 0;
 }
 
 /** What was recorded at a run's terminal boundary. `error` is present only on a failure. */
@@ -674,26 +679,40 @@ export function parseJournalKey(key: string): { runId: string; kind: JournalEntr
  * Persisted sat outside every retention window, indefinitely.
  *
  * DELIBERATELY NARROW, and the narrowness is the safety property. This function's answer feeds the
- * Run index, and sweepRuns purges an indexed run by `${runId}:` PREFIX — so a key wrongly claimed for a
- * Run means deleting a namespace that was never one. `<runId>:proc:<name>` would have been convenient
- * And is exactly the wrong shape to accept: `mem:<threadId>:messages` has it too, and a thread named
- * 'proc' would have made the whole `mem:` keyspace look like a run called 'mem' — one sweep from
- * Erasing every stored memory. The same argument rules out `:cfg:`/`:approval:`/`:incident:` and any
- * Other three-segment family.
+ * Run index, and sweepRuns purges an indexed run by `${runId}:` PREFIX — so a key wrongly claimed for
+ * A run means DELETING a namespace that was never one.
  *
- * What is left is unambiguous: the two replayable kinds the adapters ALREADY index (no new surface at
- * All), plus the two SUFFIX-anchored families. `:input` is the one that matters and the one that is
- * Always there — run.ts writes it unconditionally, before the first model call, for every run. A run
- * That persisted anything at all has it, so nothing is lost by refusing to guess from the rest.
+ * The key text alone cannot decide this, which cost a round to learn. `<runId>:proc:<name>` was
+ * Rejected early because `mem:<threadId>:messages` shares its shape. The two-segment families looked
+ * Unambiguous and were not: `appendLog(journal, ns, payload, id)` writes `${ns}:${id}` with a
+ * CALLER-SUPPLIED id, so an audit entry logged as `id: 'input'` produced `__audit__:input` — read as a
+ * Run called `__audit__`, whose next retention sweep deleted the entire audit namespace. Measured, not
+ * Imagined; see early-failure-visibility.test.ts.
+ *
+ * So the record corroborates the key. A run's frozen input is a VERSIONED journal record — see
+ * IsVersionedKey, which has always counted `:input` as one — and stampFormat gives every versioned
+ * Record a `_v`. Nothing else written under some `<x>:input` key carries it. That is a property of the
+ * Format rather than a guess about naming, which is what makes it safe to purge on.
+ *
+ * The two replayable kinds need no corroboration: `:model:`/`:tool:` are the adapters' own index
+ * Domain already, and `parseJournalKey` has always claimed exactly those.
+ *
+ * `:input` is also the one that is always there — run.ts writes it unconditionally, before the first
+ * Model call, for every run — so nothing is lost by refusing to guess from any other family.
  *
  * Greedy prefix, matching parseJournalKey's own convention, so a runId containing ':' resolves the
  * Same way in both.
  */
-export function runIdOfKey(key: string): string | null {
-  const suffixOnly = /^(.*):(input|memctx|outcome)$/.exec(key);
-  if (suffixOnly) return suffixOnly[1]!;
+export function runIdOfKey(key: string, value?: unknown): string | null {
   const withTail = /^(.*):(model|tool):.+$/.exec(key);
-  return withTail ? withTail[1]! : null;
+  if (withTail) return withTail[1]!;
+  const asInput = /^(.*):input$/.exec(key);
+  return asInput && isVersionedRecord(value) ? asInput[1]! : null;
+}
+
+/** Carries stampFormat's version marker → written by the journal itself, not by a caller's payload. */
+function isVersionedRecord(value: unknown): boolean {
+  return typeof value === 'object' && value !== null && '_v' in (value as Record<string, unknown>);
 }
 
 /**
@@ -821,7 +840,7 @@ export class InMemoryJournal implements Journal, JournalReader {
       // A run's age is the age of its NEWEST key — including the non-entry ones. A run that died
       // Before its first model step has only those, and skipping them left it undateable and so
       // Never swept: its persisted prompt outlived every retention window.
-      const owner = p ? p.runId : runIdOfKey(key);
+      const owner = p ? p.runId : runIdOfKey(key, value);
       if (!owner) continue;
       const ts = this.times.get(key) ?? 0;
       const cur = last.get(owner) ?? { ts: 0, suspended: false };
@@ -905,7 +924,7 @@ export class InMemoryJournal implements Journal, JournalReader {
         // `:input` and a claim marker) never appears here — and so is never reached by sweepRuns,
         // Leaving its persisted prompt outside every retention window. summarizeRun stays pure: the
         // Entry list it is handed is genuinely empty.
-        const owner = runIdOfKey(key);
+        const owner = runIdOfKey(key, value);
         if (owner && !byRun.has(owner)) byRun.set(owner, []);
         continue;
       }

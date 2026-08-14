@@ -432,15 +432,20 @@ class SqliteRunJournal implements RunJournal {
       // Time-travel must not start seeing it). But if it belongs to a run, the run itself has to exist
       // In the index, or a run that died before its first model step is invisible to listRuns and,
       // Worse, to sweepRuns — its persisted prompt then outlives every retention window.
-      const owner = runIdOfKey(key);
-      if (!owner) { upsert(); return; } // genuinely run-less key (queues, events, cache)
+      const owner = runIdOfKey(key, value);
       const failed = outcomeFlagOf(key, value);
+      if (!owner && failed === null) { upsert(); return; } // genuinely run-less key (queues, events, cache)
       this.withTx(() => {
         upsert();
-        this.touchRunDelta(owner, null, false, 0);
-        // The outcome is OVERWRITTEN, never accumulated: a resume that finally succeeds clears the
-        // Earlier failure, so this sets the flag both ways.
-        if (failed !== null) this.db.prepare(`UPDATE gnl_runs SET failed = ? WHERE run_id = ?`).run(failed, owner);
+        if (owner) this.touchRunDelta(owner, null, false, 0);
+        // The outcome carries its OWN path rather than riding on run ownership: it is not a versioned
+        // Record, so runIdOfKey (which now demands that proof) does not claim it. The UPDATE only
+        // Touches a row that already exists, so it cannot invent a run. Set both ways — a resume that
+        // Finally succeeds must clear an earlier failure.
+        if (failed !== null) {
+          const runId = key.slice(0, -':outcome'.length);
+          this.db.prepare(`UPDATE gnl_runs SET failed = ? WHERE run_id = ?`).run(failed, runId);
+        }
       });
       return;
     }
@@ -465,7 +470,7 @@ class SqliteRunJournal implements RunJournal {
        ON CONFLICT(key) DO NOTHING`,
     ).run(key, p?.runId ?? null, p?.kind ?? null, suspended, serialize(value), Date.now());
     if (!p) {
-      const owner = runIdOfKey(key);
+      const owner = runIdOfKey(key, value);
       if (!owner) return ins().changes === 1; // genuinely run-less key
       return this.withTx(() => {
         const info = ins();

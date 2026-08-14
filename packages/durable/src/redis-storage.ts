@@ -279,20 +279,20 @@ class RedisRunJournal implements RunJournal {
         // ApplyBatch as never-active and sweep it as stale. Collected here, applied inside the SAME Lua unit.
         const zadds: { key: string; score: number; member: string }[] = [];
         const now = Date.now();
-        const touchOf = (key: string, p: ReturnType<typeof parseJournalKey>) => {
-          const owner = p?.runId ?? runIdOfKey(key);
+        const touchOf = (key: string, p: ReturnType<typeof parseJournalKey>, value: unknown) => {
+          const owner = p?.runId ?? runIdOfKey(key, value);
           if (owner && client.zadd) zadds.push({ key: this.activityKey(), score: now, member: owner });
         };
         if (batch.claim) {
           const p = parseJournalKey(batch.claim.key);
           desc.claim = { key: this.full(batch.claim.key), value: serialize(rjEnv(batch.claim.value, p, isSuspended(p, batch.claim.value), now)) };
-          touchOf(batch.claim.key, p);
+          touchOf(batch.claim.key, p, batch.claim.value);
         }
         if (batch.incrs?.length) desc.incrs = batch.incrs.map(({ key, fields }) => ({ key: this.pfx + CTR + key, fields }));
         if (batch.puts?.length) {
           desc.puts = batch.puts.map(({ key, value }) => {
             const p = parseJournalKey(key);
-            touchOf(key, p);
+            touchOf(key, p, value);
             return { key: this.full(key), value: serialize(rjEnv(value, p, isSuspended(p, value), now)) };
           });
         }
@@ -432,7 +432,7 @@ class RedisRunJournal implements RunJournal {
     // The ACTIVITY index must cover every run-scoped key, not just replayable entries: a run that died
     // Before its first model step has only `:input` + a claim marker, and leaving those out of the ZSET
     // Made it permanently invisible to listStaleRuns → sweepRuns never reached it.
-    const owner = p?.runId ?? runIdOfKey(key);
+    const owner = p?.runId ?? runIdOfKey(key, value);
     const full = this.full(key);
     // Preserve created_at (sqlite ON CONFLICT DO UPDATE doesn't update created_at) → readRun order stays stable.
     // DELIBERATE 2-RTT (GET+SET) — NOT OPTIMIZED with bulkGet: put() operates on a single key,
@@ -460,7 +460,7 @@ class RedisRunJournal implements RunJournal {
     // The ACTIVITY index must cover every run-scoped key, not just replayable entries: a run that died
     // Before its first model step has only `:input` + a claim marker, and leaving those out of the ZSET
     // Made it permanently invisible to listStaleRuns → sweepRuns never reached it.
-    const owner = p?.runId ?? runIdOfKey(key);
+    const owner = p?.runId ?? runIdOfKey(key, value);
     const full = this.full(key);
     const payload = serialize(rjEnv(value, p, isSuspended(p, value), Date.now()));
     if (this.canPipe(owner)) {
@@ -505,7 +505,7 @@ class RedisRunJournal implements RunJournal {
     // The ACTIVITY index must cover every run-scoped key, not just replayable entries: a run that died
     // Before its first model step has only `:input` + a claim marker, and leaving those out of the ZSET
     // Made it permanently invisible to listStaleRuns → sweepRuns never reached it.
-    const owner = p?.runId ?? runIdOfKey(key);
+    const owner = p?.runId ?? runIdOfKey(key, value);
     const next = serialize(rjEnv(value, p, isSuspended(p, value), env.t)); // t is preserved
     if (this.client.eval) {
       if (this.canPipe(owner)) {
@@ -674,7 +674,7 @@ class RedisRunJournal implements RunJournal {
       // Claim marker) has nothing in the envelope's r/k fields, so it never reached byRun above and was
       // Absent from every listing — and therefore from sweepRuns too, leaving its persisted prompt
       // Outside the retention window. Register it from the key text, with genuinely zero counts.
-      const owner = runIdOfKey(rawKey);
+      const owner = runIdOfKey(rawKey, e.v);
       if (owner) {
         const cur = byRun.get(owner);
         if (!cur) byRun.set(owner, { m: 0, t: 0, s: false, c0: e.t });
