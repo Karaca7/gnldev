@@ -26,6 +26,64 @@ function requireListKeys(journal: Journal): NonNullable<Journal['listKeys']> {
 }
 
 /**
+ * The workflow run-registry key, derived exactly the way @gnldev/workflow's `statusKey` WRITES it
+ * (`wfrun:<runId>`). Mirrored rather than imported: this package stays structurally decoupled from
+ * @gnldev/workflow (see registry.ts's WorkflowLike JSDoc), and the same mirroring already happens in
+ * registry.ts's FLOW-08 comment and its tests. The record is deliberately NOT under `<runId>:` — a
+ * top-level key so ONE prefix scan enumerates every workflow run — which is precisely why the
+ * `${runId}:` deletes in purgeRun never reached it.
+ */
+const workflowStatusKey = (runId: string) => `wfrun:${runId}`;
+
+/**
+ * Deletes ONE key on a port that only offers PREFIX deletion. `wfrun:<runId>` ends where the runId
+ * ends, so `deletePrefix('wfrun:r-1')` also takes `wfrun:r-10` — a DIFFERENT run's record, and that
+ * boundary is the property purge.test.ts exists to protect. Extension neighbors are therefore read
+ * back and rewritten around the delete. The rewrite is sound because the value is the one just read
+ * and the record is an advisory mirror (@gnldev/workflow's `putStatus` is best-effort; the
+ * WorkflowResult return value is the source of truth) — a status transition landing inside the window
+ * loses one advisory update, which the run's next transition overwrites.
+ *
+ * Without listKeys the neighbors cannot be seen at all, so the delete is attempted only when the EXACT
+ * record exists: a purge can then never turn a runId that owns no record into a prefix sweep of other
+ * runs' records. The remaining case (the record exists AND a longer runId extends it on a journal with
+ * no listKeys) is stated, not hidden — every adapter shipped here provides listKeys.
+ */
+async function deleteExactKey(journal: Journal, key: string): Promise<number> {
+  const del = requireDelete(journal);
+  if ((await journal.get(key)) === undefined) return 0;
+  const lk = journal.listKeys;
+  if (typeof lk !== 'function') return del(key);
+  const neighbors: Array<[string, unknown]> = [];
+  for (const k of await lk.call(journal, key)) {
+    if (k === key) continue;
+    neighbors.push([k, await journal.get(k)]);
+  }
+  const deleted = await del(key);
+  for (const [k, value] of neighbors) {
+    if (value !== undefined) await journal.put(k, value);
+  }
+  return Math.max(0, deleted - neighbors.length);
+}
+
+/**
+ * Does a DERIVED child runId actually have a trace? Keys first, because listKeys sees a workflow
+ * child's `<runId>:wf:<step>` records and readRun cannot (they are not `:model:`/`:tool:` entries, so
+ * parseJournalKey is blind to them by design). The run-registry record is the last probe: a workflow
+ * whose steps all live behind a suspend, or one built with no steps at all, has written nothing else.
+ */
+async function hasTrace(journal: Journal & Partial<JournalReader>, runId: string): Promise<boolean> {
+  const lk = journal.listKeys;
+  const rr = journal.readRun;
+  if (typeof lk === 'function') {
+    if ((await lk.call(journal, `${runId}:`)).length > 0) return true;
+  } else if (typeof rr === 'function' && (await rr.call(journal, runId)).length > 0) {
+    return true;
+  }
+  return (await journal.get(workflowStatusKey(runId))) !== undefined;
+}
+
+/**
  * 1.1: BEFORE the run is deleted, SUBTRACT any cost that may have been added to the counter (H4:
  * Otherwise `__usage__` goes stale after purge — the deleted run's cost keeps being counted as a
  * Ghost). Only subtracted if the `usage-counted` marker EXISTS (i.e. it was actually added to the
@@ -73,6 +131,14 @@ async function uncountUsage(journal: Journal & Partial<JournalReader>, runId: st
  *   Are read from the parent's tool entries (readRun), and every `agent:<tcid>` child with a trace in
  *   The journal is recursed into. If readRun is unavailable, this discovery is skipped (best-effort —
  *   Documented legacy behavior).
+ * **Workflow-as-tool children** (`wf:<runId>:<tcid>`, registry.ts's buildWorkflowTools): derived from
+ *   The SAME tool entries, with the same both-shapes rule. These used to outlive their parent
+ *   Entirely — a purged run left the workflow child's step outputs and its `wfrun:` registry record
+ *   Behind, advertising a run whose parent no longer exists.
+ *
+ * **Run-registry record** (`wfrun:<runId>`): top-level by design, so no `<runId>:` prefix delete could
+ * Reach it. Deleted for THIS run — which covers nested workflow children too, since the cascade
+ * Recurses into them and each recursion deletes its own.
  *
  * Cycle safety: the same runId is processed once per purge chain (`seen`). GDPR implication: parent
  * Purge no longer orphans sub-agent output (which may contain PII) at ANY level.
@@ -95,14 +161,16 @@ export async function purgeRun(
     for (const e of await rr.call(journal, runId)) {
       if (e.kind !== 'tool') continue;
       const tcid = e.key.slice(e.key.lastIndexOf(':tool:') + ':tool:'.length);
-      // Both shapes: the parent-scoped id a sub-agent uses now, and the bare legacy one still in
-      // Journals written before it was scoped — a purge that misses either leaves orphaned PII.
-      for (const child of new Set([nestedAgentRunId(runId, tcid), `agent:${tcid}`])) {
-        const exists =
-          typeof lk === 'function'
-            ? (await lk.call(journal, `${child}:`)).length > 0
-            : (await rr.call(journal, child)).length > 0;
-        if (exists) total += await purgeRun(journal, child, seen);
+      // Both KINDS of nested run (sub-agent and workflow-as-tool) in both SHAPES: the parent-scoped id
+      // They use now, and the bare legacy one still in journals written before it was scoped — a purge
+      // That misses any of them leaves orphaned PII.
+      for (const child of new Set([
+        nestedAgentRunId(runId, tcid),
+        `agent:${tcid}`,
+        nestedAgentRunId(runId, tcid, 'wf'),
+        `wf:${tcid}`,
+      ])) {
+        if (await hasTrace(journal, child)) total += await purgeRun(journal, child, seen);
       }
     }
   }
@@ -120,6 +188,7 @@ export async function purgeRun(
   total += await del(runKeys.memAppended(runId)); // full key = its own prefix
   total += await del(runKeys.memUserAppended(runId)); // write-ahead marker — same lifecycle as memAppended
   total += await del(`net:${runId}:`); // blanket cascade for journals without listKeys (direct level)
+  total += await deleteExactKey(journal, workflowStatusKey(runId)); // top-level, so the prefixes above miss it
   return total;
 }
 

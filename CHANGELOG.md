@@ -90,6 +90,15 @@ would be worse than saying that.
   local one, and against the tool's own declared `timeoutMs` rather than a flat 30s — a tool that
   declared two minutes was being declared crashed at thirty seconds and its side effect run alongside
   itself.
+- **A GDPR purge walked past workflow children.** `purgeRun` cascaded into sub-agent runs and stopped
+  there, so a parent that had started a workflow as a tool was deleted *around* its child: the
+  workflow's journaled step outputs — prompts, tool results, whatever personal data flowed through
+  them — stayed behind under a `wf:` namespace nothing would ever sweep again. Both nested id shapes are
+  followed now, the parent-scoped one and the bare pre-scoping one. The top-level `wfrun:` run-registry
+  record goes with it (it is deliberately not under `<runId>:`, so every prefix delete had been missing
+  it, and a purged run kept advertising itself — suspend reason and waitId included — in
+  `listWorkflowRuns`). That key ends where the runId ends, so it is deleted neighbour-safely: purging
+  `r-1` does not take `r-10`'s record with it.
 - Every documented code sample is typechecked in CI (`pnpm check:docs`), which caught a quickstart that
   had never compiled.
 
@@ -105,9 +114,6 @@ would be worse than saying that.
   stays outside listings and retention on those engines (redis/in-memory derive at read time and
   self-heal). If this matters for a database, `checkSchema`/a manual `:input`-scan backfill is the
   path.
-- **Workflow (`wf:`) children are not part of the purge cascade** — a pre-existing gap the audit
-  surfaced: purging a parent run does not purge a workflow-as-tool child's journal. On the backlog.
-
 ### Changed
 
 - `RunSummary.status` is now `'completed' | 'suspended' | 'failed' | 'running'`. A TypeScript `switch`

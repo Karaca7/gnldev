@@ -224,3 +224,92 @@ describe('purgeRun agent-tool cascade (H5)', () => {
     expect(await journal.readRun('agent:tcA')).toEqual([]);
   });
 });
+
+describe('purgeRun workflow-as-tool cascade', () => {
+  it('workflow-as-tool child (`wf:<parent>:<tcid>`) is cascaded, registry record and all', async () => {
+    // The agent cascade above stopped at `agent:` children, so a parent that started a WORKFLOW as a
+    // tool was purged around its child: the workflow's step outputs and its top-level `wfrun:` record
+    // survived the parent that owned them. @gnldev/durable stays structurally decoupled from
+    // @gnldev/workflow (see registry.ts's WorkflowLike JSDoc), so the workflow below writes what the
+    // real engine writes — a journaled step output under `<runId>:wf:<stepId>` (workflow.ts's runStep)
+    // and the `wfrun:<runId>` status mirror (its putStatus) — without importing that package.
+    const journal = new InMemoryJournal();
+    const { toolCallResult, countToolResults } = await import('./mock.js');
+    const parentModel = createMockModel(async ({ prompt }: any) =>
+      countToolResults(prompt) === 0
+        ? toolCallResult('workflow_onboarding', 'call-w1', { input: { orderId: '8812' } })
+        : finalTextResult('done'),
+    );
+    const gnl = createGnl({
+      journal,
+      workflows: {
+        onboarding: {
+          build: () => [{ id: 'collect' }],
+          run: async () => ({}),
+          async runResumable(_input: unknown, ctx: { runId: string; journal: any }) {
+            await ctx.journal.put(`${ctx.runId}:wf:collect`, { customer: 'secret personal data' });
+            await ctx.journal.put(`wfrun:${ctx.runId}`, { runId: ctx.runId, status: 'completed', updatedAt: Date.now() });
+            return { status: 'completed' as const, output: { shipped: true } };
+          },
+        },
+      },
+      agents: { clerk: { model: parentModel, workflows: ['onboarding'] } },
+    });
+    // NEIGHBORS in the same namespace: an unrelated parent's workflow child, and a runId that merely
+    // EXTENDS the child's (`call-w1` vs `call-w10`) — the registry key has no terminator after the
+    // runId, so a prefix delete of the child's record would take this one with it.
+    await journal.put('wf:p-other:call-w1:wf:collect', { keep: true });
+    await journal.put('wfrun:wf:p-other:call-w1', { runId: 'wf:p-other:call-w1', status: 'completed' });
+    await journal.put('wfrun:wf:p-wf:call-w10', { runId: 'wf:p-wf:call-w10', status: 'completed' });
+
+    await gnl.run('clerk', { runId: 'p-wf', prompt: 'onboard order 8812' });
+
+    // Precondition: the workflow really ran durably under the parent-scoped nested id.
+    const child = 'wf:p-wf:call-w1';
+    expect(await journal.get(`${child}:wf:collect`)).toBeDefined();
+    expect(await journal.get(`wfrun:${child}`)).toBeDefined();
+
+    await purgeRun(journal, 'p-wf');
+
+    expect(await journal.listKeys('p-wf:')).toEqual([]);
+    expect(await journal.listKeys(`${child}:`)).toEqual([]); // no orphaned step output
+    expect(await journal.get(`wfrun:${child}`)).toBeUndefined(); // and it stops advertising itself
+    expect(await journal.get('wf:p-other:call-w1:wf:collect')).toBeDefined();
+    expect(await journal.get('wfrun:wf:p-other:call-w1')).toBeDefined();
+    expect(await journal.get('wfrun:wf:p-wf:call-w10')).toBeDefined(); // r-1 did not take r-10
+  });
+
+  it('legacy bare `wf:<toolCallId>` children are cascaded too; another parent\'s child REMAINS', async () => {
+    const journal = new InMemoryJournal();
+    // Synthetic, exact schema match — the pre-parent-scoping shape still sitting in older journals:
+    // p4's tool is tcW → the workflow ran as `wf:tcW`, with a suspend reason in its registry record.
+    await journal.put(runKeys.model('p4', 0), { content: [] });
+    await journal.put(runKeys.tool('p4', 'tcW'), { status: 'succeeded', output: { suspended: true } });
+    await journal.put('wf:tcW:wf:review', { applicant: 'PII in a step output' });
+    await journal.put('wfrun:wf:tcW', { runId: 'wf:tcW', status: 'suspended', reason: 'needs a manager' });
+    // NEIGHBOR: another parent's workflow child — must not be touched.
+    await journal.put('wf:tcOther:wf:review', { applicant: 'stays' });
+    await journal.put('wfrun:wf:tcOther', { runId: 'wf:tcOther', status: 'completed' });
+
+    await purgeRun(journal, 'p4');
+    expect(await journal.listKeys('wf:tcW:')).toEqual([]);
+    expect(await journal.get('wfrun:wf:tcW')).toBeUndefined();
+    expect(await journal.get('wf:tcOther:wf:review')).toBeDefined();
+    expect(await journal.get('wfrun:wf:tcOther')).toBeDefined();
+  });
+
+  it('purging a workflow run of its own drops its registry record, without touching the r-10 neighbor', async () => {
+    // Same key shape reached from the other direction: `purgeRun` on a TOP-LEVEL workflow run. The
+    // record is not under `<runId>:`, so every prefix delete in purgeRun used to miss it and a swept
+    // run kept showing up in listWorkflowRuns — with its suspend reason and waitId still readable.
+    const journal = new InMemoryJournal();
+    await journal.put('r-1:wf:review', { applicant: 'personal data' });
+    await journal.put('wfrun:r-1', { runId: 'r-1', status: 'suspended', waitId: 'manager', reason: 'personal data' });
+    await journal.put('wfrun:r-10', { runId: 'r-10', status: 'completed' });
+
+    await purgeRun(journal, 'r-1');
+    expect(await journal.get('wfrun:r-1')).toBeUndefined();
+    expect(await journal.get('r-1:wf:review')).toBeUndefined();
+    expect(await journal.get('wfrun:r-10')).toBeDefined();
+  });
+});

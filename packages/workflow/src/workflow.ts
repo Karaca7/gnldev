@@ -61,7 +61,9 @@ const canceledKey = (runId: string) => `${runId}:wf:_canceled`;
  * Cannot offer (no suffix scans). Same pattern precedent as @gnldev/durable's `xrun:` cross-run keys:
  * Invisible to parseJournalKey (not part of any single run's timeline) and org-prefixed automatically
  * By `withOrg` (it prefixes ALL keys unconditionally) → organization isolation is preserved.
- * Cleanup note (same as xrun:): run-retention sweeps that delete `<runId>:*` do NOT touch this key —
+ * Cleanup note (same as xrun:): a `<runId>:*` prefix delete does NOT touch this key — @gnldev/durable's
+ * `purgeRun` deletes it for the run it purges (and for the nested workflow children it cascades into),
+ * neighbor-safely; anything sweeping the journal itself must handle it.
  * Purge explicitly via `deletePrefix('wfrun:')` (all) — but BEWARE the per-run form:
  * `deletePrefix('wfrun:<runId>')` is PREFIX-matched, so runId 'r1' would also sweep 'r10'/'r1x'
  * (there is no trailing terminator in this key shape). Safe only when runIds cannot share prefixes
