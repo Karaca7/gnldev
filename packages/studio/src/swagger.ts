@@ -121,7 +121,8 @@ export function openapiSpec(apiBase = '') {
  * It used to load `swagger-ui-dist@5` — a FLOATING major — from unpkg, with no integrity check and no
  * CSP. Anyone able to publish a 5.x, or to tamper with what unpkg served, would have been running code
  * In that position. Pinned to an exact version and bound by SRI, the browser now refuses any bytes that
- * Are not the ones these hashes describe; the CSP below then confines the page to that single origin.
+ * Are not the ones these hashes describe; the CSP below then admits, as script, only that one file (by
+ * Its hash) and the one nonced bootstrap.
  *
  * TO UPGRADE: change SWAGGER_UI_VERSION and recompute BOTH hashes, or the page will (correctly) refuse
  * To load:
@@ -139,15 +140,30 @@ const SWAGGER_UI_ORIGIN = 'https://unpkg.com';
 
 /**
  * The page's own CSP, carried in a meta tag so it applies wherever the HTML is served from (the studio
- * Mounts /swagger on two routes) without depending on a proxy to add a header. `script-src` admits only
- * The pinned CDN plus the one inline bootstrap below — which is why that bootstrap carries a nonce.
- * `connect-src 'self'` keeps the spec fetch (and any "try it out" call) on this origin: injected code
- * Cannot exfiltrate to an outside host. `object-src`/`base-uri` 'none' close the usual bypasses.
+ * Mounts /swagger on two routes) without depending on a proxy to add a header. `connect-src 'self'`
+ * Keeps the spec fetch (and any "try it out" call) on this origin: injected code cannot exfiltrate to
+ * An outside host. `object-src`/`base-uri` 'none' close the usual bypasses.
+ *
+ * `script-src` names no origin at all. An origin allowlist (`script-src https://unpkg.com`) would have
+ * Admitted ANY path on unpkg — an injected `<script src="https://unpkg.com/…">` runs, because an origin
+ * Source does not require integrity. Nothing can inject here today (the template is static and apiBase
+ * Is operator config), so this is defence in depth rather than a live hole; it costs one constant.
+ * Instead the policy carries the bundle's own sha384 as a CSP3 hash-source. For an EXTERNAL script a
+ * Hash-source only matches when the tag carries an `integrity` attribute whose digest equals it (CSP3
+ * "external hashes"), so the tag below must keep its integrity= — the same hash, named once.
+ *
+ * Deliberate asymmetry: `style-src` still names the origin. Hash-sources for external stylesheets have
+ * Spottier CSP3 support, and a stylesheet cannot reach the bearer token the way a script can.
+ *
+ * Browser support: hash-sources for external scripts land in current Chrome/Firefox/Safari. A browser
+ * That does not implement them ignores the hash, matches nothing, and BLOCKS the bundle — the page
+ * Fails closed (no Swagger UI, the spec still readable at /openapi.json) rather than open. For an admin
+ * Page holding the token that is the right side to fail on.
  */
 function swaggerCsp(nonce: string): string {
   return [
     "default-src 'none'",
-    `script-src ${SWAGGER_UI_ORIGIN} 'nonce-${nonce}'`,
+    `script-src '${SWAGGER_UI_JS_SRI}' 'nonce-${nonce}'`,
     `style-src ${SWAGGER_UI_ORIGIN} 'unsafe-inline'`,
     "img-src 'self' data:",
     "font-src 'self' data:",

@@ -54,12 +54,42 @@ describe('the swagger page cannot be turned into an admin-token exfiltrator', ()
     expect(csp).toContain("connect-src 'self'");
     expect(csp).toContain("object-src 'none'");
     expect(csp).toContain("base-uri 'none'");
-    // script-src admits the pinned CDN and the nonced bootstrap, and nothing else.
+    // script-src admits the pinned bundle (by hash) and the nonced bootstrap, and nothing else.
     const scriptSrc = csp!.split('; ').find((d) => d.startsWith('script-src'))!;
-    expect(scriptSrc).toContain('https://unpkg.com');
+    expect(scriptSrc).toMatch(/'sha384-[A-Za-z0-9+/=]+'/);
     expect(scriptSrc).not.toContain("'unsafe-inline'");
     expect(scriptSrc).not.toContain("'unsafe-eval'");
     expect(scriptSrc).not.toContain('*');
+  });
+
+  it('script-src names the bundle by hash and the nonce — never the whole CDN origin', () => {
+    // An origin source admits every path on it: `script-src https://unpkg.com` would have let an
+    // injected <script src="https://unpkg.com/…"> run with no integrity at all. Nothing can inject
+    // into this template today, so this is defence in depth — but a hash-source costs nothing and
+    // narrows the allowance from "an origin" to "this one file". style-src may still name the origin
+    // (external-stylesheet hashes are less widely supported, and a stylesheet cannot read the token),
+    // so this asserts on the parsed script-src directive rather than the CSP string as a whole.
+    const out = html();
+    const csp = /<meta http-equiv="Content-Security-Policy" content="([^"]+)">/.exec(out)![1];
+    const scriptSrc = csp.split('; ').find((d) => d.startsWith('script-src'))!;
+    const nonce = /<script nonce="([^"]+)">/.exec(out)![1];
+    expect(scriptSrc).toContain(`'nonce-${nonce}'`);
+    expect(scriptSrc, 'an origin source would admit any path on it').not.toContain('unpkg.com');
+    expect(csp.split('; ').find((d) => d.startsWith('style-src'))).toContain('unpkg.com');
+  });
+
+  it('the script-src hash IS the integrity attribute — one hash, not two that can drift', () => {
+    // CSP3 matches a hash-source against an EXTERNAL script only when the tag carries an integrity
+    // attribute with that same digest. Two literals would let a version bump update one and leave the
+    // other: the page would then silently fail closed (bundle blocked) or, worse, look fine locally.
+    const out = html();
+    const csp = /<meta http-equiv="Content-Security-Policy" content="([^"]+)">/.exec(out)![1];
+    const scriptSrc = csp.split('; ').find((d) => d.startsWith('script-src'))!;
+    const integrity = /<script[^>]*swagger-ui-bundle\.js"[^>]*integrity="([^"]+)"/.exec(out)?.[1];
+    expect(integrity, 'the bundle tag must carry integrity, or the hash-source matches nothing').toMatch(
+      /^sha384-[A-Za-z0-9+/=]+$/,
+    );
+    expect(scriptSrc).toContain(`'${integrity}'`);
   });
 
   it('nonces the inline bootstrap, with a fresh value per response', () => {

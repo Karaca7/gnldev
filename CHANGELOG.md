@@ -30,7 +30,10 @@ would be worse than saying that.
   unpkg with no integrity attribute and no CSP, on the same origin whose `localStorage` holds the
   Studio bearer token — so publishing any `5.x`, or tampering with what unpkg served, put attacker code
   in reach of it. Pinned to an exact version with SRI on both assets, plus a page-level CSP whose
-  `connect-src 'self'` means injected code cannot post the token anywhere.
+  `connect-src 'self'` means injected code cannot post the token anywhere. Its `script-src` now names
+  the bundle by its sha384 (a CSP3 hash-source, the same hash the tag's `integrity` carries) instead of
+  allowlisting the whole unpkg origin, which would have admitted any path on it with no integrity —
+  defence in depth, not a live hole, since the page's markup is static.
 
 ### Added
 
