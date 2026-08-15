@@ -58,7 +58,9 @@ jobs:
           declare -A seen=()
           bad=0
           for pkg in packages/*/package.json; do
-            [ "$(jq -r '.private // false' "$pkg")" = "true" ] && continue
+            # `if .private then` rather than `== "true"`: pnpm skips on truthiness, so `"private": 1`
+            # would be held back from publishing while a string-equality test called it publishable.
+            [ "$(jq -r 'if .private then "true" else "false" end' "$pkg")" = "true" ] && continue
             name=$(jq -r '.name' "$pkg"); version=$(jq -r '.version' "$pkg")
             if [ "$version" = "0.0.0" ]; then
               echo "::error file=$pkg::$name is still at 0.0.0"; bad=1

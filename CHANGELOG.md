@@ -82,6 +82,15 @@ would be worse than saying that.
 
 ### Fixed
 
+- **`pnpm check:versions` now covers the packages it was waving through.** `@gnldev/auth-ee` is
+  `private` but distributed — packed and shipped to customers under licence — so the unconditional
+  private exemption let the paid tier sit at a different version from the `@gnldev/auth` it plugs into,
+  which is the shared-format mismatch lockstep exists to prevent; a private package that declares
+  `files` (a publish-only field) is now in the set. The guard also refuses a prerelease version, because
+  `pnpm -r publish` passes no `--tag` and would make `0.2.0-rc.1` the `latest` that every
+  `npm i @gnldev/*` installs — deliberate rc pipelines pass `GNL_ALLOW_PRERELEASE=1`, so the decision is
+  recorded in the invocation. A malformed `package.json` now names its path instead of dying with a
+  stack that named no file.
 - **The third-party notices are reachable from the running Studio** (`/THIRD-PARTY-NOTICES.txt`, linked
   in the sidebar). They were generated into `dist/` and served by nothing, so they 404'd — and the
   bundle inlines ~220 packages whose licences, the Geist fonts' OFL-1.1 most explicitly, ask that the
