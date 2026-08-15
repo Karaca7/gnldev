@@ -154,6 +154,62 @@ async function warnOnModelDivergence(
   }
 }
 
+/** The journaled shape of a streaming step; `partial: true` is only ever set by the write-ahead copy. */
+type StreamStepRecord = { parts?: unknown[]; rest?: Record<string, unknown>; partial?: boolean };
+
+/**
+ * Memo for the partial-replay warning, keyed on the journal object so it cannot outlive it (same
+ * shape as the fallback warnings in journal.ts/limits.ts). The inner set only grows with genuinely
+ * partial replays — one entry per crashed step — not per run.
+ */
+const partialReplayWarned = new WeakMap<object, Set<string>>();
+
+/**
+ * A replayed step can be a TRUNCATED one, and nothing used to say so.
+ *
+ * The streaming recorder below writes a write-ahead copy of the step the moment a tool call arrives
+ * (`{ parts, rest, partial: true }`, cut off at that chunk — see stream-crash-window.test.ts). That
+ * copy is what a crash-resume reads, and replaying it is the RIGHT call: it is precisely what stops
+ * the resume from re-planning and running the side effect a second time. But it is NOT what the model
+ * finished saying. Everything streamed after the tool call was never journaled, so the resumed
+ * assistant turn ends at the tool call — no closing text, no finish reason, no usage.
+ *
+ * Serving that as truth without a word is how an operator ends up staring at an assistant turn with
+ * its tail missing and nothing anywhere explaining why. So: replay it, and SAY SO — once per
+ * (runId, step), naming what the record concretely lacks rather than a generic 'partial data' line.
+ */
+function warnOnPartialReplay(ctx: DurableCtx, hit: StreamStepRecord, key: string, step: number): void {
+  if (hit?.partial !== true) return;
+  let seen = partialReplayWarned.get(ctx.journal);
+  if (!seen) {
+    seen = new Set<string>();
+    partialReplayWarned.set(ctx.journal, seen);
+  }
+  if (seen.has(key)) return;
+  seen.add(key);
+
+  const parts = Array.isArray(hit.parts) ? (hit.parts as Array<{ type?: string }>) : [];
+  const count = (type: string) => parts.filter((p) => p?.type === type).length;
+  // Name what a flushed record would have carried and this one does not — the tail of a stream is
+  // exactly the `finish` part plus whatever blocks were still open when the write-ahead fired.
+  const missing: string[] = [];
+  if (count('finish') === 0) missing.push('the `finish` part (finishReason + usage for this step)');
+  const openText = count('text-start') - count('text-end');
+  if (openText > 0) missing.push(`the end of ${openText} text block(s) still open at the cut`);
+  const openReasoning = count('reasoning-start') - count('reasoning-end');
+  if (openReasoning > 0) missing.push(`the end of ${openReasoning} reasoning block(s) still open at the cut`);
+
+  console.warn(
+    `@gnldev/durable: replaying a PARTIAL model step — '${key}' (run '${ctx.runId}', step ${step}) was journaled ` +
+      'mid-stream by the write-ahead checkpoint on its tool call, not at stream end: the record carries ' +
+      `\`partial: true\` and ${parts.length} chunk(s). Absent from it: ` +
+      `${missing.length > 0 ? missing.join(', ') : 'whatever followed the tool call'}. ` +
+      'Whatever the model streamed AFTER its tool call was never journaled, so this resumed turn ends at the ' +
+      'tool call. The tool calls it DID make are recorded — which is why this record is replayed instead of ' +
+      're-planned (re-planning would re-run the side effect). Start a fresh runId if you need a complete turn.',
+  );
+}
+
 /**
  * (entry-point switch breaks replay silently): a model step is journaled in one of TWO shapes —
  * `wrapGenerate` writes the raw doGenerate result (has `content`, NO `.parts`); `wrapStream` writes
@@ -250,11 +306,13 @@ export function withDurableModel(model: LanguageModelV2, ctx: DurableCtx, opts?:
       const key = runKeys.model(ctx.runId, step);
       const claimKey = runKeys.proc(ctx.runId, `__gnl_model_claim:${step}`);
       const reqHash = safeRequestHash(params);
-      const hit = await ctxGet<{ parts: any[]; rest: Record<string, unknown> }>(ctx, key);
+      const hit = await ctxGet<{ parts: any[]; rest: Record<string, unknown>; partial?: boolean }>(ctx, key);
       if (hit !== undefined) {
         // Reject a generate-shaped record (no `.parts`) replayed through the stream path —
         // Otherwise simulateReadableStream chokes on `undefined` chunks (silent/cryptic broken stream).
         assertReplayEntryPoint(hit, 'stream', key);
+        // A write-ahead (truncated) record is still replayed — but never in silence (see warnOnPartialReplay).
+        warnOnPartialReplay(ctx, hit, key, step);
         // SAME divergence check as generate (see warnOnModelDivergence).
         await warnOnModelDivergence(ctx, claimKey, key, reqHash, 'model stream step');
         step++;
@@ -308,14 +366,31 @@ export function withDurableModel(model: LanguageModelV2, ctx: DurableCtx, opts?:
       // stream, which nothing reads today but which is the only trace a crash leaves. The tool-call
       // write is additive, not a replacement — the two answer different questions.
       const CHECKPOINT_EVERY = 10;
+      // A write-ahead put that fails silently reopens the exact window this checkpoint was added to
+      // close — the caller's stream keeps flowing and nothing anywhere records that the step is no
+      // longer recoverable. Warn once per STREAM, not per chunk: a step can carry many tool calls,
+      // and a journal that is down is down for all of them (one line per chunk is noise, not signal).
+      let writeAheadFailureWarned = false;
       const recorder = new TransformStream<any, any>({
         async transform(chunk, controller) {
           parts.push(chunk);
           if (chunk?.type === 'tool-call') {
             try {
               await ctx.journal.put(runKeys.model(ctx.runId, myStep), stampFormat({ parts: parts.slice(), rest, partial: true }));
-            } catch {
-              /* best-effort: a journal hiccup must not stop the stream the caller is reading */
+            } catch (err) {
+              // Best-effort stays best-effort: a journal hiccup must not stop the stream the caller
+              // is reading. But it is said out loud.
+              if (!writeAheadFailureWarned) {
+                writeAheadFailureWarned = true;
+                console.warn(
+                  `@gnldev/durable: the mid-stream write-ahead checkpoint FAILED for run '${ctx.runId}' step ${myStep} ` +
+                    `('${runKeys.model(ctx.runId, myStep)}'). The stream is NOT broken (this write is best-effort), but until ` +
+                    'flush() lands the complete record, a crash after a tool call in this step leaves it unjournaled — the ' +
+                    'resume re-plans, the provider mints a fresh toolCallId, and a side effect can run a SECOND time. ' +
+                    'Further failures on this stream are not repeated. Cause:',
+                  err,
+                );
+              }
             }
           } else if (parts.length % CHECKPOINT_EVERY === 0) {
             // Idempotent: the SAME key is overwritten with all chunks so far (overwrite, not append),

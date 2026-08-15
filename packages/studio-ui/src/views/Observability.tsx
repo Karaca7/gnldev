@@ -318,9 +318,11 @@ export function Observability() {
           />
           <select aria-label={t('statusFilterAriaLabel')} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="rounded-md border border-input bg-background px-2 py-1 text-xs">
             <option value="all">{statusLabel('all')}</option>
+            <option value="running">{statusLabel('running')}</option>
             <option value="completed">{statusLabel('completed')}</option>
             <option value="suspended">{statusLabel('suspended')}</option>
             <option value="failed">{statusLabel('failed')}</option>
+            <option value="canceled">{statusLabel('canceled')}</option>
           </select>
           <button
             type="button"

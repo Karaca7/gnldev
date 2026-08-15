@@ -102,6 +102,12 @@ would be worse than saying that.
 - **A crash between "the tool ran" and "the stream ended" could run a side effect twice.** The streamed
   model step was journaled in `flush()`, after tool execution, so a resume re-planned and a fresh
   toolCallId slipped past the per-call gate.
+- **The write-ahead copy that closes that window no longer works in silence.** It is cut off at the
+  tool call — no closing text, no finish reason, no usage — yet a resume replayed it as the turn the
+  model had finished, and a journal that rejected the write had its error swallowed, quietly reopening
+  the very window the checkpoint exists to close. Both now say so on `console.warn`, naming the run and
+  step (once per replayed step, once per stream); replay still happens and the stream is still never
+  broken, because re-planning would be the worse outcome.
 - **Claim staleness is measured against the shared clock** (`journal.now()`) rather than each worker's
   local one, and against the tool's own declared `timeoutMs` rather than a flat 30s — a tool that
   declared two minutes was being declared crashed at thirty seconds and its side effect run alongside
