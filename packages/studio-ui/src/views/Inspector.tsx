@@ -51,7 +51,7 @@ export function Inspector() {
   const navigate = useNavigate();
   useLiveRuns();
   const caps = useCapabilities();
-  const [statusF, setStatusF] = useState<'all' | 'completed' | 'suspended' | 'failed'>('all');
+  const [statusF, setStatusF] = useState<'all' | 'completed' | 'suspended' | 'failed' | 'running'>('all');
   // The filter tabs printed the raw enum ('completed', 'suspended') in every language — only 'all' was
   // Ever translated. Same vocabulary as StatusBadge, so a tab and a row never disagree on a word.
   const statusLabel = useStatusLabel();
@@ -163,7 +163,7 @@ export function Inspector() {
             className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none"
           />
           <div className="flex items-center gap-1">
-            {(['all', 'completed', 'suspended', 'failed'] as const).map((s) => (
+            {(['all', 'running', 'completed', 'suspended', 'failed'] as const).map((s) => (
               <button
                 key={s}
                 type="button"
@@ -344,7 +344,7 @@ function RunRow({ run, metricsById, active, onClick }: { run: RunSummary; metric
         active ? 'bg-muted' : 'hover:bg-muted/60')}
     >
       <span aria-hidden className={cn('mt-1.5 h-2 w-2 shrink-0 rounded-full',
-        failed ? 'bg-destructive' : suspended ? 'bg-warning' : 'bg-success/60')} />
+        failed ? 'bg-destructive' : suspended ? 'bg-warning' : run.status === 'running' ? 'bg-info' : 'bg-success/60')} />
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
           <span className="truncate text-[13px] font-semibold text-foreground">{label}</span>

@@ -43,6 +43,20 @@ describe('exporting a run that failed', () => {
     expect(root.attributes['gnl.status']).toBe('completed');
   });
 
+  it('reports a run that never ended as UNSET/running — never OK', async () => {
+    const journal = new InMemoryStorage().runs;
+    // Abandoned mid-work: the write-ahead landed, no terminal ever did (the SIGKILL case).
+    const never = { ...base, doGenerate: () => new Promise(() => {}) } as any;
+    void runDurable({ runId: 'stuck', journal, model: never, prompt: 'x' } as any).catch(() => {});
+    await new Promise((r) => setTimeout(r, 30));
+
+    const root = await rootSpanOf(journal, 'stuck');
+    // OTel's OK means "ended fine"; this run has not ended. Exporting it as OK was the dashboard
+    // showing green precisely while the process was dead.
+    expect(root.status.code).not.toBe(SpanStatusCode.OK);
+    expect(root.attributes['gnl.status']).toBe('running');
+  });
+
   it('falls back to the old derivation for a run written before outcomes existed', async () => {
     const journal = new InMemoryStorage().runs;
     await runDurable({ runId: 'legacy', journal, model: good, prompt: 'x' } as any);

@@ -44,13 +44,14 @@ export const runsCommand: Command = {
   name: 'runs',
   group: 'inspect',
   summary: 'List runs (status, steps, cost)',
-  usage: 'gnl runs [--status completed|suspended|failed] [--limit N] [--json] [--config gnl.config.ts]',
+  usage: 'gnl runs [--status completed|suspended|failed|running] [--limit N] [--json] [--config gnl.config.ts]',
   async run(ctx) {
     const status = flag(ctx.argv, 'status');
-    if (status !== undefined && status !== 'completed' && status !== 'suspended' && status !== 'failed') {
-      // 'failed' was added to RunStatus and this line was not widened with it — so the one filter an
-      // operator reaches for when something is wrong was the one the CLI rejected.
-      throw new Error(`--status must be 'completed', 'suspended' or 'failed', got '${status}'`);
+    const STATUSES = ['completed', 'suspended', 'failed', 'running'] as const;
+    if (status !== undefined && !(STATUSES as readonly string[]).includes(status)) {
+      // A list, not a chain of !== — this line has now lagged the vocabulary twice ('failed', then
+      // 'running'); a chain invites the third time, a list shared with the message does not.
+      throw new Error(`--status must be one of ${STATUSES.join(', ')}, got '${status}'`);
     }
     const limitRaw = flag(ctx.argv, 'limit');
     let limit: number | undefined;

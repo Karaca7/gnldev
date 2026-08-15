@@ -60,6 +60,30 @@ describe('GET /runs when the host passes storage.runs as `journal` (the document
     expect(filtered.body.items).toHaveLength(5);
     expect((await hit('/runs?status=suspended')).body.items).toHaveLength(0);
   });
+
+  it('?status=running finds the run that never said it ended', async () => {
+    const journal = pagedJournal();
+    await seed(journal, ['finished']);
+    // A run abandoned mid-work: its write-ahead exists, no terminal ever lands.
+    await journal.put('stuck:input', { _v: 1, at: Date.now(), prompt: 'x' });
+    await journal.put('stuck:model:0', { content: [] });
+    await journal.put('stuck:outcome', { status: 'running', at: Date.now() });
+    const api = createRestApi({ journal, agents: {} } as any);
+    const hit = async (u: string) => {
+      const res = await api.fetch(new Request(`http://x${u}`));
+      return { status: res.status, body: await res.json() as any };
+    };
+
+    const running = await hit('/runs?status=running');
+    expect(running.status).toBe(200);
+    expect(running.body.items.map((r: any) => r.runId)).toEqual(['stuck']);
+    // And the completed bucket does NOT absorb it — the lie this vocabulary exists to end.
+    expect((await hit('/runs?status=completed')).body.items.map((r: any) => r.runId)).toEqual(['finished']);
+    // An unknown value still 400s, and the message teaches the full vocabulary.
+    const bad = await hit('/runs?status=exploded');
+    expect(bad.status).toBe(400);
+    expect(JSON.stringify(bad.body)).toContain('running');
+  });
 });
 
 describe('the org view over a paged journal', () => {

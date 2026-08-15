@@ -113,9 +113,14 @@ export async function exportRun(
   }
 
   const failed = anyError || runFailed;
-  root.setStatus(failed ? { code: SpanStatusCode.ERROR, ...(outcome?.error ? { message: outcome.error } : {}) } : { code: SpanStatusCode.OK });
+  const stillRunning = !failed && outcome?.status === 'running';
+  // A run whose write-ahead has no terminal yet is UNSET, not OK: OTel's OK means "ended fine", and
+  // this run has not ended — exporting mid-flight (or after a crash) must not report a success.
+  root.setStatus(failed
+    ? { code: SpanStatusCode.ERROR, ...(outcome?.error ? { message: outcome.error } : {}) }
+    : stillRunning ? { code: SpanStatusCode.UNSET } : { code: SpanStatusCode.OK });
   // Same precedence as deriveRunStatus in @gnldev/durable: suspended is a live state and wins.
-  root.setAttribute('gnl.status', anySuspended ? 'suspended' : failed ? 'failed' : 'completed');
+  root.setAttribute('gnl.status', anySuspended ? 'suspended' : failed ? 'failed' : stillRunning ? 'running' : 'completed');
   if (runFailed && outcome?.error) root.setAttribute('gnl.error', outcome.error);
   root.end(lastTs > firstTs ? lastTs : firstTs);
 

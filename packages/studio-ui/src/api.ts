@@ -138,11 +138,11 @@ export interface VectorMatch { id: string; text: string; score: number; metadata
 export interface DatasetMeta { id: string; cases: number; description?: string; }
 export interface EvalDatasetResult { datasetId: string; cases: { caseId: string; output: string; scores: Record<string, { score: number; reason?: string }> }[]; aggregate: Record<string, number>; }
 // ThreadId is optional: only present on runs tied to a thread (backend ready — server /runs).
-export interface RunSummary { runId: string; status: 'completed' | 'suspended' | 'failed'; modelSteps: number; toolCalls: number; threadId?: string; agent?: string; }
+export interface RunSummary { runId: string; status: 'completed' | 'suspended' | 'failed' | 'running'; modelSteps: number; toolCalls: number; threadId?: string; agent?: string; }
 /** S4 pagination envelope: GET /runs?limit=&cursor= (newest first). */
 export interface RunsPage { items: RunSummary[]; nextCursor?: string; total: number; }
 /** API-09: optional GET /runs filters (status/agent pushed down server-side; q = runId substring). */
-export interface RunsFilter { status?: 'completed' | 'suspended' | 'failed'; agent?: string; q?: string; }
+export interface RunsFilter { status?: 'completed' | 'suspended' | 'failed' | 'running'; agent?: string; q?: string; }
 /** POST /retention/sweep response (purged is truncated to the first 100 runIds). */
 export interface SweepResult { ok: boolean; scanned: number; purged: string[]; keptSuspended: number; keptNoTs: number; deletedEntries: number; }
 export interface JournalEntry { key: string; runId: string; kind: 'model' | 'tool'; value: unknown; seq: number; ts?: number; }
