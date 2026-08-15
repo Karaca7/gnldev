@@ -53,6 +53,7 @@ describe('SqliteStorage schema tooling', () => {
     // Same drift scenario — dropping only one would leave the newer column's migration unproven.
     raw.exec('ALTER TABLE gnl_runs DROP COLUMN failed');
     raw.exec('ALTER TABLE gnl_runs DROP COLUMN running');
+    raw.exec('ALTER TABLE gnl_runs DROP COLUMN canceled');
     raw.exec('DROP TABLE gnl_counters');
 
     const before = await storage.checkSchema();
@@ -60,7 +61,7 @@ describe('SqliteStorage schema tooling', () => {
     expect(before.missingTables).toEqual(['gnl_counters']);
     // Both added-later columns are reported. `failed` (the run-outcome flag) arrived the same way
     // Suspended_count did, and the introspection picks it up from the DDL without being told.
-    expect(before.missingColumns.map((c) => c.column).sort()).toEqual(['failed', 'running', 'suspended_count']);
+    expect(before.missingColumns.map((c) => c.column).sort()).toEqual(['canceled', 'failed', 'running', 'suspended_count']);
     expect(before.missingColumns.every((c) => c.table === 'gnl_runs')).toBe(true);
 
     const dry = await storage.migrateSchema({ dryRun: true });
@@ -134,7 +135,7 @@ describe('PostgresStorage schema tooling (pg-mem)', () => {
     expect(before.ok).toBe(false);
     // Both added-later columns are reported. `failed` (the run-outcome flag) arrived the same way
     // Suspended_count did, and the introspection picks it up from the DDL without being told.
-    expect(before.missingColumns.map((c) => c.column).sort()).toEqual(['failed', 'running', 'suspended_count']);
+    expect(before.missingColumns.map((c) => c.column).sort()).toEqual(['canceled', 'failed', 'running', 'suspended_count']);
     expect(before.missingColumns.every((c) => c.table === 'gnl_runs')).toBe(true);
     expect(before.missingTables.sort()).toEqual(
       ['gnl_counters', 'gnl_run_journal', 'gnl_threads', 'gnl_messages', 'gnl_working_memory', 'gnl_observations', 'gnl_vectors', 'gnl_work_log', 'gnl_work_kv', 'gnl_cache'].sort(),
@@ -146,6 +147,7 @@ describe('PostgresStorage schema tooling (pg-mem)', () => {
     expect(dry.statements.some((s) => /ALTER TABLE gnl_runs ADD COLUMN IF NOT EXISTS suspended_count/i.test(s))).toBe(true);
     expect(dry.statements.some((s) => /ALTER TABLE gnl_runs ADD COLUMN IF NOT EXISTS failed/i.test(s))).toBe(true);
     expect(dry.statements.some((s) => /ALTER TABLE gnl_runs ADD COLUMN IF NOT EXISTS running/i.test(s))).toBe(true);
+    expect(dry.statements.some((s) => /ALTER TABLE gnl_runs ADD COLUMN IF NOT EXISTS canceled/i.test(s))).toBe(true);
     const stillBefore = await storage.checkSchema();
     expect(stillBefore.ok).toBe(false); // dry-run applied nothing
 

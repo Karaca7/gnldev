@@ -117,17 +117,25 @@ const STATUS_LABEL_KEYS: Record<string, string> = {
 export function StatusBadge({ status }: { status: string }) {
   // Pill-shaped status chip. Running is INFO (cool blue) + a live pulse, deliberately distinct from
   // Completed (success green) — before, both were green and read as the same state. Needs-approval /
-  // Suspended = warning (amber); failed/error/cancelled = destructive (red). Unknown → neutral (never
+  // Suspended = warning (amber); failed/error = destructive (red). Unknown → neutral (never
   // Fail-open to green). Squared mono `Badge` above is kept for DATA tags (model/tool names).
+  //
+  // Cancelled is MUTED, not destructive, and both spellings say so. A run an operator chose to stop
+  // is not an incident; painting it the same red as a 401 is how a list of genuine failures stops
+  // being scannable. And the two spellings had drifted apart the moment `RunStatus` gained 'canceled':
+  // the durable vocabulary spells it with one L, the workflow engine with two, and the same decision
+  // rendered as two different states depending on which page you were on.
   const label = useStatusLabel();
   const s = status.toLowerCase();
   const info = 'bg-info/15 text-info';
+  const muted = 'border border-border bg-muted/40 text-muted-foreground';
   const cls =
     s === 'running' || s === 'in_progress' ? info
     : s === 'suspended' || s === 'needs approval' || s === 'needs_approval' || s === 'pending' ? 'bg-warning/15 text-warning'
-    : s === 'failed' || s === 'error' || s === 'cancelled' ? 'bg-destructive/15 text-destructive'
+    : s === 'canceled' || s === 'cancelled' ? muted
+    : s === 'failed' || s === 'error' ? 'bg-destructive/15 text-destructive'
     : s === 'completed' || s === 'done' || s === 'ok' || s === 'success' ? 'bg-success/15 text-success'
-    : 'border border-border bg-muted/40 text-muted-foreground';
+    : muted;
   const live = s === 'running' || s === 'in_progress';
   return (
     <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium capitalize', cls)}>

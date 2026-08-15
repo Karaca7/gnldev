@@ -17,6 +17,7 @@
 // Safety/compliance reasons and silently reviving the same runId would erase that decision's meaning.
 import type { Journal } from './journal.js';
 import { runKeys } from './journal.js';
+import { runCanceled } from './outcome.js';
 
 /** The cancel flag key — a proc-space record (invisible to the run's timeline), runId-prefixed so
  *  `withOrg` isolates it and run-retention sweeps clean it up with the rest of the run. */
@@ -39,14 +40,25 @@ export class RunCanceledError extends Error {
  * Later run/resume attempt throws `RunCanceledError`. Idempotent (re-canceling keeps the FIRST
  * Record's reason/timestamp — the original decision is the audit-relevant one). Never deletes journal
  * State — the completed prefix stays replayable/inspectable (studio timeline, diff, fork all work).
+ *
+ * Also the ONE place a run's 'canceled' OUTCOME is recorded. This is the choke point — every cancel
+ * Route (server `/runs/:id/cancel?durable`, studio's, a direct call) arrives here, and the flag is what
+ * Makes every RunCanceledError downstream possible — so recording from the throw sites instead would
+ * Mean N racing writers for one fact. It is written AFTER the flag: the flag is what stops the run,
+ * And an outcome saying 'canceled' for a run nothing had actually canceled would be the worse lie.
  */
 export async function cancelAgentRun(journal: Journal, runId: string, opts: { reason?: unknown } = {}): Promise<void> {
   const record = { at: Date.now(), ...(opts.reason !== undefined ? { reason: opts.reason } : {}) };
   if (journal.putIfAbsent) {
     await journal.putIfAbsent(cancelKey(runId), record); // first cancel wins — idempotent
-    return;
+  } else if ((await journal.get(cancelKey(runId))) === undefined) {
+    await journal.put(cancelKey(runId), record);
   }
-  if ((await journal.get(cancelKey(runId))) === undefined) await journal.put(cancelKey(runId), record);
+  // Read back rather than trusting `record`: on a re-cancel this call LOST the claim, and the outcome
+  // must carry the ORIGINAL decision's moment — the same idempotency the flag itself promises. One
+  // extra point-read on a rare operator path.
+  const flag = await agentRunCanceled(journal, runId);
+  await runCanceled(journal, runId, flag?.at ?? record.at);
 }
 
 /** Whether the run carries the durable cancel flag (undefined-safe on journals without the record). */

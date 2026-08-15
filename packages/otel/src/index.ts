@@ -58,6 +58,7 @@ export async function exportRun(
         .get<{ status?: string; error?: string }>(`${runId}:outcome`).catch(() => undefined)
     : undefined;
   const runFailed = outcome?.status === 'failed';
+  const runCanceled = outcome?.status === 'canceled';
   const exporter = opts.exporter ?? (opts.endpoint ? await otlpExporter(opts.endpoint) : new InMemorySpanExporter());
 
   // Deterministic id queues: root traceId + (for the root + each entry) spanId.
@@ -112,15 +113,24 @@ export async function exportRun(
     span.end(end > start ? end : start);
   }
 
-  const failed = anyError || runFailed;
-  const stillRunning = !failed && outcome?.status === 'running';
+  // A cancel is an OPERATOR ACTION, not a system fault, so it decides the run's ending outright — the
+  // outcome record is the authority on HOW a run ended, and an errored entry earlier in a run someone
+  // then chose to stop does not make the stopping a failure. The child span that errored keeps its own
+  // ERROR status, so nothing is hidden; it simply stops being the root's verdict.
+  const failed = !runCanceled && (anyError || runFailed);
+  const stillRunning = !failed && !runCanceled && outcome?.status === 'running';
   // A run whose write-ahead has no terminal yet is UNSET, not OK: OTel's OK means "ended fine", and
   // this run has not ended — exporting mid-flight (or after a crash) must not report a success.
+  // A canceled run is UNSET for the mirror-image reason: it ended, but not WELL enough for OK and not
+  // BADLY enough for ERROR. OTel's semantic conventions reserve ERROR for unexpected endings, and
+  // paging an on-call because an operator cancelled a run is exactly the false alarm that trains
+  // people to ignore the signal. `gnl.status` carries the fact for anyone filtering on it.
   root.setStatus(failed
     ? { code: SpanStatusCode.ERROR, ...(outcome?.error ? { message: outcome.error } : {}) }
-    : stillRunning ? { code: SpanStatusCode.UNSET } : { code: SpanStatusCode.OK });
-  // Same precedence as deriveRunStatus in @gnldev/durable: suspended is a live state and wins.
-  root.setAttribute('gnl.status', anySuspended ? 'suspended' : failed ? 'failed' : stillRunning ? 'running' : 'completed');
+    : stillRunning || runCanceled ? { code: SpanStatusCode.UNSET } : { code: SpanStatusCode.OK });
+  // Same precedence as deriveRunStatus in @gnldev/durable: canceled is terminal and wins over even
+  // suspended (a canceled run's pending approval can never be applied), then suspended is a live state.
+  root.setAttribute('gnl.status', runCanceled ? 'canceled' : anySuspended ? 'suspended' : failed ? 'failed' : stillRunning ? 'running' : 'completed');
   if (runFailed && outcome?.error) root.setAttribute('gnl.error', outcome.error);
   root.end(lastTs > firstTs ? lastTs : firstTs);
 

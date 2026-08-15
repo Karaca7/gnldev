@@ -279,6 +279,13 @@ for (const [name, make, caps] of storages) {
       // running→completed would pass this suite exactly the way the failed collapse once did.
       await b.runs.put('crs5:model:0', { ok: true });
       await b.runs.put('crs5:outcome', { status: 'running', at: Date.now() });
+      // And a CANCELED one, seeded SUSPENDED as well — this row is the precedence probe, not just a
+      // sixth count. An adapter whose CASE/filter checks `suspended` before `canceled` reports it as
+      // suspended in the aggregate while listRuns (deriveRunStatus, canceled first) calls it canceled,
+      // and the two paths disagree about a run that can never be resumed.
+      await b.runs.put('crs6:model:0', { ok: true });
+      await b.runs.put('crs6:tool:t1', { status: 'suspended', output: {} });
+      await b.runs.put('crs6:outcome', { status: 'canceled', at: Date.now() });
       const counted = await j.countRunsByStatus();
       const page = await b.runs.listRuns({ limit: 1_000_000 });
       const expected: Record<string, number> = {};
@@ -287,6 +294,8 @@ for (const [name, make, caps] of storages) {
       expect(expected.suspended).toBe(1); // sanity: the suspended run really is in there
       expect(expected.failed, 'the failed run must be counted AS failed by both paths').toBe(1);
       expect(expected.running, 'the running run must be counted AS running by both paths').toBe(1);
+      expect(expected.canceled, 'canceled beats suspended, in the aggregate exactly as in listRuns').toBe(1);
+      expect(expected.suspended, 'and the canceled run must NOT have landed in the suspended bucket').toBe(1);
     });
 
     // MemoryStore conformance is skipped for storages that don't provide the memory port (Redis).

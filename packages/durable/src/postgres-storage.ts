@@ -39,6 +39,15 @@ function pageOf<T>(rows: T[], start: number, limit: number, total: number): Page
   const next = start + limit;
   return { items: rows, nextCursor: next < total ? String(next) : undefined };
 }
+/**
+ * The materialized `gnl_runs` flags back into the ONE outcome shape `deriveRunStatus` reads — the
+ * Twin of sqlite-storage.ts's helper, and written out for the same reason: the flag→status mapping is
+ * Precedence-bearing, and hand-copying the ternary chain into listRuns AND countRunsByStatus is
+ * Exactly how one of them ends up ordering `failed` ahead of `canceled` while the other does not.
+ */
+function outcomeOfRow(r: { failed?: unknown; running?: unknown; canceled?: unknown }): { status: 'canceled' | 'failed' | 'running' } | null {
+  return r.canceled ? { status: 'canceled' } : r.failed ? { status: 'failed' } : r.running ? { status: 'running' } : null;
+}
 // P1.5 matchFilter is now shared (storage.ts) — see its JSDoc for the operator
 // Subset ($eq/$ne/$gt/$gte/$lt/$lte/$in/$nin). Import above (was a local exact-equality-only copy).
 function normRange(r?: number | { before: number; after: number }) {
@@ -51,7 +60,7 @@ const DDL = [
   `CREATE TABLE IF NOT EXISTS gnl_meta (k TEXT PRIMARY KEY, v TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS gnl_run_journal (key TEXT PRIMARY KEY, run_id TEXT, kind TEXT, suspended BOOLEAN NOT NULL DEFAULT false, value TEXT NOT NULL, created_at BIGINT NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS gnl_run_journal_run ON gnl_run_journal (run_id, created_at)`,
-  `CREATE TABLE IF NOT EXISTS gnl_runs (run_id TEXT PRIMARY KEY, model_steps INTEGER NOT NULL DEFAULT 0, tool_calls INTEGER NOT NULL DEFAULT 0, suspended BOOLEAN NOT NULL DEFAULT false, suspended_count INTEGER NOT NULL DEFAULT 0, failed BOOLEAN NOT NULL DEFAULT false, running BOOLEAN NOT NULL DEFAULT false, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS gnl_runs (run_id TEXT PRIMARY KEY, model_steps INTEGER NOT NULL DEFAULT 0, tool_calls INTEGER NOT NULL DEFAULT 0, suspended BOOLEAN NOT NULL DEFAULT false, suspended_count INTEGER NOT NULL DEFAULT 0, failed BOOLEAN NOT NULL DEFAULT false, running BOOLEAN NOT NULL DEFAULT false, canceled BOOLEAN NOT NULL DEFAULT false, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS gnl_runs_updated ON gnl_runs (updated_at)`,
   // H11b migration: add the column if missing in an old setup (backfill once at init, below).
   `ALTER TABLE gnl_runs ADD COLUMN IF NOT EXISTS suspended_count INTEGER NOT NULL DEFAULT 0`,
@@ -62,6 +71,10 @@ const DDL = [
   `ALTER TABLE gnl_runs ADD COLUMN IF NOT EXISTS failed BOOLEAN NOT NULL DEFAULT false`,
   // `running` (the write-ahead half): same shape, same no-backfill argument as `failed` above.
   `ALTER TABLE gnl_runs ADD COLUMN IF NOT EXISTS running BOOLEAN NOT NULL DEFAULT false`,
+  // `canceled` (the operator's ending): same again. Three booleans for one status IS inelegant; they
+  // Are only ever written together, from a single `outcomeStatusOf` value in a single statement, so
+  // They cannot disagree — collapsing them into one materialized `outcome` column is its own round.
+  `ALTER TABLE gnl_runs ADD COLUMN IF NOT EXISTS canceled BOOLEAN NOT NULL DEFAULT false`,
   `CREATE TABLE IF NOT EXISTS gnl_counters (key TEXT NOT NULL, field TEXT NOT NULL, value DOUBLE PRECISION NOT NULL, PRIMARY KEY (key, field))`,
   `CREATE INDEX IF NOT EXISTS gnl_runs_created ON gnl_runs (created_at, run_id)`,
   `CREATE TABLE IF NOT EXISTS gnl_threads (id TEXT PRIMARY KEY, resource_id TEXT NOT NULL, title TEXT, parent_thread_id TEXT, metadata TEXT, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL, deleted_at BIGINT)`,
@@ -310,13 +323,13 @@ class PgRunJournal implements RunJournal {
         await upsert(q);
         if (owner) await this.touchRunDelta(q, owner, null, false, 0);
         // Own path, not riding on run ownership (see the sqlite twin). The UPDATE only touches an
-        // Existing row, so it cannot invent a run. Both flags from ONE status in ONE statement, so
-        // They can never disagree — and every transition clears its predecessor.
+        // Existing row, so it cannot invent a run. ALL THREE flags from ONE status in ONE statement,
+        // So they can never disagree — and every transition clears its predecessors.
         if (oc !== null) {
           const runId = key.slice(0, -':outcome'.length);
           // First write of a brand-new run may precede its row — see the sqlite twin's comment.
           await this.touchRunDelta(q, runId, null, false, 0);
-          await q(`UPDATE gnl_runs SET failed = $1, running = $2 WHERE run_id = $3`, [oc === 'failed', oc === 'running', runId]);
+          await q(`UPDATE gnl_runs SET failed = $1, running = $2, canceled = $3 WHERE run_id = $4`, [oc === 'failed', oc === 'running', oc === 'canceled', runId]);
         }
       });
       return;
@@ -356,7 +369,7 @@ class PgRunJournal implements RunJournal {
           if (oc !== null) {
             const runId = key.slice(0, -':outcome'.length);
             await this.touchRunDelta(q, runId, null, false, 0); // see the sqlite twin
-            await q(`UPDATE gnl_runs SET failed = $1, running = $2 WHERE run_id = $3`, [oc === 'failed', oc === 'running', runId]);
+            await q(`UPDATE gnl_runs SET failed = $1, running = $2, canceled = $3 WHERE run_id = $4`, [oc === 'failed', oc === 'running', oc === 'canceled', runId]);
           }
         }
         return ok;
@@ -394,7 +407,7 @@ class PgRunJournal implements RunJournal {
         if (ok) {
           const runId = key.slice(0, -':outcome'.length);
           await this.touchRunDelta(q, runId, null, false, 0); // see the sqlite twin
-          await q(`UPDATE gnl_runs SET failed = $1, running = $2 WHERE run_id = $3`, [oc === 'failed', oc === 'running', runId]);
+          await q(`UPDATE gnl_runs SET failed = $1, running = $2, canceled = $3 WHERE run_id = $4`, [oc === 'failed', oc === 'running', oc === 'canceled', runId]);
         }
         return ok;
       });
@@ -574,26 +587,28 @@ class PgRunJournal implements RunJournal {
    */
   async listRuns(q?: ListQuery): Promise<Page<RunSummary>> {
     const { start, limit } = offset(q);
-    // Three-way, still on indexed columns, and in the SAME precedence deriveRunStatus applies
-    // (suspended beats the recorded outcome) so a filtered page cannot disagree with a full scan.
+    // Five-way, still on indexed columns, and in the SAME precedence deriveRunStatus applies
+    // (canceled beats suspended beats the rest of the recorded outcome) so a filtered page cannot
+    // disagree with a full scan.
     const statusWhere =
-      q?.status === 'suspended' ? ' WHERE r.suspended = true'
-      : q?.status === 'failed' ? ' WHERE r.suspended = false AND r.failed = true'
-      : q?.status === 'running' ? ' WHERE r.suspended = false AND r.failed = false AND r.running = true'
-      : q?.status === 'completed' ? ' WHERE r.suspended = false AND r.failed = false AND r.running = false'
+      q?.status === 'canceled' ? ' WHERE r.canceled = true'
+      : q?.status === 'suspended' ? ' WHERE r.canceled = false AND r.suspended = true'
+      : q?.status === 'failed' ? ' WHERE r.canceled = false AND r.suspended = false AND r.failed = true'
+      : q?.status === 'running' ? ' WHERE r.canceled = false AND r.suspended = false AND r.failed = false AND r.running = true'
+      : q?.status === 'completed' ? ' WHERE r.canceled = false AND r.suspended = false AND r.failed = false AND r.running = false'
       : '';
     const statusParams: unknown[] = [];
     const toSummary = (x: any): RunSummary => {
       const input = x.input_val ? deserialize<{ threadId?: string; agent?: string }>(x.input_val) : undefined;
       return {
-        runId: x.run_id, status: deriveRunStatus(!!x.suspended, x.failed ? { status: 'failed' } : x.running ? { status: 'running' } : null), modelSteps: Number(x.model_steps), toolCalls: Number(x.tool_calls),
+        runId: x.run_id, status: deriveRunStatus(!!x.suspended, outcomeOfRow(x)), modelSteps: Number(x.model_steps), toolCalls: Number(x.tool_calls),
         ...(input?.threadId ? { threadId: input.threadId } : {}),
         ...(input?.agent ? { agent: input.agent } : {}),
       };
     };
     if (q?.agent) {
       const r = await this.q(
-        `SELECT r.run_id, r.model_steps, r.tool_calls, r.suspended, r.failed, r.running, j.value AS input_val
+        `SELECT r.run_id, r.model_steps, r.tool_calls, r.suspended, r.failed, r.running, r.canceled, j.value AS input_val
          FROM gnl_runs r LEFT JOIN gnl_run_journal j ON j.key = r.run_id || ':input'${statusWhere}
          ORDER BY r.created_at, r.run_id`,
         statusParams,
@@ -604,7 +619,7 @@ class PgRunJournal implements RunJournal {
     const total = Number((await this.q(`SELECT COUNT(*) AS n FROM gnl_runs r${statusWhere}`, statusParams)).rows[0].n);
     const limitIdx = statusParams.length + 1;
     const r = await this.q(
-      `SELECT r.run_id, r.model_steps, r.tool_calls, r.suspended, r.failed, r.running, j.value AS input_val
+      `SELECT r.run_id, r.model_steps, r.tool_calls, r.suspended, r.failed, r.running, r.canceled, j.value AS input_val
        FROM gnl_runs r LEFT JOIN gnl_run_journal j ON j.key = r.run_id || ':input'${statusWhere}
        ORDER BY r.created_at, r.run_id LIMIT $${limitIdx} OFFSET $${limitIdx + 1}`,
       [...statusParams, limit, start],
@@ -687,17 +702,17 @@ class PgRunJournal implements RunJournal {
   /**
    * P1.6b: push-down status aggregate — a single `GROUP BY` over the indexed `gnl_runs.suspended`
    * Column, MUST MATCH listRuns' own status derivation (deriveRunStatus: suspended, then failed) —
-   * Same column, same boolean, mapped to the status string in JS (not in SQL) so it cannot drift.
-   * Grouping by the RAW boolean column (not a `CASE WHEN ... THEN 'suspended' ...` computed expression) —
+   * Same columns, same booleans, mapped to the status string in JS (not in SQL) so it cannot drift.
+   * Grouping by the RAW boolean columns (not a `CASE WHEN ... THEN 'suspended' ...` computed expression) —
    * Pg-mem's query planner mis-groups a `GROUP BY` on a CASE-derived alias (verified experimentally: rows
    * For BOTH branches come back labeled with the wrong status); grouping by the underlying column is
    * Correct on both pg-mem and real Postgres.
    */
   async countRunsByStatus(): Promise<Record<string, number>> {
-    const r = await this.q(`SELECT suspended, failed, running, COUNT(*) AS n FROM gnl_runs GROUP BY suspended, failed, running`);
+    const r = await this.q(`SELECT suspended, failed, running, canceled, COUNT(*) AS n FROM gnl_runs GROUP BY suspended, failed, running, canceled`);
     const out: Record<string, number> = {};
     for (const row of r.rows) {
-      const status = deriveRunStatus(!!row.suspended, row.failed ? { status: 'failed' } : row.running ? { status: 'running' } : null);
+      const status = deriveRunStatus(!!row.suspended, outcomeOfRow(row));
       out[status] = (out[status] ?? 0) + Number(row.n);
     }
     return out;

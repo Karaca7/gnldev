@@ -878,10 +878,13 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     const limit = Math.min(Math.max(Math.floor(Number(limitRaw)) || 0, 1), 500);
     const start = Math.max(Math.floor(Number(c.req.query('cursor'))) || 0, 0);
     const statusRaw = c.req.query('status');
-    if (statusRaw != null && statusRaw !== 'completed' && statusRaw !== 'suspended' && statusRaw !== 'failed' && statusRaw !== 'running') {
-      return c.json({ error: `invalid status '${statusRaw}' (expected 'completed', 'suspended', 'failed' or 'running')` }, 400);
+    // Same list-not-a-chain form as @gnldev/server's GET /runs — the two must accept the SAME
+    // vocabulary or the Studio's own filter tabs 400 against a server that already understands them.
+    const RUN_STATUSES = ['completed', 'suspended', 'failed', 'running', 'canceled'] as const;
+    if (statusRaw != null && !(RUN_STATUSES as readonly string[]).includes(statusRaw)) {
+      return c.json({ error: `invalid status '${statusRaw}' (expected one of ${RUN_STATUSES.join(', ')})` }, 400);
     }
-    const status = statusRaw as 'completed' | 'suspended' | 'failed' | 'running' | undefined;
+    const status = statusRaw as (typeof RUN_STATUSES)[number] | undefined;
     const agent = c.req.query('agent') || undefined;
     const q = c.req.query('q') || undefined;
     // API-01/API-09: prefer the engine push-down (listRunsPaged) — avoids materializing EVERY run (see

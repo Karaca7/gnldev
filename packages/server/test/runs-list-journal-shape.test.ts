@@ -84,6 +84,34 @@ describe('GET /runs when the host passes storage.runs as `journal` (the document
     expect(bad.status).toBe(400);
     expect(JSON.stringify(bad.body)).toContain('running');
   });
+
+  it('?status=canceled finds the run an operator stopped', async () => {
+    const { cancelAgentRun } = await import('@gnldev/durable');
+    const journal = pagedJournal();
+    await seed(journal, ['finished']);
+    // A run still in flight — write-ahead recorded, no terminal — which is what an operator actually
+    // cancels. (Cancelling a run that has ALREADY ended deliberately does not relabel it; that rule
+    // is proven in durable's canceled-status suite, and it is why this seed is not just a finished run.)
+    await journal.put('stopped:input', { _v: 1, at: Date.now(), prompt: 'x' });
+    await journal.put('stopped:model:0', { content: [] });
+    await journal.put('stopped:outcome', { status: 'running', at: Date.now() });
+    await cancelAgentRun(journal, 'stopped', { reason: 'operator' });
+    const api = createRestApi({ journal, agents: {} } as any);
+    const hit = async (u: string) => {
+      const res = await api.fetch(new Request(`http://x${u}`));
+      return { status: res.status, body: await res.json() as any };
+    };
+
+    const canceled = await hit('/runs?status=canceled');
+    expect(canceled.status, 'the route rejected this value as invalid').toBe(200);
+    expect(canceled.body.items.map((r: any) => r.runId)).toEqual(['stopped']);
+    // The completed bucket must not absorb it — cancellation was indistinguishable from success.
+    expect((await hit('/runs?status=completed')).body.items.map((r: any) => r.runId)).toEqual(['finished']);
+    // And the 400's message teaches the FULL vocabulary, not the one it had when it was written.
+    const bad = await hit('/runs?status=exploded');
+    expect(bad.status).toBe(400);
+    expect(JSON.stringify(bad.body)).toContain('canceled');
+  });
 });
 
 describe('the org view over a paged journal', () => {

@@ -19,13 +19,19 @@ export const red = wrap('31');
 export const yellow = wrap('33');
 export const cyan = wrap('36');
 
-/** completed -> green, suspended -> yellow, failed -> red, running -> cyan (else uncolored). */
+/** completed -> green, suspended -> yellow, failed -> red, running -> cyan, canceled -> dim (else uncolored). */
 export function colorStatus(status: string): string {
   if (status === 'suspended') return yellow(status);
   if (status === 'completed') return green(status);
   // The newest status and the one most worth noticing was the only one printed without colour.
   if (status === 'failed') return red(status);
   if (status === 'running') return cyan(status); // live, matching the studio's info tone
+  // There is no grey helper here (the palette is four hand-rolled SGR codes, and a 90m bright-black
+  // Is illegible on the light terminals that render it as pale grey). `dim` is the muted tone this
+  // File already owns, and it reads correctly on both backgrounds — the Studio's muted-foreground in
+  // The vocabulary this renderer actually has. Both spellings: the durable RunStatus is 'canceled',
+  // while the workflow engine's own status strings say 'cancelled', and both reach printTable.
+  if (status === 'canceled' || status === 'cancelled') return dim(status);
   return status;
 }
 

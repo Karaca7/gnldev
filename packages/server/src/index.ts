@@ -975,7 +975,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
    * Assert on `runs[0].runId` etc. see byte-identical behavior).
    *   ?limit=      clamped to [1, 1000] (default 50 — same default every adapter's own listRuns uses)
    *   ?cursor=     opaque — pass back a page's `nextCursor` verbatim
-   *   ?status=     'completed' | 'suspended' | 'failed' | 'running' — else 400
+   *   ?status=     'completed' | 'suspended' | 'failed' | 'running' | 'canceled' — else 400
    *   ?agent=      exact match against RunSummary.agent
    */
   app.get('/runs', async (c) => {
@@ -989,12 +989,16 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     if (limitRaw == null && cursor == null && statusRaw == null && agent == null) {
       return c.json(await s.journal.listRuns()); // no params → legacy array (unchanged)
     }
-    let status: 'completed' | 'suspended' | 'failed' | 'running' | undefined;
+    // A list rather than a chain of !==: this validation has lagged the vocabulary at every widening
+    // ('failed', then 'running', now 'canceled'), and a chain invites the next one. The message is
+    // built from the same list, so it can never advertise a smaller vocabulary than it accepts.
+    const RUN_STATUSES = ['completed', 'suspended', 'failed', 'running', 'canceled'] as const;
+    let status: (typeof RUN_STATUSES)[number] | undefined;
     if (statusRaw != null) {
-      if (statusRaw !== 'completed' && statusRaw !== 'suspended' && statusRaw !== 'failed' && statusRaw !== 'running') {
-        return c.json({ error: `invalid status '${statusRaw}' (expected 'completed', 'suspended', 'failed' or 'running')` }, 400);
+      if (!(RUN_STATUSES as readonly string[]).includes(statusRaw)) {
+        return c.json({ error: `invalid status '${statusRaw}' (expected one of ${RUN_STATUSES.join(', ')})` }, 400);
       }
-      status = statusRaw;
+      status = statusRaw as (typeof RUN_STATUSES)[number];
     }
     const limit = limitRaw != null ? Math.max(1, Math.min(1000, Math.trunc(Number(limitRaw)) || 50)) : undefined;
     const q = {

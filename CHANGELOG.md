@@ -49,6 +49,22 @@ would be worse than saying that.
   exactly as they did. Surfaced through `?status=running`, `gnl runs` (cyan), the Inspector (tab +
   info-blue dot), and OTel — where an unfinished run now exports **UNSET**, never OK: the dashboard
   no longer shows green precisely while the process is dead.
+- **`RunStatus` gained `'canceled'` — a cancelled run no longer looks like a successful one.**
+  `cancelAgentRun` journaled a flag and nothing else, and the `RunCanceledError` it causes is
+  deliberately classified as *not a failure* — so the throw site recorded nothing, a run cancelled
+  before it started read `'completed'`, and one cancelled mid-flight kept reading `'running'` forever.
+  The cancel choke point now writes the verdict itself, once: the flag is what makes every downstream
+  refusal possible, so recording from the throw sites would be several writers racing over one fact.
+  Precedence is canceled > suspended > failed > running > completed — canceled outranks even
+  `'suspended'`, because a cancelled run's pending approval can never be applied (`assertNotCanceled`
+  refuses every resume, and there is deliberately no uncancel). Two things it deliberately does *not*
+  do: a cancel that arrives after a run has already ended does not relabel it (the run's output is
+  sitting right there in the timeline), and no straggling write-ahead can resurrect it. Surfaced
+  through `?status=canceled`, `gnl runs` (dim), the Inspector (tab + muted dot — an operator stopping
+  a run is not an incident, and colouring it like one buries the failures that are), and OTel, where
+  it exports **UNSET** rather than ERROR: the semantic conventions reserve ERROR for *unexpected*
+  endings, and paging an on-call because someone pressed cancel is the false alarm that trains people
+  to ignore the signal.
 - **`GET /health` and `GET /ready`.** Liveness touches nothing, so a failing database cannot cause a
   healthy process to be killed and restarted; readiness reads the journal with a 2s budget and returns
   503 when storage is unreachable. Both are unauthenticated by design and report reachability only —
@@ -116,15 +132,18 @@ would be worse than saying that.
   path.
 ### Changed
 
-- `RunSummary.status` is now `'completed' | 'suspended' | 'failed' | 'running'`. A TypeScript `switch`
-  over it with no `default` will stop compiling — deliberately, since the alternative is silently
-  mislabelling a failed or unfinished run as completed.
+- `RunSummary.status` is now `'completed' | 'suspended' | 'failed' | 'running' | 'canceled'`. A
+  TypeScript `switch` over it with no `default` will stop compiling — deliberately, since the
+  alternative is silently mislabelling a failed, unfinished or cancelled run as completed.
 - `limits.approvalScope: 'attempt'` (opt-in) spends a human approval on the attempt it unblocks, so a
   later retry asks again instead of proceeding on an answer given about an earlier attempt. The default
   is unchanged: the approval is journaled and survives a crash.
-- `sqlite`/`postgres` gained `failed` and `running` columns on `gnl_runs` (materialized at write time —
-  not indexed; the status filter is an operator path, not a hot one), migrated on startup like
-  `suspended_count`. Journals written before them read exactly as they did before.
+- `sqlite`/`postgres` gained `failed`, `running` and `canceled` columns on `gnl_runs` (materialized at
+  write time — not indexed; the status filter is an operator path, not a hot one), migrated on startup
+  like `suspended_count`. Journals written before them read exactly as they did before. Three booleans
+  for one status is inelegant and known to be: they are only ever written together, from a single
+  outcome status in a single statement, so they cannot disagree — collapsing them into one `outcome`
+  column is a schema round of its own.
 
 <!-- Once v0.1.0 is tagged, this becomes .../compare/v0.1.0...HEAD -->
 [Unreleased]: https://github.com/Karaca7/gnl-framework/commits/main

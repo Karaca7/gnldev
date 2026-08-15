@@ -24,6 +24,11 @@ import { RunBusyError } from './errors.js';
  *   From here would overwrite a live run's record with the story of a caller who never got in.
  * CompensatedRunError / RunCanceledError: terminal refusals. The run was deliberately unwound or
  *   Cancelled; those are their own states, and calling them failures loses that distinction.
+ *   RunCanceledError specifically records NOTHING from here, and that is not an omission: the error
+ *   Only exists because `cancelAgentRun` journaled the flag, and that is the call that writes
+ *   {status:'canceled'}. Writing again from the throw site would be a second machine for one fact —
+ *   Racing the first, on a path (the mid-flight model-step gate) that fires once per worker that
+ *   Notices. One writer, at the choke point that knows the ORIGINAL decision's timestamp.
  *
  * Matched by name rather than by instanceof: cancel.ts/compensation.ts import from run.ts's side of
  * The graph, and importing them back here would be a cycle for no gain.
@@ -69,7 +74,7 @@ export async function recordRunOutcome(
   journal: Journal,
   runId: string,
   outcome: RunOutcomeRecord,
-  opts?: { fillOnly?: boolean },
+  opts?: { fillOnly?: boolean; notAfterTerminal?: boolean },
 ): Promise<void> {
   try {
     const key = runKeys.outcome(runId);
@@ -88,7 +93,24 @@ export async function recordRunOutcome(
       const cur = raw as RunOutcomeRecord | undefined;
       if (cur !== undefined) {
         if (opts?.fillOnly) return; // a verdict already stands, and this caller may only fill absence
+        // This record says HOW A RUN ENDED, and a run that already ended did not end by being
+        // canceled. Used only by the cancel path: an operator cancelling a run that finished a second
+        // before the click must not relabel a run whose output is sitting right there in the
+        // timeline, and cancelling one that already failed must not erase the 401. 'running' is not
+        // an ending, so it IS replaced — which is the whole point, since a mid-flight run, a crashed
+        // one, and a suspended one all carry exactly that record. A re-cancel lands here too and
+        // returns, which is the idempotence cancel.ts already promises.
+        if (opts?.notAfterTerminal && cur.status !== 'running') return;
         if (typeof cur.at === 'number' && cur.at > next.at) return; // a newer verdict already stands
+        // A write-ahead 'running' may never bury a CANCEL. Every other verdict still can when it is
+        // strictly newer — a run that finished DESPITE a late cancel really did finish, and calling
+        // that canceled would be the lie in the other direction (the cancel takes effect at the next
+        // model-step boundary; against a run on its last step it simply arrives too late). But a
+        // start marker is not an ending, and this race is reachable without any of that nuance: a
+        // worker that passed assertNotCanceled microseconds before the flag landed writes runStarted
+        // right after it, then throws RunCanceledError at its next step and — correctly — records
+        // nothing, leaving a canceled run reading 'running' forever.
+        if (cur.status === 'canceled' && next.status === 'running') return;
         // A same-millisecond tie between a TERMINAL verdict and a 'running' start goes to the
         // terminal: the start is only newer information when it is STRICTLY newer. Without this, a
         // resume's start stamped in the same ms as the previous attempt's verdict flickered the run
@@ -133,6 +155,15 @@ export const runFailedIfUnrecorded = (journal: Journal, runId: string, err: unkn
  */
 export const runStarted = (journal: Journal, runId: string, at: number): Promise<void> =>
   recordRunOutcome(journal, runId, { status: 'running', at });
+
+/**
+ * The operator's ending. Written by `cancelAgentRun` — the durable cancel's single choke point — with
+ * The `at` of the WINNING flag record, so a re-cancel keeps stamping the original decision's moment
+ * Rather than sliding it forward. `notAfterTerminal` because a cancel can only decide how a run ended
+ * If it had not already ended (see recordRunOutcome), and no straggling start marker may bury it.
+ */
+export const runCanceled = (journal: Journal, runId: string, at: number): Promise<void> =>
+  recordRunOutcome(journal, runId, { status: 'canceled', at }, { notAfterTerminal: true });
 
 /** The recorded outcome, or undefined for a run written before outcomes existed. */
 export async function readRunOutcome(journal: Journal, runId: string): Promise<RunOutcomeRecord | undefined> {

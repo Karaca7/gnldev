@@ -57,6 +57,22 @@ describe('exporting a run that failed', () => {
     expect(root.attributes['gnl.status']).toBe('running');
   });
 
+  it('reports a canceled run as UNSET/canceled — not ERROR, and never OK', async () => {
+    const { cancelAgentRun } = await import('@gnldev/durable');
+    const journal = new InMemoryStorage().runs;
+    const never = { ...base, doGenerate: () => new Promise(() => {}) } as any;
+    void runDurable({ runId: 'stopped', journal, model: never, prompt: 'x' } as any).catch(() => {});
+    await new Promise((r) => setTimeout(r, 30));
+    await cancelAgentRun(journal, 'stopped', { reason: 'operator' });
+
+    const root = await rootSpanOf(journal, 'stopped');
+    // OK would say the run ended fine, which it did not. ERROR would page an on-call because an
+    // operator pressed cancel — the false alarm that trains people to ignore the signal. OTel reserves
+    // ERROR for UNEXPECTED endings; this one was ordered. The fact travels on the attribute instead.
+    expect(root.status.code).toBe(SpanStatusCode.UNSET);
+    expect(root.attributes['gnl.status'], 'this exported as OK/completed').toBe('canceled');
+  });
+
   it('falls back to the old derivation for a run written before outcomes existed', async () => {
     const journal = new InMemoryStorage().runs;
     await runDurable({ runId: 'legacy', journal, model: good, prompt: 'x' } as any);

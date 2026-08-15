@@ -650,7 +650,7 @@ class RedisRunJournal implements RunJournal {
     // Since SCAN already fetches ALL rj: keys in one pass (keys/values above), this is NOT a SEPARATE
     // Round-trip, it's part of the same scan.
     const threadIds = new Map<string, string>();
-    const outcomes = new Map<string, 'failed' | 'running'>();
+    const outcomes = new Map<string, 'failed' | 'running' | 'canceled'>();
     const agents = new Map<string, string>();
     for (let i = 0; i < keys.length; i++) {
       const s = values[i];
@@ -686,10 +686,11 @@ class RedisRunJournal implements RunJournal {
       if (rawKey.endsWith(':outcome')) {
         const runId = rawKey.slice(0, -':outcome'.length);
         const st = (e.v as { status?: string } | undefined)?.status;
-        if (st === 'failed' || st === 'running') outcomes.set(runId, st);
-        // The write-ahead can be a run's FIRST key (killed before `:input` landed) — the run still
-        // started, so it still lists, with genuinely zero counts.
-        if ((st === 'failed' || st === 'running' || st === 'completed') && !byRun.has(runId)) {
+        if (st === 'failed' || st === 'running' || st === 'canceled') outcomes.set(runId, st);
+        // The write-ahead can be a run's FIRST key (killed before `:input` landed) — and so can a
+        // cancel, which an operator may order against a run that has not started yet. Either way the
+        // run exists, so it still lists, with genuinely zero counts.
+        if ((st === 'failed' || st === 'running' || st === 'canceled' || st === 'completed') && !byRun.has(runId)) {
           byRun.set(runId, { m: 0, t: 0, s: false, c0: e.t });
         }
       }

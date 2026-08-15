@@ -20,7 +20,7 @@ describe('StatusBadge speaks the reader’s language', () => {
   afterEach(cleanup);
 
   it('translates every run status in English', async () => {
-    for (const [status, label] of [['completed', 'Completed'], ['suspended', 'Suspended'], ['failed', 'Failed']] as const) {
+    for (const [status, label] of [['completed', 'Completed'], ['suspended', 'Suspended'], ['failed', 'Failed'], ['canceled', 'Cancelled']] as const) {
       const { unmount } = render(<StatusBadge status={status} />);
       expect(screen.getByText(label), `${status} → ${label}`).toBeTruthy();
       unmount();
@@ -29,7 +29,7 @@ describe('StatusBadge speaks the reader’s language', () => {
 
   it('translates every run status in Turkish', async () => {
     await setLang('tr');
-    for (const [status, label] of [['completed', 'Tamamlandı'], ['suspended', 'Askıda'], ['failed', 'Başarısız']] as const) {
+    for (const [status, label] of [['completed', 'Tamamlandı'], ['suspended', 'Askıda'], ['failed', 'Başarısız'], ['canceled', 'İptal edildi']] as const) {
       const { unmount } = render(<StatusBadge status={status} />);
       expect(screen.getByText(label), `${status} → ${label}`).toBeTruthy();
       unmount();
@@ -50,6 +50,22 @@ describe('StatusBadge speaks the reader’s language', () => {
     const ok = render(<StatusBadge status="completed" />);
     expect(ok.container.querySelector('span')?.className).toContain('success');
   });
+
+  it('renders BOTH spellings of cancelled identically, and never as a failure', async () => {
+    // The durable RunStatus spells it 'canceled'; the workflow engine's own statuses spell it
+    // 'cancelled'. The same decision rendering as two different states depending on which page you
+    // were on is exactly the drift the shared vocabulary exists to prevent. And it is MUTED, not
+    // destructive: a run an operator chose to stop is not an incident, and painting it the same red
+    // as a 401 is how a list of genuine failures stops being scannable.
+    for (const spelling of ['canceled', 'cancelled'] as const) {
+      const { container, unmount } = render(<StatusBadge status={spelling} />);
+      const cls = container.querySelector('span')?.className ?? '';
+      expect(screen.getByText('Cancelled'), `${spelling} → Cancelled`).toBeTruthy();
+      expect(cls, `${spelling} must not read as a failure`).not.toContain('destructive');
+      expect(cls).toContain('muted-foreground');
+      unmount();
+    }
+  });
 });
 
 describe('both locales define the whole status vocabulary', () => {
@@ -69,7 +85,7 @@ describe('both locales define the whole status vocabulary', () => {
     // Translation's clothes — these particular words differ in both languages.
     const en = i18n.getResourceBundle('en', 'common') as Record<string, string>;
     const tr = i18n.getResourceBundle('tr', 'common') as Record<string, string>;
-    for (const k of ['statusCompleted', 'statusSuspended', 'statusFailed']) {
+    for (const k of ['statusCompleted', 'statusSuspended', 'statusFailed', 'statusCancelled']) {
       expect(tr[k], `tr/common.${k} was left in English`).not.toBe(en[k]);
     }
   });

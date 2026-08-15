@@ -295,13 +295,13 @@ export const runKeys = {
  *
  * Returns null for every other key, so a caller can use it as "is this an outcome write at all".
  */
-export function outcomeStatusOf(key: string, value: unknown): 'running' | 'failed' | 'completed' | null {
+export function outcomeStatusOf(key: string, value: unknown): 'running' | 'failed' | 'canceled' | 'completed' | null {
   if (!key.endsWith(':outcome')) return null;
   // The key suffix alone is not proof: `appendLog(journal, ns, payload, 'outcome')` writes
   // `${ns}:outcome` with a caller's payload. Only the engine's own record — whose status is exactly
-  // One of the three lifecycle values — is treated as an outcome.
+  // One of the four lifecycle values — is treated as an outcome.
   const status = (value as { status?: unknown } | null)?.status;
-  return status === 'failed' || status === 'completed' || status === 'running' ? status : null;
+  return status === 'failed' || status === 'completed' || status === 'running' || status === 'canceled' ? status : null;
 }
 
 /** What was recorded at a run's terminal boundary. `error` is present only on a failure. */
@@ -312,8 +312,15 @@ export interface RunOutcomeRecord {
    * To read back as 'completed', because "no terminal record" and "ended fine" were the same absence.
    * A run that never said it ended now never claims it did; it stays 'running', visibly stale by its
    * `at`, until a resume finishes it or retention sweeps it.
+   *
+   * 'canceled' is the operator's own ending, written by `cancelAgentRun` at the moment it journals the
+   * Durable cancel flag. Before it, a cancel recorded NOTHING — `classifyRunError` calls
+   * RunCanceledError a not-a-failure, so an in-flight run that stopped at its next model step left
+   * Whatever was already there, and a run canceled before it ever started read 'completed'. Deliberate
+   * Cancellation and success were the same answer, which is the one distinction an operator ordering a
+   * Cancel actually needs.
    */
-  status: 'completed' | 'failed' | 'running';
+  status: 'completed' | 'failed' | 'running' | 'canceled';
   at: number;
   error?: string;
 }
@@ -499,12 +506,13 @@ export interface JournalEntry {
  * Ceiling, was reported as 'completed' — and exportRun sent it to OTel with SpanStatusCode.OK. Nothing
  * Recorded that a run had ENDED BADLY, so nothing could say so.
  *
- * Derivation order is fixed and must be identical in every adapter: 'suspended' first (a run waiting on
- * A human is a LIVE state, and it is derived from tool records that outlive any outcome), then the
+ * Derivation order is fixed and must be identical in every adapter: 'canceled' first (see
+ * DeriveRunStatus for why it outranks even 'suspended'), then 'suspended' (a run waiting on a human is
+ * A LIVE state, and it is derived from tool records that outlive any outcome), then the rest of the
  * Recorded outcome, then 'completed'. A run with no outcome record — every run written before this
  * Existed — reads exactly as it did before.
  */
-export type RunStatus = 'completed' | 'suspended' | 'failed' | 'running';
+export type RunStatus = 'completed' | 'suspended' | 'failed' | 'running' | 'canceled';
 
 export interface RunSummary {
   runId: string;
@@ -727,6 +735,13 @@ function isVersionedRecord(value: unknown): boolean {
  * Second value in three of them.
  */
 export function deriveRunStatus(suspended: boolean, outcome?: Pick<RunOutcomeRecord, 'status'> | null): RunStatus {
+  // Canceled outranks even 'suspended', which is the one precedence call here that is not obvious.
+  // 'suspended' is derived from tool records, and those outlive the cancel: a run canceled while it
+  // waited on a human still has its suspended tool record, so it would keep advertising an approval
+  // that can never be applied — runDurableGuarded (and resumeRun, which goes through it) calls
+  // assertNotCanceled and refuses, and cancel.ts states there is deliberately no uncancel. Every other
+  // status describes a run that could still move; a canceled one is terminally over.
+  if (outcome?.status === 'canceled') return 'canceled';
   if (suspended) return 'suspended';
   if (outcome?.status === 'failed') return 'failed';
   // The write-ahead half: a run that recorded a start and never recorded an end has NOT completed —
@@ -955,7 +970,7 @@ export class InMemoryJournal implements Journal, JournalReader {
     return [...byRun.entries()].map(([runId, entries]) => {
       // Same O(1) point-read as `:input` below — the outcome is not an entry, so summarizeRun cannot
       // See it on its own.
-      const out = this.store.get(`${runId}:outcome`) as { status?: 'completed' | 'failed' | 'running' } | undefined;
+      const out = this.store.get(`${runId}:outcome`) as { status?: RunOutcomeRecord['status'] } | undefined;
       const s = summarizeRun(runId, entries, out as never);
       const inp = this.store.get(`${runId}:input`) as { threadId?: string; agent?: string } | undefined;
       return {

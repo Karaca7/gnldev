@@ -11,13 +11,15 @@ import { loadDurable, projectDirOf } from '../runtime.js';
 import { colorStatus, printTable } from '../ansi.js';
 
 export interface RunsOptions {
-  status?: 'completed' | 'suspended' | 'failed';
+  /** The FULL RunStatus vocabulary. This union used to stop at 'failed' while the row below already
+   *  Knew about 'running', so `--status running` type-checked only through a cast at the call site. */
+  status?: 'completed' | 'suspended' | 'failed' | 'running' | 'canceled';
   limit?: number;
 }
 
 export interface RunRow {
   runId: string;
-  status: 'completed' | 'suspended' | 'failed' | 'running';
+  status: 'completed' | 'suspended' | 'failed' | 'running' | 'canceled';
   modelSteps: number;
   toolCalls: number;
   costUsd?: number;
@@ -44,13 +46,13 @@ export const runsCommand: Command = {
   name: 'runs',
   group: 'inspect',
   summary: 'List runs (status, steps, cost)',
-  usage: 'gnl runs [--status completed|suspended|failed|running] [--limit N] [--json] [--config gnl.config.ts]',
+  usage: 'gnl runs [--status completed|suspended|failed|running|canceled] [--limit N] [--json] [--config gnl.config.ts]',
   async run(ctx) {
     const status = flag(ctx.argv, 'status');
-    const STATUSES = ['completed', 'suspended', 'failed', 'running'] as const;
+    const STATUSES = ['completed', 'suspended', 'failed', 'running', 'canceled'] as const;
     if (status !== undefined && !(STATUSES as readonly string[]).includes(status)) {
-      // A list, not a chain of !== — this line has now lagged the vocabulary twice ('failed', then
-      // 'running'); a chain invites the third time, a list shared with the message does not.
+      // A list, not a chain of !== — this line has now lagged the vocabulary three times ('failed',
+      // 'running', 'canceled'); a chain invites the fourth, a list shared with the message does not.
       throw new Error(`--status must be one of ${STATUSES.join(', ')}, got '${status}'`);
     }
     const limitRaw = flag(ctx.argv, 'limit');
@@ -64,7 +66,9 @@ export const runsCommand: Command = {
 
     const config = await loadConfig(configPath);
     const d = await loadDurable(projectDirOf(configPath));
-    const rows = await listRunsCore(config, d, { status: status as 'completed' | 'suspended' | undefined, limit });
+    // No cast to a narrower union than STATUSES: the old one said 'completed' | 'suspended', so
+    // --status failed/running was type-erased right where the validation had just proven it valid.
+    const rows = await listRunsCore(config, d, { status: status as RunsOptions['status'], limit });
 
     if (json) {
       console.log(JSON.stringify(rows, null, 2));
