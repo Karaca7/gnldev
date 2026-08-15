@@ -12,7 +12,7 @@
 // And liveness must not depend on storage. If a dead database made /health fail, an orchestrator would
 // kill and restart a perfectly good process — which reconnects nobody's database and drops whatever
 // in-flight work the process still had.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createRestApi } from '../src/index.js';
 import { InMemoryStorage } from '@gnldev/durable';
 import { roleAuth } from '@gnldev/auth';
@@ -42,6 +42,30 @@ function throwingJournal() {
       return typeof v === 'function' ? v.bind(t) : v;
     },
   });
+}
+
+/**
+ * A working journal that COUNTS the reads /ready makes. `delayMs` keeps a read open long enough that a
+ * Burst is genuinely concurrent — without it the first read settles before the twentieth request arrives
+ * And the cache, not the coalescing, would be what the burst test measures.
+ */
+function countingJournal(delayMs = 0) {
+  const inner = new InMemoryStorage().runs as any;
+  const counter = { gets: 0 };
+  const journal = new Proxy(inner, {
+    get(t, p, r) {
+      if (p === 'get') {
+        return async (k: string) => {
+          counter.gets++;
+          if (delayMs) await new Promise((res) => setTimeout(res, delayMs));
+          return inner.get(k);
+        };
+      }
+      const v = Reflect.get(t, p, r);
+      return typeof v === 'function' ? v.bind(t) : v;
+    },
+  });
+  return { journal, counter };
 }
 
 describe('liveness and readiness', () => {
@@ -93,6 +117,76 @@ describe('liveness and readiness', () => {
     // Restarting this process would not reconnect the database; it would only discard its in-flight work.
     expect(res.status).toBe(200);
     expect((await res.json() as any).status).toBe('ok');
+  });
+
+  it('collapses a burst of probes into one read, and still answers every one of them', async () => {
+    // /ready is unauthenticated, so anyone who can reach the port sets the rate. Against a real database
+    // Each request would be a real query — and when storage hangs, a parked connection for 2s each.
+    const { journal, counter } = countingJournal(20);
+    const api = createRestApi({ journal, agents: {} } as any);
+
+    const responses = await Promise.all(Array.from({ length: 20 }, () => hit(api, '/ready')));
+
+    expect(counter.gets).toBeLessThanOrEqual(2);
+    // Cheaper must not mean vaguer: all 20 callers get the full, correct answer.
+    expect(responses).toHaveLength(20);
+    for (const res of responses) {
+      expect(res.status).toBe(200);
+      expect((await res.json() as any).status).toBe('ready');
+    }
+  });
+
+  it('reuses a settled answer for a second, then probes again', async () => {
+    // The window is read off Date.now, so fake timers can move it without the test waiting in real life.
+    vi.useFakeTimers();
+    try {
+      const { journal, counter } = countingJournal();
+      const api = createRestApi({ journal, agents: {} } as any);
+
+      expect((await hit(api, '/ready')).status).toBe(200);
+      expect((await hit(api, '/ready')).status).toBe(200);
+      expect(counter.gets, 'the second request inside the window should be served from cache').toBe(1);
+
+      vi.advanceTimersByTime(1_100);
+      // Past the window the answer is stale — storage may have died since — so it is measured again.
+      expect((await hit(api, '/ready')).status).toBe(200);
+      expect(counter.gets).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('warns once for an outage, not once per probe', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const api = createRestApi({ journal: throwingJournal(), agents: {} } as any);
+      for (let i = 0; i < 25; i++) expect((await hit(api, '/ready')).status).toBe(503);
+
+      const readiness = warn.mock.calls.filter((c) => String(c[0]).includes('readiness probe failed'));
+      // Otherwise an unauthenticated caller writes the operator's log for them, and the first useful line
+      // Scrolls away under its own repetitions.
+      expect(readiness).toHaveLength(1);
+      expect(String(readiness[0][0])).toContain('repeats suppressed for 30s');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('keeps readiness state per API instance — two apps must not answer for each other', async () => {
+    // Module-level state would make the second app's answer depend on the first app's journal.
+    const a = countingJournal();
+    const b = countingJournal();
+    const apiA = createRestApi({ journal: a.journal, agents: {} } as any);
+    const apiB = createRestApi({ journal: b.journal, agents: {} } as any);
+
+    expect((await hit(apiA, '/ready')).status).toBe(200);
+    expect((await hit(apiA, '/ready')).status).toBe(200);
+    expect(a.counter.gets).toBe(1);
+    expect(b.counter.gets, 'A being ready says nothing about B storage').toBe(0);
+
+    expect((await hit(apiB, '/ready')).status).toBe(200);
+    expect(b.counter.gets).toBe(1);
+    expect(a.counter.gets).toBe(1);
   });
 
   it('says nothing about what the deployment contains', async () => {

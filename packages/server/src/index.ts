@@ -716,10 +716,39 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
    */
   app.get('/health', (c) => c.json({ status: 'ok', uptimeSec: Math.floor(process.uptime()) }));
 
-  app.get('/ready', async (c) => {
-    // Bounded on purpose: an unreachable database usually HANGS rather than refusing, and a probe that
-    // Hangs is read as a timeout by some orchestrators and as success by others. Answer either way.
-    const budgetMs = 2_000;
+  /**
+   * `/ready` is unauthenticated, so anyone who can reach the port decides how often it touches the
+   * Database. The read itself is cheap (5000 sequential in-memory gets ≈ 66ms), so this is not about
+   * CPU — it is about what a BURST costs against a real database: each request is a real query, and
+   * When storage HANGS each one parks an uncancelled promise, and its connection, for the whole 2s
+   * Budget. Two bounds, both closed over THIS app instance:
+   *   - one probe in flight at a time — concurrent requests await the same promise, so a burst parks
+   *     One connection rather than one per request;
+   *   - a settled answer is reused for 1s. Readiness probes fire on second-scale periods (Kubernetes'
+   *     PeriodSeconds defaults to 10, Fly and Cloud Run sit in the same range), so a 1s window changes
+   *     No orchestrator's view of this process while collapsing any burst to ≤1 query per second.
+   * Deliberately NOT module-level state: `createRestApi` can be called more than once in a process
+   * (tests do, and so does anyone mounting two APIs over different storage), and two apps sharing one
+   * Cache would answer for each other's journal.
+   * The 2s budget and the response contract are unchanged by any of this.
+   */
+  const readyBudgetMs = 2_000;
+  const readyCacheMs = 1_000;
+  // The warning is one line per FAILED probe, and a failing probe is exactly the moment an unauthenticated
+  // Caller can repeat cheaply — an outage plus a probe loop (or a hostile client) turns the operator's log
+  // Into noise that hides the first, useful line. 30s is the shortest interval that still keeps the failure
+  // Visible in a log tail while surviving an hour of outage in ~120 lines. The first failure after a quiet
+  // Period always warns again, so a recurrence is never silent.
+  const readyWarnEveryMs = 30_000;
+  let readyCache: { at: number; ok: boolean } | undefined;
+  let readyInFlight: Promise<boolean> | undefined;
+  let readyWarnedAt = 0;
+
+  /** Resolves the readiness answer, from cache, from a probe already running, or from a new one. */
+  const probeReady = (): Promise<boolean> => {
+    // Date.now rather than a timer so the window is readable — and testable — without a clock of its own.
+    if (readyCache && Date.now() - readyCache.at < readyCacheMs) return Promise.resolve(readyCache.ok);
+    if (readyInFlight) return readyInFlight;
     const probe = (async () => {
       // A read is enough to prove the connection is usable, and cannot disturb any run's state. The
       // Key is deliberately one that never exists.
@@ -727,18 +756,31 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
       return true;
     })();
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<false>((resolve) => { timer = setTimeout(() => resolve(false), budgetMs); });
-    try {
-      const ok = await Promise.race([probe.catch(() => false), timeout]);
-      if (!ok) {
-        // The reason stays in the logs; the response says only that storage is not reachable.
-        console.warn('@gnldev/server: readiness probe failed — the journal did not answer within ' + budgetMs + 'ms');
-        return c.json({ status: 'unavailable', storage: 'unreachable' }, 503);
-      }
-      return c.json({ status: 'ready' });
-    } finally {
+    // Bounded on purpose: an unreachable database usually HANGS rather than refusing, and a probe that
+    // Hangs is read as a timeout by some orchestrators and as success by others. Answer either way.
+    const timeout = new Promise<false>((resolve) => { timer = setTimeout(() => resolve(false), readyBudgetMs); });
+    // Assigned synchronously — anything that arrives before the race settles must find this promise.
+    readyInFlight = Promise.race([probe.catch(() => false), timeout]).then((ok) => {
       if (timer) clearTimeout(timer);
+      readyCache = { at: Date.now(), ok };
+      readyInFlight = undefined;
+      return ok;
+    });
+    return readyInFlight;
+  };
+
+  app.get('/ready', async (c) => {
+    const ok = await probeReady();
+    if (!ok) {
+      // The reason stays in the logs; the response says only that storage is not reachable.
+      const now = Date.now();
+      if (now - readyWarnedAt >= readyWarnEveryMs) {
+        readyWarnedAt = now;
+        console.warn('@gnldev/server: readiness probe failed — the journal did not answer within ' + readyBudgetMs + 'ms (repeats suppressed for ' + readyWarnEveryMs / 1000 + 's)');
+      }
+      return c.json({ status: 'unavailable', storage: 'unreachable' }, 503);
     }
+    return c.json({ status: 'ready' });
   });
 
   // Metadata list of registered agents (for the client/playground agent selector).

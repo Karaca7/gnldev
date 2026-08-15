@@ -158,6 +158,10 @@ would be worse than saying that.
   for one status is inelegant and known to be: they are only ever written together, from a single
   outcome status in a single statement, so they cannot disagree — collapsing them into one `outcome`
   column is a schema round of its own.
+- `GET /ready` now shares one in-flight probe between concurrent requests and reuses a settled answer for
+  1s, and warns at most once per 30s. It is unauthenticated, so anyone who could reach the port set how
+  often it queried the database and how much it wrote to the log — and against a hanging database each
+  request parked its own connection for the full 2s budget. The 2s budget and the responses are unchanged.
 
 <!-- Once v0.1.0 is tagged, this becomes .../compare/v0.1.0...HEAD -->
 [Unreleased]: https://github.com/Karaca7/gnl-framework/commits/main
