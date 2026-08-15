@@ -456,6 +456,13 @@ class SqliteRunJournal implements RunJournal {
         // ONE statement, so they can never disagree — and every transition clears its predecessor.
         if (oc !== null) {
           const runId = key.slice(0, -':outcome'.length);
+          // The write-ahead 'running' is the FIRST write of a brand-new run — before `:input`, before
+          // any entry — so the row may not exist yet, and an UPDATE against a missing row silently
+          // dropped the flag (measured: outcome said running, gnl_runs said 0 0 0 → 'completed', the
+          // exact lie this vocabulary removes). touchRunDelta's upsert creates the row with zero
+          // counts; an outcome is only ever written by the engine for a real run, so this does not
+          // reopen the invented-run hazard the non-owner branch guards against.
+          this.touchRunDelta(runId, null, false, 0);
           this.db.prepare(`UPDATE gnl_runs SET failed = ?, running = ? WHERE run_id = ?`).run(oc === 'failed' ? 1 : 0, oc === 'running' ? 1 : 0, runId);
         }
       });
@@ -493,6 +500,7 @@ class SqliteRunJournal implements RunJournal {
           // path); handling the flags only in put() left sqlite reading every failure as completed.
           if (oc !== null) {
             const runId = key.slice(0, -':outcome'.length);
+            this.touchRunDelta(runId, null, false, 0); // first write of a new run — see putCore's twin
             this.db.prepare(`UPDATE gnl_runs SET failed = ?, running = ? WHERE run_id = ?`).run(oc === 'failed' ? 1 : 0, oc === 'running' ? 1 : 0, runId);
           }
         }
@@ -525,7 +533,11 @@ class SqliteRunJournal implements RunJournal {
       // failure) arrives through putIfMatch — the flags must follow the record here too.
       return this.withTx(() => {
         const ok = Number(upd().changes ?? 0) === 1;
-        if (ok) this.db.prepare(`UPDATE gnl_runs SET failed = ?, running = ? WHERE run_id = ?`).run(oc === 'failed' ? 1 : 0, oc === 'running' ? 1 : 0, key.slice(0, -':outcome'.length));
+        if (ok) {
+          const runId = key.slice(0, -':outcome'.length);
+          this.touchRunDelta(runId, null, false, 0); // see putCore's twin
+          this.db.prepare(`UPDATE gnl_runs SET failed = ?, running = ? WHERE run_id = ?`).run(oc === 'failed' ? 1 : 0, oc === 'running' ? 1 : 0, runId);
+        }
         return ok;
       });
     }

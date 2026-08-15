@@ -937,6 +937,12 @@ export class InMemoryJournal implements Journal, JournalReader {
         // Entry list it is handed is genuinely empty.
         const owner = runIdOfKey(key, value);
         if (owner && !byRun.has(owner)) byRun.set(owner, []);
+        // The write-ahead can be a run's FIRST key — it registers the run even before `:input` does.
+        const oc = outcomeStatusOf(key, value);
+        if (oc !== null) {
+          const runId = key.slice(0, -':outcome'.length);
+          if (!byRun.has(runId)) byRun.set(runId, []);
+        }
         continue;
       }
       const list = byRun.get(p.runId) ?? [];

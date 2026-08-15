@@ -40,6 +40,15 @@ would be worse than saying that.
   not a failed one, a run refused because another worker holds the lock is not a failure of that run,
   and a run that failed and later resumed to success stops being failed. Surfaced through
   `/runs?status=failed`, `gnl runs`, Studio, and OTel (which now reports `ERROR` with the reason).
+- **`RunStatus` gained `'running'` — a run can now say it has not ended.** Every attempt writes a
+  write-ahead outcome at entry; the terminal verdict overwrites it. The closed defect: a run
+  SIGKILLed mid-work read back as `'completed'`, because "no terminal record" and "ended fine" were
+  the same absence — proven closed at the process level (a child killed with SIGKILL mid-model-call
+  reads `running` from the same SQLite file, and a resume closes it). Precedence is
+  suspended > failed > running > completed; journals written before outcomes existed still read
+  exactly as they did. Surfaced through `?status=running`, `gnl runs` (cyan), the Inspector (tab +
+  info-blue dot), and OTel — where an unfinished run now exports **UNSET**, never OK: the dashboard
+  no longer shows green precisely while the process is dead.
 - **`GET /health` and `GET /ready`.** Liveness touches nothing, so a failing database cannot cause a
   healthy process to be killed and restarted; readiness reads the journal with a 2s budget and returns
   503 when storage is unreachable. Both are unauthenticated by design and report reachability only —
@@ -101,15 +110,15 @@ would be worse than saying that.
 
 ### Changed
 
-- `RunSummary.status` is now `'completed' | 'suspended' | 'failed'`. A TypeScript `switch` over it with
-  no `default` will stop compiling — deliberately, since the alternative is silently labelling a failed
-  run as completed.
+- `RunSummary.status` is now `'completed' | 'suspended' | 'failed' | 'running'`. A TypeScript `switch`
+  over it with no `default` will stop compiling — deliberately, since the alternative is silently
+  mislabelling a failed or unfinished run as completed.
 - `limits.approvalScope: 'attempt'` (opt-in) spends a human approval on the attempt it unblocks, so a
   later retry asks again instead of proceeding on an answer given about an earlier attempt. The default
   is unchanged: the approval is journaled and survives a crash.
-- `sqlite`/`postgres` gained a `failed` column on `gnl_runs` (materialized at write time — not
-  indexed; the status filter is an operator path, not a hot one), migrated on startup like
-  `suspended_count`. Journals written before it read exactly as they did before.
+- `sqlite`/`postgres` gained `failed` and `running` columns on `gnl_runs` (materialized at write time —
+  not indexed; the status filter is an operator path, not a hot one), migrated on startup like
+  `suspended_count`. Journals written before them read exactly as they did before.
 
 <!-- Once v0.1.0 is tagged, this becomes .../compare/v0.1.0...HEAD -->
 [Unreleased]: https://github.com/Karaca7/gnl-framework/commits/main

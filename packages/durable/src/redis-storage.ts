@@ -687,6 +687,11 @@ class RedisRunJournal implements RunJournal {
         const runId = rawKey.slice(0, -':outcome'.length);
         const st = (e.v as { status?: string } | undefined)?.status;
         if (st === 'failed' || st === 'running') outcomes.set(runId, st);
+        // The write-ahead can be a run's FIRST key (killed before `:input` landed) — the run still
+        // started, so it still lists, with genuinely zero counts.
+        if ((st === 'failed' || st === 'running' || st === 'completed') && !byRun.has(runId)) {
+          byRun.set(runId, { m: 0, t: 0, s: false, c0: e.t });
+        }
       }
     }
     // P0.3 filters: listRuns is ALREADY a full brute-force SCAN here (Redis has no

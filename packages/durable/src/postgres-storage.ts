@@ -314,6 +314,8 @@ class PgRunJournal implements RunJournal {
         // They can never disagree — and every transition clears its predecessor.
         if (oc !== null) {
           const runId = key.slice(0, -':outcome'.length);
+          // First write of a brand-new run may precede its row — see the sqlite twin's comment.
+          await this.touchRunDelta(q, runId, null, false, 0);
           await q(`UPDATE gnl_runs SET failed = $1, running = $2 WHERE run_id = $3`, [oc === 'failed', oc === 'running', runId]);
         }
       });
@@ -351,7 +353,11 @@ class PgRunJournal implements RunJournal {
         if (ok) {
           if (owner) await this.touchRunDelta(q, owner, null, false, 0);
           // First outcome write arrives via putIfAbsent (monotonic recordRunOutcome) — see sqlite twin.
-          if (oc !== null) await q(`UPDATE gnl_runs SET failed = $1, running = $2 WHERE run_id = $3`, [oc === 'failed', oc === 'running', key.slice(0, -':outcome'.length)]);
+          if (oc !== null) {
+            const runId = key.slice(0, -':outcome'.length);
+            await this.touchRunDelta(q, runId, null, false, 0); // see the sqlite twin
+            await q(`UPDATE gnl_runs SET failed = $1, running = $2 WHERE run_id = $3`, [oc === 'failed', oc === 'running', runId]);
+          }
         }
         return ok;
       });
@@ -385,7 +391,11 @@ class PgRunJournal implements RunJournal {
       if (oc === null) return Number((await upd(this.q)).rowCount ?? 0) === 1; // ':lock' etc. → no derived index
       return await this.tx(async (q) => {
         const ok = Number((await upd(q)).rowCount ?? 0) === 1;
-        if (ok) await q(`UPDATE gnl_runs SET failed = $1, running = $2 WHERE run_id = $3`, [oc === 'failed', oc === 'running', key.slice(0, -':outcome'.length)]);
+        if (ok) {
+          const runId = key.slice(0, -':outcome'.length);
+          await this.touchRunDelta(q, runId, null, false, 0); // see the sqlite twin
+          await q(`UPDATE gnl_runs SET failed = $1, running = $2 WHERE run_id = $3`, [oc === 'failed', oc === 'running', runId]);
+        }
         return ok;
       });
     }
