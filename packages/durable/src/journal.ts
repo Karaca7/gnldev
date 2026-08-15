@@ -307,7 +307,14 @@ export function outcomeFlagOf(key: string, value: unknown): 0 | 1 | null {
 
 /** What was recorded at a run's terminal boundary. `error` is present only on a failure. */
 export interface RunOutcomeRecord {
-  status: 'completed' | 'failed';
+  /**
+   * 'running' is the WRITE-AHEAD half: recorded when a run STARTS, overwritten by the terminal
+   * Verdict when it ends. Its purpose is the crash between the two — a run SIGKILLed mid-work used
+   * To read back as 'completed', because "no terminal record" and "ended fine" were the same absence.
+   * A run that never said it ended now never claims it did; it stays 'running', visibly stale by its
+   * `at`, until a resume finishes it or retention sweeps it.
+   */
+  status: 'completed' | 'failed' | 'running';
   at: number;
   error?: string;
 }
@@ -498,7 +505,7 @@ export interface JournalEntry {
  * Recorded outcome, then 'completed'. A run with no outcome record — every run written before this
  * Existed — reads exactly as it did before.
  */
-export type RunStatus = 'completed' | 'suspended' | 'failed';
+export type RunStatus = 'completed' | 'suspended' | 'failed' | 'running';
 
 export interface RunSummary {
   runId: string;
@@ -722,7 +729,12 @@ function isVersionedRecord(value: unknown): boolean {
  */
 export function deriveRunStatus(suspended: boolean, outcome?: Pick<RunOutcomeRecord, 'status'> | null): RunStatus {
   if (suspended) return 'suspended';
-  return outcome?.status === 'failed' ? 'failed' : 'completed';
+  if (outcome?.status === 'failed') return 'failed';
+  // The write-ahead half: a run that recorded a start and never recorded an end has NOT completed —
+  // saying 'completed' here was the lie the vocabulary used to force. A journal with NO outcome at
+  // all (written before outcomes existed) still reads 'completed', exactly as it always did.
+  if (outcome?.status === 'running') return 'running';
+  return 'completed';
 }
 
 /**

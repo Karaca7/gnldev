@@ -73,7 +73,7 @@ export { durableProcessorStep, createProcessorCtx, ProcessorTripwire, recordProc
 // D4-retry turn-level retry-with-feedback ladder (see run.ts).
 export { ProcessorRetry, RetryExhaustedByProcessorError } from './processor.js';
 export { recordIncident, readIncidents } from './incidents.js';
-export { readRunOutcome, recordRunOutcome, isRunFailure } from './outcome.js';
+export { readRunOutcome, recordRunOutcome, runStarted, isRunFailure } from './outcome.js';
 export { acquireLease, releaseLease, readLease } from './lease.js';
 export type { Lease } from './lease.js';
 export type { RunIncident } from './incidents.js';

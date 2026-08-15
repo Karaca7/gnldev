@@ -118,8 +118,13 @@ describe('what is NOT a failure', () => {
 
     expect(res.interrupts.length, 'it really did suspend').toBeGreaterThan(0);
     expect(await statusOf(journal, 'waiting')).toBe('suspended');
-    // And no outcome was recorded at all — the run has not ended.
-    expect(await journal.get(runKeys.outcome('waiting'))).toBeUndefined();
+    // The write-ahead start exists (the run DID start) but no TERMINAL verdict does — the run has
+    // not ended. The original form of this assertion predates the 'running' vocabulary and asserted
+    // total absence; what it was actually guarding is that suspension is never recorded as an ending.
+    const outcome = await journal.get<{ status?: string }>(runKeys.outcome('waiting'));
+    expect(outcome?.status).toBe('running');
+    expect(outcome?.status).not.toBe('completed');
+    expect(outcome?.status).not.toBe('failed');
   });
 
   it('a run refused because another worker holds the lock is not marked failed', async () => {

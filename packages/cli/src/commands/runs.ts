@@ -17,7 +17,7 @@ export interface RunsOptions {
 
 export interface RunRow {
   runId: string;
-  status: 'completed' | 'suspended' | 'failed';
+  status: 'completed' | 'suspended' | 'failed' | 'running';
   modelSteps: number;
   toolCalls: number;
   costUsd?: number;

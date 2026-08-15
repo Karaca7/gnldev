@@ -24,7 +24,7 @@ import { markRunTainted, readThreadTaint, readDirectRunTaint, recordTaintProvena
 import type { RunLimits } from './limits.js';
 import type { ToolSchemaRule } from '@gnldev/tool-schema';
 import type { LanguageModelV2 } from '@ai-sdk/provider';
-import { runFailed, runFailedIfUnrecorded, runSucceeded, classifyRunError, isRunFailure } from './outcome.js';
+import { runFailed, runFailedIfUnrecorded, runStarted, runSucceeded, classifyRunError, isRunFailure } from './outcome.js';
 
 type GenerateTextOptions = Parameters<typeof generateText>[0];
 type StreamTextOptions = Parameters<typeof streamText>[0];
@@ -973,6 +973,11 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   // With "model.doGenerate is not a function", which tells a newcomer nothing about what they did
   // Wrong. Resolve it here so the published type is true wherever it appears.
   const model = typeof modelInput === 'string' ? await resolveModel(modelInput) : modelInput;
+  // WRITE-AHEAD outcome: this attempt has STARTED. A run SIGKILLed anywhere past this line reads
+  // 'running' — never 'completed', which is what the absence of any record used to mean. Sits after
+  // the lock (the guarded path acquires before calling here), so a caller that never got in never
+  // touches the live run's record. Best-effort like every outcome write.
+  await runStarted(journal, runId, Date.now());
   // AUDIT (approval first-class): BEFORE ctx is set up — claim the parameter's approvals into the
   // Journal + merge with the journal's existing approvals (see the resolveApprovals header).
   const resolvedApprovals = await resolveApprovals(journal, runId, approvals);
@@ -1221,6 +1226,9 @@ export async function streamDurable(args: StreamDurableArgs) {
   // No heartbeat by design (see StreamDurableArgs.lock) — a streamed lock relies on ttlMs for takeover.
   const lockHandle = lock ? await acquireRunLock(journal, runId, lock.owner, lock.ttlMs) : null;
   if (lock && !lockHandle) throw Object.assign(new RunBusyError(`run '${runId}' is locked by another process`), { atLockAcquisition: true });
+  // WRITE-AHEAD outcome — the stream twin of runDurableInner's. A stream abandoned mid-flight (the
+  // process died, neither onFinish nor onError ran) reads 'running' instead of 'completed'.
+  await runStarted(journal, runId, Date.now());
   // AUDIT (approval first-class): SAME as runDurableInner — BEFORE ctx is set up (see resolveApprovals).
   const resolvedApprovals = await resolveApprovals(journal, runId, approvals);
   // C2: on resume, load the replay snapshot (same as runDurableInner).

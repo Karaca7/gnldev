@@ -89,6 +89,12 @@ export async function recordRunOutcome(
       if (cur !== undefined) {
         if (opts?.fillOnly) return; // a verdict already stands, and this caller may only fill absence
         if (typeof cur.at === 'number' && cur.at > next.at) return; // a newer verdict already stands
+        // A same-millisecond tie between a TERMINAL verdict and a 'running' start goes to the
+        // terminal: the start is only newer information when it is STRICTLY newer. Without this, a
+        // resume's start stamped in the same ms as the previous attempt's verdict flickered the run
+        // back to 'running' even though nothing had run yet — harmless but noisy; and the reverse
+        // race (terminal then same-ms running from a parallel starter) hid a real ending.
+        if (typeof cur.at === 'number' && cur.at === next.at && next.status === 'running' && cur.status !== 'running') return;
         if (journal.putIfMatch) {
           if (await journal.putIfMatch(key, raw, next)) return;
           continue; // lost the CAS — re-read, the winner may be newer than us
@@ -118,6 +124,15 @@ export const runFailed = (journal: Journal, runId: string, err: unknown, at: num
 /** A fenced-out attempt's failure: only ever fills an ABSENT verdict — the surviving executor's wins. */
 export const runFailedIfUnrecorded = (journal: Journal, runId: string, err: unknown, at: number): Promise<void> =>
   recordRunOutcome(journal, runId, { status: 'failed', at, error: messageOf(err) }, { fillOnly: true });
+
+/**
+ * The write-ahead start marker. Recorded at every attempt's entry (a resume is a new attempt), so a
+ * Run killed between here and its terminal write reads 'running' — never 'completed', which is what
+ * The absence of any record used to mean. Monotonic like every outcome write: it cannot bury a
+ * Strictly newer terminal, and a stale attempt's late start cannot resurrect a finished run.
+ */
+export const runStarted = (journal: Journal, runId: string, at: number): Promise<void> =>
+  recordRunOutcome(journal, runId, { status: 'running', at });
 
 /** The recorded outcome, or undefined for a run written before outcomes existed. */
 export async function readRunOutcome(journal: Journal, runId: string): Promise<RunOutcomeRecord | undefined> {
