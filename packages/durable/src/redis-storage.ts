@@ -650,7 +650,7 @@ class RedisRunJournal implements RunJournal {
     // Since SCAN already fetches ALL rj: keys in one pass (keys/values above), this is NOT a SEPARATE
     // Round-trip, it's part of the same scan.
     const threadIds = new Map<string, string>();
-    const failedRuns = new Set<string>();
+    const outcomes = new Map<string, 'failed' | 'running'>();
     const agents = new Map<string, string>();
     for (let i = 0; i < keys.length; i++) {
       const s = values[i];
@@ -685,7 +685,8 @@ class RedisRunJournal implements RunJournal {
       // Word 'failed'; the record's own status field does not lie).
       if (rawKey.endsWith(':outcome')) {
         const runId = rawKey.slice(0, -':outcome'.length);
-        if ((e.v as { status?: string } | undefined)?.status === 'failed') failedRuns.add(runId);
+        const st = (e.v as { status?: string } | undefined)?.status;
+        if (st === 'failed' || st === 'running') outcomes.set(runId, st);
       }
     }
     // P0.3 filters: listRuns is ALREADY a full brute-force SCAN here (Redis has no
@@ -699,7 +700,7 @@ class RedisRunJournal implements RunJournal {
         const threadId = threadIds.get(runId);
         const agent = agents.get(runId);
         return {
-          runId, status: deriveRunStatus(v.s, failedRuns.has(runId) ? { status: 'failed' } : null), modelSteps: v.m, toolCalls: v.t,
+          runId, status: deriveRunStatus(v.s, outcomes.has(runId) ? { status: outcomes.get(runId)! } : null), modelSteps: v.m, toolCalls: v.t,
           ...(threadId ? { threadId } : {}),
           ...(agent ? { agent } : {}),
         };

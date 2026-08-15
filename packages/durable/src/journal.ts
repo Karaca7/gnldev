@@ -295,14 +295,13 @@ export const runKeys = {
  *
  * Returns null for every other key, so a caller can use it as "is this an outcome write at all".
  */
-export function outcomeFlagOf(key: string, value: unknown): 0 | 1 | null {
+export function outcomeStatusOf(key: string, value: unknown): 'running' | 'failed' | 'completed' | null {
   if (!key.endsWith(':outcome')) return null;
   // The key suffix alone is not proof: `appendLog(journal, ns, payload, 'outcome')` writes
   // `${ns}:outcome` with a caller's payload. Only the engine's own record — whose status is exactly
-  // One of the two terminal values — is treated as an outcome.
+  // One of the three lifecycle values — is treated as an outcome.
   const status = (value as { status?: unknown } | null)?.status;
-  if (status !== 'failed' && status !== 'completed') return null;
-  return status === 'failed' ? 1 : 0;
+  return status === 'failed' || status === 'completed' || status === 'running' ? status : null;
 }
 
 /** What was recorded at a run's terminal boundary. `error` is present only on a failure. */
@@ -950,7 +949,7 @@ export class InMemoryJournal implements Journal, JournalReader {
     return [...byRun.entries()].map(([runId, entries]) => {
       // Same O(1) point-read as `:input` below — the outcome is not an entry, so summarizeRun cannot
       // See it on its own.
-      const out = this.store.get(`${runId}:outcome`) as { status?: 'completed' | 'failed' } | undefined;
+      const out = this.store.get(`${runId}:outcome`) as { status?: 'completed' | 'failed' | 'running' } | undefined;
       const s = summarizeRun(runId, entries, out as never);
       const inp = this.store.get(`${runId}:input`) as { threadId?: string; agent?: string } | undefined;
       return {

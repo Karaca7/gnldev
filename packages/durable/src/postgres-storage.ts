@@ -4,7 +4,7 @@
 // Vector is 'scan' for now (brute-force cosine; pgvector deferred — pg-mem compatibility + lean first cut).
 import { createRequire } from 'node:module';
 import { cosineSimilarity } from 'ai';
-import { runIdOfKey, parseJournalKey, outcomeFlagOf, deriveRunStatus } from './journal.js';
+import { runIdOfKey, parseJournalKey, outcomeStatusOf, deriveRunStatus } from './journal.js';
 import type { JournalBatch, JournalEntry, RunSummary, ToolJournalRecord } from './journal.js';
 import { serialize, deserialize } from './serialize.js';
 import { matchFilter } from './storage.js';
@@ -51,7 +51,7 @@ const DDL = [
   `CREATE TABLE IF NOT EXISTS gnl_meta (k TEXT PRIMARY KEY, v TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS gnl_run_journal (key TEXT PRIMARY KEY, run_id TEXT, kind TEXT, suspended BOOLEAN NOT NULL DEFAULT false, value TEXT NOT NULL, created_at BIGINT NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS gnl_run_journal_run ON gnl_run_journal (run_id, created_at)`,
-  `CREATE TABLE IF NOT EXISTS gnl_runs (run_id TEXT PRIMARY KEY, model_steps INTEGER NOT NULL DEFAULT 0, tool_calls INTEGER NOT NULL DEFAULT 0, suspended BOOLEAN NOT NULL DEFAULT false, suspended_count INTEGER NOT NULL DEFAULT 0, failed BOOLEAN NOT NULL DEFAULT false, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS gnl_runs (run_id TEXT PRIMARY KEY, model_steps INTEGER NOT NULL DEFAULT 0, tool_calls INTEGER NOT NULL DEFAULT 0, suspended BOOLEAN NOT NULL DEFAULT false, suspended_count INTEGER NOT NULL DEFAULT 0, failed BOOLEAN NOT NULL DEFAULT false, running BOOLEAN NOT NULL DEFAULT false, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS gnl_runs_updated ON gnl_runs (updated_at)`,
   // H11b migration: add the column if missing in an old setup (backfill once at init, below).
   `ALTER TABLE gnl_runs ADD COLUMN IF NOT EXISTS suspended_count INTEGER NOT NULL DEFAULT 0`,
@@ -60,6 +60,8 @@ const DDL = [
   // Value would mean matching the word 'failed' inside error MESSAGES. Nothing to backfill — a run
   // Written before outcomes existed has none, and false reads exactly as it did before.
   `ALTER TABLE gnl_runs ADD COLUMN IF NOT EXISTS failed BOOLEAN NOT NULL DEFAULT false`,
+  // `running` (the write-ahead half): same shape, same no-backfill argument as `failed` above.
+  `ALTER TABLE gnl_runs ADD COLUMN IF NOT EXISTS running BOOLEAN NOT NULL DEFAULT false`,
   `CREATE TABLE IF NOT EXISTS gnl_counters (key TEXT NOT NULL, field TEXT NOT NULL, value DOUBLE PRECISION NOT NULL, PRIMARY KEY (key, field))`,
   `CREATE INDEX IF NOT EXISTS gnl_runs_created ON gnl_runs (created_at, run_id)`,
   `CREATE TABLE IF NOT EXISTS gnl_threads (id TEXT PRIMARY KEY, resource_id TEXT NOT NULL, title TEXT, parent_thread_id TEXT, metadata TEXT, created_at BIGINT NOT NULL, updated_at BIGINT NOT NULL, deleted_at BIGINT)`,
@@ -302,16 +304,17 @@ class PgRunJournal implements RunJournal {
       // Before its first model step never appears in listRuns and is never reached by sweepRuns — its
       // Persisted prompt then outlives every retention window.
       const owner = runIdOfKey(key, value);
-      const failed = outcomeFlagOf(key, value);
-      if (!owner && failed === null) { await upsert(this.q); return; } // genuinely run-less key
+      const oc = outcomeStatusOf(key, value);
+      if (!owner && oc === null) { await upsert(this.q); return; } // genuinely run-less key
       await this.tx(async (q) => {
         await upsert(q);
         if (owner) await this.touchRunDelta(q, owner, null, false, 0);
         // Own path, not riding on run ownership (see the sqlite twin). The UPDATE only touches an
-        // Existing row, so it cannot invent a run. Set both ways so a later success clears the failure.
-        if (failed !== null) {
+        // Existing row, so it cannot invent a run. Both flags from ONE status in ONE statement, so
+        // They can never disagree — and every transition clears its predecessor.
+        if (oc !== null) {
           const runId = key.slice(0, -':outcome'.length);
-          await q(`UPDATE gnl_runs SET failed = $1 WHERE run_id = $2`, [failed === 1, runId]);
+          await q(`UPDATE gnl_runs SET failed = $1, running = $2 WHERE run_id = $3`, [oc === 'failed', oc === 'running', runId]);
         }
       });
       return;
@@ -341,14 +344,14 @@ class PgRunJournal implements RunJournal {
     );
     if (!p) {
       const owner = runIdOfKey(key, value);
-      const failed = outcomeFlagOf(key, value);
-      if (!owner && failed === null) return inserted1(await ins(this.q)); // genuinely run-less key
+      const oc = outcomeStatusOf(key, value);
+      if (!owner && oc === null) return inserted1(await ins(this.q)); // genuinely run-less key
       return await this.tx(async (q) => {
         const ok = inserted1(await ins(q));
         if (ok) {
           if (owner) await this.touchRunDelta(q, owner, null, false, 0);
           // First outcome write arrives via putIfAbsent (monotonic recordRunOutcome) — see sqlite twin.
-          if (failed !== null) await q(`UPDATE gnl_runs SET failed = $1 WHERE run_id = $2`, [failed === 1, key.slice(0, -':outcome'.length)]);
+          if (oc !== null) await q(`UPDATE gnl_runs SET failed = $1, running = $2 WHERE run_id = $3`, [oc === 'failed', oc === 'running', key.slice(0, -':outcome'.length)]);
         }
         return ok;
       });
@@ -378,11 +381,11 @@ class PgRunJournal implements RunJournal {
       [serialize(value), !!suspended, key, serialize(expected)],
     );
     if (!p) {
-      const failed = outcomeFlagOf(key, value);
-      if (failed === null) return Number((await upd(this.q)).rowCount ?? 0) === 1; // ':lock' etc. → no derived index
+      const oc = outcomeStatusOf(key, value);
+      if (oc === null) return Number((await upd(this.q)).rowCount ?? 0) === 1; // ':lock' etc. → no derived index
       return await this.tx(async (q) => {
         const ok = Number((await upd(q)).rowCount ?? 0) === 1;
-        if (ok) await q(`UPDATE gnl_runs SET failed = $1 WHERE run_id = $2`, [failed === 1, key.slice(0, -':outcome'.length)]);
+        if (ok) await q(`UPDATE gnl_runs SET failed = $1, running = $2 WHERE run_id = $3`, [oc === 'failed', oc === 'running', key.slice(0, -':outcome'.length)]);
         return ok;
       });
     }
@@ -566,20 +569,21 @@ class PgRunJournal implements RunJournal {
     const statusWhere =
       q?.status === 'suspended' ? ' WHERE r.suspended = true'
       : q?.status === 'failed' ? ' WHERE r.suspended = false AND r.failed = true'
-      : q?.status === 'completed' ? ' WHERE r.suspended = false AND r.failed = false'
+      : q?.status === 'running' ? ' WHERE r.suspended = false AND r.failed = false AND r.running = true'
+      : q?.status === 'completed' ? ' WHERE r.suspended = false AND r.failed = false AND r.running = false'
       : '';
     const statusParams: unknown[] = [];
     const toSummary = (x: any): RunSummary => {
       const input = x.input_val ? deserialize<{ threadId?: string; agent?: string }>(x.input_val) : undefined;
       return {
-        runId: x.run_id, status: deriveRunStatus(!!x.suspended, x.failed ? { status: 'failed' } : null), modelSteps: Number(x.model_steps), toolCalls: Number(x.tool_calls),
+        runId: x.run_id, status: deriveRunStatus(!!x.suspended, x.failed ? { status: 'failed' } : x.running ? { status: 'running' } : null), modelSteps: Number(x.model_steps), toolCalls: Number(x.tool_calls),
         ...(input?.threadId ? { threadId: input.threadId } : {}),
         ...(input?.agent ? { agent: input.agent } : {}),
       };
     };
     if (q?.agent) {
       const r = await this.q(
-        `SELECT r.run_id, r.model_steps, r.tool_calls, r.suspended, r.failed, j.value AS input_val
+        `SELECT r.run_id, r.model_steps, r.tool_calls, r.suspended, r.failed, r.running, j.value AS input_val
          FROM gnl_runs r LEFT JOIN gnl_run_journal j ON j.key = r.run_id || ':input'${statusWhere}
          ORDER BY r.created_at, r.run_id`,
         statusParams,
@@ -590,7 +594,7 @@ class PgRunJournal implements RunJournal {
     const total = Number((await this.q(`SELECT COUNT(*) AS n FROM gnl_runs r${statusWhere}`, statusParams)).rows[0].n);
     const limitIdx = statusParams.length + 1;
     const r = await this.q(
-      `SELECT r.run_id, r.model_steps, r.tool_calls, r.suspended, r.failed, j.value AS input_val
+      `SELECT r.run_id, r.model_steps, r.tool_calls, r.suspended, r.failed, r.running, j.value AS input_val
        FROM gnl_runs r LEFT JOIN gnl_run_journal j ON j.key = r.run_id || ':input'${statusWhere}
        ORDER BY r.created_at, r.run_id LIMIT $${limitIdx} OFFSET $${limitIdx + 1}`,
       [...statusParams, limit, start],
@@ -680,10 +684,10 @@ class PgRunJournal implements RunJournal {
    * Correct on both pg-mem and real Postgres.
    */
   async countRunsByStatus(): Promise<Record<string, number>> {
-    const r = await this.q(`SELECT suspended, failed, COUNT(*) AS n FROM gnl_runs GROUP BY suspended, failed`);
+    const r = await this.q(`SELECT suspended, failed, running, COUNT(*) AS n FROM gnl_runs GROUP BY suspended, failed, running`);
     const out: Record<string, number> = {};
     for (const row of r.rows) {
-      const status = deriveRunStatus(!!row.suspended, row.failed ? { status: 'failed' } : null);
+      const status = deriveRunStatus(!!row.suspended, row.failed ? { status: 'failed' } : row.running ? { status: 'running' } : null);
       out[status] = (out[status] ?? 0) + Number(row.n);
     }
     return out;

@@ -275,6 +275,10 @@ for (const [name, make, caps] of storages) {
       // re-collapses failed→completed would show "Failed: 0" above a list full of failed runs.
       await b.runs.put('crs4:model:0', { ok: true });
       await b.runs.put('crs4:outcome', { status: 'failed', at: Date.now(), error: '401' });
+      // And a RUNNING one — the write-ahead half. Without a seed here, an adapter that collapses
+      // running→completed would pass this suite exactly the way the failed collapse once did.
+      await b.runs.put('crs5:model:0', { ok: true });
+      await b.runs.put('crs5:outcome', { status: 'running', at: Date.now() });
       const counted = await j.countRunsByStatus();
       const page = await b.runs.listRuns({ limit: 1_000_000 });
       const expected: Record<string, number> = {};
@@ -282,6 +286,7 @@ for (const [name, make, caps] of storages) {
       expect(counted).toEqual(expected);
       expect(expected.suspended).toBe(1); // sanity: the suspended run really is in there
       expect(expected.failed, 'the failed run must be counted AS failed by both paths').toBe(1);
+      expect(expected.running, 'the running run must be counted AS running by both paths').toBe(1);
     });
 
     // MemoryStore conformance is skipped for storages that don't provide the memory port (Redis).

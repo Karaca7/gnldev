@@ -5,7 +5,7 @@
 import { createRequire } from 'node:module';
 import { statSync, existsSync } from 'node:fs';
 import { cosineSimilarity } from 'ai';
-import { runIdOfKey, parseJournalKey, outcomeFlagOf, deriveRunStatus } from './journal.js';
+import { runIdOfKey, parseJournalKey, outcomeStatusOf, deriveRunStatus } from './journal.js';
 import type { JournalBatch, JournalEntry, RunSummary, ToolJournalRecord } from './journal.js';
 import { serialize, deserialize } from './serialize.js';
 import { matchFilter } from './storage.js';
@@ -223,6 +223,16 @@ export class SqliteStorage implements Storage {
         if (!String((e as Error)?.message ?? e).includes('duplicate column')) throw e;
       }
     }
+    // `running` (the write-ahead half of the outcome): same shape, same no-backfill argument — an
+    // Outcome with status 'running' only exists from the write-ahead onward, so pre-existing rows
+    // Have nothing to reconstruct it from and 0 reads as before.
+    if (!cols.some((c) => c.name === 'running')) {
+      try {
+        this.db.exec(`ALTER TABLE gnl_runs ADD COLUMN running INTEGER NOT NULL DEFAULT 0`);
+      } catch (e) {
+        if (!String((e as Error)?.message ?? e).includes('duplicate column')) throw e;
+      }
+    }
     // The seed used to be
     // Check-then-INSERT (SELECT → INSERT if absent) — a TOCTOU: two simultaneous booters both saw no
     // Row, both inserted, and the loser CRASHED ON BOOT with a UNIQUE constraint. `INSERT OR IGNORE`
@@ -273,6 +283,7 @@ export class SqliteStorage implements Storage {
       ...DDL.split(';').map((s) => s.trim()).filter(Boolean),
       'ALTER TABLE gnl_runs ADD COLUMN suspended_count INTEGER NOT NULL DEFAULT 0',
       'ALTER TABLE gnl_runs ADD COLUMN failed INTEGER NOT NULL DEFAULT 0',
+      'ALTER TABLE gnl_runs ADD COLUMN running INTEGER NOT NULL DEFAULT 0',
     ];
   }
 
@@ -349,7 +360,7 @@ CREATE TABLE IF NOT EXISTS gnl_run_journal (
 CREATE INDEX IF NOT EXISTS gnl_run_journal_run ON gnl_run_journal (run_id, created_at);
 CREATE TABLE IF NOT EXISTS gnl_runs (
   run_id TEXT PRIMARY KEY, model_steps INTEGER NOT NULL DEFAULT 0, tool_calls INTEGER NOT NULL DEFAULT 0,
-  suspended INTEGER NOT NULL DEFAULT 0, suspended_count INTEGER NOT NULL DEFAULT 0, failed INTEGER NOT NULL DEFAULT 0,
+  suspended INTEGER NOT NULL DEFAULT 0, suspended_count INTEGER NOT NULL DEFAULT 0, failed INTEGER NOT NULL DEFAULT 0, running INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS gnl_runs_created ON gnl_runs (created_at, run_id);
@@ -434,18 +445,18 @@ class SqliteRunJournal implements RunJournal {
       // In the index, or a run that died before its first model step is invisible to listRuns and,
       // Worse, to sweepRuns — its persisted prompt then outlives every retention window.
       const owner = runIdOfKey(key, value);
-      const failed = outcomeFlagOf(key, value);
-      if (!owner && failed === null) { upsert(); return; } // genuinely run-less key (queues, events, cache)
+      const oc = outcomeStatusOf(key, value);
+      if (!owner && oc === null) { upsert(); return; } // genuinely run-less key (queues, events, cache)
       this.withTx(() => {
         upsert();
         if (owner) this.touchRunDelta(owner, null, false, 0);
         // The outcome carries its OWN path rather than riding on run ownership: it is not a versioned
         // Record, so runIdOfKey (which now demands that proof) does not claim it. The UPDATE only
-        // Touches a row that already exists, so it cannot invent a run. Set both ways — a resume that
-        // Finally succeeds must clear an earlier failure.
-        if (failed !== null) {
+        // Touches a row that already exists, so it cannot invent a run. Both flags from ONE status in
+        // ONE statement, so they can never disagree — and every transition clears its predecessor.
+        if (oc !== null) {
           const runId = key.slice(0, -':outcome'.length);
-          this.db.prepare(`UPDATE gnl_runs SET failed = ? WHERE run_id = ?`).run(failed, runId);
+          this.db.prepare(`UPDATE gnl_runs SET failed = ?, running = ? WHERE run_id = ?`).run(oc === 'failed' ? 1 : 0, oc === 'running' ? 1 : 0, runId);
         }
       });
       return;
@@ -472,17 +483,17 @@ class SqliteRunJournal implements RunJournal {
     ).run(key, p?.runId ?? null, p?.kind ?? null, suspended, serialize(value), Date.now());
     if (!p) {
       const owner = runIdOfKey(key, value);
-      const failed = outcomeFlagOf(key, value);
-      if (!owner && failed === null) return ins().changes === 1; // genuinely run-less key
+      const oc = outcomeStatusOf(key, value);
+      if (!owner && oc === null) return ins().changes === 1; // genuinely run-less key
       return this.withTx(() => {
         const info = ins();
         if (info.changes === 1) {
           if (owner) this.touchRunDelta(owner, null, false, 0);
           // The outcome's first write arrives through putIfAbsent (recordRunOutcome's monotonic
-          // path); handling the flag only in put() left sqlite reading every failure as completed.
-          if (failed !== null) {
+          // path); handling the flags only in put() left sqlite reading every failure as completed.
+          if (oc !== null) {
             const runId = key.slice(0, -':outcome'.length);
-            this.db.prepare(`UPDATE gnl_runs SET failed = ? WHERE run_id = ?`).run(failed, runId);
+            this.db.prepare(`UPDATE gnl_runs SET failed = ?, running = ? WHERE run_id = ?`).run(oc === 'failed' ? 1 : 0, oc === 'running' ? 1 : 0, runId);
           }
         }
         return info.changes === 1;
@@ -508,13 +519,13 @@ class SqliteRunJournal implements RunJournal {
       'UPDATE gnl_run_journal SET value = ?, suspended = ? WHERE key = ? AND value = ?',
     ).run(serialize(value), suspended, key, serialize(expected));
     if (!p) {
-      const failed = outcomeFlagOf(key, value);
-      if (failed === null) return Number(upd().changes ?? 0) === 1; // lock key (e.g. ':lock') → no derived index
-      // The monotonic outcome REPLACEMENT (a later success clearing an earlier failure, or the
-      // reverse) arrives through putIfMatch — the flag must follow the record here too.
+      const oc = outcomeStatusOf(key, value);
+      if (oc === null) return Number(upd().changes ?? 0) === 1; // lock key (e.g. ':lock') → no derived index
+      // The monotonic outcome REPLACEMENT (running→terminal, or a later success clearing an earlier
+      // failure) arrives through putIfMatch — the flags must follow the record here too.
       return this.withTx(() => {
         const ok = Number(upd().changes ?? 0) === 1;
-        if (ok) this.db.prepare(`UPDATE gnl_runs SET failed = ? WHERE run_id = ?`).run(failed, key.slice(0, -':outcome'.length));
+        if (ok) this.db.prepare(`UPDATE gnl_runs SET failed = ?, running = ? WHERE run_id = ?`).run(oc === 'failed' ? 1 : 0, oc === 'running' ? 1 : 0, key.slice(0, -':outcome'.length));
         return ok;
       });
     }
@@ -652,32 +663,33 @@ class SqliteRunJournal implements RunJournal {
     const statusWhere =
       q?.status === 'suspended' ? ' WHERE suspended = 1'
       : q?.status === 'failed' ? ' WHERE suspended = 0 AND failed = 1'
-      : q?.status === 'completed' ? ' WHERE suspended = 0 AND failed = 0'
+      : q?.status === 'running' ? ' WHERE suspended = 0 AND failed = 0 AND running = 1'
+      : q?.status === 'completed' ? ' WHERE suspended = 0 AND failed = 0 AND running = 0'
       : '';
     const statusParams: unknown[] = [];
-    const toSummary = (r: { run_id: string; model_steps: number; tool_calls: number; suspended: number; failed: number; input_val: string | null }): RunSummary => {
+    const toSummary = (r: { run_id: string; model_steps: number; tool_calls: number; suspended: number; failed: number; running: number; input_val: string | null }): RunSummary => {
       const input = r.input_val ? deserialize<{ threadId?: string; agent?: string }>(r.input_val) : undefined;
       return {
-        runId: r.run_id, status: deriveRunStatus(!!r.suspended, r.failed ? { status: 'failed' } : null), modelSteps: r.model_steps, toolCalls: r.tool_calls,
+        runId: r.run_id, status: deriveRunStatus(!!r.suspended, r.failed ? { status: 'failed' } : r.running ? { status: 'running' } : null), modelSteps: r.model_steps, toolCalls: r.tool_calls,
         ...(input?.threadId ? { threadId: input.threadId } : {}),
         ...(input?.agent ? { agent: input.agent } : {}),
       };
     };
     if (q?.agent) {
       const rows = this.db.prepare(
-        `SELECT r.run_id, r.model_steps, r.tool_calls, r.suspended, r.failed,
+        `SELECT r.run_id, r.model_steps, r.tool_calls, r.suspended, r.failed, r.running,
                 (SELECT value FROM gnl_run_journal WHERE key = r.run_id || ':input') AS input_val
          FROM gnl_runs r${statusWhere} ORDER BY r.created_at, r.run_id`,
-      ).all(...statusParams) as { run_id: string; model_steps: number; tool_calls: number; suspended: number; failed: number; input_val: string | null }[];
+      ).all(...statusParams) as { run_id: string; model_steps: number; tool_calls: number; suspended: number; failed: number; running: number; input_val: string | null }[];
       const all = rows.map(toSummary).filter((r) => r.agent === q.agent);
       return pageOf(all.slice(start, start + limit), start, limit, all.length);
     }
     const total = (this.db.prepare(`SELECT COUNT(*) AS n FROM gnl_runs${statusWhere}`).get(...statusParams) as { n: number }).n;
     const rows = this.db.prepare(
-      `SELECT r.run_id, r.model_steps, r.tool_calls, r.suspended, r.failed,
+      `SELECT r.run_id, r.model_steps, r.tool_calls, r.suspended, r.failed, r.running,
               (SELECT value FROM gnl_run_journal WHERE key = r.run_id || ':input') AS input_val
        FROM gnl_runs r${statusWhere} ORDER BY r.created_at, r.run_id LIMIT ? OFFSET ?`,
-    ).all(...statusParams, limit, start) as { run_id: string; model_steps: number; tool_calls: number; suspended: number; failed: number; input_val: string | null }[];
+    ).all(...statusParams, limit, start) as { run_id: string; model_steps: number; tool_calls: number; suspended: number; failed: number; running: number; input_val: string | null }[];
     return pageOf(rows.map(toSummary), start, limit, total);
   }
 
@@ -723,7 +735,7 @@ class SqliteRunJournal implements RunJournal {
    */
   async countRunsByStatus(): Promise<Record<string, number>> {
     const rows = this.db.prepare(
-      `SELECT CASE WHEN suspended THEN 'suspended' WHEN failed THEN 'failed' ELSE 'completed' END AS status, COUNT(*) AS n FROM gnl_runs GROUP BY status`,
+      `SELECT CASE WHEN suspended THEN 'suspended' WHEN failed THEN 'failed' WHEN running THEN 'running' ELSE 'completed' END AS status, COUNT(*) AS n FROM gnl_runs GROUP BY status`,
     ).all() as { status: string; n: number }[];
     const out: Record<string, number> = {};
     for (const r of rows) out[r.status] = Number(r.n);
