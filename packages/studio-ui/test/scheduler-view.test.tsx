@@ -119,7 +119,7 @@ describe('Scheduler view', () => {
     expect(screen.getByText('wf-report')).toBeTruthy();
     expect(screen.getByText('cron 0 9 * * *')).toBeTruthy();
     expect(screen.getByText('f1')).toBeTruthy();
-    expect(screen.getByText('failed')).toBeTruthy();
+    expect(screen.getByText('Failed')).toBeTruthy();
     expect(screen.getByText('connection dropped')).toBeTruthy();
     expect(screen.getByText('1/1')).toBeTruthy();
   });

@@ -6,7 +6,7 @@ import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, Cell, CartesianGrid,
 } from 'recharts';
 import { useMetrics, useMetricsRuns, type MetricsRun, type MetricsDayEntry } from '../api';
-import { Spinner, StatusBadge, Empty, ErrorBox, PageHeader } from '../components';
+import { Spinner, StatusBadge, Empty, ErrorBox, PageHeader, useStatusLabel } from '../components';
 import { Stagger, StaggerItem, Reveal } from '../motion';
 
 // RFC4180-like CSV field escaping: fields containing a comma/quote/newline are wrapped in double
@@ -150,6 +150,7 @@ export function buildScoreTrend(byDay: MetricsDayEntry[]): { scorers: string[]; 
 
 export function Observability() {
   const { t } = useTranslation('observability');
+  const statusLabel = useStatusLabel();
   const metrics = useMetrics();
   // `null` = no limit: percentiles (p50/p95/p99), the chart series and the CSV export are only
   // Meaningful over the FULL run set — the default 200-run cap (API-10, sized for Inspector's
@@ -208,10 +209,10 @@ export function Observability() {
       </div>
       <Stagger className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <StaggerItem><Card label={t('totalRuns')} value={String(metrics.data?.total ?? 0)} /></StaggerItem>
-        <StaggerItem><Card label={t('completed')} value={String(metrics.data?.byStatus.completed ?? 0)} /></StaggerItem>
-        <StaggerItem><Card label={t('suspended')} value={String(metrics.data?.byStatus.suspended ?? 0)} /></StaggerItem>
+        <StaggerItem><Card label={statusLabel('completed')} value={String(metrics.data?.byStatus.completed ?? 0)} /></StaggerItem>
+        <StaggerItem><Card label={statusLabel('suspended')} value={String(metrics.data?.byStatus.suspended ?? 0)} /></StaggerItem>
         {/* Failures were countable but never counted — the one number an operator scans this strip for. */}
-        <StaggerItem><Card label={t('failed')} value={String(metrics.data?.byStatus.failed ?? 0)} /></StaggerItem>
+        <StaggerItem><Card label={statusLabel('failed')} value={String(metrics.data?.byStatus.failed ?? 0)} /></StaggerItem>
         <StaggerItem><Card label={t('cost')} value={`$${(metrics.data?.costUsd ?? 0).toFixed(4)}`} /></StaggerItem>
         <StaggerItem><Card label={t('tokens')} value={(metrics.data?.tokens ?? 0).toLocaleString('tr-TR')} /></StaggerItem>
         <StaggerItem><Card label={t('durationP95')} value={fmtMs(p95)} hint={t('durationHint', { p50: fmtMs(p50), p99: fmtMs(p99) })} /></StaggerItem>
@@ -316,10 +317,10 @@ export function Observability() {
             className="ml-auto w-40 rounded-md border border-input bg-background px-2 py-1 text-xs outline-none"
           />
           <select aria-label={t('statusFilterAriaLabel')} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="rounded-md border border-input bg-background px-2 py-1 text-xs">
-            <option value="all">{t('statusAll')}</option>
-            <option value="completed">{t('completed')}</option>
-            <option value="suspended">{t('suspended')}</option>
-            <option value="failed">{t('failed')}</option>
+            <option value="all">{statusLabel('all')}</option>
+            <option value="completed">{statusLabel('completed')}</option>
+            <option value="suspended">{statusLabel('suspended')}</option>
+            <option value="failed">{statusLabel('failed')}</option>
           </select>
           <button
             type="button"

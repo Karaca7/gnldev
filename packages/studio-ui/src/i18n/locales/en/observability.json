@@ -3,8 +3,6 @@
   "description": "Monitor run volume, cost, and duration trends, then filter or export individual runs.",
   "autoRefreshNote": "auto-refreshes (every 5–10s)",
   "totalRuns": "Total runs",
-  "completed": "Completed",
-  "suspended": "Suspended",
   "cost": "Cost",
   "tokens": "Tokens",
   "durationP95": "Duration p95",
@@ -19,7 +17,6 @@
   "searchPlaceholder": "search runId…",
   "searchAriaLabel": "search runId",
   "statusFilterAriaLabel": "status filter",
-  "statusAll": "all",
   "downloadCsv": "Download CSV",
   "colRunId": "runId",
   "colStatus": "status",
@@ -29,6 +26,5 @@
   "colTool": "tool",
   "colToken": "token",
   "openInInspector": "Open in Inspector",
-  "noMatchingRuns": "No matching runs",
-  "failed": "Failed"
+  "noMatchingRuns": "No matching runs"
 }

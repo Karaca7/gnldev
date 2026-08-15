@@ -34,6 +34,7 @@ const APP_TS = `// The GNL surface, with no server attached.
 // Deno, Bun), none of which uses a Node HTTP framework. Your server choice lives next door and does
 // Not reach in here.
 import { createGnl, toJournal } from '@gnldev/durable';
+import { roleAuth } from '@gnldev/auth';
 import type { CreateGnlConfig } from '@gnldev/durable';
 import { createRestApi } from '@gnldev/server';
 import { createStudioApp, createStudioRunner } from '@gnldev/studio';
@@ -57,14 +58,26 @@ const reader = config.storage
   ? toJournal(config.storage.runs)
   : (config.journal as unknown as Parameters<typeof createStudioApp>[0] extends { reader: infer R } ? R : never);
 
+/** Role auth from gnl.config's \`auth\` (or GNL_ADMIN_TOKEN / GNL_VIEWER_TOKEN in the environment) —
+ * the same resolution \`gnl dev\` applies. Without this the scaffold mounted Studio and the REST API
+ * with NO auth at all, so \`gnl add host\` copied an unauthenticated admin surface into every
+ * generated project; only NODE_ENV=production's fail-closed gate stood in the way. */
+const cred = (v?: string) => (v ? { token: v } : undefined);
+const roles = {
+  admin: (raw as { auth?: { admin?: object } }).auth?.admin ?? cred(process.env.GNL_ADMIN_TOKEN),
+  viewer: (raw as { auth?: { viewer?: object } }).auth?.viewer ?? cred(process.env.GNL_VIEWER_TOKEN),
+};
+const auth = roles.admin || roles.viewer ? roleAuth(roles as never) : undefined;
+
 /** The REST API — agents, runs, workflows. A fetch handler: callable, and carrying \`.fetch\`. */
-export const app = createRestApi(config, { title: 'app' });
+export const app = createRestApi(config, { title: 'app', auth });
 
 /** The Studio inspector + playground. Mount it in development; gate it or drop it in production. */
 export const studio = createStudioApp({
   reader,
   apiBase: '/studio',
   gnl: createStudioRunner(gnl, config, { toJsonSchema: aiToolSchema }),
+  auth,
 });
 `;
 
@@ -96,7 +109,9 @@ const server = new Hono();
 server.mount('/studio', studio);
 server.mount('/', api);
 
-serve({ fetch: server.fetch, port: Number(process.env.PORT ?? 3000) });
+// Loopback by default — set HOST=0.0.0.0 to reach it from outside (containers). A bare listen
+// binds every interface, which for a Studio without auth is an admin surface offered to the network.
+serve({ fetch: server.fetch, port: Number(process.env.PORT ?? 3000), hostname: process.env.HOST ?? '127.0.0.1' });
 console.log('→ http://localhost:' + (process.env.PORT ?? 3000) + '/studio');
 `,
   },
@@ -119,7 +134,7 @@ createServer((req, res) => {
     return studioNode(req, res);
   }
   return apiNode(req, res);
-}).listen(port);
+}).listen(port, process.env.HOST ?? '127.0.0.1'); // loopback by default — HOST=0.0.0.0 for containers
 console.log('→ http://localhost:' + port + '/studio');
 `,
   },
@@ -146,7 +161,7 @@ server.use('/studio', toNodeHandler(studio as never));
 server.use('/', toNodeHandler(api));
 
 const port = Number(process.env.PORT ?? 3000);
-server.listen(port);
+server.listen(port, process.env.HOST ?? '127.0.0.1'); // loopback by default — HOST=0.0.0.0 for containers
 console.log('→ http://localhost:' + port + '/studio');
 `,
   },
@@ -178,7 +193,7 @@ server.use((req: { url?: string }, res: unknown, next: () => void) =>
   (String(req.url).startsWith('/app/') ? next() : apiNode(req as never, res as never)));
 
 const port = Number(process.env.PORT ?? 3000);
-await server.listen({ port });
+await server.listen({ port, host: process.env.HOST ?? '127.0.0.1' }); // loopback by default — HOST=0.0.0.0 for containers
 console.log('→ http://localhost:' + port + '/studio');
 `,
   },
@@ -219,7 +234,7 @@ server.use(c2k((req: { url?: string }, res: unknown, _next: () => void) => {
 // Server.use(bodyParser());
 
 const port = Number(process.env.PORT ?? 3000);
-server.listen(port);
+server.listen(port, process.env.HOST ?? '127.0.0.1'); // loopback by default — HOST=0.0.0.0 for containers
 console.log('→ http://localhost:' + port + '/studio');
 `,
   },
@@ -249,7 +264,7 @@ server.use((req: { url?: string }, res: unknown, next: () => void) =>
   (String(req.url).startsWith('/app/') ? next() : apiNode(req as never, res as never)));
 
 const port = Number(process.env.PORT ?? 3000);
-await server.listen(port);
+await server.listen(port, process.env.HOST ?? '127.0.0.1'); // loopback by default — HOST=0.0.0.0 for containers
 console.log('→ http://localhost:' + port + '/studio');
 `,
   },

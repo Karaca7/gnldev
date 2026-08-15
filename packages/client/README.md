@@ -34,6 +34,7 @@ for await (const ev of api.stream('support', { prompt: 'hello' })) {
 
 ```tsx
 import { useChat } from '@gnldev/client/react';
+import type { GnlClient } from '@gnldev/client';
 
 function Chat({ api }: { api: GnlClient }) {
   const { messages, input, setInput, send, loading, interrupts, approve } = useChat(api, 'support');

@@ -11,6 +11,22 @@ import { swaggerHtml, SWAGGER_UI_VERSION } from '../src/swagger.js';
 
 const html = () => swaggerHtml('');
 
+describe('the swagger routes send the header the meta policy cannot', () => {
+  it('frame-ancestors arrives as a real header — in meta form the spec ignores it', async () => {
+    // The audit's finding: the page's own <meta> CSP looked complete, but frame-ancestors (and
+    // sandbox, and report-uri) are defined to be IGNORED when delivered via meta — so the one
+    // directive that stops framing this admin page for clickjacking was dead text. The server owns
+    // the route, so the statement now travels where browsers actually honour it.
+    const { Hono } = await import('hono');
+    const { createStudioApp } = await import('../src/server.js');
+    const app = createStudioApp({ reader: { listRuns: async () => [], readRun: async () => [] } as any });
+    const res = await (app as unknown as Hono).fetch(new Request('http://s/swagger'));
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
+    expect(res.headers.get('x-frame-options')).toBe('DENY');
+  });
+});
+
 describe('the swagger page cannot be turned into an admin-token exfiltrator', () => {
   it('pins an exact version — never a floating range', () => {
     const out = html();

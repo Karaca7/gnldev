@@ -53,5 +53,7 @@
   "statusPending": "Bekliyor",
   "statusNeedsApproval": "Onay bekliyor",
   "statusAll": "Tümü",
-  "openSourceLicenses": "Açık kaynak lisansları"
+  "openSourceLicenses": "Açık kaynak lisansları",
+  "statusIdle": "Boşta",
+  "statusQueued": "Kuyrukta"
 }

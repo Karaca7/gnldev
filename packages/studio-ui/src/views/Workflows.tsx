@@ -8,7 +8,7 @@ import {
   useWorkflows, useWorkflowRuns, useWorkflowRunsRegistry, useCapabilities, useAgents, runWorkflowStream, api, errMessage, useWorkflowRunState,
   type WorkflowMeta, type WorkflowRunResult, type WorkflowRunSummary, type WorkflowRunRegistryItem, type WorkflowDef, type WorkflowStepDef,
 } from '../api';
-import { Btn, Spinner, Badge, StatusBadge, EmptyState, ErrorBox, JsonBlock, cn } from '../components';
+import { Btn, Spinner, Badge, StatusBadge, EmptyState, ErrorBox, JsonBlock, cn, useStatusLabel } from '../components';
 import { ConfirmDialog, toast } from '../ui';
 import { diffWorkflowSteps } from './workflow-diff';
 
@@ -1138,8 +1138,9 @@ function Row({ k, children }: { k: string; children: React.ReactNode }) {
 // Family. Named distinctly from the imported `StatusBadge` to avoid shadowing it in this file (see
 // The real StatusBadge's use for the run-level indicator above, a different, higher-level concept).
 function NodeStatusBadge({ s }: { s: Status }) {
+  const label = useStatusLabel();
   const tone = s === 'done' ? 'success' : s === 'running' ? 'info' : s === 'suspended' ? 'warning' : s === 'failed' ? 'destructive' : 'muted';
-  return <Badge tone={tone as any}>{s}</Badge>;
+  return <Badge tone={tone as any}>{label(s)}</Badge>;
 }
 
 /**

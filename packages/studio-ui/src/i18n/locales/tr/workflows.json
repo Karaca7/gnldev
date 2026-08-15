@@ -29,7 +29,7 @@
   "resumeTitle": "Suspended adımı sürdür (HITL)",
   "retryTitle": "Aynı runId ile yeniden dene (tamamlananlar replay, hata veren adım tekrar çalışır)",
   "attemptBadge": "deneme {{n}}",
-  "suspendedAtBadge": "suspended @ {{stepId}}",
+  "suspendedAtBadge": "askıda @ {{stepId}}",
   "pausedAtBadge": "duraklatıldı → {{stepId}}",
   "completedBadge": "tamamlandı",
   "requiredTitle": "gerekli",

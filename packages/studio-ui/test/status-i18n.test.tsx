@@ -74,10 +74,16 @@ describe('both locales define the whole status vocabulary', () => {
     }
   });
 
-  it('observability names the failed bucket in both languages', () => {
+  it('no per-page copies of the status words survive — one vocabulary, one place', () => {
+    // The audit measured the drift this breeds: observability's own 'completed' ("Tamamlanan") and
+    // common's ("Tamamlandı") rendered for the SAME state on the SAME page. The page now reads
+    // through useStatusLabel, and the orphaned copies are deleted — a key nothing reads is where
+    // the next drift starts.
     for (const lng of ['en', 'tr'] as const) {
       const bundle = i18n.getResourceBundle(lng, 'observability') as Record<string, string>;
-      expect(bundle.failed, `${lng}/observability.failed is missing`).toBeTruthy();
+      for (const k of ['completed', 'suspended', 'failed', 'statusAll']) {
+        expect(bundle[k], `${lng}/observability.${k} is a duplicate of common.status* — remove it`).toBeUndefined();
+      }
     }
   });
 });

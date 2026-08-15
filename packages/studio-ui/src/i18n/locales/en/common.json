@@ -53,5 +53,7 @@
   "statusPending": "Pending",
   "statusNeedsApproval": "Needs approval",
   "statusAll": "All",
-  "openSourceLicenses": "Open-source licenses"
+  "openSourceLicenses": "Open-source licenses",
+  "statusIdle": "Idle",
+  "statusQueued": "Queued"
 }

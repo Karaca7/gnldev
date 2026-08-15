@@ -109,7 +109,7 @@ const STATUS_LABEL_KEYS: Record<string, string> = {
   suspended: 'statusSuspended',
   failed: 'statusFailed', error: 'statusFailed',
   cancelled: 'statusCancelled', canceled: 'statusCancelled',
-  pending: 'statusPending',
+  pending: 'statusPending', queued: 'statusQueued', idle: 'statusIdle',
   'needs approval': 'statusNeedsApproval', needs_approval: 'statusNeedsApproval',
   all: 'statusAll',
 };

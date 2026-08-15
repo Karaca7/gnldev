@@ -2,7 +2,7 @@ import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { Clock } from 'lucide-react';
 import { useCapabilities, useSchedulerTriggers, type SchedulerTrigger } from '../api';
-import { Spinner, EmptyState, ErrorBox, Badge, StatStrip, PageHeader } from '../components';
+import { Spinner, EmptyState, ErrorBox, Badge, StatStrip, PageHeader, useStatusLabel } from '../components';
 import { Stagger, StaggerItem } from '../motion';
 // I18n init side effect: so useTranslation still works if this view is rendered directly
 // (without App) (see src/i18n/index.ts) — main.tsx already does this, this re-guarantees it here.
@@ -67,6 +67,7 @@ export function statusTone(
 // GET /scheduler/triggers). Auto-refreshes every 5s (same live-list spirit as the Cache view).
 export function Scheduler() {
   const { t } = useTranslation('scheduler');
+  const statusLabel = useStatusLabel();
   const caps = useCapabilities();
   const triggers = useSchedulerTriggers();
 
@@ -131,7 +132,7 @@ export function Scheduler() {
                 <td className="py-1.5 pr-3"><Badge tone="muted">{trg.misfire}</Badge></td>
                 <td className="py-1.5 pr-3">
                   <span className="inline-flex items-center gap-1.5">
-                    <Badge tone={statusTone(trg, now)}>{trg.status}</Badge>
+                    <Badge tone={statusTone(trg, now)}>{statusLabel(trg.status)}</Badge>
                     <span className="text-xs text-muted-foreground">{trg.attempts}/{trg.maxAttempts}</span>
                   </span>
                   {trg.status === 'failed' && trg.lastError && (

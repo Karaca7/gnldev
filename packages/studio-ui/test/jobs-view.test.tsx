@@ -59,9 +59,13 @@ describe('Jobs view', () => {
       expect(screen.getByText(j.type)).toBeTruthy();
     }
     // statuses are double-coded: a text Badge next to a decorative glyph
-    expect(screen.getByText('done')).toBeTruthy();
-    expect(screen.getByText('failed')).toBeTruthy();
-    expect(screen.getByText('queued')).toBeTruthy();
+    // Translated labels, not raw enums — the row now speaks the shared status vocabulary (EN default
+    // in tests), which is the fix these assertions used to contradict.
+    // getAllByText: the same word also labels the stat cards above the table — one shared
+    // vocabulary showing up twice on the page is the consolidation working, not a defect.
+    expect(screen.getAllByText('Completed').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Failed').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Queued').length).toBeGreaterThan(0);
   });
 
   it('shows the empty state when the queue has no jobs', async () => {

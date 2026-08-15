@@ -118,17 +118,20 @@ function docFiles() {
   return out;
 }
 
-/** Fenced ```ts / ```typescript blocks, with the 1-based line where each starts. */
+/** Fenced ```ts / ```typescript / ```tsx blocks, with the 1-based line where each starts. */
 function blocks(text) {
   const lines = text.split('\n');
   const found = [];
   for (let i = 0; i < lines.length; i++) {
-    if (!/^```(ts|typescript)\s*$/.test(lines[i])) continue;
+    // tsx included: the one sample the old regex skipped was the client React quickstart — the most
+    // copy-pasted adapter surface, and precisely the class of silent doc-rot this script exists to end.
+    const fence = /^```(ts|typescript|tsx)\s*$/.exec(lines[i]);
+    if (!fence) continue;
     if (/doccheck:\s*skip/.test(lines[i - 1] ?? '')) continue;
     const start = i + 1;
     let j = i + 1;
     while (j < lines.length && !/^```\s*$/.test(lines[j])) j++;
-    found.push({ line: start + 1, code: lines.slice(start, j).join('\n') });
+    found.push({ line: start + 1, code: lines.slice(start, j).join('\n'), lang: fence[1] });
     i = j;
   }
   return found;
@@ -141,7 +144,7 @@ const cases = [];
 for (const file of docFiles()) {
   const rel = relative(ROOT, file);
   blocks(readFileSync(file, 'utf8')).forEach((b, n) => {
-    const name = `${rel.replace(/[^a-z0-9]/gi, '_')}__${n}.ts`;
+    const name = `${rel.replace(/[^a-z0-9]/gi, '_')}__${n}.${b.lang === 'tsx' ? 'tsx' : 'ts'}`;
     // `export {}` keeps each block a module, so `const` in two blocks cannot collide.
     const prefix = 'export {};\n';
     writeFileSync(join(OUT, name), `${prefix}${b.code}\n`);
@@ -166,10 +169,13 @@ writeFileSync(join(OUT, 'tsconfig.json'), JSON.stringify({
     target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext',
     // Samples elide error handling and exhaustive types on purpose; the point is the API shape.
     strict: false, noEmit: true, skipLibCheck: true, allowJs: true,
+    // react-jsx would demand react's type packages for every sample run; 'preserve' typechecks the
+    // TSX shapes without requiring the runtime's types — the point is the API surface, not the JSX transform.
+    jsx: 'preserve',
     baseUrl: '.', types: ['node'],
     paths: Object.fromEntries([...externalPaths(), ...packagePaths()]),
   },
-  include: ['*.ts', '_globals.d.ts', '_modules.d.ts'],
+  include: ['*.ts', '*.tsx', '_globals.d.ts', '_modules.d.ts'],
 }, null, 2));
 
 console.log(`doc samples: ${cases.length} block(s) from ${docFiles().length} file(s)`);

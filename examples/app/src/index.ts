@@ -34,7 +34,10 @@ app.mount('/studio', createStudioApp({
 }));
 
 const APP_PORT = Number(process.env.PORT ?? 3100);
-serve({ fetch: app.fetch, port: APP_PORT });
+// Loopback unless the operator names an address (HOST=0.0.0.0 for containers). A bare serve() binds
+// every interface, and with STUDIO_ADMIN unset that offered an OPEN admin surface to the network
+// while the lines below said localhost — the pattern cli/src/bind.ts exists to prevent.
+serve({ fetch: app.fetch, port: APP_PORT, hostname: process.env.HOST ?? '127.0.0.1' });
 console.log(`\n🎫 Support Desk → http://localhost:${APP_PORT}`);
 console.log(`🔍 Ops Studio   → http://localhost:${APP_PORT}/studio   (admin-write ${ADMIN ? 'token protected' : 'open'})\n`);
 console.log('Try it: open a ticket for "cust-1" → type "I want a refund for ORD-1042" → an approval prompt appears → Approve.\n');

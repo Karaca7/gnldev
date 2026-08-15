@@ -40,4 +40,5 @@ function echoModel(): any {
 const assistant: AgentConfig = { model: echoModel(), system: 'demo asistan', maxSteps: 4 };
 const api = createRestApi({ journal: new InMemoryJournal(), agents: { assistant } });
 
-serve({ fetch: api.fetch, port: 3000 }, (info) => console.log(`gnl storage → http://localhost:${info.port}`));
+// Loopback, matching the printed URL (a bare serve() binds every interface — see cli/src/bind.ts).
+serve({ fetch: api.fetch, port: 3000, hostname: '127.0.0.1' }, (info) => console.log(`gnl storage → http://localhost:${info.port}`));

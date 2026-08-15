@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 import { ListChecks, RotateCcw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useJobs, useCapabilities, api, errMessage } from '../api';
-import { Spinner, EmptyState, ErrorBox, Badge, Btn, StatStrip, PageHeader } from '../components';
+import { Spinner, EmptyState, ErrorBox, Badge, Btn, StatStrip, PageHeader, useStatusLabel } from '../components';
 import { toast } from '../ui';
 import { Stagger, StaggerItem } from '../motion';
 // I18n init side effect: so useTranslation still works if this view is rendered directly
@@ -25,6 +25,7 @@ function StatusGlyph({ s }: { s: string }) {
 // Queue/Jobs: live table of background jobs (@gnldev/queue listJobs). Refreshes every 3s.
 export function Jobs() {
   const { t } = useTranslation('jobs');
+  const statusLabel = useStatusLabel();
   const jobs = useJobs();
   const caps = useCapabilities();
   const qc = useQueryClient();
@@ -95,7 +96,7 @@ export function Jobs() {
                 <td className="py-1.5 pr-3">
                   <span className="inline-flex items-center gap-1.5">
                     <StatusGlyph s={j.status} />
-                    <Badge tone={tone(j.status)}>{j.status}</Badge>
+                    <Badge tone={tone(j.status)}>{statusLabel(j.status)}</Badge>
                   </span>
                 </td>
                 <td className="py-1.5 pr-3">{j.attempts}</td>

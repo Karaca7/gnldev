@@ -2879,7 +2879,14 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 function studioAdminApp (opts: { apiBase?: string } = {}): Hono {
   const app = new Hono();
   app.get('/openapi.json', (c) => c.json(openapiSpec(opts.apiBase ?? '')));
-  app.get('/swagger', (c) => c.html(swaggerHtml(opts.apiBase ?? '')));
+  // The page carries its own <meta> CSP, but the spec IGNORES frame-ancestors in meta form — so the
+  // one directive that stops this admin page being framed for clickjacking ("Execute" sits on it) was
+  // dead. The server owns this route, so the header goes on here; the meta stays for other hostings.
+  app.get('/swagger', (c) => {
+    c.header('Content-Security-Policy', "frame-ancestors 'none'");
+    c.header('X-Frame-Options', 'DENY'); // the same statement for anything old enough to predate CSP
+    return c.html(swaggerHtml(opts.apiBase ?? ''));
+  });
   // Prefer the prebuilt React SPA (@gnldev/studio-ui) first; fall back to the old single-file HTML if there's no build.
   if (!mountSpa(app, opts.apiBase ?? '')) app.get('/', (c) => c.html(notBuiltHtml()));
   return app;
@@ -2894,7 +2901,14 @@ function studioAppApp (input: JournalReader | StudioAppOptions): Hono {
   const app = new Hono();
   app.route('/api', studioApiApp(opts));
   app.get('/openapi.json', (c) => c.json(openapiSpec(opts.apiBase ?? '')));
-  app.get('/swagger', (c) => c.html(swaggerHtml(opts.apiBase ?? '')));
+  // The page carries its own <meta> CSP, but the spec IGNORES frame-ancestors in meta form — so the
+  // one directive that stops this admin page being framed for clickjacking ("Execute" sits on it) was
+  // dead. The server owns this route, so the header goes on here; the meta stays for other hostings.
+  app.get('/swagger', (c) => {
+    c.header('Content-Security-Policy', "frame-ancestors 'none'");
+    c.header('X-Frame-Options', 'DENY'); // the same statement for anything old enough to predate CSP
+    return c.html(swaggerHtml(opts.apiBase ?? ''));
+  });
   // Prefer the prebuilt React SPA (@gnldev/studio-ui) first; fall back to the old single-file HTML if there's no build.
   if (!mountSpa(app, opts.apiBase ?? '')) app.get('/', (c) => c.html(notBuiltHtml()));
   return app;

@@ -61,5 +61,7 @@ const app = createStudioApp({
   a2a: true, // gnl-demo.db has router-1 → a2a:* calls → Networks is populated
   mcp: [{ id: 'github', name: 'GitHub (demo)', client: githubMcp }],
 });
-serve({ fetch: app.fetch, port: 4321 });
+// Loopback, matching the printed URL — a bare serve() binds every interface, which for an
+// unauthenticated Studio is an admin surface offered to the whole network (see cli/src/bind.ts).
+serve({ fetch: app.fetch, port: 4321, hostname: '127.0.0.1' });
 console.log('gnl studio → http://localhost:4321  (first generate gnl-demo.db with `pnpm demo`)');
