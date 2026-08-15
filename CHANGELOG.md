@@ -115,6 +115,14 @@ would be worse than saying that.
   it, and a purged run kept advertising itself — suspend reason and waitId included — in
   `listWorkflowRuns`). That key ends where the runId ends, so it is deleted neighbour-safely: purging
   `r-1` does not take `r-10`'s record with it.
+- **`GET /metrics/runs` contradicted `GET /runs` about the same run.** Observability's metrics table
+  served the status off the materialized per-run row, which is written once — the first time a run
+  finishes successfully — so a run that succeeded, was re-run and *failed* (or was cancelled) read
+  `failed` in the list and `completed` in the table directly below it. Status is served from the
+  journal now, where it is derived; cost and tokens stay materialized in the row, which is what the
+  fast path exists for. It costs nothing: the handler had already fetched the run list. The row's own
+  `status` field is a finalize-time record and is typed as the two values it can actually hold, rather
+  than the five it advertised.
 - Every documented code sample is typechecked in CI (`pnpm check:docs`), which caught a quickstart that
   had never compiled.
 

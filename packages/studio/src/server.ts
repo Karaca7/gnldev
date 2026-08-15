@@ -1593,7 +1593,22 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       if (row) {
         rows.push({
           runId: r.runId,
-          status: row.status,
+          // D5: STATUS COMES FROM THE LIVE LIST, NEVER FROM THE ROW. The row is written once, the first
+          // time a run finishes successfully (metrics.ts recordRunMetrics, exactly-once per runId) — so a
+          // run that succeeded, was re-run and FAILED (or was canceled) kept a row saying 'completed'
+          // while GET /runs, reading the same journal, said 'failed'. The aggregate contradicted the list
+          // directly above it in Observability, and the row's `status` could never even hold three of the
+          // five values its type claimed (see MetricsRunRow.status).
+          // Fixed at READ time, not write time: making the row truthful when written does not keep it
+          // truthful — the D5 scenario is precisely a verdict that changes AFTER the write — and
+          // recording metrics on the failure path too would put failed runs into the day/cost aggregates
+          // that /metrics reports as spend. So STATUS is served from the journal, which is its one source
+          // of truth, and COST/tokens stay materialized in the row, which is the whole point of the fast
+          // path: one owner each for living state and for settled history.
+          // Free, not an N+1: `r` is the RunSummary this handler ALREADY fetched via listRuns() above,
+          // and every adapter derives its status from the current `:outcome` record (deriveRunStatus).
+          // No per-row outcome get, no extra round-trip, unchanged under ?limit=.
+          status: r.status,
           modelSteps: row.modelSteps,
           toolCalls: row.toolCalls,
           startTs: row.startTs,

@@ -5,6 +5,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { InMemoryJournal } from '../src/journal.js';
 import type { Journal, JournalReader } from '../src/journal.js';
 import { withOrg } from '../src/organization.js';
+import { recordRunOutcome, runStarted } from '../src/outcome.js';
 import {
   recordRunMetrics, backfillMetrics, rebuildMetrics, readMetricsSummary,
   metricsRunKey, metricsDoneKey, METRICS_ALL_KEY,
@@ -94,6 +95,37 @@ describe('metrics.ts — recordRunMetrics', () => {
     await journal.put('r2:model:0', modelUsage(5));
     await recordRunMetrics(journal, journal, 'r2'); // no agentName → no per-agent counter
     // (no assertion needed beyond "doesn't throw" — there is no agent-scoped key to check for r2)
+  });
+
+  // D5: the row's `status` is the verdict its settled cost belongs to — a finalize-time record, never
+  // the run's live status. It was typed `RunStatus` (five values) while the producer could only ever
+  // write two of them, and Studio's /metrics/runs read it as if it were live: a run that succeeded and
+  // was later re-run into failure showed 'failed' on GET /runs and 'completed' on GET /metrics/runs.
+  it('the row records the FINALIZE-TIME verdict only — a later outcome never rewrites it', async () => {
+    const journal = new InMemoryJournal();
+    await journal.put('r1:model:0', modelUsage(10));
+    // The write-ahead 'running' that is genuinely there when recordRunMetrics runs: run.ts calls it
+    // BEFORE runSucceeded at both completion choke points (measured — a successful run's outcome still
+    // reads {status:'running'} at this instant). Feeding this record into summarizeRun would therefore
+    // label a succeeded run 'running'; the row stays outcome-blind on purpose.
+    await runStarted(journal, 'r1', Date.now());
+    await recordRunMetrics(journal, journal, 'r1');
+    expect(await journal.get(metricsRunKey('r1'))).toMatchObject({ status: 'completed' });
+
+    // The run is re-run and fails. The row is claimed exactly-once, so it does NOT move — which is why
+    // status has to be served from the journal (deriveRunStatus over the outcome), not from here.
+    await recordRunOutcome(journal, 'r1', { status: 'failed', at: Date.now(), error: 'boom' });
+    expect(await recordRunMetrics(journal, journal, 'r1')).toBe(false);
+    expect(await journal.get(metricsRunKey('r1'))).toMatchObject({ status: 'completed' });
+    expect((await journal.listRuns()).find((r) => r.runId === 'r1')?.status).toBe('failed');
+  });
+
+  it('a suspended run\'s row records \'suspended\' — the other value the finalize-time verdict can take', async () => {
+    const journal = new InMemoryJournal();
+    await journal.put('r1:model:0', modelUsage(10));
+    await journal.put('r1:tool:c1', { status: 'suspended', output: {} });
+    await recordRunMetrics(journal, journal, 'r1');
+    expect(await journal.get(metricsRunKey('r1'))).toMatchObject({ status: 'suspended' });
   });
 
   it('fallback: a journal without incrBy/putIfAbsent returns false and writes nothing', async () => {

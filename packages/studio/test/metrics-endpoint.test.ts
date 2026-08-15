@@ -1,7 +1,10 @@
 // P1.6 (AUDIT-R2): GET /metrics + /metrics/runs — materialized-counter fast path vs the
 // legacy full-scan fallback. Mirrors runs-paging.test.ts's seeding style (raw journal.put model/tool keys).
 import { describe, it, expect, vi } from 'vitest';
-import { InMemoryJournal, recordRunMetrics, metricsDayKey, METRICS_ALL_KEY } from '@gnldev/durable';
+import {
+  InMemoryJournal, recordRunMetrics, metricsDayKey, metricsRunKey, METRICS_ALL_KEY,
+  recordRunOutcome, runStarted, runCanceled,
+} from '@gnldev/durable';
 import { createStudioApi } from '../src/server.js';
 import { call } from './call.js';
 
@@ -196,6 +199,48 @@ describe('GET /metrics/runs', () => {
     expect(res.runs).toHaveLength(2);
     expect(getManySpy).toHaveBeenCalledTimes(1); // ONE batched round-trip for both rows
     expect(getSpy).not.toHaveBeenCalled(); // no per-key get loop
+  });
+
+  // D5: the two endpoints Observability shows on ONE screen — the runs list and the metrics table —
+  // disagreed about the same run. The `__metrics__run:` row is written once, the first time a run
+  // finishes successfully (exactly-once claim per runId), so a later verdict never reaches it.
+  it('a run re-run into FAILURE reads failed on /metrics/runs, not the stale row\'s completed', async () => {
+    const journal = new InMemoryJournal();
+    await seedRun(journal, 'r1', 10);
+    await recordRunMetrics(journal, journal, 'r1'); // first attempt succeeded → row written
+    expect(await journal.get(metricsRunKey('r1'))).toMatchObject({ status: 'completed' }); // the row itself stays at its finalize-time verdict
+    // The re-run fails. recordRunMetrics is a no-op (claim already held) — only the journal learns.
+    await recordRunOutcome(journal, 'r1', { status: 'failed', at: Date.now(), error: '401 invalid api key' });
+    expect(await recordRunMetrics(journal, journal, 'r1')).toBe(false);
+
+    const app = createStudioApi({ reader: journal });
+    const runs = await (await call(app, '/runs')).json();
+    const metricsRuns = (await (await call(app, '/metrics/runs')).json()).runs;
+
+    expect(runs.find((r: any) => r.runId === 'r1').status).toBe('failed');
+    expect(metricsRuns.find((r: any) => r.runId === 'r1').status).toBe('failed'); // the aggregate agrees with the list
+    expect(metricsRuns[0].totalTokens).toBe(10); // cost/tokens still come off the materialized row
+  });
+
+  // The vocabulary grew ('canceled', 'running') AFTER this fast path was written — a run in either state
+  // must not be flattened into the row's finalize-time verdict on day one.
+  it('canceled and running runs keep their live status through the fast-row path', async () => {
+    const journal = new InMemoryJournal();
+    await seedRun(journal, 'gone', 10);
+    await recordRunMetrics(journal, journal, 'gone');
+    await seedRun(journal, 'live', 20);
+    await recordRunMetrics(journal, journal, 'live');
+    await runCanceled(journal, 'gone', Date.now()); // operator canceled it after that first finish
+    await runStarted(journal, 'live', Date.now()); // re-run in flight — write-ahead, no ending recorded
+
+    const app = createStudioApi({ reader: journal });
+    const runs = await (await call(app, '/runs')).json();
+    const byIdRuns = Object.fromEntries(runs.map((r: any) => [r.runId, r.status]));
+    const metricsRuns = (await (await call(app, '/metrics/runs')).json()).runs;
+    const byIdMetrics = Object.fromEntries(metricsRuns.map((r: any) => [r.runId, r.status]));
+
+    expect(byIdRuns).toMatchObject({ gone: 'canceled', live: 'running' });
+    expect(byIdMetrics).toEqual(byIdRuns); // same journal, same answer — on every status in the vocabulary
   });
 
   // P1.6b: ?limit= — clamped 1..1000, slicing the run list BEFORE fetching rows.

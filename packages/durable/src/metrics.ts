@@ -7,7 +7,7 @@
 // Same shape as budget.ts's `__usage__` counter (H8a) and its get→put/warn-once fallback story, just
 // Bucketed per-day/per-agent instead of a single running total, plus a per-run "fast row" for the
 // Runs table (avoids readRun+getRunCost for every already-finalized run).
-import type { Journal, JournalBatch, JournalReader, RunStatus } from './journal.js';
+import type { Journal, JournalBatch, JournalReader } from './journal.js';
 import { summarizeRun, runKeys, listRunsArray } from './journal.js';
 import { getRunCost } from './cost.js';
 
@@ -130,7 +130,29 @@ function extractNumericScore(raw: number | { score: number } | unknown): number 
 export interface MetricsRunRow {
   runId: string;
   agentName?: string;
-  status: RunStatus;
+  /**
+   * The verdict the settled cost below BELONGS TO — the status observed at finalize time, NOT the run's
+   * current status. Deliberately narrower than `RunStatus`: `recordRunMetrics` is only ever called from
+   * run.ts's success choke points (inside `interrupts.length === 0`) and from `backfillMetrics` (which
+   * skips everything that isn't 'completed'), and it summarizes WITHOUT the outcome record — so this can
+   * only ever hold 'completed' or 'suspended'. Typing it `RunStatus` advertised three values
+   * ('failed' | 'running' | 'canceled') no producer can ever write, which is how the row came to be read
+   * as if it were the run's status (see below).
+   *
+   * Passing the outcome into `summarizeRun` here would NOT make the field carry those three honestly, it
+   * would make it WRONG: at both call sites `recordRunMetrics` runs BEFORE `runSucceeded` (run.ts), so
+   * the outcome record still carries this attempt's write-ahead 'running' — measured: a successful run
+   * would have been recorded as 'running'.
+   *
+   * NEVER read this to display a run's status. The row is written ONCE per runId (exactly-once claim), so
+   * a run that succeeded and was later re-run and failed keeps a row saying 'completed' — that is the
+   * D5 disagreement between GET /metrics/runs and GET /runs. Status is living state whose one source of
+   * truth is the journal (`listRuns`/`deriveRunStatus`); cost and tokens are settled history and stay
+   * materialized here. Studio's /metrics/runs serves `RunSummary.status` and takes only the cost/token
+   * fields from this row (see server.ts). The field keeps its name because rows already persisted in
+   * customer journals carry it.
+   */
+  status: 'completed' | 'suspended';
   costUsd: number;
   totalTokens: number;
   modelSteps: number;
@@ -213,7 +235,10 @@ export async function recordRunMetrics(
   const row: MetricsRunRow = {
     runId,
     ...(opts.agentName ? { agentName: opts.agentName } : {}),
-    status: summary.status,
+    // Narrowed at runtime rather than cast: `summarizeRun` without an outcome can only answer
+    // 'suspended' or 'completed' (deriveRunStatus), and if that ever stops being true this row must
+    // still not start claiming a live verdict it does not track — see MetricsRunRow.status.
+    status: summary.status === 'suspended' ? 'suspended' : 'completed',
     costUsd: cost.costUsd, // the row is a plain record, not an accumulating counter — exact float is fine here
     totalTokens: cost.totalTokens,
     modelSteps: summary.modelSteps,

@@ -61,13 +61,19 @@ function startFixture(file: string, runnerPid: number): Promise<{ pid: number; k
 
 describe('the cross-process fixture watchdog', () => {
   it('exits a fixture whose runner has gone away, with tsx in between', { timeout: 60_000 }, async () => {
-    // A short-lived stand-in for the runner. Its death is the signal; it is NOT the fixture's parent
-    // (tsx is), which is the whole reason the pid is passed explicitly.
-    const stand_in = spawn(process.execPath, ['-e', 'setTimeout(()=>process.exit(0), 2000)'], { stdio: 'ignore' });
+    // A stand-in for the runner. Its death is the signal; it is NOT the fixture's parent (tsx is),
+    // which is the whole reason the pid is passed explicitly. Its lifetime is EVENT-driven, not a
+    // timer: the first version gave it two seconds and under full-suite CPU saturation the tsx
+    // fixture could not even boot inside them — the stand-in was already dead before the watchdog
+    // armed, and the test timed out. Ordered explicitly (fixture up → THEN kill the runner), the
+    // saturation has nothing left to race.
+    const stand_in = spawn(process.execPath, ['-e', 'setTimeout(()=>{}, 600000)'], { stdio: 'ignore' });
+    const standInExited = new Promise((r) => stand_in.once('exit', r));
     const fixture = await startFixture(neverEndingFixture(300_000), stand_in.pid!);
 
     expect(alive(fixture.pid), 'the fixture is up while its runner lives').toBe(true);
-    await new Promise((r) => stand_in.on('exit', r));
+    stand_in.kill('SIGKILL');
+    await standInExited;
 
     let died = false;
     for (let i = 0; i < 20 && !died; i++) { await sleep(500); died = !alive(fixture.pid); }
