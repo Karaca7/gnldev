@@ -49,7 +49,7 @@ async function readUntil(reader: ReadableStreamDefaultReader<any>, predicate: (v
   }
 }
 
-describe('@gnldev/ai-sdk abort forwarding', () => {
+describe('@gnldev/chat-adapter abort forwarding', () => {
   it('registry: gnl.stream forwards RunOptions.abortSignal into the model call', async () => {
     const captured: { signal?: AbortSignal } = {};
     const gnl = createGnl({ journal: new InMemoryJournal(), agents: { chat: { model: controllableMock(captured), maxSteps: 4 } } });

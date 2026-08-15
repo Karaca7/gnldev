@@ -61,7 +61,7 @@ function parseModelInput(input: unknown): unknown {
  * Stuck in `pending`. In Studio's Inspector that surfaced as every assistant bubble saying "(no text)"
  * While the run had plainly succeeded. Both shapes are legitimate and both are written by
  * Durable-model.ts, so settling them here (rather than at each read site) is what keeps the two paths
- * From drifting apart again. `@gnldev/ai-sdk`'s messages.ts carries the same mapping for UIMessage
+ * From drifting apart again. `@gnldev/chat-adapter`'s messages.ts carries the same mapping for UIMessage
  * Conversion — that copy is the one place allowed to diverge, since it additionally emits `reasoning`.
  */
 export function settleModelContent(value: unknown): any[] {

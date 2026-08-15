@@ -158,6 +158,13 @@ would be worse than saying that.
   path.
 ### Changed
 
+- **`@gnldev/ai-sdk` is now `@gnldev/chat-adapter`.** "AI SDK" is Vercel's product name, and a package
+  called `@gnldev/ai-sdk` read as if it were that product rather than an adapter for it. The new name
+  follows the same function-first convention as `tool-schema`: it says what the package does (bridge a
+  durable run to a chat UI). Nothing was ever published under the old name, so nothing breaks; the
+  description and keywords keep "Vercel AI SDK" and "useChat" as descriptive search terms.
+
+
 - `RunSummary.status` is now `'completed' | 'suspended' | 'failed' | 'running' | 'canceled'`. A
   TypeScript `switch` over it with no `default` will stop compiling — deliberately, since the
   alternative is silently mislabelling a failed, unfinished or cancelled run as completed.

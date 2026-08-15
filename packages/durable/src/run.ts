@@ -501,7 +501,7 @@ function historyEndsWithIncoming(history: any[], incoming: any[]): boolean {
 
 /**
  * F1 — durability review: server-owned-history contract, enforced at the core. useChat-style
- * Clients POST their ENTIRE message history every turn (see @gnldev/ai-sdk chat-route.ts — the
+ * Clients POST their ENTIRE message history every turn (see @gnldev/chat-adapter chat-route.ts — the
  * Client's UIMessage[] is converted wholesale); with memory+threadId that whole history became
  * `incoming`, so every turn re-persisted and re-prompted the echoed early turns — compounding
  * Duplication. Exact-equality dedupe can't catch it: the client's echo of an assistant turn

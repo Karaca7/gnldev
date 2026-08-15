@@ -379,7 +379,7 @@ export interface RunOptions {
    * P0.2 thread a request's AbortSignal into generation — forwarded AS-IS to
    * RunDurable/streamDurable, which don't destructure it (see the `...rest` spread ~run.ts:650/885) so it
    * Lands directly in `generateText`/`streamText`'s own `abortSignal` option. Lets a caller (e.g.
-   * @gnldev/ai-sdk's chat route, wired to `c.req.raw.signal`) stop token generation on client disconnect
+   * @gnldev/chat-adapter's chat route, wired to `c.req.raw.signal`) stop token generation on client disconnect
    * WITHOUT touching the resumable-SSE replay story: an abort just ends generation early — the journal
    * Keeps whatever prefix already completed, and a later call with the SAME runId resumes/replays exactly
    * As it would have without an abort ever happening.

@@ -1,4 +1,4 @@
-# @gnldev/ai-sdk
+# @gnldev/chat-adapter
 
 Compatibility with the Vercel AI SDK's UI layer: run a durable agent on the server, render it with
 `useChat` on the client.
@@ -6,13 +6,13 @@ Compatibility with the Vercel AI SDK's UI layer: run a durable agent on the serv
 ## Install
 
 ```bash
-npm i @gnldev/ai-sdk
+npm i @gnldev/chat-adapter
 ```
 
 ## Chat route
 
 ```ts
-import { createChatRoute } from '@gnldev/ai-sdk';
+import { createChatRoute } from '@gnldev/chat-adapter';
 
 app.post('/api/chat', createChatRoute({ gnl }, {
   // Both optional; without a resolveRunId the route generates one per request, which means a retry
@@ -27,7 +27,7 @@ unchanged — while the run behind it is journaled, replayable and exactly-once.
 ## Rebuilding history from the journal
 
 ```ts
-import { toUIMessages } from '@gnldev/ai-sdk';
+import { toUIMessages } from '@gnldev/chat-adapter';
 
 const messages = toUIMessages(await journal.list(runId));
 ```

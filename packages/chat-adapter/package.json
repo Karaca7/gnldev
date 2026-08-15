@@ -1,5 +1,5 @@
 {
-  "name": "@gnldev/ai-sdk",
+  "name": "@gnldev/chat-adapter",
   "version": "0.1.0",
   "license": "Apache-2.0",
   "engines": {
@@ -55,7 +55,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Karaca7/gnl-framework.git",
-    "directory": "packages/ai-sdk"
+    "directory": "packages/chat-adapter"
   },
   "publishConfig": {
     "access": "public"

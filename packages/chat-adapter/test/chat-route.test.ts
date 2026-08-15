@@ -114,7 +114,7 @@ async function readChunks(res: Response): Promise<any[]> {
     .map((d) => JSON.parse(d));
 }
 
-describe('@gnldev/ai-sdk createChatRoute', () => {
+describe('@gnldev/chat-adapter createChatRoute', () => {
   // REGRESSION (review finding): useChat's `body.id` is STABLE across the whole conversation — using it
   // alone as the runId made every later turn REPLAY turn 1 from the journal (the model never ran again).
   // The route now derives `${body.id}:${lastMessage.id}` — same chat id + NEW message id → fresh run.

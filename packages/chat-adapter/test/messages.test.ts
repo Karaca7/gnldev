@@ -4,7 +4,7 @@ import { describe, it, expect } from 'vitest';
 import { InMemoryJournal, runKeys } from '@gnldev/durable';
 import { toUIMessages } from '../src/index.js';
 
-describe('@gnldev/ai-sdk toUIMessages', () => {
+describe('@gnldev/chat-adapter toUIMessages', () => {
   it('maps [user, assistant(tool output-available), assistant(text)] from journal entries + seed', async () => {
     const j = new InMemoryJournal();
     await j.put(runKeys.model('r1', 0), {
