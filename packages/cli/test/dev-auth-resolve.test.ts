@@ -3,7 +3,7 @@
 // ones: EE missing → fall back to free, unless licenseStrict, in which case booting unprotected is
 // exactly what must NOT happen. `serveDev` itself (Node boot + listen) is not covered here — it
 // needs a fully installed project; dev-server.test.ts covers the app it builds.
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -12,7 +12,21 @@ import { resolveAuthProvider } from '../src/dev-server.js';
 import type { GnlDevConfig } from '../src/config.js';
 
 const created: string[] = [];
-const envKeys = ['GNL_LICENSE_KEY', 'GNL_ADMIN_TOKEN', 'GNL_VIEWER_TOKEN', 'GNL_ADMIN_USER', 'GNL_ADMIN_PASS'];
+// GNL_EE_PUBLIC_KEY belongs here too: without it a machine that has one configured takes the PAID
+// path in a suite whose first describe is titled "no license (free path)".
+const envKeys = ['GNL_LICENSE_KEY', 'GNL_EE_PUBLIC_KEY', 'GNL_ADMIN_TOKEN', 'GNL_VIEWER_TOKEN', 'GNL_ADMIN_USER', 'GNL_ADMIN_PASS'];
+
+/**
+ * Cleared BEFORE each test as well as after.
+ *
+ * Clearing only afterwards left the FIRST test in the file running against whatever the developer's
+ * shell happened to export — so this suite passed on a clean machine and failed on one with a real
+ * licence configured, i.e. on the maintainer's own. A test that asserts the free path has to
+ * guarantee the free path rather than assume it.
+ */
+beforeEach(() => {
+  for (const k of envKeys) delete process.env[k];
+});
 
 afterEach(() => {
   for (const d of created.splice(0)) rmSync(d, { recursive: true, force: true });
