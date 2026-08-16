@@ -63,7 +63,7 @@ describe('W2 regression — diffRuns', () => {
     const diff = await diffRuns(journal, 'base', newRunId);
     expect(diff.divergentAt).toBeUndefined();
     expect(diff.summary).toEqual({ same: 3, changed: 0, missing: 0, added: 0 }); // model:0(tool-call) + tool:0 + model:1(final)
-    expect(diff.steps.every((s) => s.durum === 'same')).toBe(true);
+    expect(diff.steps.every((s) => s.status === 'same')).toBe(true);
     expect(diff.steps.map((s) => s.kind)).toEqual(['model', 'tool', 'model']);
   });
 
@@ -85,15 +85,15 @@ describe('W2 regression — diffRuns', () => {
 
     const [modelStep, toolStep, finalStep] = diff.steps;
     expect(modelStep!.kind).toBe('model');
-    expect(modelStep!.detay?.toolCallsA?.[0]?.argsHash).not.toBe(modelStep!.detay?.toolCallsB?.[0]?.argsHash);
+    expect(modelStep!.detail?.toolCallsA?.[0]?.argsHash).not.toBe(modelStep!.detail?.toolCallsB?.[0]?.argsHash);
 
     expect(toolStep!.kind).toBe('tool');
-    expect(toolStep!.detay?.outputA).toEqual({ charged: 20 });
-    expect(toolStep!.detay?.outputB).toEqual({ charged: 30 });
+    expect(toolStep!.detail?.outputA).toEqual({ charged: 20 });
+    expect(toolStep!.detail?.outputB).toEqual({ charged: 30 });
 
     expect(finalStep!.kind).toBe('model');
-    expect(finalStep!.detay?.textA).toBe('Done A');
-    expect(finalStep!.detay?.textB).toBe('Done B');
+    expect(finalStep!.detail?.textA).toBe('Done A');
+    expect(finalStep!.detail?.textB).toBe('Done B');
   });
 
   it('missing scenario: A is longer -> extra steps are missing', async () => {
@@ -109,7 +109,7 @@ describe('W2 regression — diffRuns', () => {
     const diff = await diffRuns(journal, 'long', 'short');
     expect(diff.summary).toEqual({ same: 2, changed: 0, missing: 1, added: 0 });
     expect(diff.divergentAt).toBe(2);
-    expect(diff.steps[2]).toMatchObject({ kind: 'model', durum: 'missing' });
+    expect(diff.steps[2]).toMatchObject({ kind: 'model', status: 'missing' });
   });
 
   it('added scenario: diff in the reverse direction with the same data -> extra step is added', async () => {
@@ -124,7 +124,7 @@ describe('W2 regression — diffRuns', () => {
     const diff = await diffRuns(journal, 'short2', 'long2'); // base short, new long → extra step is 'added'
     expect(diff.summary).toEqual({ same: 2, changed: 0, missing: 0, added: 1 });
     expect(diff.divergentAt).toBe(2);
-    expect(diff.steps[2]).toMatchObject({ kind: 'model', durum: 'added' });
+    expect(diff.steps[2]).toMatchObject({ kind: 'model', status: 'added' });
   });
 });
 

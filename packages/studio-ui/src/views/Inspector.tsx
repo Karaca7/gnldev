@@ -1639,14 +1639,14 @@ function DiffPair({ a, b }: { a: string; b: string }) {
 // D6-4: 'changed' used to map to 'brand' (lime) — recolored to 'info' (kept distinct from 'warning',
 // Already used for 'added', and from 'destructive', already used for 'missing', so all four decision
 // Outcomes stay visually distinguishable without spending the brand accent on a status label).
-const DURUM_TONE: Record<RegressionDiffEntry['durum'], 'muted' | 'info' | 'destructive' | 'warning'> = {
+const STATUS_TONE: Record<RegressionDiffEntry['status'], 'muted' | 'info' | 'destructive' | 'warning'> = {
   same: 'muted', changed: 'info', missing: 'destructive', added: 'warning',
 };
 
 /** Shows the detail of a single decision point (model: text+tool-calls · tool: status/argsHash/output). */
 function DecisionDetail({ entry }: { entry: RegressionDiffEntry }) {
   const { t } = useTranslation('inspector');
-  const d = entry.detay;
+  const d = entry.detail;
   if (!d) return null;
   if (d.note) return <div className="text-xs text-muted-foreground">{d.note}</div>;
   if (entry.kind === 'model') {
@@ -1661,7 +1661,7 @@ function DecisionDetail({ entry }: { entry: RegressionDiffEntry }) {
         </div>
         <div className="min-w-0 space-y-1">
           <div className="microlabel text-muted-foreground">{t('newLabel')}</div>
-          {/* D6-4: was bg-brand/5 — recolored to info to match DURUM_TONE.changed below. */}
+          {/* D6-4: was bg-brand/5 — recolored to info to match STATUS_TONE.changed below. */}
           {d.textB !== undefined && <div className="whitespace-pre-wrap break-words rounded-sm bg-info/5 p-1.5 font-mono text-[11px]">{d.textB || <span className="text-muted-foreground">{t('noText')}</span>}</div>}
           {d.toolCallsB && d.toolCallsB.length > 0 && (
             <div className="flex flex-wrap gap-1">{d.toolCallsB.map((tc, i) => <Badge key={i} tone="model">{tc.toolName}·{tc.argsHash.slice(0, 8)}</Badge>)}</div>
@@ -1698,8 +1698,8 @@ function DecisionDetail({ entry }: { entry: RegressionDiffEntry }) {
 /** Decision-point list + divergentAt summary — POST (re-run) and GET (existing run diff) share the SAME schema. */
 function DecisionList({ report }: { report: RegressionReport }) {
   const { t } = useTranslation('inspector');
-  const DURUM_LABEL: Record<RegressionDiffEntry['durum'], string> = {
-    same: t('durumSame'), changed: t('durumChanged'), missing: t('durumMissing'), added: t('durumAdded'),
+  const STATUS_LABEL: Record<RegressionDiffEntry['status'], string> = {
+    same: t('statusSame'), changed: t('statusChanged'), missing: t('statusMissing'), added: t('statusAdded'),
   };
   const { diff } = report;
   return (
@@ -1720,7 +1720,7 @@ function DecisionList({ report }: { report: RegressionReport }) {
         {diff.divergentAt === undefined ? (
           <div className="rounded-md border border-success/40 bg-success/5 p-2.5 text-xs text-success">{t('allDecisionsSame')}</div>
         ) : (
-          // D6-4: was border/bg/text-brand — recolored to info, matching DURUM_TONE.changed above.
+          // D6-4: was border/bg/text-brand — recolored to info, matching STATUS_TONE.changed above.
           <div className="rounded-md border border-info/40 bg-info/5 p-2.5 text-xs text-info">{t('firstDivergence', { index: diff.divergentAt, kind: diff.steps[diff.divergentAt]?.kind })}</div>
         )}
       </Reveal>
@@ -1734,14 +1734,14 @@ function DecisionList({ report }: { report: RegressionReport }) {
               className={cn(
                 'rounded-md border p-2.5',
                 i === diff.divergentAt ? 'border-info/60' : 'border-border',
-                s.durum === 'same' && 'opacity-70',
+                s.status === 'same' && 'opacity-70',
               )}
             >
               <div className="mb-1.5 flex items-center gap-2 font-mono text-xs">
                 <span className="text-muted-foreground">#{i}</span>
                 <Badge tone={s.kind === 'model' ? 'model' : 'success'}>{s.kind}</Badge>
                 <span className="text-muted-foreground">{t('stepLabel', { step: s.step })}</span>
-                <Badge tone={DURUM_TONE[s.durum]}>{DURUM_LABEL[s.durum]}</Badge>
+                <Badge tone={STATUS_TONE[s.status]}>{STATUS_LABEL[s.status]}</Badge>
               </div>
               <DecisionDetail entry={s} />
             </StaggerItem>

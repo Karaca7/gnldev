@@ -306,7 +306,7 @@ export interface RegressionDiffDetail {
   toolName?: string; argsHashA?: string; argsHashB?: string; statusA?: string; statusB?: string;
   outputA?: unknown; outputB?: unknown; note?: string;
 }
-export interface RegressionDiffEntry { step: number; kind: 'model' | 'tool'; durum: 'same' | 'changed' | 'missing' | 'added'; detay?: RegressionDiffDetail; }
+export interface RegressionDiffEntry { step: number; kind: 'model' | 'tool'; status: 'same' | 'changed' | 'missing' | 'added'; detail?: RegressionDiffDetail; }
 export interface RegressionRunDiff {
   steps: RegressionDiffEntry[];
   divergentAt?: number;

@@ -91,8 +91,8 @@ export interface DiffEntry {
   /** The model step the decision point belongs to. */
   step: number;
   kind: 'model' | 'tool';
-  durum: 'same' | 'changed' | 'missing' | 'added';
-  detay?: DiffDetail;
+  status: 'same' | 'changed' | 'missing' | 'added';
+  detail?: DiffDetail;
 }
 
 export interface RunDiff {
@@ -124,17 +124,17 @@ function modelToolCalls(value: unknown): { toolName: string; argsHash: string }[
     .map((p) => ({ toolName: p.toolName, argsHash: argsHash(parseMaybeJSON(p.input)) }));
 }
 
-function compareModelPoints(av: unknown, bv: unknown): { same: boolean; detay?: DiffDetail } {
+function compareModelPoints(av: unknown, bv: unknown): { same: boolean; detail?: DiffDetail } {
   const textA = modelText(av);
   const textB = modelText(bv);
   const callsA = modelToolCalls(av);
   const callsB = modelToolCalls(bv);
   const same = textA === textB && stableStringify(callsA) === stableStringify(callsB);
   if (same) return { same: true };
-  return { same: false, detay: { textA, textB, toolCallsA: callsA, toolCallsB: callsB } };
+  return { same: false, detail: { textA, textB, toolCallsA: callsA, toolCallsB: callsB } };
 }
 
-function compareToolPoints(a: DecisionPoint, b: DecisionPoint): { same: boolean; detay?: DiffDetail } {
+function compareToolPoints(a: DecisionPoint, b: DecisionPoint): { same: boolean; detail?: DiffDetail } {
   const va = a.value as any;
   const vb = b.value as any;
   const statusA = va?.status;
@@ -151,7 +151,7 @@ function compareToolPoints(a: DecisionPoint, b: DecisionPoint): { same: boolean;
   if (same) return { same: true };
   return {
     same: false,
-    detay: {
+    detail: {
       toolName: a.toolName === b.toolName ? a.toolName : `${a.toolName} -> ${b.toolName}`,
       statusA,
       statusB,
@@ -163,9 +163,9 @@ function compareToolPoints(a: DecisionPoint, b: DecisionPoint): { same: boolean;
   };
 }
 
-function comparePoints(a: DecisionPoint, b: DecisionPoint): { same: boolean; detay?: DiffDetail } {
+function comparePoints(a: DecisionPoint, b: DecisionPoint): { same: boolean; detail?: DiffDetail } {
   if (a.kind !== b.kind) {
-    return { same: false, detay: { note: `kind changed: ${a.kind} -> ${b.kind}` } };
+    return { same: false, detail: { note: `kind changed: ${a.kind} -> ${b.kind}` } };
   }
   return a.kind === 'model' ? compareModelPoints(a.value, b.value) : compareToolPoints(a, b);
 }
@@ -189,7 +189,7 @@ function describePoint(side: 'A' | 'B', p: DecisionPoint): DiffDetail {
  * (only in A) or 'added' (only in B). `divergentAt` is the index of the first non-same point.
  *
  * TRUST BOUNDARY (Decision #3): if the tool-call COUNT changes at the divergence point, the tail
- * Shifts positionally — the `durum` labels AND `summary` counts AFTER `divergentAt` may contain
+ * Shifts positionally — the `status` labels AND `summary` counts AFTER `divergentAt` may contain
  * Noise (re-alignment is deliberately NOT DONE: LCS-style alignment produces a multi-solution/unstable
  * Diff). The reliable signal is `divergentAt` and everything before it; read the `steps.slice(divergentAt)`
  * Record with this caveat in mind for post-divergence analysis. Scorers should tie their score to
@@ -211,14 +211,14 @@ export async function diffRuns(reader: JournalReader, runIdA: string, runIdB: st
     let entry: DiffEntry;
     if (a && b) {
       const cmp = comparePoints(a, b);
-      entry = { step: a.step, kind: a.kind, durum: cmp.same ? 'same' : 'changed', detay: cmp.detay };
+      entry = { step: a.step, kind: a.kind, status: cmp.same ? 'same' : 'changed', detail: cmp.detail };
     } else if (a) {
-      entry = { step: a.step, kind: a.kind, durum: 'missing', detay: describePoint('A', a) };
+      entry = { step: a.step, kind: a.kind, status: 'missing', detail: describePoint('A', a) };
     } else {
-      entry = { step: b!.step, kind: b!.kind, durum: 'added', detay: describePoint('B', b!) };
+      entry = { step: b!.step, kind: b!.kind, status: 'added', detail: describePoint('B', b!) };
     }
-    if (entry.durum !== 'same' && divergentAt === undefined) divergentAt = i;
-    summary[entry.durum]++;
+    if (entry.status !== 'same' && divergentAt === undefined) divergentAt = i;
+    summary[entry.status]++;
     steps.push(entry);
   }
 
