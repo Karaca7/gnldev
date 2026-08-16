@@ -384,7 +384,10 @@ import { evalDataset } from '@gnldev/evals';`,
     oneLiner: `Each request scoped to an isolated organization journal; tied to identity, 403 on mismatch.`,
     tier: `ee`,
     package: `@gnldev/server`,
-    install: `npm install @gnldev/server @gnldev/durable @gnldev/auth-ee`,
+    // No auth-ee in the npm-install line: EE_NOTE right below it says the package is NOT on the
+    // public registry, and an install command contradicting the note is worse than either alone —
+    // the reader runs the command, gets E404, and now distrusts the note too.
+    install: `npm install @gnldev/server @gnldev/durable  # @gnldev/auth-ee arrives separately, under license`,
     apis: [`withOrg(journal, orgId) — scopes the journal with an 'org:<orgId>:' prefix`, `RestApiOptions.org — opt-in multi-organization (createRestApi option name; concept: organization scope)`, `OrgOptions — { resolve?, required? } (defaults to the x-gnl-org header)`],
     example: `app.mount('/api', createRestApi(config, {
   title: 'SWAPI Pro',
