@@ -53,6 +53,13 @@ export interface AuthProvider {
   authenticate(req: Request): Promise<Principal | null> | Principal | null;
   authorize(principal: Principal | null, req: Request, ctx: AuthContext): Promise<Decision> | Decision;
   capabilities?(): Partial<AuthCapabilities>;
+  /**
+   * `false` declares that this provider has NO principal model — `authenticate()` returns null for
+   * every request, by construction, not because a token was missing. Hosts that scope organizations
+   * by identity reject that combination instead of letting a header pick the scope. Omit it (the
+   * normal case): a provider that can authenticate needs to say nothing. See `bindsIdentity()`.
+   */
+  bindsIdentity?: boolean;
 }
 
 /**

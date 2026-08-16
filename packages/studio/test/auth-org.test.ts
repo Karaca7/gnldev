@@ -578,3 +578,48 @@ describe('@gnldev/studio auth↔org', () => {
     }
   });
 });
+
+describe('@gnldev/studio B2 — an auth provider that binds no identity', () => {
+  // @gnldev/server closed this at src/index.ts (the B2 guard) and Studio never got the same fix.
+  //
+  // The legacy {read,write} pair normalizes through fromReadWrite(), whose authenticate() returns
+  // null UNCONDITIONALLY (packages/auth/src/adapter.ts) — the decision lives in the predicate, not
+  // in a principal. So with `org` configured there is an authProvider but never an identity: the
+  // strict fail-closed net below it tests `principal && !bound`, which null skips, and the org for
+  // a GET becomes `bound ?? requested` — the raw header. A caller holding a valid READ token then
+  // picks whichever organization it names, which is the whole isolation claim inverted.
+  it('B2: {read,write} auth + org option → the x-gnl-org header cannot drive the org (403, fail-closed)', async () => {
+    const journal = new InMemoryJournal();
+    await seed(journal);
+    const app = createStudioApi({
+      reader: journal,
+      auth: { read: () => true, write: () => true },
+      org: {},
+    });
+
+    const res = await call(app, '/runs', { headers: { 'x-gnl-org': 'globex' } });
+    expect(res.status).toBe(403);
+
+    // Sanity: WITHOUT the org option the same principal-less auth is untouched — it makes no
+    // isolation claim, so it keeps serving the single shared scope exactly as before.
+    const noOrg = createStudioApi({ reader: journal, auth: { read: () => true, write: () => true } });
+    expect((await call(noOrg, '/runs')).status).toBe(200);
+  });
+
+  it('a provider that CAN authenticate still answers a missing token with 401, not this 403', async () => {
+    // The reason the guard keys on the provider rather than on `!principal`, which is what the
+    // equivalent @gnldev/server guard tests. Under roleAuth a token-less request also produces a
+    // null principal, but nothing is misconfigured there — the caller simply did not authenticate,
+    // and flattening that into "org isolation cannot work here" would report the wrong problem and
+    // tell a caller to fix its deployment when it needs to send a token.
+    const journal = new InMemoryJournal();
+    await seed(journal);
+    const app = createStudioApi({ reader: journal, auth: AUTH(), org: {} });
+
+    expect((await call(app, '/runs')).status).toBe(401);
+    // ...and the identity-bound caller still gets its own org, so the guard did not over-reach.
+    const ok = await call(app, '/runs', { headers: { authorization: 'Bearer viw' } });
+    expect(ok.status).toBe(200);
+    expect((await ok.json()).map((r: any) => r.runId)).toEqual(['r-acme']);
+  });
+});

@@ -6,6 +6,6 @@
 export type { Principal, AuthContext, Decision, AuthCapabilities, AuthProvider, Cred } from './types.js';
 export { roleAuth } from './role-auth.js';
 export { makeGate, principalOf, type Gate, type GateOptions } from './gate.js';
-export { fromReadWrite, normalizeAuth, type ReadWriteAuth } from './adapter.js';
+export { fromReadWrite, normalizeAuth, bindsIdentity, type ReadWriteAuth } from './adapter.js';
 export { safeEqual } from './safe-equal.js';
 export { PLATFORM_ADMIN_ROLE, isPlatformAdmin, principalScope, assertAssignablePrivileges, type PrincipalScope, type AssignabilityResult } from './scope.js';

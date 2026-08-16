@@ -7,7 +7,7 @@ import { sseResponse } from './sse.js';
 import { asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, purgeRun, purgeOrganization, sweepRuns, POLICY_KEY, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent } from '@gnldev/durable';
 import type { PolicyDoc, PolicyRule, BudgetLimit } from '@gnldev/durable';
 import type { JournalReader, Journal, WorkflowLike, MetricsRunRow } from '@gnldev/durable';
-import { makeGate, normalizeAuth, principalOf, isPlatformAdmin, principalScope, assertAssignablePrivileges, type AuthProvider, type Principal } from '@gnldev/auth';
+import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, principalScope, assertAssignablePrivileges, type AuthProvider, type Principal } from '@gnldev/auth';
 import { listTriggers } from '@gnldev/scheduler';
 import { mountSpa, notBuiltHtml } from './spa.js';
 import { openapiSpec, swaggerHtml } from './swagger.js';
@@ -558,6 +558,19 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       // Requests a different org, 403 — org scope is based on identity, not a spoofable header.
       const principal = authProvider ? await authProvider.authenticate(c.req.raw) : null;
       const bound = principal?.orgId;
+      // FAIL-CLOSED, unconditional: `org` is configured, so this surface CLAIMS organization
+      // isolation — but the auth provider has no principal model (the legacy {read,write} pair,
+      // whose authenticate() is `return null` by construction). There is no identity to bind an org
+      // to, so the only thing left to pick the scope is the x-gnl-org header, and a caller holding
+      // any valid read token could then name whichever organization it liked. That is the isolation
+      // claim inverted, and it is a property of the CONFIGURATION, not of the request — which is
+      // why it is not license-gated like the strict net below, and why a missing token is a
+      // different question (that one is still the per-endpoint gate's 401). The same combination is
+      // rejected by @gnldev/server; Studio claimed the guarantee without carrying the guard.
+      if (opts.org && authProvider && !bindsIdentity(authProvider) &&
+          !c.req.path.endsWith('/me') && !c.req.path.endsWith('/capabilities')) {
+        return c.json({ error: 'access denied: org isolation is configured but this auth provider binds no identity to an org (fail-closed)' }, 403);
+      }
       // STRICT (EE multi-org) FAIL-CLOSED NET: an AUTHENTICATED identity with no org binding AND no
       // Explicit platform-admin grant may NOT reach org data/management surfaces — without this, an
       // Unbound principal would fall through unscoped and read the whole root journal (the accidental

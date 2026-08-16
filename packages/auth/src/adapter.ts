@@ -7,9 +7,26 @@ export interface ReadWriteAuth {
   write?: (req: Request) => boolean | Promise<boolean>;
 }
 
+/**
+ * Can this provider ever produce a principal?
+ *
+ * `authenticate() === null` is ambiguous: it means EITHER "this request carried no token" (a
+ * roleAuth caller who should get 401) OR "this provider has no principal model at all and never
+ * will" (the {read,write} pair below). A host that scopes organizations by identity has to tell
+ * those apart — the first is a per-request condition, the second is a configuration that cannot
+ * isolate anything, because there is no identity to bind an org to. Collapsing them makes the
+ * unauthenticated caller's 401 turn into a misleading 403, or leaves the unsafe configuration open.
+ *
+ * Absent on hand-written providers, so `!== false` is the compatible reading: unknown means capable.
+ */
+export function bindsIdentity(auth: AuthProvider | undefined): boolean {
+  return !!auth && (auth as { bindsIdentity?: boolean }).bindsIdentity !== false;
+}
+
 /** {read,write} → AuthProvider. If there's no fn in that direction, it's unrestricted (preserves the existing `!fn || fn(c)` behavior). */
 export function fromReadWrite(rw: ReadWriteAuth): AuthProvider {
   return {
+    bindsIdentity: false,
     authenticate() {
       return null; // no principal model; the decision is made in the predicate.
     },
