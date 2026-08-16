@@ -134,7 +134,7 @@ export async function evalDataset(opts: EvalDatasetOptions): Promise<EvalDataset
     const output = typeof r === 'string' ? r : r.output;
     const scores: Record<string, ScoreResult> = {};
     // RunId is threaded into the sample so journal-backed scorers (e.g. trajectory.ts's
-    // TrajectoryScorerFor) can be dropped into `scorers` with no extra wiring (P1.1, ).
+    // TrajectoryScorerFor) can be dropped into `scorers` with no extra wiring (P1.1).
     for (const s of scorers) scores[s.name] = await s.score({ output, expected: c.expected, runId });
     return { caseId: c.id, output, scores };
   };

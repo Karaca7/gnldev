@@ -70,12 +70,11 @@ If `tool-call`/`tool-result`/`interrupt`/`error`/`done` arrives while a text mes
 
 ## How it works
 `pipeAguiStream` keeps a small, independent copy of the fullStream-reading loop from `pipeAgentStream` in
-`@gnldev/server/sse.ts` (`sse.ts` was not touched, since it is a sensitive file carrying the W3
-resumable-id contract and locked in by exactly-once tests) — it converts to the GNL `{event,data}` shape and
+`@gnldev/server/sse.ts` — it converts to the GNL `{event,data}` shape and
 passes it to `toAguiEvents`. AG-UI SSE frames carry only a `data:` field (the type is inside the JSON) — the
 `event:` field is not used.
 
 ## Known limits
-- This adapter has **NO resumable stream (Last-Event-ID)** — `@gnldev/server`'s W3 contract is not
-  carried here (could be a separate task).
+- This adapter has **NO resumable stream (Last-Event-ID)** — `@gnldev/server`'s resumable-id contract is
+  not carried here, so a dropped connection restarts the turn rather than resuming it.
 - `createAguiRoute` does not include auth/tenancy/budget (see the API note above).

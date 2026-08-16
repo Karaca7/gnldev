@@ -98,7 +98,7 @@ export interface NetworkObserver {
 
 /**
  * Best-effort observer invocation: awaits the callback (sync or async) and swallows any throw (logs
- * Via console.warn instead) — an observer bug must NEVER break the run (P2-network, ).
+ * Via console.warn instead) — an observer bug must NEVER break the run (P2-network).
  */
 async function notify<A extends unknown[], R>(
   fn: ((...args: A) => R | Promise<R>) | undefined,

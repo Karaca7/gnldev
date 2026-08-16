@@ -7,6 +7,10 @@
     "strict": true,
     "declaration": true,
     "sourceMap": true,
+    // The maps ship (files: ["dist"]) but `src/` does not, so their `sources` pointed at paths no
+    // consumer has — 183 maps that no debugger could ever resolve, ~15% of tarball weight buying
+    // nothing. Embedding the source fixes that, and costs no secrecy: this code is public.
+    "inlineSources": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,

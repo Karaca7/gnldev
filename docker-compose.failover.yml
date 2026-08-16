@@ -36,7 +36,7 @@ services:
     command: >
       sh -c 'if [ ! -s "$$PGDATA/PG_VERSION" ]; then
                until pg_basebackup -h pg-primary -p 5432 -U gnl -D "$$PGDATA" -R -X stream; do
-                 echo "primary bekleniyor..."; sleep 2;
+                 echo "waiting for primary..."; sleep 2;
                done;
              fi;
              chmod 700 "$$PGDATA";

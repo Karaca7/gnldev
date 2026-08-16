@@ -31,7 +31,7 @@ export async function scoreRun(
   const entries = await reader.readRun(runId);
   const output = extractFinalText(entries);
   // RunId is included so trajectory-style scorers (see trajectory.ts's trajectoryScorerFor) can look
-  // This run's decision sequence back up without any extra wiring at the call site (P1.1, ).
+  // This run's decision sequence back up without any extra wiring at the call site (P1.1).
   const sample: ScoreSample = { output, expected: opts.expected, runId };
 
   const j = reader as Partial<Journal>;

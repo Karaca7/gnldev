@@ -15,7 +15,7 @@ export interface ScoreSample {
    */
   context?: string | string[];
   /**
-   * CONVENTION (P1.1, ): the durable runId this sample was produced from, if any.
+   * CONVENTION (P1.1): the durable runId this sample was produced from, if any.
    * Populated automatically by `scoreRun` and `evalDataset` (see score-run.ts/dataset.ts) — lets
    * Journal-backed scorers (e.g. `trajectoryScorerFor` in trajectory.ts) look the run back up without
    * Every caller having to thread it through by hand.

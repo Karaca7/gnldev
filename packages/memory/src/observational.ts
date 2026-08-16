@@ -139,7 +139,7 @@ export interface OmRecallMatch extends Observation {
 }
 
 /**
- * OM recall tool (P2-memory v1 + D4-om follow-up, ): an AI SDK tool wrapping
+ * OM recall tool (P2-memory v1 + D4-om follow-up): an AI SDK tool wrapping
  * Caller-supplied recall/expand functions (mirrors `createWorkingMemoryTool`'s `apply`-closure shape — the
  * Caller binds `threadId` via `AgentMemory.recallObservations`/`recallObservationsSemantic`/
  * `expandObservation`, this stays store-agnostic — it never touches `AgentMemory` or storage directly).

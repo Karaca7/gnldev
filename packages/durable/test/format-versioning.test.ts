@@ -27,9 +27,9 @@ describe('H13 — format units', () => {
   });
 
   it('current stamp: _v is stripped, content stays as-is (the stamp does not leak into the user object)', () => {
-    const kayit = stampFormat({ status: 'succeeded', output: 42 });
-    expect((kayit as any)._v).toBe(JOURNAL_FORMAT_VERSION);
-    expect(upgradeFormat(kayit, 'r:tool:c1')).toEqual({ status: 'succeeded', output: 42 });
+    const record = stampFormat({ status: 'succeeded', output: 42 });
+    expect((record as any)._v).toBe(JOURNAL_FORMAT_VERSION);
+    expect(upgradeFormat(record, 'r:tool:c1')).toEqual({ status: 'succeeded', output: 42 });
   });
 
   it('a FUTURE-version record (_v high): not silent corruption — JournalFormatError with key+version', () => {
