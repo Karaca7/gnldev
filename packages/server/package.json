@@ -51,7 +51,7 @@
   },
   "devDependencies": {
     "@gnldev/durable": "workspace:*",
-    "ai": "^5.0.0",
+    "ai": "^7.0.0",
     "zod": "^3.25.0"
   },
   "author": "Karaca Yılmaz (https://gnl.dev)",

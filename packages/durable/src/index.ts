@@ -24,6 +24,10 @@ export type {
 export { BasicMemory, PROVENANCE_RECENT_CAP, messagePreview } from './memory.js';
 export type { Memory, MemoryContextProvenance, RecalledMessageRef } from './memory.js';
 export { getRunCost, toTraceSpans } from './cost.js';
+// Sibling packages (@gnldev/otel's span builder) read the same journal records and hit the same
+// AI-SDK shape churn. Exporting the two readers keeps ONE implementation of that knowledge instead
+// of a copy per package — the copies are what drift, and drift here is silent.
+export { flattenUsage, finishReasonText, type FlatUsage } from './sdk-compat.js';
 export type { RunCost, RunCostOptions, TraceSpan } from './cost.js';
 export { DEFAULT_PRICING, priceFor, costOf, PRICING_KEY, readPricing, effectivePricingTable } from './pricing.js';
 // Exported for consumers that need the usage/modelId of ONE model step and their own pricing
@@ -50,6 +54,9 @@ export { withIdempotency } from './idempotent-tools.js';
 export type { WithIdempotencyOptions } from './idempotent-tools.js';
 export type { ModelInput, AnyTool, ToolSet } from './types.js';
 export { gnlTool } from './types.js';
+// Shared with @gnldev/studio: rendering a tool list has no call context, so a dynamic description
+// must resolve to nothing rather than to a stringified function.
+export { toolDescriptionText } from './types.js';
 export type { ToolDurability } from './types.js';
 export { runDurable, resumeRun, streamDurable, limitBreachFromSteps, blockedFromSteps } from './run.js';
 export type { RunDurableArgs, StreamDurableArgs, DurableResult, ResumeAgentConfig, StreamBreach, MemoryContextRecord } from './run.js';

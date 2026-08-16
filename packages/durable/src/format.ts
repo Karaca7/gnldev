@@ -27,8 +27,19 @@ export class JournalFormatError extends Error {
   }
 }
 
-/** The format version this GNL version WRITES and natively READS (AI SDK v5 record shapes = 1). */
-export const JOURNAL_FORMAT_VERSION = 1;
+/**
+ * The format version this GNL version WRITES and natively READS.
+ *
+ *   1 = AI SDK v5 record shapes — flat `usage: {inputTokens, outputTokens, totalTokens}`,
+ *       `finishReason: 'stop'`.
+ *   2 = AI SDK v7 record shapes — `usage: {inputTokens: {total, noCache, cacheRead, cacheWrite},
+ *       outputTokens: {total, text, reasoning}}` (no top-level total), `finishReason: {unified, raw}`.
+ *
+ * The canonical shape is deliberately WHATEVER THE CURRENT SDK PRODUCES, not a gnl-invented one:
+ * a replayed record is handed straight back to the SDK's own loop, so it has to be in the shape that
+ * loop expects. Old records are converted forward, once, on read.
+ */
+export const JOURNAL_FORMAT_VERSION = 2;
 
 type FormatUpgrader = (value: Record<string, unknown>) => Record<string, unknown>;
 const upgraders = new Map<number, FormatUpgrader>();
@@ -40,9 +51,61 @@ const upgraders = new Map<number, FormatUpgrader>();
  * The returned function undoes the registration (for test/temporary scenarios).
  */
 export function registerFormatUpgrade(from: number, up: FormatUpgrader): () => void {
+  // RESTORES the previous registration rather than deleting the slot. The disposer used to
+  // `delete(from)`, which meant a test that temporarily overrode v1→v2 silently removed the
+  // BUILT-IN v1→v2 upgrader for the remainder of the process — every later read of a real v1
+  // record then failed with "no upgrader is registered". Deleting by version key cannot express
+  // "undo my registration"; restoring what was there can.
+  const previous = upgraders.get(from);
   upgraders.set(from, up);
-  return () => { upgraders.delete(from); };
+  return () => {
+    if (previous) upgraders.set(from, previous);
+    else upgraders.delete(from);
+  };
 }
+
+/**
+ * v1 → v2: an AI SDK v5-shaped record read by a gnl running AI SDK v7.
+ *
+ * Registered here rather than in sdk-compat.ts to keep the split honest: sdk-compat owns values IN
+ * FLIGHT, this module owns records ON DISK. A record only ever passes through here once, on the way
+ * out of storage, and is stamped v2 afterwards — the engine downstream never sees a v1 shape and so
+ * never learns to sniff for one. That is the whole difference between a versioned upgrade and a
+ * tolerant reader: the tolerant reader has to keep guessing forever, and hides drift while it does.
+ *
+ * Only `usage` and `finishReason` moved. Everything else in a model record (content, warnings,
+ * response metadata) is carried through untouched.
+ */
+registerFormatUpgrade(1, (rec) => {
+  const out: Record<string, unknown> = { ...rec, _v: 2 };
+
+  const u = rec.usage as Record<string, unknown> | undefined;
+  // Already-nested usage means the record was written by a v7 process that predates this stamp —
+  // convert nothing, or `inputTokens.total` would become `{total: {total: n}}`.
+  if (u && typeof u.inputTokens !== 'object') {
+    const input = (u.inputTokens as number | undefined) ?? undefined;
+    const cached = (u.cachedInputTokens as number | undefined) ?? undefined;
+    out.usage = {
+      inputTokens: { total: input, noCache: undefined, cacheRead: cached, cacheWrite: undefined },
+      outputTokens: { total: (u.outputTokens as number | undefined) ?? undefined, text: undefined, reasoning: undefined },
+    };
+  }
+
+  if (typeof rec.finishReason === 'string') {
+    out.finishReason = { unified: rec.finishReason, raw: rec.finishReason };
+  }
+
+  // A streamed step keeps its parts array; the finish part carries the same two fields.
+  if (Array.isArray(rec.parts)) {
+    out.parts = (rec.parts as Array<Record<string, unknown>>).map((part) => {
+      if (part?.type !== 'finish') return part;
+      const upgraded = upgradeFormat({ ...part, _v: 1 }, undefined, 2) as Record<string, unknown>;
+      return upgraded;
+    });
+  }
+
+  return out;
+});
 
 /** Write stamp: adds `_v` to a copy of the record (does NOT MUTATE the caller's object — the model
  *  Result is also returned to the caller after being written to the journal; we don't leak _v into it). */

@@ -1,5 +1,6 @@
 import { nestedAgentRunId } from './journal.js';
 import { tool, stepCountIs } from 'ai';
+import type { Tool } from 'ai';
 import { z } from 'zod';
 import { runDurable } from './run.js';
 import { readRunTaint, markRunTainted } from './taint.js';
@@ -91,7 +92,14 @@ export async function runSubAgent(
  * `durableTool` memoizes this agent-tool's result → the ENTIRE sub-agent is SKIPPED on a parent resume
  * (exactly-once handoff). If the sub-agent crashes midway, it resumes from its own journal.
  */
-export function createAgentTool(config: AgentToolConfig, opts?: { description?: string }) {
+export function createAgentTool(
+  config: AgentToolConfig,
+  opts?: { description?: string },
+// The return type is DECLARED, not inferred. Left to inference, TypeScript emits a .d.ts that names
+// a pnpm-internal path inside @ai-sdk/provider-utils — a package we do not declare and should not
+// have to (TS2742). Naming the contract in types reachable through `ai`, the peer we already
+// require, keeps our published surface ours and our dependency list honest.
+): Tool<{ task: string }, { text: string; interrupts: Interrupt[] }> & { idempotent: boolean } {
   // H7: the nested run is ITSELF durable → a repeated call replays from its own journal, produces
   // No side effect → idempotent (smooth resume without getting stuck at the crash-window gate).
   return Object.assign(tool({

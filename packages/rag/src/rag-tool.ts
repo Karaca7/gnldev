@@ -1,7 +1,15 @@
 import { tool } from 'ai';
+import type { Tool } from 'ai';
 import { z } from 'zod';
 import type { VectorStore, Embed } from './vector-store.js';
 import type { Reranker } from './rerank.js';
+
+/** One retrieved document as the tool reports it. Named so the tool's public type can be declared. */
+export interface RagHit {
+  text: string;
+  score: number;
+  metadata?: Record<string, unknown>;
+}
 
 /**
  * RAG tool that an agent can call. When used inside `runDurable`, `durableTool` journals its result
@@ -18,7 +26,10 @@ export function createRagTool(opts: {
   rerank?: Reranker;
   /** Number of results to keep after rerank. */
   rerankTopK?: number;
-}) {
+// Declared, not inferred: inference makes the emitted .d.ts name a pnpm-internal provider-utils
+// path (TS2742) — a package this one neither declares nor should. `Tool` comes from `ai`, the peer
+// we already require.
+}): Tool<{ query: string }, RagHit[]> & { idempotent: boolean } {
   // H7: read-only search — safe to re-run → idempotent (keeps retry/reclaim smooth).
   return Object.assign(tool({
     description: opts.description ?? 'Retrieves documents relevant to the query from the knowledge base',
@@ -27,7 +38,7 @@ export function createRagTool(opts: {
       const embedding = await opts.embed(query);
       let matches = await opts.store.query(embedding, opts.topK ?? 4);
       if (opts.rerank) matches = await opts.rerank.rerank(query, matches, opts.rerankTopK);
-      return matches.map((m) => ({
+      return matches.map((m): RagHit => ({
         text: m.text,
         score: Number(m.score.toFixed(4)),
         ...(m.metadata ? { metadata: m.metadata } : {}),

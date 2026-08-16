@@ -11,6 +11,7 @@ import { generateText } from 'ai';
 import { claim, frozenGet } from './journal.js';
 import type { Journal } from './journal.js';
 import type { Interrupt } from './guard.js';
+import { toolDescriptionText } from './types.js';
 
 /** The router's single-turn decision: either give a task to an agent OR write the final answer. */
 export type RouteDecision =
@@ -161,7 +162,7 @@ function summarizeHistory(history: NetworkStep[]): string {
 /** Router prompt: target list + task + history; strict JSON is requested. */
 function routerPrompt(opts: RunNetworkOptions, history: NetworkStep[], force: 'final' | null): string {
   const agentList = Object.entries(opts.agents)
-    .map(([name, t]) => `- ${name}${t.description ? `: ${t.description}` : ''}`)
+    .map(([name, t]) => { const d = toolDescriptionText(t); return `- ${name}${d ? `: ${d}` : ''}`; })
     .join('\n');
   const past = summarizeHistory(history);
   const actions = force === 'final'

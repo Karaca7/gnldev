@@ -4,7 +4,7 @@
 // It carries real wall-clock time/latency (non-det) — that's why it goes only to the exporter, never the journal.
 import { createRequire } from 'node:module';
 import { wrapLanguageModel } from 'ai';
-import type { LanguageModelV2, LanguageModelV2Middleware } from '@ai-sdk/provider';
+import type { LanguageModelV4, LanguageModelV4Middleware } from '@ai-sdk/provider';
 import {
   BasicTracerProvider,
   SimpleSpanProcessor,
@@ -14,6 +14,7 @@ import {
 import { trace, context, SpanKind, SpanStatusCode, type Span, type Context } from '@opentelemetry/api';
 import { priceFor, costOf, DEFAULT_PRICING } from '@gnldev/durable';
 import type { ModelPricing } from '@gnldev/durable';
+import { flattenUsage } from '@gnldev/durable';
 
 export interface LiveCost {
   inputTokens: number;
@@ -147,16 +148,17 @@ export function liveObservability(opts: LiveObservabilityOptions = {}): LiveObse
   function recordModel(runId: string, e: ModelEmit): void {
     const r = ensureRoot(runId, e.start);
     total.modelCalls++;
-    const u = e.usage ?? {};
-    const inp = u.inputTokens ?? 0;
-    const outp = u.outputTokens ?? 0;
-    const cached = u.cachedTokens ?? 0;
-    const tot = u.totalTokens ?? inp + outp;
+    // Same shared reader the journal path uses: AI SDK 7 nests the counts, so reading the flat
+    // fields yields undefined → `?? 0` → a live cost feed that reports zero forever, and an
+    // onCost budget alarm that therefore never fires. `cachedTokens` was never an SDK field at all.
+    const u = flattenUsage(e.usage);
+    const { inputTokens: inp, outputTokens: outp, cachedTokens: cached, totalTokens: tot } = u;
     total.inputTokens += inp;
     total.outputTokens += outp;
     total.cachedTokens += cached;
     total.totalTokens += tot;
     const p = e.modelId ? priceFor(e.modelId, pricing) : undefined;
+    // costOf reads FLAT fields — hand it the flattened object, not the raw record.
     const cost = p ? costOf(u, p) : 0;
     total.costUsd += cost;
     const span = tracer.startSpan(
@@ -192,8 +194,9 @@ export function liveObservability(opts: LiveObservabilityOptions = {}): LiveObse
     span.end(e.end > e.start ? e.end : e.start);
   }
 
-  function liveMiddleware(runId: string): LanguageModelV2Middleware {
+  function liveMiddleware(runId: string): LanguageModelV4Middleware {
     return {
+      specificationVersion: 'v4',
       wrapGenerate: async ({ doGenerate }) => {
         const start = Date.now();
         const result = await doGenerate();
@@ -246,7 +249,7 @@ export function liveObservability(opts: LiveObservabilityOptions = {}): LiveObse
     // Sampling: if this run won't be traced, return args unchanged (zero cost).
     if (sampleRate < 1 && Math.random() >= sampleRate) return args;
     const runId = args.runId;
-    const model = args.model ? wrapLanguageModel({ model: args.model as LanguageModelV2, middleware: liveMiddleware(runId) }) : args.model;
+    const model = args.model ? wrapLanguageModel({ model: args.model as LanguageModelV4, middleware: liveMiddleware(runId) }) : args.model;
     let tools = args.tools;
     if (args.tools) {
       tools = {};

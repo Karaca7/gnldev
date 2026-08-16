@@ -50,7 +50,7 @@
   },
   "peerDependencies": {
     "@gnldev/tool-schema": "workspace:^",
-    "ai": "^5.0.0",
+    "ai": "^7.0.0",
     "ioredis": "^5.4.0",
     "pg": "^8.0.0"
   },
@@ -66,9 +66,10 @@
     }
   },
   "devDependencies": {
-    "@ai-sdk/provider": "^2.0.0",
+    "@ai-sdk/openai": "^4.0.0",
+    "@ai-sdk/provider": "^4.0.0",
     "@gnldev/tool-schema": "workspace:*",
-    "ai": "^5.0.0",
+    "ai": "^7.0.0",
     "ioredis": "^5.4.0",
     "pg": "^8.0.0",
     "pg-mem": "^3.0.14",

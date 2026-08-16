@@ -1,11 +1,12 @@
 // Converts a createGnl instance into the Playground/Tools runner (StudioAgentRunner). Pure adapter — does not import `ai`.
 // @gnldev/cli and the studio CLI `--config` share this → single source of truth.
 import type { AgentMeta, StudioAgentRunner, ToolMeta, ToolListItem } from './server.js';
-import { durableTool } from '@gnldev/durable';
+import { durableTool, toolDescriptionText } from '@gnldev/durable';
 import type { Guard, Journal, WorkflowMeta, WorkflowRunResult } from '@gnldev/durable';
 
 export interface RunnerToolLike {
-  description?: string;
+  /** AI SDK 7 lets a tool compute its description at call time; mirrors AnyTool in @gnldev/durable. */
+  description?: string | ((options: any) => string);
   inputSchema?: unknown;
   execute?: (input: any, options: any) => any;
 }
@@ -66,7 +67,9 @@ function toolMeta(
       inputSchema = undefined;
     }
   }
-  return { name, description: t?.description, inputSchema, ...(guarded ? { guarded: true } : {}) };
+  // Studio lists tools without a call context, so a dynamically-computed description has no
+  // value to show — undefined is honest, a stringified function is not.
+  return { name, description: toolDescriptionText(t), inputSchema, ...(guarded ? { guarded: true } : {}) };
 }
 
 /** Builds the Playground/Tools runner from the createGnl return value (`gnl`) + config. */

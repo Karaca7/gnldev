@@ -1,9 +1,10 @@
 import { generateText, streamText, stepCountIs } from 'ai';
+import type { StreamTextResult } from 'ai';
 import { withDurableModel } from './durable-model.js';
 import { durableTools } from './durable-tool.js';
 import { acquireRunLock } from './run-lock.js';
 import { RunBusyError, SideEffectRetryBlockedError, RetryLimitExceededError } from './errors.js';
-import { createProcessorCtx, composePrepareStep, composeOnStepFinish, durableProcessorStep, ProcessorRetry, RetryExhaustedByProcessorError } from './processor.js';
+import { createProcessorCtx, composePrepareStep, composeOnStepFinish, durableProcessorStep, ProcessorRetry, RetryExhaustedByProcessorError, type StepHookFailure } from './processor.js';
 import { loadReplayCache, runKeys, claim } from './journal.js';
 // Statically safe: model-router imports only ./journal, and the provider packages it can reach are
 // Behind dynamic import(), so this costs the core bundle nothing.
@@ -23,7 +24,8 @@ import { assertNotCanceled } from './cancel.js';
 import { markRunTainted, readThreadTaint, readDirectRunTaint, recordTaintProvenance, isThreadTaintExpired } from './taint.js';
 import type { RunLimits } from './limits.js';
 import type { ToolSchemaRule } from '@gnldev/tool-schema';
-import type { LanguageModelV2 } from '@ai-sdk/provider';
+import type { LanguageModelV4 } from '@ai-sdk/provider';
+import { systemText, finishReasonText, producedMessages, type InstructionsLike } from './sdk-compat.js';
 import { runFailed, runFailedIfUnrecorded, runStarted, runSucceeded, classifyRunError, isRunFailure } from './outcome.js';
 
 type GenerateTextOptions = Parameters<typeof generateText>[0];
@@ -311,13 +313,17 @@ function lastUserText(messages: any[]): string | undefined {
 }
 
 // Combine stopWhen with the suspend detector: when a tool is suspended, the loop stops.
-function composeStopWhen(stopWhen: any): any[] {
+function composeStopWhen(stopWhen: any, stepHookFailure?: StepHookFailure): any[] {
   const base = stopWhen ?? stepCountIs(12);
   const suspendStop = ({ steps }: any) => {
     const last = steps[steps.length - 1];
     return Array.isArray(last?.content) && last.content.some((p: any) => hasSuspend(p) || hasLimitExceeded(p) || hasBlocked(p));
   };
-  return [...(Array.isArray(base) ? base : [base]), suspendStop];
+  // A per-step hook that threw must end the loop even though the SDK swallowed the throw — without
+  // this the run keeps stepping and finishes successfully, which is the opposite of what a blocking
+  // processor asked for.
+  const hookStop = () => stepHookFailure?.error !== undefined;
+  return [...(Array.isArray(base) ? base : [base]), suspendStop, hookStop];
 }
 
 /**
@@ -474,7 +480,7 @@ async function inheritThreadTaint(
 }
 
 // Common fields for runDurable/streamDurable (the slice used in memory/processor preparation).
-type PreparedInput = { prompt?: unknown; messages?: any[]; system?: string };
+type PreparedInput = { prompt?: unknown; messages?: any[]; system?: InstructionsLike };
 
 /**
  * Load the memory context: thread history + working memory (+ the OM/recall/WM tool on the rich path).
@@ -554,7 +560,7 @@ async function prepareMemoryContext(
     // Would see the user message twice and writeAheadIncoming would store it twice.
     const alreadyStored = historyEndsWithIncoming(history, incoming);
     rest.messages = alreadyStored ? [...history] : [...history, ...incoming];
-    if (mc.system) rest.system = [rest.system, mc.system].filter(Boolean).join('\n\n');
+    if (mc.system) rest.system = [systemText(rest.system), mc.system].filter(Boolean).join('\n\n');
     const provenance: MemoryContextRecord = {
       v: 1, threadId,
       recalled: mc.provenance?.recalled ?? [],
@@ -577,7 +583,7 @@ async function prepareMemoryContext(
   if (memory.getWorkingMemory) {
     const wm = await memory.getWorkingMemory(threadId);
     if (wm) {
-      rest.system = [rest.system, `# Working Memory\n${wm}`].filter(Boolean).join('\n\n');
+      rest.system = [systemText(rest.system), `# Working Memory\n${wm}`].filter(Boolean).join('\n\n');
       wmChars = String(wm).length;
     }
   }
@@ -607,7 +613,7 @@ async function applyInputProcessors(
   rest: PreparedInput,
 ): Promise<void> {
   if ((await journal.get(runKeys.input(runId))) !== undefined) return;
-  let pin: ProcessorInput = { system: rest.system, messages: rest.messages, prompt: rest.prompt };
+  let pin: ProcessorInput = { system: systemText(rest.system) || undefined, messages: rest.messages, prompt: rest.prompt };
   for (const p of processors) {
     if (p.processInput) pin = await p.processInput(pin, procCtx);
   }
@@ -623,9 +629,11 @@ async function applyToolProcessors(
   processors: Processor[],
   procCtx: ProcessorCtx,
   tools: Record<string, any>,
-  input?: { system?: string; messages?: any[]; prompt?: unknown },
+  input?: PreparedInput,
 ): Promise<Record<string, any>> {
-  const ctx: ProcessorCtx = { ...procCtx, input };
+  // Same reasoning as applyInputProcessors: a tool processor reading `input.system` as a signal
+  // wants text, not a union it has to unwrap.
+  const ctx: ProcessorCtx = { ...procCtx, input: input && { ...input, system: systemText(input.system) || undefined } };
   let out = tools;
   for (const p of processors) {
     if (p.processTools) out = await p.processTools(out, ctx);
@@ -838,6 +846,8 @@ async function runGenerateWithRetryLadder(
   procCtx: ProcessorCtx | undefined,
   journal: Journal,
   runId: string,
+  /** Carries an error a per-step hook threw and the SDK swallowed — see composeOnStepFinish. */
+  stepHookFailure: StepHookFailure = {},
 ): Promise<{ result: any; interrupts: Interrupt[] }> {
   const usedByProcessor: Record<string, number> = {};
   let attempt = 0;
@@ -873,6 +883,11 @@ async function runGenerateWithRetryLadder(
       throw err;
     }
 
+    // A per-step processor threw and the SDK swallowed it (see composeOnStepFinish). Raise it here,
+    // BEFORE the sentinel checks: the hook asked for the run to stop, and it is the caller's own
+    // error type — reporting anything else would mislabel a deliberate block.
+    if (stepHookFailure.error !== undefined) throw stepHookFailure.error;
+
     // K1 + A block sentinel OR a tool-step limit stopped the composeStopWhen loop → convert
     // To a real typed error and throw (unrelated to the retry ladder — never retried).
     const finishError = streamFinishError((result as any).steps ?? []);
@@ -890,7 +905,7 @@ async function runGenerateWithRetryLadder(
     if (procCtx && interrupts.length === 0) {
       let pout: ProcessorOutput = {
         text: (result as any).text,
-        messages: (result as any).response?.messages ?? [],
+        messages: producedMessages(result),
         result,
       };
       try {
@@ -968,7 +983,7 @@ async function runDurableGuarded(args: RunDurableArgs): Promise<DurableResult> {
 async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   const { journal, runId, guard, approvals, memory, threadId, resourceId, agentName, replay, lock: _lock, processors, schemaCompat, limits, exclusiveModelStep, replayCacheMaxBytes, toolPolicy, timeouts, model: modelInput, tools, stopWhen, ...rest } =
     args as RunDurableArgs & Record<string, any>;
-  // `ModelInput` is `LanguageModelV2 | string`, and until now only createGnl honoured the string
+  // `ModelInput` is `LanguageModelV4 | string`, and until now only createGnl honoured the string
   // Half: passing 'nvidia/…' straight to runDurable type-checked and then died inside the AI SDK
   // With "model.doGenerate is not a function", which tells a newcomer nothing about what they did
   // Wrong. Resolve it here so the published type is true wherever it appears.
@@ -1027,12 +1042,19 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
     effectiveTools = applyToolCompat(effectiveTools, model, rules);
   }
 
+  const stepHookFailure: StepHookFailure = {};
   const options: any = {
+    // AI SDK 7 defaults `allowSystemInMessages` to false and throws AI_InvalidPromptError when a
+    // system message appears inside `messages`. Sensible for hand-written calls; wrong here. This
+    // engine REPLAYS what happened: thread history loaded from memory, and any journalled message
+    // list, is a record. Refusing to send back a system message we ourselves stored turns a faithful
+    // replay into a hard failure. `...rest` follows, so a caller can still override this.
+    allowSystemInMessages: true,
     ...rest,
     // §5.3 + Y1: exclusiveModelStep/stepTimeoutMs flow into withDurableModel as opt-in (identical to before if not provided).
-    model: withDurableModel(model as LanguageModelV2, ctx,
+    model: withDurableModel(model as LanguageModelV4, ctx,
       (exclusiveModelStep || timeouts?.modelStepMs) ? { exclusiveStep: exclusiveModelStep, stepTimeoutMs: timeouts?.modelStepMs } : undefined),
-    stopWhen: composeStopWhen(stopWhen),
+    stopWhen: composeStopWhen(stopWhen, stepHookFailure),
   };
   if (effectiveTools) options.tools = durableTools(effectiveTools, ctx);
   // P2-step: per-step processor hooks (common per-step-processor parity, v1) — bridged to the AI SDK's own per-iteration
@@ -1040,7 +1062,9 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   if (procCtx && processors?.length) {
     const prep = composePrepareStep(processors as Processor[], procCtx);
     if (prep) options.prepareStep = prep;
-    const onStep = composeOnStepFinish(processors as Processor[], procCtx);
+    // The holder is read by the stop condition below: AI SDK 7 swallows a throw from onStepFinish,
+    // so a processor that blocks a run only takes effect if WE notice and stop.
+    const onStep = composeOnStepFinish(processors as Processor[], procCtx, stepHookFailure);
     if (onStep) options.onStepFinish = onStep;
   }
 
@@ -1048,7 +1072,7 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   // Bounded retry-with-feedback ladder (see runGenerateWithRetryLadder above for the full contract —
   // Includes the K1/W1 sentinel-to-error conversion and the 8.7 output-processor pass, byte-for-
   // Byte unchanged for a run with no ProcessorRetry-throwing processor).
-  const { result: ladderResult, interrupts } = await runGenerateWithRetryLadder(options, processors, procCtx, journal, runId);
+  const { result: ladderResult, interrupts } = await runGenerateWithRetryLadder(options, processors, procCtx, journal, runId, stepHookFailure);
   let result = ladderResult;
 
   // Memory: idempotent append on completion (not suspended) — resume/retry does NOT double-write.
@@ -1067,7 +1091,7 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
       // F3 note (deliberate): under CONCURRENT turns on one thread, messages land in SEND order and
       // Answers in COMPLETION order — the transcript reflects what actually happened, rather than the
       // Old atomic-pair append that reordered reality into adjacent Q/A pairs.
-      const produced = (result as any).response?.messages ?? [];
+      const produced = producedMessages(result);
       // F5: if this run's write-ahead was skipped over ANOTHER worker's pending claim and that claim
       // Has since gone STALE (crashed before appending), take it over now — the question rides along
       // With the answer instead of being lost. A still-FRESH claim keeps the safe-side skip (the
@@ -1213,7 +1237,10 @@ export async function resumeRun(
  *      Sse.ts/agui effectively do via `limitBreachFromSteps`/`blockedFromSteps`.
  * Prefer `runDurable` if you don't want to own any of this.
  */
-export async function streamDurable(args: StreamDurableArgs) {
+// Declared, not inferred — same reason as createAgentTool: inference names a pnpm-internal
+// provider-utils path in the emitted .d.ts (TS2742). `StreamTextResult` comes from `ai`, the peer we
+// already require, so the published surface stays describable in terms we actually depend on.
+export async function streamDurable(args: StreamDurableArgs): Promise<StreamTextResult<any, any, any>> {
   // Same refusal as runDurable — a compensated run never streams either.
   await assertNotCompensated(args.journal, args.runId);
   // P2-cancel: same terminal-refusal contract as compensation — a durably-canceled run never
@@ -1269,12 +1296,15 @@ export async function streamDurable(args: StreamDurableArgs) {
     effectiveTools = applyToolCompat(effectiveTools, model, rules);
   }
 
+  const stepHookFailure: StepHookFailure = {};
   const options: any = {
+    // Same reason as runDurableInner: a replay must be able to send back what it recorded.
+    allowSystemInMessages: true,
     ...rest,
     // §5.3 + Y1: SAME opt-in flow as runDurableInner (see the note there).
-    model: withDurableModel(model as LanguageModelV2, ctx,
+    model: withDurableModel(model as LanguageModelV4, ctx,
       (exclusiveModelStep || timeouts?.modelStepMs) ? { exclusiveStep: exclusiveModelStep, stepTimeoutMs: timeouts?.modelStepMs } : undefined),
-    stopWhen: composeStopWhen(stopWhen),
+    stopWhen: composeStopWhen(stopWhen, stepHookFailure),
   };
   if (effectiveTools) options.tools = durableTools(effectiveTools, ctx);
   // P2-step: SAME per-step hook bridging as runDurableInner (parity contract — see the note there).
@@ -1282,7 +1312,9 @@ export async function streamDurable(args: StreamDurableArgs) {
   if (procCtx && processors?.length) {
     const prep = composePrepareStep(processors as Processor[], procCtx);
     if (prep) options.prepareStep = prep;
-    const onStep = composeOnStepFinish(processors as Processor[], procCtx);
+    // The holder is read by the stop condition below: AI SDK 7 swallows a throw from onStepFinish,
+    // so a processor that blocks a run only takes effect if WE notice and stop.
+    const onStep = composeOnStepFinish(processors as Processor[], procCtx, stepHookFailure);
     if (onStep) options.onStepFinish = onStep;
   }
   // Stream finish: output processors (only messages being persisted) + idempotent memory append
@@ -1315,7 +1347,7 @@ export async function streamDurable(args: StreamDurableArgs) {
         Array.isArray(s?.content) && s.content.some((p: any) => hasSuspend(p) || hasLimitExceeded(p) || hasBlocked(p)));
       if (!pending) {
         try {
-          let produced: any[] = ev?.response?.messages ?? [];
+          let produced: any[] = producedMessages(ev);
           if (procCtx) {
             let pout: ProcessorOutput = { text: ev?.text ?? '', messages: produced, result: ev };
             // NOTE (deliberate limitation): a ProcessorRetry thrown here is NOT retried — unlike
@@ -1366,8 +1398,11 @@ export async function streamDurable(args: StreamDurableArgs) {
         // Recorded as finished. NOT on an errored stream: onFinish fires after onError, and the
         // Success write here was measured OVERWRITING the failure the error path had just recorded —
         // ["failed","completed"], final record completed — on the SSE/chat path of all places.
-        const endedInError = streamFailed || ev?.finishReason === 'error'
-          || stepsArr.some((st: any) => st?.finishReason === 'error');
+        // finishReasonText, NOT ===: AI SDK 7 made finishReason an object ({unified, raw}), so the
+        // string comparison is permanently false and a failed stream is journaled as a SUCCESS —
+        // the worst possible lie for a durability engine to tell.
+        const endedInError = streamFailed || finishReasonText(ev?.finishReason) === 'error'
+          || stepsArr.some((st: any) => finishReasonText(st?.finishReason) === 'error');
         if (!endedInError) await runSucceeded(journal, runId, Date.now());
         else await runFailed(journal, runId, new Error(String(ev?.finishReason ?? 'stream error')), Date.now());
       }

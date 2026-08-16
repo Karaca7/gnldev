@@ -63,6 +63,9 @@ export function priceFor(
 
 /** The USD cost of a usage record (cached tokens are priced separately). */
 export function costOf(usage: any, pricing: ModelPricing): number {
+  // Callers hand this the FLATTENED usage (see sdk-compat.flattenUsage), so `cachedTokens` here is
+  // gnl's own normalised field — not the SDK's. Reading the SDK object directly is what made the
+  // cache discount dead code on every version: no AI SDK release has ever had `usage.cachedTokens`.
   const cached = usage?.cachedTokens ?? 0;
   const input = Math.max(0, (usage?.inputTokens ?? 0) - cached);
   const output = usage?.outputTokens ?? 0;

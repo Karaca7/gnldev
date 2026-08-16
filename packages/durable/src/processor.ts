@@ -136,20 +136,36 @@ export function composePrepareStep(
  * P2-step: composes `processOutputStep` hooks into ONE `onStepFinish` callback. A ProcessorTripwire
  * (or any throw) propagates — generateText rejects, the run fails loudly (v1 contract; see the hook's JSDoc).
  */
+/** Where a swallowed per-step error is parked so the caller can rethrow it. See composeOnStepFinish. */
+export interface StepHookFailure { error?: unknown }
+
 export function composeOnStepFinish(
   processors: Processor[],
   ctx: ProcessorCtx,
+  /** Receives the first error a hook throws; the caller stops the loop and rethrows it. */
+  failure?: StepHookFailure,
 ): ((step: any) => Promise<void>) | undefined {
   const hooked = processors.filter((p) => typeof p.processOutputStep === 'function');
   if (!hooked.length) return undefined;
   let stepNumber = 0;
   return async (step: any) => {
     const n = stepNumber++;
-    for (const p of hooked) {
-      await p.processOutputStep!(
-        { stepNumber: n, text: step?.text, toolCalls: step?.toolCalls, toolResults: step?.toolResults, finishReason: step?.finishReason, usage: step?.usage },
-        ctx,
-      );
+    try {
+      for (const p of hooked) {
+        await p.processOutputStep!(
+          { stepNumber: n, text: step?.text, toolCalls: step?.toolCalls, toolResults: step?.toolResults, finishReason: step?.finishReason, usage: step?.usage },
+          ctx,
+        );
+      }
+    } catch (err) {
+      // AI SDK 7 SWALLOWS anything thrown from onStepFinish — verified against ai@7.0.66; under v5
+      // it propagated. A processor that throws to stop a run (ProcessorTripwire, a policy gate)
+      // therefore did nothing at all: the loop continued and the run reported success. A governance
+      // hook that fails open is worse than no hook, so the error is parked here and the caller —
+      // which owns the loop's stop condition — raises it. Same shape as the tool sentinel: the SDK
+      // cannot be relied on to carry our control flow, so we carry it ourselves.
+      if (failure && failure.error === undefined) failure.error = err;
+      throw err; // still thrown, in case a future SDK propagates again — first-wins keeps it idempotent
     }
   };
 }

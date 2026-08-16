@@ -58,7 +58,7 @@
     "hono": "^4.6.0"
   },
   "peerDependencies": {
-    "ai": "^5.0.0",
+    "ai": "^7.0.0",
     "@gnldev/workflow": "workspace:^"
   },
   "peerDependenciesMeta": {
@@ -70,7 +70,7 @@
     }
   },
   "devDependencies": {
-    "ai": "^5.0.0",
+    "ai": "^7.0.0",
     "@gnldev/workflow": "workspace:*",
     "pg-mem": "^3.0.14",
     "zod": "^3.25.76"

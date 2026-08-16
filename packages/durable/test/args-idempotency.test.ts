@@ -49,7 +49,12 @@ describe('duplicate-toolCallId proof test — model calls the same tool 5x in a 
     const result = await runDurable({ runId: 'r7261-args', journal, model: multiCallModel(), tools, stopWhen: stepCountIs(6), prompt: 'x' });
 
     expect(calls).toBe(1); // duplicate-toolCallId pattern: double (5x) side-effect PREVENTED
-    const toolMsg = (result.response.messages as any[]).find((m) => m.role === 'tool');
+    // AI SDK 7 narrowed `response.messages` to the FINAL step's messages; tool results now live per
+    // step. Searching every step is both correct here and correct under v5, where the tool message
+    // also appears in its own step.
+    const stepMessages = ((result as any).steps ?? []).flatMap((st: any) => st.response?.messages ?? []);
+    const toolMsg = stepMessages.find((m: any) => m.role === 'tool');
+    expect(toolMsg, 'no tool message was produced in any step').toBeDefined();
     const outputs = toolMsg.content.map((p: any) => p.output.value);
     expect(outputs).toHaveLength(5);
     for (const o of outputs) expect(o).toEqual({ charged: 20, seq: 1 }); // all outputs come from the SAME execution

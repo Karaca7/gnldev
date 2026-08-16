@@ -90,7 +90,13 @@ describe('provider failures reach the caller as themselves', () => {
 });
 
 describe('an empty answer says so', () => {
-  /** What the free provider actually returned: a response with no content and finishReason 'unknown'. */
+  /**
+   * What the free provider actually returned: a response with no content and no usable finish
+   * reason. The provider's word is passed through unchanged; AI SDK 7 renamed the UNIFIED bucket
+   * for it from 'unknown' to 'other', which is what the caller now sees. Nothing in the engine
+   * branches on this value (only `=== 'error'` matters), so the rename is reporting, not behaviour
+   * — but the point of the test stands: an empty answer must SAY why it is empty.
+   */
   function emptyModel() {
     const usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
     return {
@@ -113,6 +119,6 @@ describe('an empty answer says so', () => {
     expect(res.status).toBe(200);
     const body = await res.json() as { text?: string; finishReason?: string };
     expect(body.text).toBe('');
-    expect(body.finishReason).toBe('unknown');
+    expect(body.finishReason, 'an empty answer must still report a reason').toBe('other');
   });
 });

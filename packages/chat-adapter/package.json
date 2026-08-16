@@ -38,12 +38,12 @@
     "@gnldev/durable": "workspace:^"
   },
   "peerDependencies": {
-    "ai": "^5.0.0",
+    "ai": "^7.0.0",
     "hono": "^4.6.0"
   },
   "devDependencies": {
     "@gnldev/durable": "workspace:*",
-    "ai": "^5.0.0",
+    "ai": "^7.0.0",
     "hono": "^4.6.0",
     "zod": "^3.25.0"
   },

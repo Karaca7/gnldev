@@ -1,13 +1,24 @@
 // Public API type helpers — types expressing intent instead of `any` (consumers get these from @gnldev/durable).
-import type { LanguageModelV2 } from '@ai-sdk/provider';
+import type { LanguageModelV4 } from '@ai-sdk/provider';
 
 /** An AI SDK model OR a 'provider/model' string (resolved via the model router). */
-export type ModelInput = LanguageModelV2 | string;
+export type ModelInput = LanguageModelV4 | string;
+
+/** Static description text, or undefined when the SDK computes it dynamically (see AnyTool.description). */
+export function toolDescriptionText(t: { description?: unknown } | undefined): string | undefined {
+  return typeof t?.description === 'string' ? t.description : undefined;
+}
 
 /** The minimal tool surface durableTool can wrap (AI SDK `tool()` output or {execute}). */
 export interface AnyTool {
   execute?: (input: any, options: any) => any;
-  description?: string;
+  /**
+   * AI SDK 7 allows a DYNAMIC description — a function the SDK calls with the tool's context. Any
+   * place we render one without that context (the network router's tool list, MCP's manifest, the
+   * firewall's poisoning hash) has no honest string to show, so `toolDescriptionText` returns
+   * undefined rather than stringifying a function into a model prompt.
+   */
+  description?: string | ((options: any) => string);
   inputSchema?: unknown;
   /**
    * H7 SAFE DEFAULT: an unmarked tool is considered SIDE-EFFECTFUL (sideEffect ?? idempotent !== true).

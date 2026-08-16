@@ -4,6 +4,7 @@
 // Side effect). When wrapped in durableTool inside a parent runDurable, the parent also journals it → on parent
 // Resume, the remote call is SKIPPED.
 import { tool } from 'ai';
+import type { Tool } from 'ai';
 import { z } from 'zod';
 import { createHmac } from 'node:crypto';
 
@@ -63,7 +64,18 @@ export class StepTimeoutError extends Error {
  * Remote `/agents/:name/run` (with deterministic runId) and returns the result. Durable when used within
  * `@gnldev/durable`'s `runDurable`.
  */
-export function createA2ATool(opts: A2AToolOptions) {
+/** What the remote agent answered, as this tool reports it. */
+export interface A2AResult {
+  text: string;
+  interrupts: unknown;
+  /** The deterministic runId the remote replayed under — the exactly-once handle across the network. */
+  runId: string;
+  remoteAgent: string;
+}
+
+// Declared, not inferred (TS2742): inference would name a pnpm-internal provider-utils path in the
+// emitted .d.ts. `Tool` comes from `ai`, which this package already requires as a peer.
+export function createA2ATool(opts: A2AToolOptions): Tool<{ task: string }, A2AResult> & { idempotent: boolean } {
   const doFetch = opts.fetchImpl ?? fetch;
   // H7: the remote side replays the same deterministic runId (exactly-once across the network) →
   // A repeat POST has no side effect → idempotent. The runId is derived from

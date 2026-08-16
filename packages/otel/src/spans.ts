@@ -2,6 +2,10 @@
 import { createHash } from 'node:crypto';
 import type { IdGenerator } from '@opentelemetry/sdk-trace-base';
 import type { JournalEntry } from '@gnldev/durable';
+import { flattenUsage, finishReasonText } from '@gnldev/durable';
+
+/** The step's token counts, flat, whichever AI SDK shape the record was written in. */
+const usageOf = (v: any) => flattenUsage(v?.usage);
 
 /** runId → fixed 32-hex trace id (the same run always yields the same trace). */
 export function traceIdFor(runId: string): string {
@@ -60,10 +64,13 @@ export function mapEntry(e: JournalEntry): MappedSpan {
       attributes: clean({
         'gen_ai.operation.name': 'generate',
         'gen_ai.response.model': v?.response?.modelId,
-        'gen_ai.response.finish_reason': v?.finishReason,
-        'gen_ai.usage.input_tokens': v?.usage?.inputTokens,
-        'gen_ai.usage.output_tokens': v?.usage?.outputTokens,
-        'gen_ai.usage.total_tokens': v?.usage?.totalTokens,
+        // Through the shared readers: OTel attributes must be scalars, and an AI SDK 7 record's
+        // usage is nested while its finishReason is an object — emitted raw they arrive as
+        // "[object Object]" or NaN, which every backend either drops or charts as garbage.
+        'gen_ai.response.finish_reason': finishReasonText(v?.finishReason),
+        'gen_ai.usage.input_tokens': usageOf(v).inputTokens,
+        'gen_ai.usage.output_tokens': usageOf(v).outputTokens,
+        'gen_ai.usage.total_tokens': usageOf(v).totalTokens,
       }),
       isError: false,
       isSuspended: false,

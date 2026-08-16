@@ -1,5 +1,5 @@
 import { wrapLanguageModel, simulateReadableStream } from 'ai';
-import type { LanguageModelV2, LanguageModelV2CallOptions, LanguageModelV2Middleware } from '@ai-sdk/provider';
+import type { LanguageModelV4, LanguageModelV4CallOptions, LanguageModelV4Middleware } from '@ai-sdk/provider';
 import { argsHash } from './hash.js';
 import { claim, ctxGet, runKeys } from './journal.js';
 import { stampFormat } from './format.js';
@@ -112,7 +112,7 @@ const DETERMINISTIC_PARAM_KEYS = [
  * SILENTLY returns `undefined` → the check is SKIPPED, the run is never BROKEN because of this
  * (PROTECTIVE).
  */
-function safeRequestHash(params: LanguageModelV2CallOptions): string | undefined {
+function safeRequestHash(params: LanguageModelV4CallOptions): string | undefined {
   try {
     const picked: Record<string, unknown> = {};
     for (const k of DETERMINISTIC_PARAM_KEYS) {
@@ -152,6 +152,43 @@ async function warnOnModelDivergence(
   if (claimed?.reqHash !== undefined && claimed.reqHash !== reqHash) {
     console.warn(`@gnldev/durable: divergence — ${label} (${key}) produced a different request on replay (informational; run not stopped)`);
   }
+}
+
+
+/**
+ * A truncated (write-ahead) record, made replayable.
+ *
+ * The write-ahead copy is cut off at the tool-call chunk, so it has no `finish` part. AI SDK 5
+ * executed a tool the moment its call arrived, so replaying those chunks was enough to carry the
+ * recorded work forward. AI SDK 7 defers tool execution to the END of a step — measured against
+ * ai@7.0.66 — so a stream that never says it finished completes no tools at all: the resume of a
+ * crashed run produces silence, which is the exact opposite of what the checkpoint was written for.
+ *
+ * Appending the missing terminator is honest rather than inventive. The record already tells us what
+ * the model produced; the only thing absent is the marker saying it stopped, and the run DID stop —
+ * that is why the record is partial. `finishReason` is derived from the recorded content, and usage
+ * is zeroed because the truncated record genuinely never carried it (billing a guess would be worse
+ * than billing nothing). warnOnPartialReplay has already told the operator this record is partial.
+ *
+ * Exactly-once is unaffected: the tool calls this lets through are still gated per toolCallId by
+ * durableTool, so a tool that already ran replays from its own record instead of running again.
+ */
+function completeIfTruncated(hit: StreamStepRecord): unknown[] {
+  const parts = hit.parts ?? [];
+  if (hit.partial !== true) return parts as unknown[];
+  if (parts.some((p: any) => p?.type === 'finish')) return parts as unknown[];
+  const hasToolCall = parts.some((p: any) => p?.type === 'tool-call');
+  return [
+    ...parts,
+    {
+      type: 'finish',
+      finishReason: { unified: hasToolCall ? 'tool-calls' : 'stop', raw: 'gnl:partial-replay' },
+      usage: {
+        inputTokens: { total: 0, noCache: 0, cacheRead: undefined, cacheWrite: undefined },
+        outputTokens: { total: 0, text: 0, reasoning: undefined },
+      },
+    },
+  ];
 }
 
 /** The journaled shape of a streaming step; `partial: true` is only ever set by the write-ahead copy. */
@@ -239,9 +276,10 @@ function assertReplayEntryPoint(hit: unknown, expected: 'generate' | 'stream', k
   }
 }
 
-export function withDurableModel(model: LanguageModelV2, ctx: DurableCtx, opts?: DurableModelOptions): LanguageModelV2 {
+export function withDurableModel(model: LanguageModelV4, ctx: DurableCtx, opts?: DurableModelOptions): LanguageModelV4 {
   let step = 0;
-  const middleware: LanguageModelV2Middleware = {
+  const middleware: LanguageModelV4Middleware = {
+    specificationVersion: 'v4',
     wrapGenerate: async ({ doGenerate, params }) => {
       const key = runKeys.model(ctx.runId, step);
       // Invisible to parseJournalKey (runKeys.proc) → does NOT AFFECT reader/time-travel/forkRun;
@@ -319,7 +357,7 @@ export function withDurableModel(model: LanguageModelV2, ctx: DurableCtx, opts?:
         // SAME replay-recheck as generate (see wrapGenerate) — does not leak progress.
         if (ctx.limits) await enforceStepLimits(ctx.journal as unknown as JournalReader, ctx.runId, ctx.limits);
         return {
-          stream: simulateReadableStream({ chunks: hit.parts, initialDelayInMs: 0, chunkDelayInMs: 0 }),
+          stream: simulateReadableStream({ chunks: completeIfTruncated(hit), initialDelayInMs: 0, chunkDelayInMs: 0 }),
           ...hit.rest,
         } as any;
       }

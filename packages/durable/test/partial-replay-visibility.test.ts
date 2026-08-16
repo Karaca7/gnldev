@@ -102,15 +102,28 @@ async function drain(res: any) {
 
 /** Kills the stream at the moment the tool result lands — flush() never runs, so `model:0` is left
  *  as the write-ahead (partial) copy. */
+/**
+ * Drives a stream to the write-ahead checkpoint and abandons it there — the state a process kill
+ * mid-stream leaves behind: `model:0` present, marked partial, with no finish.
+ *
+ * It waits for the RECORD rather than for a `tool-result` chunk. Under AI SDK 5 the tool executed as
+ * soon as its call arrived, so tool-result was a reliable signpost; ai@7 defers execution until the
+ * step finishes, and a stream that never finishes never produces one — waiting for it hangs forever.
+ * The checkpoint is written when the tool-call chunk passes through (durable-model.ts), which is the
+ * event this test actually cares about, so wait for that.
+ */
 async function crashAfterTool(runId: string, journal: InMemoryJournal, tools: any) {
   const res = await streamDurable({ runId, journal, model: streamingModel('call-A', true), tools, prompt: 'charge' } as any);
   const reader = (res as any).fullStream.getReader();
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    if (value?.type === 'tool-result') break;
+  const pump = (async () => { try { for (;;) { const { done } = await reader.read(); if (done) break; } } catch { /* abandoned */ } })();
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    const rec = await journal.get<any>(runKeys.model(runId, 0));
+    if (rec?.partial === true) break;
+    await new Promise((r) => setTimeout(r, 20));
   }
   await reader.cancel().catch(() => {});
+  await pump.catch(() => {});
 }
 
 afterEach(() => { vi.restoreAllMocks(); });
@@ -140,7 +153,10 @@ describe('replaying a partial (write-ahead) model step', () => {
     expect(partialLines[0]).toContain('partial: true');
     // The point of naming what is missing: this record was cut off before the stream's tail.
     expect(partialLines[0]).toContain('finish');
-    expect(charges(), 'the replay must not re-run the side effect').toBe(1);
+    // ai@7 defers tool execution to step end, so the abandoned stream above charged nothing; the
+    // single charge here is the replay's own. The invariant the file exists for is unchanged —
+    // one charge total across a crash and a resume — and it is still what is asserted.
+    expect(charges(), 'a crash plus a resume must still total exactly one charge').toBe(1);
   });
 
   it('stays silent when the replayed step is COMPLETE', async () => {

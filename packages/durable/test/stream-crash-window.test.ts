@@ -9,6 +9,13 @@
 // toolCallId every completion — so the journal's per-toolCallId gate never matches and the side
 // effect runs a second time.
 //
+// AI SDK 7 NARROWED THIS. Measured against ai@7.0.66: a stream that never delivers its `finish`
+// part does not execute tools at all — so the "killed mid-stream, tool already charged" shape this
+// file was written for can no longer occur that way. What remains reachable is the abandoned
+// reader: the step finishes (tools run), and the consumer goes away before draining. The test now
+// drives THAT, because a scenario the runtime cannot reach proves nothing. Both facts are asserted
+// below, so a future SDK that reverts either one fails here.
+//
 // The partial checkpoint written every 10 chunks does not help: nothing reads it. It is written,
 // overwritten, and never consulted by any code path.
 import { describe, it, expect } from 'vitest';
@@ -79,10 +86,10 @@ describe('a crash after the tool ran but before the stream ended', () => {
     const { chargeCard, charges } = chargeTool();
     const runId = 'sw-1';
 
-    // Run 1: consume only as far as the tool result, then abandon the stream — the process dies
-    // before flush() would have written model:0.
+    // Run 1: the step completes (so the tool runs), then the consumer abandons the stream — a
+    // client that disconnected, a worker killed after the charge landed.
     const first = await streamDurable({
-      runId, journal, model: streamingModel('call-A', true), tools: { chargeCard }, prompt: 'charge',
+      runId, journal, model: streamingModel('call-A'), tools: { chargeCard }, prompt: 'charge',
     });
     const reader = (first as any).fullStream.getReader();
     for (;;) {
@@ -92,6 +99,8 @@ describe('a crash after the tool ran but before the stream ended', () => {
     }
     await reader.cancel().catch(() => {});
     expect(charges(), 'the tool ran during the abandoned stream').toBe(1);
+    // Give the abandoned pipeline a tick to settle before reading the journal.
+    await new Promise((r) => setTimeout(r, 50));
 
     // The step must be recoverable. Without it, the resume below re-plans and charges again.
     const step0 = await journal.get(runKeys.model(runId, 0));
@@ -105,4 +114,27 @@ describe('a crash after the tool ran but before the stream ended', () => {
 
     expect(charges(), 'the resume must replay the recorded step, not re-plan it').toBe(1);
   });
+
+  it('a stream that never finishes does not execute its tools at all', async () => {
+    // The narrowing, pinned. Under AI SDK 5 the tool ran the moment its call arrived, which is what
+    // made the window above dangerous. If a future version goes back to that, this fails and the
+    // wider hazard is back on the table — worth knowing on the day it happens, not later.
+    const journal = new InMemoryStorage().runs;
+    const { chargeCard, charges } = chargeTool();
+    const res: any = await streamDurable({
+      runId: 'sw-hang', journal, model: streamingModel('call-H', true), tools: { chargeCard }, prompt: 'charge',
+    });
+    const reader = res.fullStream.getReader();
+    const deadline = Date.now() + 1500;
+    while (Date.now() < deadline) {
+      const r: any = await Promise.race([
+        reader.read(),
+        new Promise((done) => setTimeout(() => done({ done: true }), 400)),
+      ]);
+      if (r.done) break;
+      if (r.value?.type === 'tool-result') break;
+    }
+    await reader.cancel().catch(() => {});
+    expect(charges(), 'no finish part → no tool execution → nothing to double-charge').toBe(0);
+  }, 15000);
 });

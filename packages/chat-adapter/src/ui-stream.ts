@@ -69,7 +69,7 @@ function maskSentinelChunks(): TransformStream<UIMessageChunk, UIMessageChunk> {
  * Method-binding Proxy — see run.ts's `guardStreamTerminalPromises`).
  */
 export function toUIMessageStream<UI_MESSAGE extends UIMessage = UIMessage>(
-  result: Pick<StreamTextResult<any, any>, 'toUIMessageStream'>,
+  result: Pick<StreamTextResult<any, any, any>, 'toUIMessageStream'>,
   opts?: UIMessageStreamOptions<UI_MESSAGE>,
 ): AsyncIterableStream<UIMessageChunk> {
   const native = result.toUIMessageStream(opts);
@@ -97,7 +97,7 @@ export interface ToUIMessageStreamResponseOptions<UI_MESSAGE extends UIMessage =
  * Done here, since that would bypass masking).
  */
 export function toUIMessageStreamResponse<UI_MESSAGE extends UIMessage = UIMessage>(
-  result: Pick<StreamTextResult<any, any>, 'toUIMessageStream'>,
+  result: Pick<StreamTextResult<any, any, any>, 'toUIMessageStream'>,
   opts?: ToUIMessageStreamResponseOptions<UI_MESSAGE>,
 ): Response {
   const { status, statusText, headers, consumeSseStream, ...streamOpts } = opts ?? {};

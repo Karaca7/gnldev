@@ -90,7 +90,10 @@ function reasoningMock(): any {
         { type: 'reasoning-delta', id: 'rs1', delta: 'ok.' },
         { type: 'reasoning-end', id: 'rs1' },
         { type: 'source', sourceType: 'url', id: 's1', url: 'https://example.com', title: 'Example' },
-        { type: 'file', mediaType: 'image/png', data: new Uint8Array([1, 2, 3]) },
+        // AI SDK 7 wraps file payloads: `data` went from a bare `string | Uint8Array` to a tagged
+        // `{ type: 'data' | 'url', … }`. A bare array now throws inside the SDK's own conversion,
+        // so the fixture emits what a current provider emits.
+        { type: 'file', mediaType: 'image/png', data: { type: 'data', data: new Uint8Array([1, 2, 3]) } },
         { type: 'text-start', id: '1' },
         { type: 'text-delta', id: '1', delta: 'Answer' },
         { type: 'text-end', id: '1' },

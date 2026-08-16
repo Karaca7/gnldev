@@ -65,7 +65,11 @@ export function createChatRoute(
     // Still carries tool-invocation parts from a prior turn round-trips as best-effort (text/reasoning
     // Are unaffected). Fine for the common case (server-side history via toUIMessages + threadId memory
     // Is the durable source of truth); documented rather than silently assumed complete.
-    const messages = convertToModelMessages(body.messages ?? []);
+    // AWAITED: `convertToModelMessages` is async in AI SDK 7 (it was synchronous in v5). Passing the
+    // un-awaited Promise straight through as `messages` sent a Promise into the run — the journal
+    // then tried to structuredClone it and every chat request failed with
+    // "#<Promise> could not be cloned", i.e. a flat 400 on the whole route.
+    const messages = await convertToModelMessages(body.messages ?? []);
     let result: any;
     try {
       result = await gnl.stream(name, {

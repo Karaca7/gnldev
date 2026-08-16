@@ -1,5 +1,6 @@
 import type { JournalReader } from './journal.js';
 import { DEFAULT_PRICING, priceFor, costOf, type ModelPricing } from './pricing.js';
+import { flattenUsage, finishReasonText } from './sdk-compat.js';
 
 // Cost ledger & trace export — computed POST-HOC from the journal → exact, deterministic, replayable.
 // (As opposed to a typical "approximate/async" cost guard: ours is derived verbatim from journaled usage.)
@@ -49,13 +50,14 @@ export function usageAndCostFromModelValue(value: unknown, opts: RunCostOptions 
   // Compatible — the behavior of existing generateText records does NOT CHANGE).
   const usage = v?.usage ?? (Array.isArray(v?.parts) ? v.parts.find((p: any) => p?.type === 'finish')?.usage : undefined);
   if (!usage) return undefined;
-  const inp = usage.inputTokens ?? 0;
-  const outp = usage.outputTokens ?? 0;
-  const cached = usage.cachedTokens ?? 0;
-  const total = usage.totalTokens ?? inp + outp;
+  // Through the compat layer, not field-by-field: this is the one funnel every token/cost read
+  // passes, so reading the raw object here is what silently disabled every spend ceiling.
+  const { inputTokens: inp, outputTokens: outp, cachedTokens: cached, totalTokens: total } = flattenUsage(usage);
   const modelId = v?.response?.modelId ?? v?.rest?.response?.modelId ?? opts.modelId ?? 'unknown';
   const pricing = priceFor(modelId, table);
-  const costUsd = pricing ? costOf(usage, pricing) : 0;
+  // costOf reads FLAT fields, so it must be handed the flattened object — a nested usage would
+  // price every step at zero.
+  const costUsd = pricing ? costOf({ inputTokens: inp, outputTokens: outp, cachedTokens: cached }, pricing) : 0;
   return { inputTokens: inp, outputTokens: outp, cachedTokens: cached, totalTokens: total, costUsd, modelId };
 }
 
@@ -114,9 +116,11 @@ export async function toTraceSpans(reader: JournalReader, runId: string): Promis
         seq: e.seq,
         ts: e.ts,
         attributes: {
-          'gen_ai.response.finish_reason': v?.finishReason,
-          'gen_ai.usage.input_tokens': v?.usage?.inputTokens,
-          'gen_ai.usage.output_tokens': v?.usage?.outputTokens,
+          'gen_ai.response.finish_reason': finishReasonText(v?.finishReason),
+          // gen_ai's convention wants integers; a v7 record's usage.inputTokens is an OBJECT, which
+          // every backend either drops or renders as junk.
+          'gen_ai.usage.input_tokens': flattenUsage(v?.usage).inputTokens,
+          'gen_ai.usage.output_tokens': flattenUsage(v?.usage).outputTokens,
           'gen_ai.response.model': v?.response?.modelId,
         },
       };

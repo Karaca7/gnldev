@@ -21,9 +21,33 @@ describe('H13 — format units', () => {
     expect(isVersionedKey('__gnl_usage__:t1')).toBe(false);
   });
 
-  it('an unstamped record = v1 (ALL data written up to today): read as-is', () => {
-    const eski = { content: [{ type: 'text', text: 'hello' }], usage: { totalTokens: 5 } };
-    expect(upgradeFormat(eski, 'r:model:0')).toEqual(eski);
+  it('an unstamped record = v1 → upgraded to the current shape on read', () => {
+    // Was "read as-is" while v1 WAS the current version. Now that the AI SDK v7 shapes are v2, an
+    // unstamped record is genuinely old data and the built-in v1→v2 upgrader converts it. Content
+    // is carried through untouched; only the two fields the SDK moved are rewritten.
+    const old = {
+      content: [{ type: 'text', text: 'hello' }],
+      usage: { inputTokens: 3, outputTokens: 2, totalTokens: 5, cachedInputTokens: 1 },
+      finishReason: 'stop',
+    };
+    expect(upgradeFormat(old, 'r:model:0')).toEqual({
+      content: [{ type: 'text', text: 'hello' }],
+      usage: {
+        inputTokens: { total: 3, noCache: undefined, cacheRead: 1, cacheWrite: undefined },
+        outputTokens: { total: 2, text: undefined, reasoning: undefined },
+      },
+      finishReason: { unified: 'stop', raw: 'stop' },
+    });
+  });
+
+  it('a record already in the new shape is not converted twice', () => {
+    // Guards the nesting check in the upgrader: converting an already-nested usage would produce
+    // `inputTokens: { total: { total: 3 } }` and quietly zero every token count downstream.
+    const alreadyNew = {
+      usage: { inputTokens: { total: 3 }, outputTokens: { total: 2 } },
+      finishReason: { unified: 'stop', raw: 'stop' },
+    };
+    expect(upgradeFormat({ ...alreadyNew, _v: 1 }, 'r:model:0')).toEqual(alreadyNew);
   });
 
   it('current stamp: _v is stripped, content stays as-is (the stamp does not leak into the user object)', () => {
@@ -45,9 +69,12 @@ describe('H13 — format units', () => {
     expect(upgradeFormat(v1kaydi, 'r:model:0', 3)).toEqual({ blocks: { items: ['a', 'b'] } });
   });
 
-  it('a missing link: v1 record, target v3, only 2→3 is registered → the missing converter is REPORTED', () => {
+  it('a missing link is REPORTED rather than silently skipped', () => {
+    // v1→v2 now ships built in, so the gap is opened one step further along: target v4 with only
+    // 2→3 registered. The point of the test is unchanged — a chain that cannot complete must name
+    // the missing converter instead of handing back a half-converted record.
     disposers.push(registerFormatUpgrade(2, (r) => ({ ...r, _v: 3 })));
-    expect(() => upgradeFormat({ x: 1 }, 'r:model:0', 3)).toThrow(/no v1→v2 upgrader is registered/);
+    expect(() => upgradeFormat({ x: 1 }, 'r:model:0', 4)).toThrow(/no v3→v4 upgrader is registered/);
   });
 
   it('null/primitive/array values pass through untouched', () => {

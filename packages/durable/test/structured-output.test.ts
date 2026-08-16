@@ -1,5 +1,5 @@
 // P2-structured (AUDIT-R2 Dalga-2): schema-validated structured output THROUGH the durable
-// substrate. The load-bearing claim: `experimental_output` (AI SDK v5 `Output.object`) flows into
+// substrate. The load-bearing claim: `output` (AI SDK `Output.object`; `experimental_output` before it graduated in v7) flows into
 // generateText via runDurable's `...rest` pass-through, and because the PARSING happens ABOVE the
 // journaled model step (withDurableModel journals the raw provider result; generateText derives the
 // object from it), replay is deterministic FOR FREE — a resumed/replayed run yields the SAME parsed
@@ -11,7 +11,7 @@ import { InMemoryJournal } from '../src/journal.js';
 import { runDurable } from '../src/run.js';
 import { createMockModel, finalTextResult } from './mock.js';
 
-describe('structured output through runDurable (experimental_output pass-through contract)', () => {
+describe('structured output through runDurable (output pass-through contract)', () => {
   const schema = z.object({ city: z.string(), population: z.number() });
 
   it('parses the schema-validated object AND replays it deterministically without re-calling the model', async () => {
@@ -24,17 +24,17 @@ describe('structured output through runDurable (experimental_output pass-through
 
     const r1: any = await runDurable({
       runId: 'r-so1', journal, model, prompt: 'city?',
-      experimental_output: Output.object({ schema }),
+      output: Output.object({ schema }),
     } as any);
-    expect(r1.experimental_output).toEqual({ city: 'Ankara', population: 5_800_000 });
+    expect(r1.output).toEqual({ city: 'Ankara', population: 5_800_000 });
     expect(modelCalls).toBe(1);
 
     // Replay: same runId → journaled model step replays; the object is re-derived identically, model NOT called.
     const r2: any = await runDurable({
       runId: 'r-so1', journal, model, prompt: 'city?',
-      experimental_output: Output.object({ schema }),
+      output: Output.object({ schema }),
     } as any);
-    expect(r2.experimental_output).toEqual({ city: 'Ankara', population: 5_800_000 });
+    expect(r2.output).toEqual({ city: 'Ankara', population: 5_800_000 });
     expect(modelCalls).toBe(1); // exactly-once held
   });
 
@@ -44,7 +44,7 @@ describe('structured output through runDurable (experimental_output pass-through
     await expect(
       runDurable({
         runId: 'r-so2', journal, model, prompt: 'city?',
-        experimental_output: Output.object({ schema }),
+        output: Output.object({ schema }),
       } as any),
     ).rejects.toThrow(/did not match schema/);
     // The raw model step IS journaled (write happened below the parse) — a corrected schema or a
