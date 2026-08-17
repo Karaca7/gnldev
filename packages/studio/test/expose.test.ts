@@ -11,7 +11,8 @@
 //     assigned `loopback`, so off-loopback it merely passed `false` to a gate that throws only under
 //     NODE_ENV=production.
 import { describe, it, expect } from 'vitest';
-import { decideExposure, isLoopbackHost } from '../src/expose.js';
+import { decideExposure, isLoopbackHost, resolveConfigAuth } from '../src/expose.js';
+import { roleAuth } from '@gnldev/auth';
 
 const on = (host: string, authed: boolean, allowOpenNetwork = false) =>
   decideExposure({ host, authed, allowOpenNetwork });
@@ -68,5 +69,51 @@ describe('studio exposure decision', () => {
     for (const h of ['0.0.0.0', '::', '192.168.1.10', 'example.com', '10.0.0.1']) {
       expect(isLoopbackHost(h), h).toBe(false);
     }
+  });
+});
+
+// ── gnl.config's `auth` has two legitimate shapes, and conflating them was a fail-open ───────────
+// The config type declares `auth?: { admin?: Cred; viewer?: Cred }` and `gnl add auth` scaffolds
+// exactly that — a credential MAP, not an AuthProvider. Forwarding it raw to createStudioApp was
+// worse than dropping it: normalizeAuth finds no `.authorize`, wraps it as a legacy {read,write}
+// pair whose two predicates are both undefined, and adapter.ts answers `{ allow: true }` for read
+// AND write. So every endpoint was open, while `authed` — computed from the presence of the object —
+// read true, which printed "auth: protected" and skipped the non-loopback refusal.
+//
+// Measured before the fix: normalizeAuth({admin:{token:'s3cret'}}).authorize(...) → {"allow":true},
+// and `gnl-studio --config` accepted an unauthenticated `PUT /api/policy` with 200.
+//
+// The reason it got through review: the end-to-end check used `roleAuth({...})` — a real provider —
+// so it exercised the shape that already worked, not the shape the scaffold writes.
+describe('resolveConfigAuth', () => {
+  it('turns the scaffolded credential map into a provider that actually denies', async () => {
+    const provider = resolveConfigAuth({ admin: { token: 's3cret' }, viewer: { token: 'v3wer' } });
+    expect(provider, 'a credential map must resolve to a provider').toBeDefined();
+
+    const write = (headers: Record<string, string> = {}) =>
+      new Request('http://localhost:4747/api/policy', { method: 'PUT', headers, body: '{}' });
+
+    const anon = await provider!.authorize(await provider!.authenticate(write()), write(), { action: 'write', path: '/api/policy', method: 'PUT' } as never);
+    expect(anon.allow, 'an unauthenticated write must be refused').toBe(false);
+
+    const withToken = write({ authorization: 'Bearer s3cret' });
+    const principal = await provider!.authenticate(withToken);
+    expect(principal, 'the admin token must authenticate').not.toBeNull();
+    expect((await provider!.authorize(principal, withToken, { action: 'write', path: '/api/policy', method: 'PUT' } as never)).allow).toBe(true);
+  });
+
+  it('passes a real AuthProvider straight through', () => {
+    const real = roleAuth({ admin: { token: 'adm' } })!;
+    expect(resolveConfigAuth(real)).toBe(real);
+  });
+
+  it('returns undefined when nothing resolves, so the network refusal still fires', () => {
+    // A provider that cannot authenticate must never read as auth — that is what made the
+    // credential-map case dangerous rather than merely broken.
+    for (const empty of [undefined, null, {}, { admin: undefined, viewer: undefined }, 'nonsense', 42]) {
+      expect(resolveConfigAuth(empty as never), JSON.stringify(empty)).toBeUndefined();
+    }
+    expect(decideExposure({ host: '0.0.0.0', authed: Boolean(resolveConfigAuth({})), allowOpenNetwork: false }).refusal)
+      .toBeDefined();
   });
 });

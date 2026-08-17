@@ -14,7 +14,10 @@ import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '../src/journal.js';
 import { withOrg, orgScopeOf } from '../src/organization.js';
 import { runDurable } from '../src/run.js';
-import { createMockModel, toolCallResult, finalTextResult } from './mock.js';
+import { compensateRun } from '../src/compensation.js';
+import { createMockModel, toolCallResult, finalTextResult, countToolResults } from './mock.js';
+import { tool, stepCountIs } from 'ai';
+import { z } from 'zod';
 
 /** A tool that records the provider key it was handed, instead of charging anything. */
 function keyCapturingTool() {
@@ -95,5 +98,56 @@ describe('cross-run idempotency key under organization scope', () => {
     // A marker that showed up in a spread or a JSON round-trip would end up in stored records.
     expect(Object.keys({ ...scoped })).not.toContain('orgScope');
     expect(JSON.stringify(scoped)).not.toContain('acme');
+  });
+});
+
+// ── compensation carries two provider-facing keys, and both had to follow ─────────────────────────
+// Putting the org into the EXECUTION key (durable-tool.ts) without following it here broke a mirror
+// and left a collision:
+//   • compensation.ts's `originalIdempotencyKey` exists to probe the provider with the SAME key the
+//     charge carried. Once the execution key gained `org:<id>:` and this one did not, recover() during
+//     an unwind asked about a key that never existed — so a charge that HAD happened could read as
+//     "never executed" and the refund be skipped.
+//   • the refund's own key was `${runId}:comp:${suffix}` with no org, so two organizations unwinding
+//     the same runId handed the provider one key and the second refund was deduped against the first.
+describe('compensation provider keys under organization scope', () => {
+  const probe = async (orgId?: string) => {
+    const base = new InMemoryJournal();
+    const journal = orgId ? withOrg(base, orgId) : base;
+    let refundKey: string | undefined;
+    let probeKey: string | undefined;
+
+    const charge: any = tool({ description: 'c', inputSchema: z.object({}), execute: async () => ({ ok: 1 }) });
+    charge.sideEffect = true;
+    charge.recover = async (_a: unknown, o?: { idempotencyKey?: string }) => {
+      probeKey = o?.idempotencyKey;
+      return { done: true as const, output: { ok: 1 } };
+    };
+    charge.compensate = async (_a: unknown, _o: unknown, o?: { idempotencyKey?: string }) => {
+      refundKey = o?.idempotencyKey;
+      return { refunded: true };
+    };
+
+    const m = createMockModel(async ({ prompt }: any) =>
+      countToolResults(prompt) === 0 ? toolCallResult('charge', 'call-1', {}) : finalTextResult('Done.'));
+    await runDurable({ runId: 'unwind', journal, model: m, tools: { charge }, prompt: 'x', stopWhen: stepCountIs(6) } as never);
+    await compensateRun('unwind', { journal: journal as never, tools: { charge } });
+    return { refundKey, probeKey };
+  };
+
+  it('the refund key carries the org, so two orgs do not collide at the provider', async () => {
+    const a = await probe('acme');
+    const b = await probe('globex');
+    expect(a.refundKey, 'a refund key was produced').toBeTruthy();
+    expect(a.refundKey).not.toBe(b.refundKey);
+    expect(a.refundKey).toContain('acme');
+    expect(b.refundKey).toContain('globex');
+  });
+
+  it('and a single-tenant refund key is unchanged — no org part at all', async () => {
+    const s = await probe();
+    expect(s.refundKey).toBeTruthy();
+    expect(s.refundKey, 'nothing is scoped, so nothing is prefixed').not.toContain('org:');
+    expect(s.refundKey).toContain(':comp:');
   });
 });

@@ -23,6 +23,7 @@
 //    Reverting it while unwinding ONE run could invalidate OTHER runs that legitimately deduped onto
 //    It. Sub-agent (agent:*) nested runs are also not recursed in v1 (documented; v1.1).
 import { claim, parseJournalKey, runKeys } from './journal.js';
+import { orgScopeOf } from './organization.js';
 import { upgradeFormat } from './format.js';
 import type { Journal, JournalReader, ToolJournalRecord } from './journal.js';
 import type { AnyTool } from './types.js';
@@ -71,6 +72,21 @@ export interface CompensationReport {
 const tombstoneKey = (runId: string): string => runKeys.proc(runId, '__gnl_compensated');
 const compKey = (runId: string, suffix: string): string => `${runId}:comp:${suffix}`;
 
+/**
+ * The `org:<id>:` part of a provider-facing key, or '' when nothing is scoped.
+ *
+ * The two keys below LEAVE THE PROCESS: one is what recover() probes the provider with, the other is
+ * the refund's own idempotency key. durable-tool.ts folds the org into the execution key for exactly
+ * this reason, and both of these have to agree with it — the probe because it must present the key
+ * the charge actually carried, and the refund because two organizations unwinding the same runId
+ * would otherwise hand the provider one key and have the second refund deduped against the first.
+ * Journal isolation is a key prefix and does not reach either value.
+ */
+function orgPart(journal: Journal): string {
+  const org = orgScopeOf(journal);
+  return org ? `org:${org}:` : '';
+}
+
 /** True once the run has been condemned by compensateRun (tombstone present). Load-bearing read:
  *  RunDurable/streamDurable/forkRun refuse on it, and durable-tool refuses NEW side effects mid-flight
  *  (a still-running worker must not keep producing effects while an operator unwinds the run). */
@@ -106,9 +122,9 @@ function callsFromModelSteps(entries: { kind: string; value: unknown }[]): Map<s
 
 /** The ORIGINAL execution's downstream idempotencyKey (mirrors durable-tool.ts) — recover must probe
  *  The provider with the SAME key the execution carried. */
-function originalIdempotencyKey(runId: string, suffix: string): string {
+function originalIdempotencyKey(journal: Journal, runId: string, suffix: string): string {
   const m = suffix.match(/^args-(.+)-([0-9a-f]{16})$/);
-  return m ? `${runId}:${m[1]}:${m[2]}` : `${runId}:${suffix}`;
+  return `${orgPart(journal)}${m ? `${runId}:${m[1]}:${m[2]}` : `${runId}:${suffix}`}`;
 }
 
 // A fresh 'running' comp claim younger than this belongs to a live compensator — don't fight it.
@@ -181,7 +197,7 @@ export async function compensateRun(
       }
       try {
         const args = (record as any).input ?? callsMap.get(toolCallId)?.input;
-        const probe = await tool.recover(args, { idempotencyKey: originalIdempotencyKey(runId, suffix), toolCallId });
+        const probe = await tool.recover(args, { idempotencyKey: originalIdempotencyKey(journal, runId, suffix), toolCallId });
         if (!probe.done) {
           report.entries.push({ ...base, status: 'skipped-not-executed' });
           continue;
@@ -235,7 +251,11 @@ export async function compensateRun(
     try {
       const args = (record as any).input ?? callsMap.get(toolCallId)?.input;
       const result = await tool.compensate(args, output, {
-        idempotencyKey: compKey(runId, suffix), // stable downstream key — the refund is exactly-once at the provider too
+        // Stable downstream key — the refund is exactly-once at the provider too, PER ORGANIZATION.
+        // Without the org part, two organizations unwinding the same runId hand the provider one key
+        // and the second refund is deduped against the first: org B's customer is never refunded,
+        // while both journals record a completed compensation. See orgPart above.
+        idempotencyKey: `${orgPart(journal)}${compKey(runId, suffix)}`,
         toolCallId, runId,
       });
       await journal.put(ck, { status: 'compensated', output: result, at: Date.now() } satisfies CompRecord);

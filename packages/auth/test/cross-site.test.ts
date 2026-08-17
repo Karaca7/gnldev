@@ -112,3 +112,48 @@ describe('the ?token= URL fallback', () => {
     }
   });
 });
+
+// ── allowP is the entry point most endpoints actually use ─────────────────────────────────────────
+// The first version of the cross-site block was written inline in `allow()`. `allowP()` — the
+// fine-grained variant, called by 18 endpoints in @gnldev/studio and 5 in @gnldev/server — kept an
+// unconditional `return true` for the providerless case. So the block covered the coarse path and
+// left the specific one wide open: a page on another site could still drive every endpoint that asks
+// for a named permission. Both now route through one function.
+describe('allowP gets the same treatment as allow', () => {
+  it('refuses a cross-site write on the permission-based entry point', async () => {
+    const gate = makeGate(undefined, { allowOpenAccess: true });
+    for (const perm of ['policy:write', 'runs:purge', 'cache:invalidate', 'agents:run']) {
+      expect(
+        await gate.allowP(req('POST', { 'sec-fetch-site': 'cross-site' }), perm),
+        perm,
+      ).toBe(false);
+    }
+    expect(await gate.allowP(req('DELETE', { origin: 'https://evil.example' }), 'runs:delete')).toBe(false);
+  });
+
+  it('still opens for the app itself, and for reads', async () => {
+    const gate = makeGate(undefined, { allowOpenAccess: true });
+    expect(await gate.allowP(req('POST', { 'sec-fetch-site': 'same-origin' }), 'policy:write')).toBe(true);
+    expect(await gate.allowP(req('GET', { 'sec-fetch-site': 'cross-site' }), 'runs:read')).toBe(true);
+    expect(await gate.allowP(req('POST'), 'policy:write'), 'a non-browser client is not the threat').toBe(true);
+  });
+
+  it('allow and allowP agree on every case — one decision, not two copies', async () => {
+    const gate = makeGate(undefined, { allowOpenAccess: true });
+    const cases: Array<[string, Record<string, string>]> = [
+      ['POST', { 'sec-fetch-site': 'cross-site' }],
+      ['POST', { 'sec-fetch-site': 'same-site' }],
+      ['POST', { 'sec-fetch-site': 'none' }],
+      ['POST', { origin: 'https://evil.example' }],
+      ['POST', { origin: 'http://localhost:5173' }],
+      ['POST', {}],
+      ['GET', { 'sec-fetch-site': 'cross-site' }],
+      ['DELETE', { 'sec-fetch-site': 'cross-site' }],
+    ];
+    for (const [m, h] of cases) {
+      const coarse = await gate.allow(req(m, h), m === 'GET' ? 'read' : 'write');
+      const fine = await gate.allowP(req(m, h), m === 'GET' ? 'runs:read' : 'runs:write');
+      expect(fine, `${m} ${JSON.stringify(h)} — allowP must match allow`).toBe(coarse);
+    }
+  });
+});

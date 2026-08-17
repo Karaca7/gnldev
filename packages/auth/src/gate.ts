@@ -59,31 +59,42 @@ export function makeGate(provider?: AuthProvider, opts?: GateOptions): Gate {
   // Non-production providerless gate: warn ONCE on the first request (no silent openness), then open.
   let warnedOpen = false;
   let warnedCrossSite = false;
+
+  /**
+   * The providerless decision, in ONE place.
+   *
+   * It was written inline in `allow()` only, so `allowP()` — the fine-grained entry point, and the one
+   * 23 endpoints across @gnldev/server and @gnldev/studio actually call — kept an unconditional
+   * `return true`. Which meant the cross-site block covered the coarse path and left the specific one
+   * open: a page on another site could still drive every endpoint that asks for a named permission.
+   * Two copies of a security decision is one copy too many.
+   */
+  function openSurfaceAllows(req: Request): boolean {
+    // Open to this machine is not open to every page this machine's browser visits. Without a
+    // provider there is no token to ride, so a state change initiated by another site is never
+    // something the operator asked for — see same-site.ts for what was measured.
+    if (isCrossSiteStateChange(req)) {
+      if (!warnedCrossSite) {
+        warnedCrossSite = true;
+        console.warn(
+          '@gnldev/auth: blocked a cross-site write to an open (providerless) surface. A page on ' +
+          'another site attempted a state-changing request. Configure auth if this surface is ' +
+          'meant to be reachable by other origins.',
+        );
+      }
+      return false;
+    }
+    if (!warnedOpen && process.env.NODE_ENV !== 'production') {
+      warnedOpen = true;
+      console.warn(
+        '@gnldev/auth: no provider given → ALL endpoints are open (opt-in gate not set up). Add auth before production; for deliberate open access use allowOpenAccess: true.',
+      );
+    }
+    return true;
+  }
   return {
     async allow(req, action, resource) {
-      if (!provider) {
-        // Open to this machine is not open to every page this machine's browser visits. Without a
-        // provider there is no token to ride, so a state change initiated by another site is never
-        // something the operator asked for — see same-site.ts for what was measured.
-        if (isCrossSiteStateChange(req)) {
-          if (!warnedCrossSite) {
-            warnedCrossSite = true;
-            console.warn(
-              '@gnldev/auth: blocked a cross-site write to an open (providerless) surface. A page on ' +
-              'another site attempted a state-changing request. Configure auth if this surface is ' +
-              'meant to be reachable by other origins.',
-            );
-          }
-          return false;
-        }
-        if (!warnedOpen && process.env.NODE_ENV !== 'production') {
-          warnedOpen = true;
-          console.warn(
-            '@gnldev/auth: no provider given → ALL endpoints are open (opt-in gate not set up). Add auth before production; for deliberate open access use allowOpenAccess: true.',
-          );
-        }
-        return true;
-      }
+      if (!provider) return openSurfaceAllows(req);
       const principal = await provider.authenticate(req);
       if (principal) principals.set(req, principal);
       const decision = await provider.authorize(principal, req, {
@@ -96,16 +107,7 @@ export function makeGate(provider?: AuthProvider, opts?: GateOptions): Gate {
       return decision.allow;
     },
     async allowP(req, permission) {
-      if (!provider) {
-        // Same opt-in fail-open path as allow(): warn once outside production, then open.
-        if (!warnedOpen && process.env.NODE_ENV !== 'production') {
-          warnedOpen = true;
-          console.warn(
-            '@gnldev/auth: no provider given → ALL endpoints are open (opt-in gate not set up). Add auth before production; for deliberate open access use allowOpenAccess: true.',
-          );
-        }
-        return true;
-      }
+      if (!provider) return openSurfaceAllows(req);
       const principal = await provider.authenticate(req);
       if (principal) principals.set(req, principal);
       // Free-tier reduction: anything ending in ':read' is a read, everything else is a write. An RBAC

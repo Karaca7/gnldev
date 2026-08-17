@@ -5,7 +5,7 @@ import { SqliteStorage } from '@gnldev/durable/sqlite';
 import { createStudioApp, type StudioAppOptions } from './server.js';
 import { createStudioRunner } from './runner.js';
 import { aiToolSchema } from './ai-schema.js';
-import { decideExposure, isLoopbackHost } from './expose.js';
+import { decideExposure, isLoopbackHost, resolveConfigAuth } from './expose.js';
 
 function getArg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -73,11 +73,15 @@ async function main(): Promise<void> {
       reader,
       gnl: createStudioRunner(gnl, { ...cfg, journal: cfg.storage?.runs ?? cfg.journal }, { toJsonSchema: aiToolSchema }),
       ...(memory ? { memory } : {}),
-      // `auth` from gnl.config was being dropped here. The consequence was not a missing feature but
-      // a false one: a user who wrote `auth: { admin: { token } }` got an open panel, and the warning
-      // below told them to do exactly the thing that had no effect. Measured before the fix — with a
-      // token configured, `PUT /api/policy` succeeded with no credentials.
-      ...(cfg.auth ? { auth: cfg.auth } : {}),
+      // `auth` from gnl.config was being dropped here, which left a configured admin token doing
+      // nothing. Forwarding it RAW was worse: `gnl add auth` scaffolds `{ admin?: Cred; viewer?: Cred }`
+      // — a credential map, NOT an AuthProvider — and normalizeAuth sees no `.authorize` on it, so it
+      // wraps it as a legacy {read,write} pair whose predicates are BOTH undefined. adapter.ts then
+      // answers `{ allow: true }` for read and write alike: every endpoint open, while `authed`
+      // computed from `opts.auth` was TRUE, so the banner said "protected" AND the non-loopback
+      // refusal was skipped. Measured: normalizeAuth({admin:{token:'s3cret'}}).authorize(...) →
+      // {"allow":true}. That is strictly worse than dropping it, which at least failed closed.
+      ...(resolveConfigAuth(cfg.auth) ? { auth: resolveConfigAuth(cfg.auth) } : {}),
     };
   } else {
     if (!db || db.startsWith('--')) {

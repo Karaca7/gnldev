@@ -10,6 +10,8 @@
 // Extracted rather than fixed in place: a security decision that cannot be unit-tested is a decision
 // nobody can check.
 
+import { roleAuth, type AuthProvider, type Cred } from '@gnldev/auth';
+
 export interface ExposureInput {
   /** The `--host` value as given, before normalisation. */
   host: string;
@@ -73,4 +75,27 @@ export function decideExposure({ host, authed, allowOpenNetwork }: ExposureInput
   // Only assert open access where it has actually been accepted. Asserting it while auth IS
   // configured would be a contradiction the gate has no way to resolve.
   return { loopback, allowOpenAccess: !authed && (loopback || allowOpenNetwork), warnings };
+}
+
+/**
+ * gnl.config's `auth`, in either shape it legitimately takes, as a provider.
+ *
+ * There are two, and conflating them was a fail-open. An AuthProvider (roleAuth(...),
+ * @gnldev/auth-ee) passes through. A credential MAP is what `gnl add auth` scaffolds and what the
+ * config type declares (`{ admin?: Cred; viewer?: Cred }`) — and forwarding THAT raw to the app was
+ * worse than dropping it: normalizeAuth finds no `.authorize` on it, wraps it as a legacy
+ * {read,write} pair whose two predicates are both undefined, and adapter.ts then answers
+ * `{ allow: true }` for read and write alike. Every endpoint open — while `authed`, computed from
+ * the presence of the object, read TRUE, so the banner said "protected" and the non-loopback refusal
+ * was skipped. Measured: normalizeAuth({admin:{token:'s3cret'}}).authorize(...) → {"allow":true}.
+ *
+ * Returns undefined when nothing resolves, so `authed` stays false and the refusal still fires: a
+ * provider that cannot authenticate must never read as auth.
+ */
+export function resolveConfigAuth(auth: unknown): AuthProvider | undefined {
+  if (!auth || typeof auth !== 'object') return undefined;
+  if (typeof (auth as AuthProvider).authorize === 'function') return auth as AuthProvider;
+  const creds = auth as { admin?: Cred; viewer?: Cred };
+  if (!creds.admin && !creds.viewer) return undefined;
+  return roleAuth({ admin: creds.admin, viewer: creds.viewer });
 }
