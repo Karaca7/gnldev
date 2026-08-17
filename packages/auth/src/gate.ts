@@ -5,6 +5,7 @@
 // Ours — the same coupling the factories dropped when they stopped returning a Hono app. Everything
 // The gate reads (method, path, headers, query) is on `Request`; nothing was lost by narrowing.
 import type { AuthProvider, Decision, Principal } from './types.js';
+import { isCrossSiteStateChange } from './same-site.js';
 
 export interface Gate {
   /** Is access allowed? true if there's no provider (opt-in: gate not set up → open; see makeGate in production). */
@@ -57,9 +58,24 @@ export function makeGate(provider?: AuthProvider, opts?: GateOptions): Gate {
   }
   // Non-production providerless gate: warn ONCE on the first request (no silent openness), then open.
   let warnedOpen = false;
+  let warnedCrossSite = false;
   return {
     async allow(req, action, resource) {
       if (!provider) {
+        // Open to this machine is not open to every page this machine's browser visits. Without a
+        // provider there is no token to ride, so a state change initiated by another site is never
+        // something the operator asked for — see same-site.ts for what was measured.
+        if (isCrossSiteStateChange(req)) {
+          if (!warnedCrossSite) {
+            warnedCrossSite = true;
+            console.warn(
+              '@gnldev/auth: blocked a cross-site write to an open (providerless) surface. A page on ' +
+              'another site attempted a state-changing request. Configure auth if this surface is ' +
+              'meant to be reachable by other origins.',
+            );
+          }
+          return false;
+        }
         if (!warnedOpen && process.env.NODE_ENV !== 'production') {
           warnedOpen = true;
           console.warn(

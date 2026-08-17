@@ -45,6 +45,11 @@ export function roleAuth(cfg: { admin?: Cred; viewer?: Cred }): AuthProvider | u
      * Possible (see the `/events` endpoint in packages/studio/src/server.ts) — the persistent secret
      * Is never carried in the URL.
      */
+    // GET only. The constraint this exists for is EventSource, which cannot send headers and only
+    // ever issues a GET — so accepting it on POST/DELETE bought nothing, and it authenticated an
+    // admin retention purge from a URL, which lands in proxy logs, browser history and `Referer`.
+    // The short-lived `?ticket=` flow named above is the preferred path even for the GET.
+    if (req.method.toUpperCase() !== 'GET') return false;
     const q = new URL(req.url).searchParams.get('token') ?? undefined;
     return !!q && [...role.tokens].some((v) => safeEqual(q, v));
   };
