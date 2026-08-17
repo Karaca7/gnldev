@@ -1,11 +1,16 @@
 # @gnldev/durable
 
-**Exactly-once + deterministic-replay durability for [Vercel AI SDK](https://sdk.vercel.ai) agents.**
+**Call-scoped exactly-once effect + deterministic-replay durability for [Vercel AI SDK](https://sdk.vercel.ai) agents.**
 
-Wraps the AI SDK's agent loop (`generateText`/`streamText`) **without changing it**; after a crash/restart
-it guarantees that tools **never run again** (exactly-once) and that the agent **makes the same decisions**
+Wraps the AI SDK's agent loop (`generateText`/`streamText`) **without changing it**. After a crash/restart a
+completed tool call is **never executed a second time**, and the agent **makes the same decisions**
 (deterministic replay). The one thing neither other agent frameworks nor plain AI SDK give you structurally:
 **correctness.**
+
+The precise guarantee is **at-most-once** for a side effect, because the crash window between executing a
+tool and journaling its result cannot be closed by any client-side library — see [the callout
+below](#what-never-charged-twice-actually-means). gnl's answer to that window is to refuse to guess: it
+blocks and asks, rather than silently re-running or silently continuing.
 
 ```bash
 npm i @gnldev/durable ai @ai-sdk/anthropic
@@ -43,7 +48,8 @@ card is never charged a second time:
 const res = await runDurable({ runId: 'order-123', journal, model, tools, prompt: 'Process the order' });
 ```
 
-> **What "never charged twice" actually means (audit D3):** the guarantee is **at-most-once**. If a step
+> <a id="what-never-charged-twice-actually-means"></a>
+> **What "never charged twice" actually means:** the guarantee is **at-most-once**. If a step
 > already completed, it's replayed and skipped. But if the crash lands in the narrow window *after* the
 > charge executed and *before* its success was journaled, resume can't know whether the charge went
 > through — so for a side-effect tool with no `recover()` and no `idempotent`/approval, it does **not**
@@ -112,7 +118,7 @@ const tools = {
 };
 ```
 
-> **Same-key only (important — audit D2):** `idempotency: 'args'` collapses calls that hash to the *same*
+> **Same-key only (important):** `idempotency: 'args'` collapses calls that hash to the *same*
 > key. It cannot dedup a genuinely *different* action key: `refund({orderId:'123'})` and
 > `refund({orderId:'123', note:'retry'})` hash differently → **two refunds**. "Exactly-once" here means
 > "once per identical key", not "once per business intent". When the model may vary an irrelevant field,

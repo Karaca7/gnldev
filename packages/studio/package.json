@@ -37,7 +37,8 @@
     "./node": {
       "types": "./dist/node.d.ts",
       "default": "./dist/node.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "bin": {
     "gnl-studio": "./dist/cli.js"

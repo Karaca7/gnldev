@@ -5,7 +5,7 @@
   "engines": {
     "node": ">=22.13.0"
   },
-  "description": "Exactly-once + deterministic-replay durability layer for Vercel AI SDK agents. Drop-in: generateText -> runDurable.",
+  "description": "Call-scoped exactly-once effect + deterministic-replay durability layer for Vercel AI SDK agents. Drop-in: generateText -> runDurable.",
   "keywords": [
     "ai",
     "agent",
@@ -38,7 +38,8 @@
     "./redis": {
       "types": "./dist/redis-storage.d.ts",
       "default": "./dist/redis-storage.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist"

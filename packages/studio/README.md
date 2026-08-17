@@ -74,7 +74,7 @@ By default the CLI only binds to `127.0.0.1` (so an auth-less Studio doesn't uni
 the network); pass `--host 0.0.0.0` for external access. `createStudioApp`/`createStudioApi` without `auth`
 can only be set up open in `NODE_ENV=production` DELIBERATELY, via the `allowOpenAccess: true` option — if
 the flag is missing, setup throws with a clear error; outside production it warns once via `console.warn`
-on the first request (audit #2: silent fail-open closed). The CLI treats binding to loopback as an
+on the first request, so a silent fail-open cannot survive a deploy unnoticed. The CLI treats binding to loopback as an
 intentional choice for open access.
 
 ## API

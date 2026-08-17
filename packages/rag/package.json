@@ -29,7 +29,8 @@
     "./postgres": {
       "types": "./dist/postgres-vector-store.d.ts",
       "default": "./dist/postgres-vector-store.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist"

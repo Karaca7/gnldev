@@ -29,7 +29,8 @@
     "./live": {
       "types": "./dist/live.d.ts",
       "default": "./dist/live.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist"

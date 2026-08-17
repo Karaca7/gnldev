@@ -6,9 +6,28 @@
 import { build } from 'esbuild';
 import { gzipSync } from 'node:zlib';
 
+// The surface being measured. Named by hand, so it goes stale the moment an export is renamed --
+// and it did: this list said `withTenant` for the whole life of the org rename. esbuild never
+// complained (durable re-exports through `export *`, so a missing name cannot be proven statically)
+// and `logLevel: 'silent'` would have hidden it anyway. The benchmark kept printing a number, the
+// README quoted that number as a measurement, and it was a tree-shake of a symbol that no longer
+// existed. A benchmark that cannot fail is worse than none, because its output reads as verification.
+const SURFACE = ['runDurable', 'streamDurable', 'createGnl', 'withOrg', 'InMemoryJournal', 'withModelFallback'];
+
+// So prove the names resolve before measuring them. This is the check that actually catches a
+// rename; the esbuild diagnostics below stay on as a second net for everything else.
+const mod = await import('@gnldev/durable');
+const missing = SURFACE.filter((n) => (mod as Record<string, unknown>)[n] === undefined);
+if (missing.length) {
+  throw new Error(
+    `bundle benchmark measures a stale surface: @gnldev/durable no longer exports ${missing.join(', ')}. ` +
+    `Update SURFACE to the current names -- until then any size printed here is meaningless.`,
+  );
+}
+
 const ENTRY = `
-import { runDurable, streamDurable, createGnl, withTenant, InMemoryJournal, withModelFallback } from '@gnldev/durable';
-export { runDurable, streamDurable, createGnl, withTenant, InMemoryJournal, withModelFallback };
+import { ${SURFACE.join(', ')} } from '@gnldev/durable';
+export { ${SURFACE.join(', ')} };
 `;
 
 async function measure(label: string, external: string[]): Promise<{ raw: number; gz: number }> {
@@ -21,8 +40,14 @@ async function measure(label: string, external: string[]): Promise<{ raw: number
     conditions: ['worker', 'browser', 'import'],
     external,
     write: false,
-    logLevel: 'silent',
+    // NOT 'silent': a build that reports a problem must be able to say so. This does not catch a
+    // renamed export (see SURFACE above for why), but it does catch everything esbuild CAN prove.
+    logLevel: 'warning',
   });
+  if (r.warnings.length || r.errors.length) {
+    for (const m of [...r.errors, ...r.warnings]) console.error(`  ${m.text}`);
+    throw new Error(`${label}: esbuild reported ${r.errors.length} error(s) and ${r.warnings.length} warning(s) — the measurement below would not be measuring what it claims`);
+  }
   const out = r.outputFiles[0]!.contents;
   const raw = out.byteLength;
   const gz = gzipSync(out).byteLength;
