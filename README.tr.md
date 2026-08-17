@@ -173,6 +173,67 @@ sağlayıcıya kadar takip edilir, hâlâ belirsizse sistem **sessizce tekrar et
 recover merdiveni `packages/durable/test/crash-window.test.ts`'te) — opak step-snapshot'lı bir durable agent'ın vermediği budur. Bu tür framework'ler
 daha geniş/olgun (voice/deployer/editor/auth — bizde bilinçli pas) ama hiçbir özelliği bu garantilerle gelmiyor.
 Bizim kozumuz **correctness**; ödeme/finans/transaksiyonel ve uzun-koşan/dağıtık iş yüklerinde belirleyici.
+## Neden `WorkflowAgent` değil?
+
+Yerinde bir soru, ve cevaplanması en önemli olanı: AI SDK ajanları için dayanıklılık artık SDK'da bir
+boşluk değil. Vercel, `@ai-sdk/workflow` içinde
+[`WorkflowAgent`](https://vercel.com/kb/guide/what-is-workflowagent) ve Workflow DevKit içinde
+[`DurableAgent`](https://workflow-sdk.dev) sunuyor — aynı ajan döngüsü, ama her araç çağrısı
+`'use step'` ile dayanıklı bir adıma dönüşüyor: hata alınca yeniden deniyor, süreç sınırından sağ
+çıkıyor, `needsApproval` ile askıya alınıp günler sonra devam edebiliyor. Vercel üzerindeysen
+yönetilen kalıcılık, gözlemlenebilirlik ve çoklu bölge işletmen gereken hiçbir depolama olmadan
+geliyor. Bu gerçek bir ürün ve bu projenin yaptığının çoğuyla örtüşüyor.
+
+**Fark tek eksende: yan etkinin iki kez olmamasından kim sorumlu.**
+
+`WorkflowAgent` başarısız araç çağrısını otomatik yeniden deniyor — varsayılan üç deneme. Etkiyi
+tekilleştirmiyor ve tekilleştirdiğini de iddia etmiyor: Vercel'in kendi yönlendirmesi, adımın
+`stepId`'sini dış API'ye
+[idempotency key](https://workflow-sdk.dev/cookbook/common-patterns/idempotency) olarak geçirmen —
+böylece kopyayı *Stripe* birleştiriyor. Sağlam bir kalıp, ve sana üç şey bırakıyor:
+
+- **API'nin idempotency key desteklemesi gerekir.** Stripe destekliyor. Kurum içi bir muhasebe
+  servisi genelde desteklemiyor.
+- **Her çağrı yerinde elle bağlanıyor.** Birini atlarsan gürültülü biçimde bozulmuyor; sadece bir gün
+  iki kez çekiyor.
+- **`stepId` konumsal.** Model *aynı iş eylemini* yeni bir araç çağrısı olarak yeniden planlarsa —
+  belgelenmiş bir AI SDK kalıbı — adım farklı olur, dolayısıyla anahtar farklı olur, dolayısıyla etki
+  tekrar gerçekleşir. [`idempotency: 'args'`](./packages/durable/README.md) tam bu durum için var.
+
+gnl tekilleştirmeyi journal'a koyuyor: varsayılan olarak `toolCallId` ile, opt-in yaparsan argüman
+hash'i veya mantıksal bir anahtarla, istersen koşular arası — ve sonuç gerçekten bilinemediğinde
+(etki ile kaydı arasındaki çöküş) iki yönden birine tahmin yürütmek yerine **durup insana soruyor.**
+Doğruluk varsayılan, her çağrı yerinde ayrı bir yükümlülük değil. Diğer pratik fark: bu, zaten
+işlettiğin depolamanın üstünde bir kütüphane (`node:sqlite`, Postgres, Redis, kendi adaptörün),
+üzerine dağıtım yapacağın bir platform değil.
+
+**Workflow grafiği içinde ajanlar.** `@gnldev/workflow` grafiği zaten sunuyor — `then` / `branch` /
+`parallel` / `foreach` / `dowhile`, artı `sleep`, `waitFor` ve askıya alma/devam — ve `Step` iki
+alanlı bir arayüz olduğu için ajan yeni bir API'ye gerek kalmadan düğüm oluyor:
+
+```ts
+const triage = step('triage', async (input, ctx) => {
+  const res = await runDurable({
+    runId: `${ctx.keyPrefix ?? ''}${ctx.runId}:triage`,   // ← adımdan türet, aşağıya bak
+    journal: ctx.journal, model, tools, prompt: 'bu bileti sınıflandır',
+  });
+  return { ...input, label: res.text };
+});
+
+workflow().then(triage).branch((i) => i.label === 'refund', refundFlow, closeTicket);
+```
+
+Taşıyıcı satır `runId`. Adımın kimliğinden türetilirse devam aynı ajan koşusunu replay eder; her
+çağrıda uydurulursa yenisini başlatır — ve adımın *içinde*, araç çalıştıktan ama grafik hiçbir şey
+kaydetmeden önce olan bir çöküş kartı iki kez çeker. Bu iddia değil, ölçüm:
+`packages/durable/test/agent-as-workflow-step.test.ts` bu iç içe geçmeyi kapsıyor ve o tek satırı
+bozmak çekim sayısını 1'den 2'ye çıkarıyor. Bilinmesi gereken bir asimetri: `.foreach` `Step` değil
+fonksiyon aldığı için, fan-out içindeki ajan aynı yardımcıyı yeniden kullanmak yerine yerinde
+çağrılıyor.
+
+---
+
+
 
 ---
 

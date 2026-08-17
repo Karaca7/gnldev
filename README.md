@@ -208,6 +208,63 @@ payment/financial and transactional or long-running/distributed workloads.
 
 ---
 
+## Why not `WorkflowAgent`?
+
+Fair question, and the most important one to answer: durability for AI SDK agents is no longer a gap
+in the SDK. Vercel ships [`WorkflowAgent`](https://vercel.com/kb/guide/what-is-workflowagent) in
+`@ai-sdk/workflow` and [`DurableAgent`](https://workflow-sdk.dev) in the Workflow DevKit — the same
+agent loop, with each tool call marked `'use step'` so it becomes a durable step: it retries on
+failure, survives a process boundary, and can suspend on `needsApproval` and resume days later. If
+you are on Vercel, you get managed persistence, observability and multi-region with none of the
+storage to operate. That is a real product and it overlaps most of what this project does.
+
+**The difference is one axis: who is responsible for not doing the side effect twice.**
+
+`WorkflowAgent` retries a failed tool call automatically — three attempts by default. It does not
+dedupe the effect, and does not claim to: Vercel's own guidance is that the developer passes the
+step's `stepId` to the external API as an
+[idempotency key](https://workflow-sdk.dev/cookbook/common-patterns/idempotency), so that *Stripe*
+collapses the duplicate. That is a sound pattern, and it leaves three things to you:
+
+- **The API has to support idempotency keys.** Stripe does. An internal ledger service usually does not.
+- **It is wired by hand at every call site.** Miss one and nothing breaks loudly; it just charges
+  twice one day.
+- **`stepId` is positional.** If the model re-plans the *same business action* as a new tool call — a
+  documented AI SDK pattern — the step is different, so the key is different, so the effect happens
+  again. This is the case [`idempotency: 'args'`](./packages/durable/README.md) exists for.
+
+gnl puts the dedup in the journal instead: keyed by `toolCallId` by default, by argument hash or a
+logical key when you opt in, across runs when you ask for it — and when the outcome genuinely cannot
+be known (crash between the effect and its record) it **blocks and asks a human** rather than
+guessing in either direction. Correctness is the default, not a per-call-site obligation. The other
+practical difference: this is a library over storage you already run (`node:sqlite`, Postgres, Redis,
+your own adapter), not a platform to deploy onto.
+
+**Agents inside a workflow graph.** `@gnldev/workflow` has the graph — `then` / `branch` / `parallel`
+/ `foreach` / `dowhile`, plus `sleep`, `waitFor` and suspend/resume — and a `Step` is a two-field
+interface, so an agent becomes a node without any new API:
+
+```ts
+const triage = step('triage', async (input, ctx) => {
+  const res = await runDurable({
+    runId: `${ctx.keyPrefix ?? ''}${ctx.runId}:triage`,   // ← derive it from the step, see below
+    journal: ctx.journal, model, tools, prompt: 'classify this ticket',
+  });
+  return { ...input, label: res.text };
+});
+
+workflow().then(triage).branch((i) => i.label === 'refund', refundFlow, closeTicket);
+```
+
+The `runId` is the load-bearing line. Derived from the step's identity, a resume replays the same
+agent run; made up per call, it starts a fresh one — and a crash *inside* the step, after a tool ran
+but before the graph recorded anything, charges the card twice. That is measured, not asserted:
+`packages/durable/test/agent-as-workflow-step.test.ts` covers the nesting, and breaking that one line
+turns its charge count from 1 into 2. One asymmetry to know about: `.foreach` takes a function rather
+than a `Step`, so an agent inside a fan-out is invoked inline instead of reusing the same helper.
+
+---
+
 ## Documentation
 
 - **[docs/GUIDE.md](./docs/GUIDE.md)** — the complete walkthrough: what it is, how a run works, the
