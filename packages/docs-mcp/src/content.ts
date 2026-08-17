@@ -51,7 +51,7 @@ export const OVERVIEW_SUMMARY = `A thin correctness layer on top of the Vercel A
 
 export const OVERVIEW_DETAIL = `GNL keeps the same agent loop via \`runDurable\`, a drop-in replacement for \`generateText\`/\`streamText\`; it additionally takes a \`journal\` + \`runId\`. Even if the process crashes, calling it again with the same \`runId\` resumes deterministically from where it left off, and completed tool calls never run again. Three tiers: Core (free, @gnldev/durable/@gnldev/server/@gnldev/auth/@gnldev/evals), Studio (@gnldev/studio — inspection/management, free), Enterprise (@gnldev/auth-ee — signed license, RBAC/SSO/multi-organization/budget).`;
 
-/** Full list of the 25 features — mirrors gnl.dev/llms-full.txt. Order = the order field.
+/** Full list of the 33 features — mirrors gnl.dev/llms-full.txt. Order = the order field.
  *  The count is asserted against this array in test/content-counts.test.ts: it said 25 against 26
  *  entries, and this file is the ONLY documentation a user can reach when the docs host is
  *  unreachable, so a wrong number here is the number they get. */
@@ -477,6 +477,165 @@ import { toJournal } from '@gnldev/durable';`,
   fallback,
 });
 // Studio's own management-action log: GET /audit?limit=200&action=policy.update`,
+  },
+  {
+    slug: `saga-compensation`,
+    order: 6,
+    title: `Saga / compensation (unwind)`,
+    oneLiner: `Roll back already-executed side effects in reverse order with per-tool compensate hooks.`,
+    tier: `core`,
+    package: `@gnldev/durable`,
+    install: `import { createGnl, compensateRun, CompensatedRunError } from '@gnldev/durable';`,
+    apis: [
+      `compensateRun(runId, { journal, tools?, dryRun? }) — reverse-order unwind of already-executed side effects; returns CompensationReport`,
+      `AnyTool.compensate(input, output, { idempotencyKey, toolCallId, runId }) — per-tool rollback hook; called ONLY by compensateRun, never automatically on failure`,
+      `CompensationReport — { runId, dryRun, condemned, entries[] }; entry.status: compensated | already-compensated | would-compensate | skipped-* | failed | not-attempted`,
+      `CompensatedRunError — a condemned run refuses resume; detail { runId }`,
+    ],
+    example: `const charge = {
+  execute: async (a) => stripe.charge(a),
+  compensate: async (input, output, { idempotencyKey }) => stripe.refund(output.id, { idempotencyKey }),
+};
+await gnl.run('order', { runId: 'r3', prompt: 'process order' });
+const report = await compensateRun('r3', { journal: storage.runs, tools: { charge } });
+console.log(report.condemned, report.entries.map((e) => e.status));`,
+  },
+  {
+    slug: `duplicate-guard`,
+    order: 8,
+    title: `Safe-by-default duplicate guard`,
+    oneLiner: `Catches a repeated side-effecting call with identical args; a reflect nudge or a hard block.`,
+    tier: `core`,
+    package: `@gnldev/durable`,
+    install: `import { createGnl, DuplicateSideEffectError, type RunLimits } from '@gnldev/durable';`,
+    apis: [
+      `RunLimits.sideEffectDuplicates — 'off'|'warn'|'reflect'|'block'|'suspend' (default 'warn'); catches an identical side-effect repeat in the same run`,
+      `DuplicateSideEffectError — thrown under 'block' (and after an ignored 'reflect' nudge); detail { toolName, argsHash, firstToolCallId, toolCallId }`,
+      `AnyTool.idempotent / sideEffect — a tool is side-effectful by default; mark idempotent: true to exempt it from the guard`,
+    ],
+    example: `// 'charge' is unmarked, so it is treated as a side effect: a second identical call in the
+// same runId is caught rather than executed.
+const limits: RunLimits = { sideEffectDuplicates: 'block' };
+await gnl.run('billing', { runId: 'r7', prompt: 'charge the order', limits });`,
+  },
+  {
+    slug: `taint-guard`,
+    order: 9,
+    title: `Taint-aware guard (prompt-injection)`,
+    oneLiner: `Blocks a side effect once untrusted (attacker-authorable) content has entered the run.`,
+    tier: `core`,
+    package: `@gnldev/durable`,
+    install: `import { createGnl, TaintedSideEffectError, readRunTaint, type RunLimits } from '@gnldev/durable';`,
+    apis: [
+      `RunLimits.taintedSideEffects — 'off'|'warn'|'reflect'|'block'|'suspend' (default 'warn'); fires on a side effect after untrusted content entered the run`,
+      `AnyTool.untrusted — marks a tool whose OUTPUT is attacker-authorable (a web fetch, a document); its success taints the run (monotonic, journaled)`,
+      `markRunTainted / readRunTaint — set/read run taint; RunTaint { at, toolCallId, toolName, source, reason? }`,
+      `TaintedSideEffectError — thrown under 'block'; detail { toolName, toolCallId, taintSource }`,
+    ],
+    example: `// fetchPage is untrusted, so its output taints the run; a prompt-injected sendMail is then blocked.
+try {
+  await gnl.run('asst', { runId: 'r2', prompt: 'read the page then email a summary', limits: { taintedSideEffects: 'block' } });
+} catch (e) {
+  if (e instanceof TaintedSideEffectError) console.log('injection blocked, source:', e.detail.taintSource);
+}`,
+  },
+  {
+    slug: `run-limits`,
+    order: 13,
+    title: `Per-run limits & cost cap`,
+    oneLiner: `Stop a runaway run on a per-run token/cost/tool-call ceiling with RunLimits.`,
+    tier: `core`,
+    package: `@gnldev/durable`,
+    install: `import { createGnl, RunLimitExceededError, type RunLimits } from '@gnldev/durable';`,
+    apis: [
+      `RunLimits.maxTokens / maxCostUsd / maxToolCalls — per-run ceilings via RunOptions.limits; inherited by sub-agents as-is`,
+      `RunLimits.loopDetection — { maxRepeats, onRepeat: 'block' | 'reflect' }`,
+      `RunLimitExceededError — detail { kind, value, limit }; kind 'maxTokens' | 'maxCostUsd' | 'maxToolCalls'`,
+      `maxCostUsd needs a priced model: a model absent from the pricing table counts as $0, and the ceiling says so (strict throws, otherwise it warns once)`,
+      `Distinct from @gnldev/server budget-quota (org-level BudgetExceededError, HTTP 402); RunLimits is entirely per-run`,
+    ],
+    example: `try {
+  await gnl.run('asst', { runId: 'r5', prompt: 'do the task', limits: { maxTokens: 50_000, maxCostUsd: 0.5, maxToolCalls: 20 } });
+} catch (e) {
+  if (e instanceof RunLimitExceededError) console.log(e.detail.kind, e.detail.value, e.detail.limit);
+}`,
+  },
+  {
+    slug: `agent-networks`,
+    order: 30,
+    title: `Dynamic agent networks`,
+    oneLiner: `A router LLM selects sub-agents; decisions are frozen via CAS, so the router is not called again on resume.`,
+    tier: `core`,
+    package: `@gnldev/durable`,
+    install: `import { createGnl, getNetworkTrace } from '@gnldev/durable';
+import type { NetworkConfig } from '@gnldev/durable';`,
+    apis: [
+      `createGnl({ networks }) — NetworkConfig: a router, the routable agent names, and optional system / maxIterations`,
+      `gnl.runNetwork(name, { runId, task }) — the router picks a sub-agent or writes the final answer; decisions are CAS-frozen`,
+      `runNetwork(opts) — the core entry; route <runId>:net:route:<i> and step <runId>:net:step:<i> are frozen in the journal`,
+      `getNetworkTrace(journal, runId) — the dynamic tree (routes + steps); the source behind Studio's GET /runs/:id/network`,
+    ],
+    example: `const gnl = createGnl({
+  storage,
+  agents: { researcher: { model }, writer: { model } },
+  networks: { desk: { router: model, agents: ['researcher', 'writer'], maxIterations: 4 } },
+});
+const r = await gnl.runNetwork('desk', { runId: 'n1', task: 'research and draft a summary' });`,
+  },
+  {
+    slug: `rag-pipeline`,
+    order: 31,
+    title: `RAG pipeline (chunking + pgvector + GraphRAG)`,
+    oneLiner: `Deterministic chunking, a persistent pgvector store, and GraphRAG; exactly-once RAG inside durable.`,
+    tier: `core`,
+    package: `@gnldev/rag`,
+    install: `import { chunkDocuments, indexDocuments, PostgresVectorStore, GraphRag, createRagTool } from '@gnldev/rag';`,
+    apis: [
+      `chunkText / chunkDocuments — recursive/markdown/character strategies, size/overlap, deterministic <docId>#<i> ids`,
+      `PostgresVectorStore — a persistent pgvector store (pool or connectionString, dimension?, index: hnsw|ivfflat|none)`,
+      `GraphRag — a similarity-graph VectorStore (threshold/hops/decay/seeds), a drop-in for createRagTool`,
+      `createRagTool({ store, embed, topK?, rerank? }) — journaled inside durable, so retrieval is exactly-once`,
+    ],
+    example: `const chunks = chunkDocuments(docs, { strategy: 'markdown', size: 1200, overlap: 120 });
+const store = new PostgresVectorStore({ connectionString: process.env.DATABASE_URL, index: 'hnsw' });
+await indexDocuments(store, chunks, embed);
+const gnl = createGnl({ storage, agents: { asst: { model, tools: { search: createRagTool({ store, embed, topK: 5 }) } } } });`,
+  },
+  {
+    slug: `tool-search`,
+    order: 32,
+    title: `Semantic tool search (toolSearch)`,
+    oneLiner: `A processor that selects the topK tools via embeddings; the selection is journaled, so embedding never runs again on resume.`,
+    tier: `core`,
+    package: `@gnldev/processors`,
+    install: `import { toolSearch } from '@gnldev/processors';`,
+    apis: [
+      `toolSearch({ embed, topK?=8, always?, minScore? }) — a Processor (processTools)`,
+      `the selection is journaled through ctx.step('tool-search'), so embedding does not run on resume or replay`,
+      `always is not scored and does not count toward topK; minScore drops anything below the threshold; with no query it does not narrow at all`,
+    ],
+    example: `const gnl = createGnl({
+  storage,
+  processors: [toolSearch({ embed, topK: 8, always: ['final'], minScore: 0.2 })],
+  agents: { assistant: { model, tools: bigToolset } },
+});`,
+  },
+  {
+    slug: `observability-integrations`,
+    order: 33,
+    title: `Observability integrations (OTLP presets)`,
+    oneLiner: `Langfuse/LangSmith/Braintrust/Honeycomb/Datadog/Collector via one-line OTLP, plus a live mode.`,
+    tier: `core`,
+    package: `@gnldev/otel`,
+    install: `import { otlpPresets, exportRunToOtlp } from '@gnldev/otel';
+import { liveObservability } from '@gnldev/otel/live';`,
+    apis: [
+      `otlpPresets — { langfuse, langsmith, braintrust, honeycomb, datadogAgent, collector }, pure config builders`,
+      `exportRunToOtlp(reader, runId, opts) — POSTs a journaled run to an OTLP/HTTP endpoint; { traceId, spans, ok, status }`,
+      `exportRun(reader, runId, opts?) — to an OTEL SpanExporter; ids are deterministic, so exporting twice is idempotent`,
+      `liveObservability(opts) — live spans and cost; instrument()/cost()/flush(); composes under durable and never touches the journal`,
+    ],
+    example: `await exportRunToOtlp(storage.runs, 'r1', otlpPresets.langfuse({ publicKey, secretKey }));`,
   },
 ];
 

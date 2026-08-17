@@ -69,7 +69,7 @@ describe('handleMessage — tools/list', () => {
 });
 
 describe('handleMessage — tools/call gnl_docs_overview', () => {
-  it('includes all 25 features (embedded content)', async () => {
+  it('includes EVERY feature, whatever the count (embedded content)', async () => {
     const res: any = await handleMessage(provider(), {
       jsonrpc: '2.0',
       id: 3,
@@ -78,8 +78,12 @@ describe('handleMessage — tools/call gnl_docs_overview', () => {
     });
     expect(res.result.isError).toBeUndefined();
     const text = res.result.content[0].text;
-    expect(FEATURES).toHaveLength(25);
-    for (const f of FEATURES) expect(text).toContain(f.title);
+    // The count used to be pinned here as a literal, which made adding a feature look like a test
+    // failure and taught whoever hit it to bump the number. What matters is that the overview leaves
+    // NOTHING out — an absent feature is a feature no assistant can discover. The count itself is
+    // asserted once, against the prose that states it, in content-counts.test.ts.
+    expect(FEATURES.length).toBeGreaterThan(0);
+    for (const f of FEATURES) expect(text, `overview omits ${f.slug}`).toContain(f.title);
   });
 });
 
