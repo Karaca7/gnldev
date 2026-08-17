@@ -5,8 +5,11 @@ Thanks for considering a contribution.
 ## Before your first pull request
 
 This project requires a **Contributor License Agreement (CLA)** — see [CLA.md](./CLA.md) for the
-full text and why it exists (short version: it lets the license evolve later without having to
-track down every past contributor for consent).
+full text. The short version, stated plainly because the detail is the part that matters: it lets
+the Maintainer relicense your contribution under any terms — including source-available or
+proprietary ones — without tracking down every past contributor for consent. If that is not
+acceptable to you, this is the right moment to know it. What the CLA does NOT do: it asks for no
+indemnity, and you keep every right to your own work.
 
 Accepting it is a single checkbox: the pull request template includes a line confirming you have
 read and agree to the CLA. Tick it in your first PR and you're done — it carries over to your later

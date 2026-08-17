@@ -87,10 +87,15 @@ You represent that:
 - You are not aware of any claim that your Contribution infringes a third party's intellectual
   property rights.
 
-If any of these representations turns out to be untrue and the Maintainer suffers loss as a result,
-you will indemnify the Maintainer for that loss. This matters because a licence granted by someone
+You agree to notify the Maintainer of any facts or circumstances you become aware of that would make
+these representations inaccurate in any respect. This matters because a licence granted by someone
 who was not entitled to grant it conveys nothing: the Maintainer would have to remove the
-Contribution from every published version, and the representation alone is not a remedy.
+Contribution from every published version, and that is far cheaper the sooner it is known.
+
+There is deliberately no indemnity here. An honest mistake about what you were entitled to grant is
+not something a weekend contribution should carry unlimited liability for, and the Maintainer's real
+need is early notice, not a claim. This matches the Apache ICLA, which asks for the same notice and
+imposes no indemnification.
 
 ## 5. Moral Rights
 
