@@ -42,12 +42,12 @@
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",
-    "@opentelemetry/sdk-trace-base": "^1.30.0",
+    "@opentelemetry/sdk-trace-base": "^2.10.0",
     "@opentelemetry/semantic-conventions": "^1.28.0"
   },
   "peerDependencies": {
     "@gnldev/durable": "workspace:^",
-    "@opentelemetry/exporter-trace-otlp-http": "^0.57.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.221.0",
     "ai": "^7.0.0"
   },
   "peerDependenciesMeta": {

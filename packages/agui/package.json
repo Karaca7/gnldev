@@ -37,7 +37,7 @@
   },
   "dependencies": {
     "@gnldev/server": "workspace:^",
-    "hono": "^4.6.0"
+    "hono": "^4.13.2"
   },
   "peerDependencies": {
     "@gnldev/durable": "workspace:^"

@@ -19,7 +19,9 @@ const dead = { ...base, doGenerate: async () => { throw new Error('401 invalid a
 async function rootSpanOf(journal: any, runId: string) {
   const { exporter } = await exportRun(journal, runId);
   const spans = (exporter as any).getFinishedSpans();
-  return spans.find((s: any) => !s.parentSpanId) ?? spans[0];
+  // The root is the span with no parent. OTel 2.x moved that from parentSpanId to
+  // parentSpanContext; both are read so this helper works whichever major is installed.
+  return spans.find((s: any) => !s.parentSpanId && !s.parentSpanContext) ?? spans[0];
 }
 
 describe('exporting a run that failed', () => {

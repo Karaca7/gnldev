@@ -55,12 +55,12 @@
     "@gnldev/durable": "workspace:^",
     "@gnldev/scheduler": "workspace:^",
     "@gnldev/studio-ui": "workspace:^",
-    "@hono/node-server": "^1.13.0",
-    "hono": "^4.6.0"
+    "@hono/node-server": "^1.19.17",
+    "hono": "^4.13.2"
   },
   "peerDependencies": {
-    "ai": "^7.0.0",
-    "@gnldev/workflow": "workspace:^"
+    "@gnldev/workflow": "workspace:^",
+    "ai": "^7.0.0"
   },
   "peerDependenciesMeta": {
     "ai": {
@@ -71,8 +71,8 @@
     }
   },
   "devDependencies": {
-    "ai": "^7.0.0",
     "@gnldev/workflow": "workspace:*",
+    "ai": "^7.0.0",
     "pg-mem": "^3.0.14",
     "zod": "^3.25.76"
   },

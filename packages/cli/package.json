@@ -45,9 +45,9 @@
   "peerDependencies": {
     "@gnldev/auth": "workspace:^",
     "@gnldev/durable": "workspace:^",
+    "@gnldev/memory": "workspace:^",
     "@gnldev/server": "workspace:^",
     "@gnldev/studio": "workspace:^",
-    "@gnldev/memory": "workspace:^",
     "@hono/node-server": "^1.13.0",
     "hono": "^4.6.0"
   },
@@ -77,14 +77,14 @@
   "devDependencies": {
     "@gnldev/auth": "workspace:^",
     "@gnldev/durable": "workspace:^",
+    "@gnldev/memory": "workspace:^",
     "@gnldev/server": "workspace:^",
     "@gnldev/studio": "workspace:^",
-    "@gnldev/memory": "workspace:^",
-    "@hono/node-server": "^1.13.0",
-    "hono": "^4.6.0",
+    "@hono/node-server": "^1.19.17",
     "ai": "^7.0.0",
-    "zod": "^3.25.0",
-    "esbuild": "^0.21.5"
+    "esbuild": "^0.21.5",
+    "hono": "^4.13.2",
+    "zod": "^3.25.0"
   },
   "author": "Karaca Yılmaz (https://gnl.dev)",
   "homepage": "https://gnl.dev",

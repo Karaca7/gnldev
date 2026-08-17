@@ -110,8 +110,9 @@ export function liveObservability(opts: LiveObservabilityOptions = {}): LiveObse
   const pricing = opts.pricing ?? DEFAULT_PRICING;
   const sampleRate = opts.sampleRate ?? 1;
   const exporter = opts.exporter ?? (opts.endpoint ? otlpExporterSync(opts.endpoint) : new InMemorySpanExporter());
-  const provider = new BasicTracerProvider();
-  provider.addSpanProcessor(new SimpleSpanProcessor(exporter));
+  // OpenTelemetry JS 2.x removed `provider.addSpanProcessor()`: a processor can no longer be
+  // attached after construction, it is declared with the provider. Passed via `spanProcessors`.
+  const provider = new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
   const tracer = provider.getTracer('@gnldev/otel/live');
 
   const roots = new Map<string, { span: Span; ctx: Context }>();

@@ -66,8 +66,9 @@ export async function exportRun(
   const spanIds = ['root' as const, ...entries.map((_, i) => i)].map((s) => spanIdFor(runId, s));
   const idGenerator = new QueueIdGenerator(runId, [traceId], spanIds);
 
-  const provider = new BasicTracerProvider({ idGenerator });
-  provider.addSpanProcessor(new SimpleSpanProcessor(exporter));
+  // OpenTelemetry JS 2.x removed `provider.addSpanProcessor()`: a processor can no longer be
+  // attached after construction, it is declared with the provider. Passed via `spanProcessors`.
+  const provider = new BasicTracerProvider({ idGenerator, spanProcessors: [new SimpleSpanProcessor(exporter)] });
   const tracer = provider.getTracer('@gnldev/otel');
 
   const cost = await getRunCost(reader, runId, { pricing: opts.pricing, modelId: opts.modelId });

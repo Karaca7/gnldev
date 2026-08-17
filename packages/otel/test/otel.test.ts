@@ -52,7 +52,9 @@ describe('Phase 10 exportRun', () => {
     expect(children.length).toBe(3);
     for (const c of children) {
       expect(c.spanContext().traceId).toBe(traceId);
-      expect(c.parentSpanId).toBe(root.spanContext().spanId);
+      // OTel 2.x replaced ReadableSpan.parentSpanId with parentSpanContext; the claim is unchanged
+      // (every child's parent IS the root span), only the field the SDK exposes it through.
+      expect(c.parentSpanContext?.spanId).toBe(root.spanContext().spanId);
     }
 
     const llm = fin.find((s) => s.name === 'llm.generate')!;

@@ -44,8 +44,8 @@
   "dependencies": {
     "@gnldev/auth": "workspace:^",
     "@gnldev/workflow": "workspace:^",
-    "@hono/node-server": "^1.13.0",
-    "hono": "^4.6.0"
+    "@hono/node-server": "^1.19.17",
+    "hono": "^4.13.2"
   },
   "peerDependencies": {
     "@gnldev/durable": "workspace:^"

@@ -40,7 +40,7 @@
     "hono": "^4.6.0"
   },
   "devDependencies": {
-    "hono": "^4.6.0"
+    "hono": "^4.13.2"
   },
   "author": "Karaca Yılmaz (https://gnl.dev)",
   "homepage": "https://gnl.dev",
