@@ -40,12 +40,17 @@ bu vakaya tanım gereği kördür. Tool başına opt-in yap, GNL journal anahtar
 **argümanlardan** türetsin:
 
 ```ts
+import { gnlTool } from '@gnldev/durable';
+import { tool } from 'ai';
+
 const tools = {
-  charge: {
-    idempotency: 'args',                       // varsayılan: 'call' (toolCallId-anahtarlı, değişmedi)
-    // ya da mantıksal anahtarla: idempotencyKey: (args) => args.orderId,
-    execute: chargeCard,
-  },
+  charge: gnlTool(
+    tool({ description: 'Siparişi tahsil et', inputSchema: z.object({ orderId: z.string() }), execute: chargeCard }),
+    {
+      idempotency: 'args',                       // varsayılan: 'call' (toolCallId-anahtarlı, değişmedi)
+      // ya da mantıksal anahtarla: idempotencyKey: (input) => input.orderId,
+    },
+  ),
 };
 ```
 
@@ -126,7 +131,7 @@ for await (const ev of gnl.stream('assistant', { prompt: 'akış' })) { /* text-
 | **`@gnldev/cache`** | cross-run cache |
 | **`@gnldev/studio`** | inspector **+ Playground**: agent seç→prompt→streaming yanıt→onay · time-travel/fork + cost/trace/metrics/diff · admin↔API ayrımı + rol auth |
 | **`@gnldev/client`** | type-safe REST/SSE client (framework-agnostik core) + React hook'ları (`@gnldev/client/react`: `useGnlAgent`/`useChat`) |
-| **`@gnldev/cli`** | proje: `gnl init [--template minimal\|full] [--e2e]` (starter'lar — **`full`, `idempotency: 'args'` tool'u + tekrarlanan-toolCallId desenini yeniden üreten e2e testi taşır**) / `add <memory\|rag\|mcp\|workflow\|auth>` / `dev` / `studio` · inceleme: `runs`/`run`/`inspect` (**terminalde zaman yolculuğu**) · operasyon: `fork`/`resume`/`sweep`/`rm` (hepsi doğrudan `@gnldev/durable`'ın kendi export'larına bağlı, hiçbiri yeniden implement edilmedi) · **sıfır yeni runtime bağımlılığı** (elle yazılmış ANSI/tablo, chalk/ora/commander yok) · `create-gnl` (`npm create gnl`) |
+| **`@gnldev/cli`** | proje: `gnl init [--template minimal\|full] [--e2e]` (starter'lar — **`full`, `idempotency: 'args'` tool'u + tekrarlanan-toolCallId desenini yeniden üreten e2e testi taşır**) / `add <memory\|rag\|mcp\|workflow\|auth>` / `dev` / `studio` · inceleme: `runs`/`run`/`inspect` (**terminalde zaman yolculuğu**) · operasyon: `fork`/`resume`/`sweep`/`rm` (hepsi doğrudan `@gnldev/durable`'ın kendi export'larına bağlı, hiçbiri yeniden implement edilmedi) · **bir runtime bağımlılığı** (`tsx`, `gnl.config.ts` yüklemek için; elle yazılmış ANSI/tablo, chalk/ora/commander yok) · `create-gnl` (`npm create gnl`) |
 
 ## Örnekler (`examples/`)
 - **`showcase`** — paketleri kendi kendini doğrulayan tek dosya: `pnpm --filter @gnldev/showcase demo` → 22 bölüm 22/22 ✓ (mock model, API key gerekmez) · `bench` (overhead ölçer)

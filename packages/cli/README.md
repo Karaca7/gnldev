@@ -1,9 +1,11 @@
 # @gnldev/cli
 
 The `gnl` developer CLI. Three groups of commands, all wired straight to `@gnldev/durable`'s own exports
-(`listRuns`/`readRun`/`reconstructState`/`forkRun`/`resumeRun`/`sweepRuns`/`purgeRun`/`getRunCost`) —
-nothing here reimplements durability, it just puts it in your terminal. **Zero new runtime
-dependencies**: no commander/yargs/chalk/ora, colors and tables are hand-rolled ANSI (see
+(`reconstructState`/`forkRun`/`resumeRun`/`sweepRuns`/`purgeRun`/`getRunCost`, plus the journal's own
+`listRuns`/`readRun`) —
+nothing here reimplements durability, it just puts it in your terminal. **One runtime dependency** (`tsx`, to load your
+`gnl.config.ts`): no commander/yargs/chalk/ora/inquirer — colors, tables and the checkbox are
+hand-rolled ANSI (see
 [Supply-chain hygiene](../../README.md#supply-chain-hygiene)).
 
 ```bash

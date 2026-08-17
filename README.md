@@ -62,12 +62,17 @@ including our default — is blind to that case by construction. Opt in per tool
 by the **arguments** instead:
 
 ```ts
+import { gnlTool } from '@gnldev/durable';
+import { tool } from 'ai';
+
 const tools = {
-  charge: {
-    idempotency: 'args',                       // default: 'call' (toolCallId-keyed, unchanged)
-    // or dedup by a logical key: idempotencyKey: (input) => (input as { orderId: string }).orderId,
-    execute: chargeCard,
-  },
+  charge: gnlTool(
+    tool({ description: 'Charge an order', inputSchema: z.object({ orderId: z.string() }), execute: chargeCard }),
+    {
+      idempotency: 'args',                       // default: 'call' (toolCallId-keyed, unchanged)
+      // or dedup by a logical key: idempotencyKey: (input) => input.orderId,
+    },
+  ),
 };
 ```
 
@@ -148,7 +153,7 @@ for await (const ev of gnl.stream('assistant', { prompt: 'streaming' })) { /* te
 | **`@gnldev/cache`** | cross-run cache |
 | **`@gnldev/studio`** | inspector **+ Playground**: pick agent → prompt → streaming response → approval · time-travel/fork + cost/trace/metrics/diff · admin/API separation + role-based auth |
 | **`@gnldev/client`** | type-safe REST/SSE client (framework-agnostic core) + React hooks (`@gnldev/client/react`: `useGnlAgent`/`useChat`) |
-| **`@gnldev/cli`** | project: `gnl init` (**interactive feature checkbox** — pick idempotency-tool/rag/mcp/memory/workflow/auth/e2e → a wired `gnl.config.ts` is generated; non-interactive via `--features a,b,c` / `--template minimal\|full` / `--yes`, prompt never opens without a TTY) / `add <idempotency-tool\|rag\|mcp\|memory\|workflow\|auth>` / `dev` / `studio` · inspect: `runs`/`run`/`inspect` (**time-travel in the terminal**) · operate: `fork`/`resume`/`sweep`/`rm` (all wired straight to `@gnldev/durable`'s own exports, nothing reimplemented) · **zero new runtime deps** (hand-rolled ANSI/table + a from-scratch raw-mode checkbox, no chalk/ora/commander/inquirer) · `create-gnl` (`npm create gnl`) |
+| **`@gnldev/cli`** | project: `gnl init` (**interactive feature checkbox** — pick idempotency-tool/rag/mcp/memory/workflow/auth/e2e → a wired `gnl.config.ts` is generated; non-interactive via `--features a,b,c` / `--template minimal\|full` / `--yes`, prompt never opens without a TTY) / `add <idempotency-tool\|rag\|mcp\|memory\|workflow\|auth>` / `dev` / `studio` · inspect: `runs`/`run`/`inspect` (**time-travel in the terminal**) · operate: `fork`/`resume`/`sweep`/`rm` (all wired straight to `@gnldev/durable`'s own exports, nothing reimplemented) · **one runtime dep** (`tsx`, to load `gnl.config.ts`; hand-rolled ANSI/table + a from-scratch raw-mode checkbox, no chalk/ora/commander/inquirer) · `create-gnl` (`npm create gnl`) |
 
 ## Examples (`examples/`)
 - **`showcase`** — a single self-verifying file exercising the packages: `pnpm --filter @gnldev/showcase demo` → 22 sections, 22/22 ✓ (mock model, no API key needed) · `bench` (overhead measurement)

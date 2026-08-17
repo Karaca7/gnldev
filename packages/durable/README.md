@@ -109,12 +109,17 @@ model re-planning the *same* work under a **brand-new** `toolCallId` (a document
 called 5× in one turn). Opt in per tool and GNL keys the journal by the **arguments** instead:
 
 ```ts
+import { gnlTool } from '@gnldev/durable';
+import { tool } from 'ai';
+
 const tools = {
-  charge: {
-    idempotency: 'args',                       // default: 'call' (toolCallId-keyed, unchanged)
-    // or dedup by a logical key: idempotencyKey: (args) => args.orderId,
-    execute: chargeCard,
-  },
+  charge: gnlTool(
+    tool({ description: 'Charge an order', inputSchema: z.object({ orderId: z.string() }), execute: chargeCard }),
+    {
+      idempotency: 'args',                       // default: 'call' (toolCallId-keyed, unchanged)
+      // or dedup by a logical key: idempotencyKey: (input) => input.orderId,
+    },
+  ),
 };
 ```
 
@@ -201,7 +206,6 @@ const tools = durableTools(myTools, { journal, runId });
 
 ## Tools
 
-- **`gnl chat`** — durable agent terminal REPL (crash & resume, inline tool/cost). `gnl chat --db runs.db`
 - **`@gnldev/studio`** (separate package) — web UI: runs/timeline + **time-travel** + approval queue.
   `npx @gnldev/studio --db runs.db` — point it at the journal you passed to `runDurable`.
   With a config file instead (`--config gnl.config.ts`) it also serves the Playground. Bare
@@ -218,7 +222,7 @@ npx tsx examples/no-double-charge.ts   # no API key needed (mock model) — exac
 | | |
 |---|---|
 | `runDurable(args) → DurableResult` | Drop-in `generateText` + `journal`/`runId`/`guard`/`approvals`. Adds `.interrupts`. Optional `timeouts: { modelStepMs, toolMs, claimTtlMs }` — on timeout `StepTimeoutError` flows through the existing failed/retry/recover paths (opt-in, behavior unchanged if not provided). |
-| `resume` | Alias for `runDurable`. |
+| `resumeRun(args)` | Resume a suspended run: reads the prompt and the frozen limits back from the journal, so the resumed turn runs under the same bounds as the original. NOT an alias for `runDurable` — that name never existed. |
 | `withDurableModel(model, ctx)` / `durableTools(tools, ctx)` | Composable wrappers. |
 | `InMemoryJournal` / `SqliteStorage` (`/sqlite`, journal at `.runs`) | Journal adapters. |
 | `Guard`, `Interrupt`, `Journal`, `DurableResult` | Types. |

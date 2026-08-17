@@ -27,7 +27,7 @@ Each model/tool journal entry maps to a span; trace/span ids are derived from ru
 
 ## Zero-dependency OTLP/HTTP JSON exporter (`exportRunToOtlp` / `toOtlpJson`)
 
-The `exportRun` above uses `@opentelemetry/sdk-trace-base` (peer dep). Alongside it there is also a smaller alternative that **doesn't need any OTel SDK** — it manually converts `packages/durable`'s `toTraceSpans` output into an OTLP/HTTP JSON body and POSTs it with plain `fetch` (~8KB footprint: just `node:crypto` + the global `fetch`).
+The `exportRun` above uses `@opentelemetry/sdk-trace-base` (a dependency of this package, installed for you). Alongside it there is also a smaller alternative that **doesn't need any OTel SDK** — it manually converts `packages/durable`'s `toTraceSpans` output into an OTLP/HTTP JSON body and POSTs it with plain `fetch` (~8KB footprint: just `node:crypto` + the global `fetch`).
 
 ```ts
 import { exportRunToOtlp, toOtlpJson } from '@gnldev/otel';
