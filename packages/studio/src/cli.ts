@@ -5,6 +5,7 @@ import { SqliteStorage } from '@gnldev/durable/sqlite';
 import { createStudioApp, type StudioAppOptions } from './server.js';
 import { createStudioRunner } from './runner.js';
 import { aiToolSchema } from './ai-schema.js';
+import { decideExposure, isLoopbackHost } from './expose.js';
 
 function getArg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -17,7 +18,11 @@ const port = Number(getArg('port') ?? 4747);
 // Default is loopback-only (audit #2): the Studio CLI opens without auth, so it must not leak onto
 // The network unintentionally. Deliberate external access is opted into via --host 0.0.0.0 (or another address).
 const host = getArg('host') ?? '127.0.0.1';
-const loopback = host === '127.0.0.1' || host === '::1' || host === 'localhost';
+const loopback = isLoopbackHost(host);
+// Deliberate, recorded in the command that ran rather than in a config file — same reason `gnl dev`
+// makes you type it. Without this there is no way to serve an unauthenticated Studio off loopback,
+// which is the point.
+const allowOpenNetwork = process.argv.includes('--allow-open-network');
 
 async function main(): Promise<void> {
   let opts: StudioAppOptions;
@@ -68,28 +73,32 @@ async function main(): Promise<void> {
       reader,
       gnl: createStudioRunner(gnl, { ...cfg, journal: cfg.storage?.runs ?? cfg.journal }, { toJsonSchema: aiToolSchema }),
       ...(memory ? { memory } : {}),
+      // `auth` from gnl.config was being dropped here. The consequence was not a missing feature but
+      // a false one: a user who wrote `auth: { admin: { token } }` got an open panel, and the warning
+      // below told them to do exactly the thing that had no effect. Measured before the fix — with a
+      // token configured, `PUT /api/policy` succeeded with no credentials.
+      ...(cfg.auth ? { auth: cfg.auth } : {}),
     };
   } else {
     if (!db || db.startsWith('--')) {
       console.error('Usage: gnl-studio --db <runs.db> [--port 4747] [--host 127.0.0.1]   (inspector)');
       console.error('    or: gnl-studio --config <gnl.config.ts> [--port 4747] [--host 127.0.0.1]   (+ Playground)');
+      console.error('  A non-loopback --host needs auth in gnl.config, or an explicit --allow-open-network.');
       process.exit(1);
       return;
     }
     opts = { reader: toJournal(new SqliteStorage(db).runs) };
   }
-  // The CLI doesn't carry auth: open access on loopback is considered deliberate (local machine only).
-  // A non-loopback host + NODE_ENV=production → makeGate throws at setup (no silent fail-open, audit #2).
-  opts.allowOpenAccess = loopback;
-  if (loopback) {
-    // Loopback = access from THIS machine only; but on a shared/multi-user machine (e.g. dev server,
-    // Virtual desktop) other LOCAL users can also reach the panel without auth (audit #3).
-    console.warn(
-      'gnl studio: loopback host (127.0.0.1/::1/localhost) → panel open without auth. On a shared ' +
-      'machine, other local users can also reach it; configure roleAuth via --config to add auth, ' +
-      'or restrict access.',
-    );
+  // One decision, made in expose.ts so it can be tested; this is the part that acts on it.
+  const exposure = decideExposure({ host, authed: Boolean(opts.auth), allowOpenNetwork });
+  if (exposure.refusal) {
+    console.error(exposure.refusal);
+    process.exit(1);
+    return;
   }
+  opts.allowOpenAccess = exposure.allowOpenAccess;
+  for (const w of exposure.warnings) console.warn(w);
+
   const app = createStudioApp(opts);
   serve({ fetch: app.fetch, port, hostname: host }, (info) => {
     console.log(`gnl studio → http://${loopback ? 'localhost' : host}:${info.port}${configPath ? '   (Playground open)' : `   (db: ${db})`}`);
