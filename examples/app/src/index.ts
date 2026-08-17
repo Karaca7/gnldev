@@ -30,7 +30,12 @@ app.mount('/studio', createStudioApp({
     getWorkingMemory: (tid) => memory.getWorkingMemory(tid),
     truncateMessages: (tid, afterIndex) => memory.truncateMessagesAfter(tid, afterIndex),
   },
-  auth: { write: (c) => !ADMIN || c.req.header('x-studio-admin') === ADMIN },
+  // A {read,write} predicate receives a web-standard `Request` (see @gnldev/auth ReadWriteAuth), not
+  // a Hono Context. The previous `c.req.header(...)` therefore threw `TypeError: Cannot read
+  // properties of undefined (reading 'header')` on EVERY write whenever ADMIN was set — so this
+  // example's admin-protected mode was dead code: it answered 500, never 403, and the header it
+  // documents could not be used.
+  auth: { write: (req) => !ADMIN || req.headers.get('x-studio-admin') === ADMIN },
 }));
 
 const APP_PORT = Number(process.env.PORT ?? 3100);

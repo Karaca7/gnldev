@@ -6,6 +6,7 @@
 // The gate reads (method, path, headers, query) is on `Request`; nothing was lost by narrowing.
 import type { AuthProvider, Decision, Principal } from './types.js';
 import { isCrossSiteStateChange } from './same-site.js';
+import { bindsIdentity } from './adapter.js';
 
 export interface Gate {
   /** Is access allowed? true if there's no provider (opt-in: gate not set up → open; see makeGate in production). */
@@ -69,21 +70,33 @@ export function makeGate(provider?: AuthProvider, opts?: GateOptions): Gate {
    * open: a page on another site could still drive every endpoint that asks for a named permission.
    * Two copies of a security decision is one copy too many.
    */
-  function openSurfaceAllows(req: Request): boolean {
-    // Open to this machine is not open to every page this machine's browser visits. Without a
-    // provider there is no token to ride, so a state change initiated by another site is never
-    // something the operator asked for — see same-site.ts for what was measured.
-    if (isCrossSiteStateChange(req)) {
-      if (!warnedCrossSite) {
-        warnedCrossSite = true;
-        console.warn(
-          '@gnldev/auth: blocked a cross-site write to an open (providerless) surface. A page on ' +
-          'another site attempted a state-changing request. Configure auth if this surface is ' +
-          'meant to be reachable by other origins.',
-        );
-      }
-      return false;
+  /**
+   * Is this request a cross-site state change against a surface with NO IDENTITY to ride?
+   *
+   * The condition is about identity, not about the presence of a provider — and getting that wrong
+   * left a hole. A legacy `{read,write}` pair IS a provider after normalizeAuth, so keying on
+   * `!provider` skipped the check for it; but that pair has no principal model at all (its
+   * authenticate() is `return null` by construction), so there is no credential a cross-site page
+   * could be riding, and its predicate answers on the request alone. Measured: with
+   * `{read:()=>true, write:()=>true}` configured, a cross-site `POST /api/retention/sweep` was
+   * ALLOWED. examples/app ships exactly that shape, so it was the published example that was open.
+   *
+   * `bindsIdentity(undefined)` is false, so the providerless case is covered by the same test.
+   */
+  function crossSiteWithoutIdentity(req: Request): boolean {
+    if (bindsIdentity(provider) || !isCrossSiteStateChange(req)) return false;
+    if (!warnedCrossSite) {
+      warnedCrossSite = true;
+      console.warn(
+        '@gnldev/auth: blocked a cross-site write to a surface with no identity to authenticate ' +
+        'against. A page on another site attempted a state-changing request. Configure an auth ' +
+        'provider that binds an identity if this surface is meant to be reachable by other origins.',
+      );
     }
+    return true;
+  }
+
+  function openSurfaceAllows(req: Request): boolean {
     if (!warnedOpen && process.env.NODE_ENV !== 'production') {
       warnedOpen = true;
       console.warn(
@@ -94,6 +107,7 @@ export function makeGate(provider?: AuthProvider, opts?: GateOptions): Gate {
   }
   return {
     async allow(req, action, resource) {
+      if (crossSiteWithoutIdentity(req)) return false;
       if (!provider) return openSurfaceAllows(req);
       const principal = await provider.authenticate(req);
       if (principal) principals.set(req, principal);
@@ -107,6 +121,7 @@ export function makeGate(provider?: AuthProvider, opts?: GateOptions): Gate {
       return decision.allow;
     },
     async allowP(req, permission) {
+      if (crossSiteWithoutIdentity(req)) return false;
       if (!provider) return openSurfaceAllows(req);
       const principal = await provider.authenticate(req);
       if (principal) principals.set(req, principal);

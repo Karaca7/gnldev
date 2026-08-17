@@ -11,7 +11,7 @@
 // from a plain `<form enctype="text/plain">` navigation, so no CORS preflight and no fetch()
 // permission is needed — the webpack-dev-server / Vite dev-server advisory shape.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { makeGate, isCrossSiteStateChange, roleAuth } from '../src/index.js';
+import { makeGate, isCrossSiteStateChange, roleAuth, normalizeAuth } from '../src/index.js';
 
 const req = (method: string, headers: Record<string, string> = {}, url = 'http://localhost:4747/api/retention/sweep') =>
   new Request(url, { method, headers, ...(method === 'GET' || method === 'HEAD' ? {} : { body: '{}' }) });
@@ -155,5 +155,40 @@ describe('allowP gets the same treatment as allow', () => {
       const fine = await gate.allowP(req(m, h), m === 'GET' ? 'runs:read' : 'runs:write');
       expect(fine, `${m} ${JSON.stringify(h)} — allowP must match allow`).toBe(coarse);
     }
+  });
+});
+
+// ── the condition is "no identity to ride", not "no provider" ─────────────────────────────────────
+// Keying the check on `!provider` left a hole big enough to ship. A legacy `{read,write}` pair IS a
+// provider after normalizeAuth, so the check was skipped for it — but that pair has no principal
+// model at all (its authenticate() is `return null` by construction), so there is no credential a
+// cross-site page could be riding and its predicate answers on the request alone.
+//
+// Measured before this: with `{read:()=>true, write:()=>true}` configured, a cross-site
+// `POST /api/retention/sweep` was ALLOWED. examples/app ships exactly that shape, so the published
+// example was the open one.
+describe('a provider that binds no identity gets the same protection as none at all', () => {
+  const legacy = () => makeGate(normalizeAuth({ read: () => true, write: () => true }), {});
+
+  it('a cross-site write through a {read,write} pair is refused, on both entry points', async () => {
+    expect(await legacy().allow(req('POST', { 'sec-fetch-site': 'cross-site' }), 'write')).toBe(false);
+    expect(await legacy().allowP(req('POST', { 'sec-fetch-site': 'cross-site' }), 'runs:purge')).toBe(false);
+    expect(await legacy().allow(req('DELETE', { origin: 'https://evil.example' }), 'write')).toBe(false);
+  });
+
+  it('the pair still works for its own app, and still authorizes normally', async () => {
+    expect(await legacy().allow(req('POST', { 'sec-fetch-site': 'same-origin' }), 'write')).toBe(true);
+    expect(await legacy().allow(req('GET', { 'sec-fetch-site': 'cross-site' }), 'read')).toBe(true);
+    // ...and a pair that DENIES still denies, so the check did not replace authorization.
+    const deny = makeGate(normalizeAuth({ read: () => true, write: () => false }), {});
+    expect(await deny.allow(req('POST', { 'sec-fetch-site': 'same-origin' }), 'write')).toBe(false);
+  });
+
+  it('a provider that DOES bind identity is untouched — the token cannot be ridden', async () => {
+    const gate = makeGate(roleAuth({ admin: { token: 'adm' } }), {});
+    const r = new Request('http://localhost:4747/api/retention/sweep', {
+      method: 'POST', headers: { 'sec-fetch-site': 'cross-site', authorization: 'Bearer adm' }, body: '{}',
+    });
+    expect(await gate.allow(r, 'write')).toBe(true);
   });
 });
