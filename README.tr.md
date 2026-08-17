@@ -156,7 +156,7 @@ docker-compose up -d
 GNL_INTEGRATION=1 npx vitest run packages/durable/test/integration-real.test.ts
 docker-compose down
 ```
-TypeScript strict · 0 `@ts-ignore` (tip kaçışları sınırlı tutuldu; sınır/serileştirme noktalarında bir miktar `any`) · ~7,8 MiB toplam dist (yayınlanan 24 paketin `dist/` toplamı; tüketici yalnız kullandığını çeker — ölçülen çekirdek 29,9 KiB gzip) · bağımlılık: `superjson` (+ opsiyonel hono/opentelemetry). Peer: `ai`, `zod`. **Telemetri/phone-home yok.**
+TypeScript strict · 0 `@ts-ignore` (tip kaçışları sınırlı tutuldu; sınır/serileştirme noktalarında bir miktar `any`) · bağımlılık: `superjson` (+ opsiyonel hono/opentelemetry). Peer: `ai`, `zod`. **Telemetri/phone-home yok.**
 
 ## Deployment
 gnl tamamen Hono tabanlı → Node deploy birkaç satır:
