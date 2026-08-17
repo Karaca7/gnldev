@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path';
 import type { Command } from './types.js';
 import { positional } from '../args.js';
 import { bold, cyan, dim, green, yellow } from '../ansi.js';
-import { RECIPES } from '../recipes.js';
+import { RECIPES, recipeContents } from '../recipes.js';
 
 export const addCommand: Command = {
   name: 'add',
@@ -32,7 +32,7 @@ export const addCommand: Command = {
       console.log(`${yellow('•')} ${r.file} already exists — leaving it untouched.`);
     } else {
       mkdirSync(join(target, '..'), { recursive: true });
-      writeFileSync(target, r.contents);
+      writeFileSync(target, recipeContents(r));
       console.log(`${green('✓')} created ${bold(r.file)}`);
     }
     console.log(`\n${cyan('Add to gnl.config.ts:')}`);

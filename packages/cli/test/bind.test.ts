@@ -8,7 +8,7 @@
 // function, and a pure function cannot tell you what a kernel actually bound.
 import { describe, it, expect } from 'vitest';
 import { createServer } from 'node:http';
-import { resolveBind, isLoopbackHost, exposureNotice } from '../src/bind.js';
+import { resolveBind, isLoopbackHost, exposureNotice, isPublishedDevCredential } from '../src/bind.js';
 
 function listenOn(hostname: string | undefined): Promise<{ address: string; family: string }> {
   return new Promise((resolve, reject) => {
@@ -80,5 +80,52 @@ describe('resolveBind', () => {
     // A concrete address IS dialable, so it is shown as given.
     expect(resolveBind({ host: '192.168.1.20', authed: true, allowOpenNetwork: false, command: 'x' }).displayHost)
       .toBe('192.168.1.20');
+  });
+});
+
+// ── credentials this package used to publish ─────────────────────────────────────────────────────
+// `gnl init --features auth` wrote `admin-dev`/`viewer-dev` literally into the scaffolded project,
+// which meant the working admin credential for every scaffolded project shipped inside this package's
+// npm tarball. The production guard in the generated file did not close it: outside production,
+// `gnl dev --host 0.0.0.0` bound to every interface, printed "(auth: protected)", and accepted
+// `Bearer admin-dev` as full admin.
+//
+// Two changes, and this covers the second. New scaffolds generate a random token per project
+// (recipes.ts), so nothing shared exists to look up. But a project created BEFORE that still carries
+// the literal, so the bind decision must not count it as auth either.
+describe('published dev credentials are not auth', () => {
+  it('recognises a credential set made only of values this package shipped', () => {
+    expect(isPublishedDevCredential(['admin-dev'])).toBe(true);
+    expect(isPublishedDevCredential(['admin-dev', 'viewer-dev'])).toBe(true);
+  });
+
+  it('a real token — including a generated one — is auth', () => {
+    expect(isPublishedDevCredential(['admin-2s0Bf_WhvKNL'])).toBe(false);
+    expect(isPublishedDevCredential(['s3cret'])).toBe(false);
+    // Mixed: one real credential is enough to be authenticated.
+    expect(isPublishedDevCredential(['admin-dev', 's3cret'])).toBe(false);
+  });
+
+  it('no credential at all is not "published credentials" — that is the auth-off case', () => {
+    expect(isPublishedDevCredential([])).toBe(false);
+    expect(isPublishedDevCredential([undefined, undefined])).toBe(false);
+    expect(isPublishedDevCredential([''])).toBe(false);
+  });
+
+  it('so a network bind carrying only the shipped token is refused', () => {
+    // This is the composition that mattered: provider resolved, but not with anything private.
+    expect(() => resolveBind({
+      host: '0.0.0.0',
+      authed: true && !isPublishedDevCredential(['admin-dev']),
+      allowOpenNetwork: false,
+      command: 'gnl dev',
+    })).toThrow(/refusing to serve/);
+    // ...and a real token still binds.
+    expect(resolveBind({
+      host: '0.0.0.0',
+      authed: true && !isPublishedDevCredential(['admin-2s0Bf_WhvKNL']),
+      allowOpenNetwork: false,
+      command: 'gnl dev',
+    }).exposed).toBe(true);
   });
 });

@@ -7,7 +7,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, s
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import { RECIPES, FEATURE_IDS, E2E_FEATURE, type Recipe } from './recipes.js';
+import { RECIPES, FEATURE_IDS, E2E_FEATURE, recipeContents, type Recipe } from './recipes.js';
 import { hostById, APP_FILE, hostReadme } from './hosts.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -197,7 +197,7 @@ function scaffoldFeatures(dir: string, name: string, features: string[], forceE2
   for (const r of recipes) {
     const target = join(dir, r.file);
     mkdirSync(dirname(target), { recursive: true });
-    writeFileSync(target, r.contents);
+    writeFileSync(target, recipeContents(r));
     // The CLI's own version, not a literal — the literal version of this line has been wrong twice
     // ('^0.0.0', then '^0.1.0' about to be wrong at the first minor bump). See frameworkRange.
     if (r.dep) deps[r.dep] = frameworkRange();

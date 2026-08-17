@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 // Shared feature recipes — the single source used by BOTH `gnl add <feature>` (writes the src file +
 // Prints hand-wiring) and `gnl init` feature-composition (writes the src file + GENERATES gnl.config.ts).
 //
@@ -9,6 +10,19 @@
 
 /** Where a recipe's export slots into the generated gnl.config.ts. */
 export type WiringPlace = 'agentTool' | 'configField';
+
+/** Resolves a recipe's contents, whether static or generated. */
+export function recipeContents(r: Recipe): string {
+  return typeof r.contents === 'function' ? r.contents() : r.contents;
+}
+
+/**
+ * A per-project development token. Random, so it is never a value anyone can look up in this
+ * package's published source — which is what `admin-dev` was.
+ */
+function devToken(role: string): string {
+  return `${role}-${randomBytes(9).toString('base64url')}`;
+}
 
 export interface RecipeWiring {
   /** The import line to add to gnl.config.ts, e.g. "import { searchDocs } from './src/rag.js';". */
@@ -28,7 +42,12 @@ export interface Recipe {
   /** Relative path written into the project (never overwritten by `add`). */
   file: string;
   /** File body. */
-  contents: string;
+  /**
+   * The file to write. A FUNCTION when the content must differ per project — the auth recipe
+   * generates a random dev token, because a literal in this file is a literal in the npm tarball,
+   * and an admin API guarded by a published string is not guarded.
+   */
+  contents: string | (() => string);
   /** npm dependency to add to package.json (omit if already in the base template — e.g. memory/auth). */
   dep?: string;
   /** How this recipe wires into gnl.config.ts (omit → nothing to wire, file is self-contained). */
@@ -197,13 +216,19 @@ export const checkout = workflow<{ orderId?: string }>()
     label: 'Role-based auth',
     file: 'src/auth.ts',
     // @gnldev/auth is already a dependency of the base template — no dep to add.
-    contents: `// Role-based auth for the REST API + Studio (admin = read/write, viewer = read).
+    // Generated, not literal. The previous version wrote `admin-dev`/`viewer-dev` — which meant the
+    // working admin credential for every scaffolded project was published in the npm tarball of this
+    // package. The production guard below did not close it: outside production `gnl dev --host
+    // 0.0.0.0` bound to every interface, printed "(auth: protected)", and accepted `Bearer admin-dev`
+    // as full admin. Now each project gets its own value at scaffold time, so there is nothing
+    // shared to look up.
+    contents: () => `// Role-based auth for the REST API + Studio (admin = read/write, viewer = read).
 // Provide credentials only — the dev server calls roleAuth() for you. Omit \`auth\` → the API stays open.
 import type { Cred } from '@gnldev/auth';
 
-// The dev fallbacks below are convenience for local work ONLY. In production the process refuses
-// To start without real tokens: a default that ships in a public template is not a secret, and an
-// Admin API guarded by one is effectively open.
+// The dev fallbacks below were generated when this file was created and are unique to this project.
+// They are convenience for local work ONLY: they sit in your source tree, so treat them as public.
+// In production the process refuses to start without real tokens from the environment.
 function credential(envVar: string, devFallback: string): string {
   const value = process.env[envVar];
   if (value) return value;
@@ -214,8 +239,8 @@ function credential(envVar: string, devFallback: string): string {
 }
 
 export const auth: { admin?: Cred; viewer?: Cred } = {
-  admin: { token: credential('GNL_ADMIN_TOKEN', 'admin-dev') },
-  viewer: { token: credential('GNL_VIEWER_TOKEN', 'viewer-dev') },
+  admin: { token: credential('GNL_ADMIN_TOKEN', '${devToken('admin')}') },
+  viewer: { token: credential('GNL_VIEWER_TOKEN', '${devToken('viewer')}') },
 };
 `,
     wiring: {

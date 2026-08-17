@@ -38,6 +38,21 @@ export interface BindChoice {
  * one was configured, because a misconfigured provider that resolves to undefined is the case most
  * likely to be believed and least likely to be checked.
  */
+/**
+ * Credentials that were once written literally into a scaffolded project by this package, and so were
+ * published in its npm tarball. A project still carrying one is not authenticated in any sense that
+ * matters — anybody can read the value out of the registry — so it must not satisfy the network
+ * refusal below. New scaffolds generate a random token per project (see recipes.ts), which is why
+ * this is a fixed, closed list rather than a heuristic: it can only ever shrink.
+ */
+const PUBLISHED_DEV_TOKENS = new Set(['admin-dev', 'viewer-dev']);
+
+/** Does this credential set consist only of values this package once published? */
+export function isPublishedDevCredential(tokens: Iterable<string | undefined>): boolean {
+  const present = [...tokens].filter((t): t is string => typeof t === 'string' && t.length > 0);
+  return present.length > 0 && present.every((t) => PUBLISHED_DEV_TOKENS.has(t));
+}
+
 export function resolveBind(opts: {
   host?: string;
   authed: boolean;

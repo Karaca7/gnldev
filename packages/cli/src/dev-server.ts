@@ -8,7 +8,7 @@ import type * as Durable from '@gnldev/durable';
 import type * as Studio from '@gnldev/studio';
 import type * as StudioAi from '@gnldev/studio/ai';
 import type * as Memory from '@gnldev/memory';
-import { resolveBind, exposureNotice } from './bind.js';
+import { resolveBind, exposureNotice, isPublishedDevCredential } from './bind.js';
 import type { AuthProvider, Cred } from '@gnldev/auth';
 import type * as Auth from '@gnldev/auth';
 import { devMemoryFactory, devStudioMemory } from './memory.js';
@@ -128,12 +128,21 @@ export async function serveDev(
   const provider = await resolveAuthProvider(config, rt.auth, projectDir);
   const app = buildDevApp(config, rt, provider);
   const port = config.port ?? 3000;
-  const mode = provider ? 'protected' : 'open';
   // Previously `serve({ fetch, port })` — with no hostname @hono/node-server binds EVERY interface,
   // While these very lines printed 'localhost'. See bind.ts.
+  // A provider whose only credential is one this package used to SHIP is not auth: the value is
+  // readable in the registry. Without this, `--host 0.0.0.0` printed "(auth: protected)" while
+  // accepting `Bearer admin-dev`. See isPublishedDevCredential.
+  const shippedCreds = isPublishedDevCredential([
+    (config as { auth?: { admin?: { token?: string }; viewer?: { token?: string } } }).auth?.admin?.token,
+    (config as { auth?: { admin?: { token?: string }; viewer?: { token?: string } } }).auth?.viewer?.token,
+  ]);
+  // The banner said 'protected' whenever a provider existed, so a project still carrying the shipped
+  // token was told it was protected by a credential published in the registry. Say what is true.
+  const mode = !provider ? 'open' : shippedCreds ? 'shipped dev token — treat as OPEN' : 'protected';
   const bind = resolveBind({
     host: bindOpts?.host,
-    authed: !!provider,
+    authed: !!provider && !shippedCreds,
     allowOpenNetwork: !!bindOpts?.allowOpenNetwork,
     command: 'gnl dev',
   });

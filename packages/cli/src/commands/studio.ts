@@ -4,7 +4,7 @@
 // From the PROJECT (see runtime.ts), not bundled with @gnldev/cli.
 import type { Command } from './types.js';
 import { flag, flagBool } from '../args.js';
-import { resolveBind, exposureNotice } from '../bind.js';
+import { resolveBind, exposureNotice, isPublishedDevCredential } from '../bind.js';
 
 export const studioCommand: Command = {
   name: 'studio',
@@ -28,9 +28,16 @@ export const studioCommand: Command = {
     // `gnl dev` has always resolved an auth provider from config/env; this command simply never did,
     // So its admin surface was open regardless of what the operator had configured.
     const provider = await resolveAuthProvider(config, await loadAuth(dir), dir);
+    // A provider whose only credential is one this package used to SHIP is not auth: the value is
+    // readable in the registry. Without this, `--host 0.0.0.0` printed "(auth: protected)" while
+    // accepting `Bearer admin-dev`. See isPublishedDevCredential.
+    const shippedCreds = isPublishedDevCredential([
+      (config as { auth?: { admin?: { token?: string }; viewer?: { token?: string } } }).auth?.admin?.token,
+      (config as { auth?: { admin?: { token?: string }; viewer?: { token?: string } } }).auth?.viewer?.token,
+    ]);
     const bind = resolveBind({
       host: flag(ctx.argv, 'host'),
-      authed: !!provider,
+      authed: !!provider && !shippedCreds,
       allowOpenNetwork: flagBool(ctx.argv, 'allow-open-network'),
       command: 'gnl studio',
     });
