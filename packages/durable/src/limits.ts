@@ -529,11 +529,12 @@ async function writeChainCas(
 }
 
 /** Adds a model-step record to the counter DELTA (O(1), the pricing logic is SHARED with cost.ts). */
-function applyModelStepDelta(delta: LimitCounters, value: unknown, opts: RunCostOptions): void {
+function applyModelStepDelta(delta: LimitCounters, value: unknown, opts: RunCostOptions, unpriced?: Set<string>): void {
   const u = usageAndCostFromModelValue(value, opts);
   if (u) {
     delta.totalTokens += u.totalTokens;
     delta.costUsd += u.costUsd;
+    if (!u.priced) unpriced?.add(u.modelId);
   }
   delta.modelStepsSeen++;
 }
@@ -591,6 +592,7 @@ async function seedFromHistory(
   reader: JournalReader,
   runId: string,
   opts: RunCostOptions,
+  unpriced?: Set<string>,
 ): Promise<{ counters: LimitCounters; chain: LimitChain }> {
   const entries = await reader.readRun(runId);
   const counters = emptyCounters();
@@ -598,7 +600,7 @@ async function seedFromHistory(
   const prefix = `${runId}:tool:`;
   for (const e of entries) {
     if (e.kind === 'model') {
-      applyModelStepDelta(counters, e.value, opts);
+      applyModelStepDelta(counters, e.value, opts, unpriced);
       continue;
     }
     if (e.kind !== 'tool') continue;
@@ -628,10 +630,11 @@ async function ensureSeeded(
   store: LimitsStore,
   runId: string,
   opts: RunCostOptions,
+  unpriced?: Set<string>,
 ): Promise<boolean> {
   if ((await readChain(store, runId)) !== undefined) return false; // already seeded
   if (typeof reader.readRun !== 'function') return false; // fail-open
-  const seeded = await seedFromHistory(reader, runId, opts);
+  const seeded = await seedFromHistory(reader, runId, opts, unpriced);
   const key = chainKey(runId);
   const won = typeof store.putIfAbsent === 'function'
     ? await store.putIfAbsent(key, seeded.chain)
@@ -698,6 +701,8 @@ async function computeModelStepsDelta(
   runId: string,
   modelStepsSeen: number,
   opts: RunCostOptions,
+  /** Model ids this delta could not price — collected so the caller can refuse to claim a $ ceiling. */
+  unpriced: Set<string> = new Set(),
 ): Promise<Partial<LimitCounters> | undefined> {
   if (typeof store.get !== 'function') return undefined;
   let seen = modelStepsSeen;
@@ -711,6 +716,7 @@ async function computeModelStepsDelta(
     if (u) {
       totalTokens += u.totalTokens;
       costUsd += u.costUsd;
+      if (!u.priced) unpriced.add(u.modelId);
     }
     seen++;
     stepsAdded++;
@@ -781,9 +787,10 @@ export async function enforceStepLimits(
   if (typeof reader.readRun !== 'function') { reportUnenforceableLimits(reader, limits); return; } // fail-open (or throw under strict)
   const store = reader as LimitsStore;
 
-  await ensureSeeded(reader, store, runId, opts); // seeds with a SINGLE readRun on first encounter (no-op afterward)
+  const unpriced = new Set<string>();
+  await ensureSeeded(reader, store, runId, opts, unpriced); // seeds with a SINGLE readRun on first encounter (no-op afterward)
   let counters = (await readCounters(store, runId)) ?? emptyCounters();
-  const delta = await computeModelStepsDelta(store, runId, counters.modelStepsSeen, opts); // O(1) targeted get — no readRun
+  const delta = await computeModelStepsDelta(store, runId, counters.modelStepsSeen, opts, unpriced); // O(1) targeted get — no readRun
   if (delta) {
     await incrCounters(store, runId, delta);
     counters = {
@@ -804,6 +811,28 @@ export async function enforceStepLimits(
       `@gnldev/durable: run '${runId}' exceeded the maxTokens limit (${limits.maxTokens}) with ${totalTokens} tokens`,
       { kind: 'maxTokens', value: totalTokens, limit: limits.maxTokens },
     );
+  }
+  // A $ ceiling over a run whose model has no price is not a ceiling. costUsd is 0 for those steps
+  // because nothing could price them, so `costUsd > maxCostUsd` stays false no matter how much the
+  // run actually spends -- the guard reads as green precisely when it is doing nothing. Same shape
+  // as the readRun-less case above, so it takes the same route: loud under `strict`, warn otherwise.
+  if (limits.maxCostUsd != null && unpriced.size > 0) {
+    const names = [...unpriced].join(', ');
+    if (limits.strict) {
+      throw new Error(
+        `@gnldev/durable: run '${runId}' sets maxCostUsd, but no pricing entry exists for ${names} — ` +
+          'those steps count as $0, so the ceiling CANNOT be enforced. Supply prices via the `pricing` ' +
+          'option or the journal\'s __pricing__ document, or remove `strict` to fail open with a warning.',
+      );
+    }
+    if (!limitsFailOpenWarned.has(store)) {
+      limitsFailOpenWarned.add(store);
+      console.warn(
+        `@gnldev/durable: maxCostUsd is set but ${names} has no pricing entry — those steps are counted ` +
+          'as $0, so the ceiling is NOT capping this run. Supply prices via the `pricing` option or the ' +
+          'journal\'s __pricing__ document, or set `limits.strict: true` to fail loudly instead.',
+      );
+    }
   }
   if (limits.maxCostUsd != null && costUsd > limits.maxCostUsd) {
     throw new RunLimitExceededError(

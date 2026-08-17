@@ -28,6 +28,30 @@ export function isOffline(env: NodeJS.ProcessEnv = process.env): boolean {
   return false;
 }
 
+/**
+ * Is this actually llms.txt, or is it something that merely answered with 200?
+ *
+ * `res.ok` is not evidence that a document is the document. An access wall, a captive portal, a
+ * CDN error page or an SPA's catch-all route all answer 200 with HTML, and this fetcher fed
+ * whatever came back straight to an AI assistant as the framework's official documentation. That
+ * is not a hypothetical: with the docs host behind Cloudflare Access, GET /llms.txt returns
+ * `200 text/html`, 34 KB, `<title>Sign in ・ Cloudflare Access</title>` -- so every caller was
+ * served a login page as the docs, and the embedded fallback that exists for exactly this case
+ * never got a chance to run, because from `res.ok`'s point of view nothing had gone wrong.
+ *
+ * The llms.txt convention is a markdown document, so the check is: not HTML, and shaped like one.
+ * Anything ambiguous falls back to the embedded copy, which is the safe direction -- slightly
+ * stale but true beats fresh and fabricated.
+ */
+export function looksLikeDocs(body: string, contentType: string | null): boolean {
+  if (contentType && /\b(?:text\/html|application\/xhtml\+xml)\b/i.test(contentType)) return false;
+  const head = body.slice(0, 2000).trimStart();
+  if (!head) return false;
+  if (/^<(?:!doctype|html|\?xml)/i.test(head)) return false;
+  // llms.txt opens with a markdown H1; llms-full.txt sections are '---'-separated markdown.
+  return /^#\s/.test(head) || head.includes('\n# ') || head.startsWith('---');
+}
+
 async function fetchText(url: string): Promise<string | null> {
   if (typeof fetch !== 'function') return null; // Node < 18 (no globalThis.fetch) — unexpected but a safe fallback
   const ac = new AbortController();
@@ -35,7 +59,8 @@ async function fetchText(url: string): Promise<string | null> {
   try {
     const res = await fetch(url, { signal: ac.signal });
     if (!res.ok) return null;
-    return await res.text();
+    const body = await res.text();
+    return looksLikeDocs(body, res.headers.get('content-type')) ? body : null;
   } catch {
     return null;
   } finally {

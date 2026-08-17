@@ -34,6 +34,12 @@ export interface ModelStepUsage {
   totalTokens: number;
   costUsd: number;
   modelId: string;
+  /**
+   * Was `modelId` actually found in the pricing table? When false, `costUsd` is 0 because nothing
+   * could price it -- NOT because the step was free. Callers that enforce a spend ceiling have to
+   * tell those apart; a run priced entirely at $0 will never cross `maxCostUsd`.
+   */
+  priced: boolean;
 }
 
 /**
@@ -58,7 +64,12 @@ export function usageAndCostFromModelValue(value: unknown, opts: RunCostOptions 
   // costOf reads FLAT fields, so it must be handed the flattened object — a nested usage would
   // price every step at zero.
   const costUsd = pricing ? costOf({ inputTokens: inp, outputTokens: outp, cachedTokens: cached }, pricing) : 0;
-  return { inputTokens: inp, outputTokens: outp, cachedTokens: cached, totalTokens: total, costUsd, modelId };
+  // Reported, not warned about. This funnel also serves plain cost REPORTING, where an unpriced
+  // model is unremarkable -- every mock model in a test suite is unpriced and always will be. The
+  // warning belongs where the silence is actually dangerous: at a configured maxCostUsd ceiling
+  // (see limits.ts). Warning here instead meant an ordinary durable run printed to stderr, which
+  // is how test/suspend-cross-process.test.ts caught it.
+  return { inputTokens: inp, outputTokens: outp, cachedTokens: cached, totalTokens: total, costUsd, modelId, priced: !!pricing };
 }
 
 export async function getRunCost(
