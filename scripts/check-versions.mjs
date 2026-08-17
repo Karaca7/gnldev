@@ -127,8 +127,15 @@ for (const t of templates) {
   const tpl = JSON.parse(readFileSync(file, 'utf8'));
   examined++;
   const deps = { ...(tpl.dependencies ?? {}), ...(tpl.devDependencies ?? {}) };
-  for (const [dep, range] of Object.entries(deps)) {
-    if (!dep.startsWith('@gnldev/')) continue;
+  // Every @gnldev package's peers, not only the ones this template lists today. `gnl init --features`
+  // ADDS packages at scaffold time (rag, mcp, workflow — see recipes.ts `dep`), and a `--host` choice
+  // adds more; none of those appear in the template manifest, so checking only what is listed left the
+  // exact case a user hits invisible. Which package gets added depends on a runtime flag, so the
+  // question is answered for all of them: if the template pins ai@^7, every publishable package's
+  // `ai` peer must accept ^7, whichever one the scaffold pulls in.
+  const candidates = new Set([...Object.keys(deps).filter((d) => d.startsWith('@gnldev/')), ...lockstep.map((p) => p.name)]);
+  for (const dep of candidates) {
+    const range = deps[dep];
     // Every gnldev package the template pulls in: its peers must be satisfiable by what the
     // template itself pins. Compared as strings — this catches a stale major, which is the failure
     // that actually happens; it deliberately does not try to be a semver range intersector.
@@ -141,7 +148,7 @@ for (const t of templates) {
         tmplProblems.push(`  templates/${t.name}: pins ${peerDep}@${pinned}, but ${dep} peers ${peerDep}@${peer}`);
       }
     }
-    if (range.startsWith('workspace:')) {
+    if (range && range.startsWith('workspace:')) {
       tmplProblems.push(`  templates/${t.name}: ${dep}@${range} — workspace: protocol cannot resolve outside this repo`);
     }
   }

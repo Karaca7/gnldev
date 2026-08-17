@@ -564,3 +564,98 @@ describe.skipIf(!RUN)('REAL Postgres — schema creation under a simultaneous bo
     }
   }, 40_000);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Prefix ranges under the SERVER'S OWN COLLATION.
+//
+// Every prefix operation here is a range: `key >= prefix AND key < prefix + U+FFFF`. That upper bound
+// is only a prefix under BYTE ordering. Under a linguistic collation — en_US.utf8, the default of
+// nearly every managed Postgres (Neon, RDS, Supabase) — U+FFFF is a noncharacter that collates as if
+// absent, so the bound degenerates to `key < prefix` and the range matches NOTHING. listKeys returns
+// empty and deletePrefix deletes nothing, both reporting success: an org purge, a retention sweep and
+// a GDPR erasure all "succeed" while the rows stay.
+//
+// This block exists because the rest of the suite could not see that. Measured, with the COLLATE "C"
+// fix reverted:
+//
+//   postgres:15-alpine (SQL_ASCII / coll=C)  → 30/30 PASS   ← what CI runs
+//   postgres / pgvector pg16 (UTF8 / en_US)  → 1 FAIL
+//
+// So the single most consequential Postgres fix in the release was invisible to CI, on the exact
+// configuration every managed provider ships. The CI job now runs a matrix over both orderings, and
+// GNL_PG_EXPECT_COLLATION lets each leg assert it really got the ordering it was meant to test —
+// otherwise an image default could quietly move both legs to C and the coverage would evaporate while
+// staying green.
+describe.skipIf(!RUN)('REAL Postgres — prefix ranges under this server\'s collation', () => {
+  let s: PostgresStorage;
+  let pool: any;
+
+  beforeAll(async () => {
+    s = new PostgresStorage({ connectionString: PG_URL });
+    await s.init();
+    const require_ = createRequire(import.meta.url);
+    const { Pool } = require_('pg');
+    pool = new Pool({ connectionString: PG_URL });
+  }, 30_000);
+
+  afterAll(async () => {
+    await s?.close();
+    await pool?.end();
+  });
+
+  /** Whether THIS server orders strings by byte value, asked of the server rather than assumed. */
+  async function byteOrdered(): Promise<boolean> {
+    // Parameters, not a U&'' literal: on a SQL_ASCII database the literal escape is rejected outright
+    // ("conversion between UTF8 and SQL_ASCII is not supported"), which would make this throw on the
+    // very server that is byte-ordered. The production code passes prefix + '￿' as a bind
+    // parameter for the same reason.
+    const r = await pool.query(`SELECT ($1 < $2) AS b`, ['a:b', 'a:' + '￿']);
+    return r.rows[0].b === true;
+  }
+
+  it('reports the collation it is testing, and matches what CI asked for', async () => {
+    const meta = await pool.query(
+      `SELECT pg_encoding_to_char(encoding) AS enc, datcollate AS coll FROM pg_database WHERE datname = current_database()`,
+    );
+    const { enc, coll } = meta.rows[0];
+    const bo = await byteOrdered();
+    console.log(`[collation] encoding=${enc} collate=${coll} byte_ordered=${bo}`);
+
+    const expected = process.env.GNL_PG_EXPECT_COLLATION;
+    if (expected) {
+      // A matrix leg that silently ran the ordering it was NOT assigned would report coverage it does
+      // not have — the failure mode this whole block exists to prevent.
+      expect(coll, `this leg was assigned collation ${expected} but the server reports ${coll}`).toBe(expected);
+    }
+    // Not asserted unconditionally: both orderings are legitimate, and which one is present is the
+    // property of the environment. What is asserted is that the two agree with each other.
+    expect(typeof bo).toBe('boolean');
+    expect(bo, 'a C-collated database must order by bytes').toBe(coll === 'C' || coll.startsWith('C.') ? true : bo);
+  });
+
+  it('listKeys returns the keys under a prefix — on a linguistic collation too', async () => {
+    const run = `${SEED}coll1`;
+    await s.runs.put(`${run}:model:a`, { i: 1 });
+    await s.runs.put(`${run}:model:b`, { i: 2 });
+    await s.runs.put(`${run}:model:c`, { i: 3 });
+
+    const keys = await s.runs.listKeys(`${run}:`);
+    // THE assertion. With the fix reverted this is [] on en_US.utf8 — an empty list, no error.
+    expect(keys.sort()).toEqual([`${run}:model:a`, `${run}:model:b`, `${run}:model:c`]);
+  });
+
+  it('deletePrefix really deletes, and stops at the prefix boundary', async () => {
+    const run = `${SEED}coll2`;
+    const neighbour = `${SEED}coll2x`; // shares the prefix's leading bytes; must NOT be swept
+    await s.runs.put(`${run}:model:k1`, { i: 1 });
+    await s.runs.put(`${run}:model:k2`, { i: 2 });
+    await s.runs.put(`${neighbour}:model:keep`, { i: 3 });
+
+    const n = await s.runs.deletePrefix(`${run}:`);
+    // A count, not just an absence: deletePrefix returning 0 while claiming success is the bug.
+    expect(n, 'deletePrefix reported a row count of 0 — the range matched nothing').toBeGreaterThanOrEqual(2);
+    expect(await s.runs.listKeys(`${run}:`)).toEqual([]);
+    // And the boundary: an over-wide range would take the neighbour's row with it.
+    expect(await s.runs.listKeys(`${neighbour}:`)).toEqual([`${neighbour}:model:keep`]);
+  });
+});

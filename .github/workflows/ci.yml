@@ -38,13 +38,42 @@ jobs:
 
 
   integration:
-    name: real backend (Postgres + Redis)
+    name: real backend (${{ matrix.pg.label }})
     runs-on: ubuntu-latest
+    # Two Postgres string orderings, because the prefix-range fix is invisible under one of them.
+    #
+    # Every prefix operation is a range `key >= prefix AND key < prefix + U+FFFF`, which is only a
+    # prefix under BYTE ordering. postgres:15-alpine initdb's to SQL_ASCII/C -- byte-ordered -- so this
+    # job used to pass whether or not the COLLATE "C" fix was present. Managed Postgres (Neon, RDS,
+    # Supabase) defaults to en_US.utf8, where U+FFFF is a noncharacter that collates as if absent and
+    # the range matches NOTHING: listKeys returns empty and deletePrefix deletes nothing, both
+    # reporting success. Measured with the fix reverted:
+    #
+    #   postgres:15-alpine (SQL_ASCII / C)  -> 33/33 pass   <- the only leg this job used to have
+    #   postgres:16 (UTF8 / en_US.utf8)     -> 3 fail, including the GDPR counter sweep
+    #
+    # So the leg that matters is the second one. Both are kept: C is what a self-hosted alpine user
+    # gets, and a fix that assumed a linguistic collation would break them instead.
+    strategy:
+      fail-fast: false
+      matrix:
+        pg:
+          - label: 'Postgres en_US.utf8 + Redis'
+            image: 'postgres:16'
+            # The official Debian image already sets LANG=en_US.utf8; passed explicitly so an image
+            # default change cannot silently move this leg to C and evaporate the coverage.
+            initdb: '--locale=en_US.utf8 --encoding=UTF8'
+            collation: 'en_US.utf8'
+          - label: 'Postgres C + Redis'
+            image: 'postgres:15-alpine'
+            initdb: '--locale=C'
+            collation: 'C'
     services:
       postgres:
-        image: postgres:15-alpine
+        image: ${{ matrix.pg.image }}
         env:
           POSTGRES_PASSWORD: postgres
+          POSTGRES_INITDB_ARGS: ${{ matrix.pg.initdb }}
         ports: ['5432:5432']
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
@@ -60,6 +89,10 @@ jobs:
       # services it connected to the defaults 55432/6380 and failed with a retry-timeout).
       GNL_PG_URL: postgresql://postgres:postgres@localhost:5432/postgres
       GNL_REDIS_URL: redis://localhost:6379
+      # The leg asserts it really got the ordering it was assigned. Without this, POSTGRES_INITDB_ARGS
+      # silently not taking effect would leave both legs byte-ordered and the job would report coverage
+      # it does not have -- the same failure this matrix exists to fix.
+      GNL_PG_EXPECT_COLLATION: ${{ matrix.pg.collation }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
