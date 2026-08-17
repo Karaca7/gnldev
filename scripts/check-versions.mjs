@@ -93,7 +93,68 @@ if (isPrerelease && process.env.GNL_ALLOW_PRERELEASE !== '1') {
   process.exit(1);
 }
 
+// ── the scaffold's dependency ranges must agree with what the packages actually peer on ─────────
+// These manifests are NOT workspace members, so nothing above sees them and no install resolves
+// them — which is exactly how they drifted: the workspace moved to AI SDK 7 and both templates kept
+// `"ai": "^5.0.0"`. The result was invisible here and fatal there: `npm create gnl` produced a
+// project whose first `npm install` died with ERESOLVE against `peer ai@^7.0.0`, and the advertised
+// entry point of the whole framework did not work. A range that a published peer contradicts is a
+// broken scaffold, so it is checked here rather than trusted to review.
+const templateDir = join(pkgDir, 'cli', 'templates');
+// Read peers from the manifest on disk. `lockstep` carries only name/version/dir/private, so an
+// earlier version of this check looked up `p.peerDependencies`, got undefined for every package, and
+// passed unconditionally — a guard that could not fail, which is worse than no guard because a green
+// line says the templates were checked. Caught by reintroducing the broken range and watching it
+// exit 0.
+const peerOf = (name, dep) => {
+  const entry = lockstep.find((x) => x.name === name);
+  if (!entry) return undefined;
+  const file = join(pkgDir, entry.dir, 'package.json');
+  return JSON.parse(readFileSync(file, 'utf8')).peerDependencies?.[dep];
+};
+// A fixture workspace (test/check-versions.test.ts builds several) has packages but no CLI
+// templates. Absent directory means there is nothing to contradict, so there is nothing to check —
+// the same reading as the `existsSync(manifest)` skip above. The real repo has the directory, so
+// this cannot quietly disable the check where it matters.
+const tmplProblems = [];
+const templates = existsSync(templateDir)
+  ? readdirSync(templateDir, { withFileTypes: true }).filter((d) => d.isDirectory())
+  : [];
+for (const t of templates) {
+  const file = join(templateDir, t.name, 'package.json');
+  if (!existsSync(file)) continue;
+  const tpl = JSON.parse(readFileSync(file, 'utf8'));
+  const deps = { ...(tpl.dependencies ?? {}), ...(tpl.devDependencies ?? {}) };
+  for (const [dep, range] of Object.entries(deps)) {
+    if (!dep.startsWith('@gnldev/')) continue;
+    // Every gnldev package the template pulls in: its peers must be satisfiable by what the
+    // template itself pins. Compared as strings — this catches a stale major, which is the failure
+    // that actually happens; it deliberately does not try to be a semver range intersector.
+    for (const peerDep of ['ai', 'zod']) {
+      const peer = peerOf(dep, peerDep);
+      const pinned = deps[peerDep];
+      if (!peer || !pinned) continue;
+      const major = (r) => (r.match(/(\d+)\./) ?? [])[1];
+      if (major(pinned) && major(peer) && !peer.includes(`^${major(pinned)}.`)) {
+        tmplProblems.push(`  templates/${t.name}: pins ${peerDep}@${pinned}, but ${dep} peers ${peerDep}@${peer}`);
+      }
+    }
+    if (range.startsWith('workspace:')) {
+      tmplProblems.push(`  templates/${t.name}: ${dep}@${range} — workspace: protocol cannot resolve outside this repo`);
+    }
+  }
+}
+if (tmplProblems.length) {
+  console.error('check-versions: scaffold templates contradict the packages they install.\n');
+  console.error([...new Set(tmplProblems)].join('\n'));
+  console.error('\n  These manifests are not workspace members, so nothing else checks them and no');
+  console.error('  install here exercises them. A user hits it on the first `npm install` after');
+  console.error('  `npm create gnl`, as an ERESOLVE with no node_modules.\n');
+  process.exit(1);
+}
+
 const heldBack = lockstep.filter((p) => p.private).map((p) => p.name);
 const suffix = heldBack.length ? ` (incl. private-but-distributed: ${heldBack.join(', ')})` : '';
 const prereleaseNote = isPrerelease ? ' — PRERELEASE, allowed by GNL_ALLOW_PRERELEASE=1' : '';
 console.log(`✓ ${lockstep.length} distributed packages, all at ${version}${suffix}${prereleaseNote}`);
+if (templates.length) console.log(`✓ ${templates.length} scaffold templates agree with the published peer ranges`);

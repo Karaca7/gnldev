@@ -125,3 +125,66 @@ describe('check-versions: the real repository', () => {
     expect(result.status).toBe(0);
   });
 });
+
+// ── the scaffold's ranges against the packages' peers ────────────────────────────────────────────
+// The failure this covers reached the publish candidate: the workspace moved to AI SDK 7 while
+// packages/cli/templates/*/package.json kept `"ai": "^5.0.0"`. Nothing noticed, because those
+// manifests are not workspace members — no install resolves them and no other check reads them. The
+// user finds out on the first `npm install` after `npm create gnl`, as an ERESOLVE with no
+// node_modules, on the entry point the root README advertises.
+//
+// Note what the first version of the guard did: it looked up `peerDependencies` on the lockstep
+// entry, which only carries name/version/dir/private. Every lookup was undefined, so it passed
+// unconditionally AND printed a line saying the templates agreed. These fixtures exist so that
+// cannot come back — the first asserts it FAILS, which is the direction a broken guard gets wrong.
+function withTemplate(dir: string, name: string, manifest: unknown): string {
+  const d = join(dir, 'packages', 'cli', 'templates', name);
+  mkdirSync(d, { recursive: true });
+  writeFileSync(join(d, 'package.json'), JSON.stringify(manifest, null, 2));
+  return dir;
+}
+
+describe('check-versions: scaffold templates', () => {
+  const peering = (name: string, peer: Record<string, string>) => ({
+    name: `@gnldev/${name}`, version: '0.1.0', files: ['dist'], peerDependencies: peer,
+  });
+
+  it('fails when a template pins a major the package it installs does not peer on', () => {
+    const dir = withTemplate(
+      fixtureWorkspace({ durable: peering('durable', { ai: '^7.0.0' }) }),
+      'minimal',
+      { name: 'app', dependencies: { '@gnldev/durable': '^0.1.0', ai: '^5.0.0' } },
+    );
+    const { status, out } = runGuard(dir);
+    expect(status, 'a scaffold that cannot install must fail the guard').toBe(1);
+    expect(out).toContain('templates/minimal');
+    expect(out).toContain('pins ai@^5.0.0');
+    expect(out).toContain('peers ai@^7.0.0');
+  });
+
+  it('passes when they agree', () => {
+    const dir = withTemplate(
+      fixtureWorkspace({ durable: peering('durable', { ai: '^7.0.0' }) }),
+      'minimal',
+      { name: 'app', dependencies: { '@gnldev/durable': '^0.1.0', ai: '^7.0.0' } },
+    );
+    expect(runGuard(dir).status).toBe(0);
+  });
+
+  it('rejects a workspace: protocol left in a template, which cannot resolve for a user', () => {
+    const dir = withTemplate(
+      fixtureWorkspace({ durable: peering('durable', { ai: '^7.0.0' }) }),
+      'full',
+      { name: 'app', dependencies: { '@gnldev/durable': 'workspace:*', ai: '^7.0.0' } },
+    );
+    const { status, out } = runGuard(dir);
+    expect(status).toBe(1);
+    expect(out).toContain('workspace: protocol');
+  });
+
+  it('a workspace with no templates at all passes, and does NOT claim it checked any', () => {
+    const { status, out } = runGuard(fixtureWorkspace({ durable: peering('durable', { ai: '^7.0.0' }) }));
+    expect(status).toBe(0);
+    expect(out, 'an absent directory must not print a confirmation').not.toContain('scaffold templates agree');
+  });
+});

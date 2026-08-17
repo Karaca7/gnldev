@@ -53,7 +53,8 @@
     "@gnldev/tool-schema": "workspace:^",
     "ai": "^7.0.0",
     "ioredis": "^5.4.0",
-    "pg": "^8.0.0"
+    "pg": "^8.0.0",
+    "zod": "^3.25.76 || ^4.1.8"
   },
   "peerDependenciesMeta": {
     "@gnldev/tool-schema": {

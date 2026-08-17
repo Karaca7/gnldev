@@ -100,14 +100,24 @@ jobs:
       #
       # --no-git-checks is required because the tag ref is checked out detached (not on a
       # branch), which pnpm's default git-status checks would otherwise reject.
+      # PROVENANCE IS PASSED AS CONFIG, NOT AS A FLAG. `pnpm publish` rebuilds npm's argv from a
+      # fixed allow-list (--access / --dry-run / --otp), so `--provenance` is accepted and silently
+      # DROPPED: `pnpm publish --help` does not list it, while `npm publish --help` does. The flag
+      # form therefore publishes 24 unattested tarballs while exiting 0, and npm refuses to
+      # republish a version -- so 0.1.0 would stay permanently unattested with nothing in the log to
+      # say so. NPM_CONFIG_PROVENANCE reaches npm through the environment, which pnpm does not
+      # filter. Verify with a workflow_dispatch dry run before a real tag: the npm output must
+      # mention an attestation/provenance step.
       - name: Publish (dry run)
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
-        run: pnpm -r publish --access public --provenance --no-git-checks --dry-run
+        run: pnpm -r publish --access public --no-git-checks --dry-run
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true
 
       - name: Publish
         if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
-        run: pnpm -r publish --access public --provenance --no-git-checks
+        run: pnpm -r publish --access public --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true
