@@ -136,7 +136,7 @@ The dedup window is run-scoped by default. Opt into `idempotencyWindow: 'cross-r
 arguments (or logical key) execute once across **all** runs — retried jobs and re-triggered agents
 included. Cross-run records live under the `xrun:` key prefix, outside any run's timeline: run
 retention/sweep never touches them (purge explicitly with `journal.deletePrefix('xrun:')`), and
-`withOrg` isolation still applies. Proof tests: `test/args-idempotency.test.ts` (reproduces the
+`withOrg` isolation still applies — including the `options.idempotencyKey` handed to your tool and forwarded to the provider, which carries the org so two organizations using the same `orderId` do NOT collapse into one charge at Stripe. Proof: `test/cross-run-org-key.test.ts`. Proof tests: `test/args-idempotency.test.ts` (reproduces the
 duplicate-toolCallId pattern end-to-end) and `test/cross-run-idempotency.test.ts`.
 
 ## Governance (policy)

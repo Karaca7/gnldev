@@ -3,6 +3,7 @@ import { withTimeout } from './timeout.js';
 import { stampFormat, upgradeFormat } from './format.js';
 import { DivergenceError, RetryLimitExceededError, RunBusyError, SideEffectRetryBlockedError } from './errors.js';
 import { claim, ctxGet, runKeys } from './journal.js';
+import { orgScopeOf } from './organization.js';
 import { CompensatedRunError, runCompensated } from './compensation.js';
 import { recordIncident } from './incidents.js';
 import { markRunTainted, readRunTaint } from './taint.js';
@@ -213,11 +214,26 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       // Stays CONSISTENT (otherwise every new toolCallId would spawn a different provider idempotencyKey).
       // In the 'cross-run' window the runId is dropped here too — so the downstream idempotencyKey is
       // ALSO cross-run (a retried run reusing the same arguments must reuse the SAME provider key).
+      //
+      // The ORG belongs in this key too, because this key LEAVES the process. Journal isolation is a
+      // key prefix, so two `withOrg` journals already keep separate records — but the value below is
+      // handed to the provider, and `toolName:hash` is identical across orgs. Two orgs charging the
+      // same orderId therefore produced the same Stripe idempotency key: the second charge was
+      // deduped against the first, org B was told it succeeded, org A paid, and both journals
+      // recorded success. Money-shaped and silent, and the docs instruct forwarding this exact string
+      // (see examples/stripe-idempotency).
+      //
+      // Added ONLY when a scope is active, so a single-tenant deployment's keys stay byte-identical:
+      // a key format that shifts under an in-flight retry is itself a double-charge. For org-scoped
+      // users the format does change, which is acceptable only because nothing is published yet;
+      // after 1.0 the same change would need a migration window.
+      const orgScope = orgScopeOf(ctx.journal);
+      const orgPart = orgScope ? `org:${orgScope}:` : '';
       const idempotencyKey = mode !== 'args'
-        ? `${ctx.runId}:${toolCallId}`
+        ? `${orgPart}${ctx.runId}:${toolCallId}`
         : window === 'cross-run'
-          ? `${toolName}:${hash}`
-          : `${ctx.runId}:${toolName}:${hash}`;
+          ? `${orgPart}${toolName}:${hash}`
+            : `${orgPart}${ctx.runId}:${toolName}:${hash}`;
 
       // 1) Exactly-once: if a succeeded/denied/reflected record exists, do NOT execute, return from the
       // Journal (replay) — a 'reflected' nudge replays IDENTICALLY too (the same toolCallId must see the

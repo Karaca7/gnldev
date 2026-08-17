@@ -22,12 +22,34 @@ function orgPrefix(orgId: string): string {
  * BasicMemory/queue. Organizations CANNOT SEE each other's keys; the same runId is independent across
  * Different organizations.
  */
+/**
+ * Marks a journal as scoped to an organization, so code holding only the `Journal` can still tell.
+ *
+ * Needed because org isolation is implemented as a key prefix captured in a closure: everything
+ * downstream sees a plain `Journal` and cannot know an org is in play. That is fine for storage —
+ * the prefix does the isolating — but NOT for a value that leaves this process. The cross-run
+ * idempotency key is handed to the PROVIDER (Stripe et al.), and without the org in it two isolated
+ * orgs charging the same orderId produce the same provider key, so the second charge is deduped
+ * against the first: org B is told it succeeded, org A paid, and both journals record success.
+ * Money-shaped and silent. Read by durable-tool.ts.
+ */
+export const ORG_SCOPE = Symbol.for('@gnldev/durable.orgScope');
+
+/** The organization a journal is scoped to, if any. */
+export function orgScopeOf(journal: unknown): string | undefined {
+  const v = (journal as Record<symbol, unknown> | null | undefined)?.[ORG_SCOPE];
+  return typeof v === 'string' ? v : undefined;
+}
+
 export function withOrg(journal: Journal, orgId: string): Journal & Partial<JournalReader> {
   const prefix = orgPrefix(orgId);
   const out: Journal & Partial<JournalReader> = {
     get: <T = unknown>(key: string) => journal.get<T>(prefix + key),
     put: (key: string, value: unknown) => journal.put(prefix + key, value),
   };
+  // Non-enumerable: this is a marker for code in this process, not part of the journal's data shape,
+  // so it must not appear in a spread, a JSON round-trip, or a key listing.
+  Object.defineProperty(out, ORG_SCOPE, { value: orgId, enumerable: false, configurable: true });
   if (journal.putIfAbsent) {
     out.putIfAbsent = (key, value) => journal.putIfAbsent!(prefix + key, value);
   }
