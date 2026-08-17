@@ -1,6 +1,5 @@
 import { nestedAgentRunId } from './journal.js';
-import { stepCountIs, tool as aiTool } from 'ai';
-import { z } from 'zod';
+import { stepCountIs, tool as aiTool, jsonSchema } from 'ai';
 import { runDurable, streamDurable } from './run.js';
 import type { StreamBreach } from './run.js';
 import { resolveModel, withModelFallback, type FallbackCandidate } from './model-router.js';
@@ -445,8 +444,25 @@ export function createGnl(config: CreateGnlConfig) {
       }
       out[`workflow_${wfName}`] = Object.assign(aiTool({
         description: `Start the '${wfName}' workflow and return its output`,
-        inputSchema: z.object({
-          input: z.record(z.string(), z.any()).optional().describe('input object handed to the workflow'),
+        // Declared as JSON Schema, not zod, and deliberately. `@ai-sdk/provider-utils` forces
+        // `additionalProperties: false` on every object it converts through its ZOD 4 path
+        // (addAdditionalPropertiesToJsonSchema, reached from zod4Schema but not zod3Schema), so on
+        // zod 4 this schema told the provider the input accepts NO properties at all. Measured:
+        //   zod 3.25.76 → {"type":"object","additionalProperties":{}}
+        //   zod 4.4.3   → {"type":"object","propertyNames":{...},"additionalProperties":false}
+        // It is not specific to z.record — `z.looseObject({})` and `z.object({}).passthrough()` are
+        // clobbered identically, so no zod spelling survives. A workflow takes an arbitrary input
+        // object by definition, and jsonSchema() bypasses the converter, which also makes this
+        // independent of whichever zod major the host installs.
+        inputSchema: jsonSchema<{ input?: Record<string, unknown> }>({
+          type: 'object',
+          properties: {
+            input: {
+              type: 'object',
+              additionalProperties: true,
+              description: 'input object handed to the workflow',
+            },
+          },
         }),
         execute: async ({ input }: { input?: Record<string, unknown> }, options: any) => {
           // Parent-scoped, for the same reason as agent-tool's nested runId above: a toolCallId is
