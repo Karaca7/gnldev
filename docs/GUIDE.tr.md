@@ -38,10 +38,40 @@ Ajanı AYNI runId ile tekrar çalıştır.
 → CRM notu:    kayıtlı DEĞİL → şimdi çalışır ✅
 ```
 
-Buna **exactly-once** (tam-bir-kez: her yan etki ne eksik ne fazla, tam olarak bir kez çalışır)
-ve **deterministic replay** (deterministik tekrar-oynatma: aynı koşu tekrar edildiğinde LLM'e ve
-araçlara yeniden gitmeden, defterdeki kayıtlardan aynı sonucun yeniden kurulması) denir.
-**GNL'in "moat"u** (hendek: aynı tasarım bahsine girmeden kopyalanması zor, yapısal üstünlük) budur.
+Buna **exactly-once** (tam-bir-kez) ve **deterministic replay** (deterministik tekrar-oynatma: aynı
+koşu tekrar edildiğinde LLM'e ve araçlara yeniden gitmeden, defterdeki kayıtlardan aynı sonucun
+yeniden kurulması) denir.
+
+### Yukarıdaki cümlenin sessizce atladığı durum
+
+Yukarıdaki çöküş adımlar *arasında* oluyor — kolay yarısı bu. Zor yarısı bir adımın **içinde** olan
+çöküş: CRM yazması gitmiş, ve süreç sonucu deftere ulaşmadan ölmüş. Devam etme artık
+sınıflandıramadığı bir adımla karşı karşıya: olmuş olabilir, olmamış da olabilir.
+
+GNL iki yönden hiçbirine tahmin yürütmez. Yan etkisi olan bir araç için **durur ve sorar**,
+`SideEffectRetryBlockedError` fırlatarak:
+
+```ts
+import { SideEffectRetryBlockedError } from '@gnldev/durable';
+
+try {
+  await runDurable({ runId: 'order-42', journal, model, tools, prompt });
+} catch (e) {
+  if (!(e instanceof SideEffectRetryBlockedError)) throw e;
+  // e.detail.key şüphede olan çağrıyı adlandırır. Üç yoldan biriyle çözülür:
+  //   1. tool.recover()  — sağlayıcıyı yeniden sor; {done:true, output} ya da {done:false} döner
+  //   2. tool.idempotent: true — tekrarlanması güvenli, o hâlde tekrarla
+  //   3. approvals: { [toolCallId]: true } — bir insan karar verdi
+}
+```
+
+Yani garantinin dürüst adı **at-most-once** (en-fazla-bir-kez): bir yan etki asla iki kez çalışmaz, ve
+framework'ün ayırt edemediği yerde riske girmek yerine durur. Bu bilinçli bir takas — kusursuzluk
+yerine doğruluk — ve devam etmenin her zaman görünmez olmamasının sebebi budur. **GNL'in "moat"u**
+(hendek: aynı tasarım bahsine girmeden kopyalanması zor, yapısal üstünlük) budur.
+
+Aksini söylemedikçe her araç yan etkili sayılır (`durable-tool.ts`:
+`tool.sideEffect ?? tool.idempotent !== true`), yani bu istisnai bir durum değil, varsayılan yol.
 
 ---
 

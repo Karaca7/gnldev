@@ -72,7 +72,11 @@ try {
       });
       out({ ok: true, text: res.text });
     } catch (e: any) {
-      out({ ok: false, error: String(e?.name ?? e) });
+      // `atLockAcquisition` is stamped by run.ts on the RunBusyError it throws when acquireRunLock
+      // returns null. Reporting it is what lets the test tell "the LOCK turned me away" apart from
+      // "I got in and something else stopped me" — without it, a test named after the lock passed
+      // with the lock removed entirely.
+      out({ ok: false, error: String(e?.name ?? e), atLockAcquisition: e?.atLockAcquisition === true });
     }
   } else if (mode === 'incr') {
     // Cross-process H8a proof: K blind increments from EACH process on the same counter key —

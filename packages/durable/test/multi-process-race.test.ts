@@ -87,9 +87,23 @@ describe('REAL multi-process races (same SQLite journal, two OS processes)', () 
       const { a, b } = await runPair('charge-lock', dir);
       // THE exactly-once claim, under a real concurrent window (the tool holds the lock for 300ms):
       expect(chargeCount(dir)).toBe(1);
-      // At least one worker completed; a loser (if the overlap caught it) failed ONLY with RunBusyError.
-      expect([a, b].some((r) => r.ok)).toBe(true);
-      for (const r of [a, b]) if (!r.ok) expect(r.error).toBe('RunBusyError');
+
+      // ...and it has to be THE LOCK that produced it. This asserted only "charge is 1", "someone
+      // succeeded", and — inside a `for` over the failures — "any failure is RunBusyError". With no
+      // failures that loop asserts nothing, so all three held when BOTH workers succeeded. Measured:
+      // stubbing acquireRunLock to grant unconditionally left this test GREEN, because the tool claim
+      // (the next test's subject) was keeping the charge at 1. The lock itself was untested.
+      const rejected = [a, b].filter((r) => !r.ok);
+      expect(
+        rejected.length,
+        'exactly one worker must be turned away — both getting through means no contention happened and this test measured nothing',
+      ).toBe(1);
+      expect(rejected[0].error).toBe('RunBusyError');
+      expect(
+        rejected[0].atLockAcquisition,
+        'the rejection must come from acquireRunLock, not from a gate further in',
+      ).toBe(true);
+      expect([a, b].filter((r) => r.ok).length, 'and exactly one must get through').toBe(1);
       await assertCleanReplay(dir);
       expect(chargeCount(dir)).toBe(1); // still 1 after the replay
     });

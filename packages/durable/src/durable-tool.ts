@@ -192,6 +192,9 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
     ...tool,
     execute: async (input: any, options: any) => {
       const toolCallId = options?.toolCallId;
+      // Set when THIS call's recover() probe threw. Per invocation on purpose — see the catch below
+      // for what happened when the same fact was written onto `tool`.
+      let recoverUnavailable = false;
       // TASK (args idempotency): `hash` is the SINGLE source of truth for the duration of this execute
       // Call — the journal key, the drift detector, the loop-detection hash, AND the idempotencyKey
       // Carried to the provider ALL derive from it. In 'call' mode (or in 'args' mode when there is NO
@@ -638,7 +641,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
         //   Done:false → it never happened: safely auto-retry.
         //   Recover throws → the uncertainty couldn't be resolved → safe last resort: the approval gate.
         const uncertain = record.status === 'running' || record.status === 'failed';
-        if (sideEffect && uncertain && approved !== true && typeof tool.recover === 'function') {
+        if (sideEffect && uncertain && approved !== true && !recoverUnavailable && typeof tool.recover === 'function') {
           try {
             const probe = await tool.recover(input, { idempotencyKey, toolCallId });
             // The contract is `{done:true, output} | {done:false}`, and the branch below reads
@@ -686,10 +689,16 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
               `@gnldev/durable: '${toolName}' has a recover() hook but it failed for ${key} — falling back to the approval gate:`,
               recoverErr,
             );
-            tool = { ...tool, recover: undefined } as T; // don't retry recover again on this attempt
+            // Scoped to this call. This used to be `tool = { ...tool, recover: undefined }`, and
+            // `tool` is durableTool's PARAMETER — one closure shared by every invocation of the
+            // returned tool. So a single transient probe failure (a timeout, a 503) removed recover()
+            // for the REST OF THE RUN: every later in-doubt call skipped the provider check and went
+            // straight to manual approval, with nothing saying why. The comment here already said "on
+            // this attempt"; the scope did not match it.
+            recoverUnavailable = true;
           }
         }
-        const recovered = typeof tool.recover === 'function'; // reached here with done:false → auto-cleared
+        const recovered = !recoverUnavailable && typeof tool.recover === 'function'; // reached here with done:false
 
         if (record.status === 'failed') {
           const attempts = record.attempts ?? 1;

@@ -5,7 +5,7 @@
 //     RE-RUN → SideEffectRetryBlockedError (double-charging is impossible; the cost is a human decision).
 //   - approvals[toolCallId]=true: a human says "re-run knowing the risk" → runs exactly 1 more time.
 //   - a tool marked idempotent: true: frictionless reclaim (retrying is declared harmless).
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { InMemoryJournal, runKeys, durableTool, SideEffectRetryBlockedError } from '../src/index.js';
 
 const STALE_MS = 60_000; // above CLAIM_TTL_MS (30s) — definitely stale
@@ -216,5 +216,68 @@ describe("H10 — footnotes turned into code: strict tool policy", () => {
     expect(() =>
       durableTools({ chargeCard: { execute: async () => 1 } }, { journal: new InMemoryJournal(), runId: 'p2' }),
     ).not.toThrow();
+  });
+});
+
+// ── a failed probe must not disarm recover() for the rest of the run ─────────────────────────────
+// When recover() throws, the call falls back to the approval gate — correct, and it warns. What was
+// wrong is the SCOPE of that fallback: the code wrote `tool = { ...tool, recover: undefined }`, and
+// `tool` is durableTool's parameter, i.e. one closure shared by every invocation of the returned
+// tool. So a single transient failure — a timeout, one 503 from the provider's API — silently
+// removed recover() for every LATER in-doubt call in the run. Each of those then skipped the
+// provider check it was written for and went to manual approval instead, with nothing explaining
+// why. The comment at that line already said "on this attempt"; the scope did not match it.
+describe('recover() failure is scoped to the call that failed', () => {
+  it('a transient probe failure does not disarm recover() for the next in-doubt call', async () => {
+    const journal = new InMemoryJournal();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let probes = 0;
+    let charges = 0;
+
+    const dt = durableTool(
+      {
+        sideEffect: true,
+        execute: async () => { charges++; return { charged: 20 }; },
+        recover: async () => {
+          probes++;
+          // The provider is unreachable on the FIRST probe only — the shape of a timeout or a 503.
+          if (probes === 1) throw new Error('provider unreachable');
+          return { done: true as const, output: { charged: 20, recovered: true } };
+        },
+      },
+      { journal, runId: 'rc' },
+      'chargeCard',
+    );
+
+    // Call 1: in doubt, probe throws → falls back to the approval gate. Expected.
+    await crashWindow(journal, 'rc', 'call-1');
+    await expect(dt.execute!({ amount: 20 }, { toolCallId: 'call-1' })).rejects.toThrow(SideEffectRetryBlockedError);
+    expect(probes, 'the first call did reach the provider').toBe(1);
+
+    // Call 2: a DIFFERENT call, also in doubt. It must get its own chance to ask the provider.
+    await crashWindow(journal, 'rc', 'call-2');
+    const out = await dt.execute!({ amount: 20 }, { toolCallId: 'call-2' });
+    expect(probes, 'recover() was still armed for the second call').toBe(2);
+    expect(out).toEqual({ charged: 20, recovered: true });
+    expect(charges, 'and it recovered rather than re-charging').toBe(0);
+  });
+
+  it('within ONE call a thrown probe is not retried', async () => {
+    // The behaviour the original line was reaching for, and which still holds.
+    const journal = new InMemoryJournal();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let probes = 0;
+    await crashWindow(journal, 'rc2', 'call-1');
+    const dt = durableTool(
+      {
+        sideEffect: true,
+        execute: async () => ({ charged: 20 }),
+        recover: async () => { probes++; throw new Error('provider unreachable'); },
+      },
+      { journal, runId: 'rc2' },
+      'chargeCard',
+    );
+    await expect(dt.execute!({ amount: 20 }, { toolCallId: 'call-1' })).rejects.toThrow(SideEffectRetryBlockedError);
+    expect(probes, 'probed once, not in a loop').toBe(1);
   });
 });
