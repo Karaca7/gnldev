@@ -56,6 +56,24 @@ function normRange(r?: number | { before: number; after: number }) {
 }
 const hasNorm = (v?: number[] | null): v is number[] => !!v && v.some((x) => x !== 0);
 
+/**
+ * Does plain `<` on this backend order strings by bytes?
+ *
+ * Every prefix scan here is a range: `key >= prefix AND key < prefix + U+FFFF`. That is only a
+ * prefix under BYTE ordering. Under a linguistic collation -- en_US.utf8, the default of nearly
+ * every managed Postgres -- U+FFFF is a noncharacter that collates as if absent, so the upper bound
+ * reduces to `key < prefix` and the range matches NOTHING: listKeys returns empty, deletePrefix
+ * deletes nothing and reports 0, with no error anywhere.
+ *
+ * `COLLATE "C"` fixes it, but cannot simply be hardcoded: pg-mem (which this suite runs most of its
+ * Postgres tests against) rejects the statement at parse time, and its own comparison is already
+ * byte order, so it does not need it. A database created with C collation does not need it either.
+ *
+ * So probe the behaviour instead of guessing the backend, the same way the advisory lock above is
+ * best-effort rather than version-gated. Returns the clause to splice into the comparisons.
+ */
+type PrefixShape = { collate: string };
+
 const DDL = [
   `CREATE TABLE IF NOT EXISTS gnl_meta (k TEXT PRIMARY KEY, v TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS gnl_run_journal (key TEXT PRIMARY KEY, run_id TEXT, kind TEXT, suspended BOOLEAN NOT NULL DEFAULT false, value TEXT NOT NULL, created_at BIGINT NOT NULL)`,
@@ -90,6 +108,8 @@ const DDL = [
 ];
 
 export class PostgresStorage implements Storage {
+  /** Filled in by ensureReady's probe; shared BY REFERENCE with PgRunJournal (see PrefixShape). */
+  private prefixShape: PrefixShape = { collate: '' };
   /** H10a: deployment durability report (delegates to the runs journal — see PgRunJournal.durabilityReport). */
   durabilityReport() { return (this.runs as any).durabilityReport() as ReturnType<any>; }
 
@@ -162,7 +182,7 @@ export class PostgresStorage implements Storage {
         client.release?.(destroy);
       }
     };
-    this.runs = new PgRunJournal(q, tx);
+    this.runs = new PgRunJournal(q, tx, this.prefixShape);
     this.memory = new PgMemoryStore(q);
     this.vectors = new PgVectorStore(q);
     this.work = new PgWorkStore(q);
@@ -195,6 +215,23 @@ export class PostgresStorage implements Storage {
         const locked = await this._pool.query('SELECT pg_advisory_lock(47110001)').then(() => true, () => false);
         try {
           for (const sql of DDL) await this._pool.query(sql);
+          // Ask the backend what its `<` actually does, rather than assuming. 'a:b' sorts below
+          // 'a:' + U+FFFF under byte order and NOT under a linguistic collation, so this single
+          // comparison separates the two. A backend that cannot answer is treated as byte-ordered:
+          // that is the behaviour every backend had before this probe existed.
+          const probe = await this._pool
+            .query(`SELECT ('a:b' < ('a:' || U&'\\FFFF')) AS byte_ordered`)
+            .then((r: any) => r.rows?.[0]?.byte_ordered !== false, () => true);
+          if (!probe) {
+            this.prefixShape.collate = ' COLLATE "C"';
+            // The PK indexes are in the database's own collation and cannot serve a COLLATE "C"
+            // range, so a prefix scan would degrade to a seq scan without these.
+            for (const sql of [
+              `CREATE INDEX IF NOT EXISTS gnl_run_journal_cprefix ON gnl_run_journal (key COLLATE "C")`,
+              `CREATE INDEX IF NOT EXISTS gnl_runs_cprefix ON gnl_runs (run_id COLLATE "C")`,
+              `CREATE INDEX IF NOT EXISTS gnl_counters_cprefix ON gnl_counters (key COLLATE "C")`,
+            ]) await this._pool.query(sql);
+          }
           await this._pool.query(`INSERT INTO gnl_meta (k, v) VALUES ('schema_version', $1) ON CONFLICT (k) DO NOTHING`, [SCHEMA_VERSION]);
         } finally {
           if (locked) await this._pool.query('SELECT pg_advisory_unlock(47110001)').catch(() => {});
@@ -298,7 +335,7 @@ const inserted1 = (r: QueryResult) => (r.rowCount ?? r.rows.length) === 1;
 type Tx = <T>(fn: (q: Q) => Promise<T>) => Promise<T>;
 
 class PgRunJournal implements RunJournal {
-  constructor(private q: Q, private tx: Tx) {}
+  constructor(private q: Q, private tx: Tx, private shape: PrefixShape) {}
   async get<T = unknown>(key: string): Promise<T | undefined> {
     const r = await this.q('SELECT value FROM gnl_run_journal WHERE key = $1', [key]);
     return r.rows[0] ? deserialize<T>(r.rows[0].value) : undefined;
@@ -549,20 +586,30 @@ class PgRunJournal implements RunJournal {
     );
   }
   async listKeys(prefix: string): Promise<string[]> {
-    // Sargable range scan (uses the PK index) — LIKE 'prefix%' would fall back to a seq scan under the default collation.
+    // COLLATE "C" is load-bearing, not a micro-optimisation. Under a linguistic collation (en_US.utf8,
+    // the default of nearly every managed Postgres) string comparison is NOT byte order: U+FFFF is a
+    // noncharacter and collates as if absent, so `key < prefix || U+FFFF` reduces to `key < prefix` and
+    // the range matches NOTHING. Measured on a stock pgvector/pg16 (en_US.utf8): the same range that
+    // matches 3 rows under "C" matched 0 under the default. That made listKeys silently return empty
+    // and deletePrefix silently delete nothing -- returning 0 with no error, so an org purge, a
+    // retention sweep and `deletePrefix('xrun:')` all reported success while the rows stayed. SQLite is
+    // unaffected: its default collation IS byte order. The gnl_*_cprefix indexes below are declared
+    // with the same collation so these stay index-backed range scans rather than seq scans.
     // Same upper bound as the SQLite approach: prefix + '￿'.
-    const r = await this.q(`SELECT key FROM gnl_run_journal WHERE key >= $1 AND key < $2 ORDER BY created_at`, [prefix, prefix + '￿']);
+    const c = this.shape.collate;
+    const r = await this.q(`SELECT key FROM gnl_run_journal WHERE key${c} >= $1 AND key${c} < $2 ORDER BY created_at`, [prefix, prefix + '￿']);
     return r.rows.map((x) => x.key);
   }
 
   /** Retention/GDPR: PERMANENTLY delete keys starting with a prefix; also clean up the derived gnl_runs index. */
   async deletePrefix(prefix: string): Promise<number> {
-    const r = await this.q('DELETE FROM gnl_run_journal WHERE key >= $1 AND key < $2', [prefix, prefix + '￿']);
+    const c = this.shape.collate;
+    const r = await this.q(`DELETE FROM gnl_run_journal WHERE key${c} >= $1 AND key${c} < $2`, [prefix, prefix + '￿']);
     const rid = prefix.endsWith(':') ? prefix.slice(0, -1) : prefix;
-    await this.q('DELETE FROM gnl_runs WHERE run_id = $1 OR (run_id >= $2 AND run_id < $3)', [rid, prefix, prefix + '￿']);
+    await this.q(`DELETE FROM gnl_runs WHERE run_id = $1 OR (run_id${c} >= $2 AND run_id${c} < $3)`, [rid, prefix, prefix + '￿']);
     // Counters (incrBy/H8a) are keys too — see the sqlite-storage.ts deletePrefix note (GDPR org purge
     // + rebuildMetrics correctness). Not included in the return count, same as the gnl_runs rows.
-    await this.q('DELETE FROM gnl_counters WHERE key >= $1 AND key < $2', [prefix, prefix + '￿']);
+    await this.q(`DELETE FROM gnl_counters WHERE key${c} >= $1 AND key${c} < $2`, [prefix, prefix + '￿']);
     return r.rowCount ?? 0;
   }
   async readRun(runId: string): Promise<JournalEntry[]> {
