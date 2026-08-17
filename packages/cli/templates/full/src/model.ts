@@ -13,13 +13,21 @@ function toolResultsSeen(prompt: any[]): number {
   return n;
 }
 
-const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
+// SPEC v4, matching the `ai@^7` this project depends on. Declaring 'v2' put the SDK into
+// compatibility mode and printed a warning on the FIRST run of every scaffolded project — before the
+// user had written a line. The usage shape moved with it: v7 nests the counts, and a flat
+// `{inputTokens: 1}` reads as undefined through the SDK's accessors, so any cost or token ceiling
+// would have counted this model as free.
+const usage = {
+  inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
+  outputTokens: { total: 1, text: 1, reasoning: undefined },
+};
 
 // Turn 1: call chargeOrder(orderId: 'order-1', amount: 42). Turn 2 (once a tool result exists):
 // reply with text. This gives you a real tool call to inspect in Studio (`gnl studio`).
 function toolCallingMock(): any {
   return {
-    specificationVersion: 'v2',
+    specificationVersion: 'v4',
     provider: 'mock',
     modelId: 'demo',
     supportedUrls: {},

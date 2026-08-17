@@ -10,11 +10,19 @@ function lastUserText(prompt: any[]): string {
   return '';
 }
 
-const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
+// SPEC v4, matching the `ai@^7` this project depends on. Declaring 'v2' put the SDK into
+// compatibility mode and printed a warning on the FIRST run of every scaffolded project — before the
+// user had written a line. The usage shape moved with it: v7 nests the counts, and a flat
+// `{inputTokens: 1}` reads as undefined through the SDK's accessors, so any cost or token ceiling
+// would have counted this model as free.
+const usage = {
+  inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
+  outputTokens: { total: 1, text: 1, reasoning: undefined },
+};
 
 function echoModel(): any {
   return {
-    specificationVersion: 'v2',
+    specificationVersion: 'v4',
     provider: 'mock',
     modelId: 'echo',
     supportedUrls: {},

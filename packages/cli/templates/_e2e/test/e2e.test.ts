@@ -3,12 +3,16 @@
 import { describe, it, expect } from 'vitest';
 import { runDurable, InMemoryJournal } from '@gnldev/durable';
 
-const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
+// v7 nests the token counts; a flat shape reads as undefined through the SDK's accessors.
+const usage = {
+  inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
+  outputTokens: { total: 1, text: 1, reasoning: undefined },
+};
 
 // An echo model that counts how many times it is actually invoked.
 function countingModel(counter: { calls: number }): any {
   return {
-    specificationVersion: 'v2', provider: 'mock', modelId: 'echo', supportedUrls: {},
+    specificationVersion: 'v4', provider: 'mock', modelId: 'echo', supportedUrls: {},
     doGenerate: async () => {
       counter.calls++;
       return { content: [{ type: 'text', text: 'hello' }], finishReason: 'stop', usage, warnings: [] };

@@ -9,13 +9,17 @@ import { stepCountIs } from 'ai';
 import { runDurable, InMemoryJournal } from '@gnldev/durable';
 import { chargeOrder, ledger } from '../src/tools.js';
 
-const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
+// v7 nests the token counts; a flat shape reads as undefined through the SDK's accessors.
+const usage = {
+  inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
+  outputTokens: { total: 1, text: 1, reasoning: undefined },
+};
 
 // A model that, in ONE turn, calls chargeOrder 3× with identical args but 3 different toolCallIds.
 function duplicateCallingModel(): any {
   let turn = 0;
   return {
-    specificationVersion: 'v2', provider: 'mock', modelId: 'dup', supportedUrls: {},
+    specificationVersion: 'v4', provider: 'mock', modelId: 'dup', supportedUrls: {},
     doGenerate: async () => {
       turn++;
       if (turn === 1) {
