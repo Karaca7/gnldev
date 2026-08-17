@@ -250,15 +250,23 @@ your own adapter), not a platform to deploy onto.
 interface, so an agent becomes a node without any new API:
 
 ```ts
-const triage = step('triage', async (input, ctx) => {
+import { workflow, step, type StepCtx } from '@gnldev/workflow';
+import { runDurable } from '@gnldev/durable';
+
+const triage = step('triage', async (input: { ticket: string }, ctx: StepCtx) => {
   const res = await runDurable({
     runId: `${ctx.keyPrefix ?? ''}${ctx.runId}:triage`,   // ← derive it from the step, see below
-    journal: ctx.journal, model, tools, prompt: 'classify this ticket',
-  });
-  return { ...input, label: res.text };
+    journal: ctx.journal as never, model, tools, prompt: 'classify this ticket',
+  } as never);
+  return { ...input, label: (res as { text: string }).text };
 });
 
-workflow().then(triage).branch((i) => i.label === 'refund', refundFlow, closeTicket);
+const refundFlow = step('refund', async (i: { label: string }) => i);
+const closeTicket = step('close', async (i: { label: string }) => i);
+
+workflow<{ ticket: string }>()
+  .then(triage)
+  .branch((i) => i.label === 'refund', refundFlow, closeTicket);
 ```
 
 The `runId` is the load-bearing line. Derived from the step's identity, a resume replays the same

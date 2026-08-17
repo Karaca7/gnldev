@@ -217,15 +217,23 @@ işlettiğin depolamanın üstünde bir kütüphane (`node:sqlite`, Postgres, Re
 alanlı bir arayüz olduğu için ajan yeni bir API'ye gerek kalmadan düğüm oluyor:
 
 ```ts
-const triage = step('triage', async (input, ctx) => {
+import { workflow, step, type StepCtx } from '@gnldev/workflow';
+import { runDurable } from '@gnldev/durable';
+
+const triage = step('triage', async (input: { ticket: string }, ctx: StepCtx) => {
   const res = await runDurable({
     runId: `${ctx.keyPrefix ?? ''}${ctx.runId}:triage`,   // ← adımdan türet, aşağıya bak
-    journal: ctx.journal, model, tools, prompt: 'bu bileti sınıflandır',
-  });
-  return { ...input, label: res.text };
+    journal: ctx.journal as never, model, tools, prompt: 'bu bileti sınıflandır',
+  } as never);
+  return { ...input, label: (res as { text: string }).text };
 });
 
-workflow().then(triage).branch((i) => i.label === 'refund', refundFlow, closeTicket);
+const refundFlow = step('refund', async (i: { label: string }) => i);
+const closeTicket = step('close', async (i: { label: string }) => i);
+
+workflow<{ ticket: string }>()
+  .then(triage)
+  .branch((i) => i.label === 'refund', refundFlow, closeTicket);
 ```
 
 Taşıyıcı satır `runId`. Adımın kimliğinden türetilirse devam aynı ajan koşusunu replay eder; her
