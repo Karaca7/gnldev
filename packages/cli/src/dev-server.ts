@@ -121,13 +121,17 @@ export function buildDevApp(config: GnlDevConfig, rt: DevRuntimeModules, auth?: 
 export async function serveDev(
   config: GnlDevConfig,
   projectDir: string,
-  bindOpts?: { host?: string; allowOpenNetwork?: boolean },
+  bindOpts?: { host?: string; port?: number; allowOpenNetwork?: boolean },
 ): Promise<void> {
   const rt = await loadDevRuntime(projectDir, config);
   const { serve } = await loadNodeServer(projectDir);
   const provider = await resolveAuthProvider(config, rt.auth, projectDir);
   const app = buildDevApp(config, rt, provider);
-  const port = config.port ?? 3000;
+  // --port / PORT wins over the config, so a busy port is fixable without editing a file.
+  const port = bindOpts?.port ?? config.port ?? 3000;
+  if (bindOpts?.port !== undefined && !Number.isInteger(port)) {
+    throw new Error(`gnl dev: --port must be an integer, got '${bindOpts.port}'`);
+  }
   // Previously `serve({ fetch, port })` — with no hostname @hono/node-server binds EVERY interface,
   // While these very lines printed 'localhost'. See bind.ts.
   // A provider whose only credential is one this package used to SHIP is not auth: the value is
@@ -145,6 +149,16 @@ export async function serveDev(
     authed: !!provider && !shippedCreds,
     allowOpenNetwork: !!bindOpts?.allowOpenNetwork,
     command: 'gnl dev',
+  });
+  process.on('uncaughtException', (err: NodeJS.ErrnoException) => {
+    // EADDRINUSE arrives asynchronously from the listen call, so it surfaced as an unhandled Node
+    // internals stack trace inside a hung `tsx watch` — no mention of the port, and nothing to act on.
+    if (err?.code === 'EADDRINUSE') {
+      console.error(`gnl dev: port ${port} is already in use on ${bind.hostname}.`);
+      console.error('  Pass a different one with `gnl dev --port 3001`, set PORT, or stop whatever holds it.');
+      process.exit(1);
+    }
+    throw err;
   });
   serve({ fetch: app.fetch, port, hostname: bind.hostname }, (info: { port: number }) => {
     console.log(`gnl dev → REST   http://${bind.displayHost}:${info.port}   (auth: ${mode})`);

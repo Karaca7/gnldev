@@ -12,6 +12,18 @@ describe('7.2 keywordScore / tokenize (pure)', () => {
   it('tokenize splits on lowercase + alphanumeric', () => {
     expect(tokenize('Hello, World! 42')).toEqual(['hello', 'world', '42']);
   });
+  it('keeps non-ASCII words whole, in any language', () => {
+    // The old character class was ASCII plus the six Turkish letters, so every other language was cut
+    // at its accents: 'Grüße' became ['gr', 'e'] and scored against fragments — silently, on any
+    // non-English corpus.
+    expect(tokenize('Grüße, München!')).toEqual(['grüße', 'münchen']);
+    expect(tokenize('français mañana')).toEqual(['français', 'mañana']);
+    expect(tokenize('Ölçüm yapıldı')).toEqual(['ölçüm', 'yapıldı']);
+    expect(tokenize('日本語 テスト')).toEqual(['日本語', 'テスト']);
+  });
+  it('keywordScore therefore matches a non-ASCII term', () => {
+    expect(keywordScore('münchen', 'reise nach münchen')).toBe(1);
+  });
   it('keywordScore is the ratio of query terms matched', () => {
     expect(keywordScore('cat dog', 'cat and bird')).toBe(0.5); // 1/2 terms present
     expect(keywordScore('cat dog', 'cat dog fish')).toBe(1);

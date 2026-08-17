@@ -1,8 +1,12 @@
 // Edge bundle benchmark: MEASURE the "fits in Cloudflare Workers" claim. Two scenarios:
 //   A) GNL layer only (ai/zod external — user already uses the AI SDK): net additional cost.
 //   B) GNL + AI SDK bundled together: end-to-end real worker size.
-// Comparison: a typical full-featured agent framework's build output is ~17.58 MiB — CF Workers limit
-// 3 MiB (free) / 10 MiB (paid, compressed). Run: pnpm --filter @gnldev/showcase bundle
+// Reference: the CF Workers limit is 3 MiB (free) / 10 MiB (paid, compressed). Run:
+// pnpm --filter @gnldev/showcase bundle
+//
+// No third-party comparison figure here. The one that used to sit in this header came from a single
+// GitHub issue and was generalised to "a typical framework", then printed inside output labelled
+// "measured" — which it was not. The absolute gzip numbers below are measured and stand on their own.
 import { build } from 'esbuild';
 import { gzipSync } from 'node:zlib';
 
@@ -65,7 +69,6 @@ console.log(`
 References (measured against gzip size vs. compressed limits):
   Cloudflare Workers free:  3 MiB  → scenario B is ${((b.gz / (3 * MIB)) * 100).toFixed(1)}%
   Cloudflare Workers paid:  10 MiB  → scenario B is ${((b.gz / (10 * MIB)) * 100).toFixed(2)}%
-  Full-featured framework: ~17.58 MiB (raw; typical build output — doesn't fit the free limit)
   GNL net layer (A, gzip): ${(a.gz / 1024).toFixed(1)} KiB
 `);
 if (b.gz > 3 * MIB) {

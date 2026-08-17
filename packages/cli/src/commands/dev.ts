@@ -8,12 +8,15 @@ export const devCommand: Command = {
   name: 'dev',
   group: 'project',
   summary: 'Hot-reload dev: REST API + Studio Playground (single port)',
-  usage: 'gnl dev [--config gnl.config.ts] [--host 127.0.0.1] [--allow-open-network]',
+  usage: 'gnl dev [--config gnl.config.ts] [--port 3000] [--host 127.0.0.1] [--allow-open-network]',
   async run(ctx) {
     const configPath = flag(ctx.argv, 'config') ?? 'gnl.config.ts';
     // The actual server runs in the tsx-watch child (dev-entry.ts), so the bind choice travels by env
     // Alongside GNL_CONFIG rather than argv.
     const host = flag(ctx.argv, 'host');
+    // There was no way to move off 3000 except editing gnl.config, so a second project or anything
+    // else already on the port gave a raw Node EADDRINUSE traceback out of a watch process.
+    const port = flag(ctx.argv, 'port') ?? process.env.PORT;
     const allowOpen = flagBool(ctx.argv, 'allow-open-network');
     const { spawn } = await import('node:child_process');
     const { createRequire } = await import('node:module');
@@ -34,6 +37,7 @@ export const devCommand: Command = {
         ...process.env,
         GNL_CONFIG: configPath,
         ...(host ? { GNL_HOST: host } : {}),
+        ...(port ? { GNL_PORT: port } : {}),
         ...(allowOpen ? { GNL_ALLOW_OPEN_NETWORK: '1' } : {}),
       },
     });

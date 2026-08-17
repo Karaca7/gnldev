@@ -52,3 +52,7 @@ const { text } = await gnl.run('assistant', { prompt: 'hello' });
 React: `import { useChat } from '@gnldev/client/react'`.
 
 ## Note
+
+The dev tokens in `src/auth.ts` (if you scaffolded with `--features auth`) were generated for this
+project and live in your source tree — treat them as public. In production the process refuses to
+start without `GNL_ADMIN_TOKEN` / `GNL_VIEWER_TOKEN` from the environment.

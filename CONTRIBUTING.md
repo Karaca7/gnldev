@@ -12,9 +12,9 @@ acceptable to you, this is the right moment to know it. What the CLA does NOT do
 indemnity, and you keep every right to your own work.
 
 Accepting it is a single checkbox: the pull request template includes a line confirming you have
-read and agree to the CLA. Tick it in your first PR and you're done — it carries over to your later
-contributions, so it's a one-time step per GitHub account. The CLA check has to pass before a pull
-request is reviewed.
+read and agree to the CLA. Tick it in every pull request: the check reads the PR body each time (it runs on `opened`, `edited`,
+`reopened` and `synchronize`), so it is a per-PR line rather than a one-time registration. Reading
+the CLA is the one-time part. The check has to pass before a pull request is reviewed.
 
 ## About this repository's history
 

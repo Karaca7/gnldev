@@ -7,5 +7,6 @@ const path = process.env.GNL_CONFIG ?? 'gnl.config.ts';
 const config = await loadConfig(path);
 await serveDev(config, projectDirOf(path), {
   host: process.env.GNL_HOST,
+  port: process.env.GNL_PORT ? Number(process.env.GNL_PORT) : undefined,
   allowOpenNetwork: process.env.GNL_ALLOW_OPEN_NETWORK === '1',
 });

@@ -52,6 +52,16 @@ jobs:
       # rejected 0.0.0, which stopped catching anything the moment the packages were bumped to
       # 0.1.0 — a guard that passes unconditionally is worse than none, because it reads as
       # verification.
+      # The inline guard below covers lockstep and tag-matching. It does NOT cover the two things
+      # scripts/check-versions.mjs adds: the prerelease refusal (a v0.2.0-rc.1 tag would otherwise
+      # publish 24 packages to the `latest` dist-tag, repairable only by hand on every one of them),
+      # and the scaffold-template check (a template pinning a major the packages do not peer on
+      # produces a `npm create gnl` project that cannot install). That script was wired only to
+      # ci.yml, which runs on branch pushes and pull requests — never on a tag, which is the only
+      # event that publishes.
+      - name: Version guard (shared script — prerelease + scaffold templates)
+        run: pnpm check:versions
+
       - name: Version guard
         run: |
           set -euo pipefail

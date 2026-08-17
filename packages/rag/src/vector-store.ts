@@ -48,9 +48,16 @@ export type Embed = (text: string) => Promise<number[]>;
 
 // ── 7.2 Hybrid helpers (pure, testable) ──────────────────────────
 
-/** Simple tokenization: lowercase + split on non-alphanumeric, drop empties. */
+/**
+ * Simple tokenization: lowercase, then keep runs of letters and digits.
+ *
+ * Unicode-aware on purpose. The previous character class was `[^a-z0-9çğıöşü]`, i.e. ASCII plus the
+ * six Turkish letters — so `Grüße`, `français` and `mañana` were each split at the accent and scored
+ * against fragments, silently, on any non-English corpus. @gnldev/evals' tokenizer one package over
+ * already used \p{L}/\p{N}; this is the same reading. ASCII behaviour is unchanged.
+ */
 export function tokenize(s: string): string[] {
-  return s.toLowerCase().split(/[^a-z0-9çğıöşü]+/i).filter(Boolean);
+  return (s ?? '').toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
 }
 
 /**
