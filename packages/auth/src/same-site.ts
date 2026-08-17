@@ -40,7 +40,13 @@ export function isCrossSiteStateChange(req: Request): boolean {
   if (site) return site.trim().toLowerCase() === 'cross-site';
 
   const origin = req.headers.get('origin');
-  if (!origin || origin === 'null') return false;
+  if (!origin) return false;
+  // `null` is an OPAQUE origin — a sandboxed iframe, a `data:` document, a `file://` page, some
+  // redirect chains. It is never the app itself, so allowing it was the wrong side of the fence: the
+  // earlier reading here was that Fetch Metadata covers those contexts, which is true of a current
+  // browser but not of a client that omits the header. An opaque origin is not same-origin by
+  // definition, so it is treated as cross-site.
+  if (origin === 'null') return true;
   try {
     return new URL(origin).hostname !== new URL(req.url).hostname;
   } catch {

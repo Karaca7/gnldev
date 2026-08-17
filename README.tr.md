@@ -120,7 +120,7 @@ for await (const ev of gnl.stream('assistant', { prompt: 'akış' })) { /* text-
 | **`@gnldev/memory`** | `AgentMemory`: recall (messageRange/threshold/filter/resource-scope) · schema WM + `updateWorkingMemory` tool · thread CRUD/clone · observational memory (Observer/Reflector, pluggable tokenizer) · MessageList |
 | **`@gnldev/rag`** | vector store (dev: in-memory · **prod: pgvector**) · **`chunkText`/`chunkDocuments`** (recursive/markdown/character) · **`GraphRag`** (benzerlik-grafı retrieval) · `createRagTool` · `llmReranker` · `SemanticMemory` |
 | **`@gnldev/workflow`** | then/parallel/branch · foreach/loop · **`retry` (bildirimsel retry-policy, sayaç journal'da)** · `runResumable` + `sleep`/`waitFor` (evented/scheduled) |
-| **`@gnldev/processors`** | piiRedactor · moderation · toolFilter · **`toolSearch` (semantik tool seçimi, journal'lı)** · tokenLimit · promptInjection · outputLimit |
+| **`@gnldev/processors`** | piiRedactor · moderationProcessor · toolFilter · **`toolSearch` (semantik tool seçimi, journal'lı)** · tokenLimit · promptInjectionDetector · outputLimit |
 | **`@gnldev/evals`** | **16 hazır scorer** (faithfulness/hallucination/…) · llmJudge · `scoreRun` · `evalDataset` (resumable) · **`createDatasetsManager`** (versiyon geçmişi + deney `compare`) |
 | **`@gnldev/mcp`** | MCP client (`mcpTools`) **+ server** (`createMcpServer`, server-side exactly-once) |
 | **`@gnldev/server`** | `createRestApi` + OpenAPI · **fail-closed auth** (production'da provider yoksa kurulum hata verir; bilinçli açık erişim `allowOpenAccess: true`) · **409/422 resumable sözleşmesi** (blok/limit hataları `BLOCKED_ERROR_CODES` tek kaynağından `resumable`/`retry` ayrımıyla döner) |

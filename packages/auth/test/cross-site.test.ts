@@ -74,9 +74,13 @@ describe('cross-site state changes against an open surface', () => {
 
   it('a malformed Origin is not trusted', () => {
     expect(isCrossSiteStateChange(req('POST', { origin: 'not a url' }))).toBe(true);
-    // 'null' is what a sandboxed iframe / data: document sends; treat it as no Origin, since the
-    // Fetch Metadata header is the signal that actually covers those.
-    expect(isCrossSiteStateChange(req('POST', { origin: 'null' }))).toBe(false);
+    // `null` is an OPAQUE origin — a sandboxed iframe, a data: document, a file:// page. It is never
+    // the app itself, so it belongs on the cross-site side. Allowing it (the first reading here) bet
+    // on Fetch Metadata always being present, which holds for a current browser and not for a client
+    // that omits the header.
+    expect(isCrossSiteStateChange(req('POST', { origin: 'null' }))).toBe(true);
+    // ...and a read from an opaque origin is still a read.
+    expect(isCrossSiteStateChange(req('GET', { origin: 'null' }))).toBe(false);
   });
 });
 

@@ -41,6 +41,21 @@ export const devCommand: Command = {
         ...(allowOpen ? { GNL_ALLOW_OPEN_NETWORK: '1' } : {}),
       },
     });
-    child.on('exit', (code) => process.exit(code ?? 0));
+    // Forward termination to the tsx child. Without this a SIGTERM to `gnl dev` exited the parent and
+    // ORPHANED the watcher, which kept the port bound — so the next `gnl dev` failed with EADDRINUSE
+    // on a server nobody could see. `exited` guards the double-signal case (a supervisor sending
+    // SIGTERM then SIGKILL) from racing the exit handler.
+    let exited = false;
+    for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
+      process.on(sig, () => {
+        if (!exited) child.kill(sig);
+      });
+    }
+    child.on('exit', (code, signal) => {
+      exited = true;
+      // Report the child's fate, so a supervisor sees a signal death as a signal death.
+      if (signal) process.kill(process.pid, signal);
+      else process.exit(code ?? 0);
+    });
   },
 };

@@ -117,6 +117,7 @@ const peerOf = (name, dep) => {
 // the same reading as the `existsSync(manifest)` skip above. The real repo has the directory, so
 // this cannot quietly disable the check where it matters.
 const tmplProblems = [];
+let examined = 0;
 const templates = existsSync(templateDir)
   ? readdirSync(templateDir, { withFileTypes: true }).filter((d) => d.isDirectory())
   : [];
@@ -124,6 +125,7 @@ for (const t of templates) {
   const file = join(templateDir, t.name, 'package.json');
   if (!existsSync(file)) continue;
   const tpl = JSON.parse(readFileSync(file, 'utf8'));
+  examined++;
   const deps = { ...(tpl.dependencies ?? {}), ...(tpl.devDependencies ?? {}) };
   for (const [dep, range] of Object.entries(deps)) {
     if (!dep.startsWith('@gnldev/')) continue;
@@ -157,4 +159,7 @@ const heldBack = lockstep.filter((p) => p.private).map((p) => p.name);
 const suffix = heldBack.length ? ` (incl. private-but-distributed: ${heldBack.join(', ')})` : '';
 const prereleaseNote = isPrerelease ? ' — PRERELEASE, allowed by GNL_ALLOW_PRERELEASE=1' : '';
 console.log(`✓ ${lockstep.length} distributed packages, all at ${version}${suffix}${prereleaseNote}`);
-if (templates.length) console.log(`✓ ${templates.length} scaffold templates agree with the published peer ranges`);
+// Count what was actually READ, not what was listed: templates/_e2e is an add-on with no manifest,
+// so `templates.length` claimed 3 where 2 were examined. A coverage number that overstates itself is
+// the same defect as a check that cannot fail, in smaller print.
+if (examined) console.log(`✓ ${examined} scaffold template${examined === 1 ? '' : 's'} agree with the published peer ranges`);
