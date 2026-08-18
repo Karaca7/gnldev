@@ -893,7 +893,14 @@ export async function checkToolGate(
   if (!needsState) return undefined; // if only maxTokens/maxCostUsd are set, the tool-gate does NOTHING at all (SAME as old behavior)
 
   const store = reader as LimitsStore;
-  await ensureSeeded(reader, store, runId, {});
+  // Seed with the EFFECTIVE price table, not with `{}`. The counters are additive and never recomputed,
+  // so whatever price is used here is the price those model steps keep forever. Seeding with empty
+  // options meant DEFAULT_PRICING only — the journal's `__pricing__` document was ignored — and a model
+  // priced solely by that document was recorded at $0 permanently. enforceStepLimits resolving the table
+  // correctly afterwards cannot undo it, and because `unpriced` stayed empty the "no price for this
+  // model" warning did not fire either. Measured: a step the document prices at $300 left a maxCostUsd
+  // of $0.01 unenforced, silently.
+  await ensureSeeded(reader, store, runId, { pricing: await effectivePricingTable(reader as never) });
   const chain = (await readChain(store, runId)) ?? emptyChain();
 
   if (maxRepeats != null && maxRepeats > 0) {
@@ -980,7 +987,8 @@ export async function recordToolOutcome(
 
   if ((await readChain(journal, runId)) === undefined) {
     if (typeof journal.readRun !== 'function') { if (limits) reportUnenforceableLimits(journal, limits); return; } // fail-open (or throw under strict)
-    const won = await ensureSeeded(journal as JournalReader, journal, runId, {});
+    // Same reason as the tool gate above: this seeding decides the recorded cost of every earlier step.
+    const won = await ensureSeeded(journal as JournalReader, journal, runId, { pricing: await effectivePricingTable(journal as never) });
     if (won) return; // seeding ALREADY included THIS call's own outcome — double counting prevented
     // We lost (another concurrent call seeded it) → fall through to the normal (steady-state) increment path
   }

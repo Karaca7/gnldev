@@ -35,19 +35,52 @@ describe('the org marker under wrapping', () => {
     expect(orgScopeOf(logged)).toBe('acme');
   });
 
-  it('re-wrapping replaces it, so a copy never carries a stale org', () => {
+  it('REFUSES to scope an already-scoped journal', async () => {
+    // The first version of this test wrote exactly this and asserted only that the label had changed —
+    // blessing a pattern that breaks the isolation contract. Measured with the nesting allowed:
+    //
+    //   withOrg({ ...withOrg(base, 'acme') }, 'globex').put('secret', …)
+    //   → the real key is `org:acme:org:globex:secret`
+    //   → acme.listKeys('')     sees it
+    //   → acme.get(…)           reads it
+    //   → acme.deletePrefix('') deletes it
+    //
+    // The marker said 'globex' the whole time, which is why asserting on the label proved nothing.
     const acme = withOrg(new InMemoryJournal(), 'acme');
-    const globex = withOrg({ ...acme } as never, 'globex');
-    expect(orgScopeOf(globex)).toBe('globex');
+    expect(() => withOrg({ ...acme } as never, 'globex')).toThrow(/already scoped to organization 'acme'/);
+    // Scoping the ROOT journal again is the correct move and stays allowed.
+    const base = new InMemoryJournal();
+    expect(orgScopeOf(withOrg(base, 'globex'))).toBe('globex');
   });
 
-  it('still does not leak into any data shape', () => {
-    const scoped = withOrg(new InMemoryJournal(), 'acme');
+  it('nesting cannot be reached, so one organization cannot host another\'s data', async () => {
+    // The consequence, asserted at the storage layer rather than through the marker.
+    const base = new InMemoryJournal();
+    const acme = withOrg(base, 'acme');
+    await acme.put('secret', { v: 1 });
+    const globex = withOrg(base, 'globex');
+    await globex.put('secret', { v: 2 });
+
+    expect((await base.listKeys('')).sort()).toEqual(['org:acme:secret', 'org:globex:secret']);
+    expect(await acme.listKeys(''), 'acme can see a key that is not its own').toEqual(['secret']);
+    expect(await acme.get('org:globex:secret')).toBeUndefined();
+  });
+
+  it('does not end up inside a STORED record', async () => {
+    // The earlier version of this asserted that the marker is absent from Object.keys, JSON.stringify
+    // and for-in. Those hold for a symbol whatever its enumerability — this file's own header says so —
+    // so it was an assertion that could not fail in either implementation, dressed as a check on the
+    // change. What was actually worth pinning is the thing the old comment feared: the marker reaching
+    // persisted DATA. That is measured here, against what the store really holds.
+    const base = new InMemoryJournal();
+    const scoped = withOrg(base, 'acme');
+    await scoped.put('rec', { note: 'hello' });
+
+    const raw = await base.get('org:acme:rec');
+    expect(JSON.stringify(raw), 'the org marker reached a stored record').not.toContain('acme');
+    expect(Object.getOwnPropertySymbols(raw as object)).toEqual([]);
+    // And the wrapper itself still keeps it off the enumerable string keys a serialiser would walk.
     expect(Object.keys(scoped)).not.toContain('orgScope');
-    expect(JSON.stringify(scoped)).not.toContain('acme');
-    const forIn: string[] = [];
-    for (const k in scoped) forIn.push(k);
-    expect(forIn.join(',')).not.toContain('acme');
   });
 
   it('the provider-facing idempotency key keeps its org through a wrapped journal', async () => {

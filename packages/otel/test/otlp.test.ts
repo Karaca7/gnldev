@@ -111,6 +111,25 @@ describe('exportRunToOtlp (fetch mocked — no network)', () => {
     vi.unstubAllGlobals();
   });
 
+
+  it('does not follow redirects — the credentials and the trace must not travel to a second host', async () => {
+    // What crosses this wire is a run's full trace (prompts, tool arguments, model output) under the
+    // provider's credentials. `fetch` follows redirects by default, and a runtime strips `Authorization`
+    // across origins but NOT the headers these presets actually use — `x-api-key` (apiKeyOtlp),
+    // `x-honeycomb-team`, `x-bt-parent`. So a redirect from a mistyped or compromised endpoint hands
+    // both the key and the payload to whoever answers it.
+    const journal = await seededRun('f-redir');
+    const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await exportRunToOtlp(journal, 'f-redir', {
+      endpoint: 'https://otel.example.com/v1/traces',
+      headers: { 'x-api-key': 'secret-key' },
+    });
+
+    const [, init] = fetchMock.mock.calls[0]!;
+    expect((init as RequestInit).redirect, 'a redirect would carry x-api-key to another host').toBe('error');
+  });
   it('POST body = toOtlpJson output; endpoint + headers are passed through; result returns ok/status/traceId/spans', async () => {
     const journal = await seededRun('f1');
     const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));

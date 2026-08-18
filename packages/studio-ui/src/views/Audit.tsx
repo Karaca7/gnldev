@@ -56,13 +56,20 @@ function downloadText(filename: string, text: string, mime: string): void {
 // `type AuditAction`) — otherwise the user can't filter by some actions. The match is
 // Verified in test/observability-audit.test.ts via a plain constant comparison.
 export const ACTIONS = [
-  'approve', 'deny', 'fork',
-  'thread.rename', 'thread.delete',
-  'workflow.create', 'workflow.update', 'workflow.delete',
-  'tool.exec', 'agent.run', 'agent.version', 'agent.promote', 'agent.gate',
-  'run.purge', 'run.regression', 'retention.sweep', 'policy.update',
-  'user.create', 'user.delete', 'user.revoke',
-  'cache.invalidate',
+  // Kept in step with server.ts's AuditAction union — observability-audit.test.ts reads that union
+  // from source and fails on any difference. It used to compare against a list hand-copied INTO the
+  // test, so both could drift together: measured, 15 of the server's 36 actions were missing here,
+  // including run.cancel, run.compensate, org.delete and pricing.update — the destructive ones an
+  // operator most wants to filter by.
+  'agent.approve', 'agent.block', 'agent.delete', 'agent.gate',
+  'agent.promote', 'agent.run', 'agent.version', 'agent.version-delete',
+  'approve', 'cache.invalidate', 'deny', 'fork',
+  'job.retry', 'org.budget', 'org.create', 'org.delete',
+  'policy.update', 'pricing.update', 'retention.sweep', 'run.cancel',
+  'run.compensate', 'run.otel-export', 'run.purge', 'run.regression',
+  'thread.delete', 'thread.rename', 'thread.truncate', 'tool.exec',
+  'user.create', 'user.delete', 'user.revoke', 'user.update',
+  'workflow.cancel', 'workflow.create', 'workflow.delete', 'workflow.update',
 ] as const;
 
 function actionTone(action: string): 'success' | 'destructive' | 'warning' | 'muted' | 'info' {

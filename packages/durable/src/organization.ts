@@ -63,6 +63,24 @@ export function orgScopeOf(journal: unknown): string | undefined {
 }
 
 export function withOrg(journal: Journal, orgId: string): Journal & Partial<JournalReader> {
+  // Refuse to scope a journal that is ALREADY scoped. Nesting produces `org:acme:org:globex:<key>`:
+  // the marker says 'globex' and the data sits inside acme, so acme can list, read and DELETE it —
+  // measured, including `acme.deletePrefix('')` sweeping globex's rows. That is the exact opposite of
+  // this module's contract ("Organizations CANNOT SEE each other's keys"), and the provider-facing
+  // idempotency key would carry only `org:globex:` while the record lives under acme.
+  //
+  // No first-party code nests (studio and server both wrap the root journal). It became reachable as a
+  // PATTERN because a test wrote `withOrg({ ...withOrg(base, 'acme') }, 'globex')` and asserted only
+  // that the label had changed. Detecting it costs one line now that the marker is readable, and a
+  // caller that wants a different organization should scope the ROOT journal again.
+  const already = orgScopeOf(journal);
+  if (already !== undefined) {
+    throw new Error(
+      `@gnldev/durable: this journal is already scoped to organization '${already}' — scoping it again ` +
+      `as '${orgId}' would nest the prefixes (org:${already}:org:${orgId}:…), leaving the data inside ` +
+      `'${already}' where that organization can read and delete it. Scope the unscoped journal instead.`,
+    );
+  }
   const prefix = orgPrefix(orgId);
   const out: Journal & Partial<JournalReader> = {
     get: <T = unknown>(key: string) => journal.get<T>(prefix + key),

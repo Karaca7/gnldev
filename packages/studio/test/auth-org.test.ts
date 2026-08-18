@@ -622,4 +622,36 @@ describe('@gnldev/studio B2 — an auth provider that binds no identity', () => 
     expect(ok.status).toBe(200);
     expect((await ok.json()).map((r: any) => r.runId)).toEqual(['r-acme']);
   });
+
+  it('a HEADER-scoped caller sees only its own audit records and organizations', async () => {
+    // The org can reach a request two ways: bound to the identity (Principal.orgId) or resolved into the
+    // ALS by `x-gnl-org` / `opts.org.resolve`. /audit and /organizations read only the first, so the
+    // second — a supported, tested setup — got EVERY organization's rows. Same leak the comment at the
+    // /managed-agents resolution already warns about, two endpoints over.
+    const journal = new InMemoryJournal();
+    await journal.put('org:acme:r1:model:0', { content: [{ type: 'text', text: 'a' }], finishReason: 'stop' });
+    await journal.put('org:globex:r2:model:0', { content: [{ type: 'text', text: 'g' }], finishReason: 'stop' });
+    // Two audit rows at the ROOT, tagged by org — that is where the audit log lives.
+    const app = createStudioApi({ reader: journal, org: {} });
+    // Written by an UNBOUND operator (no org header): a write carrying `x-gnl-org` is refused by the
+    // v1 read-only rule, and org.budget takes its audit `org` from the target anyway.
+    await call(app, '/organizations/acme/budget', {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tokenLimit: 10 }),
+    });
+    await call(app, '/organizations/globex/budget', {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tokenLimit: 20 }),
+    });
+    // Both rows exist and are visible to an unscoped reader — otherwise the assertion below would pass
+    // on an empty log rather than on a filtered one.
+    const all = await (await call(app, '/audit')).json();
+    expect(all.items.map((i: { target: string }) => i.target).sort()).toEqual(['acme', 'globex']);
+
+    const acme = await (await call(app, '/audit', { headers: { 'x-gnl-org': 'acme' } })).json();
+    expect(acme.items.map((i: { target: string }) => i.target), 'a header-scoped caller saw another org\'s audit')
+      .toEqual(['acme']);
+
+    const orgs = await (await call(app, '/organizations', { headers: { 'x-gnl-org': 'acme' } })).json();
+    const ids = (orgs.organizations ?? orgs).map((o: { id?: string } | string) => (typeof o === 'string' ? o : o.id));
+    expect(ids, 'a header-scoped caller saw another organization in the list').toEqual(['acme']);
+  });
 });

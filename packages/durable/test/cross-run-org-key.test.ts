@@ -89,15 +89,24 @@ describe('cross-run idempotency key under organization scope', () => {
     expect(seen[0]!.startsWith('charge:'), 'exactly the historical format').toBe(true);
   });
 
-  it('orgScopeOf reports the scope, and does not leak into the journal\'s data shape', () => {
+  it('orgScopeOf reports the scope, and the marker never reaches a stored record', async () => {
     const base = new InMemoryJournal();
     const scoped = withOrg(base, 'acme');
     expect(orgScopeOf(scoped)).toBe('acme');
     expect(orgScopeOf(base), 'an unscoped journal has no scope').toBeUndefined();
     expect(orgScopeOf(undefined)).toBeUndefined();
-    // A marker that showed up in a spread or a JSON round-trip would end up in stored records.
-    expect(Object.keys({ ...scoped })).not.toContain('orgScope');
-    expect(JSON.stringify(scoped)).not.toContain('acme');
+
+    // The comment here used to read "a marker that showed up in a spread … would end up in stored
+    // records", and the marker is now deliberately CARRIED through a spread — hiding it made
+    // `{ ...journal, put: … }` return a journal that no longer knew its org, which put an un-scoped
+    // idempotency key in front of a payment provider. The two are not the same worry: surviving a
+    // spread is about the wrapper OBJECT, reaching a record is about DATA. Only the second is asserted
+    // now, and against what the store actually holds rather than against the wrapper.
+    expect(orgScopeOf({ ...scoped }), 'a wrapper built by spreading lost its org').toBe('acme');
+    await scoped.put('k', { note: 'hello' });
+    const raw = await base.get('org:acme:k');
+    expect(JSON.stringify(raw), 'the marker reached a stored record').not.toContain('acme');
+    expect(Object.getOwnPropertySymbols(raw as object)).toEqual([]);
   });
 });
 

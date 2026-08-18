@@ -1,5 +1,8 @@
 // F6.4: audit/metrics CSV export pure functions — escaping edge cases (node environment, no DOM needed).
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { runsToCsv } from '../src/views/Observability';
 import { auditToCsv, ACTIONS } from '../src/views/Audit';
 import type { MetricsRun } from '../src/api';
@@ -81,16 +84,17 @@ describe('auditToCsv (Audit)', () => {
 describe('ACTIONS (Audit filter list)', () => {
   // Must match packages/studio/src/server.ts's `type AuditAction` (~line 472-479) exactly —
   // the server never produces an action outside these values, and the dropdown must not list too few or too many.
-  const SERVER_AUDIT_ACTIONS = [
-    'approve', 'deny', 'fork',
-    'thread.rename', 'thread.delete',
-    'workflow.create', 'workflow.update', 'workflow.delete',
-    'tool.exec', 'agent.run',
-    'agent.version', 'agent.promote', 'agent.gate',
-    'run.purge', 'run.regression', 'retention.sweep', 'policy.update',
-    'user.create', 'user.delete', 'user.revoke',
-    'cache.invalidate',
-  ];
+  // READ from the server's own union instead of a copy. The copy was the problem: the comment said it
+  // "must match server.ts exactly" and nothing enforced that, so this list and the UI's drifted
+  // together — measured, 15 of the server's 36 actions were missing from the dropdown, including
+  // run.cancel, run.compensate, org.delete and pricing.update.
+  const serverSrc = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'studio', 'src', 'server.ts'),
+    'utf8',
+  );
+  const SERVER_AUDIT_ACTIONS = [...new Set(
+    [...(/type AuditAction =([\s\S]*?);/.exec(serverSrc)?.[1] ?? '').matchAll(/'([a-zA-Z.\-]+)'/g)].map((x) => x[1]),
+  )];
 
   it('matches the server\'s AuditAction union (no extras/no omissions)', () => {
     expect([...ACTIONS].sort()).toEqual([...SERVER_AUDIT_ACTIONS].sort());

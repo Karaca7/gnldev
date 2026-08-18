@@ -278,6 +278,13 @@ export async function exportRunToOtlp(
       method: 'POST',
       headers: { 'content-type': 'application/json', ...(opts.headers ?? {}) },
       body: JSON.stringify(payload),
+      // Do NOT follow redirects. The default is 'follow', and what travels here is a run's full trace —
+      // prompts, tool arguments, model output — under provider credentials. Runtimes strip
+      // `Authorization` across origins but not the headers these presets actually use (`x-api-key`,
+      // `x-honeycomb-team`, `x-bt-parent`), so a redirect from a mistyped or compromised endpoint hands
+      // both the key and the payload to whoever answers. A telemetry POST gains nothing from a
+      // redirect; failing loudly is the better trade.
+      redirect: 'error',
     });
   const res = opts.retry ? await fetchWithRetry(doFetch, opts.retry) : await doFetch();
   return {

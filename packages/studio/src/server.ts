@@ -238,7 +238,7 @@ export interface StudioQueue {
    * The new job id. Returns `null` if the job isn't found OR isn't yet terminal-failed (pending/done — to
    * Prevent DOUBLE-RUNNING it); the server reflects this as a 409.
    */
-  retry?(id: string): Promise<string | null> | string | null;
+  retry?(id: string, ctx?: StudioCallbackCtx): Promise<string | null> | string | null;
 }
 
 /** Cache view: hit/miss ratio + size (duck-type compatible with @gnldev/cache `stats()`). */
@@ -252,12 +252,12 @@ export interface StudioCache {
    * (best-effort — CacheStore doesn't offer key enumeration), all keys the host KNOWS ABOUT are removed
    * (see @gnldev/cache `invalidate()`). Returns the number of keys removed.
    */
-  invalidate?(key?: unknown): Promise<number> | number;
+  invalidate?(key?: unknown, ctx?: StudioCallbackCtx): Promise<number> | number;
 }
 
 /** Knowledge view: vector store search (the host app wraps its own embed+store). */
 export interface StudioVectorMatch { id: string; text: string; score: number; metadata?: Record<string, unknown>; }
-export interface StudioVectors { search (query: string, topK?: number): Promise<StudioVectorMatch[]> | StudioVectorMatch[]; }
+export interface StudioVectors { search (query: string, topK?: number, ctx?: StudioCallbackCtx): Promise<StudioVectorMatch[]> | StudioVectorMatch[]; }
 
 /** Safe user view exposed to studio (no secrets/tokens). */
 export interface StudioUser {
@@ -500,6 +500,12 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
    *  • strict mode + org-less WITHOUT the platform-admin grant → fail-closed 403.
    *  • free mode + org-less → allowed (legacy operator).  • platform-admin → allowed.
    */
+  /** Whether this caller may manage a ROOT-level document (policy, pricing, organizations). */
+  const isPlatformOperator = (c: Context): boolean => {
+    const p = principalOf(c.req.raw);
+    if (p?.orgId) return false;
+    return !strictMultiOrg || isPlatformAdmin(p);
+  };
   const requirePlatformAdmin = (c: Context, orgBoundMsg: string): Response | undefined => {
     const p = principalOf(c.req.raw);
     if (p?.orgId) return c.json({ error: orgBoundMsg }, 403);
@@ -1176,7 +1182,12 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     const limit = Math.max(1, Math.min(1000, Number(c.req.query('limit') ?? 200)));
     const action = c.req.query('action');
     const q = c.req.query('q')?.toLowerCase();
-    const bound = principalOf(c.req.raw)?.orgId;
+    // The ALS-resolved org counts too, not just the identity-bound one. `opts.org.resolve` / `x-gnl-org`
+    // put the caller's organization in the ALS without touching the principal, and reading only
+    // `principalOf(...).orgId` here meant that supported setup got EVERY organization's records back.
+    // Line ~796 already resolves it this way, with a comment saying the alternative "would make GET
+    // /managed-agents return the root store for EVERY org (a leak)" — the same leak, two endpoints over.
+    const bound = principalOf(c.req.raw)?.orgId ?? orgALS.getStore();
     const org = bound ?? (c.req.query('org') || undefined);
     const logs = await listLog<{ actor: string; action: string; target: string; org?: string; detail?: unknown }>(rootRw as Journal, '__audit__');
     const items = logs
@@ -1199,7 +1210,12 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     // An identity-bound org sees ONLY itself — the global list is open only to unbound (operator) identities.
     const rootRw = rawReader as Partial<Journal> & JournalReader;
     const keys = await rootRw.listKeys!(ORG_KEY_PRE).catch(() => [] as string[]);
-    const bound = principalOf(c.req.raw)?.orgId;
+    // The ALS-resolved org counts too, not just the identity-bound one. `opts.org.resolve` / `x-gnl-org`
+    // put the caller's organization in the ALS without touching the principal, and reading only
+    // `principalOf(...).orgId` here meant that supported setup got EVERY organization's records back.
+    // Line ~796 already resolves it this way, with a comment saying the alternative "would make GET
+    // /managed-agents return the root store for EVERY org (a leak)" — the same leak, two endpoints over.
+    const bound = principalOf(c.req.raw)?.orgId ?? orgALS.getStore();
     // Merge DISCOVERED orgs (with org:<id>: prefixed data) with EXPLICITLY REGISTERED ones (__org__:<id>) →
     // A newly created org with no runs yet also shows up in the list.
     const discovered = keys.map((k) => { const j = k.indexOf(':', ORG_KEY_PRE.length); return j > ORG_KEY_PRE.length ? k.slice(ORG_KEY_PRE.length, j) : ''; }).filter(Boolean);
@@ -1537,7 +1553,12 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     // An identity-bound org can ONLY write ITS OWN budget — it cannot change someone else's or the
     // 'default' fallback (the write-side counterpart of the visibility restriction in GET /organizations).
     // An unbound (operator) identity manages all of them.
-    const bound = principalOf(c.req.raw)?.orgId;
+    // The ALS-resolved org counts too, not just the identity-bound one. `opts.org.resolve` / `x-gnl-org`
+    // put the caller's organization in the ALS without touching the principal, and reading only
+    // `principalOf(...).orgId` here meant that supported setup got EVERY organization's records back.
+    // Line ~796 already resolves it this way, with a comment saying the alternative "would make GET
+    // /managed-agents return the root store for EVERY org (a leak)" — the same leak, two endpoints over.
+    const bound = principalOf(c.req.raw)?.orgId ?? orgALS.getStore();
     if (bound && id !== bound) {
       return c.json({ error: `unauthorized: identity is bound to org '${bound}', cannot manage the budget of '${id}'` }, 403);
     }
@@ -2082,14 +2103,23 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   app.get('/pricing', async (c) => {
     if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!writable) return c.json({ version: 0, overrides: {}, effective: {}, editable: false });
-    const doc = (await rw.get!(PRICING_KEY)) as PricingDoc | undefined;
+    // The ROOT journal, explicitly — the same choice /audit makes, and for the same reason: PUT
+    // /pricing requires an unbound platform operator, so the document only ever exists at the root.
+    // Reading it through the org-scoped `rw` meant a bound org admin was shown an empty override list
+    // AND lost the operator's corrections from `effective` — the price their runs are actually billed
+    // at, reported as the shipped default. Measured: operator sets x/y to 9, bound admin sees neither.
+    const rootJ = rawReader as Partial<Journal> & JournalReader;
+    const doc = (await rootJ.get!(PRICING_KEY)) as PricingDoc | undefined;
     return c.json({
       version: doc?.version ?? 0,
       overrides: doc?.models ?? {},
       replace: doc?.replace ?? false,
       updatedAt: doc?.updatedAt ?? null,
-      effective: await effectivePricingTable(rw as never),
-      editable: true,
+      effective: await effectivePricingTable(rootJ as never),
+      // Whether THIS caller can save, not whether the journal is writable. Reporting `true` to a bound
+      // admin made the UI offer an editor whose Save answers 403 — the screen promising something the
+      // server refuses.
+      editable: isPlatformOperator(c),
     });
   });
 
@@ -2103,6 +2133,30 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       { models?: Record<string, { inputPer1M?: unknown; outputPer1M?: unknown; cachedInputPer1M?: unknown }>; replace?: boolean; ifVersion?: number } | null;
     if (!body?.models || typeof body.models !== 'object' || Array.isArray(body.models)) {
       return c.json({ error: 'a models object is required' }, 400);
+    }
+    // `replace: true` with nothing in it prices NOTHING — effectivePricingTable returns `{}`, every
+    // model counts as $0, and every spend ceiling stops firing. This file's own comment describes that
+    // as the failure it defends against, and the endpoint answered 200 to it. The UI can reach it in two
+    // clicks: the row bin removes the last override while `replace` is carried through unchanged.
+    if (body.replace && Object.keys(body.models).length === 0) {
+      return c.json({
+        error: 'refusing to save an empty table with replace: true — no model would have a price, so ' +
+          'maxCostUsd and organization spend limits would stop firing entirely. Set replace: false to ' +
+          'fall back to the shipped defaults, or send at least one model.',
+      }, 400);
+    }
+    // A bound on size, because this document is read on EVERY model step (enforceStepLimits) and spread
+    // into a new object each time. Without one, 20k rows of 200-char keys are accepted and then paid for
+    // on every step of every run, forever.
+    const MAX_MODELS = 500;
+    const MAX_ID = 200;
+    if (Object.keys(body.models).length > MAX_MODELS) {
+      return c.json({ error: `too many models (${Object.keys(body.models).length} > ${MAX_MODELS})` }, 400);
+    }
+    for (const id of Object.keys(body.models)) {
+      if (!id || id.length > MAX_ID) {
+        return c.json({ error: `model id must be 1..${MAX_ID} characters (got ${id.length})` }, 400);
+      }
     }
     const clean: Record<string, { inputPer1M: number; outputPer1M: number; cachedInputPer1M?: number }> = {};
     for (const [id, row] of Object.entries(body.models)) {
@@ -2438,7 +2492,8 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     if (!queue?.retry) return c.json({ error: 'job retry is not supported (queue not given or retry not implemented)' }, 501);
     const id = decodeURIComponent(c.req.param('id'));
-    const newId = await queue.retry(id);
+    // Same reason: a job id from another organization requeues its dead-letter work.
+    const newId = await queue.retry(id, { orgId: callerOrg(c) });
     if (newId == null) {
       return c.json({ error: `job '${id}' not found or not in a retryable state (only failed/dead-letter jobs can be retried)` }, 409);
     }
@@ -2459,7 +2514,11 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     if (!cache?.invalidate) return c.json({ error: 'cache invalidate is not supported (cache not given or invalidate not implemented)' }, 501);
     const body = (await c.req.json().catch(() => ({}))) as { key?: unknown };
-    const deleted = await cache.invalidate(body.key);
+    // The org travels with it. With no key AND no organization the host wipes everything it knows —
+    // measured from an acme-bound admin: `{ok:true,deleted:{removed:9}}`, every organization's cache
+    // gone in one call. Studio cannot scope a host's cache itself; it can stop hiding whose request it
+    // was, which is what lets the host scope it.
+    const deleted = await cache.invalidate(body.key, { orgId: callerOrg(c) });
     await audit(c, 'cache.invalidate', body.key !== undefined ? String(body.key) : '*', { deleted });
     return c.json({ ok: true, deleted });
   });
@@ -2480,7 +2539,10 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     if (!vectors) return c.json([]);
     const body = (await c.req.json().catch(() => ({}))) as { query?: string; topK?: number };
     if (!body.query?.trim()) return c.json([]);
-    return c.json(await vectors.search(body.query, body.topK));
+    // Read-gated, and it reads the WHOLE corpus: measured, an acme-bound identity got back
+    // `[{"text":"globex private doc"}]`. The host owns the index, so only the host can filter it — but
+    // it needs to know who asked.
+    return c.json(await vectors.search(body.query, body.topK, { orgId: callerOrg(c) }));
   });
 
   // ── Workflows (if gnl.listWorkflows or the workflows option is given) ──────────

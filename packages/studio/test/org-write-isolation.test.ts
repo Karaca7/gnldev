@@ -203,4 +203,36 @@ describe('@gnldev/studio — the org boundary on the write surface', () => {
     expect(res.status).toBe(200);
     expect(seen).toEqual([{ orgId: undefined }]);
   });
+
+  it('every host adapter that can reach another organization is told who asked', async () => {
+    // Studio's org boundary is a journal key prefix, and these three endpoints do not touch the
+    // journal — they hand the request to an adapter the host owns. Measured from an acme-bound admin
+    // before this: `cache/invalidate` with no key returned `{deleted:{removed:9}}` (every
+    // organization's cache, in one call), `jobs/:id/retry` requeued another org's dead-letter job, and
+    // `knowledge/search` returned `[{"text":"globex private doc"}]` from the whole corpus.
+    //
+    // Studio cannot filter a host's cache or vector index for it. What it can stop doing is hiding who
+    // the caller was — the third parameter is what makes scoping possible on the host's side, and a
+    // host that ignores it behaves exactly as before.
+    const seen: Record<string, unknown[]> = { cache: [], retry: [], search: [] };
+    const app = createStudioApi({
+      reader: new InMemoryJournal(),
+      auth: AUTH(),
+      org: {},
+      cache: {
+        stats: () => ({ hits: 0, misses: 0, hitRate: 0, size: 0 }),
+        invalidate: (key: unknown, ctx?: { orgId?: string }) => { seen.cache.push(ctx?.orgId); return 1; },
+      },
+      queue: { retry: (_id: string, ctx?: { orgId?: string }) => { seen.retry.push(ctx?.orgId); return 'new-1'; } },
+      vectors: { search: (_q: string, _k?: number, ctx?: { orgId?: string }) => { seen.search.push(ctx?.orgId); return []; } },
+    } as never);
+
+    await call(app as never, '/cache/invalidate', { method: 'POST', headers: asAcme, body: '{}' });
+    await call(app as never, '/jobs/j1/retry', { method: 'POST', headers: asAcme, body: '{}' });
+    await call(app as never, '/knowledge/search', { method: 'POST', headers: asAcme, body: '{"query":"x"}' });
+
+    expect(seen.cache, 'cache.invalidate was not told which organization asked').toEqual(['acme']);
+    expect(seen.retry, 'queue.retry was not told which organization asked').toEqual(['acme']);
+    expect(seen.search, 'vectors.search was not told which organization asked').toEqual(['acme']);
+  });
 });

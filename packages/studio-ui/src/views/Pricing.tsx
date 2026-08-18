@@ -173,9 +173,23 @@ export function Pricing() {
       await qc.invalidateQueries({ queryKey: ['pricing'] });
       toast.success('Pricing saved — in effect on the next model step, no deploy needed');
     } catch (e) {
-      toast.error(e instanceof ApiError && e.status === 409
-        ? 'Another admin saved first — reload before editing again'
-        : errMessage(e));
+      // A 409 left the draft pinned to the version it was built on, so every later Save sent the same
+      // stale `ifVersion` and got the same 409 — permanently, with no discard button to escape through.
+      // The other direction is worse: silently re-pinning and retrying is exactly the overwrite the lock
+      // exists to prevent. So the conflict is RESOLVED but not applied — the edits are kept, the table is
+      // refreshed so the other admin's change is visible, and the next Save is a deliberate act on top of
+      // what is now there.
+      if (e instanceof ApiError && e.status === 409) {
+        const current = (e.body?.current as { version?: number } | null | undefined)?.version;
+        await qc.invalidateQueries({ queryKey: ['pricing'] });
+        if (draft && typeof current === 'number') setDraft({ ...draft, baseVersion: current });
+        toast.error(
+          `Another admin saved first (now v${current ?? '?'}). Your edits are kept and the table below is ` +
+          'refreshed — check what changed, then press Save again to apply yours on top.',
+        );
+      } else {
+        toast.error(errMessage(e));
+      }
     } finally { setSaving(false); }
   };
 

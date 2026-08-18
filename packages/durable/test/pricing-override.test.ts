@@ -177,4 +177,25 @@ describe('the journal\'s __pricing__ document', () => {
       runId: 'ceil-org', journal: withOrg(base, 'acme'), model: model(), prompt: 'x', limits: { maxCostUsd: 0.01 },
     } as never)).rejects.toBeInstanceOf(RunLimitExceededError);
   });
+
+  it('the TOOL path seeds the counters with the same table the ceiling uses', async () => {
+    // The counters are additive and never recomputed, so whichever table seeds them decides the recorded
+    // cost of every earlier step for the rest of the run. `checkToolGate` and `recordToolOutcome` seeded
+    // with empty options — DEFAULT_PRICING only — so a model priced solely by the `__pricing__` document
+    // was written down at $0 permanently. enforceStepLimits resolving the table correctly afterwards
+    // cannot undo it, and the "no price for this model" warning did not fire either because the unpriced
+    // set stayed empty. Measured: a step the document prices at $300 left a $0.01 ceiling unenforced.
+    const { checkToolGate, enforceStepLimits } = await import('../src/limits.js');
+    const j = new InMemoryJournal();
+    await j.put(PRICING_KEY, { models: { [NEW_MODEL]: { inputPer1M: 100_000, outputPer1M: 200_000 } } });
+    await j.put('seed-1:input', { prompt: 'x' });
+    await j.put('seed-1:model:0', step(NEW_MODEL, 1000));
+
+    // The tool gate runs FIRST and seeds. This is the ordering the bug needed.
+    await checkToolGate(j as never, 'seed-1', 'someTool', 'hash1', { maxToolCalls: 10 } as never);
+
+    await expect(
+      enforceStepLimits(j as never, 'seed-1', { maxCostUsd: 0.01 } as never, {}),
+    ).rejects.toBeInstanceOf(RunLimitExceededError);
+  });
 });

@@ -244,4 +244,52 @@ describe('Pricing view', () => {
     expect(sent.models['acme/new-model']).not.toHaveProperty('cachedInputPer1M');
     expect(sent.models['acme/new-model'].inputPer1M, 'the other fields must survive').toBe(10);
   });
+
+  it('a 409 is recoverable: the edits survive and the SECOND save goes through', async () => {
+    // The draft stayed pinned to the version it was built on, so every later Save sent the same stale
+    // ifVersion and got the same 409 — for good, with no discard button to escape through. Auto-retrying
+    // would have been worse: that is the silent overwrite the lock exists to prevent. So the conflict is
+    // resolved (edits kept, table refreshed) and the next Save is a deliberate act on top of what is now
+    // there.
+    let version = 3;
+    let firstSave = true;
+    const bodies: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (_u: string, init?: RequestInit) => {
+      if (init?.method === 'PUT') {
+        bodies.push(String(init.body));
+        if (firstSave) {
+          firstSave = false;
+          version = 9; // another admin landed
+          // A REAL Response: the api layer reads the error body via `res.clone().json()`, and a hand-rolled
+          // object without `clone()` makes that throw into a catch that silently drops the body — so the
+          // conflict's `current` version never reaches the view. The first version of this test did that
+          // and measured a fix that could not have worked.
+          return new Response(
+            JSON.stringify({ error: 'conflict', code: 'version_conflict', current: { version: 9 } }),
+            { status: 409, headers: { 'content-type': 'application/json' } },
+          );
+        }
+        return jsonOk({ ok: true, version: 10 });
+      }
+      return jsonOk({ ...RESPONSE, version });
+    }));
+
+    wrap(<Pricing />);
+    const field = await waitFor(() => screen.getByLabelText('acme/new-model inputPer1M') as HTMLInputElement);
+    fireEvent.change(field, { target: { value: '' } });
+    fireEvent.change(field, { target: { value: '77' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+    await waitFor(() => expect(bodies.length).toBe(1));
+    expect(JSON.parse(bodies[0]).ifVersion, 'the first save used the version the draft was built on').toBe(3);
+
+    // The edit is still on screen — a conflict must not throw away what was typed.
+    await waitFor(() => expect((screen.getByLabelText('acme/new-model inputPer1M') as HTMLInputElement).value).toBe('77'));
+
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+    await waitFor(() => expect(bodies.length).toBe(2));
+    const second = JSON.parse(bodies[1]);
+    expect(second.ifVersion, 'the second save repeated the stale version and would 409 forever').toBe(9);
+    expect(second.models['acme/new-model'].inputPer1M, 'the edit was lost on the way').toBe(77);
+  });
 });

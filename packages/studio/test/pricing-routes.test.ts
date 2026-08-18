@@ -131,4 +131,52 @@ describe('Studio /pricing', () => {
     expect(audit.items[0].actor).toBe('ops');
     expect(audit.items[0].detail.models).toContain('a');
   });
+
+  it('a bound org admin sees the operator\'s prices, and is told it cannot edit them', async () => {
+    // The document only ever exists at the ROOT (PUT requires an unbound operator), so reading it
+    // through the org-scoped `rw` showed a bound admin an empty override list AND dropped the
+    // operator's corrections from `effective` — the price their runs are actually billed at, reported
+    // as the shipped default. Measured: operator sets x/y to 9, the bound admin saw neither.
+    const journal = new InMemoryJournal();
+    const opApp = createStudioApi({ reader: journal, auth: AUTH(), org: {} });
+    await put(opApp as never, 'op', { models: { 'x/y': { inputPer1M: 9, outputPer1M: 9 } } });
+
+    const boundApp = createStudioApi({ reader: journal, auth: BOUND_ADMIN(), org: {} });
+    const res = await (await call(boundApp as never, '/pricing', { headers: H('acme-adm') })).json();
+
+    expect(res.overrides['x/y'], 'a bound admin cannot see the operator\'s override').toBeDefined();
+    expect(res.effective['x/y'].inputPer1M, 'a bound admin was billed at a price it cannot see').toBe(9);
+    // ...and the screen must not offer an editor whose Save answers 403.
+    expect(res.editable, 'the UI was told a bound admin can edit global pricing').toBe(false);
+  });
+
+  it('an unbound operator is still told it CAN edit', async () => {
+    const { app } = api();
+    const res = await (await call(app as never, '/pricing', { headers: H('op') })).json();
+    expect(res.editable).toBe(true);
+  });
+
+  it('refuses replace:true with an empty table — that prices nothing at all', async () => {
+    // effectivePricingTable would return `{}`: every model counts as $0 and every ceiling stops firing.
+    // The UI reaches it in two clicks (the row bin removes the last override, `replace` rides along).
+    const { app, journal } = api();
+    const res = await put(app as never, 'op', { replace: true, models: {} });
+    expect(res.status).toBe(400);
+    expect(await res.text()).toMatch(/stop firing/);
+
+    const { effectivePricingTable } = await import('@gnldev/durable');
+    expect(Object.keys(await effectivePricingTable(journal as never)).length, 'the table was emptied anyway')
+      .toBeGreaterThan(0);
+  });
+
+  it('bounds the document size — it is re-read and spread on every model step', async () => {
+    const { app } = api();
+    const many = Object.fromEntries(
+      Array.from({ length: 501 }, (_, i) => [`m${i}`, { inputPer1M: 1, outputPer1M: 1 }]),
+    );
+    expect((await put(app as never, 'op', { models: many })).status).toBe(400);
+
+    const longId = { ['x'.repeat(201)]: { inputPer1M: 1, outputPer1M: 1 } };
+    expect((await put(app as never, 'op', { models: longId })).status).toBe(400);
+  });
 });
