@@ -679,6 +679,13 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
         context: s.orgId ? { org: s.orgId } : undefined,
         limits: clampLimits(opts.limits, body.limits),
         ...(input.messages ? { messages: input.messages } : { prompt: input.prompt }),
+        // The threadId comes from `:input` for the same reason the prompt does: a resume is
+        // self-contained and the client does not re-send it. Without it the registry's memory has no
+        // thread to append to — runDurable's append is conditioned on `memory && threadId` — so the
+        // assistant's reply to an approved call never entered the conversation. Measured: the user
+        // asks for a charge, a human approves it, the charge goes through, and the thread still holds
+        // only the user's message. The next turn's model sees no charge and no answer.
+        ...(input.threadId ? { threadId: input.threadId } : {}),
       });
       // `finishReason` is here because without it an empty answer is unreadable. A run whose model
       // Returned nothing answers 200 with `text: ""` — identical, on the wire, to a model that

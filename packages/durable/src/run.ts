@@ -1151,6 +1151,27 @@ export interface ResumeAgentConfig {
    */
   limits?: RunLimits;
   processors?: Processor[];
+  /**
+   * `memory` was the next field in that same list, and it was the one that loses DATA rather than
+   * protection. runDurable appends the finished turn only when `memory && threadId` are both present
+   * and the run did not suspend, so a suspended turn skips the append by design — and a resume with no
+   * memory attached never appends it either. The assistant's reply to an approved call is then gone
+   * from the thread for good.
+   *
+   * Measured, same journal, same approval, one difference:
+   *
+   *   via resumeRun   → thread ['user']                                  the answer vanished
+   *   via runDurable  → thread ['user','assistant','tool','assistant']   the turn is there
+   *
+   * The user asked for a charge, a human approved it, the charge went through, the assistant said so —
+   * and the conversation remembers only the request. The next turn's model sees no charge and no
+   * answer, which for a money-shaped tool is the setup for doing it again.
+   *
+   * `threadId` is recovered from `:input` below, so passing `memory` is enough; pass `resourceId` too
+   * if the original run used resource-scope recall.
+   */
+  memory?: Memory;
+  resourceId?: string;
   lock?: { owner: string; ttlMs: number };
   timeouts?: { modelStepMs?: number; toolMs?: number; claimTtlMs?: number };
   exclusiveModelStep?: { ttlMs?: number };
@@ -1191,6 +1212,8 @@ export async function resumeRun(
     // Forward the FULL protection set (not just limits) — processors especially, so
     // Tool-result redaction runs on the approved call during resume.
     ...(opts.processors ? { processors: opts.processors } : {}),
+    ...(opts.memory ? { memory: opts.memory } : {}),
+    ...(opts.resourceId ? { resourceId: opts.resourceId } : {}),
     ...(opts.lock ? { lock: opts.lock } : {}),
     ...(opts.timeouts ? { timeouts: opts.timeouts } : {}),
     ...(opts.exclusiveModelStep ? { exclusiveModelStep: opts.exclusiveModelStep } : {}),
@@ -1201,8 +1224,10 @@ export async function resumeRun(
     ...(input.system ? { system: input.system } : {}),
     // Recover the threadId frozen into `:input` — a resumed run under `taintScope: 'thread'`
     // Must keep the thread carry (inherit at start + write the thread key on a NEW post-resume
-    // Untrusted call). No memory is attached here, so this changes nothing else (memory recall needs
-    // `memory && threadId`).
+    // Untrusted call). It is ALSO the half that makes an attached `memory` work: the append is
+    // conditioned on `memory && threadId`, so recovering the id here and forwarding memory above are
+    // one fix, not two. (This comment used to say no memory is attached "so this changes nothing
+    // else" — true, and the reason the resumed turn never reached the thread.)
     ...(input.threadId ? { threadId: input.threadId } : {}),
   } as any);
 }
