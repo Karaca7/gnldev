@@ -4,6 +4,7 @@
 import type { Journal, JournalReader, RunSummary } from './journal.js';
 import { claim, listRunsArray } from './journal.js';
 import { getRunCost, type RunCost } from './cost.js';
+import { effectivePricingTable, type ModelPricing } from './pricing.js';
 import { withOrg } from './organization.js';
 
 /** Journal key prefix for budget documents: `__budget__:<orgId>` + `__budget__:default`. */
@@ -179,6 +180,23 @@ export async function getOrgUsage(
   const view = (orgId ? withOrg(reader as unknown as Journal, orgId) : reader) as unknown as JournalReader & Partial<Journal>;
   if (typeof view.listRuns !== 'function') return { runs: 0, tokens: 0, costUsd: 0 };
 
+  /**
+   * The price table, resolved AT MOST ONCE per call and shared by every run in the scan.
+   *
+   * Without `opts.pricing`, getRunCost resolves the table itself — a `__pricing__` point-read per
+   * call. In a loop over runs that is the same document fetched once per run, and it dominates:
+   * measured on a full scan, 200 runs did 401 gets of which 200 were `__pricing__` — 49.9% of all
+   * reads, for a value that cannot change between two iterations of the same loop. Cheap on local
+   * SQLite (~142-383 µs each); on Postgres it is 200 extra round trips.
+   *
+   * Lazy, so the counter fast path above — which returns before any loop — still costs nothing. Read
+   * once rather than per run is also the more consistent answer: one scan should price against one
+   * table, not against whatever the document happened to be at each step.
+   */
+  let cachedPricing: Record<string, ModelPricing> | undefined;
+  const pricing = async (): Promise<Record<string, ModelPricing>> =>
+    (cachedPricing ??= await effectivePricingTable(view as never));
+
   const counted = await readUsageCounter(view); // H8a: sum of counters + legacy
   if (counted) {
     if (!strictSuspendedCost) {
@@ -191,7 +209,7 @@ export async function getOrgUsage(
     let extraCostUsd = 0;
     for (const r of runs) {
       if (r.status === 'completed') continue; // already included in the counter
-      const rc = await getRunCost(view, r.runId); // suspended: always live (not final)
+      const rc = await getRunCost(view, r.runId, { pricing: await pricing() }); // suspended: always live (not final)
       extraTokens += rc.totalTokens;
       extraCostUsd += rc.costUsd;
     }
@@ -210,7 +228,7 @@ export async function getOrgUsage(
     const completed = r.status === 'completed';
     let rc = completed ? costCache?.get(cacheKey) : undefined;
     if (!rc) {
-      rc = await getRunCost(view, r.runId);
+      rc = await getRunCost(view, r.runId, { pricing: await pricing() });
       if (completed) costCache?.set(cacheKey, rc); // only final runs are cached
     }
     tokens += rc.totalTokens;

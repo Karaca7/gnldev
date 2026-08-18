@@ -246,3 +246,86 @@ describe('budget (journal-backed live quota)', () => {
     });
   });
 });
+
+// The price table is read ONCE per scan, not once per run.
+//
+// getRunCost resolves the `__pricing__` document itself when no `pricing` option is given — correct for
+// a single call, and a per-run round trip inside a loop. Measured on the full-scan path before the fix:
+//
+//   20 runs  -> 41 gets,  20 of them `__pricing__`
+//   200 runs -> 401 gets, 200 of them `__pricing__`   (49.9% of every read)
+//
+// for a document that cannot change between two iterations of the same loop. On local SQLite each get
+// is 142-383 µs; on Postgres it is one network round trip per run. Reading it once is also the more
+// consistent answer — one scan should price against one table rather than against whatever the
+// document happened to be at each step.
+//
+// Asserted as a READ COUNT rather than a duration: a timing assertion on a loop this small measures
+// the machine, and the thing that regressed here is a call shape, which counting sees exactly.
+describe('getOrgUsage and the price table', () => {
+  /** Wraps a journal so every get is counted, without changing any behaviour. */
+  function counting(journal: InMemoryJournal) {
+    const counts = { get: 0, pricing: 0 };
+    const proxy = new Proxy(journal, {
+      get(target: any, prop) {
+        if (prop === 'get') {
+          return async (key: string) => {
+            counts.get++;
+            if (String(key).includes('__pricing__')) counts.pricing++;
+            return target.get(key);
+          };
+        }
+        const v = target[prop];
+        return typeof v === 'function' ? v.bind(target) : v;
+      },
+    });
+    return { counts, proxy: proxy as unknown as InMemoryJournal };
+  }
+
+  async function seedCompleted(j: InMemoryJournal, n: number) {
+    for (let i = 0; i < n; i++) {
+      await j.put(`pr${i}:input`, { prompt: 'x' });
+      await j.put(`pr${i}:model:0`, {
+        usage: { inputTokens: 100, outputTokens: 100, totalTokens: 200 },
+        response: { modelId: 'gpt-4o' }, finishReason: 'stop',
+      });
+      await j.put(`pr${i}:outcome`, { status: 'completed', at: 1 });
+    }
+  }
+
+  it('reads __pricing__ once for a whole full scan, however many runs it covers', async () => {
+    const journal = new InMemoryJournal();
+    await seedCompleted(journal, 40);
+    const { counts, proxy } = counting(journal);
+
+    await getOrgUsage(proxy, undefined);
+
+    expect(counts.pricing, 'the price document was fetched once per run').toBe(1);
+    // And the saving is the bulk of the scan, not a rounding difference.
+    expect(counts.get).toBeLessThan(60);
+  });
+
+  it('still reports the same usage it did before', async () => {
+    // The point of reading once is that the answer does not change. 40 runs x (100 in @ $2.50/1M +
+    // 100 out @ $10/1M) = 40 x $0.00125.
+    const journal = new InMemoryJournal();
+    await seedCompleted(journal, 40);
+
+    const usage = await getOrgUsage(journal, undefined);
+    expect(usage.runs).toBe(40);
+    expect(usage.tokens).toBe(40 * 200);
+    expect(usage.costUsd).toBeCloseTo(40 * 0.00125, 10);
+  });
+
+  it('the counter fast path does not read the table at all', async () => {
+    // The resolve is lazy on purpose: the O(1) path returns before any loop, and making it pay for a
+    // table it never uses would trade a loop cost for a cost on every single budget check.
+    const journal = new InMemoryJournal();
+    await journal.put(USAGE_KEY, { runs: 3, tokens: 300, costUsd: 0.5 });
+    const { counts, proxy } = counting(journal);
+
+    const usage = await getOrgUsage(proxy, undefined, undefined, false);
+    expect(usage.costUsd).toBe(0.5);
+    expect(counts.pricing, 'the O(1) counter path resolved a price table it never used').toBe(0);
+  });
+});

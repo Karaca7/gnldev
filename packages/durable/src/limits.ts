@@ -654,6 +654,40 @@ async function ensureSeeded(
  * O(number of sub-runs) `get`s, no readRun. If a sub-agent never ran (no counter key), its contribution
  * Is zero — harmless. `seen`: defense against cyclic/double-counted references.
  */
+/**
+ * Nested run ids PROVEN ABSENT, per store. Misses only — a hit is re-read every time, because a
+ * sub-agent's counters are exactly the thing that must stay live.
+ *
+ * `subRunIds` collects EVERY tool call, and almost none of them are sub-agents; each non-sub-agent
+ * costs two `get`s (the parent-scoped id and the legacy bare one) on EVERY subsequent model step. That
+ * is quadratic and it was measured that way — one tool call per step, counting only counter reads:
+ *
+ *   10 steps →   200      30 steps →  1800      60 steps →  7200      (= 2k²)
+ *
+ * Cheap on a local store; on Postgres it is 7200 round trips inside one run's spend check.
+ *
+ * Why a miss is permanent: a toolCallId enters `subRunIds` from `recordToolOutcome`, which
+ * durable-tool.ts calls at the moment it writes the tool's OUTCOME — so the tool's execute has already
+ * returned, and a sub-agent it ran has already written its counters. If neither key exists then,
+ * neither ever will. A suspended sub-agent is a HIT (its counters exist and are non-zero), so it keeps
+ * being re-read and its later growth is still counted.
+ *
+ * KNOWN BOUND, accepted deliberately: a tool that starts a sub-agent WITHOUT awaiting it returns
+ * before those counters are written, so it is cached as a miss and never attributed. Such a run
+ * already escapes attribution in every other respect — it can outlive its parent entirely — and
+ * `createAgentTool` awaits.
+ *
+ * In-memory and per store object, so it costs nothing durable and cannot go stale across processes: a
+ * resumed run in a fresh process simply re-probes once per id and re-learns.
+ */
+const absentNestedRuns = new WeakMap<object, Set<string>>();
+
+function absentFor(store: LimitsStore): Set<string> {
+  let s = absentNestedRuns.get(store as object);
+  if (!s) { s = new Set(); absentNestedRuns.set(store as object, s); }
+  return s;
+}
+
 async function sumSubRuns(
   store: LimitsStore,
   parentRunId: string | undefined,
@@ -661,6 +695,7 @@ async function sumSubRuns(
   opts: RunCostOptions,
   seen: Set<string>,
 ): Promise<{ totalTokens: number; costUsd: number; succeededToolCalls: number }> {
+  const absent = absentFor(store);
   let totalTokens = 0;
   let costUsd = 0;
   let succeededToolCalls = 0;
@@ -670,9 +705,10 @@ async function sumSubRuns(
     const candidates = [nestedAgentRunId(parentRunId, toolCallId), `agent:${toolCallId}`];
     for (const nestedRunId of new Set(candidates)) {
       if (seen.has(nestedRunId)) continue;
+      if (absent.has(nestedRunId)) continue; // proven absent on an earlier step — see absentNestedRuns
       seen.add(nestedRunId);
       const nested = await readCounters(store, nestedRunId); // O(1) — the sub-run already kept this DURING its own run
-      if (!nested) continue; // the sub-agent never ran → harmless 0
+      if (!nested) { absent.add(nestedRunId); continue; } // the sub-agent never ran → harmless 0, and never will
       totalTokens += nested.totalTokens;
       costUsd += nested.costUsd;
       succeededToolCalls += nested.succeededToolCalls;
