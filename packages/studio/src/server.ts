@@ -434,7 +434,21 @@ export interface StudioApiOptions {
    * (2) each tool call awaiting approval (via a first-write-wins `__alert__` marker; webhook errors are
    * Swallowed — never breaks the main flow). Payload.type: 'budget-exceeded' | 'approval-pending'.
    */
-  alerts?: { webhook?: string };
+  alerts?: {
+    webhook?: string;
+    /**
+     * How long an alert POST may take before it is abandoned (ms, default 5000).
+     *
+     * Not a tuning knob so much as a bound. Both alert sites are `await`ed inside a GET handler, and
+     * `fetch` has no default timeout, so an endpoint that accepts the connection and never answers —
+     * a wedged receiver, a dropped route, a webhook host in the middle of an outage — held the request
+     * open indefinitely. Measured: with a socket that accepts and never replies, `GET /approvals`
+     * was still open after 20s and had no reason to ever close. `/approvals` is what the panel polls
+     * every 5 seconds, so the operator's own inbox is the first thing to stop working, and it stops
+     * because the ALERT is broken — the machinery that exists to tell them something is wrong.
+     */
+    timeoutMs?: number;
+  };
   /**
    * W5 regression: converts POST /runs/:id/regression body.model (a 'provider/model' spec) to a real
    * Model. If not given, @gnldev/durable's `resolveModel` is used (dynamically imports the relevant provider
@@ -634,6 +648,27 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   const rw = reader as Partial<Journal> & JournalReader;
   const writable = typeof rw.get === 'function' && typeof rw.put === 'function';
+
+  /**
+   * The one way this server talks to an alert webhook.
+   *
+   * Both alert sites already swallowed errors, which reads as "this cannot break the request" — and
+   * that is exactly why the missing bound went unnoticed: a rejected POST was handled, a POST that
+   * never settles was not, and `.catch()` says nothing about time. Written once because the two call
+   * sites are identical in every respect that matters, and a third alert added later should not have
+   * to rediscover that `fetch` waits forever by default.
+   */
+  async function postAlert (payload: unknown): Promise<void> {
+    const webhook = opts.alerts?.webhook;
+    if (!webhook) return;
+    await fetch(webhook, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(opts.alerts?.timeoutMs ?? 5_000),
+    }).catch(() => { /* alerts are best-effort: a broken receiver must not break the endpoint */ });
+  }
+
   // If memory isn't given and reader is a writable Journal, derive it from the factory (CLI/dev default).
   const resolvedMemory: StudioMemory | undefined =
     memory ?? (opts.memoryFactory && writable ? opts.memoryFactory(reader as unknown as Journal) : undefined);
@@ -1161,7 +1196,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
           if ((await rootRw.get!(`__alert__:approval:${it.runId}:${it.toolCallId}`)) === undefined) {
             const payload = { type: 'approval-pending', ...it };
             await appendLog(rootRw as Journal, '__alert__', payload, `approval:${it.runId}:${it.toolCallId}`);
-            await fetch(opts.alerts.webhook, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) }).catch(() => { });
+            await postAlert(payload);
           }
         } catch { /* alert is best-effort — swallow */ }
       }
@@ -1283,7 +1318,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
             if ((await rootRw.get!(`__alert__:budget:${id}`)) === undefined) {
               const payload = { type: 'budget-exceeded', org: id, costUsd, tokens, limits: lim };
               await appendLog(rootRw as Journal, '__alert__', payload, `budget:${id}`);
-              await fetch(opts.alerts.webhook, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) }).catch(() => { });
+              await postAlert(payload);
             }
           } catch { /* alert is best-effort — swallow */ }
         }

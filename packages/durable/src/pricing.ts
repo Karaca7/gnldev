@@ -116,6 +116,51 @@ export async function effectivePricingTable(journal: Partial<Journal>): Promise<
 }
 
 /**
+ * Whether a table row can actually be multiplied by a token count.
+ *
+ * The `__pricing__` document is documented as editable through Studio, through `gnl pricing`, OR
+ * directly in the journal. Studio's PUT validates every number; a direct write validates nothing, and
+ * a row like `{ inputPer1M: 'free' }` is the shape someone reaches for. That row used to be returned
+ * as a price, `costOf` multiplied by a string, and every cost downstream became NaN.
+ *
+ * NaN is the worst possible value here because `NaN > limit` is FALSE: the run does not exceed the
+ * ceiling, it stops being comparable to it. Measured, a 10M-token step under `maxCostUsd: 0.01` with
+ * `limits.strict: true` threw nothing and warned nothing — while the same run with the model simply
+ * ABSENT from the table failed loudly. Writing a broken price was quieter than writing none.
+ *
+ * Treated as "no price" so the existing unpriced machinery — the strict throw and the fail-open
+ * warning in limits.ts — handles it, rather than growing a second, parallel notion of a bad price.
+ */
+function isUsablePrice(row: unknown): row is ModelPricing {
+  const r = row as ModelPricing | undefined;
+  if (!r || typeof r !== 'object') return false;
+  for (const v of [r.inputPer1M, r.outputPer1M]) {
+    if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) return false;
+  }
+  // Optional, but if present it is multiplied too, so the same rule applies.
+  const cached = r.cachedInputPer1M;
+  if (cached !== undefined && (typeof cached !== 'number' || !Number.isFinite(cached) || cached < 0)) return false;
+  return true;
+}
+
+/** One warning per bad row per process — a broken price must be loud, but not once per step. */
+const warnedBadPrice = new Set<string>();
+
+function rejectBadPrice(modelId: string, key: string): undefined {
+  if (!warnedBadPrice.has(key)) {
+    warnedBadPrice.add(key);
+    console.warn(
+      `@gnldev/durable: the __pricing__ entry for '${key}' is not a usable price (inputPer1M and ` +
+        'outputPer1M must be finite non-negative numbers), so it is being IGNORED' +
+        (key === modelId ? '' : ` while pricing '${modelId}'`) +
+        '. Fix it via Studio, `gnl pricing set`, or the journal document — until then these steps ' +
+        'count as unpriced.',
+    );
+  }
+  return undefined;
+}
+
+/**
  * Pricing for modelId: EXACT match FIRST, otherwise a REAL prefix match (`modelId.startsWith(p)` —
  * The previous `includes` was WRONG because it also counted any substring appearing anywhere as a
  * "prefix"). If multiple prefixes match, the LONGEST (most specific) wins (e.g. for 'openai/gpt-4o-mini'
@@ -131,12 +176,17 @@ export function priceFor(
   // itself. `costOf` then multiplied by undefined and produced NaN — and `NaN > limit` is false, so the
   // spend ceiling stopped firing entirely. Measured: priceFor('constructor') → a function, costUsd NaN.
   // Contrived as an attack, ordinary as a bug: any id that happens to name an Object member did it.
-  if (Object.hasOwn(table, modelId)) return table[modelId];
   // Object.keys already yields own enumerable keys only, so the prefix path was never exposed to this.
-  const key = Object.keys(table)
-    .filter((p) => modelId.startsWith(p))
-    .sort((a, b) => b.length - a.length)[0];
-  return key !== undefined ? table[key] : undefined;
+  const key = Object.hasOwn(table, modelId)
+    ? modelId
+    : Object.keys(table)
+      .filter((p) => modelId.startsWith(p))
+      .sort((a, b) => b.length - a.length)[0];
+  if (key === undefined) return undefined;
+  // Validated AFTER the row is chosen, deliberately: an unusable row is not skipped so a shorter
+  // prefix can win it. The user named a price for this model — charging it at some other row's rate
+  // would replace a missing number with a WRONG one, which is harder to notice than an absence.
+  return isUsablePrice(table[key]) ? table[key] : rejectBadPrice(modelId, key);
 }
 
 /** The USD cost of a usage record (cached tokens are priced separately). */

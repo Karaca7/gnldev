@@ -47,29 +47,45 @@ export interface ModelStepUsage {
  * The caller should interpret this as "this step does not contribute to the count" (SAME as
  * GetRunCost's existing `continue`).
  */
-export function usageAndCostFromModelValue(value: unknown, opts: RunCostOptions = {}): ModelStepUsage | undefined {
+/**
+ * The three facts every reader needs off a model record, resolved for BOTH record shapes.
+ *
+ * A streamDurable record has the shape `{ parts, rest }` (durable-model.ts wrapStream): `usage` is not
+ * at the top level but in the 'finish' part, `finishReason` sits beside it there, and the model's
+ * identity arrives as a `response-metadata` part. The generateText shape (top-level `usage`,
+ * `response.modelId`) is tried FIRST, so existing generate records behave exactly as before.
+ *
+ * This lives in one function because the last time the rule was written per-caller, only the caller
+ * that was being fixed got it: the cost path learned the stream shape and `toTraceSpans` did not, so
+ * the ceiling fired correctly while every OTel span for the same run still reported 0 tokens and an
+ * undefined model. Two readers, one rule — a second reader must not be able to miss it again.
+ */
+export function modelRecordFacts(value: unknown): { usage: unknown; modelId: string | undefined; finishReason: unknown } {
   const v: any = value;
+  const parts: any[] | undefined = Array.isArray(v?.parts) ? v.parts : undefined;
+  const finish = parts?.find((p: any) => p?.type === 'finish');
+  return {
+    usage: v?.usage ?? finish?.usage,
+    modelId: v?.response?.modelId ?? v?.rest?.response?.modelId
+      ?? parts?.find((p: any) => p?.type === 'response-metadata')?.modelId,
+    finishReason: v?.finishReason ?? finish?.finishReason,
+  };
+}
+
+export function usageAndCostFromModelValue(value: unknown, opts: RunCostOptions = {}): ModelStepUsage | undefined {
   const table = opts.pricing ?? DEFAULT_PRICING;
-  // A streamDurable record has the shape `{ parts, rest }` (durable-model.ts wrapStream) —
-  // `usage` is NOT at the top level, it's in the 'finish' part inside `parts`. The generateText shape
-  // (top-level `usage`) is tried FIRST, otherwise it's extracted from the stream shape (backward
-  // Compatible — the behavior of existing generateText records does NOT CHANGE).
-  const usage = v?.usage ?? (Array.isArray(v?.parts) ? v.parts.find((p: any) => p?.type === 'finish')?.usage : undefined);
-  if (!usage) return undefined;
+  const facts = modelRecordFacts(value);
+  if (!facts.usage) return undefined;
+  const { usage } = facts;
   // Through the compat layer, not field-by-field: this is the one funnel every token/cost read
   // passes, so reading the raw object here is what silently disabled every spend ceiling.
   const { inputTokens: inp, outputTokens: outp, cachedTokens: cached, totalTokens: total } = flattenUsage(usage);
-  // Same three-shape treatment `usage` gets above, and for the same reason. On a stream there IS no
-  // `response.modelId`: measured against a live provider, a generate record's `response` carries
-  // ["id","modelId","timestamp","headers","body"] while a stream record's carries ONLY ["headers"] —
-  // the model's identity arrives as a `response-metadata` PART, which is recorded but was never read.
-  // So every streamDurable step priced as 'unknown', priceFor returned nothing and costUsd was 0:
-  // maxCostUsd and an organization's usdLimit could not fire at ANY threshold on the streaming path.
-  // Measured on one real call, same model, same table, 158 vs 161 tokens: generate $0.303, stream $0.
-  const streamMeta = Array.isArray(v?.parts)
-    ? v.parts.find((p: any) => p?.type === 'response-metadata')
-    : undefined;
-  const modelId = v?.response?.modelId ?? v?.rest?.response?.modelId ?? streamMeta?.modelId ?? opts.modelId ?? 'unknown';
+  // Measured against a live provider: a generate record's `response` carries
+  // ["id","modelId","timestamp","headers","body"] while a stream record's carries ONLY ["headers"], so
+  // every streamDurable step used to price as 'unknown' — priceFor returned nothing, costUsd was 0 and
+  // maxCostUsd could not fire at ANY threshold on the streaming path. One real call, same model, same
+  // table, 158 vs 161 tokens: generate $0.303, stream $0.
+  const modelId = facts.modelId ?? opts.modelId ?? 'unknown';
   const pricing = priceFor(modelId, table);
   // costOf reads FLAT fields, so it must be handed the flattened object — a nested usage would
   // price every step at zero.
@@ -137,6 +153,11 @@ export async function toTraceSpans(reader: JournalReader, runId: string): Promis
   return entries.map((e) => {
     const v: any = e.value;
     if (e.kind === 'model') {
+      // Through modelRecordFacts, not field-by-field: reading `v.usage` / `v.response.modelId` here
+      // was correct only for the generate shape, so every span of a STREAMED run reported 0 input,
+      // 0 output and an undefined model while the cost report for the same run was right.
+      const { usage, modelId, finishReason } = modelRecordFacts(v);
+      const flat = flattenUsage(usage);
       return {
         name: 'llm.generate',
         kind: 'model' as const,
@@ -144,12 +165,12 @@ export async function toTraceSpans(reader: JournalReader, runId: string): Promis
         seq: e.seq,
         ts: e.ts,
         attributes: {
-          'gen_ai.response.finish_reason': finishReasonText(v?.finishReason),
+          'gen_ai.response.finish_reason': finishReasonText(finishReason),
           // gen_ai's convention wants integers; a v7 record's usage.inputTokens is an OBJECT, which
           // every backend either drops or renders as junk.
-          'gen_ai.usage.input_tokens': flattenUsage(v?.usage).inputTokens,
-          'gen_ai.usage.output_tokens': flattenUsage(v?.usage).outputTokens,
-          'gen_ai.response.model': v?.response?.modelId,
+          'gen_ai.usage.input_tokens': flat.inputTokens,
+          'gen_ai.usage.output_tokens': flat.outputTokens,
+          'gen_ai.response.model': modelId,
         },
       };
     }

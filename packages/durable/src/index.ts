@@ -33,7 +33,7 @@ export { DEFAULT_PRICING, priceFor, costOf, PRICING_KEY, readPricing, effectiveP
 // Exported for consumers that need the usage/modelId of ONE model step and their own pricing
 // Decision on top — `getRunCost` prices an unknown model at 0, which is right for a total and wrong
 // For a report that has to distinguish "free" from "we have no price for this".
-export { usageAndCostFromModelValue } from './cost.js';
+export { usageAndCostFromModelValue, modelRecordFacts } from './cost.js';
 export type { ModelPricing, PricingDoc } from './pricing.js';
 export {
   DivergenceError, RunBusyError, SideEffectRetryBlockedError, RetryLimitExceededError,

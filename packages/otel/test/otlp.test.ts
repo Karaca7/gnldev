@@ -176,6 +176,14 @@ describe('exportRunToOtlp (fetch mocked — no network)', () => {
 describe('exportRunToOtlp — retry (opt-in, zero-dep hand-rolled loop)', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    // Two tests below do `vi.spyOn(globalThis, 'setTimeout')` under fake timers and never restore it,
+    // so the spy stayed installed over the FAKE setTimeout it had captured. `vi.useRealTimers()` in
+    // their own `finally` does not undo a spy, so from that point on the file's global setTimeout was
+    // a wrapper around a torn-down fake — and the next test to schedule a real timer died with
+    // "setTimeout is not a function". Restored here rather than in each test, because the next spy
+    // added to this file would have to remember the same thing.
+    vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   it('no retry config → exactly one fetch call (backward compat, unchanged default behavior)', async () => {
@@ -359,3 +367,4 @@ describe('exportRunToOtlp — retry (opt-in, zero-dep hand-rolled loop)', () => 
     }
   });
 });
+

@@ -195,4 +195,51 @@ describe('gnl pricing', () => {
     // And nothing of this command's landed — the refusal is before the write.
     expect(json(await run(cfg, 'list', '--json')).overrides['e/f']).toBeUndefined();
   });
+
+  it('reads the model name even when the flags come FIRST', async () => {
+    // The positionals were taken with `argv.filter(a => !a.startsWith('-'))`, which counts a flag's
+    // VALUE as a positional. So this exact invocation priced a model literally named "5": the command
+    // printed success, the table gained a junk row, and `acme/flags-first` — the model the user was
+    // trying to price — stayed unpriced. For a pricing table that means maxCostUsd goes on not capping
+    // the very model they just tried to fix, and nothing anywhere said so.
+    const cfg = writeFixtureConfig();
+    await run(cfg, 'set', '--input', '5', '--output', '10', 'acme/flags-first');
+
+    const out = json(await run(cfg, 'list', '--json'));
+    expect(out.overrides['acme/flags-first'], 'the model name was read from a flag value').toEqual({ inputPer1M: 5, outputPer1M: 10 });
+    expect(Object.keys(out.overrides), 'a model named after a flag value was created').toEqual(['acme/flags-first']);
+  });
+
+  it('refuses the rm that would leave a replace:true table with nothing priced', async () => {
+    // `replace: true` means the document IS the table, so removing the last row prices EVERY model at
+    // $0 — and $0 cannot exceed any ceiling. This is the one `rm` that turns maxCostUsd off for the
+    // whole deployment rather than restoring a default, and it looked like every other rm.
+    // Studio's PUT already refuses `{replace: true, models: {}}`; the CLI reached the same state by a
+    // different door, which is the recurring shape of these: one rule, two call sites, one of them
+    // never told.
+    const cfg = writeFixtureConfig();
+    await run(cfg, 'set', 'only/model', '--input', '1', '--output', '1');
+    const { loadConfig } = await import('../src/config.js');
+    const config = await loadConfig(cfg);
+    const j = (config as { journal: { get: (k: string) => Promise<unknown>; put: (k: string, v: unknown) => Promise<void> } }).journal;
+    const cur = await j.get('__pricing__') as Record<string, unknown>;
+    await j.put('__pricing__', { ...cur, replace: true });
+
+    await expect(run(cfg, 'rm', 'only/model')).rejects.toThrow(/prices EVERY model at \$0/);
+    // And the row is still there — the refusal happens before the write, not after a partial one.
+    expect(json(await run(cfg, 'list', '--json')).overrides['only/model']).toEqual({ inputPer1M: 1, outputPer1M: 1 });
+  });
+
+  it('a NON-replace document may be emptied — that restores the shipped table, it does not erase it', async () => {
+    // The other direction, so the refusal above cannot be read as "rm of a last row is forbidden".
+    // Without `replace`, the document layers over DEFAULT_PRICING, so removing the last override hands
+    // pricing back to the shipped table. That is a return to the default, not a table of zeros.
+    const cfg = writeFixtureConfig();
+    await run(cfg, 'set', 'only/model', '--input', '1', '--output', '1');
+    await run(cfg, 'rm', 'only/model');
+
+    const out = json(await run(cfg, 'list', '--json'));
+    expect(out.overrides).toEqual({});
+    expect(out.effective['gpt-4o'].inputPer1M, 'emptying a layered document unpriced the shipped table').toBe(2.5);
+  });
 });

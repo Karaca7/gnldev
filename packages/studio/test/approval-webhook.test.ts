@@ -62,4 +62,48 @@ describe('approval webhook notification', () => {
     await call(app, '/approvals');
     expect(hook).not.toHaveBeenCalled();
   });
+
+  // A receiver that never answers, which the test above cannot express.
+  //
+  // 'a webhook error does not break the inbox flow' stubs a fetch that THROWS, and a throw is the easy
+  // case — it settles. The case that actually happens to a webhook host is the socket that accepts the
+  // connection and then goes quiet: a wedged process, a load balancer with no backend, a receiver
+  // mid-restart. `fetch` has no default timeout, so that POST never settles, and because it is awaited
+  // inside the handler the whole endpoint never settles either.
+  //
+  // Measured before the bound: with the socket below, `GET /approvals` was still open after 20 seconds
+  // with no reason to ever close. The panel polls that endpoint every 5s, so an operator whose webhook
+  // host is down loses the approval inbox — the alert path taking down the thing it exists to serve.
+  //
+  // This uses a REAL socket rather than a stub on purpose. Nothing about a hang is expressible as a
+  // mocked fetch: a stub that never resolves would hang the test run itself, which is the same failure
+  // in a different place and would prove only that a promise can be left pending.
+  it('a webhook that never answers cannot hold the endpoint open', async () => {
+    const net = await import('node:net');
+    const black = net.createServer((s) => { s.on('data', () => { /* accept, never reply */ }); });
+    await new Promise<void>((r) => black.listen(0, '127.0.0.1', () => r()));
+    const port = (black.address() as { port: number }).port;
+
+    try {
+      const journal = new InMemoryJournal();
+      await seedSuspended(journal, 'sus-4');
+      const app = createStudioApi({
+        reader: journal,
+        alerts: { webhook: `http://127.0.0.1:${port}/hook`, timeoutMs: 150 },
+      });
+
+      const started = Date.now();
+      const res = await Promise.race([
+        call(app, '/approvals'),
+        new Promise<'HUNG'>((r) => setTimeout(() => r('HUNG'), 5_000)),
+      ]);
+      expect(res, 'the unanswered webhook held GET /approvals open').not.toBe('HUNG');
+      expect((res as Response).status).toBe(200);
+      // The inbox is still correct, not merely fast: abandoning the alert must not drop the items.
+      expect((await (res as Response).json()).items).toHaveLength(1);
+      expect(Date.now() - started).toBeLessThan(3_000);
+    } finally {
+      await new Promise<void>((r) => black.close(() => r()));
+    }
+  });
 });

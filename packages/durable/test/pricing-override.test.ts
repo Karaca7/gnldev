@@ -178,6 +178,70 @@ describe('the journal\'s __pricing__ document', () => {
     } as never)).rejects.toBeInstanceOf(RunLimitExceededError);
   });
 
+  it('a row whose price is not a number is IGNORED, so the ceiling still fires', async () => {
+    // The document is documented as editable through Studio, through `gnl pricing`, or DIRECTLY in the
+    // journal. Studio's PUT validates every number; a direct write validates nothing, and
+    // `{ inputPer1M: 'free' }` is a shape someone reaches for. Nothing on the read side checked, so
+    // `costOf` multiplied by a string and every cost downstream became NaN.
+    //
+    // NaN is the worst value this can take, because `NaN > limit` is FALSE — the run does not exceed
+    // the ceiling, it stops being comparable to it. Measured before the fix: a 10M-token step under
+    // maxCostUsd $0.01 with `limits.strict: true` threw NOTHING and warned NOTHING, while the same run
+    // with the model simply absent from the table failed loudly. Writing a broken price bought more
+    // silence than writing no price at all — the one outcome a spend ceiling must never have.
+    const j = new InMemoryJournal();
+    await j.put(PRICING_KEY, { models: { [NEW_MODEL]: { inputPer1M: 'free' as never, outputPer1M: 1 } } });
+    await j.put('bad-1:input', { prompt: 'x' });
+    await j.put('bad-1:model:0', step(NEW_MODEL, 5_000_000));
+
+    const cost = await getRunCost(j, 'bad-1');
+    expect(Number.isNaN(cost.costUsd), 'the broken row poisoned every cost downstream').toBe(false);
+
+    const { enforceStepLimits } = await import('../src/limits.js');
+    await expect(
+      enforceStepLimits(j as never, 'bad-1', { maxCostUsd: 0.01, strict: true } as never, {}),
+      'a 10M-token step passed a $0.01 ceiling in strict mode',
+    ).rejects.toThrow(/maxCostUsd/);
+  });
+
+  it('a broken EXACT row does not silently fall back to a shorter prefix\'s price', async () => {
+    // The other way this could have been written. Charging the model at some other row's rate would
+    // replace a missing number with a WRONG one, which is harder to notice than an absence — and the
+    // user's intent was to price this exact model, not to opt into whatever prefix happens to match.
+    const j = new InMemoryJournal();
+    await j.put(PRICING_KEY, {
+      replace: true,
+      models: {
+        'acme': { inputPer1M: 1, outputPer1M: 1 },
+        'acme/model-x': { inputPer1M: null as never, outputPer1M: 2 },
+      },
+    });
+    await j.put('bad-2:input', { prompt: 'x' });
+    await j.put('bad-2:model:0', step('acme/model-x', 1_000_000));
+
+    const cost = await getRunCost(j, 'bad-2');
+    expect(cost.costUsd, 'the broken exact row was quietly charged at the \'acme\' prefix rate').toBe(0);
+  });
+
+  it('a legitimate zero price still prices — 0 is a number, not a broken row', async () => {
+    // The guard must reject non-numbers, not falsy numbers. A free tier priced at 0 is ordinary, and
+    // rejecting it would report a genuinely free model as unpriced and make strict mode throw on it.
+    const j = new InMemoryJournal();
+    await j.put(PRICING_KEY, { models: { [NEW_MODEL]: { inputPer1M: 0, outputPer1M: 0 } } });
+    await j.put('zero-1:input', { prompt: 'x' });
+    await j.put('zero-1:model:0', step(NEW_MODEL, 1_000_000));
+
+    const cost = await getRunCost(j, 'zero-1');
+    expect(cost.costUsd).toBe(0);
+    // The load-bearing half: $0 and "no price" both report costUsd 0, so the only thing that tells them
+    // apart is whether strict mode treats the model as unpriced. It must not.
+    const { enforceStepLimits } = await import('../src/limits.js');
+    await expect(
+      enforceStepLimits(j as never, 'zero-1', { maxCostUsd: 0.01, strict: true } as never, {}),
+      'a model priced at $0 was rejected as having no price',
+    ).resolves.toBeUndefined();
+  });
+
   it('the TOOL path seeds the counters with the same table the ceiling uses', async () => {
     // The counters are additive and never recomputed, so whichever table seeds them decides the recorded
     // cost of every earlier step for the rest of the run. `checkToolGate` and `recordToolOutcome` seeded

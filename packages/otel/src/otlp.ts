@@ -247,6 +247,17 @@ export interface ExportRunToOtlpOptions {
   now?: number;
   /** Opt-in retry/backoff for the POST (default: none — exactly one attempt, unchanged behavior). */
   retry?: OtlpRetryOptions;
+  /**
+   * How long one export attempt may take before it is abandoned (ms, default 30000).
+   *
+   * `fetch` has no default timeout, so a collector that accepts the connection and never answers held
+   * this call open with nothing to observe. `retry` made that worse rather than better: retry counts
+   * ATTEMPTS, and an attempt that never settles is never a failure, so a configured backoff never got
+   * to run — the option that exists for an unhealthy collector was disabled by the specific kind of
+   * unhealthy this is. Each attempt is bounded separately, so `retry` now sees a timeout as the
+   * failure it is and backs off as configured.
+   */
+  timeoutMs?: number;
 }
 
 export interface ExportRunToOtlpResult {
@@ -285,6 +296,9 @@ export async function exportRunToOtlp(
       // both the key and the payload to whoever answers. A telemetry POST gains nothing from a
       // redirect; failing loudly is the better trade.
       redirect: 'error',
+      // Per ATTEMPT, not per export: see `timeoutMs` — a signal shared across retries would abort the
+      // second attempt before it started, turning the bound into a cap on the whole backoff instead.
+      signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000),
     });
   const res = opts.retry ? await fetchWithRetry(doFetch, opts.retry) : await doFetch();
   return {

@@ -14,7 +14,7 @@
 // real run depends on it.
 import type * as Durable from '@gnldev/durable';
 import type { Command } from './types.js';
-import { flag, flagBool } from '../args.js';
+import { flag, flagBool, positionals } from '../args.js';
 import { loadConfig } from '../config.js';
 import type { GnlDevConfig } from '../config.js';
 import { getJournal } from '../journal-util.js';
@@ -115,7 +115,10 @@ export const pricingCommand: Command = {
     'gnl pricing [list] | set <model> --input <usd> --output <usd> [--cached <usd>] | rm <model> | ' +
     'test <model> --in <tokens> --out <tokens> [--cached <tokens>]  [--json] [--config gnl.config.ts]',
   async run(ctx) {
-    const [sub = 'list', target] = ctx.argv.filter((a) => !a.startsWith('-'));
+    // Not `argv.filter(a => !a.startsWith('-'))`: that reads a flag's VALUE as a positional, so
+    // `pricing set --input 5 --output 10 my-model` priced a model literally named "5" and said it
+    // succeeded. See positionals() for why this is shared rather than fixed inline.
+    const [sub = 'list', target] = positionals(ctx.argv, ['input', 'output', 'cached', 'in', 'out', 'config']);
     const json = flagBool(ctx.argv, 'json');
     const configPath = flag(ctx.argv, 'config') ?? 'gnl.config.ts';
     const config = await loadConfig(configPath);
@@ -170,6 +173,19 @@ export const pricingCommand: Command = {
         return;
       }
       delete doc.models[target];
+      // Under `replace: true` the document IS the whole table, so removing the last row leaves every
+      // model unpriced — and an unpriced model costs $0, so this is the one `rm` that silently turns
+      // maxCostUsd off for the entire deployment instead of restoring a default. Studio's PUT already
+      // refuses `{replace: true, models: {}}` for the same reason; the CLI reached the same state by a
+      // different door. Refused rather than auto-cleared, because guessing which the user meant —
+      // "price nothing" or "go back to the shipped table" — is not something to guess about money.
+      if (doc.replace && Object.keys(doc.models).length === 0) {
+        throw new Error(
+          `removing '${target}' would leave a replace:true pricing document with no models, which prices ` +
+          'EVERY model at $0 and stops maxCostUsd capping anything. Either add another model first, or ' +
+          'delete the __pricing__ document to fall back to the table shipped with @gnldev/durable.',
+        );
+      }
       await writeDoc(config, d, doc, raw);
       console.log(`removed override for ${bold(target)}`);
       return;
