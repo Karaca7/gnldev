@@ -26,8 +26,20 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The SAME gates a push to main runs, by reference rather than by restatement: build, typecheck,
+  # test, check:docs, check:versions, the competitor-name scan, and the real-backend matrix (Postgres
+  # in both collations + Redis). `publish` needs this, so a red gate stops the release before npm.
+  #
+  # ci.yml is not triggered by a tag — its filter is `branches: [master, main]` — so until this job
+  # existed the publish path ran a strict subset of the checks main gets, and the two most recent
+  # additions to that set (check:docs, the en_US.utf8 Postgres leg) applied to every commit EXCEPT
+  # the ones that ship.
+  gates:
+    uses: ./.github/workflows/ci.yml
+
   publish:
     name: build · typecheck · test · publish
+    needs: gates
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,6 +54,12 @@ jobs:
           registry-url: https://registry.npmjs.org
           cache: pnpm
 
+      # Deliberately repeated after `gates`, not left over from before it. `gates` ran on a different
+      # runner, and what npm receives is the dist THIS job builds — including `pretest`'s
+      # check-dist-fresh, which can only speak for the build in the job it runs in. The build is
+      # required here regardless (there is nothing to publish without it); typecheck and test are
+      # belt-and-braces, worth a few minutes on a workflow that runs a handful of times a year and
+      # ends in an action npm will not let us take back.
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r build
       - run: pnpm -r typecheck

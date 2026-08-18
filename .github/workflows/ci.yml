@@ -4,6 +4,13 @@ on:
   push:
     branches: [master, main]
   pull_request:
+  # Callable so the release workflow can REQUIRE these exact gates instead of restating a subset of
+  # them. A `v*` tag push does not match the branch filter above, so before this the publish path ran
+  # neither `check:docs`, nor the competitor-name scan, nor the real-backend matrix — the artifact that
+  # reached npm had never been tested against a collation-ordered Postgres, which is the only place the
+  # bug that matrix exists for can appear. Restating the steps in release.yml would have re-created the
+  # drift that caused this: a gate added here is a gate the release does not get.
+  workflow_call:
 
 jobs:
   build-test:
