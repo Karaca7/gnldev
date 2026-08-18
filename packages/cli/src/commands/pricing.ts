@@ -23,19 +23,74 @@ import { bold, dim, yellow } from '../ansi.js';
 
 interface Row { inputPer1M: number; outputPer1M: number; cachedInputPer1M?: number }
 
-/** The document as stored, or an empty one. Never invents `replace`. */
-async function readDoc(config: GnlDevConfig, d: typeof Durable): Promise<{ version: number; models: Record<string, Row>; replace?: boolean; updatedAt?: number }> {
+interface Doc { version: number; models: Record<string, Row>; replace?: boolean; updatedAt?: number }
+
+/**
+ * The document as stored, plus the RAW value it came back as.
+ *
+ * The raw value is the compare-and-set operand. Every adapter compares the SERIALISED form (sqlite
+ * `value = ?`, postgres/redis serialize(expected), in-memory stableStringify), so a normalised copy —
+ * which is what the object below is, with its defaults filled in — never matches and the CAS always
+ * loses. Learned the hard way in run-lock.ts; repeated here so it is not learned twice.
+ */
+async function readDoc(config: GnlDevConfig, d: typeof Durable): Promise<{ doc: Doc; raw: unknown }> {
   const journal = getJournal(config, d);
-  const doc = await (journal as { get?: (k: string) => Promise<unknown> }).get?.(d.PRICING_KEY);
-  const asDoc = doc as { version?: number; models?: Record<string, Row>; replace?: boolean; updatedAt?: number } | undefined;
-  return { version: asDoc?.version ?? 1, models: asDoc?.models ?? {}, replace: asDoc?.replace, updatedAt: asDoc?.updatedAt };
+  const raw = await (journal as { get?: (k: string) => Promise<unknown> }).get?.(d.PRICING_KEY);
+  const asDoc = raw as { version?: number; models?: Record<string, Row>; replace?: boolean; updatedAt?: number } | undefined;
+  return {
+    // COPIED, not aliased. The callers mutate `doc.models` before writing, and sharing the reference with
+    // `raw` mutated the compare-and-set operand too — so `expected` no longer described what is stored
+    // and every second write lost its own CAS. The copy keeps `raw` exactly as it came back.
+    doc: {
+      version: asDoc?.version ?? 1,
+      models: { ...(asDoc?.models ?? {}) },
+      replace: asDoc?.replace,
+      updatedAt: asDoc?.updatedAt,
+    },
+    raw,
+  };
 }
 
-async function writeDoc(config: GnlDevConfig, d: typeof Durable, doc: { version: number; models: Record<string, Row>; replace?: boolean }): Promise<void> {
-  const journal = getJournal(config, d);
-  const put = (journal as { put?: (k: string, v: unknown) => Promise<void> }).put;
-  if (!put) throw new Error("this journal is read-only — `gnl pricing set` needs a writable journal");
-  await put.call(journal, d.PRICING_KEY, { ...doc, updatedAt: Date.now() });
+async function writeDoc(config: GnlDevConfig, d: typeof Durable, doc: Doc, expected: unknown): Promise<void> {
+  const journal = getJournal(config, d) as {
+    put?: (k: string, v: unknown) => Promise<void>;
+    putIfMatch?: (k: string, expected: unknown, v: unknown) => Promise<boolean>;
+    putIfAbsent?: (k: string, v: unknown) => Promise<boolean>;
+  };
+  if (!journal.put) throw new Error("this journal is read-only — `gnl pricing set` needs a writable journal");
+  // The version has to move, or Studio's optimistic lock silently eats this write: Studio loads v3, the
+  // CLI saves (still v3), Studio then saves with ifVersion:3, the check passes because nothing moved, and
+  // the CLI's change is gone with no conflict reported. A lock that cannot detect the other writer is
+  // worse than none, because the UI claims it is protecting you.
+  const next = { ...doc, version: doc.version + 1, updatedAt: Date.now() };
+  // Compare-and-set for the same reason the version moves at all: this command is read-modify-write, so
+  // two `gnl pricing set` runs a second apart silently discarded one of the two edits. A conflict the
+  // operator is told about is recoverable; one they are not told about is a price nobody set.
+  // Creating the document is a different operation from replacing it: there is no previous value to
+  // compare against, and putIfMatch against `undefined` is not a comparison every adapter can make.
+  // putIfAbsent is the create-side CAS, and it loses to whoever created it first — which is the same
+  // answer, reported the same way.
+  if (expected === undefined && typeof journal.putIfAbsent === 'function') {
+    const created = await journal.putIfAbsent(d.PRICING_KEY, next);
+    if (!created) {
+      throw new Error(
+        'pricing was created by another writer while this command was running. Nothing was written — ' +
+        're-run the command to apply it on top of the current table.',
+      );
+    }
+    return;
+  }
+  if (expected !== undefined && typeof journal.putIfMatch === 'function') {
+    const won = await journal.putIfMatch(d.PRICING_KEY, expected, next);
+    if (!won) {
+      throw new Error(
+        'pricing changed while this command was running (another `gnl pricing` run, or a Studio save). ' +
+        'Nothing was written — re-run the command to apply it on top of the current table.',
+      );
+    }
+    return;
+  }
+  await journal.put.call(journal, d.PRICING_KEY, next);
 }
 
 /** A price given on the command line. Rejects anything that would silently price at zero. */
@@ -68,13 +123,13 @@ export const pricingCommand: Command = {
     const journal = getJournal(config, d);
 
     if (sub === 'list') {
-      const doc = await readDoc(config, d);
+      const { doc } = await readDoc(config, d);
       const effective = await d.effectivePricingTable(journal as never);
       const own = new Set(Object.keys(doc.models));
       if (json) {
         console.log(JSON.stringify({
           source: own.size ? (doc.replace ? 'journal (replace)' : 'journal (layered over defaults)') : 'defaults',
-          overrides: doc.models, effective, updatedAt: doc.updatedAt,
+          version: doc.version, overrides: doc.models, effective, updatedAt: doc.updatedAt,
         }, null, 2));
         return;
       }
@@ -92,7 +147,7 @@ export const pricingCommand: Command = {
 
     if (sub === 'set') {
       if (!target) throw new Error('usage: gnl pricing set <model> --input <usd> --output <usd> [--cached <usd>]');
-      const doc = await readDoc(config, d);
+      const { doc, raw } = await readDoc(config, d);
       const row: Row = {
         inputPer1M: money(ctx.argv, 'input', true)!,
         outputPer1M: money(ctx.argv, 'output', true)!,
@@ -100,7 +155,7 @@ export const pricingCommand: Command = {
       const cached = money(ctx.argv, 'cached', false);
       if (cached !== undefined) row.cachedInputPer1M = cached;
       doc.models[target] = row;
-      await writeDoc(config, d, doc);
+      await writeDoc(config, d, doc, raw);
       if (json) { console.log(JSON.stringify({ set: target, ...row }, null, 2)); return; }
       console.log(`${bold(target)}  in ${row.inputPer1M}  out ${row.outputPer1M}${row.cachedInputPer1M !== undefined ? `  cache ${row.cachedInputPer1M}` : ''}`);
       console.log(dim('check it with: gnl pricing test ' + target + ' --in 1000 --out 1000'));
@@ -109,13 +164,13 @@ export const pricingCommand: Command = {
 
     if (sub === 'rm') {
       if (!target) throw new Error('usage: gnl pricing rm <model>');
-      const doc = await readDoc(config, d);
+      const { doc, raw } = await readDoc(config, d);
       if (!(target in doc.models)) {
         console.log(dim(`no override for '${target}' — nothing to remove (the shipped table is unaffected either way)`));
         return;
       }
       delete doc.models[target];
-      await writeDoc(config, d, doc);
+      await writeDoc(config, d, doc, raw);
       console.log(`removed override for ${bold(target)}`);
       return;
     }
@@ -130,7 +185,7 @@ export const pricingCommand: Command = {
       }
       const table = await d.effectivePricingTable(journal as never);
       const price = d.priceFor(target, table);
-      const doc = await readDoc(config, d);
+      const { doc } = await readDoc(config, d);
       // Which entry answered. `priceFor` matches by LONGEST PREFIX, so a dated id resolves through a
       // shorter key — and a wrong-but-plausible answer (a whole family sharing one price) looks
       // identical to a right one unless the matched key is shown.

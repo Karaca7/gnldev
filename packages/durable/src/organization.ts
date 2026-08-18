@@ -35,6 +35,27 @@ function orgPrefix(orgId: string): string {
  */
 export const ORG_SCOPE = Symbol.for('@gnldev/durable.orgScope');
 
+/**
+ * The journal a scoped view wraps.
+ *
+ * `withOrg` prefixes EVERY key, with no exemptions, which is right for run data and wrong for the few
+ * documents that are deliberately global. `__pricing__` is one: Studio's PUT requires a platform admin
+ * (an unbound identity, so no scope) and writes it at the root, while a multi-org runtime reads through
+ * a scoped journal and therefore looks for `org:<id>:__pricing__`. Measured: the document was written,
+ * and `effectivePricingTable` on a scoped journal did not see it — so the spend ceiling a customer just
+ * configured went on counting $0 in exactly the deployments that have organizations.
+ *
+ * Exposing the parent lets a global-document reader fall back without needing the caller to thread a
+ * second journal through every call site. `__policy__` has the same shape and is not changed here —
+ * naming it so the next person knows it is the same question, not a different one.
+ */
+export const ORG_PARENT = Symbol.for('@gnldev/durable.orgParent');
+
+/** The unscoped journal behind a `withOrg` view, or undefined if this journal is not a scoped view. */
+export function orgParentOf(journal: unknown): Partial<Journal> | undefined {
+  return (journal as Record<symbol, Partial<Journal>> | null | undefined)?.[ORG_PARENT];
+}
+
 /** The organization a journal is scoped to, if any. */
 export function orgScopeOf(journal: unknown): string | undefined {
   const v = (journal as Record<symbol, unknown> | null | undefined)?.[ORG_SCOPE];
@@ -60,6 +81,9 @@ export function withOrg(journal: Journal, orgId: string): Journal & Partial<Jour
   // Carrying it through a spread cannot produce the opposite mistake: re-wrapping with withOrg
   // defines its own value over the copy, so a journal never keeps a stale org.
   Object.defineProperty(out, ORG_SCOPE, { value: orgId, enumerable: true, configurable: true });
+  // Same enumerability, same reason: a wrapper built by spreading this object must keep both markers or
+  // it silently becomes a journal that cannot answer where its global documents live.
+  Object.defineProperty(out, ORG_PARENT, { value: journal, enumerable: true, configurable: true });
   if (journal.putIfAbsent) {
     out.putIfAbsent = (key, value) => journal.putIfAbsent!(prefix + key, value);
   }
@@ -204,8 +228,13 @@ export function withOrg(journal: Journal, orgId: string): Journal & Partial<Jour
  * Incrementing the prefix's last code point is exact rather than a taller sentinel: no suffix can sort
  * at or above it, because any key that did would no longer start with the prefix.
  */
-export function prefixUpperBound(prefix: string): string {
-  if (!prefix) return ''; // an empty prefix has no upper bound; callers scan everything
+export function prefixUpperBound(prefix: string): string | undefined {
+  // An empty prefix means EVERY key, so there is no upper bound to compute — and returning '' was a
+  // regression: `key < ''` is never true, so `listKeys('')` returned nothing and `deletePrefix('')`
+  // deleted nothing while reporting 0. Measured on SQLite: 0 of 2 keys. That is the same silent-success
+  // shape this function exists to remove, reintroduced at the one input that means "all of it".
+  // `undefined` forces the caller to omit the upper bound rather than compare against a sentinel.
+  if (!prefix) return undefined;
   const cps = Array.from(prefix);
   const last = cps.pop()!;
   let next = last.codePointAt(0)! + 1;

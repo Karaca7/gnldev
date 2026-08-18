@@ -108,6 +108,19 @@ const DDL = [
   `CREATE TABLE IF NOT EXISTS gnl_cache (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at BIGINT)`,
 ];
 
+
+/**
+ * `col >= $n [AND col < $n+1]` with the collation suffix, starting at `from`. The upper bound is omitted
+ * for an empty prefix, which means every key — `col < ''` is never true, so emitting it unconditionally
+ * turned `deletePrefix('')` into a delete of nothing that still reported success.
+ */
+function pgRange(col: string, collate: string, prefix: string, from: number): { where: string; params: string[] } {
+  const upper = prefixUpperBound(prefix);
+  return upper === undefined
+    ? { where: `${col}${collate} >= $${from}`, params: [prefix] }
+    : { where: `${col}${collate} >= $${from} AND ${col}${collate} < $${from + 1}`, params: [prefix, upper] };
+}
+
 export class PostgresStorage implements Storage {
   /** Filled in by ensureReady's probe; shared BY REFERENCE with PgRunJournal (see PrefixShape). */
   private prefixShape: PrefixShape = { collate: '' };
@@ -598,19 +611,23 @@ class PgRunJournal implements RunJournal {
     // with the same collation so these stay index-backed range scans rather than seq scans.
     // Same upper bound as the SQLite approach: prefixUpperBound(prefix).
     const c = this.shape.collate;
-    const r = await this.q(`SELECT key FROM gnl_run_journal WHERE key${c} >= $1 AND key${c} < $2 ORDER BY created_at`, [prefix, prefixUpperBound(prefix)]);
+    const rg = pgRange('key', c, prefix, 1);
+    const r = await this.q(`SELECT key FROM gnl_run_journal WHERE ${rg.where} ORDER BY created_at`, rg.params);
     return r.rows.map((x) => x.key);
   }
 
   /** Retention/GDPR: PERMANENTLY delete keys starting with a prefix; also clean up the derived gnl_runs index. */
   async deletePrefix(prefix: string): Promise<number> {
     const c = this.shape.collate;
-    const r = await this.q(`DELETE FROM gnl_run_journal WHERE key${c} >= $1 AND key${c} < $2`, [prefix, prefixUpperBound(prefix)]);
+    const jr = pgRange('key', c, prefix, 1);
+    const r = await this.q(`DELETE FROM gnl_run_journal WHERE ${jr.where}`, jr.params);
     const rid = prefix.endsWith(':') ? prefix.slice(0, -1) : prefix;
-    await this.q(`DELETE FROM gnl_runs WHERE run_id = $1 OR (run_id${c} >= $2 AND run_id${c} < $3)`, [rid, prefix, prefixUpperBound(prefix)]);
+    const rr = pgRange('run_id', c, prefix, 2);
+    await this.q(`DELETE FROM gnl_runs WHERE run_id = $1 OR (${rr.where})`, [rid, ...rr.params]);
     // Counters (incrBy/H8a) are keys too — see the sqlite-storage.ts deletePrefix note (GDPR org purge
     // + rebuildMetrics correctness). Not included in the return count, same as the gnl_runs rows.
-    await this.q(`DELETE FROM gnl_counters WHERE key${c} >= $1 AND key${c} < $2`, [prefix, prefixUpperBound(prefix)]);
+    const cr = pgRange('key', c, prefix, 1);
+    await this.q(`DELETE FROM gnl_counters WHERE ${cr.where}`, cr.params);
     return r.rowCount ?? 0;
   }
   async readRun(runId: string): Promise<JournalEntry[]> {

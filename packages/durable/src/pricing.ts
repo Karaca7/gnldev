@@ -1,5 +1,6 @@
 // Approximate model pricing table ($/1M tokens). The user can override it (getRunCost opts.pricing).
 import type { Journal } from './journal.js';
+import { orgParentOf } from './organization.js';
 
 export interface ModelPricing {
   inputPer1M: number;
@@ -96,7 +97,14 @@ export const PRICING_KEY = '__pricing__';
 /** Reads the pricing document from the journal LIVE (undefined if absent — caller falls back to DEFAULT_PRICING). */
 export async function readPricing(journal: Partial<Journal>): Promise<PricingDoc | undefined> {
   if (typeof journal.get !== 'function') return undefined;
-  return journal.get<PricingDoc>(PRICING_KEY);
+  const own = await journal.get<PricingDoc>(PRICING_KEY);
+  if (own) return own;
+  // An organization-scoped journal prefixes every key, so a document written at the root — which is
+  // where Studio and the CLI write it, both requiring an unbound platform admin — is invisible from
+  // inside a scope. Falling back to the parent makes the global table reachable while leaving room for
+  // a per-organization override to win: the scoped read is tried first.
+  const parent = orgParentOf(journal);
+  return typeof parent?.get === 'function' ? parent.get<PricingDoc>(PRICING_KEY) : undefined;
 }
 
 /** Effective pricing table: journal `__pricing__` (if present) > DEFAULT_PRICING (fallback). */
@@ -118,11 +126,17 @@ export function priceFor(
   modelId: string,
   table: Record<string, ModelPricing> = DEFAULT_PRICING,
 ): ModelPricing | undefined {
-  if (table[modelId]) return table[modelId];
+  // `Object.hasOwn`, not truthiness: `table[modelId]` walks the PROTOTYPE chain, so a model id of
+  // 'constructor', 'toString', 'valueOf' or '__proto__' returned an inherited function or Object.prototype
+  // itself. `costOf` then multiplied by undefined and produced NaN — and `NaN > limit` is false, so the
+  // spend ceiling stopped firing entirely. Measured: priceFor('constructor') → a function, costUsd NaN.
+  // Contrived as an attack, ordinary as a bug: any id that happens to name an Object member did it.
+  if (Object.hasOwn(table, modelId)) return table[modelId];
+  // Object.keys already yields own enumerable keys only, so the prefix path was never exposed to this.
   const key = Object.keys(table)
     .filter((p) => modelId.startsWith(p))
     .sort((a, b) => b.length - a.length)[0];
-  return key ? table[key] : undefined;
+  return key !== undefined ? table[key] : undefined;
 }
 
 /** The USD cost of a usage record (cached tokens are priced separately). */

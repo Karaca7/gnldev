@@ -171,6 +171,18 @@ function normRange(r?: number | { before: number; after: number }) {
 }
 const hasNorm = (v?: number[] | null): v is number[] => !!v && v.some((x) => x !== 0);
 
+
+/**
+ * `key >= lower [AND key < upper]` — the upper bound is omitted for an empty prefix, which means every
+ * key. Built in one place so the four call sites cannot disagree about what "no bound" means.
+ */
+function range(col: string, prefix: string): { where: string; params: string[] } {
+  const upper = prefixUpperBound(prefix);
+  return upper === undefined
+    ? { where: `${col} >= ?`, params: [prefix] }
+    : { where: `${col} >= ? AND ${col} < ?`, params: [prefix, upper] };
+}
+
 export class SqliteStorage implements Storage {
   readonly name = 'sqlite';
   readonly capabilities: CapabilityMatrix = { runs: 'full', memory: 'full', vectors: 'scan', work: 'full', cache: 'ttl' };
@@ -655,22 +667,26 @@ class SqliteRunJournal implements RunJournal {
     ).run(runId, c.m ?? 0, c.t ?? 0, (c.s ?? 0) > 0 ? 1 : 0, c.s ?? 0, c.c0 ?? Date.now(), Date.now());
   }
   async listKeys(prefix: string): Promise<string[]> {
-    const rows = this.db.prepare('SELECT key FROM gnl_run_journal WHERE key >= ? AND key < ? ORDER BY created_at')
-      .all(prefix, prefixUpperBound(prefix)) as { key: string }[];
+    const rg = range('key', prefix);
+      const rows = this.db.prepare(`SELECT key FROM gnl_run_journal WHERE ${rg.where} ORDER BY created_at`)
+        .all(...rg.params) as { key: string }[];
     return rows.map((r) => r.key);
   }
 
   /** Retention/GDPR: PERMANENTLY delete keys starting with the prefix; also clean up the derived gnl_runs index. */
   async deletePrefix(prefix: string): Promise<number> {
-    const r = this.db.prepare('DELETE FROM gnl_run_journal WHERE key >= ? AND key < ?').run(prefix, prefixUpperBound(prefix));
+    const jr = range('key', prefix);
+    const r = this.db.prepare(`DELETE FROM gnl_run_journal WHERE ${jr.where}`).run(...jr.params);
     // Deleting by a `<runId>:` prefix must also drop the run summary (gnl_runs is indexed by run_id).
     const rid = prefix.endsWith(':') ? prefix.slice(0, -1) : prefix;
-    this.db.prepare('DELETE FROM gnl_runs WHERE run_id = ? OR (run_id >= ? AND run_id < ?)').run(rid, prefix, prefixUpperBound(prefix));
+    const rr = range('run_id', prefix);
+    this.db.prepare(`DELETE FROM gnl_runs WHERE run_id = ? OR (${rr.where})`).run(rid, ...rr.params);
     // Counters (incrBy/H8a) are keys too — the deletePrefix contract (journal.ts) says ALL keys under
     // The prefix go. Without this, an org purge (GDPR) left `org:<id>:__usage__` behind forever, and
     // RebuildMetrics's wipe kept stale `__metrics__:` counters (recompute would ADD on top of them).
     // Not included in the return count, same as the derived gnl_runs rows above.
-    this.db.prepare('DELETE FROM gnl_counters WHERE key >= ? AND key < ?').run(prefix, prefixUpperBound(prefix));
+    const cr = range('key', prefix);
+    this.db.prepare(`DELETE FROM gnl_counters WHERE ${cr.where}`).run(...cr.params);
     return Number(r.changes ?? 0);
   }
   async readRun(runId: string): Promise<JournalEntry[]> {

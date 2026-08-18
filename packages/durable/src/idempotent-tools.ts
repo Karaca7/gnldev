@@ -95,9 +95,19 @@ export async function releaseFailedClaim(
   journal: Journal,
   opts: { toolName: string; args: unknown; key?: (toolName: string, args: unknown) => string },
 ): Promise<boolean> {
-  if (typeof journal.deletePrefix !== 'function') {
+  // CAS, not a delete. The first version read the record, checked it said 'failed', and then deleted —
+  // and the gap between those two steps is a double charge: a concurrent retry (a tool marked
+  // `idempotent: true`, or one whose recover() hook resolved the failure) can succeed in that window,
+  // and the delete then removes a SUCCEEDED claim. Measured: 3 real charges where 2 were correct.
+  //
+  // putIfMatch closes it because the compare and the write are one operation. If the record moved on
+  // while we were deciding, our write loses and we say so instead of destroying the winner's record.
+  if (typeof journal.putIfMatch !== 'function') {
     throw new Error(
-      '@gnldev/durable: releaseFailedClaim needs a journal with deletePrefix (InMemoryJournal, SqliteStorage, PostgresStorage all have it)',
+      '@gnldev/durable: releaseFailedClaim needs a journal with putIfMatch — without a compare-and-set ' +
+      'the release cannot tell a still-failed claim from one that succeeded a moment ago, and removing ' +
+      'the latter runs the side effect twice. (InMemoryJournal, SqliteStorage, PostgresStorage and ' +
+      'RedisStorage all have it.)',
     );
   }
   const hash = argsHash(opts.key ? opts.key(opts.toolName, opts.args) : opts.args);
@@ -110,8 +120,17 @@ export async function releaseFailedClaim(
       'Releasing a succeeded claim would let the side effect run a second time.',
     );
   }
-  // No single-key delete on the Journal interface. The hash is fixed-width and the key ends with it,
-  // so no other key can have this one as a prefix — the range is this record alone.
-  await journal.deletePrefix(claimKey);
+  // A tombstone rather than a deletion. durable-tool does not recognise this status, so the next call
+  // executes — which is the point — and the record stays as a trace of who unblocked what. Deleting
+  // after the CAS would reopen a smaller version of the same window for no benefit.
+  const released = { status: 'released', previous: 'failed', releasedAt: Date.now(), toolName: opts.toolName };
+  const won = await journal.putIfMatch(claimKey, rec, released);
+  if (!won) {
+    throw new Error(
+      `@gnldev/durable: '${opts.toolName}' (${claimKey}) changed while it was being released — it is no ` +
+      'longer the failed record that was read. Re-read it before releasing again; releasing blindly here ' +
+      'would discard the outcome of whatever ran in the meantime.',
+    );
+  }
   return true;
 }

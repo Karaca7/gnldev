@@ -64,6 +64,26 @@ describe('DEFAULT_PRICING resolution', () => {
     });
   }
 
+  it('an id that names an Object member resolves to nothing, not to a prototype value', () => {
+    // `table[modelId]` walks the prototype chain. 'constructor', 'toString', 'valueOf' and '__proto__'
+    // therefore returned an inherited function (or Object.prototype itself), `costOf` multiplied by
+    // undefined, and the step priced at NaN — where `NaN > limit` is false, so the ceiling stopped
+    // firing entirely. Measured: priceFor('constructor') returned a function and costUsd came out NaN.
+    for (const id of ['constructor', '__proto__', 'toString', 'valueOf', 'hasOwnProperty']) {
+      expect(priceFor(id, DEFAULT_PRICING), `${id} resolved through the prototype chain`).toBeUndefined();
+    }
+  });
+
+  it('a NaN price cannot be produced by an inherited value', () => {
+    // The consequence, stated as the number a ceiling reads: an unpriced model must cost 0 and report
+    // itself unpriced, never NaN — NaN compares false against every threshold.
+    const p = priceFor('constructor', DEFAULT_PRICING);
+    expect(p).toBeUndefined();
+    // ...and a table that genuinely carries such a key still works, because own keys are honoured.
+    const odd = { constructor: { inputPer1M: 1, outputPer1M: 2 } } as never;
+    expect(priceFor('constructor', odd)).toEqual({ inputPer1M: 1, outputPer1M: 2 });
+  });
+
   it('a model outside the table resolves to nothing rather than to a neighbour', () => {
     // The other direction: prefix matching must not be so eager that an unrelated id picks up a price.
     // `unpriced-model.test.ts` covers what the runtime then does about it.

@@ -11,7 +11,7 @@
 // `claude-opus-4*` id, so Opus 4 was billed at Opus 4.5's rate — a third of the real one — and nothing
 // distinguished that from a correct answer.
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, cleanup, fireEvent, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import '../src/i18n';
@@ -26,7 +26,8 @@ function jsonOk(body: unknown) {
 }
 function wrap(node: React.ReactNode) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<MemoryRouter><QueryClientProvider client={qc}>{node}</QueryClientProvider></MemoryRouter>);
+  const r = render(<MemoryRouter><QueryClientProvider client={qc}>{node}</QueryClientProvider></MemoryRouter>);
+  return Object.assign(r, { qc });
 }
 
 const RESPONSE = {
@@ -142,5 +143,105 @@ describe('Pricing view', () => {
     wrap(<Pricing />);
     await waitFor(() => expect(screen.getByText(/read-only/)).toBeTruthy());
     expect(screen.queryByLabelText('new model id')).toBeNull();
+  });
+
+  it('saves against the version the DRAFT was built on, not whatever refetched underneath it', async () => {
+    // The silent overwrite this prevents. react-query refetches in the background (window focus, an
+    // invalidate elsewhere), so reading the version at save time meant: another admin saves, our cache
+    // quietly refreshes to their version, and our stale draft then PASSES the optimistic lock and
+    // replaces their rows. The lock reported success in exactly the case it exists to catch.
+    let version = 3;
+    const bodies: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'PUT') { bodies.push(String(init.body)); return jsonOk({ ok: true, version: version + 1 }); }
+      return jsonOk({ ...RESPONSE, version });
+    }));
+
+    const { qc } = wrap(<Pricing />);
+    const fetchCalls = () => (globalThis.fetch as unknown as { mock: { calls: unknown[] } }).mock.calls.length;
+    const field = await waitFor(() => screen.getByLabelText('acme/new-model inputPer1M') as HTMLInputElement);
+    fireEvent.change(field, { target: { value: '' } });
+    fireEvent.change(field, { target: { value: '77' } });
+
+    // Another admin saves, and our cache ACTUALLY refetches — an invalidate is what react-query does on
+    // window focus or after any other mutation. Merely changing the number the server would return is not
+    // enough: the first version of this test did that, the cache never refreshed, and both the fixed and
+    // the broken code sent the same value. The mutation check caught it.
+    version = 9;
+    await act(async () => { await qc.invalidateQueries({ queryKey: ['pricing'] }); });
+    await waitFor(() => expect(fetchCalls()).toBeGreaterThan(1));
+
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => expect(bodies.length).toBe(1));
+    const sent = JSON.parse(bodies[0]);
+    expect(sent.ifVersion, 'the save used a version the draft never saw, so the conflict went undetected').toBe(3);
+  });
+
+  it('a fresh draft after a reload uses the NEW version — the pin is per draft, not forever', async () => {
+    const bodies: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'PUT') { bodies.push(String(init.body)); return jsonOk({ ok: true, version: 12 }); }
+      return jsonOk({ ...RESPONSE, version: 11 });
+    }));
+
+    wrap(<Pricing />);
+    const field = await waitFor(() => screen.getByLabelText('acme/new-model inputPer1M') as HTMLInputElement);
+    fireEvent.change(field, { target: { value: '' } });
+    fireEvent.change(field, { target: { value: '5' } });
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => expect(bodies.length).toBe(1));
+    expect(JSON.parse(bodies[0]).ifVersion).toBe(11);
+  });
+
+  it('refuses to save a CLEARED price instead of storing $0', async () => {
+    // `Number('')` is 0, so an emptied field used to save as free — a blank box on screen, a $0 model on
+    // the server, and a model that costs nothing cannot exceed any ceiling. The blank has to be refused,
+    // not interpreted.
+    const bodies: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (_u: string, init?: RequestInit) => {
+      if (init?.method === 'PUT') { bodies.push(String(init.body)); return jsonOk({ ok: true, version: 4 }); }
+      return jsonOk(RESPONSE);
+    }));
+
+    wrap(<Pricing />);
+    const field = await waitFor(() => screen.getByLabelText('acme/new-model inputPer1M') as HTMLInputElement);
+    fireEvent.change(field, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+    // Nothing is sent at all — the refusal happens before the request, which is the assertion. (The
+    // toast itself renders through a portal this harness does not mount, so its text is not the proof.)
+    await new Promise((r) => setTimeout(r, 300));
+    expect(bodies, 'a cleared field was saved as $0').toEqual([]);
+  });
+
+  it('an emptied CACHE field is "not set", not zero — the one field that is optional', async () => {
+    const bodies: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (_u: string, init?: RequestInit) => {
+      if (init?.method === 'PUT') { bodies.push(String(init.body)); return jsonOk({ ok: true, version: 4 }); }
+      return jsonOk(RESPONSE);
+    }));
+
+    // The row must START with a cache price, or "clearing" it writes '' over '' — React fires no change
+    // event, no draft is created, and Save stays disabled. The first version of this test did that and
+    // measured the disabled button rather than the parsing rule.
+    serve({ ...RESPONSE, overrides: { 'acme/new-model': { inputPer1M: 10, outputPer1M: 30, cachedInputPer1M: 2 } } });
+    const bodies2: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (_u: string, init?: RequestInit) => {
+      if (init?.method === 'PUT') { bodies2.push(String(init.body)); return jsonOk({ ok: true, version: 4 }); }
+      return jsonOk({ ...RESPONSE, overrides: { 'acme/new-model': { inputPer1M: 10, outputPer1M: 30, cachedInputPer1M: 2 } } });
+    }));
+
+    wrap(<Pricing />);
+    const cache = await waitFor(() => screen.getByLabelText('acme/new-model cachedInputPer1M') as HTMLInputElement);
+    expect(cache.value, 'the fixture must start with a cache price for this test to mean anything').toBe('2');
+    fireEvent.change(cache, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() => expect(bodies2.length).toBe(1));
+    const sent = JSON.parse(bodies2[0]);
+    expect(sent.models['acme/new-model']).not.toHaveProperty('cachedInputPer1M');
+    expect(sent.models['acme/new-model'].inputPer1M, 'the other fields must survive').toBe(10);
   });
 });

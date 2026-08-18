@@ -6,6 +6,10 @@ import { call } from './call.js';
 
 /** Seeds a suspended run: the model produced a tool-call, the tool is waiting on the suspended sentinel. */
 async function seedSuspended(journal: InMemoryJournal, runId = 'sus-1') {
+  // `:input` is what persistInput writes on every run()/stream(), and what the per-run endpoints now
+  // use to decide whether the caller can see this run at all. A suspended run always has it; leaving it
+  // out described a run that cannot exist.
+  await journal.put(`${runId}:input`, { prompt: 'charge the card' });
   await journal.put(`${runId}:model:0`, {
     content: [{ type: 'tool-call', toolCallId: 'call-1', toolName: 'chargeCard', input: '{"amount":99}' }],
     finishReason: 'tool-calls',
@@ -14,6 +18,16 @@ async function seedSuspended(journal: InMemoryJournal, runId = 'sus-1') {
     status: 'suspended',
     output: { __gnl_suspend: { toolCallId: 'call-1', toolName: 'chargeCard', args: { amount: 99 }, reason: 'high amount' } },
   });
+}
+
+// A run these endpoints can SEE. They now refuse an id that is not present in Studio's reader
+// (the `${id}:input` marker every run()/stream() writes) — the same check cancel and fork already
+// had. Seeding it keeps these fixtures testing what they mean to test (forwarding + audit) with a
+// run that could actually exist; the previous empty journal described a call on a run nobody made.
+async function seeded(): Promise<InMemoryJournal> {
+  const j = new InMemoryJournal();
+  for (const id of ['r1', 'run-1', 'r', 'abc', 'x', 'sus-1', 'sus-2']) await j.put(`${id}:input`, { prompt: 'seed' });
+  return j;
 }
 
 describe('governance: /approvals', () => {
@@ -121,7 +135,7 @@ describe('governance: /runs/:id/processors (compliance reports)', () => {
   });
 
   it('an empty list if there is no record (not 500)', async () => {
-    const app = createStudioApi({ reader: new InMemoryJournal() });
+    const app = createStudioApi({ reader: await seeded() });
     const res = await (await call(app, '/runs/no-such-run/processors')).json();
     expect(res.reports).toEqual([]);
   });
@@ -134,7 +148,7 @@ describe('governance: /runs/:id/processors (compliance reports)', () => {
   });
 
   it('capabilities.processors is on for a writable+listKeys journal', async () => {
-    const app = createStudioApi({ reader: new InMemoryJournal() });
+    const app = createStudioApi({ reader: await seeded() });
     const caps = await (await call(app, '/capabilities')).json();
     expect(caps.processors).toBe(true);
   });

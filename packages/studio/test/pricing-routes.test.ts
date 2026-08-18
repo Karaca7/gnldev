@@ -16,8 +16,18 @@ import { call } from './call.js';
 
 const AUTH = () => roleAuth({
   admin: { token: 'op', user: 'ops' },              // unbound operator
-  viewer: { token: 'acme-adm', orgId: 'acme' },     // bound to one organization
+  viewer: { token: 'acme-view', orgId: 'acme' },    // bound, read-only
 });
+
+/**
+ * An ADMIN bound to an organization — the only persona that reaches the platform-admin gate.
+ *
+ * The bound identity here used to be the viewer, which has no write permission, so `allowP` refused
+ * first and `requirePlatformAdmin` was never consulted. Measured: deleting that gate entirely left all
+ * eight tests green. The same mistake as the fail-open this suite exists for — testing the boundary with
+ * a persona that cannot reach it.
+ */
+const BOUND_ADMIN = () => roleAuth({ admin: { token: 'acme-adm', user: 'acme-ops', orgId: 'acme' } });
 const H = (t: string) => ({ 'content-type': 'application/json', authorization: `Bearer ${t}` });
 
 const api = (journal = new InMemoryJournal()) => ({
@@ -71,13 +81,25 @@ describe('Studio /pricing', () => {
     expect(cached.status).toBe(400);
   });
 
-  it('an org-bound identity cannot change what every organization is billed at', async () => {
-    const { app } = api();
-    const res = await put(app as never, 'acme-adm', { models: { 'gpt-4o': { inputPer1M: 0, outputPer1M: 0 } } });
-    expect([401, 403]).toContain(res.status);
+  it('an org-bound ADMIN cannot change what every organization is billed at', async () => {
+    // Bound AND allowed to write: the combination that actually reaches requirePlatformAdmin. A bound
+    // viewer is refused one gate earlier and proves nothing about this one.
+    const journal = new InMemoryJournal();
+    const app = createStudioApi({ reader: journal, auth: BOUND_ADMIN(), org: {} });
 
-    const after = await (await call(app as never, '/pricing', { headers: H('op') })).json();
-    expect(after.overrides, 'a bound identity wrote the global table').toEqual({});
+    const res = await put(app as never, 'acme-adm', { models: { 'gpt-4o': { inputPer1M: 0, outputPer1M: 0 } } });
+    expect(res.status, 'a bound admin wrote the table every organization is billed against').toBe(403);
+    expect(await res.text()).toMatch(/operator required/);
+
+    // And nothing landed: the refusal is before the write, not after it.
+    const { effectivePricingTable } = await import('@gnldev/durable');
+    expect((await effectivePricingTable(journal as never))['gpt-4o'].inputPer1M).toBe(2.5);
+  });
+
+  it('a bound VIEWER is refused too, one gate earlier — both refusals matter', async () => {
+    const { app } = api();
+    const res = await put(app as never, 'acme-view', { models: { 'gpt-4o': { inputPer1M: 0, outputPer1M: 0 } } });
+    expect([401, 403]).toContain(res.status);
   });
 
   it('refuses a save that would overwrite another admin\'s, when the client says which version it edited', async () => {

@@ -16,9 +16,25 @@ import { pipeAgentStream } from './sse.js';
 /** Scheduler view trigger row (same shape as @gnldev/scheduler `listTriggers` — see GET /scheduler/triggers). */
 export type { TriggerInfo } from '@gnldev/scheduler';
 
+/**
+ * `ctx.orgId` is the organization the CALLER is scoped to, when there is one.
+ *
+ * Studio's read surface is organization-scoped: `GET /runs` lists `r1`, not `org:acme:r1`, because the
+ * scoped journal strips the prefix. The host's callback, however, holds the ROOT journal — so handing it
+ * the bare `r1` sent it looking for a key that only exists as `org:acme:r1:input`, and the Approve
+ * button answered 500 for exactly the multi-org administrator the feature is sold to. Measured:
+ * `GET /runs` → [{runId:'r1'}], `POST /runs/r1/resume` → 500 "no recorded input for runId r1".
+ *
+ * Passing the physical id instead would have leaked the prefix into every host that has no organizations
+ * and made the id the host sees depend on who called. The org travels separately, and a host that
+ * ignores it behaves exactly as before — which is why this is a third parameter and not a changed one.
+ */
+export interface StudioCallbackCtx { orgId?: string }
+
 export type StudioResume = (
   runId: string,
   approvals: Record<string, boolean>,
+  ctx?: StudioCallbackCtx,
 ) => Promise<{ text?: string; interrupts?: unknown[]; finishReason?: string }>;
 
 export type StudioChat = (
@@ -330,7 +346,7 @@ export interface StudioApiOptions {
    * Hooks live in code): `compensate: (runId, o) => compensateRun(runId, { journal, tools, ...o })`.
    * IRREVERSIBLE (a condemned run never resumes) → the endpoint is write-gated and audited.
    */
-  compensate?: (runId: string, opts?: { dryRun?: boolean }) => Promise<unknown>;
+  compensate?: (runId: string, opts?: { dryRun?: boolean }, ctx?: StudioCallbackCtx) => Promise<unknown>;
   /** If given, live chat works. */
   chat?: StudioChat;
   /** If given, the Playground works: pick an agent from the browser + prompt + (streaming) response + approval. */
@@ -1837,8 +1853,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     // the caller cannot see — a no-op reported as success, and a different answer than cancel gives
     // for the identical situation. It is also the second line of defence for the org boundary: `reader`
     // is org-scoped, so another organization's run reads as absent here rather than as an empty fork.
-    const source = await rw.get!(`${id}:input`).catch(() => undefined);
-    if (source === undefined) return c.json({ error: `run '${id}' not found` }, 404);
+    if (!(await runVisible(id))) return c.json({ error: `run '${id}' not found` }, 404);
     const fork = await forkRun(reader as any, id, body.step ?? 0, body.newRunId);
     const r = await resume(fork.newRunId, {});
     await audit(c, 'fork', id, { step: body.step ?? 0, newRunId: fork.newRunId });
@@ -1850,8 +1865,9 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     if (!(await allowP(c.req.raw, 'run:write'))) return deny(c.req.raw, 'write');
     if (!resume) return c.json({ error: 'resume is not enabled' }, 501);
     const id = decodeURIComponent(c.req.param('id'));
+    if (!(await runVisible(id))) return c.json({ error: `run '${id}' not found` }, 404);
     const body = (await c.req.json().catch(() => ({}))) as { approvals?: Record<string, boolean> };
-    const result = await resume(id, body.approvals ?? {});
+    const result = await resume(id, body.approvals ?? {}, { orgId: callerOrg(c) });
     // 'approve' if any value in approvals is true, otherwise 'deny' (the detail carries the full decision set)
     const anyApproved = Object.values(body.approvals ?? {}).some((v) => v === true);
     await audit(c, anyApproved ? 'approve' : 'deny', id, { approvals: body.approvals });
@@ -1869,12 +1885,30 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
    * Every run()/stream() call) — a run from another organization is invisible through the org-scoped
    * `rw` (withOrg prefixes every key), so this returns the same 404 (no existence leak) as elsewhere.
    */
+  /**
+   * Is this run visible to the caller AT ALL?
+   *
+   * `rw` is org-scoped (withOrg prefixes every key), so another organization's run reads as absent and
+   * the answer is the same 404 an unknown id gets — no existence leak. `persistInput` is written by
+   * every run()/stream() call, so `${id}:input` is the presence marker.
+   *
+   * A helper rather than the line repeated per endpoint, because repeating it is exactly how this went
+   * wrong: cancel and fork got the check, and /resume, /compensate and /otel-export did not. Measured on
+   * the shipped build — an acme-bound admin naming `org:globex:victim` got 404 from cancel and 200 from
+   * all three others, resuming a run it cannot see (approving its pending human-approval tool calls),
+   * condemning it and running its compensate hooks, and exporting its full trace to an APM. Any new
+   * per-run endpoint should call this rather than re-deriving the rule.
+   */
+  async function runVisible (id: string): Promise<boolean> {
+    if (typeof rw.get !== 'function') return true; // read-only journal: presence cannot be established
+    return (await rw.get(`${id}:input`).catch(() => undefined)) !== undefined;
+  }
+
   app.post('/runs/:id/cancel', async (c) => {
     if (!(await allowP(c.req.raw, 'run:write'))) return deny(c.req.raw, 'write');
     if (!writable) return c.json({ error: 'cancel requires a writable journal' }, 501);
     const id = decodeURIComponent(c.req.param('id'));
-    const visible = await rw.get!(`${id}:input`).catch(() => undefined);
-    if (visible === undefined) return c.json({ error: `run '${id}' not found` }, 404);
+    if (!(await runVisible(id))) return c.json({ error: `run '${id}' not found` }, 404);
     await cancelAgentRun(rw as unknown as Journal, id, { reason: 'studio-cancel' });
     await audit(c, 'run.cancel', id, { durable: true });
     return c.json({ ok: true, durable: true });
@@ -1888,8 +1922,10 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     if (!(await allowP(c.req.raw, 'run:write'))) return deny(c.req.raw, 'write');
     if (!compensate) return c.json({ error: 'compensate is not enabled (pass the compensate option — see StudioApiOptions)' }, 501);
     const id = decodeURIComponent(c.req.param('id'));
+    // Also gated on the dryRun path: a preview still discloses another organization's saga plan.
+    if (!(await runVisible(id))) return c.json({ error: `run '${id}' not found` }, 404);
     const body = (await c.req.json().catch(() => ({}))) as { dryRun?: boolean };
-    const report = (await compensate(id, { dryRun: !!body.dryRun })) as { entries?: { status: string }[] };
+    const report = (await compensate(id, { dryRun: !!body.dryRun }, { orgId: callerOrg(c) })) as { entries?: { status: string }[] };
     if (!body.dryRun) {
       const counts: Record<string, number> = {};
       for (const e of report.entries ?? []) counts[e.status] = (counts[e.status] ?? 0) + 1;
@@ -1964,6 +2000,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
     if (!opts.otelExport) return c.json({ error: 'OTEL export is not enabled (the host must provide otelExport)' }, 501);
     const id = decodeURIComponent(c.req.param('id'));
+    if (!(await runVisible(id))) return c.json({ error: `run '${id}' not found` }, 404);
     const result = await opts.otelExport(id);
     await audit(c, 'run.otel-export', id, result);
     return c.json(result);
@@ -2944,6 +2981,9 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!scorers) return c.json({ error: 'scorers is not enabled' }, 501);
     const id = decodeURIComponent(c.req.param('id'));
+    // Read-gated, but it still reads a RUN: a scorer's `reason` quotes the run it judged, so an
+    // unscoped id hands another organization's prompt back to the caller through the explanation field.
+    if (!(await runVisible(id))) return c.json({ error: `run '${id}' not found` }, 404);
     const body = (await c.req.json().catch(() => ({}))) as { scorers?: string[]; expected?: string };
     try {
       return c.json({ ok: true, ...(await scorers.score(id, body.scorers ?? [], { expected: body.expected })) });

@@ -12,11 +12,21 @@ const report = { runId: 'r1', dryRun: false, condemned: true, entries: [
   { suffix: 'call-1', toolName: 'charge', status: 'skipped-no-hook' },
 ] };
 
+// A run these endpoints can SEE. They now refuse an id that is not present in Studio's reader
+// (the `${id}:input` marker every run()/stream() writes) — the same check cancel and fork already
+// had. Seeding it keeps these fixtures testing what they mean to test (forwarding + audit) with a
+// run that could actually exist; the previous empty journal described a call on a run nobody made.
+async function seeded(): Promise<InMemoryJournal> {
+  const j = new InMemoryJournal();
+  for (const id of ['r1', 'run-1', 'r', 'abc', 'x']) await j.put(`${id}:input`, { prompt: 'seed' });
+  return j;
+}
+
 describe('POST /runs/:id/compensate', () => {
   it('forwards to the host compensate, audits the summary counts, reports capability', async () => {
     const calls: [string, unknown][] = [];
     const app = createStudioApi({
-      reader: new InMemoryJournal(),
+      reader: await seeded(),
       compensate: async (runId, opts) => { calls.push([runId, opts]); return report; },
     });
     expect((await (await call(app, '/capabilities')).json()).compensate).toBe(true);
@@ -38,7 +48,7 @@ describe('POST /runs/:id/compensate', () => {
 
   it('dryRun forwards but does NOT audit (nothing happened)', async () => {
     const app = createStudioApi({
-      reader: new InMemoryJournal(),
+      reader: await seeded(),
       compensate: async () => ({ ...report, dryRun: true, condemned: false }),
     });
     const res = await call(app, '/runs/r1/compensate', {
@@ -49,12 +59,12 @@ describe('POST /runs/:id/compensate', () => {
   });
 
   it('without the host option → 501 (and the capability is off); a viewer → 403', async () => {
-    const bare = createStudioApi({ reader: new InMemoryJournal() });
+    const bare = createStudioApi({ reader: await seeded() });
     expect((await (await call(bare, '/capabilities')).json()).compensate).toBe(false);
     expect((await call(bare, '/runs/r1/compensate', { method: 'POST', body: '{}' })).status).toBe(501);
 
     const authed = createStudioApi({
-      reader: new InMemoryJournal(),
+      reader: await seeded(),
       compensate: async () => report,
       auth: roleAuth({ admin: { token: 'adm' }, viewer: { token: 'viw' } }),
     });

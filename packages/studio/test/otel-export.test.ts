@@ -10,12 +10,22 @@ import { call } from './call.js';
 const post = (app: any, path: string, body: unknown = {}, headers: Record<string, string> = {}) =>
   call(app, path, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
 
+// A run these endpoints can SEE. They now refuse an id that is not present in Studio's reader
+// (the `${id}:input` marker every run()/stream() writes) — the same check cancel and fork already
+// had. Seeding it keeps these fixtures testing what they mean to test (forwarding + audit) with a
+// run that could actually exist; the previous empty journal described a call on a run nobody made.
+async function seeded(): Promise<InMemoryJournal> {
+  const j = new InMemoryJournal();
+  for (const id of ['r1', 'run-1', 'r', 'abc', 'x']) await j.put(`${id}:input`, { prompt: 'seed' });
+  return j;
+}
+
 describe('capabilities.otelExport', () => {
   it('true only if the host gives opts.otelExport', async () => {
-    const withFn = createStudioApi({ reader: new InMemoryJournal(), otelExport: async () => ({ ok: true, target: 'x' }) });
+    const withFn = createStudioApi({ reader: await seeded(), otelExport: async () => ({ ok: true, target: 'x' }) });
     expect((await (await call(withFn, '/capabilities')).json()).otelExport).toBe(true);
 
-    const without = createStudioApi({ reader: new InMemoryJournal() });
+    const without = createStudioApi({ reader: await seeded() });
     expect((await (await call(without, '/capabilities')).json()).otelExport).toBe(false);
   });
 });
@@ -24,7 +34,7 @@ describe('POST /runs/:id/otel-export', () => {
   it('calls opts.otelExport(runId), returns the result as-is, run.otel-export lands in audit', async () => {
     const calls: string[] = [];
     const app = createStudioApi({
-      reader: new InMemoryJournal(),
+      reader: await seeded(),
       otelExport: async (runId) => {
         calls.push(runId);
         return { ok: true, target: 'https://cloud.langfuse.com' };
@@ -46,7 +56,7 @@ describe('POST /runs/:id/otel-export', () => {
 
   it('if the host function returns ok:false (an error), it is still relayed as-is with 200 + lands in audit', async () => {
     const app = createStudioApi({
-      reader: new InMemoryJournal(),
+      reader: await seeded(),
       otelExport: async () => ({ ok: false, error: 'endpoint returned 500' }),
     });
     const res = await post(app, '/runs/run-1/otel-export');
@@ -60,7 +70,7 @@ describe('POST /runs/:id/otel-export', () => {
   it('403 without write permission (otelExport is never called)', async () => {
     let called = false;
     const app = createStudioApi({
-      reader: new InMemoryJournal(),
+      reader: await seeded(),
       otelExport: async () => { called = true; return { ok: true }; },
       auth: { write: () => false },
     });
@@ -70,7 +80,7 @@ describe('POST /runs/:id/otel-export', () => {
   });
 
   it('501 if opts.otelExport is not given (feature check comes AFTER the write permission check)', async () => {
-    const app = createStudioApi({ reader: new InMemoryJournal() });
+    const app = createStudioApi({ reader: await seeded() });
     const res = await post(app, '/runs/run-1/otel-export');
     expect(res.status).toBe(501);
   });

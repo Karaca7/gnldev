@@ -43,8 +43,13 @@ describe('prefixUpperBound', () => {
     expect(prefixUpperBound('x\u{1F600}')).toBe('x\u{1F601}');
   });
 
-  it('an empty prefix has no bound', () => {
-    expect(prefixUpperBound('')).toBe('');
+  it('an empty prefix has NO bound, and says so', () => {
+    // Returning '' here was a regression, and a bad one: `key < ''` is never true, so on SQLite and
+    // Postgres `listKeys('')` returned 0 of 2 keys and `deletePrefix('')` deleted nothing while
+    // reporting success — the exact silent-success shape this whole helper exists to remove, at the one
+    // input that means "all of it". `undefined` makes the caller omit the bound instead of comparing
+    // against a sentinel that cannot exist.
+    expect(prefixUpperBound('')).toBeUndefined();
   });
 });
 
@@ -75,5 +80,34 @@ describe('SQLite prefix scans over astral keys', () => {
     expect(await j.get(EMOJI), 'an erasure reported success and left this row').toBeUndefined();
     expect(await j.get('org:acme:normal:model:0')).toBeUndefined();
     expect(await j.get('org:acmeX:neighbour:model:0'), 'a neighbouring org was swept').toBeDefined();
+  });
+});
+
+describe('the empty prefix means EVERY key', () => {
+  const seeded = async () => {
+    const s = new SqliteStorage(':memory:');
+    await s.init();
+    const j = s.runs;
+    await j.put('a:model:0', { x: 1 });
+    await j.put('b:model:0', { x: 2 });
+    await j.put('org:acme:c:model:0', { x: 3 });
+    return j;
+  };
+
+  it('listKeys("") returns everything', async () => {
+    const j = await seeded();
+    expect((await j.listKeys('')).length, 'an empty prefix matched nothing').toBe(3);
+  });
+
+  it('deletePrefix("") deletes everything and reports the real count', async () => {
+    const j = await seeded();
+    expect(await j.deletePrefix(''), 'a full purge reported a count it did not delete').toBe(3);
+    expect(await j.listKeys('')).toEqual([]);
+  });
+
+  it('a non-empty prefix is still bounded — the fix did not make every scan unbounded', async () => {
+    const j = await seeded();
+    expect(await j.deletePrefix('org:')).toBe(1);
+    expect((await j.listKeys('')).length, 'the bounded delete took more than its prefix').toBe(2);
   });
 });

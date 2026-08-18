@@ -17,8 +17,9 @@
 // not.
 import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '../src/journal.js';
+import { withOrg } from '../src/organization.js';
 import { getRunCost } from '../src/cost.js';
-import { PRICING_KEY } from '../src/pricing.js';
+import { PRICING_KEY, effectivePricingTable } from '../src/pricing.js';
 import { runDurable } from '../src/run.js';
 import { RunLimitExceededError } from '../src/limits.js';
 import { createMockModel, finalTextResult } from './mock.js';
@@ -119,5 +120,61 @@ describe('the journal\'s __pricing__ document', () => {
     await j.put('r6:model:0', step('gpt-4o'));
     const cost = await getRunCost(j, 'r6');
     expect(cost.costUsd).toBe(12.5); // 1M in @ $2.50 + 1M out @ $10
+  });
+
+  it('is visible from an ORGANIZATION-SCOPED journal — where the ceiling actually runs', async () => {
+    // withOrg prefixes every key, so a document written at the root (which is where both Studio and the
+    // CLI write it — both require an unbound platform admin) was invisible from inside a scope. Measured
+    // before the fix: the doc existed and effectivePricingTable on a scoped journal returned defaults, so
+    // "the ceiling now sees your prices" was true single-org and false in exactly the deployments that
+    // have organizations.
+    const base = new InMemoryJournal();
+    await base.put(PRICING_KEY, { models: { [NEW_MODEL]: { inputPer1M: 10, outputPer1M: 30 } } });
+    const acme = withOrg(base, 'acme');
+
+    const table = await effectivePricingTable(acme as never);
+    expect(table[NEW_MODEL], 'the global table is invisible inside an organization').toEqual({ inputPer1M: 10, outputPer1M: 30 });
+  });
+
+  it('an organization\'s OWN document wins over the global one', async () => {
+    const base = new InMemoryJournal();
+    await base.put(PRICING_KEY, { models: { [NEW_MODEL]: { inputPer1M: 10, outputPer1M: 30 } } });
+    const acme = withOrg(base, 'acme');
+    await acme.put(PRICING_KEY, { models: { [NEW_MODEL]: { inputPer1M: 999, outputPer1M: 1 } } });
+
+    expect((await effectivePricingTable(acme as never))[NEW_MODEL].inputPer1M).toBe(999);
+    // ...and it does not leak upward into everyone else's prices.
+    expect((await effectivePricingTable(base))[NEW_MODEL].inputPer1M).toBe(10);
+  });
+
+  it('survives the wrapper spread, like the org marker does', async () => {
+    const base = new InMemoryJournal();
+    await base.put(PRICING_KEY, { models: { [NEW_MODEL]: { inputPer1M: 7, outputPer1M: 7 } } });
+    const wrapped = { ...withOrg(base, 'acme') };
+    expect((await effectivePricingTable(wrapped as never))[NEW_MODEL].inputPer1M).toBe(7);
+  });
+
+  it('the CEILING fires under an organization scope, not just the cost report', async () => {
+    // Two different code paths read the table: getRunCost (reporting) and enforceStepLimits (the ceiling).
+    // Fixing the reader without checking the ceiling would have left the half that matters broken, and
+    // the symptom is silence — a ceiling that never fires looks exactly like a run under budget.
+    const base = new InMemoryJournal();
+    await base.put(PRICING_KEY, { models: { [NEW_MODEL]: { inputPer1M: 100_000, outputPer1M: 200_000 } } });
+
+    const model = () => createMockModel(async () => ({
+      ...finalTextResult('ok'),
+      usage: { inputTokens: 1000, outputTokens: 1000, totalTokens: 2000 },
+      response: { modelId: NEW_MODEL },
+    }) as never);
+
+    // Root: the baseline.
+    await expect(runDurable({
+      runId: 'ceil-root', journal: base, model: model(), prompt: 'x', limits: { maxCostUsd: 0.01 },
+    } as never)).rejects.toBeInstanceOf(RunLimitExceededError);
+
+    // Organization-scoped: the same document, reached through the parent.
+    await expect(runDurable({
+      runId: 'ceil-org', journal: withOrg(base, 'acme'), model: model(), prompt: 'x', limits: { maxCostUsd: 0.01 },
+    } as never)).rejects.toBeInstanceOf(RunLimitExceededError);
   });
 });

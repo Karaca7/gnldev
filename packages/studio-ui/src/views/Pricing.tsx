@@ -98,10 +98,19 @@ const toRaw = (p: ModelPrice): RawPrice => ({
 });
 
 /** Parse a typed row. An empty cache field means "not set", not zero. */
+/**
+ * An EMPTY field is not zero.
+ *
+ * `Number('')` is 0, so clearing a price and pressing Save stored $0: the screen showed a blank box, the
+ * server was told the model is free, and a $0 model cannot exceed any spend ceiling. NaN instead makes
+ * the save validation refuse it, which is what a blank required field should do.
+ */
+const num = (raw: string): number => (raw.trim() === '' ? Number.NaN : Number(raw));
+
 function fromRaw(r: RawPrice): ModelPrice {
-  const out: ModelPrice = { inputPer1M: Number(r.inputPer1M), outputPer1M: Number(r.outputPer1M) };
+  const out: ModelPrice = { inputPer1M: num(r.inputPer1M), outputPer1M: num(r.outputPer1M) };
   if (r.cachedInputPer1M !== undefined && r.cachedInputPer1M.trim() !== '') {
-    out.cachedInputPer1M = Number(r.cachedInputPer1M);
+    out.cachedInputPer1M = num(r.cachedInputPer1M);
   }
   return out;
 }
@@ -114,12 +123,20 @@ export function Pricing() {
   // produced "995" — a price ten times too large, in the field a spend ceiling reads. It looked fine
   // in jsdom because the test set the whole value in one change event rather than character by
   // character; it showed up the moment the page was typed into in a real browser.
-  const [draft, setDraft] = useState<Record<string, RawPrice> | null>(null);
+  // The draft carries the version it was BUILT ON, not whichever version happens to be loaded when Save
+  // is pressed. react-query refetches in the background (window focus, an invalidate elsewhere), so
+  // reading `q.data.version` at save time meant: another admin saves, our cache quietly refreshes to
+  // their version, and our stale draft then passes the optimistic lock and overwrites their rows. The
+  // lock reported success precisely when it should have reported a conflict.
+  const [draft, setDraft] = useState<{ rows: Record<string, RawPrice>; baseVersion: number } | null>(null);
   const [saving, setSaving] = useState(false);
   const [newId, setNewId] = useState('');
 
-  const rawOverrides: Record<string, RawPrice> = draft
+  const rawOverrides: Record<string, RawPrice> = draft?.rows
     ?? Object.fromEntries(Object.entries(q.data?.overrides ?? {}).map(([k, v]) => [k, toRaw(v)]));
+  /** Start or continue a draft, keeping the version it was based on. */
+  const setRows = (rows: Record<string, RawPrice>) =>
+    setDraft({ rows, baseVersion: draft?.baseVersion ?? q.data?.version ?? 0 });
   const overrides: Record<string, ModelPrice> = useMemo(
     () => Object.fromEntries(Object.entries(rawOverrides).map(([k, v]) => [k, fromRaw(v)])),
     [rawOverrides],
@@ -138,7 +155,7 @@ export function Pricing() {
   // Stores the keystroke as typed. Validation happens on save, so an in-progress "99." or "" is not
   // rewritten under the cursor.
   const edit = (id: string, field: keyof ModelPrice, raw: string) => {
-    setDraft({ ...rawOverrides, [id]: { ...rawOverrides[id], [field]: raw } as RawPrice });
+    setRows({ ...rawOverrides, [id]: { ...rawOverrides[id], [field]: raw } as RawPrice });
   };
 
   const save = async () => {
@@ -151,7 +168,7 @@ export function Pricing() {
 
     setSaving(true);
     try {
-      await api.savePricing(overrides, q.data?.version, q.data?.replace);
+      await api.savePricing(overrides, draft?.baseVersion ?? q.data?.version, q.data?.replace);
       setDraft(null);
       await qc.invalidateQueries({ queryKey: ['pricing'] });
       toast.success('Pricing saved — in effect on the next model step, no deploy needed');
@@ -228,7 +245,7 @@ export function Pricing() {
                   <td className="px-3 py-2 text-right">
                     {mine && q.data?.editable && (
                       <button
-                        onClick={() => { const next = { ...rawOverrides }; delete next[id]; setDraft(next); }}
+                        onClick={() => { const next = { ...rawOverrides }; delete next[id]; setRows(next); }}
                         aria-label={`remove override for ${id}`}
                         className="text-muted-foreground hover:text-destructive"
                       >
@@ -257,7 +274,7 @@ export function Pricing() {
             variant="outline"
             disabled={!newId.trim() || newId.trim() in overrides}
             onClick={() => {
-              setDraft({ ...rawOverrides, [newId.trim()]: { inputPer1M: '0', outputPer1M: '0' } });
+              setRows({ ...rawOverrides, [newId.trim()]: { inputPer1M: '0', outputPer1M: '0' } });
               setNewId('');
             }}
           >
