@@ -13,7 +13,10 @@ export function buildOverviewText(docsUrl: string = DEFAULT_DOCS_URL): string {
   lines.push('');
   lines.push(OVERVIEW_DETAIL);
   lines.push('');
-  lines.push('## Features (25)');
+  // Derived, not typed in. The literal said 25 while FEATURES held 33 — and the CLI test asserted on
+  // that same literal, so correcting the number would have turned a passing suite red. A count written
+  // down twice drifts; a count written down once cannot.
+  lines.push(`## Features (${FEATURES.length})`);
   lines.push('');
   for (const f of FEATURES) {
     lines.push(`${f.order}. [${f.title}](${docsUrl}/docs/${f.slug}) — ${f.oneLiner} (${TIER_LABEL[f.tier]}, \`${f.package}\`)`);

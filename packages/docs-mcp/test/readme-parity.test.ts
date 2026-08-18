@@ -53,20 +53,28 @@ describe('README.md ↔ README.tr.md', () => {
     }
   });
 
-  it('do not name an export that does not exist', () => {
-    // The names both pages have got wrong before: `resume`, `stream`, `moderation`,
-    // `promptInjection`. Checked against what the built packages actually export, so a rename fails
-    // here rather than in a reader's editor.
-    const modules: Array<[string, string[]]> = [
-      ['@gnldev/durable', ['runDurable', 'resumeRun', 'streamDurable', 'gnlTool', 'withOrg']],
-      ['@gnldev/processors', ['moderationProcessor', 'promptInjectionDetector', 'piiRedactor', 'toolSearch']],
+  it('do not name an export that does not exist', async () => {
+    // The names both pages have got wrong before: `resume`, `stream`, `moderation`, `promptInjection`.
+    //
+    // The first version of this claimed to check "what the built packages actually export" and did not:
+    // it never imported anything, and its loop was `if (!md.includes(n)) continue;` followed by
+    // `expect(md.includes(n)).toBe(true)` — the guard and the assertion were the same condition, so it
+    // could not fail. A tautology under a comment describing a real check is worse than no test, because
+    // it answers the question for anyone who looks.
+    //
+    // It imports the packages now, so renaming an export in the source turns this red.
+    const modules: Array<[Record<string, unknown>, string[]]> = [
+      // Imported by RELATIVE path to the built output: @gnldev/docs-mcp does not depend on either
+      // package (it only describes them), so a bare specifier does not resolve from here. Reading the
+      // built dist is also the honest target — that is what a reader installs.
+      [await import('../../durable/dist/index.js'), ['runDurable', 'resumeRun', 'streamDurable', 'gnlTool', 'withOrg']],
+      [await import('../../processors/dist/index.js'), ['moderationProcessor', 'promptInjectionDetector', 'piiRedactor', 'toolSearch']],
     ];
-    for (const [, names] of modules) {
+    for (const [mod, names] of modules) {
+      const real = Object.keys(mod);
       for (const n of names) {
-        for (const [page, md] of [['README.md', en], ['README.tr.md', tr]] as const) {
-          if (!md.includes(`\`${n}\``)) continue; // not mentioned on this page — fine
-          expect(md.includes(`\`${n}\``), `${page} names ${n}`).toBe(true);
-        }
+        // Every name the READMEs are allowed to print must be a real export.
+        expect(real, `the READMEs name ${n}, which the package does not export`).toContain(n);
       }
     }
     // The wrong spellings, banned only where they would read as @gnldev/durable exports. `resume` on

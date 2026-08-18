@@ -2,6 +2,7 @@
 // sequence over stdio (initialize -> tools/list -> tools/call x3), and verifies the responses
 // line by line. Fetch is fully disabled via GNL_DOCS_OFFLINE=1 — tests are network-independent/
 // deterministic.
+import { FEATURES } from '../src/content.js';
 import { describe, expect, it } from 'vitest';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
@@ -80,7 +81,10 @@ describe('gnl-docs-mcp — real stdio process', () => {
       });
       const overview = await client.next();
       expect(overview.result.content[0].text).toContain('# GNL');
-      expect(overview.result.content[0].text).toContain('Features (25)');
+      // Derived from the data, not typed in: this line hardcoded 25 and LOCKED the wrong number —
+      // correcting the header would have turned this test red, which is the wrong direction for a test
+      // to push.
+      expect(overview.result.content[0].text).toContain(`Features (${FEATURES.length})`);
 
       client.send({
         jsonrpc: '2.0',
