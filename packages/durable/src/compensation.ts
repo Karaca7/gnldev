@@ -159,6 +159,12 @@ export async function compensateRun(
     if (e.kind !== 'tool' || !e.key.startsWith(prefix)) continue;
     const record = upgradeFormat(e.value as any, e.key) as ToolJournalRecord | undefined;
     if (!record) continue;
+    // A SHADOW of a record whose authoritative key is not run-scoped (the `cross-run` window). The
+    // action is SHARED — other runs may depend on it — so it is deliberately outside a single run's
+    // unwind, which is why its real record lives outside the run's key space at all. The shadow only
+    // gives the run a history and the operator something to approve; unwinding it here would refund a
+    // charge another run is still relying on. See ToolJournalRecord.mirrorOf.
+    if (record.mirrorOf !== undefined) continue;
     // Denied/reflected/suspended never EXECUTED anything → nothing to unwind, not even reported.
     if (record.status === 'succeeded' || record.status === 'failed' || record.status === 'running') {
       work.push({ suffix: e.key.slice(prefix.length), record });

@@ -7,7 +7,7 @@ import type { Processor } from './processor.js';
 import { stableStringify } from './hash.js';
 import { isVersionedKey, upgradeFormat } from './format.js';
 
-export type ToolJournalRecord =
+export type ToolJournalRecord = (
   // ToolName — carried so loop detection (checkToolLoop) can match SUCCEEDED records by
   // Tool. Optional: absent from old records → checks that require a toolName match (which only run
   // WHEN limits.loopDetection IS ON) simply treat those records as "a different tool" (harmless, breaks the streak).
@@ -51,7 +51,24 @@ export type ToolJournalRecord =
   // Stored so seedFromHistory can reconstruct the SAME count from the journal on a first-encounter scan.
   // Optional: absent from old records → treated as not-a-side-effect (harmless, the pre-C3 behavior).
   | { status: 'failed'; error: string; attempts?: number; sideEffect?: boolean; toolName?: string }
-  | { status: 'running'; startedAt: number; toolName?: string }; // M4: atomic claim marker (execute in-flight)
+  | { status: 'running'; startedAt: number; toolName?: string } // M4: atomic claim marker (execute in-flight)
+) & {
+  /**
+   * Set on a SHADOW copy written under `${runId}:tool:` for a record whose authoritative key is not
+   * run-scoped — today only the `cross-run` idempotency window (`xrun:args-…`). Holds that key.
+   *
+   * The shadow exists because a run with nothing under its own prefix has no history: `readRun` misses
+   * the step, `listRuns` cannot derive 'suspended', and Studio's approval inbox shows nothing to click
+   * while the run sits waiting for a decision. It is NOT authoritative — the exactly-once read always
+   * uses the real key — and nothing consults it to decide whether to execute.
+   *
+   * It must be invisible to a SINGLE RUN'S UNWIND. A cross-run record is shared: other runs may depend
+   * on the action, which is why the record was kept out of the run's key space in the first place.
+   * `compensateRun` therefore skips anything carrying this field — without that, mirroring a succeeded
+   * record made one run's rollback refund a charge another run was still relying on.
+   */
+  mirrorOf?: string;
+};
 
 /**
  * Every optional concurrency primitive

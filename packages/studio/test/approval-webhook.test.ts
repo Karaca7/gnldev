@@ -107,3 +107,46 @@ describe('approval webhook notification', () => {
     }
   });
 });
+
+// A cross-run tool's approval must reach the inbox at all.
+//
+// `idempotencyWindow: 'cross-run'` stores the tool record under a run-independent key so the same
+// arguments dedup across runs. Nothing was then written under the run, so this endpoint — which walks
+// each SUSPENDED run's entries — had neither a suspended run to walk nor an entry to find. Measured:
+// two runs parked on an approval, inbox `[]`. The operator is not shown a wrong button; they are shown
+// nothing, while the runs wait for a decision that has no way to be made.
+describe('the inbox and cross-run tools', () => {
+  it('lists a cross-run approval, and gives each run the id its OWN approval lookup uses', async () => {
+    const { runDurable, gnlTool } = await import('@gnldev/durable');
+    const { z } = await import('zod');
+
+    const charge = gnlTool({
+      description: 'charge',
+      inputSchema: z.object({ orderId: z.string() }),
+      idempotency: 'args',
+      idempotencyWindow: 'cross-run',
+      execute: async () => ({ charged: 100 }),
+    } as never);
+    const guard = async () => ({ action: 'require-approval' as const, reason: 'big amount' });
+    const model = (toolCallId: string) => ({
+      specificationVersion: 'v2', provider: 'mock', modelId: 'm', supportedUrls: {},
+      doGenerate: async ({ prompt }: any) => ((prompt ?? []).filter((m: any) => m.role === 'tool').length === 0
+        ? { content: [{ type: 'tool-call', toolCallId, toolName: 'charge', input: JSON.stringify({ orderId: 'X' }) }], finishReason: 'tool-calls', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, warnings: [], response: { modelId: 'm' } }
+        : { content: [{ type: 'text', text: 'done' }], finishReason: 'stop', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, warnings: [], response: { modelId: 'm' } }),
+      doStream: async () => { throw new Error('no stream'); },
+    });
+
+    const journal = new InMemoryJournal();
+    await runDurable({ runId: 'runA', journal, model: model('call-A'), tools: { charge }, guard, prompt: 'go' } as never);
+    await runDurable({ runId: 'runB', journal, model: model('call-B'), tools: { charge }, guard, prompt: 'go' } as never);
+
+    const app = createStudioApi({ reader: journal });
+    const items = (await (await call(app, '/approvals')).json()).items as { runId: string; toolCallId: string }[];
+
+    expect(items, 'two runs are parked on an approval and the inbox is empty').toHaveLength(2);
+    // Each row must carry the id that THAT run's approvals map is keyed by — the stored sentinel holds
+    // run A's id, so run B listing run A's would be a button that resolves to nothing.
+    expect(items.find((i) => i.runId === 'runA')?.toolCallId).toBe('call-A');
+    expect(items.find((i) => i.runId === 'runB')?.toolCallId).toBe('call-B');
+  });
+});

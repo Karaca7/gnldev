@@ -97,6 +97,40 @@ const dupMarkerKey = (runId: string, toolName: string, hash: string): string =>
   // ToolName VERBATIM in the key — same accepted practice as runKeys.toolByArgs/toolCrossRun (journal.ts).
   runKeys.proc(runId, `dup-${toolName}-${hash}`);
 
+/**
+ * Under the `cross-run` window the journal key deliberately carries no runId (`xrun:args-…`), so the
+ * run that produced the step has NOTHING under its own prefix recording that it happened. Measured,
+ * with a cross-run tool suspended for approval:
+ *
+ *   readRun('runA')          → ['model']            the tool step is missing
+ *   listRuns()               → status 'running'     'suspended' is derived from the run's tool records
+ *   Studio GET /approvals    → []                   the operator sees no pending approval at all
+ *
+ * So the run waits for a decision that cannot be made: the approval never appears in the inbox, and
+ * the run reads as healthy and running while it is in fact stopped. Every other window writes under
+ * `${runId}:` and none of this happens — the cross-run key bought dedup and silently gave up the run's
+ * own history.
+ *
+ * The authoritative record stays at the run-independent key: that is what makes dedup work across
+ * runs, and nothing here reads the mirror to decide whether to execute. The mirror exists so the run
+ * has a history and the operator has something to click, and it is written HERE — inside the one choke
+ * point every terminal write already passes through — rather than at the seven call sites, because a
+ * rule spread over call sites is how the suspended path came to be the one that forgot.
+ */
+async function mirrorUnderRun(
+  ctx: DurableCtx,
+  key: string,
+  record: ToolJournalRecord,
+  toolCallId: string,
+): Promise<void> {
+  if (key.startsWith(`${ctx.runId}:`)) return; // already run-scoped — nothing to mirror
+  // `mirrorOf` is what keeps this out of compensateRun's worklist. Without it, mirroring a SUCCEEDED
+  // cross-run record makes one run's rollback undo an action other runs still depend on — the exact
+  // thing the run-independent key was chosen to prevent (compensation-interactions.test.ts pins it,
+  // and caught this the first time the mirror was written unconditionally).
+  await ctx.journal.put(runKeys.tool(ctx.runId, toolCallId), stampFormat({ ...record, mirrorOf: key }));
+}
+
 async function writeToolTerminal(
   ctx: DurableCtx,
   key: string,
@@ -125,6 +159,7 @@ async function writeToolTerminal(
       ? { ...named, resolvedToolCallIds: [toolCallId] }
       : named;
   await ctx.journal.put(key, stampFormat(stamped));
+  await mirrorUnderRun(ctx, key, stamped, toolCallId);
   if (dupKey && record.status === 'succeeded') {
     const success: DupMarker = { firstToolCallId: toolCallId, at: Date.now() };
     const won = await claim(ctx.journal, dupKey, success);
@@ -293,7 +328,24 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           await writeToolTerminal(ctx, key, { status: 'denied', output }, toolCallId, toolName, hash);
           return output;
         }
-        if (approved !== true) return record.output;
+        if (approved !== true) {
+          // The stored sentinel embeds the toolCallId of the run that FIRST suspended. Under the
+          // cross-run window a later run reuses that record, so returning it verbatim reported an id
+          // this run never emitted — while the approval above is looked up under THIS run's id. The
+          // operator therefore saw an id that resolved to nothing: approving it left the call
+          // suspended, and denying it wrote no terminal record either. Measured, run B reporting run
+          // A's 'call-A': approve('call-A') → still suspended, executed 0; deny('call-A') → no record
+          // written; approve('call-B') → runs, but nothing ever showed the operator 'call-B'.
+          //
+          // That is the exact failure the branch above this one was written to close ("the Studio Deny
+          // button did nothing"), reopened by a key that drops the runId.
+          const sus = (record.output as { __gnl_suspend?: { toolCallId?: string } } | undefined)?.__gnl_suspend;
+          if (!sus || sus.toolCallId === toolCallId) return record.output;
+          const fresh = { ...record.output as object, __gnl_suspend: { ...sus, toolCallId } };
+          // The run's own copy, so the inbox offers the id that this run's approval lookup will use.
+          await mirrorUnderRun(ctx, key, { ...record, output: fresh }, toolCallId);
+          return fresh;
+        }
         // Approved === true → run below
       } else if (ctx.guard) {
         // 3) General policy: check at the gate before execute (gate the side effect).
