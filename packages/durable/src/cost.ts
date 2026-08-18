@@ -1,5 +1,5 @@
 import type { JournalReader } from './journal.js';
-import { DEFAULT_PRICING, priceFor, costOf, type ModelPricing } from './pricing.js';
+import { DEFAULT_PRICING, priceFor, costOf, effectivePricingTable, type ModelPricing } from './pricing.js';
 import { flattenUsage, finishReasonText } from './sdk-compat.js';
 
 // Cost ledger & trace export — computed POST-HOC from the journal → exact, deterministic, replayable.
@@ -59,7 +59,17 @@ export function usageAndCostFromModelValue(value: unknown, opts: RunCostOptions 
   // Through the compat layer, not field-by-field: this is the one funnel every token/cost read
   // passes, so reading the raw object here is what silently disabled every spend ceiling.
   const { inputTokens: inp, outputTokens: outp, cachedTokens: cached, totalTokens: total } = flattenUsage(usage);
-  const modelId = v?.response?.modelId ?? v?.rest?.response?.modelId ?? opts.modelId ?? 'unknown';
+  // Same three-shape treatment `usage` gets above, and for the same reason. On a stream there IS no
+  // `response.modelId`: measured against a live provider, a generate record's `response` carries
+  // ["id","modelId","timestamp","headers","body"] while a stream record's carries ONLY ["headers"] —
+  // the model's identity arrives as a `response-metadata` PART, which is recorded but was never read.
+  // So every streamDurable step priced as 'unknown', priceFor returned nothing and costUsd was 0:
+  // maxCostUsd and an organization's usdLimit could not fire at ANY threshold on the streaming path.
+  // Measured on one real call, same model, same table, 158 vs 161 tokens: generate $0.303, stream $0.
+  const streamMeta = Array.isArray(v?.parts)
+    ? v.parts.find((p: any) => p?.type === 'response-metadata')
+    : undefined;
+  const modelId = v?.response?.modelId ?? v?.rest?.response?.modelId ?? streamMeta?.modelId ?? opts.modelId ?? 'unknown';
   const pricing = priceFor(modelId, table);
   // costOf reads FLAT fields, so it must be handed the flattened object — a nested usage would
   // price every step at zero.
@@ -77,6 +87,13 @@ export async function getRunCost(
   runId: string,
   opts: RunCostOptions = {},
 ): Promise<RunCost> {
+  // The journal's `__pricing__` document, when the caller did not hand us a table. Provider list prices
+  // change on their own schedule, and a table compiled into this package can only be corrected by
+  // shipping a release — the wrong loop for someone whose ceiling is mispriced today.
+  // `effectivePricingTable`/`readPricing` were exported and documented for exactly this, and NOTHING in
+  // the product ever called them: measured, a `__pricing__` doc naming a model still produced costUsd 0,
+  // so the escape hatch the docs point at did not exist.
+  const resolved: RunCostOptions = opts.pricing ? opts : { ...opts, pricing: await effectivePricingTable(reader as never) };
   const entries = await reader.readRun(runId);
   const out: RunCost = {
     runId, inputTokens: 0, outputTokens: 0, cachedTokens: 0, totalTokens: 0,
@@ -87,7 +104,7 @@ export async function getRunCost(
       out.toolCalls++;
       continue;
     }
-    const u = usageAndCostFromModelValue(e.value, opts);
+    const u = usageAndCostFromModelValue(e.value, resolved);
     if (!u) continue;
     out.modelCalls++;
     out.inputTokens += u.inputTokens;

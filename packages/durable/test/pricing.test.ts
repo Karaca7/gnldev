@@ -57,8 +57,26 @@ describe('readPricing / effectivePricingTable — journal-backed versioned prici
 
     expect(await readPricing(j)).toEqual(doc);
     const table = await effectivePricingTable(j);
-    expect(table).toEqual(doc.models);
-    expect(table['gpt-4o-mini']).toEqual({ inputPer1M: 0.1, outputPer1M: 0.4 });
+    // The document LAYERS over DEFAULT_PRICING rather than replacing it. This assertion used to be
+    // `toEqual(doc.models)`, i.e. the document was the whole table — which meant correcting one price
+    // silently un-priced every other model, and an un-priced model costs 0, so a maxCostUsd ceiling
+    // stopped capping as a side effect of fixing a maxCostUsd ceiling. Changing it was safe because
+    // NOTHING in the product read this document: `effectivePricingTable` had no callers outside its own
+    // module and the docs, so no deployment could have depended on either behaviour. `replace: true`
+    // keeps the old semantics for anyone who genuinely wants only their own prices.
+    expect(table['gpt-4o-mini']).toEqual({ inputPer1M: 0.1, outputPer1M: 0.4 }); // the override applies
+    expect(table['gpt-4o'], 'an untouched model lost its price').toEqual(DEFAULT_PRICING['gpt-4o']);
+  });
+
+  it('replace: true restores the whole-table semantics', async () => {
+    const j = new InMemoryJournal();
+    await j.put(PRICING_KEY, {
+      version: 1,
+      replace: true,
+      models: { 'gpt-4o-mini': { inputPer1M: 0.1, outputPer1M: 0.4 } },
+    } as PricingDoc);
+    const table = await effectivePricingTable(j);
+    expect(table).toEqual({ 'gpt-4o-mini': { inputPer1M: 0.1, outputPer1M: 0.4 } });
   });
 
   it('once journal pricing is updated (version bumped), getRunCost can use the new table', async () => {

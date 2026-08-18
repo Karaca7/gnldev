@@ -90,6 +90,7 @@
 //    Regenerates the same toolCallId) — no approval is REQUIRED (DIFFERENT from guard's require-approval).
 import { claim, runKeys, nestedAgentRunId } from './journal.js';
 import { usageAndCostFromModelValue, type RunCostOptions } from './cost.js';
+import { effectivePricingTable } from './pricing.js';
 import type { Journal, JournalReader, ToolJournalRecord } from './journal.js';
 
 /** Per-run runaway protection (opt-in): fields that aren't provided are not enforced. */
@@ -786,6 +787,14 @@ export async function enforceStepLimits(
   if (!limits || (limits.maxCostUsd == null && limits.maxTokens == null)) return;
   if (typeof reader.readRun !== 'function') { reportUnenforceableLimits(reader, limits); return; } // fail-open (or throw under strict)
   const store = reader as LimitsStore;
+
+  // Resolve the price table ONCE, here, and thread it down — the ceiling is the one place a stale or
+  // missing price does real damage, and it was the one place that could not be corrected without a
+  // release. The unpriced-model warning below already tells operators to "supply prices via the
+  // `pricing` option or the journal's __pricing__ document"; the second half of that sentence was not
+  // true, because nothing read the document. Resolved once per enforcement rather than per step: this
+  // runs on every model step, and the document is a single point-read.
+  if (!opts.pricing) opts = { ...opts, pricing: await effectivePricingTable(reader as never) };
 
   const unpriced = new Set<string>();
   await ensureSeeded(reader, store, runId, opts, unpriced); // seeds with a SINGLE readRun on first encounter (no-op afterward)

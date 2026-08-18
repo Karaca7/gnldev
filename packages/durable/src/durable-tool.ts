@@ -705,9 +705,21 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           // (a) a tool with side effects → NO retry without explicit approval unless recover said 'it did not happen',
           // (b) if the maxRetries limit is reached, permanently failed (no infinite retry loop).
           if (sideEffect && approved !== true && !recovered) {
+            // The remedies have to be reachable from where the caller actually is. In the cross-run
+            // window the claim key carries no runId, so this refusal is permanent AND global — and the
+            // approvals route does not exist there: `withIdempotency` runs outside runDurable with no
+            // approvals channel, and the toolCallId named here is a fresh one on every attempt, so
+            // even a caller that had approvals could not have pre-approved this id. Naming an
+            // unreachable remedy is how a correct refusal reads as a dead end.
+            const crossRun = key.startsWith('xrun:') || key.includes(':xrun:');
+            const remedy = crossRun
+              ? `this is a cross-run claim, so the refusal is permanent and applies to every run: ` +
+                `release it with releaseFailedClaim(journal, { toolName: '${toolName}', args }) once you ` +
+                `have established the side effect did not happen, or give the tool a recover() hook so ` +
+                `that question is answered automatically`
+              : `allow explicitly with approvals['${toolCallId}']=true, mark idempotent: true, or provide a recover() hook`;
             return blockedOrThrow(ctx, toolCallId, toolName, new SideEffectRetryBlockedError(
-              `@gnldev/durable: '${toolName}' (${key}) has side effects — not auto-retried after failed ` +
-                `(allow explicitly with approvals['${toolCallId}']=true, mark idempotent: true, or provide a recover() hook)`,
+              `@gnldev/durable: '${toolName}' (${key}) has side effects — not auto-retried after failed (${remedy})`,
               { key, attempts },
             ));
           }

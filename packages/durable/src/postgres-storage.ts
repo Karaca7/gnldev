@@ -2,6 +2,7 @@
 // Same schema/semantics as SqliteStorage; pg async API ($N placeholders, CAS detection via RETURNING).
 // Injectable pool pattern → zero-infra testing with pg-mem. `pg` is an optional peer dep.
 // Vector is 'scan' for now (brute-force cosine; pgvector deferred — pg-mem compatibility + lean first cut).
+import { prefixUpperBound } from './organization.js';
 import { createRequire } from 'node:module';
 import { cosineSimilarity } from 'ai';
 import { runIdOfKey, parseJournalKey, outcomeStatusOf, deriveRunStatus } from './journal.js';
@@ -595,21 +596,21 @@ class PgRunJournal implements RunJournal {
     // retention sweep and `deletePrefix('xrun:')` all reported success while the rows stayed. SQLite is
     // unaffected: its default collation IS byte order. The gnl_*_cprefix indexes below are declared
     // with the same collation so these stay index-backed range scans rather than seq scans.
-    // Same upper bound as the SQLite approach: prefix + '￿'.
+    // Same upper bound as the SQLite approach: prefixUpperBound(prefix).
     const c = this.shape.collate;
-    const r = await this.q(`SELECT key FROM gnl_run_journal WHERE key${c} >= $1 AND key${c} < $2 ORDER BY created_at`, [prefix, prefix + '￿']);
+    const r = await this.q(`SELECT key FROM gnl_run_journal WHERE key${c} >= $1 AND key${c} < $2 ORDER BY created_at`, [prefix, prefixUpperBound(prefix)]);
     return r.rows.map((x) => x.key);
   }
 
   /** Retention/GDPR: PERMANENTLY delete keys starting with a prefix; also clean up the derived gnl_runs index. */
   async deletePrefix(prefix: string): Promise<number> {
     const c = this.shape.collate;
-    const r = await this.q(`DELETE FROM gnl_run_journal WHERE key${c} >= $1 AND key${c} < $2`, [prefix, prefix + '￿']);
+    const r = await this.q(`DELETE FROM gnl_run_journal WHERE key${c} >= $1 AND key${c} < $2`, [prefix, prefixUpperBound(prefix)]);
     const rid = prefix.endsWith(':') ? prefix.slice(0, -1) : prefix;
-    await this.q(`DELETE FROM gnl_runs WHERE run_id = $1 OR (run_id${c} >= $2 AND run_id${c} < $3)`, [rid, prefix, prefix + '￿']);
+    await this.q(`DELETE FROM gnl_runs WHERE run_id = $1 OR (run_id${c} >= $2 AND run_id${c} < $3)`, [rid, prefix, prefixUpperBound(prefix)]);
     // Counters (incrBy/H8a) are keys too — see the sqlite-storage.ts deletePrefix note (GDPR org purge
     // + rebuildMetrics correctness). Not included in the return count, same as the gnl_runs rows.
-    await this.q(`DELETE FROM gnl_counters WHERE key${c} >= $1 AND key${c} < $2`, [prefix, prefix + '￿']);
+    await this.q(`DELETE FROM gnl_counters WHERE key${c} >= $1 AND key${c} < $2`, [prefix, prefixUpperBound(prefix)]);
     return r.rowCount ?? 0;
   }
   async readRun(runId: string): Promise<JournalEntry[]> {

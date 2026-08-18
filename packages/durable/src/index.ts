@@ -50,7 +50,7 @@ export { withDurableModel } from './durable-model.js';
 export type { DurableModelOptions, ExclusiveStepOptions } from './durable-model.js';
 export { durableTool, durableTools } from './durable-tool.js';
 // AI SDK drop-in: LLM-aware idempotency for a plain generateText/streamText loop (no runDurable).
-export { withIdempotency } from './idempotent-tools.js';
+export { withIdempotency, releaseFailedClaim } from './idempotent-tools.js';
 export type { WithIdempotencyOptions } from './idempotent-tools.js';
 export type { ModelInput, AnyTool, ToolSet } from './types.js';
 export { gnlTool } from './types.js';

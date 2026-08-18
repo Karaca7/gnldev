@@ -16,7 +16,8 @@
 // Crash-recovery / approval gating still require `runDurable`. This layer gives you "the same argument
 // Never runs twice", not full durability.
 import { durableTool } from './durable-tool.js';
-import type { Journal } from './journal.js';
+import { runKeys, type Journal } from './journal.js';
+import { argsHash } from './hash.js';
 import type { AnyTool, ToolSet } from './types.js';
 
 export interface WithIdempotencyOptions {
@@ -67,4 +68,50 @@ export function withIdempotency<T extends ToolSet>(tools: T, opts: WithIdempoten
     out[name] = durableTool(configured, ctx, name);
   }
   return out as T;
+}
+
+/**
+ * Let a cross-run claim that FAILED be attempted again.
+ *
+ * A side-effecting tool that threw is deliberately not retried on its own: the failure may have
+ * happened after the charge went through, so retrying could double it. That refusal is correct. What
+ * was missing is a way back. In the `cross-run` window the claim key carries no runId, so one transient
+ * network blip on order o-1 wrote `{status:'failed'}` under a GLOBAL key and every future attempt, in
+ * any run, forever, was refused. The error suggested `approvals[<toolCallId>] = true` — unreachable
+ * here: `withIdempotency` runs outside runDurable and has no approvals channel, and the toolCallId in
+ * the message is a new one each time. The only documented escape was
+ * `journal.deletePrefix('xrun:')`, which discards every cross-run dedup record in the journal to fix
+ * one of them.
+ *
+ * This releases exactly one, and only when it FAILED. A succeeded claim is refused rather than
+ * released: that record is the exactly-once guarantee itself, and a helper that could delete it would
+ * be a double-charge waiting for a tired operator.
+ *
+ * Pass the same `args` (and the same `key` function, if the tools were configured with one) that the
+ * original call used — the claim is addressed by argument hash, so anything else names a different
+ * record.
+ */
+export async function releaseFailedClaim(
+  journal: Journal,
+  opts: { toolName: string; args: unknown; key?: (toolName: string, args: unknown) => string },
+): Promise<boolean> {
+  if (typeof journal.deletePrefix !== 'function') {
+    throw new Error(
+      '@gnldev/durable: releaseFailedClaim needs a journal with deletePrefix (InMemoryJournal, SqliteStorage, PostgresStorage all have it)',
+    );
+  }
+  const hash = argsHash(opts.key ? opts.key(opts.toolName, opts.args) : opts.args);
+  const claimKey = runKeys.toolCrossRun(opts.toolName, hash);
+  const rec = await journal.get<{ status?: string }>(claimKey);
+  if (rec === undefined) return false; // nothing claimed — releasing is a no-op, not an error
+  if (rec?.status !== 'failed') {
+    throw new Error(
+      `@gnldev/durable: refusing to release '${opts.toolName}' (${claimKey}) — its claim is '${rec?.status}', not 'failed'. ` +
+      'Releasing a succeeded claim would let the side effect run a second time.',
+    );
+  }
+  // No single-key delete on the Journal interface. The hash is fixed-width and the key ends with it,
+  // so no other key can have this one as a prefix — the range is this record alone.
+  await journal.deletePrefix(claimKey);
+  return true;
 }

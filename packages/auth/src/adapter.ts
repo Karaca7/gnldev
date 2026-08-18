@@ -43,8 +43,32 @@ function isProvider(x: AuthProvider | ReadWriteAuth): x is AuthProvider {
   return typeof (x as AuthProvider).authorize === 'function';
 }
 
-/** AuthProvider | {read,write} | undefined → AuthProvider | undefined (hosts reduce to a single type). */
+/**
+ * AuthProvider | {read,write} | undefined → AuthProvider | undefined (hosts reduce to a single type).
+ *
+ * Throws on an object that is neither, because the alternative is the worst possible answer. The
+ * previous reading was "not a provider ⇒ it must be {read,write}", and `fromReadWrite` treats a
+ * missing direction as unrestricted — so ANY unrecognised object became a provider that allows
+ * everything. The realistic way to hit that is the credential map the scaffold writes:
+ *
+ *   createRestApi({ auth: { admin: { token: 's3cret' } } })   // looks protected, allows everyone
+ *
+ * That exact shape shipped once already: @gnldev/studio grew `resolveConfigAuth` for it, but
+ * @gnldev/server still calls this directly, so the hole stayed open on the other host. Refusing here
+ * closes it for every caller and turns a silent, invisible failure into an error at startup — the one
+ * moment it can still be fixed. A caller that really wants no restrictions passes `undefined`; that
+ * intent is expressible and needs no guessing.
+ */
 export function normalizeAuth(auth?: AuthProvider | ReadWriteAuth): AuthProvider | undefined {
   if (!auth) return undefined;
-  return isProvider(auth) ? auth : fromReadWrite(auth);
+  if (isProvider(auth)) return auth;
+  const rw = auth as ReadWriteAuth;
+  if (typeof rw.read === 'function' || typeof rw.write === 'function') return fromReadWrite(rw);
+  const keys = Object.keys(auth as object).slice(0, 5).join(', ') || '(no keys)';
+  throw new TypeError(
+    `@gnldev/auth: \`auth\` is neither an AuthProvider (no \`authorize\` function) nor a {read, write} ` +
+    `pair (no \`read\`/\`write\` function). Got an object with: ${keys}. ` +
+    `If this is a credential map like { admin: { token } }, wrap it: \`roleAuth({ admin: { token } })\`. ` +
+    `Passing it directly would authorise every request. For no restrictions, omit \`auth\` entirely.`,
+  );
 }

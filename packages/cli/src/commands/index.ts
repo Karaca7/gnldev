@@ -11,6 +11,7 @@ import { inspectCommand } from './inspect.js';
 import { forkCommand } from './fork.js';
 import { resumeCommand } from './resume.js';
 import { sweepCommand } from './sweep.js';
+import { pricingCommand } from './pricing.js';
 import { rmCommand } from './rm.js';
 
 export type { Command, CommandCtx, CommandGroup } from './types.js';
@@ -26,6 +27,7 @@ export const commandList: Command[] = [
   forkCommand,
   resumeCommand,
   sweepCommand,
+  pricingCommand,
   rmCommand,
 ];
 

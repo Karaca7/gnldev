@@ -6,7 +6,7 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
 import {
   Activity, Boxes, Workflow, Network, Plug, Inbox, ScrollText, Building2, Shield,
   FlaskConical, Gauge, Wrench, Moon, Sun, Languages, MessageSquare, BookOpen, ListChecks, Library, LogOut, Users as UsersIcon,
-  AlertTriangle, Database, Clock, Menu, Search, Scale } from 'lucide-react';
+  AlertTriangle, Database, Clock, Menu, Search, Scale, DollarSign } from 'lucide-react';
 import { useCapabilities, useMe, api, ApiError, shouldForceReauth, type Capabilities } from './api';
 import { Spinner, ViewSkeleton, Btn, ErrorBox, Badge, cn } from './components';
 import { CommandPalette, type CommandItem } from './ui';
@@ -57,6 +57,7 @@ const Audit = lazy(() => named(import('./views/Audit'), 'Audit'));
 const Organizations = lazy(() => named(import('./views/Organizations'), 'Organizations'));
 const Users = lazy(() => named(import('./views/Users'), 'Users'));
 const Policy = lazy(() => named(import('./views/Policy'), 'Policy'));
+const Pricing = lazy(() => named(import('./views/Pricing'), 'Pricing'));
 
 // `labelKey` → a key into i18n/locales/{en,tr}/nav.json (not literal text); resolved via
 // `t(labelKey)` at render time (see AppShell). This way nav returns the correct language on a
@@ -109,6 +110,7 @@ const NAV: NavItem[] = [
   { to: '/organizations', labelKey: 'organizations', icon: Building2, cap: 'organizations', group: 'governance' },
   { to: '/users', labelKey: 'users', icon: UsersIcon, cap: 'userManage', group: 'governance' },
   { to: '/policy', labelKey: 'policy', icon: Shield, cap: 'policy', group: 'governance' },
+  { to: '/pricing', labelKey: 'pricing', icon: DollarSign, cap: 'policy', group: 'governance' },
 ];
 const NAV_GROUPS: { key: NavGroupKey; titleKey: string }[] = [
   { key: 'runs', titleKey: 'groupRuns' },
@@ -466,6 +468,7 @@ function AppShell({ onLogout }: { onLogout?: () => void }) {
               <Route path="/organizations" element={<Organizations />} />
               <Route path="/users" element={<Users />} />
               <Route path="/policy" element={<Policy />} />
+              <Route path="/pricing" element={<Pricing />} />
               <Route path="*" element={<Navigate to="/inspector" replace />} />
             </Routes>
           </Suspense>

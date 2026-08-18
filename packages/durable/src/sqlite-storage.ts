@@ -2,6 +2,7 @@
 // RunJournal = append-only journal (gnl_run_journal) + derived gnl_runs index (indexed readRun/listRuns).
 // MemoryStore = gnl_threads + gnl_messages (per-message PK → idempotent append) + WM + observations.
 // Vectors = 'scan' (brute-force cosine; no pgvector). node:sqlite (loaded at runtime via createRequire).
+import { prefixUpperBound } from './organization.js';
 import { createRequire } from 'node:module';
 import { statSync, existsSync } from 'node:fs';
 import { cosineSimilarity } from 'ai';
@@ -655,21 +656,21 @@ class SqliteRunJournal implements RunJournal {
   }
   async listKeys(prefix: string): Promise<string[]> {
     const rows = this.db.prepare('SELECT key FROM gnl_run_journal WHERE key >= ? AND key < ? ORDER BY created_at')
-      .all(prefix, prefix + '￿') as { key: string }[];
+      .all(prefix, prefixUpperBound(prefix)) as { key: string }[];
     return rows.map((r) => r.key);
   }
 
   /** Retention/GDPR: PERMANENTLY delete keys starting with the prefix; also clean up the derived gnl_runs index. */
   async deletePrefix(prefix: string): Promise<number> {
-    const r = this.db.prepare('DELETE FROM gnl_run_journal WHERE key >= ? AND key < ?').run(prefix, prefix + '￿');
+    const r = this.db.prepare('DELETE FROM gnl_run_journal WHERE key >= ? AND key < ?').run(prefix, prefixUpperBound(prefix));
     // Deleting by a `<runId>:` prefix must also drop the run summary (gnl_runs is indexed by run_id).
     const rid = prefix.endsWith(':') ? prefix.slice(0, -1) : prefix;
-    this.db.prepare('DELETE FROM gnl_runs WHERE run_id = ? OR (run_id >= ? AND run_id < ?)').run(rid, prefix, prefix + '￿');
+    this.db.prepare('DELETE FROM gnl_runs WHERE run_id = ? OR (run_id >= ? AND run_id < ?)').run(rid, prefix, prefixUpperBound(prefix));
     // Counters (incrBy/H8a) are keys too — the deletePrefix contract (journal.ts) says ALL keys under
     // The prefix go. Without this, an org purge (GDPR) left `org:<id>:__usage__` behind forever, and
     // RebuildMetrics's wipe kept stale `__metrics__:` counters (recompute would ADD on top of them).
     // Not included in the return count, same as the derived gnl_runs rows above.
-    this.db.prepare('DELETE FROM gnl_counters WHERE key >= ? AND key < ?').run(prefix, prefix + '￿');
+    this.db.prepare('DELETE FROM gnl_counters WHERE key >= ? AND key < ?').run(prefix, prefixUpperBound(prefix));
     return Number(r.changes ?? 0);
   }
   async readRun(runId: string): Promise<JournalEntry[]> {

@@ -658,4 +658,22 @@ describe.skipIf(!RUN)('REAL Postgres — prefix ranges under this server\'s coll
     // And the boundary: an over-wide range would take the neighbour's row with it.
     expect(await s.runs.listKeys(`${neighbour}:`)).toEqual([`${neighbour}:model:keep`]);
   });
+
+  it('a key beginning with an astral character is inside its own prefix range', async () => {
+    // UTF-8 sorts every astral character above U+FFFF, which the old `prefix + U+FFFF` bound put
+    // OUTSIDE the range. In memory the same code passed, because JS compares UTF-16 where a surrogate
+    // pair starts below U+FFFF — so this could only ever be caught against a real engine.
+    const run = `${SEED}astral`;
+    // The astral character must come FIRST after the prefix — that is the position the range bound
+    // decides. An earlier version put it deeper (`${run}:model:<emoji>`), where the first byte after
+    // the prefix is an ordinary 'm', so the bound was never consulted and the test passed with the
+    // bug still in place. Caught by reverting the fix and seeing it stay green.
+    await s.runs.put(`${run}:plain:model:0`, { i: 1 });
+    await s.runs.put(`${run}:\u{1F600}emoji:model:0`, { i: 2 });
+
+    const keys = await s.runs.listKeys(`${run}:`);
+    expect(keys.length, `listKeys returned ${keys.length} of 2 — an astral key fell outside its prefix`).toBe(2);
+    expect(await s.runs.deletePrefix(`${run}:`)).toBe(2);
+    expect(await s.runs.listKeys(`${run}:`)).toEqual([]);
+  });
 });

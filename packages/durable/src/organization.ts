@@ -47,9 +47,19 @@ export function withOrg(journal: Journal, orgId: string): Journal & Partial<Jour
     get: <T = unknown>(key: string) => journal.get<T>(prefix + key),
     put: (key: string, value: unknown) => journal.put(prefix + key, value),
   };
-  // Non-enumerable: this is a marker for code in this process, not part of the journal's data shape,
-  // so it must not appear in a spread, a JSON round-trip, or a key listing.
-  Object.defineProperty(out, ORG_SCOPE, { value: orgId, enumerable: false, configurable: true });
+  // Enumerable, deliberately — and this used to be `enumerable: false` on the reasoning that a marker
+  // for in-process code "must not appear in a spread, a JSON round-trip, or a key listing". Two of
+  // those three are free: this is a SYMBOL, and symbols are invisible to JSON.stringify, Object.keys
+  // and for-in whatever their enumerability. Only the spread was actually affected — and there,
+  // hiding it is the dangerous direction. `{ ...journal, put: log(journal.put) }` is the obvious way
+  // to wrap a journal, and with a hidden marker it silently returns an org-scoped journal that no
+  // longer reports its org: durable-tool then builds the provider-facing idempotency key WITHOUT the
+  // `org:<id>:` part, and two isolated orgs charging the same orderId collide at the provider. That
+  // is the money-shaped failure this symbol exists to prevent, reintroduced by the wrapper.
+  //
+  // Carrying it through a spread cannot produce the opposite mistake: re-wrapping with withOrg
+  // defines its own value over the copy, so a journal never keeps a stale org.
+  Object.defineProperty(out, ORG_SCOPE, { value: orgId, enumerable: true, configurable: true });
   if (journal.putIfAbsent) {
     out.putIfAbsent = (key, value) => journal.putIfAbsent!(prefix + key, value);
   }
@@ -172,4 +182,40 @@ export function withOrg(journal: Journal, orgId: string): Journal & Partial<Jour
     out.readRunStats = (runId: string) => reader.readRunStats!.call(journal, prefix + runId);
   }
   return out;
+}
+
+/**
+ * The exclusive upper bound of a prefix range, for a store that orders strings by BYTES.
+ *
+ * Every prefix scan here is `key >= prefix AND key < bound`. The bound used to be `prefix + U+FFFF`,
+ * on the assumption that U+FFFF sorts above anything that can follow the prefix. In UTF-16 (what JS
+ * string comparison uses) it does — an astral character is a surrogate pair starting at U+D800, which
+ * is below U+FFFF. In UTF-8, which is what SQLite and Postgres actually compare, it does NOT: U+FFFF
+ * encodes as EF BF BF and any astral character starts with F0 or higher.
+ *
+ * Measured on SQLite, three keys under `org:acme:` where one run id begins with an emoji:
+ *   listKeys('org:acme:')   → 2 of 3
+ *   deletePrefix('org:acme:') → deleted 2, returned 2, and the third key was still there
+ *
+ * So an organization purge or a GDPR erasure reported success while leaving rows behind, for run ids
+ * that are perfectly legal — the same silent, "succeeded" shape as the collation bug, reached through
+ * a different door.
+ *
+ * Incrementing the prefix's last code point is exact rather than a taller sentinel: no suffix can sort
+ * at or above it, because any key that did would no longer start with the prefix.
+ */
+export function prefixUpperBound(prefix: string): string {
+  if (!prefix) return ''; // an empty prefix has no upper bound; callers scan everything
+  const cps = Array.from(prefix);
+  const last = cps.pop()!;
+  let next = last.codePointAt(0)! + 1;
+  // Lone surrogates are not valid scalar values and do not survive a UTF-8 round trip.
+  if (next >= 0xD800 && next <= 0xDFFF) next = 0xE000;
+  if (next > 0x10FFFF) {
+    // The prefix ends at the highest code point there is, so nothing can be incremented. Fall back to
+    // appending the maximum character: the range is then everything from `prefix` up to
+    // `prefix + U+10FFFF`, which covers every suffix except one that begins with U+10FFFF itself.
+    return prefix + '\u{10FFFF}';
+  }
+  return cps.join('') + String.fromCodePoint(next);
 }

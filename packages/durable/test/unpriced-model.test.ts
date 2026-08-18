@@ -17,7 +17,11 @@ import { createMockModel, finalTextResult } from './mock.js';
 
 afterEach(() => vi.restoreAllMocks());
 
-const UNKNOWN = 'claude-opus-5'; // a real model id the shipped table does not carry
+// A shape a provider really could hand us, chosen so it can never become priced. This was
+// `claude-opus-5` — true when written, and it turned the test into a lock: adding that model to the
+// table (which the table needed) failed here, so the file quietly argued against its own premise. A
+// test for the unpriced path must not depend on a specific model STAYING unpriced.
+const UNKNOWN = 'acme-internal/finetune-2026-08';
 const step = (modelId: string) => ({
   content: [{ type: 'text', text: 'ok' }],
   finishReason: 'stop',
@@ -73,7 +77,7 @@ describe('unpriced models', () => {
       model: createMockModel(async () => finalTextResult('done')),
       prompt: 'x',
       limits: { maxCostUsd: 0.01, strict: true },
-    } as never)).rejects.toThrow(/no pricing entry exists for claude-opus-5/);
+    } as never)).rejects.toThrow(new RegExp(`no pricing entry exists for ${UNKNOWN}`));
   });
 
   it('a priced run is unaffected: no warning, and the ceiling still fires', async () => {

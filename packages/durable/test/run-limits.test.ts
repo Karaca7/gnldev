@@ -75,8 +75,9 @@ describe('Run limits (cost ceiling + loop detection + fan-out inheritance)', () 
 
   it('throws RunLimitExceededError on maxCostUsd overflow (real cost computed via DEFAULT_PRICING)', async () => {
     const journal = new InMemoryJournal();
-    // claude-opus-4: input $5/1M, output $25/1M — mock usage {input:10,output:5} → per-step cost
-    // (10/1e6)*5 + (5/1e6)*25 = 0.00005 + 0.000125 = $0.000175. Cumulative over 3 steps ~$0.000525.
+    // claude-opus-4: input $15/1M, output $75/1M — mock usage {input:10,output:5} → per-step cost
+    // (10/1e6)*15 + (5/1e6)*75 = 0.00015 + 0.000375 = $0.000525. Cumulative over 3 steps ~$0.001575.
+    // (These were $5/$25 while the table carried Opus 4.5's price under Opus 4's key.)
     const model = createMockModel(async ({ prompt }: any) => {
       const done = countToolResults(prompt);
       if (done < 2) return { ...toolCallResult('noop', `call-${done + 1}`, {}), response: { modelId: 'claude-opus-4' } };
@@ -88,7 +89,7 @@ describe('Run limits (cost ceiling + loop detection + fan-out inheritance)', () 
       runDurable({
         runId: 'r2', journal, model, tools: { noop },
         prompt: 'start', stopWhen: stepCountIs(10),
-        limits: { maxCostUsd: 0.0003 }, // exceeds after 2 steps (0.00035), does not exceed after 1 step (0.000175)
+        limits: { maxCostUsd: 0.0009 }, // exceeds after 2 steps (0.00105), does not exceed after 1 step (0.000525)
       }),
     ).rejects.toBeInstanceOf(RunLimitExceededError);
   });

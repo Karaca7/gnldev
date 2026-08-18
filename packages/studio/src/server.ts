@@ -4,8 +4,8 @@ import { toFetchHandler, type FetchHandler } from './handler.js';
 import { Hono, type Context } from 'hono';
 import { sseResponse } from './sse.js';
 
-import { asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, purgeRun, purgeOrganization, sweepRuns, POLICY_KEY, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent } from '@gnldev/durable';
-import type { PolicyDoc, PolicyRule, BudgetLimit } from '@gnldev/durable';
+import { asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, purgeRun, purgeOrganization, sweepRuns, POLICY_KEY, PRICING_KEY, effectivePricingTable, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent } from '@gnldev/durable';
+import type { PolicyDoc, PolicyRule, BudgetLimit, PricingDoc } from '@gnldev/durable';
 import type { JournalReader, Journal, WorkflowLike, MetricsRunRow } from '@gnldev/durable';
 import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, principalScope, assertAssignablePrivileges, type AuthProvider, type Principal } from '@gnldev/auth';
 import { listTriggers } from '@gnldev/scheduler';
@@ -587,16 +587,25 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       if (bound && requested && requested !== bound) {
         return c.json({ error: `org mismatch: identity is bound to org '${bound}'` }, 403);
       }
-      // An identity-bound org ONLY scopes the READ (GET) surface. Management writes (fork/resume/
-      // Policy/budget PUT) run against the root journal and are not org-scoped → a bound admin can still
-      // Write (otherwise binding would lock out all Studio management). On non-GET, an org can only be
-      // Requested via an EXPLICIT header, and that's rejected by the v1 read-only rule.
-      const org = c.req.method === 'GET' ? (bound ?? requested) : requested;
-      if (!org) return next();
-      if (org.includes(':')) return c.json({ error: "invalid org: cannot contain ':'" }, 400);
-      if (c.req.method !== 'GET') {
+      // An identity-bound org scopes BOTH surfaces. It used to scope only GET: on a write the org was
+      // taken from the explicit header alone, so a bound admin sending no header fell through with an
+      // empty ALS — and `scopedNow()` returns the RAW root journal when the ALS is empty. Since
+      // withOrg's physical prefix is `org:<id>:`, that made another organization's keys directly
+      // addressable: POST /runs/org:globex:victim/cancel from an acme-bound admin returned 200 and
+      // cancelled it (terminally — every later resume is refused), and /fork copied that run's prompt
+      // and model output into a key the caller could then read back through the legitimate org-scoped
+      // GET surface. The reasoning for the old shape was that binding would otherwise "lock out all
+      // Studio management", but the answer to that is to scope the write, not to drop the boundary:
+      // a bound admin still manages its OWN organization, and another org's physical key now resolves
+      // to `org:<self>:org:<other>:…`, which does not exist → the same 404 the endpoints already
+      // document. An EXPLICIT org header on a write remains rejected (v1 read-only rule) — that is a
+      // separate question from which org the caller is bound to.
+      if (requested && c.req.method !== 'GET') {
         return c.json({ error: 'writes are not supported in an org context (v1 read-only audit) — use @gnldev/server\'s org option for writes' }, 403);
       }
+      const org = bound ?? requested;
+      if (!org) return next();
+      if (org.includes(':')) return c.json({ error: "invalid org: cannot contain ':'" }, 400);
       await orgALS.run(org, () => next());
     });
   }
@@ -676,7 +685,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     | 'workflow.create' | 'workflow.update' | 'workflow.delete'
     | 'tool.exec' | 'agent.run'
     | 'agent.version' | 'agent.promote' | 'agent.gate' | 'agent.delete' | 'agent.version-delete'
-    | 'run.purge' | 'run.regression' | 'run.compensate' | 'run.cancel' | 'retention.sweep' | 'policy.update'
+    | 'run.purge' | 'run.regression' | 'run.compensate' | 'run.cancel' | 'retention.sweep' | 'policy.update' | 'pricing.update'
     | 'org.budget' | 'org.create' | 'org.delete'
     | 'user.create' | 'user.delete' | 'user.revoke' | 'user.update'
     | 'job.retry' | 'cache.invalidate' | 'run.otel-export' | 'workflow.cancel'
@@ -708,7 +717,14 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       const orgFromDetail = action === 'user.create' && detail && typeof detail === 'object'
         ? (detail as { orgId?: string }).orgId : undefined;
       const org = p?.orgId ?? orgFromTarget ?? orgFromDetail;
-      await appendLog(rw as Journal, '__audit__', { actor, action, target, ...(org ? { org } : {}), ...(detail !== undefined ? { detail } : {}) });
+      // The ROOT journal, explicitly — the same choice GET /audit already documents and makes when it
+      // reads through `rawReader`. The organization is a FIELD on the record, not a key prefix, which is
+      // what lets an unbound operator see every org's actions in one list and a bound identity see only
+      // its own (filtered by that field). This used to be `rw` and happened to agree only because a
+      // write never had an org in the ALS; once writes became org-scoped, every bound identity's audit
+      // record landed under `org:<id>:__audit__` where the reader never looks — the log went silently
+      // empty for exactly the identities whose actions most need recording.
+      await appendLog(rawReader as unknown as Journal, '__audit__', { actor, action, target, ...(org ? { org } : {}), ...(detail !== undefined ? { detail } : {}) });
     } catch { /* audit is best-effort — swallow */ }
   }
 
@@ -1816,6 +1832,13 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     if (!writable) return c.json({ error: 'fork requires a writable journal' }, 501);
     const id = decodeURIComponent(c.req.param('id'));
     const body = (await c.req.json().catch(() => ({}))) as { step?: number; newRunId?: string };
+    // The same `${id}:input` visibility check cancel uses (persistInput is written by every
+    // run()/stream() call). Without it fork answered 200 `{copiedModel: 0, copiedTool: 0}` for a run
+    // the caller cannot see — a no-op reported as success, and a different answer than cancel gives
+    // for the identical situation. It is also the second line of defence for the org boundary: `reader`
+    // is org-scoped, so another organization's run reads as absent here rather than as an empty fork.
+    const source = await rw.get!(`${id}:input`).catch(() => undefined);
+    if (source === undefined) return c.json({ error: `run '${id}' not found` }, 404);
     const fork = await forkRun(reader as any, id, body.step ?? 0, body.newRunId);
     const r = await resume(fork.newRunId, {});
     await audit(c, 'fork', id, { step: body.step ?? 0, newRunId: fork.newRunId });
@@ -2007,6 +2030,81 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     await rw.put!(POLICY_KEY, doc);
     // The FULL rule set is in the audit detail → past versions can be read back from the audit trail.
     await audit(c, 'policy.update', 'policy', { version: doc.version, rules: doc.rules });
+    return c.json({ ok: true, version: doc.version });
+  });
+
+  // ── Model pricing ────────────────────────────────────────────────────────────
+  // The price table a spend ceiling reads. DEFAULT_PRICING is compiled into @gnldev/durable, so it is
+  // stale the day it ships and knows nothing about a model released last week — and an unpriced model
+  // counts as $0, which means maxCostUsd cannot fire at ANY threshold. Correcting that by publishing a
+  // release is the wrong loop for an operator whose ceiling is silently not capping anything today.
+  //
+  // The journal's `__pricing__` document LAYERS over the shipped table (see PricingDoc.replace): a
+  // screen that lets you add tomorrow's model must not un-price gpt-4o as a side effect, because the
+  // symptom of that is not an error — it is a ceiling that quietly stopped working.
+  app.get('/pricing', async (c) => {
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!writable) return c.json({ version: 0, overrides: {}, effective: {}, editable: false });
+    const doc = (await rw.get!(PRICING_KEY)) as PricingDoc | undefined;
+    return c.json({
+      version: doc?.version ?? 0,
+      overrides: doc?.models ?? {},
+      replace: doc?.replace ?? false,
+      updatedAt: doc?.updatedAt ?? null,
+      effective: await effectivePricingTable(rw as never),
+      editable: true,
+    });
+  });
+
+  app.put('/pricing', async (c) => {
+    if (!(await allowP(c.req.raw, 'policy:write'))) return deny(c.req.raw, 'write');
+    if (!writable) return c.json({ error: 'editing pricing requires a writable journal' }, 501);
+    // Root-level management, exactly like the policy: pricing is ONE global table for every org, so a
+    // bound identity could otherwise change what every other organization is billed at.
+    { const denied = requirePlatformAdmin(c, 'an org-bound identity cannot update global pricing (operator required)'); if (denied) return denied; }
+    const body = (await c.req.json().catch(() => null)) as
+      { models?: Record<string, { inputPer1M?: unknown; outputPer1M?: unknown; cachedInputPer1M?: unknown }>; replace?: boolean; ifVersion?: number } | null;
+    if (!body?.models || typeof body.models !== 'object' || Array.isArray(body.models)) {
+      return c.json({ error: 'a models object is required' }, 400);
+    }
+    const clean: Record<string, { inputPer1M: number; outputPer1M: number; cachedInputPer1M?: number }> = {};
+    for (const [id, row] of Object.entries(body.models)) {
+      // A NaN price is the dangerous input, not a negative one: it stores fine, produces NaN costs, and
+      // `NaN > limit` is false — so the ceiling stops capping without anything failing.
+      const input = row?.inputPer1M;
+      const output = row?.outputPer1M;
+      for (const [field, v] of [['inputPer1M', input], ['outputPer1M', output]] as const) {
+        if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) {
+          return c.json({ error: `${id}.${field} must be a finite, non-negative number` }, 400);
+        }
+      }
+      clean[id] = { inputPer1M: input as number, outputPer1M: output as number };
+      const cached = row?.cachedInputPer1M;
+      if (cached !== undefined) {
+        if (typeof cached !== 'number' || !Number.isFinite(cached) || cached < 0) {
+          return c.json({ error: `${id}.cachedInputPer1M must be a finite, non-negative number` }, 400);
+        }
+        clean[id].cachedInputPer1M = cached;
+      }
+    }
+    const prev = (await rw.get!(PRICING_KEY)) as PricingDoc | undefined;
+    if (body.ifVersion != null) {
+      const current = prev?.version ?? 0;
+      if (body.ifVersion !== current) {
+        return c.json({
+          error: `pricing was modified by another admin (expected v${body.ifVersion}, current v${current})`,
+          code: 'version_conflict', current: prev ?? null,
+        }, 409);
+      }
+    }
+    const doc: PricingDoc = {
+      version: (prev?.version ?? 0) + 1,
+      models: clean,
+      updatedAt: Date.now(),
+      ...(body.replace ? { replace: true } : {}),
+    };
+    await rw.put!(PRICING_KEY, doc);
+    await audit(c, 'pricing.update', 'pricing', { version: doc.version, models: Object.keys(clean), replace: !!body.replace });
     return c.json({ ok: true, version: doc.version });
   });
 

@@ -299,6 +299,20 @@ export interface AgentVersion { version: number; model: string; system?: string;
 export interface ManagedAgentRecord { name: string; active: number | null; versions: AgentVersion[]; }
 export interface PolicyRule { tool: string; action: 'allow' | 'deny' | 'require-approval'; reason?: string; }
 export interface PolicyDoc { version: number; rules: PolicyRule[]; updatedAt?: number; }
+/** USD per 1M tokens. `cachedInputPer1M` is the cache-READ rate; cache writes are not modelled. */
+export interface ModelPrice { inputPer1M: number; outputPer1M: number; cachedInputPer1M?: number; }
+export interface PricingResponse {
+  version: number;
+  /** Only what is stored in the journal — the operator's own edits. */
+  overrides: Record<string, ModelPrice>;
+  /** What the runtime actually prices with: the journal document layered over the shipped table. */
+  effective: Record<string, ModelPrice>;
+  /** When true the document is the WHOLE table and the shipped defaults do not apply. */
+  replace?: boolean;
+  updatedAt?: number | null;
+  /** False on a read-only journal — the screen shows the table but cannot save. */
+  editable: boolean;
+}
 // ── W5: regression (structurally compatible with @gnldev/durable regression.ts — DiffDetail/DiffEntry/RunDiff) ──
 export interface RegressionDiffDetail {
   textA?: string; textB?: string;
@@ -521,6 +535,13 @@ export const api = {
   blockAgent: (name: string, note?: string) =>
     post<{ ok: boolean; record: AgentRegistryRecord }>(`/agents/registry/${encodeURIComponent(name)}/block`, note ? { note } : {}),
   policy: () => get<{ policy: PolicyDoc | null }>('/policy'),
+  /** The price table a spend ceiling reads: `effective` is what the runtime uses, `overrides` is the
+   *  part stored in the journal. They differ because the document LAYERS over the table compiled into
+   *  @gnldev/durable — showing only the overrides would hide the prices most runs are billed at. */
+  pricing: () => get<PricingResponse>('/pricing'),
+  /** `ifVersion`: the version the caller loaded — optimistic lock, same contract as savePolicy. */
+  savePricing: (models: Record<string, ModelPrice>, ifVersion?: number, replace?: boolean) =>
+    http<{ ok: boolean; version: number }>('/pricing', { method: 'PUT', body: JSON.stringify({ models, ifVersion, replace }) }),
   /** `ifVersion`: the version the caller loaded — optimistic lock (API-08). Omit for the old
    *  Last-write-wins behavior. Mismatch → 409 ApiError (see `ApiError.status`). */
   savePolicy: (rules: PolicyRule[], ifVersion?: number) =>
@@ -754,6 +775,7 @@ export const usePermissionsCatalog = () => useQuery({ queryKey: ['permissions-ca
 export const useMe = () => useQuery({ queryKey: ['me'], queryFn: api.me });
 export const useManagedAgents = () => useQuery({ queryKey: ['managed-agents'], queryFn: api.managedAgents });
 export const usePolicy = () => useQuery({ queryKey: ['policy'], queryFn: api.policy });
+export const usePricing = () => useQuery({ queryKey: ['pricing'], queryFn: api.pricing });
 export const useWorkflowRuns = (name: string | null, limit?: number) =>
   useQuery({ queryKey: ['wf-runs', name, limit], queryFn: () => api.workflowRuns(name!, limit), enabled: !!name });
 // API-03: the suspended-runs inbox is a review surface, not a live feed — 15s (was 5s) avoids
