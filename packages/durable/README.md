@@ -147,7 +147,9 @@ The LLM sees all tools and reasons freely; policy only gates **execution**:
 await runDurable({
   runId, journal, model, tools, prompt,
   guard: ({ toolName, args }) => {
-    if (toolName === 'chargeCard' && args.amount > 1000) return { action: 'require-approval' };
+    // `args` is `unknown`: the guard sees every tool's arguments, so narrow before reading one.
+    const { amount } = args as { amount?: number };
+    if (toolName === 'chargeCard' && (amount ?? 0) > 1000) return { action: 'require-approval' };
     return { action: 'allow' };
   },
 });

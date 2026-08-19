@@ -371,7 +371,13 @@ const gnl = createGnl({
   agents: {
     cashier: {
       model: 'openai/gpt-4o',
-      tools: { chargeCard: tool({ /* charge the card */ }) },
+      tools: {
+        chargeCard: tool({
+          description: 'charge the card',
+          inputSchema: z.object({ amount: z.number() }),
+          execute: async ({ amount }) => ({ charged: amount }),
+        }),
+      },
       // `guard` is a FUNCTION, not a config object: it sees every tool call and returns a decision.
       guard: ({ toolName }) =>
         toolName === 'chargeCard' ? { action: 'require-approval' } : { action: 'allow' },
@@ -394,7 +400,11 @@ const r2 = await gnl.run('cashier', {
 
 ```ts
 import { AgentMemory } from '@gnldev/memory';
-const gnl = createGnl({ storage, memoryFactory: (s) => new AgentMemory({ storage: s, embed }) });
+import type { Storage } from '@gnldev/durable';
+// `memoryFactory` receives whatever the registry was given, which may be a bare journal.
+// AgentMemory needs the full Storage (messages + vectors), so this form assumes the `storage`
+// above rather than a journal-only setup.
+const gnl = createGnl({ storage, memoryFactory: (s) => new AgentMemory({ storage: s as Storage, embed }) });
 await gnl.run('assistant', { runId: 'r1', threadId: 'customer-5', prompt: 'My name is Ali' });
 await gnl.run('assistant', { runId: 'r2', threadId: 'customer-5', prompt: 'What was my name?' }); // "Ali"
 ```

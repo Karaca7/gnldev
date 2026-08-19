@@ -361,7 +361,13 @@ const gnl = createGnl({
   agents: {
     kasiyer: {
       model: 'openai/gpt-4o',
-      tools: { chargeCard: tool({ /* kart çekme */ }) },
+      tools: {
+        chargeCard: tool({
+          description: 'kart çekme',
+          inputSchema: z.object({ amount: z.number() }),
+          execute: async ({ amount }) => ({ charged: amount }),
+        }),
+      },
       // `guard` bir NESNE değil, FONKSİYON: her araç çağrısını görür ve bir karar döndürür.
       guard: ({ toolName }) =>
         toolName === 'chargeCard' ? { action: 'require-approval' } : { action: 'allow' },
@@ -384,7 +390,11 @@ const r2 = await gnl.run('kasiyer', {
 
 ```ts
 import { AgentMemory } from '@gnldev/memory';
-const gnl = createGnl({ storage, memoryFactory: (s) => new AgentMemory({ storage: s, embed }) });
+import type { Storage } from '@gnldev/durable';
+// `memoryFactory`, kayıt katmanına ne verildiyse onu alır — bu düz bir journal de olabilir.
+// AgentMemory tam Storage ister (mesajlar + vektörler), bu yüzden bu biçim yukarıdaki `storage`ı
+// varsayar, yalnızca-journal bir kurulumu değil.
+const gnl = createGnl({ storage, memoryFactory: (s) => new AgentMemory({ storage: s as Storage, embed }) });
 await gnl.run('asistan', { runId: 'r1', threadId: 'musteri-5', prompt: 'Adım Ali' });
 await gnl.run('asistan', { runId: 'r2', threadId: 'musteri-5', prompt: 'Adım neydi?' }); // "Ali"
 ```

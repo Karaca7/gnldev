@@ -57,9 +57,24 @@ const GLOBALS = `declare global {
 }
 declare global {
   // Framework entry points a fragment may use after the prose has shown the import.
-  const runDurable: any; const streamDurable: any; const createGnl: any;
-  const createRestApi: any; const createStudioApp: any; const createStudioRunner: any;
-  const serve: any; const createServer: any; const tool: any; const z: any;
+  //
+  // TYPED, not \`any\`. Declaring these opaque meant a block that used them without an import was
+  // checked for nothing at all — option names, argument counts and return types were all free, which
+  // is precisely what this gate exists to verify. Measured: 16 of 76 blocks reached the framework only
+  // through these names, and two of them were replaced with invented API (\`runIdent\`, \`journalz\`,
+  // \`thisOptionDoesNotExist\`, a third positional argument) without the gate noticing.
+  //
+  // The illustrative placeholders in the block above stay \`any\` on purpose: \`myTools\`, \`paymentApi\`
+  // and friends are stand-ins for the reader's own code and have no type to be right about. These do.
+  const runDurable: typeof import('@gnldev/durable').runDurable;
+  const streamDurable: typeof import('@gnldev/durable').streamDurable;
+  const createGnl: typeof import('@gnldev/durable').createGnl;
+  const createRestApi: typeof import('@gnldev/server').createRestApi;
+  const createStudioApp: typeof import('@gnldev/studio').createStudioApp;
+  const createStudioRunner: typeof import('@gnldev/studio').createStudioRunner;
+  const tool: typeof import('ai').tool;
+  const z: typeof import('zod').z;
+  const serve: any; const createServer: any;
 }
 export {};`;
 
@@ -146,7 +161,12 @@ for (const file of docFiles()) {
   blocks(readFileSync(file, 'utf8')).forEach((b, n) => {
     const name = `${rel.replace(/[^a-z0-9]/gi, '_')}__${n}.${b.lang === 'tsx' ? 'tsx' : 'ts'}`;
     // `export {}` keeps each block a module, so `const` in two blocks cannot collide.
-    const prefix = 'export {};\n';
+    //
+    // `prompt` is declared HERE rather than in _globals.d.ts because lib.dom also declares it — as a
+    // function — and a global ambient cannot outrank another global. A module-scope declaration can.
+    // This went unnoticed while the framework entry points were `any`: nothing looked closely enough
+    // at what was passed to them to care that `prompt` was a function.
+    const prefix = 'export {};\ndeclare const prompt: string;\n';
     writeFileSync(join(OUT, name), `${prefix}${b.code}\n`);
     // Counted, not derived: a wrong offset points the reader at the wrong line, which is worse than
     // pointing at none.
