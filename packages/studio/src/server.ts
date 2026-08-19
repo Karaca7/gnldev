@@ -4,7 +4,7 @@ import { toFetchHandler, type FetchHandler } from './handler.js';
 import { Hono, type Context } from 'hono';
 import { sseResponse } from './sse.js';
 
-import { asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, purgeRun, purgeOrganization, orgPurgedKey, sweepRuns, POLICY_KEY, PRICING_KEY, effectivePricingTable, readPricing, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, knownModelProviders, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent } from '@gnldev/durable';
+import { asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, countLog, purgeRun, purgeOrganization, orgPurgedKey, sweepRuns, sweepLog, POLICY_KEY, PRICING_KEY, effectivePricingTable, readPricing, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, knownModelProviders, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent } from '@gnldev/durable';
 import type { PolicyDoc, PolicyRule, BudgetLimit, PricingDoc } from '@gnldev/durable';
 import type { JournalReader, Journal, WorkflowLike, MetricsRunRow } from '@gnldev/durable';
 import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, principalScope, assertAssignablePrivileges, type AuthProvider, type Principal } from '@gnldev/auth';
@@ -423,7 +423,19 @@ export interface StudioApiOptions {
    * OlderThanMs are deleted. Suspended and timestamp-less runs are always preserved (keepSuspended=false
    * Includes suspended ones in the sweep too). Sweeping is only triggered on request (the host can wire it to cron).
    */
-  retention?: { olderThanMs: number; keepSuspended?: boolean };
+  retention?: {
+    olderThanMs: number;
+    keepSuspended?: boolean;
+    /**
+     * Also sweep `__audit__` records older than this (ms). OFF unless set.
+     *
+     * Separate from `olderThanMs`, and off by default, because how long an audit trail is kept is a
+     * compliance decision and not a storage one — deleting it on the same schedule as run data would
+     * be an answer nobody asked for. But the log has no sweeper wired anywhere today, so it only ever
+     * grows: every organization's writes land in the single root log, and nothing removes them.
+     */
+    auditOlderThanMs?: number;
+  };
   /**
    * Org budgets (GET /organizations): an org's limit is `perOrg[id] ?? default`; exceeded =
    * (if usdLimit is set, costUsd>usdLimit) || (if tokenLimit is set, tokens>tokenLimit).
@@ -1232,7 +1244,17 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     // /managed-agents return the root store for EVERY org (a leak)" — the same leak, two endpoints over.
     const bound = principalOf(c.req.raw)?.orgId ?? orgALS.getStore();
     const org = bound ?? (c.req.query('org') || undefined);
-    const logs = await listLog<{ actor: string; action: string; target: string; org?: string; detail?: unknown }>(rootRw as Journal, '__audit__');
+    // Bounded read, newest first. Every organization's writes land in this single root log, so an
+    // unbounded read meant one tenant's `limit=1` cost one `get` per record in the PLATFORM's entire
+    // history — measured at 2001 gets for a 2000-record log, which on Postgres is 2000 round trips to
+    // return one row. The scan window is generous relative to the page so filters still have material
+    // to work with, and when it does cut the history short the response says so rather than presenting
+    // a partial answer as a complete one.
+    const scan = Math.max(limit * 20, 500);
+    const total = await countLog(rootRw as Journal, '__audit__');
+    const logs = await listLog<{ actor: string; action: string; target: string; org?: string; detail?: unknown }>(
+      rootRw as Journal, '__audit__', { limit: scan },
+    );
     // An ORG-scoped view starts at that org's current tenancy. `__audit__` is not org-prefixed, so it
     // survives purgeOrganization by design — an audit log erased by the operation it records is not an
     // audit log — but org ids are human-chosen strings ('acme', a company slug), and the same id going
@@ -1250,7 +1272,10 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       .filter((i) => !q || i.target.toLowerCase().includes(q) || i.actor.toLowerCase().includes(q))
       .sort((a, b) => (b.at ?? 0) - (a.at ?? 0))
       .slice(0, limit);
-    return c.json({ items });
+    // `scanned`/`truncated` rather than a quietly short list: a filter that matches nothing inside the
+    // window is indistinguishable from a filter that matches nothing at all, and only one of those is
+    // worth changing the query over.
+    return c.json({ items, scanned: Math.min(scan, total), total, truncated: total > scan });
   });
 
   // Organizations: listed from `org:<id>:` prefixes + usage/cost + budget status (opts.budgets).
@@ -2120,17 +2145,25 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     if (typeof (rw as Partial<Journal>).deletePrefix !== 'function') {
       return c.json({ error: 'retention requires journal deletePrefix support' }, 501);
     }
-    const body = (await c.req.json().catch(() => ({}))) as { olderThanMs?: number; keepSuspended?: boolean };
+    const body = (await c.req.json().catch(() => ({}))) as { olderThanMs?: number; keepSuspended?: boolean; auditOlderThanMs?: number };
     const olderThanMs = body.olderThanMs ?? opts.retention?.olderThanMs;
     if (olderThanMs == null) return c.json({ error: 'olderThanMs is required (body or the retention option)' }, 400);
     const keepSuspended = body.keepSuspended ?? opts.retention?.keepSuspended ?? true;
     const result = await sweepRuns(rw as any, { olderThanMs, keepSuspended });
+    // The audit log is swept only when a retention period was chosen for it, and against the ROOT
+    // journal because that is where it lives (see the audit endpoint). The record written just below
+    // is newer than any cutoff, so a sweep never erases the evidence of itself.
+    const auditOlderThanMs = body.auditOlderThanMs ?? opts.retention?.auditOlderThanMs;
+    const auditSwept = auditOlderThanMs == null
+      ? undefined
+      : await sweepLog(rawReader as unknown as Journal, '__audit__', { olderThanMs: auditOlderThanMs });
     await audit(c, 'retention.sweep', 'runs', {
       olderThanMs, keepSuspended,
       scanned: result.scanned, purged: result.purged.length,
       keptSuspended: result.keptSuspended, keptNoTs: result.keptNoTs,
+      ...(auditSwept ? { auditOlderThanMs, auditDeleted: auditSwept.deleted, auditScanned: auditSwept.scanned } : {}),
     });
-    return c.json({ ok: true, ...result, purged: result.purged.slice(0, 100) });
+    return c.json({ ok: true, ...result, purged: result.purged.slice(0, 100), ...(auditSwept ? { audit: auditSwept } : {}) });
   });
 
   // ── Guard/policy editor: rules live in the journal (__policy__), policyGuard reads them live ──────────

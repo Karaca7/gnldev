@@ -7,7 +7,7 @@ export { JOURNAL_FORMAT_VERSION, JournalFormatError, registerFormatUpgrade, stam
 export { acquireRunLock } from './run-lock.js';
 export type { RunLock } from './run-lock.js';
 export { reconstructState, forkRun, settleModelContent } from './time-travel.js';
-export { appendLog, listLog, consumeOnce } from './durable-log.js';
+export { appendLog, listLog, countLog, consumeOnce } from './durable-log.js';
 export type { LogItem } from './durable-log.js';
 export type { ReconstructedState, ReconstructSeed, ForkResult } from './time-travel.js';
 export type {
