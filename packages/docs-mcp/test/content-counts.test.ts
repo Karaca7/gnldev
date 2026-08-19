@@ -25,6 +25,35 @@ describe('embedded docs — the numbers in the prose', () => {
     expect(Number(stated![1]), `prose says ${stated![1]}, the array has ${FEATURES.length}`).toBe(FEATURES.length);
   });
 
+  // The guard used to stop here — at ONE comment inside content.ts, which had been updated to 33 while
+  // five user-visible strings still said 25: the MCP tool's own `description` (what an assistant reads
+  // to decide whether to call it at all), the overview doc comment, and two lines of the README. It was
+  // green the whole time, standing outside the surface it claimed to protect.
+  //
+  // So the count is now DERIVED where it is emitted, and this checks the SHIPPED FILES for a stale
+  // literal instead of one comment. Reading source in a test is the point: prose cannot be typechecked,
+  // and the alternative was a guard that could not fail.
+  it('no shipped file states a feature count that is not the real one', () => {
+    const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+    const files = ['src/server.ts', 'src/text.ts', 'src/content.ts', 'README.md'];
+    const wrong: string[] = [];
+    for (const rel of files) {
+      const text = readFileSync(join(root, rel), 'utf8');
+      // Any number immediately in front of the word "feature(s)" — the shape all five stale strings had.
+      for (const m of text.matchAll(/(\d+)\s+features?\b/g)) {
+        if (Number(m[1]) !== FEATURES.length) wrong.push(`${rel}: "${m[0]}" (array has ${FEATURES.length})`);
+      }
+    }
+    expect(wrong, `a stale count survives in a shipped file:\n${wrong.join('\n')}`).toEqual([]);
+  });
+
+  it('the tool description an assistant reads carries the real count', () => {
+    // Derived rather than typed in, so this cannot drift again — asserted through the built module so
+    // it is the string that actually ships.
+    const desc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'server.ts'), 'utf8');
+    expect(desc, 'the description hardcodes a count again').toMatch(/\$\{FEATURES\.length\} features/);
+  });
+
   it('every feature carries the fields the MCP tools read, so none answers with a hole', () => {
     for (const f of FEATURES) {
       expect(f.slug, JSON.stringify(f).slice(0, 60)).toBeTruthy();

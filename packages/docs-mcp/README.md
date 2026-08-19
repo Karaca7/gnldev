@@ -1,6 +1,6 @@
 # @gnldev/docs-mcp
 
-**Stdio server that serves GNL docs to AI assistants over MCP (Model Context Protocol).** Any MCP-compatible CLI or editor starts this server as a child process and can query GNL's 25 features (install/API/example) with the `gnl_docs_overview` / `gnl_docs_feature` / `gnl_docs_search` tools.
+**Stdio server that serves GNL docs to AI assistants over MCP (Model Context Protocol).** Any MCP-compatible CLI or editor starts this server as a child process and can query GNL's features (install/API/example) with the `gnl_docs_overview` / `gnl_docs_feature` / `gnl_docs_search` tools.
 
 Hand-written JSON-RPC 2.0 — **`@modelcontextprotocol/sdk` is NOT USED** (zero new dependencies: only `node:readline`/`node:process`). Content is first tried via a live fetch of `/llms.txt` + `/llms-full.txt` through `GNL_DOCS_URL` (default `https://gnl.dev`); if the network is unavailable/unreachable, it falls back to the static content embedded in the package (`src/content.ts`) — this package works on its own even if the site is down.
 
@@ -47,7 +47,7 @@ To run locally from within the monorepo (before publishing):
 
 ## Tools (`tools/list`)
 
-- `gnl_docs_overview()` → GNL summary + ordered list of the 25 features.
+- `gnl_docs_overview()` → GNL summary + ordered list of the features.
 - `gnl_docs_feature({ slug })` → installation/API/example detail for that feature (unknown `slug` → info text listing valid slugs, not a JSON-RPC error).
 - `gnl_docs_search({ query })` → simple (case-insensitive) text search.
 

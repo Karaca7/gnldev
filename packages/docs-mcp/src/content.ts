@@ -1,6 +1,6 @@
 // EMBEDDED static GNL doc content — the fallback single source of truth for @gnldev/docs-mcp.
 //
-// Compiled 1:1 from components/docs/nav-data.ts (ordered list of the 25 features:
+// Compiled 1:1 from components/docs/nav-data.ts (ordered list of the features:
 // Slug/title/oneLiner/tier/package) and lib/llms-content.ts (per-slug install/apis/example)
 // On the gnl.dev site — content mirrors the official docs, not invented here.
 // It is embedded here so this package can work on its own even if the site

@@ -4,7 +4,7 @@
 import { DEFAULT_DOCS_URL } from './docs-source.js';
 import { FEATURES, FEATURES_BY_SLUG, OVERVIEW_DETAIL, OVERVIEW_SUMMARY, TIER_LABEL, EE_NOTE, type DocFeature } from './content.js';
 
-/** gnl_docs_overview's embedded-content output: summary + ordered list of the 25 features. */
+/** gnl_docs_overview's embedded-content output: summary + ordered list of the features. */
 export function buildOverviewText(docsUrl: string = DEFAULT_DOCS_URL): string {
   const lines: string[] = [];
   lines.push('# GNL');

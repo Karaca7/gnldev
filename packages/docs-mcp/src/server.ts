@@ -15,6 +15,7 @@ import {
   type JsonRpcResponse,
 } from './protocol.js';
 import { extractRemoteSection, fetchRemoteDocs, isOffline, resolveDocsUrl, type RemoteDocs } from './docs-source.js';
+import { FEATURES } from './content.js';
 import {
   buildFeatureText,
   buildOverviewText,
@@ -39,7 +40,10 @@ export interface ToolDef {
 export const TOOLS: ToolDef[] = [
   {
     name: 'gnl_docs_overview',
-    description: 'Returns a summary of the GNL framework and the ordered list of its 25 features.',
+    // Derived, like the body it describes. This literal said 25 while FEATURES held 33, and it is
+    // the string an assistant reads to decide whether to call the tool at all — a wrong count here
+    // is wrong at the moment of choosing, not merely in the output.
+    description: `Returns a summary of the GNL framework and the ordered list of its ${FEATURES.length} features.`,
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
