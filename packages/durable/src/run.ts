@@ -1,4 +1,5 @@
 import { generateText, streamText, stepCountIs } from 'ai';
+import type { ToolSchemaRuleLike } from './types.js';
 import type { StreamTextResult } from 'ai';
 import { withDurableModel } from './durable-model.js';
 import { durableTools } from './durable-tool.js';
@@ -23,7 +24,7 @@ import { assertNotCompensated, CompensatedRunError } from './compensation.js';
 import { assertNotCanceled } from './cancel.js';
 import { markRunTainted, readThreadTaint, readDirectRunTaint, recordTaintProvenance, isThreadTaintExpired } from './taint.js';
 import type { RunLimits } from './limits.js';
-import type { ToolSchemaRule } from '@gnldev/tool-schema';
+
 import type { LanguageModelV4 } from '@ai-sdk/provider';
 import { systemText, finishReasonText, producedMessages, type InstructionsLike } from './sdk-compat.js';
 import { runFailed, runFailedIfUnrecorded, runStarted, runSucceeded, classifyRunError, isRunFailure } from './outcome.js';
@@ -74,7 +75,7 @@ export type RunDurableArgs = GenerateTextOptions & {
   /** 8.7 Processor pipeline: input/output/tool transformers (PII/moderation/tool-filter). */
   processors?: Processor[];
   /** 8.8 Provider-specific tool-schema compatibility (opt-in): true → default set; array → those rules. */
-  schemaCompat?: boolean | ToolSchemaRule[];
+  schemaCompat?: boolean | ToolSchemaRuleLike[];
   /** W1 (opt-in): per-run cost cap + loop detection. If not provided, no check runs. */
   limits?: RunLimits;
   /**
@@ -110,7 +111,7 @@ export type StreamDurableArgs = StreamTextOptions & {
    */
   processors?: Processor[];
   /** 8.8 Provider-specific tool-schema compatibility (opt-in): true → default set; array → those rules. */
-  schemaCompat?: boolean | ToolSchemaRule[];
+  schemaCompat?: boolean | ToolSchemaRuleLike[];
   /** W1 (opt-in): per-run cost cap + loop detection. If not provided, no check runs. */
   limits?: RunLimits;
   /** §5.3 (opt-in): model-step exclusivity — same semantics as runDurable (see RunDurableArgs). */
@@ -1182,7 +1183,7 @@ export interface ResumeAgentConfig {
   lock?: { owner: string; ttlMs: number };
   timeouts?: { modelStepMs?: number; toolMs?: number; claimTtlMs?: number };
   exclusiveModelStep?: { ttlMs?: number };
-  schemaCompat?: boolean | ToolSchemaRule[];
+  schemaCompat?: boolean | ToolSchemaRuleLike[];
   toolPolicy?: 'strict';
 }
 

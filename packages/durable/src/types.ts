@@ -168,3 +168,31 @@ export type ToolDurability = Pick<
 export function gnlTool<T>(t: T, durability: ToolDurability): T {
   return Object.assign(t as any, durability) as T;
 }
+
+/**
+ * A tool-schema compatibility rule, declared STRUCTURALLY here rather than imported from
+ * `@gnldev/tool-schema`.
+ *
+ * That package is an OPTIONAL peer — the whole point of `schemaCompat` being opt-in is that a caller
+ * who does not use it never installs it. But `run.d.ts` and `registry.d.ts` referenced its types
+ * unconditionally, and a published `.d.ts` is compiled by the CONSUMER. Measured on a project with
+ * every required peer installed and only this optional one absent, `skipLibCheck: false`:
+ *
+ *   run.d.ts(9,37):      error TS2307: Cannot find module '@gnldev/tool-schema'
+ *   registry.d.ts(3,37): error TS2307: Cannot find module '@gnldev/tool-schema'
+ *
+ * So "optional" held at install time and at runtime, and broke at typecheck — for people who had done
+ * nothing wrong except not opt in. `skipLibCheck: true` hides it, which is why it went unnoticed.
+ *
+ * Structural, so a caller who DOES install the package can still pass the real `ToolSchemaRule`: the
+ * shapes are compatible by definition, and tool-schema's own test suite asserts that both directions
+ * stay assignable so the two cannot drift apart silently.
+ */
+export interface ToolSchemaRuleLike {
+  /** Stable, unique name (for logging/diagnostics). */
+  name: string;
+  /** Does this rule apply to the given model? */
+  shouldApply(model: { provider: string; modelId: string }): boolean;
+  /** Transform the JSON Schema (may mutate in place and return the same object). */
+  transform(schema: Record<string, any>, model: { provider: string; modelId: string }): Record<string, any>;
+}

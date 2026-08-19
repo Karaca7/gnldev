@@ -1,4 +1,5 @@
 import { nestedAgentRunId } from './journal.js';
+import type { ToolSchemaRuleLike } from './types.js';
 import { stepCountIs, tool as aiTool, jsonSchema } from 'ai';
 import { runDurable, streamDurable } from './run.js';
 import type { StreamBreach } from './run.js';
@@ -8,7 +9,7 @@ import { runNetwork as runNetworkCore, type NetworkResult, type NetworkTarget } 
 import { durableProcessorStep } from './processor.js';
 import { recordRunScores } from './metrics.js';
 import { assertSuiteConsistent } from './suite-consistency.js';
-import type { ToolSchemaRule } from '@gnldev/tool-schema';
+
 import type { Journal } from './journal.js';
 import type { Storage } from './storage.js';
 import type { Guard } from './guard.js';
@@ -293,7 +294,7 @@ export interface CreateGnlConfig {
    * Fixed allowlist of options to runDurable that did not include it, so the package's only
    * Documented integration was silently doing nothing.
    */
-  schemaCompat?: boolean | ToolSchemaRule[];
+  schemaCompat?: boolean | ToolSchemaRuleLike[];
 }
 
 /**
