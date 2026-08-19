@@ -86,10 +86,7 @@ await gnl.run('starwars', { runId: 'demo-1', prompt: 'Who is Luke Skywalker?' })
 import { PostgresStorage } from '@gnldev/durable/postgres';
 import { InMemoryStorage, toJournal, composite } from '@gnldev/durable';`,
     apis: [`SqliteStorage — node:sqlite-based dev/single-file storage`, `PostgresStorage — pg-based production storage (connectionString or pool)`, `InMemoryStorage — test storage without persistence`, `composite({ default, overrides }) — different backend per port`, `toJournal(storage.runs) — bridges RunJournal to Journal & JournalReader`],
-    example: `import { composite } from '@gnldev/durable';
-import { SqliteStorage } from '@gnldev/durable/sqlite';
-
-const storage = composite({
+    example: `const storage = composite({
   default: new SqliteStorage('app.db'),
   overrides: { cache: someRedisBackedStorage },
 });`,
@@ -192,8 +189,18 @@ const res = await gnl.runWorkflow('onboard', input, { runId: 'wf-1' });`,
     install: `import { withModelFallback, resolveModel, runDurable } from '@gnldev/durable';
 import type { FallbackCandidate } from '@gnldev/durable';`,
     apis: [`resolveModel('provider/model') — converts a string id into an actual model (lazy import)`, `withModelFallback(candidates, journal, runId) — deterministically falls back to the first successful model`, `FallbackCandidate — { spec, model }`],
-    example: `const model = withModelFallback(
-  [{ model: 'openai:gpt-4o' }, { model: 'openai:gpt-4o-mini' }],
+    example: `// A candidate is { spec, model }: the spec is the stable label written to the journal,
+// the model is a real model instance — resolveModel is async, so resolve them first.
+const [primary, backup] = await Promise.all([
+  resolveModel('openai/gpt-4o'),
+  resolveModel('openai/gpt-4o-mini'),
+]);
+
+const model = withModelFallback(
+  [
+    { spec: 'openai/gpt-4o', model: primary },
+    { spec: 'openai/gpt-4o-mini', model: backup },
+  ],
   journal,
   runId,
 );
@@ -323,7 +330,8 @@ import { evalDataset } from '@gnldev/evals';`,
     package: `@gnldev/studio`,
     install: `import { createStudioApp } from '@gnldev/studio';`,
     apis: [`POST /managed-agents — { name, model, system?, maxSteps?, note? } adds a new version`, `POST /managed-agents/:name/promote — { version } changes the active version`, `GET /managed-agents — version history + active version number`],
-    example: `// POST /studio/api/managed-agents
+    example: `// doccheck: skip — HTTP request/response bodies, not TypeScript
+// POST /studio/api/managed-agents
 { "name": "support-bot", "model": "gpt-4o-mini", "system": "Give short and polite answers.", "maxSteps": 4 }
 // > { ok: true, name: "support-bot", version: 2, active: 1 }
 
@@ -598,7 +606,7 @@ const r = await gnl.runNetwork('desk', { runId: 'n1', task: 'research and draft 
     ],
     example: `const chunks = chunkDocuments(docs, { strategy: 'markdown', size: 1200, overlap: 120 });
 const store = new PostgresVectorStore({ connectionString: process.env.DATABASE_URL, index: 'hnsw' });
-await indexDocuments(store, chunks, embed);
+await indexDocuments(store, embed, chunks);
 const gnl = createGnl({ storage, agents: { asst: { model, tools: { search: createRagTool({ store, embed, topK: 5 }) } } } });`,
   },
   {

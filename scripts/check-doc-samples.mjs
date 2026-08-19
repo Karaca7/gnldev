@@ -17,6 +17,9 @@ import { readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync, existsSync
 import { join, relative, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = join(ROOT, '.doccheck');
@@ -66,6 +69,24 @@ declare global {
   //
   // The illustrative placeholders in the block above stay \`any\` on purpose: \`myTools\`, \`paymentApi\`
   // and friends are stand-ins for the reader's own code and have no type to be right about. These do.
+  // Names the docs-mcp examples use after their own prose has shown the import. REAL exports are
+  // typed like the entry points above — declaring them \`any\` would repeat the exact hole that made
+  // 16 markdown blocks unchecked. Everything below the divider is a stand-in for the reader's own
+  // code and has no type to be right about.
+  const InMemoryJournal: typeof import('@gnldev/durable').InMemoryJournal;
+  const toJournal: typeof import('@gnldev/durable').toJournal;
+  const stepCountIs: typeof import('ai').stepCountIs;
+  const roleAuth: typeof import('@gnldev/auth').roleAuth;
+  const scoreRun: typeof import('@gnldev/evals').scoreRun;
+  const exactMatch: typeof import('@gnldev/evals').exactMatch;
+  const llmJudge: typeof import('@gnldev/evals').llmJudge;
+  const datasets: typeof import('@gnldev/evals').datasets;
+  const Hono: typeof import('hono').Hono;
+  // ── the reader's own code ────────────────────────────────────────────────
+  const buildModel: any; const makeModel: any; const makeTools: any; const makeSwapiTools: any;
+  const SYSTEM: any; const bigToolset: any; const someRedisBackedStorage: any; const forkModel: any;
+  const counter: any; const licenseKey: any; const fallback: any; const auth: any; const reader: any;
+  const aiToolSchema: any;
   const runDurable: typeof import('@gnldev/durable').runDurable;
   const streamDurable: typeof import('@gnldev/durable').streamDurable;
   const createGnl: typeof import('@gnldev/durable').createGnl;
@@ -155,6 +176,40 @@ function blocks(text) {
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
 
+/**
+ * The examples embedded in @gnldev/docs-mcp — what an AI assistant is handed when it asks about a
+ * feature — checked with the same compiler as the markdown.
+ *
+ * Nothing compiled these. The model-fallback example gave `[{ model: 'openai:gpt-4o' }, …]`: no `spec`
+ * field and a STRING where a model instance belongs, so it constructed silently and threw
+ * `TypeError: m.doGenerate is not a function` on the first call — while the `apis` line directly above
+ * it in the same record said `FallbackCandidate — { spec, model }`. The record contradicted itself and
+ * both halves shipped.
+ *
+ * Read from the BUILT module rather than by parsing the source: what ships is the built value, and a
+ * regex over a template literal would have its own bugs.
+ */
+function embeddedExamples() {
+  const dist = join(ROOT, 'packages', 'docs-mcp', 'dist', 'content.js');
+  if (!existsSync(dist)) return [];
+  const out = [];
+  try {
+    const { FEATURES } = require(dist);
+    for (const f of FEATURES ?? []) {
+      if (!f?.example?.trim()) continue;
+      // Same opt-out the markdown blocks have. A few examples are deliberately NOT TypeScript —
+      // agent-versioning shows HTTP request and response bodies — and compiling those would report
+      // a syntax error against text that is correct for what it is.
+      if (/doccheck:\s*skip/.test(f.example)) continue;
+      // `install` is a shell command for most features (`pnpm add …`) and an import line for a few.
+      // Only the second kind is code; prepending the first would fail every block on its own text.
+      const preamble = /^\s*import\b/.test(f.install ?? '') ? `${f.install}\n` : '';
+      out.push({ slug: f.slug, code: `${preamble}${f.example}` });
+    }
+  } catch { return []; }
+  return out;
+}
+
 const cases = [];
 for (const file of docFiles()) {
   const rel = relative(ROOT, file);
@@ -172,6 +227,12 @@ for (const file of docFiles()) {
     // pointing at none.
     cases.push({ name, rel, line: b.line, prefixLines: prefix.split('\n').length - 1 });
   });
+}
+for (const ex of embeddedExamples()) {
+  const name = `docsmcp__${ex.slug.replace(/[^a-z0-9]/gi, '_')}.ts`;
+  const prefix = 'export {};\ndeclare const prompt: string;\n';
+  writeFileSync(join(OUT, name), `${prefix}${ex.code}\n`);
+  cases.push({ name, rel: `packages/docs-mcp/src/content.ts (${ex.slug})`, line: 1, prefixLines: 2 });
 }
 
 writeFileSync(join(OUT, '_globals.d.ts'), GLOBALS);
