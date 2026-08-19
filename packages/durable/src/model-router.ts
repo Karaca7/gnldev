@@ -127,12 +127,44 @@ export function withModelFallback(candidates: FallbackCandidate[], journal: Jour
   };
 
   const first = candidates[0]!.model;
+  /** Whoever is actually serving: the frozen winner once known, the first candidate before that. */
+  const serving = () => candidates[sticky ?? 0]!.model;
   return {
     specificationVersion: first.specificationVersion,
-    provider: first.provider,
-    modelId: first.modelId,
-    supportedUrls: first.supportedUrls,
+    // Getters, not a snapshot of candidates[0]. These fields were copied once and never updated, so
+    // after anthropic failed and OpenAI served the call, the proxy still answered `anthropic` /
+    // `claude-x` — measured. Anything that asks the model who it is (telemetry, logs, a host's own
+    // accounting) was told the name of the candidate that did NOT run.
+    get provider() { return serving().provider; },
+    get modelId() { return serving().modelId; },
+    get supportedUrls() { return serving().supportedUrls; },
+    /**
+     * The chain itself, for callers that must prepare something BEFORE knowing who will serve.
+     *
+     * Tool-schema compat is the case that matters: run.ts applies it once per run, before the first
+     * model call, keyed off the model's identity. With a stale identity a mixed-provider chain applied
+     * anthropic's rules and then let OpenAI serve the call — so `openaiStrict` was skipped and a Zod
+     * `.url()` (`format: 'uri'`) reached OpenAI, which is exactly the silent rejection that rule
+     * exists to prevent. Reporting the truth afterwards cannot fix that: by then the tools are built.
+     *
+     * Exposed so the transform can be applied for EVERY candidate instead. The rules are filtered per
+     * model by `shouldApply`, so applying them in chain order composes, and the resulting schema
+     * satisfies whichever candidate ends up answering.
+     */
+    fallbackCandidates: candidates.map((c) => c.model),
     doGenerate: (options: any) => attempt((m) => m.doGenerate(options)),
     doStream: (options: any) => attempt((m) => m.doStream(options)),
   };
+}
+
+/**
+ * The candidate models behind a `withModelFallback` proxy, or `undefined` for a plain model.
+ *
+ * A single-candidate chain is short-circuited to the raw model by `withModelFallback`, so a plain
+ * model and a one-model chain are indistinguishable here — correctly, since there is nothing to fall
+ * back to and nothing extra to prepare for.
+ */
+export function fallbackCandidatesOf(model: unknown): any[] | undefined {
+  const c = (model as { fallbackCandidates?: unknown })?.fallbackCandidates;
+  return Array.isArray(c) && c.length > 0 ? c : undefined;
 }

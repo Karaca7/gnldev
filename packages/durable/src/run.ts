@@ -8,7 +8,7 @@ import { createProcessorCtx, composePrepareStep, composeOnStepFinish, durablePro
 import { loadReplayCache, runKeys, claim } from './journal.js';
 // Statically safe: model-router imports only ./journal, and the provider packages it can reach are
 // Behind dynamic import(), so this costs the core bundle nothing.
-import { resolveModel } from './model-router.js';
+import { resolveModel, fallbackCandidatesOf } from './model-router.js';
 import { stampFormat, upgradeFormat } from './format.js';
 import { recordRunUsage } from './budget.js';
 import { recordRunMetrics } from './metrics.js';
@@ -1039,7 +1039,15 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   if (schemaCompat && effectiveTools) {
     const { applyToolCompat, defaultRules } = await import('@gnldev/tool-schema');
     const rules = schemaCompat === true ? defaultRules : schemaCompat;
-    effectiveTools = applyToolCompat(effectiveTools, model, rules);
+    // Once per CANDIDATE for a fallback chain, not once for the proxy. The rules are selected per
+    // model by `shouldApply`, so applying them in chain order composes and the result satisfies
+    // whichever candidate answers. Keyed off the proxy alone, a chain of
+    // ['anthropic/…','openai/…'] applied anthropic's rules and then let OpenAI serve — `openaiStrict`
+    // skipped, and a `format: 'uri'` schema reaching the provider that rejects it. Nothing here can be
+    // deferred until the winner is known: the tools are converted by the AI SDK before the call.
+    for (const m of fallbackCandidatesOf(model) ?? [model]) {
+      effectiveTools = applyToolCompat(effectiveTools, m, rules);
+    }
   }
 
   const stepHookFailure: StepHookFailure = {};
@@ -1318,7 +1326,15 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   if (schemaCompat && effectiveTools) {
     const { applyToolCompat, defaultRules } = await import('@gnldev/tool-schema');
     const rules = schemaCompat === true ? defaultRules : schemaCompat;
-    effectiveTools = applyToolCompat(effectiveTools, model, rules);
+    // Once per CANDIDATE for a fallback chain, not once for the proxy. The rules are selected per
+    // model by `shouldApply`, so applying them in chain order composes and the result satisfies
+    // whichever candidate answers. Keyed off the proxy alone, a chain of
+    // ['anthropic/…','openai/…'] applied anthropic's rules and then let OpenAI serve — `openaiStrict`
+    // skipped, and a `format: 'uri'` schema reaching the provider that rejects it. Nothing here can be
+    // deferred until the winner is known: the tools are converted by the AI SDK before the call.
+    for (const m of fallbackCandidatesOf(model) ?? [model]) {
+      effectiveTools = applyToolCompat(effectiveTools, m, rules);
+    }
   }
 
   const stepHookFailure: StepHookFailure = {};
