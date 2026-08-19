@@ -392,6 +392,12 @@ export async function frozenGet<T>(journal: Journal, key: string, compute: () =>
 
 /** Context of a durable run: journal, run, optional policy and approvals. */
 export interface DurableCtx {
+  /**
+   * Set by callers that have NO approvals channel — `withIdempotency` runs outside runDurable, and the
+   * toolCallId it names is a fresh one on every attempt, so `approvals[id] = true` could never have
+   * been pre-supplied. Refusal messages use it to avoid naming a remedy the caller cannot reach.
+   */
+  noApprovals?: boolean;
   journal: Journal;
   runId: string;
   /**

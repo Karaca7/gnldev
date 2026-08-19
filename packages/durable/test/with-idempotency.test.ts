@@ -5,6 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '../src/journal.js';
 import { withIdempotency } from '../src/idempotent-tools.js';
+import { z } from 'zod';
 
 describe('withIdempotency — default window ("cross-run")', () => {
   it('two SEPARATE calls (different toolCallIds, same args) → underlying execute runs EXACTLY once', async () => {
@@ -90,5 +91,77 @@ describe('withIdempotency — control: an UNWRAPPED plain tool has no dedup', ()
     await plain.charge.execute!({ orderId: 'X' }, { toolCallId: 'b' });
 
     expect(calls).toBe(2); // no idempotency layer → both side effects happen
+  });
+});
+
+// A refusal must name a remedy the caller can actually reach.
+//
+// The side-effect retry block is correct — a failed side effect is not re-run on its own — but the
+// message told the caller what to do next, and for two callers that instruction was a dead end.
+//
+// `withIdempotency` runs OUTSIDE runDurable and has no approvals channel at all, and the toolCallId it
+// names is a fresh one on every attempt, so `approvals[id] = true` could never have been pre-supplied.
+// The code knew this for the cross-run window and said so there — but the reason has nothing to do with
+// the window, and a `window: 'run'` caller (a documented option) was still being sent to approvals.
+//
+// The other half was a detection bug: `crossRun` was decided by sniffing the KEY for 'xrun:' rather
+// than reading the `window` already in scope. A run whose runId is literally `xrun` produces the
+// run-window key `xrun:tool:args-…`, which startsWith('xrun:') — so it was told to call
+// releaseFailedClaim, which looks for `xrun:args-<tool>-<hash>`, finds nothing, and returns false
+// without saying why.
+describe('the remedy named when a failed side effect is refused', () => {
+  const failing = (fail: boolean) => ({
+    description: 'charge',
+    inputSchema: z.object({ o: z.string() }),
+    idempotency: 'args' as const,
+    execute: async () => { if (fail) throw new Error('provider down'); return { ok: true }; },
+  });
+
+  /** Runs the tool once so it fails, then again so the refusal fires; returns the second message. */
+  async function refusalFrom(make: (fail: boolean) => { charge: any }) {
+    try { await make(true).charge.execute({ o: 'X' }, { toolCallId: 'c1' }); } catch { /* first attempt fails */ }
+    try {
+      await make(false).charge.execute({ o: 'X' }, { toolCallId: 'c2' });
+      return '(no refusal)';
+    } catch (e) { return String((e as Error).message); }
+  }
+
+  it('does not offer approvals to a caller that has no approvals channel', async () => {
+    const journal = new InMemoryJournal();
+    const msg = await refusalFrom((fail) =>
+      withIdempotency({ charge: failing(fail) } as never, { journal, runId: 'R1', window: 'run' }) as never);
+
+    expect(msg, 'the caller was sent to a channel it does not have').not.toMatch(/approvals\['c2'\]=true/);
+    expect(msg).toMatch(/no approvals channel/);
+    expect(msg, 'the reachable remedies must still be named').toMatch(/recover\(\)/);
+  });
+
+  it('still offers approvals to a run that HAS them, even when its runId looks like a key prefix', async () => {
+    // `xrun` is a legal runId. Keyed off the window rather than the key text, this is an ordinary
+    // run-scoped claim and approvals are exactly the right answer.
+    const { durableTool } = await import('../src/durable-tool.js');
+    const journal = new InMemoryJournal();
+    const make = (fail: boolean) => ({
+      charge: durableTool(failing(fail) as never, { journal, runId: 'xrun' } as never, 'charge'),
+    });
+    const msg = await refusalFrom(make as never);
+
+    expect(msg, 'a run-scoped claim was described as a permanent cross-run one').not.toMatch(/cross-run claim/);
+    expect(msg).toMatch(/approvals\['c2'\]=true/);
+  });
+
+  it('still names releaseFailedClaim for a genuine cross-run claim', async () => {
+    // The branch that was right all along, kept honest: this remedy IS reachable here, because the
+    // claim key really is run-independent.
+    const { durableTool } = await import('../src/durable-tool.js');
+    const journal = new InMemoryJournal();
+    const crossRun = (fail: boolean) => ({ ...failing(fail), idempotencyWindow: 'cross-run' as const });
+    const make = (fail: boolean) => ({
+      charge: durableTool(crossRun(fail) as never, { journal, runId: 'R1' } as never, 'charge'),
+    });
+    const msg = await refusalFrom(make as never);
+
+    expect(msg).toMatch(/cross-run claim/);
+    expect(msg).toMatch(/releaseFailedClaim/);
   });
 });

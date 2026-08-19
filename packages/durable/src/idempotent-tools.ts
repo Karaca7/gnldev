@@ -51,7 +51,7 @@ export function withIdempotency<T extends ToolSet>(tools: T, opts: WithIdempoten
   // MINIMAL ctx: journal + runId only. No `blockedAsSentinel` → standalone throw semantics (documented
   // Honest limit). runId is irrelevant in the cross-run window (the journal key is runId-free), and
   // Scopes dedup in the 'run' window.
-  const ctx = { journal: opts.journal, runId: opts.runId ?? 'ambient' };
+  const ctx = { journal: opts.journal, runId: opts.runId ?? 'ambient', noApprovals: true };
   const out: Record<string, AnyTool> = {};
   for (const [name, tool] of Object.entries(tools) as [string, AnyTool][]) {
     if (typeof tool.execute !== 'function') {

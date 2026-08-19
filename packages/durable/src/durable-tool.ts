@@ -763,13 +763,24 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
             // approvals channel, and the toolCallId named here is a fresh one on every attempt, so
             // even a caller that had approvals could not have pre-approved this id. Naming an
             // unreachable remedy is how a correct refusal reads as a dead end.
-            const crossRun = key.startsWith('xrun:') || key.includes(':xrun:');
+            // From the `window` in scope, not from the key's TEXT. Sniffing for 'xrun:' misreads a
+            // run whose runId happens to be `xrun` — its run-window key is `xrun:tool:args-…`, which
+            // startsWith('xrun:') — and then names releaseFailedClaim, which looks for
+            // `xrun:args-<tool>-<hash>`, finds nothing and returns false without saying why. The
+            // second disjunct (`:xrun:`) could not match any key runKeys produces at all.
+            const crossRun = window === 'cross-run';
             const remedy = crossRun
               ? `this is a cross-run claim, so the refusal is permanent and applies to every run: ` +
                 `release it with releaseFailedClaim(journal, { toolName: '${toolName}', args }) once you ` +
                 `have established the side effect did not happen, or give the tool a recover() hook so ` +
                 `that question is answered automatically`
-              : `allow explicitly with approvals['${toolCallId}']=true, mark idempotent: true, or provide a recover() hook`;
+              : ctx.noApprovals
+                // No approvals channel at all — see DurableCtx.noApprovals. Offering it here is the
+                // same dead end the cross-run branch above exists to avoid, and it is not a property
+                // of the WINDOW: a `window: 'run'` withIdempotency caller was being sent there too.
+                ? `mark idempotent: true, or provide a recover() hook — this caller has no approvals ` +
+                  `channel, so approvals['${toolCallId}'] is not reachable from here`
+                : `allow explicitly with approvals['${toolCallId}']=true, mark idempotent: true, or provide a recover() hook`;
             return blockedOrThrow(ctx, toolCallId, toolName, new SideEffectRetryBlockedError(
               `@gnldev/durable: '${toolName}' (${key}) has side effects — not auto-retried after failed (${remedy})`,
               { key, attempts },
