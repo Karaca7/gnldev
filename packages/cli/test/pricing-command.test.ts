@@ -243,3 +243,67 @@ describe('gnl pricing', () => {
     expect(out.effective['gpt-4o'].inputPer1M, 'emptying a layered document unpriced the shipped table').toBe(2.5);
   });
 });
+
+// An empty value is not a price.
+//
+// `Number('')`, `Number(' ')` and `Number('\n')` are all 0, so `--input ""` was accepted and stored as
+// a free model. Zero is a legitimate price — a free tier is real, and rejecting it would report a
+// genuinely free model as unpriced — but it has to be WRITTEN. An operator whose shell expanded a
+// variable to nothing meant to set a price and got a model no ceiling can cap.
+describe('gnl pricing set — the value must be a number', () => {
+  it.each(['', ' ', '\n'])('refuses %j instead of storing it as free', async (bad) => {
+    const cfg = writeFixtureConfig();
+    await expect(run(cfg, 'set', 'a/b', '--input', bad as string, '--output', '1'))
+      .rejects.toThrow(/empty value/);
+  });
+
+  it('still accepts an explicit zero, because a free model is real', async () => {
+    const cfg = writeFixtureConfig();
+    await run(cfg, 'set', 'free/model', '--input', '0', '--output', '0');
+    expect(json(await run(cfg, 'list', '--json')).overrides['free/model'])
+      .toEqual({ inputPer1M: 0, outputPer1M: 0 });
+  });
+
+  it('still refuses a non-number and a negative', async () => {
+    const cfg = writeFixtureConfig();
+    await expect(run(cfg, 'set', 'a/b', '--input', 'abc', '--output', '1')).rejects.toThrow(/non-negative number/);
+    await expect(run(cfg, 'set', 'a/b', '--input', '-1', '--output', '1')).rejects.toThrow(/non-negative number/);
+  });
+});
+
+// A short override is a PREFIX rule, and the listing has to show it as one of yours.
+//
+// `priceFor` matches by longest prefix, so `set claude` prices every claude-* model at once. That is a
+// real feature — DEFAULT_PRICING itself is keyed that way — and the risk is only that a rule with this
+// much reach is invisible in the listing. Measured rather than assumed: the effective table is
+// `{...DEFAULT_PRICING, ...doc.models}`, so an override key is in it whatever its shape.
+describe('gnl pricing list — a prefix override', () => {
+  it('appears in the listing and is marked as the operator\'s own', async () => {
+    const cfg = writeFixtureConfig();
+    await run(cfg, 'set', 'claude', '--input', '99', '--output', '99');
+
+    const out = json(await run(cfg, 'list', '--json'));
+    expect(out.overrides.claude, 'the override was not recorded').toEqual({ inputPer1M: 99, outputPer1M: 99 });
+    expect(out.effective.claude, 'a prefix override is missing from the effective table').toEqual({ inputPer1M: 99, outputPer1M: 99 });
+
+    const human = (await run(cfg, 'list')).join('\n');
+    expect(human, 'a rule that reprices a whole family was not marked as yours').toMatch(/claude.*← yours/);
+  });
+
+  it('answers for a family member the shipped table has never heard of', async () => {
+    // The consequence, not just the display. Note WHICH member: `claude-opus-4` is an exact key in
+    // DEFAULT_PRICING and exact beats prefix, so a prefix rule does not touch it — the first version of
+    // this test asserted otherwise and was wrong about the code, not the other way round. A model with
+    // no exact entry is where the rule actually applies, and is the reason someone writes one.
+    const cfg = writeFixtureConfig();
+    await run(cfg, 'set', 'claude', '--input', '99', '--output', '99');
+
+    const t = json(await run(cfg, 'test', 'claude-experimental-9', '--in', '1000000', '--out', '0', '--json'));
+    expect(t.matched, 'the prefix rule did not answer for an unknown family member').toBe('claude');
+    expect(t.costUsd).toBe(99);
+
+    // ...and it leaves an exactly-keyed sibling alone.
+    const exact = json(await run(cfg, 'test', 'claude-opus-4', '--in', '1000000', '--out', '0', '--json'));
+    expect(exact.matched, 'the prefix rule swallowed a model that has its own entry').toBe('claude-opus-4');
+  });
+});

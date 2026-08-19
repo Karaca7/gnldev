@@ -100,6 +100,12 @@ function money(argv: string[], name: string, required: boolean): number | undefi
     if (!required) return undefined;
     throw new Error(`--${name} is required (USD per 1M tokens, e.g. --${name} 2.5)`);
   }
+  // `Number('')`, `Number(' ')` and `Number('\n')` are all 0, so an EMPTY value was accepted and
+  // stored as a free model. Zero is a legitimate price — a free tier is real, and rejecting it would
+  // report a genuinely free model as unpriced — but it has to be written, not fallen into. An operator
+  // whose shell expanded a variable to nothing meant to set a price, and got a model that no ceiling
+  // can ever cap.
+  if (raw.trim() === '') throw new Error(`--${name} was given an empty value; write a number (0 is allowed, but write it)`);
   const n = Number(raw);
   // A NaN here would be stored and then quietly produce NaN costs, which compare false against every
   // ceiling — the silent-no-cap failure this whole command exists to prevent.
