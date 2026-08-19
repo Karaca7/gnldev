@@ -7,6 +7,44 @@ import type { ExportRunToOtlpOptions } from './otlp.js';
 
 type Overrides = Partial<Pick<ExportRunToOtlpOptions, 'endpoint' | 'serviceName' | 'resourceAttributes'>>;
 
+/**
+ * Appends an OTLP path to a base URL through the URL parser, instead of gluing two strings together.
+ *
+ * A base carrying a fragment or a query does not concatenate — it SWALLOWS the path. Measured with
+ * langfuse's preset:
+ *
+ *   base 'https://lf.acme.internal#'    -> 'https://lf.acme.internal#/api/public/otel/v1/traces'
+ *   base 'https://lf.acme.internal?a=1' -> 'https://lf.acme.internal?a=1/api/public/otel/v1/traces'
+ *
+ * Both of those request path `/`. What travels on this wire is a run's entire trace — prompts, tool
+ * arguments, model output — under the exporter's credentials, so posting it to a host's site root
+ * instead of its OTLP receiver is not a 404 to shrug at. A trailing slash was the milder version of the
+ * same thing: `//api/...`, which plenty of servers do not route.
+ *
+ * Rejected rather than silently stripped: a base with a query or fragment is not a base URL that was
+ * meant to have a path appended, and guessing which half the author intended is how the wrong endpoint
+ * gets configured quietly.
+ */
+function otlpEndpoint(base: string, path: string): string {
+  let u: URL;
+  try {
+    u = new URL(base);
+  } catch {
+    throw new Error(`@gnldev/otel: '${base}' is not a valid base URL (expected something like 'https://host' or 'http://host:4318').`);
+  }
+  if (u.search || u.hash) {
+    throw new Error(
+      `@gnldev/otel: the base URL '${base}' carries a ${u.hash ? 'fragment' : 'query string'}, so appending ` +
+      `'${path}' would produce a URL that requests '/' instead. Give the base only ` +
+      '(scheme, host, optional port and path), or pass the full `endpoint` yourself.',
+    );
+  }
+  u.pathname = `${u.pathname.replace(/\/$/, '')}${path}`;
+  return u.toString();
+}
+
+
+
 const b64 = (s: string): string => Buffer.from(s, 'utf8').toString('base64');
 
 /** Langfuse (cloud eu/us or self-hosted `baseUrl`): Basic auth = publicKey:secretKey. */
@@ -20,7 +58,7 @@ export function langfuse(opts: {
 } & Overrides): ExportRunToOtlpOptions {
   const base = opts.baseUrl ?? (opts.region === 'us' ? 'https://us.cloud.langfuse.com' : 'https://cloud.langfuse.com');
   return {
-    endpoint: opts.endpoint ?? `${base}/api/public/otel/v1/traces`,
+    endpoint: opts.endpoint ?? otlpEndpoint(base, '/api/public/otel/v1/traces'),
     headers: { authorization: `Basic ${b64(`${opts.publicKey}:${opts.secretKey}`)}` },
     serviceName: opts.serviceName,
     resourceAttributes: opts.resourceAttributes,
@@ -64,7 +102,7 @@ export function datadogAgent(opts: { host?: string; port?: number } & Overrides 
   const host = opts.host ?? 'localhost';
   const port = opts.port ?? 4318;
   return {
-    endpoint: opts.endpoint ?? `http://${host}:${port}/v1/traces`,
+    endpoint: opts.endpoint ?? otlpEndpoint(`http://${host}:${port}`, '/v1/traces'),
     serviceName: opts.serviceName,
     resourceAttributes: opts.resourceAttributes,
   };
@@ -73,7 +111,7 @@ export function datadogAgent(opts: { host?: string; port?: number } & Overrides 
 /** Generic OTel Collector / Jaeger / Tempo: just give the base URL (`/v1/traces` is appended). */
 export function collector(opts: { baseUrl: string; headers?: Record<string, string> } & Overrides): ExportRunToOtlpOptions {
   return {
-    endpoint: opts.endpoint ?? `${opts.baseUrl.replace(/\/$/, '')}/v1/traces`,
+    endpoint: opts.endpoint ?? otlpEndpoint(opts.baseUrl, '/v1/traces'),
     headers: opts.headers,
     serviceName: opts.serviceName,
     resourceAttributes: opts.resourceAttributes,
