@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { Check, X, Wrench, Plus, Trash2, Pencil, Ban, Copy, Database, Activity, RotateCw, ArrowDown, Settings, Paperclip, FileText, PanelLeft, ChevronDown, MessageSquare } from 'lucide-react';
-import { useAgents, useCapabilities, useMe, useThreads, useWorkingMemory, streamAgent, api, errMessage, ApiError, type Interrupt, type ThreadRecord, type AgentRunBody, type RunCost } from '../api';
+import { useAgents, useCapabilities, useModelProviders, useMe, useThreads, useWorkingMemory, streamAgent, api, errMessage, ApiError, type Interrupt, type ThreadRecord, type AgentRunBody, type RunCost } from '../api';
 import { Btn, Spinner, Empty, EmptyState, ErrorBox, Badge, JsonBlock, cn } from '../components';
 import { Markdown } from '../markdown';
 import { Stagger, StaggerItem, Reveal } from '../motion';
@@ -118,7 +118,21 @@ function resourceForUser(meId: string | null | undefined): string {
   return meId ? `studio:${meId}` : RESOURCE_ID;
 }
 
-// Model suggestions: known ids from the 4 providers the model-router supports.
+// Model suggestions: a DEFAULT set, extended by the server (see useModelProviders).
+//
+// These twelve stay here as the offline baseline — the box must be useful before any request lands.
+// Everything else comes from the deployment: ids the host configured, ids it has priced in the
+// journal, and every prefix the router understands. Providers ship models weekly, so a list that
+// lives only in this bundle is one that needs a gnl release to mention a model that came out this
+// morning; that is exactly the trap DEFAULT_PRICING was in.
+//
+// The list used to be these twelve strings and nothing else, so a deployment wired to an
+// OpenAI-compatible endpoint registered `nvidia/` with the router and then found no trace of it in the
+// box where a model is typed — the same "the agent's model reads as custom and no string reproduces
+// it" symptom that registerModelProvider was added to fix, one layer up. A registered prefix now shows
+// as `nvidia/`, which is a start rather than a full id: the router knows the prefix, only the host
+// knows which ids are valid behind it.
+//
 // Suggestion only (datalist) — free text is always valid, the list may be incomplete.
 const MODEL_SUGGESTIONS = [
   'anthropic/claude-fable-5', 'anthropic/claude-opus-4-8', 'anthropic/claude-sonnet-5', 'anthropic/claude-haiku-4-5-20251001',
@@ -251,6 +265,19 @@ export function Playground() {
   const { t } = useTranslation('playground');
   const STARTERS = t('starters', { returnObjects: true }) as string[];
   const caps = useCapabilities();
+  const providers = useModelProviders();
+  // Built-in ids first (a complete, typable suggestion), then every prefix the router knows that none
+  // of them covers — so a host provider appears without pretending to know its model ids.
+  const modelOptions = useMemo(() => {
+    const known = providers.data?.providers ?? [];
+    const fromServer = providers.data?.models ?? [];
+    // A prefix with no id behind it is still worth offering: the router knows `nvidia/` is routable,
+    // only the host knows which ids are valid there. Skipped when something already starts with it,
+    // so a real id is never displaced by a bare prefix.
+    const all = [...MODEL_SUGGESTIONS, ...fromServer];
+    const prefixes = known.filter((p: string) => !all.some((m) => m.startsWith(`${p}/`))).map((p: string) => `${p}/`);
+    return [...new Set([...all, ...prefixes])];
+  }, [providers.data]);
   const agents = useAgents();
   const me = useMe();
   // Per-user thread scoping: authenticated → `studio:<id>`; local no-auth → the shared 'studio-user'.
@@ -744,7 +771,7 @@ export function Playground() {
           {!caps.data?.memory && <Btn variant="ghost" size="xs" onClick={newConversation}>{t('clearButton')}</Btn>}
         </div>
 
-        <datalist id="pg-models">{MODEL_SUGGESTIONS.map((m) => <option key={m} value={m} />)}</datalist>
+        <datalist id="pg-models">{modelOptions.map((m: string) => <option key={m} value={m} />)}</datalist>
         {showWm && thread && <WorkingMemoryPanel id={thread} />}
 
         <div className="relative flex-1 overflow-hidden">

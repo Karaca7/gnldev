@@ -33,17 +33,54 @@ const CUSTOM: Map<string, ModelProviderFactory> = new Map();
  * Returns an unregister function, so a test can add one without leaking it into the next test —
  * A global that can only grow is a global that eventually explains a failure somewhere else.
  */
+/**
+ * What a prefix may look like: lowercase, no spaces, no slash.
+ *
+ * The old check rejected only `''` and anything containing `/`, so `' openai'`, `'openai '`,
+ * `'OPENAI'` and `'ope nai'` were all accepted — measured. Each defeats the built-in guard below while
+ * LOOKING like the built-in it shadows, and a model spec is a string a human types from memory:
+ * `'OPENAI/gpt-4o'` would resolve through a host's factory while `'openai/gpt-4o'` resolved through
+ * the real package, in the same process, with nothing on screen to tell them apart.
+ *
+ * Rejected rather than normalised on purpose. Silently lowercasing or trimming means the prefix stored
+ * is not the prefix written, and the next person greps for the wrong string.
+ */
+const PREFIX_RE = /^[a-z0-9][a-z0-9._-]*$/;
+
+/** Warn once per prefix that a later registration took over an earlier one. */
+const overwriteWarned = new Set<string>();
+
 export function registerModelProvider(prefix: string, factory: ModelProviderFactory): () => void {
-  if (!prefix || prefix.includes('/')) {
-    throw new Error(`registerModelProvider: '${prefix}' is not a usable prefix (no slashes, not empty)`);
+  if (!PREFIX_RE.test(prefix ?? '')) {
+    throw new Error(
+      `registerModelProvider: '${prefix}' is not a usable prefix — lowercase letters, digits, '.', '_' ` +
+      "and '-' only, starting with a letter or digit (no spaces, no slash, no empty string).",
+    );
   }
-  if (PROVIDER_PKG[prefix]) {
+  // `Object.hasOwn`, not truthiness: `PROVIDER_PKG[prefix]` walks the PROTOTYPE, so 'constructor',
+  // 'toString', 'valueOf', '__proto__' and 'hasOwnProperty' all read as built-in providers. Measured:
+  // registering any of them was refused as "a built-in provider", and `resolveModel('constructor/x')`
+  // reported `function Object() { [native code] } is not installed`. Same shape as the pricing-table
+  // bug in pricing.ts — an ordinary object literal used as a lookup answers for keys nobody put in it.
+  if (Object.hasOwn(PROVIDER_PKG, prefix)) {
     // Refused rather than shadowed: silently taking over 'openai' would make every other model
     // String in the process mean something the person reading it cannot see.
     throw new Error(`registerModelProvider: '${prefix}' is a built-in provider and cannot be replaced`);
   }
+  if (CUSTOM.has(prefix) && !overwriteWarned.has(prefix)) {
+    overwriteWarned.add(prefix);
+    console.warn(
+      `@gnldev/durable: registerModelProvider('${prefix}') replaced an existing registration. The same ` +
+      'model string now resolves through a different factory, which is invisible at every call site. ' +
+      'Unregister the old one first if this was not intended.',
+    );
+  }
   CUSTOM.set(prefix, factory);
-  return () => { CUSTOM.delete(prefix); };
+  // Identity-checked: an unregister function only removes the registration it installed. Plain
+  // `CUSTOM.delete(prefix)` let a STALE unregister — from a registration that was already replaced —
+  // delete somebody else's live provider. Measured: two registrations, and the second's teardown
+  // removed the prefix entirely, so the first's teardown would then have hit whatever came next.
+  return () => { if (CUSTOM.get(prefix) === factory) CUSTOM.delete(prefix); };
 }
 
 /** Every prefix `resolveModel` currently understands — built-ins first, then the host's. */
@@ -59,7 +96,9 @@ export async function resolveModel(spec: string): Promise<any> {
   const custom = CUSTOM.get(provider);
   if (custom) return custom(modelId);
 
-  const pkg = PROVIDER_PKG[provider];
+  // Own keys only — see registerModelProvider: an inherited 'constructor'/'toString' otherwise
+  // resolved to an Object.prototype member and reported it as a missing package.
+  const pkg = Object.hasOwn(PROVIDER_PKG, provider) ? PROVIDER_PKG[provider] : undefined;
   if (!pkg) {
     throw new Error(
       `Unknown provider '${provider}'. Known: ${knownModelProviders().join(', ')}. `

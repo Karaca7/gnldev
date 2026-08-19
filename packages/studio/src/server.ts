@@ -4,7 +4,7 @@ import { toFetchHandler, type FetchHandler } from './handler.js';
 import { Hono, type Context } from 'hono';
 import { sseResponse } from './sse.js';
 
-import { asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, purgeRun, purgeOrganization, sweepRuns, POLICY_KEY, PRICING_KEY, effectivePricingTable, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent } from '@gnldev/durable';
+import { asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, purgeRun, purgeOrganization, sweepRuns, POLICY_KEY, PRICING_KEY, effectivePricingTable, readPricing, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, knownModelProviders, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent } from '@gnldev/durable';
 import type { PolicyDoc, PolicyRule, BudgetLimit, PricingDoc } from '@gnldev/durable';
 import type { JournalReader, Journal, WorkflowLike, MetricsRunRow } from '@gnldev/durable';
 import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, principalScope, assertAssignablePrivileges, type AuthProvider, type Principal } from '@gnldev/auth';
@@ -434,6 +434,14 @@ export interface StudioApiOptions {
    * (2) each tool call awaiting approval (via a first-write-wins `__alert__` marker; webhook errors are
    * Swallowed — never breaks the main flow). Payload.type: 'budget-exceeded' | 'approval-pending'.
    */
+  /**
+   * Extra model ids for the Playground's model box, on top of what the journal already knows.
+   *
+   * A host wired to an OpenAI-compatible endpoint knows which ids are valid behind its prefix; the
+   * router only knows the prefix. Config rather than a compiled-in list so adding one is the host's
+   * deploy, not our release.
+   */
+  modelSuggestions?: string[];
   alerts?: {
     webhook?: string;
     /**
@@ -1419,6 +1427,37 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!rbacEnabled) return c.json({ enabled: false, permissions: [], rolePresets: {} });
     return c.json({ enabled: true, permissions: PERMISSION_CATALOG, rolePresets: ROLE_PERMISSION_PRESETS });
+  });
+
+  /**
+   * Provider prefixes `resolveModel` understands — the four built-ins plus whatever the host taught it
+   * with `registerModelProvider`.
+   *
+   * The Playground's model box suggests ids for the built-ins from a hardcoded list, so a deployment
+   * wired to an OpenAI-compatible endpoint (NVIDIA, Together, a gateway, a local server) registered its
+   * prefix and then saw no sign of it anywhere in the UI — the very symptom
+   * `registerModelProvider` was added to fix, still present one layer up. The registry knew; nothing
+   * asked it. `knownModelProviders()` had no non-test caller at all.
+   *
+   * Behind the read gate rather than on `/capabilities`: that endpoint is deliberately public so the
+   * login screen can render, and which providers a deployment routes to is configuration, not
+   * something to hand out before anyone has identified themselves.
+   */
+  app.get('/model-providers', async (c) => {
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    // Model ids come from the journal and from host config, never from a list compiled into the UI.
+    // Providers add and rename models constantly, and a suggestion list baked into the bundle is one
+    // that needs a gnl RELEASE to mention a model that shipped this morning — the same trap
+    // DEFAULT_PRICING was in, and the same way out.
+    //
+    // The `__pricing__` overrides are included because they are already the list of models this
+    // deployment cares about: anyone running a model they were not born knowing has to price it for
+    // maxCostUsd to mean anything, so the ids are there for free and stay current without a second
+    // place to edit.
+    const doc = await readPricing(rw as never).catch(() => undefined);
+    const priced = doc?.models ? Object.keys(doc.models) : [];
+    const models = [...new Set([...(opts.modelSuggestions ?? []), ...priced])];
+    return c.json({ providers: knownModelProviders(), models });
   });
 
   // ── User management (paid; if opts.users is given) ────────────────────────

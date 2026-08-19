@@ -397,6 +397,8 @@ function workflowRunsRegistry(status?: 'suspended' | 'completed' | 'canceled', l
 
 export const api = {
   capabilities: () => get<Capabilities>('/capabilities'),
+  /** Provider prefixes the model router understands — built-ins plus whatever the host registered. */
+  modelProviders: () => get<{ providers: string[]; models: string[] }>('/model-providers'),
   runs: () => get<RunSummary[]>('/runs'),
   /** Memory provenance for a turn ('null' = not recorded: old run, memory off, read-only journal). */
   memoryContext: (id: string) => get<{ context: MemoryContextRecord | null }>(`/runs/${encodeURIComponent(id)}/memory-context`),
@@ -693,6 +695,14 @@ export async function runWorkflowStream(
 
 // ── react-query hooks ─────────────────────────────────────────────────────
 export const useCapabilities = () => useQuery({ queryKey: ['capabilities'], queryFn: api.capabilities });
+/**
+ * The router's provider prefixes. Rarely changes within a session (a host registers at boot), so it is
+ * fetched once and kept — a datalist that re-requests on every keystroke would be worse than the
+ * hardcoded list it replaces.
+ */
+export const useModelProviders = () => useQuery({
+  queryKey: ['model-providers'], queryFn: api.modelProviders, staleTime: Infinity,
+});
 export const useRuns = () => useQuery({ queryKey: ['runs'], queryFn: api.runs });
 /**
  * Paginated run list (newest first). ['runs',…] key → useLiveRuns invalidation still matches (prefix

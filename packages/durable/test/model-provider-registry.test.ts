@@ -52,3 +52,88 @@ describe('the error when nothing matches', () => {
     await expect(resolveModel('bare-model')).rejects.toThrow(/expected 'provider\/model'/);
   });
 });
+
+// The registry as a lookup, rather than as a happy path.
+//
+// PROVIDER_PKG is an ordinary object literal used as a table, and the guard read it with plain
+// truthiness — so every Object.prototype member answered as a built-in provider. Measured:
+//
+//   registerModelProvider('constructor') -> "'constructor' is a built-in provider and cannot be replaced"
+//   resolveModel('constructor/x')        -> "function Object() { [native code] } is not installed"
+//
+// The same shape as the pricing-table bug in pricing.ts: a lookup that answers for keys nobody put in
+// it. Neither is an attack — it is any id that happens to name an Object member.
+describe('prefixes that are not really built-ins', () => {
+  it('does not treat an inherited Object member as a registered provider', () => {
+    const unregister = registerModelProvider('constructor', () => ({ id: 'custom' }));
+    try {
+      expect(knownModelProviders()).toContain('constructor');
+    } finally {
+      unregister();
+    }
+  });
+
+  it('reports an unknown prefix as unknown, not as an uninstalled package', async () => {
+    await expect(resolveModel('constructor/x')).rejects.toThrow(/Unknown provider 'constructor'/);
+  });
+});
+
+// A prefix is a string a person types from memory into a model spec.
+//
+// The old check rejected only the empty string and anything containing '/', so ' openai', 'openai ',
+// 'OPENAI' and 'ope nai' were all accepted — each defeating the built-in guard while LOOKING like the
+// built-in it shadows. Two spellings of the same name would then resolve through different factories
+// in one process, with nothing on screen to tell them apart.
+describe('prefix validation', () => {
+  it.each([' openai', 'openai ', 'OPENAI', 'ope nai', '  ', '', 'a/b', '_x'])(
+    'refuses %j', (bad) => {
+      expect(() => registerModelProvider(bad as string, () => ({}))).toThrow(/not a usable prefix|built-in/);
+    },
+  );
+
+  it.each(['nvidia', 'together', 'my-gateway', 'local.llm', 'v2_provider', 'llama3'])(
+    'accepts %j', (good) => {
+      const unregister = registerModelProvider(good as string, () => ({}));
+      expect(knownModelProviders()).toContain(good);
+      unregister();
+      expect(knownModelProviders()).not.toContain(good);
+    },
+  );
+
+  it('still refuses to shadow a real built-in', () => {
+    expect(() => registerModelProvider('openai', () => ({}))).toThrow(/built-in/);
+  });
+});
+
+// Teardown must not reach past its own registration.
+//
+// `CUSTOM.delete(prefix)` let a STALE unregister — from a registration that had already been replaced
+// — remove somebody else's live provider. Measured before the fix: two registrations of one prefix,
+// and the SECOND's teardown removed the prefix outright, so the first's teardown would then have hit
+// whatever was registered next. In a test suite that is one file quietly breaking the one after it.
+describe('unregistering', () => {
+  it('an outdated unregister does not remove the registration that replaced it', async () => {
+    const first = registerModelProvider('acme', () => ({ which: 'first' }));
+    const second = registerModelProvider('acme', () => ({ which: 'second' }));
+    try {
+      first(); // stale — must be a no-op
+      expect(await resolveModel('acme/m'), 'the stale teardown removed the live provider')
+        .toEqual({ which: 'second' });
+    } finally {
+      second();
+    }
+    expect(knownModelProviders()).not.toContain('acme');
+  });
+
+  it('warns when a registration replaces another, because the call sites cannot see it', async () => {
+    const { vi } = await import('vitest');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const a = registerModelProvider('dup-warn', () => ({}));
+    const b = registerModelProvider('dup-warn', () => ({}));
+    try {
+      expect(warn.mock.calls.map((c) => String(c[0])).join('\n')).toContain('replaced an existing registration');
+    } finally {
+      warn.mockRestore(); a(); b();
+    }
+  });
+});
