@@ -34,6 +34,12 @@ const RESPONSE = {
   version: 3,
   editable: true,
   overrides: { 'acme/new-model': { inputPer1M: 10, outputPer1M: 30 } },
+  // The SHIPPED table, served alongside `effective` so the editor can show what a row falls back to
+  // when its override is removed. `effective` already contains the overrides, so it cannot answer that.
+  defaults: {
+    'gpt-4o': { inputPer1M: 2.5, outputPer1M: 10 },
+    'claude-opus-4-5': { inputPer1M: 5, outputPer1M: 25 },
+  },
   effective: {
     'acme/new-model': { inputPer1M: 10, outputPer1M: 30 },
     'gpt-4o': { inputPer1M: 2.5, outputPer1M: 10 },
@@ -291,5 +297,76 @@ describe('Pricing view', () => {
     const second = JSON.parse(bodies[1]);
     expect(second.ifVersion, 'the second save repeated the stale version and would 409 forever').toBe(9);
     expect(second.models['acme/new-model'].inputPer1M, 'the edit was lost on the way').toBe(77);
+  });
+});
+
+// The preview has to show what will be in force AFTER saving.
+//
+// It was `{...serverEffective, ...draftOverrides}`, and `serverEffective` already CONTAINS the saved
+// overrides — so removing one could not remove its price from the preview. An operator pressed the bin,
+// saw the old override price still on screen, and saved a table where that model had gone back to its
+// shipped default, or to nothing at all. The file's own comment two lines up promised the opposite.
+describe('Pricing view — the preview after an edit', () => {
+  it('drops an override\'s price when the row is removed', async () => {
+    serve();
+    wrap(<Pricing />);
+    await screen.findByText('acme/new-model');
+
+    fireEvent.click(screen.getByLabelText('remove override for acme/new-model'));
+
+    // 10 / 30 was the override. With it gone the model has no shipped price at all, so the preview must
+    // stop claiming one rather than keep showing the number that is about to disappear.
+    await waitFor(() => {
+      expect(screen.queryByText('acme/new-model'), 'the removed override is still priced in the preview').toBeNull();
+    });
+  });
+
+  it('still shows a model that has a shipped default after its override is removed', async () => {
+    // The other direction: removing an override on gpt-4o falls BACK to $2.50, it does not unprice it.
+    // A preview that dropped the row entirely would be wrong in the opposite way.
+    serve({
+      ...RESPONSE,
+      overrides: { 'gpt-4o': { inputPer1M: 99, outputPer1M: 99 } },
+      effective: { ...RESPONSE.effective, 'gpt-4o': { inputPer1M: 99, outputPer1M: 99 } },
+    });
+    wrap(<Pricing />);
+    await screen.findByText('gpt-4o');
+
+    fireEvent.click(screen.getByLabelText('remove override for gpt-4o'));
+    await waitFor(() => expect(screen.getByText('gpt-4o')).toBeTruthy());
+  });
+});
+
+// Adding a model must not unprice one.
+//
+// `Add` was disabled only when the id was already an OVERRIDE, and seeded every new row with 0/0. So
+// typing `gpt-4o` — a model the shipped table prices at $2.50 — laid an inputPer1M:0 row over it, and
+// Save wrote that. The screen for adding tomorrow's model silently unpriced one of today's, which is
+// what the server-side comment says this editor must never do.
+describe('Pricing view — adding a model that already has a price', () => {
+  it('seeds the row from the price it is replacing, not from zero', async () => {
+    serve();
+    wrap(<Pricing />);
+    await screen.findByText('gpt-4o');
+
+    fireEvent.change(screen.getByLabelText('new model id'), { target: { value: 'gpt-4o' } });
+    fireEvent.click(screen.getByText('Add'));
+
+    await waitFor(() => {
+      const inputs = screen.getAllByDisplayValue('2.5');
+      expect(inputs.length, 'the new row started at 0 and would have unpriced gpt-4o on save').toBeGreaterThan(0);
+    });
+  });
+
+  it('still starts a genuinely unknown model at zero', async () => {
+    // The fallback is unchanged for the case Add exists for: an id nothing prices yet.
+    serve();
+    wrap(<Pricing />);
+    await screen.findByText('gpt-4o');
+
+    fireEvent.change(screen.getByLabelText('new model id'), { target: { value: 'nobody/prices-this' } });
+    fireEvent.click(screen.getByText('Add'));
+
+    await waitFor(() => expect(screen.getByText('nobody/prices-this')).toBeTruthy());
   });
 });

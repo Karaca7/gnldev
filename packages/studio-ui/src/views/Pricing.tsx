@@ -68,6 +68,17 @@ function CostPreview({ table }: { table: Record<string, ModelPrice> }) {
         <input className="rounded-md border border-border bg-background px-2 py-1.5 text-sm"
           value={outTok} onChange={(e) => setOutTok(e.target.value)} aria-label="output tokens" />
       </div>
+      {/*
+        The page's ONE answer, announced. The preview updates as the model id is typed and entered the
+        DOM silently: a screen-reader user got no signal that the question had been answered at all.
+        Same shape the Playground already uses for its pending-approval count (aria-live polite +
+        sr-only), so this is the house pattern rather than a new one.
+      */}
+      <div aria-live="polite" aria-atomic="true" className="sr-only">
+        {result && (result.matched === undefined
+          ? `No price for ${modelId.trim()}. A step on it counts as zero, so maxCostUsd cannot cap it.`
+          : `${modelId.trim()} matches ${result.matched}, ${money(result.cost)} dollars.`)}
+      </div>
       {result && (
         result.matched === undefined ? (
           <div className="rounded-md bg-destructive/10 p-3 text-sm">
@@ -144,9 +155,13 @@ export function Pricing() {
   const dirty = draft !== null;
   // The preview must reflect what would be in force AFTER saving, not what is in force now — otherwise
   // an operator checks a price, sees the old number, and saves anyway.
+  // Built from the shipped DEFAULTS plus the draft, never from the server's `effective` — that already
+  // contains the saved overrides, so removing one could not remove its price from the preview. An
+  // operator pressed the bin, saw the old override price still there, and saved a table in which that
+  // model had gone back to its default (or to nothing). `defaults` is served alongside for exactly this.
   const effective = useMemo(
-    () => ({ ...(q.data?.effective ?? {}), ...overrides }),
-    [q.data?.effective, overrides],
+    () => ({ ...(q.data?.defaults ?? q.data?.effective ?? {}), ...overrides }),
+    [q.data?.defaults, q.data?.effective, overrides],
   );
 
   if (q.isLoading) return <Spinner />;
@@ -223,13 +238,17 @@ export function Pricing() {
 
       <div className="overflow-x-auto rounded-md border border-border">
         <table className="w-full text-sm">
+          {/* Prices are per 1M tokens everywhere in this product; the caption says so once instead of
+              leaving each column header to imply it. */}
+          <caption className="sr-only">Model prices in USD per 1M tokens. Rows you have overridden are marked.</caption>
           <thead>
             <tr className="border-b border-border text-xs text-muted-foreground">
-              <th className="px-3 py-2 text-left font-medium">Model</th>
-              <th className="px-3 py-2 text-right font-medium">Input</th>
-              <th className="px-3 py-2 text-right font-medium">Output</th>
-              <th className="px-3 py-2 text-right font-medium">Cache read</th>
-              <th className="px-3 py-2" />
+              <th scope="col" className="px-3 py-2 text-left font-medium">Model</th>
+              <th scope="col" className="px-3 py-2 text-right font-medium">Input</th>
+              <th scope="col" className="px-3 py-2 text-right font-medium">Output</th>
+              <th scope="col" className="px-3 py-2 text-right font-medium">Cache read</th>
+              {/* Named, not empty: a column of buttons with no header is read as a nameless cell. */}
+              <th scope="col" className="px-3 py-2"><span className="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody>
@@ -288,7 +307,17 @@ export function Pricing() {
             variant="outline"
             disabled={!newId.trim() || newId.trim() in overrides}
             onClick={() => {
-              setRows({ ...rawOverrides, [newId.trim()]: { inputPer1M: '0', outputPer1M: '0' } });
+              const id = newId.trim();
+              // Seeded from whatever prices this id TODAY, not from 0/0. Typing `gpt-4o` and pressing
+              // Add used to lay an inputPer1M:0 row over the shipped $2.50, and Save wrote it — the
+              // screen for adding tomorrow's model silently unpriced one of today's, which is the exact
+              // thing the server's own comment says this editor must not do. Overriding a
+              // default-priced model stays possible; it just starts from the number it is replacing.
+              const seed = q.data?.defaults?.[id] ?? q.data?.effective?.[id];
+              setRows({
+                ...rawOverrides,
+                [id]: seed ? toRaw(seed) : { inputPer1M: '0', outputPer1M: '0' },
+              });
               setNewId('');
             }}
           >

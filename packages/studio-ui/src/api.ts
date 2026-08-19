@@ -307,6 +307,10 @@ export interface PricingResponse {
   overrides: Record<string, ModelPrice>;
   /** What the runtime actually prices with: the journal document layered over the shipped table. */
   effective: Record<string, ModelPrice>;
+
+  /** The shipped table, so the editor can show what a row falls back to when its override is removed. */
+
+  defaults?: Record<string, ModelPrice>;
   /** When true the document is the WHOLE table and the shipped defaults do not apply. */
   replace?: boolean;
   updatedAt?: number | null;
