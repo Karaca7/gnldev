@@ -175,6 +175,7 @@ export const pricingCommand: Command = {
       if (!target) throw new Error('usage: gnl pricing rm <model>');
       const { doc, raw } = await readDoc(config, d);
       if (!(target in doc.models)) {
+        if (json) { console.log(JSON.stringify({ removed: null, reason: 'no override for this model' }, null, 2)); return; }
         console.log(dim(`no override for '${target}' — nothing to remove (the shipped table is unaffected either way)`));
         return;
       }
@@ -193,6 +194,10 @@ export const pricingCommand: Command = {
         );
       }
       await writeDoc(config, d, doc, raw);
+      // `rm` ignored --json entirely and printed prose, so `gnl pricing rm x --json | jq` failed on a
+      // command that had actually succeeded. Every other subcommand honours the flag; a contract that
+      // holds for three of four is one a script cannot rely on.
+      if (json) { console.log(JSON.stringify({ removed: target, version: doc.version + 1 }, null, 2)); return; }
       console.log(`removed override for ${bold(target)}`);
       return;
     }
@@ -225,7 +230,10 @@ export const pricingCommand: Command = {
       }
       const costUsd = d.costOf({ inputTokens: inTok, outputTokens: outTok, cachedTokens: cachedTok }, price);
       const source = matched && matched in doc.models ? 'journal override' : 'shipped default';
-      if (json) { console.log(JSON.stringify({ model: target, matched, source, tokens: { in: inTok, out: outTok, cached: cachedTok }, price, costUsd }, null, 2)); return; }
+      // `priced` on BOTH branches. It appeared only on the unpriced one, so a script writing the
+      // obvious `if (!out.priced) alarm()` fired on every model that IS priced — the field was
+      // absent, not false. A flag that exists in one shape of a response is worse than no flag.
+      if (json) { console.log(JSON.stringify({ model: target, priced: true, matched, source, tokens: { in: inTok, out: outTok, cached: cachedTok }, price, costUsd }, null, 2)); return; }
       console.log(`${bold(target)}`);
       console.log(`  matched entry : ${matched}${matched !== target ? dim('  (prefix match)') : ''}`);
       console.log(`  price source  : ${source}`);

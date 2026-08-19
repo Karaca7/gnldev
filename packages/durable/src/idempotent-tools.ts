@@ -113,7 +113,35 @@ export async function releaseFailedClaim(
   const hash = argsHash(opts.key ? opts.key(opts.toolName, opts.args) : opts.args);
   const claimKey = runKeys.toolCrossRun(opts.toolName, hash);
   const rec = await journal.get<{ status?: string }>(claimKey);
-  if (rec === undefined) return false; // nothing claimed — releasing is a no-op, not an error
+  if (rec === undefined) {
+    // `false` on its own is overloaded: "nothing was ever claimed" and "you looked in the wrong place"
+    // produce the identical silent answer, and three ordinary mistakes land here — releasing against
+    // the ROOT journal when the tools ran org-scoped, releasing a `window: 'run'` claim (whose key
+    // carries the runId and is not this one), and omitting the `key` function the tools were built
+    // with (which changes the hash). In all three the operator concludes there was no claim and stops
+    // looking, while the run stays blocked.
+    //
+    // The key that was looked for is printed, because seeing `xrun:args-charge-<hash>` is what tells
+    // them which of the three it was. Sibling claims for the same tool are listed when the journal can
+    // list keys: "this tool has claims, none with these arguments" is a different problem from "this
+    // tool has none", and only one of them is about the arguments.
+    let siblings: string[] = [];
+    if (typeof journal.listKeys === 'function') {
+      siblings = (await journal.listKeys(`xrun:args-${opts.toolName}-`).catch(() => [] as string[]))
+        .filter((k) => k !== claimKey).slice(0, 5);
+    }
+    console.warn(
+      `@gnldev/durable: releaseFailedClaim found no claim at '${claimKey}' — nothing was released. ` +
+      (siblings.length
+        ? `This tool DOES have ${siblings.length === 5 ? '5+' : siblings.length} other claim(s) ` +
+          `(${siblings.join(', ')}), so the arguments or the \`key\` function may not match the ones ` +
+          'the claim was made with.'
+        : 'This tool has no cross-run claims at all in this journal — check that you are using the same ' +
+          'journal the tools ran on (an organization-scoped view has its own keys) and that the tool ' +
+          "uses idempotencyWindow: 'cross-run' rather than the default per-run window."),
+    );
+    return false; // nothing claimed — releasing is a no-op, not an error
+  }
   if (rec?.status !== 'failed') {
     throw new Error(
       `@gnldev/durable: refusing to release '${opts.toolName}' (${claimKey}) — its claim is '${rec?.status}', not 'failed'. ` +

@@ -307,3 +307,40 @@ describe('gnl pricing list — a prefix override', () => {
     expect(exact.matched, 'the prefix rule swallowed a model that has its own entry').toBe('claude-opus-4');
   });
 });
+
+// The --json contract has to hold for every subcommand and every branch.
+//
+// `test --json` carried `priced: false` on the unpriced branch and NO `priced` field at all on the
+// priced one, so the obvious script — `if (!out.priced) alarm()` — fired on every model that is
+// correctly priced. A flag present in one shape of a response is worse than no flag: it invites the
+// check that misreads it. And `rm` ignored --json entirely and printed prose, so
+// `gnl pricing rm x --json | jq` failed on a command that had succeeded.
+describe('gnl pricing --json', () => {
+  it('reports `priced` on the PRICED branch too, not only the unpriced one', async () => {
+    const cfg = writeFixtureConfig();
+    const priced = json(await run(cfg, 'test', 'gpt-4o', '--in', '1000', '--out', '0', '--json'));
+    const unpriced = json(await run(cfg, 'test', 'nobody/prices-this', '--in', '1000', '--out', '0', '--json'));
+
+    expect(priced.priced, 'a priced model answered with no `priced` field').toBe(true);
+    expect(unpriced.priced).toBe(false);
+    // The check a script actually writes now works in both directions.
+    expect([priced, unpriced].filter((o) => !o.priced)).toHaveLength(1);
+  });
+
+  it('rm honours --json when it removes something', async () => {
+    const cfg = writeFixtureConfig();
+    await run(cfg, 'set', 'a/b', '--input', '1', '--output', '2');
+    const out = json(await run(cfg, 'rm', 'a/b', '--json'));
+    expect(out.removed).toBe('a/b');
+    expect(typeof out.version, 'the new version is what a script needs to keep an optimistic lock').toBe('number');
+  });
+
+  it('rm honours --json when there is nothing to remove', async () => {
+    // The no-op branch printed prose too. A script piping this into jq broke on the ordinary case of
+    // removing something twice.
+    const cfg = writeFixtureConfig();
+    const out = json(await run(cfg, 'rm', 'never/existed', '--json'));
+    expect(out.removed).toBeNull();
+    expect(out.reason).toMatch(/no override/);
+  });
+});

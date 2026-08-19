@@ -2,9 +2,9 @@
 // LLM-aware idempotency to a PLAIN AI SDK loop (no runDurable). Mirrors the harness of
 // args-idempotency.test.ts / cross-run-idempotency.test.ts: durableTool-wrapped tools driven directly
 // against an InMemoryJournal, so no full generateText loop is needed to prove the dedup contract.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { InMemoryJournal } from '../src/journal.js';
-import { withIdempotency } from '../src/idempotent-tools.js';
+import { withIdempotency, releaseFailedClaim } from '../src/idempotent-tools.js';
 import { z } from 'zod';
 
 describe('withIdempotency — default window ("cross-run")', () => {
@@ -163,5 +163,53 @@ describe('the remedy named when a failed side effect is refused', () => {
 
     expect(msg).toMatch(/cross-run claim/);
     expect(msg).toMatch(/releaseFailedClaim/);
+  });
+});
+
+// `false` on its own cannot be acted on.
+//
+// releaseFailedClaim returns false both when nothing was ever claimed and when the caller looked in
+// the wrong place — and three ordinary mistakes land in the second case: releasing against the ROOT
+// journal when the tools ran org-scoped, releasing a `window: 'run'` claim (whose key carries the
+// runId), and omitting the `key` function the tools were built with. In all three the operator reads
+// "no claim" and stops looking while the run stays blocked.
+describe('releaseFailedClaim when it finds nothing', () => {
+  it('says which key it looked for, so the caller can see they are in the wrong place', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const journal = new InMemoryJournal();
+      expect(await releaseFailedClaim(journal, { toolName: 'charge', args: { o: 'X' } })).toBe(false);
+      const said = warn.mock.calls.map((c) => String(c[0])).join('\n');
+      expect(said, 'the answer was a bare false').toContain('xrun:args-charge-');
+      expect(said).toMatch(/no cross-run claims at all/);
+    } finally { warn.mockRestore(); }
+  });
+
+  it('distinguishes "this tool has none" from "none with THESE arguments"', async () => {
+    // Two different problems, and only one of them is about the arguments.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const journal = new InMemoryJournal();
+      await journal.put('xrun:args-charge-deadbeefdeadbeef', { status: 'failed' });
+
+      expect(await releaseFailedClaim(journal, { toolName: 'charge', args: { o: 'other' } })).toBe(false);
+      const said = warn.mock.calls.map((c) => String(c[0])).join('\n');
+      expect(said, 'a sibling claim went unmentioned').toMatch(/DOES have 1 other claim/);
+      expect(said).toContain('xrun:args-charge-deadbeefdeadbeef');
+    } finally { warn.mockRestore(); }
+  });
+
+  it('says nothing extra when it actually releases one', async () => {
+    // The diagnostic is for the failure path only; a working release must stay quiet.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const journal = new InMemoryJournal();
+      const { argsHash } = await import('../src/hash.js');
+      const key = `xrun:args-charge-${argsHash({ o: 'X' })}`;
+      await journal.put(key, { status: 'failed', toolName: 'charge' });
+
+      expect(await releaseFailedClaim(journal, { toolName: 'charge', args: { o: 'X' } })).toBe(true);
+      expect(warn.mock.calls.map((c) => String(c[0])).join('\n')).not.toContain('found no claim');
+    } finally { warn.mockRestore(); }
   });
 });

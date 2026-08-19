@@ -63,7 +63,23 @@ export function normalizeAuth(auth?: AuthProvider | ReadWriteAuth): AuthProvider
   if (!auth) return undefined;
   if (isProvider(auth)) return auth;
   const rw = auth as ReadWriteAuth;
-  if (typeof rw.read === 'function' || typeof rw.write === 'function') return fromReadWrite(rw);
+  // Each side that is PRESENT must be a function. The check used to be `read is fn OR write is fn`,
+  // which short-circuits: `{ read: fn, write: { admin: { token } } }` — one direction a predicate, the
+  // other a credential map, which is what a half-finished config looks like — passed here and then
+  // threw at REQUEST time, on the first write, in production. That is the silent invisible failure
+  // this whole function exists to move to startup.
+  const sides = (['read', 'write'] as const).filter((k) => rw[k] !== undefined);
+  if (sides.length > 0) {
+    const bad = sides.filter((k) => typeof rw[k] !== 'function');
+    if (bad.length === 0) return fromReadWrite(rw);
+    throw new TypeError(
+      `@gnldev/auth: \`auth.${bad.join('\` and \`auth.')}\` must be a function ` +
+      `(got ${bad.map((k) => `${k}: ${typeof rw[k]}`).join(', ')}). ` +
+      `A {read, write} pair takes predicates; a credential map like { admin: { token } } has to be ` +
+      `wrapped: \`roleAuth({ admin: { token } })\`. Left as it is, this authorises nothing until the ` +
+      `first request and then throws there instead.`,
+    );
+  }
   const keys = Object.keys(auth as object).slice(0, 5).join(', ') || '(no keys)';
   throw new TypeError(
     `@gnldev/auth: \`auth\` is neither an AuthProvider (no \`authorize\` function) nor a {read, write} ` +
