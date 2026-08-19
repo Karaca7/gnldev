@@ -93,7 +93,7 @@ export type { CreateGnlConfig, AgentConfig, RunOptions, WorkflowLike, WorkflowMe
 export { runNetwork, getNetworkTrace, netKeys } from './network.js';
 export type { NetworkResult, NetworkStep, NetworkTarget, RouteDecision, RunNetworkOptions } from './network.js';
 export { withOrg, orgScopeOf } from './organization.js';
-export { purgeRun, purgeThread, purgeOrganization, sweepRuns, sweepLog, sweepThreads, createRetentionSweeper } from './retention.js';
+export { orgPurgedKey, purgeRun, purgeThread, purgeOrganization, sweepRuns, sweepLog, sweepThreads, createRetentionSweeper } from './retention.js';
 export type { LogSweepTarget, RetentionSweeperOptions, RetentionSweepSummary, RetentionSweeper } from './retention.js';
 // Phase 8.1: the common poll-loop core for queue/events/scheduler (a setTimeout chain with backoff).
 export { createPollLoop } from './polling.js';

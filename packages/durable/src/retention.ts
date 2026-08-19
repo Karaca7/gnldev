@@ -220,10 +220,27 @@ export async function purgeThread(journal: Journal, threadId: string): Promise<n
  * EE user records (auth-ee's own store) — studio's DELETE /organizations/:id removes members when
  *    `opts.users` is wired; call that surface (or the user store directly) alongside this.
  */
-export async function purgeOrganization(journal: Journal, orgId: string): Promise<number> {
+export async function purgeOrganization(journal: Journal, orgId: string, now = Date.now()): Promise<number> {
   if (orgId.includes(':')) throw new Error(`@gnldev/durable: purgeOrganization('${orgId}') — org id must not contain ':' (it would break the org:<id>: prefix boundary)`);
   const del = requireDelete(journal);
-  return del(`org:${orgId}:`);
+  const n = await del(`org:${orgId}:`);
+  // A boundary marker, because the audit log is NOT org-prefixed and therefore survives this.
+  //
+  // Org ids are strings a human chooses — 'acme', a company slug — so the same id being handed to a
+  // different tenant later is ordinary, not exotic. Measured before this: purge removed the org's data
+  // and left every `__audit__` record tagged `org: 'acme'` in place, so the NEXT tenant of that id
+  // opened /audit and read who did what in the previous tenancy.
+  //
+  // The records are not deleted. An audit log that can be erased by the operation it is meant to
+  // record is not an audit log, and the operator's own view still needs the whole history — including
+  // the purge. What changes is the org-SCOPED view: it starts at the org's current tenancy.
+  await journal.put(orgPurgedKey(orgId), { at: now });
+  return n;
+}
+
+/** Marks when an org id was last purged; an org-scoped audit view starts after this. */
+export function orgPurgedKey(orgId: string): string {
+  return `__org_purged__:${orgId}`;
 }
 
 export interface SweepOptions {

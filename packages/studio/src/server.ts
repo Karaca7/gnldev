@@ -4,7 +4,7 @@ import { toFetchHandler, type FetchHandler } from './handler.js';
 import { Hono, type Context } from 'hono';
 import { sseResponse } from './sse.js';
 
-import { asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, purgeRun, purgeOrganization, sweepRuns, POLICY_KEY, PRICING_KEY, effectivePricingTable, readPricing, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, knownModelProviders, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent } from '@gnldev/durable';
+import { asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, purgeRun, purgeOrganization, orgPurgedKey, sweepRuns, POLICY_KEY, PRICING_KEY, effectivePricingTable, readPricing, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, knownModelProviders, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent } from '@gnldev/durable';
 import type { PolicyDoc, PolicyRule, BudgetLimit, PricingDoc } from '@gnldev/durable';
 import type { JournalReader, Journal, WorkflowLike, MetricsRunRow } from '@gnldev/durable';
 import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, principalScope, assertAssignablePrivileges, type AuthProvider, type Principal } from '@gnldev/auth';
@@ -1233,10 +1233,20 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     const bound = principalOf(c.req.raw)?.orgId ?? orgALS.getStore();
     const org = bound ?? (c.req.query('org') || undefined);
     const logs = await listLog<{ actor: string; action: string; target: string; org?: string; detail?: unknown }>(rootRw as Journal, '__audit__');
+    // An ORG-scoped view starts at that org's current tenancy. `__audit__` is not org-prefixed, so it
+    // survives purgeOrganization by design — an audit log erased by the operation it records is not an
+    // audit log — but org ids are human-chosen strings ('acme', a company slug), and the same id going
+    // to a different tenant later is ordinary. Without this cutoff the next tenant of an id opened
+    // /audit and read who did what in the previous tenancy. The OPERATOR's unscoped view is unchanged
+    // and still shows everything, including the purge itself.
+    const purgedAt = org
+      ? ((await rootRw.get?.(orgPurgedKey(org))) as { at?: number } | undefined)?.at ?? 0
+      : 0;
     const items = logs
       .map((l) => ({ id: l.id, at: l.at, ...l.payload }))
       .filter((i) => !action || i.action === action)
       .filter((i) => !org || i.org === org)
+      .filter((i) => !org || (i.at ?? 0) > purgedAt)
       .filter((i) => !q || i.target.toLowerCase().includes(q) || i.actor.toLowerCase().includes(q))
       .sort((a, b) => (b.at ?? 0) - (a.at ?? 0))
       .slice(0, limit);
