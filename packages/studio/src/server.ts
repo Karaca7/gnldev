@@ -2354,7 +2354,34 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       ...(body.replace ? { replace: true } : {}),
     };
     await rw.put!(PRICING_KEY, doc);
-    await audit(c, 'pricing.update', 'pricing', { version: doc.version, models: Object.keys(clean), replace: !!body.replace });
+    // The VALUES, not just the model names. A price is a spend ceiling: taking gpt-4o to $0.0001
+    // effectively turns maxCostUsd off for it, and a record saying only "gpt-4o changed" cannot tell
+    // an auditor whether that happened. Before/after per model, so the record answers the question it
+    // exists for.
+    //
+    // Capped, because a `replace` of a large table would otherwise put hundreds of rows in one audit
+    // entry — and a log that is expensive to write is a log somebody eventually turns off. The count is
+    // reported whole, so a truncated record still says how much it is not showing.
+    const prevModels = prev?.models ?? {};
+    const changes = [];
+    for (const [id, to] of Object.entries(clean)) {
+      const from = prevModels[id];
+      if (JSON.stringify(from) !== JSON.stringify(to)) changes.push({ model: id, from: from ?? null, to });
+    }
+    if (body.replace) {
+      for (const id of Object.keys(prevModels)) {
+        if (!(id in clean)) changes.push({ model: id, from: prevModels[id], to: null });
+      }
+    }
+    const AUDIT_CHANGE_CAP = 50;
+    await audit(c, 'pricing.update', 'pricing', {
+      version: doc.version,
+      models: Object.keys(clean),
+      replace: !!body.replace,
+      changed: changes.length,
+      changes: changes.slice(0, AUDIT_CHANGE_CAP),
+      ...(changes.length > AUDIT_CHANGE_CAP ? { changesTruncated: true } : {}),
+    });
     return c.json({ ok: true, version: doc.version });
   });
 

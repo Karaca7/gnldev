@@ -9,7 +9,7 @@
 // every other organization is billed at, a NaN price being stored, and a save silently overwriting
 // another admin's.
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnldev/durable';
+import { InMemoryJournal, listLog } from '@gnldev/durable';
 import { roleAuth } from '@gnldev/auth';
 import { createStudioApi } from '../src/server.js';
 import { call } from './call.js';
@@ -178,5 +178,79 @@ describe('Studio /pricing', () => {
 
     const longId = { ['x'.repeat(201)]: { inputPer1M: 1, outputPer1M: 1 } };
     expect((await put(app as never, 'op', { models: longId })).status).toBe(400);
+  });
+});
+
+// A price change is a spend-ceiling change, so the audit record has to say WHAT changed.
+//
+// It recorded the model NAMES and nothing else: `{version, models: ['gpt-4o'], replace: false}`. An
+// auditor could see that someone touched gpt-4o and not that they took it to $0.0001, which
+// effectively turns maxCostUsd off for that model. Knowing an event happened without knowing what it
+// did is a notification, not an audit trail.
+describe('the pricing.update audit record', () => {
+  const put = (app: unknown, body: unknown) =>
+    call(app as never, '/pricing', {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    });
+  const details = async (journal: InMemoryJournal) =>
+    (await listLog<{ action: string; detail: any }>(journal, '__audit__'))
+      .filter((r) => r.payload.action === 'pricing.update').map((r) => r.payload.detail);
+
+  it('records the value a price moved FROM and TO', async () => {
+    const journal = new InMemoryJournal();
+    const app = createStudioApi({ reader: journal, journal });
+
+    await put(app, { models: { 'gpt-4o': { inputPer1M: 2.5, outputPer1M: 10 } } });
+    await put(app, { models: { 'gpt-4o': { inputPer1M: 0.0001, outputPer1M: 0.0001 } } });
+
+    const [first, second] = await details(journal);
+    expect(first.changes, 'a first write recorded no value').toEqual([
+      { model: 'gpt-4o', from: null, to: { inputPer1M: 2.5, outputPer1M: 10 } },
+    ]);
+    expect(second.changes, 'the record cannot say what the price became').toEqual([
+      { model: 'gpt-4o', from: { inputPer1M: 2.5, outputPer1M: 10 }, to: { inputPer1M: 0.0001, outputPer1M: 0.0001 } },
+    ]);
+  });
+
+  it('records a REMOVAL under replace, which is the change that unprices a model', async () => {
+    // A model dropped from a replace document costs $0 afterwards, so its absence is the whole event.
+    const journal = new InMemoryJournal();
+    const app = createStudioApi({ reader: journal, journal });
+
+    await put(app, { models: { 'gpt-4o': { inputPer1M: 2.5, outputPer1M: 10 } } });
+    await put(app, { replace: true, models: { 'other/m': { inputPer1M: 1, outputPer1M: 1 } } });
+
+    const last = (await details(journal)).at(-1)!;
+    expect(last.changes).toContainEqual({ model: 'gpt-4o', from: { inputPer1M: 2.5, outputPer1M: 10 }, to: null });
+  });
+
+  it('does not record an entry that did not move', async () => {
+    // Rewriting the same values is not a price change, and a record full of non-events is a record
+    // nobody reads.
+    const journal = new InMemoryJournal();
+    const app = createStudioApi({ reader: journal, journal });
+    const models = { 'gpt-4o': { inputPer1M: 2.5, outputPer1M: 10 }, 'x/y': { inputPer1M: 1, outputPer1M: 1 } };
+
+    await put(app, { models });
+    await put(app, { models: { ...models, 'x/y': { inputPer1M: 2, outputPer1M: 1 } } });
+
+    const last = (await details(journal)).at(-1)!;
+    expect(last.changes.map((c: { model: string }) => c.model), 'an unchanged model was logged as a change').toEqual(['x/y']);
+  });
+
+  it('caps a large change set and says it capped it', async () => {
+    // A `replace` of a large table would otherwise put hundreds of rows in one entry, and a log that is
+    // expensive to write is a log somebody turns off. The count stays whole so the record says how much
+    // it is not showing.
+    const journal = new InMemoryJournal();
+    const app = createStudioApi({ reader: journal, journal });
+    const many: Record<string, { inputPer1M: number; outputPer1M: number }> = {};
+    for (let i = 0; i < 60; i++) many[`m${i}`] = { inputPer1M: i, outputPer1M: i };
+
+    await put(app, { models: many });
+    const last = (await details(journal)).at(-1)!;
+    expect(last.changed, 'the true size was lost').toBe(60);
+    expect(last.changes).toHaveLength(50);
+    expect(last.changesTruncated).toBe(true);
   });
 });
