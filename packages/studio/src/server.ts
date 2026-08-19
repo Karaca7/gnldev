@@ -540,6 +540,25 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     if (p?.orgId) return false;
     return !strictMultiOrg || isPlatformAdmin(p);
   };
+  /**
+   * Refuses a thread request from an org-bound caller when thread storage cannot be scoped.
+   *
+   * Serving it would hand one tenant another tenant's conversations. Refusing is the only honest
+   * answer available: the host's `memory` object owns its own store, and nothing here can put an
+   * organization boundary inside it. The message names the fix, because the fix is a one-line config
+   * change (`memoryFactory` instead of `memory`) and the alternative is a leak nobody sees.
+   */
+  const requireScopedMemory = (c: Context): Response | undefined => {
+    if (memoryIsOrgScoped) return undefined;
+    const org = principalOf(c.req.raw)?.orgId ?? orgALS.getStore();
+    if (!org) return undefined; // single-org / operator: nothing to isolate from
+    return c.json({
+      error: 'thread endpoints are unavailable to an organization-scoped identity because this ' +
+        'deployment passed `memory` directly, which has no organization boundary. Pass `memoryFactory` ' +
+        'instead — it receives the org-scoped journal — or use an unscoped operator identity.',
+    }, 403);
+  };
+
   const requirePlatformAdmin = (c: Context, orgBoundMsg: string): Response | undefined => {
     const p = principalOf(c.req.raw);
     if (p?.orgId) return c.json({ error: orgBoundMsg }, 403);
@@ -692,6 +711,19 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // If memory isn't given and reader is a writable Journal, derive it from the factory (CLI/dev default).
   const resolvedMemory: StudioMemory | undefined =
     memory ?? (opts.memoryFactory && writable ? opts.memoryFactory(reader as unknown as Journal) : undefined);
+  /**
+   * Whether thread storage is organization-scoped.
+   *
+   * `memoryFactory` is handed the ALS-aware reader, so everything it writes lands under
+   * `org:<id>:` — measured. A `memory` object the host passes DIRECTLY has no notion of an
+   * organization and cannot be given one from out here: it is somebody else's object with its own
+   * store behind it. So the same endpoints are isolated under one option and not under the other.
+   *
+   * Measured with a host-provided memory and an acme-bound identity: `GET /threads` listed globex's
+   * thread and `GET /threads/globex-thread/messages` returned its contents. Writes were already
+   * refused by the org-write guard; reads were not.
+   */
+  const memoryIsOrgScoped = !memory;
 
   const WF_STORE_PRE = '__studio_wf__';
   const resolvedWfStore: StudioWorkflowStore | undefined = _wfStoreOpt ?? (
@@ -891,6 +923,16 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // @gnldev/auth-ee). Neither exists on the free tier → org surfaces are NEVER shown: it runs in a single
   // Implicit org, and the user is never aware multi-org exists.
   const multiOrganizationEnabled = !!opts.org || !!authProvider?.capabilities?.().multiOrganization;
+  if (!memoryIsOrgScoped && multiOrganizationEnabled) {
+    // Said at boot, not at the first 403: a host reading this can change one option, while a user
+    // hitting the refusal can only file a bug about a feature that looks broken.
+    console.warn(
+      '@gnldev/studio: `memory` was passed directly while multi-organization is enabled. That object ' +
+      'owns its own store and cannot be given an organization boundary, so the thread endpoints are ' +
+      'refused to organization-scoped identities rather than serving one tenant another tenant\'s ' +
+      'conversations. Pass `memoryFactory` instead — it receives the org-scoped journal.',
+    );
+  }
 
   // PUBLIC (exempt from the read gate): lets the UI discover the auth mode + premium capabilities (sso/rbac...) BEFORE login.
   app.get('/capabilities', (c) =>
@@ -2534,22 +2576,26 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // ── Memory / Threads (if memory is given) ─────────────────────────────────────
   app.get('/threads', async (c) => {
     if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    { const denied = requireScopedMemory(c); if (denied) return denied; }
     if (!resolvedMemory) return c.json([]);
     const resourceId = c.req.query('resourceId') || undefined;
     return c.json(await resolvedMemory.listThreads(resourceId));
   });
   app.get('/threads/:id/messages', async (c) => {
     if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    { const denied = requireScopedMemory(c); if (denied) return denied; }
     if (!resolvedMemory) return c.json([]);
     return c.json(await resolvedMemory.getMessages(decodeURIComponent(c.req.param('id'))));
   });
   app.get('/threads/:id/working-memory', async (c) => {
     if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    { const denied = requireScopedMemory(c); if (denied) return denied; }
     if (!resolvedMemory?.getWorkingMemory) return c.json({ value: null });
     return c.json({ value: (await resolvedMemory.getWorkingMemory(decodeURIComponent(c.req.param('id')))) ?? null });
   });
   app.patch('/threads/:id', async (c) => {
     if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
+    { const denied = requireScopedMemory(c); if (denied) return denied; }
     if (!resolvedMemory?.updateThread) return c.json({ error: 'updateThread is not supported' }, 501);
     const patch = (await c.req.json().catch(() => ({}))) as { title?: string; metadata?: Record<string, unknown> };
     try {
@@ -2562,6 +2608,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   });
   app.delete('/threads/:id', async (c) => {
     if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
+    { const denied = requireScopedMemory(c); if (denied) return denied; }
     if (!resolvedMemory?.deleteThread) return c.json({ error: 'deleteThread is not supported' }, 501);
     try {
       await resolvedMemory.deleteThread(decodeURIComponent(c.req.param('id')));
@@ -2578,6 +2625,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // Store can't support it (signaled by a `null` return) — same externally-observable outcome either way.
   app.delete('/threads/:id/messages', async (c) => {
     if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
+    { const denied = requireScopedMemory(c); if (denied) return denied; }
     if (!resolvedMemory?.truncateMessages) return c.json({ error: 'truncateMessages is not supported' }, 501);
     const body = (await c.req.json().catch(() => ({}))) as { afterIndex?: unknown };
     if (typeof body.afterIndex !== 'number' || !Number.isFinite(body.afterIndex)) {
