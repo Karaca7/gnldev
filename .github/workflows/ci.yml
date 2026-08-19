@@ -124,4 +124,7 @@ jobs:
       - run: pnpm -r build
       # Run from the root: the root vitest.config include is 'packages/*/test/**', so running from
       # inside a package directory reports "No test files found" (a known monorepo quirk).
-      - run: pnpm exec vitest run packages/durable/test/integration-real.test.ts
+      # prefix-astral-postgres is the reason this job has TWO collation legs. The SQLite twin of these
+      # assertions cannot fail — SQLite's default collation IS byte order — so before this file the
+      # Postgres half of the fix had no test anywhere that could turn red.
+      - run: pnpm exec vitest run packages/durable/test/integration-real.test.ts packages/durable/test/prefix-astral-postgres.test.ts
