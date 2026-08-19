@@ -5,7 +5,7 @@
 // could resolve `nvidia/…` in the lab — which already had a resolver hook — and could not resolve
 // it anywhere near an agent run, which goes through the router. Reported from the Playground: the
 // agent's own model reads as "custom", and no string a user can type reproduces it.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { resolveModel, registerModelProvider, knownModelProviders } from '../src/index.js';
 
 describe('a host provider', () => {
@@ -135,5 +135,60 @@ describe('unregistering', () => {
     } finally {
       warn.mockRestore(); a(); b();
     }
+  });
+});
+
+// The model id is not host-authored config.
+//
+// Studio passes it straight out of an HTTP body — `resolveModel(body.model)` on
+// POST /runs/:id/regression among others — so whatever a caller types reaches the host's factory
+// verbatim. The obvious factory body is `createOpenAI({ baseURL, apiKey }).chat(id)`, which puts the id
+// in a request URL under the deployment's credentials. Measured before the check, all of these arrived
+// unchanged: '../../etc/passwd', 'https://evil.example/v1', a value containing a newline, and ''.
+describe('the model id handed to a host factory', () => {
+  let seen: string[];
+  let unregister: () => void;
+  beforeEach(() => {
+    seen = [];
+    unregister = registerModelProvider('probe', (id) => { seen.push(id); return { id }; });
+  });
+  afterEach(() => unregister());
+
+  it.each([
+    'gpt-4o',
+    'meta/llama-3.1-70b-instruct',
+    'claude-opus-4-5-20251101',
+    'llama3:8b',            // ollama-style tag — `:` has to stay legal
+    'stepfun-ai/step-3.7-flash',
+  ])('passes a real model id through unchanged: %s', async (id) => {
+    await resolveModel(`probe/${id}`);
+    expect(seen, 'a legitimate id was rejected').toEqual([id]);
+  });
+
+  it.each([
+    ['a traversal segment', '../../etc/passwd'],
+    ['a whole URL', 'https://evil.example/v1'],
+    ['a newline, which is the shape header injection takes', 'model\nX-Injected: 1'],
+    ['a space', 'gpt 4o'],
+    ['nothing at all', ''],
+  ])('refuses %s', async (_why, id) => {
+    await expect(resolveModel(`probe/${id}`)).rejects.toThrow(/not a usable model id/);
+    expect(seen, 'the factory was called anyway').toEqual([]);
+  });
+
+  it('refuses an absurdly long id', async () => {
+    await expect(resolveModel(`probe/${'a'.repeat(300)}`)).rejects.toThrow(/200/);
+  });
+
+  it('names the offending spec and why, rather than failing anonymously', async () => {
+    // The caller is usually a UI field. "Unknown provider" would send them looking in the wrong place.
+    await expect(resolveModel('probe/../x')).rejects.toThrow(/probe\/\.\.\/x/);
+  });
+
+  it('tells a host how to write the factory for an OpenAI-compatible server', async () => {
+    // This error string was the ONLY documentation of registerModelProvider anywhere, and the obvious
+    // reading of it produced the RESPONSES model — while NVIDIA NIM, Together, vLLM and Ollama serve
+    // /chat/completions. A reader who guessed got a 404 from their own endpoint.
+    await expect(resolveModel('nosuchprovider/x')).rejects.toThrow(/\.chat\(id\)/);
   });
 });

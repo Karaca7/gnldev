@@ -88,11 +88,51 @@ export function knownModelProviders(): string[] {
   return [...Object.keys(PROVIDER_PKG), ...CUSTOM.keys()];
 }
 
+/**
+ * What may be handed to a host factory as a model id.
+ *
+ * This string is NOT host-authored config. Studio takes it straight out of an HTTP body —
+ * `resolveModel(body.model)` on POST /runs/:id/regression among others — so whatever a caller types
+ * reaches the factory verbatim. The obvious factory body is
+ * `createOpenAI({ baseURL, apiKey })(modelId)`, which puts the id in a URL PATH under the deployment's
+ * credentials. Measured, all of these arrived unchanged:
+ *
+ *   '../../etc/passwd'        a traversal, if the factory joins it onto a base path
+ *   'https://evil.example/v1' a whole URL where an id was expected
+ *   'model\nX-Injected: 1'    a newline, which is the shape header injection takes
+ *   ''                        empty
+ *
+ * Real ids are namespaced words: `gpt-4o`, `meta/llama-3.1-70b-instruct`, `claude-opus-4-5-20251101`,
+ * `stepfun-ai/step-3.7-flash`. The allow-list is that, and nothing is normalised — a rejected id is
+ * reported, because guessing which characters the caller meant to type is how the wrong model gets
+ * called quietly.
+ */
+const MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:\/-]*$/;
+const MODEL_ID_MAX = 200;
+
+function assertUsableModelId(spec: string, modelId: string): void {
+  const why = !modelId
+    ? 'it is empty'
+    : modelId.length > MODEL_ID_MAX ? `it is ${modelId.length} characters (max ${MODEL_ID_MAX})`
+      : !MODEL_ID_RE.test(modelId) ? 'it contains characters outside [A-Za-z0-9 . _ : / -] or does not start with a letter or digit'
+        : modelId.split('/').includes('..') ? "it contains a '..' path segment"
+          // `:` stays legal — ollama-style ids look like `llama3:8b` — but `://` is a scheme, and a
+          // whole URL where an id was expected is the case that redirects a credentialed request.
+          : modelId.includes('://') ? 'it looks like a URL, not a model id'
+          : undefined;
+  if (!why) return;
+  throw new Error(
+    `model: '${spec.slice(0, 80)}' is not a usable model id — ${why}. This string is passed to the ` +
+    'provider factory and typically ends up in a request URL, so it is checked rather than trusted.',
+  );
+}
+
 export async function resolveModel(spec: string): Promise<any> {
   const i = spec.indexOf('/');
   if (i < 0) throw new Error(`model: expected 'provider/model', got '${spec}'`);
   const provider = spec.slice(0, i);
   const modelId = spec.slice(i + 1);
+  assertUsableModelId(spec, modelId);
   const custom = CUSTOM.get(provider);
   if (custom) return custom(modelId);
 
@@ -103,7 +143,13 @@ export async function resolveModel(spec: string): Promise<any> {
     throw new Error(
       `Unknown provider '${provider}'. Known: ${knownModelProviders().join(', ')}. `
       + 'A host can teach this one more with registerModelProvider(prefix, factory) — '
-      + 'that is what an OpenAI-compatible endpoint (NVIDIA, Together, a gateway, a local server) needs.',
+      + 'that is what an OpenAI-compatible endpoint (NVIDIA, Together, a gateway, a local server) needs. '
+      // The factory body, because this string was the ONLY documentation of the API and the obvious
+      // reading of it is wrong: `createOpenAI({...})(id)` returns the RESPONSES model, while NVIDIA
+      // NIM, Together, vLLM and Ollama serve /chat/completions. `.chat(id)` is the one that works, and
+      // a reader who guesses gets a 404 from their own endpoint with nothing pointing here.
+      + "For an OpenAI-compatible server use the CHAT model: "
+      + "registerModelProvider('nvidia', (id) => createOpenAI({ baseURL, apiKey }).chat(id)).",
     );
   }
   let mod: any;
