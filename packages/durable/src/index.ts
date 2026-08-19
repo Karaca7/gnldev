@@ -132,7 +132,7 @@ export {
 } from './agent-registry.js';
 export type { AgentRegistryRecord, AgentApprovalStatus } from './agent-registry.js';
 export type { RunLimits, RunLimitKind } from './limits.js';
-export { resolveModel, withModelFallback, fallbackCandidatesOf, registerModelProvider, knownModelProviders } from './model-router.js';
+export { resolveModel, withModelFallback, fallbackCandidatesOf, resolveFrozenChoice, registerModelProvider, knownModelProviders } from './model-router.js';
 export type { FallbackCandidate, ModelProviderFactory } from './model-router.js';
 // W2: Replay-based regression core (diffRuns/replayRun/regressionReport) — see regression.ts.
 // BuildDecisionSequence: also re-exported for P1.1 — @gnldev/evals' trajectory

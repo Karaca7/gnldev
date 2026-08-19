@@ -14,16 +14,23 @@
 // becomes `format: 'uri'` — reached OpenAI, which is precisely the silent rejection that rule exists to
 // prevent. The more providers a chain mixes, the more this bites.
 //
-// Two separate fixes, because reporting the truth afterwards cannot repair the tools:
+// Two fixes, because reporting the truth afterwards cannot repair the tools:
 //
 //   - the identity fields became getters over the candidate that is actually serving;
-//   - compat is applied for EVERY candidate in the chain, not for the proxy's identity.
+//   - the frozen choice is resolved BEFORE compat runs, so a chain that has already picked a winner
+//     shapes its tools for that winner instead of for candidate[0].
 //
-// The second is a deliberate widening: the tools a chain sends must satisfy whichever candidate
-// answers, and nothing can be deferred until the winner is known because the AI SDK converts the tools
-// before the call. Rules are selected per model by `shouldApply`, so applying them in chain order
-// composes rather than fighting.
-import { describe, it, expect } from 'vitest';
+// Applying every candidate's rules in turn was tried first and is WRONG: the providers genuinely
+// contradict each other. `openaiStrict` SETS `additionalProperties: false` (its strict mode requires
+// it) and the gemini rule DELETES it (Gemini rejects the keyword), so composing them leaves whichever
+// ran last in place and hands the other exactly what its own rule exists to prevent. Measured:
+//
+//   chain [gemini, openai] → gemini was handed `additionalProperties: false`
+//   chain [openai, gemini] → OpenAI was handed no `additionalProperties` at all
+//
+// There is no one schema for such a chain, so the framework shapes for the model that will serve and
+// says so out loud when the chain cannot be satisfied at once.
+import { describe, it, expect, vi } from 'vitest';
 import { z } from 'zod';
 import { InMemoryJournal } from '../src/journal.js';
 import { withModelFallback, fallbackCandidatesOf } from '../src/model-router.js';
@@ -99,59 +106,101 @@ describe('a fallback chain\'s identity', () => {
   });
 });
 
-describe('tool-schema compat across a mixed chain', () => {
-  // The discriminator has to be a property the two rules treat DIFFERENTLY. `format: 'uri'` is not
-  // one: anthropic strips it too, so an assertion on it passes whichever identity compat was keyed
-  // off — the first version of this test was green against the bug. `openaiStrict` alone rewrites
-  // `required` to every property; anthropic leaves an optional field optional.
-  it('applies the SERVING provider\'s rules, not the failed candidate\'s', async () => {
+describe('tool-schema compat and a fallback chain', () => {
+  /** The schema a lone model of this provider would be sent — the reference to match. */
+  async function schemaFor(provider: string, modelId: string): Promise<any> {
     let seen: any;
     const journal = new InMemoryJournal();
-    const proxy = withModelFallback([
-      { spec: 'anthropic/claude-x', model: mkModel('anthropic', 'claude-x', { fail: true }) },
-      { spec: 'openai/gpt-4o', model: mkModel('openai', 'gpt-4o', { seen: (s2) => { seen = s2; } }) },
-    ], journal, 'compat-1');
-
     await runDurable({
-      runId: 'compat-1', journal, model: proxy, tools: { fetchIt: mixedTool() },
-      prompt: 'go', schemaCompat: true, stopWhen: stepCountIs(3),
+      runId: `ref-${provider}`, journal, model: mkModel(provider, modelId, { seen: (s) => { seen = s; } }),
+      tools: { fetchIt: mixedTool() }, prompt: 'go', schemaCompat: true, stopWhen: stepCountIs(3),
     } as never);
+    return seen;
+  }
 
-    expect(seen, 'OpenAI was handed no schema at all').toBeTruthy();
-    expect(seen.required, 'OpenAI received a schema shaped for anthropic — openaiStrict never ran')
-      .toEqual(['url', 'note']);
-    expect(JSON.stringify(seen)).not.toContain('"format"');
-  });
+  it('a chain that has already frozen its winner shapes tools for THAT model', async () => {
+    // The steady state: after the first success the choice lives in the journal, so this is what
+    // every resume and every later run does. Before the fix the frozen winner was not read until
+    // doGenerate — after run.ts had already built the tools — so compat always saw candidate[0].
+    let seen: any;
+    const journal = new InMemoryJournal();
+    await journal.put('frozen-1:cfg:model', { spec: 'openai/gpt-4o' });
 
-  it('a chain presents ONE contract: the strictest of its candidates', async () => {
-    // A deliberate consequence, asserted rather than discovered. Nothing can wait until the winner is
-    // known — the AI SDK converts the tools before the call — so the choice is between one contract
-    // for the chain or a contract that depends on which candidate happened to answer. The second
-    // would hand the model different tool definitions on different attempts of the same run, which is
-    // the opposite of what this framework is for. The cost is visible here: an optional field is
-    // required for every candidate in a chain that contains OpenAI, including the ones that would
-    // have accepted it optional.
-    let viaChain: any;
-    let viaSingle: any;
-
-    const j1 = new InMemoryJournal();
     await runDurable({
-      runId: 'compat-2', journal: j1, tools: { fetchIt: mixedTool() }, prompt: 'go',
+      runId: 'frozen-1', journal, tools: { fetchIt: mixedTool() }, prompt: 'go',
       schemaCompat: true, stopWhen: stepCountIs(3),
       model: withModelFallback([
-        { spec: 'anthropic/claude-x', model: mkModel('anthropic', 'claude-x', { seen: (s2) => { viaChain = s2; } }) },
-        { spec: 'openai/gpt-4o', model: mkModel('openai', 'gpt-4o') },
-      ], j1, 'compat-2'),
+        { spec: 'anthropic/claude-x', model: mkModel('anthropic', 'claude-x') },
+        { spec: 'openai/gpt-4o', model: mkModel('openai', 'gpt-4o', { seen: (s) => { seen = s; } }) },
+      ], journal, 'frozen-1'),
     } as never);
 
-    const j2 = new InMemoryJournal();
-    await runDurable({
-      runId: 'compat-3', journal: j2, tools: { fetchIt: mixedTool() }, prompt: 'go',
-      schemaCompat: true, stopWhen: stepCountIs(3),
-      model: mkModel('anthropic', 'claude-x', { seen: (s2) => { viaSingle = s2; } }),
-    } as never);
+    // Compared against what a LONE openai model would have been sent, so the assertion is "the chain
+    // shaped for its winner" rather than a hand-copied schema that drifts when the rules change.
+    const reference = await schemaFor('openai', 'gpt-4o');
+    expect(seen, 'the frozen winner got tools shaped for a different candidate').toEqual(reference);
+    // Named explicitly too, so a reader can see WHAT differs: anthropic leaves `note` optional.
+    expect(seen.required).toEqual(['url', 'note']);
+  });
 
-    expect(viaSingle.required, 'a lone anthropic model leaves an optional field optional').toEqual(['url']);
-    expect(viaChain.required, 'the chain did not adopt its strictest candidate\'s contract').toEqual(['url', 'note']);
+  it('warns when the chain contains providers whose rules contradict', async () => {
+    // openaiStrict sets `additionalProperties: false`; gemini deletes it. Nothing can satisfy both,
+    // and the tools are converted once, before the call — so the fallback WILL receive a schema its
+    // own rule exists to prevent. Saying that once is the only honest option available.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const journal = new InMemoryJournal();
+      await runDurable({
+        runId: 'clash-1', journal, tools: { fetchIt: mixedTool() }, prompt: 'go',
+        schemaCompat: true, stopWhen: stepCountIs(3),
+        model: withModelFallback([
+          { spec: 'openai/gpt-4o', model: mkModel('openai', 'gpt-4o') },
+          { spec: 'google/gemini-2', model: mkModel('google', 'gemini-2') },
+        ], journal, 'clash-1'),
+      } as never);
+
+      const said = warn.mock.calls.map((c) => String(c[0])).join('\n');
+      expect(said, 'a chain that cannot be satisfied at once said nothing').toContain('schema rules disagree');
+      expect(said, 'the warning must name the candidate that will be sent the wrong shape').toContain('google/gemini-2');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('stays silent when the chain\'s providers agree', async () => {
+    // groq is served by openaiStrict too (its own API is OpenAI-compatible), so this chain has one
+    // contract and nothing to report. A warning here would be noise on a perfectly good setup.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const journal = new InMemoryJournal();
+      await runDurable({
+        runId: 'agree-1', journal, tools: { fetchIt: mixedTool() }, prompt: 'go',
+        schemaCompat: true, stopWhen: stepCountIs(3),
+        model: withModelFallback([
+          { spec: 'openai/gpt-4o', model: mkModel('openai', 'gpt-4o') },
+          { spec: 'groq/llama-3', model: mkModel('groq', 'llama-3') },
+        ], journal, 'agree-1'),
+      } as never);
+
+      const said = warn.mock.calls.map((c) => String(c[0])).join('\n');
+      expect(said, 'a chain whose rules agree was warned about anyway').not.toContain('schema rules disagree');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('a single model is never warned about', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const journal = new InMemoryJournal();
+      await runDurable({
+        runId: 'solo-1', journal, tools: { fetchIt: mixedTool() }, prompt: 'go',
+        schemaCompat: true, stopWhen: stepCountIs(3),
+        model: mkModel('openai', 'gpt-4o'),
+      } as never);
+      expect(warn.mock.calls.map((c) => String(c[0])).join('\n')).not.toContain('schema rules disagree');
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

@@ -143,15 +143,36 @@ export function withModelFallback(candidates: FallbackCandidate[], journal: Jour
      *
      * Tool-schema compat is the case that matters: run.ts applies it once per run, before the first
      * model call, keyed off the model's identity. With a stale identity a mixed-provider chain applied
-     * anthropic's rules and then let OpenAI serve the call — so `openaiStrict` was skipped and a Zod
-     * `.url()` (`format: 'uri'`) reached OpenAI, which is exactly the silent rejection that rule
-     * exists to prevent. Reporting the truth afterwards cannot fix that: by then the tools are built.
+     * anthropic's rules and then let OpenAI serve — so `openaiStrict` was skipped and a Zod `.url()`
+     * (`format: 'uri'`) reached OpenAI, exactly the silent rejection that rule exists to prevent.
      *
-     * Exposed so the transform can be applied for EVERY candidate instead. The rules are filtered per
-     * model by `shouldApply`, so applying them in chain order composes, and the resulting schema
-     * satisfies whichever candidate ends up answering.
+     * Applying the rules of every candidate in turn was tried and is WRONG, because the providers'
+     * requirements genuinely contradict. `openaiStrict` SETS `additionalProperties: false` (its strict
+     * mode requires it); the gemini rule DELETES `additionalProperties` (Gemini rejects the keyword).
+     * Measured on a two-candidate chain, composing them left whichever ran last in place:
+     *
+     *   chain [gemini, openai] → gemini was handed `additionalProperties: false`
+     *   chain [openai, gemini] → OpenAI was handed no `additionalProperties` at all
+     *
+     * Either way one provider receives the schema its own rule exists to prevent. There is no single
+     * contract that satisfies such a chain, so the honest move is to shape the tools for the candidate
+     * that will actually serve — see `resolveFrozenChoice` — and to say so out loud when the chain
+     * cannot be satisfied at once.
      */
     fallbackCandidates: candidates.map((c) => c.model),
+    /**
+     * Reads back the frozen choice so the identity above is right BEFORE the first call of this
+     * process. `order()` does this lazily, but not until `doGenerate` — which is after run.ts has
+     * already built the tools. Awaiting this first makes every run after the chain froze (and every
+     * resume, which is most calls in a long-lived deployment) prepare tools for the model that is
+     * really going to answer.
+     *
+     * The irreducible remainder: the FIRST run, before anything is frozen, is prepared for the first
+     * candidate. If that candidate then fails, the tools going to its replacement were shaped for it.
+     * Nothing can close that window here — the AI SDK converts the tools before the call, so by the
+     * time the fallback picks a different model there is no schema left to reshape.
+     */
+    resolveFrozenChoice: async (): Promise<void> => { await order(); },
     doGenerate: (options: any) => attempt((m) => m.doGenerate(options)),
     doStream: (options: any) => attempt((m) => m.doStream(options)),
   };
@@ -164,6 +185,18 @@ export function withModelFallback(candidates: FallbackCandidate[], journal: Jour
  * model and a one-model chain are indistinguishable here — correctly, since there is nothing to fall
  * back to and nothing extra to prepare for.
  */
+/**
+ * Populates a fallback proxy's frozen choice, so its identity is right before the first call.
+ *
+ * A no-op for a plain model and for a chain that has never run. Callers that must prepare something
+ * keyed off the model's identity — tool-schema compat is the one — should await this first, otherwise
+ * they see the first candidate no matter which one the journal already froze.
+ */
+export async function resolveFrozenChoice(model: unknown): Promise<void> {
+  const r = (model as { resolveFrozenChoice?: () => Promise<void> })?.resolveFrozenChoice;
+  if (typeof r === 'function') await r();
+}
+
 export function fallbackCandidatesOf(model: unknown): any[] | undefined {
   const c = (model as { fallbackCandidates?: unknown })?.fallbackCandidates;
   return Array.isArray(c) && c.length > 0 ? c : undefined;

@@ -8,7 +8,7 @@ import { createProcessorCtx, composePrepareStep, composeOnStepFinish, durablePro
 import { loadReplayCache, runKeys, claim } from './journal.js';
 // Statically safe: model-router imports only ./journal, and the provider packages it can reach are
 // Behind dynamic import(), so this costs the core bundle nothing.
-import { resolveModel, fallbackCandidatesOf } from './model-router.js';
+import { resolveModel, fallbackCandidatesOf, resolveFrozenChoice } from './model-router.js';
 import { stampFormat, upgradeFormat } from './format.js';
 import { recordRunUsage } from './budget.js';
 import { recordRunMetrics } from './metrics.js';
@@ -1039,15 +1039,12 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   if (schemaCompat && effectiveTools) {
     const { applyToolCompat, defaultRules } = await import('@gnldev/tool-schema');
     const rules = schemaCompat === true ? defaultRules : schemaCompat;
-    // Once per CANDIDATE for a fallback chain, not once for the proxy. The rules are selected per
-    // model by `shouldApply`, so applying them in chain order composes and the result satisfies
-    // whichever candidate answers. Keyed off the proxy alone, a chain of
-    // ['anthropic/…','openai/…'] applied anthropic's rules and then let OpenAI serve — `openaiStrict`
-    // skipped, and a `format: 'uri'` schema reaching the provider that rejects it. Nothing here can be
-    // deferred until the winner is known: the tools are converted by the AI SDK before the call.
-    for (const m of fallbackCandidatesOf(model) ?? [model]) {
-      effectiveTools = applyToolCompat(effectiveTools, m, rules);
-    }
+    // Shape the tools for the model that will ACTUALLY serve. For a fallback chain the winner is
+    // frozen in the journal after the first success, so resolving it here — before the transform,
+    // rather than lazily inside doGenerate — is what makes every resume and every later run correct.
+    await resolveFrozenChoice(model);
+    effectiveTools = applyToolCompat(effectiveTools, model, rules);
+    warnIfChainCannotAgree(model, effectiveTools, rules, applyToolCompat);
   }
 
   const stepHookFailure: StepHookFailure = {};
@@ -1241,6 +1238,48 @@ export async function resumeRun(
 }
 
 /**
+ * One warning when a fallback chain cannot be satisfied by a single tool schema.
+ *
+ * `openaiStrict` SETS `additionalProperties: false`; the gemini rule DELETES it. A chain containing
+ * both has no schema that satisfies each — whichever transform is applied, the other provider gets
+ * exactly what its own rule was written to prevent. The tools are therefore shaped for the candidate
+ * that will serve (the frozen winner, or the first candidate before anything is frozen), and the rest
+ * of the chain is a fallback whose schema may not suit it.
+ *
+ * Detected by comparing the real transformed tools per candidate rather than by hard-coding which
+ * providers clash, so a rule added later is covered without anyone remembering this function. Pure and
+ * in-memory; it runs once per run, only when `schemaCompat` is on AND the model is a chain.
+ */
+const chainCompatWarned = new WeakSet<object>();
+function warnIfChainCannotAgree(
+  model: unknown,
+  shaped: Record<string, unknown>,
+  rules: unknown[],
+  apply: (t: Record<string, any>, m: unknown, r: any[]) => Record<string, any>,
+): void {
+  const candidates = fallbackCandidatesOf(model);
+  if (!candidates || chainCompatWarned.has(model as object)) return;
+  const target = JSON.stringify(shaped);
+  const disagreeing = candidates.filter((m) => {
+    try {
+      return JSON.stringify(apply(shaped as Record<string, any>, m, rules as any[])) !== target;
+    } catch {
+      return false;
+    }
+  });
+  if (disagreeing.length === 0) return;
+  chainCompatWarned.add(model as object);
+  const names = disagreeing.map((m: any) => `${m?.provider}/${m?.modelId}`).join(', ');
+  console.warn(
+    `@gnldev/durable: schemaCompat shaped this run's tools for '${(model as any)?.provider}/${(model as any)?.modelId}', ` +
+      `but the fallback chain also contains ${names}, whose schema rules disagree with it (e.g. OpenAI's strict ` +
+      'mode requires `additionalProperties: false` while Gemini rejects the keyword). The tools are converted ' +
+      'once, before the call, so a fallback to one of those models sends it a schema its own rule exists to ' +
+      'prevent. Use one provider family per chain when schemaCompat is on, or pass rules that agree.',
+  );
+}
+
+/**
  * The durable counterpart of `streamText` — model/tools are wrapped, input is journaled.
  * Memory + processor scope goes through the SAME helpers as runDurable (parity must not be broken);
  * The only difference: output processors are applied only to messages being persisted (streamed
@@ -1326,15 +1365,12 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   if (schemaCompat && effectiveTools) {
     const { applyToolCompat, defaultRules } = await import('@gnldev/tool-schema');
     const rules = schemaCompat === true ? defaultRules : schemaCompat;
-    // Once per CANDIDATE for a fallback chain, not once for the proxy. The rules are selected per
-    // model by `shouldApply`, so applying them in chain order composes and the result satisfies
-    // whichever candidate answers. Keyed off the proxy alone, a chain of
-    // ['anthropic/…','openai/…'] applied anthropic's rules and then let OpenAI serve — `openaiStrict`
-    // skipped, and a `format: 'uri'` schema reaching the provider that rejects it. Nothing here can be
-    // deferred until the winner is known: the tools are converted by the AI SDK before the call.
-    for (const m of fallbackCandidatesOf(model) ?? [model]) {
-      effectiveTools = applyToolCompat(effectiveTools, m, rules);
-    }
+    // Shape the tools for the model that will ACTUALLY serve. For a fallback chain the winner is
+    // frozen in the journal after the first success, so resolving it here — before the transform,
+    // rather than lazily inside doGenerate — is what makes every resume and every later run correct.
+    await resolveFrozenChoice(model);
+    effectiveTools = applyToolCompat(effectiveTools, model, rules);
+    warnIfChainCannotAgree(model, effectiveTools, rules, applyToolCompat);
   }
 
   const stepHookFailure: StepHookFailure = {};
