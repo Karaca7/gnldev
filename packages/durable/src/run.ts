@@ -8,7 +8,7 @@ import { createProcessorCtx, composePrepareStep, composeOnStepFinish, durablePro
 import { loadReplayCache, runKeys, claim } from './journal.js';
 // Statically safe: model-router imports only ./journal, and the provider packages it can reach are
 // Behind dynamic import(), so this costs the core bundle nothing.
-import { resolveModel, fallbackCandidatesOf, resolveFrozenChoice } from './model-router.js';
+import { resolveModel, setChainToolShaper } from './model-router.js';
 import { stampFormat, upgradeFormat } from './format.js';
 import { recordRunUsage } from './budget.js';
 import { recordRunMetrics } from './metrics.js';
@@ -1037,14 +1037,16 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   // Call + BEFORE durableTools wraps it → doesn't touch the journal, argsHash/toolCallId/replay unaffected.
   // Lazy import: if unused, @gnldev/tool-schema is never loaded (keeps the durable core thin).
   if (schemaCompat && effectiveTools) {
-    const { applyToolCompat, defaultRules } = await import('@gnldev/tool-schema');
+    const { applyToolCompat, defaultRules, detectModel } = await import('@gnldev/tool-schema');
     const rules = schemaCompat === true ? defaultRules : schemaCompat;
-    // Shape the tools for the model that will ACTUALLY serve. For a fallback chain the winner is
-    // frozen in the journal after the first success, so resolving it here — before the transform,
-    // rather than lazily inside doGenerate — is what makes every resume and every later run correct.
-    await resolveFrozenChoice(model);
-    effectiveTools = applyToolCompat(effectiveTools, model, rules);
-    warnIfChainCannotAgree(model, effectiveTools, rules, applyToolCompat);
+    // A fallback chain shapes per CANDIDATE, at the moment one is chosen, rather than once here for
+    // whichever model the proxy claims to be. Transforming here for a chain would bake in one
+    // provider's rules and hand them to whoever actually answers — and the providers genuinely
+    // disagree (OpenAI's strict mode requires `additionalProperties: false`; Gemini rejects the
+    // keyword), so no single shape serves them all. See setChainToolShaper.
+    if (!setChainToolShaper(model, (toolsJson: any[], candidate: unknown) => shapeJsonTools(toolsJson, candidate, rules as any[], detectModel))) {
+      effectiveTools = applyToolCompat(effectiveTools, model, rules);
+    }
   }
 
   const stepHookFailure: StepHookFailure = {};
@@ -1238,45 +1240,34 @@ export async function resumeRun(
 }
 
 /**
- * One warning when a fallback chain cannot be satisfied by a single tool schema.
+ * Applies the schemaCompat rules to the AI SDK's already-converted tool list, for ONE candidate.
  *
- * `openaiStrict` SETS `additionalProperties: false`; the gemini rule DELETES it. A chain containing
- * both has no schema that satisfies each — whichever transform is applied, the other provider gets
- * exactly what its own rule was written to prevent. The tools are therefore shaped for the candidate
- * that will serve (the frozen winner, or the first candidate before anything is frozen), and the rest
- * of the chain is a fallback whose schema may not suit it.
+ * By the time a fallback picks a model the tools have been converted, which is why the transform
+ * appeared to be un-redoable. It is not: what the SDK hands `doGenerate` is
+ * `[{ type, name, description, inputSchema }]` with `inputSchema` a plain JSON Schema — the exact
+ * shape these rules take and return. So each candidate gets a schema built for it instead of one
+ * built for whichever candidate happened to be first.
  *
- * Detected by comparing the real transformed tools per candidate rather than by hard-coding which
- * providers clash, so a rule added later is covered without anyone remembering this function. Pure and
- * in-memory; it runs once per run, only when `schemaCompat` is on AND the model is a chain.
+ * Copied before transforming: the rules mutate in place, and the caller's array is reused across
+ * attempts, so transforming it directly would leave the second candidate reading the first's result.
  */
-const chainCompatWarned = new WeakSet<object>();
-function warnIfChainCannotAgree(
-  model: unknown,
-  shaped: Record<string, unknown>,
-  rules: unknown[],
-  apply: (t: Record<string, any>, m: unknown, r: any[]) => Record<string, any>,
-): void {
-  const candidates = fallbackCandidatesOf(model);
-  if (!candidates || chainCompatWarned.has(model as object)) return;
-  const target = JSON.stringify(shaped);
-  const disagreeing = candidates.filter((m) => {
-    try {
-      return JSON.stringify(apply(shaped as Record<string, any>, m, rules as any[])) !== target;
-    } catch {
-      return false;
+function shapeJsonTools(
+  tools: any[],
+  candidate: unknown,
+  rules: any[],
+  detectModel: (m: unknown) => any,
+): any[] {
+  const info = detectModel(candidate);
+  const active = rules.filter((r) => { try { return r.shouldApply(info); } catch { return false; } });
+  if (active.length === 0) return tools;
+  return tools.map((t) => {
+    if (!t?.inputSchema || typeof t.inputSchema !== 'object') return t;
+    let schema = structuredClone(t.inputSchema);
+    for (const r of active) {
+      try { schema = r.transform(schema) ?? schema; } catch { /* a broken rule must not break the call */ }
     }
+    return { ...t, inputSchema: schema };
   });
-  if (disagreeing.length === 0) return;
-  chainCompatWarned.add(model as object);
-  const names = disagreeing.map((m: any) => `${m?.provider}/${m?.modelId}`).join(', ');
-  console.warn(
-    `@gnldev/durable: schemaCompat shaped this run's tools for '${(model as any)?.provider}/${(model as any)?.modelId}', ` +
-      `but the fallback chain also contains ${names}, whose schema rules disagree with it (e.g. OpenAI's strict ` +
-      'mode requires `additionalProperties: false` while Gemini rejects the keyword). The tools are converted ' +
-      'once, before the call, so a fallback to one of those models sends it a schema its own rule exists to ' +
-      'prevent. Use one provider family per chain when schemaCompat is on, or pass rules that agree.',
-  );
 }
 
 /**
@@ -1363,14 +1354,16 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
 
   // 8.8 Tool-schema compat (opt-in): see runDurableInner — pure, before the model call + before durableTools.
   if (schemaCompat && effectiveTools) {
-    const { applyToolCompat, defaultRules } = await import('@gnldev/tool-schema');
+    const { applyToolCompat, defaultRules, detectModel } = await import('@gnldev/tool-schema');
     const rules = schemaCompat === true ? defaultRules : schemaCompat;
-    // Shape the tools for the model that will ACTUALLY serve. For a fallback chain the winner is
-    // frozen in the journal after the first success, so resolving it here — before the transform,
-    // rather than lazily inside doGenerate — is what makes every resume and every later run correct.
-    await resolveFrozenChoice(model);
-    effectiveTools = applyToolCompat(effectiveTools, model, rules);
-    warnIfChainCannotAgree(model, effectiveTools, rules, applyToolCompat);
+    // A fallback chain shapes per CANDIDATE, at the moment one is chosen, rather than once here for
+    // whichever model the proxy claims to be. Transforming here for a chain would bake in one
+    // provider's rules and hand them to whoever actually answers — and the providers genuinely
+    // disagree (OpenAI's strict mode requires `additionalProperties: false`; Gemini rejects the
+    // keyword), so no single shape serves them all. See setChainToolShaper.
+    if (!setChainToolShaper(model, (toolsJson: any[], candidate: unknown) => shapeJsonTools(toolsJson, candidate, rules as any[], detectModel))) {
+      effectiveTools = applyToolCompat(effectiveTools, model, rules);
+    }
   }
 
   const stepHookFailure: StepHookFailure = {};

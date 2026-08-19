@@ -112,11 +112,28 @@ export function withModelFallback(candidates: FallbackCandidate[], journal: Jour
     sticky = i;
     await claim(journal, key, { spec: candidates[i]!.spec }); // first winner; doesn't touch if already present (CAS)
   };
-  const attempt = async <T>(fn: (m: any) => Promise<T>): Promise<T> => {
+  /**
+   * Reshapes the call's tool schemas for the candidate about to be tried. Installed by run.ts when
+   * `schemaCompat` is on; absent otherwise, in which case the options pass through untouched.
+   *
+   * This is what makes a mixed chain actually work. The transform used to run once, before the call,
+   * against whichever model the proxy claimed to be — so a chain that fell over to a different
+   * provider sent it a schema shaped for the one that failed. By the time the fallback picks someone
+   * else the AI SDK has already converted the tools, which looked like the end of it. It is not:
+   * `options.tools[i].inputSchema` at this point is plain JSON Schema, and the compat rules are
+   * JSON-Schema-to-JSON-Schema. So each candidate can be handed a schema built for it, here, at the
+   * moment it is chosen.
+   */
+  let shapeTools: ((tools: any[], model: any) => any[]) | undefined;
+  const forCandidate = (options: any, m: any): any =>
+    shapeTools && Array.isArray(options?.tools) ? { ...options, tools: shapeTools(options.tools, m) } : options;
+
+  const attempt = async <T>(fn: (m: any, opts: (o: any) => any) => Promise<T>): Promise<T> => {
     let lastErr: unknown;
     for (const i of await order()) {
+      const m = candidates[i]!.model;
       try {
-        const r = await fn(candidates[i]!.model);
+        const r = await fn(m, (o: any) => forCandidate(o, m));
         await record(i);
         return r;
       } catch (e) {
@@ -138,66 +155,27 @@ export function withModelFallback(candidates: FallbackCandidate[], journal: Jour
     get provider() { return serving().provider; },
     get modelId() { return serving().modelId; },
     get supportedUrls() { return serving().supportedUrls; },
-    /**
-     * The chain itself, for callers that must prepare something BEFORE knowing who will serve.
-     *
-     * Tool-schema compat is the case that matters: run.ts applies it once per run, before the first
-     * model call, keyed off the model's identity. With a stale identity a mixed-provider chain applied
-     * anthropic's rules and then let OpenAI serve — so `openaiStrict` was skipped and a Zod `.url()`
-     * (`format: 'uri'`) reached OpenAI, exactly the silent rejection that rule exists to prevent.
-     *
-     * Applying the rules of every candidate in turn was tried and is WRONG, because the providers'
-     * requirements genuinely contradict. `openaiStrict` SETS `additionalProperties: false` (its strict
-     * mode requires it); the gemini rule DELETES `additionalProperties` (Gemini rejects the keyword).
-     * Measured on a two-candidate chain, composing them left whichever ran last in place:
-     *
-     *   chain [gemini, openai] → gemini was handed `additionalProperties: false`
-     *   chain [openai, gemini] → OpenAI was handed no `additionalProperties` at all
-     *
-     * Either way one provider receives the schema its own rule exists to prevent. There is no single
-     * contract that satisfies such a chain, so the honest move is to shape the tools for the candidate
-     * that will actually serve — see `resolveFrozenChoice` — and to say so out loud when the chain
-     * cannot be satisfied at once.
-     */
-    fallbackCandidates: candidates.map((c) => c.model),
-    /**
-     * Reads back the frozen choice so the identity above is right BEFORE the first call of this
-     * process. `order()` does this lazily, but not until `doGenerate` — which is after run.ts has
-     * already built the tools. Awaiting this first makes every run after the chain froze (and every
-     * resume, which is most calls in a long-lived deployment) prepare tools for the model that is
-     * really going to answer.
-     *
-     * The irreducible remainder: the FIRST run, before anything is frozen, is prepared for the first
-     * candidate. If that candidate then fails, the tools going to its replacement were shaped for it.
-     * Nothing can close that window here — the AI SDK converts the tools before the call, so by the
-     * time the fallback picks a different model there is no schema left to reshape.
-     */
-    resolveFrozenChoice: async (): Promise<void> => { await order(); },
-    doGenerate: (options: any) => attempt((m) => m.doGenerate(options)),
-    doStream: (options: any) => attempt((m) => m.doStream(options)),
+    /** Installed by run.ts when schemaCompat is on — see `shapeTools`. */
+    setToolShaper: (fn: (tools: any[], model: any) => any[]): void => { shapeTools = fn; },
+    doGenerate: (options: any) => attempt((m, shaped) => m.doGenerate(shaped(options))),
+    doStream: (options: any) => attempt((m, shaped) => m.doStream(shaped(options))),
   };
 }
 
-/**
- * The candidate models behind a `withModelFallback` proxy, or `undefined` for a plain model.
- *
- * A single-candidate chain is short-circuited to the raw model by `withModelFallback`, so a plain
- * model and a one-model chain are indistinguishable here — correctly, since there is nothing to fall
- * back to and nothing extra to prepare for.
- */
-/**
- * Populates a fallback proxy's frozen choice, so its identity is right before the first call.
- *
- * A no-op for a plain model and for a chain that has never run. Callers that must prepare something
- * keyed off the model's identity — tool-schema compat is the one — should await this first, otherwise
- * they see the first candidate no matter which one the journal already froze.
- */
-export async function resolveFrozenChoice(model: unknown): Promise<void> {
-  const r = (model as { resolveFrozenChoice?: () => Promise<void> })?.resolveFrozenChoice;
-  if (typeof r === 'function') await r();
-}
 
-export function fallbackCandidatesOf(model: unknown): any[] | undefined {
-  const c = (model as { fallbackCandidates?: unknown })?.fallbackCandidates;
-  return Array.isArray(c) && c.length > 0 ? c : undefined;
+/**
+ * Installs a per-candidate tool-schema shaper on a fallback chain. Returns false for a plain model
+ * (and for a one-candidate chain, which `withModelFallback` short-circuits to the raw model), so the
+ * caller can fall back to transforming the tools itself.
+ *
+ * This exists because providers' schema requirements genuinely contradict — OpenAI's strict mode
+ * requires `additionalProperties: false`, Gemini rejects the keyword — so no single shape serves a
+ * mixed chain. Transforming once, before the call, sent whichever candidate answered a schema built
+ * for a different one. Shaping inside the retry loop gives each candidate the schema it wants.
+ */
+export function setChainToolShaper(model: unknown, fn: (tools: any[], model: any) => any[]): boolean {
+  const set = (model as { setToolShaper?: (f: typeof fn) => void })?.setToolShaper;
+  if (typeof set !== 'function') return false;
+  set(fn);
+  return true;
 }
