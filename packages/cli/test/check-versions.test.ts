@@ -97,9 +97,20 @@ describe('check-versions: prerelease versions', () => {
     expect(out).toContain('0.2.0-rc.1');
   });
 
-  it('build metadata is not a prerelease — `+build.5` publishes as latest legitimately', () => {
-    const dir = fixtureWorkspace({ server: pub('server', '0.2.0+build.5'), durable: pub('durable', '0.2.0+build.5') });
-    expect(runGuard(dir).status).toBe(0);
+  it('build metadata is not a prerelease — a `-` AFTER the `+` is not a prerelease marker', () => {
+    // The fixture has to contain a hyphen in the BUILD part, or it proves nothing. `0.2.0+build.5` has
+    // no hyphen anywhere, so the naive `version.includes('-')` and the corrected
+    // `version.split('+')[0].includes('-')` agree on it — measured: reverting the fix left this test
+    // green. `0.2.0+build-5` is the shape that separates them.
+    const dir = fixtureWorkspace({ server: pub('server', '0.2.0+build-5'), durable: pub('durable', '0.2.0+build-5') });
+    const { status, out } = runGuard(dir);
+    expect(status, 'build metadata was mistaken for a prerelease').toBe(0);
+    expect(out, 'a legitimate latest release was announced as a prerelease').not.toContain('PRERELEASE');
+  });
+
+  it('a real prerelease is still refused, so the fix above did not open a hole', () => {
+    const dir = fixtureWorkspace({ server: pub('server', '0.2.0-rc.1+build-5'), durable: pub('durable', '0.2.0-rc.1+build-5') });
+    expect(runGuard(dir).status).toBe(1);
   });
 });
 
@@ -145,8 +156,8 @@ function withTemplate(dir: string, name: string, manifest: unknown): string {
 }
 
 describe('check-versions: scaffold templates', () => {
-  const peering = (name: string, peer: Record<string, string>) => ({
-    name: `@gnldev/${name}`, version: '0.1.0', files: ['dist'], peerDependencies: peer,
+  const peering = (name: string, peer: Record<string, string>, version = '0.1.0') => ({
+    name: `@gnldev/${name}`, version, files: ['dist'], peerDependencies: peer,
   });
 
   it('fails when a template pins a major the package it installs does not peer on', () => {
@@ -186,5 +197,73 @@ describe('check-versions: scaffold templates', () => {
     const { status, out } = runGuard(fixtureWorkspace({ durable: peering('durable', { ai: '^7.0.0' }) }));
     expect(status).toBe(0);
     expect(out, 'an absent directory must not print a confirmation').not.toContain('scaffold templates agree');
+  });
+
+  /** A workspace at `version` whose template pins @gnldev/durable at `pin`. */
+  function withTemplatePin(version: string, pin: string) {
+    const dir = fixtureWorkspace({ durable: peering('durable', { ai: '^7.0.0' }, version) });
+    const tpl = join(dir, 'packages', 'cli', 'templates', 'minimal');
+    mkdirSync(tpl, { recursive: true });
+    writeFileSync(join(tpl, 'package.json'), JSON.stringify({
+      name: 'app', dependencies: { '@gnldev/durable': pin, ai: '^7.0.0' },
+    }));
+    return dir;
+  }
+
+  // The template's own @gnldev pin was never compared to the version being published. Measured on the
+  // real script: packages at 0.2.0 with a template pinning ^0.1.0 exited 0, and so did ^9.9.9 — a
+  // version that will never exist. The gate then printed "1 scaffold template agree with the published
+  // peer ranges", claiming an agreement it had not looked for. A user meets it as an ERESOLVE on the
+  // first `npm install` after `npm create gnl`, with no node_modules to inspect.
+  it('refuses a template pinned a minor BEHIND the version being published', () => {
+    const { status, out } = runGuard(withTemplatePin('0.2.0', '^0.1.0'));
+    expect(status, 'a stale template pin shipped').toBe(1);
+    expect(out).toContain('does not accept 0.2.0');
+  });
+
+  it('refuses a template pinned to a version that will never exist', () => {
+    const { status, out } = runGuard(withTemplatePin('0.2.0', '^9.9.9'));
+    expect(status).toBe(1);
+    expect(out).toContain('does not accept 0.2.0');
+  });
+
+  it('refuses a pin it cannot verify rather than assuming it is fine', () => {
+    // `latest` resolves to whatever npm has at install time, which is the opposite of a lockstep
+    // guarantee. Unverifiable and wrong are the same problem here: nobody is checking either way.
+    const { status, out } = runGuard(withTemplatePin('0.2.0', 'latest'));
+    expect(status).toBe(1);
+    expect(out).toContain('unrecognised');
+  });
+
+  it.each(['^0.2.0', '~0.2.0', '0.2.0'])('accepts %j against 0.2.0', (pin) => {
+    expect(runGuard(withTemplatePin('0.2.0', pin as string)).status, `${pin} was refused`).toBe(0);
+  });
+
+  it('knows that ^0.x is not the same rule as ^1.x', () => {
+    // The case this repo is actually in. `^0.1.0` does NOT accept 0.2.0 (a 0.x minor is a breaking
+    // change by convention), while `^1.1.0` DOES accept 1.2.0. A checker that missed this would pass
+    // exactly the pins that break a scaffold.
+    expect(runGuard(withTemplatePin('1.2.0', '^1.1.0')).status, '^1.1.0 should accept 1.2.0').toBe(0);
+    expect(runGuard(withTemplatePin('0.2.0', '^0.1.0')).status, '^0.1.0 must not accept 0.2.0').toBe(1);
+  });
+
+  it('counts the templates it READ, not the directories it found', () => {
+    // The case the `examined` counter exists for, and the one no fixture had: a template directory
+    // with NO manifest. templates/_e2e is exactly that in the real repo — an add-on with no
+    // package.json — so `templates.length` claimed one more than was examined. Measured before this
+    // test: reverting `examined` to `templates.length` left all ten fixtures green, because none of
+    // them had a manifest-less directory and no assertion read the number.
+    const dir = fixtureWorkspace({ durable: peering('durable', { ai: '^7.0.0' }) });
+    const tpl = join(dir, 'packages', 'cli', 'templates');
+    mkdirSync(join(tpl, 'minimal'), { recursive: true });
+    writeFileSync(join(tpl, 'minimal', 'package.json'), JSON.stringify({
+      name: 'app', dependencies: { '@gnldev/durable': '^0.1.0', ai: '^7.0.0' },
+    }));
+    mkdirSync(join(tpl, '_e2e'), { recursive: true }); // an add-on, deliberately without a manifest
+
+    const { status, out } = runGuard(dir);
+    expect(status).toBe(0);
+    expect(out, 'the count included a directory that was never read').toContain('1 scaffold template ');
+    expect(out).not.toContain('2 scaffold template');
   });
 });

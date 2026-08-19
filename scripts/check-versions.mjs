@@ -117,6 +117,32 @@ const peerOf = (name, dep) => {
 // the same reading as the `existsSync(manifest)` skip above. The real repo has the directory, so
 // this cannot quietly disable the check where it matters.
 const tmplProblems = [];
+/**
+ * Does `range` accept `version`? A deliberately small semver subset — `^`, `~` and an exact pin —
+ * because that is what a scaffold template is allowed to contain, and pulling in a semver library for
+ * a release gate that must run before anything is installed is the wrong trade.
+ *
+ * Anything outside that subset is reported rather than assumed fine: an unverifiable pin in a template
+ * is the same problem as a wrong one, since nobody is checking it either way.
+ */
+function rangeAccepts(range, version) {
+  const v = (version.match(/^(\d+)\.(\d+)\.(\d+)/) ?? []).slice(1).map(Number);
+  const m = range.match(/^([\^~]?)(\d+)\.(\d+)\.(\d+)/);
+  if (v.length !== 3 || !m) return { ok: false, why: 'unrecognised' };
+  const [, op, MA, MI, PA] = m;
+  const r = [Number(MA), Number(MI), Number(PA)];
+  const gte = v[0] > r[0] || (v[0] === r[0] && (v[1] > r[1] || (v[1] === r[1] && v[2] >= r[2])));
+  if (!op) return { ok: v[0] === r[0] && v[1] === r[1] && v[2] === r[2], why: 'exact pin' };
+  if (op === '~') return { ok: gte && v[0] === r[0] && v[1] === r[1], why: 'tilde range' };
+  // caret: 0.x.y is special — ^0.1.0 does NOT accept 0.2.0, which is exactly the case this repo is in.
+  if (r[0] === 0) {
+    return r[1] === 0
+      ? { ok: v[0] === 0 && v[1] === 0 && v[2] === r[2], why: 'caret on 0.0.x' }
+      : { ok: gte && v[0] === 0 && v[1] === r[1], why: 'caret on 0.x' };
+  }
+  return { ok: gte && v[0] === r[0], why: 'caret' };
+}
+
 let examined = 0;
 const templates = existsSync(templateDir)
   ? readdirSync(templateDir, { withFileTypes: true }).filter((d) => d.isDirectory())
@@ -150,6 +176,18 @@ for (const t of templates) {
     }
     if (range && range.startsWith('workspace:')) {
       tmplProblems.push(`  templates/${t.name}: ${dep}@${range} — workspace: protocol cannot resolve outside this repo`);
+    } else if (range) {
+      // The pin must accept the version about to be published. Nothing compared these before: a
+      // template pinning ^0.1.0 while the workspace sat at 0.2.0 passed, and so did ^9.9.9 — a version
+      // that will never exist. Worse, the gate then printed "N scaffold templates agree with the
+      // published peer ranges", claiming agreement it had not looked for. The user meets it as an
+      // ERESOLVE on the first `npm install` after `npm create gnl`, with no node_modules to inspect.
+      const verdict = rangeAccepts(range, version);
+      if (!verdict.ok) {
+        tmplProblems.push(
+          `  templates/${t.name}: pins ${dep}@${range}, which does not accept ${version} (${verdict.why})`,
+        );
+      }
     }
   }
 }
