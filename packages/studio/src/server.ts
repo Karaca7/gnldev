@@ -398,10 +398,18 @@ export interface StudioApiOptions {
   /**
    * Opt-in multi-org support (v1 = READ-ONLY audit): if an org resolves (default: the `x-gnl-org`
    * Header), the entire read surface (runs/state/diff/trace/metrics/threads) is scoped to that org via
-   * WithOrg. In an org context, WRITES (POST/PATCH/DELETE) return 403 — since the runner/resume are tied
-   * To the caller's gnl instance, a half-scoped write would create data confusion; use @gnldev/server's
-   * `org` option for the write path (the option name is KEPT for consistency with @gnldev/server). A request
-   * Without an org runs in the shared space.
+   * WithOrg. A request without an org runs in the shared space.
+   *
+   * WRITES depend on WHERE the org came from, which this comment used to flatten into "writes return
+   * 403". Measured:
+   *
+   *   x-gnl-org HEADER + write        403 — a header is not an identity, and honouring it would let
+   *                                          any caller act as any organization
+   *   identity-bound org + own run    200 — the principal IS the authority; this is the normal path
+   *   identity-bound org + other run  404 — the run is not in that scope, so there is nothing to act on
+   *
+   * The option name is KEPT for consistency with @gnldev/server, whose `org` option covers the write
+   * path for a host that resolves organizations itself.
    */
   org?: {
     /**

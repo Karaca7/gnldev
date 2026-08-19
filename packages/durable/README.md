@@ -228,6 +228,37 @@ npx tsx examples/no-double-charge.ts   # no API key needed (mock model) — exac
 | `withDurableModel(model, ctx)` / `durableTools(tools, ctx)` | Composable wrappers. |
 | `InMemoryJournal` / `SqliteStorage` (`/sqlite`, journal at `.runs`) | Journal adapters. |
 | `Guard`, `Interrupt`, `Journal`, `DurableResult` | Types. |
+| `resolveModel(spec)` / `registerModelProvider(prefix, factory)` | Turns `'provider/model'` into a model, lazily importing the provider package. Four prefixes ship built in (`openai`, `anthropic`, `google`, `mistral`); a host teaches it more — see below. |
+
+### Your own provider (OpenAI-compatible endpoints)
+
+An endpoint that speaks the OpenAI API — NVIDIA NIM, Together, vLLM, Ollama, a gateway, a local
+server — is not one of the four built-in prefixes, so `resolveModel('nvidia/…')` does not know it
+until the host says so:
+
+```ts
+import { createOpenAI } from '@ai-sdk/openai';
+import { registerModelProvider } from '@gnldev/durable';
+
+// `.chat(id)`, NOT `createOpenAI({...})(id)`. The bare call returns the RESPONSES model, and these
+// servers speak /chat/completions — the wrong one fails as a 404 from your own endpoint.
+const unregister = registerModelProvider('nvidia', (modelId) =>
+  createOpenAI({ baseURL: 'https://integrate.api.nvidia.com/v1', apiKey: process.env.NVIDIA_API_KEY })
+    .chat(modelId));
+```
+
+After that, `'nvidia/meta/llama-3.1-70b-instruct'` resolves everywhere a model string is accepted —
+agent config, the Studio playground, a fallback chain. The returned function unregisters it, so a
+test can add one without leaking it into the next.
+
+Two things the router enforces, so a host does not have to:
+
+- **Prefixes are lowercase words.** `' openai'`, `'OPENAI'` and `'openai '` are refused rather than
+  normalised: two spellings of one name resolving through different factories in the same process is
+  a difference nothing on screen would show.
+- **Model ids are checked before they reach your factory.** That string arrives from an HTTP body in
+  Studio, and a factory typically puts it in a request URL under your credentials — so `'../../etc'`,
+  a whole URL, or anything with a newline is refused at the boundary rather than passed on.
 
 License: Apache-2.0 — see [LICENSE](../../LICENSE).
 
