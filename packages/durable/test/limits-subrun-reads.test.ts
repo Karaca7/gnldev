@@ -114,3 +114,62 @@ describe('sub-run cost summing', () => {
     ).rejects.toBeInstanceOf(RunLimitExceededError);
   });
 });
+
+// The same invariant through the real API, not hand-seeded keys.
+//
+// run-limits.test.ts already pins that a sub-agent's spend counts toward the parent's ceiling, but it
+// fires on the step immediately after the hand-off — the FIRST read of the nested counter, where a
+// cache cannot show up yet. That is why an over-eager cache passed it. Here the parent keeps working
+// for several more steps first, so the nested counter has to be read again after the miss-cache has
+// been populated by the parent's own noop calls.
+describe('fan-out spend after the parent keeps working', () => {
+  it('the sub-agent\'s cost is still counted many steps later', async () => {
+    const { runDurable, createAgentTool, gnlTool } = await import('../src/index.js');
+    const { stepCountIs } = await import('ai');
+    const { z } = await import('zod');
+    const journal = new InMemoryStorage().runs;
+
+    const bigUsage = { inputTokens: 300_000, outputTokens: 300_000, totalTokens: 600_000 };
+    const childModel: any = {
+      specificationVersion: 'v2', provider: 'mock', modelId: 'gpt-4o', supportedUrls: {},
+      doGenerate: async () => ({
+        content: [{ type: 'text', text: 'sub' }], finishReason: 'stop',
+        usage: bigUsage, warnings: [], response: { modelId: 'gpt-4o' },
+      }),
+      doStream: async () => { throw new Error('generate-only'); },
+    };
+    // A ceiling the sub-agent alone does not hit, so it completes and leaves its counters behind.
+    const expert = createAgentTool({ journal, model: childModel, limits: { maxCostUsd: 1000 } } as never);
+    const noop = gnlTool({ description: 'noop', inputSchema: z.object({}), execute: async () => ({ ok: true }) } as never);
+
+    let step = 0;
+    const parentModel: any = {
+      specificationVersion: 'v2', provider: 'mock', modelId: 'gpt-4o', supportedUrls: {},
+      doGenerate: async () => {
+        step++;
+        const small = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
+        if (step === 1) {
+          return { content: [{ type: 'tool-call', toolCallId: 'call-sub', toolName: 'agent_expert', input: JSON.stringify({ task: 'go' }) }], finishReason: 'tool-calls', usage: small, warnings: [], response: { modelId: 'gpt-4o' } };
+        }
+        if (step <= 6) {
+          return { content: [{ type: 'tool-call', toolCallId: `noop-${step}`, toolName: 'noop', input: '{}' }], finishReason: 'tool-calls', usage: small, warnings: [], response: { modelId: 'gpt-4o' } };
+        }
+        return { content: [{ type: 'text', text: 'done' }], finishReason: 'stop', usage: small, warnings: [], response: { modelId: 'gpt-4o' } };
+      },
+      doStream: async () => { throw new Error('generate-only'); },
+    };
+
+    // A ceiling high enough that the run completes — the point is what is VISIBLE afterwards.
+    await runDurable({
+      runId: 'fan-1', journal, model: parentModel, tools: { agent_expert: expert, noop },
+      prompt: 'delegate', stopWhen: stepCountIs(12), limits: { maxCostUsd: 1000 },
+    } as never);
+    expect(step, 'the parent should have kept working after the hand-off').toBeGreaterThan(5);
+
+    // 600k tokens at gpt-4o rates is $3.75; the parent's own steps add cents.
+    await expect(
+      enforceStepLimits(journal as never, 'fan-1', { maxCostUsd: 1 } as never, {}),
+      'after several later steps the sub-agent\'s spend was no longer visible to the ceiling',
+    ).rejects.toBeInstanceOf(RunLimitExceededError);
+  });
+});
