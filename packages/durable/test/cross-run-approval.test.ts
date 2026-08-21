@@ -118,6 +118,78 @@ describe('a cross-run tool suspended for approval', () => {
     expect(executed, 'the shadow was treated as the record and the charge ran twice').toBe(1);
   });
 
+  it('does not leave the OTHER run holding a phantom approval for a charge that already ran', async () => {
+    // The shadow was written once and never refreshed, which turned the fix into a worse version of the
+    // bug it closed. Run A suspends and gets a `suspended` shadow; run B suspends on the same claim, the
+    // operator approves in B, the charge runs, the authoritative record moves to `succeeded` — and run A
+    // keeps its shadow at `suspended` forever. Measured before the replay path mirrored too: run A
+    // COMPLETED (final model step written, text 'done') while listRuns reported it suspended
+    // permanently, so Studio's inbox offered a human an approval for a charge that had already gone
+    // through, Deny did nothing, and Approve printed a bogus "the journal recorded false" conflict.
+    // Retention went blind at the same time: listStaleRuns excludes suspended, so run A was never
+    // reclaimed.
+    const journal = new InMemoryJournal();
+    let executed = 0;
+    const charge = chargeTool(() => { executed++; });
+    await runDurable({ runId: 'runA', journal, model: model('call-A'), tools: { charge }, guard, prompt: 'go' } as never);
+    const b = await runDurable({ runId: 'runB', journal, model: model('call-B'), tools: { charge }, guard, prompt: 'go' } as never);
+    await runDurable({
+      runId: 'runB', journal, model: model('call-B'), tools: { charge }, guard, prompt: 'go',
+      approvals: { [b.interrupts![0]!.toolCallId]: true },
+    } as never);
+
+    // The operator now acts on the id run A's inbox entry is showing.
+    const a = await runDurable({
+      runId: 'runA', journal, model: model('call-A'), tools: { charge }, guard, prompt: 'go',
+      approvals: { 'call-A': true },
+    } as never);
+
+    expect((a as { text?: string }).text, 'approving from run A\'s inbox entry did nothing').toBe('done');
+    expect(executed, 'the shared action ran a second time').toBe(1);
+    const runA = (await journal.listRuns()).find((r) => r.runId === 'runA');
+    expect(runA?.status, 'a finished run still reports suspended — the inbox keeps it forever and retention never sweeps it').toBe('completed');
+    const step = (await journal.readRun('runA')).find((e) => e.kind === 'tool');
+    expect((step?.value as { status?: string })?.status, 'the run\'s own history still says suspended').toBe('succeeded');
+  });
+
+  it('does not leave the run\'s copy disagreeing with the record about who has been served', async () => {
+    // The updated resolvedToolCallIds list was written to the authoritative key while the STALE local
+    // copy was mirrored, so the two disagreed — authoritative `["call-A","call-B"]` against a mirror
+    // still holding `["call-A"]`. time-travel.ts stops matching on the key once resolvedIds are
+    // present, so a COMPLETED run reported a pending tool call, and Studio's GET /approvals offered a
+    // human an approval for a charge that had already gone through. Deny then read as a silent no-op:
+    // the record stays 'succeeded' and only the inbox row disappears.
+    const journal = new InMemoryJournal();
+    const charge = chargeTool(() => {});
+    await runDurable({ runId: 'runA', journal, model: model('call-A'), tools: { charge }, guard, prompt: 'go' } as never);
+    const b = await runDurable({ runId: 'runB', journal, model: model('call-B'), tools: { charge }, guard, prompt: 'go' } as never);
+    await runDurable({
+      runId: 'runB', journal, model: model('call-B'), tools: { charge }, guard, prompt: 'go',
+      approvals: { [b.interrupts![0]!.toolCallId]: true },
+    } as never);
+    await runDurable({ runId: 'runA', journal, model: model('call-A'), tools: { charge }, guard, prompt: 'go' } as never);
+
+    const authoritativeKey = (await journal.listKeys('')).find((k) => k.startsWith('xrun:'))!;
+    const authoritative = await journal.get(authoritativeKey) as { resolvedToolCallIds?: string[] };
+    const mirror = (await journal.readRun('runA')).find((e) => e.kind === 'tool')!.value as { resolvedToolCallIds?: string[] };
+
+    expect(authoritative.resolvedToolCallIds, 'run A never recorded that its own id was served').toContain('call-A');
+    expect(mirror.resolvedToolCallIds, 'the run\'s copy disagrees with the record about who has been served')
+      .toEqual(authoritative.resolvedToolCallIds);
+  });
+
+  it('gives the DEDUPING run a history too, not only the one that wrote the terminal', async () => {
+    // The shadow was written only from the terminal-write path, so of two runs doing the same work one
+    // had a tool step and the other had none — and getRunCost reported different tool counts for them.
+    const journal = new InMemoryJournal();
+    const charge = chargeTool(() => {});
+    await runDurable({ runId: 'first', journal, model: model('c1'), tools: { charge }, prompt: 'go' } as never);
+    await runDurable({ runId: 'second', journal, model: model('c2'), tools: { charge }, prompt: 'go' } as never);
+
+    const kinds = (await journal.readRun('second')).map((e) => e.kind);
+    expect(kinds, 'the run that deduped has no record that the step happened').toContain('tool');
+  });
+
   it('a single run\'s unwind still does not touch the SHARED action', async () => {
     // compensation-interactions.test.ts states this invariant already; repeated here against the
     // shadow specifically, because the shadow is the thing that could break it and did, once.

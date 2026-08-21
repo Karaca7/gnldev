@@ -212,19 +212,30 @@ describe('@gnldev/studio — the org boundary on the write surface', () => {
     // `knowledge/search` returned `[{"text":"globex private doc"}]` from the whole corpus.
     //
     // Studio cannot filter a host's cache or vector index for it. What it can stop doing is hiding who
-    // the caller was — the third parameter is what makes scoping possible on the host's side, and a
-    // host that ignores it behaves exactly as before.
+    // the caller was — the third parameter is what makes scoping possible on the host's side.
+    //
+    // The clause that used to end this paragraph — "and a host that ignores it behaves exactly as
+    // before" — WAS the hole, and it was the default. Nothing obliges a host to read an argument it has
+    // never heard of, and two of the five entry points (`cache.stats()`, `queue.listJobs()`) are handed
+    // nothing at all. So the argument stayed, and the default flipped: an unscopeable host object is
+    // now REFUSED to an org-scoped identity, and a host that has actually made its object org-aware
+    // says so with `orgScoped: true` (see unscopeable-hosts.test.ts for the refusal side).
+    //
+    // These adapters therefore declare it: this test is about what a host that ACTS on the orgId is
+    // told, which is only reachable for a host that has claimed it. The assertions are unchanged — the
+    // test still fails if the orgId is not passed.
     const seen: Record<string, unknown[]> = { cache: [], retry: [], search: [] };
     const app = createStudioApi({
       reader: new InMemoryJournal(),
       auth: AUTH(),
       org: {},
       cache: {
+        orgScoped: true,
         stats: () => ({ hits: 0, misses: 0, hitRate: 0, size: 0 }),
         invalidate: (key: unknown, ctx?: { orgId?: string }) => { seen.cache.push(ctx?.orgId); return 1; },
       },
-      queue: { retry: (_id: string, ctx?: { orgId?: string }) => { seen.retry.push(ctx?.orgId); return 'new-1'; } },
-      vectors: { search: (_q: string, _k?: number, ctx?: { orgId?: string }) => { seen.search.push(ctx?.orgId); return []; } },
+      queue: { orgScoped: true, retry: (_id: string, ctx?: { orgId?: string }) => { seen.retry.push(ctx?.orgId); return 'new-1'; } },
+      vectors: { orgScoped: true, search: (_q: string, _k?: number, ctx?: { orgId?: string }) => { seen.search.push(ctx?.orgId); return []; } },
     } as never);
 
     await call(app as never, '/cache/invalidate', { method: 'POST', headers: asAcme, body: '{}' });

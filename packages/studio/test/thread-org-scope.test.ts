@@ -16,6 +16,7 @@
 // boot, where a host can act on it, instead of at the first 403, where a user can only file a bug.
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { InMemoryJournal, InMemoryStorage } from '@gnldev/durable';
+import { roleAuth } from '@gnldev/auth';
 import { createStudioApi } from '../src/server.js';
 import { call } from './call.js';
 
@@ -40,6 +41,14 @@ function hostMemory() {
 const asOrg = (app: unknown, path: string, init: RequestInit = {}) =>
   call(app as never, path, { ...init, headers: { 'x-gnl-org': 'acme', ...(init.headers ?? {}) } });
 
+/** An org bound to the IDENTITY. Unlike the header, this one is allowed to write. */
+const boundAdmin = roleAuth({ admin: { token: 'acme-adm', orgId: 'acme' } });
+const asBoundAdmin = (app: unknown, path: string, init: RequestInit = {}) =>
+  call(app as never, path, {
+    ...init,
+    headers: { authorization: 'Bearer acme-adm', 'content-type': 'application/json', ...(init.headers ?? {}) },
+  });
+
 describe('threads when the host passes `memory` directly', () => {
   it.each([
     ['/threads', 'GET'],
@@ -61,6 +70,49 @@ describe('threads when the host passes `memory` directly', () => {
     const res = await call(app as never, '/threads');
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual([{ id: 'globex-thread' }]);
+  });
+
+  it.each([
+    ['/agents/bot/run'],
+    ['/agents/bot/stream'],
+  ])('refuses %s when it NAMES a thread, which reaches the same store', async (path) => {
+    // The boundary was put on the thread endpoints and walked around by naming the thread instead of
+    // fetching it: these routes hand a caller-supplied `threadId` straight to the host's unscoped
+    // store. Measured against the real stack — `GET /threads/<globex>/messages` answered 403 while
+    // `POST /agents/bot/run {threadId:'<globex>'}` answered 200 with GLOBEX_PRIVATE_MESSAGE in the
+    // model prompt and in the response body, and the run then WROTE to that thread.
+    const { memory } = hostMemory();
+    const seen: string[] = [];
+    const gnl = {
+      listAgents: async () => [{ name: 'bot' }],
+      run: async (_n: string, o: { threadId?: string }) => { seen.push(o.threadId ?? ''); return { text: 'ok' }; },
+      stream: async (_n: string, o: { threadId?: string }) => { seen.push(o.threadId ?? ''); return new Response('ok'); },
+    };
+    // An IDENTITY-bound org, not the `x-gnl-org` header: a header-derived org already has every write
+    // refused by the v1 read-only rule, so the header can never reach this. The bound admin is the
+    // paid multi-org path, and it is the one that got through.
+    const app = createStudioApi({ reader: new InMemoryJournal(), memory, gnl, auth: boundAdmin, org: {} } as never);
+
+    const res = await asBoundAdmin(app, path, {
+      method: 'POST',
+      body: JSON.stringify({ runId: 'r1', prompt: 'hi', threadId: 'globex-thread' }),
+    });
+    expect(res.status, `${path} reached another tenant's conversation store`).toBe(403);
+    expect(seen, 'the run was started before anything checked the thread').toEqual([]);
+  });
+
+  it('still serves an agent run that names NO thread', async () => {
+    // An agent run without a thread touches no conversation store; refusing it would break org-scoped
+    // Playground use over an unrelated option.
+    const { memory } = hostMemory();
+    const gnl = { listAgents: async () => [{ name: 'bot' }], run: async () => ({ text: 'ok' }) };
+    const app = createStudioApi({ reader: new InMemoryJournal(), memory, gnl, auth: boundAdmin, org: {} } as never);
+
+    const res = await asBoundAdmin(app, '/agents/bot/run', {
+      method: 'POST',
+      body: JSON.stringify({ runId: 'r1', prompt: 'hi' }),
+    });
+    expect(res.status).toBe(200);
   });
 
   it('warns at boot rather than only at the first refusal', async () => {

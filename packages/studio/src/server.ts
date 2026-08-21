@@ -561,11 +561,73 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     const org = principalOf(c.req.raw)?.orgId ?? orgALS.getStore();
     if (!org) return undefined; // single-org / operator: nothing to isolate from
     return c.json({
-      error: 'thread endpoints are unavailable to an organization-scoped identity because this ' +
-        'deployment passed `memory` directly, which has no organization boundary. Pass `memoryFactory` ' +
+      error: 'this request reaches the conversation store, which has no organization boundary in this ' +
+        'deployment because `memory` was passed directly. Pass `memoryFactory` ' +
         'instead — it receives the org-scoped journal — or use an unscoped operator identity.',
     }, 403);
   };
+
+  /**
+   * `memory` is not the only host object with this problem, and treating it as if it were is what left
+   * the others open.
+   *
+   * `vectors`, `cache`, `queue` and a host-supplied `workflowStore` are all somebody else's objects
+   * with their own storage behind them. Studio hands three of them an `{ orgId }` argument, but that is
+   * ADVISORY — nothing obliges a host to read it, and the two remaining entry points (`cache.stats()`,
+   * `queue.listJobs()`) are handed nothing at all. Measured from an acme-bound admin against hosts that
+   * ignore the argument:
+   *
+   *   POST /knowledge/search   -> 200 [{"text":"globex private doc"}]
+   *   POST /cache/invalidate {} -> 200 {"removed":9}      every organization's cache, one call
+   *   POST /jobs/globex-job/retry -> 200
+   *   GET  /workflows          -> 200, another org's definition INCLUDING its prompt template
+   *   DELETE /workflows/secret -> 200, and the other org's definition is gone
+   *
+   * (The journal-derived workflow store is fine — measured, it isolates correctly, because it is built
+   * from the ALS-aware reader. Only the host-supplied one is unscopeable.)
+   *
+   * If handing over a store that cannot be scoped is grounds to refuse threads, it is grounds to refuse
+   * these. A host that HAS made its object org-aware says so by setting `orgScoped: true` on it — an
+   * explicit claim, in the host's own code, the same shape as `allowOpenAccess`. Refusing by default is
+   * the only side of this that fails safe: the cost of a wrong refusal is a config line, and the cost of
+   * a wrong service is one tenant reading another's data.
+   */
+  const unscopeableHosts: Array<{ what: string; obj: unknown; fix: string }> = [
+    { what: 'vectors', obj: vectors, fix: 'set `orgScoped: true` on it once it honours the `orgId` it is handed' },
+    { what: 'cache', obj: cache, fix: 'set `orgScoped: true` on it once it honours the `orgId` it is handed' },
+    { what: 'queue', obj: queue, fix: 'set `orgScoped: true` on it once it honours the `orgId` it is handed' },
+    { what: 'workflowStore', obj: _wfStoreOpt, fix: 'omit `workflowStore` to use the journal-derived store, which IS org-scoped' },
+  ];
+
+  const requireScopedHost = (c: Context, what: string): Response | undefined => {
+    const entry = unscopeableHosts.find((e) => e.what === what);
+    if (!entry?.obj) return undefined; // not configured — the route answers its own way
+    if ((entry.obj as { orgScoped?: boolean }).orgScoped === true) return undefined; // the host claims it
+    const org = principalOf(c.req.raw)?.orgId ?? orgALS.getStore();
+    if (!org) return undefined; // single-org / operator: nothing to isolate from
+    return c.json({
+      error: `this request reaches \`${what}\`, which is a host-provided object with no organization ` +
+        `boundary, so serving it would hand one tenant another tenant's data — ${entry.fix}, or use an ` +
+        'unscoped operator identity.',
+    }, 403);
+  };
+
+  /**
+   * The same refusal, for the routes that reach the conversation store WITHOUT being thread endpoints.
+   *
+   * `/agents/:name/run` and `/agents/:name/stream` take a caller-supplied `threadId` and hand it
+   * straight to the host's unscoped store, so the boundary that `requireScopedMemory` puts on
+   * `/threads*` was walked around by naming the thread instead of fetching it. Measured against the
+   * real stack: `GET /threads/<globex-thread>/messages` answered 403 while
+   * `POST /agents/bot/run {threadId:'<globex-thread>'}` answered 200 with GLOBEX_PRIVATE_MESSAGE in the
+   * model prompt and in the response body — and the run then WROTE to that thread. Read and write, on
+   * the surface the sibling routes were closed to.
+   *
+   * Conditional on a thread actually being named: an agent run that uses no thread touches no
+   * conversation store, and refusing it would break org-scoped Playground use for no reason.
+   */
+  const requireScopedThread = (c: Context, threadId: unknown): Response | undefined =>
+    threadId === undefined || threadId === null ? undefined : requireScopedMemory(c);
 
   const requirePlatformAdmin = (c: Context, orgBoundMsg: string): Response | undefined => {
     const p = principalOf(c.req.raw);
@@ -574,6 +636,44 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       return c.json({ error: 'platform-admin required (fail-closed: no org scope and no platform-admin grant)' }, 403);
     }
     return undefined;
+  };
+
+  /**
+   * The request path with the mount prefix removed, so an exemption can name an EXACT route.
+   *
+   * The org fail-closed guards exempt `GET /me` and `GET /capabilities`, so a refused caller can still
+   * learn its own scope and the auth mode. That exemption was written as `path.endsWith('/me')` because
+   * this app carries no basePath of its own and a host may mount it anywhere — measured, an inner
+   * middleware sees `/me` standalone and `/studio/me` under `app.route('/studio', …)`.
+   *
+   * Tested against the WHOLE path, it matched any route whose last segment a caller could choose, and
+   * three of ours end in a free parameter: `/runs/:id`, `/workflows/run/:runId`, and
+   * `/runs/:id/regression/:otherId`. Measured, with the legacy `{read,write}` pair + `org` — the exact
+   * configuration the fail-closed guard exists for:
+   *
+   *   GET /runs                                x-gnl-org: globex -> 403
+   *   GET /runs/me                             x-gnl-org: globex -> 200  another org's run
+   *   GET /runs/r-globex/regression/me         x-gnl-org: globex -> 200  "textA":"GLOBEX-SECRET"
+   *
+   * and under the paid strict multi-org net, from an authenticated principal with no org binding:
+   *
+   *   GET /runs/org:acme:r-acme/regression/me  Bearer unbound   -> 200  "textA":"ACME-SECRET"
+   *
+   * — the physical `org:<id>:` key is addressable, so that reads ANY organization, not just root data.
+   *
+   * `c.req.routePath` inside this middleware is the middleware's own pattern, which is exactly the
+   * mount prefix plus `/*` (measured: `/*` standalone, `/studio/*` mounted). Stripping it gives the
+   * route as registered, so the exemption can be an equality test. A routePath that is not `*`-suffixed
+   * leaves the path unchanged and the exemption simply does not apply — failing closed.
+   */
+  const mountedRouteOf = (c: Context): string => {
+    const mount = c.req.routePath.replace(/\/\*$/, '');
+    return mount && c.req.path.startsWith(mount) ? c.req.path.slice(mount.length) : c.req.path;
+  };
+  /** `/me` and `/capabilities` — what a REFUSED caller is still allowed to learn about itself. */
+  const isSelfDescribingRoute = (c: Context): boolean => {
+    const route = mountedRouteOf(c);
+    return route === '/me' || route === '/capabilities';
   };
 
   // Multi-org (v1 read-only): the org middleware stores it in ALS; on every call `reader` delegates to
@@ -651,7 +751,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       // different question (that one is still the per-endpoint gate's 401). The same combination is
       // rejected by @gnldev/server; Studio claimed the guarantee without carrying the guard.
       if (opts.org && authProvider && !bindsIdentity(authProvider) &&
-          !c.req.path.endsWith('/me') && !c.req.path.endsWith('/capabilities')) {
+          !isSelfDescribingRoute(c)) {
         return c.json({ error: 'access denied: org isolation is configured but this auth provider binds no identity to an org (fail-closed)' }, 403);
       }
       // STRICT (EE multi-org) FAIL-CLOSED NET: an AUTHENTICATED identity with no org binding AND no
@@ -663,7 +763,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       // Entirely (strictMultiOrg=false) → behavior unchanged.
       if (
         strictMultiOrg && principal && !bound && !isPlatformAdmin(principal) &&
-        !c.req.path.endsWith('/me') && !c.req.path.endsWith('/capabilities')
+        !isSelfDescribingRoute(c)
       ) {
         return c.json({ error: 'access denied: no org scope and no platform-admin grant (fail-closed)' }, 403);
       }
@@ -940,6 +1040,20 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       'refused to organization-scoped identities rather than serving one tenant another tenant\'s ' +
       'conversations. Pass `memoryFactory` instead — it receives the org-scoped journal.',
     );
+  }
+  // The same sentence for the same problem, for every OTHER host object with it. `memory` got a boot
+  // warning and a refusal; its four siblings got an advisory `{ orgId }` argument that no host is
+  // obliged to read, and nothing was said at boot about any of them.
+  if (multiOrganizationEnabled) {
+    for (const { what, obj, fix } of unscopeableHosts) {
+      if (!obj || (obj as { orgScoped?: boolean }).orgScoped === true) continue;
+      console.warn(
+        `@gnldev/studio: \`${what}\` was passed directly while multi-organization is enabled. It owns ` +
+        'its own store and cannot be given an organization boundary from here, so the endpoints that ' +
+        `reach it are refused to organization-scoped identities rather than serving one tenant another ` +
+        `tenant's data. To serve them, ${fix}.`,
+      );
+    }
   }
 
   // PUBLIC (exempt from the read gate): lets the UI discover the auth mode + premium capabilities (sso/rbac...) BEFORE login.
@@ -2532,6 +2646,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     if (gated) return gated;
     const body = (await c.req.json().catch(() => ({}))) as any;
     if (!body.runId) return c.json({ error: 'runId is required (idempotency key)' }, 400);
+    { const denied = requireScopedThread(c, body.threadId); if (denied) return denied; }
     try {
       const mo = await managedOverrides(name, c);
       const r = await gnl.run(name, {
@@ -2569,6 +2684,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     if (gated) return gated;
     const body = (await c.req.json().catch(() => ({}))) as any;
     if (!body.runId) return c.json({ error: 'runId is required (idempotency key)' }, 400);
+    { const denied = requireScopedThread(c, body.threadId); if (denied) return denied; }
     let result: any;
     try {
       const mo = await managedOverrides(name, c);
@@ -2686,6 +2802,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   app.get('/jobs', async (c) => {
     if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!queue) return c.json([]);
+    { const denied = requireScopedHost(c, 'queue'); if (denied) return denied; }
     return c.json(await queue.listJobs());
   });
 
@@ -2698,6 +2815,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     if (!queue?.retry) return c.json({ error: 'job retry is not supported (queue not given or retry not implemented)' }, 501);
     const id = decodeURIComponent(c.req.param('id'));
     // Same reason: a job id from another organization requeues its dead-letter work.
+    { const denied = requireScopedHost(c, 'queue'); if (denied) return denied; }
     const newId = await queue.retry(id, { orgId: callerOrg(c) });
     if (newId == null) {
       return c.json({ error: `job '${id}' not found or not in a retryable state (only failed/dead-letter jobs can be retried)` }, 409);
@@ -2710,6 +2828,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   app.get('/cache/stats', async (c) => {
     if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!cache) return c.json({ hits: 0, misses: 0, hitRate: 0, size: 0 });
+    { const denied = requireScopedHost(c, 'cache'); if (denied) return denied; }
     return c.json(await cache.stats());
   });
 
@@ -2723,6 +2842,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     // measured from an acme-bound admin: `{ok:true,deleted:{removed:9}}`, every organization's cache
     // gone in one call. Studio cannot scope a host's cache itself; it can stop hiding whose request it
     // was, which is what lets the host scope it.
+    { const denied = requireScopedHost(c, 'cache'); if (denied) return denied; }
     const deleted = await cache.invalidate(body.key, { orgId: callerOrg(c) });
     await audit(c, 'cache.invalidate', body.key !== undefined ? String(body.key) : '*', { deleted });
     return c.json({ ok: true, deleted });
@@ -2742,6 +2862,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   app.post('/knowledge/search', async (c) => {
     if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!vectors) return c.json([]);
+    { const denied = requireScopedHost(c, 'vectors'); if (denied) return denied; }
     const body = (await c.req.json().catch(() => ({}))) as { query?: string; topK?: number };
     if (!body.query?.trim()) return c.json([]);
     // Read-gated, and it reads the WHOLE corpus: measured, an acme-bound identity got back
@@ -2755,7 +2876,11 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     const rawCode = gnl?.listWorkflows ? await gnl.listWorkflows() : (workflows ? await workflows.listWorkflows() : []);
     const code: WorkflowMeta[] = rawCode.map((w) => ({ ...w, source: 'code' as const, ...(workflowInputs?.[w.name] ? { input: workflowInputs[w.name] } : {}) }));
-    const managed: WorkflowMeta[] = resolvedWfStore
+    // The managed half only. Code workflows come from the process, not from a tenant's data, so they
+    // stay listed — refusing the whole route would take the code list away over an unrelated option.
+    // Measured before this: an acme-bound admin's `GET /workflows` returned globex's definition
+    // including its prompt template.
+    const managed: WorkflowMeta[] = resolvedWfStore && !requireScopedHost(c, 'workflowStore')
       ? (await resolvedWfStore.list()).map((d) => ({ name: d.name, description: d.description, steps: d.steps.map((s) => ({ id: s.id, kind: 'agent' })), source: 'managed' as const }))
       : [];
     const codeNames = new Set(code.map((w) => w.name));
@@ -3065,6 +3190,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   app.get('/workflows/:name/def', async (c) => {
     if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
     if (!resolvedWfStore) return c.json({ error: 'no workflow store is available' }, 501);
+    { const denied = requireScopedHost(c, 'workflowStore'); if (denied) return denied; }
     const name = decodeURIComponent(c.req.param('name'));
     const def = await resolvedWfStore.get(name);
     if (!def) return c.json({ error: 'not found' }, 404);
@@ -3074,6 +3200,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   app.post('/workflows', async (c) => {
     if (!(await allowP(c.req.raw, 'workflow:write'))) return deny(c.req.raw, 'write');
     if (!resolvedWfStore) return c.json({ error: 'no workflow store is available' }, 501);
+    { const denied = requireScopedHost(c, 'workflowStore'); if (denied) return denied; }
     const body = (await c.req.json().catch(() => null)) as WorkflowDef | null;
     if (!body?.name?.trim()) return c.json({ error: 'name is required' }, 400);
     const now = Date.now();
@@ -3086,6 +3213,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   app.put('/workflows/:name', async (c) => {
     if (!(await allowP(c.req.raw, 'workflow:write'))) return deny(c.req.raw, 'write');
     if (!resolvedWfStore) return c.json({ error: 'no workflow store is available' }, 501);
+    { const denied = requireScopedHost(c, 'workflowStore'); if (denied) return denied; }
     const name = decodeURIComponent(c.req.param('name'));
     const body = (await c.req.json().catch(() => null)) as Partial<WorkflowDef> | null;
     if (!body) return c.json({ error: 'invalid body' }, 400);
@@ -3099,6 +3227,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   app.delete('/workflows/:name', async (c) => {
     if (!(await allowP(c.req.raw, 'workflow:write'))) return deny(c.req.raw, 'write');
     if (!resolvedWfStore) return c.json({ error: 'no workflow store is available' }, 501);
+    { const denied = requireScopedHost(c, 'workflowStore'); if (denied) return denied; }
     const name = decodeURIComponent(c.req.param('name'));
     const codeNames = gnl?.listWorkflows ? (await gnl.listWorkflows()).map((w) => w.name) : [];
     if (codeNames.includes(name)) return c.json({ error: 'a code-defined workflow cannot be deleted' }, 403);

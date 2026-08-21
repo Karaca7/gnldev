@@ -124,11 +124,46 @@ async function mirrorUnderRun(
   toolCallId: string,
 ): Promise<void> {
   if (key.startsWith(`${ctx.runId}:`)) return; // already run-scoped — nothing to mirror
+  // No approvals channel means no runDurable run: this is `withIdempotency`, whose ctx is a journal
+  // and a placeholder runId (`'ambient'` by default, SHARED by every call in the process). There is no
+  // timeline to build and no inbox to feed, so both reasons the mirror exists are absent — and writing
+  // it invented a run. Measured: one business key called 1000 times took the journal from 2 rows to
+  // 1001, and listRuns reported a single run 'ambient' with 1000 tool calls, whose key space grows
+  // without bound while sweepRuns sees one run. The dedup HIT is this API's hot path; it wrote nothing
+  // before and must write nothing now.
+  if (ctx.noApprovals) return;
   // `mirrorOf` is what keeps this out of compensateRun's worklist. Without it, mirroring a SUCCEEDED
   // cross-run record makes one run's rollback undo an action other runs still depend on — the exact
   // thing the run-independent key was chosen to prevent (compensation-interactions.test.ts pins it,
   // and caught this the first time the mirror was written unconditionally).
-  await ctx.journal.put(runKeys.tool(ctx.runId, toolCallId), stampFormat({ ...record, mirrorOf: key }));
+  //
+  // BEST-EFFORT, AND THAT IS THE POINT. This write is a CONVENIENCE: it gives the run a history and
+  // the operator something to click. The record that decides whether the side effect happened is the
+  // authoritative one, written by the caller immediately before this.
+  //
+  // Unguarded, it was a double-charge. `writeToolTerminal` runs inside the try that wraps the tool
+  // body, and that try's catch overwrites the record with `{status:'failed'}`. So a transient failure
+  // of the MIRROR — a Postgres connection reset, a Redis timeout, ENOSPC — landed in the catch and
+  // buried a charge that had already succeeded. Measured, same probe, one injected put rejection on
+  // the mirror key: before this range the success path did ONE write and the retry replayed
+  // `{"n":1}` with 1 side effect; with the mirror it recorded `{"status":"failed"}` and the next
+  // approved attempt returned `{"n":2}` — 2 side effects. Without an approval the other outcome is
+  // worse in a quieter way: the cross-run claim is poisoned globally and permanently, and the remedy
+  // the refusal names (releaseFailedClaim, "once you have established the side effect did not
+  // happen") is unusable precisely because it DID happen.
+  //
+  // So: losing the inbox entry costs the operator a click. Letting this throw costs the user money.
+  try {
+    await ctx.journal.put(runKeys.tool(ctx.runId, toolCallId), stampFormat({ ...record, mirrorOf: key }));
+  } catch (err) {
+    // Named, not swallowed: the authoritative record is intact and the run is correct, but this run's
+    // timeline will be missing the step and Studio's approvals inbox will not offer it.
+    console.warn(
+      `@gnldev/durable: could not mirror '${key}' into run '${ctx.runId}' — the run's own timeline will ` +
+      `not show this tool step and it will not appear in the approvals inbox. The authoritative record ` +
+      `was written and the run is unaffected. Cause: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 }
 
 async function writeToolTerminal(
@@ -196,11 +231,59 @@ async function writeToolTerminal(
  * Overwhelmingly common case: a replay/resume reusing the SAME toolCallId that's already in the list,
  * Or a 'call'-mode record (whose key IS the toolCallId — no other id can ever reach here).
  */
-async function trackResolvedToolCallId(journal: DurableCtx['journal'], key: string, record: ToolJournalRecord, toolCallId: string): Promise<void> {
+async function trackResolvedToolCallId(ctx: DurableCtx, key: string, record: ToolJournalRecord, toolCallId: string): Promise<void> {
   if (record.status !== 'succeeded' && record.status !== 'denied' && record.status !== 'reflected') return;
   const ids = record.resolvedToolCallIds ?? [];
   if (ids.includes(toolCallId)) return;
-  await journal.put(key, stampFormat({ ...record, resolvedToolCallIds: [...ids, toolCallId] }));
+  // Mirror the record we are WRITING, not the one we were handed. Writing the updated list to the
+  // authoritative key and then mirroring the stale local copy left the two disagreeing — measured,
+  // authoritative `resolvedToolCallIds: ["call-A","call-B"]` against a mirror still holding
+  // `["call-A"]`. time-travel.ts stops matching on the key once resolvedIds are present, so a
+  // COMPLETED run reported `pending: [{call-B}]` and Studio's GET /approvals offered a human an
+  // approval for a charge that had already gone through.
+  const updated: ToolJournalRecord = { ...record, resolvedToolCallIds: [...ids, toolCallId] };
+  await ctx.journal.put(key, stampFormat(updated));
+  await mirrorUnderRun(ctx, key, updated, toolCallId);
+}
+
+/**
+ * Consume an ALREADY-EXISTING record: return its output, and leave this run able to see and act on the
+ * step. EVERY read-and-return point in this file goes through here.
+ *
+ * It is one function because splitting it is what kept going wrong. The rule was written at the call
+ * site that was being fixed and not at its siblings: `mirrorUnderRun` reached three of seven return
+ * points, so the permanent phantom approval it was written to close was still produced from the other
+ * four — measured from the takeover path, `runA output {"charged":100}, executions 0, authoritative
+ * "succeeded", runA's shadow "suspended", listRuns runA="suspended"`, with retention unable to sweep
+ * it. The same shape had already produced the bug one layer down, and `requireScopedMemory` repeated
+ * it a third time in Studio the same week. A rule spread over call sites is a rule with a hole in it.
+ */
+async function consumeExistingRecord(
+  ctx: DurableCtx,
+  key: string,
+  // Narrowed on purpose. A 'failed' record carries no `output` and must NOT be consumed — it is the
+  // one status whose meaning is "the side effect may have run and nobody knows", which the caller has
+  // to turn into a refusal or a recover() hook rather than a return value. Excluding it here makes the
+  // compiler check that at every call site instead of trusting each one's own guard.
+  record: Extract<ToolJournalRecord, { status: 'succeeded' | 'denied' | 'reflected' | 'suspended' }>,
+  toolCallId: string,
+): Promise<unknown> {
+  // Terminal records: record that THIS call was resolved by this record, and give the run its copy.
+  await trackResolvedToolCallId(ctx, key, record, toolCallId);
+  // A suspended record carries the toolCallId of the run that FIRST suspended. Returning it verbatim
+  // reports an id this run never emitted, while its approval is looked up under its own — so the
+  // operator sees an id that resolves to nothing, approving leaves the call suspended and denying
+  // writes no terminal record. Rewritten here rather than in one branch, because the takeover path
+  // returns suspended records too.
+  if (record.status === 'suspended') {
+    const sus = (record.output as { __gnl_suspend?: { toolCallId?: string } } | undefined)?.__gnl_suspend;
+    if (sus && sus.toolCallId !== toolCallId) {
+      const fresh = { ...record.output as object, __gnl_suspend: { ...sus, toolCallId } };
+      await mirrorUnderRun(ctx, key, { ...record, output: fresh }, toolCallId);
+      return fresh;
+    }
+  }
+  return record.output;
 }
 
 /**
@@ -293,8 +376,27 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
             console.warn(msg);
           }
         }
-        await trackResolvedToolCallId(ctx.journal, key, record, toolCallId);
-        return record.output;
+        // The replay path consumes the record like every other read-and-return point, which is the
+        // half that was missing. Two measured failures came from the shadow being written once and
+        // never refreshed:
+        //
+        //   * A PERMANENT PHANTOM APPROVAL. Run A suspends on a cross-run claim and gets a `suspended`
+        //     shadow. Run B suspends on the same claim, the operator approves in B, the charge runs, the
+        //     authoritative record moves to `succeeded` — and run A arrives here, returns the output, and
+        //     leaves its own shadow at `suspended` forever. Measured: run A then COMPLETES (its final
+        //     model step is written, text 'done') while listRuns reports it `suspended` permanently,
+        //     Studio's GET /approvals lists runA/call-A forever, the approval webhook keeps firing, Deny
+        //     is a silent no-op and Approve prints a bogus "the journal recorded false" conflict. That is
+        //     the "Studio Deny button did nothing" bug this file already closed once, reopened one layer
+        //     up — and a phantom that invites a human to re-approve a charge that ALREADY WENT THROUGH is
+        //     worse than the empty inbox it replaced.
+        //   * UN-SWEEPABLE RUNS. listStaleRuns excludes suspended by default, so retention silently
+        //     stopped reclaiming these runs: `sweepRuns` purged run B and left run A on disk forever.
+        //
+        // It also completes the fix for the DEDUPING run, which previously got no history at all — the
+        // shadow existed only for the run that happened to write the terminal, so two runs that did the
+        // same work reported different tool counts.
+        return await consumeExistingRecord(ctx, key, record, toolCallId);
       }
 
       // (same-step parallel race): mark taint on the untrusted tool's INVOCATION — here, before
@@ -339,12 +441,11 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           //
           // That is the exact failure the branch above this one was written to close ("the Studio Deny
           // button did nothing"), reopened by a key that drops the runId.
-          const sus = (record.output as { __gnl_suspend?: { toolCallId?: string } } | undefined)?.__gnl_suspend;
-          if (!sus || sus.toolCallId === toolCallId) return record.output;
-          const fresh = { ...record.output as object, __gnl_suspend: { ...sus, toolCallId } };
-          // The run's own copy, so the inbox offers the id that this run's approval lookup will use.
-          await mirrorUnderRun(ctx, key, { ...record, output: fresh }, toolCallId);
-          return fresh;
+          //
+          // The rewrite lives in consumeExistingRecord rather than here, because the takeover path
+          // returns suspended records too and did NOT get this treatment — one run kept handing back
+          // another run's id from there long after this branch was fixed.
+          return await consumeExistingRecord(ctx, key, record, toolCallId);
         }
         // Approved === true → run below
       } else if (ctx.guard) {
@@ -646,8 +747,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           if (won) break claimLoop; // won → execute below
           record = upgradeFormat(await ctx.journal.get<ToolJournalRecord>(key), key); // H13
           if (record && (record.status === 'succeeded' || record.status === 'denied' || record.status === 'reflected' || record.status === 'suspended')) {
-            await trackResolvedToolCallId(ctx.journal, key, record, toolCallId);
-            return record.output;
+            return await consumeExistingRecord(ctx, key, record, toolCallId);
           }
           if (mode !== 'args') {
             return blockedOrThrow(ctx, toolCallId, toolName,
@@ -676,8 +776,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           pollInterval = Math.min(pollInterval * 2, POLL_MAX_MS);
           record = upgradeFormat(await ctx.journal.get<ToolJournalRecord>(key), key);
           if (record && (record.status === 'succeeded' || record.status === 'denied' || record.status === 'reflected' || record.status === 'suspended')) {
-            await trackResolvedToolCallId(ctx.journal, key, record, toolCallId);
-            return record.output;
+            return await consumeExistingRecord(ctx, key, record, toolCallId);
           }
           continue claimLoop; // still running/failed → re-evaluate at the top of the loop (ttl/failed)
         }
@@ -833,8 +932,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
         // over precisely a suspended record and execute it — treating it as terminal here returned the
         // suspend sentinel instead of running the approved call, and every approval flow charged 0.
         if (before && (before.status === 'succeeded' || before.status === 'denied' || before.status === 'reflected')) {
-          await trackResolvedToolCallId(ctx.journal, key, before, toolCallId);
-          return before.output;
+          return await consumeExistingRecord(ctx, key, before, toolCallId);
         }
         // The shared clock, not the local one: staleness is measured via journal.now() (see the claim
         // gate above), so a takeover stamped with a fast local clock would look instantly stale to
@@ -847,8 +945,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
         if (!took) {
           record = upgradeFormat(await ctx.journal.get<ToolJournalRecord>(key), key);
           if (record && (record.status === 'succeeded' || record.status === 'denied' || record.status === 'reflected' || record.status === 'suspended')) {
-            await trackResolvedToolCallId(ctx.journal, key, record, toolCallId);
-            return record.output;
+            return await consumeExistingRecord(ctx, key, record, toolCallId);
           }
           if (mode !== 'args') {
             return blockedOrThrow(ctx, toolCallId, toolName,
