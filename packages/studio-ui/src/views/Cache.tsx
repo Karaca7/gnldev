@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Trash2, Database } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { api, useCapabilities, useCacheStats, errMessage } from '../api';
-import { Spinner, Empty, EmptyState, ErrorBox, Btn, cn, PageHeader } from '../components';
+import { api, useCapabilities, useCacheStats, errMessage , isScopeRefused } from '../api';
+import { Spinner, Empty, EmptyState, ErrorBox, Btn, cn, PageHeader , ScopeRefusedState } from '../components';
 import { toast, ConfirmDialog } from '../ui';
 import { Stagger, StaggerItem } from '../motion';
 // I18n init side effect: so useTranslation still works if this view is rendered directly
@@ -115,6 +115,7 @@ export function Cache() {
   if (caps.isLoading || stats.isLoading) return <Spinner />;
   if (caps.error) return <ErrorBox error={caps.error} />;
   if (stats.error) return <ErrorBox error={stats.error} />;
+  if (isScopeRefused(caps.data, 'cache')) return <ScopeRefusedState icon={Database} what="cache" />;
   if (!caps.data?.cache) return <EmptyState icon={Database} title={t('disabledTitle')} description={t('disabledDescription')} />;
 
   const s = stats.data ?? { hits: 0, misses: 0, hitRate: 0, size: 0 };

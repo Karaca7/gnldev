@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { Library } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { api, type VectorMatch } from '../api';
-import { Btn, Spinner, Empty, EmptyState, Badge, JsonBlock, PageHeader } from '../components';
+import { api, type VectorMatch , isScopeRefused , useCapabilities } from '../api';
+import { Btn, Spinner, Empty, EmptyState, Badge, JsonBlock, PageHeader , ScopeRefusedState } from '../components';
 
 const DEFAULT_TOP_K = 5;
 
@@ -32,6 +32,7 @@ export function clampMinScore(raw: string): number {
 // Knowledge: vector store search (embed(query) → store.query). Makes RAG retrieval visible.
 export function Knowledge() {
   const { t } = useTranslation('knowledge');
+  const caps = useCapabilities();
   const [q, setQ] = useState('');
   // Raw string state: freely editable while the user types; numeric clamp only on blur/submit.
   const [topKRaw, setTopKRaw] = useState(String(DEFAULT_TOP_K));
@@ -120,7 +121,9 @@ export function Knowledge() {
           // Empty. Copy is deliberately honest about there being no catalog to browse (the server
           // Only exposes /knowledge/search, no list/browse endpoint — see api.ts), so it invites a
           // Query instead of implying a list will appear.
-          <EmptyState icon={Library} title={t('emptyTitle')} description={t('emptyDescription')} />
+          isScopeRefused(caps.data, 'knowledge')
+            ? <ScopeRefusedState icon={Library} what="vectors" />
+            : <EmptyState icon={Library} title={t('emptyTitle')} description={t('emptyDescription')} />
         ) : results.length === 0 ? (
           <Empty>{t('noResults')}</Empty>
         ) : (

@@ -94,12 +94,23 @@ describe('Agents: approval registry — hidden for a caller who cannot see it', 
     expect(calls.some((u) => u.endsWith('/agents/registry'))).toBe(false);
   });
 
+  /**
+   * The fixture reports `agentRegistry: false` for the org-bound caller, because that is now what the
+   * server sends: the capability is `writable && listKeys && !callerOrgScope(c)`, and its three routes
+   * are all `requirePlatformAdmin`.
+   *
+   * It used to report `true` here and rely on the VIEW re-deriving the truth with a hand-written
+   * `!me.data?.orgId` clause beside the flag — so the fixture modelled a response the server cannot
+   * produce, and the test passed because of a compensation rather than because of the contract. The
+   * clause is gone and the guarantee moved to the capability itself; the assertion is unchanged,
+   * because what must hold is the same: a caller who would get 403 never issues the request.
+   */
   it('an org-bound identity (would 403 server-side) → the registry query is never issued', async () => {
     const calls: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       const u = String(url);
       calls.push(u);
-      if (u.endsWith('/capabilities')) return jsonOk({ agentVersions: true, agentRegistry: true });
+      if (u.endsWith('/capabilities')) return jsonOk({ agentVersions: true, agentRegistry: false });
       if (u.endsWith('/agents')) return jsonOk(AGENTS);
       if (u.endsWith('/managed-agents')) return jsonOk({ agents: [] });
       if (u.endsWith('/me')) return jsonOk({ id: 'acme-adm', roles: ['admin'], orgId: 'acme', operator: false, platformAdmin: false });

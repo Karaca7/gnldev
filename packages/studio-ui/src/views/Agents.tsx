@@ -177,7 +177,7 @@ function VersionPanel({ rec, canManage, evalGate, onChanged, onEdit, onDelete }:
                   {!isActive && (
                     <button type="button" title={t('deleteVersionTitle')}
                       disabled={busy !== null} onClick={() => onDelete(v)}
-                      className="rounded-sm p-1 text-muted-foreground hover:text-destructive disabled:opacity-50">
+                      className="rounded-sm p-1 text-muted-foreground enabled:hover:text-destructive disabled:opacity-50 disabled:cursor-not-allowed">
                       <Trash2 size={11} />
                     </button>
                   )}
@@ -406,7 +406,9 @@ export function Agents() {
   // Boot a legitimate-but-unprivileged user out on every tick. Held false until caps+me both resolve
   // (their `undefined` fields would otherwise evaluate "true" and fire one premature request).
   const identityKnown = !!caps.data && !!me.data;
-  const canSeeRegistry = identityKnown && !!caps.data?.agentRegistry && !me.data?.orgId && (!caps.data?.multiOrganization || !!me.data?.platformAdmin);
+  // The `!me.data?.orgId` clause that used to sit here is gone: `caps.agentRegistry` is now false for
+  // an org-bound caller at the source, so repeating it here would be the same fact in two places.
+  const canSeeRegistry = identityKnown && !!caps.data?.agentRegistry && (!caps.data?.multiOrganization || !!me.data?.platformAdmin);
   const registry = useAgentRegistry(canSeeRegistry);
   const registryByName = new Map((registry.data ?? []).map((r) => [r.name, r]));
   const [registryBusy, setRegistryBusy] = useState<string | null>(null);
@@ -653,7 +655,7 @@ export function Agents() {
                       {canManage && (
                         <button type="button" title={t('managedOnlyDeleteTitle')}
                           disabled={deleteBusy} onClick={() => setDeleting({ name: a.name, hasCode: true })}
-                          className="rounded-sm p-0.5 text-muted-foreground hover:text-destructive disabled:opacity-50 disabled:pointer-events-none">
+                          className="rounded-sm p-0.5 text-muted-foreground enabled:hover:text-destructive disabled:opacity-50 disabled:cursor-not-allowed">
                           <Trash2 size={11} />
                         </button>
                       )}
@@ -691,7 +693,7 @@ export function Agents() {
                       <div className="ml-auto flex shrink-0 items-center gap-1">
                         <button type="button" title={t('managedOnlyDeleteTitleNoCode')}
                           disabled={deleteBusy} onClick={() => setDeleting({ name: m.name, hasCode: false })}
-                          className="rounded-sm p-0.5 text-muted-foreground hover:text-destructive disabled:opacity-50 disabled:pointer-events-none">
+                          className="rounded-sm p-0.5 text-muted-foreground enabled:hover:text-destructive disabled:opacity-50 disabled:cursor-not-allowed">
                           <Trash2 size={11} />
                         </button>
                       </div>

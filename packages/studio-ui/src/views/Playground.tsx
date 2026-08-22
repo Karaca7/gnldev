@@ -419,9 +419,14 @@ export function Playground() {
             : { type: 'file', data: a.dataUrl, mediaType: a.type }),
         ] }] }
       : { prompt };
+    // No thread when there is no memory to put it in. `runDurable` gates every memory read and write on
+    // `memory && threadId`, so the `threadId: runId` this used to send when memory was OFF reached
+    // nothing — dead weight, until it started costing something: the server now refuses a named thread
+    // whose store has no organization boundary, so an org-bound admin sent an inert threadId and got a
+    // 403 on the whole run. Not the thread list: the Playground itself, for every prompt.
     const body: AgentRunBody = memoryOn
       ? { runId, threadId: tid, resourceId, ...msgBody, ...overrides }
-      : { runId, threadId: runId, ...msgBody, ...overrides };
+      : { runId, ...msgBody, ...overrides };
     const ac = new AbortController();
     abortRef.current = ac;
     try {
@@ -728,7 +733,7 @@ export function Playground() {
                 aria-haspopup="dialog"
                 onClick={() => setShowSettings((s) => !s)}
                 title={t('configurationTitle')}
-                className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors enabled:hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Settings size={14} /> {t('settingsButton')}
               </button>
@@ -795,7 +800,7 @@ export function Playground() {
                   {STARTERS.map((s) => (
                     <StaggerItem key={s}>
                       <button type="button" onClick={() => send(s)} disabled={!agent || busy}
-                        className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted disabled:opacity-50">{s}</button>
+                        className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground transition-colors enabled:hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed">{s}</button>
                     </StaggerItem>
                   ))}
                 </Stagger>
@@ -959,7 +964,7 @@ function HistorySidebar({ open, activeId, busy, onSelect, onNew, onDeleted, conf
           type="button"
           onClick={onNew}
           disabled={busy}
-          className="flex w-full items-center justify-center gap-1.5 rounded-md border border-border px-2 py-1.5 text-sm transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+          className="flex w-full items-center justify-center gap-1.5 rounded-md border border-border px-2 py-1.5 text-sm transition-colors enabled:hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Plus size={14} /> {t('newChatButton')}
         </button>
@@ -997,7 +1002,7 @@ function HistorySidebar({ open, activeId, busy, onSelect, onNew, onDeleted, conf
                   <div className="flex items-center gap-0.5">
                     {/* onMouseDown preventDefault: keeps focus on the input through the click so onBlur's
                         save-on-blur path doesn't race this button's own (guarded) action. */}
-                    <button type="button" title={t('rename')} onMouseDown={(e) => e.preventDefault()} onClick={() => closeRenaming(true, th.id)} disabled={working} className="rounded-sm p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"><Check size={13} /></button>
+                    <button type="button" title={t('rename')} onMouseDown={(e) => e.preventDefault()} onClick={() => closeRenaming(true, th.id)} disabled={working} className="rounded-sm p-1 text-muted-foreground enabled:hover:bg-muted enabled:hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed"><Check size={13} /></button>
                     <button type="button" title={t('cancel')} onMouseDown={(e) => e.preventDefault()} onClick={() => closeRenaming(false, th.id)} className="rounded-sm p-1 text-muted-foreground hover:bg-muted"><X size={13} /></button>
                   </div>
                 </div>

@@ -93,6 +93,38 @@ describe('host objects with no organization boundary', () => {
       expect(said, `nothing was said about \`${what}\` — a deployment could ship this unaware`).toContain(what);
     }
   });
+
+  it('says it when a caller is refused, for the config boot cannot predict', async () => {
+    // `roleAuth({ admin: { token, orgId } })` binds an organization to the identity — documented as
+    // first-class, no `org` option needed — and reports `multiOrganization: false`, because that flag
+    // means "the paid multi-org product". So the boot check saw a single-org deployment while six
+    // endpoints started refusing. Measured: warnings printed at boot, ZERO.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const app = createStudioApi({ reader: new InMemoryJournal(), auth: boundAdmin, ...blindHosts() } as never);
+    expect(warn.mock.calls.length, 'this config cannot be predicted at boot — the test premise is wrong').toBe(0);
+
+    const res = await as(app, '/knowledge/search', { method: 'POST', body: JSON.stringify({ query: 'x' }) });
+    expect(res.status).toBe(403);
+    expect(warn.mock.calls.map((c) => String(c[0])).join('\n'), 'the refusal was silent').toContain('vectors');
+  });
+
+  it('says nothing at boot for a licensed deployment that refuses nothing', async () => {
+    // The opposite error: an EE licensee running single-tenant got three warnings claiming its
+    // endpoints "are refused", while nothing was refused. The capability flag means the product is
+    // licensed, not that identities carry an organization.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const eeProvider = {
+      authenticate: () => null,
+      authorize: () => ({ allow: true }),
+      capabilities: () => ({ multiOrganization: true }),
+    };
+    createStudioApi({ reader: new InMemoryJournal(), auth: eeProvider, ...blindHosts() } as never);
+
+    const said = warn.mock.calls.map((c) => String(c[0])).join('\n');
+    for (const what of ['vectors', 'cache', 'queue']) {
+      expect(said, `warned about \`${what}\` on a deployment where nothing is refused`).not.toContain(`\`${what}\``);
+    }
+  });
 });
 
 describe('a host-supplied workflow store', () => {
@@ -107,6 +139,46 @@ describe('a host-supplied workflow store', () => {
     const del = await as(app, '/workflows/secret', { method: 'DELETE' });
     expect(del.status, 'another org\'s workflow could be deleted').toBe(403);
     expect([...defs.keys()], 'another org\'s workflow was actually removed').toEqual(['secret']);
+  });
+
+  it.each([
+    ['POST', '/workflows/secret/run', JSON.stringify({ input: {}, dryRun: true })],
+    ['POST', '/workflows/secret/run-stream', JSON.stringify({ input: {} })],
+    ['POST', '/workflows/secret/runs/r1/fork', JSON.stringify({ upto: 1 })],
+  ])('does not let %s %s reach it either', async (method, path, body) => {
+    // The refusal was added to list/def/CRUD and missed the three routes that RUN a managed workflow.
+    // Measured before this: `GET /workflows/secret/def` answered 403 while `POST /workflows/secret/run`
+    // answered 200 and returned the other tenant's prompt template verbatim in the dry-run output —
+    // and without `dryRun` it executed that workflow against the real engine.
+    //
+    // Gating the sites I happened to be looking at is how the hole stayed open, so the store is no
+    // longer reachable without a request: every route-level read goes through `wfStoreFor(c)`.
+    // Asserted on whether the STORE WAS READ, not on the status code. The code is a poor witness here:
+    // a compile stub that does not match the real shape makes an ungated route answer 400 rather than
+    // 200, so a status assertion passes for the wrong reason. Whether `get`/`list` was called answers
+    // the actual question — did another tenant's data leave the store — for all three routes.
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const defs = new Map<string, unknown>([['secret', {
+      name: 'secret', steps: [{ id: 's1', kind: 'agent', agent: 'a', prompt: 'GLOBEX-PRIVATE-TEMPLATE' }],
+    }]]);
+    const touched: string[] = [];
+    const store = wfStore(defs);
+    const watched = {
+      list: async () => { touched.push('list'); return store.list(); },
+      get: async (n: string) => { touched.push(`get:${n}`); return store.get(n); },
+      set: store.set, delete: store.delete,
+    };
+    const app = createStudioApi({
+      reader: new InMemoryJournal(), auth: boundAdmin, org: {},
+      workflowStore: watched,
+      compileWorkflow: () => ({ run: async () => ({ output: 'x', steps: [] }) }),
+      gnl: { run: async () => ({ text: 'x' }) },
+    } as never);
+
+    const res = await as(app, path, { method, body });
+    expect(touched, `${method} ${path} read another tenant's workflow store`).toEqual([]);
+    expect(await res.text(), 'another tenant\'s prompt template came back in the response')
+      .not.toContain('GLOBEX-PRIVATE-TEMPLATE');
   });
 
   it('still lists CODE workflows, which do not come from a tenant\'s data', async () => {

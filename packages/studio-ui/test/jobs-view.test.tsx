@@ -36,7 +36,11 @@ function stubFetch(opts: { jobs?: unknown; queueManage?: boolean; onRetry?: () =
     const u = String(url);
     calls.push({ url: u, method: init?.method ?? 'GET' });
     let body: unknown = [];
-    if (u.includes('/capabilities')) body = { queueManage: opts.queueManage ?? false };
+    // `queue: true` as well as the flag under test. The Jobs view is only reachable when the queue
+    // capability is on (the nav row is filtered by it), and `useJobs` now refuses to poll without it —
+    // a capability the caller does not have is an endpoint that will refuse them, and polling it every
+    // 3s used to sign them out. Stubbing only `queueManage` modelled a state that cannot occur.
+    if (u.includes('/capabilities')) body = { queue: true, queueManage: opts.queueManage ?? false };
     else if (/\/jobs\/[^/]+\/retry$/.test(u)) body = opts.onRetry ? opts.onRetry() : { ok: true, id: 'job-dead' };
     else if (u.endsWith('/jobs')) body = opts.jobs ?? JOBS;
     return { ok: true, status: 200, headers: { get: () => 'application/json' }, json: async () => body };

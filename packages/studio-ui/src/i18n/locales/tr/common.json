@@ -55,5 +55,7 @@
   "statusAll": "Tümü",
   "openSourceLicenses": "Açık kaynak lisansları",
   "statusIdle": "Boşta",
-  "statusQueued": "Kuyrukta"
+  "statusQueued": "Kuyrukta",
+  "scopeRefusedTitle": "Organizasyon kapsamınızda kullanılamıyor",
+  "scopeRefusedDescription": "Bu kurulumun {{what}} bileşeni, organizasyon sınırı olmayan bir host nesnesi; sunulması bir kiracıya bir başkasının verisini vermek olurdu. Kapalı değil — kapsamsız bir operatör görebiliyor. Bir operatörden bunu organizasyon-farkında yapmasını isteyin."
 }

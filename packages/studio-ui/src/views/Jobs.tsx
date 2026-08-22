@@ -3,8 +3,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { ListChecks, RotateCcw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { useJobs, useCapabilities, api, errMessage } from '../api';
-import { Spinner, EmptyState, ErrorBox, Badge, Btn, StatStrip, PageHeader, useStatusLabel } from '../components';
+import { useJobs, useCapabilities, api, errMessage , isScopeRefused } from '../api';
+import { Spinner, EmptyState, ErrorBox, Badge, Btn, StatStrip, PageHeader, useStatusLabel , ScopeRefusedState } from '../components';
 import { toast } from '../ui';
 import { Stagger, StaggerItem } from '../motion';
 // I18n init side effect: so useTranslation still works if this view is rendered directly
@@ -51,6 +51,7 @@ export function Jobs() {
 
   if (jobs.isLoading) return <Spinner />;
   if (jobs.error) return <ErrorBox error={jobs.error} />;
+  if (isScopeRefused(caps.data, 'queue')) return <ScopeRefusedState icon={ListChecks} what="queue" />;
   if (!jobs.data?.length) return <EmptyState icon={ListChecks} title={t('emptyTitle')} description={t('emptyDescription')} />;
 
   const jc = (...sts: string[]) => jobs.data!.filter((j) => sts.includes(j.status)).length;

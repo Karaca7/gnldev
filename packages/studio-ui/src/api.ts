@@ -16,6 +16,19 @@ export interface Capabilities {
   tools: boolean; toolExec: boolean; toolExecDurable: boolean; memory: boolean;
   workflows: boolean; workflowExec: boolean; scorers: boolean; datasets: boolean; mcp: boolean; a2a: boolean;
   queue: boolean; knowledge: boolean; workflowManage: boolean;
+  /**
+   * Capabilities that are `false` for THIS caller's organization scope but would be `true` for an
+   * unscoped operator — see the server's `scopeRefusedCaps`.
+   *
+   * Without it a view cannot tell "the deployment has no cache" from "your organization cannot reach
+   * this deployment's cache", because both arrive as `cache: false`. Measured in a browser: an
+   * org-bound admin was shown "Cache disabled" and "No jobs yet" while the API behind them was
+   * answering `403 org_scope_refused` with a message naming the fix.
+   *
+   * Optional: an older server does not send it, and `isScopeRefused` then reports false, which is the
+   * previous behaviour.
+   */
+  scopeRefused?: string[];
   /** "Retry" action in the Jobs view (on if the host implements queue.retry). */
   queueManage?: boolean;
   /** Cache view (@gnldev/cache hit/miss ratio + size — on if the host passed the `cache` option). */
@@ -97,12 +110,34 @@ export function isAuthError(err: unknown): boolean {
 }
 
 /**
+ * A 403 that means "not for your scope", not "your token is bad".
+ *
+ * The server labels the organization-scope refusals it serves for a host object with no organization
+ * boundary (`org_scope_refused`). They are a property of WHERE the caller is, not of WHO they are.
+ */
+/** True when `cap` is false only because of the caller's organization scope — see `Capabilities.scopeRefused`. */
+export function isScopeRefused(caps: Capabilities | undefined, cap: keyof Capabilities): boolean {
+  return !!caps?.scopeRefused?.includes(cap as string);
+}
+
+export function isScopeError(err: unknown): boolean {
+  return err instanceof ApiError && err.code === 'org_scope_refused';
+}
+
+/**
  * Mid-session 401/403 → should we fall back to a clean login?
  * Returns true ONLY when auth is ON (authRequired) AND a token is present. When there is no
  * Token (we're already on the Login screen), always returns false to avoid a re-login loop —
  * The 401 there is shown by the Login component with its own error message.
+ *
+ * A SCOPE refusal is excluded, and the case is not hypothetical: the nav hides a row the caller's
+ * capabilities exclude, but every route stays registered, so typing `/cache` mounts the view anyway.
+ * `useCacheStats` then polls `GET /cache/stats`, which answers 403 for an organization-bound admin —
+ * and this function, matching on status alone, cleared their token and flushed the cache. They were
+ * signed out for visiting a page. Every 5s, on every login, until they stopped using the URL.
  */
 export function shouldForceReauth(input: { err: unknown; authRequired: boolean; hasToken: boolean }): boolean {
+  if (isScopeError(input.err)) return false;
   return input.authRequired && input.hasToken && isAuthError(input.err);
 }
 
@@ -699,6 +734,23 @@ export async function runWorkflowStream(
 
 // ── react-query hooks ─────────────────────────────────────────────────────
 export const useCapabilities = () => useQuery({ queryKey: ['capabilities'], queryFn: api.capabilities });
+
+/**
+ * A polling query that cannot be constructed without naming the capability it depends on.
+ *
+ * The rule was previously a convention, and a convention with eight call sites is a convention with
+ * holes: `useJobs` (3s), `useCacheStats` (5s), `useSchedulerTriggers` (5s) and `useApprovals` (5s) all
+ * polled unconditionally. The nav hides a row whose capability is off, but every route stays
+ * registered, so typing the URL mounted the view and started the poll against an endpoint that
+ * refuses. Only `useAgentRegistry` took an `enabled` argument — added by hand, after being burned.
+ *
+ * Putting the capability in the signature makes "capability off ⇒ no background traffic" a property of
+ * the type rather than of whoever writes the next hook.
+ */
+function usePolled<T>(cap: keyof Capabilities, key: unknown[], fn: () => Promise<T>, ms: number) {
+  const caps = useCapabilities();
+  return useQuery({ queryKey: key, queryFn: fn, refetchInterval: ms, enabled: caps.data?.[cap] === true });
+}
 /**
  * The router's provider prefixes. Rarely changes within a session (a host registers at boot), so it is
  * fetched once and kept — a datalist that re-requests on every keystroke would be worse than the
@@ -773,11 +825,11 @@ export const useMcp = () => useQuery({ queryKey: ['mcp'], queryFn: api.mcpServer
 export const useScorers = () => useQuery({ queryKey: ['scorers'], queryFn: api.scorers });
 export const useDatasets = () => useQuery({ queryKey: ['datasets'], queryFn: api.datasets });
 
-export const useJobs = () => useQuery({ queryKey: ['jobs'], queryFn: api.jobs, refetchInterval: 3000 });
-export const useCacheStats = () => useQuery({ queryKey: ['cache-stats'], queryFn: api.cacheStats, refetchInterval: 5000 });
-export const useSchedulerTriggers = () => useQuery({ queryKey: ['scheduler-triggers'], queryFn: api.schedulerTriggers, refetchInterval: 5000 });
+export const useJobs = () => usePolled('queue', ['jobs'], api.jobs, 3000);
+export const useCacheStats = () => usePolled('cache', ['cache-stats'], api.cacheStats, 5000);
+export const useSchedulerTriggers = () => usePolled('scheduler', ['scheduler-triggers'], api.schedulerTriggers, 5000);
 // Governance: approvals inbox refreshes every 5s, organization counters every 10s; audit is keyed by filters.
-export const useApprovals = () => useQuery({ queryKey: ['approvals'], queryFn: api.approvals, refetchInterval: 5000 });
+export const useApprovals = () => usePolled('approvals', ['approvals'], api.approvals, 5000);
 export const useAudit = (filters?: AuditFilters) =>
   useQuery({ queryKey: ['audit', filters], queryFn: () => api.audit(filters) });
 // API-02: this is a review surface, not a live feed — 30s (was 10s) avoids re-triggering a per-org
