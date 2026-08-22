@@ -2064,8 +2064,23 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     const own = principalOf(c.req.raw)?.orgId;
     if (own) {
       // Org-admin can only delete a member of ITS OWN org.
+      /**
+       * `!target` is a REFUSAL, not a pass. The guard used to read `if (target && target.orgId !== own)`,
+       * so a target the caller could not see skipped it entirely and the write went ahead. Measured
+       * against a store whose `list()` returns nothing:
+       *
+       *   DELETE /users/u1 as acme-adm  ->  200 {"ok":true}   host calls: ["remove:u1"]
+       *
+       * — acme's admin deleting globex's user. `StudioUserStore.list()` takes no argument and nothing in
+       * its contract says it must return every user of every organization, yet three guards depended on
+       * exactly that. Both first-party stores do, so the shipped path was safe; a third-party store, or
+       * scoping `list()` later as a security improvement, would have disabled all three at once.
+       *
+       * An organization-bound caller acting on a user it cannot see is refused. `POST /users` never had
+       * this shape — it compares `body.orgId` to the caller directly, with no lookup.
+       */
       const target = (await opts.users.list()).find((u) => u.id === id);
-      if (target && target.orgId !== own) {
+      if (!target || target.orgId !== own) {
         return c.json({ error: `you can only delete members of your own org ('${own}')` }, 403);
       }
     }
@@ -2083,9 +2098,9 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     const id = decodeURIComponent(c.req.param('id'));
     const own = principalOf(c.req.raw)?.orgId;
     if (own) {
-      // Org-admin can only revoke a member of ITS OWN org.
+      // Org-admin can only revoke a member of ITS OWN org. `!target` refuses — see the delete route.
       const target = (await opts.users.list()).find((u) => u.id === id);
-      if (target && target.orgId !== own) {
+      if (!target || target.orgId !== own) {
         return c.json({ error: `you can only revoke members of your own org ('${own}')` }, 403);
       }
     }
@@ -2104,8 +2119,9 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     const id = decodeURIComponent(c.req.param('id'));
     const own = principalOf(c.req.raw)?.orgId;
     if (own) {
+      // `!target` refuses — see the delete route.
       const target = (await opts.users.list()).find((u) => u.id === id);
-      if (target && target.orgId !== own) {
+      if (!target || target.orgId !== own) {
         return c.json({ error: `you can only update members of your own org ('${own}')` }, 403);
       }
     }
