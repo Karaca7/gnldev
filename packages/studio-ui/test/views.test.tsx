@@ -456,7 +456,10 @@ describe('studio-ui components', () => {
   it('Approvals: lists the pending approval, Approve/Deny buttons are visible', async () => {
     stubFetch({
       '/approvals': { items: [{ runId: 'sus-1', toolCallId: 'call-1', toolName: 'chargeCard', args: { amount: 99 }, reason: 'high amount' }] },
-      '/capabilities': CAPS,
+      // `approvals: true` — the view is only reachable when the capability is on (the nav row is
+      // filtered by it), and the hook no longer polls without it. Polling an endpoint the caller's
+      // capabilities exclude is what used to sign an organization-bound admin out every few seconds.
+      '/capabilities': { ...CAPS, approvals: true },
     });
     wrap(<Approvals />);
     await waitFor(() => expect(screen.getByText('chargeCard')).toBeTruthy());

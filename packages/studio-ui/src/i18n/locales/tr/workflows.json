@@ -9,6 +9,7 @@
   "codeDefinedTitle": "Kod tanımlı — kaynak dosyada, UI'dan düzenlenemez",
   "codeLabel": "kod",
   "deleted": "\"{{name}}\" silindi",
+  "defLoadFailed": "'{{name}}' okunamadı — boş bir taslak üzerine yazmasın diye düzenleyici açılmadı. {{error}}",
   "deleteFailed": "Silinemedi: {{error}}",
   "invalidJsonForm": "JSON geçersiz — form devre dışı. Metni düzeltin veya bir preset yükleyin.",
   "invalidJsonInput": "Geçersiz JSON input",

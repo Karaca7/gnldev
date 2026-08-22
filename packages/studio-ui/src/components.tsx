@@ -26,7 +26,15 @@ export function Btn({
    */
   busy?: boolean;
 }) {
-  const base = 'inline-flex items-center gap-1.5 rounded-md transition-colors disabled:opacity-50 disabled:pointer-events-none';
+  // `disabled:cursor-not-allowed`, NOT `disabled:pointer-events-none`.
+  //
+  // The old class removed the element from hit-testing, and the native `title` tooltip is delivered by
+  // hit-testing — so a disabled button could not explain itself. That is backwards: `title` is almost
+  // always set precisely BECAUSE the control is disabled ("approvals are unreachable in this scope",
+  // "no workflow definition"), and it was suppressed in the one state where it is the only explanation
+  // the user gets. `pointer-events-none` was only ever there to stop the hover colour from firing on a
+  // dead control, which `enabled:` on each hover variant does directly, without touching the DOM.
+  const base = 'inline-flex items-center gap-1.5 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
   const sz = size === 'icon'
     ? 'h-[42px] w-[42px] justify-center p-0 text-base'
     : size === 'xs' ? 'px-2 py-1 text-xs' : 'px-3 py-1.5 text-sm';
@@ -41,15 +49,15 @@ export function Btn({
   // Changes nothing there. In the light theme --brand is the deeper step (#445e08) and --primary the
   // Lighter one (#6d970c) — the deeper one takes WHITE text at 7.33:1, which is the look we want,
   // While the lighter one only worked with near-black and read as mud. See --brand-foreground.
-  const PRIMARY = 'bg-brand text-brand-foreground hover:bg-brand/90 font-bold';
-  const OUTLINE = 'border border-border bg-transparent text-foreground hover:bg-muted font-medium';
+  const PRIMARY = 'bg-brand text-brand-foreground enabled:hover:bg-brand/90 font-bold';
+  const OUTLINE = 'border border-border bg-transparent text-foreground enabled:hover:bg-muted font-medium';
   const v = {
     default: PRIMARY,
     primary: PRIMARY,
     outline: OUTLINE,
-    ghost: 'text-muted-foreground hover:bg-muted font-medium',
-    ok: 'bg-success/15 text-success hover:bg-success/25 font-medium',
-    deny: 'bg-destructive/15 text-destructive hover:bg-destructive/25 font-medium',
+    ghost: 'text-muted-foreground enabled:hover:bg-muted font-medium',
+    ok: 'bg-success/15 text-success enabled:hover:bg-success/25 font-medium',
+    deny: 'bg-destructive/15 text-destructive enabled:hover:bg-destructive/25 font-medium',
   }[variant];
   return (
     <button className={cn(base, sz, v)} onClick={onClick} disabled={disabled || busy} title={title} aria-busy={busy || undefined}>
@@ -255,6 +263,20 @@ export function Empty({ children }: { children: ReactNode }) {
  * (Formerly `views/Placeholder.tsx`'s unused `Placeholder({title,note})` — repurposed here since
  * This is a shared UI primitive, not a route view; the old file was deleted.)
  */
+/**
+ * The honest empty state when a capability is off ONLY because of the caller's organization scope.
+ *
+ * Without this a view falls through to its ordinary "nothing here" message, and an org-bound admin was
+ * shown "No jobs yet" and "Cache disabled" — measured in a browser — while the endpoint behind them
+ * answered `403 org_scope_refused` naming the exact fix. "Disabled" sends an operator to their cache
+ * config, which is the wrong place. Refusing honestly at the API and then saying "not configured" on
+ * screen moves the same defect one layer up.
+ */
+export function ScopeRefusedState({ icon, what }: { icon?: ComponentType<{ size?: number | string; className?: string }>; what: string }) {
+  const { t } = useTranslation('common');
+  return <EmptyState icon={icon} title={t('scopeRefusedTitle')} description={t('scopeRefusedDescription', { what })} />;
+}
+
 export function EmptyState({
   icon: Icon, title, description, action,
 }: {

@@ -231,7 +231,7 @@ export function Inspector() {
               type="button"
               onClick={() => runs.fetchNextPage()}
               disabled={runs.isFetchingNextPage}
-              className="mt-1 w-full rounded-md border border-border px-2 py-1.5 font-mono text-[11px] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+              className="mt-1 w-full rounded-md border border-border px-2 py-1.5 font-mono text-[11px] text-muted-foreground transition-colors enabled:hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {runs.isFetchingNextPage ? t('loadingMoreButton') : t('loadMoreButton', { loaded: runList.length, total })}
             </button>

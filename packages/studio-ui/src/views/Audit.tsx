@@ -114,7 +114,7 @@ export function Audit() {
             type="button"
             onClick={() => downloadText(`gnl-audit-${Date.now()}.csv`, auditToCsv(items), 'text/csv;charset=utf-8;')}
             disabled={items.length === 0}
-            className="rounded-md border border-input px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+            className="rounded-md border border-input px-2 py-1 text-xs text-muted-foreground transition-colors enabled:hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {t('downloadCsv')}
           </button>
@@ -186,7 +186,7 @@ export function Audit() {
               type="button"
               onClick={() => setLimit((l) => Math.min(AUDIT_MAX, l + AUDIT_PAGE))}
               disabled={audit.isFetching}
-              className="w-full border-t border-border px-3 py-1.5 font-mono text-[11px] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+              className="w-full border-t border-border px-3 py-1.5 font-mono text-[11px] text-muted-foreground transition-colors enabled:hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {audit.isFetching ? t('loadingMore') : t('loadMore', { count: items.length, limit })}
             </button>

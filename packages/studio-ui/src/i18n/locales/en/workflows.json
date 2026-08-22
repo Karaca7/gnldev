@@ -9,6 +9,7 @@
   "codeDefinedTitle": "Code-defined — lives in a source file, cannot be edited from the UI",
   "codeLabel": "code",
   "deleted": "\"{{name}}\" deleted",
+  "defLoadFailed": "Could not load '{{name}}' — not opening the editor, so an empty draft cannot overwrite it. {{error}}",
   "deleteFailed": "Could not delete: {{error}}",
   "invalidJsonForm": "Invalid JSON — form disabled. Fix the text or load a preset.",
   "invalidJsonInput": "Invalid JSON input",

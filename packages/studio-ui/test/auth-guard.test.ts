@@ -1,7 +1,7 @@
 // F6.2: pure session-rejection logic (401/403 detection + when to bounce back to login).
 // NODE environment — no DOM needed, no react-query hooks are called (only pure functions are imported).
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { ApiError, isAuthError, shouldForceReauth, queryRetry, api } from '../src/api';
+import { ApiError, isAuthError, isScopeError, shouldForceReauth, queryRetry, api } from '../src/api';
 
 describe('isAuthError (F6.2)', () => {
   it('ApiError 401/403 → true', () => {
@@ -17,6 +17,31 @@ describe('isAuthError (F6.2)', () => {
     expect(isAuthError(null)).toBe(false);
     expect(isAuthError(undefined)).toBe(false);
     expect(isAuthError('401')).toBe(false);
+  });
+});
+
+describe('a scope refusal is not a bad token', () => {
+  // The nav hides a row whose capability is off, but every route stays registered — so typing `/cache`
+  // mounts the view anyway. `useCacheStats` then polls `GET /cache/stats`, which answers 403 to an
+  // organization-bound admin because the host's cache has no organization boundary. Matching on status
+  // alone, this signed them out: token cleared, cache flushed, back to Login. Every 5s, on every login.
+  //
+  // The refusal is about WHERE the caller is, not WHO they are. The server labels it; this must read
+  // the label, or a correctly-authenticated user is thrown out for opening a page.
+  const scopeErr = new ApiError(403, 'reaches `cache` …', { code: 'org_scope_refused' });
+
+  it('is recognised by its code, not its status', () => {
+    expect(isScopeError(scopeErr)).toBe(true);
+    expect(isScopeError(new ApiError(403, 'forbidden'))).toBe(false);
+    expect(isAuthError(scopeErr), 'still a 403 — the status test is unchanged').toBe(true);
+  });
+
+  it('does not bounce the user back to login', () => {
+    expect(shouldForceReauth({ err: scopeErr, authRequired: true, hasToken: true })).toBe(false);
+  });
+
+  it('a plain 403 still does', () => {
+    expect(shouldForceReauth({ err: new ApiError(403, 'forbidden'), authRequired: true, hasToken: true })).toBe(true);
   });
 });
 

@@ -328,7 +328,7 @@ export function Observability() {
             type="button"
             onClick={() => downloadText(`gnl-runs-${Date.now()}.csv`, runsToCsv(filtered), 'text/csv;charset=utf-8;')}
             disabled={filtered.length === 0}
-            className="rounded-md border border-input px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+            className="rounded-md border border-input px-2 py-1 text-xs text-muted-foreground transition-colors enabled:hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {t('downloadCsv')}
           </button>

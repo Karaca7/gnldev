@@ -5,7 +5,7 @@ import { ReactFlow, Background, Controls, MiniMap, type Node, type Edge } from '
 import dagre from '@dagrejs/dagre';
 import { Play, RotateCw, History, X, Ban, Plus, Pencil, Trash2, GripVertical, Code2, Cpu, Copy, ArrowRight, GitFork, Columns2, Inbox, ChevronLeft } from 'lucide-react';
 import {
-  useWorkflows, useWorkflowRuns, useWorkflowRunsRegistry, useCapabilities, useAgents, runWorkflowStream, api, errMessage, useWorkflowRunState,
+  useWorkflows, useWorkflowRuns, useWorkflowRunsRegistry, useCapabilities, useAgents, runWorkflowStream, api, errMessage, useWorkflowRunState, ApiError,
   type WorkflowMeta, type WorkflowRunResult, type WorkflowRunSummary, type WorkflowRunRegistryItem, type WorkflowDef, type WorkflowStepDef,
 } from '../api';
 import { Btn, Spinner, Badge, StatusBadge, EmptyState, ErrorBox, JsonBlock, cn, useStatusLabel } from '../components';
@@ -29,6 +29,22 @@ const KIND_GLYPH: Record<string, string> = { parallel: '⇉', branch: '⌥', loo
  * (so 'order' doesn't shadow 'order-fulfillment' when both exist). Returns null when no known name
  * Matches — callers fall back to letting the user pick.
  */
+/**
+ * Is this failure "there is no stored definition yet", or is it a failure to READ one that exists?
+ *
+ * Only a 404 is the first. `startEdit` used to catch everything and open an empty draft either way,
+ * and an empty draft is not a neutral state here: the editor shows a workflow with no steps, and Save
+ * writes that over the real one. A 403 (an organization-scoped caller whose host workflow store has no
+ * boundary), a 500, or a dropped connection was one click away from deleting the definition it had
+ * just failed to read.
+ *
+ * Exported and pure so the decision can be tested without mounting the view — the same reason
+ * `shouldForceReauth` lives outside `App.tsx`.
+ */
+export function isMissingDefinition(e: unknown): boolean {
+  return e instanceof ApiError && e.status === 404;
+}
+
 export function deriveWorkflowName(runId: string, knownNames: string[]): string | null {
   const candidateIds = runId.startsWith('dry-') ? [runId, runId.slice(4)] : [runId];
   let best: string | null = null;
@@ -144,9 +160,11 @@ export function Workflows() {
 
   async function startEdit(wf: WorkflowMeta) {
     try {
-      const def = await api.workflowDef(wf.name);
-      setEditing(def);
-    } catch { setEditing({ name: wf.name, description: wf.description ?? '', steps: [] }); }
+      setEditing(await api.workflowDef(wf.name));
+    } catch (e) {
+      if (isMissingDefinition(e)) setEditing({ name: wf.name, description: wf.description ?? '', steps: [] });
+      else toast.error(t('defLoadFailed', { name: wf.name, error: errMessage(e) }));
+    }
   }
 
   async function handleDelete(name: string) {
@@ -218,7 +236,7 @@ export function Workflows() {
         )}
         <div className="p-1.5 border-b border-border">
           <button type="button" onClick={() => setShowInbox(true)} disabled={running} title={running ? t('runningGuardTitle') : undefined}
-            className="inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground">
+            className="inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs font-medium text-muted-foreground transition-colors enabled:hover:bg-muted enabled:hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40">
             <Inbox size={13} /> {t('inboxToggleLabel')}
             {registryItems(suspendedRuns.data).length > 0 && <Badge tone="warning">{registryItems(suspendedRuns.data).length}</Badge>}
           </button>
@@ -517,7 +535,7 @@ function WorkflowDetail({ wf, canRun, canManage, onEdit, onRunningChange, onBack
             switching workflows in the list (leaving now would abort the stream). */}
         {onBack && (
           <button type="button" onClick={onBack} disabled={busy} title={busy ? t('runningGuardTitle') : t('backToWorkflowsTitle')}
-            className="shrink-0 text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 md:hidden">
+            className="shrink-0 text-muted-foreground enabled:hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 md:hidden">
             <ChevronLeft size={16} />
           </button>
         )}
@@ -776,8 +794,8 @@ function WorkflowEditor({ initial, onSave, onCancel }: {
             <div key={i} className="rounded-md border border-border bg-card p-3 space-y-2">
               <div className="flex items-center gap-2">
                 <div className="flex flex-col gap-0.5">
-                  <button type="button" title={t('moveUpTitle')} onClick={() => i > 0 && moveStep(i, -1)} disabled={i === 0} className="text-muted-foreground hover:text-foreground disabled:opacity-30"><GripVertical size={14} className="-mb-1" /></button>
-                  <button type="button" title={t('moveDownTitle')} onClick={() => i < steps.length - 1 && moveStep(i, 1)} disabled={i === steps.length - 1} className="text-muted-foreground hover:text-foreground disabled:opacity-30"><GripVertical size={14} className="-mt-1 rotate-180" /></button>
+                  <button type="button" title={t('moveUpTitle')} onClick={() => i > 0 && moveStep(i, -1)} disabled={i === 0} className="text-muted-foreground enabled:hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed"><GripVertical size={14} className="-mb-1" /></button>
+                  <button type="button" title={t('moveDownTitle')} onClick={() => i < steps.length - 1 && moveStep(i, 1)} disabled={i === steps.length - 1} className="text-muted-foreground enabled:hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed"><GripVertical size={14} className="-mt-1 rotate-180" /></button>
                 </div>
                 <span className="text-[11px] text-muted-foreground font-mono shrink-0">#{i + 1}</span>
                 <input value={step.id} onChange={(e) => updateStep(i, { id: e.target.value })}
