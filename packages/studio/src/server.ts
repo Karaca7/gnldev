@@ -1181,7 +1181,26 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       // write never had an org in the ALS; once writes became org-scoped, every bound identity's audit
       // record landed under `org:<id>:__audit__` where the reader never looks — the log went silently
       // empty for exactly the identities whose actions most need recording.
-      await appendLog(rawReader as unknown as Journal, '__audit__', { actor, action, target, ...(org ? { org } : {}), ...(detail !== undefined ? { detail } : {}) });
+      /**
+       * `reason` is whatever the caller sent in `x-gnl-reason`, so a review can ask "why" and not only
+       * "who". Not required, deliberately: making it mandatory would break every existing operator
+       * script on the day it shipped, and a trail nobody can write to is worse than one with blanks.
+       *
+       * There is deliberately no `actingAs` here. I added one and then measured that it can never fill
+       * on this surface: `org = bound ?? requested` and an explicit org header is REFUSED on any
+       * non-GET (the v1 read-only rule, line ~971), so on a write the ALS only ever holds the caller's
+       * own binding. A platform identity crossing into an organization does it through
+       * `@gnldev/server`, which is where that field now lives.
+       */
+      const reason = c.req.header('x-gnl-reason')?.slice(0, 300);
+      await appendLog(rawReader as unknown as Journal, '__audit__', {
+        actor,
+        action,
+        target,
+        ...(org ? { org } : {}),
+        ...(reason ? { reason } : {}),
+        ...(detail !== undefined ? { detail } : {}),
+      });
     } catch { /* audit is best-effort — swallow */ }
   }
 

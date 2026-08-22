@@ -246,12 +246,14 @@ async function seeded() {
 /** Every host call, with the organization studio told it about. The control for WRITE routes. */
 const hostCalls: Array<{ what: string; orgId?: string }> = [];
 
+/** Records one host/runner call and returns the value, so a seam can be observed without changing it. */
+const rec = <T>(what: string, ctx: { orgId?: string } | undefined, v: T): T => {
+  hostCalls.push({ what, orgId: ctx?.orgId });
+  return v;
+};
+
 function hostObjects(optIn: boolean) {
   const flag = optIn ? { orgScoped: true } : {};
-  const rec = <T>(what: string, ctx: { orgId?: string } | undefined, v: T): T => {
-    hostCalls.push({ what, orgId: ctx?.orgId });
-    return v;
-  };
   const mine = (orgId: string | undefined) => (orgId === 'acme' ? MARKER : 'GLOBEX-OWN');
   const defs = new Map([['acme-workflow', {
     name: 'acme-workflow', description: MARKER, steps: [{ id: 's1', agentName: 'w', prompt: MARKER }],
@@ -315,7 +317,10 @@ async function makeApi(optIn = false) {
     resume: async () => ({}),
     compensate: async () => ({ ok: true }),
     otelExport: async (runId: string) => ({ ok: true, target: runId }),
-    chat: { send: async () => ({ text: 'chat-ok' }) },
+    // `chat` is a FUNCTION, not an object with `.send` — the route calls `chat(message, {runId}, ctx)`.
+    // An earlier fixture used `{ send }`, which produced "chat is not a function" and left the route
+    // looking uncontrollable when it was simply never reached.
+    chat: async (_m: string, _o: unknown, ctx?: { orgId?: string }) => rec('chat', ctx, { text: 'chat-ok' }),
     scorers: { list: () => [{ name: 'quality' }], score: async () => ({ quality: 1 }) },
     // Scoped by the org the store is asked about, the way a real user store is.
     /**
@@ -335,7 +340,10 @@ async function makeApi(optIn = false) {
       remove: async () => {},
       revoke: async () => {},
     },
-    datasets: { list: () => [{ id: 'd-acme', size: 1 }], run: async () => ({ ok: true, results: [] }) },
+    datasets: {
+      list: () => [{ id: 'd-acme', size: 1 }],
+      run: async (_id: string, _o?: unknown, ctx?: { orgId?: string }) => rec('datasets.run', ctx, { ok: true, results: [] }),
+    },
     // A FACTORY, not an object: it is handed the org-scoped reader, so threads isolate. A `memory`
     // object is refused unless it declares `orgScoped: true` — see the block at the end of this file.
     memoryFactory: mem,
@@ -344,10 +352,10 @@ async function makeApi(optIn = false) {
       // agents are all global makes that filter invisible: both callers see the same list, and the
       // route looks uncontrollable when it is simply never exercised.
       listAgents: () => [{ name: 'acme-only-agent', orgs: ['acme'] }, { name: 'shared-agent' }],
-      run: async () => ({ text: 'ok' }),
+      run: async (_n: string, _o: unknown, ctx?: { orgId?: string }) => rec('gnl.run', ctx, { text: 'ok' }),
       stream: async () => ({ textStream: (async function* () { yield 'ok'; })() }),
       listTools: () => [{ name: 'acme-tool' }],
-      runTool: async () => ({ ok: true }),
+      runTool: async (_n: string, _i: unknown, _o?: unknown, ctx?: { orgId?: string }) => rec('gnl.runTool', ctx, { ok: true }),
       listWorkflows: () => [],
     },
     ...(({ __dishonest: _d, ...rest }) => rest)(hostObjects(optIn) as never),
@@ -490,7 +498,8 @@ describe('the ownership control — acme must SEE what globex must not', () => {
   ];
 
   /** Controlled by the recorded host call instead of the body — see the write-route block below. */
-  const WRITE_CONTROLLED = ['POST /workflows', 'PUT /workflows/:name', 'DELETE /workflows/:name'];
+  const WRITE_CONTROLLED = ['POST /workflows', 'PUT /workflows/:name', 'DELETE /workflows/:name',
+    'POST /agents/:name/run', 'POST /tools/:name/execute', 'POST /chat', 'POST /datasets/:id/run'];
 
   /**
    * Controlled by the EFFECT the request had, for routes that answer a constant.
@@ -545,11 +554,7 @@ describe('the ownership control — acme must SEE what globex must not', () => {
     // The host is a stub that answers identically; the org is carried in the CALL, not the response.
     'POST /users': 'creates a user rather than acting on an existing one, so there is no existing target '
       + 'whose organization the route can compare against the calling identity',
-    'POST /agents/:name/run': 'stub runner returns the same body; needs a recorded seam like the write routes',
     'POST /agents/:name/stream': 'streamed body, and the stub runner answers identically',
-    'POST /chat': 'stub chat answers identically',
-    'POST /tools/:name/execute': 'stub tool runner answers identically',
-    'POST /datasets/:id/run': 'stub dataset runner answers identically',
     'POST /managed-agents': 'requires a code-defined agent to version against',
     'DELETE /managed-agents/:name': 'answers {ok:true} to both',
     'POST /managed-agents/:name/promote': 'needs a stored version to promote',
@@ -660,6 +665,41 @@ describe('the ownership control — acme must SEE what globex must not', () => {
     expect(globex.body, 'the global agent disappeared for a non-owning caller').toContain('shared-agent');
   }, 30_000);
 
+  /**
+   * The RUNNER routes, controlled by the organization the runner was told about.
+   *
+   * These answer a constant — a stub runner returns the same body to everybody — so no comparison of
+   * answers can separate the owner from a stranger. Each entry point now takes `ctx?: StudioCallbackCtx`
+   * and studio passes the caller's organization, so the observable is what the runner was told.
+   *
+   * The caller's organization is bound to its IDENTITY here, not sent as `x-gnl-org`. Studio refuses an
+   * explicit org header on any write (the v1 read-only rule), so a header-based fixture would be
+   * measuring that refusal rather than reaching the runner at all.
+   */
+  it.each([
+    ['POST /agents/:name/run', 'POST', '/agents/:name/run', 'gnl.run'],
+    ['POST /tools/:name/execute', 'POST', '/tools/:name/execute', 'gnl.runTool'],
+    ['POST /chat', 'POST', '/chat', 'chat'],
+    ['POST /datasets/:id/run', 'POST', '/datasets/:id/run', 'datasets.run'],
+  ])('%s tells the runner which organization is asking', async (_label, method, path, what) => {
+    const { api } = await makeApi(true);
+
+    const start = hostCalls.length;
+    await drive(api, { method, path }, AS.acme);
+    const acmeCalls = hostCalls.slice(start).filter((c) => c.what === what);
+
+    const mid = hostCalls.length;
+    await drive(api, { method, path }, AS.globex);
+    const globexCalls = hostCalls.slice(mid).filter((c) => c.what === what);
+
+    expect(acmeCalls.length, `${what} was never called — the route did not reach the runner`).toBeGreaterThan(0);
+    expect([...new Set(acmeCalls.map((c) => c.orgId))], `${what} was not told it was acting for acme`).toEqual(['acme']);
+    expect(globexCalls.length, `${what} was never called for globex`).toBeGreaterThan(0);
+    expect([...new Set(globexCalls.map((c) => c.orgId))],
+      `${what} was told the wrong organization, or none at all — the runner cannot scope what it does`)
+      .toEqual(['globex']);
+  }, 30_000);
+
   it('names every org-scoped route that is leak-checked but not ownership-controlled', () => {
     const orgScoped = Object.entries(VERDICTS).filter(([, v]) => v.verdict === 'org-scoped').map(([k]) => k);
     const controlled = new Set([...CONTROLLED, ...WRITE_CONTROLLED, ...EFFECT_CONTROLLED]);
@@ -675,7 +715,7 @@ describe('the ownership control — acme must SEE what globex must not', () => {
     // Every gap must carry a reason. An unexplained one is the same failure as an unclassified route.
     expect(uncontrolled.filter((k) => !UNCONTROLLED_REASONS[k]),
       'an org-scoped route is uncontrolled with no reason recorded — say why, or control it').toEqual([]);
-    expect(controlled.size, 'ownership coverage went backwards').toBeGreaterThanOrEqual(44);
+    expect(controlled.size, 'ownership coverage went backwards').toBeGreaterThanOrEqual(48);
   });
 });
 

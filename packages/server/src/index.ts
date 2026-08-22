@@ -675,11 +675,40 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
       const actor = actorOf(c);
       const p = principalOf(c.req.raw);
       const org = p?.orgId ?? orgId;
+      /**
+       * `actingAs` — an UNBOUND identity operating inside an organization, which `org` cannot express.
+       *
+       * `org` answers "which organization was this about" and fills from the actor's own binding or
+       * from the scope the request resolved. Both give the same value for a platform-admin working
+       * inside someone else's organization, so the record cannot distinguish "acme's admin cancelled
+       * acme's run" from "the operator cancelled acme's run" — and the second is the event a customer
+       * would ask about.
+       *
+       * Set only when the actor has NO organization of their own and the request resolved into one.
+       * A bound identity never has it: acting inside your own organization is not acting as anyone.
+       *
+       * It lives here rather than in @gnldev/studio because this is the only surface where it can
+       * happen. Studio refuses an explicit org header on every non-GET (its v1 read-only rule), so on
+       * a write its ALS only ever holds the caller's own binding — I put the field there first and
+       * measured that it could never fill.
+       *
+       * `reason` is whatever the caller sent in `x-gnl-reason`. Optional on purpose: required would
+       * break every existing operator script the day it shipped, and a trail nobody can write to is
+       * worse than one with blanks.
+       */
+      const actingAs = !p?.orgId && orgId ? orgId : undefined;
+      const reason = c.req.header('x-gnl-reason')?.slice(0, 300);
       // ALWAYS the ROOT journal (baseJournal), NEVER an org-scoped view — the `__audit__` contract
       // (see @gnldev/studio server.ts's /audit reader) is a SINGLE root-level trail with the organization
       // Carried as a PAYLOAD FIELD for filtering. An org-prefixed write (`org:<id>:__audit__:…`) would
       // Be invisible to studio's audit view (it deliberately reads the root journal for exactly this reason).
-      await appendLog(baseJournal, '__audit__', { actor, action, target, ...(org ? { org } : {}), ...(detail !== undefined ? { detail } : {}) });
+      await appendLog(baseJournal, '__audit__', {
+        actor, action, target,
+        ...(org ? { org } : {}),
+        ...(actingAs ? { actingAs } : {}),
+        ...(reason ? { reason } : {}),
+        ...(detail !== undefined ? { detail } : {}),
+      });
     } catch { /* audit is best-effort — swallow */ }
   }
 
