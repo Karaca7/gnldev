@@ -318,8 +318,18 @@ async function makeApi(optIn = false) {
     chat: { send: async () => ({ text: 'chat-ok' }) },
     scorers: { list: () => [{ name: 'quality' }], score: async () => ({ quality: 1 }) },
     // Scoped by the org the store is asked about, the way a real user store is.
+    /**
+     * Returns EVERY user when called without an organization — which is how the routes call it. All
+     * four `/users` handlers do `opts.users.list()` unscoped and filter in the handler against the
+     * caller's own `orgId`. An earlier fixture returned `[]` for the unscoped call, so `target` was
+     * never found, the `target.orgId !== own` guard never fired, and a stranger's delete came back 200:
+     * the fixture defeated the very check the route exists for.
+     */
     users: {
-      list: async (orgId?: string) => (orgId === 'acme' ? [{ id: 'u-acme', email: MARKER, roles: ['admin'], orgId }] : []),
+      list: async (orgId?: string) => [
+        { id: 'u-acme', email: MARKER, roles: ['admin'], orgId: 'acme' },
+        { id: 'u-globex', email: 'GLOBEX-OWN', roles: ['admin'], orgId: 'globex' },
+      ].filter((u) => orgId === undefined || u.orgId === orgId),
       create: async (u: Record<string, unknown>) => ({ ...u, id: 'u-new' }),
       update: async (id: string, patch: Record<string, unknown>) => ({ id, ...patch, roles: ['admin'] }),
       remove: async () => {},
@@ -330,7 +340,10 @@ async function makeApi(optIn = false) {
     // object is refused unless it declares `orgScoped: true` — see the block at the end of this file.
     memoryFactory: mem,
     gnl: {
-      listAgents: () => [{ name: 'a' }],
+      // Agents carry `orgs`, because `GET /agents` filters with `agentVisibleToOrg`. A fixture whose
+      // agents are all global makes that filter invisible: both callers see the same list, and the
+      // route looks uncontrollable when it is simply never exercised.
+      listAgents: () => [{ name: 'acme-only-agent', orgs: ['acme'] }, { name: 'shared-agent' }],
       run: async () => ({ text: 'ok' }),
       stream: async () => ({ textStream: (async function* () { yield 'ok'; })() }),
       listTools: () => [{ name: 'acme-tool' }],
@@ -362,6 +375,9 @@ async function drive(api: (r: Request) => Promise<Response>, route: { method: st
     init.body = JSON.stringify({
       runId: 'r-acme', name: 'acme-workflow', input: {}, query: 'x', prompt: 'x', steps: [],
       message: 'hello', model: 'openai/gpt-4o-mini', afterIndex: 0, upto: 1, version: 1, id: 'x',
+      // `PATCH /users/:id` refuses a body with nothing to change ("nothing to update"), which reads as
+      // a refusal of the CALLER rather than of the request.
+      roles: ['viewer'],
     });
   }
   const res = await Promise.race([
@@ -460,6 +476,7 @@ describe('the ownership control — acme must SEE what globex must not', () => {
   // they answered both callers identically (`GET /runs/:id/cost`, `GET /a2a-network`, `GET /approvals`
   // at the time) — a control that cannot tell the two apart is a control in name only.
   const CONTROLLED: string[] = [
+    'GET /agents', 'GET /users', 'DELETE /users/:id', 'PATCH /users/:id', 'POST /users/:id/revoke',
     'POST /auth/sse-ticket', 'POST /cache/invalidate', 'GET /cache/stats',
     'GET /jobs', 'POST /jobs/:id/retry', 'POST /knowledge/search', 'GET /managed-agents',
     'GET /metrics', 'GET /metrics/runs', 'GET /organizations',
@@ -474,6 +491,19 @@ describe('the ownership control — acme must SEE what globex must not', () => {
 
   /** Controlled by the recorded host call instead of the body — see the write-route block below. */
   const WRITE_CONTROLLED = ['POST /workflows', 'PUT /workflows/:name', 'DELETE /workflows/:name'];
+
+  /**
+   * Controlled by the EFFECT the request had, for routes that answer a constant.
+   *
+   * `PATCH`/`DELETE /threads/:id` and `DELETE /threads/:id/messages` all answer `{ok:true}` to
+   * everybody, so no comparison of bodies can ever separate the owner from a stranger. Their seams
+   * (`updateThread`, `deleteThread`, `truncateMessages`) receive only a threadId — no organization —
+   * because isolation comes from the ALS-scoped journal the conversation store is built over.
+   *
+   * So the observable is WHERE THE WRITE LANDED. The owner's mutation must reach the owner's key, and
+   * a stranger issuing the identical request must not.
+   */
+  const EFFECT_CONTROLLED = ['PATCH /threads/:id', 'DELETE /threads/:id', 'DELETE /threads/:id/messages'];
 
   // The OPT-IN fixture: routes backed by a host object are refused entirely without it, and a 403 to
   // both callers is not an ownership control. This is the configuration in which they serve at all.
@@ -504,7 +534,6 @@ describe('the ownership control — acme must SEE what globex must not', () => {
     // routes, so driving the whole inventory first left rows behind and made it look controlled. Run
     // alone it is empty for both callers. An order-dependent control is worse than none.
     'GET /audit': 'empty for both callers unless earlier requests happened to write audit rows',
-    'GET /agents': 'the stub runner returns one static agent list to everyone',
     'GET /approvals': 'needs a run left suspended in a state listRuns reports as pending',
     'GET /runs/:id/incidents': 'needs incident records in readIncidents\' shape',
     'GET /runs/:id/network': 'needs sub-agent call records',
@@ -514,22 +543,17 @@ describe('the ownership control — acme must SEE what globex must not', () => {
     'GET /workflows/:name/runs': 'needs wfrun records keyed by workflow name',
     'GET /users': 'needs a user store whose list() is called with the caller\'s organization',
     // The host is a stub that answers identically; the org is carried in the CALL, not the response.
+    'POST /users': 'creates a user rather than acting on an existing one, so there is no existing target '
+      + 'whose organization the route can compare against the calling identity',
     'POST /agents/:name/run': 'stub runner returns the same body; needs a recorded seam like the write routes',
     'POST /agents/:name/stream': 'streamed body, and the stub runner answers identically',
     'POST /chat': 'stub chat answers identically',
     'POST /tools/:name/execute': 'stub tool runner answers identically',
     'POST /datasets/:id/run': 'stub dataset runner answers identically',
-    'PATCH /threads/:id': 'answers {ok:true} to both; the memory adapter has no recorded seam',
-    'DELETE /threads/:id': 'answers {ok:true} to both; the memory adapter has no recorded seam',
-    'DELETE /threads/:id/messages': 'answers {ok:true} to both; the memory adapter has no recorded seam',
     'POST /managed-agents': 'requires a code-defined agent to version against',
     'DELETE /managed-agents/:name': 'answers {ok:true} to both',
     'POST /managed-agents/:name/promote': 'needs a stored version to promote',
     'DELETE /managed-agents/:name/versions/:version': 'needs a stored version to delete',
-    'POST /users': 'user store shape; not chased',
-    'PATCH /users/:id': 'user store shape; not chased',
-    'DELETE /users/:id': 'answers {ok:true} to both',
-    'POST /users/:id/revoke': 'answers {ok:true} to both',
     'POST /runs/:id/regression': 'reaches a real provider and fails on a missing API key for both',
     // Needs production support to be controllable at all.
     'GET /events': 'SSE — the body never ends, so there is no answer to compare',
@@ -537,21 +561,121 @@ describe('the ownership control — acme must SEE what globex must not', () => {
     'POST /workflows/:name/run-stream': 'needs compileWorkflow wired; answers 501 to both without it',
   };
 
+  /**
+   * The recorded-EFFECT control, for the routes whose answer is a constant.
+   *
+   * Each case drives the SAME request as both callers against the SAME thread id, and reads the
+   * underlying journal to see where the write landed. Both halves are asserted: the owner's mutation
+   * must reach the owner's key (or the control is vacuous), and the stranger's identical request must
+   * leave it untouched (or it is a cross-organization write).
+   */
+  describe('routes that answer a constant are controlled by where the write landed', () => {
+    const KEY = { acme: 'org:acme:thread:t-acme', globex: 'org:globex:thread:t-acme' };
+
+    /** Seeds one message under BOTH organizations' copies of the same thread id. */
+    async function seedBothThreads(journal: InMemoryJournal) {
+      await journal.put(KEY.acme, [{ role: 'user', content: MARKER }]);
+      await journal.put(KEY.globex, [{ role: 'user', content: 'GLOBEX-OWN' }]);
+    }
+
+    it.each([
+      ['DELETE /threads/:id', 'DELETE', '/threads/:id'],
+      ['DELETE /threads/:id/messages', 'DELETE', '/threads/:id/messages'],
+    ])('%s empties the caller\'s own thread and no one else\'s', async (_label, method, path) => {
+      const { api, journal } = await makeApi(true);
+      await seedBothThreads(journal);
+
+      // The stranger first: its identical request must not touch acme's copy.
+      await drive(api, { method, path }, AS.globex);
+      expect(await journal.get(KEY.acme),
+        "a stranger's delete reached another organization's thread").toEqual([{ role: 'user', content: MARKER }]);
+
+      // Then the owner: the same request must actually do something.
+      await drive(api, { method, path }, AS.acme);
+      expect(await journal.get(KEY.acme),
+        'the owner\'s delete did nothing — the isolation above is blanket refusal, not ownership').toEqual([]);
+    }, 30_000);
+
+    it('PATCH /threads/:id writes metadata under the caller\'s own organization', async () => {
+      const { api, journal } = await makeApi(true);
+      await seedBothThreads(journal);
+
+      await drive(api, { method: 'PATCH', path: '/threads/:id' }, AS.acme);
+      await drive(api, { method: 'PATCH', path: '/threads/:id' }, AS.globex);
+
+      expect(await journal.get('org:acme:thread-meta:t-acme'),
+        'the owner\'s patch did not land under its own organization').toBeTruthy();
+      expect(await journal.get('org:globex:thread-meta:t-acme'),
+        'the stranger\'s patch landed somewhere other than its own organization').toBeTruthy();
+      // The two are separate rows: neither caller can see or overwrite the other's.
+      expect(await journal.get('org:acme:thread-meta:t-acme'))
+        .not.toBe(await journal.get('org:globex:thread-meta:t-acme'));
+    }, 30_000);
+  });
+
+  /**
+   * The `/users` routes carry their own organization check: each reads the whole store and compares
+   * `target.orgId` against the caller's own, answering 403 when they differ. So the owner and a
+   * stranger get genuinely different ANSWERS, and the control is the answer — no seam needed.
+   */
+  describe('user management is confined to the caller\'s own organization', () => {
+    it.each([
+      ['DELETE /users/:id', 'DELETE', '/users/:id'],
+      ['PATCH /users/:id', 'PATCH', '/users/:id'],
+      ['POST /users/:id/revoke', 'POST', '/users/:id/revoke'],
+    ])('%s: the owner may act on its own member, a stranger may not', async (_label, method, path) => {
+      const { api } = await makeApi(true);
+
+      const owner = await drive(api, { method, path }, AS.acme);      // u-acme belongs to acme
+      const stranger = await drive(api, { method, path }, AS.globex);
+
+      expect(owner.status, "the owning organization could not act on its own member").toBeLessThan(400);
+      expect(stranger.status, "another organization acted on a member that is not theirs").toBe(403);
+      expect(stranger.body, 'the refusal does not say whose member it is').toMatch(/own org/);
+    }, 30_000);
+
+    it('GET /users lists only the caller\'s own members', async () => {
+      const { api } = await makeApi(true);
+      const acme = await drive(api, { method: 'GET', path: '/users' }, AS.acme);
+      const globex = await drive(api, { method: 'GET', path: '/users' }, AS.globex);
+
+      expect(acme.body, 'the owner cannot see its own member').toContain('u-acme');
+      expect(acme.body, "another organization's member appeared in the list").not.toContain('u-globex');
+      expect(globex.body).toContain('u-globex');
+      expect(globex.body).not.toContain('u-acme');
+    }, 30_000);
+  });
+
+  // `GET /agents` filters through `agentVisibleToOrg` — the same rule `agentGate` uses to answer an
+  // identical 404 for "no such agent" and "not yours". An agent NAME is therefore a fact this route
+  // must not disclose to a non-owning organization.
+  it('GET /agents shows each organization only the agents it may run', async () => {
+    const { api } = await makeApi(true);
+    const acme = await drive(api, { method: 'GET', path: '/agents' }, AS.acme);
+    const globex = await drive(api, { method: 'GET', path: '/agents' }, AS.globex);
+
+    expect(acme.body, 'the owning organization lost its own agent').toContain('acme-only-agent');
+    expect(globex.body, 'an agent name was disclosed to an organization that cannot run it')
+      .not.toContain('acme-only-agent');
+    expect(globex.body, 'the global agent disappeared for a non-owning caller').toContain('shared-agent');
+  }, 30_000);
+
   it('names every org-scoped route that is leak-checked but not ownership-controlled', () => {
     const orgScoped = Object.entries(VERDICTS).filter(([, v]) => v.verdict === 'org-scoped').map(([k]) => k);
-    const controlled = new Set([...CONTROLLED, ...WRITE_CONTROLLED]);
+    const controlled = new Set([...CONTROLLED, ...WRITE_CONTROLLED, ...EFFECT_CONTROLLED]);
     const uncontrolled = orgScoped.filter((k) => !controlled.has(k));
 
     // eslint-disable-next-line no-console
     console.log(`[cross-org] ${controlled.size}/${orgScoped.length} org-scoped routes are ownership-controlled `
-      + `(${CONTROLLED.length} by answer, ${WRITE_CONTROLLED.length} by recorded host call).\n`
+      + `(${CONTROLLED.length} by answer, ${WRITE_CONTROLLED.length} by recorded host call, `
+      + `${EFFECT_CONTROLLED.length} by recorded effect).\n`
       + `[cross-org] NOT ownership-controlled (${uncontrolled.length}):\n`
       + uncontrolled.map((k) => `  ${k} — ${UNCONTROLLED_REASONS[k] ?? 'UNEXPLAINED'}`).join('\n'));
 
     // Every gap must carry a reason. An unexplained one is the same failure as an unclassified route.
     expect(uncontrolled.filter((k) => !UNCONTROLLED_REASONS[k]),
       'an org-scoped route is uncontrolled with no reason recorded — say why, or control it').toEqual([]);
-    expect(controlled.size, 'ownership coverage went backwards').toBeGreaterThanOrEqual(36);
+    expect(controlled.size, 'ownership coverage went backwards').toBeGreaterThanOrEqual(44);
   });
 });
 

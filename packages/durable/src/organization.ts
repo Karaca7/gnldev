@@ -98,6 +98,53 @@ export async function assertOrgRegistered(
   );
 }
 
+/**
+ * Refuses to adopt while a run is still executing.
+ *
+ * Measured, on SQLite with a real model call in flight: the migration moved three of the run's keys
+ * into the organization, the run then wrote its next key at the ROOT, and the store ended with the
+ * SAME logical key in both places —
+ *
+ *   canli-kosu:proc:__gnl_model_claim:0            (root, written after the migration)
+ *   org:acme:canli-kosu:proc:__gnl_model_claim:0   (moved)
+ *
+ * — which is the exactly-once claim marker, duplicated. That is the worst of the three outcomes: no
+ * error, and no whole record either. The transaction does not help, because the run is not inside it;
+ * it protects the migration from failing halfway, not the store from being written to meanwhile.
+ *
+ * So this is a refusal, not a warning. "Stop writes before upgrading" is advice a deployment can
+ * follow accidentally; the store is the only place that knows whether it actually did.
+ *
+ * Detected from the outcome records rather than `listRuns`, because the summary shape differs between
+ * adapters while `{status:'running'}` is written by the engine itself and is identical everywhere.
+ */
+export async function assertNoRunsInFlight(
+  read: {
+    listKeys?(prefix: string): Promise<string[]>;
+    get<T = unknown>(key: string): Promise<T | undefined>;
+  },
+  allowInFlight?: boolean,
+): Promise<void> {
+  if (allowInFlight || typeof read.listKeys !== 'function') return;
+  const keys = await read.listKeys('');
+  const inFlight: string[] = [];
+  for (const k of keys) {
+    if (!k.endsWith(':outcome')) continue;
+    const rec = await read.get<{ status?: string }>(k);
+    if (rec && typeof rec === 'object' && (rec as { status?: string }).status === 'running') {
+      inFlight.push(k.slice(0, -':outcome'.length));
+    }
+  }
+  if (inFlight.length === 0) return;
+  throw new Error(
+    `@gnldev/durable: ${inFlight.length} run(s) are still executing (${inFlight.slice(0, 3).join(', ')}` +
+    `${inFlight.length > 3 ? ', …' : ''}), and adopting now would SPLIT them: the migration moves the keys `
+    + 'they have already written while they go on writing unprefixed ones, leaving the same exactly-once '
+    + 'claim marker in two places. Measured. Stop accepting work, let the runs finish, then adopt — or '
+    + 'pass { allowInFlight: true } if you know these runs are abandoned.',
+  );
+}
+
 /** True when a root-level key belongs to the platform and `adoptIntoOrg` must leave it alone. */
 export function isPlatformKey(key: string): boolean {
   if (!key.startsWith('__')) return false;                       // ordinary data — adoptable

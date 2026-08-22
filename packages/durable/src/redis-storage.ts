@@ -18,7 +18,7 @@
 import { createRequire } from 'node:module';
 import { runIdOfKey, parseJournalKey, deriveRunStatus } from './journal.js';
 import { stableStringify } from './hash.js';
-import { ENGINE_META_KEYS, assertOrgRegistered, isPlatformKey, orgPrefix } from './organization.js';
+import { ENGINE_META_KEYS, assertNoRunsInFlight, assertOrgRegistered, isPlatformKey, orgPrefix } from './organization.js';
 import type { JournalBatch, JournalEntry, RunSummary, ToolJournalRecord } from './journal.js';
 import { serialize, deserialize } from './serialize.js';
 import { ReplicationNotAcknowledgedError } from './errors.js';
@@ -851,9 +851,10 @@ export class RedisStorage implements Storage {
    * a cache entry that outlives its expiry is worse than a cold cache. Cache is derived data: it
    * refills. Reported under `skippedPlatformKeys` as `cache:` so the decision is visible.
    */
-  async adoptIntoOrg(orgId: string, opts?: { dryRun?: boolean; allowUnregistered?: boolean }): Promise<AdoptIntoOrgResult> {
+  async adoptIntoOrg(orgId: string, opts?: { dryRun?: boolean; allowUnregistered?: boolean; allowInFlight?: boolean }): Promise<AdoptIntoOrgResult> {
     const prefix = orgPrefix(orgId);
     await assertOrgRegistered(this.runs, orgId, opts?.allowUnregistered);
+    await assertNoRunsInFlight(this.runs, opts?.allowInFlight);
     const dryRun = opts?.dryRun === true;
     const moved: Record<string, number> = {};
     const skipped = new Set<string>(['cache:']);

@@ -7,7 +7,7 @@ import { createRequire } from 'node:module';
 import { statSync, existsSync } from 'node:fs';
 import { cosineSimilarity } from 'ai';
 import { runIdOfKey, parseJournalKey, outcomeStatusOf, deriveRunStatus } from './journal.js';
-import { ENGINE_META_KEYS, assertOrgRegistered, isPlatformKey, orgPrefix } from './organization.js';
+import { ENGINE_META_KEYS, assertNoRunsInFlight, assertOrgRegistered, isPlatformKey, orgPrefix } from './organization.js';
 import type { JournalBatch, JournalEntry, RunSummary, ToolJournalRecord } from './journal.js';
 import { serialize, deserialize } from './serialize.js';
 import { matchFilter } from './storage.js';
@@ -327,9 +327,10 @@ export class SqliteStorage implements Storage {
    * top K — see `VectorStore.query`). Its rows are stamped, not renamed, and the namespace has no
    * trailing colon, matching what `withOrgStorage` writes.
    */
-  async adoptIntoOrg(orgId: string, opts?: { dryRun?: boolean; allowUnregistered?: boolean }): Promise<AdoptIntoOrgResult> {
+  async adoptIntoOrg(orgId: string, opts?: { dryRun?: boolean; allowUnregistered?: boolean; allowInFlight?: boolean }): Promise<AdoptIntoOrgResult> {
     const prefix = orgPrefix(orgId);               // throws on '' or a ':'-bearing id — one guard, shared
     await assertOrgRegistered(this.runs, orgId, opts?.allowUnregistered);
+    await assertNoRunsInFlight(this.runs, opts?.allowInFlight);
     const ns = prefix.slice(0, -1);                // 'org:acme', what scopedVectors writes
     const dryRun = opts?.dryRun === true;
     // [table, column, store-name-for-the-report]

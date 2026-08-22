@@ -356,9 +356,15 @@ export interface Storage {
    * running it again with the correct name skips them as `alreadyScoped`. `allowUnregistered: true`
    * opts out for a deployment with no registration path.
    *
+   * REFUSES while a run is still executing. Measured on SQLite with a live model call: the migration
+   * moved three of the run's keys and the run wrote its next one at the root, leaving the same
+   * exactly-once claim marker in two places — no error, no whole record. The transaction protects the
+   * migration from failing halfway; it does not stop anything else writing meanwhile.
+   * `allowInFlight: true` opts out for runs known to be abandoned.
+   *
    * `dryRun` reports the same counts without writing.
    */
-  adoptIntoOrg?(orgId: string, opts?: { dryRun?: boolean; allowUnregistered?: boolean }): Promise<AdoptIntoOrgResult>;
+  adoptIntoOrg?(orgId: string, opts?: { dryRun?: boolean; allowUnregistered?: boolean; allowInFlight?: boolean }): Promise<AdoptIntoOrgResult>;
 }
 
 /** What `Storage.adoptIntoOrg` moved, or would move under `dryRun` — one entry per store it touched. */
