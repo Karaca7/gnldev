@@ -40,6 +40,8 @@ export type StudioResume = (
 export type StudioChat = (
   message: string,
   opts?: { runId?: string },
+  /** The calling organization — see StudioAgentRunner.run. */
+  ctx?: StudioCallbackCtx,
 ) => Promise<{ runId?: string; text?: string; interrupts?: unknown[]; finishReason?: string }>;
 
 /** Metadata for a single tool (for the Tools view + agent context panel). */
@@ -77,8 +79,21 @@ export interface AgentMeta {
  */
 export interface StudioAgentRunner {
   listAgents (): Promise<AgentMeta[]> | AgentMeta[];
-  run (name: string, opts: { runId: string; prompt?: string; messages?: unknown; threadId?: string; resourceId?: string; approvals?: Record<string, boolean>; model?: string; temperature?: number; topP?: number; system?: string; tools?: string[] }): Promise<{ text?: string; interrupts?: unknown[]; finishReason?: string }>;
-  stream?(name: string, opts: { runId: string; prompt?: string; messages?: unknown; threadId?: string; resourceId?: string; approvals?: Record<string, boolean>; model?: string; temperature?: number; topP?: number; system?: string; tools?: string[] }): Promise<any>;
+  /**
+   * `ctx.orgId` is the organization the caller is acting for, supplied on every call.
+   *
+   * These four entry points — `run`, `stream`, `runTool`, `runWorkflow`, plus `StudioChat` and
+   * `StudioDatasets.run` below — received NOTHING about the caller, unlike `queue.retry`,
+   * `cache.invalidate` and the workflow store, which all take a `StudioCallbackCtx`. So a host runner
+   * could not behave differently per organization even if it wanted to, and nothing could prove it had
+   * been told which one it was acting for. The journal it writes through is already scoped, so this is
+   * not where isolation comes from; it is what makes the runner's own behaviour attributable.
+   *
+   * Optional, so every existing host implementation stays valid — a function of fewer parameters is
+   * assignable to one declaring more.
+   */
+  run (name: string, opts: { runId: string; prompt?: string; messages?: unknown; threadId?: string; resourceId?: string; approvals?: Record<string, boolean>; model?: string; temperature?: number; topP?: number; system?: string; tools?: string[] }, ctx?: StudioCallbackCtx): Promise<{ text?: string; interrupts?: unknown[]; finishReason?: string }>;
+  stream?(name: string, opts: { runId: string; prompt?: string; messages?: unknown; threadId?: string; resourceId?: string; approvals?: Record<string, boolean>; model?: string; temperature?: number; topP?: number; system?: string; tools?: string[] }, ctx?: StudioCallbackCtx): Promise<any>;
   /** If given, the Tools view shows the tool list. */
   listTools?(): Promise<ToolListItem[]> | ToolListItem[];
   /** If given, tools can be run for TEST purposes (respects the guard; opts.durable → writes to the
@@ -87,6 +102,7 @@ export interface StudioAgentRunner {
     name: string,
     input: unknown,
     opts?: { durable?: boolean; approve?: { runId: string; toolCallId: string; approved: boolean } },
+    ctx?: StudioCallbackCtx,
   ): Promise<{ result?: unknown; error?: string; blocked?: 'deny' | 'approval'; runId?: string }>;
   /** True when runTool's durable mode is supported (a journal exists). */
   toolExecDurable?: boolean;
@@ -99,6 +115,7 @@ export interface StudioAgentRunner {
     name: string,
     input: unknown,
     opts?: { runId?: string; maxSteps?: number; resume?: Record<string, unknown> },
+    ctx?: StudioCallbackCtx,
   ): Promise<{ runId: string; output?: unknown; suspended?: boolean; paused?: boolean; canceled?: boolean; stepId?: string; reason?: unknown; steps: { id: string; kind: string; output: unknown }[] }>;
 }
 
@@ -261,7 +278,8 @@ export interface EvalDatasetResultLike {
  */
 export interface StudioDatasets {
   list (): Promise<DatasetMeta[]> | DatasetMeta[];
-  run (id: string, opts?: { scorers?: string[] }): Promise<EvalDatasetResultLike> | EvalDatasetResultLike;
+  /** `ctx.orgId` is the calling organization — see StudioAgentRunner.run. */
+  run (id: string, opts?: { scorers?: string[] }, ctx?: StudioCallbackCtx): Promise<EvalDatasetResultLike> | EvalDatasetResultLike;
 }
 
 /** An MCP server's definition as given to studio (MCP Servers view). */
@@ -2817,7 +2835,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     const body = (await c.req.json().catch(() => ({}))) as { message?: string; runId?: string };
     if (!body.message) return c.json({ error: 'message is required' }, 400);
     try {
-      return c.json({ ok: true, ...(await chat(String(body.message), { runId: body.runId })) });
+      return c.json({ ok: true, ...(await chat(String(body.message), { runId: body.runId }, { orgId: callerOrg(c) })) });
     } catch (e) {
       // This endpoint had no catch at all, so the SAME upstream failure that other endpoints turned
       // Into a 400 became an unhandled 500 here — one fault, two answers, depending only on which
@@ -2959,7 +2977,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
         topP: body.topP,
         system: body.system ?? mo?.system,
         ...(Array.isArray(body.tools) ? { tools: body.tools as string[] } : {}),
-      });
+      }, { orgId: callerOrg(c) });
       await audit(c, 'agent.run', name, { runId: body.runId, ...(mo && body.model == null ? { managedVersion: true } : {}) });
       // `finishReason` is here because without it an empty answer is unreadable. A run whose model
       // Returned nothing answers 200 with `text: ""` — identical, on the wire, to a model that
@@ -2998,7 +3016,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
         topP: body.topP,
         system: body.system ?? mo?.system,
         ...(Array.isArray(body.tools) ? { tools: body.tools as string[] } : {}),
-      });
+      }, { orgId: callerOrg(c) });
     } catch (e: any) {
       // Same taxonomy as the non-streaming /agents/:name/run handler above: this catch fires
       // BEFORE the SSE body starts (gnl.stream() only sets up the run — pipeAgentStream() below
@@ -3022,7 +3040,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     if (!gnl?.runTool) return c.json({ error: 'tool execution is not enabled' }, 501);
     const name = decodeURIComponent(c.req.param('name'));
     const body = (await c.req.json().catch(() => ({}))) as { input?: unknown; durable?: boolean; approve?: { runId: string; toolCallId: string; approved: boolean } };
-    const r = await gnl.runTool(name, body.input, { durable: !!body.durable, approve: body.approve });
+    const r = await gnl.runTool(name, body.input, { durable: !!body.durable, approve: body.approve }, { orgId: callerOrg(c) });
     await audit(c, 'tool.exec', name, { durable: !!body.durable });
     return c.json(r.error ? { error: r.error, blocked: r.blocked, runId: r.runId } : { ok: true, result: r.result, runId: r.runId });
   });
@@ -3203,7 +3221,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
             ...(body.maxSteps != null ? { maxSteps: body.maxSteps } : {}),
             ...(body.resume ? { resume: body.resume } : {}),
           };
-          return c.json({ ok: true, ...(await gnl.runWorkflow(name, body.input, Object.keys(wfOpts).length ? wfOpts : undefined)) });
+          return c.json({ ok: true, ...(await gnl.runWorkflow(name, body.input, Object.keys(wfOpts).length ? wfOpts : undefined, { orgId: callerOrg(c) })) });
         } catch (e: any) {
           return c.json({ error: String(e?.message ?? e) }, 400);
         }
@@ -3617,7 +3635,10 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       const minAvg = opts.evalGate.minAvg ?? 0.5;
       let aggregate: Record<string, number>;
       try {
-        aggregate = (await datasets.run(opts.evalGate.datasetId)).aggregate;
+        // The organization too. This is the eval gate for PROMOTING a managed agent version, which
+        // happens in an organization's context — leaving it off would be the same rule applied to
+        // the call sites that were easy to find rather than to all of them.
+        aggregate = (await datasets.run(opts.evalGate.datasetId, undefined, { orgId: callerOrg(c) })).aggregate;
       } catch (e: any) {
         return c.json({ error: `eval gate could not run: ${String(e?.message ?? e)}` }, 500);
       }
@@ -3707,7 +3728,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     const id = decodeURIComponent(c.req.param('id'));
     const body = (await c.req.json().catch(() => ({}))) as { scorers?: string[] };
     try {
-      return c.json({ ok: true, ...(await datasets.run(id, { scorers: body.scorers })) });
+      return c.json({ ok: true, ...(await datasets.run(id, { scorers: body.scorers }, { orgId: callerOrg(c) })) });
     } catch (e: any) {
       return c.json({ error: String(e?.message ?? e) }, 400);
     }
