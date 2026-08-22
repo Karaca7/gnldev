@@ -162,7 +162,7 @@ const AS = { acme: { authorization: 'Bearer acme' }, globex: { authorization: 'B
  */
 function concrete(path: string): string {
   const family = (m: string): string => {
-    if (m === ':version') return '1';
+    if (m === ':version') return '2'; // the DRAFT version — v1 is active and cannot be deleted
     if (m === ':otherId') return 'r-acme-2';
     if (m === ':runId') return 'r-acme';
     if (path.startsWith('/threads')) return 't-acme';
@@ -211,7 +211,13 @@ async function seedOrg(j: InMemoryJournal, org: string, run: string, text: strin
   await j.put(`${p}:memctx`, { recalled: [], recentCount: 1, note: text });
   await j.put(`${p}:wf:step-a`, { output: text });
   await j.put(`org:${org}:wfrun:${run}`, { runId: run, workflowName: 'acme-workflow', status: 'completed', at: 1 });
-  await j.put(`org:${org}:__studio_agent__:acme-bot`, { name: 'acme-bot', versions: [{ version: 1, system: text, at: 1 }], active: 1 });
+  // TWO versions, one active. `DELETE /managed-agents/:name/versions/:version` refuses the active one
+  // with 409, so a single-version record makes that route answer identically to every caller for a
+  // reason that has nothing to do with organizations.
+  await j.put(`org:${org}:__studio_agent__:acme-bot`, {
+    name: 'acme-bot', active: 1,
+    versions: [{ version: 1, system: text, at: 1 }, { version: 2, system: `${text} v2`, at: 2 }],
+  });
   await j.put(`org:${org}:__audit__:a1`, { at: 1, actor: text, action: 'run', target: run });
   await j.put(`org:${org}:sched:def:t-${org}`, { id: `t-${org}`, cron: '* * * * *', agent: text });
   await j.put(`org:${org}:sched:state:t-${org}`, { id: `t-${org}`, nextAt: 2, lastAt: 1 });
@@ -392,7 +398,10 @@ async function drive(api: (r: Request) => Promise<Response>, route: { method: st
     // the route in the uncontrolled pile for a reason that has nothing to do with organizations.
     init.body = JSON.stringify({
       runId: 'r-acme', name: 'acme-workflow', input: {}, query: 'x', prompt: 'x', steps: [],
-      message: 'hello', model: 'openai/gpt-4o-mini', afterIndex: 0, upto: 1, version: 1, id: 'x',
+      message: 'hello', model: 'openai/gpt-4o-mini', afterIndex: 0, upto: 1, id: 'x',
+      // v2 is the DRAFT; v1 is active. `promote` reads `body.version`, so promoting v2 is a real state
+      // change whose effect can be observed — promoting the already-active v1 changes nothing.
+      version: 2,
       // `PATCH /users/:id` refuses a body with nothing to change ("nothing to update"), which reads as
       // a refusal of the CALLER rather than of the request.
       roles: ['viewer'],
@@ -504,7 +513,7 @@ describe('the ownership control — acme must SEE what globex must not', () => {
     'GET /scheduler/triggers', 'POST /runs/:id/fork', 'GET /runs/:id/memory-context',
     'POST /runs/:id/otel-export', 'GET /runs/:id/regression/:otherId', 'POST /runs/:id/resume',
     'POST /runs/:id/score', 'GET /runs/:id/scores', 'GET /runs/:id/state', 'GET /runs/:id/trace',
-    'GET /threads', 'GET /threads/:id/working-memory',
+    'GET /threads', 'GET /threads/:id/messages', 'GET /threads/:id/working-memory',
     'GET /workflows', 'GET /workflows/:name/def', 'POST /workflows/:name/runs/:id/fork',
     'GET /workflows/run/:runId', 'GET /workflows/runs', 'POST /workflows/runs/:id/cancel',
   ];
@@ -524,7 +533,9 @@ describe('the ownership control — acme must SEE what globex must not', () => {
    * So the observable is WHERE THE WRITE LANDED. The owner's mutation must reach the owner's key, and
    * a stranger issuing the identical request must not.
    */
-  const EFFECT_CONTROLLED = ['PATCH /threads/:id', 'DELETE /threads/:id', 'DELETE /threads/:id/messages'];
+  const EFFECT_CONTROLLED = ['PATCH /threads/:id', 'DELETE /threads/:id', 'DELETE /threads/:id/messages',
+    'DELETE /managed-agents/:name', 'POST /managed-agents/:name/promote',
+    'DELETE /managed-agents/:name/versions/:version'];
 
   // The OPT-IN fixture: routes backed by a host object are refused entirely without it, and a 403 to
   // both callers is not an ownership control. This is the configuration in which they serve at all.
@@ -556,7 +567,6 @@ describe('the ownership control — acme must SEE what globex must not', () => {
     // alone it is empty for both callers. An order-dependent control is worse than none.
     'GET /audit': 'empty for both callers unless earlier requests happened to write audit rows',
     'GET /approvals': 'needs a run left suspended in a state listRuns reports as pending',
-    'GET /threads/:id/messages': 'the factory-backed store returns [] for the seeded thread id',
     'GET /workflows/:name/runs': 'needs wfrun records keyed by workflow name',
     'GET /users': 'needs a user store whose list() is called with the caller\'s organization',
     // The host is a stub that answers identically; the org is carried in the CALL, not the response.
@@ -564,9 +574,6 @@ describe('the ownership control — acme must SEE what globex must not', () => {
       + 'whose organization the route can compare against the calling identity',
     'POST /agents/:name/stream': 'streamed body, and the stub runner answers identically',
     'POST /managed-agents': 'requires a code-defined agent to version against',
-    'DELETE /managed-agents/:name': 'answers {ok:true} to both',
-    'POST /managed-agents/:name/promote': 'needs a stored version to promote',
-    'DELETE /managed-agents/:name/versions/:version': 'needs a stored version to delete',
     'POST /runs/:id/regression': 'reaches a real provider and fails on a missing API key for both',
     // Needs production support to be controllable at all.
     'GET /events': 'SSE — the body never ends, so there is no answer to compare',
@@ -708,6 +715,49 @@ describe('the ownership control — acme must SEE what globex must not', () => {
       .toEqual(['globex']);
   }, 30_000);
 
+  /**
+   * The managed-agent write routes, controlled by the EFFECT on the caller's own record.
+   *
+   * All three answer a constant — `{ok:true,...}` identical for every caller — so the observable is the
+   * stored record. The agent store is reached through `agentStoreFor(c)`, which is org-scoped, so the
+   * owner's write must change the owner's record and leave the other organization's alone.
+   */
+  describe('managed-agent writes act on the caller\'s own record only', () => {
+    const KEY = { acme: 'org:acme:__studio_agent__:acme-bot', globex: 'org:globex:__studio_agent__:acme-bot' };
+    type Rec = { active?: number | null; versions?: { version: number }[] } | undefined;
+
+    it('DELETE /managed-agents/:name removes only the caller\'s record', async () => {
+      const { api, journal } = await makeApi(true);
+      await drive(api, { method: 'DELETE', path: '/managed-agents/:name' }, AS.acme);
+
+      // The leak assertion comes FIRST so that a mutant which misdirects the write trips THIS one, not the
+      // owner assertion below — otherwise the isolation half is never the reason the test fails.
+      expect(await journal.get(KEY.globex), "acme's delete removed another organization's agent").toBeTruthy();
+      expect(await journal.get(KEY.acme), 'the owner\'s record survived its own delete').toBeFalsy();
+    }, 30_000);
+
+    it('POST /managed-agents/:name/promote changes only the caller\'s active version', async () => {
+      const { api, journal } = await makeApi(true);
+      // Promote v2 in acme; globex must keep v1 active.
+      await drive(api, { method: 'POST', path: '/managed-agents/:name/promote' }, AS.acme);
+
+      expect((await journal.get(KEY.globex) as Rec)?.active,
+        "acme's promote changed which version is live in another organization").toBe(1);
+      expect((await journal.get(KEY.acme) as Rec)?.active, 'the owner\'s promote did nothing').toBe(2);
+    }, 30_000);
+
+    it('DELETE /managed-agents/:name/versions/:version removes it from the caller\'s record only', async () => {
+      const { api, journal } = await makeApi(true);
+      await drive(api, { method: 'DELETE', path: '/managed-agents/:name/versions/:version' }, AS.acme);
+
+      const acme = await journal.get(KEY.acme) as Rec;
+      const globex = await journal.get(KEY.globex) as Rec;
+      expect(globex?.versions?.map((v) => v.version),
+        "acme's version delete reached another organization's record").toEqual([1, 2]);
+      expect(acme?.versions?.map((v) => v.version), 'the draft version was not removed for its owner').toEqual([1]);
+    }, 30_000);
+  });
+
   it('names every org-scoped route that is leak-checked but not ownership-controlled', () => {
     const orgScoped = Object.entries(VERDICTS).filter(([, v]) => v.verdict === 'org-scoped').map(([k]) => k);
     const controlled = new Set([...CONTROLLED, ...WRITE_CONTROLLED, ...EFFECT_CONTROLLED]);
@@ -723,7 +773,7 @@ describe('the ownership control — acme must SEE what globex must not', () => {
     // Every gap must carry a reason. An unexplained one is the same failure as an unclassified route.
     expect(uncontrolled.filter((k) => !UNCONTROLLED_REASONS[k]),
       'an org-scoped route is uncontrolled with no reason recorded — say why, or control it').toEqual([]);
-    expect(controlled.size, 'ownership coverage went backwards').toBeGreaterThanOrEqual(52);
+    expect(controlled.size, 'ownership coverage went backwards').toBeGreaterThanOrEqual(56);
   });
 });
 
