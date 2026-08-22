@@ -3,7 +3,7 @@
 // Structurally compatible, without either package depending on the other.
 import type { Hono } from 'hono';
 
-/** One mounted route, as `{ method, path }` — see `FetchHandler.routes`. */
+/** One mounted route, as `{ method, path }` — see `FetchHandler.routeTable`. */
 export interface RouteInfo {
   /** Uppercase HTTP method, or `ALL` for a method-agnostic mount. */
   method: string;
@@ -11,6 +11,21 @@ export interface RouteInfo {
   path: string;
 }
 
+/**
+ * NAMED `routeTable`, not `routes`, and that is not a style choice.
+ *
+ * `routes` is Hono's OWN property: `app.route(path, app)` does `app.routes.map((r) => r.handler)`.
+ * A fetch handler is not a Hono instance and `.route()` was never the supported way to mount one —
+ * `.mount()` is — but with a `routes` array present the wrong call SUCCEEDS at boot and then throws
+ * `r.handler is not a function` on every request. Measured against Hono 4.12:
+ *
+ *   routes present  ->  boot OK, every request 500
+ *   routes absent   ->  boot throws "Cannot read properties of undefined (reading 'map')"
+ *
+ * The second is the better failure: unsupported usage should fail where it is written, not on the
+ * first request in production. Colliding with the framework's own name turned a loud boot error into
+ * a quiet one, which is a worse outcome than the introspection is worth.
+ */
 export type FetchHandler = ((request: Request, ...rest: unknown[]) => Promise<Response>) & {
   fetch: (request: Request, ...rest: unknown[]) => Promise<Response>;
   /**
@@ -25,12 +40,12 @@ export type FetchHandler = ((request: Request, ...rest: unknown[]) => Promise<Re
    * the gap appears. Reading it off the router means a new route shows up in the conformance suite
    * without anyone remembering to add it.
    */
-  routes: readonly RouteInfo[];
+  routeTable: readonly RouteInfo[];
 }
 
 export function toFetchHandler(app: Hono): FetchHandler {
   const call = (request: Request, ...rest: unknown[]) => (app.fetch as any)(request, ...rest) as Promise<Response>;
-  return Object.assign(call, { fetch: call, routes: routeInventory(app) });
+  return Object.assign(call, { fetch: call, routeTable: routeInventory(app) });
 }
 
 /**
@@ -55,7 +70,7 @@ export function toFetchHandler(app: Hono): FetchHandler {
  * Each entry is frozen, not just the array. The same array is handed to every caller, so a single
  * consumer writing `routes[0].path = …` in place would corrupt the inventory for every later reader —
  * and the intended consumer is a test suite, which is exactly where that happens. One consequence:
- * `routes.sort(…)` throws (it sorts in place); copy first — `[...routes].sort(…)`.
+ * `routeTable.sort(…)` throws (it sorts in place); copy first — `[...routeTable].sort(…)`.
  */
 export function routeInventory(app: Hono): readonly RouteInfo[] {
   const seen = new Map<string, RouteInfo>();

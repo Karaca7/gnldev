@@ -145,7 +145,7 @@ const snapshot = async (j: InMemoryJournal) => {
 describe('the conformance table covers the router exactly', () => {
   it('every route the handler serves has a verdict', async () => {
     const { api } = await makeApi();
-    const inventory = api.routes.map((r: { method: string; path: string }) => `${r.method} ${r.path}`);
+    const inventory = api.routeTable.map((r: { method: string; path: string }) => `${r.method} ${r.path}`);
 
     expect(inventory.length, 'the inventory is empty — the suite would pass vacuously').toBe(18);
     expect(inventory.filter((r: string) => !(r in VERDICTS)),
@@ -155,7 +155,7 @@ describe('the conformance table covers the router exactly', () => {
 
   it('and no verdict names a route that no longer exists', async () => {
     const { api } = await makeApi();
-    const inventory = new Set(api.routes.map((r: { method: string; path: string }) => `${r.method} ${r.path}`));
+    const inventory = new Set(api.routeTable.map((r: { method: string; path: string }) => `${r.method} ${r.path}`));
     expect(Object.keys(VERDICTS).filter((k) => !inventory.has(k)), 'a stale verdict outlived its route').toEqual([]);
   });
 
@@ -168,7 +168,7 @@ describe("one organization's request cannot reach another's data", () => {
   it('no route returns acme data to globex', async () => {
     const { api } = await makeApi();
     const leaks: string[] = [];
-    for (const r of api.routes) {
+    for (const r of api.routeTable) {
       const { status, body } = await drive(api, r, AS.globex);
       if (body.includes(MARKER)) leaks.push(`${r.method} ${r.path} -> ${status} leaked the payload`);
       // The agent NAME is the fact `agentGate` exists to withhold, so it counts as a leak — but ONLY
@@ -186,7 +186,7 @@ describe("one organization's request cannot reach another's data", () => {
   it('no globex request modifies an acme journal key', async () => {
     const { api, journal } = await makeApi();
     const before = await snapshot(journal);
-    for (const r of api.routes) await drive(api, r, AS.globex);
+    for (const r of api.routeTable) await drive(api, r, AS.globex);
     const after = await snapshot(journal);
 
     expect(Object.keys(before).filter((k) => before[k] !== after[k] || !(k in after)),

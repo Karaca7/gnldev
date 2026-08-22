@@ -22,6 +22,21 @@ import type { Hono } from 'hono';
  * 404 from the buried handler, which reads as a broken package rather than a mount in the wrong
  * Order — measured, not theorised (`packages/cli/src/dev-server.ts` hit exactly this).
  */
+/**
+ * NAMED `routeTable`, not `routes`, and that is not a style choice.
+ *
+ * `routes` is Hono's OWN property: `app.route(path, app)` does `app.routes.map((r) => r.handler)`.
+ * A fetch handler is not a Hono instance and `.route()` was never the supported way to mount one —
+ * `.mount()` is — but with a `routes` array present the wrong call SUCCEEDS at boot and then throws
+ * `r.handler is not a function` on every request. Measured against Hono 4.12:
+ *
+ *   routes present  ->  boot OK, every request 500
+ *   routes absent   ->  boot throws "Cannot read properties of undefined (reading 'map')"
+ *
+ * The second is the better failure: unsupported usage should fail where it is written, not on the
+ * first request in production. Colliding with the framework's own name turned a loud boot error into
+ * a quiet one, which is a worse outcome than the introspection is worth.
+ */
 export type FetchHandler = ((request: Request, ...rest: unknown[]) => Promise<Response>) & {
   fetch: (request: Request, ...rest: unknown[]) => Promise<Response>;
   /**
@@ -35,10 +50,10 @@ export type FetchHandler = ((request: Request, ...rest: unknown[]) => Promise<Re
    * sees a new route the day it is added; a list maintained by hand sees it whenever someone
    * remembers.
    */
-  routes: readonly RouteInfo[];
+  routeTable: readonly RouteInfo[];
 };
 
-/** One mounted route, as `{ method, path }` — see `FetchHandler.routes`. */
+/** One mounted route, as `{ method, path }` — see `FetchHandler.routeTable`. */
 export interface RouteInfo {
   /** Uppercase HTTP method, or `ALL` for a method-agnostic mount. */
   method: string;
@@ -54,7 +69,7 @@ export interface RouteInfo {
  */
 export function toFetchHandler(app: Hono): FetchHandler {
   const call = (request: Request, ...rest: unknown[]) => (app.fetch as any)(request, ...rest) as Promise<Response>;
-  return Object.assign(call, { fetch: call, routes: routeInventory(app) });
+  return Object.assign(call, { fetch: call, routeTable: routeInventory(app) });
 }
 
 /**
@@ -78,12 +93,12 @@ export function toFetchHandler(app: Hono): FetchHandler {
  * here prefixed. `app.mount(path, handler)` does not: a host that mounts this handler and then reads
  * its OWN route table gets a single `ALL <path>/*` with all 87 routes hidden underneath. Since
  * `mount()` is the documented way in (see the note at the top of this file), a host cannot build a
- * conformance suite from its own table — it has to read `handler.routes`, which is complete because it
+ * conformance suite from its own table — it has to read `handler.routeTable`, which is complete because it
  * is computed before any host sees it.
  *
  * Each entry is frozen, not just the array: the same array goes to every caller, so one consumer
  * editing an entry in place would corrupt the inventory for every later reader. `routes.sort(…)`
- * therefore throws; copy first — `[...routes].sort(…)`.
+ * therefore throws; copy first — `[...routeTable].sort(…)`.
  */
 export function routeInventory(app: Hono): readonly RouteInfo[] {
   const seen = new Map<string, RouteInfo>();

@@ -3,7 +3,7 @@
 // This is what the route inventory was built for. Four rounds running, the same defect shape has
 // shipped: `requireScopedMemory` reached 6 of 9 routes, `wfStoreRefusal` 2 of 3, the fork route was a
 // third sibling, `/openapi.json` published exactly what `agentGate` withholds. Every one was a rule
-// applied to a subset. So the suite reads `handler.routes` and refuses to let a route go unexamined.
+// applied to a subset. So the suite reads `handler.routeTable` and refuses to let a route go unexamined.
 //
 // THE TABLE IS THE POINT. Every route carries an explicit, named verdict. A route in the inventory
 // with no entry FAILS — an unclassified route is the actual failure mode, and passing it silently
@@ -338,7 +338,7 @@ async function makeApi(optIn = false) {
       listWorkflows: () => [],
     },
     ...(({ __dishonest: _d, ...rest }) => rest)(hostObjects(optIn) as never),
-  } as never) as unknown as ((r: Request) => Promise<Response>) & { routes: readonly { method: string; path: string }[] };
+  } as never) as unknown as ((r: Request) => Promise<Response>) & { routeTable: readonly { method: string; path: string }[] };
   return { api, journal };
 }
 
@@ -381,7 +381,7 @@ const snapshot = async (j: InMemoryJournal) => {
 describe('the conformance table covers the router exactly', () => {
   it('every route the handler serves has a verdict', async () => {
     const { api } = await makeApi();
-    const inventory = api.routes.map((r) => `${r.method} ${r.path}`);
+    const inventory = api.routeTable.map((r) => `${r.method} ${r.path}`);
     const unclassified = inventory.filter((r) => !(r in VERDICTS));
 
     expect(inventory.length, 'the inventory is empty — the suite would pass vacuously').toBeGreaterThan(50);
@@ -393,7 +393,7 @@ describe('the conformance table covers the router exactly', () => {
 
   it('and no verdict names a route that no longer exists', async () => {
     const { api } = await makeApi();
-    const inventory = new Set(api.routes.map((r) => `${r.method} ${r.path}`));
+    const inventory = new Set(api.routeTable.map((r) => `${r.method} ${r.path}`));
     expect(Object.keys(VERDICTS).filter((k) => !inventory.has(k)), 'a stale verdict outlived its route').toEqual([]);
   });
 
@@ -413,7 +413,7 @@ describe("one organization's request cannot reach another's data", () => {
   it('no route returns acme data to globex', async () => {
     const { api } = await makeApi();
     const leaks: string[] = [];
-    for (const r of api.routes) {
+    for (const r of api.routeTable) {
       const { status, body } = await drive(api, r, AS.globex);
       if (body.includes(MARKER)) leaks.push(`${r.method} ${r.path} -> ${status} leaked`);
     }
@@ -425,7 +425,7 @@ describe("one organization's request cannot reach another's data", () => {
     const { api, journal } = await makeApi();
     const before = await snapshot(journal);
 
-    for (const r of api.routes) await drive(api, r, AS.globex);
+    for (const r of api.routeTable) await drive(api, r, AS.globex);
 
     const after = await snapshot(journal);
     const changed = Object.keys(before).filter((k) => before[k] !== after[k]);

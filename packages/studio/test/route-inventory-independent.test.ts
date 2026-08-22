@@ -18,11 +18,11 @@ import { InMemoryJournal } from '@gnldev/durable';
 import { createStudioApi, createStudioApp } from '../src/server.js';
 import { routeInventory } from '../src/handler.js';
 
-type Handler = { routes: readonly { method: string; path: string }[] } & ((r: Request) => Promise<Response>);
+type Handler = { routeTable: readonly { method: string; path: string }[] } & ((r: Request) => Promise<Response>);
 
 const api = (opts: object = {}) => createStudioApi({ reader: new InMemoryJournal(), ...opts } as never) as unknown as Handler;
 const app = (opts: object = {}) => createStudioApp({ reader: new InMemoryJournal(), ...opts } as never) as unknown as Handler;
-const sig = (h: Handler) => h.routes.map((r) => `${r.method} ${r.path}`);
+const sig = (h: Handler) => h.routeTable.map((r) => `${r.method} ${r.path}`);
 
 /**
  * A wildcard that serves files is only distinguishable from an unrouted path when the file EXISTS —
@@ -44,7 +44,7 @@ async function unroutedEntries(h: Handler): Promise<string[]> {
   const miss = await h(new Request('http://x/definitely-not-a-route-zzz'));
   const missBody = await miss.text();
   const out: string[] = [];
-  for (const r of h.routes.filter((x) => x.method !== 'ALL')) {
+  for (const r of h.routeTable.filter((x) => x.method !== 'ALL')) {
     if (r.path in OVERRIDES && OVERRIDES[r.path] === undefined) continue; // no built UI to probe with
     const url = OVERRIDES[r.path] ?? concrete(r.path);
     const init: RequestInit = { method: r.method };
@@ -66,7 +66,7 @@ async function unroutedEntries(h: Handler): Promise<string[]> {
 describe('the inventory describes what the handler actually serves', () => {
   it('createStudioApi: every entry routes', async () => {
     const h = api();
-    expect(h.routes.length, 'the inventory is empty — this test proves nothing').toBeGreaterThan(50);
+    expect(h.routeTable.length, 'the inventory is empty — this test proves nothing').toBeGreaterThan(50);
     expect(await unroutedEntries(h), 'the inventory lists routes the handler does not serve').toEqual([]);
   }, 60_000);
 
@@ -91,10 +91,10 @@ describe('the inventory describes what the handler actually serves', () => {
   });
 
   it('lists nothing twice, sorted by path then method', () => {
-    const routes = api().routes;
-    expect(new Set(sig(api())).size).toBe(routes.length);
-    const expected = [...routes].sort((a, b) => (a.path === b.path ? a.method.localeCompare(b.method) : a.path.localeCompare(b.path)));
-    expect(routes.map((r) => `${r.method} ${r.path}`)).toEqual(expected.map((r) => `${r.method} ${r.path}`));
+    const routeTable = api().routeTable;
+    expect(new Set(sig(api())).size).toBe(routeTable.length);
+    const expected = [...routeTable].sort((a, b) => (a.path === b.path ? a.method.localeCompare(b.method) : a.path.localeCompare(b.path)));
+    expect(routeTable.map((r) => `${r.method} ${r.path}`)).toEqual(expected.map((r) => `${r.method} ${r.path}`));
   });
 });
 
@@ -134,10 +134,10 @@ describe('a sub-app mounted with .route()', () => {
  * KNOWN LIMIT — `app.mount()` does not unpack, and `mount()` is how a host is told to attach this.
  *
  * The handler's OWN `routes` is complete, because it is read off this package's app before any host
- * sees it. But a Hono host that does `host.mount('/studio', handler)` and then reads `host.routes`
+ * sees it. But a Hono host that does `host.mount('/studio', handler)` and then reads `host.routeTable`
  * gets exactly one entry — `ALL /studio/*` — with all 87 routes hidden underneath. A host building a
  * conformance suite from its own route table therefore learns nothing about what it just mounted; it
- * has to read `handler.routes` instead.
+ * has to read `handler.routeTable` instead.
  *
  * Measured against Hono directly, so the contrast between the two mounting verbs is on the record.
  */
@@ -166,7 +166,7 @@ describe('what a host sees after mounting the handler', () => {
     const host = new Hono();
     host.mount('/studio', h as unknown as (r: Request) => Promise<Response>);
 
-    expect(h.routes.length, 'mounting mutated the handler\'s own inventory').toBeGreaterThan(50);
+    expect(h.routeTable.length, 'mounting mutated the handler\'s own inventory').toBeGreaterThan(50);
   });
 });
 
@@ -186,7 +186,7 @@ describe('ALL entries are middleware, not routes', () => {
   // `auth` never sees one, so it never learns it has to filter — and then breaks on a deployment that
   // does. Driving `ALL /*` means requesting the literal path `/*`.
   it('appear in this package only once `org` or `auth` is configured', () => {
-    const allOf = (h: Handler) => h.routes.filter((r) => r.method === 'ALL').map((r) => r.path);
+    const allOf = (h: Handler) => h.routeTable.filter((r) => r.method === 'ALL').map((r) => r.path);
     const authProvider = {
       authenticate: () => ({ roles: ['admin'] }),
       authorize: () => ({ allow: true }),
@@ -217,13 +217,13 @@ describe('ALL entries are middleware, not routes', () => {
 describe('what the inventory exposes', () => {
   it('method and path only — no handler, no Hono instance', () => {
     const h = api();
-    for (const r of h.routes) expect(Object.keys(r).sort()).toEqual(['method', 'path']);
-    expect(Object.keys(h).sort()).toEqual(['fetch', 'routes']);
-    expect(JSON.stringify(h.routes)).not.toMatch(/function|=>/);
+    for (const r of h.routeTable) expect(Object.keys(r).sort()).toEqual(['method', 'path']);
+    expect(Object.keys(h).sort()).toEqual(['fetch', 'routeTable']);
+    expect(JSON.stringify(h.routeTable)).not.toMatch(/function|=>/);
   });
 
   it('with uppercase methods and rooted paths', () => {
-    for (const r of api().routes) {
+    for (const r of api().routeTable) {
       expect(r.method).toBe(r.method.toUpperCase());
       expect(r.path.startsWith('/'), `${r.path} is not rooted`).toBe(true);
     }
@@ -239,11 +239,11 @@ describe('what the inventory exposes', () => {
 describe('what freezing protects', () => {
   it('the array and the entries inside it', () => {
     const h = api();
-    const original = h.routes[0]!.path;
+    const original = h.routeTable[0]!.path;
 
-    expect(Object.isFrozen(h.routes)).toBe(true);
-    expect(h.routes.every((r) => Object.isFrozen(r)), 'some entry escaped the freeze').toBe(true);
-    expect(() => ((h.routes[0] as { path: string }).path = 'HACKED'), 'an entry accepted an in-place write').toThrow(TypeError);
-    expect(h.routes[0]!.path, 'the inventory was corrupted for every later reader').toBe(original);
+    expect(Object.isFrozen(h.routeTable)).toBe(true);
+    expect(h.routeTable.every((r) => Object.isFrozen(r)), 'some entry escaped the freeze').toBe(true);
+    expect(() => ((h.routeTable[0] as { path: string }).path = 'HACKED'), 'an entry accepted an in-place write').toThrow(TypeError);
+    expect(h.routeTable[0]!.path, 'the inventory was corrupted for every later reader').toBe(original);
   });
 });

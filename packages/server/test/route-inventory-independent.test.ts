@@ -30,7 +30,7 @@ const wf = { build: () => [{ id: 's1' }], run: async () => ({ ok: true }) };
 
 const base = () => ({ journal: new InMemoryJournal(), agents: { a: { model } } });
 const mk = (cfg?: object, opts?: object) => createRestApi({ ...base(), ...cfg } as never, opts as never);
-const sig = (h: { routes: readonly { method: string; path: string }[] }) => h.routes.map((r) => `${r.method} ${r.path}`);
+const sig = (h: { routeTable: readonly { method: string; path: string }[] }) => h.routeTable.map((r) => `${r.method} ${r.path}`);
 
 /** A concrete URL for a pattern: `/agents/:name/run` → `/agents/X/run`. */
 const concrete = (p: string) => p.replace(/:([A-Za-z_]\w*)/g, 'X').replace(/\/\*$/, '/probe').replace(/\*/g, 'probe');
@@ -49,7 +49,7 @@ describe('the inventory describes what the handler actually serves', () => {
     expect(miss.status, 'the unrouted probe did not 404 — the discriminator is broken').toBe(404);
 
     const unrouted: string[] = [];
-    for (const r of api.routes.filter((x) => x.method !== 'ALL')) {
+    for (const r of api.routeTable.filter((x) => x.method !== 'ALL')) {
       const init: RequestInit = { method: r.method };
       if (!['GET', 'HEAD'].includes(r.method)) {
         init.headers = { 'content-type': 'application/json' };
@@ -64,7 +64,7 @@ describe('the inventory describes what the handler actually serves', () => {
       if (body === missBody) unrouted.push(`${r.method} ${r.path}`);
     }
 
-    expect(api.routes.length, 'the inventory is empty — this test proves nothing').toBeGreaterThan(0);
+    expect(api.routeTable.length, 'the inventory is empty — this test proves nothing').toBeGreaterThan(0);
     expect(unrouted, 'the inventory lists routes the handler does not serve').toEqual([]);
   });
 
@@ -83,19 +83,19 @@ describe('the inventory describes what the handler actually serves', () => {
   });
 
   it('and lists nothing twice, in a stable order', () => {
-    const routes = mk().routes;
+    const routeTable = mk().routeTable;
     const inventory = sig(mk());
     expect(new Set(inventory).size, 'the inventory contains duplicates').toBe(inventory.length);
 
     // Sorted by PATH then METHOD — not by the rendered `"METHOD path"` string, which orders
     // differently and is the easy thing to assert by mistake.
-    const expected = [...routes].sort((a, b) => (a.path === b.path ? a.method.localeCompare(b.method) : a.path.localeCompare(b.path)));
-    expect(routes.map((r) => `${r.method} ${r.path}`),
+    const expected = [...routeTable].sort((a, b) => (a.path === b.path ? a.method.localeCompare(b.method) : a.path.localeCompare(b.path)));
+    expect(routeTable.map((r) => `${r.method} ${r.path}`),
       'the inventory is not sorted, so a snapshot churns when a route moves in the file')
       .toEqual(expected.map((r) => `${r.method} ${r.path}`));
 
     // Two entries sharing a path must be adjacent and method-ordered.
-    const paths = routes.map((r) => r.path);
+    const paths = routeTable.map((r) => r.path);
     expect(paths, 'entries for the same path are not grouped together').toEqual([...paths].sort());
   });
 });
@@ -119,7 +119,7 @@ describe('the inventory does not depend on configuration', () => {
   it('is 18 routes for this package, and says so in one place', () => {
     // A count, deliberately: it is what makes "a route was added" visible in review. If it changes,
     // read the diff above it — the set is asserted, this is the tripwire.
-    expect(mk().routes).toHaveLength(18);
+    expect(mk().routeTable).toHaveLength(18);
   });
 });
 
@@ -134,13 +134,13 @@ describe('what a conformance suite must know before using it', () => {
       ['plain', {}, undefined], ['org', {}, { org: {} }],
       ['auth', {}, { auth: { read: () => true, write: () => true } }],
     ] as const) {
-      expect(mk(cfg as object, opts as object).routes.filter((r) => r.method === 'ALL'),
+      expect(mk(cfg as object, opts as object).routeTable.filter((r) => r.method === 'ALL'),
         'an ALL entry appeared — a suite driving the inventory would request the literal path').toEqual([]);
     }
   });
 
   it('every entry has an uppercase method and a path that starts with a slash', () => {
-    for (const r of mk().routes) {
+    for (const r of mk().routeTable) {
       expect(r.method, `${r.method} is not uppercase`).toBe(r.method.toUpperCase());
       expect(r.path.startsWith('/'), `${r.path} is not rooted`).toBe(true);
     }
@@ -148,11 +148,11 @@ describe('what a conformance suite must know before using it', () => {
 
   it('exposes method and path and nothing else — no handler, no closure', () => {
     const api = mk();
-    for (const r of api.routes) expect(Object.keys(r).sort()).toEqual(['method', 'path']);
+    for (const r of api.routeTable) expect(Object.keys(r).sort()).toEqual(['method', 'path']);
     expect(Object.keys(api).sort(), 'the handler grew a property that is not part of its contract')
-      .toEqual(['fetch', 'routes']);
+      .toEqual(['fetch', 'routeTable']);
     // The Hono instance itself must not be reachable from the handler.
-    expect(JSON.stringify(api.routes), 'a handler reference is serialised into the inventory').not.toMatch(/function|=>/);
+    expect(JSON.stringify(api.routeTable), 'a handler reference is serialised into the inventory').not.toMatch(/function|=>/);
   });
 
   // The dedup key must include the METHOD. This package happens to register no path with two methods,
@@ -186,7 +186,7 @@ describe('what a conformance suite must know before using it', () => {
   it('is the same list whether read from the handler or from routeInventory directly', () => {
     // `routeInventory` is exported, so a host can call it on its own app. The two must not drift.
     expect(typeof routeInventory).toBe('function');
-    expect(sig(mk())).toEqual(sig({ routes: mk().routes }));
+    expect(sig(mk())).toEqual(sig({ routeTable: mk().routeTable }));
   });
 });
 
@@ -194,32 +194,32 @@ describe('what a conformance suite must know before using it', () => {
  * The freeze is DEEP — array and entries both.
  *
  * This block used to record the opposite as a known boundary: `Object.freeze` on the array stopped
- * `push`/`splice` while each `RouteInfo` stayed mutable, and since `handler.routes` hands the SAME
- * array to every caller, one consumer writing `handler.routes[0].path = 'x'` corrupted the inventory
+ * `push`/`splice` while each `RouteInfo` stayed mutable, and since `handler.routeTable` hands the SAME
+ * array to every caller, one consumer writing `handler.routeTable[0].path = 'x'` corrupted the inventory
  * for every later reader — with a test suite, where a stray in-place edit is exactly what happens, as
  * the intended consumer. `Object.freeze(entry)` inside the map loop closed it, so these are inverted
  * rather than deleted: the boundary was written down, and then it moved.
  *
  * The milder trap in the same place stands and is documented in the JSDoc: a frozen array makes the
- * natural `handler.routes.sort(...)` throw, because `sort` mutates in place. Copy first.
+ * natural `handler.routeTable.sort(...)` throw, because `sort` mutates in place. Copy first.
  */
 describe('what freezing the inventory does and does not protect', () => {
   it('the array cannot be resized', () => {
-    expect(() => (mk().routes as { push: (x: unknown) => void }).push({ method: 'GET', path: '/x' })).toThrow(TypeError);
-    expect(Object.isFrozen(mk().routes)).toBe(true);
+    expect(() => (mk().routeTable as { push: (x: unknown) => void }).push({ method: 'GET', path: '/x' })).toThrow(TypeError);
+    expect(Object.isFrozen(mk().routeTable)).toBe(true);
   });
 
   it('and an individual entry cannot be rewritten either', () => {
     const api = mk();
-    const original = api.routes[0]!.path;
+    const original = api.routeTable[0]!.path;
 
-    expect(() => ((api.routes[0] as { path: string }).path = 'HACKED'), 'an entry accepted an in-place write').toThrow(TypeError);
-    expect(api.routes[0]!.path, 'the inventory was corrupted for every later reader').toBe(original);
-    expect(api.routes.every((r) => Object.isFrozen(r)), 'some entry escaped the freeze').toBe(true);
+    expect(() => ((api.routeTable[0] as { path: string }).path = 'HACKED'), 'an entry accepted an in-place write').toThrow(TypeError);
+    expect(api.routeTable[0]!.path, 'the inventory was corrupted for every later reader').toBe(original);
+    expect(api.routeTable.every((r) => Object.isFrozen(r)), 'some entry escaped the freeze').toBe(true);
   });
 
   it('and sorting it in place throws, because the array is frozen', () => {
-    expect(() => (mk().routes as { sort: (f: () => number) => unknown }).sort(() => 0)).toThrow(TypeError);
-    expect(() => [...mk().routes].sort(), 'a copy cannot be sorted either').not.toThrow();
+    expect(() => (mk().routeTable as { sort: (f: () => number) => unknown }).sort(() => 0)).toThrow(TypeError);
+    expect(() => [...mk().routeTable].sort(), 'a copy cannot be sorted either').not.toThrow();
   });
 });
