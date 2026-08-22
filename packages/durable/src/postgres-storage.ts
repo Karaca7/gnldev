@@ -9,13 +9,14 @@ import { runIdOfKey, parseJournalKey, outcomeStatusOf, deriveRunStatus } from '.
 import type { JournalBatch, JournalEntry, RunSummary, ToolJournalRecord } from './journal.js';
 import { serialize, deserialize } from './serialize.js';
 import { matchFilter } from './storage.js';
-import type {
+import type { AdoptIntoOrgResult,
   Storage, CapabilityMatrix, Page, ListQuery,
   RunJournal, MemoryStore, VectorStore, WorkStore, CacheStore, MetaStore,
   ThreadRecord, MessageRecord, Observation, RecallOptions, VectorItem, VectorMatch, VectorQueryOptions, LogRecord,
 } from './storage.js';
 // P2-migrate schema introspection/migration façade — see migrate.ts's header.
 import { tablesFromDDL } from './migrate.js';
+import { ENGINE_META_KEYS, isPlatformKey, orgPrefix } from './organization.js';
 import type { SchemaCheckResult, SchemaMigrationResult, MissingColumn } from './migrate.js';
 
 type QueryResult = { rows: any[]; rowCount?: number | null };
@@ -271,6 +272,75 @@ export class PostgresStorage implements Storage {
    * Table + temporarily needs 2× disk → only during a maintenance window. Postgres doesn't expose file
    * Size via the API → reclaimedBytes = -1 (unknown).
    */
+  /** See `Storage.adoptIntoOrg`. Same table list and the same platform-key rule as the SQLite adapter. */
+  async adoptIntoOrg(orgId: string, opts?: { dryRun?: boolean }): Promise<AdoptIntoOrgResult> {
+    const prefix = orgPrefix(orgId);
+    const ns = prefix.slice(0, -1);
+    const dryRun = opts?.dryRun === true;
+    await this.ensureReady();
+    // A DEDICATED connection, not the pool. `BEGIN` and `COMMIT` issued through `pool.query` can land
+    // on different connections, so the statements between them would not be in a transaction at all —
+    // and a half-migrated store is worse than an unmigrated one, because nobody can tell which half is
+    // which.
+    if (typeof this._pool.connect !== 'function') {
+      // Refused rather than run without one. A duck-typed pool that cannot hand out a connection
+      // cannot give us a transaction, and this migration rewrites every key in the store — running it
+      // non-atomically would leave a store nobody can classify if it failed halfway.
+      throw new Error(
+        '@gnldev/durable: adoptIntoOrg needs a pool that supports connect() so the migration runs in one '
+        + 'transaction. Pass a real `pg` Pool (or a connectionString) rather than a minimal query-only object.',
+      );
+    }
+    const client = await this._pool.connect();
+    const q = (sql: string, p?: unknown[]) => client.query(sql, p);
+    const KEYED: Array<[string, string, string]> = [
+      ['gnl_run_journal', 'key', 'runs'], ['gnl_runs', 'run_id', 'runs'], ['gnl_counters', 'key', 'runs'],
+      ['gnl_threads', 'id', 'memory'], ['gnl_messages', 'thread_id', 'memory'],
+      ['gnl_working_memory', 'scope_id', 'memory'], ['gnl_observations', 'thread_id', 'memory'],
+      ['gnl_work_log', 'ns', 'work'], ['gnl_work_kv', 'key', 'work'], ['gnl_cache', 'key', 'cache'],
+    ];
+    const moved: Record<string, number> = {};
+    const skipped = new Set<string>();
+    let alreadyScoped = 0;
+    const bump = (store: string, n: number) => { moved[store] = (moved[store] ?? 0) + n; };
+
+    if (!dryRun) await q('BEGIN');
+    try {
+      for (const [table, col, store] of KEYED) {
+        alreadyScoped += Number((await q(`SELECT COUNT(*) AS c FROM ${table} WHERE ${col} LIKE 'org:%'`)).rows[0].c);
+        const rows = (await q(`SELECT DISTINCT ${col} AS k FROM ${table} WHERE ${col} NOT LIKE 'org:%'`)).rows as { k: string }[];
+        let n = 0;
+        for (const { k } of rows) {
+          if (isPlatformKey(k)) { skipped.add(k.split(':')[0]!); continue; }
+          n += Number((await q(`SELECT COUNT(*) AS c FROM ${table} WHERE ${col} = $1`, [k])).rows[0].c);
+          if (!dryRun) await q(`UPDATE ${table} SET ${col} = $1 WHERE ${col} = $2`, [prefix + k, k]);
+        }
+        bump(store, n);
+      }
+      // gnl_meta minus the engine's own rows — see ENGINE_META_KEYS.
+      const metaRows = (await q(`SELECT k FROM gnl_meta WHERE k NOT LIKE 'org:%'`)).rows as { k: string }[];
+      alreadyScoped += Number((await q(`SELECT COUNT(*) AS c FROM gnl_meta WHERE k LIKE 'org:%'`)).rows[0].c);
+      let metaN = 0;
+      for (const { k } of metaRows) {
+        if (ENGINE_META_KEYS.includes(k) || isPlatformKey(k)) { skipped.add(k); continue; }
+        metaN++;
+        if (!dryRun) await q(`UPDATE gnl_meta SET k = $1 WHERE k = $2`, [prefix + k, k]);
+      }
+      bump('meta', metaN);
+
+      const vecs = Number((await q(`SELECT COUNT(*) AS c FROM gnl_vectors WHERE namespace IS NULL`)).rows[0].c);
+      alreadyScoped += Number((await q(`SELECT COUNT(*) AS c FROM gnl_vectors WHERE namespace IS NOT NULL`)).rows[0].c);
+      if (!dryRun && vecs) await q(`UPDATE gnl_vectors SET namespace = $1 WHERE namespace IS NULL`, [ns]);
+      bump('vectors', vecs);
+
+      if (!dryRun) await q('COMMIT');
+    } catch (e) {
+      if (!dryRun) await q('ROLLBACK').catch(() => {});
+      throw e;
+    } finally { client.release?.(); }
+    return { orgId, dryRun, moved, alreadyScoped, skippedPlatformKeys: [...skipped].sort() };
+  }
+
   async compact(opts?: { full?: boolean }): Promise<{ reclaimedBytes: number }> {
     const tables = ['gnl_run_journal', 'gnl_runs', 'gnl_messages', 'gnl_work_log', 'gnl_vectors'];
     for (const t of tables) {
@@ -386,7 +456,7 @@ class PgRunJournal implements RunJournal {
           const runId = key.slice(0, -':outcome'.length);
           // First write of a brand-new run may precede its row — see the sqlite twin's comment.
           await this.touchRunDelta(q, runId, null, false, 0);
-          await q(`UPDATE gnl_runs SET failed = $1, running = $2, canceled = $3 WHERE run_id = $4`, [oc === 'failed', oc === 'running', oc === 'canceled', runId]);
+          await this.q(`UPDATE gnl_runs SET failed = $1, running = $2, canceled = $3 WHERE run_id = $4`, [oc === 'failed', oc === 'running', oc === 'canceled', runId]);
         }
       });
       return;
@@ -400,7 +470,7 @@ class PgRunJournal implements RunJournal {
     // SELECT sees the committed prev. H11b's O(1) incremental update (touchRunDelta) is preserved as-is.
     await this.tx(async (q) => {
       await this.lockRunRow(q, p.runId);
-      const prev = (await q('SELECT suspended FROM gnl_run_journal WHERE key = $1', [key])).rows[0];
+      const prev = (await this.q('SELECT suspended FROM gnl_run_journal WHERE key = $1', [key])).rows[0];
       await upsert(q);
       const delta = (suspended ? 1 : 0) - (prev?.suspended ? 1 : 0);
       await this.touchRunDelta(q, p.runId, p.kind, prev === undefined, delta);
@@ -426,7 +496,7 @@ class PgRunJournal implements RunJournal {
           if (oc !== null) {
             const runId = key.slice(0, -':outcome'.length);
             await this.touchRunDelta(q, runId, null, false, 0); // see the sqlite twin
-            await q(`UPDATE gnl_runs SET failed = $1, running = $2, canceled = $3 WHERE run_id = $4`, [oc === 'failed', oc === 'running', oc === 'canceled', runId]);
+            await this.q(`UPDATE gnl_runs SET failed = $1, running = $2, canceled = $3 WHERE run_id = $4`, [oc === 'failed', oc === 'running', oc === 'canceled', runId]);
           }
         }
         return ok;
@@ -464,7 +534,7 @@ class PgRunJournal implements RunJournal {
         if (ok) {
           const runId = key.slice(0, -':outcome'.length);
           await this.touchRunDelta(q, runId, null, false, 0); // see the sqlite twin
-          await q(`UPDATE gnl_runs SET failed = $1, running = $2, canceled = $3 WHERE run_id = $4`, [oc === 'failed', oc === 'running', oc === 'canceled', runId]);
+          await this.q(`UPDATE gnl_runs SET failed = $1, running = $2, canceled = $3 WHERE run_id = $4`, [oc === 'failed', oc === 'running', oc === 'canceled', runId]);
         }
         return ok;
       });
@@ -566,7 +636,7 @@ class PgRunJournal implements RunJournal {
    */
   private async lockRunRow(q: Q, runId: string): Promise<void> {
     const now = Date.now();
-    await q(
+    await this.q(
       `INSERT INTO gnl_runs (run_id, model_steps, tool_calls, suspended, suspended_count, created_at, updated_at)
        VALUES ($1,0,0,false,0,$2,$3)
        ON CONFLICT (run_id) DO UPDATE SET updated_at = gnl_runs.updated_at`,
@@ -579,7 +649,7 @@ class PgRunJournal implements RunJournal {
     const m = isInsert && kind === 'model' ? 1 : 0;
     const t = isInsert && kind === 'tool' ? 1 : 0;
     const now = Date.now();
-    await q(
+    await this.q(
       `INSERT INTO gnl_runs (run_id, model_steps, tool_calls, suspended, suspended_count, created_at, updated_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7)
        ON CONFLICT (run_id) DO UPDATE SET
@@ -594,12 +664,12 @@ class PgRunJournal implements RunJournal {
 
   /** Full recount — for rare paths (putIfMatch/repair). */
   private async recountRun(q: Q, runId: string): Promise<void> {
-    const c = (await q(
+    const c = (await this.q(
       `SELECT SUM(CASE WHEN kind='model' THEN 1 ELSE 0 END) AS m, SUM(CASE WHEN kind='tool' THEN 1 ELSE 0 END) AS t,
               SUM(CASE WHEN suspended THEN 1 ELSE 0 END) AS s, MIN(created_at) AS c0 FROM gnl_run_journal WHERE run_id = $1`,
       [runId],
     )).rows[0];
-    await q(
+    await this.q(
       `INSERT INTO gnl_runs (run_id, model_steps, tool_calls, suspended, suspended_count, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7)
        ON CONFLICT (run_id) DO UPDATE SET model_steps=EXCLUDED.model_steps, tool_calls=EXCLUDED.tool_calls, suspended=EXCLUDED.suspended, suspended_count=EXCLUDED.suspended_count, updated_at=EXCLUDED.updated_at`,
       [runId, Number(c.m) || 0, Number(c.t) || 0, Number(c.s) > 0, Number(c.s) || 0, Number(c.c0) || Date.now(), Date.now()],
@@ -723,7 +793,7 @@ class PgRunJournal implements RunJournal {
         const p = parseJournalKey(batch.claim.key);
         const suspended = p?.kind === 'tool' && (batch.claim.value as ToolJournalRecord | undefined)?.status === 'suspended';
         if (p) await this.lockRunRow(q, p.runId);
-        const ins = await q(
+        const ins = await this.q(
           `INSERT INTO gnl_run_journal (key, run_id, kind, suspended, value, created_at) VALUES ($1,$2,$3,$4,$5,$6)
            ON CONFLICT (key) DO NOTHING RETURNING key`,
           [batch.claim.key, p?.runId ?? null, p?.kind ?? null, !!suspended, serialize(batch.claim.value), Date.now()],
@@ -733,7 +803,7 @@ class PgRunJournal implements RunJournal {
       }
       for (const { key, fields } of batch.incrs ?? []) {
         for (const [f, d] of Object.entries(fields)) {
-          await q(
+          await this.q(
             'INSERT INTO gnl_counters (key, field, value) VALUES ($1, $2, $3) ON CONFLICT (key, field) DO UPDATE SET value = gnl_counters.value + EXCLUDED.value',
             [key, f, d],
           );
@@ -742,8 +812,8 @@ class PgRunJournal implements RunJournal {
       for (const { key, value } of batch.puts ?? []) {
         const p = parseJournalKey(key);
         const suspended = p?.kind === 'tool' && (value as ToolJournalRecord | undefined)?.status === 'suspended';
-        const prev = p ? (await q('SELECT suspended FROM gnl_run_journal WHERE key = $1', [key])).rows[0] : undefined;
-        await q(
+        const prev = p ? (await this.q('SELECT suspended FROM gnl_run_journal WHERE key = $1', [key])).rows[0] : undefined;
+        await this.q(
           `INSERT INTO gnl_run_journal (key, run_id, kind, suspended, value, created_at) VALUES ($1,$2,$3,$4,$5,$6)
            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, suspended = EXCLUDED.suspended`,
           [key, p?.runId ?? null, p?.kind ?? null, !!suspended, serialize(value), Date.now()],

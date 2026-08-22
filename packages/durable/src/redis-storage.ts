@@ -18,10 +18,11 @@
 import { createRequire } from 'node:module';
 import { runIdOfKey, parseJournalKey, deriveRunStatus } from './journal.js';
 import { stableStringify } from './hash.js';
+import { ENGINE_META_KEYS, isPlatformKey, orgPrefix } from './organization.js';
 import type { JournalBatch, JournalEntry, RunSummary, ToolJournalRecord } from './journal.js';
 import { serialize, deserialize } from './serialize.js';
 import { ReplicationNotAcknowledgedError } from './errors.js';
-import type {
+import type { AdoptIntoOrgResult,
   Storage, CapabilityMatrix, Page, ListQuery,
   RunJournal, WorkStore, CacheStore, MetaStore, LogRecord,
 } from './storage.js';
@@ -813,6 +814,8 @@ export class RedisStorage implements Storage {
   readonly name = 'redis';
   readonly capabilities: CapabilityMatrix = { runs: 'full', memory: 'none', vectors: 'none', work: 'full', cache: 'ttl' };
   private client: RedisLike;
+  /** The key prefix every sub-store shares — kept so `adoptIntoOrg` can scan the same keyspace. */
+  private readonly pfx: string;
   readonly runs: RunJournal;
   readonly work: WorkStore;
   readonly cache: CacheStore;
@@ -821,6 +824,7 @@ export class RedisStorage implements Storage {
 
   constructor(opts: RedisStorageOptions = {}) {
     const pfx = opts.keyPrefix ?? 'gnl:';
+    this.pfx = pfx;
     if (opts.client) {
       this.client = opts.client;
     } else {
@@ -834,6 +838,68 @@ export class RedisStorage implements Storage {
     this.meta = new RedisMetaStore(this.client, pfx);
   }
   /** Redis is schemaless → no table setup; write schema_version idempotently (parity with sqlite/pg meta). */
+  /**
+   * See `Storage.adoptIntoOrg`.
+   *
+   * TWO HONEST LIMITS, both reported in the result rather than hidden:
+   *
+   * NOT ATOMIC. `RedisLike` has no MULTI/EXEC, so this is a sequence of individual writes. If it fails
+   * partway the store is half-migrated. It is idempotent, so the remedy is to run it again — but stop
+   * writers first, and prefer taking a snapshot.
+   *
+   * `cache:` is NOT migrated. Rewriting a key means reading and re-setting it, which drops its TTL, and
+   * a cache entry that outlives its expiry is worse than a cold cache. Cache is derived data: it
+   * refills. Reported under `skippedPlatformKeys` as `cache:` so the decision is visible.
+   */
+  async adoptIntoOrg(orgId: string, opts?: { dryRun?: boolean }): Promise<AdoptIntoOrgResult> {
+    const prefix = orgPrefix(orgId);
+    const dryRun = opts?.dryRun === true;
+    const moved: Record<string, number> = {};
+    const skipped = new Set<string>(['cache:']);
+    let alreadyScoped = 0;
+
+    const scanAll = async (pattern: string): Promise<string[]> => {
+      const out: string[] = [];
+      let cursor: string | number = 0;
+      do {
+        const [next, keys] = await this.client.scan(cursor, 'MATCH', pattern, 'COUNT', 1000);
+        out.push(...keys);
+        cursor = next;
+      } while (String(cursor) !== '0');
+      return out;
+    };
+
+    // [redis sub-namespace, store name, is it a hash]
+    const SPACES: Array<[string, string, boolean]> = [[RJ, 'runs', false], [CTR, 'runs', true], [WK, 'work', false], [META, 'meta', false]];
+    for (const [space, store, isHash] of SPACES) {
+      const full = this.pfx + space;
+      const keys = await scanAll(full + '*');
+      let n = 0;
+      for (const k of keys) {
+        const bare = k.slice(full.length);
+        if (bare.startsWith('org:')) { alreadyScoped++; continue; }
+        if (isPlatformKey(bare) || (space === META && ENGINE_META_KEYS.includes(bare))) { skipped.add(bare.split(':')[0]!); continue; }
+        n++;
+        if (dryRun) continue;
+        const dst = full + prefix + bare;
+        if (isHash) {
+          if (!this.client.hgetall || !this.client.hincrbyfloat) { skipped.add(space); n--; continue; }
+          const fields = await this.client.hgetall(k);
+          for (const [f, v] of Object.entries(fields)) await this.client.hincrbyfloat(dst, f, Number(v));
+        } else {
+          const v = await this.client.get(k);
+          if (v !== null) await this.client.set(dst, v);
+        }
+        await this.client.del(k);
+      }
+      moved[store] = (moved[store] ?? 0) + n;
+    }
+    moved.cache = 0;
+    // The vector port does not exist on this engine (capabilities.vectors === 'none'), so it is absent
+    // from the report rather than reported as zero — see AdoptIntoOrgResult.
+    return { orgId, dryRun, moved, alreadyScoped, skippedPlatformKeys: [...skipped].sort() };
+  }
+
   async init(): Promise<void> {
     if ((await this.meta.get('schema_version')) == null) await this.meta.set('schema_version', SCHEMA_VERSION);
   }

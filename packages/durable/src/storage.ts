@@ -332,6 +332,45 @@ export interface Storage {
    * `reclaimedBytes` is the approximate disk reclaimed (-1 if unknown).
    */
   compact?(opts?: { full?: boolean }): Promise<{ reclaimedBytes: number }>;
+  /**
+   * Moves data written BEFORE organizations were configured into `orgId`.
+   *
+   * A deployment that ran without `org` wrote unprefixed keys. Turning organizations on does not
+   * migrate them, so every one of those rows becomes invisible to organization-bound identities while
+   * remaining visible to an unscoped operator — measured on a real free-tier database: the operator
+   * still saw its runs, `acme` saw none. Nothing is lost and nothing leaks, but to the people using it
+   * their entire history has disappeared, which is the same "the owner cannot reach their own data"
+   * failure the scoping itself is written to avoid.
+   *
+   * ENGINE-LEVEL on purpose. The ports cannot express this: `vectors` has only `upsert`/`query`,
+   * `cache` only `get`/`set`/`delete`, `meta` only `get`/`set` — none of them can enumerate what they
+   * hold, so a migration written against the port interfaces could reach the run journal and the
+   * conversation store and nothing else. Each adapter knows its own key layout and can move all of it.
+   *
+   * Only rows that are NOT already organization-prefixed are touched, so it is idempotent: running it
+   * twice moves nothing the second time, and it can never nest `org:a:org:b:`. Call it ONCE, with the
+   * deployment stopped — an upgrade is not a live operation, and this does not coordinate with writers.
+   *
+   * `dryRun` reports the same counts without writing.
+   */
+  adoptIntoOrg?(orgId: string, opts?: { dryRun?: boolean }): Promise<AdoptIntoOrgResult>;
+}
+
+/** What `Storage.adoptIntoOrg` moved, or would move under `dryRun` — one entry per store it touched. */
+export interface AdoptIntoOrgResult {
+  orgId: string;
+  dryRun: boolean;
+  /** Rows moved into the organization, by store. A store the engine does not have is absent, not zero. */
+  moved: Record<string, number>;
+  /** Rows left alone because they already carried an organization prefix. */
+  alreadyScoped: number;
+  /**
+   * Platform-level keys deliberately NOT moved, by name — `__org__`, `__agent_registry__`, the paid
+   * user store, budgets, policy, pricing. Reported rather than silent: an operator running a migration
+   * is entitled to see what it decided not to touch, and this is the list that would break
+   * authentication and organization registration if it were ever wrong.
+   */
+  skippedPlatformKeys: string[];
 }
 
 export type StoreName = keyof CapabilityMatrix;

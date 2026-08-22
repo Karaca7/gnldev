@@ -805,6 +805,22 @@ export function summarizeRun(
  */
 export class InMemoryJournal implements Journal, JournalReader {
   private store = new Map<string, unknown>();
+  /** @internal — key renaming for `Storage.adoptIntoOrg`. Not part of the Journal port.
+   *  `undefined` from `rename` leaves the entry where it is, which is how platform keys stay put. */
+  rekey(rename: (k: string) => string | undefined): number {
+    let n = 0;
+    for (const k of this.keys()) {
+      const to = rename(k);
+      if (to === undefined || to === k) continue;
+      if (this.store.has(k)) { this.store.set(to, this.store.get(k)!); this.store.delete(k); }
+      // Counters live in their own map and `keys()` reports them, so a rekey that skipped them would
+      // leave an organization's usage totals stranded at the root while its runs moved.
+      if (this.counters.has(k)) { this.counters.set(to, this.counters.get(k)!); this.counters.delete(k); }
+      if (this.times.has(k)) { this.times.set(to, this.times.get(k)!); this.times.delete(k); }
+      n++;
+    }
+    return n;
+  }
   private times = new Map<string, number>(); // key → first write time (OTEL timing)
 
   async get<T = unknown>(key: string): Promise<T | undefined> {

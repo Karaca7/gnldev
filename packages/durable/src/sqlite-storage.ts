@@ -7,13 +7,14 @@ import { createRequire } from 'node:module';
 import { statSync, existsSync } from 'node:fs';
 import { cosineSimilarity } from 'ai';
 import { runIdOfKey, parseJournalKey, outcomeStatusOf, deriveRunStatus } from './journal.js';
+import { ENGINE_META_KEYS, isPlatformKey, orgPrefix } from './organization.js';
 import type { JournalBatch, JournalEntry, RunSummary, ToolJournalRecord } from './journal.js';
 import { serialize, deserialize } from './serialize.js';
 import { matchFilter } from './storage.js';
 import type {
   Storage, CapabilityMatrix, Page, ListQuery,
   RunJournal, MemoryStore, VectorStore, WorkStore, CacheStore, MetaStore,
-  ThreadRecord, MessageRecord, Observation, RecallOptions, VectorItem, VectorMatch, VectorQueryOptions, LogRecord,
+  AdoptIntoOrgResult, ThreadRecord, MessageRecord, Observation, RecallOptions, VectorItem, VectorMatch, VectorQueryOptions, LogRecord,
 } from './storage.js';
 // P2-migrate schema introspection/migration façade — see migrate.ts's header.
 import { tablesFromDDL } from './migrate.js';
@@ -316,6 +317,77 @@ export class SqliteStorage implements Storage {
    * VACUUM briefly blocks in single-writer SQLite → call it during a cron/maintenance window, NOT on
    * The hot path. (`full` is ignored on SQLite since VACUUM is already complete.) No-op on a `:memory:` DB.
    */
+  /**
+   * See `Storage.adoptIntoOrg`. Every table that carries an organization-bearing column is listed here
+   * ONCE — a table added later and not added to this list is data an upgrade silently leaves behind,
+   * which is why the list sits next to the DDL rather than in a doc.
+   *
+   * `gnl_vectors` is the odd one: it is partitioned by a `namespace` COLUMN rather than by a key
+   * prefix (the store ranks, so a prefix cannot be applied before it has already chosen its global
+   * top K — see `VectorStore.query`). Its rows are stamped, not renamed, and the namespace has no
+   * trailing colon, matching what `withOrgStorage` writes.
+   */
+  async adoptIntoOrg(orgId: string, opts?: { dryRun?: boolean }): Promise<AdoptIntoOrgResult> {
+    const prefix = orgPrefix(orgId);               // throws on '' or a ':'-bearing id — one guard, shared
+    const ns = prefix.slice(0, -1);                // 'org:acme', what scopedVectors writes
+    const dryRun = opts?.dryRun === true;
+    // [table, column, store-name-for-the-report]
+    const KEYED: Array<[string, string, string]> = [
+      ['gnl_run_journal', 'key', 'runs'],
+      ['gnl_runs', 'run_id', 'runs'],
+      ['gnl_counters', 'key', 'runs'],
+      ['gnl_threads', 'id', 'memory'],
+      ['gnl_messages', 'thread_id', 'memory'],
+      ['gnl_working_memory', 'scope_id', 'memory'],
+      ['gnl_observations', 'thread_id', 'memory'],
+      ['gnl_work_log', 'ns', 'work'],
+      ['gnl_work_kv', 'key', 'work'],
+      ['gnl_cache', 'key', 'cache'],
+    ];
+    const moved: Record<string, number> = {};
+    const skipped = new Set<string>();
+    let alreadyScoped = 0;
+    const bump = (store: string, n: number) => { moved[store] = (moved[store] ?? 0) + n; };
+
+    const run = () => {
+      for (const [table, col, store] of KEYED) {
+        alreadyScoped += this.db.prepare(`SELECT COUNT(*) AS c FROM ${table} WHERE ${col} LIKE 'org:%'`).get().c as number;
+        // Row by row rather than one UPDATE, because which reserved keys are the PLATFORM's is a rule
+        // in TypeScript (`isPlatformKey`), not something SQL can express — and a blanket UPDATE here
+        // would move `__org__:acme` to `org:acme:__org__:acme` and stop every organization resolving.
+        const rows = this.db.prepare(`SELECT DISTINCT ${col} AS k FROM ${table} WHERE ${col} NOT LIKE 'org:%'`).all() as { k: string }[];
+        let n = 0;
+        for (const { k } of rows) {
+          if (isPlatformKey(k)) { skipped.add(k.split(':')[0]!); continue; }
+          n += this.db.prepare(`SELECT COUNT(*) AS c FROM ${table} WHERE ${col} = ?`).get(k).c as number;
+          if (!dryRun) this.db.prepare(`UPDATE ${table} SET ${col} = ? WHERE ${col} = ?`).run(prefix + k, k);
+        }
+        bump(store, n);
+      }
+      // `gnl_meta` minus the engine's own rows — see ENGINE_META_KEYS for why moving `schema_version`
+      // would leave the deployment looking unversioned on its next boot.
+      const holes = ENGINE_META_KEYS.map(() => '?').join(',');
+      const metaTodo = this.db.prepare(`SELECT COUNT(*) AS c FROM gnl_meta WHERE k NOT LIKE 'org:%' AND k NOT IN (${holes})`).get(...ENGINE_META_KEYS).c as number;
+      alreadyScoped += this.db.prepare(`SELECT COUNT(*) AS c FROM gnl_meta WHERE k LIKE 'org:%'`).get().c as number;
+      if (!dryRun && metaTodo) this.db.prepare(`UPDATE gnl_meta SET k = ? || k WHERE k NOT LIKE 'org:%' AND k NOT IN (${holes})`).run(prefix, ...ENGINE_META_KEYS);
+      bump('meta', metaTodo);
+
+      const vecs = this.db.prepare(`SELECT COUNT(*) AS c FROM gnl_vectors WHERE namespace IS NULL`).get().c as number;
+      alreadyScoped += this.db.prepare(`SELECT COUNT(*) AS c FROM gnl_vectors WHERE namespace IS NOT NULL`).get().c as number;
+      if (!dryRun && vecs) this.db.prepare(`UPDATE gnl_vectors SET namespace = ? WHERE namespace IS NULL`).run(ns);
+      bump('vectors', vecs);
+    };
+
+    // One transaction: a half-migrated store is worse than an unmigrated one, because the operator can
+    // no longer tell which half is which.
+    if (dryRun) run();
+    else {
+      this.db.exec('BEGIN IMMEDIATE');
+      try { run(); this.db.exec('COMMIT'); } catch (e) { this.db.exec('ROLLBACK'); throw e; }
+    }
+    return { orgId, dryRun, moved, alreadyScoped, skippedPlatformKeys: [...skipped].sort() };
+  }
+
   async compact(): Promise<{ reclaimedBytes: number }> {
     if (this.dbPath === ':memory:') return { reclaimedBytes: 0 };
     let before = 0;

@@ -4,13 +4,14 @@
 import { cosineSimilarity } from 'ai';
 import { InMemoryJournal } from './journal.js';
 import { stableStringify } from './hash.js';
+import { ENGINE_META_KEYS, isPlatformKey, orgPrefix } from './organization.js';
 import type { JournalEntry, RunSummary } from './journal.js';
 import { matchFilter } from './storage.js';
 import type {
   Storage, CapabilityMatrix, Page, ListQuery,
   RunJournal, MemoryStore, VectorStore, WorkStore, CacheStore, MetaStore,
   ThreadRecord, MessageRecord, Observation, RecallOptions,
-  VectorItem, VectorMatch, VectorQueryOptions, LogRecord } from './storage.js';
+  AdoptIntoOrgResult, VectorItem, VectorMatch, VectorQueryOptions, LogRecord } from './storage.js';
 
 let idc = 0;
 function genId(prefix: string): string {
@@ -35,6 +36,20 @@ function normRange(r?: number | { before: number; after: number }): { before: nu
 const hasNorm = (v?: number[]): v is number[] => !!v && v.some((x) => x !== 0);
 
 // ── RunJournal: wrap the existing InMemoryJournal, add paged listRuns ───────────────
+/**
+ * Moves the keys of a `Map` through `rename`, in place. `undefined` from `rename` leaves the entry
+ * alone — that is how platform keys stay where they are.
+ */
+function rekeyMap<V>(m: Map<string, V>, rename: (k: string) => string | undefined): number {
+  let n = 0;
+  for (const k of [...m.keys()]) {
+    const to = rename(k);
+    if (to === undefined || to === k) continue;
+    m.set(to, m.get(k)!); m.delete(k); n++;
+  }
+  return n;
+}
+
 class InMemoryRunJournal implements RunJournal {
   constructor(readonly journal = new InMemoryJournal()) {}
   get<T = unknown>(k: string) { return this.journal.get<T>(k); }
@@ -68,6 +83,11 @@ class InMemoryRunJournal implements RunJournal {
 
 // ── MemoryStore ───────────────────────────────────────────────────────────────
 class InMemoryMemoryStore implements MemoryStore {
+  /** @internal — see Storage.adoptIntoOrg. */
+  _rekey(f: (k: string) => string | undefined): number {
+    return rekeyMap(this.threads, f) + rekeyMap(this.messages, f) + rekeyMap(this.wm, f) + rekeyMap(this.obs, f);
+  }
+
   private threads = new Map<string, ThreadRecord>();
   private messages = new Map<string, MessageRecord[]>(); // threadId → seq-ordered rows
   private wm = new Map<string, unknown>();
@@ -162,7 +182,14 @@ class InMemoryMemoryStore implements MemoryStore {
 
 // ── VectorStore (cosine, same behavior as rag's InMemoryVectorStore) ───────────
 class InMemoryVectorStore implements VectorStore {
-  private items: VectorItem[] = [];
+  /** @internal — see Storage.adoptIntoOrg. Stamps the namespace on documents that have none. */
+  _stamp(ns: string): number {
+    let n = 0;
+    for (const it of this.items) if (it.namespace === undefined) { it.namespace = ns; n++; }
+    return n;
+  }
+
+  items: VectorItem[] = [];
   async upsert(items: VectorItem[]) {
     for (const it of items) {
       const i = this.items.findIndex((x) => x.id === it.id);
@@ -184,6 +211,9 @@ class InMemoryVectorStore implements VectorStore {
 
 // ── WorkStore (append-log + KV + CAS ack) ─────────────────────────────────────
 class InMemoryWorkStore implements WorkStore {
+  /** @internal — see Storage.adoptIntoOrg. */
+  _rekey(f: (k: string) => string | undefined): number { return rekeyMap(this.logs, f) + rekeyMap(this.kv, f); }
+
   private logs = new Map<string, LogRecord[]>();
   private kv = new Map<string, unknown>();
   async append(ns: string, payload: unknown, id?: string): Promise<string> {
@@ -214,6 +244,9 @@ class InMemoryWorkStore implements WorkStore {
 
 // ── CacheStore (with TTL) ───────────────────────────────────────────────────────
 class InMemoryCacheStore implements CacheStore {
+  /** @internal — see Storage.adoptIntoOrg. */
+  _rekey(f: (k: string) => string | undefined): number { return rekeyMap(this.m, f); }
+
   private m = new Map<string, { v: unknown; exp?: number }>();
   async get<T = unknown>(key: string): Promise<T | undefined> {
     const e = this.m.get(key);
@@ -228,6 +261,9 @@ class InMemoryCacheStore implements CacheStore {
 }
 
 class InMemoryMetaStore implements MetaStore {
+  /** @internal — see Storage.adoptIntoOrg. */
+  _rekey(f: (k: string) => string | undefined): number { return rekeyMap(this.m, f); }
+
   private m = new Map<string, string>();
   async get(key: string) { return this.m.get(key); }
   async set(key: string, value: string) { this.m.set(key, value); }
@@ -245,6 +281,47 @@ export class InMemoryStorage implements Storage {
   readonly work = new InMemoryWorkStore();
   readonly cache = new InMemoryCacheStore();
   readonly meta = new InMemoryMetaStore();
+
+  /**
+   * See `Storage.adoptIntoOrg`.
+   *
+   * Present mostly so the contract has a fast, dependency-free adapter to be TESTED against — this
+   * engine does not survive a restart, so a real upgrade never happens on it. Same rules as the
+   * persistent adapters: platform keys stay put, already-scoped rows are counted not moved, and it is
+   * idempotent.
+   */
+  async adoptIntoOrg(orgId: string, opts?: { dryRun?: boolean }): Promise<AdoptIntoOrgResult> {
+    const prefix = orgPrefix(orgId);
+    const dryRun = opts?.dryRun === true;
+    const skipped = new Set<string>();
+    let alreadyScoped = 0;
+    const rename = (k: string): string | undefined => {
+      if (k.startsWith('org:')) { alreadyScoped++; return undefined; }
+      if (isPlatformKey(k) || ENGINE_META_KEYS.includes(k)) { skipped.add(k.split(':')[0]!); return undefined; }
+      return prefix + k;
+    };
+    // Counting pass: `rename` has the side effects, so a dry run must not mutate. Run it over the keys
+    // without applying, which is what passing a no-op mover does.
+    const count = (keys: string[]): number => keys.filter((k) => rename(k) !== undefined).length;
+
+    if (dryRun) {
+      const moved = {
+        runs: count([...this.runs.journal.keys()]),
+        memory: 0, work: 0, cache: 0, meta: 0,
+        vectors: this.vectors.items.filter((i) => i.namespace === undefined).length,
+      };
+      return { orgId, dryRun, moved, alreadyScoped, skippedPlatformKeys: [...skipped].sort() };
+    }
+    const moved = {
+      runs: this.runs.journal.rekey(rename),
+      memory: this.memory._rekey(rename),
+      work: this.work._rekey(rename),
+      cache: this.cache._rekey(rename),
+      meta: this.meta._rekey(rename),
+      vectors: this.vectors._stamp(prefix.slice(0, -1)),
+    };
+    return { orgId, dryRun, moved, alreadyScoped, skippedPlatformKeys: [...skipped].sort() };
+  }
   /** Access to the underlying journal for replay/time-travel tests. */
   get journal() { return this.runs.journal; }
 }

@@ -10,6 +10,47 @@ import type { Journal, JournalBatch, JournalReader, JournalEntry, RunSummary } f
 
 /** An organization-prefixed key. orgId must not contain ':' (it would break the key schema). */
 /**
+ * Meta keys the ENGINE writes about the deployment, which `adoptIntoOrg` must never move.
+ *
+ * `MetaStore` is a port an organization can write through, so most of `gnl_meta` is ordinary data and
+ * belongs to whoever is adopting it. `schema_version` is not: every adapter writes it at init to record
+ * which schema the file is on. Prefixing it to `org:acme:schema_version` leaves the deployment looking
+ * unversioned on the next boot, so the migration would corrupt the thing it is migrating. Caught in a
+ * dry run against a real free-tier database, where it was the ONLY meta row present.
+ *
+ * Shared rather than repeated per adapter: three copies of this list is three chances to add the next
+ * engine-level key to two of them.
+ */
+export const ENGINE_META_KEYS: readonly string[] = ['schema_version'];
+
+/**
+ * Reserved `__…__` keys that ARE an organization's data and so may be adopted — measured, not assumed.
+ *
+ * On a live multi-organization deployment these are the only reserved keys ever seen written under an
+ * `org:<id>:` prefix. Everything else in the reserved space is platform-level and must stay at the
+ * root: `__org__` (registration records), `__agent_registry__` (is this code-agent allowed to serve at
+ * all), `__eeuser__`/`__eetoken__`/`__eeaudit__` (the paid user store), `__budget__` (set BY the
+ * operator, keyed by organization id already), `__policy__` and `__pricing__` (platform-admin
+ * endpoints).
+ *
+ * Moving any of those would not be a cosmetic mistake: `__org__:acme` becoming
+ * `org:acme:__org__:acme` makes `requireRegistration` reject every organization, and the token rows
+ * becoming org-scoped means nobody can authenticate at all.
+ *
+ * An ALLOW list rather than a deny list, deliberately. A reserved key added later and forgotten here
+ * stays where it is — the operator still sees it and nothing breaks — where a forgotten DENY entry
+ * would move platform state into one tenant. `adoptIntoOrg` reports what it skipped by name so the
+ * decision is visible rather than silent.
+ */
+export const ADOPTABLE_RESERVED_PREFIXES: readonly string[] = ['__usage__', '__metrics__'];
+
+/** True when a root-level key belongs to the platform and `adoptIntoOrg` must leave it alone. */
+export function isPlatformKey(key: string): boolean {
+  if (!key.startsWith('__')) return false;                       // ordinary data — adoptable
+  return !ADOPTABLE_RESERVED_PREFIXES.some((p) => key.startsWith(p));
+}
+
+/**
  * The key prefix for an organization, and the single place an organization id is validated.
  *
  * EXPORTED so `withOrgStorage` shares this guard rather than computing its own prefix. Six ports
