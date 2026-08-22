@@ -43,6 +43,9 @@ async function adoptOn(make: () => Storage) {
   const s = make();
   await s.init?.();
   for (const k of SEED) await s.runs.put(k, { seeded: k });
+  // Registered first — `adoptIntoOrg` refuses an unregistered organization, because adopting into a
+  // mistyped id is irreversible (the rows carry a prefix afterwards and a corrected run skips them).
+  await s.runs.put('__org__:acme', { id: 'acme' });
   const result = await s.adoptIntoOrg!('acme');
   const keys = (await s.runs.listKeys!('')).sort();
   await s.close?.();
@@ -131,6 +134,7 @@ describe('the limits the implementation documents', () => {
     const s = new RedisStorage({ client: makeFakeRedis(undefined, true) } as never);
     await s.init?.();
     await s.runs.put('r-1:model:0', { x: 1 });
+    await s.runs.put('__org__:acme', { id: 'acme' });   // adoption refuses an unregistered organization
     await s.cache!.set('ck', { v: 1 }, { ttlMs: 60_000 });
 
     const result = await s.adoptIntoOrg!('acme');
@@ -147,6 +151,7 @@ describe('the limits the implementation documents', () => {
     // A store with no cache at all must be ABSENT from `moved`, not present as 0 — the two mean
     // different things ("this engine has no cache" vs "it has one and nothing moved").
     const s = new InMemoryStorage();
+    await s.runs.put('__org__:acme', { id: 'acme' });
     const { moved } = await s.adoptIntoOrg!('acme');
     expect(Object.keys(moved), 'the report does not name the stores it touched').toContain('runs');
   }, 30_000);

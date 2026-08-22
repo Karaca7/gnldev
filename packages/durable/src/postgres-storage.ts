@@ -16,7 +16,7 @@ import type { AdoptIntoOrgResult,
 } from './storage.js';
 // P2-migrate schema introspection/migration façade — see migrate.ts's header.
 import { tablesFromDDL } from './migrate.js';
-import { ENGINE_META_KEYS, isPlatformKey, orgPrefix } from './organization.js';
+import { ENGINE_META_KEYS, assertOrgRegistered, isPlatformKey, orgPrefix } from './organization.js';
 import type { SchemaCheckResult, SchemaMigrationResult, MissingColumn } from './migrate.js';
 
 type QueryResult = { rows: any[]; rowCount?: number | null };
@@ -273,7 +273,7 @@ export class PostgresStorage implements Storage {
    * Size via the API → reclaimedBytes = -1 (unknown).
    */
   /** See `Storage.adoptIntoOrg`. Same table list and the same platform-key rule as the SQLite adapter. */
-  async adoptIntoOrg(orgId: string, opts?: { dryRun?: boolean }): Promise<AdoptIntoOrgResult> {
+  async adoptIntoOrg(orgId: string, opts?: { dryRun?: boolean; allowUnregistered?: boolean }): Promise<AdoptIntoOrgResult> {
     const prefix = orgPrefix(orgId);
     const ns = prefix.slice(0, -1);
     const dryRun = opts?.dryRun === true;
@@ -293,6 +293,11 @@ export class PostgresStorage implements Storage {
     }
     const client = await this._pool.connect();
     const q = (sql: string, p?: unknown[]) => client.query(sql, p);
+    // AFTER the connect() check, because a pool that cannot give a transaction is a configuration
+    // error and should be reported as one — checking registration first would answer a question about
+    // the data while the setup is unusable.
+    try { await assertOrgRegistered(this.runs, orgId, opts?.allowUnregistered); }
+    catch (e) { client.release?.(); throw e; }
     const KEYED: Array<[string, string, string]> = [
       ['gnl_run_journal', 'key', 'runs'], ['gnl_runs', 'run_id', 'runs'], ['gnl_counters', 'key', 'runs'],
       ['gnl_threads', 'id', 'memory'], ['gnl_messages', 'thread_id', 'memory'],

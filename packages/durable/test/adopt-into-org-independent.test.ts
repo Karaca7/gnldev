@@ -26,8 +26,13 @@ const PLATFORM = [
 /** Reserved keys that ARE an organization's data and must travel with it. */
 const ADOPTABLE = ['__usage__:acme', '__metrics__:all', '__metrics__run:r1'];
 
-const seedRoot = async (s: InMemoryStorage, keys: string[]) => {
+  // The organization is REGISTERED first, because `adoptIntoOrg` refuses an unregistered id — a
+  // one-keystroke typo would otherwise move every row under `org:<typo>:` and running it again with
+  // the right name would fix nothing, since those rows now count as already-scoped. Registering here
+  // rather than passing `allowUnregistered` keeps these tests on the path a real upgrade takes.
+const seedRoot = async (s: InMemoryStorage, keys: string[], orgId = 'acme') => {
   for (const k of keys) await s.runs.put(k, { seeded: k });
+  await s.runs.put(`__org__:${orgId}`, { id: orgId });
 };
 
 describe('the platform-key rule, from the side that breaks the deployment', () => {
@@ -163,6 +168,7 @@ describe('running it twice', () => {
     await seedRoot(s, ['r-1:model:0']);
     await s.adoptIntoOrg!('acme');
     await s.adoptIntoOrg!('acme');
+    await s.runs.put('__org__:globex', { id: 'globex' });
     await s.adoptIntoOrg!('globex'); // a second adoption, of an already-adopted store
 
     const keys = await s.runs.listKeys!('');
@@ -175,6 +181,7 @@ describe('running it twice', () => {
     const s = new InMemoryStorage();
     await s.runs.put('org:globex:r-g:model:0', { x: 1 });
     await s.runs.put('r-shared:model:0', { x: 1 });
+    await s.runs.put('__org__:acme', { id: 'acme' });   // adoption refuses an unregistered organization
     await s.adoptIntoOrg!('acme');
 
     const keys = await s.runs.listKeys!('');
@@ -188,6 +195,9 @@ describe('the organization id is validated before anything moves', () => {
     const s = new InMemoryStorage();
     await seedRoot(s, ['r-1:model:0']);
     await expect(s.adoptIntoOrg!(bad), `'${bad}' was accepted as an organization id`).rejects.toThrow();
-    expect(await s.runs.listKeys!(''), 'rows moved before the id was rejected').toEqual(['r-1:model:0']);
+    // `__org__:acme` is the registration row `seedRoot` writes; it is root-level platform state and
+    // must be here untouched. What matters is that nothing gained a prefix.
+    expect((await s.runs.listKeys!('')).sort(), 'rows moved before the id was rejected')
+      .toEqual(['__org__:acme', 'r-1:model:0']);
   });
 });

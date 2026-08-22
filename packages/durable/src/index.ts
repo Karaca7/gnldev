@@ -64,7 +64,7 @@ export type { RunDurableArgs, StreamDurableArgs, DurableResult, ResumeAgentConfi
 export { streamFinishError } from './run.js';
 // Greenfield storage contracts (ports + Storage + capability + composite).
 export { CapabilityError, requireCapability, composite, toJournal, matchFilter } from './storage.js';
-export type {
+export type { AdoptIntoOrgResult,
   Page, ListQuery,
   RunJournal, MemoryStore, VectorStore, WorkStore, CacheStore, MetaStore,
   ThreadRecord, MessageRecord, Observation, RecallOptions,
@@ -92,7 +92,7 @@ export type { CreateGnlConfig, AgentConfig, RunOptions, WorkflowLike, WorkflowMe
 // Dynamic multi-agent routing (Supervisor/`.network()` parity) — decisions are CAS-frozen.
 export { runNetwork, getNetworkTrace, netKeys } from './network.js';
 export type { NetworkResult, NetworkStep, NetworkTarget, RouteDecision, RunNetworkOptions } from './network.js';
-export { withOrg, orgScopeOf, orgPrefix, isPlatformKey, ADOPTABLE_RESERVED_PREFIXES, ENGINE_META_KEYS } from './organization.js';
+export { withOrg, orgScopeOf, orgPrefix, isPlatformKey, assertOrgRegistered, ORG_RECORD_PRE, ADOPTABLE_RESERVED_PREFIXES, ENGINE_META_KEYS } from './organization.js';
 export { withOrgStorage, orgStorageScopeOf } from './org-storage.js';
 export { orgPurgedKey, purgeRun, purgeThread, purgeOrganization, sweepRuns, sweepLog, sweepThreads, createRetentionSweeper } from './retention.js';
 export type { LogSweepTarget, RetentionSweeperOptions, RetentionSweepSummary, RetentionSweeper } from './retention.js';

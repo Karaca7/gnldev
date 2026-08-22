@@ -330,3 +330,54 @@ describe('scoping a storage preserves what the store can do', () => {
       'countRunsByStatus is now bridged — studio\'s raw-reader fallback is dead code').toBe('undefined');
   });
 });
+
+/**
+ * WHOLE-STORE OPERATIONS must not be reachable from an organization's view of the storage.
+ *
+ * `init`, `close` and `compact` are documented as not forwarded — they act on the whole engine, and one
+ * organization calling `close()` on what it believes is its own storage would take the process down for
+ * every other tenant.
+ *
+ * `adoptIntoOrg` is the one that is NOT documented, and it is the most dangerous of the four. It is
+ * absent today only because the wrapper builds an explicit object rather than spreading the source, so
+ * a later `...storage` would hand every tenant a deployment-wide migration:
+ *
+ *   withOrgStorage(storage, 'acme').adoptIntoOrg('globex')
+ *
+ * would rewrite acme's already-prefixed keys to `org:acme:org:globex:` — the nesting the id guards
+ * exist to prevent, reached without ever passing an invalid id, because the second scope is applied by
+ * a method rather than by the constructor. Asserted by NAME so the absence stops being incidental.
+ */
+describe('a scoped storage does not expose whole-store operations', () => {
+  it.each(['adoptIntoOrg', 'init', 'close', 'compact'])('%s is not reachable from an organization', (method) => {
+    const base = new InMemoryStorage() as unknown as Record<string, unknown>;
+    const scoped = withOrgStorage(new InMemoryStorage(), 'acme') as unknown as Record<string, unknown>;
+
+    // `init`/`close`/`compact` are OPTIONAL on Storage and InMemoryStorage implements none of them, so
+    // only `adoptIntoOrg` can carry a meaningful precondition here — asserted separately below.
+    void base;
+    expect(typeof scoped[method],
+      `${method} is reachable from an organization-scoped storage. For adoptIntoOrg that means a tenant `
+      + 'can migrate the whole deployment into a second prefix (org:acme:org:globex:); for close/init it '
+      + 'means one tenant acting on every tenant\'s engine.')
+      .toBe('undefined');
+  });
+
+  it('and the base storage really does offer adoptIntoOrg, so the absence above means something', () => {
+    expect(typeof (new InMemoryStorage() as unknown as Record<string, unknown>).adoptIntoOrg,
+      'the base has no adoptIntoOrg either — the whole block is vacuous').toBe('function');
+  });
+
+  it('so a scoped storage cannot be re-adopted into a second organization', async () => {
+    const base = new InMemoryStorage();
+    await base.runs.put('r-1:model:0', { x: 1 });
+    await base.runs.put('__org__:acme', { id: 'acme' });   // adoption refuses an unregistered organization
+    const acme = withOrgStorage(base, 'acme') as unknown as { adoptIntoOrg?: (o: string) => Promise<unknown> };
+
+    expect(acme.adoptIntoOrg, 'the scoped storage offers a migration entry point').toBeUndefined();
+    // …and the root still can, which is what the operator actually needs.
+    await base.adoptIntoOrg!('acme');
+    expect((await base.runs.listKeys!('')).filter((k) => /^org:[^:]+:org:/.test(k)),
+      'a nested prefix appeared').toEqual([]);
+  });
+});

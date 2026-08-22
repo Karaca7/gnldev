@@ -56,6 +56,48 @@ export const ADOPTABLE_RESERVED_PREFIXES: readonly string[] = [
   '__studio_wf__', '__studio_agent__',
 ];
 
+/**
+ * Organization registration record prefix. `@gnldev/studio`'s `POST /organizations` writes
+ * `__org__:<id>`; a `null` value is a deletion tombstone.
+ *
+ * Declared here because `adoptIntoOrg` reads it and both server and studio already had their own copy
+ * of the literal.
+ */
+export const ORG_RECORD_PRE = '__org__:';
+
+/**
+ * Refuses to adopt into an organization that was never registered.
+ *
+ * `orgPrefix` checks the SHAPE of an id and nothing else, which leaves a one-keystroke, irreversible
+ * mistake: an operator typing `acmee` for `acme` moves every row under `org:acmee:`, the real
+ * organization sees nothing, and running it again with the right name FIXES NOTHING — those rows now
+ * carry a prefix, so they count as `alreadyScoped` and are skipped. Measured end to end. The dry run
+ * does not help either: it prints `acmee` and reads as an ordinary success.
+ *
+ * So the check happens where the name is still correctable. On a free-to-paid upgrade the natural
+ * order is: install the paid tier, create the organization, then adopt — and this makes that order
+ * required rather than assumed.
+ *
+ * `allowUnregistered` exists for the deployment that has no registration path at all (no studio, no
+ * `__org__` writer). It is a deliberate opt-out, not a default.
+ */
+export async function assertOrgRegistered(
+  read: { get<T = unknown>(key: string): Promise<T | undefined> },
+  orgId: string,
+  allowUnregistered?: boolean,
+): Promise<void> {
+  if (allowUnregistered) return;
+  const rec = await read.get(ORG_RECORD_PRE + orgId);
+  if (rec != null) return;
+  throw new Error(
+    `@gnldev/durable: organization '${orgId}' is not registered, so adopting into it would move every row `
+    + `under 'org:${orgId}:' where nothing reads them — and a second run with the right name would not `
+    + `undo it, because the rows would already carry a prefix. Create the organization first `
+    + `(studio: POST /organizations), or pass { allowUnregistered: true } if this deployment has no `
+    + 'registration path at all.',
+  );
+}
+
 /** True when a root-level key belongs to the platform and `adoptIntoOrg` must leave it alone. */
 export function isPlatformKey(key: string): boolean {
   if (!key.startsWith('__')) return false;                       // ordinary data — adoptable

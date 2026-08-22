@@ -13,6 +13,7 @@ import { resumeCommand } from './resume.js';
 import { sweepCommand } from './sweep.js';
 import { pricingCommand } from './pricing.js';
 import { rmCommand } from './rm.js';
+import { adoptOrgCommand } from './adopt-org.js';
 
 export type { Command, CommandCtx, CommandGroup } from './types.js';
 
@@ -29,6 +30,7 @@ export const commandList: Command[] = [
   sweepCommand,
   pricingCommand,
   rmCommand,
+  adoptOrgCommand,
 ];
 
 export const commands: Record<string, Command> = Object.fromEntries(commandList.map((c) => [c.name, c]));

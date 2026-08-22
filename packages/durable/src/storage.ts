@@ -351,9 +351,14 @@ export interface Storage {
    * twice moves nothing the second time, and it can never nest `org:a:org:b:`. Call it ONCE, with the
    * deployment stopped — an upgrade is not a live operation, and this does not coordinate with writers.
    *
+   * REFUSES an organization that is not registered (`__org__:<id>` absent), because the mistake it
+   * prevents is irreversible: adopting into a mistyped id moves every row under that prefix, and
+   * running it again with the correct name skips them as `alreadyScoped`. `allowUnregistered: true`
+   * opts out for a deployment with no registration path.
+   *
    * `dryRun` reports the same counts without writing.
    */
-  adoptIntoOrg?(orgId: string, opts?: { dryRun?: boolean }): Promise<AdoptIntoOrgResult>;
+  adoptIntoOrg?(orgId: string, opts?: { dryRun?: boolean; allowUnregistered?: boolean }): Promise<AdoptIntoOrgResult>;
 }
 
 /** What `Storage.adoptIntoOrg` moved, or would move under `dryRun` — one entry per store it touched. */
