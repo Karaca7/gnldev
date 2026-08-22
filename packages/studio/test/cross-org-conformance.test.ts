@@ -532,7 +532,7 @@ describe('the ownership control — acme must SEE what globex must not', () => {
   // at the time) — a control that cannot tell the two apart is a control in name only.
   const CONTROLLED: string[] = [
     'GET /agents', 'GET /users', 'DELETE /users/:id', 'PATCH /users/:id', 'POST /users/:id/revoke',
-    'POST /auth/sse-ticket', 'POST /cache/invalidate', 'GET /cache/stats',
+    'POST /cache/invalidate', 'GET /cache/stats',
     'GET /jobs', 'POST /jobs/:id/retry', 'POST /knowledge/search', 'GET /managed-agents',
     'GET /metrics', 'GET /metrics/runs', 'GET /organizations',
     'GET /runs', 'GET /runs/:id', 'POST /runs/:id/cancel', 'POST /runs/:id/compensate',
@@ -614,6 +614,24 @@ describe('the ownership control — acme must SEE what globex must not', () => {
     expect(owner.status, `${key} refused the organization that owns the data`).toBeLessThan(400);
   }, 30_000);
 
+  /**
+   * Why `POST /auth/sse-ticket` cannot be a by-answer control — asserted, not just asserted-about.
+   *
+   * This is a real property in its own right (a single-use ticket that repeated would be a replayable
+   * credential), and it is the exact reason a body comparison proves nothing there: if two tickets from
+   * the SAME caller differ, then two tickets from different callers differing is not evidence about
+   * organizations. Anyone tempted to move the route back into CONTROLLED runs into this first.
+   */
+  it('POST /auth/sse-ticket answers differently to the SAME caller, so its two bodies never match', async () => {
+    const { api } = await makeApi(true);
+    const ask = async () => (await (await api(new Request('http://x/auth/sse-ticket',
+      { method: 'POST', headers: AS.acme }))).json()) as { ticket: string };
+    const a = await ask();
+    const b = await ask();
+    expect(a.ticket, 'a single-use SSE ticket repeated for the same caller — it is replayable')
+      .not.toBe(b.ticket);
+  }, 30_000);
+
   // The honest accounting, printed rather than hidden: which org-scoped routes are leak-checked but
   // have no ownership control in this fixture. They are NOT claimed proven.
   /**
@@ -633,7 +651,18 @@ describe('the ownership control — acme must SEE what globex must not', () => {
     'GET /workflows/:name/runs': 'needs wfrun records keyed by workflow name',
     'POST /agents/:name/stream': 'streamed body, and the stub runner answers identically',
     // Needs production support to be controllable at all.
-    'GET /events': 'SSE — the body never ends, so there is no answer to compare',
+    // Measured rather than assumed: the stream CAN be read one frame and cancelled, but the frame is
+    // `event: change / data: runs` — a content-free notification that something moved. Identical for
+    // both callers, so even a one-frame read separates nothing.
+    'GET /events': 'SSE, and the first frame is a content-free change notification identical for both callers',
+    // Dropped from CONTROLLED, where it had been passing since it was added. `issueSseTicket` answers
+    // `{ ticket: randomUUID(), expiresAt: Date.now() + TTL }`, so ANY two requests differ — including
+    // two from the same caller, which the test below asserts on purpose. It survived BOTH collapse
+    // mutants (organization forced in the ALS, and every identity re-bound to acme): 41 of the other 42
+    // by-answer controls died to one or the other, this one to neither. The ticket's organization is
+    // only observable by redeeming it at `/events`, whose frames carry no organization data.
+    'POST /auth/sse-ticket': 'answers a fresh randomUUID and a timestamp, so two bodies differ whoever '
+      + 'asks; the ticket\'s organization is only observable through /events, which carries no data',
   };
 
   /**
@@ -845,7 +874,7 @@ describe('the ownership control — acme must SEE what globex must not', () => {
     // Every gap must carry a reason. An unexplained one is the same failure as an unclassified route.
     expect(uncontrolled.filter((k) => !UNCONTROLLED_REASONS[k]),
       'an org-scoped route is uncontrolled with no reason recorded — say why, or control it').toEqual([]);
-    expect(controlled.size, 'ownership coverage went backwards').toBeGreaterThanOrEqual(61);
+    expect(controlled.size, 'ownership coverage went backwards').toBeGreaterThanOrEqual(60);
   });
 });
 
@@ -1031,6 +1060,7 @@ describe('a write reaches the host under the calling organization', () => {
       `globex's write reached ${what} as another organization, or anonymously`).toEqual(['globex']);
   }, 30_000);
 });
+
 
 
 

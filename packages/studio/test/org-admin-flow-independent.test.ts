@@ -12,6 +12,13 @@
  * auth-ee/test/rbac-ladder.test.ts, and `POST /organizations` 403 for a bound identity is covered by
  * auth-org.test.ts B2 — those are asserted here only as part of the sequence, not as new coverage.
  *
+ * One caveat about that last one, because it is the same weakness in a different place: B2 asserts the
+ * STATUS only. `requirePlatformAdmin` has two arms (server.ts:819 org-bound, :820 fail-closed), both
+ * answering 403, so removing the org check leaves B2 green — the refusal still arrives, from the other
+ * arm, for a different reason. Step 2 below asserts the message for exactly that reason. A status-only
+ * assertion cannot tell a guard from its neighbour, which is what made the `!target` fail-open invisible
+ * too: the wrong 403, or the right 403 after the write already happened, both look like success.
+ *
  * THE SILENT DEFAULT is the point of most of this file. When an org admin omits `orgId`, the route
  * does not refuse and does not create an org-less user: it falls back to the caller's own org
  * (server.ts:2037, `targetOrg = own`). Nothing in a 403-only test would notice if that line were
@@ -58,6 +65,7 @@ function userStore(opts: { listReturns?: 'all' | 'none' } = {}) {
         return { user, token: `tok-${id}` };
       },
       update: async (id: string, patch: Partial<User>) => {
+        calls.push(`update:${id}`);
         const u = { ...mem.get(id)!, ...patch };
         mem.set(id, u);
         return u;
@@ -202,6 +210,63 @@ describe('what an org admin may do to a user in ANOTHER organization', () => {
       'an org admin could not revoke its own member').toBe(200);
     expect((await send(`/users/${id}`, { method: 'DELETE', headers: H })).status,
       'an org admin could not delete its own member').toBe(200);
-    expect(us.calls).toEqual([`revoke:${id}`, `remove:${id}`]);
+    expect(us.calls).toEqual([`update:${id}`, `revoke:${id}`, `remove:${id}`]);
+  });
+});
+
+/**
+ * The four cases the `!target` refusal has to satisfy AT ONCE. Three of them are also satisfied by a
+ * guard that is wrong in the opposite direction, which is the whole reason they are pinned together:
+ *
+ *   1. invisible target  → refused, and the host is NEVER called. A route that refused after already
+ *      calling `remove` would pass a status-only assertion, which is the same weakness as a 403 that
+ *      arrives from the wrong arm of a guard.
+ *   2. visible foreign target → refused          (asserted above, in the cross-organization test)
+ *   3. own member → allowed                      (asserted above, in the own-org test)
+ *   4. unbound operator → allowed on ANY org's member
+ *
+ * Cases 3 and 4 are what stop "refuse everybody" from being a passing answer to 1 and 2, and they fail
+ * to DIFFERENT mutations: 3 dies when the bound branch refuses unconditionally, 4 dies when the guard
+ * stops being conditional on the caller being org-bound at all.
+ */
+describe('a user write whose target the caller cannot see', () => {
+  const ROUTES = [
+    { verb: 'delete', init: (H: Record<string, string>) => ({ method: 'DELETE', headers: H }), call: 'remove' },
+    { verb: 'revoke', init: (H: Record<string, string>) => ({ method: 'POST', headers: H }), call: 'revoke', suffix: '/revoke' },
+    { verb: 'update', init: (H: Record<string, string>) => ({ method: 'PATCH', headers: { ...H, 'content-type': 'application/json' }, body: JSON.stringify({ roles: ['viewer'] }) }), call: 'update' },
+  ] as const;
+
+  /** globex's user exists, but this host's `list()` shows the caller nothing — the shape that used to
+   *  skip the guard entirely and let acme's admin delete it. */
+  it.each(ROUTES)('$verb is refused when the target is invisible, and never reaches the host', async (r) => {
+    const { us, send } = await makeApp({ listReturns: 'none' });
+    await send('/organizations', J({ id: 'globex' }, 'root'));
+    const g = await send('/users', J({ email: 'g@globex.test', roles: ['admin'], orgId: 'globex' }, 'root'));
+    const gid = g.json.user.id;
+
+    const res = await send(`/users/${gid}${(r as { suffix?: string }).suffix ?? ''}`,
+      r.init({ authorization: 'Bearer acme-adm' }));
+
+    // The EFFECT first: this is the assertion the old `target &&` shape failed, and the one a
+    // status-only test cannot make.
+    expect(us.calls, `${r.verb} reached the host for a target the caller cannot see`).toEqual([]);
+    expect([...us.mem.keys()], `${r.verb} altered the store for a target the caller cannot see`).toEqual([gid]);
+    expect(res.status, `${r.verb} was allowed against a target the caller cannot see`).toBe(403);
+  });
+
+  /** The guard is for org-BOUND callers. An operator has no org of its own and manages every org, so
+   *  it must still reach another organization's member — otherwise `!target` would have closed the
+   *  hole by breaking user management. */
+  it.each(ROUTES)('$verb still succeeds for an unbound operator acting on another organization\'s member', async (r) => {
+    const { us, send } = await makeApp();
+    await send('/organizations', J({ id: 'globex' }, 'root'));
+    const g = await send('/users', J({ email: 'g@globex.test', roles: ['admin'], orgId: 'globex' }, 'root'));
+    const gid = g.json.user.id;
+
+    const res = await send(`/users/${gid}${(r as { suffix?: string }).suffix ?? ''}`,
+      r.init({ authorization: 'Bearer root' }));
+
+    expect(res.status, `an unbound operator was refused ${r.verb} on a member it administers`).toBe(200);
+    expect(us.calls, `${r.verb} answered 200 without reaching the host`).toEqual([`${r.call}:${gid}`]);
   });
 });
