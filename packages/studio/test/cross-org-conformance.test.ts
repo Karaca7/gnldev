@@ -200,11 +200,21 @@ async function seedOrg(j: InMemoryJournal, org: string, run: string, text: strin
   // reaches one of them.
   await j.incrBy!(`org:${org}:__metrics__:all`, { runs: 1, tokens: cost * 100, costUsdMicros: cost });
   await j.put(`${p}:proc:eval:quality`, { v: cost });
+  // The shapes each read route actually parses, taken from its reader rather than guessed. An earlier
+  // seed wrote `${p}:proc:redactor` for processors — wrong prefix (`readProcessorReports` scans
+  // `:procreport:`) and wrong shape (every one of these is wrapped in `{ v }`), so the route answered
+  // `{"reports":[]}` to both callers and looked uncontrollable.
+  await j.put(`${p}:procreport:redactor`, { v: { name: text, phase: 'input', ts: 1, findings: [text] } });
+  await j.put(`${p}:incident:call-1`, { v: { toolCallId: 'call-1', at: 1, kind: 'blocked', detail: text } });
+  await j.put(`${p}:net:route:0`, { v: { to: text, why: text } });
+  await j.put(`${p}:net:step:0`, { v: { agent: text, output: text } });
   await j.put(`${p}:memctx`, { recalled: [], recentCount: 1, note: text });
   await j.put(`${p}:wf:step-a`, { output: text });
   await j.put(`org:${org}:wfrun:${run}`, { runId: run, workflowName: 'acme-workflow', status: 'completed', at: 1 });
   await j.put(`org:${org}:__studio_agent__:acme-bot`, { name: 'acme-bot', versions: [{ version: 1, system: text, at: 1 }], active: 1 });
   await j.put(`org:${org}:__audit__:a1`, { at: 1, actor: text, action: 'run', target: run });
+  await j.put(`org:${org}:sched:def:t-${org}`, { id: `t-${org}`, cron: '* * * * *', agent: text });
+  await j.put(`org:${org}:sched:state:t-${org}`, { id: `t-${org}`, nextAt: 2, lastAt: 1 });
   // The conversation store below is a factory over the org-scoped journal, so its keys are org-prefixed.
   await j.put(`org:${org}:threads`, [{ id: `t-${org}`, title: text }]);
   await j.put(`org:${org}:thread:t-${org}`, [{ role: 'user', content: text }]);
@@ -489,7 +499,9 @@ describe('the ownership control — acme must SEE what globex must not', () => {
     'GET /jobs', 'POST /jobs/:id/retry', 'POST /knowledge/search', 'GET /managed-agents',
     'GET /metrics', 'GET /metrics/runs', 'GET /organizations',
     'GET /runs', 'GET /runs/:id', 'POST /runs/:id/cancel', 'POST /runs/:id/compensate',
-    'GET /runs/:id/cost', 'GET /runs/:id/diff', 'POST /runs/:id/fork', 'GET /runs/:id/memory-context',
+    'GET /runs/:id/cost', 'GET /runs/:id/diff',
+    'GET /runs/:id/incidents', 'GET /runs/:id/network', 'GET /runs/:id/processors',
+    'GET /scheduler/triggers', 'POST /runs/:id/fork', 'GET /runs/:id/memory-context',
     'POST /runs/:id/otel-export', 'GET /runs/:id/regression/:otherId', 'POST /runs/:id/resume',
     'POST /runs/:id/score', 'GET /runs/:id/scores', 'GET /runs/:id/state', 'GET /runs/:id/trace',
     'GET /threads', 'GET /threads/:id/working-memory',
@@ -544,10 +556,6 @@ describe('the ownership control — acme must SEE what globex must not', () => {
     // alone it is empty for both callers. An order-dependent control is worse than none.
     'GET /audit': 'empty for both callers unless earlier requests happened to write audit rows',
     'GET /approvals': 'needs a run left suspended in a state listRuns reports as pending',
-    'GET /runs/:id/incidents': 'needs incident records in readIncidents\' shape',
-    'GET /runs/:id/network': 'needs sub-agent call records',
-    'GET /runs/:id/processors': 'needs processor reports in the shape the route reads',
-    'GET /scheduler/triggers': 'needs @gnldev/scheduler trigger keys',
     'GET /threads/:id/messages': 'the factory-backed store returns [] for the seeded thread id',
     'GET /workflows/:name/runs': 'needs wfrun records keyed by workflow name',
     'GET /users': 'needs a user store whose list() is called with the caller\'s organization',
@@ -715,7 +723,7 @@ describe('the ownership control — acme must SEE what globex must not', () => {
     // Every gap must carry a reason. An unexplained one is the same failure as an unclassified route.
     expect(uncontrolled.filter((k) => !UNCONTROLLED_REASONS[k]),
       'an org-scoped route is uncontrolled with no reason recorded — say why, or control it').toEqual([]);
-    expect(controlled.size, 'ownership coverage went backwards').toBeGreaterThanOrEqual(48);
+    expect(controlled.size, 'ownership coverage went backwards').toBeGreaterThanOrEqual(52);
   });
 });
 
