@@ -42,7 +42,19 @@ export const ENGINE_META_KEYS: readonly string[] = ['schema_version'];
  * would move platform state into one tenant. `adoptIntoOrg` reports what it skipped by name so the
  * decision is visible rather than silent.
  */
-export const ADOPTABLE_RESERVED_PREFIXES: readonly string[] = ['__usage__', '__metrics__'];
+export const ADOPTABLE_RESERVED_PREFIXES: readonly string[] = [
+  '__usage__', '__metrics__',
+  // Managed workflow definitions and managed agent versions. Studio writes both through its
+  // ALS-SCOPED reader (`rw.put(WF_STORE_PRE + …)`, the agent store's prefixer), so on a deployment
+  // with organizations they are per-organization by construction and read back through the same
+  // scope. Left at the root by an upgrade they are not deleted — they are UNREACHABLE, and the
+  // operator sees an empty list and concludes the migration dropped them.
+  //
+  // Both were missing from this list when it was first written, which is the failure mode an allow
+  // list has: it leaves data behind. That is the trade it is chosen for — a missing DENY entry moves
+  // platform state into one tenant and breaks authentication.
+  '__studio_wf__', '__studio_agent__',
+];
 
 /** True when a root-level key belongs to the platform and `adoptIntoOrg` must leave it alone. */
 export function isPlatformKey(key: string): boolean {

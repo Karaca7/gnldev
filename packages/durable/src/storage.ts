@@ -360,7 +360,15 @@ export interface Storage {
 export interface AdoptIntoOrgResult {
   orgId: string;
   dryRun: boolean;
-  /** Rows moved into the organization, by store. A store the engine does not have is absent, not zero. */
+  /**
+   * Rows moved into the organization, by store. A store the engine does not have is absent, not zero.
+   *
+   * ROWS, not logical keys, and the two differ by engine. SQLite and Postgres materialise a per-run
+   * summary row (`gnl_runs`) alongside the journal entries, so they report one more than the
+   * key-value engines do for the same data — measured: 5 against in-memory and Redis's 4. Nothing is
+   * lost either way; a migration rehearsed on one engine simply reports a different figure than
+   * production, and an operator counting with `listKeys` afterwards will find the key-value number.
+   */
   moved: Record<string, number>;
   /** Rows left alone because they already carried an organization prefix. */
   alreadyScoped: number;
