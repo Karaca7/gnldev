@@ -25,10 +25,10 @@ import { ORG_SCOPE, orgPrefix, orgScopeOf, withOrg } from './organization.js';
 import { toJournal } from './storage.js';
 import type {
   CacheStore, CapabilityMatrix, ListQuery, LogRecord, MemoryStore, MessageRecord, MetaStore,
-  Observation, Page, RecallOptions, RunJournal, Storage, ThreadRecord,
+  Page, RunJournal, Storage, ThreadRecord,
   VectorItem, VectorMatch, VectorQueryOptions, VectorStore, WorkStore,
 } from './storage.js';
-import type { JournalEntry, RunSummary } from './journal.js';
+import type { RunSummary } from './journal.js';
 
 /** Adds the prefix; the inverse of `strip`. */
 const add = (p: string, key: string): string => p + key;

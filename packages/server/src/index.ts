@@ -3,7 +3,7 @@
 import { Hono, type Context } from 'hono';
 import { toFetchHandler, type FetchHandler } from './handler.js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { createGnl, agentVisibleToOrg, withOrg, withOrgStorage, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, asReaderJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, blockedErrorCode, upstreamFailure, sealRequestContext, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry } from '@gnldev/durable';
+import { createGnl, agentVisibleToOrg, withOrg, withOrgStorage, ORG_RECORD_PRE, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, asReaderJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, blockedErrorCode, upstreamFailure, sealRequestContext, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry } from '@gnldev/durable';
 import type { CreateGnlConfig, Journal, JournalReader, BudgetLimit, UsageCostCache, RunLimits } from '@gnldev/durable';
 import { makeGate, normalizeAuth, principalOf, isPlatformAdmin, type AuthProvider, type ReadWriteAuth, type Principal } from '@gnldev/auth';
 // P0.4 @gnldev/workflow is zero-dependency (see its package.json) — depending on it
@@ -386,8 +386,10 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   const strictMultiOrg = authProvider?.capabilities?.().multiOrganization === true;
   // HARDENING: one-time warn when a multi-org deployment serves an org-less request in the shared scope (see scope()).
   let warnedSharedOrgFallback = false;
-  // Org registration record prefix (studio POST /organizations writes `__org__:<id>`; opt-in requireRegistration gate reads it).
-  const ORG_RECORD_PRE = '__org__:';
+  // Org registration record prefix: ORG_RECORD_PRE, imported from @gnldev/durable. It was a local
+  // literal here and another in @gnldev/studio, and `adoptIntoOrg` needs the same one — three copies
+  // of a key that decides whether an organization resolves is three chances to change two of them.
+
 
   // Multi-organization: lazy registry per organization (same agent config, journal scoped to the
   // Organization). Since the registry is per-org, model-fallback freezing and memory are also isolated

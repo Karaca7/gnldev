@@ -18,7 +18,8 @@ export interface Capabilities {
   queue: boolean; knowledge: boolean; workflowManage: boolean;
   /**
    * Capabilities that are `false` for THIS caller's organization scope but would be `true` for an
-   * unscoped operator — see the server's `scopeRefusedCaps`.
+   * unscoped operator. Derived server-side by evaluating the capability set twice, once as this caller
+   * and once as an operator, and diffing — see `/capabilities` in @gnldev/studio.
    *
    * Without it a view cannot tell "the deployment has no cache" from "your organization cannot reach
    * this deployment's cache", because both arrive as `cache: false`. Measured in a browser: an

@@ -4,7 +4,7 @@ import { toFetchHandler, type FetchHandler } from './handler.js';
 import { Hono, type Context } from 'hono';
 import { sseResponse } from './sse.js';
 
-import { asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, countLog, purgeRun, purgeOrganization, orgPurgedKey, sweepRuns, sweepLog, POLICY_KEY, PRICING_KEY, effectivePricingTable, DEFAULT_PRICING, readPricing, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, knownModelProviders, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent } from '@gnldev/durable';
+import { ORG_RECORD_PRE, asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, countLog, purgeRun, purgeOrganization, orgPurgedKey, sweepRuns, sweepLog, POLICY_KEY, PRICING_KEY, effectivePricingTable, DEFAULT_PRICING, readPricing, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, knownModelProviders, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent } from '@gnldev/durable';
 import type { PolicyDoc, PolicyRule, BudgetLimit, PricingDoc } from '@gnldev/durable';
 import type { JournalReader, Journal, WorkflowLike, MetricsRunRow } from '@gnldev/durable';
 import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, principalScope, assertAssignablePrivileges, type AuthProvider, type Principal } from '@gnldev/auth';
@@ -1173,7 +1173,10 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // An older version. Every change is logged to audit.
   const AGENT_STORE_PRE = '__studio_agent__:';
   // Org record prefix: orgs that were EXPLICITLY created (may not have any runs yet) are kept here.
-  const ORG_PRE = '__org__:';
+  // ORG_RECORD_PRE from @gnldev/durable — the same literal lived here, in @gnldev/server, and (once
+  // `adoptIntoOrg` arrived) in the storage adapters. One source, since it decides whether an
+  // organization resolves at all.
+  const ORG_PRE = ORG_RECORD_PRE;
   const agentStoreEnabled = writable && typeof rw.listKeys === 'function';
   type AgentStore = {
     list(): Promise<ManagedAgentRecord[]>;
