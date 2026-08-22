@@ -231,19 +231,20 @@ async function writeToolTerminal(
  * Overwhelmingly common case: a replay/resume reusing the SAME toolCallId that's already in the list,
  * Or a 'call'-mode record (whose key IS the toolCallId — no other id can ever reach here).
  */
-async function trackResolvedToolCallId(ctx: DurableCtx, key: string, record: ToolJournalRecord, toolCallId: string): Promise<void> {
-  if (record.status !== 'succeeded' && record.status !== 'denied' && record.status !== 'reflected') return;
+/** Returns the record as it now stands — updated when this call added an id, otherwise the original. */
+async function trackResolvedToolCallId<T extends ToolJournalRecord>(ctx: DurableCtx, key: string, record: T, toolCallId: string): Promise<T> {
+  if (record.status !== 'succeeded' && record.status !== 'denied' && record.status !== 'reflected') return record;
   const ids = record.resolvedToolCallIds ?? [];
-  if (ids.includes(toolCallId)) return;
-  // Mirror the record we are WRITING, not the one we were handed. Writing the updated list to the
-  // authoritative key and then mirroring the stale local copy left the two disagreeing — measured,
-  // authoritative `resolvedToolCallIds: ["call-A","call-B"]` against a mirror still holding
-  // `["call-A"]`. time-travel.ts stops matching on the key once resolvedIds are present, so a
-  // COMPLETED run reported `pending: [{call-B}]` and Studio's GET /approvals offered a human an
-  // approval for a charge that had already gone through.
-  const updated: ToolJournalRecord = { ...record, resolvedToolCallIds: [...ids, toolCallId] };
+  if (ids.includes(toolCallId)) return record;
+  const updated = { ...record, resolvedToolCallIds: [...ids, toolCallId] } as T;
   await ctx.journal.put(key, stampFormat(updated));
-  await mirrorUnderRun(ctx, key, updated, toolCallId);
+  // Returned, not mirrored here. The caller mirrors what this returns — writing the updated list to the
+  // authoritative key and then mirroring the STALE local copy left the two disagreeing: measured,
+  // authoritative `resolvedToolCallIds: ["call-A","call-B"]` against a mirror still holding
+  // `["call-A"]`. time-travel stops matching on the key once resolvedIds are present, so a COMPLETED
+  // run reported `pending: [{call-B}]` and GET /approvals offered a human an approval for a charge that
+  // had already gone through.
+  return updated;
 }
 
 /**
@@ -268,22 +269,35 @@ async function consumeExistingRecord(
   record: Extract<ToolJournalRecord, { status: 'succeeded' | 'denied' | 'reflected' | 'suspended' }>,
   toolCallId: string,
 ): Promise<unknown> {
-  // Terminal records: record that THIS call was resolved by this record, and give the run its copy.
-  await trackResolvedToolCallId(ctx, key, record, toolCallId);
+  // Terminal records: record that THIS call was resolved by this record. Returns what is now stored.
+  const latest = await trackResolvedToolCallId(ctx, key, record, toolCallId);
   // A suspended record carries the toolCallId of the run that FIRST suspended. Returning it verbatim
   // reports an id this run never emitted, while its approval is looked up under its own — so the
   // operator sees an id that resolves to nothing, approving leaves the call suspended and denying
   // writes no terminal record. Rewritten here rather than in one branch, because the takeover path
   // returns suspended records too.
-  if (record.status === 'suspended') {
-    const sus = (record.output as { __gnl_suspend?: { toolCallId?: string } } | undefined)?.__gnl_suspend;
-    if (sus && sus.toolCallId !== toolCallId) {
-      const fresh = { ...record.output as object, __gnl_suspend: { ...sus, toolCallId } };
-      await mirrorUnderRun(ctx, key, { ...record, output: fresh }, toolCallId);
-      return fresh;
-    }
+  if (latest.status === 'suspended') {
+    const sus = (latest.output as { __gnl_suspend?: { toolCallId?: string } } | undefined)?.__gnl_suspend;
+    const mine = sus && sus.toolCallId === toolCallId;
+    const output = sus && !mine ? { ...latest.output as object, __gnl_suspend: { ...sus, toolCallId } } : latest.output;
+    await mirrorUnderRun(ctx, key, { ...latest, output }, toolCallId);
+    return output;
   }
-  return record.output;
+  // Written on EVERY consume, not only when this call added an id.
+  //
+  // The mirror was effectively write-once, and a single transient failure was permanent. Measured, one
+  // injected ECONNRESET on the mirror key while the run was suspended for approval: the run had NO tool
+  // record, `listRuns` reported it `running` with 0 tool calls, Studio's approvals inbox had nothing to
+  // click, and a later replay did NOT retry the write — attempts stayed at 1. The claim then sat
+  // `suspended` forever and `releaseFailedClaim` refused it ("its claim is 'suspended', not 'failed'"),
+  // reproducing the very "poisoned globally and permanently, and the remedy cannot be used" outcome the
+  // best-effort change was made to prevent. Two early returns were doing the silencing: the one above
+  // for an id already in the list, and the suspend branch's "only when the id differs".
+  //
+  // So the write is unconditional and the record is idempotent. It costs one put per consumed cross-run
+  // step; a shadow that only exists when nothing went wrong is not worth having.
+  await mirrorUnderRun(ctx, key, latest, toolCallId);
+  return latest.output;
 }
 
 /**

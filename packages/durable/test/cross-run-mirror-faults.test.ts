@@ -21,6 +21,19 @@ import { withIdempotency } from '../src/idempotent-tools.js';
 import { gnlTool } from '../src/types.js';
 import { createMockModel, countToolResults, toolCallResult, finalTextResult } from './mock.js';
 
+/** Fails the FIRST mirror write only — a transient blip, not a broken backend. */
+class OnceHostileJournal extends InMemoryJournal {
+  mirrorAttempts = 0;
+  private failing = true;
+  override async put(key: string, value: unknown): Promise<void> {
+    if (/:tool:/.test(key) && !key.startsWith('xrun:')) {
+      this.mirrorAttempts++;
+      if (this.failing) { this.failing = false; throw new Error('ECONNRESET: journal write failed'); }
+    }
+    return super.put(key, value);
+  }
+}
+
 /** A journal whose writes to the RUN-SCOPED mirror key fail, while every other write succeeds. */
 class MirrorHostileJournal extends InMemoryJournal {
   mirrorAttempts = 0;
@@ -95,6 +108,39 @@ describe('a failing mirror write', () => {
     const record = await journal.get(authoritative) as { status?: string; output?: unknown };
     expect(record?.status).toBe('succeeded');
     expect(record?.output).toEqual({ charged: 100 });
+  });
+
+  it('is repaired on the next replay, instead of being permanently absent', async () => {
+    // Best-effort is only half of it. The mirror was also effectively write-once: two early returns —
+    // "this id is already in the list" and the suspend branch's "only when the id differs" — meant a
+    // single transient failure was never retried.
+    //
+    // Measured on a run suspended for approval, one injected ECONNRESET: the run had NO tool record,
+    // listRuns reported it `running` with 0 tool calls, Studio's inbox had nothing to click, and a
+    // later replay did not retry — attempts stayed at 1. The claim then sat `suspended` forever and
+    // `releaseFailedClaim` refused it ("its claim is 'suspended', not 'failed'"), which is exactly the
+    // "poisoned globally and permanently, and the remedy cannot be used" outcome best-effort was meant
+    // to avoid. Losing the inbox entry has to be temporary, or it is the same bug wearing a warning.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const journal = new OnceHostileJournal();
+    const guard = async () => ({ action: 'require-approval' as const, reason: 'big' });
+    const charge = chargeTool(() => {});
+
+    await runDurable({ runId: 'r1', journal, model: model('call-1'), tools: { charge }, guard, prompt: 'go' } as never);
+    expect(journal.mirrorAttempts, 'the mirror was never attempted — this test proves nothing').toBe(1);
+    expect((await journal.readRun('r1')).some((e) => e.kind === 'tool'),
+      'the failed write left a record behind — the fixture is wrong').toBe(false);
+
+    // The next time anything replays this run, the shadow must come back.
+    await runDurable({ runId: 'r1', journal, model: model('call-1'), tools: { charge }, guard, prompt: 'go' } as never);
+
+    const step = (await journal.readRun('r1')).find((e) => e.kind === 'tool');
+    expect(step, 'the shadow was never retried — the run stays invisible to the approvals inbox forever').toBeTruthy();
+    expect((step?.value as { status?: string })?.status).toBe('suspended');
+    const runs = await journal.listRuns();
+    expect(runs.find((r) => r.runId === 'r1')?.status,
+      'a run waiting for approval still reports itself as running').toBe('suspended');
+    expect(warn.mock.calls.flat().join(' ')).toMatch(/could not mirror/);
   });
 
   it('does not turn a withIdempotency dedup HIT into a journal write', async () => {

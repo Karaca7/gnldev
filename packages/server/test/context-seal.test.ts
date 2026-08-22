@@ -50,7 +50,10 @@ function mkApi(journal: InMemoryJournal) {
       agents: {
         a: {
           model: mkModel('ok'),
-          system: (ctx: any) => JSON.stringify({ org: ctx[GNL_ORG_ID_KEY], resourceId: ctx[GNL_RESOURCE_ID_KEY] }),
+          // `plainOrg` is the documented, client-readable name for the same fact — `@gnldev/server`'s
+          // own docs tell dynamic agents to read `ctx.org`, so it is observed here alongside the
+          // reserved key it mirrors.
+          system: (ctx: any) => JSON.stringify({ org: ctx[GNL_ORG_ID_KEY], resourceId: ctx[GNL_RESOURCE_ID_KEY], plainOrg: ctx.org }),
         },
       },
     },
@@ -123,5 +126,51 @@ describe('@gnldev/server: request-context identity sealing (P1.7)', () => {
     const seen = JSON.parse(input!.system!);
     expect(seen.org).toBe('acme');
     expect(seen.resourceId).toBe('alice');
+  });
+
+  it('the PLAIN `org` key does not survive when NO organization resolves', async () => {
+    // The dangerous case, and the one the previous shape missed. When an organization DOES resolve the
+    // server writes its own value over the body's, so the spoof loses by accident. When none resolves
+    // — an identity with no `orgId`, on a deployment that never configured `org`, which is the default
+    // — there was nothing to overwrite it and the body's `org` reached the agent verbatim.
+    const journal = new InMemoryJournal();
+    const api = createRestApi(
+      {
+        journal,
+        agents: { a: { model: mkModel('ok'), system: (ctx: any) => JSON.stringify({ plainOrg: ctx.org ?? null }) } },
+      },
+      { auth: roleAuth({ admin: { user: 'alice', pass: 'pw' } }) }, // no orgId anywhere
+    );
+
+    const res = await call(api, '/agents/a/run', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: basicAuthHeader },
+      body: JSON.stringify({ runId: 'unscoped-spoof', prompt: 'hi', context: { org: 'victim' } }),
+    });
+    expect(res.status).toBe(200);
+
+    const input = await journal.get<{ system?: string }>('unscoped-spoof:input');
+    const seen = JSON.parse(input!.system!);
+    expect(seen.plainOrg, 'the body invented an organization the server never resolved').toBeNull();
+  });
+
+  it('the PLAIN `org` key is sealed too — it is the one the docs tell agents to read', async () => {
+    // The seal stripped the three `__gnl_*` keys and stopped there, while `@gnldev/server` publishes
+    // and documents a plain `org` beside them. A body carrying `context: { org: 'victim' }` therefore
+    // reached dynamic `system`/`model`/`tools` functions verbatim on every path where no organization
+    // resolved — which is every request on a deployment that has not configured `org` at all.
+    const journal = new InMemoryJournal();
+    const api = mkApi(journal);
+
+    const res = await call(api, '/agents/a/run', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: basicAuthHeader },
+      body: JSON.stringify({ runId: 'plain-org-spoof', prompt: 'hi', context: { org: 'victim' } }),
+    });
+    expect(res.status).toBe(200);
+
+    const input = await journal.get<{ system?: string }>('org:acme:plain-org-spoof:input');
+    const seen = JSON.parse(input!.system!);
+    expect(seen.plainOrg, 'the body\'s `org` reached the agent').toBe('acme');
   });
 });

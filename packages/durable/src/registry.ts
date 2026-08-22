@@ -34,6 +34,44 @@ export const GNL_ORG_ID_KEY = '__gnl_orgId';
 export const GNL_THREAD_ID_KEY = '__gnl_threadId';
 
 /**
+ * Plain keys the SERVER also derives, and which a client therefore must not be able to supply.
+ *
+ * The seal covered the three `__gnl_*` keys and stopped there, but `@gnldev/server` documents and
+ * injects a plain `org` alongside them ("the resolved organization is injected into requestContext as
+ * `org`, visible to dynamic agents"), and dynamic `system`/`model`/`tools` functions read it. When no
+ * organization resolves for a request — the shared-scope path, which is every request on a deployment
+ * that has not configured `org` — a body carrying `context: { org: 'victim' }` reached those functions
+ * verbatim. The seal existed to close exactly that class and missed the one key it had published.
+ */
+const RESERVED_CONTEXT_KEYS = [GNL_RESOURCE_ID_KEY, GNL_ORG_ID_KEY, GNL_THREAD_ID_KEY, 'org'] as const;
+
+/**
+ * Writes an OWN property, ignoring the prototype chain.
+ *
+ * Plain assignment does not: `[[Set]]` walks the prototype before it will create an own property, so
+ * a polluted `Object.prototype` decides what happens. Measured against the four shapes an attacker
+ * can install, with the server having ALREADY resolved a real identity (`resourceId: 'real-user'`):
+ *
+ *   data property   ->  "real-user"    the own write lands; only this shape was ever handled
+ *   accessor pair   ->  "victim-user"  inherited setter swallows the write, getter answers instead
+ *   getter-only     ->  TypeError      "Cannot set property ... which has only a getter"
+ *   non-writable    ->  TypeError      "Cannot assign to read only property"
+ *
+ * The accessor-pair row is the whole point: the server's authenticated identity is silently discarded
+ * and `serverIdentityOf` then reports the attacker's value — the exact P1.7 hijack the seal exists to
+ * prevent, reachable again through a route the seal never considered. The two TypeError rows land
+ * inside `try` blocks in `@gnldev/server`, so they degrade to a 400 on every request.
+ *
+ * `defineProperty` defines on the object itself and never consults the prototype, so all four shapes
+ * behave identically to the unpolluted case. The descriptor matches what assignment would have
+ * produced (enumerable/writable/configurable) so nothing downstream — spread, `Object.keys`,
+ * `JSON.stringify` — can tell the difference.
+ */
+function define(target: RequestContext, key: string, value: unknown): void {
+  Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true });
+}
+
+/**
  * P1.7 seals a request context against the cross-tenant hijack class where a
  * Client-supplied `context.__gnl_resourceId`/`__gnl_orgId`/`__gnl_threadId` in the request body would
  * Otherwise be indistinguishable from a value the SERVER derived from the authenticated identity — a
@@ -51,12 +89,52 @@ export function sealRequestContext(
   server: { resourceId?: string; orgId?: string; threadId?: string },
 ): RequestContext {
   const sealed: RequestContext = { ...ctx };
-  delete sealed[GNL_RESOURCE_ID_KEY];
-  delete sealed[GNL_ORG_ID_KEY];
-  delete sealed[GNL_THREAD_ID_KEY];
-  if (server.resourceId !== undefined) sealed[GNL_RESOURCE_ID_KEY] = server.resourceId;
-  if (server.orgId !== undefined) sealed[GNL_ORG_ID_KEY] = server.orgId;
-  if (server.threadId !== undefined) sealed[GNL_THREAD_ID_KEY] = server.threadId;
+  // A JSON body cannot pollute `Object.prototype` through this function — spread copies `__proto__`
+  // as an inert own DATA property — but it does not follow that the key is harmless to pass on. This
+  // context is handed to user-written dynamic `system`/`model`/`tools` functions and to tool code, and
+  // an ordinary merge there re-arms it, because `Object.assign` writes with `[[Set]]`:
+  //
+  //   body    {"context": {"a": 1, "__proto__": {"isAdmin": true}}}
+  //   sealed  own keys ["a","__proto__","__gnl_orgId","org"]   sealed.isAdmin -> undefined
+  //   Object.assign({}, sealed)                                 .isAdmin      -> true   (prototype set)
+  //
+  // So the seal was handing a live payload to every consumer and relying on none of them using the
+  // one-line merge. Dropped here: no legitimate request context carries `__proto__` as data, and this
+  // is the function whose whole job is making the context safe to pass onward.
+  //
+  // SHALLOW, and deliberately so — `context: { profile: { __proto__: {...} } }` still arms
+  // `Object.assign({}, ctx.profile)` one level down, and neither `structuredClone` nor a JSON round
+  // trip strips it (measured). Closing that means recursively rewriting arbitrary caller data on every
+  // request, which is a larger behavioural change than the residual warrants. `__proto__` is the ONLY
+  // accessor on `Object.prototype` (surveyed, and pinned by a test that fails if a runtime adds a
+  // second), so `constructor`/`toString`/`valueOf` merge into plain own properties and escalate
+  // nothing — a surviving `toString` key does make `String(merged)` throw, which is a crash, not a
+  // privilege. Consumers must not `Object.assign` untrusted SUB-objects of a request context.
+  delete sealed['__proto__'];
+  // Stripped from the LIST, not one `delete` per key. The three `__gnl_*` keys were deleted here by
+  // hand while a fourth reserved key — the plain `org` that @gnldev/server publishes to dynamic agents
+  // — went on arriving from the request body. A rule written out per key is a rule that grows a hole
+  // the moment a fifth key is published.
+  for (const k of RESERVED_CONTEXT_KEYS) {
+    delete sealed[k];
+    // `delete` removes the OWN property only, so a reserved key inherited from a polluted
+    // `Object.prototype` survives it and reads back exactly like a value the server set. Shadowed with
+    // an own `undefined` — and only when the key is still reachable, so an ordinary context gains
+    // nothing.
+    //
+    // gnl's own callers cannot reach this: a JSON body gives `__proto__` as an own data property and
+    // object spread copies it as data, leaving `Object.prototype` untouched (measured). But this
+    // function is exported from `@gnldev/durable`, so the object it is handed may have come from a
+    // YAML parse, a query-string parser, or a config merge — and a seal whose correctness depends on
+    // which parser the caller happened to use is not a seal.
+    if (k in sealed) define(sealed, k, undefined);
+  }
+  if (server.resourceId !== undefined) define(sealed, GNL_RESOURCE_ID_KEY, server.resourceId);
+  if (server.orgId !== undefined) {
+    define(sealed, GNL_ORG_ID_KEY, server.orgId);
+    define(sealed, 'org', server.orgId); // the documented, client-readable name for the same server-derived fact
+  }
+  if (server.threadId !== undefined) define(sealed, GNL_THREAD_ID_KEY, server.threadId);
   return sealed;
 }
 

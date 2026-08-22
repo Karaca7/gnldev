@@ -608,6 +608,24 @@ async function seedFromHistory(
     if (!e.key.startsWith(prefix)) continue; // unexpected key shape — skip (defensive, same as old behavior)
     const toolCallId = e.key.slice(prefix.length);
     const v = e.value as ToolJournalRecord | undefined;
+    // A SHADOW of a record whose authoritative key is not run-scoped — skipped for the same reason
+    // `compensateRun` skips it (compensation.ts), and to keep the rule above true.
+    //
+    // The live rule only ever fires from `writeToolTerminal`. A cross-run DEDUP HIT returns from the
+    // journal without writing a terminal, so it increments nothing — but it does leave a shadow, and
+    // counting that here made the seed disagree with the live path. Measured, two runs sharing one
+    // cross-run charge under `maxToolCalls: 1`: the deduping run executed ZERO tools and died with
+    // RunLimitExceededError where it used to complete, and whether it died depended on whether the
+    // dedup hit happened to be the run's FIRST tool call — same work, same run, different budget.
+    //
+    // The executing run's shadow is skipped too, and that is deliberate rather than overlooked: its
+    // call WAS counted live at the moment it ran, and this scan only happens when the chain key is
+    // absent — which means limits were not in play then either, so there was nothing to reconstruct. I
+    // tried to build a case where the executor's shadow needed to count (a later resume, a fork with
+    // limits added afterwards) and could not produce one; a narrower marker distinguishing the two
+    // shadows was written and then removed, because a schema field justified only by an unmeasured
+    // scenario is a liability. If such a case turns up, this is the line to split.
+    if (v?.mirrorOf !== undefined) continue;
     // MUST match recordToolOutcome's live-increment rule EXACTLY so a first-encounter
     // Seed reconstructs the SAME count — a succeeded call OR a failed SIDE-EFFECT attempt (the failed
     // Record carries `sideEffect`; older records without it fall back to not-counted, matching pre-C3).
