@@ -115,6 +115,20 @@ Every storage command accepts `--config` (default `gnl.config.ts`). See
 `port`/`studio`/`auth`).
 
 ## Programmatic surface
-`import { commands, commandList } from '@gnldev/cli'` — the same `Command` registry `cli.ts` dispatches
-through, for embedding/tests that want to drive a command's `run()` without spawning the `gnl` binary.
-Also re-exported: `defineConfig`/`loadConfig`, `buildDevApp`/`serveDev`, `scaffold`.
+Two entry points, split by what they need installed.
+
+**`@gnldev/cli`** — `defineConfig`/`loadConfig`, `scaffold`/`generateConfig`, the `RECIPES` feature
+list, the checkbox prompt reducer, and `commands`/`commandList`: the same `Command` registry `cli.ts`
+dispatches through, for embedding/tests that want to drive a command's `run()` without spawning the
+`gnl` binary. Nothing here names an optional peer, so it type-checks in a project that has only
+`@gnldev/durable` — including under `skipLibCheck: false`.
+
+**`@gnldev/cli/dev`** — `buildDevApp`/`serveDev`/`loadDevRuntime`/`resolveAuthProvider` and the `load*`
+runtime resolvers. Everything here is typed against the optional peers (`@gnldev/durable`, `server`,
+`studio`, `studio/ai`, `memory`, `auth`, `hono`, `@hono/node-server`), because it exists to boot them
+from the target project. Importing this subpath means you are running the dev server and therefore
+have them.
+
+These used to be one entry, which put those peer type references into the program of anyone importing
+the package at all: `import { scaffold } from '@gnldev/cli'` in a project with none of them installed
+produced 16 `TS2307: Cannot find module` errors. Nothing was removed — the dev half moved.

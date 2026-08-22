@@ -15,6 +15,11 @@ const usage = {
   outputTokens: { total: 1, text: 1, reasoning: undefined },
 };
 
+// And the same is true of the finish reason: v7 reads `finishReason.unified`. With a bare string it
+// is undefined, and from ai@7.0.70 the loop stops before executing a tool — so these two tests, the
+// ones that exist to prove the charge happens exactly once, failed by never charging at all.
+const finish = (reason: 'stop' | 'tool-calls') => ({ unified: reason, raw: reason });
+
 // A model that, in ONE turn, calls chargeOrder 3× with identical args but 3 different toolCallIds.
 function duplicateCallingModel(): any {
   let turn = 0;
@@ -28,10 +33,10 @@ function duplicateCallingModel(): any {
             type: 'tool-call', toolCallId: `call-${i}`, toolName: 'chargeOrder',
             input: JSON.stringify({ orderId: 'order-1', amount: 42 }),
           })),
-          finishReason: 'tool-calls', usage, warnings: [],
+          finishReason: finish('tool-calls'), usage, warnings: [],
         };
       }
-      return { content: [{ type: 'text', text: 'done' }], finishReason: 'stop', usage, warnings: [] };
+      return { content: [{ type: 'text', text: 'done' }], finishReason: finish('stop'), usage, warnings: [] };
     },
   };
 }

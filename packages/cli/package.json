@@ -28,11 +28,23 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./dev": {
+      "types": "./dist/dev.d.ts",
+      "default": "./dist/dev.js"
+    },
     "./package.json": "./package.json"
+  },
+  "typesVersions": {
+    "*": {
+      "dev": [
+        "./dist/dev.d.ts"
+      ]
+    }
   },
   "files": [
     "dist",
-    "templates"
+    "templates",
+    "!templates/**/node_modules"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",

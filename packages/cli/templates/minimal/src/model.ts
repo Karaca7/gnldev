@@ -20,6 +20,13 @@ const usage = {
   outputTokens: { total: 1, text: 1, reasoning: undefined },
 };
 
+// The finish reason moved with the usage shape and only the usage half was fixed. A v4 provider
+// reports `{unified, raw}`; AI SDK 7 reads `finishReason.unified`, and a bare string leaves it
+// undefined. Harmless on this text-only path today, and wrong the moment anyone adds a tool — which
+// is what the `full` template does, where it produced an agent that never called one. Same shape in
+// both templates, so the next person to copy this file copies something correct.
+const finish = (reason: 'stop' | 'tool-calls') => ({ unified: reason, raw: reason });
+
 function echoModel(): any {
   return {
     specificationVersion: 'v4',
@@ -28,7 +35,7 @@ function echoModel(): any {
     supportedUrls: {},
     doGenerate: async ({ prompt }: any) => ({
       content: [{ type: 'text', text: `echo: ${lastUserText(prompt)}` }],
-      finishReason: 'stop',
+      finishReason: finish('stop'),
       usage,
       warnings: [],
     }),
@@ -41,7 +48,7 @@ function echoModel(): any {
             c.enqueue({ type: 'text-start', id: '1' });
             for (const ch of text) c.enqueue({ type: 'text-delta', id: '1', delta: ch });
             c.enqueue({ type: 'text-end', id: '1' });
-            c.enqueue({ type: 'finish', finishReason: 'stop', usage });
+            c.enqueue({ type: 'finish', finishReason: finish('stop'), usage });
             c.close();
           },
         }),

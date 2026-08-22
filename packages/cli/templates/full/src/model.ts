@@ -23,6 +23,25 @@ const usage = {
   outputTokens: { total: 1, text: 1, reasoning: undefined },
 };
 
+// The finish reason moved with the usage shape, and only the usage half was fixed.
+//
+// A v4 provider reports `{unified, raw}`; AI SDK 7 reads `finishReason.unified`. A bare string leaves
+// it undefined — and until ai@7.0.69 the loop tolerated that and ran the tool anyway. From 7.0.70 it
+// does not. Measured against the plain SDK, with no gnl code involved:
+//
+//   ai=7.0.69  bare string -> fired=1 text="done"  |  {unified,raw} -> fired=1 text="done"
+//   ai=7.0.73  bare string -> fired=0 text=""      |  {unified,raw} -> fired=1 text="done"
+//
+// The peer range is `^7.0.0`, so a project scaffolded today installs 7.0.7x and ships an agent that
+// never calls a tool: `POST /agents/assistant/run` answers `{"text":""}` and `gnl run` shows a
+// COMPLETED run with its tool call still pending. The template that exists to demonstrate
+// exactly-once side effects demonstrated none, and its own `pnpm test` failed 2/2 out of the box.
+//
+// Fixed here rather than by pinning `ai` below 7.0.70: the bare string was always the wrong shape —
+// this repo's own fixture (packages/durable/test/mock.ts) has converted it for months. Pinning would
+// freeze every new user on an old SDK to preserve our bug.
+const finish = (reason: 'stop' | 'tool-calls') => ({ unified: reason, raw: reason });
+
 // Turn 1: call chargeOrder(orderId: 'order-1', amount: 42). Turn 2 (once a tool result exists):
 // reply with text. This gives you a real tool call to inspect in Studio (`gnl studio`).
 function toolCallingMock(): any {
@@ -35,12 +54,12 @@ function toolCallingMock(): any {
       if (toolResultsSeen(prompt) === 0) {
         return {
           content: [{ type: 'tool-call', toolCallId: 'call-1', toolName: 'chargeOrder', input: JSON.stringify({ orderId: 'order-1', amount: 42 }) }],
-          finishReason: 'tool-calls',
+          finishReason: finish('tool-calls'),
           usage,
           warnings: [],
         };
       }
-      return { content: [{ type: 'text', text: 'Order charged once. Try running the same runId again — it will not charge twice.' }], finishReason: 'stop', usage, warnings: [] };
+      return { content: [{ type: 'text', text: 'Order charged once. Try running the same runId again — it will not charge twice.' }], finishReason: finish('stop'), usage, warnings: [] };
     },
     doStream: async () => ({
       stream: new ReadableStream({
@@ -49,7 +68,7 @@ function toolCallingMock(): any {
           c.enqueue({ type: 'text-start', id: '1' });
           for (const ch of 'Order charged once.') c.enqueue({ type: 'text-delta', id: '1', delta: ch });
           c.enqueue({ type: 'text-end', id: '1' });
-          c.enqueue({ type: 'finish', finishReason: 'stop', usage });
+          c.enqueue({ type: 'finish', finishReason: finish('stop'), usage });
           c.close();
         },
       }),

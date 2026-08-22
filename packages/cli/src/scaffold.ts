@@ -91,7 +91,7 @@ function patchPkg(dir: string, fn: (pkg: any) => void): void {
 
 /** Adds vitest + a `test` script + an e2e test to a scaffolded project (test source chosen by caller). */
 function addE2e(dir: string, testSrcDir: string): void {
-  cpSync(join(testSrcDir, 'test'), join(dir, 'test'), { recursive: true });
+  cpSync(join(testSrcDir, 'test'), join(dir, 'test'), { recursive: true, filter: notBuildDebris });
   cpSync(join(templatesDir('_e2e'), 'vitest.config.ts'), join(dir, 'vitest.config.ts')); // self-contained test config
   patchPkg(dir, (pkg) => {
     pkg.scripts = { ...pkg.scripts, test: 'vitest run' };
@@ -113,11 +113,29 @@ function frameworkRange(): string {
   return `^${version}`;
 }
 
+/**
+ * Skips anything a template directory accumulates from being USED rather than from being authored.
+ *
+ * `templates/full` is a runnable project — the repo's own tests install and run it — so a checkout
+ * grows `templates/full/node_modules/`, and inside it `.vite/vitest/results.json`, a cache of which
+ * tests last passed. `cpSync(..., { recursive: true })` copied all of it into every scaffold: a brand
+ * new project arrived with a stranger's dependency tree and a test-results cache reporting runs the
+ * user never made.
+ *
+ * The npm `files` list now excludes `templates/**\/node_modules` so the published tarball is clean, but
+ * that only fixes the published path. Anyone scaffolding from a source checkout — a contributor, and
+ * the repo's own e2e tests — copies straight off disk, which is where the debris actually lives.
+ */
+function notBuildDebris(src: string): boolean {
+  const base = basename(src);
+  return base !== 'node_modules' && base !== 'dist' && base !== '.vite' && base !== '.turbo';
+}
+
 /** cpSync a template into an EMPTY targetDir + gitignore→.gitignore + fill the project-name placeholder. */
 function copyTemplate(dir: string, template: TemplateName, name: string): void {
   const src = templatesDir(template);
   if (!existsSync(src)) throw new Error(`gnl: template not found: ${src}`);
-  cpSync(src, dir, { recursive: true });
+  cpSync(src, dir, { recursive: true, filter: notBuildDebris });
 
   // Npm tarballs drop .gitignore → the template keeps it as 'gitignore', converted to .gitignore on copy.
   const gi = join(dir, 'gitignore');

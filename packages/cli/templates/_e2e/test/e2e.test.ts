@@ -9,13 +9,17 @@ const usage = {
   outputTokens: { total: 1, text: 1, reasoning: undefined },
 };
 
+// v7 reads `finishReason.unified`; a bare string leaves it undefined. Text-only here, so it passes
+// either way — kept in the same shape as the other templates so a copy of this file starts correct.
+const finish = (reason: 'stop' | 'tool-calls') => ({ unified: reason, raw: reason });
+
 // An echo model that counts how many times it is actually invoked.
 function countingModel(counter: { calls: number }): any {
   return {
     specificationVersion: 'v4', provider: 'mock', modelId: 'echo', supportedUrls: {},
     doGenerate: async () => {
       counter.calls++;
-      return { content: [{ type: 'text', text: 'hello' }], finishReason: 'stop', usage, warnings: [] };
+      return { content: [{ type: 'text', text: 'hello' }], finishReason: finish('stop'), usage, warnings: [] };
     },
   };
 }
