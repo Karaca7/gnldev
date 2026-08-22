@@ -3,7 +3,7 @@
 import { Hono, type Context } from 'hono';
 import { toFetchHandler, type FetchHandler } from './handler.js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { createGnl, agentVisibleToOrg, withOrg, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, asReaderJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, blockedErrorCode, upstreamFailure, sealRequestContext, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry } from '@gnldev/durable';
+import { createGnl, agentVisibleToOrg, withOrg, withOrgStorage, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, asReaderJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, blockedErrorCode, upstreamFailure, sealRequestContext, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry } from '@gnldev/durable';
 import type { CreateGnlConfig, Journal, JournalReader, BudgetLimit, UsageCostCache, RunLimits } from '@gnldev/durable';
 import { makeGate, normalizeAuth, principalOf, isPlatformAdmin, type AuthProvider, type ReadWriteAuth, type Principal } from '@gnldev/auth';
 // P0.4 @gnldev/workflow is zero-dependency (see its package.json) — depending on it
@@ -83,6 +83,35 @@ export interface OrgOptions {
    * A registration PATH in the deployment (studio's org management, or a direct `__org__:<id>` write);
    * With it on and no such path, every org-scoped request is rejected. */
   requireRegistration?: boolean;
+  /**
+   * Ceiling on how many per-organization registries are held in memory at once (default 512).
+   *
+   * The cache is keyed by the RESOLVED organization id, and with `requireRegistration` off — the
+   * default — that id is whatever `resolve` returned, i.e. the `x-gnl-org` header. Every distinct
+   * value built a full `createGnl` registry and kept it forever, so a loop over random header values
+   * grew the process until it died. Nothing in the request has to be valid for that: an unregistered
+   * org is served, and serving it is what allocates.
+   *
+   * Least-recently-used entries are evicted past the cap. Eviction is state-preserving, and the parts
+   * that could have made it otherwise were measured rather than assumed: an instance is a CACHE over
+   * the org-scoped journal (memory comes from `memoryFactory(scoped)`, the frozen model spec lives in
+   * the journal), `createGnl` opens no connections and starts no timers, the rebuild re-derives
+   * `withOrg(base, id)` without double-scoping the key prefix, and cancellation is unaffected because
+   * `inflight` hangs off the API closure keyed `org:<id>:<runId>` — not off the instance — so the key
+   * survives a rebuild.
+   *
+   * The one exception is a `memoryFactory` that IGNORES its argument and returns a process-local store.
+   * That is a split rather than a loss: an in-flight run holds the evicted instance by reference, so
+   * for a window one organization has two live stores and half a conversation lands in the one nothing
+   * will read again. A factory that uses the journal it is handed — which is why it is handed one —
+   * has no such window.
+   *
+   * Raise it if you legitimately serve more than 512 organizations from one process and want them all
+   * warm. A non-integer or a value below 1 is REJECTED at construction, `Infinity` included: the growth
+   * this bounds is reachable by anyone who can send a header, so opting out of the bound is not a
+   * setting, and a negative one used to spin the eviction loop forever.
+   */
+  maxInstances?: number;
 }
 
 export interface RestApiOptions {
@@ -290,6 +319,26 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   // So GET /runs?limit= died on `all.filter is not a function` and the bare GET /runs returned a page
   // Object where its documented contract promises an array. asReaderJournal presents one shape for both.
   const baseJournal = (config.storage ? toJournal(config.storage.runs) : asReaderJournal(config.journal as object)) as Journal & JournalReader;
+  // A conversation store handed over as an OBJECT has no organization boundary, and this host had no
+  // guard for it. Refused at setup rather than at the first leak.
+  //
+  // `orgInstance` below builds a per-organization registry with `{ ...config, journal: scoped }` — but
+  // the spread carried `config.memory` through untouched, and `createGnl` resolves memory as
+  // `config.memory ?? memoryFactory(...)` (registry.ts), so the object won and the factory was never
+  // called. Every organization therefore shared ONE `Memory`: threads, messages, working memory and
+  // observations are keyed by a caller-chosen `threadId` alone, so naming another tenant's thread was
+  // enough to read it. Studio refuses exactly this shape and says so at boot; this host served it.
+  //
+  // `memory: false` stays valid — that is the host saying "no conversation store", which needs no
+  // boundary. A factory is fine: it is called per organization with that organization's journal.
+  if (opts.org && config.memory) { // `false` is falsy here — an explicit "no store" needs no boundary
+    throw new Error(
+      'createRestApi: `memory` was passed as an object while `org` is configured. That object owns its ' +
+      'own store and cannot be given an organization boundary, so every organization would share one ' +
+      'set of threads. Pass `memoryFactory` instead — it is called per organization with that ' +
+      "organization's journal — or set `memory: false`.",
+    );
+  }
   const defaultInstance = { gnl: createGnl(config), journal: baseJournal, orgId: undefined as string | undefined };
   const names = Object.keys(config.agents ?? {});
   const workflowNames = Object.keys(config.workflows ?? {});
@@ -345,12 +394,70 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   // Per organization.
   type Instance = typeof defaultInstance;
   const orgs = new Map<string, Instance>();
+  // See OrgOptions.maxInstances. A `Map` iterates in insertion order, so re-inserting on every hit
+  // makes the first key the least recently used one.
+  //
+  // REJECTED at construction rather than clamped. This started as `Math.max(1, …)`, and the clamp was
+  // doing far more than reading like a tidy default: with a negative cap, `orgs.size > -5` is
+  // permanently true while `orgs.delete(undefined)` never shrinks the map, so the eviction loop spins
+  // forever and the request never returns. A silent clamp also hides the milder version of the same
+  // typo — `maxInstances: 0` would quietly rebuild every organization's registry on every request. A
+  // value that can only be a mistake should say so at boot, where it costs one line to see.
+  const maxOrgInstances = opts.org?.maxInstances ?? 512;
+  if (!Number.isInteger(maxOrgInstances) || maxOrgInstances < 1) {
+    throw new Error(
+      `createRestApi: \`org.maxInstances\` must be a positive integer (got ${String(opts.org?.maxInstances)}). ` +
+        'It is the ceiling on how many per-organization registries are cached in memory; omit it for the default of 512.',
+    );
+  }
+  let warnedOrgEviction = false;
   function orgInstance(id: string): Instance {
     let inst = orgs.get(id);
+    if (inst) orgs.delete(id); // re-inserted below, moving it to the most-recently-used end
     if (!inst) {
-      const scoped = withOrg(baseJournal, id) as Journal & JournalReader;
-      inst = { gnl: createGnl({ ...config, storage: undefined, journal: scoped }), journal: scoped, orgId: id };
-      orgs.set(id, inst);
+      // `memory` is dropped explicitly, not left to the spread. The guard at construction already
+      // refuses an object here, so this only removes a value that cannot exist — but stating it means
+      // the next field added to `CreateGnlConfig` cannot silently ride the spread into every
+      // organization the way this one did. `memoryFactory` receives the scoped source, so each
+      // organization gets its own store over its own keys.
+      const { memory: _sharedMemory, ...perOrg } = config;
+      if (config.storage) {
+        // A `Storage` has SIX ports and this used to keep exactly one of them. The line was
+        // `storage: undefined, journal: withOrg(baseJournal, id)`: the run journal was scoped and
+        // `memory`, `vectors`, `work`, `cache` and `meta` were thrown away, so an organization's
+        // registry fell back to whatever `createGnl` derived from the journal alone — and every
+        // organization's threads, corpus, queue, cache and metadata lived in one shared set of keys.
+        // The leaks found one at a time through studio (knowledge search, the jobs list, cache
+        // invalidate) were this, seen through different routes.
+        //
+        // `withOrgStorage` scopes all six. No `journal` is passed alongside it on purpose: `createGnl`
+        // resolves `config.storage ? config.storage.runs : config.journal`, so the storage's own
+        // already-scoped `runs` is the journal — passing a separately-scoped one would be a second
+        // wrapper around the same data and the two would disagree about which is authoritative.
+        const scopedStorage = withOrgStorage(config.storage, id);
+        const scoped = toJournal(scopedStorage.runs) as Journal & JournalReader;
+        inst = { gnl: createGnl({ ...perOrg, storage: scopedStorage, journal: undefined }), journal: scoped, orgId: id };
+      } else {
+        // Journal-only deployment: there is no `Storage` to scope, so this stays exactly as it was.
+        // The other five ports do not exist here — `createGnl` derives what it needs from the journal —
+        // so there is nothing this path is missing.
+        const scoped = withOrg(baseJournal, id) as Journal & JournalReader;
+        inst = { gnl: createGnl({ ...perOrg, storage: undefined, journal: scoped }), journal: scoped, orgId: id };
+      }
+    }
+    orgs.set(id, inst);
+    while (orgs.size > maxOrgInstances) {
+      const lru = orgs.keys().next().value as string;
+      orgs.delete(lru);
+      // Once, not per eviction: a deployment genuinely serving more orgs than the cap would otherwise
+      // print a line per request, and the operator only needs to learn the ceiling exists.
+      if (!warnedOrgEviction) {
+        warnedOrgEviction = true;
+        console.warn(
+          `@gnldev/server: more than ${maxOrgInstances} organizations are active in this process — evicting the least recently used registry (starting with '${lru}'). ` +
+            'Evicted organizations are rebuilt on their next request and read the same journal keys. Raise `org.maxInstances` if this is your real organization count rather than header noise.',
+        );
+      }
     }
     return inst;
   }
@@ -619,7 +726,13 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
         threadId: body.threadId,
         approvals: body.approvals,
         context: sealRequestContext(
-          { ...(body.context ?? {}), ...(s.orgId ? { org: s.orgId } : {}) },
+          // Not merged here, because sealRequestContext writes `org` itself from the server-derived
+          // value. This is a simplification, NOT a fix: measured over 21 body shapes × 4 server states
+          // — including a prototype-polluted body, a getter for `org`, a null-prototype object and an
+          // empty-string orgId — the merge and the seal never disagree, because the seal's first act is
+          // an unconditional delete that dominates anything written here. The security property lives
+          // entirely in sealRequestContext; the earlier version of this comment claimed otherwise.
+          body.context ?? {},
           { orgId: s.orgId ?? principal?.orgId, resourceId: principal?.id },
         ),
         limits: clampLimits(opts.limits, body.limits),
@@ -676,7 +789,14 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
       const r = await s.gnl.run(name, {
         runId: body.runId,
         approvals: body.approvals,
-        context: s.orgId ? { org: s.orgId } : undefined,
+        // Sealed like run and stream. This path built the context by hand and therefore carried
+        // neither `__gnl_resourceId` nor `__gnl_threadId`, so a dynamic `system`/`model`/`tools`
+        // function saw an identity on a fresh run and none on the resume of that same run — the two
+        // halves of one conversation disagreeing about who the caller is.
+        context: sealRequestContext({}, {
+          orgId: s.orgId ?? principalOf(c.req.raw)?.orgId,
+          resourceId: principalOf(c.req.raw)?.id,
+        }),
         limits: clampLimits(opts.limits, body.limits),
         ...(input.messages ? { messages: input.messages } : { prompt: input.prompt }),
         // The threadId comes from `:input` for the same reason the prompt does: a resume is
@@ -876,7 +996,13 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
         threadId: body.threadId,
         approvals: body.approvals,
         context: sealRequestContext(
-          { ...(body.context ?? {}), ...(s.orgId ? { org: s.orgId } : {}) },
+          // Not merged here, because sealRequestContext writes `org` itself from the server-derived
+          // value. This is a simplification, NOT a fix: measured over 21 body shapes × 4 server states
+          // — including a prototype-polluted body, a getter for `org`, a null-prototype object and an
+          // empty-string orgId — the merge and the seal never disagree, because the seal's first act is
+          // an unconditional delete that dominates anything written here. The security property lives
+          // entirely in sealRequestContext; the earlier version of this comment claimed otherwise.
+          body.context ?? {},
           { orgId: s.orgId ?? principal?.orgId, resourceId: principal?.id },
         ),
         limits: clampLimits(opts.limits, body.limits),
@@ -1134,11 +1260,29 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     if ('error' in s) return c.json({ error: s.error }, s.status);
     return c.json(await s.journal.readRun(decodeURIComponent(c.req.param('id'))));
   });
-  app.get('/openapi.json', async (c) => ((await allow(c.req.raw, 'read')) ? c.json(buildOpenApi(names, workflowNames, opts.title)) : deny(c.req.raw, 'read')));
+  /**
+   * Agent names FILTERED by the caller's org, exactly as `/agents` and `agentGate` filter them.
+   *
+   * `names` is every agent in the config, computed once at construction. Serving that verbatim handed
+   * a caller from org B a complete list of org A's agent names, which is the one fact `agentGate` is
+   * written to withhold — it answers the same 404 for "no such agent" and "not yours" precisely so a
+   * non-owning org cannot learn an agent EXISTS. The schema route published the list next door.
+   *
+   * Built per request rather than once, because the answer depends on who is asking. Workflows have no
+   * org dimension anywhere in the config, so `workflowNames` stays whole.
+   */
+  app.get('/openapi.json', async (c) => {
+    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    const s = await scope(c);
+    if ('error' in s) return c.json({ error: s.error }, s.status);
+    const visible = names.filter((n) => agentVisibleToOrg(config.agents?.[n] ?? {}, s.orgId));
+    return c.json(buildOpenApi(visible, workflowNames, opts.title));
+  });
 
   return app;
 }
 
+export type { FetchHandler, RouteInfo } from './handler.js';
 export { buildOpenApi } from './openapi.js';
 export { pipeAgentStream, interruptsFromSteps, sseResponse } from './sse.js';
 

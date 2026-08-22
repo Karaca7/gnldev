@@ -9,7 +9,14 @@ import { listRunsArray } from './journal.js';
 import type { Journal, JournalBatch, JournalReader, JournalEntry, RunSummary } from './journal.js';
 
 /** An organization-prefixed key. orgId must not contain ':' (it would break the key schema). */
-function orgPrefix(orgId: string): string {
+/**
+ * The key prefix for an organization, and the single place an organization id is validated.
+ *
+ * EXPORTED so `withOrgStorage` shares this guard rather than computing its own prefix. Six ports
+ * each deriving `` `org:${id}:` `` inline is six places the empty-string check can be forgotten, and
+ * `''` produces `org::` — one shared partition that every organization writes into and none notices.
+ */
+export function orgPrefix(orgId: string): string {
   if (!orgId || orgId.includes(':')) {
     throw new Error(`@gnldev/durable: invalid orgId '${orgId}' — must be non-empty and must not contain ':'`);
   }

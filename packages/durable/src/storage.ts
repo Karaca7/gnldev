@@ -202,6 +202,14 @@ export interface VectorDoc {
   id: string;
   text: string;
   metadata?: Record<string, unknown>;
+  /**
+   * Partition this document belongs to. Documents in different namespaces never see each other.
+   *
+   * `undefined` is its own partition — the un-namespaced one — and is NOT a wildcard. That asymmetry is
+   * the point: a store written before namespaces existed keeps every document in it, and a caller that
+   * asks for namespace `x` must never be answered from it. See `VectorQueryOptions.namespace`.
+   */
+  namespace?: string;
 }
 export interface VectorItem extends VectorDoc {
   embedding: number[];
@@ -209,9 +217,32 @@ export interface VectorItem extends VectorDoc {
 export interface VectorMatch extends VectorDoc {
   score: number;
 }
+/** Narrows which documents a query may be answered from — see `VectorStore.query`. */
+export interface VectorQueryOptions {
+  /**
+   * Only documents in this namespace are eligible. Omitted means "no restriction" and searches
+   * everything, which is the pre-existing behaviour and the only backwards-compatible default.
+   *
+   * `withOrgStorage` supplies it on every call, so an organization-scoped store cannot be queried
+   * without one. That is deliberate: an optional filter defaulting to unrestricted is safe as a port
+   * contract and unsafe as an isolation mechanism, so the isolation lives in the wrapper — which
+   * always passes it — rather than in this default.
+   */
+  namespace?: string;
+}
+
 export interface VectorStore {
   upsert(items: VectorItem[]): Promise<void>;
-  query(embedding: number[], topK: number): Promise<VectorMatch[]>;
+  /**
+   * Nearest `topK` documents to `embedding`, most similar first.
+   *
+   * `opts` FILTERS BEFORE RANKING, in every implementation. Filtering afterwards would return the top
+   * `topK` across all namespaces and then discard most of them, so a caller asking for 4 results from
+   * its own namespace would get however few of the global top 4 happened to be its own — while looking
+   * entirely correct. There would be no leak and no error; the answer would just quietly be worse for
+   * every tenant but the busiest one.
+   */
+  query(embedding: number[], topK: number, opts?: VectorQueryOptions): Promise<VectorMatch[]>;
 }
 
 // ── 4) WorkStore = queue + events + scheduler primitive (has its OWN namespace; doesn't pollute RunJournal) ──

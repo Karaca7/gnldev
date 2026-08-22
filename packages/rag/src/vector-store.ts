@@ -74,8 +74,13 @@ export function keywordScore(query: string, doc: string): number {
   return hit / q.length;
 }
 
-/** Metadata shallow equality: does EVERY key in filter exist in item.metadata with the same value. */
-function matchesFilter(metadata: Record<string, unknown> | undefined, filter?: Record<string, unknown>): boolean {
+/**
+ * Metadata shallow equality: does EVERY key in filter exist in item.metadata with the same value.
+ *
+ * Exported so the other in-repo `VectorStore` implementations narrow the same way. GraphRag used to
+ * implement none of this — the second copy of a filtering rule is where the copies start to differ.
+ */
+export function matchesFilter(metadata: Record<string, unknown> | undefined, filter?: Record<string, unknown>): boolean {
   if (!filter) return true;
   const m = metadata ?? {};
   for (const [k, v] of Object.entries(filter)) {

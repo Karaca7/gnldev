@@ -26,6 +26,19 @@ export function createRagTool(opts: {
   rerank?: Reranker;
   /** Number of results to keep after rerank. */
   rerankTopK?: number;
+  /**
+   * The slice of the corpus this tool may retrieve from.
+   *
+   * There was no way to express this, and the tool never passed `QueryOptions` to the store at all —
+   * so `namespace`, the only isolation mechanism the store layer has, was unreachable through the one
+   * documented RAG path. Every agent built from this tool searched the whole index, and every shipped
+   * example (README, both GUIDEs, the scaffold recipe, the docs-mcp entry) does exactly that.
+   *
+   * Build one tool per tenant with their namespace, or pass a function to resolve it per call.
+   */
+  namespace?: string;
+  /** Metadata narrowing, applied by the store alongside `namespace`. */
+  filter?: Record<string, unknown>;
 // Declared, not inferred: inference makes the emitted .d.ts name a pnpm-internal provider-utils
 // path (TS2742) — a package this one neither declares nor should. `Tool` comes from `ai`, the peer
 // we already require.
@@ -36,7 +49,10 @@ export function createRagTool(opts: {
     inputSchema: z.object({ query: z.string().describe('search query') }),
     execute: async ({ query }) => {
       const embedding = await opts.embed(query);
-      let matches = await opts.store.query(embedding, opts.topK ?? 4);
+      let matches = await opts.store.query(embedding, opts.topK ?? 4, {
+        ...(opts.namespace !== undefined ? { namespace: opts.namespace } : {}),
+        ...(opts.filter !== undefined ? { filter: opts.filter } : {}),
+      });
       if (opts.rerank) matches = await opts.rerank.rerank(query, matches, opts.rerankTopK);
       return matches.map((m): RagHit => ({
         text: m.text,

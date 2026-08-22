@@ -12,7 +12,7 @@ import { matchFilter } from './storage.js';
 import type {
   Storage, CapabilityMatrix, Page, ListQuery,
   RunJournal, MemoryStore, VectorStore, WorkStore, CacheStore, MetaStore,
-  ThreadRecord, MessageRecord, Observation, RecallOptions, VectorItem, VectorMatch, LogRecord,
+  ThreadRecord, MessageRecord, Observation, RecallOptions, VectorItem, VectorMatch, VectorQueryOptions, LogRecord,
 } from './storage.js';
 // P2-migrate schema introspection/migration façade — see migrate.ts's header.
 import { tablesFromDDL } from './migrate.js';
@@ -101,7 +101,13 @@ const DDL = [
   `CREATE TABLE IF NOT EXISTS gnl_messages (thread_id TEXT NOT NULL, seq INTEGER NOT NULL, role TEXT NOT NULL, text TEXT, embedding TEXT, metadata TEXT, ts BIGINT NOT NULL, message TEXT NOT NULL, PRIMARY KEY (thread_id, seq))`,
   `CREATE TABLE IF NOT EXISTS gnl_working_memory (scope_id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at BIGINT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS gnl_observations (thread_id TEXT PRIMARY KEY, obs TEXT NOT NULL)`,
-  `CREATE TABLE IF NOT EXISTS gnl_vectors (id TEXT PRIMARY KEY, text TEXT NOT NULL, embedding TEXT NOT NULL, metadata TEXT, created_at BIGINT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS gnl_vectors (id TEXT PRIMARY KEY, text TEXT NOT NULL, embedding TEXT NOT NULL, metadata TEXT, namespace TEXT, created_at BIGINT NOT NULL)`,
+  // Same migration shape as the gnl_runs columns above: `CREATE TABLE IF NOT EXISTS` does nothing to
+  // a table that already exists, so an old database would keep a five-column gnl_vectors and every
+  // upsert would fail with "column namespace does not exist". Deliberately NOT backfilled — rows
+  // written before namespaces existed belong to the un-namespaced partition, and a query for a real
+  // namespace must not be answered from them.
+  `ALTER TABLE gnl_vectors ADD COLUMN IF NOT EXISTS namespace TEXT`,
   `CREATE TABLE IF NOT EXISTS gnl_work_log (ns TEXT NOT NULL, id TEXT NOT NULL, payload TEXT NOT NULL, ts BIGINT NOT NULL, PRIMARY KEY (ns, id))`,
   `CREATE INDEX IF NOT EXISTS gnl_work_log_ns ON gnl_work_log (ns, ts)`,
   `CREATE TABLE IF NOT EXISTS gnl_work_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
@@ -891,14 +897,23 @@ class PgVectorStore implements VectorStore {
   constructor(private q: Q) {}
   async upsert(items: VectorItem[]): Promise<void> {
     for (const it of items) await this.q(
-      `INSERT INTO gnl_vectors (id, text, embedding, metadata, created_at) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO UPDATE SET text=EXCLUDED.text, embedding=EXCLUDED.embedding, metadata=EXCLUDED.metadata`,
-      [it.id, it.text, JSON.stringify(it.embedding), it.metadata ? serialize(it.metadata) : null, Date.now()],
+      `INSERT INTO gnl_vectors (id, text, embedding, metadata, namespace, created_at) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (id) DO UPDATE SET text=EXCLUDED.text, embedding=EXCLUDED.embedding, metadata=EXCLUDED.metadata, namespace=EXCLUDED.namespace`,
+      [it.id, it.text, JSON.stringify(it.embedding), it.metadata ? serialize(it.metadata) : null, it.namespace ?? null, Date.now()],
     );
   }
-  async query(embedding: number[], topK: number): Promise<VectorMatch[]> {
-    const r = await this.q('SELECT id, text, embedding, metadata FROM gnl_vectors');
+  async query(embedding: number[], topK: number, opts?: VectorQueryOptions): Promise<VectorMatch[]> {
+    // Filtered in SQL, so only eligible rows reach the ranking. Ranking the whole table and filtering
+    // afterwards would tie a caller's result count to how many other namespaces exist: ask for 4, get
+    // however many of the global top 4 were yours. Nothing errors, nothing leaks — recall just decays
+    // as other tenants upload, and only a fixture with two tenants can see it.
+    //
+    // `IS NOT DISTINCT FROM` rather than `=`: `= NULL` is never true in SQL, so a query for the
+    // un-namespaced partition would match nothing at all.
+    const r = opts?.namespace === undefined
+      ? await this.q('SELECT id, text, embedding, metadata, namespace FROM gnl_vectors')
+      : await this.q('SELECT id, text, embedding, metadata, namespace FROM gnl_vectors WHERE namespace IS NOT DISTINCT FROM $1', [opts.namespace]);
     return r.rows
-      .map((x) => ({ id: x.id, text: x.text, metadata: x.metadata ? deserialize<Record<string, unknown>>(x.metadata) : undefined, score: cosineSimilarity(embedding, JSON.parse(x.embedding)) }))
+      .map((x) => ({ id: x.id, text: x.text, metadata: x.metadata ? deserialize<Record<string, unknown>>(x.metadata) : undefined, ...(x.namespace != null ? { namespace: x.namespace as string } : {}), score: cosineSimilarity(embedding, JSON.parse(x.embedding)) }))
       .sort((a, b) => b.score - a.score).slice(0, topK);
   }
 }

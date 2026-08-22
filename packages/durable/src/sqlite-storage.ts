@@ -13,7 +13,7 @@ import { matchFilter } from './storage.js';
 import type {
   Storage, CapabilityMatrix, Page, ListQuery,
   RunJournal, MemoryStore, VectorStore, WorkStore, CacheStore, MetaStore,
-  ThreadRecord, MessageRecord, Observation, RecallOptions, VectorItem, VectorMatch, LogRecord,
+  ThreadRecord, MessageRecord, Observation, RecallOptions, VectorItem, VectorMatch, VectorQueryOptions, LogRecord,
 } from './storage.js';
 // P2-migrate schema introspection/migration façade — see migrate.ts's header.
 import { tablesFromDDL } from './migrate.js';
@@ -226,6 +226,22 @@ export class SqliteStorage implements Storage {
     this.db.exec(DDL);
     // H11b migration: suspended_count column (for incremental touchRun). Add it if missing from the
     // Old table + backfill existing rows with a ONE-TIME recount (init cost; O(1) afterward).
+    // `gnl_vectors.namespace`: the same migration shape as the `gnl_runs` columns below. `CREATE TABLE
+    // IF NOT EXISTS` does nothing to a table that already exists, so without this an existing database
+    // keeps a four-column `gnl_vectors` and every upsert fails with "no such column: namespace" —
+    // an isolation feature that bricks the store it was meant to partition.
+    //
+    // No backfill, and NULL is the right value for the rows already there: they were written before
+    // namespaces existed, so they belong to the un-namespaced partition. A query for namespace 'x'
+    // must not be answered from them, and `WHERE namespace IS ?` gives exactly that.
+    const vcols = this.db.prepare(`PRAGMA table_info(gnl_vectors)`).all() as { name: string }[];
+    if (!vcols.some((c) => c.name === 'namespace')) {
+      try {
+        this.db.exec(`ALTER TABLE gnl_vectors ADD COLUMN namespace TEXT`);
+      } catch (e) {
+        if (!String((e as Error)?.message ?? e).includes('duplicate column')) throw e;
+      }
+    }
     const cols = this.db.prepare(`PRAGMA table_info(gnl_runs)`).all() as { name: string }[];
     if (!cols.some((c) => c.name === 'suspended_count')) {
       // Two processes can BOTH see the column missing and BOTH try
@@ -419,7 +435,7 @@ CREATE TABLE IF NOT EXISTS gnl_messages (
 );
 CREATE TABLE IF NOT EXISTS gnl_working_memory (scope_id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS gnl_observations (thread_id TEXT PRIMARY KEY, obs TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS gnl_vectors (id TEXT PRIMARY KEY, text TEXT NOT NULL, embedding TEXT NOT NULL, metadata TEXT, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS gnl_vectors (id TEXT PRIMARY KEY, text TEXT NOT NULL, embedding TEXT NOT NULL, metadata TEXT, namespace TEXT, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS gnl_work_log (ns TEXT NOT NULL, id TEXT NOT NULL, payload TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY (ns, id));
 CREATE INDEX IF NOT EXISTS gnl_work_log_ns ON gnl_work_log (ns, ts);
 CREATE TABLE IF NOT EXISTS gnl_work_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -948,15 +964,24 @@ class SqliteVectorStore implements VectorStore {
   constructor(private db: any) {}
   async upsert(items: VectorItem[]): Promise<void> {
     const stmt = this.db.prepare(
-      `INSERT INTO gnl_vectors (id, text, embedding, metadata, created_at) VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET text=excluded.text, embedding=excluded.embedding, metadata=excluded.metadata`,
+      `INSERT INTO gnl_vectors (id, text, embedding, metadata, namespace, created_at) VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET text=excluded.text, embedding=excluded.embedding, metadata=excluded.metadata, namespace=excluded.namespace`,
     );
-    for (const it of items) stmt.run(it.id, it.text, JSON.stringify(it.embedding), it.metadata ? serialize(it.metadata) : null, Date.now());
+    for (const it of items) stmt.run(it.id, it.text, JSON.stringify(it.embedding), it.metadata ? serialize(it.metadata) : null, it.namespace ?? null, Date.now());
   }
-  async query(embedding: number[], topK: number): Promise<VectorMatch[]> {
-    const rows = this.db.prepare('SELECT id, text, embedding, metadata FROM gnl_vectors').all() as any[];
+  async query(embedding: number[], topK: number, opts?: VectorQueryOptions): Promise<VectorMatch[]> {
+    // Filtered in SQL, so the rows that reach the ranking are already the eligible ones. Ranking the
+    // whole table and filtering afterwards would make a caller's result count depend on how many other
+    // namespaces exist: ask for 4, get however many of the global top 4 were yours. Nothing errors and
+    // nothing leaks — recall just degrades as other tenants upload, invisibly.
+    //
+    // `IS` rather than `=`: SQLite's `=` is never true against NULL, so a query for the un-namespaced
+    // partition would silently match nothing at all.
+    const rows = (opts?.namespace === undefined
+      ? this.db.prepare('SELECT id, text, embedding, metadata, namespace FROM gnl_vectors').all()
+      : this.db.prepare('SELECT id, text, embedding, metadata, namespace FROM gnl_vectors WHERE namespace IS ?').all(opts.namespace)) as any[];
     return rows
-      .map((r) => ({ id: r.id, text: r.text, metadata: r.metadata ? deserialize<Record<string, unknown>>(r.metadata) : undefined, score: cosineSimilarity(embedding, JSON.parse(r.embedding)) }))
+      .map((r) => ({ id: r.id, text: r.text, metadata: r.metadata ? deserialize<Record<string, unknown>>(r.metadata) : undefined, ...(r.namespace != null ? { namespace: r.namespace as string } : {}), score: cosineSimilarity(embedding, JSON.parse(r.embedding)) }))
       .sort((a, b) => b.score - a.score)
       .slice(0, topK);
   }

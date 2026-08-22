@@ -10,8 +10,7 @@ import type {
   Storage, CapabilityMatrix, Page, ListQuery,
   RunJournal, MemoryStore, VectorStore, WorkStore, CacheStore, MetaStore,
   ThreadRecord, MessageRecord, Observation, RecallOptions,
-  VectorItem, VectorMatch, LogRecord,
-} from './storage.js';
+  VectorItem, VectorMatch, VectorQueryOptions, LogRecord } from './storage.js';
 
 let idc = 0;
 function genId(prefix: string): string {
@@ -170,9 +169,14 @@ class InMemoryVectorStore implements VectorStore {
       if (i >= 0) this.items[i] = it; else this.items.push(it);
     }
   }
-  async query(embedding: number[], topK: number): Promise<VectorMatch[]> {
+  async query(embedding: number[], topK: number, opts?: VectorQueryOptions): Promise<VectorMatch[]> {
+    // Filter, THEN rank, THEN slice. Ranking first and filtering after would make a caller's result
+    // count depend on how many other namespaces exist and how similar their documents happen to be:
+    // ask for 4, get however many of the global top 4 were yours. No error, no leak, just recall that
+    // quietly degrades as other tenants upload — invisible unless a test has two tenants in it.
     return this.items
-      .map((it) => ({ id: it.id, text: it.text, metadata: it.metadata, score: cosineSimilarity(embedding, it.embedding) }))
+      .filter((it) => opts?.namespace === undefined || it.namespace === opts.namespace)
+      .map((it) => ({ id: it.id, text: it.text, metadata: it.metadata, ...(it.namespace !== undefined ? { namespace: it.namespace } : {}), score: cosineSimilarity(embedding, it.embedding) }))
       .sort((a, b) => b.score - a.score)
       .slice(0, topK);
   }

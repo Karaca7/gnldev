@@ -92,7 +92,8 @@ export type { CreateGnlConfig, AgentConfig, RunOptions, WorkflowLike, WorkflowMe
 // Dynamic multi-agent routing (Supervisor/`.network()` parity) — decisions are CAS-frozen.
 export { runNetwork, getNetworkTrace, netKeys } from './network.js';
 export type { NetworkResult, NetworkStep, NetworkTarget, RouteDecision, RunNetworkOptions } from './network.js';
-export { withOrg, orgScopeOf } from './organization.js';
+export { withOrg, orgScopeOf, orgPrefix } from './organization.js';
+export { withOrgStorage, orgStorageScopeOf } from './org-storage.js';
 export { orgPurgedKey, purgeRun, purgeThread, purgeOrganization, sweepRuns, sweepLog, sweepThreads, createRetentionSweeper } from './retention.js';
 export type { LogSweepTarget, RetentionSweeperOptions, RetentionSweepSummary, RetentionSweeper } from './retention.js';
 // Phase 8.1: the common poll-loop core for queue/events/scheduler (a setTimeout chain with backoff).
