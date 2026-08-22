@@ -26,6 +26,7 @@
 import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
 import { createStudioApi } from '../src/server.js';
+import { compileManagedWorkflow } from '../src/managed-workflow.js';
 
 const MARKER = 'ACME-CONFIDENTIAL-PAYLOAD';
 
@@ -148,6 +149,16 @@ const authProvider = {
   authorize: () => ({ allow: true }),
   capabilities: () => ({ sso: false, rbac: false, audit: false, multiOrganization: false, users: false }),
 };
+
+/** A minimal LanguageModelV2 stand-in, so the regression replay never leaves the process. */
+function mockModel() {
+  return {
+    specificationVersion: 'v2', provider: 'mock', modelId: 'mock-model', supportedUrls: {},
+    doGenerate: async () => ({ content: [{ type: 'text', text: 'replayed' }], finishReason: 'stop' as const,
+      usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 }, warnings: [] as unknown[] }),
+    doStream: async () => { throw new Error('mock: doStream is not supported'); },
+  };
+}
 
 const AS = { acme: { authorization: 'Bearer acme' }, globex: { authorization: 'Bearer globex' } };
 
@@ -327,6 +338,10 @@ async function makeApi(optIn = false) {
     appendMessages: async () => {},
   });
   const api = createStudioApi({
+    // The studio's OWN compiler, from its `./workflow` sub-export — one import and one option. Without it
+    // `canRunManaged` is false and both run routes answer 501 to everybody, which is not an ownership
+    // control. Measured with it wired: acme 200, globex 404 'workflow not found'.
+    compileWorkflow: compileManagedWorkflow,
     reader: journal,
     auth: authProvider,
     org: {},
@@ -337,6 +352,11 @@ async function makeApi(optIn = false) {
     // An earlier fixture used `{ send }`, which produced "chat is not a function" and left the route
     // looking uncontrollable when it was simply never reached.
     chat: async (_m: string, _o: unknown, ctx?: { orgId?: string }) => rec('chat', ctx, { text: 'chat-ok' }),
+    // POST /runs/:id/regression converts `body.model` ('provider/model') to a real model object via
+    // `resolveModel` unless the host injects this seam (server.ts:597). Without it the route reaches a
+    // real provider and dies on a missing OPENAI_API_KEY — an environment failure, not an organization
+    // one, and one that would flip meaning on a machine that happens to have the key set.
+    regressionModel: () => mockModel(),
     scorers: { list: () => [{ name: 'quality' }], score: async () => ({ quality: 1 }) },
     // Scoped by the org the store is asked about, the way a real user store is.
     /**
@@ -351,7 +371,11 @@ async function makeApi(optIn = false) {
         { id: 'u-acme', email: MARKER, roles: ['admin'], orgId: 'acme' },
         { id: 'u-globex', email: 'GLOBEX-OWN', roles: ['admin'], orgId: 'globex' },
       ].filter((u) => orgId === undefined || u.orgId === orgId),
-      create: async (u: Record<string, unknown>) => ({ ...u, id: 'u-new' }),
+      // `{ user, token }` — NOT a flat user. The route reads `created.user.id` for its audit row, so a
+      // flat return threw "Cannot read properties of undefined (reading 'id')" and POST /users answered
+      // 400 to its OWNER. That is what the route's recorded reason had been describing: a fixture whose
+      // create() had the wrong shape, not a route with nothing to compare against.
+      create: async (u: Record<string, unknown>) => ({ user: { ...u, id: 'u-new' }, token: 't-new' }),
       update: async (id: string, patch: Record<string, unknown>) => ({ id, ...patch, roles: ['admin'] }),
       remove: async () => {},
       revoke: async () => {},
@@ -405,6 +429,10 @@ async function drive(api: (r: Request) => Promise<Response>, route: { method: st
       // `PATCH /users/:id` refuses a body with nothing to change ("nothing to update"), which reads as
       // a refusal of the CALLER rather than of the request.
       roles: ['viewer'],
+      // Acme's ORGANIZATION, substituted the same way acme's path ids are. `POST /users` is the only
+      // handler that reads `body.orgId` (grepped), and it is the field the route compares against the
+      // calling identity — so a stranger sending it is the universal probe in body form.
+      orgId: 'acme',
     });
   }
   const res = await Promise.race([
@@ -510,13 +538,34 @@ describe('the ownership control — acme must SEE what globex must not', () => {
     'GET /runs', 'GET /runs/:id', 'POST /runs/:id/cancel', 'POST /runs/:id/compensate',
     'GET /runs/:id/cost', 'GET /runs/:id/diff',
     'GET /runs/:id/incidents', 'GET /runs/:id/network', 'GET /runs/:id/processors',
-    'GET /scheduler/triggers', 'POST /runs/:id/fork', 'GET /runs/:id/memory-context',
+    'GET /scheduler/triggers', 'GET /runs/:id/memory-context',
     'POST /runs/:id/otel-export', 'GET /runs/:id/regression/:otherId', 'POST /runs/:id/resume',
     'POST /runs/:id/score', 'GET /runs/:id/scores', 'GET /runs/:id/state', 'GET /runs/:id/trace',
+    'POST /users',
     'GET /threads', 'GET /threads/:id/messages', 'GET /threads/:id/working-memory',
-    'GET /workflows', 'GET /workflows/:name/def', 'POST /workflows/:name/runs/:id/fork',
-    'GET /workflows/run/:runId', 'GET /workflows/runs', 'POST /workflows/runs/:id/cancel',
+    'GET /workflows', 'GET /workflows/:name/def',     'GET /workflows/run/:runId', 'GET /workflows/runs', 'POST /workflows/runs/:id/cancel',
   ];
+
+  /**
+   * Controlled by an explicit REFUSAL, for routes whose successful answer embeds a nondeterministic
+   * value, so "the two bodies differ" is not evidence of anything.
+   *
+   * `POST /runs/:id/regression` answers `{ newRunId: "<id>:replay:<Date.now()>:0", ... }`. Measured: with
+   * every caller's organization forced to `acme` (a total collapse of the boundary) globex successfully
+   * replayed acme's run — and the by-answer control still PASSED, because the two timestamps differed.
+   * The assertion was riding along on the clock. What actually separates owner from stranger here is that
+   * the stranger's replay cannot find the run at all, so that is what gets asserted.
+   */
+  const REFUSAL_CONTROLLED = ['POST /runs/:id/regression',
+    // Same hazard: `/run` answers a `runId` built from `Date.now()`, and `/run-stream` answers an SSE
+    // body whose frames carry it too — so "the bodies differ" would be true even on a total leak.
+    'POST /workflows/:name/run', 'POST /workflows/:name/run-stream',
+    // Both fork routes answer `newRunId: "<src>:fork:<Date.now()>"`. They had been by-answer controls,
+    // and the surviving-mutant evidence is what moved them: with every caller collapsed onto acme,
+    // neither noticed — two forks of the same run one millisecond apart differ, so the assertion was
+    // satisfied by the clock rather than by the boundary. Measured honestly, acme gets 200 and globex
+    // gets 404, so the refusal is the real observable.
+    'POST /runs/:id/fork', 'POST /workflows/:name/runs/:id/fork'];
 
   /** Controlled by the recorded host call instead of the body — see the write-route block below. */
   const WRITE_CONTROLLED = ['POST /workflows', 'PUT /workflows/:name', 'DELETE /workflows/:name',
@@ -535,7 +584,7 @@ describe('the ownership control — acme must SEE what globex must not', () => {
    */
   const EFFECT_CONTROLLED = ['PATCH /threads/:id', 'DELETE /threads/:id', 'DELETE /threads/:id/messages',
     'DELETE /managed-agents/:name', 'POST /managed-agents/:name/promote',
-    'DELETE /managed-agents/:name/versions/:version'];
+    'DELETE /managed-agents/:name/versions/:version', 'POST /managed-agents'];
 
   // The OPT-IN fixture: routes backed by a host object are refused entirely without it, and a 403 to
   // both callers is not an ownership control. This is the configuration in which they serve at all.
@@ -549,6 +598,20 @@ describe('the ownership control — acme must SEE what globex must not', () => {
     expect(owner.status, `${key} refused the organization that owns the data`).toBeLessThan(400);
     expect(owner.body, `${key} answers its owner and a stranger identically — the leak probe passes for the wrong reason`)
       .not.toBe(stranger.body);
+  }, 30_000);
+
+  it.each(REFUSAL_CONTROLLED)('%s serves its owner and refuses a stranger outright', async (key) => {
+    const [method, ...rest] = key.split(' ');
+    const route = { method: method!, path: rest.join(' ') };
+    // A fresh fixture per caller: this route WRITES a replay run, so sharing one would let the owner's
+    // replay change what the stranger's request sees.
+    const owner = await drive((await makeApi(true)).api, route, AS.acme);
+    const stranger = await drive((await makeApi(true)).api, route, AS.globex);
+
+    // The refusal assertion FIRST: it is the one that carries the ownership claim.
+    expect(stranger.status, `${key} served a stranger — body was ${stranger.body.slice(0, 120)}`)
+      .toBeGreaterThanOrEqual(400);
+    expect(owner.status, `${key} refused the organization that owns the data`).toBeLessThan(400);
   }, 30_000);
 
   // The honest accounting, printed rather than hidden: which org-scoped routes are leak-checked but
@@ -568,17 +631,9 @@ describe('the ownership control — acme must SEE what globex must not', () => {
     'GET /audit': 'empty for both callers unless earlier requests happened to write audit rows',
     'GET /approvals': 'needs a run left suspended in a state listRuns reports as pending',
     'GET /workflows/:name/runs': 'needs wfrun records keyed by workflow name',
-    'GET /users': 'needs a user store whose list() is called with the caller\'s organization',
-    // The host is a stub that answers identically; the org is carried in the CALL, not the response.
-    'POST /users': 'creates a user rather than acting on an existing one, so there is no existing target '
-      + 'whose organization the route can compare against the calling identity',
     'POST /agents/:name/stream': 'streamed body, and the stub runner answers identically',
-    'POST /managed-agents': 'requires a code-defined agent to version against',
-    'POST /runs/:id/regression': 'reaches a real provider and fails on a missing API key for both',
     // Needs production support to be controllable at all.
     'GET /events': 'SSE — the body never ends, so there is no answer to compare',
-    'POST /workflows/:name/run': 'needs compileWorkflow wired; answers 501 to both without it',
-    'POST /workflows/:name/run-stream': 'needs compileWorkflow wired; answers 501 to both without it',
   };
 
   /**
@@ -756,24 +811,41 @@ describe('the ownership control — acme must SEE what globex must not', () => {
         "acme's version delete reached another organization's record").toEqual([1, 2]);
       expect(acme?.versions?.map((v) => v.version), 'the draft version was not removed for its owner').toEqual([1]);
     }, 30_000);
+
+    it('POST /managed-agents versions the agent under the caller\'s own organization', async () => {
+      const { api, journal } = await makeApi(true);
+      // A CODE-DEFINED name with no managed record yet in either organization, so the observable is
+      // creation rather than growth: `shared-agent` is in `gnl.listAgents()` (the route rejects a name
+      // with no code counterpart, 422), and neither org has versioned it. Both callers get the byte-
+      // identical answer {ok,name,version:1,active:1} — measured — so only the landing site separates them.
+      const K = (org: string) => `org:${org}:__studio_agent__:shared-agent`;
+      const body = JSON.stringify({ name: 'shared-agent', model: 'openai/gpt-4o-mini' });
+      const hdrs = { ...AS.acme, 'content-type': 'application/json' };
+      await api(new Request('http://x/managed-agents', { method: 'POST', headers: hdrs, body }));
+
+      expect(await journal.get(K('globex')),
+        "acme's new managed version appeared under another organization").toBeFalsy();
+      expect(await journal.get(K('acme')), 'the owner\'s version was not stored under its own organization').toBeTruthy();
+    }, 30_000);
   });
 
   it('names every org-scoped route that is leak-checked but not ownership-controlled', () => {
     const orgScoped = Object.entries(VERDICTS).filter(([, v]) => v.verdict === 'org-scoped').map(([k]) => k);
-    const controlled = new Set([...CONTROLLED, ...WRITE_CONTROLLED, ...EFFECT_CONTROLLED]);
+    const controlled = new Set([...CONTROLLED, ...WRITE_CONTROLLED, ...EFFECT_CONTROLLED, ...REFUSAL_CONTROLLED]);
     const uncontrolled = orgScoped.filter((k) => !controlled.has(k));
 
     // eslint-disable-next-line no-console
     console.log(`[cross-org] ${controlled.size}/${orgScoped.length} org-scoped routes are ownership-controlled `
       + `(${CONTROLLED.length} by answer, ${WRITE_CONTROLLED.length} by recorded host call, `
-      + `${EFFECT_CONTROLLED.length} by recorded effect).\n`
+      + `${EFFECT_CONTROLLED.length} by recorded effect, `
+      + `${REFUSAL_CONTROLLED.length} by explicit refusal).\n`
       + `[cross-org] NOT ownership-controlled (${uncontrolled.length}):\n`
       + uncontrolled.map((k) => `  ${k} — ${UNCONTROLLED_REASONS[k] ?? 'UNEXPLAINED'}`).join('\n'));
 
     // Every gap must carry a reason. An unexplained one is the same failure as an unclassified route.
     expect(uncontrolled.filter((k) => !UNCONTROLLED_REASONS[k]),
       'an org-scoped route is uncontrolled with no reason recorded — say why, or control it').toEqual([]);
-    expect(controlled.size, 'ownership coverage went backwards').toBeGreaterThanOrEqual(56);
+    expect(controlled.size, 'ownership coverage went backwards').toBeGreaterThanOrEqual(61);
   });
 });
 
@@ -959,3 +1031,6 @@ describe('a write reaches the host under the calling organization', () => {
       `globex's write reached ${what} as another organization, or anonymously`).toEqual(['globex']);
   }, 30_000);
 });
+
+
+
