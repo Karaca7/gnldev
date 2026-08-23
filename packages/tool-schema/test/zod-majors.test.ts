@@ -55,19 +55,25 @@ describe('tool schemas under both zod majors', () => {
         expect(s.properties.order.properties.id.type).toBe('string');
       });
 
-      it('an open-ended object declared with z.record is NOT usable as a provider schema', () => {
-        // This is the break, pinned as the fact it is rather than as a wish. On zod 3 the conversion
-        // yields `additionalProperties: {}` (anything allowed); on zod 4, provider-utils forces
-        // `additionalProperties: false` — the model is told the object takes NO properties. Neither
-        // `z.looseObject({})` nor `z.object({}).passthrough()` escapes it, so there is no zod spelling
-        // that works on both. Anything first-party that needs an open object must use jsonSchema().
+      it('an open-ended object declared with z.record reaches the provider as open on both majors', () => {
+        // This assertion used to say the opposite for zod 4, and the change is upstream, not ours.
+        // provider-utils forced `additionalProperties: false` on a converted record — the model was
+        // told an open object takes NO properties — and neither `z.looseObject({})` nor
+        // `z.object({}).passthrough()` escaped it. It is fixed: measured `false` on
+        // @ai-sdk/provider-utils 5.0.27 and `{}` on 5.0.29, which is what zod 3 always produced.
+        //
+        // Found by a fresh install rather than by reading a changelog: this repo's lockfile pinned the
+        // older resolution, so the suite had been green against versions a new user would not get. The
+        // refreshed lockfile moved 147 of 656 packages and this was the ONLY behavioural difference in
+        // 3581 tests.
+        //
+        // The jsonSchema() escape hatches (registry.ts, mcp, tool-schema/apply.ts) STAY. The declared
+        // peer is `ai: ^7.0.0`, so an install can still resolve a version with the old behaviour, and
+        // the hatch is correct under both. Deleting it would trade a working path for a version bound
+        // this package does not declare.
         const s = emitted(z.object({ input: z.record(z.string(), z.any()) }));
-        const ap = s.properties.input.additionalProperties;
-        if (name === 'zod4') {
-          expect(ap, 'if this stops being false, provider-utils changed and the jsonSchema() workarounds can go').toBe(false);
-        } else {
-          expect(ap).toEqual({});
-        }
+        expect(s.properties.input.additionalProperties,
+          'a converted record must not tell the model the object is closed').toEqual({});
       });
 
       it('jsonSchema() is the escape hatch, and it is identical on both majors', () => {
