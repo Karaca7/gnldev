@@ -1,11 +1,18 @@
 # Contributor License Agreement (CLA)
 
-> **Version 1.0** — effective 12 August 2026.
+> **Version 1.1** — effective 23 August 2026.
 >
 > This document is versioned on purpose. What you accept is the text of the version named above, not
 > whatever this file happens to say later: if the terms are ever revised, the version number is
 > raised and earlier acceptances stay bound to the version that was in force when they were given.
 > The exact wording of any version can be read out of this repository's history.
+>
+> **Changes from 1.0** (12 August 2026): section 4 no longer asks a contributor to indemnify the
+> Maintainer for losses arising from an inaccurate representation, and asks instead to be told when
+> one turns out to be inaccurate. The change was made on 17 August in the commit that rewrote that
+> section, and it is recorded here because the version number should have moved with it and did not —
+> the paragraph above promises exactly that, and this is the correction. No acceptance was affected:
+> every commit in this repository to date is the Maintainer's own, so no one had accepted 1.0.
 
 This is the Contributor License Agreement for **gnl-framework** (source repository, npm scope
 `@gnldev`). It applies to any Contribution (code, documentation, or other material) you submit to
@@ -131,7 +138,7 @@ You do not need to sign anything separately or in advance. The pull request temp
 single line:
 
 ```
-- [ ] I have read and agree to the CLA, v1.0.
+- [ ] I have read and agree to the CLA, v1.1.
 ```
 
 Ticking that box **is** the acceptance. A workflow (`.github/workflows/cla.yml`) reads the pull

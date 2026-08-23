@@ -33,7 +33,7 @@ jobs:
           PR_AUTHOR_TYPE: ${{ github.event.pull_request.user.type }}
           # The version in force. Raise this in the same commit that adds a new CLA version, so a
           # contributor who accepted the old text is asked again rather than passing silently.
-          CLA_VERSION: '1.0'
+          CLA_VERSION: '1.1'
         run: |
           # Bots submit no original authorship, so there is nothing for them to license. Everyone
           # else ticks the box, the maintainer included: one rule with no exception is easier to
@@ -66,7 +66,7 @@ jobs:
 
           To accept it: edit this pull request's description and tick
 
-              - [x] I have read and agree to the [CLA, v1.0](https://github.com/Karaca7/gnl-framework/blob/main/CLA.md).
+              - [x] I have read and agree to the [CLA, v1.1](https://github.com/Karaca7/gnl-framework/blob/main/CLA.md).
 
           Read it first — it grants the maintainer the right to relicense the contribution,
           including under terms that are not open source. It is a one-time step per account, but
