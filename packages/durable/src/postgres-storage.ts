@@ -462,7 +462,7 @@ class PgRunJournal implements RunJournal {
           const runId = key.slice(0, -':outcome'.length);
           // First write of a brand-new run may precede its row — see the sqlite twin's comment.
           await this.touchRunDelta(q, runId, null, false, 0);
-          await this.q(`UPDATE gnl_runs SET failed = $1, running = $2, canceled = $3 WHERE run_id = $4`, [oc === 'failed', oc === 'running', oc === 'canceled', runId]);
+          await q(`UPDATE gnl_runs SET failed = $1, running = $2, canceled = $3 WHERE run_id = $4`, [oc === 'failed', oc === 'running', oc === 'canceled', runId]);
         }
       });
       return;
@@ -476,7 +476,7 @@ class PgRunJournal implements RunJournal {
     // SELECT sees the committed prev. H11b's O(1) incremental update (touchRunDelta) is preserved as-is.
     await this.tx(async (q) => {
       await this.lockRunRow(q, p.runId);
-      const prev = (await this.q('SELECT suspended FROM gnl_run_journal WHERE key = $1', [key])).rows[0];
+      const prev = (await q('SELECT suspended FROM gnl_run_journal WHERE key = $1', [key])).rows[0];
       await upsert(q);
       const delta = (suspended ? 1 : 0) - (prev?.suspended ? 1 : 0);
       await this.touchRunDelta(q, p.runId, p.kind, prev === undefined, delta);
@@ -502,7 +502,7 @@ class PgRunJournal implements RunJournal {
           if (oc !== null) {
             const runId = key.slice(0, -':outcome'.length);
             await this.touchRunDelta(q, runId, null, false, 0); // see the sqlite twin
-            await this.q(`UPDATE gnl_runs SET failed = $1, running = $2, canceled = $3 WHERE run_id = $4`, [oc === 'failed', oc === 'running', oc === 'canceled', runId]);
+            await q(`UPDATE gnl_runs SET failed = $1, running = $2, canceled = $3 WHERE run_id = $4`, [oc === 'failed', oc === 'running', oc === 'canceled', runId]);
           }
         }
         return ok;
@@ -540,7 +540,7 @@ class PgRunJournal implements RunJournal {
         if (ok) {
           const runId = key.slice(0, -':outcome'.length);
           await this.touchRunDelta(q, runId, null, false, 0); // see the sqlite twin
-          await this.q(`UPDATE gnl_runs SET failed = $1, running = $2, canceled = $3 WHERE run_id = $4`, [oc === 'failed', oc === 'running', oc === 'canceled', runId]);
+          await q(`UPDATE gnl_runs SET failed = $1, running = $2, canceled = $3 WHERE run_id = $4`, [oc === 'failed', oc === 'running', oc === 'canceled', runId]);
         }
         return ok;
       });
@@ -642,7 +642,7 @@ class PgRunJournal implements RunJournal {
    */
   private async lockRunRow(q: Q, runId: string): Promise<void> {
     const now = Date.now();
-    await this.q(
+    await q(
       `INSERT INTO gnl_runs (run_id, model_steps, tool_calls, suspended, suspended_count, created_at, updated_at)
        VALUES ($1,0,0,false,0,$2,$3)
        ON CONFLICT (run_id) DO UPDATE SET updated_at = gnl_runs.updated_at`,
@@ -655,7 +655,7 @@ class PgRunJournal implements RunJournal {
     const m = isInsert && kind === 'model' ? 1 : 0;
     const t = isInsert && kind === 'tool' ? 1 : 0;
     const now = Date.now();
-    await this.q(
+    await q(
       `INSERT INTO gnl_runs (run_id, model_steps, tool_calls, suspended, suspended_count, created_at, updated_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7)
        ON CONFLICT (run_id) DO UPDATE SET
@@ -670,12 +670,12 @@ class PgRunJournal implements RunJournal {
 
   /** Full recount — for rare paths (putIfMatch/repair). */
   private async recountRun(q: Q, runId: string): Promise<void> {
-    const c = (await this.q(
+    const c = (await q(
       `SELECT SUM(CASE WHEN kind='model' THEN 1 ELSE 0 END) AS m, SUM(CASE WHEN kind='tool' THEN 1 ELSE 0 END) AS t,
               SUM(CASE WHEN suspended THEN 1 ELSE 0 END) AS s, MIN(created_at) AS c0 FROM gnl_run_journal WHERE run_id = $1`,
       [runId],
     )).rows[0];
-    await this.q(
+    await q(
       `INSERT INTO gnl_runs (run_id, model_steps, tool_calls, suspended, suspended_count, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7)
        ON CONFLICT (run_id) DO UPDATE SET model_steps=EXCLUDED.model_steps, tool_calls=EXCLUDED.tool_calls, suspended=EXCLUDED.suspended, suspended_count=EXCLUDED.suspended_count, updated_at=EXCLUDED.updated_at`,
       [runId, Number(c.m) || 0, Number(c.t) || 0, Number(c.s) > 0, Number(c.s) || 0, Number(c.c0) || Date.now(), Date.now()],
@@ -799,7 +799,7 @@ class PgRunJournal implements RunJournal {
         const p = parseJournalKey(batch.claim.key);
         const suspended = p?.kind === 'tool' && (batch.claim.value as ToolJournalRecord | undefined)?.status === 'suspended';
         if (p) await this.lockRunRow(q, p.runId);
-        const ins = await this.q(
+        const ins = await q(
           `INSERT INTO gnl_run_journal (key, run_id, kind, suspended, value, created_at) VALUES ($1,$2,$3,$4,$5,$6)
            ON CONFLICT (key) DO NOTHING RETURNING key`,
           [batch.claim.key, p?.runId ?? null, p?.kind ?? null, !!suspended, serialize(batch.claim.value), Date.now()],
@@ -809,7 +809,7 @@ class PgRunJournal implements RunJournal {
       }
       for (const { key, fields } of batch.incrs ?? []) {
         for (const [f, d] of Object.entries(fields)) {
-          await this.q(
+          await q(
             'INSERT INTO gnl_counters (key, field, value) VALUES ($1, $2, $3) ON CONFLICT (key, field) DO UPDATE SET value = gnl_counters.value + EXCLUDED.value',
             [key, f, d],
           );
@@ -818,8 +818,8 @@ class PgRunJournal implements RunJournal {
       for (const { key, value } of batch.puts ?? []) {
         const p = parseJournalKey(key);
         const suspended = p?.kind === 'tool' && (value as ToolJournalRecord | undefined)?.status === 'suspended';
-        const prev = p ? (await this.q('SELECT suspended FROM gnl_run_journal WHERE key = $1', [key])).rows[0] : undefined;
-        await this.q(
+        const prev = p ? (await q('SELECT suspended FROM gnl_run_journal WHERE key = $1', [key])).rows[0] : undefined;
+        await q(
           `INSERT INTO gnl_run_journal (key, run_id, kind, suspended, value, created_at) VALUES ($1,$2,$3,$4,$5,$6)
            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, suspended = EXCLUDED.suspended`,
           [key, p?.runId ?? null, p?.kind ?? null, !!suspended, serialize(value), Date.now()],
