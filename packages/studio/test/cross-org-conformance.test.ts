@@ -220,6 +220,12 @@ async function seedOrg(j: InMemoryJournal, org: string, run: string, text: strin
   await j.put(`${p}:net:route:0`, { v: { to: text, why: text } });
   await j.put(`${p}:net:step:0`, { v: { agent: text, output: text } });
   await j.put(`${p}:memctx`, { recalled: [], recentCount: 1, note: text });
+  // An AGENT-TO-AGENT edge, which is what `GET /a2a-network` extracts: a `tool` entry whose
+  // `value.output.remoteAgent` is set (server.ts:3782). Nothing of this shape was seeded before, so the
+  // route answered `[]` to both callers and read as isolation. The route's OTHER gate is the `a2a`
+  // option itself (`if (!a2a) return c.json([])`, server.ts:3775) — it is a plain boolean and makeApi
+  // now sets it, because without it the handler never looks at any data at all.
+  await j.put(`${p}:tool:a2a-1`, { status: 'completed', output: { remoteAgent: `${text}-remote`, runId: `${run}-remote` } });
   await j.put(`${p}:wf:step-a`, { output: text });
   await j.put(`org:${org}:wfrun:${run}`, { runId: run, workflowName: 'acme-workflow', status: 'completed', at: 1 });
   // TWO versions, one active. `DELETE /managed-agents/:name/versions/:version` refuses the active one
@@ -229,7 +235,12 @@ async function seedOrg(j: InMemoryJournal, org: string, run: string, text: strin
     name: 'acme-bot', active: 1,
     versions: [{ version: 1, system: text, at: 1 }, { version: 2, system: `${text} v2`, at: 2 }],
   });
-  await j.put(`org:${org}:__audit__:a1`, { at: 1, actor: text, action: 'run', target: run });
+  // NOTE — there is deliberately no `org:<org>:__audit__:…` seed here. There used to be one, and it was
+  // dead: `GET /audit` reads the ROOT journal (`listLog(rootRw, '__audit__')`, server.ts:1741) because
+  // `__audit__` is not org-prefixed on purpose — an audit log erased by the purge it records is not an
+  // audit log. An org-PREFIXED key is invisible to that read, so the only rows the route ever showed
+  // were the ones other tests' write routes happened to leave behind, which is what made it look
+  // "order-dependent". The real rows are seeded into the root log in `seeded()` below.
   await j.put(`org:${org}:sched:def:t-${org}`, { id: `t-${org}`, cron: '* * * * *', agent: text });
   await j.put(`org:${org}:sched:state:t-${org}`, { id: `t-${org}`, nextAt: 2, lastAt: 1 });
   // The conversation store below is a factory over the org-scoped journal, so its keys are org-prefixed.
@@ -246,13 +257,58 @@ async function seeded() {
   // run `GET /runs/:id/regression/:otherId` needs.
   await seedOrg(journal, 'acme', 'r-acme-2', MARKER, 2);
   await seedOrg(journal, 'globex', 'r-globex', 'GLOBEX-OWN', 1);
-  // A run left SUSPENDED on a tool call, which is what `GET /approvals` reconstructs. Its outcome is
-  // removed on purpose — a completed run is not pending anything.
-  await journal.put('org:acme:r-acme:tool:call-1', {
-    status: 'suspended', toolName: MARKER, output: { __gnl_suspend: { toolCallId: 'call-1', reason: MARKER } },
-  });
-  await journal.put('org:acme:r-acme:outcome', undefined);
+  // A run left SUSPENDED on a tool call, which is what `GET /approvals` reconstructs.
+  await suspendRun(journal, 'acme', 'r-acme', MARKER);
+  // The SAME shape under globex, so the control is "two different pending queues" rather than "one
+  // organization has a queue and the other has nothing". An empty-vs-non-empty comparison also passes
+  // when the route is broken for one caller for a reason that has nothing to do with organizations.
+  await suspendRun(journal, 'globex', 'r-globex', 'GLOBEX-OWN');
+
+  // WORKFLOW RUN HISTORY for `GET /workflows/:name/runs`. The route does NOT read `wfrun:` records —
+  // measured against the handler (server.ts:3401): it scans `listKeys('wf-<name>-')` and splits each key
+  // on `:wf:`, so the run history lives in keys shaped `wf-<workflow>-<startedAt>:wf:<stepId>`. The
+  // corpus already writes `<runId>:wf:step-a`, but under `r-acme` — a runId that does not carry the
+  // `wf-acme-workflow-` prefix, so the scan matched nothing and the route answered `[]` to everybody.
+  // Distinct startedAt stamps per organization, so the two answers differ by content and not by luck.
+  for (const [org, at] of [['acme', 1001], ['globex', 2002]] as const) {
+    await journal.put(`org:${org}:wf-acme-workflow-${at}:wf:s1`, { output: org });
+    await journal.put(`org:${org}:wf-acme-workflow-${at}:wf:s2`, { output: org });
+  }
+
+  // THE AUDIT LOG, in the ROOT journal where `GET /audit` actually reads it, in the record shape
+  // `listLog` requires (`{ id, payload, at }` — durable-log.ts:22/66). The route filters on the `org`
+  // FIELD INSIDE each row (server.ts:1757), which is what carries the isolation here.
+  // `at` must clear the org's purge cutoff (server.ts:1751); no organization is purged in this fixture
+  // so the cutoff is 0, and any positive stamp clears it.
+  for (const [org, actor] of [['acme', MARKER], ['globex', 'GLOBEX-OWN']] as const) {
+    await journal.put(`__audit__:seed-${org}`, {
+      id: `seed-${org}`, at: 1_000,
+      payload: { actor, action: 'run', target: `r-${org}`, org, detail: actor },
+    });
+  }
   return journal;
+}
+
+/**
+ * Leaves `run` SUSPENDED on a tool call, in the shape BOTH readers of that state need.
+ *
+ * Two independent things had to be true and only one was. `listRuns` derives `status: 'suspended'` from
+ * the tool record (journal.ts:796) — that part worked. But `GET /approvals` builds its answer from
+ * `reconstructState(entries).pending` (server.ts:1692), and `pending` is populated ONLY from MODEL
+ * entries carrying a `tool-call` part (time-travel.ts:133-143). With no such entry the run was listed as
+ * suspended and had nothing pending, so the route answered `{items:[]}` to every caller.
+ */
+async function suspendRun(j: InMemoryJournal, org: string, run: string, text: string) {
+  const p = `org:${org}:${run}`;
+  await j.put(`${p}:model:1`, {
+    content: [{ type: 'tool-call', toolCallId: 'call-1', toolName: `${text}-tool`, input: '{}' }],
+    finishReason: 'tool-calls', usage: { inputTokens: { total: 1 }, outputTokens: { total: 1 } }, modelId: 'm', at: 4,
+  });
+  await j.put(`${p}:tool:call-1`, {
+    status: 'suspended', toolName: `${text}-tool`, output: { __gnl_suspend: { toolCallId: 'call-1', reason: text } },
+  });
+  // A completed run is not pending anything — the outcome is removed on purpose.
+  await j.put(`${p}:outcome`, undefined);
 }
 
 /**
@@ -345,6 +401,9 @@ async function makeApi(optIn = false) {
     reader: journal,
     auth: authProvider,
     org: {},
+    // A plain boolean, not a host object — `GET /a2a-network` answers `[]` to everybody without it
+    // (server.ts:3775) without reading any data at all, which is a 200 that looks like isolation.
+    a2a: true,
     resume: async () => ({}),
     compensate: async () => ({ ok: true }),
     otelExport: async (runId: string) => ({ ok: true, target: runId }),
@@ -393,7 +452,12 @@ async function makeApi(optIn = false) {
       // route looks uncontrollable when it is simply never exercised.
       listAgents: () => [{ name: 'acme-only-agent', orgs: ['acme'] }, { name: 'shared-agent' }],
       run: async (_n: string, _o: unknown, ctx?: { orgId?: string }) => rec('gnl.run', ctx, { text: 'ok' }),
-      stream: async () => ({ textStream: (async function* () { yield 'ok'; })() }),
+      // RECORDED, like its non-streaming sibling. The streamed BODY is unusable as a control — a stub
+      // runner writes the same frames to everybody — but `gnl.stream` is handed `{ orgId: callerOrg(c) }`
+      // exactly as `gnl.run` is (server.ts:3054), so the organization the runner was TOLD about is a
+      // real observable. It was left unrecorded, which is why the route read as uncontrollable.
+      stream: async (_n: string, _o: unknown, ctx?: { orgId?: string }) =>
+        rec('gnl.stream', ctx, { textStream: (async function* () { yield 'ok'; })() }),
       listTools: () => [{ name: 'acme-tool' }],
       runTool: async (_n: string, _i: unknown, _o?: unknown, ctx?: { orgId?: string }) => rec('gnl.runTool', ctx, { ok: true }),
       listWorkflows: () => [],
@@ -531,6 +595,7 @@ describe('the ownership control — acme must SEE what globex must not', () => {
   // they answered both callers identically (`GET /runs/:id/cost`, `GET /a2a-network`, `GET /approvals`
   // at the time) — a control that cannot tell the two apart is a control in name only.
   const CONTROLLED: string[] = [
+    'GET /a2a-network', 'GET /approvals', 'GET /audit', 'GET /workflows/:name/runs',
     'GET /agents', 'GET /users', 'DELETE /users/:id', 'PATCH /users/:id', 'POST /users/:id/revoke',
     'POST /cache/invalidate', 'GET /cache/stats',
     'GET /jobs', 'POST /jobs/:id/retry', 'POST /knowledge/search', 'GET /managed-agents',
@@ -569,7 +634,12 @@ describe('the ownership control — acme must SEE what globex must not', () => {
 
   /** Controlled by the recorded host call instead of the body — see the write-route block below. */
   const WRITE_CONTROLLED = ['POST /workflows', 'PUT /workflows/:name', 'DELETE /workflows/:name',
-    'POST /agents/:name/run', 'POST /tools/:name/execute', 'POST /chat', 'POST /datasets/:id/run'];
+    'POST /agents/:name/run', 'POST /tools/:name/execute', 'POST /chat', 'POST /datasets/:id/run',
+    // Moved out of UNCONTROLLED_REASONS. Its recorded reason ("streamed body, and the stub runner
+    // answers identically") described the RESPONSE, and the response really is unusable — but the route
+    // hands `gnl.stream` the caller's organization the same way `/agents/:name/run` hands it to
+    // `gnl.run`, and that call was simply never recorded by the fixture.
+    'POST /agents/:name/stream'];
 
   /**
    * Controlled by the EFFECT the request had, for routes that answer a constant.
@@ -581,10 +651,15 @@ describe('the ownership control — acme must SEE what globex must not', () => {
    *
    * So the observable is WHERE THE WRITE LANDED. The owner's mutation must reach the owner's key, and
    * a stranger issuing the identical request must not.
+   *
+   * The last two invert the direction: they answer nothing useful and write nothing at all, so the
+   * effect is WHICH ORGANIZATION'S WRITE THE ROUTE REACTED TO. An SSE stream opened by globex must move
+   * when globex's runs change and stay silent when acme's do — see the live-stream block below.
    */
   const EFFECT_CONTROLLED = ['PATCH /threads/:id', 'DELETE /threads/:id', 'DELETE /threads/:id/messages',
     'DELETE /managed-agents/:name', 'POST /managed-agents/:name/promote',
-    'DELETE /managed-agents/:name/versions/:version', 'POST /managed-agents'];
+    'DELETE /managed-agents/:name/versions/:version', 'POST /managed-agents',
+    'GET /events', 'POST /auth/sse-ticket'];
 
   // The OPT-IN fixture: routes backed by a host object are refused entirely without it, and a 403 to
   // both callers is not an ownership control. This is the configuration in which they serve at all.
@@ -632,38 +707,152 @@ describe('the ownership control — acme must SEE what globex must not', () => {
       .not.toBe(b.ticket);
   }, 30_000);
 
-  // The honest accounting, printed rather than hidden: which org-scoped routes are leak-checked but
-  // have no ownership control in this fixture. They are NOT claimed proven.
   /**
-   * The honest accounting. Every org-scoped route is leak-checked and write-checked by the universal
-   * probe; this names the ones with no OWNERSHIP control and why, so the gap is a list rather than a
-   * number. Grouped by what it would take to close each — the first group needs fixture data, the
-   * second needs a host seam that carries the organization, the third needs production support.
+   * THE LIVE STREAM, controlled by whose write it reacted to.
+   *
+   * Both routes here answer the same content-free frame to everybody — measured, not assumed:
+   * `event: change / data: runs`, the pre-API-04 fallback payload. The INFORMATIVE frame that names
+   * `runIds` (server.ts:2472) is unreachable for these callers, and deliberately: it fires only when
+   * `readCheapEventsSignal` returns a signal, that needs `countRunsByStatus`, and `withOrg` does NOT
+   * bridge `countRunsByStatus` (durable/organization.ts:294) because the engine's push-down has no
+   * per-organization filter. Under an org scope the bridge resolves to `undefined` and the handler
+   * takes the legacy branch. So no comparison of bodies can separate the owner from a stranger.
+   *
+   * The instrumentation route does not work either, and this is the measurement that says so: the
+   * stream's only read is `reader.listRuns()`, and `withOrg`'s `listRuns` bridge calls the underlying
+   * `listRuns()` with NO argument and filters the RESULT by prefix in memory
+   * (durable/organization.ts:320-327). Recording the keys the journal was asked for therefore yields
+   * `listRuns(null)` for acme and `listRuns(null)` for globex — byte-identical. There is nothing
+   * org-shaped to record.
+   *
+   * What IS observable is the stream's REACTION. The org filter is applied to the run list the poll
+   * loop diffs, so a frame is written when — and only when — the CALLER'S OWN organization changes.
+   * That is an effect, it is asymmetric, and both halves are asserted: a stranger's write must leave
+   * the stream silent, and the caller's own write must move it (or the silence is a dead stream rather
+   * than isolation).
    */
-  const UNCONTROLLED_REASONS: Record<string, string> = {
-    // Nothing of that shape is seeded, so both callers get an empty answer.
-    'GET /a2a-network': 'needs journaled agent-to-agent edges',
-    // Dropped from CONTROLLED after it passed only in a batch: the audit log is WRITTEN by the write
-    // routes, so driving the whole inventory first left rows behind and made it look controlled. Run
-    // alone it is empty for both callers. An order-dependent control is worse than none.
-    'GET /audit': 'empty for both callers unless earlier requests happened to write audit rows',
-    'GET /approvals': 'needs a run left suspended in a state listRuns reports as pending',
-    'GET /workflows/:name/runs': 'needs wfrun records keyed by workflow name',
-    'POST /agents/:name/stream': 'streamed body, and the stub runner answers identically',
-    // Needs production support to be controllable at all.
-    // Measured rather than assumed: the stream CAN be read one frame and cancelled, but the frame is
-    // `event: change / data: runs` — a content-free notification that something moved. Identical for
-    // both callers, so even a one-frame read separates nothing.
-    'GET /events': 'SSE, and the first frame is a content-free change notification identical for both callers',
-    // Dropped from CONTROLLED, where it had been passing since it was added. `issueSseTicket` answers
-    // `{ ticket: randomUUID(), expiresAt: Date.now() + TTL }`, so ANY two requests differ — including
-    // two from the same caller, which the test below asserts on purpose. It survived BOTH collapse
-    // mutants (organization forced in the ALS, and every identity re-bound to acme): 41 of the other 42
-    // by-answer controls died to one or the other, this one to neither. The ticket's organization is
-    // only observable by redeeming it at `/events`, whose frames carry no organization data.
-    'POST /auth/sse-ticket': 'answers a fresh randomUUID and a timestamp, so two bodies differ whoever '
-      + 'asks; the ticket\'s organization is only observable through /events, which carries no data',
-  };
+  describe('a live stream follows only its own organization', () => {
+    /** `EVENTS_POLL_MS` in server.ts — one tick of the poll loop. */
+    const POLL_MS = 2000;
+
+    /** A run, in the two keys `listRuns` needs to see one appear. */
+    async function addRun(j: InMemoryJournal, org: string, run: string) {
+      await j.put(`org:${org}:${run}:input`, { prompt: 'later', at: 9, agent: 'later' });
+      await j.put(`org:${org}:${run}:outcome`, { status: 'completed', at: 9 });
+    }
+
+    /**
+     * Collects frames off a live SSE response in the background.
+     *
+     * Reading frame-by-frame with a per-read timeout does not work here: cancelling the reader to break
+     * out of one read kills it for every later read too, so the second phase always looked silent. That
+     * false negative is the reason this pumps into an array instead — the ABSENCE of a frame has to be
+     * measurable without touching the reader.
+     */
+    function watchSse(res: Response) {
+      const reader = res.body!.getReader();
+      const dec = new TextDecoder();
+      const frames: string[] = [];
+      void (async () => {
+        try {
+          for (;;) { const { value, done } = await reader.read(); if (done) break; if (value) frames.push(dec.decode(value)); }
+        } catch { /* cancelled — the poll loop never ends on its own */ }
+      })();
+      return {
+        frames,
+        /** Waits until `n` frames have arrived or `ms` elapses, whichever comes first. */
+        until: async (n: number, ms: number) => {
+          const stop = Date.now() + ms;
+          while (frames.length < n && Date.now() < stop) await new Promise((r) => setTimeout(r, 25));
+        },
+        close: () => reader.cancel().catch(() => {}),
+      };
+    }
+
+    /**
+     * The shared body of both cases: a globex-scoped stream, an acme write it must not see, then a
+     * globex write it must.
+     */
+    async function assertFollowsOnlyGlobex(res: Response, journal: InMemoryJournal, what: string) {
+      expect(res.status, `${what} did not open a stream at all`).toBe(200);
+      const w = watchSse(res);
+      try {
+        await w.until(1, 4 * POLL_MS);
+        expect(w.frames.length, `${what} never emitted its baseline frame — nothing below can mean anything`)
+          .toBeGreaterThan(0);
+        const baseline = w.frames.length;
+
+        // ACME changes. A globex-scoped stream is not entitled to know.
+        await addRun(journal, 'acme', 'r-acme-late');
+        await new Promise((r) => setTimeout(r, 2.5 * POLL_MS));
+        expect(w.frames.length,
+          `${what} pushed a frame to globex because ACME's data changed — the stream is not org-scoped`)
+          .toBe(baseline);
+
+        // GLOBEX changes. Its own stream must move, or the silence above is a dead stream.
+        await addRun(journal, 'globex', 'r-globex-late');
+        await w.until(baseline + 1, 5 * POLL_MS);
+        expect(w.frames.length,
+          `${what} never told globex about globex's own change — the isolation above is a stalled stream`)
+          .toBeGreaterThan(baseline);
+      } finally {
+        await w.close();
+      }
+    }
+
+    it('GET /events pushes on the calling organization\'s changes and no one else\'s', async () => {
+      const { api, journal } = await makeApi(true);
+      const res = await api(new Request('http://x/events', { headers: AS.globex }));
+      await assertFollowsOnlyGlobex(res, journal, 'GET /events');
+    }, 60_000);
+
+    /**
+     * `POST /auth/sse-ticket`, controlled by what the ticket UNLOCKS rather than by its bytes.
+     *
+     * The body is `{ ticket: randomUUID(), expiresAt: Date.now() + TTL }` — two callers always differ,
+     * and so do two requests from the SAME caller (asserted above), which is why the by-answer control
+     * was removed and must stay removed. But `issueSseTicket` stores `{ principal, expiresAt }`
+     * (server.ts:2342) and `/events` scopes the whole stream with `orgALS.run(principal?.orgId, run)`
+     * (server.ts:2426/2486), so the ticket's organization decides which data the redeemed stream can
+     * see. That binding is not random, and it is what this asserts.
+     *
+     * The redemption deliberately carries NO authorization header — an EventSource cannot send one,
+     * which is the entire reason the ticket exists — so the ticket is the only thing scoping the stream.
+     * Both calls go through the SAME `makeApi()` instance because `sseTickets` is a Map in that
+     * closure and the ticket is consumed on first use (server.ts:2350).
+     */
+    it('POST /auth/sse-ticket mints a ticket that unlocks only the issuing organization', async () => {
+      const { api, journal } = await makeApi(true);
+      const { ticket } = await (await api(new Request('http://x/auth/sse-ticket',
+        { method: 'POST', headers: AS.globex }))).json() as { ticket: string };
+
+      const res = await api(new Request(`http://x/events?ticket=${encodeURIComponent(ticket)}`));
+      await assertFollowsOnlyGlobex(res, journal, 'a ticket issued to globex');
+    }, 60_000);
+  });
+
+  /**
+   * The honest accounting — and it is now EMPTY. Every org-scoped route carries an ownership control.
+   *
+   * Kept rather than deleted, because the assertion below is what forces a FUTURE gap to say why it
+   * exists instead of quietly lowering the number. Seven routes have passed through here and every one
+   * of them left for the same reason: the recorded reason described the FIXTURE or the RESPONSE, and
+   * neither is the route.
+   *   `/a2a-network`, `/audit`, `/approvals`, `/workflows/:name/runs` answered `[]` to both callers
+   *   because nothing of the shape each reads was seeded, and `[] !== []` is false.
+   *   `POST /agents/:name/stream` was recorded as "streamed body, and the stub runner answers
+   *   identically". True of the RESPONSE, and irrelevant: the route hands `gnl.stream` the caller's
+   *   organization (server.ts:3054) exactly as `/run` hands it to `gnl.run`, and the fixture's stub
+   *   was throwing the argument away.
+   *   `GET /events` and `POST /auth/sse-ticket` were recorded as uncontrollable because their frames
+   *   carry no organization data. Re-measured, that is still exactly true, and so is the reason it did
+   *   not matter — see the live-stream block above for both measurements.
+   *
+   * A route removed from a control belongs here WITH the measurement that removed it. The last round
+   * did that for `POST /auth/sse-ticket` and it was the right call on the evidence it had; what it did
+   * not have was a second observable.
+   */
+  const UNCONTROLLED_REASONS: Record<string, string> = {};
 
   /**
    * The recorded-EFFECT control, for the routes whose answer is a constant.
@@ -780,6 +969,9 @@ describe('the ownership control — acme must SEE what globex must not', () => {
     ['POST /tools/:name/execute', 'POST', '/tools/:name/execute', 'gnl.runTool'],
     ['POST /chat', 'POST', '/chat', 'chat'],
     ['POST /datasets/:id/run', 'POST', '/datasets/:id/run', 'datasets.run'],
+    // The STREAMING sibling of the first row. Same seam, same argument, and the only reason it was not
+    // here is that the fixture's `stream` stub discarded its `ctx` instead of recording it.
+    ['POST /agents/:name/stream', 'POST', '/agents/:name/stream', 'gnl.stream'],
   ])('%s tells the runner which organization is asking', async (_label, method, path, what) => {
     const { api } = await makeApi(true);
 
@@ -874,7 +1066,7 @@ describe('the ownership control — acme must SEE what globex must not', () => {
     // Every gap must carry a reason. An unexplained one is the same failure as an unclassified route.
     expect(uncontrolled.filter((k) => !UNCONTROLLED_REASONS[k]),
       'an org-scoped route is uncontrolled with no reason recorded — say why, or control it').toEqual([]);
-    expect(controlled.size, 'ownership coverage went backwards').toBeGreaterThanOrEqual(60);
+    expect(controlled.size, 'ownership coverage went backwards').toBeGreaterThanOrEqual(67);
   });
 });
 
