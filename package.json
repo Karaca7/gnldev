@@ -10,7 +10,8 @@
     "test:watch": "vitest",
     "typecheck": "pnpm -r typecheck",
     "check:docs": "node scripts/check-doc-samples.mjs",
-    "check:versions": "node scripts/check-versions.mjs"
+    "check:versions": "node scripts/check-versions.mjs",
+    "check:real": "node scripts/check-real-backends.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
