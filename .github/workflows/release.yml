@@ -26,9 +26,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # The SAME gates a push to main runs, by reference rather than by restatement: build, typecheck,
-  # test, check:docs, check:versions, the competitor-name scan, and the real-backend matrix (Postgres
-  # in both collations + Redis). `publish` needs this, so a red gate stops the release before npm.
+  # The SAME gates a push to main runs, by reference rather than by restatement — whatever ci.yml
+  # defines, including the real-backend matrix (Postgres in both collations + Redis). `publish` needs
+  # this, so a red gate stops the release before npm.
+  #
+  # Deliberately not a list: enumerating the jobs here re-creates by hand the drift this job exists to
+  # remove, and a checkout whose ci.yml defines a different set would be described wrongly by it.
   #
   # ci.yml is not triggered by a tag — its filter is `branches: [master, main]` — so until this job
   # existed the publish path ran a strict subset of the checks main gets, and the two most recent
