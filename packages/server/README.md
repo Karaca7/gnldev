@@ -112,6 +112,29 @@ For type-safe calls use [`@gnldev/client`](../client) (core) + `@gnldev/client/r
 
 **Auth (opt-in, but no silent openness in production):** `createRestApi(config, { auth })` accepts an `AuthProvider` (the free `@gnldev/auth` `roleAuth`, or the paid `@gnldev/auth-ee`) or a backward-compatible `{read, write}` pair. If `auth` is not given, endpoints are open; but under `NODE_ENV=production` this is only possible DELIBERATELY, via `allowOpenAccess: true` — without the flag, setup throws a clear error ("auth required in production"). Outside production, a setup without auth works, with a one-time `console.warn` on the first request, so a silent fail-open cannot survive unnoticed.
 
+**This server is not for browsers.** It is a backend service your own backend calls; your users reach
+your application, and your application reaches this. Nothing here authenticates an end user, and no
+credential below is safe to ship to a client device.
+
+**Which credential your application carries:** `client`, not `admin` — see
+[@gnldev/auth](../auth/README.md) for the four classes. `admin` cancels runs, reads the whole
+organization's history and reads `/usage`; an application that runs agents needs none of that. A
+`client` credential is a whitelist (`agents:run`, `workflow:run`, `run:cancel`, plus reads), so routes
+added in later versions are refused rather than silently granted.
+
+**Every `client` request names the end user it acts for.** One application credential serves many
+users, so `resourceId` in the body (or `?resourceId=` on a read) says which one:
+
+```
+POST /agents/:name/run   { runId, prompt, threadId, resourceId }   → 400 without resourceId
+GET  /runs?resourceId=u-ayse                                       → only that user's runs
+GET  /threads?resourceId=u-ayse                                    → only that user's conversations
+GET  /runs/:id?resourceId=u-mehmet                                 → 403 if the run is someone else's
+```
+
+That id is what keeps two of your users' conversations, memories and runs apart — the memory layer
+scopes on it. Operator credentials may omit it; they work across the organization by design.
+
 ## License
 
 Apache-2.0 — see [LICENSE](./LICENSE).

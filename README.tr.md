@@ -140,6 +140,28 @@ Aşağıdaki tablo doğrudan kullandığınız paketleri kapsar.
 | **`@gnldev/client`** | type-safe REST/SSE client (framework-agnostik core) + React hook'ları (`@gnldev/client/react`: `useGnlAgent`/`useChat`) |
 | **`@gnldev/cli`** | proje: `gnl init [dir] [--features a,b,c] [--host hono\|node\|express\|fastify\|koa\|nest] [--template minimal\|full] [--e2e] [--yes]` (starter'lar — **`full`, `idempotency: 'args'` tool'u + tekrarlanan-toolCallId desenini yeniden üreten e2e testi taşır**) / `add <idempotency-tool\|rag\|mcp\|memory\|workflow\|auth>` / `dev` / `studio` · inceleme: `runs`/`run`/`inspect` (**terminalde zaman yolculuğu**) · operasyon: `fork`/`resume`/`sweep`/`rm`/`pricing` (hepsi doğrudan `@gnldev/durable`'ın kendi export'larına bağlı, hiçbiri yeniden implement edilmedi) · **bir runtime bağımlılığı** (`tsx`, `gnl.config.ts` yüklemek için; elle yazılmış ANSI/tablo, chalk/ora/commander yok) · `create-gnl` (`npm create gnl`) |
 
+### Ücretsiz ve paralı — çizgi nerede
+
+**İzolasyon ücretsiz.** Organizasyon sınırı, dört kimlik sınıfı
+(`superAdmin`/`admin`/`client`/`viewer`) ve bir son kullanıcının sohbetini, belleğini ve koşularını
+diğerinden ayıran `resourceId` kuralları — hepsi `@gnldev/auth` ve sunucuların içinde. Hiçbiri ödeme
+yapınca açılmıyor: faturayla birlikte gelen bir güvenlik varsayılanı yanlış şekildir, ve ödemeyen
+kurulumun daha az izole olması bir hataydı, iş modeli değil.
+
+**Kimlik yönetimi paralı.** `@gnldev/auth-ee` şunları ekliyor: SSO/OAuth (Auth0, WorkOS), ilişkisel
+depoda kullanıcı hesapları, denetim kaydı, çok-organizasyon yönetimi — ve dört sabit sınıf yerine
+**kişi başına izin**. Sonuncusu ücretsiz katmanın cevaplayamadığı bir soruyu cevaplıyor:
+
+```
+Ayşe   runs:read ✓   threads:read ✗   money:read ✗
+       → bir koşunun başarısız olduğunu görür, müşterinin ne yazdığını görmez
+```
+
+Okuma izinleri de yazma izinleri gibi adlandırılmış (`runs`, `threads`, `money`, `audit`, `users`,
+`catalog`), böylece "destek koşuları okusun" ile "destek her müşterinin mesajını okusun" tek bir karar
+olmaktan çıkıyor. Ücretsiz `viewer` kendi organizasyonunun içindeki her şeyi okur ve daraltılamaz —
+satın aldığınız fark bu.
+
 ## Örnekler (`examples/`)
 - **`showcase`** — paketleri kendi kendini doğrulayan tek dosya: `pnpm --filter @gnldev/showcase demo` → 22 bölüm 22/22 ✓ (mock model, API key gerekmez) · `bench` (overhead ölçer)
 - **`app`** — **Durable AI Support Desk** (web UI + API): `pnpm --filter @gnldev/app start` → :3100 (UI) + :3100/studio (ops). Ticket→mesaj→onay→exactly-once iade + queue/events/otel.

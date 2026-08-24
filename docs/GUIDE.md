@@ -343,7 +343,7 @@ graph LR
         schema["@gnldev/tool-schema<br/>provider schema compatibility"]
     end
     subgraph Operations
-        auth["@gnldev/auth<br/>sessions, API keys, RBAC"]
+        auth["@gnldev/auth<br/>four credential classes,<br/>org isolation, resourceId"]
         cli["@gnldev/cli + create-gnl<br/>CLI + scaffolding"]
     end
     Capabilities --> durable

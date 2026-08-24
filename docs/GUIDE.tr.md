@@ -335,7 +335,7 @@ graph LR
         schema["@gnldev/tool-schema<br/>sağlayıcı şema uyumu"]
     end
     subgraph Operasyon
-        auth["@gnldev/auth<br/>oturum, API anahtarı, RBAC"]
+        auth["@gnldev/auth<br/>dört kimlik sınıfı,<br/>org izolasyonu, resourceId"]
         cli["@gnldev/cli + create-gnl<br/>komut satırı + şablon"]
     end
     Yetenekler --> durable

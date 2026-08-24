@@ -162,6 +162,28 @@ The table below covers the ones you interact with directly.
 | **`@gnldev/client`** | type-safe REST/SSE client (framework-agnostic core) + React hooks (`@gnldev/client/react`: `useGnlAgent`/`useChat`) |
 | **`@gnldev/cli`** | project: `gnl init` (**interactive feature checkbox** — pick idempotency-tool/rag/mcp/memory/workflow/auth/e2e → a wired `gnl.config.ts` is generated; non-interactive via `--features a,b,c` / `--template minimal\|full` / `--yes`, prompt never opens without a TTY) / `add <idempotency-tool\|rag\|mcp\|memory\|workflow\|auth>` / `dev` / `studio` · inspect: `runs`/`run`/`inspect` (**time-travel in the terminal**) · operate: `fork`/`resume`/`sweep`/`rm`/`pricing` (all wired straight to `@gnldev/durable`'s own exports, nothing reimplemented) · **one runtime dep** (`tsx`, to load `gnl.config.ts`; hand-rolled ANSI/table + a from-scratch raw-mode checkbox, no chalk/ora/commander/inquirer) · `create-gnl` (`npm create gnl`) |
 
+### Free and paid — where the line is
+
+**Isolation is free.** The organization boundary, the four credential classes
+(`superAdmin`/`admin`/`client`/`viewer`), and the `resourceId` rules that keep one end user's
+conversations, memory and runs apart from another's are all in `@gnldev/auth` and the hosts. None of
+them switch on when you pay: a security default that arrives with an invoice is the wrong shape, and
+an unpaid deployment being the less isolated one was a bug, not a business model.
+
+**Identity management is paid.** `@gnldev/auth-ee` adds SSO/OAuth (Auth0, WorkOS), per-user accounts
+with a relational store, an audit trail, multi-organization management — and permissions per person
+rather than four fixed classes. That last one answers a question the free tier cannot:
+
+```
+Ayşe   runs:read ✓   threads:read ✗   money:read ✗
+       → sees that a run failed, not what the customer typed into it
+```
+
+Reads are named the same way writes are (`runs`, `threads`, `money`, `audit`, `users`, `catalog`), so
+"let support read runs" and "let support read every customer's messages" stop being one decision.
+Free-tier `viewer` reads everything inside its own organization and cannot be narrowed — that is the
+difference you are buying.
+
 ## Examples (`examples/`)
 - **`showcase`** — a single self-verifying file exercising the packages: `pnpm --filter @gnldev/showcase demo` → 22 sections, 22/22 ✓ (mock model, no API key needed) · `bench` (overhead measurement)
 - **`app`** — **Durable AI Support Desk** (web UI + API): `pnpm --filter @gnldev/app start` → :3100 (UI) + :3100/studio (ops). Ticket → message → approval → exactly-once refund + queue/events/otel.
