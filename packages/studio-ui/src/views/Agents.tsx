@@ -8,6 +8,7 @@ import { Spinner, Empty, ErrorBox, Badge, Btn, Tabs, StatStrip, PageHeader, cn }
 import { ConfirmDialog, toast } from '../ui';
 import { Stagger, StaggerItem } from '../motion';
 import { PromptEditor } from './PromptEditor';
+import { currentLocale } from '../i18n/locale';
 
 /** A single scorer's gate-table row: score + threshold + pass/fail. */
 export interface GateScoreRow { scorer: string; score: number; threshold: number; passed: boolean; }
@@ -92,7 +93,7 @@ function VersionPanel({ rec, canManage, evalGate, onChanged, onEdit, onDelete }:
   rec: ManagedAgentRecord; canManage: boolean; evalGate: boolean; onChanged: () => void;
   onEdit: (v: AgentVersion) => void; onDelete: (v: AgentVersion) => void;
 }) {
-  const { t, i18n } = useTranslation('agents');
+  const { t } = useTranslation('agents');
   const [busy, setBusy] = useState<number | null>(null);
   const [gateFail, setGateFail] = useState<{ message: string; rows: GateScoreRow[] } | null>(null);
   // FLOW-11: promote/rollback used to fire the API call on click, with no confirmation — a single
@@ -160,7 +161,7 @@ function VersionPanel({ rec, canManage, evalGate, onChanged, onEdit, onDelete }:
               {isNewest && !isActive && <span className="text-[10px] font-medium text-brand">{t('newestLabel')}</span>}
               <span className="truncate font-mono text-[10px] text-muted-foreground">{v.model}</span>
               <span className="ml-auto shrink-0 font-mono text-[10px] text-muted-foreground">
-                {new Date(v.createdAt).toLocaleString(i18n.language === 'tr' ? 'tr-TR' : 'en-US', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                {new Date(v.createdAt).toLocaleString(currentLocale(), { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
               </span>
               {canManage && (
                 <div className="flex shrink-0 items-center gap-1">

@@ -57,5 +57,5 @@
   "statusIdle": "Idle",
   "statusQueued": "Queued",
   "scopeRefusedTitle": "Unavailable in your organization scope",
-  "scopeRefusedDescription": "This deployment's {{what}} is a host-provided object with no organization boundary, so serving it would hand one tenant another tenant's data. It is not disabled — an unscoped operator can see it. Ask an operator to make it organization-aware."
+  "scopeRefusedDescription": "This deployment's {{what}} is a host-provided object with no organization boundary, so serving it would hand one organization another organization's data. It is not disabled — an unscoped operator can see it. Ask an operator to make it organization-aware."
 }

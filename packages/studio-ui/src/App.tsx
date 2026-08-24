@@ -119,7 +119,7 @@ const NAV_GROUPS: { key: NavGroupKey; titleKey: string }[] = [
   { key: 'governance', titleKey: 'groupGovernance' },
 ];
 // D5-10: command-palette hint per nav item — the item's GROUP name instead of one generic "view"
-// String shared by all 18 rows. Derived from NAV_GROUPS (not hand-duplicated) so the two stay in
+// String shared by all 19 rows. Derived from NAV_GROUPS (not hand-duplicated) so the two stay in
 // Sync. CommandItem.value in ui.tsx is `${label} ${hint}`, so this also makes group names searchable.
 const NAV_GROUP_TITLE_KEY = Object.fromEntries(NAV_GROUPS.map((g) => [g.key, g.titleKey])) as Record<NavGroupKey, string>;
 
@@ -335,7 +335,7 @@ function AppShell({ onLogout }: { onLogout?: () => void }) {
   // Ctrl/Cmd+K palette: views + theme/session actions in a single search box.
   const commands: CommandItem[] = [
     // D5-10: hint = the item's group name (Runs/Build/Operate/Governance), not one generic "view"
-    // Label shared by all 18 rows — lets a single flat list still cluster by category, and makes
+    // Label shared by all 19 rows — lets a single flat list still cluster by category, and makes
     // Group names searchable too (CommandItem.value = `${label} ${hint}` in ui.tsx).
     ...visible.map((n) => ({ id: n.to, label: t(n.labelKey), hint: t(NAV_GROUP_TITLE_KEY[n.group]), onSelect: () => navigate(n.to) })),
     { id: 'theme', label: dark ? tc('switchToLightTheme') : tc('switchToDarkTheme'), hint: tc('themeHint'), onSelect: toggle },

@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { ScrollText } from 'lucide-react';
 import { useAudit, type AuditItem } from '../api';
 import { Spinner, EmptyState, ErrorBox, Badge, StatStrip, JsonBlock, PageHeader } from '../components';
+import { currentLocale } from '../i18n/locale';
 // Note: unlike the other views, this one deliberately has NO '../i18n' side-effect import —
 // This file's pure functions (auditToCsv/ACTIONS) are imported directly in a node environment
 // (without jsdom, see test/observability-audit.test.ts); i18n/index.ts's getStoredLang()
@@ -161,7 +162,7 @@ export function Audit() {
               {items.map((it) => (
                 <tr key={it.id} className="border-t border-border align-top">
                   <td className="whitespace-nowrap px-3 py-1.5 font-mono tabular-nums text-muted-foreground">
-                    {it.at != null ? new Date(it.at).toLocaleString('tr-TR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'}
+                    {it.at != null ? new Date(it.at).toLocaleString(currentLocale(), { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'}
                   </td>
                   <td className="px-3 py-1.5 font-mono">{it.actor}</td>
                   <td className="px-3 py-1.5 font-mono text-muted-foreground">{it.org ?? '—'}</td>

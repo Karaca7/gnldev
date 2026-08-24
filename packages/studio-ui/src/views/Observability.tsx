@@ -8,6 +8,7 @@ import {
 import { useMetrics, useMetricsRuns, type MetricsRun, type MetricsDayEntry } from '../api';
 import { Spinner, StatusBadge, Empty, ErrorBox, PageHeader, useStatusLabel } from '../components';
 import { Stagger, StaggerItem, Reveal } from '../motion';
+import { currentLocale } from '../i18n/locale';
 
 // RFC4180-like CSV field escaping: fields containing a comma/quote/newline are wrapped in double
 // Quotes (inner quotes are doubled) — pure function, edge cases are covered in test/observability-audit.test.ts.
@@ -107,8 +108,8 @@ function buildSeries(rows: MetricsRun[]) {
   }
   const points = [...buckets.entries()].sort(([a], [b]) => a - b).map(([t, v]) => ({
     label: daily
-      ? new Date(t).toLocaleDateString('tr-TR', { day: '2-digit', month: 'short' })
-      : new Date(t).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+      ? new Date(t).toLocaleDateString(currentLocale(), { day: '2-digit', month: 'short' })
+      : new Date(t).toLocaleTimeString(currentLocale(), { hour: '2-digit', minute: '2-digit' }),
     runs: v.runs,
     costUsd: Number(v.costUsd.toFixed(6)),
   }));
@@ -137,7 +138,7 @@ export function buildScoreTrend(byDay: MetricsDayEntry[]): { scorers: string[]; 
   }
   const points = byDay.map((d) => {
     const point: Record<string, string | number> = {
-      label: new Date(`${d.day}T00:00:00Z`).toLocaleDateString('tr-TR', { day: '2-digit', month: 'short' }),
+      label: new Date(`${d.day}T00:00:00Z`).toLocaleDateString(currentLocale(), { day: '2-digit', month: 'short' }),
     };
     for (const name of scorers) {
       const v = d.fields?.[`score:${name}:avg`];
@@ -214,7 +215,7 @@ export function Observability() {
         {/* Failures were countable but never counted — the one number an operator scans this strip for. */}
         <StaggerItem><Card label={statusLabel('failed')} value={String(metrics.data?.byStatus.failed ?? 0)} /></StaggerItem>
         <StaggerItem><Card label={t('cost')} value={`$${(metrics.data?.costUsd ?? 0).toFixed(4)}`} /></StaggerItem>
-        <StaggerItem><Card label={t('tokens')} value={(metrics.data?.tokens ?? 0).toLocaleString('tr-TR')} /></StaggerItem>
+        <StaggerItem><Card label={t('tokens')} value={(metrics.data?.tokens ?? 0).toLocaleString(currentLocale())} /></StaggerItem>
         <StaggerItem><Card label={t('durationP95')} value={fmtMs(p95)} hint={t('durationHint', { p50: fmtMs(p50), p99: fmtMs(p99) })} /></StaggerItem>
       </Stagger>
 
@@ -365,12 +366,12 @@ export function Observability() {
                   </td>
                   <td className="px-3 py-1.5"><StatusBadge status={r.status} /></td>
                   <td className="px-3 py-1.5 font-mono text-muted-foreground">
-                    {r.startTs != null ? new Date(r.startTs).toLocaleString('tr-TR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'}
+                    {r.startTs != null ? new Date(r.startTs).toLocaleString(currentLocale(), { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'}
                   </td>
                   <td className="px-3 py-1.5 text-right font-mono tabular-nums">{fmtMs(r.durationMs)}</td>
                   <td className="px-3 py-1.5 text-right tabular-nums">{r.modelSteps}</td>
                   <td className="px-3 py-1.5 text-right tabular-nums">{r.toolCalls}</td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{r.totalTokens.toLocaleString('tr-TR')}</td>
+                  <td className="px-3 py-1.5 text-right tabular-nums">{r.totalTokens.toLocaleString(currentLocale())}</td>
                   <td className="px-3 py-1.5 text-right font-mono tabular-nums">${r.costUsd.toFixed(4)}</td>
                 </StaggerItem>
               ))}

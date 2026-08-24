@@ -53,8 +53,11 @@ describe('budget formatting (BudgetMeter pure helpers)', () => {
     expect(fmtUsd(0)).toBe('$0.00');
     expect(fmtUsd(3.5)).toBe('$3.50');
   });
-  it('fmtTok: thousands separator (tr-TR)', () => {
+  it('fmtTok: thousands separator follows the ACTIVE language, English by default', () => {
+    // The product default is English: no language selected (i18next uninitialized in this node test)
+    // Must format as en-US. It used to be hardcoded 'tr-TR' and printed `1.000` in an English UI.
     expect(fmtTok(100)).toBe('100');
-    expect(fmtTok(1000)).toBe('1.000');
+    expect(fmtTok(1000)).toBe('1,000');
+    expect(fmtTok(1234567)).toBe('1,234,567');
   });
 });

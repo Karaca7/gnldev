@@ -15,10 +15,13 @@ import { Reveal } from '../motion';
 // Rendered via test/views.test.tsx, in the same module graph as Approvals — Approvals already
 // Initializes global i18next through its own '../i18n' import.
 import enOrganizations from '../i18n/locales/en/organizations.json';
+// Locale helper: reads the i18next singleton WITHOUT initializing it, so it is safe under the
+// Same node-environment constraint described above (no localStorage access).
+import { currentLocale } from '../i18n/locale';
 
 /** USD/token formatting (pure, tested). */
 export function fmtUsd(n: number): string { return '$' + n.toFixed(2); }
-export function fmtTok(n: number): string { return n.toLocaleString('tr-TR'); }
+export function fmtTok(n: number): string { return n.toLocaleString(currentLocale()); }
 
 // ValidateOrgId, like the pure functions in Scheduler, is also tested from outside the component;
 // `t` is optional, and if not given, a fallback that reads from en/organizations.json (ENGLISH
@@ -258,7 +261,7 @@ export function Organizations() {
           {plan && <Badge tone="info">{t('planBadge', { plan })}</Badge>}
           {licenseExp != null && (
             <Badge tone={licenseExp < Date.now() + 14 * 86_400_000 ? 'warning' : 'muted'}>
-              {t('licenseExpiry')} {new Date(licenseExp).toLocaleDateString('tr-TR')}
+              {t('licenseExpiry')} {new Date(licenseExp).toLocaleDateString(currentLocale())}
             </Badge>
           )}
         </>
@@ -283,7 +286,7 @@ export function Organizations() {
             <>
               <span className="font-mono text-xs text-muted-foreground">
                 {defaultBudget?.usdLimit != null && <>USD ≤ {defaultBudget.usdLimit} </>}
-                {defaultBudget?.tokenLimit != null && <>token ≤ {defaultBudget.tokenLimit.toLocaleString('tr-TR')}</>}
+                {defaultBudget?.tokenLimit != null && <>token ≤ {defaultBudget.tokenLimit.toLocaleString(currentLocale())}</>}
                 {defaultBudget?.usdLimit == null && defaultBudget?.tokenLimit == null && '—'}
               </span>
               <Btn size="xs" variant="outline" onClick={() => setEditing('__default__')}><Pencil size={12} /> {t('editButton')}</Btn>
@@ -330,7 +333,7 @@ export function Organizations() {
                     })()}
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums">{row.runs}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{row.tokens.toLocaleString('tr-TR')}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{row.tokens.toLocaleString(currentLocale())}</td>
                   <td className="px-3 py-2 text-right font-mono tabular-nums">${row.costUsd.toFixed(4)}</td>
                   <td className="px-3 py-2">
                     {editing === row.id ? (

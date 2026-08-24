@@ -18,6 +18,7 @@ import { TextDiff } from '../text-diff';
 import { MediaParts } from '../media';
 import { Stagger, StaggerItem, Reveal } from '../motion';
 import { ThreadDetail } from './inspector-thread';
+import { currentLocale } from '../i18n/locale';
 
 type TabId = 'conversation' | 'trace' | 'network' | 'forks' | 'regression' | 'processors' | 'cost' | 'incidents';
 const ALL_TAB_IDS: readonly TabId[] = ['conversation', 'trace', 'network', 'forks', 'regression', 'processors', 'cost', 'incidents'];
@@ -1823,7 +1824,7 @@ const INCIDENT_TONE: Record<RunIncident['action'], 'destructive' | 'warning' | '
 };
 
 function IncidentsView({ incidents }: { incidents: RunIncident[] }) {
-  const { t, i18n } = useTranslation('inspector');
+  const { t } = useTranslation('inspector');
   if (incidents.length === 0) return <Empty>{t('noIncidentsEmpty')}</Empty>;
   return (
     <Stagger className="space-y-2">
@@ -1835,7 +1836,7 @@ function IncidentsView({ incidents }: { incidents: RunIncident[] }) {
             <span className="font-mono text-xs text-foreground">{inc.toolName}</span>
             <span className="font-mono text-[11px] text-muted-foreground">{inc.toolCallId}</span>
             <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">
-              {new Date(inc.at).toLocaleString(i18n.language === 'tr' ? 'tr-TR' : 'en-US', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+              {new Date(inc.at).toLocaleString(currentLocale(), { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
             </span>
           </div>
           <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{inc.message}</p>

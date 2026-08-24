@@ -8,6 +8,7 @@ import { Stagger, StaggerItem } from '../motion';
 // (without App) (see src/i18n/index.ts) — main.tsx already does this, this re-guarantees it here.
 import '../i18n';
 import enScheduler from '../i18n/locales/en/scheduler.json';
+import { currentLocale } from '../i18n/locale';
 
 // ── Pure logic (tested) — the server already returns the raw trigger state (kind/value/nextRunAt
 // Epoch ms); here only the PRESENTATION (readable duration/date/tone) is derived. See
@@ -126,7 +127,7 @@ export function Scheduler() {
                 <td className="py-1.5 pr-3">{trg.name}</td>
                 <td className="py-1.5 pr-3 text-xs">{formatSchedule(trg, t)}</td>
                 <td className="py-1.5 pr-3 text-xs">
-                  {new Date(trg.nextRunAt).toLocaleString('tr-TR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                  {new Date(trg.nextRunAt).toLocaleString(currentLocale(), { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                   <span className="ml-1.5 text-muted-foreground">({relativeToNow(trg.nextRunAt, now, t)})</span>
                 </td>
                 <td className="py-1.5 pr-3"><Badge tone="muted">{trg.misfire}</Badge></td>
