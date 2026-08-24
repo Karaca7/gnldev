@@ -27,7 +27,7 @@ export type RequestContext = Record<string, unknown>;
  * P1.7 reserved request-context keys that only SERVER-SIDE code is allowed to
  * Fill in (see sealRequestContext below) — mirror of the common "reserved resource-id key" convention,
  * Where a reserved requestContext key carries the AUTHENTICATED resourceId so a client-supplied value
- * In the request body can never impersonate another tenant/user.
+ * In the request body can never impersonate another organization/user.
  */
 export const GNL_RESOURCE_ID_KEY = '__gnl_resourceId';
 export const GNL_ORG_ID_KEY = '__gnl_orgId';
@@ -72,11 +72,11 @@ function define(target: RequestContext, key: string, value: unknown): void {
 }
 
 /**
- * P1.7 seals a request context against the cross-tenant hijack class where a
+ * P1.7 seals a request context against the cross-organization hijack class where a
  * Client-supplied `context.__gnl_resourceId`/`__gnl_orgId`/`__gnl_threadId` in the request body would
  * Otherwise be indistinguishable from a value the SERVER derived from the authenticated identity — a
  * Client could smuggle `{ context: { __gnl_resourceId: 'victim-user' } }` and have it silently win
- * Downstream (memory lookup, dynamic model/system resolution), reading/writing another tenant's data.
+ * Downstream (memory lookup, dynamic model/system resolution), reading/writing another organization's data.
  * Mirrors the common "reserved resource-id key" design: a reserved requestContext key that only server code
  * Writes, so a client can never override its own identity through the request body.
  *
@@ -824,5 +824,17 @@ export function createGnl(config: CreateGnlConfig) {
     return { runId, output, suspended, paused, canceled, stepId, reason, steps };
   }
 
-  return { agent, run, stream, listWorkflows, runWorkflow, runNetwork, listNetworks };
+  /**
+   * The RESOLVED conversation store, exposed because nothing else could reach it.
+   *
+   * `memory` is resolved here — `config.memory`, else `config.memoryFactory(storage)`, else none — and
+   * a host that passes the FACTORY (which is what an organization-scoped deployment must pass: one
+   * shared object cannot carry an org boundary) never sees the instance that was built for a given
+   * organization. @gnldev/server needs exactly that instance to serve a thread read, and was otherwise
+   * left with a store it could write through `run()` but never read back.
+   *
+   * `undefined` when memory is off (`memory: false`, or neither option given), which is the same
+   * answer a caller gets for a deployment that keeps no conversations.
+   */
+  return { agent, run, stream, listWorkflows, runWorkflow, runNetwork, listNetworks, memory: resolvedMemory };
 }

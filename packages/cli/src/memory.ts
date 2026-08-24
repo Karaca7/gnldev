@@ -17,7 +17,12 @@ export function devMemoryFactory(mem: typeof Memory): (storage: Storage | Journa
 export function devStudioMemory(mem: typeof Memory, storage: Storage) {
   const m = mem.memoryPreset(storage, 'chat');
   return {
-    listThreads: (rid?: string) => (rid ? m.listThreads({ resourceId: rid }) : m.listAllThreads()),
+    // The two listings stay SEPARATE, matching `Memory.listThreads`/`listAllThreads`. Collapsing them
+    // into one string-taking method is what made Studio's `?resourceId=` filter inert for a host that
+    // passed AgentMemory directly: the string landed where an `{ resourceId }` object was read, so the
+    // store was asked for every thread and answered with every user's.
+    listThreads: (opts: { resourceId: string }) => m.listThreads(opts),
+    listAllThreads: () => m.listAllThreads(),
     getMessages: (tid: string) => m.getMessages(tid),
     getWorkingMemory: (tid: string) => m.getWorkingMemory(tid),
     updateThread: (tid: string, patch: { title?: string; metadata?: Record<string, unknown> }) => m.updateThread(tid, patch),

@@ -35,9 +35,11 @@ const boundApi = () => createRestApi(
   { journal: new InMemoryJournal(), agents: agents() },
   { auth: roleAuth({ admin: { token: 'acme-adm', orgId: 'acme' } }), org: {} },
 );
+// The operator is `superAdmin`, not an admin that merely forgot its orgId: with `org` configured, an
+// unbound identity is fail-closed, and the platform scope is only ever an explicit grant (scope.ts).
 const opApi = () => createRestApi(
   { journal: new InMemoryJournal(), agents: agents() },
-  { auth: roleAuth({ admin: { token: 'op' } }), org: {} },
+  { auth: roleAuth({ superAdmin: { token: 'op' } }), org: {} },
 );
 
 const run = (api: any, name: string, token: string) =>

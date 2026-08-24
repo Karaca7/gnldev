@@ -11,6 +11,7 @@
 // Every test here is paired against that case, and `actingAs = org` is mutated to prove it.
 import { describe, it, expect } from 'vitest';
 import { InMemoryJournal, listLog } from '@gnldev/durable';
+import { PLATFORM_ADMIN_ROLE } from '@gnldev/auth';
 import { createRestApi } from '../src/index.js';
 import { call } from './call.js';
 
@@ -21,7 +22,9 @@ const authProvider = {
     const t = req.headers.get('authorization')?.replace('Bearer ', '');
     if (t === 'acme-adm') return { roles: ['admin'], id: 'u-acme', orgId: 'acme' };
     if (t === 'globex-adm') return { roles: ['admin'], id: 'u-globex', orgId: 'globex' };
-    if (t === 'ops') return { roles: ['admin'], id: 'u-ops' }; // unbound platform operator
+    // The unbound platform operator, now SAYING so — see scope.ts: the platform scope is an explicit
+    // grant, never inferred from a missing orgId.
+    if (t === 'ops') return { roles: ['admin', PLATFORM_ADMIN_ROLE], id: 'u-ops' };
     return null;
   },
   authorize: () => ({ allow: true }),

@@ -77,6 +77,7 @@ class InMemoryRunJournal implements RunJournal {
     let all = await this.journal.listRuns();
     if (q?.status) all = all.filter((r) => r.status === q.status);
     if (q?.agent) all = all.filter((r) => r.agent === q.agent);
+    if (q?.resourceId) all = all.filter((r) => r.resourceId === q.resourceId);
     return paginate(all, q);
   }
 }
@@ -200,7 +201,7 @@ class InMemoryVectorStore implements VectorStore {
     // Filter, THEN rank, THEN slice. Ranking first and filtering after would make a caller's result
     // count depend on how many other namespaces exist and how similar their documents happen to be:
     // ask for 4, get however many of the global top 4 were yours. No error, no leak, just recall that
-    // quietly degrades as other tenants upload — invisible unless a test has two tenants in it.
+    // quietly degrades as other organizations upload — invisible unless a test has two of them in it.
     return this.items
       .filter((it) => opts?.namespace === undefined || it.namespace === opts.namespace)
       .map((it) => ({ id: it.id, text: it.text, metadata: it.metadata, ...(it.namespace !== undefined ? { namespace: it.namespace } : {}), score: cosineSimilarity(embedding, it.embedding) }))

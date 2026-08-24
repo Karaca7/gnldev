@@ -130,8 +130,8 @@ export interface StudioMemory {
    *
    * Studio cannot verify it and does not try: this is somebody else's object with its own storage
    * behind it. Without the claim, a caller acting as an organization is REFUSED on the routes that
-   * reach this object (403 `org_scope_refused`), because serving them would hand one tenant another
-   * tenant's data. An operator with no organization scope is unaffected either way.
+   * reach this object (403 `org_scope_refused`), because serving them would hand one organization another
+   * organization's data. An operator with no organization scope is unaffected either way.
    *
    * DECLARED here, not just read. Every refusal message tells the host to "set `orgScoped: true` on
    * it", and the field existed nowhere in the types — so a host following that instruction got
@@ -139,7 +139,16 @@ export interface StudioMemory {
    * in TypeScript at all. It was read through a cast in three places, which is what hid it.
    */
   orgScoped?: boolean;
-  listThreads (resourceId?: string): Promise<unknown[]> | unknown[];
+  /**
+   * ONE resource's threads. The OBJECT argument matters: this type used to read
+   * `listThreads(resourceId?: string)` and the route below passed a bare string, while
+   * @gnldev/memory's AgentMemory reads `opts.resourceId` — so the filter silently did nothing and the
+   * route answered with EVERY user's threads. Declaring a shape for someone else's method is how that
+   * survived; the contract now lives in @gnldev/durable's `Memory` and this mirrors it.
+   */
+  listThreads (opts: { resourceId: string }): Promise<unknown[]> | unknown[];
+  /** EVERY thread — the operator/global view this page shows when no resource is named. */
+  listAllThreads? (): Promise<unknown[]> | unknown[];
   getMessages (threadId: string): Promise<unknown[]> | unknown[];
   getWorkingMemory?(threadId: string): Promise<unknown> | unknown;
   /** Updates the thread's title/metadata (rename). Returns 501 from the route if the adapter doesn't support it. */
@@ -209,8 +218,8 @@ export interface StudioWorkflowStore {
    *
    * Studio cannot verify it and does not try: this is somebody else's object with its own storage
    * behind it. Without the claim, a caller acting as an organization is REFUSED on the routes that
-   * reach this object (403 `org_scope_refused`), because serving them would hand one tenant another
-   * tenant's data. An operator with no organization scope is unaffected either way.
+   * reach this object (403 `org_scope_refused`), because serving them would hand one organization another
+   * organization's data. An operator with no organization scope is unaffected either way.
    *
    * DECLARED here, not just read. Every refusal message tells the host to "set `orgScoped: true` on
    * it", and the field existed nowhere in the types — so a host following that instruction got
@@ -223,7 +232,7 @@ export interface StudioWorkflowStore {
    * `wfStoreFor`). It had NO context parameter at all, which made the refusal's documented escape
    * hatch — declare `orgScoped: true` once your object honours the `orgId` it is handed — an
    * unkeepable promise here: a host that set the flag was never told who was asking, so it served
-   * every tenant from one store. Measured, with the flag set: `GET /workflows` returned another
+   * every organization from one store. Measured, with the flag set: `GET /workflows` returned another
    * organization's definition including its prompt template, and `GET /workflows/:name` its steps.
    *
    * Optional, so a host implementation that ignores it still satisfies the interface — a function of
@@ -298,8 +307,8 @@ export interface StudioQueue {
    *
    * Studio cannot verify it and does not try: this is somebody else's object with its own storage
    * behind it. Without the claim, a caller acting as an organization is REFUSED on the routes that
-   * reach this object (403 `org_scope_refused`), because serving them would hand one tenant another
-   * tenant's data. An operator with no organization scope is unaffected either way.
+   * reach this object (403 `org_scope_refused`), because serving them would hand one organization another
+   * organization's data. An operator with no organization scope is unaffected either way.
    *
    * DECLARED here, not just read. Every refusal message tells the host to "set `orgScoped: true` on
    * it", and the field existed nowhere in the types — so a host following that instruction got
@@ -330,8 +339,8 @@ export interface StudioCache {
    *
    * Studio cannot verify it and does not try: this is somebody else's object with its own storage
    * behind it. Without the claim, a caller acting as an organization is REFUSED on the routes that
-   * reach this object (403 `org_scope_refused`), because serving them would hand one tenant another
-   * tenant's data. An operator with no organization scope is unaffected either way.
+   * reach this object (403 `org_scope_refused`), because serving them would hand one organization another
+   * organization's data. An operator with no organization scope is unaffected either way.
    *
    * DECLARED here, not just read. Every refusal message tells the host to "set `orgScoped: true` on
    * it", and the field existed nowhere in the types — so a host following that instruction got
@@ -359,8 +368,8 @@ export interface StudioVectors {
    *
    * Studio cannot verify it and does not try: this is somebody else's object with its own storage
    * behind it. Without the claim, a caller acting as an organization is REFUSED on the routes that
-   * reach this object (403 `org_scope_refused`), because serving them would hand one tenant another
-   * tenant's data. An operator with no organization scope is unaffected either way.
+   * reach this object (403 `org_scope_refused`), because serving them would hand one organization another
+   * organization's data. An operator with no organization scope is unaffected either way.
    *
    * DECLARED here, not just read. Every refusal message tells the host to "set `orgScoped: true` on
    * it", and the field existed nowhere in the types — so a host following that instruction got
@@ -421,7 +430,23 @@ export interface PermissionCatalogEntry {
  */
 export const PERMISSION_CATALOG: PermissionCatalogEntry[] = [
   { id: 'agents:run', label: 'Run agents', group: 'run', description: 'Execute / stream / resume agents' },
-  { id: '*:read', label: 'View runs & data', group: 'read', description: 'Read-only access to runs, usage, audit' },
+  /**
+   * READ, split. `*:read` alone could say who may DO something but never who may SEE something: one
+   * grant covered runs, conversation content, spend and the governance log alike, so "let support read
+   * runs" and "let support read every customer's messages" were the same decision.
+   *
+   * `*:read` stays, first, and still grants all of these — `permissionMatches` treats a `*` resource as
+   * matching any (@gnldev/auth-ee rbac.ts), so every existing grant keeps working unchanged. The free
+   * tier is untouched by construction: the gate reduces anything ending in `:read` to `action: 'read'`,
+   * which is exactly what these routes passed before they were named.
+   */
+  { id: '*:read', label: 'View everything', group: 'read', description: 'All read access (every permission below)' },
+  { id: 'runs:read', label: 'View runs', group: 'read', description: 'Runs, traces, steps, approvals, metrics' },
+  { id: 'threads:read', label: 'View conversations', group: 'read', description: 'Thread messages, working memory, injected context — end users\' own words' },
+  { id: 'money:read', label: 'View spend', group: 'read', description: 'Usage, cost, price table, organization budgets' },
+  { id: 'audit:read', label: 'View the audit log', group: 'read', description: 'Who did what, and when' },
+  { id: 'users:read', label: 'View users', group: 'read', description: 'The organization\'s user list' },
+  { id: 'catalog:read', label: 'View configuration', group: 'read', description: 'Agents, tools, workflows, policy, providers — no customer data' },
   { id: 'run:write', label: 'Fork/resume runs', group: 'run', description: 'Fork a run or resume an approval' },
   { id: 'run:delete', label: 'Delete/purge runs', group: 'run', description: 'Permanently purge a run (GDPR)' },
   { id: 'users:write', label: 'Manage users', group: 'admin', description: 'Create / update / delete / revoke users' },
@@ -437,6 +462,9 @@ export const PERMISSION_CATALOG: PermissionCatalogEntry[] = [
  * The customer admin can then tick/untick individual boxes and PATCH the user's explicit permissions.
  */
 export const ROLE_PERMISSION_PRESETS: Record<string, string[]> = {
+  // UNCHANGED on purpose. The named read permissions exist so a customer admin can UNTICK one — the
+  // starting point for each role stays what it has always been, so picking a role never silently takes
+  // away access someone had yesterday. The narrower sets are a choice, not a new default.
   viewer: ['*:read'],
   member: ['*:read', 'agents:run'],
   admin: ['*'],
@@ -648,6 +676,26 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // Strict fail-closed is a paid-only behavior change, gated on the license capability alone.
   const strictMultiOrg = authProvider?.capabilities?.().multiOrganization === true;
   /**
+   * Whether this deployment has organizations at all. See the twin in @gnldev/server for the
+   * measurement: with `org` configured but no paid capability declared, an unbound admin read EVERY
+   * organization's runs (200); declaring the paid capability refused it (403). A security default that
+   * turns on when you pay is the wrong shape, and `capabilities()` is caller-supplied, so it can state
+   * an intent but never prove one — a configured `org` option does.
+   *
+   * Deliberately NOT the same as `multiOrganizationEnabled` further down: that one gates the org
+   * MANAGEMENT surface (create/delete/budget), which is a commercial line. This one gates the
+   * fail-closed rules, which are a correctness line. They used to be tangled; the difference is the
+   * whole point.
+   *
+   * The `authProvider` term is load-bearing and belongs HERE rather than at each call site. An ABSENT
+   * provider is the deliberate no-auth single-operator mode: there is no identity to isolate ON, so
+   * every caller is the operator and there is nothing to fail closed about. Written without this term,
+   * a bare `org: {}` with no auth locked the operator out of its own deployment — measured as 403 on
+   * `/organizations` and on every capability the same deployment advertised as available. `strictMultiOrg`
+   * already implies a provider (it reads one), so this only widens the `opts.org` branch back to correct.
+   */
+  const orgIsolationActive = !!authProvider && (strictMultiOrg || !!opts.org);
+  /**
    * Strict-model "operator" check for PLATFORM (cross-org) actions. Returns a 403 Response if the
    * Caller may NOT act platform-wide, else undefined.
    *  • org-bound identity → NEVER a platform actor (its own `orgBoundMsg` is preserved for back-compat).
@@ -658,12 +706,12 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   const isPlatformOperator = (c: Context): boolean => {
     const p = principalOf(c.req.raw);
     if (p?.orgId) return false;
-    return !strictMultiOrg || isPlatformAdmin(p);
+    return !orgIsolationActive || isPlatformAdmin(p);
   };
   /**
    * Refuses a thread request from an org-bound caller when thread storage cannot be scoped.
    *
-   * Serving it would hand one tenant another tenant's conversations. Refusing is the only honest
+   * Serving it would hand one organization another organization's conversations. Refusing is the only honest
    * answer available: the host's `memory` object owns its own store, and nothing here can put an
    * organization boundary inside it. The message names the fix, because the fix is a one-line config
    * change (`memoryFactory` instead of `memory`) and the alternative is a leak nobody sees.
@@ -705,7 +753,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
    *
    * Three of those entry points originally received nothing at all — `cache.stats()`, `queue.listJobs()`
    * and every method of `StudioWorkflowStore` — which made the opt-in below a promise the host could
-   * not keep: it set the flag, was never told who was asking, and served every tenant from one store.
+   * not keep: it set the flag, was never told who was asking, and served every organization from one store.
    * They all take a `ctx` now, and `wfStoreFor` binds it so no call site can drop it. The flag itself
    * was also undeclared on the interfaces, so a host doing exactly what the refusal message says got
    * `TS2353` — it is a real field on all five now.
@@ -714,7 +762,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
    * these. A host that HAS made its object org-aware says so by setting `orgScoped: true` on it — an
    * explicit claim, in the host's own code, the same shape as `allowOpenAccess`. Refusing by default is
    * the only side of this that fails safe: the cost of a wrong refusal is a config line, and the cost of
-   * a wrong service is one tenant reading another's data.
+   * a wrong service is one organization reading another's data.
    */
   const unscopeableHosts: Array<{ what: string; obj: unknown; fix: string }> = [
     { what: 'vectors', obj: vectors, fix: 'set `orgScoped: true` on it once it honours the `orgId` it is handed' },
@@ -758,7 +806,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
    * operator's only signal was the 403 itself.
    *
    * Warning here instead of only at boot also removes the opposite error — an EE licensee running
-   * single-tenant got three warnings claiming endpoints "are refused" while nothing was refused.
+   * single-organization got three warnings claiming endpoints "are refused" while nothing was refused.
    * A warning tied to the refusal cannot be wrong in either direction.
    */
   const warnedRefusals = new Set<string>();
@@ -768,7 +816,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     console.warn(
       `@gnldev/studio: refused an organization-scoped identity on an endpoint that reaches \`${what}\`. ` +
       'That object owns its own store and cannot be given an organization boundary from here, so ' +
-      `serving it would hand one tenant another tenant's data. To serve these endpoints, ${fix}.`,
+      `serving it would hand one organization another organization's data. To serve these endpoints, ${fix}.`,
     );
   };
 
@@ -786,7 +834,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       // the difference between "you may not see this" and "log in again".
       code: 'org_scope_refused',
       error: `this request reaches \`${what}\`, which is a host-provided object with no organization ` +
-        `boundary, so serving it would hand one tenant another tenant's data — ${fix}, or use an ` +
+        `boundary, so serving it would hand one organization another organization's data — ${fix}, or use an ` +
         'unscoped operator identity.',
     }, 403);
   };
@@ -817,7 +865,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   const requirePlatformAdmin = (c: Context, orgBoundMsg: string): Response | undefined => {
     const p = principalOf(c.req.raw);
     if (p?.orgId) return c.json({ error: orgBoundMsg }, 403);
-    if (strictMultiOrg && !isPlatformAdmin(p)) {
+    if (orgIsolationActive && !isPlatformAdmin(p)) {
       return c.json({ error: 'platform-admin required (fail-closed: no org scope and no platform-admin grant)' }, 403);
     }
     return undefined;
@@ -947,7 +995,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       // Gate returns the correct 401 (unauthenticated) instead of a misleading 403. Free mode: skipped
       // Entirely (strictMultiOrg=false) → behavior unchanged.
       if (
-        strictMultiOrg && principal && !bound && !isPlatformAdmin(principal) &&
+        orgIsolationActive && principal && !bound && !isPlatformAdmin(principal) &&
         !isSelfDescribingRoute(c)
       ) {
         return c.json({ error: 'access denied: no org scope and no platform-admin grant (fail-closed)' }, 403);
@@ -1053,7 +1101,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
    * sites I happened to be looking at is exactly how the hole stayed open. The refusal was added to
    * list/def/CRUD and missed the three routes that RUN a managed workflow, so an org-bound admin got
    * 403 on `GET /workflows/secret/def` and 200 on `POST /workflows/secret/run` — measured, returning
-   * the other tenant's prompt template verbatim in the dry-run output, and executing it for real
+   * the other organization's prompt template verbatim in the dry-run output, and executing it for real
    * without `dryRun`. Reading the store now requires a request, and a request has to pass the gate.
    */
   /**
@@ -1299,7 +1347,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     console.warn(
       '@gnldev/studio: `memory` was passed directly while multi-organization is enabled. That object ' +
       'owns its own store and cannot be given an organization boundary, so the thread endpoints are ' +
-      'refused to organization-scoped identities rather than serving one tenant another tenant\'s ' +
+      'refused to organization-scoped identities rather than serving one organization another organization\'s ' +
       'conversations. Pass `memoryFactory` instead — it receives the org-scoped journal — or set `orgScoped: true` '
       + 'on your `memory` object if it already keeps its own organization boundary.',
     );
@@ -1321,8 +1369,8 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       console.warn(
         `@gnldev/studio: \`${what}\` was passed directly while multi-organization is enabled. It owns ` +
         'its own store and cannot be given an organization boundary from here, so the endpoints that ' +
-        `reach it are refused to organization-scoped identities rather than serving one tenant another ` +
-        `tenant's data. To serve them, ${fix}.`,
+        `reach it are refused to organization-scoped identities rather than serving one organization another ` +
+        `organization's data. To serve them, ${fix}.`,
       );
     }
   }
@@ -1465,7 +1513,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // Falls through to the unfiltered flat array below, same as today — matches the "no params → identical
   // To today" backward-compat contract; the studio-ui client always sends `limit`, so this never bites it).
   app.get('/runs', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'runs:read'))) return deny(c.req.raw, 'read');
     const limitRaw = c.req.query('limit');
     if (limitRaw === undefined) return c.json(await reader.listRuns());
     const limit = Math.min(Math.max(Math.floor(Number(limitRaw)) || 0, 1), 500);
@@ -1532,12 +1580,12 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     return c.json({ items, nextCursor: next < newestFirst.length ? String(next) : undefined, total: newestFirst.length });
   });
   app.get('/runs/:id', async (c) =>
-    (await allow(c.req.raw, 'read')) ? c.json(await reader.readRun(decodeURIComponent(c.req.param('id')))) : deny(c.req.raw, 'read'),
+    (await allowP(c.req.raw, 'runs:read')) ? c.json(await reader.readRun(decodeURIComponent(c.req.param('id')))) : deny(c.req.raw, 'read'),
   );
 
   // Materialized state at step N (reconstructState).
   app.get('/runs/:id/state', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'runs:read'))) return deny(c.req.raw, 'read');
     const id = decodeURIComponent(c.req.param('id'));
     const entries = await reader.readRun(id);
     const q = Number(c.req.query('step'));
@@ -1552,7 +1600,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // Without memory, pre-provenance runs, or a read-only journal — the UI renders that honestly as
   // "no provenance recorded", never as an error.
   app.get('/runs/:id/memory-context', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'threads:read'))) return deny(c.req.raw, 'read');
     if (!writable) return c.json({ context: null });
     const id = decodeURIComponent(c.req.param('id'));
     const ctx = await rw.get!(`${id}:memctx`).catch(() => undefined);
@@ -1561,14 +1609,14 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // Cost/token (getRunCost).
   app.get('/runs/:id/cost', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'money:read'))) return deny(c.req.raw, 'read');
     return c.json(await getRunCost(reader, decodeURIComponent(c.req.param('id'))));
   });
 
   // Runtime scorer results: the registry (AgentConfig.scorers) and the `${runId}:proc:eval:<name>`
   // Records that scoreRun memoizes — the read surface for exactly-once scores.
   app.get('/runs/:id/scores', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'runs:read'))) return deny(c.req.raw, 'read');
     if (!writable || typeof rw.listKeys !== 'function') return c.json({ scores: {} });
     const id = decodeURIComponent(c.req.param('id'));
     const prefix = `${id}:proc:eval:`;
@@ -1585,7 +1633,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // This run (`readProcessorReports` — @gnldev/durable, reads the `${runId}:procreport:...` prefix).
   // Empty list if the host doesn't use a processor / writable+listKeys is missing (SAME fallback as scores).
   app.get('/runs/:id/processors', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'runs:read'))) return deny(c.req.raw, 'read');
     if (!writable || typeof rw.listKeys !== 'function') return c.json({ reports: [] });
     const id = decodeURIComponent(c.req.param('id'));
     const reports = await readProcessorReports(rw as any, id).catch(() => []);
@@ -1596,7 +1644,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // MaxToolCalls — warn/reflect/block/suspend) as queryable telemetry. Same optional-capability
   // Fallback as /processors: no listKeys → empty list (never an error).
   app.get('/runs/:id/incidents', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'runs:read'))) return deny(c.req.raw, 'read');
     if (!writable || typeof rw.listKeys !== 'function') return c.json({ incidents: [] });
     const id = decodeURIComponent(c.req.param('id'));
     const incidents = await readIncidents(rw as any, id).catch(() => []);
@@ -1606,7 +1654,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // Dynamic agent network trace (runNetwork): CAS-frozen routing decisions + step results —
   // The UI draws the dynamic tree (router → agent → result) from this. Nested run detail at /runs/net:<id>:<i>.
   app.get('/runs/:id/network', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'runs:read'))) return deny(c.req.raw, 'read');
     if (!writable || typeof rw.listKeys !== 'function') return c.json({ routes: [], steps: [] });
     const id = decodeURIComponent(c.req.param('id'));
     // Rw is Partial<Journal>; writable + listKeys was checked → the surface getNetworkTrace uses is complete.
@@ -1617,7 +1665,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // Enrichment: tool spans are named via the toolCallId→toolName mapping and linked to the model step
   // That called them via `parent` (span index) → the UI draws a real nested tree.
   app.get('/runs/:id/trace', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'runs:read'))) return deny(c.req.raw, 'read');
     const id = decodeURIComponent(c.req.param('id'));
     const entries = await reader.readRun(id);
     const cost = await getRunCost(reader, id);
@@ -1661,7 +1709,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // Per-step diff: messages added between step N and N-1 + the pending delta (time-travel drill-down).
   app.get('/runs/:id/diff', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'runs:read'))) return deny(c.req.raw, 'read');
     const id = decodeURIComponent(c.req.param('id'));
     const entries = await reader.readRun(id);
     const step = Math.max(1, Number(c.req.query('step') ?? entries.length));
@@ -1675,7 +1723,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // ── Governance endpoints: approval queue / audit / organizations ───────────────────
   // Approval queue (inbox): the pending tool approvals of ALL suspended runs in a single list.
   app.get('/approvals', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'runs:read'))) return deny(c.req.raw, 'read');
     const runs = await reader.listRuns();
     const items: { runId: string; toolCallId: string; toolName: string; args?: unknown; reason?: string }[] = [];
     for (const r of runs) {
@@ -1718,7 +1766,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // Of the ALS-scoped `rw` (otherwise a bound identity's GET would be scoped by the org middleware to a
   // Non-existent prefix like org:<id>:__audit__: and always return empty — see the rootRw pattern in /organizations).
   app.get('/audit', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'audit:read'))) return deny(c.req.raw, 'read');
     const rootRw = rawReader as Partial<Journal> & JournalReader;
     if (!writable || typeof rootRw.listKeys !== 'function') return c.json({ items: [] });
     const limit = Math.max(1, Math.min(1000, Number(c.req.query('limit') ?? 200)));
@@ -1732,7 +1780,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     const bound = principalOf(c.req.raw)?.orgId ?? orgALS.getStore();
     const org = bound ?? (c.req.query('org') || undefined);
     // Bounded read, newest first. Every organization's writes land in this single root log, so an
-    // unbounded read meant one tenant's `limit=1` cost one `get` per record in the PLATFORM's entire
+    // unbounded read meant one organization's `limit=1` cost one `get` per record in the PLATFORM's entire
     // history — measured at 2001 gets for a 2000-record log, which on Postgres is 2000 round trips to
     // return one row. The scan window is generous relative to the page so filters still have material
     // to work with, and when it does cut the history short the response says so rather than presenting
@@ -1745,7 +1793,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     // An ORG-scoped view starts at that org's current tenancy. `__audit__` is not org-prefixed, so it
     // survives purgeOrganization by design — an audit log erased by the operation it records is not an
     // audit log — but org ids are human-chosen strings ('acme', a company slug), and the same id going
-    // to a different tenant later is ordinary. Without this cutoff the next tenant of an id opened
+    // to a different customer later is ordinary. Without this cutoff the next holder of an id opened
     // /audit and read who did what in the previous tenancy. The OPERATOR's unscoped view is unchanged
     // and still shows everything, including the purge itself.
     const purgedAt = org
@@ -1769,7 +1817,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // A SINGLE notification to opts.alerts.webhook on budget overrun (first-write-wins __alert__ marker).
   const ORG_KEY_PRE = 'org:';
   const listOrganizations = async (c: Context) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'money:read'))) return deny(c.req.raw, 'read');
     if (!writable || typeof rw.listKeys !== 'function') return c.json({ organizations: [] });
     // The scan always happens on the ROOT journal (org: prefixes aren't visible in the org-scoped view);
     // An identity-bound org sees ONLY itself — the global list is open only to unbound (operator) identities.
@@ -1966,7 +2014,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
    * something to hand out before anyone has identified themselves.
    */
   app.get('/model-providers', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'catalog:read'))) return deny(c.req.raw, 'read');
     // Model ids come from the journal and from host config, never from a list compiled into the UI.
     // Providers add and rename models constantly, and a suggestion list baked into the bundle is one
     // that needs a gnl RELEASE to mention a model that shipped this morning — the same trap
@@ -1996,7 +2044,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   }
 
   app.get('/users', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'users:read'))) return deny(c.req.raw, 'read');
     if (!opts.users) return c.json({ users: [] });
     const own = principalOf(c.req.raw)?.orgId;
     const all = await opts.users.list();
@@ -2199,7 +2247,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // Counters (O(1 + days), see readMetricsSummary) — no per-run scan at all. `source` tells the caller
   // Which path served the response (materialized vs the legacy full scan) so Studio's UI/tests can tell.
   app.get('/metrics', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'runs:read'))) return deny(c.req.raw, 'read');
     if (typeof rw.getCounters === 'function') {
       const daysParam = Number(c.req.query('days'));
       const days = Number.isFinite(daysParam) ? Math.trunc(daysParam) : undefined;
@@ -2259,7 +2307,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // Only runs WITHOUT that row (in-flight, or older than this feature / a journal without incrBy) fall
   // Back to the readRun+getRunCost scan. Response shape is UNCHANGED (same field names as before).
   app.get('/metrics/runs', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'runs:read'))) return deny(c.req.raw, 'read');
     let runs = await reader.listRuns();
     // P1.6b: optional ?limit= — clamp 1..1000, slicing the run list BEFORE fetching any rows (a cheap
     // Partial win). Full cursor-based pagination for this endpoint is P0.3's job — not attempted here.
@@ -2424,7 +2472,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       // If the ticket is org-bound (multi-org), the read is scoped to that org — PARITY with the org
       // Middleware's bound-principal behavior (see the app.use('*') block above).
       ticketOrg = principal?.orgId;
-    } else if (!(await allow(c.req.raw, 'read'))) {
+    } else if (!(await allowP(c.req.raw, 'runs:read'))) {
       return deny(c.req.raw, 'read');
     }
     const run = () => sseResponse(c, async (stream) => {
@@ -2632,7 +2680,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // Diffs two EXISTING runs (without re-running) at the decision-point level — read-only.
   app.get('/runs/:id/regression/:otherId', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'runs:read'))) return deny(c.req.raw, 'read');
     const id = decodeURIComponent(c.req.param('id'));
     const otherId = decodeURIComponent(c.req.param('otherId'));
     return c.json(await regressionReport(reader, id, otherId));
@@ -2683,7 +2731,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // ── Guard/policy editor: rules live in the journal (__policy__), policyGuard reads them live ──────────
   app.get('/policy', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'catalog:read'))) return deny(c.req.raw, 'read');
     if (!writable) return c.json({ policy: null });
     return c.json({ policy: (await rw.get!(POLICY_KEY)) ?? null });
   });
@@ -2733,7 +2781,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // screen that lets you add tomorrow's model must not un-price gpt-4o as a side effect, because the
   // symptom of that is not an error — it is a ceiling that quietly stopped working.
   app.get('/pricing', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'money:read'))) return deny(c.req.raw, 'read');
     if (!writable) return c.json({ version: 0, overrides: {}, effective: {}, editable: false });
     // The ROOT journal, explicitly — the same choice /audit makes, and for the same reason: PUT
     // /pricing requires an unbound platform operator, so the document only ever exists at the root.
@@ -2942,7 +2990,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // Registered agent list (for the selector). Visible if read is open; running requires write.
   // Org-scoped: an org-bound caller only sees GLOBAL agents + agents whose `orgs` include their org.
   app.get('/agents', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'catalog:read'))) return deny(c.req.raw, 'read');
     if (!gnl) return c.json([]);
     const org = callerOrg(c);
     const list = await gnl.listAgents();
@@ -2956,7 +3004,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // And doesn't carry the real AgentConfig — see its JSDoc above). Platform-level (never per-org, same
   // As /organizations) → gated by requirePlatformAdmin regardless of the org middleware.
   app.get('/agents/registry', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'catalog:read'))) return deny(c.req.raw, 'read');
     { const denied = requirePlatformAdmin(c, 'an org-bound identity cannot view the agent registry (operator required)'); if (denied) return denied; }
     if (!writable || typeof rw.listKeys !== 'function') return c.json([]);
     try {
@@ -3065,7 +3113,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // ── Tools (if gnl.listTools is given) ─────────────────────────────────────────
   // Flat tool list (name, description, JSON schema, which agents). For schema-driven form generation.
   app.get('/tools', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'catalog:read'))) return deny(c.req.raw, 'read');
     return c.json(gnl?.listTools ? await gnl.listTools() : []);
   });
 
@@ -3082,20 +3130,30 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // ── Memory / Threads (if memory is given) ─────────────────────────────────────
   app.get('/threads', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'threads:read'))) return deny(c.req.raw, 'read');
     { const denied = requireScopedMemory(c); if (denied) return denied; }
     if (!resolvedMemory) return c.json([]);
     const resourceId = c.req.query('resourceId') || undefined;
-    return c.json(await resolvedMemory.listThreads(resourceId));
+    // See the `listThreads` note on the type above: the one-resource method takes an object, and the
+    // unfiltered view is a DIFFERENT method. Conflating them is what made this filter inert.
+    if (resourceId) return c.json(await resolvedMemory.listThreads({ resourceId }));
+    // `listAllThreads` when the adapter has it; otherwise `listThreads()` with NO argument, which is
+    // what an adapter written against the previous `listThreads(resourceId?: string)` shape implements
+    // as its unfiltered view. Not a catch-all fallback: AgentMemory HAS `listAllThreads` and takes the
+    // first branch, so the legacy call is only ever made to an adapter that meant it. Without this,
+    // splitting the method silently emptied the operator's thread list for every host that had
+    // implemented the old contract.
+    if (resolvedMemory.listAllThreads) return c.json(await resolvedMemory.listAllThreads());
+    return c.json(await (resolvedMemory.listThreads as unknown as () => Promise<unknown[]> | unknown[])());
   });
   app.get('/threads/:id/messages', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'threads:read'))) return deny(c.req.raw, 'read');
     { const denied = requireScopedMemory(c); if (denied) return denied; }
     if (!resolvedMemory) return c.json([]);
     return c.json(await resolvedMemory.getMessages(decodeURIComponent(c.req.param('id'))));
   });
   app.get('/threads/:id/working-memory', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'threads:read'))) return deny(c.req.raw, 'read');
     { const denied = requireScopedMemory(c); if (denied) return denied; }
     if (!resolvedMemory?.getWorkingMemory) return c.json({ value: null });
     return c.json({ value: (await resolvedMemory.getWorkingMemory(decodeURIComponent(c.req.param('id')))) ?? null });
@@ -3151,7 +3209,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // ── Queue / Jobs (if queue is given) ──────────────────────────────────────────
   app.get('/jobs', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'catalog:read'))) return deny(c.req.raw, 'read');
     if (!queue) return c.json([]);
     { const denied = requireScopedHost(c, 'queue'); if (denied) return denied; }
     return c.json(await queue.listJobs({ orgId: callerOrg(c) }));
@@ -3177,7 +3235,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // ── Cache (if cache is given): hit/miss ratio + manual invalidate (@gnldev/cache stats()/invalidate() duck-type) ──
   app.get('/cache/stats', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'catalog:read'))) return deny(c.req.raw, 'read');
     if (!cache) return c.json({ hits: 0, misses: 0, hitRate: 0, size: 0 });
     { const denied = requireScopedHost(c, 'cache'); if (denied) return denied; }
     return c.json(await cache.stats({ orgId: callerOrg(c) }));
@@ -3204,14 +3262,14 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // Sched:state:/sched:fail: keys as pollScheduler, never MUTATES any state). Returns an empty list if
   // The journal isn't writable + doesn't support listKeys (or the host doesn't use @gnldev/scheduler at all) (same pattern as queue/jobs).
   app.get('/scheduler/triggers', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'catalog:read'))) return deny(c.req.raw, 'read');
     if (!writable || typeof rw.listKeys !== 'function' || typeof rw.get !== 'function') return c.json([]);
     return c.json(await listTriggers(rw as unknown as Journal));
   });
 
   // ── Knowledge / vector search (if vectors is given) ────────────────────────────
   app.post('/knowledge/search', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'catalog:read'))) return deny(c.req.raw, 'read');
     if (!vectors) return c.json([]);
     { const denied = requireScopedHost(c, 'vectors'); if (denied) return denied; }
     const body = (await c.req.json().catch(() => ({}))) as { query?: string; topK?: number };
@@ -3224,10 +3282,10 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // ── Workflows (if gnl.listWorkflows or the workflows option is given) ──────────
   app.get('/workflows', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'catalog:read'))) return deny(c.req.raw, 'read');
     const rawCode = gnl?.listWorkflows ? await gnl.listWorkflows() : (workflows ? await workflows.listWorkflows() : []);
     const code: WorkflowMeta[] = rawCode.map((w) => ({ ...w, source: 'code' as const, ...(workflowInputs?.[w.name] ? { input: workflowInputs[w.name] } : {}) }));
-    // The managed half only. Code workflows come from the process, not from a tenant's data, so they
+    // The managed half only. Code workflows come from the process, not from an organization's data, so they
     // stay listed — refusing the whole route would take the code list away over an unrelated option.
     // Measured before this: an acme-bound admin's `GET /workflows` returned globex's definition
     // including its prompt template.
@@ -3380,7 +3438,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // The status of a workflow RUN (step outputs + suspend, from the journal) — open a past run / replay.
   app.get('/workflows/run/:runId', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'runs:read'))) return deny(c.req.raw, 'read');
     if (!rw.listKeys || !rw.get) return c.json({ error: 'wf run state requires listKeys+get' }, 501);
     const runId = decodeURIComponent(c.req.param('runId'));
     const pre = `${runId}:wf:`;
@@ -3399,7 +3457,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // Lists ALL runs of a workflow (persistent history; server-side instead of localStorage).
   // Extracts `wf-<name>-` prefixed runIds from the journal (pure-wf runs don't land in listRuns → listKeys).
   app.get('/workflows/:name/runs', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'runs:read'))) return deny(c.req.raw, 'read');
     if (!rw.listKeys || !rw.get) return c.json({ error: 'wf run listing requires listKeys+get' }, 501);
     const name = decodeURIComponent(c.req.param('name'));
     const limit = Math.max(1, Math.min(500, Number(c.req.query('limit')) || 100));
@@ -3447,7 +3505,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
    * Stable to read directly without importing the package.
    */
   app.get('/workflows/runs', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'runs:read'))) return deny(c.req.raw, 'read');
     if (!rw.listKeys || !rw.get) return c.json({ error: 'workflow run listing requires listKeys+get' }, 501);
     const statusRaw = c.req.query('status');
     if (statusRaw != null && statusRaw !== 'suspended' && statusRaw !== 'completed' && statusRaw !== 'canceled') {
@@ -3547,7 +3605,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // ── Workflow CRUD (managed; if resolvedWfStore exists) ─────────────────────────
   app.get('/workflows/:name/def', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'catalog:read'))) return deny(c.req.raw, 'read');
     { const denied = requireScopedHost(c, 'workflowStore'); if (denied) return denied; }
     const wf = wfStoreFor(c);
     if (!wf) return c.json({ error: 'no workflow store is available' }, 501);
@@ -3601,13 +3659,13 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // ── Scorers / Evals (if scorers is given) ─────────────────────────────────────
   app.get('/scorers', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'catalog:read'))) return deny(c.req.raw, 'read');
     return c.json(scorers ? await scorers.list() : []);
   });
   // Score a run with the selected scorers (read; deterministic, reads from a journaled run).
   // ── Managed agent versions: list / new version / promote (rollback = promoting an older version) ──
   app.get('/managed-agents', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'catalog:read'))) return deny(c.req.raw, 'read');
     const store = agentStoreFor(c); // org-scoped: a bound identity sees only its own versions
     if (!store) return c.json({ agents: [] });
     return c.json({ agents: await store.list() });
@@ -3740,7 +3798,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   });
 
   app.post('/runs/:id/score', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'runs:read'))) return deny(c.req.raw, 'read');
     if (!scorers) return c.json({ error: 'scorers is not enabled' }, 501);
     const id = decodeURIComponent(c.req.param('id'));
     // Read-gated, but it still reads a RUN: a scorer's `reason` quotes the run it judged, so an
@@ -3755,7 +3813,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   });
 
   // ── Evals / Datasets (if datasets is given) ───────────────────────────────────
-  app.get('/datasets', async (c) => ((await allow(c.req.raw, 'read')) ? c.json(datasets ? await datasets.list() : []) : deny(c.req.raw, 'read')));
+  app.get('/datasets', async (c) => ((await allowP(c.req.raw, 'catalog:read')) ? c.json(datasets ? await datasets.list() : []) : deny(c.req.raw, 'read')));
   // Run a dataset suite (admin — runs the agent → LLM). Returns a result table + aggregate.
   app.post('/datasets/:id/run', async (c) => {
     if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
@@ -3771,7 +3829,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // ── A2A Networks (if the a2a option is on) — extracts agent-to-agent edges from the journal ───────
   app.get('/a2a-network', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'catalog:read'))) return deny(c.req.raw, 'read');
     if (!a2a) return c.json([]);
     const runs = await reader.listRuns();
     const edges: { parentRunId: string; remoteAgent: string; remoteRunId?: string; status: string }[] = [];
@@ -3789,7 +3847,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   // ── MCP Servers (if mcp is given) — list each client's tools ─────────
   app.get('/mcp-servers', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'catalog:read'))) return deny(c.req.raw, 'read');
     if (!mcp?.length) return c.json([]);
     const out: { id: string; name?: string; tools: unknown[]; error?: string }[] = [];
     for (const s of mcp) {

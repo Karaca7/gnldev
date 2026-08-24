@@ -817,20 +817,26 @@ class SqliteRunJournal implements RunJournal {
       : '';
     const statusParams: unknown[] = [];
     const toSummary = (r: RunRow): RunSummary => {
-      const input = r.input_val ? deserialize<{ threadId?: string; agent?: string }>(r.input_val) : undefined;
+      const input = r.input_val ? deserialize<{ threadId?: string; agent?: string; resourceId?: string }>(r.input_val) : undefined;
       return {
         runId: r.run_id, status: deriveRunStatus(!!r.suspended, outcomeOfRow(r)), modelSteps: r.model_steps, toolCalls: r.tool_calls,
         ...(input?.threadId ? { threadId: input.threadId } : {}),
         ...(input?.agent ? { agent: input.agent } : {}),
+        ...(input?.resourceId ? { resourceId: input.resourceId } : {}),
       };
     };
-    if (q?.agent) {
+    // `agent` and `resourceId` share ONE path: neither is a column, both live inside the `:input` blob,
+    // so both are filtered after the summary is built. Written as a single branch rather than two so a
+    // request carrying BOTH cannot take a branch that applies only one of them — and so the
+    // filter-BEFORE-slice contract (JournalReader.listRunsPaged) is satisfied once, not per filter.
+    if (q?.agent || q?.resourceId) {
       const rows = this.db.prepare(
         `SELECT r.run_id, r.model_steps, r.tool_calls, r.suspended, r.failed, r.running, r.canceled,
                 (SELECT value FROM gnl_run_journal WHERE key = r.run_id || ':input') AS input_val
          FROM gnl_runs r${statusWhere} ORDER BY r.created_at, r.run_id`,
       ).all(...statusParams) as RunRow[];
-      const all = rows.map(toSummary).filter((r) => r.agent === q.agent);
+      const all = rows.map(toSummary)
+        .filter((r) => (q.agent ? r.agent === q.agent : true) && (q.resourceId ? r.resourceId === q.resourceId : true));
       return pageOf(all.slice(start, start + limit), start, limit, all.length);
     }
     const total = (this.db.prepare(`SELECT COUNT(*) AS n FROM gnl_runs${statusWhere}`).get(...statusParams) as { n: number }).n;
@@ -1047,7 +1053,7 @@ class SqliteVectorStore implements VectorStore {
     // Filtered in SQL, so the rows that reach the ranking are already the eligible ones. Ranking the
     // whole table and filtering afterwards would make a caller's result count depend on how many other
     // namespaces exist: ask for 4, get however many of the global top 4 were yours. Nothing errors and
-    // nothing leaks — recall just degrades as other tenants upload, invisibly.
+    // nothing leaks — recall just degrades as other organizations upload, invisibly.
     //
     // `IS` rather than `=`: SQLite's `=` is never true against NULL, so a query for the un-namespaced
     // partition would silently match nothing at all.

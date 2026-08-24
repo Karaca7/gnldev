@@ -12,6 +12,7 @@
 // depends on another.
 import { describe, it, expect } from 'vitest';
 import { InMemoryJournal, withOrg } from '@gnldev/durable';
+import { PLATFORM_ADMIN_ROLE } from '@gnldev/auth';
 import { createStudioApi } from '../src/server.js';
 
 const authProvider = {
@@ -19,7 +20,8 @@ const authProvider = {
     const t = req.headers.get('authorization')?.replace('Bearer ', '');
     if (t === 'acme') return { roles: ['admin'], id: 'u-acme', orgId: 'acme' };
     if (t === 'globex') return { roles: ['admin'], id: 'u-globex', orgId: 'globex' };
-    if (t === 'ops') return { roles: ['admin'], id: 'u-ops' }; // unscoped operator
+    // The unscoped operator, now SAYING so (scope.ts: explicit grant, never inferred).
+    if (t === 'ops') return { roles: ['admin', PLATFORM_ADMIN_ROLE], id: 'u-ops' };
     return null;
   },
   authorize: () => ({ allow: true }),

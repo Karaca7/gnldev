@@ -746,21 +746,27 @@ class PgRunJournal implements RunJournal {
       : '';
     const statusParams: unknown[] = [];
     const toSummary = (x: any): RunSummary => {
-      const input = x.input_val ? deserialize<{ threadId?: string; agent?: string }>(x.input_val) : undefined;
+      const input = x.input_val ? deserialize<{ threadId?: string; agent?: string; resourceId?: string }>(x.input_val) : undefined;
       return {
         runId: x.run_id, status: deriveRunStatus(!!x.suspended, outcomeOfRow(x)), modelSteps: Number(x.model_steps), toolCalls: Number(x.tool_calls),
         ...(input?.threadId ? { threadId: input.threadId } : {}),
         ...(input?.agent ? { agent: input.agent } : {}),
+        ...(input?.resourceId ? { resourceId: input.resourceId } : {}),
       };
     };
-    if (q?.agent) {
+    // `agent` and `resourceId` share ONE path: neither is a column, both live inside the `:input` blob,
+    // so both are filtered after the summary is built. Written as a single branch rather than two so a
+    // request carrying BOTH cannot take a branch that applies only one of them — and so the
+    // filter-BEFORE-slice contract (JournalReader.listRunsPaged) is satisfied once, not per filter.
+    if (q?.agent || q?.resourceId) {
       const r = await this.q(
         `SELECT r.run_id, r.model_steps, r.tool_calls, r.suspended, r.failed, r.running, r.canceled, j.value AS input_val
          FROM gnl_runs r LEFT JOIN gnl_run_journal j ON j.key = r.run_id || ':input'${statusWhere}
          ORDER BY r.created_at, r.run_id`,
         statusParams,
       );
-      const all = r.rows.map(toSummary).filter((x) => x.agent === q.agent);
+      const all = r.rows.map(toSummary)
+        .filter((x) => (q.agent ? x.agent === q.agent : true) && (q.resourceId ? x.resourceId === q.resourceId : true));
       return pageOf(all.slice(start, start + limit), start, limit, all.length);
     }
     const total = Number((await this.q(`SELECT COUNT(*) AS n FROM gnl_runs r${statusWhere}`, statusParams)).rows[0].n);
@@ -981,7 +987,7 @@ class PgVectorStore implements VectorStore {
     // Filtered in SQL, so only eligible rows reach the ranking. Ranking the whole table and filtering
     // afterwards would tie a caller's result count to how many other namespaces exist: ask for 4, get
     // however many of the global top 4 were yours. Nothing errors, nothing leaks — recall just decays
-    // as other tenants upload, and only a fixture with two tenants can see it.
+    // as other organizations upload, and only a fixture with two organizations can see it.
     //
     // `IS NOT DISTINCT FROM` rather than `=`: `= NULL` is never true in SQL, so a query for the
     // un-namespaced partition would match nothing at all.

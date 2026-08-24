@@ -31,6 +31,12 @@ export interface ListQuery {
    */
   status?: RunStatus;
   agent?: string;
+  /**
+   * WHOSE runs to return — matches `RunSummary.resourceId` exactly (same `:input`-derived field the
+   * summary surfaces). Same contract as `agent`: filter BEFORE slicing to `limit`/`cursor`, or a
+   * matching item silently falls off a page and `nextCursor` desyncs from what the caller has seen.
+   */
+  resourceId?: string;
 }
 
 // ── 1) RunJournal = the PRESERVED journal ──────────────────────────────────────
@@ -240,7 +246,7 @@ export interface VectorStore {
    * `topK` across all namespaces and then discard most of them, so a caller asking for 4 results from
    * its own namespace would get however few of the global top 4 happened to be its own — while looking
    * entirely correct. There would be no leak and no error; the answer would just quietly be worse for
-   * every tenant but the busiest one.
+   * every organization but the busiest one.
    */
   query(embedding: number[], topK: number, opts?: VectorQueryOptions): Promise<VectorMatch[]>;
 }

@@ -85,6 +85,23 @@ export interface Memory {
   /** The resource (user) id a thread belongs to (optional; enables rich memory). */
   getThreadResource?(threadId: string): Promise<string | undefined>;
   /**
+   * ONE resource's threads (optional).
+   *
+   * Takes an OBJECT, and that detail is the whole reason this is declared here. @gnldev/studio wrote
+   * its own structural type for the same method as `listThreads(resourceId?: string)` and called it
+   * with a bare string. AgentMemory reads `opts.resourceId`, so the argument arrived as `undefined`
+   * and the store was asked for EVERY thread — measured: filtering to one user returned both users'
+   * threads, silently. Nothing caught it, because a host that declares its own shape for someone
+   * else's method has no one to disagree with.
+   *
+   * OPTIONAL like the two above: a custom `Memory` may be a thin adapter over a store with no listing
+   * at all, and requiring it would break every implementation that exists. Callers that find it absent
+   * answer "no conversations" rather than failing.
+   */
+  listThreads?(opts: { resourceId: string }): Promise<unknown[]>;
+  /** EVERY thread, unfiltered — the operator/global view (optional; see `listThreads`). */
+  listAllThreads?(): Promise<unknown[]>;
+  /**
    * Rich path (optional — provided by @gnldev/memory's AgentMemory): composes recall + working memory +
    * Observational memory + the WM tool in ONE call. If defined, runDurable/streamDurable use this
    * Instead of `getMessages`/`getWorkingMemory`. `provenance` (optional, additive) is the memory-side
@@ -97,7 +114,7 @@ export interface Memory {
 }
 
 /**
- * Memory on top of the journal: messages are stored in the journal → durable via SqliteJournal, crash-resistant.
+ * Memory on top of the journal: messages are stored in the journal → durable via SqliteStorage, crash-resistant.
  * Give it the SAME journal as the run; this way memory is also part of durable state.
  */
 /**

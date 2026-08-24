@@ -1,6 +1,7 @@
 // Durable AI Support Desk — a real app that uses our framework end to end. NO API KEY NEEDED.
-//   app  → http://localhost:3000  (web UI + API)
-//   ops  → http://localhost:4321  (studio: time-travel/fork/approval)
+// ONE port, not two — Studio is mounted into this same app below (see `app.mount('/studio', …)`):
+//   app  → http://localhost:3100         (web UI + API; PORT overrides, see APP_PORT)
+//   ops  → http://localhost:3100/studio  (studio: time-travel/fork/approval)
 import { serve } from '@hono/node-server';
 import { rmSync } from 'node:fs';
 import { SqliteStorage } from '@gnldev/durable/sqlite';
@@ -23,9 +24,12 @@ app.mount('/studio', createStudioApp({
   reader: toJournal(storage.runs),
   apiBase: '/studio',
   resume: async (runId, approvals) => { const r = await resume(runId, approvals); return { text: r.text, interrupts: r.interrupts }; },
-  // Memory/Threads view: without a resourceId, ALL threads (listAllThreads); with one, only that resource's.
+  // Memory/Threads view: two SEPARATE listings, matching Memory.listThreads/listAllThreads. They were
+  // one method taking an optional string, which is what let a host pass the id where an object was
+  // read — the filter then asked the store for every thread and got every user's.
   memory: {
-    listThreads: (rid) => (rid ? memory.listThreads({ resourceId: rid }) : memory.listAllThreads()),
+    listThreads: (opts) => memory.listThreads(opts),
+    listAllThreads: () => memory.listAllThreads(),
     getMessages: (tid) => memory.getMessages(tid),
     getWorkingMemory: (tid) => memory.getWorkingMemory(tid),
     truncateMessages: (tid, afterIndex) => memory.truncateMessagesAfter(tid, afterIndex),

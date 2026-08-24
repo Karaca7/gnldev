@@ -14,8 +14,12 @@ import { roleAuth } from '@gnldev/auth';
 import { createStudioApi } from '../src/server.js';
 import { call } from './call.js';
 
+// The price table is a PLATFORM document, so the persona that edits it is the platform operator —
+// unbound by design. `superAdmin` is that persona declaring itself: with `org` configured an unbound
+// identity is fail-closed, and the cross-org scope is an explicit grant, never inferred from a missing
+// `orgId` (@gnldev/auth scope.ts — inferring it would make a forgotten orgId a super-admin).
 const AUTH = () => roleAuth({
-  admin: { token: 'op', user: 'ops' },              // unbound operator
+  superAdmin: { token: 'op', user: 'ops' },         // the platform operator
   viewer: { token: 'acme-view', orgId: 'acme' },    // bound, read-only
 });
 

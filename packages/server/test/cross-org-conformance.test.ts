@@ -38,6 +38,8 @@ const VERDICTS: Record<string, { verdict: Verdict; why: string }> = {
   'POST /agents/:name/resume': { verdict: 'org-scoped', why: 'continues a run belonging to one org' },
   'GET /runs': { verdict: 'org-scoped', why: 'the run list is org data' },
   'GET /runs/:id': { verdict: 'org-scoped', why: 'a run belongs to one organization' },
+  'GET /threads': { verdict: 'org-scoped', why: 'conversations are org data; the store is the org-scoped one' },
+  'GET /threads/:id/messages': { verdict: 'org-scoped', why: 'a thread\'s messages are org data' },
   'POST /runs/:id/cancel': { verdict: 'org-scoped', why: 'terminally stops a run' },
   'GET /usage': { verdict: 'org-scoped', why: 'spend is metered per organization' },
   'POST /workflows/:name/run': { verdict: 'org-scoped', why: 'journals under the caller\'s org' },
@@ -111,6 +113,35 @@ async function makeApi() {
       // One agent owned by acme — its NAME is the thing agentGate withholds — and one global agent.
       agents: { [ACME_AGENT]: { model, orgs: ['acme'] }, shared: { model } },
       workflows: { 'code-wf': { build: () => [{ id: 's1' }], run: async () => ({ ok: true }) } },
+      // A conversation store, so the thread routes have something to DIFFER about. A factory, not an
+      // object: an org-scoped host drops a shared object on purpose (one store cannot carry an org
+      // boundary), so an object here would leave both callers with no store and park the two routes in
+      // the uncontrolled pile for a reason that has nothing to do with organizations — the same trap
+      // the `usage` note above records. Keyed by the scoped journal identity, which is what makes acme's
+      // and globex's threads distinct without the fixture faking the boundary itself.
+      memoryFactory: (scoped: never) => {
+        // Reads THROUGH the org-scoped journal it was handed, so the answer differs per organization
+        // because the scope differs — not because the fixture wrote `org:acme:` anywhere. A fixture
+        // that hard-coded the prefix would keep passing after the host stopped scoping, which is the
+        // failure this whole file exists to catch.
+        const j = scoped as unknown as { listKeys(p: string): Promise<string[]>; get(k: string): Promise<unknown> };
+        const own = async () => {
+          const ids = (await j.listKeys('')).filter((k) => k.endsWith(':input')).map((k) => k.slice(0, -':input'.length));
+          return Promise.all(ids.map(async (id) => ({
+            id: `t-${id}`,
+            resourceId: `u-${id}`,
+            marker: ((await j.get(`${id}:input`)) as { prompt?: string })?.prompt ?? '',
+          })));
+        };
+        return {
+          loadContext: async () => ({ messages: [] }),
+          append: async () => {},
+          getMessages: async () => (await own()).map((t) => ({ role: 'assistant', content: t.marker })),
+          getThreadResource: async (tid: string) => (await own()).find((t) => t.id === tid)?.resourceId,
+          listThreads: async (o: { resourceId: string }) => (await own()).filter((t) => t.resourceId === o.resourceId),
+          listAllThreads: own,
+        };
+      },
     } as never,
     { org: {}, auth: authProvider } as never,
   );
@@ -147,7 +178,7 @@ describe('the conformance table covers the router exactly', () => {
     const { api } = await makeApi();
     const inventory = api.routeTable.map((r: { method: string; path: string }) => `${r.method} ${r.path}`);
 
-    expect(inventory.length, 'the inventory is empty — the suite would pass vacuously').toBe(18);
+    expect(inventory.length, 'the inventory is empty — the suite would pass vacuously').toBe(20);
     expect(inventory.filter((r: string) => !(r in VERDICTS)),
       'a route has no cross-org verdict. An unexamined route is exactly how every isolation gap here '
       + 'shipped — add it to VERDICTS with a reason rather than letting it pass silently.').toEqual([]);
@@ -210,7 +241,8 @@ describe('platform-admin routes refuse an organization-bound caller', () => {
 describe('the ownership control — acme must SEE what globex must not', () => {
   const CONTROLLED = ['GET /runs', 'GET /runs/:id', 'GET /agents', 'GET /openapi.json', 'GET /usage',
     'GET /workflows/runs', 'POST /workflows/runs/:id/cancel', 'POST /runs/:id/cancel',
-    'POST /agents/:name/run', 'POST /agents/:name/resume', 'POST /agents/:name/stream'];
+    'POST /agents/:name/run', 'POST /agents/:name/resume', 'POST /agents/:name/stream',
+    'GET /threads', 'GET /threads/:id/messages'];
 
   it.each(CONTROLLED)('%s answers its owner, and differently from a stranger', async (key) => {
     const { api } = await makeApi();
@@ -261,7 +293,7 @@ describe('the ownership control — acme must SEE what globex must not', () => {
 
     expect(uncontrolled.filter((k) => !UNCONTROLLED_REASONS[k]),
       'an org-scoped route is uncontrolled with no reason recorded — say why, or control it').toEqual([]);
-    expect(CONTROLLED.length, 'ownership coverage went backwards').toBeGreaterThanOrEqual(11);
+    expect(CONTROLLED.length, 'ownership coverage went backwards').toBeGreaterThanOrEqual(13);
   });
 });
 

@@ -54,7 +54,12 @@ async function main(): Promise<void> {
       if (mem?.memoryPreset) {
         const view = mem.memoryPreset(cfg.storage, 'chat');
         memory = {
-          listThreads: (rid?: string) => (rid ? view.listThreads({ resourceId: rid }) : view.listAllThreads()),
+          // Straight through now that the host type names the two methods separately. This adapter
+          // already branched correctly, which is why the CLI never showed the bug the direct path did:
+          // a host handing AgentMemory to createStudioApi got the string call, and its `?resourceId=`
+          // filter silently returned every user's threads.
+          listThreads: (opts: { resourceId: string }) => view.listThreads(opts),
+          listAllThreads: () => view.listAllThreads(),
           getMessages: (tid: string) => view.getMessages(tid),
           getWorkingMemory: (tid: string) => view.getWorkingMemory(tid),
           updateThread: (tid: string, patch: { title?: string; metadata?: Record<string, unknown> }) => view.updateThread(tid, patch),

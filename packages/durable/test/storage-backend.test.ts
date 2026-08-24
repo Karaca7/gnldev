@@ -101,6 +101,39 @@ for (const [name, make, caps] of storages) {
       expect(rt2.agent).toBeUndefined();
     });
 
+    it('RunJournal: listRuns surfaces resourceId, and filters by it BEFORE slicing', async () => {
+      // WHOSE run it is, from the same invisible `:input` entry as threadId/agent — no column, no
+      // migration, no second read. Every adapter must surface AND filter it, so this lives in the
+      // conformance suite rather than in one adapter's own file: the in-memory and SQL paths derive it
+      // differently (SQL joins the `:input` row and filters in JS, Redis collects it during its single
+      // SCAN), and only a shared test proves they agree.
+      const b = make();
+      for (const [id, owner] of [['ra', 'u-a'], ['rb', 'u-b'], ['rc', 'u-a'], ['rd', 'u-a']] as const) {
+        await b.runs.put(`${id}:input`, { prompt: 'hi', resourceId: owner });
+        await b.runs.put(`${id}:model:0`, { ok: true });
+      }
+      await b.runs.put('rnone:model:0', { ok: true }); // no :input → no owner
+
+      const all = await b.runs.listRuns();
+      expect(all.items.find((r) => r.runId === 'ra')!.resourceId).toBe('u-a');
+      expect(all.items.find((r) => r.runId === 'rnone')!.resourceId).toBeUndefined();
+
+      const mine = await b.runs.listRuns({ resourceId: 'u-a' });
+      expect(mine.items.map((r) => r.runId).sort()).toEqual(['ra', 'rc', 'rd']);
+
+      // Filter BEFORE slicing (the JournalReader.listRunsPaged contract): walking u-a's three runs at
+      // limit 2 must yield exactly those three. An adapter that slices first and filters after returns
+      // a short first page and a cursor that has already skipped past a match.
+      const seen: string[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = await b.runs.listRuns({ resourceId: 'u-a', limit: 2, ...(cursor ? { cursor } : {}) });
+        seen.push(...page.items.map((r) => r.runId));
+        cursor = page.nextCursor;
+      } while (cursor);
+      expect(seen.sort()).toEqual(['ra', 'rc', 'rd']);
+    });
+
     // P0.3 (AUDIT-R2): status filter — must match summarizeRun's derivation exactly, and
     // must NOT break pagination (filter BEFORE slicing, not after — 3 completed + 2 suspended, walking
     // the completed set with limit:2 must land on exactly the 3 completed runs, no more no less).

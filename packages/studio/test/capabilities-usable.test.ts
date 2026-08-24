@@ -13,13 +13,16 @@
 // the routes themselves rather than from re-reading the conditions that produced the booleans.
 import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
+import { PLATFORM_ADMIN_ROLE } from '@gnldev/auth';
 import { createStudioApi } from '../src/server.js';
 
 const authProvider = {
   authenticate: (req: Request) => {
     const t = req.headers.get('authorization')?.replace('Bearer ', '');
     if (t === 'acme') return { roles: ['admin'], id: 'u-acme', orgId: 'acme' };
-    if (t === 'ops') return { roles: ['admin'], id: 'u-ops' }; // unscoped operator
+    // The unscoped operator, now SAYING so: the platform scope is an explicit grant, never inferred
+    // from a missing orgId (scope.ts — inferring it turns a forgotten orgId into a super-admin).
+    if (t === 'ops') return { roles: ['admin', PLATFORM_ADMIN_ROLE], id: 'u-ops' };
     return null;
   },
   authorize: () => ({ allow: true }),

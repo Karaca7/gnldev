@@ -653,6 +653,7 @@ class RedisRunJournal implements RunJournal {
     const threadIds = new Map<string, string>();
     const outcomes = new Map<string, 'failed' | 'running' | 'canceled'>();
     const agents = new Map<string, string>();
+    const resourceIds = new Map<string, string>();
     for (let i = 0; i < keys.length; i++) {
       const s = values[i];
       if (s == null) continue;
@@ -667,9 +668,10 @@ class RedisRunJournal implements RunJournal {
       const rawKey = keys[i]!.slice(cut);
       if (rawKey.endsWith(':input')) {
         const runId = rawKey.slice(0, -':input'.length);
-        const inp = e.v as { threadId?: string; agent?: string } | undefined;
+        const inp = e.v as { threadId?: string; agent?: string; resourceId?: string } | undefined;
         if (inp?.threadId) threadIds.set(runId, inp.threadId);
         if (inp?.agent) agents.set(runId, inp.agent);
+        if (inp?.resourceId) resourceIds.set(runId, inp.resourceId);
       }
       // A run whose keys are ALL non-entry ones (it died before its first model step: `:input` plus a
       // Claim marker) has nothing in the envelope's r/k fields, so it never reached byRun above and was
@@ -706,14 +708,17 @@ class RedisRunJournal implements RunJournal {
       .map(([runId, v]): RunSummary => {
         const threadId = threadIds.get(runId);
         const agent = agents.get(runId);
+        const resourceId = resourceIds.get(runId);
         return {
           runId, status: deriveRunStatus(v.s, outcomes.has(runId) ? { status: outcomes.get(runId)! } : null), modelSteps: v.m, toolCalls: v.t,
           ...(threadId ? { threadId } : {}),
           ...(agent ? { agent } : {}),
+          ...(resourceId ? { resourceId } : {}),
         };
       });
     if (q?.status) all = all.filter((r) => r.status === q.status);
     if (q?.agent) all = all.filter((r) => r.agent === q.agent);
+    if (q?.resourceId) all = all.filter((r) => r.resourceId === q.resourceId);
     const { start, limit } = offset(q);
     return pageOf(all, start, limit);
   }

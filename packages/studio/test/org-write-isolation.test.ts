@@ -192,7 +192,10 @@ describe('@gnldev/studio — the org boundary on the write surface', () => {
     const seen: Array<{ orgId?: string }> = [];
     const app = createStudioApi({
       reader: journal,
-      auth: roleAuth({ admin: { token: 'op', user: 'ops' } }),
+      // The operator declares itself (`superAdmin`) rather than being inferred from a missing orgId:
+      // what this test asserts is that the declaration grants PLATFORM scope, not an org — `resume`
+      // must still receive `orgId: undefined`.
+      auth: roleAuth({ superAdmin: { token: 'op', user: 'ops' } }),
       org: {},
       resume: async (_r: string, _a: unknown, ctx?: { orgId?: string }) => { seen.push({ orgId: ctx?.orgId }); return {}; },
     } as never);

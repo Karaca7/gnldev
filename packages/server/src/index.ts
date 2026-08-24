@@ -5,7 +5,7 @@ import { toFetchHandler, type FetchHandler } from './handler.js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { createGnl, agentVisibleToOrg, withOrg, withOrgStorage, ORG_RECORD_PRE, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, asReaderJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, blockedErrorCode, upstreamFailure, sealRequestContext, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry } from '@gnldev/durable';
 import type { CreateGnlConfig, Journal, JournalReader, BudgetLimit, UsageCostCache, RunLimits } from '@gnldev/durable';
-import { makeGate, normalizeAuth, principalOf, isPlatformAdmin, type AuthProvider, type ReadWriteAuth, type Principal } from '@gnldev/auth';
+import { makeGate, normalizeAuth, principalOf, isPlatformAdmin, CLIENT_ROLE, type AuthProvider, type ReadWriteAuth, type Principal } from '@gnldev/auth';
 // P0.4 @gnldev/workflow is zero-dependency (see its package.json) — depending on it
 // From @gnldev/server is a clean one-way edge (server→workflow), NOT circular: @gnldev/durable's registry.ts
 // Deliberately stays workflow-agnostic (WorkflowLike is a structural type, no import) to avoid a
@@ -192,6 +192,66 @@ export interface RestApiOptions {
  * Client can NEVER loosen the server cap. If neither side gives a field, that field ends up absent (never
  * Enforced) — the existing unlimited behavior is preserved.
  */
+/** Longest accepted `resourceId`. Generous for a user id / customer key, short of an accidental blob. */
+const MAX_RESOURCE_ID = 200;
+
+/**
+ * WHOSE run this is — the subject the memory layer scopes on (`ThreadRecord.resourceId`, and working
+ * memory's `res:<id>` key).
+ *
+ * Two deployment shapes need two different answers, and the precedence falls out of which one is in
+ * use rather than being a policy choice:
+ *
+ *   • The deployment binds an identity PER CALLER (basic auth, or @gnldev/auth-ee's per-user tokens).
+ *     Then `principal.id` IS the subject, and a body field must never override it — otherwise a user
+ *     names someone else and reads their memory.
+ *   • The deployment holds ONE application credential (the `client` class: a customer's backend
+ *     serving many end users). Then there is no per-caller identity — `principal.id` is undefined for
+ *     a bearer token — so the subject can only come from the request. The credential is trusted to
+ *     speak for its own users, which is the same trust that already lets it run agents at all.
+ *
+ * Measured before this existed: with a bearer token the server derived `resourceId` from `principal.id`
+ * (undefined), the memory layer creates a thread record only when a resourceId is present, and so a
+ * customer's backend produced ZERO thread records — `listThreads` had nothing to return for anyone.
+ * Under basic auth it produced one shared owner (the application's own username), which put every end
+ * user in ONE working-memory bucket: measured, user B read user A's stored note.
+ *
+ * An INVALID value is a 400, not a silent drop. A caller that sent a resourceId believes its data is
+ * scoped; dropping it quietly would hand back exactly the shared-bucket behaviour above while the
+ * caller thought it had asked for separation.
+ */
+function resolveResourceId(
+  principalId: string | undefined,
+  raw: unknown,
+  isClient = false,
+): { resourceId?: string } | { error: string } {
+  if (principalId) return { resourceId: principalId };
+  // An APPLICATION credential acts FOR an end user — that is what distinguishes it from an operator
+  // credential, and it is the only reason it is trusted to assert a subject at all. So it must name
+  // one. Silence used to mean "unchecked", which put an application's own users in the position the
+  // shared bucket did: nothing separated them, and nothing said so.
+  //
+  // Deliberately keyed on the CLASS, not on the route. An operator (superAdmin/admin/viewer) works
+  // across an organization's data by design and names nobody; the same rule applied to it would be
+  // wrong, which is exactly the mistake the first version made by treating "absent" the same way for
+  // everyone.
+  if (raw === undefined || raw === null) {
+    return isClient
+      ? { error: 'resourceId is required for a client credential: name the end user this request acts for' }
+      : {};
+  }
+  if (typeof raw !== 'string') return { error: 'resourceId must be a string' };
+  if (raw.length === 0) return { error: 'resourceId must not be empty' };
+  if (raw.length > MAX_RESOURCE_ID) return { error: `resourceId must be at most ${MAX_RESOURCE_ID} characters` };
+  // It becomes part of a storage key (`res:<id>`), and it is echoed back in listings. Control
+  // characters serve no purpose in an identifier and are the part of the input space that surprises
+  // key parsers and log readers; everything printable is left alone, because a customer's own user ids
+  // are not ours to shape.
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f]/.test(raw)) return { error: 'resourceId must not contain control characters' };
+  return { resourceId: raw };
+}
+
 function clampLimits(server?: RunLimits, client?: RunLimits): RunLimits | undefined {
   if (!server && !client) return undefined;
   const stricter = (s?: number, c?: number): number | undefined =>
@@ -326,7 +386,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   // the spread carried `config.memory` through untouched, and `createGnl` resolves memory as
   // `config.memory ?? memoryFactory(...)` (registry.ts), so the object won and the factory was never
   // called. Every organization therefore shared ONE `Memory`: threads, messages, working memory and
-  // observations are keyed by a caller-chosen `threadId` alone, so naming another tenant's thread was
+  // observations are keyed by a caller-chosen `threadId` alone, so naming another organization's thread was
   // enough to read it. Studio refuses exactly this shape and says so at boot; this host served it.
   //
   // `memory: false` stays valid — that is the host saying "no conversation store", which needs no
@@ -384,6 +444,34 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   // Otherwise it is fail-closed. When OFF (free/host-org/no-auth) behavior is preserved EXACTLY: an
   // Org-less identity is the legacy operator (sees the shared/root scope).
   const strictMultiOrg = authProvider?.capabilities?.().multiOrganization === true;
+  /**
+   * Whether this deployment has organizations at all — and therefore whether the fail-closed rules
+   * below apply.
+   *
+   * It used to be `strictMultiOrg` alone, deliberately: the fail-closed net was described as a
+   * paid-only behaviour change. Measured consequence, on the free tier with `org` configured: an
+   * authenticated admin carrying NO org binding read BOTH organizations' runs (200), while the same
+   * request under a provider declaring `multiOrganization: true` was refused (403). Declaring the
+   * PAID capability was what made the deployment safe — so the sentence "the tier that does not pay
+   * is the less isolated one" was literally true, and RISK-AUDIT-AUTH's own cross-cutting note says
+   * isolation must not depend on a paid feature flag.
+   *
+   * `capabilities()` cannot carry this either way: it is an object the CALLER supplies (auth/types.ts),
+   * so it states an intent, never proves one. What does prove it is that the host configured `org` —
+   * a deployment that routes by organization is one where an identity belonging to none is not the
+   * accidental operator.
+   *
+   * Single-operator deployments are untouched: with no `org` option and no capability, this is false
+   * and every path below behaves exactly as before.
+   *
+   * The `authProvider` term carries the no-auth case, and belongs HERE rather than at each call site.
+   * An ABSENT provider is the deliberate no-auth mode: there is no identity to isolate ON, so every
+   * caller is the operator. `scope()` below spelled that out inline, but the studio twin did not, and
+   * the omission locked a no-auth `org: {}` deployment out of its own `/organizations` surface. One
+   * derived expression is the fix that cannot be forgotten at the next call site. `strictMultiOrg`
+   * already implies a provider (it reads one), so this only affects the `opts.org` branch.
+   */
+  const orgIsolationActive = !!authProvider && (strictMultiOrg || !!opts.org);
   // HARDENING: one-time warn when a multi-org deployment serves an org-less request in the shared scope (see scope()).
   let warnedSharedOrgFallback = false;
   // Org registration record prefix: ORG_RECORD_PRE, imported from @gnldev/durable. It was a local
@@ -469,24 +557,74 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
    * Cred.orgId promise: "organization isolation is enforced by identity"). If the bound identity requests
    * A different organization, 403.
    */
+  /**
+   * Refuses when the caller STATED whose run it expects (`?resourceId=`) and the run says otherwise.
+   *
+   * The owner is read from the run's own frozen `:input` entry — the same place `threadId` and `agent`
+   * live — so there is no second source to keep in sync and no extra table to migrate. Reading it
+   * costs one point-read on a key the journal already holds.
+   *
+   * Silent on: no expectation stated, no owner recorded, or a journal that cannot answer. See the
+   * route JSDoc for why neither absence is treated as a denial.
+   */
+  /** Whether THIS caller is an application credential (see @gnldev/auth CLIENT_ROLE). */
+  const isClient = (c: Context): boolean => principalOf(c.req.raw)?.roles?.includes(CLIENT_ROLE) === true;
+
+  /**
+   * Refuses a client-credential request that names no end user.
+   *
+   * The single choke point for the rule, and a conformance test walks `routeTable` to prove every
+   * route touching end-user data reaches it — the alternative is a rule that holds on the routes
+   * someone remembered, which is how the first version of this shipped with the write paths open.
+   *
+   * Operators are untouched: `superAdmin`/`admin`/`viewer` work across an organization by design and
+   * name nobody. That asymmetry IS the rule — it is about which credential is asking, not which route.
+   */
+  function clientSubjectDenied(c: Context, supplied?: unknown): Response | undefined {
+    if (!isClient(c)) return undefined;
+    const named = typeof supplied === 'string' ? supplied : c.req.query('resourceId');
+    if (named) return undefined;
+    return c.json({
+      error: 'resourceId is required for a client credential: name the end user this request acts for',
+    }, 400);
+  }
+
+  async function ownershipDenied(c: Context, s: Instance, runId: string, fromBody?: unknown): Promise<Response | undefined> {
+    // The query string is the uniform source, so a GET and a POST state the expectation the same way.
+    // `fromBody` exists for the POST paths whose caller naturally puts it in the JSON it is already
+    // sending; the query still wins, so one route cannot be checked against two different claims.
+    const expected = c.req.query('resourceId') ?? (typeof fromBody === 'string' ? fromBody : undefined);
+    if (!expected) return undefined;
+    let owner: string | undefined;
+    try {
+      owner = (await s.journal.get<{ resourceId?: string }>(`${runId}:input`))?.resourceId;
+    } catch {
+      return undefined; // a reader that cannot serve the entry is not evidence of a mismatch
+    }
+    if (!owner || owner === expected) return undefined;
+    // The message names neither the real owner nor whether the run exists — a caller guessing ids
+    // would otherwise learn both from the refusal.
+    return c.json({ error: 'access denied: this run belongs to a different resourceId' }, 403);
+  }
+
   async function scope(c: Context): Promise<Instance | { error: string; status: 400 | 403 }> {
     const principal = principalOf(c.req.raw);
     const bound = principal?.orgId;
-    // B2 — tenant isolation must NOT depend on the paid license capability: when the host configured
+    // B2 — organization isolation must NOT depend on the paid license capability: when the host configured
     // Per-request orgs (opts.org) with an auth provider that produces NO principal (e.g. legacy
     // {read,write} auth whose authenticate()=null), the raw `x-gnl-org` header would drive the scope
-    // With ZERO identity binding — cross-tenant read/write. There is no identity to isolate on, so this
+    // With ZERO identity binding — cross-organization read/write. There is no identity to isolate on, so this
     // Combination is unsafe regardless of the license → fail closed. (An ABSENT auth provider is the
     // Deliberate single-operator/no-auth mode and is unaffected.)
-    if ((strictMultiOrg || !!opts.org) && authProvider && !principal) {
-      return { error: 'access denied: tenant isolation is configured but this auth provider binds no identity to an organization (fail-closed)', status: 403 };
+    if (orgIsolationActive && authProvider && !principal) {
+      return { error: 'access denied: organization isolation is configured but this auth provider binds no identity to an organization (fail-closed)', status: 403 };
     }
     // STRICT (EE multi-org) FAIL-CLOSED: an authenticated identity with NO org binding AND NO explicit
     // Platform-admin grant gets 403 — it is NOT the accidental super-admin. Kept license-gated on
     // Purpose: the FREE tier's contract is that an unbound admin is the legacy cross-org OPERATOR
     // (see auth-org.test 'operator scenario'); a host wanting strict isolation binds every token's
     // Cred.orgId or runs the paid strict-multi-org model.
-    if (strictMultiOrg && principal && !bound && !isPlatformAdmin(principal)) {
+    if (orgIsolationActive && principal && !bound && !isPlatformAdmin(principal)) {
       return { error: 'access denied: no organization scope and no platform-admin grant (fail-closed)', status: 403 };
     }
     // If neither the org option nor an identity-bound organization exists → shared default (existing behavior).
@@ -499,13 +637,13 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     const id = bound ?? requested;
     if (!id) {
       if (opts.org?.required) return { error: 'organization required (x-gnl-org header)', status: 400 };
-      // HARDENING (silent cross-tenant mixing): multi-org IS configured (`opts.org` set — we passed the
-      // Single-tenant early-return above) yet this request carries NO org and NO org-bound identity, so
+      // HARDENING (silent cross-organization mixing): multi-org IS configured (`opts.org` set — we passed the
+      // Single-org early-return above) yet this request carries NO org and NO org-bound identity, so
       // It lands in the SHARED (unprefixed) scope alongside every other org-less request. That is a
       // Potential data-mixing footgun a misconfigured client (missing x-gnl-org header) hits SILENTLY.
       // Behavior is unchanged (still served in shared scope — an operator who set `required:false`
       // Opted into this), but it is no longer silent: warn ONCE so the operator discovers they likely
-      // Want `org.required = true` for strict tenant isolation.
+      // Want `org.required = true` for strict organization isolation.
       if (!warnedSharedOrgFallback) {
         warnedSharedOrgFallback = true;
         console.warn('@gnldev/server: multi-org is configured but a request resolved NO organization → served in the SHARED scope (its data mixes with other org-less requests). Set `org.required = true` to reject such requests instead (fail-closed). This warning fires once.');
@@ -580,7 +718,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   function requirePlatformAdmin(c: Context, orgBoundMsg: string): Response | undefined {
     const p = principalOf(c.req.raw);
     if (p?.orgId) return c.json({ error: orgBoundMsg }, 403);
-    if (strictMultiOrg && !isPlatformAdmin(p)) {
+    if (orgIsolationActive && !isPlatformAdmin(p)) {
       return c.json({ error: 'platform-admin required (fail-closed: no org scope and no platform-admin grant)' }, 403);
     }
     return undefined;
@@ -631,7 +769,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
    * P0.3 in-process registry of the AbortControllers backing CURRENTLY IN-FLIGHT
    * `/run` and `/stream` generations, keyed by an ORG-SCOPED key (NOT the raw runId — two different
    * Organizations may legitimately use the SAME client-supplied runId for unrelated work; a flat
-   * `runId → controllers` map would let org A's cancel abort org B's generation, a cross-tenant
+   * `runId → controllers` map would let org A's cancel abort org B's generation, a cross-organization
    * Correctness/security bug). `POST /runs/:id/cancel` below aborts every controller registered under
    * An id. Deliberately per-INSTANCE (a plain Map, not journal-backed) — see the cancel handler's JSDoc
    * For the honest multi-worker limitation.
@@ -733,6 +871,9 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     const principal = principalOf(c.req.raw);
     const resourceDenied = await resourceGate(c, principal, { type: 'agent', id: name }, 'run');
     if (resourceDenied) return resourceDenied;
+    // WHOSE run this is — see resolveResourceId. A per-caller identity wins; otherwise the request says.
+    const subject = resolveResourceId(principal?.id, body.resourceId, isClient(c));
+    if ('error' in subject) return c.json({ error: subject.error }, 400);
     // CONSISTENT with 1.3: continuing a suspended run from this endpoint with the SAME runId + approvals
     // (like stream does) is also resume intent → if there's a trace in the journal the budget gate is
     // Skipped; new runIds are still ENFORCED (no regression).
@@ -764,7 +905,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
           // an unconditional delete that dominates anything written here. The security property lives
           // entirely in sealRequestContext; the earlier version of this comment claimed otherwise.
           body.context ?? {},
-          { orgId: s.orgId ?? principal?.orgId, resourceId: principal?.id },
+          { orgId: s.orgId ?? principal?.orgId, resourceId: subject.resourceId },
         ),
         limits: clampLimits(opts.limits, body.limits),
         // P0.2 a client disconnect stops generation instead of billing tokens to
@@ -806,6 +947,13 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     // the cheap path while leaving the dangerous one open is the wrong way round.
     const resourceDenied = await resourceGate(c, principalOf(c.req.raw), { type: 'agent', id: name }, 'run');
     if (resourceDenied) return resourceDenied;
+    // …and the FREE-tier half of the same concern. `resourceGate` is the paid FGA surface; a deployment
+    // without it had nothing here at all, so one end user could resume another's run — and `approvals`
+    // is exactly the field that decides a tool call a human gate had stopped. The caller states whose
+    // run it believes this to be (`?resourceId=`, or `resourceId` in the body it is already sending)
+    // and is refused when the run says otherwise. Unstated stays permitted: see ownershipDenied.
+    { const denied = clientSubjectDenied(c, body.resourceId); if (denied) return denied; }
+    { const denied = await ownershipDenied(c, s, body.runId, body.resourceId); if (denied) return denied; }
     // CONSISTENT with H2/1.3: only a REAL resume (there's a trace in the journal) skips the budget
     // Gate — otherwise this endpoint would be an unlimited backdoor (bypassing the quota with a
     // Traceless/made-up runId). Without a trace (typo/abuse) it's ENFORCED normally; input also comes
@@ -826,7 +974,11 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
         // halves of one conversation disagreeing about who the caller is.
         context: sealRequestContext({}, {
           orgId: s.orgId ?? principalOf(c.req.raw)?.orgId,
-          resourceId: principalOf(c.req.raw)?.id,
+          // From the FROZEN `:input`, for the same reason the prompt and threadId below are: a resume
+          // is self-contained and the client does not re-send it. Deriving it from the resuming
+          // caller instead would let the second half of a conversation belong to someone else —
+          // and on the shared-application-credential shape it resolved to undefined anyway.
+          resourceId: input.resourceId ?? principalOf(c.req.raw)?.id,
         }),
         limits: clampLimits(opts.limits, body.limits),
         ...(input.messages ? { messages: input.messages } : { prompt: input.prompt }),
@@ -944,7 +1096,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   // Metadata list of registered agents (for the client/playground agent selector).
   // Org-scoped: an org-bound caller only sees GLOBAL agents + agents whose `orgs` include their org.
   app.get('/agents', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'catalog:read'))) return deny(c.req.raw, 'read');
     const s = await scope(c);
     if ('error' in s) return c.json({ error: s.error }, s.status);
     return c.json(listAgentMeta(config, s.orgId));
@@ -955,7 +1107,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   // Here is platform-admin gated (requirePlatformAdmin) REGARDLESS of whether requireAgentApproval is
   // Turned on — an operator can review/approve agents ahead of flipping the enforcement flag.
   app.get('/agents/registry', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'catalog:read'))) return deny(c.req.raw, 'read');
     { const denied = requirePlatformAdmin(c, 'an org-bound identity cannot view the agent registry (operator required)'); if (denied) return denied; }
     await agentRegistryBoot;
     try {
@@ -966,7 +1118,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   });
 
   app.post('/agents/registry/:name/approve', async (c) => {
-    if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
+    if (!(await allowP(c.req.raw, 'agents:approve'))) return deny(c.req.raw, 'write');
     { const denied = requirePlatformAdmin(c, 'an org-bound identity cannot approve an agent (operator required)'); if (denied) return denied; }
     await agentRegistryBoot;
     const name = decodeURIComponent(c.req.param('name'));
@@ -977,7 +1129,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   });
 
   app.post('/agents/registry/:name/block', async (c) => {
-    if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
+    if (!(await allowP(c.req.raw, 'agents:block'))) return deny(c.req.raw, 'write');
     { const denied = requirePlatformAdmin(c, 'an org-bound identity cannot block an agent (operator required)'); if (denied) return denied; }
     await agentRegistryBoot;
     const name = decodeURIComponent(c.req.param('name'));
@@ -1006,6 +1158,9 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     const principal = principalOf(c.req.raw);
     const resourceDenied = await resourceGate(c, principal, { type: 'agent', id: name }, 'run');
     if (resourceDenied) return resourceDenied;
+    // WHOSE run this is — see resolveResourceId. A per-caller identity wins; otherwise the request says.
+    const subject = resolveResourceId(principal?.id, body.resourceId, isClient(c));
+    if ('error' in subject) return c.json({ error: subject.error }, 400);
     // 1.3: resume intent via approvals+runId (a pending tool approval) → the budget gate is skipped
     // CONSISTENTLY with /agents/:name/resume (otherwise a pending interrupt in an over-budget
     // Organization would never finish).
@@ -1034,7 +1189,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
           // an unconditional delete that dominates anything written here. The security property lives
           // entirely in sealRequestContext; the earlier version of this comment claimed otherwise.
           body.context ?? {},
-          { orgId: s.orgId ?? principal?.orgId, resourceId: principal?.id },
+          { orgId: s.orgId ?? principal?.orgId, resourceId: subject.resourceId },
         ),
         limits: clampLimits(opts.limits, body.limits),
         // P0.2 same as /agents/:name/run above — stop generation (and its token
@@ -1068,11 +1223,11 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   });
 
   // Metadata list of registered workflows (name + steps + kind).
-  app.get('/workflows', async (c) => ((await allow(c.req.raw, 'read')) ? c.json(defaultInstance.gnl.listWorkflows()) : deny(c.req.raw, 'read')));
+  app.get('/workflows', async (c) => ((await allowP(c.req.raw, 'catalog:read')) ? c.json(defaultInstance.gnl.listWorkflows()) : deny(c.req.raw, 'read')));
 
   // Run the workflow durably: {runId?, input}. If runId is given, it can be resumed with the same runId.
   app.post('/workflows/:name/run', async (c) => {
-    if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
+    if (!(await allowP(c.req.raw, 'workflow:run'))) return deny(c.req.raw, 'write');
     const name = c.req.param('name');
     if (!workflowNames.includes(name)) return c.json({ error: `workflow '${name}' not registered` }, 404);
     const parsed = await readSignedBody(c); // F1: A2A signature enforced here too
@@ -1126,7 +1281,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
    * Studio's own listKeys-gated routes) rather than a silent empty list.
    */
   app.get('/workflows/runs', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'runs:read'))) return deny(c.req.raw, 'read');
     const s = await scope(c);
     if ('error' in s) return c.json({ error: s.error }, s.status);
     const statusRaw = c.req.query('status');
@@ -1155,13 +1310,21 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
    * Multi-worker honesty caveat as `/runs/:id/cancel`.
    */
   app.post('/workflows/runs/:id/cancel', async (c) => {
-    if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
+    if (!(await allowP(c.req.raw, 'run:cancel'))) return deny(c.req.raw, 'write');
     const runId = decodeURIComponent(c.req.param('id'));
     const s = await scope(c);
     if ('error' in s) return c.json({ error: s.error }, s.status);
+    // BEFORE the visibility 404: the requirement is about the CREDENTIAL, not about the target, so a
+    // client that names nobody must not get as far as learning whether a run exists. Ordered the other
+    // way it answered 404-vs-403 to a caller who had not identified who it was acting for, which is a
+    // (small) existence oracle handed out for free.
+    { const denied = clientSubjectDenied(c); if (denied) return denied; }
     const status = await getWorkflowRunStatus(s.journal, runId);
     const visible = status !== undefined || (await s.journal.get(`${runId}:wf:_suspend`)) !== undefined;
     if (!visible) return c.json({ error: `workflow run '${runId}' not found` }, 404);
+    // Same expectation-check as the agent-run cancel next door — a workflow run carries an owner for
+    // the same reason and stopping one is the same act.
+    { const denied = await ownershipDenied(c, s, runId); if (denied) return denied; }
     // D4-FGA: runs AFTER the coarse allow(c,'write') gate above.
     const resourceDenied = await resourceGate(c, principalOf(c.req.raw), { type: 'workflow', id: runId }, 'cancel');
     if (resourceDenied) return resourceDenied;
@@ -1185,14 +1348,20 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
    *   ?agent=      exact match against RunSummary.agent
    */
   app.get('/runs', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'runs:read'))) return deny(c.req.raw, 'read');
     const s = await scope(c);
     if ('error' in s) return c.json({ error: s.error }, s.status);
     const limitRaw = c.req.query('limit');
     const cursor = c.req.query('cursor');
     const statusRaw = c.req.query('status');
     const agent = c.req.query('agent');
-    if (limitRaw == null && cursor == null && statusRaw == null && agent == null) {
+    // WHOSE runs. An application credential serving many end users lists one user's runs with this;
+    // it is the read half of the `resourceId` the run was started with (see resolveResourceId).
+    const resourceId = c.req.query('resourceId');
+    // Checked BEFORE the no-params shortcut below, which is the branch that would otherwise hand a
+    // client the whole organization's run list — the exact read this rule exists to scope.
+    { const denied = clientSubjectDenied(c, resourceId); if (denied) return denied; }
+    if (limitRaw == null && cursor == null && statusRaw == null && agent == null && resourceId == null) {
       return c.json(await s.journal.listRuns()); // no params → legacy array (unchanged)
     }
     // A list rather than a chain of !==: this validation has lagged the vocabulary at every widening
@@ -1212,6 +1381,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
       ...(cursor ? { cursor } : {}),
       ...(status ? { status } : {}),
       ...(agent ? { agent } : {}),
+      ...(resourceId ? { resourceId } : {}),
     };
     const paged = (s.journal as Partial<JournalReader>).listRunsPaged;
     if (typeof paged === 'function') {
@@ -1224,7 +1394,8 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     // Genuinely absent. `source` is intentionally NOT stamped on the response — the shape stays
     // Identical to the paged branch above ({items, nextCursor}) so callers don't need to branch on it.
     const all = await s.journal.listRuns();
-    const filtered = all.filter((r) => (status ? r.status === status : true) && (agent ? r.agent === agent : true));
+    const filtered = all.filter((r) => (status ? r.status === status : true) && (agent ? r.agent === agent : true)
+      && (resourceId ? r.resourceId === resourceId : true));
     const start = cursor ? Number(cursor) || 0 : 0;
     const lim = limit ?? 50;
     const items = filtered.slice(start, start + lim);
@@ -1244,7 +1415,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
    * Anything, it only stops NEW tokens/tool-calls from being produced on this instance).
    */
   app.post('/runs/:id/cancel', async (c) => {
-    if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
+    if (!(await allowP(c.req.raw, 'run:cancel'))) return deny(c.req.raw, 'write');
     const runId = decodeURIComponent(c.req.param('id'));
     const s = await scope(c);
     if ('error' in s) return c.json({ error: s.error }, s.status);
@@ -1252,8 +1423,16 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     // Journal (withOrg strips/prefixes every key) — `:input` is written by every run() /stream() call
     // (persistInput, run.ts) so its absence means either the run never existed or it belongs to a
     // Different organization; both cases return the SAME 404 (no existence leak, same pattern as agentGate).
+    // BEFORE the visibility 404: the requirement is about the CREDENTIAL, not about the target, so a
+    // client that names nobody must not get as far as learning whether a run exists. Ordered the other
+    // way it answered 404-vs-403 to a caller who had not identified who it was acting for, which is a
+    // (small) existence oracle handed out for free.
+    { const denied = clientSubjectDenied(c); if (denied) return denied; }
     const visible = await s.journal.get(`${runId}:input`);
     if (visible === undefined) return c.json({ error: `run '${runId}' not found` }, 404);
+    // Stopping someone else's work is a write, and an application credential serves many end users
+    // under one token — so the SAME `?resourceId=` expectation the read path honours is honoured here.
+    { const denied = await ownershipDenied(c, s, runId); if (denied) return denied; }
     // D4-FGA: runs AFTER the coarse allow(c,'write') gate above.
     const resourceDenied = await resourceGate(c, principalOf(c.req.raw), { type: 'run', id: runId }, 'cancel');
     if (resourceDenied) return resourceDenied;
@@ -1274,7 +1453,12 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   });
   // Token-based usage report: total usage of the request scope (organization/shared) + effective limit.
   app.get('/usage', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'money:read'))) return deny(c.req.raw, 'read');
+    // Spend is metered PER ORGANIZATION — there is no end-user dimension for a client credential to
+    // name, so the rule that every client request names a subject cannot be satisfied here. That is
+    // the answer, not an exception to work around: an application serving end users has no business
+    // reading its customer's billing, and this route was the one place the client class could.
+    if (isClient(c)) return c.json({ error: 'usage is organization-level: not available to a client credential' }, 403);
     const s = await scope(c);
     if ('error' in s) return c.json({ error: s.error }, s.status);
     // In root scope (org on), the per-org limit doesn't apply → only usage is reported, limit is null.
@@ -1285,11 +1469,93 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     const usage = check.limit ? check.usage : await getOrgUsage(baseJournal, s.orgId, usageCostCache);
     return c.json({ org: s.orgId ?? null, usage, limit: check.limit ?? null, exceeded: check.exceeded });
   });
-  app.get('/runs/:id', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+  /**
+   * `?resourceId=` here is a CHECK, not a filter: "I believe this run belongs to X — confirm it."
+   *
+   * It exists because the deployment shape this server is built for cannot answer that question on its
+   * own. An application credential (the `client` class) serves many end users under ONE token, so the
+   * caller's own identity says nothing about whose run this is; without an ownership check the
+   * customer's backend has to keep a private runId→user table and trust itself to consult it on every
+   * request. Passing the expectation and being refused is the cheaper, harder-to-forget shape.
+   *
+   * DELIBERATELY not fail-open on an absent expectation, and deliberately not fail-CLOSED on an absent
+   * owner either: a run started before this field existed (or by a single-operator deployment that
+   * never sets one) has no owner to compare against, and refusing those would break every existing
+   * caller to protect data that has no subject. The rule is only: when BOTH sides are known and they
+   * disagree, refuse. What that rules out is the mistake worth ruling out — a caller that DID state an
+   * expectation being handed someone else's run anyway.
+   */
+  /**
+   * Conversations, READ ONLY.
+   *
+   * The data was already here — every run with a `threadId` writes one — but only @gnldev/studio had
+   * routes to it, so the API a customer's backend actually talks to could create a user's threads and
+   * never list them. Serving a per-user conversation list meant either giving that backend a Studio
+   * credential or keeping a parallel copy of the mapping.
+   *
+   * The write half (rename, delete, purge messages) deliberately stays in Studio: it is operator
+   * surgery on stored history, not something an application does while serving a request.
+   *
+   * `?resourceId=` here is a FILTER, matching Studio's route of the same name — the underlying
+   * `listThreads` has taken this argument since threads existed. Without it an org-scoped caller gets
+   * its organization's threads, which is the same breadth `GET /runs` already answers with.
+   */
+  app.get('/threads', async (c) => {
+    if (!(await allowP(c.req.raw, 'threads:read'))) return deny(c.req.raw, 'read');
     const s = await scope(c);
     if ('error' in s) return c.json({ error: s.error }, s.status);
-    return c.json(await s.journal.readRun(decodeURIComponent(c.req.param('id'))));
+    const memory = s.gnl.memory;
+    // An empty list, not a 404/501: "this deployment keeps no conversations" and "this user has none"
+    // are the same answer to the caller, and the route existing is what lets a client stop branching.
+    { const denied = clientSubjectDenied(c); if (denied) return denied; }
+    const resourceId = c.req.query('resourceId') || undefined;
+    // Two METHODS, not one with an optional argument — see Memory.listThreads. Passing a bare string
+    // to the one-resource method is what silently unfiltered @gnldev/studio's own thread list.
+    if (resourceId) {
+      if (!memory?.listThreads) return c.json([]);
+      return c.json(await memory.listThreads({ resourceId }));
+    }
+    if (!memory?.listAllThreads) return c.json([]);
+    return c.json(await memory.listAllThreads());
+  });
+  /**
+   * A thread's messages. `?resourceId=` is a CHECK here rather than a filter — the same shape
+   * `GET /runs/:id` uses, and for the same reason: the caller names the thread, so the only useful
+   * question left is whether it belongs to who the caller thinks it does.
+   *
+   * Enforced against the THREAD's own record rather than a run's, because a thread outlives the run
+   * that created it and is the thing being asked for. Silent when the store cannot answer who owns a
+   * thread — a Memory implementation is free to omit `getThreadResource`, and a missing capability is
+   * not evidence of a mismatch.
+   */
+  app.get('/threads/:id/messages', async (c) => {
+    if (!(await allowP(c.req.raw, 'threads:read'))) return deny(c.req.raw, 'read');
+    const s = await scope(c);
+    if ('error' in s) return c.json({ error: s.error }, s.status);
+    const memory = s.gnl.memory;
+    if (!memory?.getMessages) return c.json([]);
+    { const denied = clientSubjectDenied(c); if (denied) return denied; }
+    const threadId = decodeURIComponent(c.req.param('id'));
+    const expected = c.req.query('resourceId');
+    if (expected && memory.getThreadResource) {
+      const owner = await memory.getThreadResource(threadId);
+      // Names neither the real owner nor whether the thread exists — a caller guessing ids would
+      // otherwise learn both from the refusal (same wording as the run-ownership check).
+      if (owner && owner !== expected) {
+        return c.json({ error: 'access denied: this thread belongs to a different resourceId' }, 403);
+      }
+    }
+    return c.json(await memory.getMessages(threadId));
+  });
+  app.get('/runs/:id', async (c) => {
+    if (!(await allowP(c.req.raw, 'runs:read'))) return deny(c.req.raw, 'read');
+    const s = await scope(c);
+    if ('error' in s) return c.json({ error: s.error }, s.status);
+    const runId = decodeURIComponent(c.req.param('id'));
+    { const d = clientSubjectDenied(c); if (d) return d; }
+    const denied = await ownershipDenied(c, s, runId);
+    if (denied) return denied;
+    return c.json(await s.journal.readRun(runId));
   });
   /**
    * Agent names FILTERED by the caller's org, exactly as `/agents` and `agentGate` filter them.
@@ -1303,7 +1569,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
    * org dimension anywhere in the config, so `workflowNames` stays whole.
    */
   app.get('/openapi.json', async (c) => {
-    if (!(await allow(c.req.raw, 'read'))) return deny(c.req.raw, 'read');
+    if (!(await allowP(c.req.raw, 'catalog:read'))) return deny(c.req.raw, 'read');
     const s = await scope(c);
     if ('error' in s) return c.json({ error: s.error }, s.status);
     const visible = names.filter((n) => agentVisibleToOrg(config.agents?.[n] ?? {}, s.orgId));

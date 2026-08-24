@@ -112,17 +112,37 @@ describe('@gnldev/studio strict multi-org (EE ON)', () => {
   });
 });
 
-describe('@gnldev/studio strict multi-org (EE OFF → legacy operator UNCHANGED)', () => {
-  it('an org-less roleAuth admin (multiOrganization:false) still sees & manages everything', async () => {
+/**
+ * The FREE tier, with organizations configured. This block used to assert the opposite — that an
+ * org-less `admin` "still sees & manages everything" — because the fail-closed net was gated on the
+ * paid `multiOrganization` capability alone.
+ *
+ * That made the unpaid deployment the less isolated one, which is the wrong direction for a security
+ * default and is what `orgIsolationActive` (server + studio) now fixes. So the contract these two
+ * tests state is the new one, and it is deliberately stronger than what it replaced: the old test
+ * asserted only that the operator got through, and would still have passed if EVERY unbound identity
+ * did. Both sides are pinned here — the undeclared admin is refused, the declared operator is not —
+ * so neither collapsing the distinction nor deleting the grant can pass.
+ */
+describe('@gnldev/studio free tier + organizations: the platform scope must be DECLARED', () => {
+  const freeApp = async (auth: ReturnType<typeof roleAuth>) => {
     const journal = new InMemoryJournal();
     await seed(journal);
-    // free roleAuth: capabilities().multiOrganization === false → strict OFF
-    const app = createStudioApi({ reader: journal, auth: roleAuth({ admin: { token: 'op' } }), org: {} });
+    // free roleAuth: capabilities().multiOrganization === false → the PAID strict model is OFF
+    return createStudioApi({ reader: journal, auth, org: {} });
+  };
 
-    // org-less operator reads the whole root journal (both orgs' prefixed runs) — NOT fail-closed
-    const runs = await (await call(app, '/runs', { headers: H('op') })).json();
-    expect(runs.length).toBe(2);
-    // and can create an org
+  it('an org-less plain admin is fail-CLOSED — a missing orgId never infers the platform scope', async () => {
+    const app = await freeApp(roleAuth({ admin: { token: 'op' } }));
+    expect((await call(app, '/runs', { headers: H('op') })).status).toBe(403);
+    expect((await call(app, '/organizations', { method: 'POST', headers: JH('op'), body: JSON.stringify({ id: 'x' }) })).status).toBe(403);
+  });
+
+  it('the same identity declared as superAdmin sees & manages everything', async () => {
+    const app = await freeApp(roleAuth({ superAdmin: { token: 'op' } }));
+    // reads the whole root journal (both organizations' prefixed runs)
+    expect((await (await call(app, '/runs', { headers: H('op') })).json()).length).toBe(2);
+    // and can create an organization
     expect((await call(app, '/organizations', { method: 'POST', headers: JH('op'), body: JSON.stringify({ id: 'x' }) })).status).toBe(200);
   });
 });

@@ -555,6 +555,13 @@ export interface RunSummary {
    * Absent on runs created before this field existed / runs invoked directly (no agent name given).
    */
   agent?: string;
+  /**
+   * WHOSE run this is — the subject, from the same invisible `:input` entry as `threadId`/`agent`
+   * (stamped by durable `persistInput`). `ThreadRecord.resourceId` is a required field and the memory
+   * layer keys working memory by it, so conversations already had an owner while runs did not: a
+   * caller could ask for one user's threads and not their runs. Absent on runs started without one.
+   */
+  resourceId?: string;
 }
 
 /** Journal read surface (timeline / time-travel / studio). */
@@ -608,6 +615,8 @@ export interface JournalReader {
     cursor?: string;
     status?: RunStatus;
     agent?: string;
+    /** WHOSE runs — matches `RunSummary.resourceId`; same filter-before-slice contract as `agent`. */
+    resourceId?: string;
   }): Promise<{ items: RunSummary[]; nextCursor?: string }>;
 }
 
@@ -616,6 +625,7 @@ export type RunListQuery = {
   cursor?: string;
   status?: RunStatus;
   agent?: string;
+  resourceId?: string;
 };
 
 /**
@@ -651,7 +661,8 @@ export async function listRunsArray(
 /** Filter + slice an array of runs with the SAME semantics listRunsPaged specifies. */
 function pageFromArray(all: RunSummary[], q?: RunListQuery): { items: RunSummary[]; nextCursor?: string } {
   const filtered = all.filter(
-    (r) => (q?.status ? r.status === q.status : true) && (q?.agent ? r.agent === q.agent : true),
+    (r) => (q?.status ? r.status === q.status : true) && (q?.agent ? r.agent === q.agent : true)
+      && (q?.resourceId ? r.resourceId === q.resourceId : true),
   );
   const start = q?.cursor ? Number(q.cursor) || 0 : 0;
   const lim = q?.limit ?? 50;
@@ -1011,11 +1022,12 @@ export class InMemoryJournal implements Journal, JournalReader {
       // See it on its own.
       const out = this.store.get(`${runId}:outcome`) as { status?: RunOutcomeRecord['status'] } | undefined;
       const s = summarizeRun(runId, entries, out as never);
-      const inp = this.store.get(`${runId}:input`) as { threadId?: string; agent?: string } | undefined;
+      const inp = this.store.get(`${runId}:input`) as { threadId?: string; agent?: string; resourceId?: string } | undefined;
       return {
         ...s,
         ...(inp?.threadId ? { threadId: inp.threadId } : {}),
         ...(inp?.agent ? { agent: inp.agent } : {}),
+        ...(inp?.resourceId ? { resourceId: inp.resourceId } : {}),
       };
     });
   }
@@ -1028,15 +1040,11 @@ export class InMemoryJournal implements Journal, JournalReader {
    * `offset()`/`paginate()` helper uses (sqlite-storage.ts/postgres-storage.ts/redis-storage.ts/
    * In-memory-storage.ts), so a cursor produced by one path is interchangeable with the others.
    */
-  async listRunsPaged(q?: {
-    limit?: number;
-    cursor?: string;
-    status?: RunStatus;
-    agent?: string;
-  }): Promise<{ items: RunSummary[]; nextCursor?: string }> {
+  async listRunsPaged(q?: RunListQuery): Promise<{ items: RunSummary[]; nextCursor?: string }> {
     let all = await this.listRuns();
     if (q?.status) all = all.filter((r) => r.status === q.status);
     if (q?.agent) all = all.filter((r) => r.agent === q.agent);
+    if (q?.resourceId) all = all.filter((r) => r.resourceId === q.resourceId);
     const start = q?.cursor ? Number(q.cursor) || 0 : 0;
     const limit = q?.limit ?? 50;
     const items = all.slice(start, start + limit);

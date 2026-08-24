@@ -119,7 +119,7 @@ describe('the inventory does not depend on configuration', () => {
   it('is 18 routes for this package, and says so in one place', () => {
     // A count, deliberately: it is what makes "a route was added" visible in review. If it changes,
     // read the diff above it — the set is asserted, this is the tripwire.
-    expect(mk().routeTable).toHaveLength(18);
+    expect(mk().routeTable).toHaveLength(20);
   });
 });
 

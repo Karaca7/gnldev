@@ -20,13 +20,15 @@
 // Verified by mutation: removing the v1 read-only rule fails this file.
 import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
+import { PLATFORM_ADMIN_ROLE } from '@gnldev/auth';
 import { createStudioApi } from '../src/server.js';
 
 const authProvider = {
   authenticate: (req: Request) => {
     const t = req.headers.get('authorization')?.replace('Bearer ', '');
     if (t === 'acme') return { roles: ['admin'], id: 'u-acme', orgId: 'acme' };
-    if (t === 'ops') return { roles: ['admin'], id: 'u-ops' }; // unbound platform operator
+    // The unbound platform operator, now SAYING so (scope.ts: explicit grant, never inferred).
+    if (t === 'ops') return { roles: ['admin', PLATFORM_ADMIN_ROLE], id: 'u-ops' };
     return null;
   },
   authorize: () => ({ allow: true }),

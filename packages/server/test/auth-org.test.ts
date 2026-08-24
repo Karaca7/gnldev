@@ -27,7 +27,12 @@ function mkApi(journal: InMemoryJournal) {
   return createRestApi(
     { journal, agents: { a: { model: mkModel('ok') } } },
     {
-      auth: roleAuth({ admin: { token: 'adm' }, viewer: { token: 'viw', orgId: 'acme' } }),
+      // `superAdmin`, not a bare admin: with the `org` option configured, an identity bound to no
+      // organization is fail-closed, and the cross-org (platform) scope is an EXPLICIT grant that is
+      // never inferred from a missing orgId — see @gnldev/auth scope.ts. The persona these tests
+      // exercise is the operator, so it says so. (`mkApiNoOrg` below has no `org` option and keeps a
+      // plain unbound admin: nothing to isolate from, so nothing to declare.)
+      auth: roleAuth({ superAdmin: { token: 'adm' }, viewer: { token: 'viw', orgId: 'acme' } }),
       org: {},
     },
   );

@@ -8,8 +8,11 @@ import { roleAuth, type AuthProvider } from '@gnldev/auth';
 import { createStudioApi } from '../src/server.js';
 import { call } from './call.js';
 
+// The admin here is the PLATFORM operator — unbound on purpose, working across organizations. It says
+// so via the `superAdmin` class rather than by omitting `orgId`: with `org` configured, an unbound
+// identity is fail-closed, and the platform scope is an explicit grant (see @gnldev/auth scope.ts).
 const AUTH = () => roleAuth({
-  admin: { token: 'adm', user: 'ops' },
+  superAdmin: { token: 'adm', user: 'ops' },
   viewer: { token: 'viw', orgId: 'acme' },
 });
 

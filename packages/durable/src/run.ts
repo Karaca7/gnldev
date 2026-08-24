@@ -418,9 +418,21 @@ async function persistInput(
   input: { prompt?: unknown; messages?: unknown; system?: unknown },
   threadId?: string,
   agentName?: string,
+  resourceId?: string,
 ): Promise<void> {
   const key = runKeys.input(runId); // ':input' doesn't match parseJournalKey → invisible in the reader
   if ((await journal.get(key)) !== undefined) return;
+  // `resourceId` — WHOSE run this is — rides along for the same reason threadId does, and answers a
+  // question the journal previously could not: `ThreadRecord.resourceId` is a REQUIRED field and the
+  // memory layer keys working memory by it (`res:<id>`), so the subject was already first-class for
+  // CONVERSATIONS while runs stayed anonymous. A caller could group a user's threads and not their
+  // runs. Frozen with the input rather than added as a column because that is where `threadId`/`agent`
+  // already live: one write, no schema migration, and every adapter surfaces it through the read it
+  // already does.
+  //
+  // FIRST-WINS, like the rest of this entry: the early return above means a resume never rewrites the
+  // owner. A run belongs to whoever started it.
+  //
   // We freeze threadId + the agent NAME together with the input (both optional): studio /runs reads
   // This to group runs by thread and to LABEL each run with its agent (no per-run journal N+1). It
   // Sits in the invisible `:input` entry → doesn't leak into reader/time-travel, doesn't affect step counting.
@@ -429,7 +441,7 @@ async function persistInput(
   // Step FINISHES — a single-step streamed run has exactly one visible row, at the very end, so a
   // Ts-span duration read 0ms (live repro: a 27s stream recorded as 0ms). Additive field; readers of
   // The input blob ignore unknown fields.
-  await journal.put(key, stampFormat({ at: Date.now(), prompt: input.prompt, messages: input.messages, system: input.system, ...(threadId ? { threadId } : {}), ...(agentName ? { agent: agentName } : {}) })); // H13
+  await journal.put(key, stampFormat({ at: Date.now(), prompt: input.prompt, messages: input.messages, system: input.system, ...(threadId ? { threadId } : {}), ...(agentName ? { agent: agentName } : {}), ...(resourceId ? { resourceId } : {}) })); // H13
 }
 
 /**
@@ -1015,7 +1027,7 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
 
   if (procCtx) await applyInputProcessors(processors!, procCtx, journal, runId, rest);
 
-  await persistInput(journal, runId, rest, threadId, agentName);
+  await persistInput(journal, runId, rest, threadId, agentName, resourceId);
   await persistMemoryContext(journal, runId, memCtx);
   // Freeze `limits` into the journal on the first run (idempotent via `claim` — the FIRST
   // Run's limits win, a later resume never overwrites them). resumeRun reads this back when the caller
@@ -1339,7 +1351,7 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
 
   if (procCtx) await applyInputProcessors(processors!, procCtx, journal, runId, rest);
 
-  await persistInput(journal, runId, rest, threadId, agentName);
+  await persistInput(journal, runId, rest, threadId, agentName, resourceId);
   await persistMemoryContext(journal, runId, memCtx);
   // Freeze `limits` on the first run (parity with runDurableInner) — idempotent via `claim`.
   if (limits) await claim(journal, runKeys.cfgLimits(runId), limits);
