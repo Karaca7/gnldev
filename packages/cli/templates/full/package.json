@@ -1,6 +1,7 @@
 {
   "name": "__PROJECT_NAME__",
   "private": true,
+  "license": "UNLICENSED",
   "type": "module",
   "scripts": {
     "dev": "gnl dev",

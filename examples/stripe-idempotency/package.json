@@ -2,6 +2,7 @@
   "name": "@gnldev/stripe-idempotency",
   "version": "0.0.0",
   "private": true,
+  "license": "Apache-2.0",
   "type": "module",
   "description": "Provider-side exactly-once: threads GNL's injected idempotencyKey to a mock Stripe client, showing the guarantee extends beyond the framework to the real payment provider. No API key required (mock Stripe, no network calls).",
   "scripts": {

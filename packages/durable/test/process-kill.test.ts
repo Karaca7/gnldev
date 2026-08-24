@@ -32,7 +32,7 @@ describe('real process-kill resume', () => {
       expect(child.stderr ?? '').not.toContain('fixture watchdog');
       expect(Number(readFileSync(sePath, 'utf8'))).toBe(1); // charge happened once
 
-      // Run 2 — parent: resumes with the SAME SqliteJournal FILE
+      // Run 2 — parent: resumes with the SAME SqliteStorage FILE
       const chargeCard = tool({
         description: 'charge',
         inputSchema: z.object({ amount: z.number() }),

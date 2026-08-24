@@ -5,7 +5,8 @@ the model re-plans the same call.
 
 ```bash
 pnpm install
-pnpm dev       # REST API + Studio Playground → http://localhost:3000 (+ /studio)
+pnpm dev       # REST API + Studio Playground → open http://localhost:3000/studio
+               # (bare http://localhost:3000 answers 404 — the REST API has no index route)
 pnpm test      # e2e proof of LLM-aware idempotency
 ```
 

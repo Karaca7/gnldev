@@ -48,3 +48,7 @@ await runDurable({ runId, journal, model, memory: mem, threadId: 'th-1', resourc
 ## Lite alternative
 For anyone who just wants simple topK recall, `SemanticMemory` in `@gnldev/rag` is lighter; it uses the same
 `sem:${threadId}:log` shape (cross-readable).
+
+## License
+
+Apache-2.0 — see [LICENSE](./LICENSE).

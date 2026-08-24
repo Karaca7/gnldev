@@ -9,7 +9,9 @@ instead and open `/studio`.
 
 ## What it renders
 
-Eighteen views over a run journal, including:
+Nineteen views over a run journal — one route and one sidebar row each, both listed in `src/App.tsx`
+(`NAV` and `<Routes>`; `PromptEditor.tsx` and `inspector-thread.tsx` live in `views/` but are
+components of other views, not views of their own). Including:
 
 - **Playground** — talk to an agent and watch the journal fill in
 - **Inspector** — a run step by step, with time-travel and fork from any point

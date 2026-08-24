@@ -2,7 +2,7 @@
 // organization. SAFE BY DEFAULT: without --yes this only PREVIEWS, exactly like `gnl sweep`.
 //
 // The organization id is the OPERATOR'S, and nothing here derives it. On a free deployment there was
-// one tenant and only the person upgrading knows which organization that data becomes. So the command
+// one organization and only the person upgrading knows which one that data becomes. So the command
 // asks, and refuses to guess: with no id and no TTY it stops rather than picking one.
 //
 // Asking matters more here than in most commands, because the mistake is irreversible. Adopting into

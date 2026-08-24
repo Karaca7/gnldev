@@ -1,6 +1,6 @@
 // Per-run COST CAP + RUNAWAY protection. Competitive report (wave 1-#2): 63 budget-overrun
 // Incidents, a single retry loop costing thousands of dollars, sub-agent fan-out bypassing the budget.
-// `budget.ts` enforces the TENANT-scoped (long-term) quota; this file enforces the RUN-scoped (single
+// `budget.ts` enforces the ORGANIZATION-scoped (long-term) quota; this file enforces the RUN-scoped (single
 // Run) cap — the TWO COMPLEMENT each other, neither replaces the other. FULLY OPT-IN: if `limits` is
 // Not provided (undefined/unset fields), no check runs → existing tests/behavior are preserved AS-IS.
 //

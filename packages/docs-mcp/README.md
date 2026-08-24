@@ -4,6 +4,8 @@
 
 Hand-written JSON-RPC 2.0 — **`@modelcontextprotocol/sdk` is NOT USED** (zero new dependencies: only `node:readline`/`node:process`). Content is first tried via a live fetch of `/llms.txt` + `/llms-full.txt` through `GNL_DOCS_URL` (default `https://gnl.dev`); if the network is unavailable/unreachable, it falls back to the static content embedded in the package (`src/content.ts`) — this package works on its own even if the site is down.
 
+> **Not on npm yet** — no `@gnldev/*` package has been published, so the `npx` form below cannot resolve either. Until the first release, point your MCP client at a [repo clone](https://github.com/Karaca7/gnl-framework) (`pnpm install && pnpm -r build`, then run `node packages/docs-mcp/dist/cli.js`).
+
 ```bash
 npm i -g @gnldev/docs-mcp   # or npx @gnldev/docs-mcp (no dependencies, runs the stdio server directly)
 ```
@@ -56,3 +58,7 @@ To run locally from within the monorepo (before publishing):
 `src/cli.ts` reads stdin line by line (`node:readline`) and hands each line to `src/server.ts#handleMessage` as a JSON-RPC 2.0 message; responses are written to stdout as single-line JSON (newline-delimited, the format expected by the MCP stdio transport). `initialize` → returns `protocolVersion: '2024-11-05'` + `serverInfo`; messages without an `id` field (notifications, e.g. `notifications/initialized`) are NEVER responded to, per JSON-RPC 2.0. Unknown method → `-32601`; in `tools/call`, an unknown tool/missing argument → a tool-level `isError: true` result (not a JSON-RPC error, per the MCP contract).
 
 As a library (test/embedding): `import { createDocsProvider, handleMessage, TOOLS } from '@gnldev/docs-mcp'` — `src/index.ts` is the public export; the CLI's stdio side effects (`process.stdin`/`process.exit`) are kept in a separate file (`src/cli.ts`), so importing `index.ts` never starts a stdio server.
+
+## License
+
+Apache-2.0 — see [LICENSE](./LICENSE).

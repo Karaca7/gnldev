@@ -8,6 +8,8 @@ nothing here reimplements durability, it just puts it in your terminal. **One ru
 hand-rolled ANSI (see
 [Supply-chain hygiene](../../README.md#supply-chain-hygiene)).
 
+> **Not on npm yet** — no `@gnldev/*` package has been published, so neither line below resolves today. Until the first release, run the CLI from a [repo clone](https://github.com/Karaca7/gnl-framework) (`pnpm install && pnpm -r build`, then `node packages/cli/dist/cli.js <command>`).
+
 ```bash
 npm i -g @gnldev/cli   # or: npx @gnldev/cli <command>
 ```
@@ -29,6 +31,13 @@ gnl init my-agent --template full && cd my-agent && pnpm install && pnpm test   
 ```
 
 ### Templates
+
+- **`minimal`** (default) — one agent, mock model, SQLite storage, `gnl dev`. The smallest thing that runs.
+- **`full`** — the same, plus a side-effecting `chargeOrder` tool with `idempotency: 'args'`
+  (`idempotencyKey: (a) => a.orderId`) and `test/e2e.test.ts` that reproduces a documented
+  duplicate-toolCallId pattern end-to-end and asserts the order is
+  charged exactly once. This is the template that shows GNL's edge.
+
 ### Where these listen
 
 Both commands bind `127.0.0.1` — reachable only from your machine. They previously passed no hostname
@@ -50,12 +59,6 @@ auth entirely, so its admin API was open no matter what you had configured.
 
 **If you run `gnl dev` inside a container**, add `--host 0.0.0.0`; without it the port is no longer
 reachable from the host.
-
-- **`minimal`** (default) — one agent, mock model, SQLite storage, `gnl dev`. The smallest thing that runs.
-- **`full`** — the same, plus a side-effecting `chargeOrder` tool with `idempotency: 'args'`
-  (`idempotencyKey: (a) => a.orderId`) and `test/e2e.test.ts` that reproduces a documented
-  duplicate-toolCallId pattern end-to-end and asserts the order is
-  charged exactly once. This is the template that shows GNL's edge.
 
 ## Inspect (read-only)
 These need a `gnl.config.ts` with `storage` (recommended, e.g. `SqliteStorage`) or a raw `journal` —
@@ -132,3 +135,7 @@ have them.
 These used to be one entry, which put those peer type references into the program of anyone importing
 the package at all: `import { scaffold } from '@gnldev/cli'` in a project with none of them installed
 produced 16 `TS2307: Cannot find module` errors. Nothing was removed — the dev half moved.
+
+## License
+
+Apache-2.0 — see [LICENSE](./LICENSE).

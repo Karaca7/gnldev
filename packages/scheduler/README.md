@@ -5,6 +5,8 @@ run fires **once**, even when several workers are polling the same schedule.
 
 ## Install
 
+> **Not on npm yet** — no `@gnldev/*` package has been published. Until the first release, use it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.
+
 ```bash
 npm i @gnldev/scheduler
 ```

@@ -61,7 +61,7 @@ export class GraphRag implements VectorStore {
       // Incremental edge building: the new item is scored once against everyone existing IN ITS OWN
       // namespace. Filtering at query time is not enough here and that is what makes this store
       // different from the others: an edge is a permanent structure, so a graph built across two
-      // namespaces lets a walk enter one tenant's document from another's and carry its score back.
+      // namespaces lets a walk enter one organization's document from another's and carry its score back.
       // Measured before this: two namespaces, one document each -> `{"nodes":2,"edges":1}`.
       for (const other of this.items) {
         if (other.id === it.id) continue;

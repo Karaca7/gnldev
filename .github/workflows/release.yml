@@ -134,7 +134,7 @@ jobs:
       # PROVENANCE IS PASSED AS CONFIG, NOT AS A FLAG. `pnpm publish` rebuilds npm's argv from a
       # fixed allow-list (--access / --dry-run / --otp), so `--provenance` is accepted and silently
       # DROPPED: `pnpm publish --help` does not list it, while `npm publish --help` does. The flag
-      # form therefore publishes 24 unattested tarballs while exiting 0, and npm refuses to
+      # form therefore publishes 25 unattested tarballs while exiting 0, and npm refuses to
       # republish a version -- so 0.1.0 would stay permanently unattested with nothing in the log to
       # say so. NPM_CONFIG_PROVENANCE reaches npm through the environment, which pnpm does not
       # filter. Verify with a workflow_dispatch dry run before a real tag: the npm output must

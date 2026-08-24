@@ -227,8 +227,8 @@ export async function purgeOrganization(journal: Journal, orgId: string, now = D
   // A boundary marker, because the audit log is NOT org-prefixed and therefore survives this.
   //
   // Org ids are strings a human chooses — 'acme', a company slug — so the same id being handed to a
-  // different tenant later is ordinary, not exotic. Measured before this: purge removed the org's data
-  // and left every `__audit__` record tagged `org: 'acme'` in place, so the NEXT tenant of that id
+  // different organization later is ordinary, not exotic. Measured before this: purge removed the org's
+  // data and left every `__audit__` record tagged `org: 'acme'` in place, so the NEXT holder of that id
   // opened /audit and read who did what in the previous tenancy.
   //
   // The records are not deleted. An audit log that can be erased by the operation it is meant to

@@ -8,6 +8,8 @@ concurrent poll race) can cause redelivery → **write the handler as idempotent
 inside it (`runDurable`/`claim`). Fan-out: N consumers → each gets every event at least once, via its own
 marker stream.
 
+> **Not on npm yet** — no `@gnldev/*` package has been published. Until the first release, use it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.
+
 ```bash
 npm i @gnldev/events   # peer: @gnldev/durable
 ```
@@ -42,3 +44,7 @@ If `start()` delivers no events on a given `poll()` call, the next wait starts a
 (cap: `maxPollMs ?? pollMs*32`); it resets to `pollMs` as soon as an event is delivered. This prevents a
 large number of consumers on an empty topic from generating tens of thousands of empty queries per second
 (a poll storm). `backoff: false` reverts to the old fixed-interval behavior.
+
+## License
+
+Apache-2.0 — see [LICENSE](./LICENSE).

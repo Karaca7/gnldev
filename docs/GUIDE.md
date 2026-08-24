@@ -196,9 +196,21 @@ const storage = composite({
 | Adapter | runs (journal) | memory | vectors | work | cache | When? |
 |---|---|---|---|---|---|---|
 | InMemory | ✅ | ✅ | ✅ | ✅ | ✅ | Testing, prototyping. |
-| SQLite | ✅ | ✅ | ✅ | ✅ | ✅ | Single machine, zero setup (built into Node). |
-| Postgres | ✅ | ✅ | ✅ (with pgvector) | ✅ | ✅ | Multi-server production. **Recommended journal.** |
+| SQLite | ✅ | ✅ | ✅ (scan) | ✅ | ✅ | Single machine, zero setup (built into Node). |
+| Postgres | ✅ | ✅ | ✅ (scan) | ✅ | ✅ | Multi-server production. **Recommended journal.** |
 | Redis | ✅* | ❌ | ❌ | ✅ | ✅ (real TTL) | Queue/cache accelerator. *Not recommended for the journal in failover setups (see below). |
+
+The cells are the adapters' own `capabilities` matrices, verbatim (`postgres-storage.ts`,
+`sqlite-storage.ts`, `redis-storage.ts`, `in-memory-storage.ts`).
+
+> **`scan`, not pgvector.** The `vectors` port on the SQLite *and* Postgres adapters stores the
+> embedding as a TEXT column and ranks by cosine similarity **in JavaScript, over every eligible
+> row** — there is no `CREATE EXTENSION vector` anywhere in `@gnldev/durable`, and no ANN index.
+> That is fine for a modest corpus and honest about what it is. **pgvector lives in a different
+> package**: `PostgresVectorStore` in `@gnldev/rag`
+> (`packages/rag/src/postgres-vector-store.ts`) creates the extension, declares an
+> `embedding vector(dim)` column and ranks with the `<=>` operator inside the engine. Use it —
+> not the storage adapter's `vectors` port — when the archive is large.
 
 ### 5.3 Concrete table structures — which table is used for what, and when?
 
@@ -214,6 +226,7 @@ graph LR
     work["work port"] --> T8["gnl_work_log"] & T9["gnl_work_kv"]
     cache["cache port"] --> T10["gnl_cache"]
     meta["meta port"] --> T11["gnl_meta"]
+    runs --> T12["gnl_counters<br/>(usage/metric totals)"]
 ```
 
 **① `gnl_run_journal` — the journal itself (the most important table).**
@@ -260,10 +273,12 @@ conversations ("user prefers formal language"). One row per thread, containing a
 observations.
 
 **⑦ `gnl_vectors` — RAG document archive.** Columns: `id (chunk identifier, e.g., 'handbook#3'),
-text (the chunk's text), embedding (meaning vector), metadata (source/title trail), created_at`.
-*When?* Populated via `indexDocuments`; every time the agent uses the knowledge-base tool, the
-"K chunks closest to the question" are searched here. If Postgres has the pgvector extension,
-the search happens inside the engine (via a fast index).
+text (the chunk's text), embedding (meaning vector, stored as TEXT), metadata (source/title trail),
+namespace (organization partition), created_at`. *When?* Populated via `indexDocuments`; every time
+the agent uses the knowledge-base tool, the "K chunks closest to the question" are searched here.
+The search is a **scan**: the eligible rows come back and cosine similarity is computed in
+JavaScript. This table is not a pgvector table and never becomes one — for engine-side ANN search,
+use `@gnldev/rag`'s `PostgresVectorStore`, which owns its own `vector(dim)` table (see §5.2).
 
 **⑧ `gnl_work_log` — queue/event log.** Columns: `ns (namespace — which queue/topic, e.g.,
 'evt:order'), id (record id; ns+id is the primary key → the same event CANNOT be inserted twice
@@ -282,9 +297,16 @@ get cleaned up.
 on startup; if the table schema is from an older version, it decides the safe migration path
 from here.
 
+**⑫ `gnl_counters` — additive totals.** Columns: `key, field, value` (`(key, field)` is the primary
+key). Written with an atomic `INSERT ... ON CONFLICT DO UPDATE SET value = value + EXCLUDED.value`,
+which is what makes it safe to increment from several processes at once. *When?* Cost/usage ledgers
+and metrics (`incrBy` — see `metrics.ts`), including the per-organization budget totals Studio
+reads. Like `gnl_runs` it is derived data, and it is swept by the same retention path
+(`deletePrefix` covers it — `retention.ts`).
+
 > To remember it easily: **① the journal, ② the listing, ③–⑥ memory, ⑦ the library, ⑧–⑨ the
-> mailroom, ⑩ the fridge, ⑪ the ID card.** The critical guarantee lives only in ①; the rest are
-> comfort/speed layers and can be moved to other engines with `composite()`.
+> mailroom, ⑩ the fridge, ⑪ the ID card, ⑫ the tally sheet.** The critical guarantee lives only
+> in ①; the rest are comfort/speed layers and can be moved to other engines with `composite()`.
 
 ---
 
@@ -328,6 +350,10 @@ graph LR
     Distributed --> durable
     Presentation --> durable
 ```
+
+The map shows the 22 packages that fall into these six groups. Two more live in `packages/` without
+one: `@gnldev/chat-adapter` and `@gnldev/docs-mcp`. That is 24 manifests in `packages/`, all of
+which publish to npm.
 
 Key point: **every package is built on top of `@gnldev/durable`** — a RAG query, a queue job, a
 remote agent call are all automatically written to the journal and INHERIT the exactly-once
@@ -529,15 +555,17 @@ await client.run('assistant', { runId: 'order-42', prompt: '...' });
 
 // Studio: web control panel — npx @gnldev/studio --db runs.db
 // (or --config gnl.config.ts, which also serves the Playground; it needs one or the other)
-// 18 views: run timeline, TIME-TRAVEL (jump back to a past step and FORK from there),
-// approval queue, cost, traces, tenant/budget management, network tree, playground...
+// 19 views (one nav row per route — see studio-ui's NAV list in src/App.tsx): run timeline,
+// TIME-TRAVEL (jump back to a past step and FORK from there), approval queue, cost, traces,
+// organization/budget management, network tree, playground...
 ```
 
 ### 7.9 Deployment and observability
 
-There is no deployment package, and that is the design: `createRestApi()` returns a web-standard
+**No deployment step is required**, and that is the design: `createRestApi()` returns a web-standard
 `fetch` handler, so what runs it is whatever your platform already expects. No adapter in between,
 nothing to keep in step with a provider's API.
+
 
 ```ts
 import { createRestApi } from '@gnldev/server';
@@ -585,7 +613,7 @@ buys the first list and costs the second.
 | **Model fallback is persistent** | The model that actually won is written to the journal; a resume sticks with it instead of re-rolling the dice |
 | **Dynamic agent-network decisions are frozen** | A routing decision made once is recorded, so a replay follows the same path |
 | **Resumable evals** | A test suite continues where it stopped instead of starting over |
-| **Governance surface** | Studio ships 18 views: approval queue, policy, budget, audit, regression comparison |
+| **Governance surface** | Studio ships 19 views: approval queue, policy, budget, audit, regression comparison |
 | **Edge-native** | A thin core with optional dependencies, small enough to run inside a Workers-class bundle |
 
 **What it cost — deliberately, not by omission**
@@ -595,7 +623,7 @@ buys the first list and costs the second.
 | Voice (TTS/STT), Slack/WhatsApp channels | Out of scope. These are integration surface, not durability; adding them would widen the core without making a single run safer. |
 | No-code agent editor | Code-first by design. An agent's behaviour lives in reviewable, testable, version-controlled code — a visual editor moves it somewhere a diff cannot follow it. |
 | A large catalogue of storage adapters | Four, plus composite mixing. Each adapter has to prove exactly-once against a real engine, and that proof is expensive; a long list of adapters that were never raced under load would be a liability, not a feature. |
-| A large catalogue of built-in scorers | Eight, plus the judge infrastructure to write your own. |
+| A large catalogue of built-in scorers | Sixteen — 8 LLM-judge, 4 model-free text, 3 rule-based, plus `embeddingSimilarity` — and the judge infrastructure to write your own. (Count them in `packages/evals/src/index.ts`: `scorers.ts` contributes 8, `text-scorers.ts` 4, `scorer.ts` 4. The trajectory scorers are a separate family on top.) |
 
 If your workload is "running twice is a disaster" — payments, finance, legal, healthcare, anything
 long-running and distributed — the first table is the whole argument. If what you need is a quick
@@ -616,12 +644,15 @@ themselves live under `packages/durable/test/`:
   NOT hold under asynchronous setups, documented honestly.)
 - **Lock takeover:** two servers tried to take over an expired lock at the same time → only one
   won (`putIfMatch` CAS; a race here was found and closed in an earlier version).
-- **Process-kill tests:** a child process hard-exits mid-run (`process.exit(1)`, after the effect
-  and before the run finishes) and the parent resumes against the same SQLite file. The only
-  `SIGKILL` in this suite is aimed at Postgres, in the failover test above — the distinction
-  matters, because `process.exit` still unwinds less than a signal but more than a power cut.
-- Total: **2000+ tests**, plus real-infrastructure suites gated behind `GNL_INTEGRATION=1` and
-  `GNL_FAILOVER=1`.
+- **Process-kill tests:** two flavours, and the difference is the point. `process-kill.test.ts` and
+  `exactly-once-intersection.test.ts` have a child process hard-exit mid-run (`process.exit(1)`,
+  after the effect and before the run finishes) and the parent resume against the same SQLite file.
+  `sigkill-status.test.ts` goes further: the child is killed with a real `SIGKILL` mid-model-call —
+  no exit handler, no flush — and the parent then reads the run as `running`, never `completed`,
+  which is what the write-ahead design exists to make possible. (The failover test above SIGKILLs
+  Postgres itself, which is a third thing again.)
+- Total: **3,589 passing tests** (48 skipped, 432 files — `npx vitest run`), plus
+  real-infrastructure suites gated behind `GNL_INTEGRATION=1` and `GNL_FAILOVER=1`.
 
 ---
 
@@ -871,11 +902,22 @@ If a change is big enough that the conversation reconstructed during replay CONF
 record (e.g., the arguments generated for a tool differ from what's in the record — this is
 called **drift**), GNL has two modes:
 
-- **`replay: 'lenient'`** (default, forgiving): logs a warning, uses the recorded result, the run
-  continues — the "I don't want the job to stall" mode.
-- **`replay: 'strict'`**: throws a `DivergenceError` and STOPS the moment drift is detected —
-  the "don't blindly continue if something's inconsistent" mode; you turn this on for
-  finance/legal work.
+- **`replay: 'lenient'`** (default, forgiving): a diverging **tool argument** logs a warning and the
+  run continues from the recorded result — the "I don't want the job to stall" mode. A diverging
+  **model request** isn't even checked here.
+- **`replay: 'strict'`**: a diverging **tool argument** throws `DivergenceError` and STOPS the run —
+  the "don't blindly continue if something's inconsistent" mode; you turn this on for finance/legal
+  work.
+
+**The honest bound, which the two modes above don't cover evenly.** Strict is strict about tool
+arguments only. A replayed **model step** that produces a different request is `console.warn`ed and
+the run continues, in strict mode too — it never throws. That is deliberate, and the reason is in
+`durable-model.ts`'s own comment: with memory or an input processor in play, calling `runDurable`
+again with the same raw arguments legitimately reconstructs a different request (the processor does
+not re-run on resume), so a hard error there would break working code for a difference that cannot
+affect the outcome — the model step is replayed from the journal either way. So: `strict` buys you
+a hard stop on tool-argument drift and a log line on model drift. If you read the flag as "nothing
+diverges silently," that is more than it promises.
 
 ### 12.4 "I want to SEE what the new model would do" — not resume, but experiment tools
 
@@ -916,13 +958,13 @@ former; it's tested with the latter.
 | Layer | Technology | What's it for in this project? |
 |---|---|---|
 | Language / runtime | TypeScript + Node.js | All code is TypeScript (type safety: wrong data shapes are caught at compile time). Thanks to Node 22's built-in `node:sqlite`, SQLite doesn't even need an extra package. |
-| Monorepo management | pnpm workspaces | Keeps 24 packages in one repo (monorepo: a single repo holding many packages). |
+| Monorepo management | pnpm workspaces | Keeps 24 packages in one repo (monorepo: a single repo holding many packages); all of them publish to npm. |
 | LLM abstraction | **Vercel AI SDK** (`ai`) | The most critical dependency: a SINGLE interface to OpenAI/Anthropic/Google/Mistral. `runDurable` is essentially a durable wrapper around `generateText` — no provider lock-in. |
 | Schema validation | Zod | Tool input schemas (shape-checking the parameters the LLM will send to a tool). |
 | Web framework | **Hono** | The HTTP layer for Server/Studio/auth. Hono instead of Express: runs identically on Node and at the edge (Cloudflare Workers), and is very small — the foundation of the "small edge bundle" claim. |
 | Storage | SQLite / PostgreSQL / Redis | The adapters from §5; all OPTIONAL dependencies (a driver you don't use is never loaded — lazy import). |
 | Serialization | superjson | Record-to-text conversion; unlike plain JSON, it doesn't lose types like `Date`. |
-| Testing | Vitest + pg-mem + Docker | 2000+ tests; pg-mem = an in-memory fake Postgres (fast); Docker compose files = REAL PG/Redis integration + a live failover scenario. |
+| Testing | Vitest + pg-mem + Docker | 3,589 passing tests across 432 files; pg-mem = an in-memory fake Postgres (fast); Docker compose files = REAL PG/Redis integration + a live failover scenario. |
 | Bundling | — | Not needed: `createRestApi()` returns a web-standard fetch handler, so each platform bundles it the way it already bundles anything else. |
 | Studio UI | React + TanStack Query + Recharts | The panel's front end: UI + data fetching/caching + charts. |
 | Observability | OTLP/HTTP (hand-rolled, ~8KB) | Sends traces to external tools; a hand-written translator instead of the massive OTel SDK (the stay-thin philosophy). Live mode also optionally uses the OTel SDK. |

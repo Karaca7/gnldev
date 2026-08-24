@@ -39,7 +39,7 @@ Usage: gnl chat [--provider anthropic|openai] [--model <id>] [--db <path>] [--se
 
   --provider   LLM provider (default: anthropic)
   --model      model id (default: claude-opus-4-8 / gpt-4o-mini)
-  --db         SqliteJournal file path (in-memory if not given)
+  --db         SQLite database file path (in-memory if not given)
   --session    session prefix (for resume; defaults to chat-<time>)
 
 API key: ANTHROPIC_API_KEY / OPENAI_API_KEY environment variable.`);

@@ -34,7 +34,7 @@ export function createRagTool(opts: {
    * documented RAG path. Every agent built from this tool searched the whole index, and every shipped
    * example (README, both GUIDEs, the scaffold recipe, the docs-mcp entry) does exactly that.
    *
-   * Build one tool per tenant with their namespace, or pass a function to resolve it per call.
+   * Build one tool per organization with their namespace, or pass a function to resolve it per call.
    */
   namespace?: string;
   /** Metadata narrowing, applied by the store alongside `namespace`. */

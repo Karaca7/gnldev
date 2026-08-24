@@ -39,7 +39,7 @@ export const ENGINE_META_KEYS: readonly string[] = ['schema_version'];
  *
  * An ALLOW list rather than a deny list, deliberately. A reserved key added later and forgotten here
  * stays where it is — the operator still sees it and nothing breaks — where a forgotten DENY entry
- * would move platform state into one tenant. `adoptIntoOrg` reports what it skipped by name so the
+ * would move platform state into one organization. `adoptIntoOrg` reports what it skipped by name so the
  * decision is visible rather than silent.
  */
 export const ADOPTABLE_RESERVED_PREFIXES: readonly string[] = [
@@ -52,7 +52,7 @@ export const ADOPTABLE_RESERVED_PREFIXES: readonly string[] = [
   //
   // Both were missing from this list when it was first written, which is the failure mode an allow
   // list has: it leaves data behind. That is the trade it is chosen for — a missing DENY entry moves
-  // platform state into one tenant and breaks authentication.
+  // platform state into one organization and breaks authentication.
   '__studio_wf__', '__studio_agent__',
 ];
 
@@ -262,7 +262,7 @@ export function withOrg(journal: Journal, orgId: string): Journal & Partial<Jour
   }
   // H1 (atomic conditional replace): the prefixed key, expected/value are delegated as-is — run-lock.ts's
   // Expired-lock takeover CAS also stays atomic in the org view (if not bridged it would fall back to
-  // Best-effort get→put, creating a split-brain risk in a multi-tenant scenario).
+  // Best-effort get→put, creating a split-brain risk in a multi-organization deployment).
   if (journal.putIfMatch) {
     out.putIfMatch = (key, expected, value) => journal.putIfMatch!(prefix + key, expected, value);
   }
@@ -294,7 +294,7 @@ export function withOrg(journal: Journal, orgId: string): Journal & Partial<Jour
   // P1.6b: `countRunsByStatus` is DELIBERATELY NOT bridged here (unlike every other optional capability
   // Above) — it's an ENGINE-LEVEL aggregate over the WHOLE underlying store (e.g. SQL `GROUP BY` on
   // `gnl_runs`), with NO per-organization filter parameter to push the `org:<id>:` prefix into. Bridging
-  // It naively would leak EVERY organization's counts into this one's view (a real cross-tenant data
+  // It naively would leak EVERY organization's counts into this one's view (a real cross-organization data
   // Leak) — so it's left undefined; callers (studio's /metrics) fall back to the already org-safe
   // `listRuns`-based count.
   // H8b (stale run scan): the underlying result physically comes back as `org:<orgId>:<runId>`

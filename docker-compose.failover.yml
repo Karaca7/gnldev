@@ -1,5 +1,7 @@
 # Postgres primary + SYNCHRONOUS replica for real FAILOVER verification.
-# Live-tests the deployment prerequisite from the README ("synchronous_commit=on + standby"):
+# Live-tests the deployment prerequisite stated in docs/GUIDE.md §12 ("synchronous_commit = on" with a
+# synchronous standby). It used to cite the README, which never carried that line — the pointer was
+# dead, and this file is where someone goes to reproduce the guarantee:
 #   docker compose -f docker-compose.failover.yml up -d
 #   GNL_FAILOVER=1 npx vitest run packages/durable/test/failover-real.test.ts
 #   docker compose -f docker-compose.failover.yml down -v

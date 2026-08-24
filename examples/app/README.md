@@ -5,7 +5,9 @@ A real reference app that uses our framework **end to end**. **No API key requir
 ```bash
 cd ../../ && pnpm -r build && cd examples/app   # build the packages
 pnpm start
-# 🎫 http://localhost:3000  (web UI)   🔍 http://localhost:4321  (ops studio)
+# 🎫 http://localhost:3100  (web UI)   🔍 http://localhost:3100/studio  (ops studio)
+# One port, not two: Studio is mounted into the same app under /studio (see src/index.ts).
+# Override with PORT=… — 3100 is the default in src/index.ts.
 ```
 
 ## Flow (try it)
@@ -26,6 +28,6 @@ pnpm start
 | `@gnldev/queue` | **send-email** background job after refund |
 | `@gnldev/events` | **refunds** exactly-once event publish → notification |
 | `@gnldev/otel` | `/api/tickets/:id/trace` → OTEL span + cost |
-| `@gnldev/studio` | ops view (separate port: time-travel/fork/approval queue) |
+| `@gnldev/studio` | ops view, mounted at `/studio` on the same port: time-travel/fork/approval queue |
 
 Extension points: `@gnldev/a2a` (remote expert agent), `@gnldev/mcp` (external tools), `@gnldev/workflow` (refund pipeline), `@gnldev/evals` (quality scores).

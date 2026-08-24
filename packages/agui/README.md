@@ -2,6 +2,8 @@
 
 **AG-UI protocol adapter**: converts `@gnldev/server`'s SSE contract ([see `@gnldev/server` README](../server/README.md)) into [AG-UI](https://github.com/ag-ui-protocol/ag-ui) (CopilotKit's open agent↔UI event protocol) event sequences. **Zero `@ag-ui/*` dependency** — event types are hand-defined (AG-UI is an open SSE/JSON protocol, no SDK required).
 
+> **Not on npm yet** — no `@gnldev/*` package has been published. Until the first release, use it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.
+
 ```bash
 npm i @gnldev/agui   # dep: @gnldev/server, hono  ·  peer: @gnldev/durable
 ```
@@ -38,8 +40,9 @@ agent.runAgent({ runId: 'r1', threadId: 't1', prompt: 'hi' });
 ```
 
 **Honesty note**: this is a hand-extracted implementation of a subset of the AG-UI core events — it is NOT VERIFIED against the official
-`@ag-ui/*` conformance test suite. Fields we're not sure about from the spec in `docs/`
-are marked with comments in `types.ts`/`convert.ts` (no made-up fields were added).
+`@ag-ui/*` conformance test suite. Fields we're not sure about from the [upstream AG-UI
+spec](https://github.com/ag-ui-protocol/ag-ui) are marked with comments in `types.ts`/`convert.ts`
+(no made-up fields were added) — there is no vendored copy of the spec in this repo to check against.
 
 ## API
 - `createAguiRoute(config, opts?)` — a single-endpoint Hono router from `@gnldev/durable`'s `CreateGnlConfig`:
@@ -78,3 +81,7 @@ passes it to `toAguiEvents`. AG-UI SSE frames carry only a `data:` field (the ty
 - This adapter has **NO resumable stream (Last-Event-ID)** — `@gnldev/server`'s resumable-id contract is
   not carried here, so a dropped connection restarts the turn rather than resuming it.
 - `createAguiRoute` does not include auth/tenancy/budget (see the API note above).
+
+## License
+
+Apache-2.0 — see [LICENSE](./LICENSE).

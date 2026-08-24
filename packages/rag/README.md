@@ -4,6 +4,8 @@
 **replayable/exactly-once** (thanks to durableTool, retrieval happens once, and comes back from the journal
 on resume).
 
+> **Not on npm yet** — no `@gnldev/*` package has been published. Until the first release, use it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.
+
 ```bash
 npm i @gnldev/rag   # peer: @gnldev/durable, ai, zod
 ```
@@ -32,3 +34,7 @@ await runDurable({ runId: 'r1', journal, model, tools: { searchPolicy }, prompt:
 ## How it works
 Since RAG is a tool, it naturally fits into the durable agent loop: retrieval + rerank are journaled
 exactly-once. For cross-run reuse, it can be combined with `@gnldev/cache`.
+
+## License
+
+Apache-2.0 — see [LICENSE](./LICENSE).

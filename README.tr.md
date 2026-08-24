@@ -85,7 +85,7 @@ testler: `packages/durable/test/with-idempotency.test.ts`.
 
 | Sadece bizde | Parite (+durable twist) |
 |---|---|
-| exactly-once tool/model/MCP/RAG · **LLM-aware args-bazlı idempotency** (`idempotency: 'args'` / `idempotencyKey` — modelin aynı çağrıyı yeni `toolCallId` ile yeniden planlamasını dedup'lar) · deterministic replay (opt-in `replay: 'strict'` → `DivergenceError`; varsayılan lenient yalnız uyarır — replay dayatılan kısıt değil, **opt-in güvence**) · time-travel + fork · **deterministik model fallback** (kazanan journal'a yazılır, resume yapışır) · **org-scoped journal** (`withOrg` — organizasyon izolasyonu + exactly-once mirası) · **edge-native**: çekirdek **29,9 KiB gzip**, AI SDK dahil **94,2 KiB gzip** = CF Workers ücretsiz limitinin %3,1'ü (`pnpm --filter @gnldev/showcase bundle` ile ölçülür) · durable queue (heartbeat'li lock renew) · event bus (exactly-once işaretleme + at-least-once teslim) · network-ötesi A2A (opt-in HMAC-SHA256 imza) · idempotent OTEL · cross-run cache · dış-çağrı **zaman aşımları** (`timeouts: {modelStepMs,toolMs,claimTtlMs}` → `StepTimeoutError`) · **fail-closed auth** (production'da provider yoksa kurulum hata verir) · **onay (approval) kararları journal'da first-class** (onaylandı-ama-tool-çalışmadan-crash senaryosunda resume kararı `approvals` parametresi verilmese bile journal'dan uygular) | agent loop · **requestContext DI** (dinamik model/system/tools) · memory (recall/schema-WM/thread/OM) · workflows (evented) · MCP (client+server) · evals (+datasets) · auto-REST/OpenAPI (409/422 resumable sözleşmesi) · processors · RAG (+rerank) · cost ledger |
+| exactly-once tool/model/MCP/RAG · **LLM-aware args-bazlı idempotency** (`idempotency: 'args'` / `idempotencyKey` — modelin aynı çağrıyı yeni `toolCallId` ile yeniden planlamasını dedup'lar) · deterministic replay (opt-in `replay: 'strict'` → **tool argümanı** kayması `DivergenceError` fırlatır; **model adımı** kayması strict'te bile yalnız `console.warn` eder, lenient varsayılanda hiç kontrol edilmez — replay dayatılan kısıt değil, **opt-in güvence**) · time-travel + fork · **deterministik model fallback** (kazanan journal'a yazılır, resume yapışır) · **org-scoped journal** (`withOrg` — organizasyon izolasyonu + exactly-once mirası) · **edge-native**: çekirdek **32,2 KiB gzip**, AI SDK dahil **99,8 KiB gzip** = CF Workers ücretsiz limitinin %3,2'si (`pnpm --filter @gnldev/showcase bundle` ile ölçülür — esbuild, minify, esm/browser) · durable queue (heartbeat'li lock renew) · event bus (exactly-once işaretleme + at-least-once teslim) · network-ötesi A2A (opt-in HMAC-SHA256 imza) · idempotent OTEL · cross-run cache · dış-çağrı **zaman aşımları** (`timeouts: {modelStepMs,toolMs,claimTtlMs}` → `StepTimeoutError`) · **fail-closed auth** (production'da provider yoksa kurulum hata verir) · **onay (approval) kararları journal'da first-class** (onaylandı-ama-tool-çalışmadan-crash senaryosunda resume kararı `approvals` parametresi verilmese bile journal'dan uygular) | agent loop · **requestContext DI** (dinamik model/system/tools) · memory (recall/schema-WM/thread/OM) · workflows (evented) · MCP (client+server) · evals (+datasets) · auto-REST/OpenAPI (409/422 resumable sözleşmesi) · processors · RAG (+rerank) · cost ledger |
 
 ## Gereksinimler
 
@@ -102,7 +102,8 @@ git clone https://github.com/Karaca7/gnl-framework.git gnl && cd gnl
 pnpm install && pnpm -r build
 cd examples && node ../packages/create-gnl/dist/index.js my-agent   # starter (mock model — API key gerekmez)
 cd my-agent && pnpm install       # examples/ içinde → @gnldev/* workspace linkiyle çözülür
-pnpm dev                          # REST API + Studio Playground (tek port): http://localhost:3000 (+ /studio)
+pnpm dev                          # REST API + Studio Playground (tek port). Aç: http://localhost:3000/studio
+                                  # (REST API `/` altına mount'lu ve index route'u yok — çıplak `/` 404 döner)
 ```
 npm yayınından sonra: her yerde `npm create gnl my-agent`.
 Frontend'den type-safe çağrı:
@@ -113,13 +114,19 @@ const { text } = await gnl.run('assistant', { prompt: 'merhaba' });
 for await (const ev of gnl.stream('assistant', { prompt: 'akış' })) { /* text-delta… */ }
 ```
 
-## Paketler (24)
+## Paketler
+`packages/` altında **24** manifest var ve hepsi Apache-2.0 ile npm'e çıkar — bu depoda
+`private` paket yok, bir paketi geride bırakan bir derleme adımı da yok. Paralı auth katmanı
+(`@gnldev/auth-ee`) kendi lisansıyla ayrı dağıtılır; burada `@gnldev/auth`'un tanımladığı
+aynı `AuthProvider` arayüzünü uygular, yani bu ağaçtaki hiçbir şey ona bağlı değildir.
+Aşağıdaki tablo doğrudan kullandığınız paketleri kapsar.
+
 | Paket | Ne |
 |---|---|
 | **`@gnldev/durable`** | Çekirdek: `runDurable`/`resumeRun`/`streamDurable` · `durableTool`/`withDurableModel` · journal (memory/**sqlite/postgres/redis**) · `createGnl`+model-router · `createAgentTool` + **dinamik ağ (`runNetwork`, CAS-frozen routing)** · `getRunCost` · `reconstructState`/`forkRun` · run-lock (**atomik takeover: `putIfMatch`**) · `rolloverRun` (dönem devri) · retention (`sweepRuns/sweepLog/sweepThreads`, özyinelemeli `purgeRun`, disk geri kazanımı `compact`) · **`timeouts` (`modelStepMs`/`toolMs`/`claimTtlMs`) → `StepTimeoutError`** |
 | **`@gnldev/memory`** | `AgentMemory`: recall (messageRange/threshold/filter/resource-scope) · schema WM + `updateWorkingMemory` tool · thread CRUD/clone · observational memory (Observer/Reflector, pluggable tokenizer) · MessageList |
 | **`@gnldev/rag`** | vector store (dev: in-memory · **prod: pgvector**) · **`chunkText`/`chunkDocuments`** (recursive/markdown/character) · **`GraphRag`** (benzerlik-grafı retrieval) · `createRagTool` · `llmReranker` · `SemanticMemory` |
-| **`@gnldev/workflow`** | then/parallel/branch · foreach/loop · **`retry` (bildirimsel retry-policy, sayaç journal'da)** · `runResumable` + `sleep`/`waitFor` (evented/scheduled) |
+| **`@gnldev/workflow`** | then/parallel/branch · foreach/loop · **`retry` (bildirimsel retry-policy, sayaç journal'da)** · `wf.runResumable()` (top-level export değil, `Workflow` **metodu**) + `sleep`/`waitFor` (evented/scheduled) |
 | **`@gnldev/processors`** | piiRedactor · moderationProcessor · toolFilter · **`toolSearch` (semantik tool seçimi, journal'lı)** · tokenLimit · promptInjectionDetector · outputLimit |
 | **`@gnldev/evals`** | **16 hazır scorer** (faithfulness/hallucination/…) · llmJudge · `scoreRun` · `evalDataset` (resumable) · **`createDatasetsManager`** (versiyon geçmişi + deney `compare`) |
 | **`@gnldev/mcp`** | MCP client (`mcpTools`) **+ server** (`createMcpServer`, server-side exactly-once) |
@@ -149,7 +156,7 @@ doğrulanabilir duruşu:
 ## Geliştirme
 ```bash
 pnpm install
-pnpm -r build && pnpm -r typecheck && pnpm test   # 2000+ test
+pnpm -r build && pnpm -r typecheck && pnpm test   # 3589 geçen, 48 atlanan, 432 dosya (npx vitest run)
 
 # gerçek backend entegrasyon testi (opsiyonel):
 docker-compose up -d

@@ -47,7 +47,7 @@ export interface DocFeature {
 }
 
 /** GNL overview summary — short summary mirroring gnl.dev/llms.txt (source for the gnl_docs_overview tool). */
-export const OVERVIEW_SUMMARY = `A thin correctness layer on top of the Vercel AI SDK: journal-based durability, exactly-once tool calls, deterministic replay/time-travel. Runtime footprint ~30 KiB gzip for the core (~94 KiB with the AI SDK bundled), BYO-DB (SQLite/Postgres/your own storage), no telemetry/phone-home — your journal always stays on your own infrastructure.`;
+export const OVERVIEW_SUMMARY = `A thin correctness layer on top of the Vercel AI SDK: journal-based durability, exactly-once tool calls, deterministic replay/time-travel. Runtime footprint ~32 KiB gzip for the core (~100 KiB with the AI SDK bundled), BYO-DB (SQLite/Postgres/your own storage), no telemetry/phone-home — your journal always stays on your own infrastructure.`;
 
 export const OVERVIEW_DETAIL = `GNL keeps the same agent loop via \`runDurable\`, a drop-in replacement for \`generateText\`/\`streamText\`; it additionally takes a \`journal\` + \`runId\`. Even if the process crashes, calling it again with the same \`runId\` resumes deterministically from where it left off, and completed tool calls never run again. Three tiers: Core (free, @gnldev/durable/@gnldev/server/@gnldev/auth/@gnldev/evals), Studio (@gnldev/studio — inspection/management, free), Enterprise (@gnldev/auth-ee — signed license, RBAC/SSO/multi-organization/budget).`;
 
@@ -375,15 +375,19 @@ import { evalDataset } from '@gnldev/evals';`,
     package: `@gnldev/auth-ee`,
     install: `import {
   createEnterpriseAuth,
-  generateLicenseKeys,
-  signLicense,
   validateLicense,
   assertLicensed,
 } from '@gnldev/auth-ee';`,
-    apis: [`generateLicenseKeys() — generates an Ed25519 key pair (vendor, one-time)`, `signLicense(payload, privateKey) — generates a signed license key`, `validateLicense(key, { publicKey }) — returns LicenseInfo (offline validation)`, `createEnterpriseAuth(opts) — returns a premium AuthProvider if the license is valid`],
+    // Key generation and signing are VENDOR-side and are not part of the customer package — the
+    // functions live in a module the published `files` list excludes. Listing them here handed the
+    // reader a two-line recipe for issuing themselves an unlimited licence, and it is not even correct
+    // any more: an import of `signLicense` from this package now fails to resolve.
+    apis: [`validateLicense(key, { publicKey }) — returns LicenseInfo (offline validation, no network)`, `licenseTrustRoot() — reports which key this deployment verifies against`, `assertLicensed(info) — throws unless the licence is valid`, `createEnterpriseAuth(opts) — returns a premium AuthProvider if the license is valid`],
+    // No `publicKey` here on purpose: in production the trust root is sealed to the vendor key compiled
+    // into the package, so passing one has no effect. The option remains for tests and local
+    // development, and documenting it as part of the normal setup would teach the wrong shape.
     example: `const auth = createEnterpriseAuth({
   licenseKey: process.env.GNL_LICENSE_KEY,
-  publicKey: process.env.GNL_EE_PUBLIC_KEY,
   failClosed: true,
   fallback: roleAuth({ admin: { token: ADMIN_TOKEN } }),
 });`,

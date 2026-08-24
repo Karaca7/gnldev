@@ -192,9 +192,21 @@ const storage = composite({
 | Adaptör | runs (defter) | memory | vectors | work | cache | Ne zaman? |
 |---|---|---|---|---|---|---|
 | InMemory | ✅ | ✅ | ✅ | ✅ | ✅ | Test, prototip. |
-| SQLite | ✅ | ✅ | ✅ | ✅ | ✅ | Tek makine, sıfır kurulum (Node'a gömülü). |
-| Postgres | ✅ | ✅ | ✅ (pgvector ile) | ✅ | ✅ | Çok sunuculu üretim. **Önerilen defter.** |
+| SQLite | ✅ | ✅ | ✅ (tarama) | ✅ | ✅ | Tek makine, sıfır kurulum (Node'a gömülü). |
+| Postgres | ✅ | ✅ | ✅ (tarama) | ✅ | ✅ | Çok sunuculu üretim. **Önerilen defter.** |
 | Redis | ✅* | ❌ | ❌ | ✅ | ✅ (gerçek TTL) | Kuyruk/önbellek hızlandırıcı. *Defter için failover'lı kurulumda önerilmez (aşağıda). |
+
+Hücreler adaptörlerin kendi `capabilities` matrisinin birebir aktarımı (`postgres-storage.ts`,
+`sqlite-storage.ts`, `redis-storage.ts`, `in-memory-storage.ts`).
+
+> **`scan` (tarama), pgvector değil.** SQLite *ve* Postgres adaptörlerinin `vectors` limanı
+> embedding'i TEXT kolonda tutar ve kosinüs benzerliğini **JavaScript'te, uygun tüm satırlar
+> üzerinde** hesaplar — `@gnldev/durable` içinde hiçbir yerde `CREATE EXTENSION vector` yok, ANN
+> index'i de yok. Mütevazı bir arşiv için yeterli ve ne olduğu konusunda dürüst. **pgvector başka
+> bir pakette**: `@gnldev/rag`'deki `PostgresVectorStore`
+> (`packages/rag/src/postgres-vector-store.ts`) eklentiyi kurar, `embedding vector(dim)` kolonu
+> tanımlar ve sıralamayı motor içinde `<=>` operatörüyle yapar. Arşiv büyükse — depolama
+> adaptörünün `vectors` limanını değil — onu kullanın.
 
 ### 5.3 Somut tablo yapıları — hangi tablo ne için, ne zaman kullanılır?
 
@@ -210,6 +222,7 @@ graph LR
     work["work limanı"] --> T8["gnl_work_log"] & T9["gnl_work_kv"]
     cache["cache limanı"] --> T10["gnl_cache"]
     meta["meta limanı"] --> T11["gnl_meta"]
+    runs --> T12["gnl_counters<br/>(kullanım/metrik toplamları)"]
 ```
 
 **① `gnl_run_journal` — seyir defterinin kendisi (en önemli tablo).**
@@ -253,10 +266,12 @@ Defterin aksine ÜZERİNE YAZILIR — çünkü bu bir kayıt değil, güncel dur
 ("kullanıcı resmi dil tercih ediyor"). Thread başına tek satır, içinde gözlem listesi.
 
 **⑦ `gnl_vectors` — RAG doküman arşivi.** Kolonlar: `id (parça kimliği, örn. 'el-kitabi#3'),
-text (parçanın metni), embedding (anlam vektörü), metadata (kaynak/başlık izi), created_at`.
-*Ne zaman?* `indexDocuments` ile doldurulur; ajan bilgi-bankası aracını her kullandığında
-"soruya en yakın K parça" burada aranır. Postgres'te pgvector eklentisi varsa arama motor
-içinde (hızlı index'le) yapılır.
+text (parçanın metni), embedding (anlam vektörü, TEXT olarak saklanır), metadata (kaynak/başlık
+izi), namespace (organizasyon bölümü), created_at`. *Ne zaman?* `indexDocuments` ile doldurulur;
+ajan bilgi-bankası aracını her kullandığında "soruya en yakın K parça" burada aranır. Arama bir
+**taramadır**: uygun satırlar geri gelir, kosinüs benzerliği JavaScript'te hesaplanır. Bu tablo bir
+pgvector tablosu değil ve olmayacak — motor içi ANN araması için `@gnldev/rag`'in
+`PostgresVectorStore`'unu kullanın; onun kendi `vector(dim)` tablosu var (bkz. §5.2).
 
 **⑧ `gnl_work_log` — kuyruk/olay defteri.** Kolonlar: `ns (namespace — hangi kuyruk/konu,
 örn. 'evt:siparis'), id (kayıt kimliği; ns+id birincil anahtar → aynı olay iki kez EKLENEMEZ =
@@ -274,9 +289,16 @@ Süresi geçen kayıt okunmaz ve temizlenir.
 **⑪ `gnl_meta` — sistem künyesi.** `k → v` (örn. `schema_version = 3`): adaptör açılışta bakar,
 tablo şeması eski sürümden kalmaysa güvenli göç (migration) kararını buradan verir.
 
+**⑫ `gnl_counters` — toplanabilir sayaçlar.** Kolonlar: `key, field, value` (`(key, field)` birincil
+anahtar). Atomik `INSERT ... ON CONFLICT DO UPDATE SET value = value + EXCLUDED.value` ile yazılır;
+birden çok süreçten aynı anda artırmayı güvenli kılan da bu. *Ne zaman?* Maliyet/kullanım defterleri
+ve metrikler (`incrBy` — bkz. `metrics.ts`), Studio'nun okuduğu organizasyon başına bütçe toplamları
+dahil. `gnl_runs` gibi türetilmiş veridir ve aynı retention yolundan süpürülür (`deletePrefix` bunu
+da kapsar — `retention.ts`).
+
 > Akılda kalsın diye: **① defter, ② vitrin, ③-⑥ hafıza, ⑦ kütüphane, ⑧-⑨ postane, ⑩ buzdolabı,
-> ⑪ künye.** Kritik garanti yalnız ①'de yaşar; gerisi konfor/hız katmanlarıdır ve `composite()`
-> ile başka motorlara taşınabilir.
+> ⑪ künye, ⑫ çetele.** Kritik garanti yalnız ①'de yaşar; gerisi konfor/hız katmanlarıdır ve
+> `composite()` ile başka motorlara taşınabilir.
 
 ---
 
@@ -320,6 +342,10 @@ graph LR
     Dağıtık --> durable
     Sunum --> durable
 ```
+
+Harita bu altı gruba giren 22 paketi gösteriyor. `packages/` altında grubu olmayan iki paket daha
+var: `@gnldev/chat-adapter` ve `@gnldev/docs-mcp`. Yani `packages/` altında 24 manifest var ve
+hepsi npm'e çıkıyor.
 
 Kilit nokta: **her paket `@gnldev/durable`ın üstüne kurulur** — RAG sorgusu da, kuyruk işi de, uzak
 ajan çağrısı da otomatik olarak deftere yazılır ve exactly-once garantisini MİRAS alır. Başka yerlerde
@@ -513,15 +539,17 @@ await api.run('asistan', { runId: 'talep-42', prompt: '...' });
 
 // Studio: web kontrol paneli — npx @gnldev/studio --db runs.db
 // (ya da --config gnl.config.ts; o zaman Playground da açılır. Biri mutlaka gerekir)
-// 15 görünüm: koşu zaman çizelgesi, TIME-TRAVEL (geçmiş bir adıma dönüp oradan ÇATALLAMA),
-// onay kuyruğu, maliyet, izler, tenant/bütçe yönetimi, ağ ağacı, playground...
+// 19 görünüm (route başına bir nav satırı — studio-ui'daki NAV listesi, src/App.tsx): koşu zaman
+// çizelgesi, TIME-TRAVEL (geçmiş bir adıma dönüp oradan ÇATALLAMA), onay kuyruğu, maliyet, izler,
+// organizasyon/bütçe yönetimi, ağ ağacı, playground...
 ```
 
 ### 7.9 Yayınlama (deploy) ve izleme
 
-Ayrı bir deploy paketi yok, ve bu bilinçli: `createRestApi()` web standardı bir `fetch` handler'ı
-döndürüyor, yani onu koşturacak şey platformunuzun zaten beklediği şey. Araya giren bir adaptör
-yok, bir sağlayıcının API'siyle ayak uydurması gereken bir şey yok.
+**Ayrı bir deploy adımı gerekmiyor**, ve bu bilinçli: `createRestApi()` web standardı bir `fetch`
+handler'ı döndürüyor, yani onu koşturacak şey platformunuzun zaten beklediği şey. Araya giren bir
+adaptör yok, bir sağlayıcının API'siyle ayak uydurması gereken bir şey yok.
+
 
 ```ts
 import { createRestApi } from '@gnldev/server';
@@ -569,7 +597,7 @@ koşu.** Bu tercih birinci listeyi kazandırıyor, ikincisine mal oluyor.
 | **Model fallback kalıcı** | Gerçekte kazanan model journal'a yazılır; resume zarı yeniden atmaz, ona yapışır |
 | **Dinamik ajan ağı kararları donar** | Bir kez verilen yönlendirme kararı kaydedilir, replay aynı yolu izler |
 | **Resumable evals** | Test paketi baştan başlamaz, durduğu yerden devam eder |
-| **Yönetişim yüzeyi** | Studio 15 görünümle gelir: onay kuyruğu, politika, bütçe, denetim, regresyon karşılaştırma |
+| **Yönetişim yüzeyi** | Studio 19 görünümle gelir: onay kuyruğu, politika, bütçe, denetim, regresyon karşılaştırma |
 | **Edge-native** | İnce çekirdek + opsiyonel bağımlılıklar; Workers sınıfı bir bundle'a sığacak kadar küçük |
 
 **Maliyeti — eksiklikten değil, bilinçli olarak**
@@ -579,7 +607,7 @@ koşu.** Bu tercih birinci listeyi kazandırıyor, ikincisine mal oluyor.
 | Ses (TTS/STT), Slack/WhatsApp kanalları | Kapsam dışı. Bunlar entegrasyon yüzeyi, dayanıklılık değil; eklemek çekirdeği genişletir ama tek bir koşuyu bile daha güvenli yapmaz. |
 | No-code ajan editörü | Tasarım gereği kod-öncelikli. Ajanın davranışı incelenebilir, test edilebilir, sürüm kontrollü kodda durur — görsel editör onu diff'in izleyemediği bir yere taşır. |
 | Geniş depolama adaptörü kataloğu | Dört tane, artı composite karışımı. Her adaptörün exactly-once'ı gerçek bir motora karşı kanıtlaması gerekir ve bu kanıt pahalıdır; yük altında hiç yarıştırılmamış uzun bir adaptör listesi özellik değil, yükümlülüktür. |
-| Geniş hazır scorer kataloğu | Sekiz tane, artı kendinizinkini yazabileceğiniz hakem altyapısı. |
+| Geniş hazır scorer kataloğu | On altı tane — 8 LLM-hakem, 4 modelsiz metin, 3 kural-tabanlı, artı `embeddingSimilarity` — ve kendinizinkini yazabileceğiniz hakem altyapısı. (`packages/evals/src/index.ts`'te sayabilirsiniz: `scorers.ts` 8, `text-scorers.ts` 4, `scorer.ts` 4 katkı veriyor. Trajectory scorer'ları bunların üstünde ayrı bir aile.) |
 
 İş yükünüz "iki kez çalışırsa felaket" cinsindense — ödeme, finans, hukuk, sağlık, uzun-koşan ve
 dağıtık her şey — birinci tablo argümanın tamamıdır. İhtiyacınız hızlı ve çok-kanallı bir demoysa,
@@ -595,12 +623,21 @@ Evet; iddiaların çoğu **gerçek motorlarda canlı testlerle** kanıtlı — t
 - **Çok-sunucu CAS yarışı:** iki ayrı Postgres bağlantı havuzu aynı anahtara aynı anda yazıyor →
   her seferinde TAM BİR kazanan (20 tur + 10'lu fırtına). Redis'te aynı (SET NX).
 - **Canlı failover** (sunucu değişimi): birincil Postgres **SIGKILL ile öldürüldü**, yedek terfi
-  ettirildi → 30/30 onaylı yazı korundu, exactly-once sürdü. (Ön koşul: senkron replikasyon —
-  README'de dağıtım notu; asenkron kurulumda bu garanti YOKTUR, dürüstçe belgeli.)
+  ettirildi → 30/30 onaylı yazı korundu, exactly-once sürdü. (Ön koşul: **senkron replikasyon** —
+  `synchronous_commit = on` ve senkron bir standby; asenkron kurulumda bu garanti YOKTUR. Koşulun
+  kendisi `docker-compose.failover.yml`'de kurulur ve `packages/durable/test/failover-real.test.ts`
+  ile test edilir; README'de bu notu aramayın, orada geçmiyor.)
 - **Kilit devralma:** süresi dolmuş kilidi iki sunucu aynı anda devralmaya kalktı → yalnız biri
   kazandı (`putIfMatch` CAS'i; eski sürümde buradaki yarış bulunmuş ve kapatılmıştı).
-- **Süreç öldürme testleri:** çocuk süreç gerçek `SIGKILL` ile öldürülüp resume ediliyor.
-- Toplam: **2000+ test**, ayrıca `GNL_INTEGRATION=1` ve `GNL_FAILOVER=1` ile gerçek-altyapı paketleri.
+- **Süreç öldürme testleri:** iki ayrı tat var ve fark önemli. `process-kill.test.ts` ve
+  `exactly-once-intersection.test.ts`'te çocuk süreç koşunun ortasında sert çıkıyor
+  (`process.exit(1)` — yan etkiden sonra, koşu bitmeden), ebeveyn aynı SQLite dosyasından resume
+  ediyor. `sigkill-status.test.ts` bir adım öteye gidiyor: çocuk, model çağrısının ortasında gerçek
+  `SIGKILL` ile öldürülüyor — exit handler yok, flush yok — ve ebeveyn koşuyu `completed` değil
+  `running` okuyor; write-ahead tasarımının var oluş sebebi tam da bu. (Yukarıdaki failover testi
+  ise Postgres'in kendisini SIGKILL'liyor — üçüncü bir durum.)
+- Toplam: **3.589 geçen test** (48 atlanan, 432 dosya — `npx vitest run`), ayrıca
+  `GNL_INTEGRATION=1` ve `GNL_FAILOVER=1` ile gerçek-altyapı paketleri.
 
 ---
 
@@ -838,10 +875,21 @@ Değişiklik, replay sırasında yeniden kurulan konuşmayı kayıtla ÇELİŞT�
 (örn. tool'a giden argümanlar kayıttakinden farklı üretiliyor — buna **drift**/sapma denir)
 GNL'in iki modu vardır:
 
-- **`replay: 'lenient'`** (varsayılan, hoşgörülü): uyarı basar, kayıttaki sonucu kullanır,
-  koşu devam eder — "iş dursun istemiyorum" modu.
-- **`replay: 'strict'`** (katı): drift tespitinde `DivergenceError` fırlatıp DURUR —
-  "tutarsızlık varsa körlemesine devam etme" modu; para/hukuk işlerinde bunu açarsın.
+- **`replay: 'lenient'`** (varsayılan, hoşgörülü): sapan bir **tool argümanı** uyarı basar, koşu
+  kayıttaki sonuçla devam eder — "iş dursun istemiyorum" modu. Sapan bir **model isteği** ise burada
+  hiç kontrol edilmez.
+- **`replay: 'strict'`** (katı): sapan bir **tool argümanı** `DivergenceError` fırlatıp koşuyu
+  DURDURUR — "tutarsızlık varsa körlemesine devam etme" modu; para/hukuk işlerinde bunu açarsın.
+
+**Dürüst sınır — iki mod bunu eşit kapsamıyor.** Strict yalnız tool argümanları için katıdır.
+Replay edilen bir **model adımı** farklı bir istek üretirse `console.warn` basılır ve koşu devam
+eder; strict'te de öyle, asla fırlatmaz. Bu bilinçli ve gerekçesi `durable-model.ts`'in kendi
+yorumunda: memory ya da bir input-processor devredeyken `runDurable`'ı aynı ham argümanlarla tekrar
+çağırmak meşru olarak farklı bir istek kurar (processor resume'da yeniden çalışmaz), dolayısıyla
+oradaki sert hata, sonucu hiç etkileyemeyecek bir farktan ötürü çalışan kodu bozardı — model adımı
+zaten her hâlükârda journal'dan replay ediliyor. Yani: `strict` sana tool-argümanı sapmasında sert
+duruş, model sapmasında bir log satırı verir. Bayrağı "hiçbir sapma sessiz kalmaz" diye okuduysan,
+vaat ettiğinden fazlasını okumuşsun.
 
 ### 12.4 "Yeni modelin ne yapacağını GÖRMEK istiyorum" — resume değil, deney araçları
 
@@ -881,13 +929,13 @@ Tek cümlelik özet: **resume = geçmişe sadakat (üretim güvenliği), replay/
 | Katman | Teknoloji | Bu projede ne işe yarar? |
 |---|---|---|
 | Dil / çalışma ortamı | TypeScript + Node.js | Tüm kod TypeScript (tip güvenliği: yanlış veri şekli derlemede yakalanır). Node 22'nin gömülü `node:sqlite`'ı sayesinde SQLite için ek paket bile gerekmez. |
-| Monorepo yönetimi | pnpm workspaces | 24 paketi tek depoda tutar (monorepo: çok paketli tek depo). |
+| Monorepo yönetimi | pnpm workspaces | 24 paketi tek depoda tutar (monorepo: çok paketli tek depo); hepsi npm'e çıkar. |
 | LLM soyutlaması | **Vercel AI SDK** (`ai`) | En kritik bağımlılık: OpenAI/Anthropic/Google/Mistral'e TEK arayüz. `runDurable` aslında `generateText`'in dayanıklı sarmalayıcısıdır — sağlayıcı kilidi yok. |
 | Şema doğrulama | Zod | Araç girdi şemaları (LLM'in araca göndereceği parametrelerin biçim kontrolü). |
 | Web çatısı | **Hono** | Server/Studio/auth'un HTTP katmanı. Express yerine Hono: hem Node'da hem edge'de (Cloudflare Workers) aynen çalışır, çok küçüktür — "küçük edge bundle" iddiasının temeli. |
 | Depolama | SQLite / PostgreSQL / Redis | §5'teki adaptörler; hepsi OPSİYONEL bağımlılık (kullanmadığın sürücü yüklenmez — lazy import). |
 | Serileştirme | superjson | Kayıt→metin çevirimi; düz JSON'dan farkı `Date` gibi tipleri kaybetmemesi. |
-| Test | Vitest + pg-mem + Docker | 2000+ test; pg-mem = bellek-içi sahte Postgres (hızlı); Docker compose'ları = GERÇEK PG/Redis entegrasyonu + canlı failover senaryosu. |
+| Test | Vitest + pg-mem + Docker | 432 dosyada 3.589 geçen test; pg-mem = bellek-içi sahte Postgres (hızlı); Docker compose'ları = GERÇEK PG/Redis entegrasyonu + canlı failover senaryosu. |
 | Paketleme | — | Gerekmiyor: `createRestApi()` web standardı bir fetch handler döndürüyor, her platform onu zaten kendi yöntemiyle paketliyor. |
 | Studio arayüzü | React + TanStack Query + Recharts | Panel ön yüzü: arayüz + veri çekme/önbellek + grafikler. |
 | Gözlemlenebilirlik | OTLP/HTTP (elle, ~8KB) | İzleri dış araçlara gönderme; koca OTel SDK yerine elle yazılmış çevirici (ince-kal felsefesi). Canlı mod ayrıca OTel SDK'sını opsiyonel kullanır. |

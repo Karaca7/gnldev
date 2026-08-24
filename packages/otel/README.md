@@ -2,6 +2,8 @@
 
 Converts the journal into a real **OpenTelemetry trace** and sends it to a SpanExporter (or an OTLP endpoint). Deterministic span ids → **idempotent**; since it's produced post-hoc from the journal, it stays complete even after a crash and consistent across replays = **crash-proof / exactly-once observability** (live-instrumenting frameworks cannot offer this).
 
+> **Not on npm yet** — no `@gnldev/*` package has been published. Until the first release, use it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.
+
 ```bash
 npm i @gnldev/otel   # peer: @gnldev/durable, (optional) @opentelemetry/exporter-trace-otlp-http
 ```
@@ -72,3 +74,7 @@ OTLP_HEADERS='{"x-honeycomb-team":"<HONEYCOMB_API_KEY>"}'
 ```
 
 Spans carry `gen_ai.*` semantic convention fields (`gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.request.model`) — most LLM-observability backends recognize these automatically.
+
+## License
+
+Apache-2.0 — see [LICENSE](./LICENSE).

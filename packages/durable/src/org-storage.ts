@@ -12,7 +12,7 @@
  * THE PREFIX COMES FROM `orgPrefix`, never from string concatenation here. That function already
  * refuses an empty or `:`-bearing id by throwing, and the whole value of a single source is that the
  * refusal cannot be forgotten in one of six places. A wrapper computing its own `` `org:${id}:` `` is
- * exactly how `''` becomes a shared partition that every tenant writes into and no tenant notices.
+ * exactly how `''` becomes a shared partition that every organization writes into and none notices.
  *
  * WRITE-SIDE PREFIXING WITHOUT READ-SIDE STRIPPING IS THE FAILURE MODE TO WATCH. If `upsertThread`
  * prefixes an id and `getThread` returns the record verbatim, the owner gets back a thread whose id is
@@ -156,7 +156,7 @@ function scopedMemory(memory: MemoryStore, p: string): MemoryStore {
    *
    * This began as `({ ...r, threadId })` — stamping the caller's argument onto whatever came back —
    * and that turned the id fix into a disguise. `recall` accepts `{ scope: 'resource', resourceId }`,
-   * and a resource id is a USER, not an organization: two tenants whose threads share one recall each
+   * and a resource id is a USER, not an organization: two organizations whose threads share one recall each
    * other's messages. Measured, with the stamping version:
    *
    *   acme.recall('t-1', q, { scope: 'resource', resourceId: 'u-shared' })

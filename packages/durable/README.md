@@ -12,6 +12,8 @@ tool and journaling its result cannot be closed by any client-side library — s
 below](#what-never-charged-twice-actually-means). gnl's answer to that window is to refuse to guess: it
 blocks and asks, rather than silently re-running or silently continuing.
 
+> **Not on npm yet** — nothing under `@gnldev/*` has been published. Until the first release, clone the [repo](https://github.com/Karaca7/gnl-framework) and `pnpm install && pnpm -r build`: the core and every adapter come with it.
+
 ```bash
 npm i @gnldev/durable ai @ai-sdk/anthropic
 ```
@@ -277,3 +279,7 @@ The exactly-once guarantee rests on one precondition: **storage never loses an a
 - **Outbound side effects:** the strongest end-to-end defense is using a provider-side **idempotency
   key** on tool calls (see the pattern in `test/idempotency-key.test.ts`) — regardless of the storage
   layer, the external system rejects the duplicate.
+
+## License
+
+Apache-2.0 — see [LICENSE](./LICENSE).

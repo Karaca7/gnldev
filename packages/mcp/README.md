@@ -2,8 +2,10 @@
 
 **MCP client + server.** Client: adapts external MCP tools to AI SDK tools → inside `runDurable` they become **exactly-once + replayable**. Server: exposes your own tools as MCP (`callTool` exactly-once via idempotencyKey).
 
+> **Not on npm yet** — no `@gnldev/*` package has been published. Until the first release, use it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.
+
 ```bash
-npm i @gnldev/mcp   # peer: @gnldev/durable, ai, @modelcontextprotocol/sdk
+npm i @gnldev/mcp   # peer: @gnldev/durable, ai  ·  dep: @modelcontextprotocol/sdk (installed for you)
 ```
 
 ```ts
@@ -67,3 +69,7 @@ await runDurable({ runId, journal, model, tools, guard, prompt: '…' });
 ```
 
 **How description pinning works**: a tool's description+inputSchema hash (`descriptionHash`) is written to the journal via `claim()` THE FIRST TIME IT'S SEEN (key: `__mcp_pin__:<server>:<tool>`) — this becomes that tool's permanent, trusted pin. On every subsequent guard call (e.g. when `describeTools()` is called again in a new session and fed to `mcpFirewall`), the CURRENT hash is compared against the pin; if the server changed the description, `require-approval` is returned ("tool description changed — poisoning risk") — the tool does NOT RUN without human approval. Because the pin lives in the journal, it stays STABLE across resume/replay (same journal → same decision).
+
+## License
+
+Apache-2.0 — see [LICENSE](./LICENSE).

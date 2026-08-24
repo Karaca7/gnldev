@@ -107,7 +107,7 @@ suspending. For those, use `runDurable`. Runnable example (no API key):
 
 | Only us | Parity (+ durable twist) |
 |---|---|
-| exactly-once tool/model/MCP/RAG · **LLM-aware args-based idempotency** (`idempotency: 'args'` / `idempotencyKey` — dedups the model re-planning the same call under a new `toolCallId`) · deterministic replay (opt-in `replay: 'strict'` → `DivergenceError`; the default is lenient and only warns — replay is an **opt-in assurance**, not an imposed constraint) · time-travel + fork · **deterministic model fallback** (the winner is written to the journal, resume sticks with it) · **org-scoped journal** (`withOrg` — organization isolation + inherits exactly-once) · **edge-native**: **29.9 KiB gzip** core, **94.2 KiB** gzip including the AI SDK = 3.1% of the CF Workers free-tier limit (measured with `pnpm --filter @gnldev/showcase bundle`) · durable queue (lock renewal via heartbeat) · event bus (exactly-once marking + at-least-once delivery) · cross-network A2A (opt-in HMAC-SHA256 signing) · idempotent OTEL · cross-run cache · outbound-call **timeouts** (`timeouts: {modelStepMs,toolMs,claimTtlMs}` → `StepTimeoutError`) · **fail-closed auth** (setup errors out in production if no provider is configured) · **approval decisions are first-class in the journal** (in the approved-but-crashed-before-the-tool-ran scenario, resume applies the decision from the journal even if the `approvals` parameter isn't passed) | agent loop · **requestContext DI** (dynamic model/system/tools) · memory (recall/schema-WM/thread/OM) · workflows (evented) · MCP (client+server) · evals (+datasets) · auto-REST/OpenAPI (409/422 resumable contract) · processors · RAG (+rerank) · cost ledger |
+| exactly-once tool/model/MCP/RAG · **LLM-aware args-based idempotency** (`idempotency: 'args'` / `idempotencyKey` — dedups the model re-planning the same call under a new `toolCallId`) · deterministic replay (opt-in `replay: 'strict'` → **tool-argument** drift throws `DivergenceError`; a diverging **model step** only `console.warn`s even under strict, and isn't checked at all under the lenient default — replay is an **opt-in assurance**, not an imposed constraint) · time-travel + fork · **deterministic model fallback** (the winner is written to the journal, resume sticks with it) · **org-scoped journal** (`withOrg` — organization isolation + inherits exactly-once) · **edge-native**: **32.2 KiB gzip** core, **99.8 KiB** gzip including the AI SDK = 3.2% of the CF Workers free-tier limit (measured with `pnpm --filter @gnldev/showcase bundle` — esbuild, minified, esm/browser) · durable queue (lock renewal via heartbeat) · event bus (exactly-once marking + at-least-once delivery) · cross-network A2A (opt-in HMAC-SHA256 signing) · idempotent OTEL · cross-run cache · outbound-call **timeouts** (`timeouts: {modelStepMs,toolMs,claimTtlMs}` → `StepTimeoutError`) · **fail-closed auth** (setup errors out in production if no provider is configured) · **approval decisions are first-class in the journal** (in the approved-but-crashed-before-the-tool-ran scenario, resume applies the decision from the journal even if the `approvals` parameter isn't passed) | agent loop · **requestContext DI** (dynamic model/system/tools) · memory (recall/schema-WM/thread/OM) · workflows (evented) · MCP (client+server) · evals (+datasets) · auto-REST/OpenAPI (409/422 resumable contract) · processors · RAG (+rerank) · cost ledger |
 
 ## Requirements
 
@@ -124,7 +124,8 @@ git clone https://github.com/Karaca7/gnl-framework.git gnl && cd gnl
 pnpm install && pnpm -r build
 cd examples && node ../packages/create-gnl/dist/index.js my-agent   # starter (mock model — no API key needed)
 cd my-agent && pnpm install       # inside examples/ → @gnldev/* resolve via workspace links
-pnpm dev                          # REST API + Studio Playground (single port): http://localhost:3000 (+ /studio)
+pnpm dev                          # REST API + Studio Playground (single port). Open http://localhost:3000/studio
+                                  # (the REST API is mounted at `/`, which has no index route — bare `/` answers 404)
 ```
 After the npm release: `npm create gnl my-agent` anywhere.
 Type-safe calls from the frontend:
@@ -135,13 +136,19 @@ const { text } = await gnl.run('assistant', { prompt: 'hello' });
 for await (const ev of gnl.stream('assistant', { prompt: 'streaming' })) { /* text-delta… */ }
 ```
 
-## Packages (24)
+## Packages
+`packages/` holds **24** manifests, and every one of them publishes to npm under Apache-2.0 — there
+is no private package in this repository and no build step that withholds one. The paid auth tier
+(`@gnldev/auth-ee`) is distributed separately under its own licence; it implements the same
+`AuthProvider` interface `@gnldev/auth` defines here, so nothing in this tree depends on having it.
+The table below covers the ones you interact with directly.
+
 | Package | What |
 |---|---|
 | **`@gnldev/durable`** | Core: `runDurable`/`resumeRun`/`streamDurable` · `durableTool`/`withDurableModel` · journal (memory/**sqlite/postgres/redis**) · `createGnl` + model router · `createAgentTool` + **dynamic network (`runNetwork`, CAS-frozen routing)** · `getRunCost` · `reconstructState`/`forkRun` · run-lock (**atomic takeover: `putIfMatch`**) · `rolloverRun` (period rollover) · retention (`sweepRuns/sweepLog/sweepThreads`, recursive `purgeRun`, disk reclaim via the storage's `compact()`) · **`timeouts` (`modelStepMs`/`toolMs`/`claimTtlMs`) → `StepTimeoutError`** |
 | **`@gnldev/memory`** | `AgentMemory`: recall (messageRange/threshold/filter/resource-scope) · schema working memory + `updateWorkingMemory` tool · thread CRUD/clone · observational memory (Observer/Reflector, pluggable tokenizer) · MessageList |
 | **`@gnldev/rag`** | vector store (dev: in-memory · **prod: pgvector**) · **`chunkText`/`chunkDocuments`** (recursive/markdown/character) · **`GraphRag`** (similarity-graph retrieval) · `createRagTool` · `llmReranker` · `SemanticMemory` |
-| **`@gnldev/workflow`** | then/parallel/branch · foreach/loop · **`retry` (declarative retry policy, counter kept in the journal)** · `runResumable` + `sleep`/`waitFor` (evented/scheduled) |
+| **`@gnldev/workflow`** | then/parallel/branch · foreach/loop · **`retry` (declarative retry policy, counter kept in the journal)** · `wf.runResumable()` (a `Workflow` **method**, not a top-level export) + `sleep`/`waitFor` (evented/scheduled) |
 | **`@gnldev/processors`** | piiRedactor · moderationProcessor · toolFilter · **`toolSearch` (semantic tool selection, journaled)** · tokenLimit · promptInjectionDetector · outputLimit |
 | **`@gnldev/evals`** | **16 built-in scorers** — 8 LLM-judge (faithfulness/hallucination/…), 4 model-free text, 3 rule-based (exactMatch/contains/regexScore) + embeddingSimilarity, which takes an embedding function you supply · llmJudge · `scoreRun` · `evalDataset` (resumable) · **`createDatasetsManager`** (version history + experiment `compare`) |
 | **`@gnldev/mcp`** | MCP client (`mcpTools`) **+ server** (`createMcpServer`, server-side exactly-once) |
@@ -172,7 +179,7 @@ this repo today:
 ## Development
 ```bash
 pnpm install
-pnpm -r build && pnpm -r typecheck && pnpm test   # 2000+ tests
+pnpm -r build && pnpm -r typecheck && pnpm test   # 3589 passing, 48 skipped, 432 files (npx vitest run)
 
 # real-backend integration test (optional):
 docker-compose up -d

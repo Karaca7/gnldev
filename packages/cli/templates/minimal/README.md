@@ -4,7 +4,8 @@ Durable agent project created with `create-gnl`. **No API key required** (echo m
 
 ```bash
 pnpm install
-pnpm dev      # REST API + Studio Playground → http://localhost:3000  (+ /studio)
+pnpm dev      # REST API + Studio Playground → open http://localhost:3000/studio
+              # (bare http://localhost:3000 answers 404 — the REST API has no index route)
 ```
 
 - **`gnl dev`** — hot-reload. Restarts when `gnl.config.ts` or `src/` changes.

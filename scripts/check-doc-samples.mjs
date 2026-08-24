@@ -4,7 +4,7 @@
 // Three consecutive review rounds found quickstarts that did not run: a package documenting a
 // parameter its function never had, an import of a package that is not published, an option the
 // registry silently dropped. Each was found by a person reading carefully, and each time the next
-// round found another one. A person reading carefully does not scale to 24 READMEs; a compiler does.
+// round found another one. A person reading carefully does not scale to 26 READMEs; a compiler does.
 //
 // What this catches: exports that do not exist, wrong argument counts, wrong option names, wrong
 // argument types. What it cannot catch: a sample that compiles and does the wrong thing at runtime.

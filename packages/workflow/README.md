@@ -2,6 +2,8 @@
 
 **Durable deterministic workflows** — each step journaled exactly-once; crash → resume picks up where it left off. Control flow: `then` / `parallel` / `branch` / `foreach` / `loop`. Suspendable: `runResumable` + `sleep` / `waitFor` (evented + scheduled).
 
+> **Not on npm yet** — no `@gnldev/*` package has been published. Until the first release, use it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.
+
 ```bash
 npm i @gnldev/workflow   # journal: @gnldev/durable
 ```
@@ -27,3 +29,7 @@ const out = await wf.run(1, { runId: 'w1', journal: new SqliteStorage('runs.db')
 
 ## How it works
 Each step's output is journaled under `${runId}#${stepId}` → the step doesn't rerun on replay. `parallel` sub-steps are journaled individually; `branch`/`loop` preserve deterministic replay.
+
+## License
+
+Apache-2.0 — see [LICENSE](./LICENSE).

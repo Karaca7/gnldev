@@ -5,6 +5,8 @@ state, cost, an OTEL-like trace waterfall, fork, approval (resume). **Playground
 pick an agent from the browser → prompt → **streaming** response → interrupt approval → that run's trace.
 The UI is @gnldev/studio-ui — a React + Vite build, served as prebuilt static assets. It must be built before running; without it the server answers with a "dist not found" page.
 
+> **Not on npm yet** — no `@gnldev/*` package has been published. From a [repo clone](https://github.com/Karaca7/gnl-framework), `pnpm install && pnpm -r build` builds the server *and* the UI bundle the inspector serves.
+
 ```bash
 npm i @gnldev/studio   # peer/dep: @gnldev/durable, hono, @hono/node-server
 ```
@@ -80,12 +82,42 @@ on the first request, so a silent fail-open cannot survive a deploy unnoticed. T
 intentional choice for open access.
 
 ## API
-- `createStudioApp(reader | options)` / `createStudioApi(options)` / `createStudioAdmin({ apiBase })`
-- `options`: `reader` · `resume?` · `chat?` · **`gnl?`** (Playground runner) · `auth?: { read, write }` ·
-  `allowOpenAccess?` · `apiBase?`
-- `createStudioRunner(gnl, config)` → Playground runner from a createGnl instance
-- `bearerAuth(token)` · `basicAuth({ user, pass })`
-- `capabilities` → `{ resume, chat, fork, playground, stream }`
+
+Every factory returns a `FetchHandler`, and every one accepts a bare `JournalReader` as shorthand
+for `{ reader }`:
+
+- `createStudioApi(reader | StudioApiOptions)` — JSON API only, no UI.
+- `createStudioApp(reader | StudioAppOptions)` — the API **plus** the served UI.
+  `StudioAppOptions extends StudioApiOptions` with one extra field, `apiBase`.
+- `createStudioAdmin({ apiBase? })` — the admin HTML on its own, for an API mounted elsewhere.
+
+`StudioApiOptions` is one option per surface, and a surface is off until you pass its option:
+
+| Option | Turns on |
+|---|---|
+| `reader` (**required**) | the run list and run detail |
+| `resume` | approval, fork, the Approvals view |
+| `compensate` | `POST /runs/:id/compensate` (irreversible; write-gated + audited) |
+| `chat` | live chat |
+| `gnl` | the **Playground** — `createStudioRunner(gnl, config)` builds one from a `createGnl` instance |
+| `memory` / `memoryFactory` | the Memory/Threads view |
+| `workflows`, `workflowInputs`, `workflowStore`, `compileWorkflow` | the Workflows views |
+| `scorers`, `datasets` | the Scorers and Evals views |
+| `mcp`, `a2a`, `queue`, `cache`, `vectors` | the MCP, Networks, Jobs, Cache and Knowledge views |
+| `org` | multi-organization mode |
+| `auth: { read, write }`, `allowOpenAccess` | the auth gate (see the note above) |
+| `users` | the Users view (a paid surface — the contract is here, the implementation is in `@gnldev/auth-ee`) |
+| `apiBase` | *(`createStudioApp`/`createStudioAdmin` only)* the prefix the UI fetches against |
+
+Also exported: `bearerAuth(token)` · `basicAuth({ user, pass })` · `roleAuth(...)` ·
+`PERMISSION_CATALOG` · `ROLE_PERMISSION_PRESETS` · `pipeAgentStream` · `interruptsFromSteps`.
+
+**`capabilities` is not an export** — it is the body of `GET /capabilities`, computed per request
+from the options above (and reported *for the calling identity*, so an organization-scoped caller
+sees `false` for anything its scope cannot reach). The UI builds itself from it, which is why the
+endpoint is deliberately public. Around three dozen booleans, including `resume`, `fork`, `chat`,
+`playground`, `stream`, `tools`, `memory`, `workflows`, `queue`, `cache`, `knowledge`, `approvals`,
+`audit`, `organizations`, `authRequired`.
 
 ### Playground endpoints (when `gnl` is given, write-gated)
 `GET /api/agents` · `POST /api/agents/:name/run` · `POST /api/agents/:name/stream` (SSE — same schema as
@@ -101,3 +133,7 @@ The UI rewrites `./api` relative to `apiBase` (admin↔API separation, can be mo
 Playground's approval flow doesn't go through a separate resume — it goes to `/run` with the **same runId +
 prompt + approvals** → the suspended tool is released (exactly-once is preserved). REST + Studio in one
 command: [`@gnldev/cli`](../cli) `gnl dev`.
+
+## License
+
+Apache-2.0 — see [LICENSE](./LICENSE).

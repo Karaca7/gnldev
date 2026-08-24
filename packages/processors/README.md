@@ -4,6 +4,8 @@
 Built-ins inherit durability — input processors run before `persistInput` (masking is journaled → doesn't
 run again on resume).
 
+> **Not on npm yet** — no `@gnldev/*` package has been published. Until the first release, use it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.
+
 ```bash
 npm i @gnldev/processors   # peer: @gnldev/durable
 ```
@@ -48,3 +50,7 @@ substring/regex matching**. This means they:
 
 For details, see the JSDoc on the relevant functions (`src/moderation.ts`, `src/safety.ts`, `src/pii.ts`,
 `src/redact.ts`).
+
+## License
+
+Apache-2.0 — see [LICENSE](./LICENSE).

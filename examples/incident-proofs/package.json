@@ -2,6 +2,7 @@
   "name": "@gnldev/incident-proofs",
   "version": "0.0.0",
   "private": true,
+  "license": "Apache-2.0",
   "type": "module",
   "description": "Reproduces 3 documented double-side-effect failure patterns and shows GNL blocking each one — runnable proof, no API key required (mock model).",
   "scripts": {

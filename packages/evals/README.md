@@ -4,6 +4,8 @@
 replayable scores (memoized if the journal is writable → same score on resume). `evalDataset` runs a
 resumable suite (picks up where it left off if interrupted).
 
+> **Not on npm yet** — no `@gnldev/*` package has been published. Until the first release, use it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.
+
 ```bash
 npm i @gnldev/evals   # peer: @gnldev/durable, ai
 ```
@@ -38,3 +40,7 @@ const r = await evalDataset({
 ## How it works
 Since scores are written to the journal, the eval suite is idempotent; long suites continue after a crash,
 and the same input produces the same score.
+
+## License
+
+Apache-2.0 — see [LICENSE](./LICENSE).

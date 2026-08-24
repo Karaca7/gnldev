@@ -358,7 +358,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       // recorded success. Money-shaped and silent, and the docs instruct forwarding this exact string
       // (see examples/stripe-idempotency).
       //
-      // Added ONLY when a scope is active, so a single-tenant deployment's keys stay byte-identical:
+      // Added ONLY when a scope is active, so a single-organization deployment's keys stay byte-identical:
       // a key format that shifts under an in-flight retry is itself a double-charge. For org-scoped
       // users the format does change, which is acceptable only because nothing is published yet;
       // after 1.0 the same change would need a migration window.

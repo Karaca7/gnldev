@@ -2,6 +2,8 @@
 
 Exposes the `createGnl` registry as **auto-REST + OpenAPI + SSE**. Every endpoint bottoms out in `runDurable` → exactly-once/durability inherited for free. (The durable counterpart to the common auto-REST pattern.)
 
+> **Not on npm yet** — no `@gnldev/*` package has been published. Until the first release, use it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.
+
 ```bash
 npm i @gnldev/server   # peer: @gnldev/durable  ·  dep: hono
 ```
@@ -109,3 +111,7 @@ For type-safe calls use [`@gnldev/client`](../client) (core) + `@gnldev/client/r
 `runId` is the idempotency key; calling `/run` or `/stream` again with the same runId triggers durable replay → side effects happen only once. `runId` is required (400 if missing).
 
 **Auth (opt-in, but no silent openness in production):** `createRestApi(config, { auth })` accepts an `AuthProvider` (the free `@gnldev/auth` `roleAuth`, or the paid `@gnldev/auth-ee`) or a backward-compatible `{read, write}` pair. If `auth` is not given, endpoints are open; but under `NODE_ENV=production` this is only possible DELIBERATELY, via `allowOpenAccess: true` — without the flag, setup throws a clear error ("auth required in production"). Outside production, a setup without auth works, with a one-time `console.warn` on the first request, so a silent fail-open cannot survive unnoticed.
+
+## License
+
+Apache-2.0 — see [LICENSE](./LICENSE).
