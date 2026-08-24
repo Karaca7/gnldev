@@ -7,7 +7,7 @@ import { sseResponse } from './sse.js';
 import { ORG_RECORD_PRE, asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, countLog, purgeRun, purgeOrganization, orgPurgedKey, sweepRuns, sweepLog, POLICY_KEY, PRICING_KEY, effectivePricingTable, DEFAULT_PRICING, readPricing, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, knownModelProviders, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent } from '@gnldev/durable';
 import type { PolicyDoc, PolicyRule, BudgetLimit, PricingDoc } from '@gnldev/durable';
 import type { JournalReader, Journal, WorkflowLike, MetricsRunRow } from '@gnldev/durable';
-import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, principalScope, assertAssignablePrivileges, type AuthProvider, type Principal } from '@gnldev/auth';
+import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, principalScope, assertAssignablePrivileges, CLIENT_ROLE, type AuthProvider, type Principal } from '@gnldev/auth';
 import { listTriggers } from '@gnldev/scheduler';
 import { mountSpa, notBuiltHtml } from './spa.js';
 import { openapiSpec, swaggerHtml } from './swagger.js';
@@ -960,6 +960,40 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       ? { listRunsPaged: (q: any) => (scopedNow() as any).listRunsPaged(q) }
       : {}),
   } as JournalReader;
+
+  /**
+   * Studio refuses APPLICATION credentials outright.
+   *
+   * This is an operator console — @gnldev/auth's README calls `admin` "the credential a PERSON
+   * carries" and `client` "a customer's backend server". The two hosts share one `AuthProvider`, and
+   * the scaffold the CLI writes passes the SAME provider to `createStudioApp` and `createRestApi`, so
+   * a `client` entry added for the REST side lands here too — measured, before this existed: a client
+   * token read `/runs` (every end user's, with their `resourceId` attached), `/runs/:id` with full
+   * journal entries, `/metrics`, `/audit` and `/users`, none of which asked it to name a subject.
+   * @gnldev/server requires one on every route that touches end-user data; this host had never heard
+   * of the class.
+   *
+   * REFUSING is the fix rather than porting the subject rules across, and the asymmetry is the reason:
+   * an operator legitimately works across the whole organization and names nobody, which is most of
+   * what Studio does. Teaching this surface to serve a per-end-user credential would mean deciding,
+   * route by route, which of ~46 reads an application may see — the same route-by-route reasoning that
+   * left the write paths open on the other host. One boundary, stated once.
+   *
+   * Runs BEFORE the org middleware and independently of it: the exposure did not need `org` configured.
+   */
+  if (authProvider) {
+    app.use('*', async (c, next) => {
+      const principal = await authProvider!.authenticate(c.req.raw);
+      if (principal?.roles?.includes(CLIENT_ROLE)) {
+        return c.json({
+          error: 'access denied: Studio is an operator console and does not accept an application '
+            + '(client) credential. Use an admin or viewer credential here; a client credential belongs '
+            + 'to your backend, against @gnldev/server.',
+        }, 403);
+      }
+      await next();
+    });
+  }
 
   // The middleware is only set up if opts.org (header-based resolution) OR an auth provider (which can
   // Produce an identity-bound org) exists; if neither exists, no request is scoped (existing shared behavior).

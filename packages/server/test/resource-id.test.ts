@@ -285,3 +285,62 @@ describe('the thread-listing call SHAPE', () => {
     expect(await (await getOp('/threads')).json()).toHaveLength(2); // the operator's unfiltered view
   });
 });
+
+describe('a thread belongs to ONE end user, on the write paths too', () => {
+  // The read route refused a foreign thread from the day it was written; the write paths did not, and
+  // the gap was measured rather than imagined: Mallory posted `{ threadId: 't-ayse', resourceId:
+  // 'u-mallory' }` to /agents/:name/run and the prompt handed to the model was Ayşe's history verbatim.
+  // Worse than disclosure — the turn is appended to that thread, so the next reader of Ayşe's own
+  // conversation finds a stranger's message inside it.
+  //
+  // 3645 tests passed over it. The conformance walk that exists to stop exactly this drove every route
+  // with a subject-LESS client and proved a subject is required; it never once paired a VALID subject
+  // with a thread belonging to someone else. That missing axis is what these tests are.
+
+  it('naming another end user\'s thread is refused on /run', async () => {
+    const { run, post } = api();
+    await run('ayse');                                    // creates t-ayse, owned by u-ayse
+    const res = await post('/agents/a/run', { runId: 'r-x', prompt: 'what did I say?', threadId: 't-ayse', resourceId: 'u-mallory' });
+    expect(res.status).toBe(403);
+  });
+
+  it('and the refusal keeps the stranger out of the conversation, not just out of the answer', async () => {
+    // The distinguishing assertion. A route that answered 403 AFTER loading the thread would satisfy
+    // the status check above and still have leaked Ayşe's history into the model — and appended
+    // Mallory's turn on the way through. `seen` is what the memory layer was actually asked for.
+    const { run, post, seen } = api();
+    await run('ayse');
+    seen.length = 0;
+    await post('/agents/a/run', { runId: 'r-x', prompt: 'what did I say?', threadId: 't-ayse', resourceId: 'u-mallory' });
+    expect(seen, 'the store was consulted for a thread the caller does not own').toEqual([]);
+  });
+
+  it('the owner reaches their own thread, and a NEW thread is not refused', async () => {
+    // The other half: a check that refused everything would pass every assertion above. A first turn
+    // creates the thread, so an unknown owner must be allowed — otherwise no conversation can start.
+    const { run, post } = api();
+    await run('ayse');
+    expect((await post('/agents/a/run', { runId: 'r-2', prompt: 'again', threadId: 't-ayse', resourceId: 'u-ayse' })).status).toBe(200);
+    expect((await post('/agents/a/run', { runId: 'r-3', prompt: 'hello', threadId: 't-brand-new', resourceId: 'u-mallory' })).status).toBe(200);
+  });
+
+  it('an OPERATOR may name any thread — it works across the organization by design', async () => {
+    const { run, postOp } = api();
+    await run('ayse');
+    expect((await postOp('/agents/a/run', { runId: 'r-op', prompt: 'inspecting', threadId: 't-ayse' })).status).toBe(200);
+  });
+
+  it('/stream enforces it too — the sibling route is where this kind of gap survives', async () => {
+    const { run, post } = api();
+    await run('ayse');
+    expect((await post('/agents/a/stream', { runId: 'r-s', prompt: 'x', threadId: 't-ayse', resourceId: 'u-mallory' })).status).toBe(403);
+  });
+
+  it('the refusal names neither the owner nor whether the thread exists', async () => {
+    const { run, post } = api();
+    await run('ayse');
+    const body = await (await post('/agents/a/run', { runId: 'r-x', prompt: 'x', threadId: 't-ayse', resourceId: 'u-mallory' })).json();
+    expect(JSON.stringify(body)).not.toContain('u-ayse');
+  });
+});
+

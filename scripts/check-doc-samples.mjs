@@ -23,6 +23,8 @@ const require = createRequire(import.meta.url);
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = join(ROOT, '.doccheck');
+/** Blocks not compiled because a first-party package they import is absent from THIS checkout. */
+const skippedForAbsentPackage = [];
 
 /** Names a doc block may use without defining them, declared GLOBALLY so a block that does define
  *  one shadows it rather than colliding. Every entry is a hole in the check, so this holds only what
@@ -228,7 +230,46 @@ for (const file of docFiles()) {
     cases.push({ name, rel, line: b.line, prefixLines: prefix.split('\n').length - 1 });
   });
 }
+/**
+ * Package names this repository actually contains. A sample importing something that is not here
+ * cannot be typechecked here, and that is a fact about the checkout rather than a defect in the sample.
+ *
+ * The case that forced this: @gnldev/docs-mcp ships five examples for the PAID auth tier, which
+ * imports `@gnldev/auth-ee`. That package exists in the private monorepo and is deliberately absent
+ * from the public snapshot, so the same five blocks typechecked in one tree and failed with TS2307 in
+ * the other — and the public tree is the one CI gates a release on. Measured: `pnpm check:docs` exited
+ * 1 there, which would have turned the first push red and stopped the v0.1.0 tag from ever reaching npm.
+ *
+ * Deliberately NOT solved with a `doccheck: skip` marker in the examples: that text is what an AI
+ * assistant is handed when it asks how the paid tier works, and it would carry a build-system comment
+ * into the answer. Deliberately not solved in the snapshot generator either — a rule that lives in the
+ * publishing script only holds for what that script produces, and this one is true of any checkout.
+ *
+ * Scoped to first-party names on purpose. A missing THIRD-party package is the existing
+ * `_modules.d.ts` ambient-declaration path, which keeps the check about our API rather than about
+ * which optional packages happen to be installed.
+ */
+const OWN_PACKAGES = new Set(
+  readdirSync(join(ROOT, 'packages'), { withFileTypes: true })
+    .filter((d) => d.isDirectory())
+    .map((d) => {
+      try { return JSON.parse(readFileSync(join(ROOT, 'packages', d.name, 'package.json'), 'utf8')).name; }
+      catch { return undefined; }
+    })
+    .filter(Boolean),
+);
+
+/** The first-party package a block imports that this checkout does not have, if any. */
+function missingOwnImport(code) {
+  for (const m of code.matchAll(/from\s+['"](@gnldev\/[a-z0-9-]+)(?:\/[^'"]*)?['"]/g)) {
+    if (!OWN_PACKAGES.has(m[1])) return m[1];
+  }
+  return undefined;
+}
+
 for (const ex of embeddedExamples()) {
+  const absent = missingOwnImport(ex.code);
+  if (absent) { skippedForAbsentPackage.push(`packages/docs-mcp/src/content.ts (${ex.slug}) — imports ${absent}`); continue; }
   const name = `docsmcp__${ex.slug.replace(/[^a-z0-9]/gi, '_')}.ts`;
   const prefix = 'export {};\ndeclare const prompt: string;\n';
   writeFileSync(join(OUT, name), `${prefix}${ex.code}\n`);
@@ -260,6 +301,11 @@ writeFileSync(join(OUT, 'tsconfig.json'), JSON.stringify({
 }, null, 2));
 
 console.log(`doc samples: ${cases.length} block(s) from ${docFiles().length} file(s)`);
+// Named, never silent. A skipped block reads as a checked block in a green run, and this checker's
+// whole value is that a reader can trust "every documented sample typechecks" to mean every one.
+for (const skipped of skippedForAbsentPackage) {
+  console.log(`  \x1b[33m∼\x1b[0m not checked here: ${skipped} (absent from this checkout)`);
+}
 
 let raw = '';
 try {
@@ -269,7 +315,9 @@ try {
 }
 
 if (!raw.trim()) {
-  console.log('  \x1b[32m✓\x1b[0m every documented sample typechecks against the packages as built');
+  const qualifier = skippedForAbsentPackage.length
+    ? ` (${skippedForAbsentPackage.length} not checked here — see above)` : '';
+  console.log(`  \x1b[32m✓\x1b[0m every documented sample typechecks against the packages as built${qualifier}`);
   process.exit(0);
 }
 

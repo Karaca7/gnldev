@@ -172,3 +172,53 @@ describe('no read route may go back to being unnamed', () => {
     }
   });
 });
+
+describe('Studio refuses an application credential', () => {
+  // The two hosts share one AuthProvider, and the scaffold the CLI writes passes the same one to both.
+  // So a `client` entry added for the REST side lands here too — and this host had never heard of the
+  // class. Measured before the refusal existed: a client token read /runs (every end user's, with
+  // their resourceId attached), /runs/:id with full journal entries, /metrics, /audit and /users,
+  // none of which asked it to name a subject. @gnldev/server requires one on every route touching
+  // end-user data.
+  //
+  // Refusing beats porting the subject rules across: an operator legitimately works across the whole
+  // organization and names nobody, which is most of what Studio does. Teaching this surface to serve a
+  // per-end-user credential means deciding, route by route, which of ~46 reads an application may
+  // see — the same route-by-route reasoning that left the other host's write paths open.
+  const app = () => createStudioApi({
+    reader: new InMemoryJournal(),
+    auth: roleAuth({
+      admin: { token: 'A', orgId: 'acme' },
+      viewer: { token: 'V', orgId: 'acme' },
+      client: { token: 'C', orgId: 'acme' },
+    }),
+  }) as never;
+
+  it('every surface refuses it, and says why', async () => {
+    const a = app();
+    for (const path of ['/runs', '/metrics', '/audit', '/users', '/threads', '/me']) {
+      const res = await call(a, path, { headers: { authorization: 'Bearer C' } });
+      expect(res.status, `${path} served an application credential`).toBe(403);
+    }
+    // The message has to be actionable: someone hits this because they wired the REST credential into
+    // both hosts, and a bare 403 sends them looking for a permissions bug that is not there.
+    const body = await (await call(a, '/runs', { headers: { authorization: 'Bearer C' } })).json();
+    expect(JSON.stringify(body)).toContain('operator console');
+  });
+
+  it('operators are untouched — refusing everything would satisfy the test above', async () => {
+    const a = app();
+    for (const who of ['A', 'V']) {
+      expect((await call(a, '/runs', { headers: { authorization: `Bearer ${who}` } })).status).toBe(200);
+    }
+  });
+
+  it('a deployment with no client credential configured behaves exactly as before', async () => {
+    const a = createStudioApi({
+      reader: new InMemoryJournal(),
+      auth: roleAuth({ admin: { token: 'A', orgId: 'acme' }, viewer: { token: 'V', orgId: 'acme' } }),
+    }) as never;
+    expect((await call(a, '/runs', { headers: { authorization: 'Bearer A' } })).status).toBe(200);
+    expect((await call(a, '/runs', { headers: { authorization: 'Bearer V' } })).status).toBe(200);
+  });
+});

@@ -589,6 +589,49 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     }, 400);
   }
 
+  /**
+   * Refuses when a request names a thread that belongs to a different end user.
+   *
+   * The READ side had this from the start; the WRITE side did not, and the gap was not theoretical.
+   * Measured before this existed, with one `client` credential serving two end users: Mallory posted
+   * `{ threadId: 'thread-alice', resourceId: 'mallory' }` to `POST /agents/:name/run` and the prompt
+   * handed to the model was Alice's history verbatim — `[{user:'my PIN is 4417'}, {assistant:'ok'},
+   * {user:'what did I say before?'}]`. The identical claim on `GET /threads/:id/messages` answered 403.
+   * Worse than disclosure: the turn is APPENDED to that thread, so the next reader of Alice's own
+   * conversation sees a stranger's message inside it.
+   *
+   * Why it was missed, written down because the shape recurs: the ownership rule was applied to the
+   * routes that were open on the screen. Runs got it at the read path, then at cancel and resume; the
+   * SUBJECT of a thread never got it anywhere but the read. The conformance walk that exists to stop
+   * exactly this drove every route with a subject-less client and proved a subject is REQUIRED — it
+   * never once paired a valid subject with a thread belonging to someone else, so 3645 tests passed
+   * over the hole. A helper rather than a fourth copy: the copies are how the first three sites
+   * drifted apart.
+   *
+   * SILENT when the store cannot answer (`getThreadResource` is optional on `Memory`) or when the
+   * thread has no recorded owner — a first turn creates the thread, so refusing an unknown owner would
+   * refuse every new conversation. Same permissiveness as the read route, same wording on refusal:
+   * it reveals neither the real owner nor whether the thread exists.
+   */
+  async function threadOwnershipDenied(
+    c: Context,
+    s: Instance,
+    threadId: unknown,
+    subject: string | undefined,
+  ): Promise<Response | undefined> {
+    if (typeof threadId !== 'string' || !threadId || !subject) return undefined;
+    const getOwner = s.gnl.memory?.getThreadResource;
+    if (!getOwner) return undefined;
+    let owner: string | undefined;
+    try {
+      owner = await getOwner.call(s.gnl.memory, threadId);
+    } catch {
+      return undefined; // a store that cannot answer is not evidence of a mismatch
+    }
+    if (!owner || owner === subject) return undefined;
+    return c.json({ error: 'access denied: this thread belongs to a different resourceId' }, 403);
+  }
+
   async function ownershipDenied(c: Context, s: Instance, runId: string, fromBody?: unknown): Promise<Response | undefined> {
     // The query string is the uniform source, so a GET and a POST state the expectation the same way.
     // `fromBody` exists for the POST paths whose caller naturally puts it in the JSON it is already
@@ -874,6 +917,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     // WHOSE run this is — see resolveResourceId. A per-caller identity wins; otherwise the request says.
     const subject = resolveResourceId(principal?.id, body.resourceId, isClient(c));
     if ('error' in subject) return c.json({ error: subject.error }, 400);
+    { const denied = await threadOwnershipDenied(c, s, body.threadId, subject.resourceId); if (denied) return denied; }
     // CONSISTENT with 1.3: continuing a suspended run from this endpoint with the SAME runId + approvals
     // (like stream does) is also resume intent → if there's a trace in the journal the budget gate is
     // Skipped; new runIds are still ENFORCED (no regression).
@@ -1161,6 +1205,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     // WHOSE run this is — see resolveResourceId. A per-caller identity wins; otherwise the request says.
     const subject = resolveResourceId(principal?.id, body.resourceId, isClient(c));
     if ('error' in subject) return c.json({ error: subject.error }, 400);
+    { const denied = await threadOwnershipDenied(c, s, body.threadId, subject.resourceId); if (denied) return denied; }
     // 1.3: resume intent via approvals+runId (a pending tool approval) → the budget gate is skipped
     // CONSISTENTLY with /agents/:name/resume (otherwise a pending interrupt in an over-budget
     // Organization would never finish).
