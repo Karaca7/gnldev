@@ -166,8 +166,9 @@ The table below covers the ones you interact with directly.
 
 **Isolation is free.** The organization boundary, the four credential classes
 (`superAdmin`/`admin`/`client`/`viewer`), and the `resourceId` rules that keep one end user's
-conversations, memory and runs apart from another's are all in `@gnldev/auth` and the hosts. None of
-them switch on when you pay: a security default that arrives with an invoice is the wrong shape, and
+conversations, memory and runs apart from another's are all in `@gnldev/auth` and `@gnldev/server`.
+(Studio is an operator console and refuses an application credential outright rather than serving one
+per end user — see [@gnldev/auth](packages/auth/README.md).) None of them switch on when you pay: a security default that arrives with an invoice is the wrong shape, and
 an unpaid deployment being the less isolated one was a bug, not a business model.
 
 **Identity management is paid.** `@gnldev/auth-ee` adds SSO/OAuth (Auth0, WorkOS), per-user accounts

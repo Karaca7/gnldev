@@ -144,8 +144,9 @@ Aşağıdaki tablo doğrudan kullandığınız paketleri kapsar.
 
 **İzolasyon ücretsiz.** Organizasyon sınırı, dört kimlik sınıfı
 (`superAdmin`/`admin`/`client`/`viewer`) ve bir son kullanıcının sohbetini, belleğini ve koşularını
-diğerinden ayıran `resourceId` kuralları — hepsi `@gnldev/auth` ve sunucuların içinde. Hiçbiri ödeme
-yapınca açılmıyor: faturayla birlikte gelen bir güvenlik varsayılanı yanlış şekildir, ve ödemeyen
+diğerinden ayıran `resourceId` kuralları — hepsi `@gnldev/auth` ve `@gnldev/server` içinde. (Studio bir
+operatör konsoludur: son kullanıcı başına hizmet vermek yerine uygulama kimliğini tümden reddeder.)
+Hiçbiri ödeme yapınca açılmıyor: faturayla birlikte gelen bir güvenlik varsayılanı yanlış şekildir, ve ödemeyen
 kurulumun daha az izole olması bir hataydı, iş modeli değil.
 
 **Kimlik yönetimi paralı.** `@gnldev/auth-ee` şunları ekliyor: SSO/OAuth (Auth0, WorkOS), ilişkisel
