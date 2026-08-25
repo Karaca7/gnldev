@@ -179,7 +179,7 @@ doğrulanabilir duruşu:
 ## Geliştirme
 ```bash
 pnpm install
-pnpm -r build && pnpm -r typecheck && pnpm test   # 3589 geçen, 48 atlanan, 432 dosya (npx vitest run)
+pnpm -r build && pnpm -r typecheck && pnpm test   # 3600+ geçen, 430+ dosya (npx vitest run)
 
 # gerçek backend entegrasyon testi (opsiyonel):
 docker-compose up -d

@@ -168,8 +168,9 @@ The table below covers the ones you interact with directly.
 (`superAdmin`/`admin`/`client`/`viewer`), and the `resourceId` rules that keep one end user's
 conversations, memory and runs apart from another's are all in `@gnldev/auth` and `@gnldev/server`.
 (Studio is an operator console and refuses an application credential outright rather than serving one
-per end user — see [@gnldev/auth](packages/auth/README.md).) None of them switch on when you pay: a security default that arrives with an invoice is the wrong shape, and
-an unpaid deployment being the less isolated one was a bug, not a business model.
+per end user — see [@gnldev/auth](packages/auth/README.md).) None of them switch on when you pay: a
+security default that arrives with an invoice is the wrong shape, and an unpaid deployment being the
+less isolated one was a bug, not a business model.
 
 **Identity management is paid.** `@gnldev/auth-ee` adds SSO/OAuth (Auth0, WorkOS), per-user accounts
 with a relational store, an audit trail, multi-organization management — and permissions per person
@@ -202,7 +203,7 @@ this repo today:
 ## Development
 ```bash
 pnpm install
-pnpm -r build && pnpm -r typecheck && pnpm test   # 3589 passing, 48 skipped, 432 files (npx vitest run)
+pnpm -r build && pnpm -r typecheck && pnpm test   # 3600+ passing across 430+ files (npx vitest run)
 
 # real-backend integration test (optional):
 docker-compose up -d
