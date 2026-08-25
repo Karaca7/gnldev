@@ -808,6 +808,15 @@ graph TB
 - Side journals are swept too: `sweepLog` (queue/event records), `sweepThreads` (old conversation
   histories). In other words, "retention" policy applies to all data types, not just runs.
 
+- **One thing is deliberately NOT swept: cross-run dedup keys.** `idempotencyWindow: 'cross-run'`
+  writes an `xrun:…` record whose entire job is to answer "did this argument already run?" *forever* —
+  sweeping it on a TTL would silently re-arm the duplicate it exists to prevent, which is the failure
+  the option was bought to avoid. The cost is honest: storage grows with the number of distinct
+  (tool, argument) pairs you dedup across runs, and nothing reclaims it on a schedule.
+  `purgeOrganization` does remove them (they live under the `org:<id>:` prefix), so an organization's
+  deletion is complete; there is simply no age-based sweep, by design. If you use `'cross-run'` on a
+  high-cardinality key, size that growth deliberately rather than discovering it.
+
 ### 11.4 A SINGLE agent that lives for weeks: `rolloverRun` (period rollover)
 
 The genuinely hard scenario: an agent lives for weeks under one `runId` (e.g., an always-on

@@ -783,6 +783,15 @@ graph TB
 - Yan defterler de süpürülür: `sweepLog` (kuyruk/olay kayıtları), `sweepThreads` (eski konuşma
   geçmişleri). Yani "retention" (saklama politikası) yalnız koşulara değil tüm veri türlerine işler.
 
+- **Bir şey bilerek süpürülmüyor: cross-run dedup anahtarları.** `idempotencyWindow: 'cross-run'`,
+  tek işi *"bu argüman daha önce koştu mu?"* sorusunu **sonsuza dek** cevaplamak olan bir `xrun:…`
+  kaydı yazar — onu TTL ile süpürmek, tam olarak engellemek için var olduğu duplicate'i sessizce
+  yeniden mümkün kılardı. Bedeli açık: koşular arasında dedup ettiğiniz farklı (araç, argüman)
+  çiftlerinin sayısıyla depolama büyür ve hiçbir zamanlanmış iş onu geri almaz. `purgeOrganization`
+  bunları siler (`org:<id>:` önekinin altındalar), yani organizasyon silme eksiksizdir; yalnızca
+  yaşa dayalı bir süpürme yoktur, bilinçli olarak. `'cross-run'`'ı yüksek kardinaliteli bir anahtarda
+  kullanıyorsanız, bu büyümeyi keşfetmek yerine baştan boyutlandırın.
+
 ### 11.4 Haftalarca yaşayan TEK ajan: `rolloverRun` (dönem devri)
 
 Asıl zor senaryo: bir ajan tek `runId` ile haftalarca yaşıyor (örn. sürekli çalışan bir operasyon
