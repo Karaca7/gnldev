@@ -585,6 +585,55 @@ await exportRunToOtlp(journal, 'order-42', otlpPresets.langfuse({ publicKey, sec
 // the run's full trace to Langfuse (an LLM tracing service) in a single line
 ```
 
+### 7.9b Capacity: what one Postgres holds, and what adding machines does
+
+Measured, not estimated. A 16-core box, Postgres in Docker, an agent turn of 3 model steps and 2
+tool calls, half the traffic over SSE, with a fixed 3 ms delay injected on every query to stand in
+for a remote database (Neon/RDS in the same region):
+
+| deployment | req/s | p50 | p99 |
+|---|---:|---:|---:|
+| 1 worker | 21 | 2.7 s | 4.2 s |
+| 4 workers | 44 | 1.2 s | 2.3 s |
+| 8 workers, 128 concurrent | 73 | 1.5 s | 2.9 s |
+| 8 workers, 256 concurrent | 93 | 2.2 s | 4.8 s |
+
+Roughly **1.5-2 million agent turns per day** at a sane operating point, or about **1,300 people
+holding a conversation at once** if each sends a message every 30 seconds. A local database is
+faster still (the contention these numbers are dominated by barely exists at sub-millisecond
+latency), so development will not show you this shape.
+
+Three things worth knowing before you plan against it.
+
+**The connection budget is a hard wall, and it is yours to respect.** Each process opens its own
+pool — node-postgres defaults to 10 connections — and Postgres allows `max_connections`, commonly
+100. Sixteen workers therefore ask for 160 and the server starts refusing: measured, 513 of 600
+requests came back as 500s. Keep
+
+```
+processes × pool size  <  max_connections − 20
+```
+
+leaving room for autovacuum and superuser sessions. Pass your own pool to go wider:
+`new PostgresStorage({ pool: new Pool({ connectionString, max: 5 }) })`. gnl states its share at
+startup when the margin is thin, and a refusal now arrives with this arithmetic attached rather than
+Postgres's bare `sorry, too many clients already`.
+
+**Adding processes helps; adding machines mostly does not.** Going from 1 worker to 8 roughly
+quadruples throughput. A second application group against the *same* database added 32%, not 100% —
+the shared Postgres is the ceiling, not the application. Past ~8 workers the curve flattens.
+
+**Beyond one Postgres there is currently no story.** gnl assumes a single database: there is no
+routing layer that spreads the journal across several. That is a deliberate consequence of the
+positioning — your own database, no infrastructure to operate — and it is the boundary of this
+design. Splitting a large tenant across databases is a real project, not a configuration flag, and
+organizations are *not* a substitute: an organization is a tenancy boundary (isolation, budget, GDPR
+deletion), not a sharding knob.
+
+For most deployments none of this binds. At 93 req/s against a real model provider you are spending
+tens of thousands of dollars a day on tokens and meeting the provider's own rate limits long before
+gnl is the constraint.
+
 ### 7.10 Maintenance: cleanup and long-lived agents
 
 ```ts

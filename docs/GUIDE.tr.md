@@ -569,6 +569,53 @@ await exportRunToOtlp(journal, 'siparis-42', otlpPresets.langfuse({ publicKey, s
 // koşunun tüm izi (trace) tek satırla Langfuse'a (LLM izleme servisi)
 ```
 
+### 7.9b Kapasite: tek bir Postgres neyi taşır, makine eklemek ne yapar
+
+Tahmin değil, ölçüm. 16 çekirdekli bir makine, Docker'da Postgres, 3 model adımı ve 2 araç
+çağrısından oluşan bir ajan turu, trafiğin yarısı SSE üzerinden, ve her sorguya enjekte edilmiş
+sabit 3 ms gecikme — uzak bir veritabanını (aynı bölgedeki Neon/RDS) temsil etmek için:
+
+| dağıtım | istek/s | p50 | p99 |
+|---|---:|---:|---:|
+| 1 worker | 21 | 2,7 sn | 4,2 sn |
+| 4 worker | 44 | 1,2 sn | 2,3 sn |
+| 8 worker, 128 eşzamanlı | 73 | 1,5 sn | 2,9 sn |
+| 8 worker, 256 eşzamanlı | 93 | 2,2 sn | 4,8 sn |
+
+Makul bir çalışma noktasında kabaca **günde 1,5-2 milyon ajan turu**, ya da her biri 30 saniyede bir
+mesaj atıyorsa **aynı anda ~1.300 kişi**. Yerel veritabanı daha da hızlıdır (bu sayılara hükmeden
+çekişme, milisaniye altı gecikmede neredeyse yoktur) — yani geliştirme ortamı bu şekli göstermez.
+
+Plan yapmadan önce bilinmesi gereken üç şey var.
+
+**Bağlantı bütçesi sert bir duvardır ve ona uymak sizin işinizdir.** Her süreç kendi havuzunu açar
+— node-postgres varsayılanı 10 bağlantı — ve Postgres `max_connections` kadarına izin verir, tipik
+olarak 100. On altı worker bu yüzden 160 ister ve sunucu reddetmeye başlar: ölçüldü, 600 isteğin
+513'ü 500 hatası döndü. Şu sınırın altında kalın:
+
+```
+süreç sayısı × havuz boyutu  <  max_connections − 20
+```
+
+Kalan pay autovacuum ve superuser oturumları içindir. Daha geniş gitmek için kendi havuzunuzu verin:
+`new PostgresStorage({ pool: new Pool({ connectionString, max: 5 }) })`. gnl, pay inceldiğinde kendi
+kullandığı miktarı açılışta bildirir; reddedilme durumunda ise Postgres'in yalın
+`sorry, too many clients already` cümlesi yerine bu aritmetiği de içeren bir hata gelir.
+
+**Süreç eklemek işe yarar; makine eklemek çoğunlukla yaramaz.** 1 worker'dan 8'e çıkmak verimi kabaca
+dörde katlar. *Aynı* veritabanına ikinci bir uygulama grubu eklemek ise %32 kattı, %100 değil —
+tavan uygulamada değil, paylaşılan Postgres'te. ~8 worker'dan sonra eğri düzleşir.
+
+**Tek Postgres'in ötesi için bugün bir hikâye yok.** gnl tek bir veritabanı varsayar; günlüğü birden
+fazlasına dağıtan bir yönlendirme katmanı yoktur. Bu, konumlanmanın bilinçli bir sonucudur — kendi
+veritabanınız, işletilecek altyapı yok — ve bu tasarımın sınırıdır. Büyük bir kiracıyı veritabanlarına
+bölmek bir yapılandırma bayrağı değil, gerçek bir projedir; ve organizasyonlar bunun yerine geçmez:
+organizasyon bir kiracılık sınırıdır (yalıtım, bütçe, KVKK/GDPR silme), bir bölümleme düğmesi değil.
+
+Çoğu dağıtım için bunların hiçbiri bağlayıcı olmaz. Gerçek bir model sağlayıcısına karşı 93 istek/s'de,
+gnl kısıt hâline gelmeden çok önce günde on binlerce dolarlık token harcıyor ve sağlayıcının kendi
+hız limitlerine çarpıyor olursunuz.
+
 ### 7.10 Bakım: temizlik ve uzun ömürlü ajanlar
 
 ```ts
