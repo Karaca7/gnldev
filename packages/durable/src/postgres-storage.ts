@@ -128,9 +128,36 @@ function pgRange(col: string, collate: string, prefix: string, from: number): { 
     : { where: `${col}${collate} >= $${from} AND ${col}${collate} < $${from + 1}`, params: [prefix, upper] };
 }
 
+/**
+ * CONNECTION BUDGET. Measured failure, not a hypothetical: two 8-worker app groups against one
+ * Postgres asked for 16 x 10 = 160 connections against `max_connections = 100`, and 513 of 600
+ * requests came back as 500s carrying nothing but Postgres's own `sorry, too many clients already`.
+ * Nothing in gnl chose that 10 — it is node-postgres's default pool size — and nothing anywhere told
+ * the operator the arithmetic that had just broken.
+ *
+ * gnl cannot see how many processes a deployment runs, so it cannot check the product. What it CAN
+ * do is state its own share once, and name the arithmetic when the server refuses a connection.
+ */
+function connectionAdvice(poolMax: number, serverMax: number): string {
+  const safe = Math.max(1, Math.floor((serverMax - 20) / Math.max(1, poolMax)));
+  return `@gnldev/durable: this process reserves up to ${poolMax} Postgres connections and the server allows `
+    + `${serverMax}. Keep (processes x pool size) under ${serverMax - 20} -- roughly ${safe} process(es) at this `
+    + `pool size, leaving headroom for autovacuum and superuser sessions. Set a smaller pool via `
+    + `new PostgresStorage({ pool }) if you run more.`;
+}
+
+/** Postgres says this when the connection slots are gone. Its own message names no remedy. */
+function isTooManyClients(e: unknown): boolean {
+  const code = (e as { code?: string } | null)?.code;
+  const msg = String((e as { message?: string } | null)?.message ?? '');
+  return code === '53300' || /too many clients/i.test(msg);
+}
+
 export class PostgresStorage implements Storage {
   /** Filled in by ensureReady's probe; shared BY REFERENCE with PgRunJournal (see PrefixShape). */
   private prefixShape: PrefixShape = { collate: '' };
+  /** Filled by ensureReady's budget probe; used to explain a connection refusal. */
+  private connectionBudget?: { poolMax: number; serverMax: number };
   /** H10a: deployment durability report (delegates to the runs journal — see PgRunJournal.durabilityReport). */
   durabilityReport() { return (this.runs as any).durabilityReport() as ReturnType<any>; }
 
@@ -177,7 +204,20 @@ export class PostgresStorage implements Storage {
         );
       });
     }
-    const q = (sql: string, p?: unknown[]) => this.ensureReady().then(() => this._pool.query(sql, p));
+    /**
+     * Wraps a connection refusal with the arithmetic that caused it. Postgres answers
+     * `sorry, too many clients already` and stops there; the operator is left to work out that
+     * processes x pool size has crossed `max_connections`. The original error is kept as `cause`.
+     */
+    const explain = (e: unknown): unknown => {
+      if (!isTooManyClients(e) || !this.connectionBudget) return e;
+      const { poolMax, serverMax } = this.connectionBudget;
+      const err = new Error(`${String((e as Error).message)} -- ${connectionAdvice(poolMax, serverMax)}`, { cause: e });
+      (err as { code?: string }).code = (e as { code?: string }).code;
+      return err;
+    };
+    const q = (sql: string, p?: unknown[]) =>
+      this.ensureReady().then(() => this._pool.query(sql, p)).catch((e) => { throw explain(e); });
     // T1 audit fix — transaction helper: all queries inside fn run within BEGIN/COMMIT (error →
     // ROLLBACK) on a SINGLE client checked out from the pool. `pool.query('BEGIN')` on a pg Pool is
     // UNSAFE (each query can go to a different connection) → connect pins the client.
@@ -188,7 +228,7 @@ export class PostgresStorage implements Storage {
     const tx = async <T>(fn: (q: Q) => Promise<T>): Promise<T> => {
       await this.ensureReady();
       if (typeof this._pool.connect !== 'function') return fn((s, p) => this._pool.query(s, p));
-      const client = await this._pool.connect();
+      const client = await this._pool.connect().catch((e: unknown) => { throw explain(e); });
       let inTx = false;
       let destroy = false;
       try {
@@ -254,6 +294,16 @@ export class PostgresStorage implements Storage {
             ]) await this._pool.query(sql);
           }
           await this._pool.query(`INSERT INTO gnl_meta (k, v) VALUES ('schema_version', $1) ON CONFLICT (k) DO NOTHING`, [SCHEMA_VERSION]);
+          // One extra query at startup to read the budget this process is spending against. Warned
+          // only when the margin is genuinely thin, so a single-process deployment stays silent.
+          try {
+            const serverMax = Number((await this._pool.query('SHOW max_connections')).rows?.[0]?.max_connections);
+            const poolMax = Number((this._pool as { options?: { max?: number } }).options?.max ?? 10);
+            this.connectionBudget = { poolMax, serverMax };
+            if (Number.isFinite(serverMax) && poolMax * 4 > serverMax - 20) {
+              console.warn(connectionAdvice(poolMax, serverMax));
+            }
+          } catch { /* a backend that cannot answer SHOW is left alone -- this is advice, not a gate */ }
         } finally {
           if (locked) await this._pool.query('SELECT pg_advisory_unlock(47110001)').catch(() => {});
         }
