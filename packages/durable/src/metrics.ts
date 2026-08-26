@@ -10,6 +10,7 @@
 import type { Journal, JournalBatch, JournalReader } from './journal.js';
 import { summarizeRun, runKeys, listRunsArray } from './journal.js';
 import { getRunCost } from './cost.js';
+import { METRICS_SHARDS, shardSuffix, sumShards } from './counter-shard.js';
 
 /**
  * P1.6b: money is accumulated as INTEGER micro-USD (`costUsdMicros = round(usd × 1e6)`) — float
@@ -51,6 +52,22 @@ export function metricsDayKey(day: string): string {
 export function metricsAgentDayKey(agentName: string, day: string): string {
   const safe = agentName.replace(/:/g, '_');
   return `${METRICS_COUNTERS_PRE}agent:${safe}:d:${day}`;
+}
+
+/**
+ * Reads ONE logical counter: the sum of its shards plus the unsuffixed key.
+ *
+ * `METRICS_ALL_KEY` / `metricsDayKey` / `metricsAgentDayKey` name a LOGICAL counter. With sharding on
+ * (the default, see counter-shard.ts) its value is spread across several physical rows, so a bare
+ * `getCounters(key)` answers for ONE shard and reads as data loss. This is the supported way to read a
+ * single bucket — `readMetricsSummary` is the batched form for the dashboard, and there was no
+ * equivalent for `metricsAgentDayKey` at all before sharding made the gap visible.
+ *
+ * Returns `undefined` when no shard holds data, exactly as an unsharded miss did.
+ */
+export function readCounter(journal: Journal, key: string): Promise<Record<string, number> | undefined> {
+  if (typeof journal.getCounters !== 'function') return Promise.resolve(undefined);
+  return sumShards((k) => journal.getCounters!(k), key, METRICS_SHARDS);
 }
 
 /** Fast-path per-run row key: `__metrics__run:<runId>`. */
@@ -226,10 +243,13 @@ export async function recordRunMetrics(
     durMs: durationMs,
     [bucketField]: 1,
   };
+  // P3.1: the shard is chosen by runId, so a run always lands on the same row and a retry cannot
+  // double-count across two shards (the claim marker still decides IF it counts at all).
+  const sfx = shardSuffix(runId, METRICS_SHARDS);
   const incrs: JournalBatch['incrs'] = [
-    { key: METRICS_ALL_KEY, fields },
-    { key: metricsDayKey(day), fields },
-    ...(opts.agentName ? [{ key: metricsAgentDayKey(opts.agentName, day), fields }] : []),
+    { key: METRICS_ALL_KEY + sfx, fields },
+    { key: metricsDayKey(day) + sfx, fields },
+    ...(opts.agentName ? [{ key: metricsAgentDayKey(opts.agentName, day) + sfx, fields }] : []),
   ];
 
   const row: MetricsRunRow = {
@@ -332,10 +352,12 @@ export async function recordRunScores(
     fields[bucketField] = (fields[bucketField] ?? 0) + 1;
   }
 
+  // P3.1: same shard as this run's own metrics pass — score fields live on the SAME counter keys.
+  const sfx = shardSuffix(runId, METRICS_SHARDS);
   const incrs: JournalBatch['incrs'] = [
-    { key: METRICS_ALL_KEY, fields },
-    { key: metricsDayKey(day), fields },
-    ...(agentName ? [{ key: metricsAgentDayKey(agentName, day), fields }] : []),
+    { key: METRICS_ALL_KEY + sfx, fields },
+    { key: metricsDayKey(day) + sfx, fields },
+    ...(agentName ? [{ key: metricsAgentDayKey(agentName, day) + sfx, fields }] : []),
   ];
 
   if (hasBatch) {
@@ -448,13 +470,13 @@ export async function readMetricsSummary(
 ): Promise<{ all: Record<string, number> | undefined; byDay: MetricsDayEntry[] }> {
   if (typeof journal.getCounters !== 'function') return { all: undefined, byDay: [] };
   const days = Math.max(1, Math.min(90, opts.days ?? 14));
-  const all = withDerivedScores(withDerivedCost(await journal.getCounters(METRICS_ALL_KEY)));
+  const all = withDerivedScores(withDerivedCost(await sumShards((k) => journal.getCounters!(k), METRICS_ALL_KEY, METRICS_SHARDS)));
   const byDay: MetricsDayEntry[] = [];
   const nowMs = Date.now();
   const msPerDay = 24 * 60 * 60 * 1000;
   for (let i = days - 1; i >= 0; i--) {
     const day = dayKeyFor(nowMs - i * msPerDay);
-    const fields = withDerivedScores(withDerivedCost(await journal.getCounters(metricsDayKey(day))));
+    const fields = withDerivedScores(withDerivedCost(await sumShards((k) => journal.getCounters!(k), metricsDayKey(day), METRICS_SHARDS)));
     byDay.push({ day, fields });
   }
   return { all, byDay };

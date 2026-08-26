@@ -13,6 +13,7 @@ import {
   recordRunScores, readMetricsSummary, metricsScoresDoneKey,
   METRICS_ALL_KEY, metricsDayKey, metricsAgentDayKey,
   recordRunMetrics, rebuildMetrics,
+  readCounter,
 } from '../src/metrics.js';
 import { runKeys } from '../src/journal.js';
 
@@ -22,7 +23,7 @@ describe('metrics.ts — recordRunScores', () => {
     const first = await recordRunScores(journal, 'r1', 'support', { quality: { score: 0.8 } });
     expect(first).toBe(true);
 
-    const all = await journal.getCounters(METRICS_ALL_KEY);
+    const all = await readCounter(journal, METRICS_ALL_KEY);
     expect(all?.['score:quality:sumMilli']).toBe(800);
     expect(all?.['score:quality:count']).toBe(1);
     expect(all?.['score:quality:gte75']).toBe(1);
@@ -31,7 +32,7 @@ describe('metrics.ts — recordRunScores', () => {
     const second = await recordRunScores(journal, 'r1', 'support', { quality: { score: 0.8 } });
     expect(second).toBe(false); // claim already held — no-op
 
-    const allAfter = await journal.getCounters(METRICS_ALL_KEY);
+    const allAfter = await readCounter(journal, METRICS_ALL_KEY);
     expect(allAfter?.['score:quality:sumMilli']).toBe(800); // unchanged — NOT double-counted
     expect(allAfter?.['score:quality:count']).toBe(1);
   });
@@ -39,7 +40,7 @@ describe('metrics.ts — recordRunScores', () => {
   it('accepts a bare numeric score (not just { score }) — same field shape either way', async () => {
     const journal = new InMemoryJournal();
     await recordRunScores(journal, 'r-bare', undefined, { relevancy: 0.4 });
-    const all = await journal.getCounters(METRICS_ALL_KEY);
+    const all = await readCounter(journal, METRICS_ALL_KEY);
     expect(all?.['score:relevancy:sumMilli']).toBe(400);
     expect(all?.['score:relevancy:count']).toBe(1);
     expect(all?.['score:relevancy:lt50']).toBe(1);
@@ -50,16 +51,16 @@ describe('metrics.ts — recordRunScores', () => {
     (journal as unknown as { now: () => Promise<number> }).now = async () => Date.UTC(2026, 0, 10);
     await recordRunScores(journal, 'r1', 'billing', { quality: { score: 0.9 } });
 
-    const day = await journal.getCounters(metricsDayKey('2026-01-10'));
+    const day = await readCounter(journal, metricsDayKey('2026-01-10'));
     expect(day?.['score:quality:sumMilli']).toBe(900);
-    const agentDay = await journal.getCounters(metricsAgentDayKey('billing', '2026-01-10'));
+    const agentDay = await readCounter(journal, metricsAgentDayKey('billing', '2026-01-10'));
     expect(agentDay?.['score:quality:count']).toBe(1);
   });
 
   it('scorer names are sanitized (":" -> "_") — same defensive posture as agent names', async () => {
     const journal = new InMemoryJournal();
     await recordRunScores(journal, 'r1', undefined, { 'weird:name': { score: 0.5 } });
-    const all = await journal.getCounters(METRICS_ALL_KEY);
+    const all = await readCounter(journal, METRICS_ALL_KEY);
     expect(all?.['score:weird_name:count']).toBe(1);
   });
 
@@ -72,7 +73,7 @@ describe('metrics.ts — recordRunScores', () => {
       missing: {} as any,
     });
     expect(ok).toBe(true); // the claim still lands — best-effort per-scorer skip, not a batch failure
-    const all = await journal.getCounters(METRICS_ALL_KEY);
+    const all = await readCounter(journal, METRICS_ALL_KEY);
     expect(all?.['score:good:count']).toBe(1);
     expect(all?.['score:bad:count']).toBeUndefined();
     expect(all?.['score:alsoBad:count']).toBeUndefined();
@@ -86,7 +87,7 @@ describe('metrics.ts — recordRunScores', () => {
     await recordRunScores(journal, 'r-c', undefined, { s: { score: 0.6 } });
     await recordRunScores(journal, 'r-d', undefined, { s: { score: 0.99 } });
 
-    const all = await journal.getCounters(METRICS_ALL_KEY);
+    const all = await readCounter(journal, METRICS_ALL_KEY);
     expect(all?.['score:s:lt25']).toBe(1);
     expect(all?.['score:s:lt50']).toBe(1);
     expect(all?.['score:s:lt75']).toBe(1);
@@ -105,7 +106,7 @@ describe('metrics.ts — recordRunScores', () => {
     await recordRunScores(journal, 'r1', undefined, { quality: { score: 0.8 }, relevancy: { score: 0.4 } });
     await recordRunScores(journal, 'r2', undefined, { quality: { score: 0.6 } }); // no relevancy this run
 
-    const all = await journal.getCounters(METRICS_ALL_KEY);
+    const all = await readCounter(journal, METRICS_ALL_KEY);
     expect(all?.['score:quality:sumMilli']).toBe(1400); // 800 + 600
     expect(all?.['score:quality:count']).toBe(2);
     expect(all?.['score:relevancy:sumMilli']).toBe(400);
@@ -135,7 +136,7 @@ describe('metrics.ts — recordRunScores', () => {
 
     const ok = await recordRunScores(stub, 'r1', undefined, { s: { score: 0.75 } });
     expect(ok).toBe(true);
-    const all = await real.getCounters(METRICS_ALL_KEY);
+    const all = await readCounter(real, METRICS_ALL_KEY);
     expect(all?.['score:s:count']).toBe(1);
     expect(all?.['score:s:gte75']).toBe(1);
   });
@@ -155,7 +156,7 @@ describe('metrics.ts — recordRunScores', () => {
     const ok = await recordRunScores(stub, 'r1', undefined, { s: { score: 0.5 } });
     expect(ok).toBe(true);
     expect(incrByCalls).toBe(2); // no agentName → 2 incrs entries (all + day), one incrBy call each
-    const all = await real.getCounters(METRICS_ALL_KEY);
+    const all = await readCounter(real, METRICS_ALL_KEY);
     expect(all?.['score:s:count']).toBe(1);
 
     const second = await recordRunScores(stub, 'r1', undefined, { s: { score: 0.5 } });
@@ -174,7 +175,7 @@ describe('metrics.ts — score counters survive rebuildMetrics (P2-skor repair p
     await recordRunMetrics(journal, journal, 'r-rb', { agentName: 'support' });
     await recordRunScores(journal, 'r-rb', 'support', { quality: { score: 0.8 }, tone: { score: 0.3 } });
 
-    const before = await journal.getCounters(METRICS_ALL_KEY);
+    const before = await readCounter(journal, METRICS_ALL_KEY);
     expect(before?.['score:quality:sumMilli']).toBe(800);
 
     // Tamper + rebuild: the wipe removes the score fields (same counter keys) AND the scores claim —
@@ -183,14 +184,14 @@ describe('metrics.ts — score counters survive rebuildMetrics (P2-skor repair p
     const res = await rebuildMetrics(journal, journal);
     expect(res.scoresRestored).toBe(1);
 
-    const after = await journal.getCounters(METRICS_ALL_KEY);
+    const after = await readCounter(journal, METRICS_ALL_KEY);
     expect(after?.['score:quality:sumMilli']).toBe(800); // tamper gone, exact value back
     expect(after?.['score:quality:count']).toBe(1);
     expect(after?.['score:tone:sumMilli']).toBe(300);
     expect(after?.['score:tone:lt50']).toBe(1);
     // A second rebuild converges to the same values (claims wiped+re-claimed, never double-added).
     await rebuildMetrics(journal, journal);
-    const again = await journal.getCounters(METRICS_ALL_KEY);
+    const again = await readCounter(journal, METRICS_ALL_KEY);
     expect(again?.['score:quality:sumMilli']).toBe(800);
     expect(again?.['score:quality:count']).toBe(1);
   });
@@ -210,7 +211,7 @@ describe('metrics.ts — score counters survive rebuildMetrics (P2-skor repair p
     const res = await backfillMetrics(stripped, stripped);
     expect(res.recorded).toBe(1); // base metrics landed
     expect(res.scoresRestored).toBe(0); // scores skipped — no listKeys, documented behavior
-    const all = await journal.getCounters(METRICS_ALL_KEY);
+    const all = await readCounter(journal, METRICS_ALL_KEY);
     expect(all?.runs).toBe(1);
     expect(all?.['score:quality:sumMilli']).toBeUndefined();
   });
@@ -238,7 +239,7 @@ describe('metrics.ts — recordRunScores integration with registry.ts C4 scoring
 
     // Give any (incorrectly) fire-and-forget recordRunScores call a tick to land, then assert nothing did.
     await new Promise((resolve) => setTimeout(resolve, 0));
-    const all = await journal.getCounters(METRICS_ALL_KEY);
+    const all = await readCounter(journal, METRICS_ALL_KEY);
     expect(all?.['score:len:count'] ?? 0).toBe(0);
   });
 
@@ -250,7 +251,7 @@ describe('metrics.ts — recordRunScores integration with registry.ts C4 scoring
 
     // recordRunScores is fired best-effort (`.catch(() => {})`, not awaited by run()) — give it a tick.
     await new Promise((resolve) => setTimeout(resolve, 0));
-    const all = await journal.getCounters(METRICS_ALL_KEY);
+    const all = await readCounter(journal, METRICS_ALL_KEY);
     expect(all?.['score:len:count']).toBe(1);
     expect(all?.['score:len:sumMilli']).toBe(900);
     expect(all?.['score:len:gte75']).toBe(1);
@@ -266,7 +267,7 @@ describe('metrics.ts — recordRunScores integration with registry.ts C4 scoring
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     const today = new Date().toISOString().slice(0, 10);
-    const agentDay = await journal.getCounters(metricsAgentDayKey('a', today));
+    const agentDay = await readCounter(journal, metricsAgentDayKey('a', today));
     expect(agentDay?.['score:len:count']).toBe(1);
   });
 });

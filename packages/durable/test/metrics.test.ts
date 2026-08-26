@@ -9,6 +9,7 @@ import { recordRunOutcome, runStarted } from '../src/outcome.js';
 import {
   recordRunMetrics, backfillMetrics, rebuildMetrics, readMetricsSummary,
   metricsRunKey, metricsDoneKey, METRICS_ALL_KEY,
+  readCounter,
 } from '../src/metrics.js';
 
 /** A model-step record with the given total token usage (the shape getRunCost/usageAndCostFromModelValue reads). */
@@ -25,7 +26,7 @@ describe('metrics.ts — recordRunMetrics', () => {
     const first = await recordRunMetrics(journal, journal, 'r1', { agentName: 'support' });
     expect(first).toBe(true);
 
-    const all = await journal.getCounters(METRICS_ALL_KEY);
+    const all = await readCounter(journal, METRICS_ALL_KEY);
     expect(all?.runs).toBe(1);
     expect(all?.tokens).toBe(1500);
     expect(all?.modelSteps).toBe(1);
@@ -37,7 +38,7 @@ describe('metrics.ts — recordRunMetrics', () => {
     const second = await recordRunMetrics(journal, journal, 'r1', { agentName: 'support' });
     expect(second).toBe(false); // claim already held — no-op
 
-    const allAfter = await journal.getCounters(METRICS_ALL_KEY);
+    const allAfter = await readCounter(journal, METRICS_ALL_KEY);
     expect(allAfter?.runs).toBe(1); // unchanged — NOT double-counted
     expect(allAfter?.tokens).toBe(1500);
   });
@@ -52,12 +53,12 @@ describe('metrics.ts — recordRunMetrics', () => {
     (journal as unknown as { now: () => Promise<number> }).now = async () => Date.UTC(2026, 0, 2); // 2026-01-02
     await recordRunMetrics(journal, journal, 'run-b');
 
-    const day1 = await journal.getCounters('__metrics__:d:2026-01-01');
-    const day2 = await journal.getCounters('__metrics__:d:2026-01-02');
+    const day1 = await readCounter(journal, '__metrics__:d:2026-01-01');
+    const day2 = await readCounter(journal, '__metrics__:d:2026-01-02');
     expect(day1).toEqual(expect.objectContaining({ runs: 1, tokens: 10 }));
     expect(day2).toEqual(expect.objectContaining({ runs: 1, tokens: 20 }));
 
-    const all = await journal.getCounters(METRICS_ALL_KEY);
+    const all = await readCounter(journal, METRICS_ALL_KEY);
     expect(all?.runs).toBe(2);
     expect(all?.tokens).toBe(30);
   });
@@ -72,7 +73,7 @@ describe('metrics.ts — recordRunMetrics', () => {
       await journal.put('r1:tool:c1', { status: 'succeeded', output: {} });
 
       await recordRunMetrics(journal, journal, 'r1');
-      const all = await journal.getCounters(METRICS_ALL_KEY);
+      const all = await readCounter(journal, METRICS_ALL_KEY);
       expect(all?.durLt5s).toBe(1);
       expect(all?.durLt1s ?? 0).toBe(0);
       expect(all?.durLt15s ?? 0).toBe(0);
@@ -89,7 +90,7 @@ describe('metrics.ts — recordRunMetrics', () => {
     (journal as unknown as { now: () => Promise<number> }).now = async () => Date.UTC(2026, 0, 5);
     await recordRunMetrics(journal, journal, 'r1', { agentName: 'billing:v2' });
 
-    const agentDay = await journal.getCounters('__metrics__:agent:billing_v2:d:2026-01-05');
+    const agentDay = await readCounter(journal, '__metrics__:agent:billing_v2:d:2026-01-05');
     expect(agentDay?.runs).toBe(1);
 
     await journal.put('r2:model:0', modelUsage(5));
@@ -150,7 +151,7 @@ describe('metrics.ts — recordRunMetrics', () => {
     });
     await recordRunMetrics(journal, journal, 'r1');
 
-    const all = await journal.getCounters(METRICS_ALL_KEY);
+    const all = await readCounter(journal, METRICS_ALL_KEY);
     expect(all?.costUsdMicros).toBe(18000); // Math.round(0.018 * 1e6) — an INTEGER, not a float
     expect(Number.isInteger(all!.costUsdMicros)).toBe(true);
 
@@ -181,7 +182,7 @@ describe('metrics.ts — recordRunMetrics', () => {
 
     const ok = await recordRunMetrics(stub, reader, 'r1');
     expect(ok).toBe(true);
-    const all = await real.getCounters(METRICS_ALL_KEY);
+    const all = await readCounter(real, METRICS_ALL_KEY);
     expect(all?.runs).toBe(1);
     expect(all?.tokens).toBe(10);
   });
@@ -225,14 +226,14 @@ describe('metrics.ts — backfillMetrics', () => {
     const first = await backfillMetrics(journal, journal);
     expect(first).toEqual({ recorded: 2, skipped: 1, scoresRestored: 0 });
 
-    const all = await journal.getCounters(METRICS_ALL_KEY);
+    const all = await readCounter(journal, METRICS_ALL_KEY);
     expect(all?.runs).toBe(2);
     expect(all?.tokens).toBe(30);
 
     const second = await backfillMetrics(journal, journal);
     expect(second).toEqual({ recorded: 0, skipped: 3, scoresRestored: 0 }); // 2 already-claimed + 1 still-suspended
 
-    const allAfter = await journal.getCounters(METRICS_ALL_KEY);
+    const allAfter = await readCounter(journal, METRICS_ALL_KEY);
     expect(allAfter?.runs).toBe(2); // unchanged
   });
 });
@@ -243,18 +244,18 @@ describe('metrics.ts — rebuildMetrics', () => {
     await journal.put('r1:model:0', modelUsage(10));
     await journal.put('r2:model:0', modelUsage(20));
     await backfillMetrics(journal, journal);
-    const before = await journal.getCounters(METRICS_ALL_KEY);
+    const before = await readCounter(journal, METRICS_ALL_KEY);
     expect(before?.runs).toBe(2);
 
     // Tamper directly with the counter (simulates drift/corruption).
     await journal.incrBy(METRICS_ALL_KEY, { runs: 999, tokens: -12345 });
-    const tampered = await journal.getCounters(METRICS_ALL_KEY);
+    const tampered = await readCounter(journal, METRICS_ALL_KEY);
     expect(tampered?.runs).not.toBe(before?.runs);
 
     const result = await rebuildMetrics(journal, journal);
     expect(result).toEqual({ recorded: 2, skipped: 0, scoresRestored: 0 });
 
-    const after = await journal.getCounters(METRICS_ALL_KEY);
+    const after = await readCounter(journal, METRICS_ALL_KEY);
     expect(after).toEqual(before);
   });
 
@@ -280,9 +281,9 @@ describe('metrics.ts — org isolation', () => {
     await acme.put('r1:model:0', modelUsage(10));
     await recordRunMetrics(acme, acme, 'r1');
 
-    const acmeAll = await acme.getCounters!(METRICS_ALL_KEY);
+    const acmeAll = await readCounter(acme, METRICS_ALL_KEY);
     expect(acmeAll?.runs).toBe(1);
-    const globexAll = await globex.getCounters!(METRICS_ALL_KEY);
+    const globexAll = await readCounter(globex, METRICS_ALL_KEY);
     expect(globexAll).toBeUndefined(); // isolation — globex sees nothing
 
     // The physical key really is org-prefixed in the shared store (the mechanism behind isolation).

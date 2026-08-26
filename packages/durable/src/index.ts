@@ -113,7 +113,7 @@ export type { BudgetLimit, OrganizationUsage, BudgetCheck, UsageCostCache } from
 // P1.6 materialized metrics layer (incremental per-day/per-agent counters +
 // Per-run fast-path row, riding incrBy/getCounters/putIfAbsent/deletePrefix) — see metrics.ts.
 export {
-  recordRunMetrics, recordRunScores, backfillMetrics, rebuildMetrics, readMetricsSummary,
+  recordRunMetrics, recordRunScores, backfillMetrics, rebuildMetrics, readMetricsSummary, readCounter,
   metricsDayKey, metricsAgentDayKey, metricsRunKey, metricsDoneKey, metricsScoresDoneKey,
   METRICS_ALL_KEY, METRICS_COUNTERS_PRE, METRICS_RUN_PRE, METRICS_DONE_PRE, METRICS_SCORES_DONE_PRE,
 } from './metrics.js';
