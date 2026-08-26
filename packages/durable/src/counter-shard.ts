@@ -22,29 +22,33 @@ function shardCount(raw: string | undefined, fallback: number): number {
 }
 
 /**
- * `__metrics__:*` shard count. Default 8, ON.
+ * `__metrics__:*` shard count. Default 16, ON.
  *
- * Measured with a fixed per-query delay standing in for a remote database (Neon/RDS at 1-5ms), 4 PM2
- * workers, 64 concurrent conversations:
+ * Contention is governed by concurrent runs PER SHARD, so the right count depends on the operating
+ * point, not on the machine. Measured with a fixed per-query delay standing in for a remote database
+ * (Neon/RDS at 1-5ms):
  *
  * ```
- *   shards      1      4      8     16
- *   req/s    12.0   35.8   42.7   43.8
- *   p99      14.8s   3.1s   2.4s   2.3s
+ *   shards            1      8     16     32     64
+ *   4w / 64 conc   12.0   42.7   43.8   43.1      -    req/s
+ *   8w / 128 conc     -    64.5   73.4   73.1   73.9    req/s
+ *   summary reads    15    135    255    495    975
  * ```
  *
- * The knee is 8: it takes 97% of 16's throughput for half the read amplification. On a LOCAL database
- * the same sweep is flat (54.8 -> 56.0), so this default costs nothing in development and pays for
- * itself in production. Single-worker deployments benefit too (10.6 -> 21.4 at 3ms) — the contention
- * is between concurrent runs, not between processes.
+ * 16 is the knee at BOTH points and costs half of 32's read amplification. On a local database the
+ * sweep is flat and 16 is free (73.2 vs 73.8 at 4w/64), so the default costs nothing in development.
+ * Single-worker deployments gain too (10.6 -> 21.4 at 3ms) -- the contention is between concurrent
+ * runs, not between processes.
  *
  * The cost is on the read side: `readMetricsSummary` does 1+N point reads per bucket, so 15 reads
- * becomes 135. That is an operator page, not a hot path, and it collapses to one query per bucket if
- * `sumShards` is ever moved onto the existing `key = ANY($1)` batch read.
+ * becomes 255 (measured 13ms local / 57ms remote at 8 shards; 50/88ms at 32). That is an operator
+ * page, not a hot path, and it collapses to one query per bucket if `sumShards` is ever moved onto
+ * the existing `key = ANY($1)` batch read.
  *
- * `GNL_METRICS_SHARDS=1` restores the previous single-row behaviour exactly.
+ * Deployments that expect much higher concurrency can raise it; `GNL_METRICS_SHARDS=1` restores the
+ * previous single-row behaviour exactly.
  */
-export const METRICS_SHARDS = shardCount(process.env.GNL_METRICS_SHARDS, 8);
+export const METRICS_SHARDS = shardCount(process.env.GNL_METRICS_SHARDS, 16);
 
 /**
  * FNV-1a over the id — deterministic, so the same run always lands on the same shard. That matters:
