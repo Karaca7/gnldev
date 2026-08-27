@@ -153,11 +153,53 @@ function isTooManyClients(e: unknown): boolean {
   return code === '53300' || /too many clients/i.test(msg);
 }
 
+/**
+ * One statement for a whole set of counter increments, instead of one awaited round trip per field.
+ *
+ * A completed agent turn writes three counter keys of seven fields each plus the usage counter — 24
+ * sequential round trips, for advisory statistics, inside the transaction that also carries the
+ * exactly-once claim. Traced against a live server: 24 of the ~114 round trips a request makes.
+ *
+ * The dedupe is not tidiness. Postgres rejects `ON CONFLICT DO UPDATE` when one statement would touch
+ * the same row twice ("cannot affect row a second time"), and a caller may legitimately pass the same
+ * (key, field) more than once — the deltas are additive, so summing them first is both the fix and
+ * the correct semantics.
+ */
+function flattenIncrs(incrs: ReadonlyArray<{ key: string; fields: Record<string, number> }>): Array<string | number> {
+  const merged = new Map<string, { key: string; field: string; delta: number }>();
+  for (const { key, fields } of incrs) {
+    for (const [field, delta] of Object.entries(fields)) {
+      const id = `${key}\u0000${field}`;
+      const prev = merged.get(id);
+      if (prev) prev.delta += delta;
+      else merged.set(id, { key, field, delta });
+    }
+  }
+  const flat: Array<string | number> = [];
+  for (const m of merged.values()) flat.push(m.key, m.field, m.delta);
+  return flat;   // [key, field, delta, key, field, delta, ...] — one triple per placeholder group
+}
+
+/**
+ * The multi-row upsert `flattenIncrs` feeds, built as an explicit `VALUES` list rather than with
+ * `UNNEST($1::text[], ...)`. The array form is tidier and works on real Postgres, but pg-mem — which
+ * the default suite runs the whole Postgres contract against — answers it with
+ * `unnest expects 1 arguments, given 3`. A numbered VALUES list is understood by both, so there is
+ * one code path instead of a capability probe and a fallback that would diverge in silence.
+ */
+function incrSql(rows: number): string {
+  const values = Array.from({ length: rows }, (_, i) => `($${i * 3 + 1}, $${i * 3 + 2}, $${i * 3 + 3})`).join(', ');
+  return `INSERT INTO gnl_counters (key, field, value) VALUES ${values}
+          ON CONFLICT (key, field) DO UPDATE SET value = gnl_counters.value + EXCLUDED.value`;
+}
+
 export class PostgresStorage implements Storage {
   /** Filled in by ensureReady's probe; shared BY REFERENCE with PgRunJournal (see PrefixShape). */
   private prefixShape: PrefixShape = { collate: '' };
   /** Filled by ensureReady's budget probe; used to explain a connection refusal. */
   private connectionBudget?: { poolMax: number; serverMax: number };
+  /** Per-INSTANCE, never module-global: a test double must not disable the lock for a real pool. */
+  private advisoryLocks = true;
   /** H10a: deployment durability report (delegates to the runs journal — see PgRunJournal.durabilityReport). */
   durabilityReport() { return (this.runs as any).durabilityReport() as ReturnType<any>; }
 
@@ -608,12 +650,9 @@ class PgRunJournal implements RunJournal {
 
   /** H8a: in-engine atomic counter (UPSERT arithmetic) — lost-update is impossible, hot-row lock is short. */
   async incrBy(key: string, fields: Record<string, number>): Promise<void> {
-    for (const [f, d] of Object.entries(fields)) {
-      await this.q(
-        'INSERT INTO gnl_counters (key, field, value) VALUES ($1, $2, $3) ON CONFLICT (key, field) DO UPDATE SET value = gnl_counters.value + EXCLUDED.value',
-        [key, f, d],
-      );
-    }
+    const flat = flattenIncrs([{ key, fields }]);
+    if (!flat.length) return;
+    await this.q(incrSql(flat.length / 3), flat);
   }
   async getCounters(key: string): Promise<Record<string, number> | undefined> {
     const r = await this.q('SELECT field, value FROM gnl_counters WHERE key = $1', [key]);
@@ -863,13 +902,9 @@ class PgRunJournal implements RunJournal {
         if (!inserted1(ins)) return false; // claim lost → the whole batch is a no-op (nothing else applied)
         if (p) await this.touchRunDelta(q, p.runId, p.kind, true, suspended ? 1 : 0);
       }
-      for (const { key, fields } of batch.incrs ?? []) {
-        for (const [f, d] of Object.entries(fields)) {
-          await q(
-            'INSERT INTO gnl_counters (key, field, value) VALUES ($1, $2, $3) ON CONFLICT (key, field) DO UPDATE SET value = gnl_counters.value + EXCLUDED.value',
-            [key, f, d],
-          );
-        }
+      {
+        const flat = flattenIncrs(batch.incrs ?? []);
+        if (flat.length) await q(incrSql(flat.length / 3), flat);
       }
       for (const { key, value } of batch.puts ?? []) {
         const p = parseJournalKey(key);
