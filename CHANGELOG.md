@@ -81,6 +81,31 @@ would be worse than saying that.
   promise in CI, because the way lockstep breaks is quiet: someone bumps the one package they touched.
 
 ### Fixed
+- **Concurrent turns on one thread no longer lose messages.** `AgentMemory.append` read the thread,
+  took `existing.length` as the next position and wrote there, so two runs answering the same thread
+  claimed the same positions and `ON CONFLICT DO NOTHING` silently discarded the loser — a third of
+  all messages under a three-way concurrent turn. When the discarded row was a `tool-result`, the
+  thread was left holding an unanswered tool call and *every* later turn on it failed at the provider
+  with `HTTP 400 "Tool result is missing for tool call …"` until the orphan slid out of the recent
+  window — five consecutive failures, measured, each a real error the user saw. The store now
+  assigns positions itself, under a per-thread lock, inside the transaction that writes the rows.
+  Measured against real Postgres, 160 concurrent appends across 40 threads: 9 request errors and
+  16/30 orphaned tool calls before, 0 and 0 after — all 40 threads hold exactly 26 messages with no
+  gap in `seq`, where message counts previously scattered between 12 and 20.
+- **A message batch is now all-or-nothing.** `sqlite` and `postgres` wrote it as a loop of autocommit
+  INSERTs, each potentially on a different pooled connection, so a batch of
+  `[assistant(tool-call), tool(tool-result)]` could half-commit and orphan the call. Both adapters now
+  write the batch in one transaction on one pinned connection. Measured over 900 requests against real
+  Postgres: 7 errors (0.78%) and 7 orphaned calls at 96.4 req/s before, 0 and 0 at 99.8 req/s after —
+  it is fewer round trips, not more, because the batch travels on one client instead of N checkouts.
+- **Importing a transcript alongside a live run is now ordered rather than racing.** The lock was
+  taken only when the store had to assign positions, so a caller supplying explicit positions raced
+  against one that did not: 20 of 60 turns lost rows. The lock is now taken on every append, whichever
+  mode it is in. Note what this does and does not buy: the two writes are serialised, but an explicit
+  position that is already occupied is still swallowed by `ON CONFLICT DO NOTHING`, because for
+  caller-supplied positions that is the documented idempotent behaviour. The loss is deterministic
+  now instead of racy — it is not gone. A large import can also now time out a live turn on the same
+  thread (`lock_timeout`, 5s); import into a thread that is not taking turns.
 
 - **`pnpm check:versions` now covers the packages it was waving through.** `@gnldev/auth-ee` is
   `private` but distributed — packed and shipped to customers under licence — so the unconditional
@@ -145,6 +170,16 @@ would be worse than saying that.
   had never compiled.
 
 ### Known limits, stated rather than implied
+- **The per-thread lock is cooperative, so a mixed-version window is not protected.** `postgres`
+  serialises appends with `pg_advisory_xact_lock`, which constrains only writers that ask for it. A
+  pre-0.1.0 process computed positions itself and took no lock at all, so while both versions are live
+  against one database, an append from the old one can still collide with an append from the new one
+  on a thread they both touch, and one of the two is lost. The production probe does not help here: it
+  proves the *server* can serialise appends, not that every *client* is asking it to. Drain in-flight
+  runs across that boundary if a thread can be written by two revisions at once.
+  Downgrading, by contrast, is data-safe: no column, index or stored format changed, `seq` is the same
+  dense integer sequence, and rows written by the new version read identically to the old one. What
+  comes back on a rollback is the defect, not a database the older version cannot read.
 
 - **In-flight nested runs do not survive the id-scheme change.** Scoping sub-agent/workflow runIds to
   their parent means a run that crashed MID-nested-work under the old scheme resumes into a fresh
@@ -157,6 +192,40 @@ would be worse than saying that.
   self-heal). If this matters for a database, `checkSchema`/a manual `:input`-scan backfill is the
   path.
 ### Changed
+- **`MemoryStore.appendMessages` now takes `MessageAppend[]`, and the store assigns `seq`.**
+  `MessageAppend` (newly exported) is `Omit<MessageRecord, 'seq'> & { seq?: number }`: omit `seq` — the
+  normal case — and the store picks the next positions itself, inside the same transaction that writes
+  the rows and serialised per thread. Supply `seq` only to reproduce positions that already have
+  meaning (`cloneThread`, transcript import); those rows are written exactly where you say, and
+  `(threadId, seq)` stays a CAS key, so writing the same row twice still leaves one copy.
+  **If you call it, nothing changes** — `MessageRecord[]` is still assignable, and passing explicit
+  positions behaves as it did. **If you implement `MemoryStore`, this needs a code change, and the
+  compiler will tell you so**: the member is declared as a property with a function type rather than a
+  method, so its parameter is checked contravariantly under `strict`. An implementation still typed
+  `rows: MessageRecord[]` fails to compile — `TS2416` on a class method, `TS2322` on an object
+  literal — instead of compiling clean and receiving `undefined` at runtime. Widen the parameter to
+  `MessageAppend[]`, then read the thread's tail under a per-thread lock and assign from it when
+  `seq` is absent.
+- **A batch must supply `seq` on every row or on none; a mixed batch throws.** With `[{seq:2}, {}, {}]`
+  the store computed `next = MAX(seq)+1 = 2`, the explicit row claimed 2 as well, and one of the two
+  was dropped — five rows expected, four stored, *inside* the transaction that is supposed to make
+  partial batches impossible. There is no legitimate mixed caller: `AgentMemory.append` supplies none,
+  `cloneThread` and transcript import supply all. `assertUniformSeq` is exported so an adapter can
+  enforce the same rule with the same message rather than reimplementing it.
+- **`ON CONFLICT DO NOTHING` is gone from positions the store assigned.** It is kept for
+  caller-supplied positions, where re-writing the same row is the documented idempotent case. On an
+  assigned position a conflict cannot happen unless something is wrong, and swallowing it would
+  silently drop a message — the exact defect this change exists to remove. It raises now.
+- **`postgres` refuses to start against a server without `pg_advisory_xact_lock` when
+  `NODE_ENV=production`.** The per-thread lock is what makes concurrent appends safe, and a backend
+  that cannot take it loses messages with no error anywhere; shipping that silently is not a trade we
+  will make for you. The check runs once per storage instance, from `ensureReady`, outside any
+  transaction, and asks the catalog (`to_regprocedure`) rather than calling the function — no lock is
+  taken and the server logs nothing. Outside production it warns and continues, which is what test
+  doubles need (pg-mem has no advisory locks). **If you run a Postgres-compatible proxy or derivative,
+  verify it exposes `pg_advisory_xact_lock(int, int)` before upgrading.** Note that with lazy
+  initialisation this surfaces on the first query, not at process start — for a deployment whose first
+  query is a health probe, it appears as a failing health check.
 
 - **`@gnldev/ai-sdk` is now `@gnldev/chat-adapter`.** "AI SDK" is Vercel's product name, and a package
   called `@gnldev/ai-sdk` read as if it were that product rather than an adapter for it. The new name

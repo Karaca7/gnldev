@@ -159,6 +159,38 @@ function comparable(a: unknown, b: unknown): boolean {
   return (typeof a === 'number' || typeof a === 'string') && typeof a === typeof b;
 }
 
+/**
+ * A message on the way IN. Identical to `MessageRecord` except that `seq` may be omitted, in which
+ * case the store assigns it (see `MemoryStore.appendMessages`).
+ *
+ * Widening the existing parameter rather than adding a second method is deliberate: `cloneThread` and
+ * transcript import genuinely need to place rows at chosen positions, so both modes have to exist, and
+ * two methods would mean the same INSERT written twice in every adapter. `MessageRecord[]` is still
+ * assignable here, so callers that pass explicit positions are unaffected.
+ */
+export type MessageAppend = Omit<MessageRecord, 'seq'> & { seq?: number };
+
+/**
+ * A batch either assigns every position or supplies every position — never both.
+ *
+ * Mixing them was measured losing rows INSIDE the all-or-nothing transaction: with `[{seq:2}, {}, {}]`
+ * the store computed `next = MAX(seq)+1 = 2`, the explicit row also claimed 2, and one of them was
+ * dropped — five rows expected, four stored. That is a partially persisted batch, which is exactly the
+ * shape this whole design exists to make impossible. There is no legitimate caller for a mixed batch:
+ * `AgentMemory.append` supplies none, `cloneThread` and transcript import supply all.
+ *
+ * Returns true when the store must assign positions.
+ */
+export function assertUniformSeq(threadId: string, rows: MessageAppend[]): boolean {
+  const explicit = rows.reduce((n, r) => n + (r.seq === undefined ? 0 : 1), 0);
+  if (explicit !== 0 && explicit !== rows.length) {
+    throw new Error(`appendMessages(${threadId}): a batch must either supply 'seq' on every row or on `
+      + `none — got ${explicit} of ${rows.length}. Mixing them makes the store assign a position a row `
+      + `in the same batch already claims, and one of the two is lost.`);
+  }
+  return explicit === 0;
+}
+
 export interface MemoryStore {
   upsertThread(rec: ThreadRecord): Promise<void>;
   getThread(id: string): Promise<ThreadRecord | undefined>;
@@ -166,8 +198,48 @@ export interface MemoryStore {
   listThreads(q: { resourceId?: string } & ListQuery): Promise<Page<ThreadRecord>>;
   deleteThread(id: string): Promise<void>;
 
-  /** Append messages — per-message idempotent (CAS); a concurrent append neither loses nor double-writes. */
-  appendMessages(threadId: string, rows: MessageRecord[]): Promise<void>;
+  /**
+   * Append messages to the tail of a thread, atomically.
+   *
+   * `seq` IS OPTIONAL, and omitting it is the normal case. The store then assigns the next positions
+   * itself, inside the same transaction that writes the rows, serialised per thread — so two callers
+   * appending at once both land, one after the other, and neither loses anything.
+   *
+   * Supply `seq` only when you are reproducing positions that already have meaning: cloning a thread,
+   * or importing a transcript. Those rows are written exactly where you say, and `(threadId, seq)` is
+   * a CAS key, so writing the same row twice leaves one copy.
+   *
+   * WHY THIS IS NOT THE CALLER'S JOB. It used to be: `AgentMemory.append` read the thread, took
+   * `existing.length` as the next position, and wrote there. Two runs answering one thread both read
+   * the same length, both claimed the same positions, and `ON CONFLICT DO NOTHING` silently discarded
+   * the loser — measured at a third of all messages under a three-way concurrent turn. A position is
+   * only meaningful relative to the tail at the instant of writing, so only the writer can assign it.
+   *
+   * The previous version of this comment promised that "a concurrent append neither loses nor
+   * double-writes". The first half was false in exactly the way above; the second half was true but
+   * not because of this method — replay protection comes from the run-level marker in run.ts, and
+   * appending the same batch twice through `AgentMemory` was measured to produce two copies.
+   *
+   * The batch is all-or-nothing. A half-written batch is worse than a lost one: a `tool-call` whose
+   * `tool-result` never arrived makes later turns on that thread fail at the provider, until it
+   * slides out of the memory window — five consecutive failures, measured, with the default preset.
+   */
+  appendMessages: (threadId: string, rows: MessageAppend[]) => Promise<void>;
+  /**
+   * Append a batch AT MOST ONCE, identified by `batchKey`. Returns false when that key was already
+   * applied to this thread, in which case nothing is written.
+   *
+   * OPTIONAL. A store without it falls back to the run-level marker in run.ts, which is weaker in a
+   * way worth stating: that marker is written AFTER the append returns, so a process that dies in
+   * between leaves it unset, and the retry appends the whole turn a second time — same `toolCallId`
+   * included, which real providers reject. Measured on sqlite through the full run path: 25 rows
+   * became 50. Implementing this closes that window by construction, because the identity and the
+   * rows land in one transaction and "written but not marked" stops existing.
+   *
+   * The key belongs beside the messages, not in the journal: that is what lets `composite()` put the
+   * journal on one engine and memory on another without the guarantee falling apart.
+   */
+  appendMessagesOnce?: (threadId: string, rows: MessageAppend[], batchKey: string) => Promise<boolean>;
   /** Thread messages — PAGINATED (NO blob loading). */
   getMessages(threadId: string, q?: ListQuery): Promise<Page<MessageRecord>>;
   /** Vector recall (thread or resource scope). */

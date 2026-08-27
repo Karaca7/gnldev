@@ -24,7 +24,7 @@
 import { ORG_SCOPE, orgPrefix, orgScopeOf, withOrg } from './organization.js';
 import { toJournal } from './storage.js';
 import type {
-  CacheStore, CapabilityMatrix, ListQuery, LogRecord, MemoryStore, MessageRecord, MetaStore,
+  CacheStore, CapabilityMatrix, ListQuery, LogRecord, MemoryStore, MessageRecord, MessageAppend, MetaStore,
   Page, RunJournal, Storage, ThreadRecord,
   VectorItem, VectorMatch, VectorQueryOptions, VectorStore, WorkStore,
 } from './storage.js';
@@ -150,7 +150,7 @@ function scopedMemory(memory: MemoryStore, p: string): MemoryStore {
    * carrying some OTHER thread's id cannot smuggle itself into that thread: the row always lands in the
    * thread the caller named.
    */
-  const inMsg = (r: MessageRecord, threadId: string): MessageRecord => ({ ...r, threadId: add(p, threadId) });
+  const inMsg = (r: MessageAppend, threadId: string): MessageAppend => ({ ...r, threadId: add(p, threadId) });
   /**
    * Strips a row's OWN `threadId`, and drops the row when it does not carry this prefix.
    *
@@ -202,6 +202,13 @@ function scopedMemory(memory: MemoryStore, p: string): MemoryStore {
     // whole file's header warns about, on the one shape that carries an id in its BODY rather than in
     // its argument.
     appendMessages: (threadId, rows) => memory.appendMessages(add(p, threadId), rows.map((r) => inMsg(r, threadId))),
+    // The THIRD argument matters. Dropping it here would leave batch identity silently disabled under
+    // org isolation — which is the configuration multi-tenant deployments actually run, and exactly
+    // the shape of the optional-method loss this file's header warns about.
+    ...(memory.appendMessagesOnce ? {
+      appendMessagesOnce: (threadId: string, rows: MessageAppend[], batchKey: string) =>
+        memory.appendMessagesOnce!(add(p, threadId), rows.map((r) => inMsg(r, threadId)), batchKey),
+    } : {}),
     getMessages: (threadId, q) => drainOwned((qq) => memory.getMessages(add(p, threadId), qq), outMsg, q),
     // `recall` returns rows from OTHER threads under `scope: 'resource'`, so it filters rather than
     // maps — see `outMsg`. Not paginated, so it drops in place rather than draining.

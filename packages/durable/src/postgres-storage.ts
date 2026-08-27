@@ -3,6 +3,7 @@
 // Injectable pool pattern → zero-infra testing with pg-mem. `pg` is an optional peer dep.
 // Vector is 'scan' for now (brute-force cosine; pgvector deferred — pg-mem compatibility + lean first cut).
 import { prefixUpperBound } from './organization.js';
+import { assertUniformSeq } from './storage.js';
 import { createRequire } from 'node:module';
 import { cosineSimilarity } from 'ai';
 import { runIdOfKey, parseJournalKey, outcomeStatusOf, deriveRunStatus } from './journal.js';
@@ -12,7 +13,7 @@ import { matchFilter } from './storage.js';
 import type { AdoptIntoOrgResult,
   Storage, CapabilityMatrix, Page, ListQuery,
   RunJournal, MemoryStore, VectorStore, WorkStore, CacheStore, MetaStore,
-  ThreadRecord, MessageRecord, Observation, RecallOptions, VectorItem, VectorMatch, VectorQueryOptions, LogRecord,
+  ThreadRecord, MessageRecord, MessageAppend, Observation, RecallOptions, VectorItem, VectorMatch, VectorQueryOptions, LogRecord,
 } from './storage.js';
 // P2-migrate schema introspection/migration façade — see migrate.ts's header.
 import { tablesFromDDL } from './migrate.js';
@@ -102,6 +103,13 @@ const DDL = [
   `CREATE TABLE IF NOT EXISTS gnl_messages (thread_id TEXT NOT NULL, seq INTEGER NOT NULL, role TEXT NOT NULL, text TEXT, embedding TEXT, metadata TEXT, ts BIGINT NOT NULL, message TEXT NOT NULL, PRIMARY KEY (thread_id, seq))`,
   `CREATE TABLE IF NOT EXISTS gnl_working_memory (scope_id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at BIGINT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS gnl_observations (thread_id TEXT PRIMARY KEY, obs TEXT NOT NULL)`,
+  // Batch identity, beside the messages rather than in the journal. Same transaction as the rows it
+  // covers, so "written but not marked" stops being a state this store can be in — see
+  // `appendMessagesOnce`. A NEW TABLE rather than a column on gnl_messages: `migrateSchema` emits
+  // CREATE TABLE with its constraints for a missing table, but has no path to add an index to one
+  // that already exists, so the column-plus-unique-index shape would reach new installs and silently
+  // skip existing ones.
+  `CREATE TABLE IF NOT EXISTS gnl_message_batches (thread_id TEXT NOT NULL, batch_key TEXT NOT NULL, seq_from INTEGER NOT NULL, seq_to INTEGER NOT NULL, ts BIGINT NOT NULL, PRIMARY KEY (thread_id, batch_key))`,
   `CREATE TABLE IF NOT EXISTS gnl_vectors (id TEXT PRIMARY KEY, text TEXT NOT NULL, embedding TEXT NOT NULL, metadata TEXT, namespace TEXT, created_at BIGINT NOT NULL)`,
   // Same migration shape as the gnl_runs columns above: `CREATE TABLE IF NOT EXISTS` does nothing to
   // a table that already exists, so an old database would keep a five-column gnl_vectors and every
@@ -214,7 +222,8 @@ export class PostgresStorage implements Storage {
   get pool(): Pool { return this._pool; }
   private ready?: Promise<void>;
   readonly runs: RunJournal;
-  readonly memory: MemoryStore;
+  /** Absent when the pool cannot hold a transaction — see the constructor and NO_TX_MSG. */
+  readonly memory!: MemoryStore;
   readonly vectors: VectorStore;
   readonly work: WorkStore;
   readonly cache: CacheStore;
@@ -267,14 +276,26 @@ export class PostgresStorage implements Storage {
     // if pool.connect is missing (minimal injected pool): no transaction, queries run sequentially via pool.query.
     // pg-mem: accepts BEGIN/COMMIT/ROLLBACK but ROLLBACK does NOT actually UNDO (verified
     //     Experimentally) → no proof of atomicity under pg-mem; real atomicity proof is in integration-real.test.ts.
-    const tx = async <T>(fn: (q: Q) => Promise<T>): Promise<T> => {
+    // `atomic: true` means the caller's correctness DEPENDS on the transaction, so the two
+    // lower-fidelity fallbacks below must refuse rather than quietly run unwrapped. Without it, a
+    // query-only pool made `appendMessages` send its lock and its `SET LOCAL` as separate autocommit
+    // statements — the lock released at the end of its own statement, `SET LOCAL` drew a server
+    // warning, and the batch was not atomic. Measured on a real server: 23 of 24 appends rejected,
+    // 3 rows of 48 stored, and an orphaned tool call — exactly the defect this all exists to remove,
+    // with the capability probe reporting everything fine.
+    //
+    // `BEGIN` runs BEFORE `fn`, so refusing there writes nothing; there is no half-done state.
+    const tx = async <T>(fn: (q: Q) => Promise<T>, opts?: { atomic?: true }): Promise<T> => {
       await this.ensureReady();
-      if (typeof this._pool.connect !== 'function') return fn((s, p) => this._pool.query(s, p));
+      if (typeof this._pool.connect !== 'function') {
+        if (opts?.atomic) throw new Error(NO_TX_MSG);
+        return fn((s, p) => this._pool.query(s, p));
+      }
       const client = await this._pool.connect().catch((e: unknown) => { throw explain(e); });
       let inTx = false;
       let destroy = false;
       try {
-        try { await client.query('BEGIN'); inTx = true; } catch { /* transaction not supported → proceed unwrapped */ }
+        try { await client.query('BEGIN'); inTx = true; } catch (e) { if (opts?.atomic) throw new Error(NO_TX_MSG, { cause: e }); /* else: transaction not supported → proceed unwrapped */ }
         const out = await fn((s, p) => client.query(s, p));
         if (inTx) await client.query('COMMIT');
         return out;
@@ -286,7 +307,18 @@ export class PostgresStorage implements Storage {
       }
     };
     this.runs = new PgRunJournal(q, tx, this.prefixShape);
-    this.memory = new PgMemoryStore(q);
+    // A1 — DOWNGRADE THE PORT, do not throw. `connect` is a synchronous check, so there is no reason
+    // to defer it to the first query; and killing the whole Storage would take the runs journal, work
+    // queue and cache down with it, for a deployment that may never touch memory at all. Declaring
+    // the port absent is this repo's own idiom for "this adapter cannot offer that" (RedisStorage
+    // does exactly this), and it leaves the operator a real way out: route memory elsewhere with
+    // composite({ default: pg, overrides: { memory: sqlite() } }).
+    if (typeof (this._pool as { connect?: unknown }).connect !== 'function') {
+      (this.capabilities as { memory: string }).memory = 'none';
+      console.error(NO_TX_MSG);
+    } else {
+      this.memory = new PgMemoryStore(q, tx, () => this.advisoryLocks);
+    }
     this.vectors = new PgVectorStore(q);
     this.work = new PgWorkStore(q);
     this.cache = new PgCacheStore(q);
@@ -346,6 +378,36 @@ export class PostgresStorage implements Storage {
               console.warn(connectionAdvice(poolMax, serverMax));
             }
           } catch { /* a backend that cannot answer SHOW is left alone -- this is advice, not a gate */ }
+          // Can this server serialise appends to one thread? Settled ONCE, here, outside any
+          // transaction — see the note on THREAD_LOCK_NS for why asking mid-transaction cannot work.
+          // Fail-closed in production: without this lock two runs answering one thread lose messages,
+          // and shipping that silently is the exact failure this whole change exists to remove. Test
+          // doubles (pg-mem has no advisory locks) are not production, so they warn and carry on.
+          // `to_regprocedure` asks the catalog whether the function exists — no lock is taken, nothing
+          // is unlocked, and the server logs no warning. Probing by CALLING pg_advisory_unlock would
+          // have worked too, but it makes the backend warn about releasing a lock we never held.
+          this.advisoryLocks = await this._pool
+            .query(`SELECT to_regprocedure('pg_advisory_xact_lock(int,int)') IS NOT NULL AS ok`)
+            .then((r: any) => r.rows?.[0]?.ok === true, () => false);
+          if (!this.advisoryLocks) {
+            // DOWNGRADE, not throw — and with no NODE_ENV branch. Throwing here killed the whole
+            // Storage: a deployment running Postgres purely for the exactly-once journal, never
+            // touching memory, died on its first query with a message about "concurrent appends to
+            // one thread". And branching a correctness guarantee on NODE_ENV means two environments
+            // get two different guarantees, which is its own smell. Declaring the port absent lets
+            // `requireCapability` stop anyone who tries to USE memory, exactly as it does for Redis,
+            // and leaves everything else running.
+            (this.capabilities as { memory: string }).memory = 'none';
+            console.error(
+              '@gnldev/durable: this Postgres has no pg_advisory_xact_lock, so appends to one thread '
+              + 'cannot be serialised and two concurrent turns would silently lose messages. The memory '
+              + 'port is disabled (capabilities.memory = "none"); the runs journal, work queue, cache '
+              + 'and meta stores are unaffected and exactly-once still holds. Route memory elsewhere — '
+              + 'composite({ default: postgres, overrides: { memory: sqlite() } }) — or use a Postgres '
+              + 'that exposes pg_advisory_xact_lock(int, int). Postgres-compatible proxies and '
+              + 'derivatives are the usual cause.',
+            );
+          }
         } finally {
           if (locked) await this._pool.query('SELECT pg_advisory_unlock(47110001)').catch(() => {});
         }
@@ -392,6 +454,11 @@ export class PostgresStorage implements Storage {
       await assertNoRunsInFlight(this.runs, opts?.allowInFlight); }
     catch (e) { client.release?.(); throw e; }
     const KEYED: Array<[string, string, string]> = [
+      // Missed here, an adopted thread keeps its batch markers under the OLD id: a retry of an
+      // in-flight batch is then unmarked and applies twice, and the stale rows sit in the global
+      // partition forever. The file's own warning above says a table left off this list is data an
+      // upgrade silently leaves behind.
+      ['gnl_message_batches', 'thread_id', 'memory'],
       ['gnl_run_journal', 'key', 'runs'], ['gnl_runs', 'run_id', 'runs'], ['gnl_counters', 'key', 'runs'],
       ['gnl_threads', 'id', 'memory'], ['gnl_messages', 'thread_id', 'memory'],
       ['gnl_working_memory', 'scope_id', 'memory'], ['gnl_observations', 'thread_id', 'memory'],
@@ -520,7 +587,13 @@ type Q = (sql: string, params?: unknown[]) => Promise<QueryResult>;
 /** Number of rows inserted: real pg rowCount (0 on a DO NOTHING conflict); pg-mem fallback is rows.length. */
 const inserted1 = (r: QueryResult) => (r.rowCount ?? r.rows.length) === 1;
 
-type Tx = <T>(fn: (q: Q) => Promise<T>) => Promise<T>;
+/**
+ * `atomic: true` marks a caller whose correctness DEPENDS on the transaction, so `tx` refuses instead
+ * of quietly running the body unwrapped. Every journal write below is such a caller — their own
+ * comments say "closes the crash window" and "in a single transaction", and that was true only when a
+ * transaction could actually be opened.
+ */
+type Tx = <T>(fn: (q: Q) => Promise<T>, opts?: { atomic?: true }) => Promise<T>;
 
 class PgRunJournal implements RunJournal {
   constructor(private q: Q, private tx: Tx, private shape: PrefixShape) {}
@@ -556,7 +629,7 @@ class PgRunJournal implements RunJournal {
           await this.touchRunDelta(q, runId, null, false, 0);
           await q(`UPDATE gnl_runs SET failed = $1, running = $2, canceled = $3 WHERE run_id = $4`, [oc === 'failed', oc === 'running', oc === 'canceled', runId]);
         }
-      });
+      }, { atomic: true });
       return;
     }
     // T1 audit fix: SELECT prev → journal UPSERT → gnl_runs delta triple, all in ONE transaction.
@@ -572,7 +645,7 @@ class PgRunJournal implements RunJournal {
       await upsert(q);
       const delta = (suspended ? 1 : 0) - (prev?.suspended ? 1 : 0);
       await this.touchRunDelta(q, p.runId, p.kind, prev === undefined, delta);
-    });
+    }, { atomic: true });
   }
   async putIfAbsent(key: string, value: unknown): Promise<boolean> {
     const p = parseJournalKey(key);
@@ -598,7 +671,7 @@ class PgRunJournal implements RunJournal {
           }
         }
         return ok;
-      });
+      }, { atomic: true });
     }
     // T1: INSERT + touchRunDelta in a single transaction (closes the crash window). lockRunRow uses the
     // SAME lock order as put() (gnl_runs first, then the journal row) → no deadlock possibility between put/putIfAbsent.
@@ -607,7 +680,7 @@ class PgRunJournal implements RunJournal {
       const inserted = inserted1(await ins(q));
       if (inserted) await this.touchRunDelta(q, p.runId, p.kind, true, suspended ? 1 : 0); // fresh insert → O(1)
       return inserted;
-    });
+    }, { atomic: true });
   }
   /**
    * H1: atomic conditional replace (expired run-lock takeover, see journal.ts JSDoc).
@@ -635,7 +708,7 @@ class PgRunJournal implements RunJournal {
           await q(`UPDATE gnl_runs SET failed = $1, running = $2, canceled = $3 WHERE run_id = $4`, [oc === 'failed', oc === 'running', oc === 'canceled', runId]);
         }
         return ok;
-      });
+      }, { atomic: true });
     }
     // T1: UPDATE + recountRun in one transaction (closes the crash → stale gnl_runs window). There is NO
     // LockRunRow here — so a failed match doesn't create a phantom row in gnl_runs (the lock order stays
@@ -645,7 +718,7 @@ class PgRunJournal implements RunJournal {
       const ok = Number((await upd(q)).rowCount ?? 0) === 1;
       if (ok) await this.recountRun(q, p.runId); // rare path (takeover) → a full recount is safe and sufficient
       return ok;
-    });
+    }, { atomic: true });
   }
 
   /** H8a: in-engine atomic counter (UPSERT arithmetic) — lost-update is impossible, hot-row lock is short. */
@@ -921,7 +994,7 @@ class PgRunJournal implements RunJournal {
         }
       }
       return true;
-    });
+    }, { atomic: true });
   }
 
   /** P1.6b: batch point-read — a single `WHERE key IN (...)` instead of N sequential `get` calls;
@@ -957,8 +1030,91 @@ class PgRunJournal implements RunJournal {
   }
 }
 
+/**
+ * Serialise appends to one thread, for the length of the caller's transaction.
+ *
+ * TWO-KEY form, not one. `pg_advisory_xact_lock(bigint)` and `pg_advisory_xact_lock(int, int)` sit in
+ * DIFFERENT lock namespaces, and the single-key space is already taken by the boot-DDL lock
+ * (47110001), so a one-key `pg_advisory_xact_lock(hash)` could collide with schema creation. `pg_locks`
+ * confirms the two-key form is disjoint: classid = THREAD_LOCK_NS, objsubid = 2.
+ *
+ * The hash is computed here rather than with Postgres's `hashtext`, which does not exist in pg-mem —
+ * the default test double for this adapter.
+ *
+ * COLLISIONS ARE REAL, and an earlier version of this note claimed otherwise. "Zero collisions over
+ * 200k ids" was measured on sequential dense strings; over ids in the shape this codebase actually
+ * generates it is 3 in 200k, and the expected value for a 32-bit hash at that count is about 5. Nor is
+ * the consequence merely a wait: two unrelated threads sharing a key serialise, and with the
+ * `lock_timeout` below one of them can exceed it and fail — an unrelated conversation's turn dies.
+ * Correctness is unaffected (MAX(seq) and the INSERT are keyed by `thread_id`, not by the hash), but
+ * this is a rare availability cost, not free.
+ *
+ * There is NO try/catch here, deliberately. Catching a missing-function error INSIDE the transaction
+ * does not degrade gracefully — Postgres marks the transaction ABORTED, so the very next statement
+ * fails with 25P02 `current transaction is aborted` and the caller sees that instead of anything
+ * useful. Measured. Whether this server has advisory locks at all is settled once, outside any
+ * transaction, by `probeAdvisoryLocks` during `ensureReady`.
+ */
+/**
+ * Said in one sentence, the way `connectionAdvice()` does it: what breaks, and what to do instead.
+ */
+const NO_TX_MSG =
+  '@gnldev/durable: the pool given to PostgresStorage has no connect(), so nothing can be written in a '
+  + 'transaction. This is not a degraded mode, it is an unusable one: appending a message batch would '
+  + 'leave a tool call with no result, the per-thread append lock cannot be held, and every journal '
+  + 'write that spans more than one statement — the replay entries, putIfAbsent, putIfMatch, '
+  + 'applyBatch — depends on exactly the atomicity that is missing. Those refuse rather than write '
+  + 'unserialised; the memory port is withdrawn outright (capabilities.memory = "none"). Single-'
+  + 'statement writes still work, which is why this is reported rather than thrown at construction. '
+  + 'Pass a real `pg` Pool, or a connectionString and let the adapter build one.';
+
+const NO_LOCK_APPEND_MSG =
+  '@gnldev/durable: this Postgres cannot take the per-thread append lock (no pg_advisory_xact_lock), '
+  + 'so two concurrent turns on one thread would silently lose messages. Refusing to append rather '
+  + 'than write unserialised. Route the memory port to another adapter, or use a Postgres that '
+  + 'exposes pg_advisory_xact_lock(int, int).';
+
+/**
+ * Turns `55P03` into something an operator can act on.
+ *
+ * The raw text is `canceling statement due to lock timeout`, which names neither the thread nor the
+ * writer that held it. The measured cause is not contention between ordinary turns — those queue in
+ * milliseconds — but a single large explicit-`seq` write: importing a 20,000-row transcript holds the
+ * lock for about six seconds, and a live turn on the same thread gives up at five. So the sentence
+ * has to point at bulk writes, not at load.
+ *
+ * `code` is preserved and the original chained as `cause`, following `explain()` above: the code is
+ * the only machine-readable signal a caller has for "this is worth retrying".
+ */
+function lockWaitAdvice(e: unknown, threadId: string, rows: number): unknown {
+  if ((e as { code?: string })?.code !== '55P03') return e;
+  const err = new Error(
+    `@gnldev/durable: appending ${rows} message(s) to thread '${threadId}' timed out waiting for that `
+    + `thread's append lock — another writer is holding it. The usual cause is a large explicit-seq `
+    + `write on the same thread (a transcript import, or cloneThread): the lock is held for the whole `
+    + `batch. Nothing was written, so the run can retry. Import large transcripts into a thread that is `
+    + `not taking live turns, or split them into smaller batches.`,
+    { cause: e },
+  );
+  (err as { code?: string }).code = '55P03';
+  return err;
+}
+
+const THREAD_LOCK_NS = 47110002;
+
+function hash32(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return h | 0;   // signed int32, which is what the two-key form takes
+}
+
 class PgMemoryStore implements MemoryStore {
-  constructor(private q: Q) {}
+  /**
+   * `tx` as well as `q`: a message batch has to land all-or-nothing (see `appendMessages`). Before
+   * this, the memory store had no way to open a transaction at all — it was handed only `q`, so every
+   * write was its own autocommit on whichever pooled connection answered first.
+   */
+  constructor(private q: Q, private tx: <T>(fn: (q: Q) => Promise<T>, opts?: { atomic?: true }) => Promise<T>, private advisoryLocks: () => boolean) {}
   async upsertThread(rec: ThreadRecord): Promise<void> {
     await this.q(
       `INSERT INTO gnl_threads (id, resource_id, title, parent_thread_id, metadata, created_at, updated_at, deleted_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
@@ -986,14 +1142,135 @@ class PgMemoryStore implements MemoryStore {
     await this.q('DELETE FROM gnl_messages WHERE thread_id = $1', [id]);
     await this.q('DELETE FROM gnl_working_memory WHERE scope_id = $1', [id]);
     await this.q('DELETE FROM gnl_observations WHERE thread_id = $1', [id]);
+    // Batch markers too. A thread is soft-deleted while its messages are hard-deleted, and
+    // `upsertThread` can bring the id back — a resurrected thread that kept its markers answers a
+    // legitimate later batch with "already applied" and drops it in silence. Measured: 0 rows written
+    // where 2 were expected.
+    await this.q('DELETE FROM gnl_message_batches WHERE thread_id = $1', [id]);
   }
-  async appendMessages(threadId: string, rows: MessageRecord[]): Promise<void> {
-    for (const r of rows) {
-      await this.q(
-        `INSERT INTO gnl_messages (thread_id, seq, role, text, embedding, metadata, ts, message) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (thread_id, seq) DO NOTHING`,
-        [threadId, r.seq, r.role, r.text ?? null, r.embedding ? JSON.stringify(r.embedding) : null, r.metadata ? serialize(r.metadata) : null, r.ts, serialize(r.message)],
+  /**
+   * ONE TRANSACTION for the whole batch — the rows of an append land together or not at all.
+   *
+   * This used to be a bare loop of autocommit INSERTs, each potentially on a different pooled
+   * connection, and that is the defect users actually saw. A batch is `[assistant(tool-call),
+   * tool(tool-result)]`; when only the first row commits, the thread is left holding a tool call that
+   * is never answered, and the AI SDK refuses to build a prompt from it — `MissingToolResultsError`,
+   * surfaced as `HTTP 400 "Tool result is missing for tool call …"`. Every later turn on that thread
+   * fails the same way until the orphan slides out of the memory window — measured at 5 consecutive
+   * failures with the default `chat` preset (recentN 10), because a failed turn still write-aheads its
+   * user message and so keeps the window moving. Self-healing, then, but at the cost of five real
+   * errors and five junk messages left in the transcript; and only while nothing pulls the orphan back
+   * into context, which recall can.
+   *
+   * Measured, 900 requests against real Postgres with the fix toggled on and off:
+   *
+   *     base    7 errors (0.78%)  |  7 threads left with an orphan call  |  96.4 req/s
+   *     atomic  0 errors          |  0 orphans                           |  99.8 req/s
+   *
+   * So atomicity alone removes 100% of those failures, and costs nothing — it is fewer round trips,
+   * not more, because the batch now travels on one pinned client instead of N pool checkouts.
+   *
+   * This is NOT the whole story. A separate defect — `AgentMemory.append` computing `seq` from an
+   * unlocked read — still drops whole batches under concurrency (measured: 33% of messages). That
+   * loss is silent and leaves the history self-consistent, which is why it produces no 400s and why
+   * it needs its own fix. Atomicity is what stops a half-written batch from BREAKING a thread.
+   *
+   * Per-row INSERTs are kept deliberately. Collapsing them into one multi-row statement was measured
+   * at 1.14x on this subsystem, which is ~11.9% of a request's round trips — a fraction of a percent
+   * end to end — and `ON CONFLICT` under pg-mem (the default test double) has known fidelity gaps.
+   * The atomicity comes from the transaction; the statement shape is not what was broken.
+   */
+  async appendMessagesOnce(threadId: string, rows: MessageAppend[], batchKey: string): Promise<boolean> {
+    const assign = assertUniformSeq(threadId, rows);
+    if (!this.advisoryLocks()) throw new Error(NO_LOCK_APPEND_MSG);
+    return this.tx(async (q) => {
+      await q(`SET LOCAL lock_timeout = '5s'`);
+      await q('SELECT pg_advisory_xact_lock($1, $2)', [THREAD_LOCK_NS, hash32(threadId)]);
+      // CLAIM FIRST, in the same transaction as the rows. Zero rows back means this batch already
+      // landed, and the messages are not touched — which is the whole point: the identity cannot
+      // survive a rollback that took the rows with it, and the rows cannot survive a rollback that
+      // took the identity. `run.ts`'s two-phase marker existed only because those were separate
+      // writes to separate stores.
+      const claim = await q(
+        `INSERT INTO gnl_message_batches (thread_id, batch_key, seq_from, seq_to, ts) VALUES ($1,$2,0,0,$3)
+         ON CONFLICT (thread_id, batch_key) DO NOTHING RETURNING batch_key`,
+        [threadId, batchKey, Date.now()],
       );
-    }
+      if ((claim.rowCount ?? 0) === 0) return false;
+      let next = 0;
+      if (assign) {
+        const r = await q('SELECT COALESCE(MAX(seq), -1) + 1 AS n FROM gnl_messages WHERE thread_id = $1', [threadId]);
+        next = Number(r.rows[0].n);
+      }
+      const from = next;
+      for (const r of rows) {
+        const conflict = r.seq === undefined ? '' : ' ON CONFLICT (thread_id, seq) DO NOTHING';
+        await q(
+          `INSERT INTO gnl_messages (thread_id, seq, role, text, embedding, metadata, ts, message) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)${conflict}`,
+          [threadId, r.seq ?? next++, r.role, r.text ?? null, r.embedding ? JSON.stringify(r.embedding) : null, r.metadata ? serialize(r.metadata) : null, r.ts, serialize(r.message)],
+        );
+      }
+      await q('UPDATE gnl_message_batches SET seq_from = $1, seq_to = $2 WHERE thread_id = $3 AND batch_key = $4',
+        [from, next, threadId, batchKey]);
+      return true;
+    }, { atomic: true }).catch((e: unknown) => { throw lockWaitAdvice(e, threadId, rows.length); });
+  }
+
+  async appendMessages(threadId: string, rows: MessageAppend[]): Promise<void> {
+    if (rows.length === 0) return;
+    const assign = assertUniformSeq(threadId, rows);
+    // Second line of defence: the capability downgrade above should have stopped anyone getting here
+    // without a usable lock, but a caller holding `storage.memory` directly bypasses that check.
+    if (!this.advisoryLocks()) throw new Error(NO_LOCK_APPEND_MSG);
+    await this.tx(async (q) => {
+      // ALWAYS take the lock, not only when assigning. The explicit-seq path was measured racing:
+      // importing a transcript (explicit positions, unlocked) alongside a live run (assigned
+      // positions, locked) lost rows in 20 of 60 turns. The contract invites transcript import, so
+      // leaving that path unserialised makes the documented use case the unsafe one. The lock costs a
+      // single round trip on a connection that is already pinned.
+      if (this.advisoryLocks()) {
+        // BOUND THE WAIT, and bound it BELOW run.ts's MEM_APPEND_TTL_MS (60s). This is not tidiness —
+        // an unbounded wait here reopens the very defect the lock closes, with no crash involved:
+        //
+        //   worker A takes the lock and its connection dies without closing (a TCP blackhole; the
+        //   backend is not reaped for minutes under default keepalives) -> worker B's append queues on
+        //   the lock -> 60s pass -> run.ts decides A's append marker is stale and lets a retry take it
+        //   over -> the lock is finally released -> BOTH writes land.
+        //
+        // Measured exactly that, with no process ever crashing: the same user message twice in one
+        // thread. Timing out instead surfaces 55P03 with nothing written, which fails the run and lets
+        // it retry cleanly. 5s leaves a 12x margin under the TTL.
+        //
+        // IT CAN FIRE, and an earlier version of this note said it could not. That claim rested on one
+        // axis only — concurrency, where the deepest contention measured was p99 336ms at 128 writers.
+        // Batch SIZE was never measured, and it is the axis that reaches the limit: importing a
+        // 20,000-row transcript holds this lock for about six seconds, so a live turn on the same
+        // thread times out at five. On a managed Postgres at 1.5ms round trip, roughly 3,300 messages
+        // is enough. Large imports belong on a thread that is not taking live turns.
+        await q(`SET LOCAL lock_timeout = '5s'`);
+        // ITS OWN STATEMENT. Folding the lock into the scalar subquery that reads MAX(seq) does not
+        // work and was measured failing: under READ COMMITTED a statement's snapshot is taken when the
+        // statement STARTS and the lock is acquired part-way through it, so MAX(seq) still reads the
+        // pre-lock tail. 155 of 160 messages were lost that way.
+        await q('SELECT pg_advisory_xact_lock($1, $2)', [THREAD_LOCK_NS, hash32(threadId)]);
+      }
+      let next = 0;
+      if (assign) {
+        const r = await q('SELECT COALESCE(MAX(seq), -1) + 1 AS n FROM gnl_messages WHERE thread_id = $1', [threadId]);
+        next = Number(r.rows[0].n);
+      }
+      for (const r of rows) {
+        // `ON CONFLICT DO NOTHING` ONLY for caller-supplied positions, where re-writing the same row
+        // is the documented idempotent case. For positions this method just assigned under the lock, a
+        // conflict is impossible unless something is wrong — and swallowing it would silently drop a
+        // message, which is the defect this method exists to fix. Let it raise.
+        const conflict = r.seq === undefined ? '' : ' ON CONFLICT (thread_id, seq) DO NOTHING';
+        await q(
+          `INSERT INTO gnl_messages (thread_id, seq, role, text, embedding, metadata, ts, message) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)${conflict}`,
+          [threadId, r.seq ?? next++, r.role, r.text ?? null, r.embedding ? JSON.stringify(r.embedding) : null, r.metadata ? serialize(r.metadata) : null, r.ts, serialize(r.message)],
+        );
+      }
+    }, { atomic: true }).catch((e: unknown) => { throw lockWaitAdvice(e, threadId, rows.length); });
   }
   private toMsg(x: any): MessageRecord {
     return { threadId: x.thread_id, seq: Number(x.seq), role: x.role, text: x.text ?? undefined, embedding: x.embedding ? JSON.parse(x.embedding) : undefined, metadata: x.metadata ? deserialize(x.metadata) : undefined, ts: Number(x.ts), message: deserialize(x.message) };
@@ -1013,6 +1290,11 @@ class PgMemoryStore implements MemoryStore {
    */
   async deleteMessagesAfter(threadId: string, afterSeq: number): Promise<number> {
     const r = await this.q('DELETE FROM gnl_messages WHERE thread_id = $1 AND seq > $2', [threadId, afterSeq]);
+    // Markers for batches that ended past the cut go with them. Leaving them behind makes a later
+    // batch reusing the same key look "already applied", and the regenerated turn is dropped in
+    // silence — measured at 1 message written where 3 were expected, which is the exact class of loss
+    // batch identity exists to prevent.
+    await this.q('DELETE FROM gnl_message_batches WHERE thread_id = $1 AND seq_to > $2', [threadId, afterSeq]);
     return r.rowCount ?? 0;
   }
   async recall(threadId: string, query: number[], opts: RecallOptions): Promise<MessageRecord[]> {

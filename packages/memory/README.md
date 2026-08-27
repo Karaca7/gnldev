@@ -44,6 +44,20 @@ await runDurable({ runId, journal, model, memory: mem, threadId: 'th-1', resourc
 - **OM v1 is minimal:** message-count threshold (not a real tokenizer), synchronous compaction (no async
   buffering), single observer model (no token-tier routing). Future: these + time-based markers +
   resource-scope OM.
+- **Concurrent turns on one thread are safe, but not ordered:** two runs appending to the same thread
+  at once both land. The store assigns `seq` inside the write, serialised per thread, so nothing is
+  dropped — this was NOT true before: a lockless read-then-write lost messages, silently, and a
+  dropped `tool-result` broke the thread until the orphan slid out of the recent-message window (five
+  consecutive failures, measured). What concurrency still costs is
+  adjacency: messages land in SEND order and answers in COMPLETION order, so two racing turns
+  interleave as `[A, B, ansA, ansB]`. If a turn must not begin while another is in flight, serialise
+  at your own entry point — gnl holds no thread-level lock.
+- **Writing your own `MemoryStore`:** `appendMessages` receives `MessageAppend[]`, where `seq` is
+  optional and normally ABSENT. An adapter must assign the next positions itself, in the same
+  transaction that writes the rows, serialised per thread, and must write the batch all-or-nothing —
+  a half-written batch can leave a `tool-call` without its `tool-result`. Rows that DO carry `seq`
+  are written exactly there and keep the idempotent CAS form (`cloneThread`, transcript import); a
+  batch that mixes the two throws.
 
 ## Lite alternative
 For anyone who just wants simple topK recall, `SemanticMemory` in `@gnldev/rag` is lighter; it uses the same

@@ -138,7 +138,7 @@ describe('PostgresStorage schema tooling (pg-mem)', () => {
     expect(before.missingColumns.map((c) => c.column).sort()).toEqual(['canceled', 'failed', 'running', 'suspended_count']);
     expect(before.missingColumns.every((c) => c.table === 'gnl_runs')).toBe(true);
     expect(before.missingTables.sort()).toEqual(
-      ['gnl_counters', 'gnl_run_journal', 'gnl_threads', 'gnl_messages', 'gnl_working_memory', 'gnl_observations', 'gnl_vectors', 'gnl_work_log', 'gnl_work_kv', 'gnl_cache'].sort(),
+      ['gnl_counters', 'gnl_run_journal', 'gnl_threads', 'gnl_messages', 'gnl_working_memory', 'gnl_observations', 'gnl_message_batches', 'gnl_vectors', 'gnl_work_log', 'gnl_work_kv', 'gnl_cache'].sort(),
     );
 
     const dry = await storage.migrateSchema({ dryRun: true });

@@ -240,7 +240,11 @@ hash'i veya mantıksal bir anahtarla, istersen koşular arası — ve sonuç ger
 (etki ile kaydı arasındaki çöküş) iki yönden birine tahmin yürütmek yerine **durup insana soruyor.**
 Doğruluk varsayılan, her çağrı yerinde ayrı bir yükümlülük değil. Diğer pratik fark: bu, zaten
 işlettiğin depolamanın üstünde bir kütüphane (`node:sqlite`, Postgres, Redis, kendi adaptörün),
-üzerine dağıtım yapacağın bir platform değil.
+üzerine dağıtım yapacağın bir platform değil. Bu adaptör bir biçim değil, bir sözleşmedir:
+`Storage` portları ve her birinin neyi garanti etmesi gerektiği — `MemoryStore.appendMessages`'ın
+`seq`'i thread bazında ve atomik olarak kendisinin atması dahil —
+[`packages/durable/src/storage.ts`](./packages/durable/src/storage.ts) içinde tanımlı ve
+[kılavuz §5.2](./docs/GUIDE.tr.md#52-depolama-mimarisi-6-liman-port-4-adaptör)'de anlatılıyor.
 
 **Workflow grafiği içinde ajanlar.** `@gnldev/workflow` grafiği zaten sunuyor — `then` / `branch` /
 `parallel` / `foreach` / `dowhile`, artı `sleep`, `waitFor` ve askıya alma/devam — ve `Step` iki

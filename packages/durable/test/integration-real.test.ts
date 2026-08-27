@@ -25,6 +25,8 @@ import { runDurable } from '../src/run.js';
 import { RunBusyError } from '../src/errors.js';
 import { createMockModel, countToolResults, toolCallResult, finalTextResult } from './mock.js';
 import { emit, createConsumer } from '../../events/src/index.js';
+import { memoryConformance } from './memory-conformance.js';
+import { Pool as PgPool } from 'pg';
 
 const RUN = process.env.GNL_INTEGRATION === '1';
 const PG_URL = process.env.GNL_PG_URL ?? 'postgres://postgres:gnl@localhost:55432/gnl';
@@ -676,4 +678,75 @@ describe.skipIf(!RUN)('REAL Postgres — prefix ranges under this server\'s coll
     expect(await s.runs.deletePrefix(`${run}:`)).toBe(2);
     expect(await s.runs.listKeys(`${run}:`)).toEqual([]);
   });
+});
+
+// The store-assigned append path, on a real server. pg-mem cannot host this test: it has no
+// `pg_advisory_xact_lock`, so its conformance run declares `serialisesAppends: false` and skips the
+// racing case. That skip is only honest if the proof exists somewhere, and this is somewhere.
+//
+// What is being proven: two SEPARATE pools — genuinely concurrent, the way two PM2 workers are —
+// appending to ONE thread lose nothing and interleave without tearing a batch apart. Under the old
+// caller-assigned `seq` this was measured losing a third of all messages, and when the loss split a
+// batch it left a tool-call with no tool-result, which fails every later turn at the provider.
+describe.skipIf(!RUN)('REAL Postgres — concurrent appends to one thread', () => {
+  const pools: PostgresStorage[] = [];
+  afterAll(async () => { for (const p of pools) await (p as any).close?.(); });
+
+  it('two pools appending at once lose nothing and keep each batch contiguous', async () => {
+    const a = new PostgresStorage({ connectionString: PG_URL });
+    const b = new PostgresStorage({ connectionString: PG_URL });
+    pools.push(a, b);
+    const tid = `append-race-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    // Each "turn" is a two-row batch — the shape that breaks visibly when it tears: an assistant
+    // message that calls a tool, then the tool's answer.
+    const turn = (s: PostgresStorage, who: string, i: number) => s.memory!.appendMessages(tid, [
+      { threadId: tid, role: 'assistant', text: `${who}-${i}-call`, ts: 1, message: { role: 'assistant', content: [{ type: 'tool-call', toolCallId: `${who}-${i}`, toolName: 'x', input: {} }] } },
+      { threadId: tid, role: 'tool', text: `${who}-${i}-result`, ts: 1, message: { role: 'tool', content: [{ type: 'tool-result', toolCallId: `${who}-${i}`, toolName: 'x', output: { type: 'json', value: {} } }] } },
+    ]);
+
+    const N = 12;
+    await Promise.all([
+      ...Array.from({ length: N }, (_, i) => turn(a, 'A', i)),
+      ...Array.from({ length: N }, (_, i) => turn(b, 'B', i)),
+    ]);
+
+    const page = await a.memory!.getMessages(tid, { limit: 1000 });
+    const seqs = page.items.map((m) => m.seq);
+    expect(seqs.length, 'a message was lost').toBe(N * 4);
+    // Dense and unique: the store handed out every position exactly once.
+    expect(seqs).toEqual([...Array(N * 4).keys()]);
+
+    // No batch was torn: every call sits immediately before its own result.
+    for (const item of page.items) {
+      const m = /^(A|B)-(\d+)-call$/.exec(item.text ?? '');
+      if (!m) continue;
+      expect(page.items[seqs.indexOf(item.seq) + 1]?.text,
+        `batch ${m[0]} was split by another writer`).toBe(`${m[1]}-${m[2]}-result`);
+    }
+  });
+});
+
+// The MemoryStore conformance cases, against a real server.
+//
+// They ran against pg-mem until PostgresStorage started withdrawing the memory port where
+// `pg_advisory_xact_lock` is missing — true of pg-mem, so the whole Postgres memory block left the
+// default suite with it. `recall`, `messageRange`, the filter operators and `deleteMessagesAfter` are
+// Postgres-specific SQL; a capability declaration removing their coverage would be exactly the false
+// comfort that declaration exists to remove. Here they run where the guarantee is actually real.
+describe.skipIf(!RUN)('REAL Postgres — MemoryStore conformance', () => {
+  const made: PostgresStorage[] = [];
+  afterAll(async () => { for (const s of made) await (s as any).close?.(); });
+  memoryConformance(() => {
+    // Each case assumes an empty store, and they all share one server — so each gets its own schema.
+    // `search_path` is set on every new connection rather than through a startup option, because the
+    // schema has to be created first and a startup `search_path` naming a missing schema resolves to
+    // nothing. PostgresStorage then runs its DDL wherever the path points, with no changes needed.
+    const ns = `mc_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+    const pool = new PgPool({ connectionString: PG_URL });
+    pool.on('connect', (c: any) => { void c.query(`CREATE SCHEMA IF NOT EXISTS ${ns}; SET search_path TO ${ns}`); });
+    const s = new PostgresStorage({ pool: pool as any });
+    made.push(s);
+    return s as any;
+  }, { serialisesAppends: true });
 });

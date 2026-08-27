@@ -63,11 +63,11 @@ export type { RunDurableArgs, StreamDurableArgs, DurableResult, ResumeAgentConfi
 // K1/W1 (B): sentinel→error conversion helper for code that consumes streamDurable directly.
 export { streamFinishError } from './run.js';
 // Greenfield storage contracts (ports + Storage + capability + composite).
-export { CapabilityError, requireCapability, composite, toJournal, matchFilter } from './storage.js';
+export { CapabilityError, requireCapability, composite, toJournal, matchFilter, assertUniformSeq } from './storage.js';
 export type { AdoptIntoOrgResult,
   Page, ListQuery,
   RunJournal, MemoryStore, VectorStore, WorkStore, CacheStore, MetaStore,
-  ThreadRecord, MessageRecord, Observation, RecallOptions,
+  ThreadRecord, MessageRecord, MessageAppend, Observation, RecallOptions,
   VectorDoc, VectorItem, VectorMatch, LogRecord,
   Storage, CapabilityLevel, CapabilityMatrix, StoreName, CompositeConfig,
 } from './storage.js';

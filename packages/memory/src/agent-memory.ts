@@ -6,7 +6,7 @@
 import { cosineSimilarity } from 'ai';
 import { requireCapability, durableProcessorStep } from '@gnldev/durable';
 import { PROVENANCE_RECENT_CAP, messagePreview } from '@gnldev/durable';
-import type { Storage, RunJournal, MemoryStore, MessageRecord, ThreadRecord, RecallOptions, MemoryContextProvenance, RecalledMessageRef } from '@gnldev/durable';
+import type { Storage, RunJournal, MemoryStore, MessageRecord, MessageAppend, ThreadRecord, RecallOptions, MemoryContextProvenance, RecalledMessageRef } from '@gnldev/durable';
 import { messageText, hasNorm, type Embed } from './keys.js';
 import { deepMerge } from './deep-merge.js';
 import { createWorkingMemoryTool, renderWorkingMemorySystem, type WorkingMemoryConfig } from './working-memory.js';
@@ -101,16 +101,188 @@ export class AgentMemory {
     return (await this.store.getMessages(threadId, { limit: HUGE })).items;
   }
 
+  /**
+   * The store assigns `seq`. This method must NOT.
+   *
+   * It used to open with `const existing = await this.allMessages(threadId); let seq = existing.length`
+   * — read the whole thread, take its length as the next position, write there. Two runs answering one
+   * thread both read the same length, both claimed the same positions, and the adapters' `(threadId,
+   * seq)` CAS silently discarded the loser. Measured against real Postgres: a third of all messages
+   * gone, and when the drop covered only PART of a batch it left a tool-call with no tool-result,
+   * which fails later turns on that thread at the provider until it slides out of the memory window
+   * (measured: 5 consecutive failures with the default `chat` preset).
+   *
+   * Deleting the read also deletes a quadratic: `allMessages` is `getMessages(limit: HUGE)`, i.e. a
+   * COUNT plus a full-history SELECT, and it ran twice per turn on a thread that only grows. Measured
+   * at saturation, this method got 1.44x faster, and the cost of an append stopped scaling with depth
+   * (0.75ms -> 1.67ms across 14..400 messages became a flat 0.37ms). Roughly 85% of that came from
+   * removing this read, not from the batching around it.
+   *
+   * Embedding still happens HERE, before the store call, and that placement is load-bearing: the store
+   * takes a per-thread lock for the duration of its transaction, and a remote embedding provider inside
+   * that lock would hold it for the length of a network round trip per message. Measured with a 200ms
+   * provider: 8 concurrent writers went from 44ms to 1624ms when the embed sat inside the lock.
+   */
   async append(threadId: string, messages: any[]): Promise<void> {
-    const existing = await this.allMessages(threadId);
-    let seq = existing.length;
-    const rows: MessageRecord[] = [];
+    const rows: MessageAppend[] = [];
     for (const message of messages) {
       const text = messageText(message);
       const embedding = text && this.embed ? await this.embed(text) : undefined;
-      rows.push({ threadId, seq: seq++, role: message?.role ?? 'user', text, embedding, metadata: message?.metadata, ts: Date.now(), message });
+      rows.push({ threadId, role: message?.role ?? 'user', text, embedding, metadata: message?.metadata, ts: Date.now(), message });
     }
     await this.store.appendMessages(threadId, rows);
+  }
+
+  /**
+   * A recalled `tool-call` must arrive with the `tool-result` that answers it, or not arrive at all.
+   *
+   * Recall selects one message at a time, by embedding similarity, and a `tool` message has no text to
+   * embed — `messageText` returns undefined for a pure `tool-result`, so it never becomes a candidate.
+   * An assistant message that carries TEXT AND a tool call does have text, so it can be elected alone.
+   * Real providers emit that shape constantly ("Let me look that up" plus the call). The result is a
+   * prompt holding a call nothing answers, which the AI SDK refuses to send —
+   * `MissingToolResultsError`, seen by the caller as `HTTP 400 "Tool result is missing for tool call"`.
+   * No concurrency, no crash, one caller: the same provider-level failure as the concurrent-append
+   * defect, reached from the opposite direction.
+   *
+   * REPAIR FIRST, DROP SECOND. The answer is almost always the very next message in the thread, so
+   * fetching it costs one read and keeps the memory that recall judged relevant. Only when it cannot be
+   * found — truncated, or the run died between the call and its result — is the message dropped, which
+   * loses a memory but can never produce a prompt the provider rejects.
+   *
+   * Calls already answered inside the recent window need nothing: the window is appended after these,
+   * so the pair is intact in the final prompt.
+   */
+  protected async pairRecalledToolCalls(
+    injected: MessageRecord[],
+    recent: MessageRecord[],
+  ): Promise<{ injected: MessageRecord[]; dropped: MessageRecord[] }> {
+    /** Tags a row with why it was left out, so provenance can say more than "it is not here". */
+    const mark = (r: MessageRecord, reason: 'unanswered-tool-call' | 'duplicate-tool-call-id') =>
+      ({ ...r, reason } as MessageRecord & { reason: string });
+    const callIds = (m: any): string[] =>
+      (Array.isArray(m?.content) ? m.content : [])
+        .filter((p: any) => p?.type === 'tool-call').map((p: any) => String(p.toolCallId));
+    const resultIds = (m: any): string[] =>
+      (Array.isArray(m?.content) ? m.content : [])
+        .filter((p: any) => p?.type === 'tool-result').map((p: any) => String(p.toolCallId));
+
+    if (!injected.some((r) => callIds(r.message).length > 0)) return { injected, dropped: [] };
+
+    const answered = new Set<string>();
+    for (const m of [...injected, ...recent]) for (const id of resultIds(m.message)) answered.add(id);
+
+    // ONE read per THREAD, not one per candidate. `allMessages` used to sit inside the loop below, so
+    // a `topK` of 5 unanswered hits cost five full-thread reads on top of the one `composeTrack1`
+    // already did — measured at 30ms on an 800-message thread, which is more than double what removing
+    // the read from `append` saved in the same change. A Map rather than a single hoisted read because
+    // resource-scoped recall returns rows from OTHER threads, and one hoist would read the wrong one.
+    const threads = new Map<string, MessageRecord[]>();
+    const readThread = async (tid: string): Promise<MessageRecord[]> => {
+      let rows = threads.get(tid);
+      if (!rows) { rows = await this.allMessages(tid); threads.set(tid, rows); }
+      return rows;
+    };
+
+    const out: MessageRecord[] = [];
+    const dropped: MessageRecord[] = [];
+    // Deduplicate on BOTH sides. A thread that took a stale-marker retry (see F7 in the durability
+    // risk audit) holds the same turn twice, at different `seq`, so recall can elect BOTH copies and
+    // the `${threadId}:${seq}` dedupe above cannot see it — measured: `topK: 3` put `tc-1` in the
+    // prompt as two calls AND two results, before any repair ran. Two blocks sharing a `toolCallId`
+    // are not a valid prompt whichever way they got there.
+    const seenCall = new Set<string>();
+    const seenResult = new Set<string>();
+    const claim = (set: Set<string>, ids: string[]) =>
+      ids.length > 0 && ids.every((id) => !set.has(id)) && (ids.forEach((id) => set.add(id)), true);
+
+    for (const r of injected) {
+      const ids = callIds(r.message);
+      if (ids.length === 0) {
+        // Not a call. Still guard the result side: a duplicated turn can put the same answer twice.
+        const rIds = resultIds(r.message);
+        if (rIds.length > 0 && !claim(seenResult, rIds)) { dropped.push(mark(r, 'duplicate-tool-call-id')); continue; }
+        out.push(r);
+        continue;
+      }
+      if (!claim(seenCall, ids)) { dropped.push(mark(r, 'duplicate-tool-call-id')); continue; }
+
+      const missing = ids.filter((id) => !answered.has(id));
+      if (missing.length === 0) { out.push(r); continue; }
+
+      // NEAREST-AFTER, not first-anywhere. When the same id appears twice, taking the earliest result
+      // can hand the model the answer to a DIFFERENT call — a wrong answer is worse than a refused
+      // prompt. Searching forward from the call is safe because a batch is written atomically and
+      // contiguously under the per-thread lock, so a result never precedes its own call unless a
+      // caller placed it there with explicit `seq`, which is that caller's own contract.
+      const rows = await readThread(r.threadId);
+      const repair: MessageRecord[] = [];
+      for (const id of missing) {
+        const hit = rows.find((m) => m.seq > r.seq && resultIds(m.message).includes(id));
+        if (hit) repair.push(hit);
+      }
+      const found = new Set(repair.flatMap((m) => resultIds(m.message)));
+      if (!missing.every((id) => found.has(id))) { dropped.push(mark(r, 'unanswered-tool-call')); continue; }
+
+      const fresh = repair.filter((m) => claim(seenResult, resultIds(m.message)));
+      out.push(r, ...fresh);
+      for (const id of found) answered.add(id);
+    }
+    return { injected: out, dropped };
+  }
+
+  /**
+   * The observed/unobserved cut moved back to where it does not split a turn.
+   *
+   * `observedSeq` is a high-water mark that compaction advances by message count or token budget, and
+   * neither of those knows what a turn is. Land the cut on the assistant message that made a call and
+   * the window opens with the ANSWER to a call the model was never shown — which Anthropic and OpenAI
+   * both reject, the same way they reject the mirror-image case recall used to produce.
+   *
+   * Moving the boundary back rather than dropping the orphan: the result is worth nothing without the
+   * call, and the call is one message away. Extending is cheap and preserves what compaction was
+   * summarising around; dropping would hide a turn's outcome from the model while its question stayed
+   * visible. Only the messages actually needed are pulled in — a window that already starts on a
+   * boundary is returned untouched.
+   */
+  protected windowFromTurnBoundary(all: MessageRecord[], observedSeq: number): MessageRecord[] {
+    const idsIn = (m: any, type: string): string[] =>
+      (Array.isArray(m?.content) ? m.content : [])
+        .filter((p: any) => p?.type === type).map((p: any) => String(p.toolCallId));
+
+    const window = all.filter((m) => m.seq > observedSeq);
+    if (window.length === 0) return window;
+
+    const shown = new Set(window.flatMap((m) => idsIn(m.message, 'tool-call')));
+    const orphans = new Set(window.flatMap((m) => idsIn(m.message, 'tool-result')).filter((id) => !shown.has(id)));
+    if (orphans.size === 0) return window;
+
+    // The call sits before the cut. Take the earliest one that is needed and start there.
+    let start = observedSeq;
+    for (const m of all) {
+      if (m.seq > observedSeq) break;
+      if (idsIn(m.message, 'tool-call').some((id) => orphans.has(id))) { start = m.seq - 1; break; }
+    }
+    return all.filter((m) => m.seq > start);
+  }
+
+  /**
+   * `append`, but at most once for a given `batchKey` — present only when the store can write the
+   * batch identity in the same transaction as the rows. Absent stores leave run.ts on its marker.
+   *
+   * Embedding still happens before the store call, for the reason given on `append`: the store holds a
+   * per-thread lock across its transaction, and a remote embedding provider inside it would hold that
+   * lock for a network round trip per message.
+   */
+  async appendOnce(threadId: string, messages: any[], batchKey: string): Promise<boolean> {
+    if (!this.store.appendMessagesOnce) { await this.append(threadId, messages); return true; }
+    const rows: MessageAppend[] = [];
+    for (const message of messages) {
+      const text = messageText(message);
+      const embedding = text && this.embed ? await this.embed(text) : undefined;
+      rows.push({ threadId, role: message?.role ?? 'user', text, embedding, metadata: message?.metadata, ts: Date.now(), message });
+    }
+    return this.store.appendMessagesOnce(threadId, rows, batchKey);
   }
 
   /** Track 1: last N + query-based topK recall. */
@@ -141,7 +313,7 @@ export class AgentMemory {
   protected async composeTrack1(
     threadId: string,
     opts?: { query?: string; resourceId?: string; scope?: 'thread' | 'resource' },
-  ): Promise<{ messages: any[]; recalled: RecalledMessageRef[]; recent: RecalledMessageRef[]; recentCount: number }> {
+  ): Promise<{ messages: any[]; recalled: RecalledMessageRef[]; recent: RecalledMessageRef[]; recentCount: number; dropped?: RecalledMessageRef[]; droppedCount?: number }> {
     const all = await this.allMessages(threadId);
     const recent = all.slice(-this.recentN);
     // The "it all fits in the recent window, so there is nothing left to recall" short-circuit is
@@ -167,10 +339,24 @@ export class AgentMemory {
       resourceId: opts.resourceId,
     });
     const recentSeqs = new Set(recent.map((e) => e.seq));
-    const injected = recalled.filter((r) => !(r.threadId === threadId && recentSeqs.has(r.seq)));
+    const deduped = recalled.filter((r) => !(r.threadId === threadId && recentSeqs.has(r.seq)));
+    const paired = await this.pairRecalledToolCalls(deduped, recent);
+    // A row recall chose but pairing pulled in is marked `origin: 'repair'` so the inspector can tell
+    // it from a similarity hit; a row pairing left out goes to `dropped`, never to `recalled`.
+    const chosen = new Set(deduped.map((r) => `${r.threadId}:${r.seq}`));
     return {
-      messages: [...injected.map((r) => r.message), ...recent.map((e) => e.message)],
-      recalled: injected.map((r) => AgentMemory.toRef(r)),
+      messages: [...paired.injected.map((r) => r.message), ...recent.map((e) => e.message)],
+      recalled: paired.injected.map((r) => {
+        const ref = AgentMemory.toRef(r);
+        return chosen.has(`${r.threadId}:${r.seq}`) ? ref : { ...ref, origin: 'repair' as const };
+      }),
+      dropped: paired.dropped.length
+        ? paired.dropped.slice(0, PROVENANCE_RECENT_CAP).map((r) => ({
+          ...AgentMemory.toRef(r),
+          ...(({ reason: (r as MessageRecord & { reason?: string }).reason }) as { reason?: any }),
+        }))
+        : undefined,
+      droppedCount: paired.dropped.length || undefined,
       recent: recent.slice(-PROVENANCE_RECENT_CAP).map((e) => AgentMemory.toRef(e)),
       recentCount: recent.length,
     };
@@ -234,7 +420,7 @@ export class AgentMemory {
       }
       const obs = (await this.store.getObservations(threadId)).filter((o) => !o.condensed);
       const observedSeq = (await this.runs.get<number>(omKey(threadId, 'observedSeq'))) ?? -1;
-      const unobservedRecs = (await this.allMessages(threadId)).filter((m) => m.seq > observedSeq);
+      const unobservedRecs = this.windowFromTurnBoundary(await this.allMessages(threadId), observedSeq);
       const unobserved = unobservedRecs.map((m) => m.message);
       messages = obs.length
         ? [{ role: 'system', content: `# Observations\n${obs.map((o) => o.text).join('\n')}` }, ...unobserved]
@@ -248,6 +434,9 @@ export class AgentMemory {
       provenance.recalled = t1.recalled;
       provenance.recent = t1.recent;
       provenance.recentCount = t1.recentCount;
+      // Forward the pairing outcome too. Assembling provenance field-by-field here is what let the
+      // first version of these fields exist in `composeTrack1` and never reach a caller.
+      if (t1.droppedCount) { provenance.droppedCount = t1.droppedCount; provenance.dropped = t1.dropped; }
     }
     const out: LoadedContext = { messages, provenance };
     if (this.wm) {

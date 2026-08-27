@@ -6,6 +6,7 @@ import { InMemoryStorage, composite, requireCapability, CapabilityError, RedisSt
 import { SqliteStorage } from '../src/sqlite-storage.js';
 import { PostgresStorage } from '../src/postgres-storage.js';
 import { makeFakeRedis } from './fake-redis.js';
+import { memoryConformance } from './memory-conformance.js';
 import type { Storage, MessageRecord, ThreadRecord } from '../src/index.js';
 
 const msg = (threadId: string, seq: number, text: string, embedding?: number[]): MessageRecord => ({
@@ -23,27 +24,39 @@ const thread = (id: string, resourceId: string, updatedAt: number): ThreadRecord
 // The memory/vectors skip decision is NOT a manual flag — it's derived from the storage's own capability
 // declaration (below, in the describe setup): for PARTIAL storages declaring 'none' (Redis: memory/vectors
 // ='none' → overridden via composite), that port's conformance tests are skipped.
-type Caps = { exactCas: boolean };
-const storages: [string, () => Storage, Caps][] = [['InMemoryStorage', () => new InMemoryStorage(), { exactCas: true }]];
+// serialisesAppends=false: the storage cannot serialise two concurrent appends to one thread in this
+// test environment. pg-mem has no `pg_advisory_xact_lock`, so four callers all read the same free
+// position and collide. That collision is now a LOUD error rather than a silent drop, which is the
+// intended behaviour — but it means the racing assertion below cannot run here. Real proof of that path
+// belongs against a real server (integration-real.test.ts, GNL_INTEGRATION=1); this flag exists so the
+// gap is declared instead of quietly absent.
+type Caps = { exactCas: boolean; serialisesAppends: boolean };
+const storages: [string, () => Storage, Caps][] = [['InMemoryStorage', () => new InMemoryStorage(), { exactCas: true, serialisesAppends: true }]];
 try {
   const probe = new SqliteStorage();
   (probe as any).close?.();
-  storages.push(['SqliteStorage', () => new SqliteStorage(':memory:'), { exactCas: true }]);
+  storages.push(['SqliteStorage', () => new SqliteStorage(':memory:'), { exactCas: true, serialisesAppends: true }]);
 } catch {
   // node:sqlite unavailable (old Node / flag) → SQLite suite is skipped.
 }
 // Postgres: fresh db per test via pg-mem (in-memory real SQL).
 const pgmemPool = () => { const { Pool } = newDb().adapters.createPg(); return new Pool(); };
-storages.push(['PostgresStorage(pg-mem)', () => new PostgresStorage({ pool: pgmemPool() }), { exactCas: false }]);
+storages.push(['PostgresStorage(pg-mem)', () => new PostgresStorage({ pool: pgmemPool() }), { exactCas: false, serialisesAppends: false }]);
 // Redis: partial storage (runs/work/cache/meta='full/ttl'; memory/vectors='none'). Runs against a fake RedisLike;
 // those two ports are skipped in the conformance suite since they're overridden via composite (capability='none' → skip).
-storages.push(['RedisStorage(fake)', () => new RedisStorage({ client: makeFakeRedis() }), { exactCas: true }]);
+storages.push(['RedisStorage(fake)', () => new RedisStorage({ client: makeFakeRedis() }), { exactCas: true, serialisesAppends: true }]);
 
 for (const [name, make, caps] of storages) {
   // The port-skip decision comes from the storage's OWN declaration: capability 'none' (or the port not
   // existing at all) → that port's conformance tests are skipped. This makes divergence between a manual
   // flag and the declaration impossible.
   const probe = make();
+  // `init()` FIRST. Some capabilities are only knowable after touching the server — PostgresStorage
+  // probes for `pg_advisory_xact_lock` there and disables the memory port when it is absent, which is
+  // exactly the case under pg-mem. Reading `capabilities` before that probe runs gives the value the
+  // adapter held before it knew, so the suite would enrol a port the adapter has since withdrawn and
+  // every memory test would fail on the refusal instead of being skipped.
+  await (probe as { init?: () => Promise<void> }).init?.().catch(() => {});
   const skipMemory = probe.capabilities.memory === 'none' || probe.memory == null;
   const skipVectors = probe.capabilities.vectors === 'none' || probe.vectors == null;
   (probe as any).close?.();
@@ -333,127 +346,7 @@ for (const [name, make, caps] of storages) {
 
     // MemoryStore conformance is skipped for storages that don't provide the memory port (Redis).
     if (!skipMemory) {
-    it('MemoryStore: thread upsert + listThreads (resource filter + DESC + paginated)', async () => {
-      const b = make();
-      await b.memory!.upsertThread(thread('t1', 'u1', 100));
-      await b.memory!.upsertThread(thread('t2', 'u1', 300));
-      await b.memory!.upsertThread(thread('t3', 'u2', 200));
-      const u1 = await b.memory!.listThreads({ resourceId: 'u1' });
-      expect(u1.items.map((t) => t.id)).toEqual(['t2', 't1']);
-      const all = await b.memory!.listThreads({ limit: 2 });
-      expect(all.items.length).toBe(2);
-      expect(all.nextCursor).toBeDefined();
-    });
-
-    it('MemoryStore: appendMessages PER-MESSAGE IDEMPOTENT', async () => {
-      const b = make();
-      await Promise.all([
-        b.memory!.appendMessages('t1', [msg('t1', 0, 'a'), msg('t1', 1, 'b')]),
-        b.memory!.appendMessages('t1', [msg('t1', 0, 'a'), msg('t1', 1, 'b')]),
-        b.memory!.appendMessages('t1', [msg('t1', 2, 'c')]),
-      ]);
-      const page = await b.memory!.getMessages('t1');
-      expect(page.items.map((m) => m.seq)).toEqual([0, 1, 2]);
-    });
-
-    it('MemoryStore: recall thread + resource scope + threshold', async () => {
-      const b = make();
-      await b.memory!.upsertThread(thread('t1', 'u1', 1));
-      await b.memory!.upsertThread(thread('t2', 'u1', 1));
-      await b.memory!.appendMessages('t1', [msg('t1', 0, 'cats', [1, 0]), msg('t1', 1, 'dogs', [0, 1])]);
-      await b.memory!.appendMessages('t2', [msg('t2', 0, 'felines', [0.9, 0.1])]);
-      const r1 = await b.memory!.recall('t1', [1, 0], { topK: 1, scope: 'thread' });
-      expect(r1.map((m) => m.text)).toEqual(['cats']);
-      const r2 = await b.memory!.recall('t1', [1, 0], { topK: 2, scope: 'resource', resourceId: 'u1' });
-      expect(r2.map((m) => m.text).sort()).toEqual(['cats', 'felines']);
-    });
-
-    // P1.5 (AUDIT-R2): messageRange expands EACH hit with its before/after neighbors BY SEQ
-    // within the thread, dedups overlapping windows, returns the union in seq order (hits included).
-    // Verifies in-memory/sqlite/postgres-storage's shared expansion logic (already present pre-P1.5;
-    // this test is new coverage, not a behavior change).
-    it('MemoryStore: recall messageRange expands + dedups overlapping windows, seq order', async () => {
-      const b = make();
-      await b.memory!.upsertThread(thread('t1', 'u1', 1));
-      // seq 2 and 5 match the query ([1,0], score 1); every other seq is orthogonal (score 0 → excluded).
-      const rows = Array.from({ length: 10 }, (_, seq) => msg('t1', seq, `m${seq}`, seq === 2 || seq === 5 ? [1, 0] : [0, 1]));
-      await b.memory!.appendMessages('t1', rows);
-      const r = await b.memory!.recall('t1', [1, 0], { topK: 2, messageRange: { before: 1, after: 2 } });
-      // hit@2 window = seq[1..4], hit@5 window = seq[4..7] → union deduped at seq4, ASC seq order.
-      expect(r.map((m) => m.seq)).toEqual([1, 2, 3, 4, 5, 6, 7]);
-    });
-
-    // P1.5 (AUDIT-R2): filter operators ($eq sugar/$in/$gt) + "filter runs BEFORE topK" — a
-    // filtered-out message must NOT consume a topK slot (the crowding-out regression this guards against:
-    // naively slicing topK first then filtering would silently return fewer than topK, or none).
-    it('MemoryStore: recall filter operators ($eq/$in/$gt), filtered-out hits do not consume topK slots', async () => {
-      const b = make();
-      await b.memory!.upsertThread(thread('t1', 'u1', 1));
-      await b.memory!.appendMessages('t1', [
-        { ...msg('t1', 0, 'A', [1, 0]), metadata: { lang: 'en', tier: 1, priority: 1 } }, // score 1.0 — highest, but lang 'en' (filtered out below)
-        { ...msg('t1', 1, 'B', [0.8, 0.6]), metadata: { lang: 'tr', tier: 2, priority: 5 } }, // score 0.8 — lang 'tr'
-        { ...msg('t1', 2, 'C', [0.6, 0.8]), metadata: { lang: 'tr', tier: 3, priority: 9 } }, // score 0.6 — lang 'tr'
-      ]);
-
-      // topK:1 + {lang:'tr'} (bare-value $eq sugar): A (score 1.0, highest) is filtered OUT before topK
-      // selection → the slot goes to B (score 0.8), NOT an empty result.
-      const eq = await b.memory!.recall('t1', [1, 0], { topK: 1, filter: { lang: 'tr' } });
-      expect(eq.map((m) => m.text)).toEqual(['B']);
-
-      // $in: tier ∈ {1, 3} → A and C (not B).
-      const inOp = await b.memory!.recall('t1', [1, 0], { topK: 5, filter: { tier: { $in: [1, 3] } } });
-      expect(inOp.map((m) => m.text).sort()).toEqual(['A', 'C']);
-
-      // $gt: priority > 4 → B and C (not A).
-      const gtOp = await b.memory!.recall('t1', [1, 0], { topK: 5, filter: { priority: { $gt: 4 } } });
-      expect(gtOp.map((m) => m.text).sort()).toEqual(['B', 'C']);
-    });
-
-    it('MemoryStore: working memory + observations', async () => {
-      const b = make();
-      await b.memory!.setWorkingMemory('t1', { plan: 'x' });
-      expect(await b.memory!.getWorkingMemory('t1')).toEqual({ plan: 'x' });
-      await b.memory!.putObservations('t1', [{ id: 'o1', text: 'obs', createdAt: 1, sourceIds: [], level: 0 }]);
-      expect((await b.memory!.getObservations('t1')).map((o) => o.text)).toEqual(['obs']);
-    });
-
-    // FLOW-10 (optional capability): deleteMessagesAfter — same "typeof … === 'function'" skip
-    // pattern as applyBatch/deletePrefix above. Currently only InMemoryStorage implements this; the
-    // guard means the test is N/A (not failing) on storages that haven't added it yet, and starts
-    // exercising them automatically once they do — no test-file change needed on their side.
-    it('MemoryStore: deleteMessagesAfter — truncates the tail by seq (exclusive), keeps the anchor + before', async () => {
-      const b = make();
-      if (typeof b.memory!.deleteMessagesAfter !== 'function') return; // optional capability absent → N/A
-      await b.memory!.upsertThread(thread('t1', 'u1', 1));
-      await b.memory!.appendMessages('t1', [msg('t1', 0, 'a'), msg('t1', 1, 'b'), msg('t1', 2, 'c'), msg('t1', 3, 'd')]);
-
-      const removed = await b.memory!.deleteMessagesAfter!('t1', 1);
-      expect(removed).toBe(2); // seq 2 and 3 removed
-
-      const page = await b.memory!.getMessages('t1');
-      expect(page.items.map((m) => m.seq)).toEqual([0, 1]); // anchor (1) and everything before it kept, in order
-    });
-
-    it('MemoryStore: deleteMessagesAfter — unknown thread and out-of-range seq are no-ops (0, never throws)', async () => {
-      const b = make();
-      if (typeof b.memory!.deleteMessagesAfter !== 'function') return;
-      // Unknown thread → 0, no throw.
-      await expect(b.memory!.deleteMessagesAfter!('does-not-exist', 0)).resolves.toBe(0);
-
-      await b.memory!.upsertThread(thread('t2', 'u1', 1));
-      await b.memory!.appendMessages('t2', [msg('t2', 0, 'a'), msg('t2', 1, 'b')]);
-
-      // afterSeq at/above the highest existing seq → nothing to remove.
-      expect(await b.memory!.deleteMessagesAfter!('t2', 1)).toBe(0);
-      expect(await b.memory!.deleteMessagesAfter!('t2', 99)).toBe(0);
-      expect((await b.memory!.getMessages('t2')).items.map((m) => m.seq)).toEqual([0, 1]);
-
-      // afterSeq below the lowest existing seq → removes everything.
-      const removedAll = await b.memory!.deleteMessagesAfter!('t2', -1);
-      expect(removedAll).toBe(2);
-      expect((await b.memory!.getMessages('t2')).items).toEqual([]);
-    });
-
+      memoryConformance(make, caps);
     } // /memory capability
 
     it('WorkStore: idempotent append + ackOnce CAS', async () => {

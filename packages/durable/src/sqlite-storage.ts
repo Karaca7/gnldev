@@ -3,6 +3,7 @@
 // MemoryStore = gnl_threads + gnl_messages (per-message PK → idempotent append) + WM + observations.
 // Vectors = 'scan' (brute-force cosine; no pgvector). node:sqlite (loaded at runtime via createRequire).
 import { prefixUpperBound } from './organization.js';
+import { assertUniformSeq } from './storage.js';
 import { createRequire } from 'node:module';
 import { statSync, existsSync } from 'node:fs';
 import { cosineSimilarity } from 'ai';
@@ -14,7 +15,7 @@ import { matchFilter } from './storage.js';
 import type {
   Storage, CapabilityMatrix, Page, ListQuery,
   RunJournal, MemoryStore, VectorStore, WorkStore, CacheStore, MetaStore,
-  AdoptIntoOrgResult, ThreadRecord, MessageRecord, Observation, RecallOptions, VectorItem, VectorMatch, VectorQueryOptions, LogRecord,
+  AdoptIntoOrgResult, ThreadRecord, MessageRecord, MessageAppend, Observation, RecallOptions, VectorItem, VectorMatch, VectorQueryOptions, LogRecord,
 } from './storage.js';
 // P2-migrate schema introspection/migration façade — see migrate.ts's header.
 import { tablesFromDDL } from './migrate.js';
@@ -342,6 +343,7 @@ export class SqliteStorage implements Storage {
       ['gnl_messages', 'thread_id', 'memory'],
       ['gnl_working_memory', 'scope_id', 'memory'],
       ['gnl_observations', 'thread_id', 'memory'],
+      ['gnl_message_batches', 'thread_id', 'memory'],
       ['gnl_work_log', 'ns', 'work'],
       ['gnl_work_kv', 'key', 'work'],
       ['gnl_cache', 'key', 'cache'],
@@ -509,6 +511,7 @@ CREATE TABLE IF NOT EXISTS gnl_messages (
 );
 CREATE TABLE IF NOT EXISTS gnl_working_memory (scope_id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS gnl_observations (thread_id TEXT PRIMARY KEY, obs TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS gnl_message_batches (thread_id TEXT NOT NULL, batch_key TEXT NOT NULL, seq_from INTEGER NOT NULL, seq_to INTEGER NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY (thread_id, batch_key));
 CREATE TABLE IF NOT EXISTS gnl_vectors (id TEXT PRIMARY KEY, text TEXT NOT NULL, embedding TEXT NOT NULL, metadata TEXT, namespace TEXT, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS gnl_work_log (ns TEXT NOT NULL, id TEXT NOT NULL, payload TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY (ns, id));
 CREATE INDEX IF NOT EXISTS gnl_work_log_ns ON gnl_work_log (ns, ts);
@@ -939,17 +942,110 @@ class SqliteMemoryStore implements MemoryStore {
     this.db.prepare('DELETE FROM gnl_messages WHERE thread_id = ?').run(id);
     this.db.prepare('DELETE FROM gnl_working_memory WHERE scope_id = ?').run(id);
     this.db.prepare('DELETE FROM gnl_observations WHERE thread_id = ?').run(id);
+    // See the Postgres twin: a resurrected thread that kept its markers silently drops a legitimate
+    // batch that reuses one of them.
+    this.db.prepare('DELETE FROM gnl_message_batches WHERE thread_id = ?').run(id);
   }
-  async appendMessages(threadId: string, rows: MessageRecord[]): Promise<void> {
+  /**
+   * The same BEGIN IMMEDIATE idiom the run journal uses (see `withTx` there, and the note about why
+   * the body must not `await`). Duplicated rather than shared because it is four lines and the
+   * journal's copy is private to a different class; extracting it would be a wider change than the
+   * defect warrants.
+   *
+   * IMMEDIATE, not deferred: it takes the write lock up front, so two processes on one database file
+   * cannot both read a stale tail and then collide. `fn` is synchronous, which is load-bearing —
+   * node:sqlite is synchronous, and an `await` between BEGIN and COMMIT would let a concurrent caller
+   * join this open transaction and have its committed-in-good-faith writes erased by our ROLLBACK.
+   */
+  private withTx<T>(fn: () => T): T {
+    let began = false;
+    try {
+      this.db.exec('BEGIN IMMEDIATE');
+      began = true;
+    } catch (e) {
+      if (!/within a transaction/i.test(String((e as Error)?.message ?? e))) throw e;
+    }
+    try {
+      const out = fn();
+      if (began) this.db.exec('COMMIT');
+      return out;
+    } catch (e) {
+      if (began) { try { this.db.exec('ROLLBACK'); } catch { /* already rolled back */ } }
+      throw e;
+    }
+  }
+
+  /**
+   * ONE TRANSACTION for the whole batch — see the long note on the Postgres adapter's
+   * `appendMessages`. The rows of an append must land together or not at all: a batch is
+   * `[assistant(tool-call), tool(tool-result)]`, and a half-written one leaves the thread holding a
+   * tool call nothing ever answers, which the AI SDK rejects on every later turn until the orphan
+   * slides out of the memory window (see the Postgres adapter for the measured cost).
+   *
+   * Postgres showed this first because its adapter wrote each row on its own pooled connection. On
+   * sqlite the single-process case was already safe by accident (node:sqlite is synchronous, so the
+   * loop cannot be interrupted); the exposed case is several processes on one file, where each
+   * `stmt.run` was its own autocommit. Measured there: 3 processes x 40 appends lost 14 of 120
+   * messages. The transaction closes the multi-process case and costs nothing in the single-process
+   * one.
+   */
+  async appendMessagesOnce(threadId: string, rows: MessageAppend[], batchKey: string): Promise<boolean> {
+    const assign = assertUniformSeq(threadId, rows);
     const stmt = this.db.prepare(
       `INSERT INTO gnl_messages (thread_id, seq, role, text, embedding, metadata, ts, message)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(thread_id, seq) DO NOTHING`,
     );
-    for (const r of rows) {
-      stmt.run(threadId, r.seq, r.role, r.text ?? null,
-        r.embedding ? JSON.stringify(r.embedding) : null,
-        r.metadata ? serialize(r.metadata) : null, r.ts, serialize(r.message));
-    }
+    const strict = this.db.prepare(
+      `INSERT INTO gnl_messages (thread_id, seq, role, text, embedding, metadata, ts, message)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    const tail = this.db.prepare('SELECT COALESCE(MAX(seq), -1) + 1 AS n FROM gnl_messages WHERE thread_id = ?');
+    const claim = this.db.prepare(
+      `INSERT INTO gnl_message_batches (thread_id, batch_key, seq_from, seq_to, ts) VALUES (?, ?, 0, 0, ?)
+       ON CONFLICT(thread_id, batch_key) DO NOTHING`,
+    );
+    const settle = this.db.prepare('UPDATE gnl_message_batches SET seq_from = ?, seq_to = ? WHERE thread_id = ? AND batch_key = ?');
+    // BEGIN IMMEDIATE takes the write lock before the claim is read, so two processes racing the same
+    // key cannot both see it absent. The claim and the rows commit together or not at all.
+    return this.withTx(() => {
+      if (Number(claim.run(threadId, batchKey, Date.now()).changes ?? 0) === 0) return false;
+      let next = assign ? Number(tail.get(threadId).n) : 0;
+      const from = next;
+      for (const r of rows) {
+        (r.seq === undefined ? strict : stmt).run(threadId, r.seq ?? next++, r.role, r.text ?? null,
+          r.embedding ? JSON.stringify(r.embedding) : null,
+          r.metadata ? serialize(r.metadata) : null, r.ts, serialize(r.message));
+      }
+      settle.run(from, next, threadId, batchKey);
+      return true;
+    });
+  }
+
+  async appendMessages(threadId: string, rows: MessageAppend[]): Promise<void> {
+    if (rows.length === 0) return;
+    const assign = assertUniformSeq(threadId, rows);
+    const stmt = this.db.prepare(
+      `INSERT INTO gnl_messages (thread_id, seq, role, text, embedding, metadata, ts, message)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(thread_id, seq) DO NOTHING`,
+    );
+    // No ON CONFLICT for positions this method assigned: a conflict there means something is wrong,
+    // and swallowing it would silently drop a message. Explicit positions keep the idempotent form.
+    const strict = this.db.prepare(
+      `INSERT INTO gnl_messages (thread_id, seq, role, text, embedding, metadata, ts, message)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    const tail = this.db.prepare('SELECT COALESCE(MAX(seq), -1) + 1 AS n FROM gnl_messages WHERE thread_id = ?');
+    this.withTx(() => {
+      // No advisory lock needed here: BEGIN IMMEDIATE already took the database's write lock, so the
+      // tail this reads cannot move before COMMIT — across processes sharing the file as well as
+      // within one. That is the whole reason the transaction is IMMEDIATE rather than deferred.
+      let next = assign ? Number(tail.get(threadId).n) : 0;
+      for (const r of rows) {
+        (r.seq === undefined ? strict : stmt).run(threadId, r.seq ?? next++, r.role, r.text ?? null,
+          r.embedding ? JSON.stringify(r.embedding) : null,
+          r.metadata ? serialize(r.metadata) : null, r.ts, serialize(r.message));
+      }
+    });
   }
   private rowToMsg(r: any): MessageRecord {
     return {
@@ -973,6 +1069,11 @@ class SqliteMemoryStore implements MemoryStore {
    */
   async deleteMessagesAfter(threadId: string, afterSeq: number): Promise<number> {
     const info = this.db.prepare('DELETE FROM gnl_messages WHERE thread_id = ? AND seq > ?').run(threadId, afterSeq);
+    // Markers for batches that ended past the cut go with them. Leaving them behind makes a later
+    // batch reusing the same key look "already applied", and the regenerated turn is dropped in
+    // silence — measured at 1 message written where 3 were expected, which is the exact class of loss
+    // batch identity exists to prevent.
+    this.db.prepare('DELETE FROM gnl_message_batches WHERE thread_id = ? AND seq_to > ?').run(threadId, afterSeq);
     return Number(info.changes ?? 0);
   }
   async recall(threadId: string, query: number[], opts: RecallOptions): Promise<MessageRecord[]> {

@@ -274,7 +274,11 @@ logical key when you opt in, across runs when you ask for it — and when the ou
 be known (crash between the effect and its record) it **blocks and asks a human** rather than
 guessing in either direction. Correctness is the default, not a per-call-site obligation. The other
 practical difference: this is a library over storage you already run (`node:sqlite`, Postgres, Redis,
-your own adapter), not a platform to deploy onto.
+your own adapter), not a platform to deploy onto. That adapter is a contract, not a shape: the
+`Storage` ports and what each one must guarantee — including that `MemoryStore.appendMessages` assigns
+`seq` itself, per thread and atomically — are specified in
+[`packages/durable/src/storage.ts`](./packages/durable/src/storage.ts) and walked through in
+[the guide, §5.2](./docs/GUIDE.md#52-storage-architecture-6-ports-4-adapters).
 
 **Agents inside a workflow graph.** `@gnldev/workflow` has the graph — `then` / `branch` / `parallel`
 / `foreach` / `dowhile`, plus `sleep`, `waitFor` and suspend/resume — and a `Step` is a two-field

@@ -252,11 +252,15 @@ metadata, created/updated_at, deleted_at (silindi işareti)`. *Ne zaman?* Hafız
 kullanıyorsan; kullanıcının konuşma listesi ekranı buradan gelir.
 
 **④ `gnl_messages` — konuşma mesajları, mesaj başına 1 satır.** Kolonlar: `thread_id + seq
-(sıra numarası — ikisi birlikte birincil anahtar: aynı sıraya iki mesaj yazılamaz → eşzamanlı
-eklemede çiftleme yok), role (user/assistant), text (aranabilir düz metin), embedding (anlamsal
-arama vektörü — "recall" bununla yapılır), ts (zaman), message (mesajın ham/tam hali)`.
-*Ne zaman?* Koşu tamamlanınca konuşma buraya eklenir; sonraki koşularda geçmiş buradan yüklenir,
-anlamsal anımsama burada arar.
+(konuşmadaki konum — DEPO atar, satırları yazdığı transaction'ın içinde, thread bazında
+serileştirerek: aynı thread'e aynı anda ekleyen iki koşu da yazar, biri diğerinin ardına, hiçbiri
+kaybolmaz), role (user/assistant), text (aranabilir düz metin), embedding (anlamsal arama vektörü —
+"recall" bununla yapılır), ts (zaman), message (mesajın ham/tam hali)`. `(thread_id, seq)` birincil
+anahtardır — ama bu bir *replay* güvencesidir, eşzamanlılık güvencesi değil: bilinen konumları
+yeniden üreten bir çağıran (`cloneThread`, transkript içe aktarma) aynı satırı iki kez yazsa tek
+kopya kalır. Yazımdan ÖNCE çağıranın hesapladığı bir konum tanımı gereği bayattır; konumu artık
+çağıran hesaplamıyor. *Ne zaman?* Kullanıcının mesajı ilk model çağrısından önce, üretilen mesajlar
+tamamlanınca yazılır (§7.3); sonraki koşularda geçmiş buradan yüklenir, anlamsal anımsama burada arar.
 
 **⑤ `gnl_working_memory` — ajanın "çalışma notu".** Konuşma/kullanıcı başına TEK satır
 (`scope_id → data`): ajanın kendine tuttuğu güncel özet ("müşterinin adı Ali, siparişi #42...").

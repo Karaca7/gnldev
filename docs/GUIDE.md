@@ -257,11 +257,16 @@ metadata, created/updated_at, deleted_at (deletion flag)`. *When?* If you're usi
 (`threadId`); the user's conversation-list screen comes from here.
 
 **④ `gnl_messages` — conversation messages, one row per message.** Columns: `thread_id + seq
-(sequence number — together they form the primary key: two messages can't be written to the
-same sequence → no duplicates on concurrent inserts), role (user/assistant), text (searchable
-plain text), embedding (semantic search vector — this is what "recall" uses), ts (timestamp),
-message (the raw/full form of the message)`. *When?* Added here once a run completes; loaded
-from here in subsequent runs for history, and semantic recall searches here.
+(position in the conversation — the STORE assigns it as it writes, inside a per-thread serialised
+transaction, so two runs appending to one thread both land, one after the other, and neither is
+lost), role (user/assistant), text (searchable plain text), embedding (semantic search vector —
+this is what "recall" uses), ts (timestamp), message (the raw/full form of the message)`.
+`(thread_id, seq)` is the primary key — a *replay* guarantee, not a concurrency one: a caller that
+reproduces positions it already knows (`cloneThread`, a transcript import) can write the same row
+twice and leaves one copy. A position computed by the caller *before* the write is stale by
+definition, which is why the caller no longer computes it. *When?* The user's message goes in
+before the first model call and the produced ones at completion (§7.3); later runs load history
+from here, and semantic recall searches here.
 
 **⑤ `gnl_working_memory` — the agent's "scratch note."** A SINGLE row per conversation/user
 (`scope_id → data`): the running summary the agent keeps for itself ("customer's name is Ali,

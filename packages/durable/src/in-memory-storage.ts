@@ -2,6 +2,7 @@
 // Zero-infra test storage (moat): per-storage bundles mimic this behavior.
 // Correctness matters, not perf (naive filter/sort). Date.now/Math.random are free to use here (runtime code).
 import { cosineSimilarity } from 'ai';
+import { assertUniformSeq } from './storage.js';
 import { InMemoryJournal } from './journal.js';
 import { stableStringify } from './hash.js';
 import { ENGINE_META_KEYS, assertNoRunsInFlight, assertOrgRegistered, isPlatformKey, orgPrefix } from './organization.js';
@@ -10,7 +11,7 @@ import { matchFilter } from './storage.js';
 import type {
   Storage, CapabilityMatrix, Page, ListQuery,
   RunJournal, MemoryStore, VectorStore, WorkStore, CacheStore, MetaStore,
-  ThreadRecord, MessageRecord, Observation, RecallOptions,
+  ThreadRecord, MessageRecord, MessageAppend, Observation, RecallOptions,
   AdoptIntoOrgResult, VectorItem, VectorMatch, VectorQueryOptions, LogRecord } from './storage.js';
 
 let idc = 0;
@@ -86,13 +87,16 @@ class InMemoryRunJournal implements RunJournal {
 class InMemoryMemoryStore implements MemoryStore {
   /** @internal — see Storage.adoptIntoOrg. */
   _rekey(f: (k: string) => string | undefined): number {
-    return rekeyMap(this.threads, f) + rekeyMap(this.messages, f) + rekeyMap(this.wm, f) + rekeyMap(this.obs, f);
+    return rekeyMap(this.threads, f) + rekeyMap(this.messages, f) + rekeyMap(this.wm, f) + rekeyMap(this.obs, f)
+      + rekeyMap(this.batches, f);
   }
 
   private threads = new Map<string, ThreadRecord>();
   private messages = new Map<string, MessageRecord[]>(); // threadId → seq-ordered rows
   private wm = new Map<string, unknown>();
   private obs = new Map<string, Observation[]>();
+  /** threadId → batchKey → the seq range that batch wrote. See `appendMessagesOnce`. */
+  private batches = new Map<string, Map<string, { from: number; to: number }>>();
 
   async upsertThread(rec: ThreadRecord) { this.threads.set(rec.id, { ...rec }); }
   async getThread(id: string) {
@@ -111,15 +115,46 @@ class InMemoryMemoryStore implements MemoryStore {
     this.messages.delete(id);
     this.wm.delete(id);
     this.obs.delete(id);
+    // A soft-deleted thread can be brought back by `upsertThread`; markers left behind would answer a
+    // legitimate later batch with "already applied" and drop it silently.
+    this.batches.delete(id);
   }
 
-  async appendMessages(threadId: string, rows: MessageRecord[]) {
+  /**
+   * Already all-or-nothing, and load-bearing that it stays so: there is NO `await` in this body, so it
+   * runs to completion in one microtask and a batch can never be observed half-written. The SQL
+   * adapters had to be given an explicit transaction to reach the same guarantee.
+   *
+   * The flip side is a testing hazard worth stating: because this adapter cannot produce a partially
+   * written batch, it cannot reproduce the orphaned-tool-call failure that the SQL adapters produced
+   * in production (measured: 0/30 here vs 16/30 against real Postgres). A green concurrency test
+   * against InMemoryStorage is not evidence that the SQL adapters are safe.
+   */
+  async appendMessagesOnce(threadId: string, rows: MessageAppend[], batchKey: string): Promise<boolean> {
+    const seen = this.batches.get(threadId) ?? new Map();
+    if (seen.has(batchKey)) return false;
+    const log = this.messages.get(threadId) ?? [];
+    const from = log.reduce((m, r) => Math.max(m, r.seq + 1), 0);
+    await this.appendMessages(threadId, rows);
+    const after = (this.messages.get(threadId) ?? []).reduce((m, r) => Math.max(m, r.seq + 1), 0);
+    seen.set(batchKey, { from, to: after });
+    this.batches.set(threadId, seen);
+    return true;
+  }
+
+  async appendMessages(threadId: string, rows: MessageAppend[]) {
     const log = this.messages.get(threadId) ?? [];
     const seen = new Set(log.map((m) => m.seq));
+    // Assigning from the tail inside this same synchronous body is what makes the store the authority
+    // on position. There is no lock because there is nothing to lock against: no `await` runs between
+    // reading the tail and writing the rows.
+    assertUniformSeq(threadId, rows);
+    let next = log.reduce((m, r) => Math.max(m, r.seq + 1), 0);
     for (const r of rows) {
-      if (seen.has(r.seq)) continue; // per-message idempotent (CAS equivalent)
-      log.push({ ...r, threadId });
-      seen.add(r.seq);
+      const seq = r.seq ?? next++;
+      if (seen.has(seq)) continue; // per-message idempotent (CAS equivalent)
+      log.push({ ...r, threadId, seq });
+      seen.add(seq);
     }
     log.sort((a, b) => a.seq - b.seq);
     this.messages.set(threadId, log);
@@ -172,6 +207,9 @@ class InMemoryMemoryStore implements MemoryStore {
 
   /** FLOW-10 (reference behavior — see storage.ts JSDoc): keep seq <= afterSeq, drop the rest. */
   async deleteMessagesAfter(threadId: string, afterSeq: number): Promise<number> {
+    // Markers past the cut go with the rows — see the Postgres twin.
+    const b = this.batches.get(threadId);
+    if (b) for (const [k, v] of b) if (v.to > afterSeq) b.delete(k);
     const log = this.messages.get(threadId);
     if (!log || log.length === 0) return 0;
     const kept = log.filter((m) => m.seq <= afterSeq);

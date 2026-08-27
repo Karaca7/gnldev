@@ -703,6 +703,25 @@ async function claimMemoryAppend(
  * Happens BEFORE this call starts, the marker stays 'pending' → the NEXT retry takes it over after
  * The TTL and tries the append ONE MORE TIME (double-append) — the safer side compared to a missing
  * Message (old behavior: lost forever), and the window is very narrow (about the width of one put call).
+ *
+ * WHAT "THE SAFER SIDE" COSTS, stated plainly, because the sentence above undersells it. The repeated
+ * append writes the WHOLE turn again, and the assistant message it carries holds the same
+ * `toolCallId` as the first copy. The AI SDK does not object; Anthropic and OpenAI reject a duplicate
+ * `tool_use` id, so the thread can end up failing at the provider on every later turn — the same
+ * unrecoverable shape as a missing tool result, arrived at from the opposite direction. Safer than
+ * silent loss, yes. Harmless, no.
+ *
+ * This window is not only a crash window. Measured with no process ever dying: a worker holding the
+ * per-thread append lock on a connection that vanished without closing (TCP blackhole) parks every
+ * other append on that thread; 60 seconds later this marker is stale, a retry takes it over, the lock
+ * is finally released, and both writes land. `appendMessages` bounds that wait with `lock_timeout`
+ * well under MEM_APPEND_TTL_MS precisely so the queued writer fails instead of outliving the TTL.
+ *
+ * The real fix is to write this marker in the SAME transaction as the messages, which needs the
+ * marker to live beside them rather than in the journal. Deferred deliberately: it moves an
+ * established key out of the journal and needs a read-fallback or a backfill for markers already
+ * written there, plus cascade deletes in `deleteThread`/`deleteMessagesAfter` and the org adoption
+ * key lists. See the durability risk audit.
  */
 async function markMemoryAppendDone(
   journal: Journal,
@@ -745,13 +764,9 @@ async function writeAheadIncoming(
   limits: RunLimits | undefined,
 ): Promise<void> {
   if (alreadyStored || incoming.length === 0) return;
-  const marker = runKeys.memUserAppended(runId);
-  const pending = await claimMemoryAppend(journal, marker);
-  if (!pending) return;
-  await memory.append(threadId, incoming);
+  const wrote = await appendBatchOnce(memory, journal, runId, threadId, runKeys.memUserAppended(runId), incoming);
   // PHASE 3: provenance stamp for the incoming half — the completion append stamps only `produced`.
-  await recordAppendedTaintProvenance(journal, runId, threadId, limits, incoming);
-  await markMemoryAppendDone(journal, marker, pending);
+  if (wrote) await recordAppendedTaintProvenance(journal, runId, threadId, limits, incoming);
 }
 
 /**
@@ -784,6 +799,89 @@ async function dropIncomingIfAppendedEarlier(
     return true;
   }
   return alreadyStored;
+}
+
+/**
+ * Append a batch at most once, preferring the store's own identity when it has one.
+ *
+ * Two mechanisms exist and this picks between them. `memory.appendOnce` writes the batch identity in
+ * the SAME transaction as the rows, so "appended but not marked" is not a reachable state. The older
+ * marker below is two writes to two stores, and the gap between them is real: a process that dies
+ * there leaves the marker unset and the retry appends the whole turn again — measured, 25 rows became
+ * 50, with the same `toolCallId` twice, which real providers reject.
+ *
+ * READ THE OLD MARKER FIRST, ALWAYS. This is the migration, and without it the upgrade is a data
+ * hazard rather than an improvement: every batch marked in the journal BEFORE the new path existed is
+ * invisible to a store that only consults its own table, so any resume or retry of those runs would
+ * apply them a second time. The window is not "the deploy" — it is every run still reachable by a
+ * retry. One extra journal read on a path that already does several is a small price for not needing
+ * a backfill migration at all.
+ */
+/**
+ * The completion append, which has to be two different shapes for two different mechanisms.
+ *
+ * With per-batch identity the question and the answer are independent batches: each carries its own
+ * key, each returns false if it already landed, and the per-thread lock keeps them in order. That is
+ * the design F7 wanted, and the stale-claim takeover it used to need disappears with it.
+ *
+ * Without it, the old shape is preserved EXACTLY — one claim on the answer's marker gating a single
+ * merged write. Not for compatibility's sake: the merge is what made the old path safe. Splitting it
+ * into two writes there would change when each half lands and how many times `append` is called, and
+ * the tests pinning that path are pinning a real guarantee, not an implementation detail.
+ */
+async function appendCompletion(
+  memory: Memory,
+  journal: Journal,
+  runId: string,
+  threadId: string,
+  marker: string,
+  incoming: any[],
+  incomingStored: boolean,
+  produced: any[],
+  limits: RunLimits | undefined,
+): Promise<void> {
+  const needIncoming = !incomingStored && incoming.length > 0;
+  if (memory.appendOnce) {
+    if (needIncoming) {
+      const w = await appendBatchOnce(memory, journal, runId, threadId, runKeys.memUserAppended(runId), incoming);
+      if (w) await recordAppendedTaintProvenance(journal, runId, threadId, limits, incoming);
+    }
+    const wrote = await appendBatchOnce(memory, journal, runId, threadId, marker, produced);
+    if (wrote) await recordAppendedTaintProvenance(journal, runId, threadId, limits, produced);
+    return;
+  }
+  const pending = await claimMemoryAppend(journal, marker);
+  if (!pending) return;
+  // F5: a write-ahead skipped over ANOTHER worker's pending claim, since gone stale — take it over so
+  // the question rides along with the answer instead of being lost. A still-FRESH claim keeps the
+  // safe-side skip; that sub-TTL window is the documented residual of this path.
+  const userPending = needIncoming ? await claimMemoryAppend(journal, runKeys.memUserAppended(runId)) : undefined;
+  const appended = userPending ? [...incoming, ...produced] : produced;
+  await memory.append(threadId, appended);
+  await recordAppendedTaintProvenance(journal, runId, threadId, limits, appended);
+  if (userPending) await markMemoryAppendDone(journal, runKeys.memUserAppended(runId), userPending);
+  await markMemoryAppendDone(journal, marker, pending);
+}
+
+async function appendBatchOnce(
+  memory: Memory,
+  journal: Journal,
+  runId: string,
+  threadId: string,
+  marker: string,
+  messages: any[],
+): Promise<boolean> {
+  if (messages.length === 0) return false;
+  if (memory.appendOnce) {
+    // Written by the pre-upgrade path for this very batch → it is already in the thread.
+    if ((await journal.get(marker)) === true) return false;
+    return memory.appendOnce(threadId, messages, marker);
+  }
+  const pending = await claimMemoryAppend(journal, marker);
+  if (!pending) return false;
+  await memory.append(threadId, messages);
+  await markMemoryAppendDone(journal, marker, pending);
+  return true;
 }
 
 /**
@@ -1103,30 +1201,15 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   // thanks to the pending marker, a legitimate retry with the SAME runId retries the append (see the
   // Memory self-heal tests).
   if (memory && threadId && interrupts.length === 0) {
-    const marker = runKeys.memAppended(runId);
-    const pending = await claimMemoryAppend(journal, marker);
-    if (pending) {
-      // PRODUCED only — `incoming` was already persisted pre-model by writeAheadIncoming (or was
-      // Found already stored by the tail-dedupe); re-appending it here would duplicate the turn.
-      // F3 note (deliberate): under CONCURRENT turns on one thread, messages land in SEND order and
-      // Answers in COMPLETION order — the transcript reflects what actually happened, rather than the
-      // Old atomic-pair append that reordered reality into adjacent Q/A pairs.
-      const produced = producedMessages(result);
-      // F5: if this run's write-ahead was skipped over ANOTHER worker's pending claim and that claim
-      // Has since gone STALE (crashed before appending), take it over now — the question rides along
-      // With the answer instead of being lost. A still-FRESH claim keeps the safe-side skip (the
-      // Owner may yet land it); that sub-TTL window is the documented residual.
-      let userPending: { status: 'pending'; startedAt: number } | undefined;
-      if (!incomingStored && incoming.length > 0) {
-        userPending = await claimMemoryAppend(journal, runKeys.memUserAppended(runId));
-      }
-      const appended = userPending ? [...incoming, ...produced] : produced;
-      await memory.append(threadId, appended);
-      // PHASE 3: stamp content provenance for directly-tainted runs (content-window expiry input).
-      await recordAppendedTaintProvenance(journal, runId, threadId, limits, appended);
-      if (userPending) await markMemoryAppendDone(journal, runKeys.memUserAppended(runId), userPending);
-      await markMemoryAppendDone(journal, marker, pending);
-    }
+    // PRODUCED only — `incoming` was already persisted pre-model by writeAheadIncoming (or was found
+    // already stored by the tail-dedupe); re-appending it here would duplicate the turn.
+    // F3 note (deliberate): under CONCURRENT turns on one thread, messages land in SEND order and
+    // answers in COMPLETION order — the transcript reflects what actually happened, rather than the
+    // old atomic-pair append that reordered reality into adjacent Q/A pairs.
+    // The claim lives INSIDE appendCompletion now; claiming here as well made the inner one lose and
+    // skip the append entirely — measured as 2 stored messages where 4 were expected.
+    const produced = producedMessages(result);
+    await appendCompletion(memory, journal, runId, threadId, runKeys.memAppended(runId), incoming, incomingStored, produced, limits);
   }
 
   // 1.1: IF the run COMPLETED (not suspended), increment the organization usage counter —
@@ -1449,22 +1532,9 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
             // Here INSIDE a try/catch (below) → if append throws, the marker stays 'pending': the
             // NEXT resume/retry (SAME runId) self-heals after the TTL; on this turn the error is
             // Made VISIBLE via console.warn but the stream is NOT BROKEN (streamText's own contract).
-            const marker = runKeys.memAppended(runId);
-            const pending = await claimMemoryAppend(journal, marker);
-            if (pending) {
-              // PRODUCED only — `incoming` went in pre-model via writeAheadIncoming (parity with
-              // RunDurableInner's completion append above, including the F3/F5 notes there).
-              let userPending: { status: 'pending'; startedAt: number } | undefined;
-              if (!incomingStored && incoming.length > 0) {
-                userPending = await claimMemoryAppend(journal, runKeys.memUserAppended(runId));
-              }
-              const appended = userPending ? [...incoming, ...produced] : produced;
-              await memory.append(threadId, appended);
-              // PHASE 3: provenance stamp — parity with runDurableInner (shared helper).
-              await recordAppendedTaintProvenance(journal, runId, threadId, limits, appended);
-              if (userPending) await markMemoryAppendDone(journal, runKeys.memUserAppended(runId), userPending);
-              await markMemoryAppendDone(journal, marker, pending);
-            }
+            // PRODUCED only — `incoming` went in pre-model via writeAheadIncoming. Shared with
+            // runDurableInner so the two paths cannot drift.
+            await appendCompletion(memory, journal, runId, threadId, runKeys.memAppended(runId), incoming, incomingStored, produced, limits);
           }
         } catch (err) {
           // NO silent swallowing (audit): history could not be written for this run — surface it, don't break the stream.

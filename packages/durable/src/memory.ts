@@ -15,6 +15,18 @@ export interface RecalledMessageRef {
   role: string;
   preview: string;
   score?: number;
+  /**
+   * Present as `'repair'` when this row was pulled in to answer a recalled `tool-call`, rather than
+   * chosen by similarity. Absent on ordinary selections.
+   *
+   * `score`'s absence could not carry this meaning: on this type it already means "a `messageRange`
+   * context neighbor", and one field cannot mean two things. Without the distinction a repair row
+   * renders in the inspector as an ordinary recall hit, which is what it looked like before this
+   * existed.
+   */
+  origin?: 'repair';
+  /** Why a `dropped` ref was left out. Absent on rows that were injected. */
+  reason?: 'unanswered-tool-call' | 'duplicate-tool-call-id';
 }
 
 /**
@@ -35,6 +47,20 @@ export interface MemoryContextProvenance {
    * Answer; absent on records written before the field existed (readers fall back to the count).
    */
   recent?: RecalledMessageRef[];
+  /**
+   * Selections recall made that were NOT injected, and why. A recalled message carrying a `tool-call`
+   * whose `tool-result` cannot be produced is left out, because a prompt the provider refuses is worth
+   * less than a lost memory — but leaving it out silently is indistinguishable from recall finding
+   * nothing, and the difference matters to anyone asking why the model forgot something.
+   *
+   * DELIBERATELY NOT part of `recalled`. That list is consumed as "what was provably injected" — the
+   * memory-off regression replay subtracts it from the prompt — so listing a message there that never
+   * reached the model would have it subtract something that was never added.
+   *
+   * `droppedCount` is the true count; `dropped` is capped like `recent` for the same reason.
+   */
+  droppedCount?: number;
+  dropped?: RecalledMessageRef[];
   /** OM path only: number of non-condensed observations injected as a system message. */
   observationCount?: number;
   /** Length of the working-memory system injection (absent = no WM text was injected). */
@@ -79,6 +105,16 @@ export interface Memory {
   getMessages(threadId: string, opts?: { query?: string; resourceId?: string; scope?: 'thread' | 'resource' }): Promise<any[]>;
   /** Append new messages to a thread. */
   append(threadId: string, messages: any[]): Promise<void>;
+  /**
+   * Append AT MOST ONCE under `batchKey`; false means that key already landed and nothing was written.
+   *
+   * OPTIONAL, and where it is absent run.ts keeps its own two-phase marker — which is weaker in a way
+   * worth naming: that marker is written after the append returns, so a process that dies in between
+   * leaves it unset and the retry writes the whole turn again, same `toolCallId` and all. Measured
+   * through the full run path: 25 rows became 50. An implementation that can write the identity in
+   * the same transaction as the rows removes the window instead of narrowing it.
+   */
+  appendOnce?(threadId: string, messages: any[], batchKey: string): Promise<boolean>;
   /** Persistent free-text working memory (optional). */
   getWorkingMemory?(threadId: string): Promise<string | undefined>;
   setWorkingMemory?(threadId: string, value: string): Promise<void>;

@@ -43,6 +43,14 @@ tests for it are behavioural:
   we would rather you were told than silently mislabel a failed run.)*
 - Changing a persisted key schema, or the meaning of a stored field.
 - Tightening validation so an input that used to be accepted is now rejected.
+- Widening what an interface we export sends to code that *implements* it. Adding a case an adapter
+  must now handle is a break even though every caller is unaffected — the two directions of an
+  interface have separate compatibility, and only the caller's is additive. *(Example:
+  `MemoryStore.appendMessages` gaining `seq?: number`. Callers pass what they always passed;
+  implementers must now assign a position when none arrives.)* Declare such a member as a property
+  with a function type rather than a method, so `strict` checks the parameter contravariantly and the
+  break is a compile error instead of an `undefined` that only shows up in production — TypeScript
+  exempts *method* declarations from that check, which is exactly the case where nothing would warn.
 
 **Not breaking** — additive:
 
@@ -59,8 +67,24 @@ stays readable, and a missing field means "the old behaviour", never "throw". Ad
 `ALTER TABLE … IF NOT EXISTS`-style migrations at startup, and `checkSchema()` / `migrateSchema()`
 exist for deployments that would rather migrate out of band than have a process do it on boot.
 
-**Downgrades are not supported.** Data written by a newer version may carry fields an older one does not
-know, and while it will typically ignore them, we do not test that direction and will not fix it.
+The storage *ports* carry their own compatibility, separate from the data. A port can change while
+every table stays as it was, and then the question is not "can an old version read this row" but "does
+an adapter written against the old signature still behave correctly". Changes to a port are listed
+under `Changed` in the changelog with the implementer's required edit spelled out, and the member is
+shaped so the compiler enforces it (see "What counts as breaking"). Guarantees a port provides
+cooperatively — a lock an adapter must ask for, not one the database imposes — hold only among
+processes running the same version; a rolling deploy is a window where they do not.
+
+**Downgrades are not supported.** Data written by a newer version may carry fields an older one does
+not know, and while it will typically ignore them, we do not test that direction and will not fix it.
+
+An unchanged schema is not by itself a safe downgrade, and this is the trap worth naming: a release can
+leave every table alone and still change a *protocol* — which process assigns a value, which lock a
+writer is expected to take. Locks that adapters take cooperatively are not enforced on a version that
+does not know to take them, so running two versions against one database is a window in which the
+older one's guarantees are the ones that apply. Where a release has that shape it is written up under
+`Known limits` in the changelog, with the direction that is safe stated explicitly — reading the two
+paragraphs together is the point, since the data half and the protocol half can disagree.
 
 ## Deprecation
 
