@@ -856,7 +856,13 @@ class PgRunJournal implements RunJournal {
     // Same upper bound as the SQLite approach: prefixUpperBound(prefix).
     const c = this.shape.collate;
     const rg = pgRange('key', c, prefix, 1);
-    const r = await this.q(`SELECT key FROM gnl_run_journal WHERE ${rg.where} ORDER BY created_at`, rg.params);
+    // `key` tie-breaker, for the reason `readRun` below already states: Postgres does not guarantee
+    // order for equal ORDER BY keys, and entries written in the same millisecond (parallel tool
+    // calls) could otherwise come back in a different order on every read. `readRun` has carried
+    // this since Decision #4 and Redis sorts the same way — this one call was left behind, so two
+    // reads of the same prefix could disagree and a caller paging through them could see a key twice
+    // or not at all.
+    const r = await this.q(`SELECT key FROM gnl_run_journal WHERE ${rg.where} ORDER BY created_at, key`, rg.params);
     return r.rows.map((x) => x.key);
   }
 

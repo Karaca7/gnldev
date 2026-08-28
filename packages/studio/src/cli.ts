@@ -4,8 +4,13 @@ import { toJournal } from '@gnldev/durable';
 import { SqliteStorage } from '@gnldev/durable/sqlite';
 import { createStudioApp, type StudioAppOptions } from './server.js';
 import { createStudioRunner } from './runner.js';
-import { aiToolSchema } from './ai-schema.js';
 import { decideExposure, isLoopbackHost, resolveConfigAuth } from './expose.js';
+// `ai-schema.js` is NOT imported here. It is the one module that imports `ai` (see its header), and
+// `ai` is an OPTIONAL peer — the package promises the core stays `ai`-free and ships the bridge as a
+// separate `./ai` subpath. A static import at the top of this file broke that promise for the whole
+// binary: `gnl-studio --db <runs.db>` runs no agents and never touches a tool schema, yet it failed
+// at module load with "Cannot find package 'ai'" on any install that took the peer at its word.
+// Only the --config branch needs it, so only that branch loads it.
 
 function getArg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -74,6 +79,9 @@ async function main(): Promise<void> {
     }
     const gnl = createGnl(memoryFactory ? { ...cfg, memoryFactory } : cfg);
     const reader = cfg.storage ? toJournal(cfg.storage.runs) : cfg.journal;
+    // The Playground renders a form from each tool's input schema, which is the only thing that needs
+    // the AI SDK. Loaded here rather than at the top of the file so the inspector path stays `ai`-free.
+    const { aiToolSchema } = await import('./ai-schema.js');
     opts = {
       reader,
       gnl: createStudioRunner(gnl, { ...cfg, journal: cfg.storage?.runs ?? cfg.journal }, { toJsonSchema: aiToolSchema }),

@@ -175,8 +175,22 @@ export interface DatasetMeta { id: string; cases: number; description?: string; 
 export interface EvalDatasetResult { datasetId: string; cases: { caseId: string; output: string; scores: Record<string, { score: number; reason?: string }> }[]; aggregate: Record<string, number>; }
 // ThreadId is optional: only present on runs tied to a thread (backend ready — server /runs).
 export interface RunSummary { runId: string; status: 'completed' | 'suspended' | 'failed' | 'running' | 'canceled'; modelSteps: number; toolCalls: number; threadId?: string; agent?: string; }
-/** S4 pagination envelope: GET /runs?limit=&cursor= (newest first). */
-export interface RunsPage { items: RunSummary[]; nextCursor?: string; total: number; }
+/**
+ * S4 pagination envelope: GET /runs?limit=&cursor= (newest first).
+ *
+ * `total` is OPTIONAL because only some backends can produce it. Studio's own `/runs` returns it
+ * (it has a cheap status aggregate); `@gnldev/server`'s `/runs` returns `{items,nextCursor}` and
+ * never has — this type used to require it anyway, so against a real server `total` was `undefined`
+ * at runtime and every consumer's `?? 0` rendered a confident **0 runs** next to a full list.
+ *
+ * It stays optional rather than being backfilled into the server for the same reason
+ * `WorkflowRunRegistryPage` below has never carried one: the paged path delegates to
+ * `listRunsPaged`, and there is no CHEAP filtered count behind it. Not "impossible" — a count can
+ * always be bought with another query — which is why this is a `?count=1`-shaped opt-in later rather
+ * than a field the envelope guarantees. Render the count when it is there; when it is not, say how
+ * many are loaded and that more exist — never invent a denominator.
+ */
+export interface RunsPage { items: RunSummary[]; nextCursor?: string; total?: number; }
 /** API-09: optional GET /runs filters (status/agent pushed down server-side; q = runId substring). */
 export interface RunsFilter { status?: RunSummary['status']; agent?: string; q?: string; }
 /** POST /retention/sweep response (purged is truncated to the first 100 runIds). */

@@ -761,8 +761,12 @@ class SqliteRunJournal implements RunJournal {
   }
   async listKeys(prefix: string): Promise<string[]> {
     const rg = range('key', prefix);
-      const rows = this.db.prepare(`SELECT key FROM gnl_run_journal WHERE ${rg.where} ORDER BY created_at`)
-        .all(...rg.params) as { key: string }[];
+    // `key` tie-breaker — same reason `readRun` below carries one (Decision #4): entries written in
+    // the same millisecond have no defined order without it, so two reads of one prefix can disagree.
+    // SQLite's plan is stabler than Postgres's in practice, which is exactly why this was easy to
+    // leave out and hard to notice; the guarantee should not depend on which engine you happen to run.
+    const rows = this.db.prepare(`SELECT key FROM gnl_run_journal WHERE ${rg.where} ORDER BY created_at, key`)
+      .all(...rg.params) as { key: string }[];
     return rows.map((r) => r.key);
   }
 

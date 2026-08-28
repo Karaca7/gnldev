@@ -1,6 +1,6 @@
 // S4 pagination: GET /runs?limit=&cursor= → a Page envelope (newest first); no parameters → a flat array (backward-compatible).
 import { describe, it, expect, vi } from 'vitest';
-import { InMemoryJournal } from '@gnldev/durable';
+import { InMemoryJournal, purgeRun } from '@gnldev/durable';
 import type { RunSummary } from '@gnldev/durable';
 import { createStudioApi } from '../src/server.js';
 import { call } from './call.js';
@@ -21,15 +21,35 @@ describe('GET /runs pagination', () => {
     const p1 = await (await call(app, '/runs?limit=2')).json();
     expect(p1.total).toBe(5);
     expect(p1.items.map((r: { runId: string }) => r.runId)).toEqual(['run-5', 'run-4']);
-    expect(p1.nextCursor).toBe('2');
+    expect(p1.nextCursor).toBeDefined();  // value is encoding, not contract — see the opacity test below
 
     const p2 = await (await call(app, `/runs?limit=2&cursor=${p1.nextCursor}`)).json();
     expect(p2.items.map((r: { runId: string }) => r.runId)).toEqual(['run-3', 'run-2']);
-    expect(p2.nextCursor).toBe('4');
+    expect(p2.nextCursor).toBeDefined();
 
     const p3 = await (await call(app, `/runs?limit=2&cursor=${p2.nextCursor}`)).json();
     expect(p3.items.map((r: { runId: string }) => r.runId)).toEqual(['run-1']);
     expect(p3.nextCursor).toBeUndefined(); // last page
+  });
+
+  // The clamp exists because a cursor can outlive the rows it points past: `sweepRuns` deletes old
+  // runs, which is the one thing that DOES move an ascending anchor. Without it the route asks the
+  // engine for a window beyond the end. Nothing else pins it — remove the clamp and every other test
+  // here still passes.
+  it('a cursor pointing past the end lands on the first page, not on an empty one', async () => {
+    const journal = new InMemoryJournal();
+    await seedRuns(journal, 3);
+    const app = createStudioApi({ reader: journal });
+
+    const far = await (await call(app, '/runs?limit=2&cursor=9999')).json();
+    expect(far.items.map((r: RunSummary) => r.runId)).toEqual(['run-3', 'run-2']);
+
+    // Zero is a real anchor — "the window ends at the oldest row" — but it is never handed out (the
+    // last page reports no cursor at all), so arriving with it means a hand-written or stale request.
+    // It is treated as absent for the same reason `-5` is: an empty list is a worse answer than the
+    // first page.
+    const zero = await (await call(app, '/runs?limit=2&cursor=0')).json();
+    expect(zero.items.map((r: RunSummary) => r.runId)).toEqual(['run-3', 'run-2']);
   });
 
   it('page items carry threadId (from the run\'s :input entry); absent if there is none', async () => {
@@ -59,7 +79,10 @@ describe('GET /runs pagination', () => {
     const journal = new InMemoryJournal();
     await seedRuns(journal, 3);
     const app = createStudioApi({ reader: journal });
-    // limit=abc → clamped to a minimum of 1; cursor=-5 → clamped to 0
+    // limit=abc → clamped to a minimum of 1; cursor=-5 → treated as absent, i.e. the FIRST page.
+    // Not "clamped to 0": under the ascending-anchor cursor, 0 is a real position meaning "the window
+    // ends at the oldest row", so clamping garbage to it would answer a malformed request with an
+    // empty list. See the cursor note in server.ts.
     const res = await (await call(app, '/runs?limit=abc&cursor=-5')).json();
     expect(res.items).toHaveLength(1);
     expect(res.items[0].runId).toBe('run-3');
@@ -109,11 +132,11 @@ describe('GET /runs pagination', () => {
       const p1 = await (await call(app, '/runs?limit=2')).json();
       expect(p1.items.map((r: RunSummary) => r.runId)).toEqual(['run-5', 'run-4']);
       expect(p1.total).toBe(5);
-      expect(p1.nextCursor).toBe('2');
+      expect(p1.nextCursor).toBeDefined();  // value is encoding, not contract — see the opacity test below
 
       const p2 = await (await call(app, `/runs?limit=2&cursor=${p1.nextCursor}`)).json();
       expect(p2.items.map((r: RunSummary) => r.runId)).toEqual(['run-3', 'run-2']);
-      expect(p2.nextCursor).toBe('4');
+      expect(p2.nextCursor).toBeDefined();
 
       const p3 = await (await call(app, `/runs?limit=2&cursor=${p2.nextCursor}`)).json();
       expect(p3.items.map((r: RunSummary) => r.runId)).toEqual(['run-1']);
@@ -136,11 +159,11 @@ describe('GET /runs pagination', () => {
       const p1 = await (await call(app, '/runs?limit=2')).json();
       expect(p1.items.map((r: RunSummary) => r.runId)).toEqual(['run-5', 'run-4']);
       expect(p1.total).toBe(5);
-      expect(p1.nextCursor).toBe('2');
+      expect(p1.nextCursor).toBeDefined();  // value is encoding, not contract — see the opacity test below
 
       const p2 = await (await call(app, `/runs?limit=2&cursor=${p1.nextCursor}`)).json();
       expect(p2.items.map((r: RunSummary) => r.runId)).toEqual(['run-3', 'run-2']);
-      expect(p2.nextCursor).toBe('4');
+      expect(p2.nextCursor).toBeDefined();
 
       const p3 = await (await call(app, `/runs?limit=2&cursor=${p2.nextCursor}`)).json();
       expect(p3.items.map((r: RunSummary) => r.runId)).toEqual(['run-1']);
@@ -148,6 +171,73 @@ describe('GET /runs pagination', () => {
 
       expect(listSpy).toHaveBeenCalled();
     });
+
+    // The reason the cursor stopped being a newest-first offset.
+    //
+    // Runs arrive while somebody is reading. With the offset reading, page 2 recomputed its window
+    // from a total that had grown in the meantime — `ascEnd = total - start` — so every insert pushed
+    // the window back toward rows the reader had already been shown. Two inserts against a 5-run
+    // journal reproduced it exactly: page 2 came back byte-identical to page 1, both runs repeated,
+    // and the two rows that should have been on page 2 were never reachable at all. Silent: the
+    // envelope is well-formed, the count is right, the rows are real.
+    //
+    // An ascending anchor cannot drift under an append, because appending does not renumber a row
+    // that already exists. Both branches are pinned because a session can start in one and continue
+    // in the other (see the cursor note in server.ts).
+    it('a run written between page 1 and page 2 does not repeat or skip rows — push-down', async () => {
+      const items = [...fixture];
+      const app = createStudioApi({ reader: makePagedReader(items) as any });
+
+      const p1 = await (await call(app, '/runs?limit=2')).json();
+      expect(p1.items.map((r: RunSummary) => r.runId)).toEqual(['run-5', 'run-4']);
+
+      // Two runs land. `makePagedReader` closes over `items`, so the fake now serves 7.
+      items.push({ runId: 'run-6', status: 'completed', steps: 0 } as RunSummary);
+      items.push({ runId: 'run-7', status: 'completed', steps: 0 } as RunSummary);
+
+      const p2 = await (await call(app, `/runs?limit=2&cursor=${p1.nextCursor}`)).json();
+      expect(p2.items.map((r: RunSummary) => r.runId)).toEqual(['run-3', 'run-2']);
+      // The old code returned ['run-5','run-4'] here — the whole of page 1, a second time.
+      expect(p2.items.map((r: RunSummary) => r.runId)).not.toEqual(p1.items.map((r: RunSummary) => r.runId));
+
+      const p3 = await (await call(app, `/runs?limit=2&cursor=${p2.nextCursor}`)).json();
+      expect(p3.items.map((r: RunSummary) => r.runId)).toEqual(['run-1']);
+      expect(p3.nextCursor).toBeUndefined();
+
+      // Every one of the five runs the reader started with was shown exactly once.
+      const seen = [p1, p2, p3].flatMap((p) => p.items.map((r: RunSummary) => r.runId));
+      expect([...seen].sort()).toEqual(['run-1', 'run-2', 'run-3', 'run-4', 'run-5']);
+    });
+  });
+
+  // The same drift, down the OTHER branch. This one has to use a bare reader on purpose: an
+  // `InMemoryJournal` implements listRunsPaged AND countRunsByStatus, so handing it over would take
+  // the push-down branch and quietly re-test the case above under a name that claims otherwise.
+  //
+  // The branch matters. Under an organization `countRunsByStatus` is deliberately left unbridged
+  // (organization.ts) and resolves to undefined, so EVERY org-scoped request lands here — which makes
+  // this the path most real multi-tenant traffic takes, not the exotic one.
+  it('a run written between page 1 and page 2 does not repeat or skip rows — full-scan fallback', async () => {
+    const journal = new InMemoryJournal();
+    await seedRuns(journal, 5);
+    const bareReader = { listRuns: journal.listRuns.bind(journal), readRun: journal.readRun.bind(journal) };
+    const app = createStudioApi({ reader: bareReader as any });
+
+    const p1 = await (await call(app, '/runs?limit=2')).json();
+    expect(p1.items.map((r: RunSummary) => r.runId)).toEqual(['run-5', 'run-4']);
+
+    await journal.put('run-6:model:0', { content: [{ type: 'text', text: 'answer 6' }], finishReason: 'stop' });
+    await journal.put('run-7:model:0', { content: [{ type: 'text', text: 'answer 7' }], finishReason: 'stop' });
+
+    const p2 = await (await call(app, `/runs?limit=2&cursor=${p1.nextCursor}`)).json();
+    expect(p2.items.map((r: RunSummary) => r.runId)).toEqual(['run-3', 'run-2']);
+
+    const p3 = await (await call(app, `/runs?limit=2&cursor=${p2.nextCursor}`)).json();
+    expect(p3.items.map((r: RunSummary) => r.runId)).toEqual(['run-1']);
+    expect(p3.nextCursor).toBeUndefined();
+
+    const seen = [p1, p2, p3].flatMap((p) => p.items.map((r: RunSummary) => r.runId));
+    expect([...seen].sort()).toEqual(['run-1', 'run-2', 'run-3', 'run-4', 'run-5']);
   });
 
   // API-09: GET /runs previously only understood limit/cursor — status/search filtering was left to the
@@ -252,5 +342,177 @@ describe('GET /runs pagination', () => {
       expect(res.items.map((r: { runId: string }) => r.runId)).toEqual(['alpha-1']);
       expect(listSpy).toHaveBeenCalled(); // full scan — confirms the push-down branch is skipped for `q`
     });
+  });
+});
+
+/**
+ * Scenarios contributed by a review round whose job was to find what the tests above do NOT cover.
+ * Two measurements from it are worth recording, because they change what "covered" means here:
+ *
+ *   - Disabling the push-down branch entirely left 13 of 16 tests green. Most of the file cannot
+ *     tell which branch ran, so `expect(listSpy).toHaveBeenCalled()` proves nothing: InMemoryJournal
+ *     derives BOTH `listRunsPaged` and `countRunsByStatus` from `listRuns`, so the array method is
+ *     called on either path. Only a NEGATIVE spy assertion distinguishes them.
+ *   - Removing the anchor clamp left 15 of 16 green.
+ *
+ * The other correction: `createStudioApi` wraps whatever it is handed in `asReaderJournal`, which
+ * SYNTHESISES `listRunsPaged`. The real discriminator is `countRunsByStatus`, which is also why an
+ * organization-scoped request always takes the full-scan path — `organization.ts` deliberately does
+ * not bridge it.
+ */
+describe('GET /runs — what the coverage above misses', () => {
+  const seedPaged = (n: number): RunSummary[] =>
+    Array.from({ length: n }, (_, i) => ({ runId: `run-${String(i + 1).padStart(2, '0')}`, status: 'completed' as const, steps: 0 }));
+
+  /** Push-down reader over a MUTABLE array, so a test can delete rows between requests. */
+  function pagedOver(items: RunSummary[]) {
+    return {
+      listRuns: vi.fn(async () => { throw new Error('listRuns must not be called on the push-down path'); }),
+      readRun: vi.fn(async () => []),
+      listRunsPaged: vi.fn(async (q?: { limit?: number; cursor?: string }) => {
+        const start = q?.cursor ? Number(q.cursor) : 0;
+        const limit = q?.limit ?? 50;
+        return { items: items.slice(start, start + limit), nextCursor: start + limit < items.length ? String(start + limit) : undefined };
+      }),
+      countRunsByStatus: vi.fn(async () => ({ completed: items.length })),
+    };
+  }
+
+  /** Walks the whole chain the way a client does: echo the cursor, never look inside it. */
+  async function walk(app: any, query: string) {
+    const pages: any[] = [];
+    let cursor: string | undefined;
+    for (let guard = 0; guard < 50; guard++) {
+      const page = await (await call(app, `${query}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`)).json();
+      pages.push(page);
+      if (!page.nextCursor) return pages;
+      cursor = page.nextCursor;
+    }
+    throw new Error('pagination did not terminate in 50 pages — the cursor is not advancing');
+  }
+
+  /**
+   * The contract is "echo the cursor back"; a client that does exactly that must reach the end.
+   *
+   * Deliberately asserts nothing about the cursor's VALUE. The tests above used to
+   * (`expect(nextCursor).toBe('3')`), which pins the encoding rather than the promise — and since
+   * the encoding is documented as opaque and is expected to become a `created_at`+`runId` key, those
+   * assertions would have turned a correct change red. One test below still pins the encoding, on
+   * purpose and under a name that says so.
+   */
+  it('a client that only echoes the cursor sees every run exactly once', async () => {
+    const journal = new InMemoryJournal();
+    await seedRuns(journal, 12);
+    const app = createStudioApi({ reader: journal });
+
+    const pages = await walk(app, '/runs?limit=3');
+    const seen = pages.flatMap((p) => p.items.map((r: RunSummary) => r.runId));
+
+    // Three assertions, because each catches something the others do not: the union catches a SKIP,
+    // the Set catches a REPEAT, and the count catches a page that quietly served more than `limit`.
+    expect([...seen].sort()).toEqual(Array.from({ length: 12 }, (_, i) => `run-${i + 1}`).sort());
+    expect(new Set(seen).size).toBe(seen.length);
+    expect(pages.every((p) => p.items.length <= 3)).toBe(true);
+    expect(pages.at(-1)!.nextCursor).toBeUndefined();
+  });
+
+  /**
+   * Today's encoding, pinned on purpose and named so nobody mistakes it for the contract.
+   *
+   * If this fails and the opacity test above still passes, the encoding changed and that is allowed —
+   * update this test. If the one above fails too, the change broke pagination itself.
+   */
+  it('encoding note: the cursor is a numeric string today — that is not a promise', async () => {
+    const journal = new InMemoryJournal();
+    await seedRuns(journal, 5);
+    const app = createStudioApi({ reader: journal });
+    const p1 = await (await call(app, '/runs?limit=2')).json();
+    expect(p1.nextCursor).toMatch(/^\d+$/);
+  });
+
+  /**
+   * An uninterpretable cursor used to answer 200 with page 1 AND a fresh cursor — measured:
+   * `?cursor=k_2026_r5` returned the first page and a cursor of `"2"`. That is the worst possible
+   * answer: the Studio's infinite query appends pages without de-duplicating, so a client following
+   * a cursor it will never advance past re-appends the same rows for as long as the user keeps
+   * clicking. A stale-but-well-formed cursor is a different event and still clamps.
+   */
+  it('rejects a cursor it cannot interpret instead of silently restarting', async () => {
+    const journal = new InMemoryJournal();
+    await seedRuns(journal, 5);
+    const app = createStudioApi({ reader: journal });
+
+    const res = await call(app, '/runs?limit=2&cursor=k_2026_r5');
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/cursor/i);
+
+    // Well-formed but stale still works — the two cases must not collapse into one another.
+    expect((await (await call(app, '/runs?limit=2&cursor=9999')).json()).items).toHaveLength(2);
+  });
+
+  /**
+   * `total` and the rows are two separate reads. A retention sweep landing between them left the
+   * route asking for a window past the end of a table that had just shrunk, and it answered with an
+   * empty `items` beside a `total` of 10 — page one of a list that visibly had runs in it.
+   */
+  it('never answers with an empty page while claiming the list is not empty', async () => {
+    const items = seedPaged(10);
+    const reader = pagedOver(items);
+    // The sweep happens between the count and the page read: `countRunsByStatus` reports the table
+    // as it was, then removes six rows before `listRunsPaged` runs.
+    reader.countRunsByStatus.mockImplementationOnce(async () => {
+      const before = { completed: items.length };
+      items.splice(0, 6);
+      return before;
+    });
+    const app = createStudioApi({ reader: reader as any });
+
+    const p = await (await call(app, '/runs?limit=3')).json();
+    expect(p.total).toBeGreaterThan(0);
+    expect(p.items.length).toBeGreaterThan(0);
+  });
+
+  /**
+   * Deleting the oldest runs mid-session moves an ascending anchor — the acknowledged cost of the
+   * cursor change (see the note in server.ts). What must NOT happen is a run going missing: repeats
+   * are recoverable by scrolling, a row never shown is not.
+   */
+  it('a retention purge between pages may repeat rows, but never hides a surviving one', async () => {
+    const journal = new InMemoryJournal();
+    await seedRuns(journal, 10);
+    const app = createStudioApi({ reader: journal });
+
+    const p1 = await (await call(app, '/runs?limit=3')).json();
+    for (let i = 1; i <= 6; i++) await purgeRun(journal, `run-${i}`);
+
+    const rest = await walk(app, `/runs?limit=3&_=1`); // fresh walk after the purge
+    const seen = [...p1.items, ...rest.flatMap((p) => p.items)].map((r: RunSummary) => r.runId);
+    for (const survivor of ['run-7', 'run-8', 'run-9', 'run-10']) {
+      expect(seen, `${survivor} survived the purge and must still be reachable`).toContain(survivor);
+    }
+  });
+
+  /**
+   * Which branch ran, asserted the only way that actually distinguishes them.
+   *
+   * `expect(listRuns).toHaveBeenCalled()` is true on BOTH paths with an InMemoryJournal, because its
+   * paged and counting methods are implemented over the array one. A negative assertion is the only
+   * honest form.
+   */
+  it('an adapter without a cheap status count takes the full-scan path, not the push-down', async () => {
+    const journal = new InMemoryJournal();
+    await seedRuns(journal, 6);
+    // Everything the push-down needs EXCEPT the count — which is the real discriminator, and exactly
+    // the shape Redis and every organization-scoped view present.
+    const noCount = {
+      listRuns: journal.listRuns.bind(journal),
+      readRun: journal.readRun.bind(journal),
+      listRunsPaged: vi.fn(journal.listRunsPaged.bind(journal)),
+    };
+    const app = createStudioApi({ reader: noCount as any });
+
+    const pages = await walk(app, '/runs?limit=2');
+    expect(noCount.listRunsPaged).not.toHaveBeenCalled();
+    expect(pages.flatMap((p) => p.items.map((r: RunSummary) => r.runId))).toHaveLength(6);
   });
 });

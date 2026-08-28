@@ -215,12 +215,19 @@ describe('P0.3: listRunsPaged (InMemoryJournal direct + withOrg bridge)', () => 
     expect(p1.items.length).toBe(1);
     const seen = [...p1.items];
     let cursor = p1.nextCursor;
-    while (cursor) {
+    // Bounded on purpose. `while (cursor)` reads as harmless until the day a cursor stops advancing —
+    // and then the failure mode is a test suite that HANGS rather than one that goes red, which is
+    // strictly worse to debug. The bound is a decade past the two rows this fixture holds, so it can
+    // only fire on a genuine non-terminating cursor.
+    for (let guard = 0; cursor; guard++) {
+      expect(guard, 'pagination did not terminate — the cursor is not advancing').toBeLessThan(20);
       const page = await acme.listRunsPaged!({ limit: 1, cursor });
       seen.push(...page.items);
       cursor = page.nextCursor;
     }
     expect(seen.map((r) => r.runId).sort()).toEqual(['r-a1', 'r-a2']);
+    // A repeat would otherwise hide inside the sort above.
+    expect(new Set(seen.map((r) => r.runId)).size).toBe(seen.length);
   });
 
   it('withOrg: if the underlying journal has no listRunsPaged, the org view does not either', () => {

@@ -81,6 +81,25 @@ would be worse than saying that.
   promise in CI, because the way lockstep breaks is quiet: someone bumps the one package they touched.
 
 ### Fixed
+- **`GET /runs` no longer repeats rows when a run is written mid-pagination.** The `cursor` was a
+  newest-first offset, and the window for each page was recomputed from a total read at request time,
+  so any run appended between two page requests pushed the window back onto rows already shown:
+  measured at 10 runs and `limit=3`, page 2 came back byte-identical to page 1 and the two rows that
+  belonged on it were unreachable. Well-formed envelope, correct count, real rows — entirely silent.
+  The cursor is now an *ascending anchor* (the exclusive end of the next page's window), which an
+  append cannot move. **The value is different, and it is opaque** — send back what the server gave
+  you; an offset written by hand against the old meaning now lands somewhere else. Honest limit: this
+  is a trade, not a strict win. Deleting the oldest runs (`sweepRuns`) moves an ascending index the
+  way an insert moved an offset, so a page taken across a retention sweep can repeat — the old
+  reading survived that case and this one does not. Inserts happen on every run and sweeps only when
+  retention runs, which is why the trade goes this way. Both readings repeat rather than skip, and a
+  cursor keyed on the row itself (`created_at` + `runId`) is what would survive both.
+- **The Studio no longer displays a fabricated run count.** `RunsPage.total` was typed as required
+  but `@gnldev/server`'s `/runs` has never sent it, so the value arrived `undefined` and a `?? 0`
+  rendered a confident **0 runs** above a list that plainly had runs in it — and `1/0` on the load-more
+  button. `total` is now optional; when it is absent the Inspector says how many are loaded and that
+  more exist, and its search box drops the count from the placeholder (which, having no `aria-label`,
+  is also the field's accessible name).
 - **Concurrent turns on one thread no longer lose messages.** `AgentMemory.append` read the thread,
   took `existing.length` as the next position and wrote there, so two runs answering the same thread
   claimed the same positions and `ON CONFLICT DO NOTHING` silently discarded the loser — a third of

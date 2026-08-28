@@ -171,6 +171,32 @@ describe('studio-ui components', () => {
     expect(screen.queryByText(/load more/)).toBeNull(); // last page → button disappears
   });
 
+  // The same view against a backend that does not send `total` — which is every deployment running
+  // `@gnldev/server` rather than the Studio's own API, since its `/runs` returns `{items,nextCursor}`
+  // and nothing else. `RunsPage.total` was typed as required anyway, so the value arrived undefined
+  // and `?? 0` rendered a confident "0 run" above a list that plainly had runs in it, and "1/0" on
+  // the load-more button. Absent must read as unknown, never as zero.
+  it('Inspector pagination: a backend that sends no `total` shows no invented count', async () => {
+    stubFetch({
+      '/runs?limit=50&cursor=50': { items: [{ runId: 'run-old', status: 'completed', modelSteps: 1, toolCalls: 0 }] },
+      '/runs?limit=50': { items: [{ runId: 'run-new', status: 'completed', modelSteps: 1, toolCalls: 0 }], nextCursor: '50' },
+      '/capabilities': CAPS,
+    });
+    wrap(<Inspector />);
+    await waitFor(() => expect(screen.getByText('run-new')).toBeTruthy());
+
+    // No denominator anywhere: not in the button, and not in the search box — whose placeholder is
+    // also its accessible name, so a fabricated count would be read out by a screen reader too.
+    expect(screen.queryByText(/load more \(\d+\/\d+\)/)).toBeNull();
+    expect(screen.getByText(/load more \(1 loaded, more available\)/)).toBeTruthy();
+    expect(screen.getByPlaceholderText('Search all runs…')).toBeTruthy();
+    expect(screen.queryByPlaceholderText(/\(\d+ run\)/)).toBeNull();
+
+    fireEvent.click(screen.getByText(/load more/).closest('button')!);
+    await waitFor(() => expect(screen.getByText('run-old')).toBeTruthy());
+    expect(screen.queryByText(/load more/)).toBeNull();
+  });
+
   it('Observability: renders cards + p95 + the rich run table', async () => {
     // Note: the '/metrics/runs' key must come BEFORE '/runs' (stubFetch's endsWith takes the
     // first match). API-10: useMetricsRuns now sends a default `?limit=200` (see api.ts) instead of an

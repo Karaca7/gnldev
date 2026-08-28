@@ -73,7 +73,10 @@ export function Inspector() {
   );
   const runs = useRunsPaged(filters);
   const runList = useMemo(() => (runs.data?.pages ?? []).flatMap((p) => p.items), [runs.data]);
-  const total = runs.data?.pages.at(-1)?.total ?? 0;
+  // Undefined, not `?? 0`: `total` is optional (see RunsPage) and `@gnldev/server` never sends it.
+  // Defaulting to zero turned "this backend cannot count cheaply" into a displayed "0 runs" sitting
+  // above a list of runs. Absent means unknown, and unknown is shown as unknown below.
+  const total = runs.data?.pages.at(-1)?.total;
   // Fork lineage (ForkView/allRuns) and the currently-selected run's status badge intentionally stay
   // UNFILTERED — a fork sibling, or the run the user has selected, may not match the active search/
   // Status filter but must still resolve (this was already the pre-API-09 behavior: `allRuns` was never
@@ -160,7 +163,7 @@ export function Inspector() {
           <input
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            placeholder={t('searchPlaceholder', { count: total })}
+            placeholder={total === undefined ? t('searchPlaceholderNoCount') : t('searchPlaceholder', { count: total })}
             className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none"
           />
           <div className="flex items-center gap-1">
@@ -234,7 +237,11 @@ export function Inspector() {
               disabled={runs.isFetchingNextPage}
               className="mt-1 w-full rounded-md border border-border px-2 py-1.5 font-mono text-[11px] text-muted-foreground transition-colors enabled:hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {runs.isFetchingNextPage ? t('loadingMoreButton') : t('loadMoreButton', { loaded: runList.length, total })}
+              {runs.isFetchingNextPage
+                ? t('loadingMoreButton')
+                : total === undefined
+                  ? t('loadMoreButtonNoTotal', { loaded: runList.length })
+                  : t('loadMoreButton', { loaded: runList.length, total })}
             </button>
           )}
         </div>
