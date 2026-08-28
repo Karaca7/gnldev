@@ -592,28 +592,44 @@ await exportRunToOtlp(journal, 'order-42', otlpPresets.langfuse({ publicKey, sec
 
 ### 7.9b Capacity: what one Postgres holds, and what adding machines does
 
-Measured, not estimated. A 16-core box, Postgres in Docker, an agent turn of 3 model steps and 2
-tool calls, half the traffic over SSE, with a fixed 3 ms delay injected on every query to stand in
-for a remote database (Neon/RDS in the same region):
+Measured, not estimated. A 16-core box at a fixed 2.4 GHz, Postgres in Docker, an agent turn of 3
+model steps and 2 tool calls, half the traffic over SSE, 256 concurrent conversations, with a fixed
+3 ms delay injected on every query to stand in for a remote database (Neon/RDS in the same region):
 
 | deployment | req/s | p50 | p99 |
 |---|---:|---:|---:|
-| 1 worker | 21 | 2.7 s | 4.2 s |
-| 4 workers | 44 | 1.2 s | 2.3 s |
-| 8 workers, 128 concurrent | 73 | 1.5 s | 2.9 s |
-| 8 workers, 256 concurrent | 93 | 2.2 s | 4.8 s |
+| 1 worker | ~19 † | 11.5 s | 14.8 s |
+| 4 workers | 76 | 3.2 s | 4.1 s |
+| 8 workers | 119 | 2.1 s | 2.9 s |
+| 16 workers | ~123 ‡ | — | — |
 
-Roughly **1.5-2 million agent turns per day** at a sane operating point, or about **1,300 people
-holding a conversation at once** if each sends a message every 30 seconds. A local database is
-faster still (the contention these numbers are dominated by barely exists at sub-millisecond
-latency), so development will not show you this shape.
+† Not certified. At 256 concurrent, one worker is far past saturation — throughput wobbled about 40%
+between 5-second buckets and the harness's stability gate rejected the run in 8 pairs out of 8. The
+figure is what the offered load produced, not a capacity this deployment can hold.
+
+‡ Indistinguishable from 8. Doubling the workers measured **+3.49%**, under the 3.5% floor the harness
+requires before it will call two arms different — over 125,000 requests with zero errors. The load
+generator was eliminated as the cause: splitting the same load across two client processes moved the
+total by +3.3%, also under the floor. The figure is 8 workers plus that unresolvable 3.49%, not a
+measurement in its own right.
+
+The certified steps: **4 → 8 workers is 1.43×** (p = 0.0005, 12 pairs). Against a faster provider
+(100 ms per model step) the earlier steps are **1 → 4: 3.38×** and **4 → 8: 1.56×** (both p = 0.002).
+
+At 8 workers, 119 turns/s is about **10 million agent turns in 24 hours** at full saturation — plan
+at half that for headroom, so roughly **5 million a day**, or, at that same half-saturation point,
+about **1,700 people holding a conversation at once** if each sends a message every 30 seconds. A local database is faster still
+(the contention these numbers are dominated by barely exists at sub-millisecond latency), so
+development will not show you this shape.
 
 Three things worth knowing before you plan against it.
 
 **The connection budget is a hard wall, and it is yours to respect.** Each process opens its own
 pool — node-postgres defaults to 10 connections — and Postgres allows `max_connections`, commonly
-100. Sixteen workers therefore ask for 160 and the server starts refusing: measured, 513 of 600
-requests came back as 500s. Keep
+100. Sixteen workers therefore ask for 160 and the server starts refusing: measured in an earlier
+round at the default 10-connection pool, 513 of 600 requests came back as 500s. (The 16-worker run
+in the table above stayed inside the budget and returned zero errors — the wall is the connection
+arithmetic, not the worker count.) Keep
 
 ```
 processes × pool size  <  max_connections − 20
@@ -624,9 +640,18 @@ leaving room for autovacuum and superuser sessions. Pass your own pool to go wid
 startup when the margin is thin, and a refusal now arrives with this arithmetic attached rather than
 Postgres's bare `sorry, too many clients already`.
 
-**Adding processes helps; adding machines mostly does not.** Going from 1 worker to 8 roughly
-quadruples throughput. A second application group against the *same* database added 32%, not 100% —
-the shared Postgres is the ceiling, not the application. Past ~8 workers the curve flattens.
+**Adding processes helps until 8, and then stops.** Going from 1 worker to 8 multiplies throughput
+about fivefold — 3.38× then 1.56×, both certified against the 100 ms provider. (The 300 ms arm's
+1-worker figure is uncertified, so that ratio cannot be read off the table above.) Going from 8 to 16
+does nothing measurable.
+
+*Where* the ceiling sits was not measured in this round: no CPU-idle or database wait-event sampling
+was taken, and the two-client test eliminated only the load generator. The shared database is the
+standing hypothesis, not a finding. An older round reported that a second application group against
+the *same* database added 32%, which would support it; that figure was not re-measured.
+
+Plan for 8 workers per database. More capacity than that means another database — and the next
+paragraph is why that is a project rather than a flag.
 
 **Beyond one Postgres there is currently no story.** gnl assumes a single database: there is no
 routing layer that spreads the journal across several. That is a deliberate consequence of the
@@ -635,9 +660,13 @@ design. Splitting a large tenant across databases is a real project, not a confi
 organizations are *not* a substitute: an organization is a tenancy boundary (isolation, budget, GDPR
 deletion), not a sharding knob.
 
-For most deployments none of this binds. At 93 req/s against a real model provider you are spending
-tens of thousands of dollars a day on tokens and meeting the provider's own rate limits long before
-gnl is the constraint.
+**Whether any of this binds depends on who pays for inference.** If you rent it — Anthropic, OpenAI,
+Bedrock — you meet the provider's rate limits and a five-figure daily token bill long before you meet
+this ceiling, and the numbers above are trivia. If you run the model yourself, on your own GPUs, the
+marginal token is free, there is no rate limit but your own hardware, and this ceiling is the first
+one you will hit. That is not a hypothetical audience: "your own database, no infrastructure to
+operate" describes a team that already runs its own machines. Plan against these numbers, not against
+the reassurance.
 
 ### 7.10 Maintenance: cleanup and long-lived agents
 

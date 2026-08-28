@@ -575,27 +575,45 @@ await exportRunToOtlp(journal, 'siparis-42', otlpPresets.langfuse({ publicKey, s
 
 ### 7.9b Kapasite: tek bir Postgres neyi taşır, makine eklemek ne yapar
 
-Tahmin değil, ölçüm. 16 çekirdekli bir makine, Docker'da Postgres, 3 model adımı ve 2 araç
-çağrısından oluşan bir ajan turu, trafiğin yarısı SSE üzerinden, ve her sorguya enjekte edilmiş
-sabit 3 ms gecikme — uzak bir veritabanını (aynı bölgedeki Neon/RDS) temsil etmek için:
+Tahmin değil, ölçüm. 2,4 GHz'e sabitlenmiş 16 çekirdekli bir makine, Docker'da Postgres, 3 model
+adımı ve 2 araç çağrısından oluşan bir ajan turu, trafiğin yarısı SSE üzerinden, 256 eşzamanlı
+konuşma, ve her sorguya enjekte edilmiş sabit 3 ms gecikme — uzak bir veritabanını (aynı bölgedeki
+Neon/RDS) temsil etmek için:
 
 | dağıtım | istek/s | p50 | p99 |
 |---|---:|---:|---:|
-| 1 worker | 21 | 2,7 sn | 4,2 sn |
-| 4 worker | 44 | 1,2 sn | 2,3 sn |
-| 8 worker, 128 eşzamanlı | 73 | 1,5 sn | 2,9 sn |
-| 8 worker, 256 eşzamanlı | 93 | 2,2 sn | 4,8 sn |
+| 1 worker | ~19 † | 11,5 sn | 14,8 sn |
+| 4 worker | 76 | 3,2 sn | 4,1 sn |
+| 8 worker | 119 | 2,1 sn | 2,9 sn |
+| 16 worker | ~123 ‡ | — | — |
 
-Makul bir çalışma noktasında kabaca **günde 1,5-2 milyon ajan turu**, ya da her biri 30 saniyede bir
-mesaj atıyorsa **aynı anda ~1.300 kişi**. Yerel veritabanı daha da hızlıdır (bu sayılara hükmeden
+† Onaylanmadı. 256 eşzamanlı konuşmada tek worker doygunluğun çok ötesinde — verim 5 saniyelik
+kovalar arasında %40 civarında dalgalandı ve tezgâhın kararlılık kapısı koşuyu 8 çiftin 8'inde de
+eledi. Bu rakam, sunulan yükün ürettiği şeydir; bu dağıtımın taşıyabileceği kapasite değil.
+
+‡ 8'den ayırt edilemiyor. Worker sayısını ikiye katlamak **%3,49** ölçüldü; bu, tezgâhın iki kolu
+farklı ilan etmek için aradığı %3,5'lik tabanın altında — 125.000'den fazla istekte sıfır hata. Yük
+üretecinin sebep olma ihtimali ayrıca elendi: aynı yük iki istemci sürecine bölününce toplam %3,3
+değişti, o da tabanın altında. Buradaki sayı, 8 worker'ın üzerine o çözülemeyen %3,49'un
+eklenmesidir; kendi başına bir ölçüm değil.
+
+Onaylanmış basamaklar: **4 → 8 worker 1,43×** (p = 0,0005, 12 çift). Daha hızlı bir sağlayıcıya
+karşı (model adımı başına 100 ms) önceki basamaklar **1 → 4: 3,38×** ve **4 → 8: 1,56×** (ikisi de
+p = 0,002).
+
+8 worker'da 119 tur/s, tam doygunlukta 24 saatte kabaca **10 milyon ajan turu** demek — pay bırakmak
+için bunun yarısına göre planlayın, yani günde yaklaşık **5 milyon**, ya da aynı yarı-doygunluk
+noktasında, her biri 30 saniyede bir mesaj atıyorsa **aynı anda ~1.700 kişi**. Yerel veritabanı daha da hızlıdır (bu sayılara hükmeden
 çekişme, milisaniye altı gecikmede neredeyse yoktur) — yani geliştirme ortamı bu şekli göstermez.
 
 Plan yapmadan önce bilinmesi gereken üç şey var.
 
 **Bağlantı bütçesi sert bir duvardır ve ona uymak sizin işinizdir.** Her süreç kendi havuzunu açar
 — node-postgres varsayılanı 10 bağlantı — ve Postgres `max_connections` kadarına izin verir, tipik
-olarak 100. On altı worker bu yüzden 160 ister ve sunucu reddetmeye başlar: ölçüldü, 600 isteğin
-513'ü 500 hatası döndü. Şu sınırın altında kalın:
+olarak 100. On altı worker bu yüzden 160 ister ve sunucu reddetmeye başlar: daha eski bir turda,
+varsayılan 10 bağlantılık havuzla ölçüldü, 600 isteğin 513'ü 500 hatası döndü. (Yukarıdaki tablodaki
+16 worker koşusu bütçenin içinde kaldı ve sıfır hata verdi — duvar worker sayısı değil, bağlantı
+aritmetiğidir.) Şu sınırın altında kalın:
 
 ```
 süreç sayısı × havuz boyutu  <  max_connections − 20
@@ -606,9 +624,18 @@ Kalan pay autovacuum ve superuser oturumları içindir. Daha geniş gitmek için
 kullandığı miktarı açılışta bildirir; reddedilme durumunda ise Postgres'in yalın
 `sorry, too many clients already` cümlesi yerine bu aritmetiği de içeren bir hata gelir.
 
-**Süreç eklemek işe yarar; makine eklemek çoğunlukla yaramaz.** 1 worker'dan 8'e çıkmak verimi kabaca
-dörde katlar. *Aynı* veritabanına ikinci bir uygulama grubu eklemek ise %32 kattı, %100 değil —
-tavan uygulamada değil, paylaşılan Postgres'te. ~8 worker'dan sonra eğri düzleşir.
+**Süreç eklemek 8'e kadar işe yarar, sonra durur.** 1 worker'dan 8'e çıkmak verimi kabaca beşe
+katlar — 3,38× ardından 1,56×, ikisi de 100 ms'lik sağlayıcıya karşı onaylandı. (300 ms'lik koldaki
+1-worker rakamı onaylanmadı, dolayısıyla bu oran yukarıdaki tablodan okunamaz.) 8'den 16'ya çıkmak
+ölçülebilir hiçbir şey getirmez.
+
+Tavanın *nerede* olduğu bu turda ölçülmedi: ne CPU boşta oranı ne veritabanı bekleme-olayı örneklendi,
+ve iki-istemci testi yalnızca yük üretecini eledi. Paylaşılan veritabanı duran hipotezdir, bulgu
+değil. Daha eski bir turda *aynı* veritabanına ikinci bir uygulama grubu eklemenin %32 kattığı
+raporlanmıştı — bunu destekler; o rakam yeniden ölçülmedi.
+
+Veritabanı başına 8 worker planlayın. Bundan fazlası başka bir veritabanı demektir — ve bir sonraki
+paragraf, bunun neden bir anahtar değil bir proje olduğunu anlatıyor.
 
 **Tek Postgres'in ötesi için bugün bir hikâye yok.** gnl tek bir veritabanı varsayar; günlüğü birden
 fazlasına dağıtan bir yönlendirme katmanı yoktur. Bu, konumlanmanın bilinçli bir sonucudur — kendi
@@ -616,9 +643,13 @@ veritabanınız, işletilecek altyapı yok — ve bu tasarımın sınırıdır. 
 bölmek bir yapılandırma bayrağı değil, gerçek bir projedir; ve organizasyonlar bunun yerine geçmez:
 organizasyon bir kiracılık sınırıdır (yalıtım, bütçe, KVKK/GDPR silme), bir bölümleme düğmesi değil.
 
-Çoğu dağıtım için bunların hiçbiri bağlayıcı olmaz. Gerçek bir model sağlayıcısına karşı 93 istek/s'de,
-gnl kısıt hâline gelmeden çok önce günde on binlerce dolarlık token harcıyor ve sağlayıcının kendi
-hız limitlerine çarpıyor olursunuz.
+**Bunların bağlayıcı olup olmaması, çıkarım bedelini kimin ödediğine bağlıdır.** Çıkarımı kiralıyorsanız
+— Anthropic, OpenAI, Bedrock — bu tavana varmadan çok önce sağlayıcının hız limitlerine ve günde beş
+haneli bir token faturasına çarparsınız; yukarıdaki sayılar sizin için ayrıntıdır. Modeli kendi
+GPU'larınızda kendiniz çalıştırıyorsanız, ek token bedavadır, kendi donanımınızdan başka hız limitiniz
+yoktur ve çarpacağınız ilk tavan budur. Bu varsayımsal bir kitle de değil: "kendi veritabanınız,
+işletilecek altyapı yok" ifadesi, zaten kendi makinelerini çalıştıran bir ekibi tarif eder. Planınızı
+bu sayılara göre yapın, teselliye göre değil.
 
 ### 7.10 Bakım: temizlik ve uzun ömürlü ajanlar
 
