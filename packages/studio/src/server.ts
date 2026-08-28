@@ -1975,7 +1975,11 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       // Path served the response.
       let source: 'materialized' | 'scan' = 'scan';
       if (typeof view.getCounters === 'function') {
-        const summary = await readMetricsSummary(view as unknown as Journal);
+        // `days: 0` — this loop reads `all` and nothing else. The default summary also builds 14
+        // daily buckets at 17 point reads each, and every one of them was discarded here: 255 reads
+        // per organization to use 17, on every load of the list. Fifty organizations meant 12,750
+        // reads against the caller's own database to answer one page.
+        const summary = await readMetricsSummary(view as unknown as Journal, { days: 0 });
         if (summary.all) {
           tokens = summary.all.tokens ?? 0;
           costUsd = summary.all.costUsd ?? 0;
@@ -2371,7 +2375,11 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     if (!(await allowP(c.req.raw, 'runs:read'))) return deny(c.req.raw, 'read');
     if (typeof rw.getCounters === 'function') {
       const daysParam = Number(c.req.query('days'));
-      const days = Number.isFinite(daysParam) ? Math.trunc(daysParam) : undefined;
+      // Clamped to at least one bucket HERE rather than inside `readMetricsSummary`, which now
+      // accepts 0 so an internal caller can ask for the running totals alone. `?days=0` has always
+      // answered with today's bucket, and this endpoint is published — the widening is for callers
+      // in this process, not a change to what the URL means.
+      const days = Number.isFinite(daysParam) ? Math.max(1, Math.trunc(daysParam)) : undefined;
       const summary = await readMetricsSummary(rw as unknown as Journal, { days });
       if (summary.all) {
         // P1.6b: when the (org-scoped) reader exposes `countRunsByStatus`, use the ENGINE-LEVEL push-down

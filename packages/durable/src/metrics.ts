@@ -469,7 +469,19 @@ export async function readMetricsSummary(
   opts: { days?: number } = {},
 ): Promise<{ all: Record<string, number> | undefined; byDay: MetricsDayEntry[] }> {
   if (typeof journal.getCounters !== 'function') return { all: undefined, byDay: [] };
-  const days = Math.max(1, Math.min(90, opts.days ?? 14));
+  /**
+   * `days: 0` asks for the `all` bucket and nothing else — for a caller that wants the running
+   * totals and never looks at the daily series.
+   *
+   * The cost is the reason it exists. Every bucket is `1 + METRICS_SHARDS` point reads (17 at the
+   * default), so the standard 14-day summary is 255 of them. The organization list wanted `tokens`
+   * and `costUsd` from `all` and threw the other 238 away — per organization, on every page load:
+   * 50 organizations came to 12,750 reads to use 850 of them.
+   *
+   * The floor used to be 1, which quietly rounded a request for "no days" up to one day. Zero is a
+   * meaningful answer here and 0 reads is a meaningful cost.
+   */
+  const days = Math.max(0, Math.min(90, opts.days ?? 14));
   const all = withDerivedScores(withDerivedCost(await sumShards((k) => journal.getCounters!(k), METRICS_ALL_KEY, METRICS_SHARDS)));
   const byDay: MetricsDayEntry[] = [];
   const nowMs = Date.now();

@@ -265,3 +265,41 @@ describe('GET /metrics/runs', () => {
     expect(none.runs).toHaveLength(5); // no ?limit= → unchanged (all runs)
   });
 });
+
+/**
+ * How many counter reads a page costs, pinned — because the waste here was invisible.
+ *
+ * Every logical counter is spread over `METRICS_SHARDS` physical rows plus the unsuffixed key, so
+ * reading one bucket is 17 point reads at the default. `readMetricsSummary` builds `all` plus 14
+ * daily buckets: 255 reads. `GET /organizations` wanted two fields out of `all` and discarded the
+ * other 238 — per organization, on every load. Fifty organizations came to 12,750 reads against the
+ * caller's own database to render one page.
+ *
+ * The count is the assertion because nothing else notices: the response was correct either way, the
+ * endpoint was never slow enough locally to look wrong, and the cost only shows up on a real
+ * database under a real number of organizations. A read budget is the only thing that fails when
+ * somebody reintroduces the full summary.
+ */
+describe('GET /organizations — counter read budget', () => {
+  it('reads the running totals only, not fourteen daily buckets nobody asked for', async () => {
+    const journal = new InMemoryJournal();
+    await seedRun(journal, 'r1', 10);
+    await recordRunMetrics(journal, 'r1', { agent: 'a', tokens: 10, costUsdMicros: 5, ms: 1 } as never).catch(() => {});
+    await journal.put('org:acme:r-x:model:0', { usage: { totalTokens: 4 } });
+    await journal.put('__org__:acme', { id: 'acme' });
+
+    const counterReads = vi.fn(journal.getCounters!.bind(journal));
+    const spied = new Proxy(journal, {
+      get: (t, p, r) => (p === 'getCounters' ? counterReads : Reflect.get(t, p, r)),
+    }) as InMemoryJournal;
+
+    const app = createStudioApi({ reader: spied, org: {} });
+    const res = await (await call(app, '/organizations')).json();
+    expect(res.organizations.length).toBeGreaterThan(0);
+
+    // One logical bucket per organization. The bound is deliberately loose — it is a budget, not a
+    // fingerprint of the shard count — but 255-per-org cannot hide under it.
+    const perOrg = counterReads.mock.calls.length / res.organizations.length;
+    expect(perOrg, `${counterReads.mock.calls.length} counter reads for ${res.organizations.length} org(s)`).toBeLessThanOrEqual(40);
+  });
+});

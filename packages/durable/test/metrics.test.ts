@@ -300,7 +300,7 @@ describe('metrics.ts — readMetricsSummary', () => {
     expect(summary.byDay).toEqual([]);
   });
 
-  it('returns all-time totals + N day buckets (default 14, clamped 1..90)', async () => {
+  it('returns all-time totals + N day buckets (default 14, clamped 0..90)', async () => {
     const journal = new InMemoryJournal();
     await journal.put('r1:model:0', modelUsage(10));
     await backfillMetrics(journal, journal);
@@ -311,8 +311,17 @@ describe('metrics.ts — readMetricsSummary', () => {
     // Today's bucket (last entry, oldest-first order) should carry the run just recorded.
     expect(summary.byDay.at(-1)?.fields?.runs).toBe(1);
 
-    const clampedLow = await readMetricsSummary(journal, { days: 0 });
-    expect(clampedLow.byDay).toHaveLength(1);
+    // `days: 0` means zero buckets, not one. Each bucket costs `1 + METRICS_SHARDS` point reads, so
+    // a caller that only wants the running totals (GET /organizations) was paying for fourteen day
+    // buckets it discarded. The floor used to round "no days" up to one, which made the cheap read
+    // impossible to ask for. `GET /metrics?days=0` still answers with today's bucket — that clamp
+    // moved to the route, since the URL's meaning is published and this widening is for in-process
+    // callers.
+    const noDays = await readMetricsSummary(journal, { days: 0 });
+    expect(noDays.byDay).toHaveLength(0);
+    expect(noDays.all?.runs).toBe(1); // the totals still come back — that is the point of asking
+    const clampedNegative = await readMetricsSummary(journal, { days: -5 });
+    expect(clampedNegative.byDay).toHaveLength(0);
     const clampedHigh = await readMetricsSummary(journal, { days: 1000 });
     expect(clampedHigh.byDay).toHaveLength(90);
   });
