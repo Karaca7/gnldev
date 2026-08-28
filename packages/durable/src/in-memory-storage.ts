@@ -19,7 +19,14 @@ function genId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${(idc++).toString(36)}`;
 }
 
-/** Offset-cursor pagination (in-memory reference; real storages use a keyset cursor). */
+/**
+ * Offset-cursor pagination.
+ *
+ * The note here used to say "real storages use a keyset cursor". They do not — postgres, sqlite and
+ * redis all read the cursor as a row offset, exactly like this one. The line described an intention
+ * as if it were the state of the code, which is the most expensive kind of comment: someone
+ * reasoning about drift would have trusted the wrong adapter.
+ */
 function paginate<T>(items: T[], q?: ListQuery): Page<T> {
   const start = q?.cursor ? Number(q.cursor) || 0 : 0;
   const limit = q?.limit ?? 50;

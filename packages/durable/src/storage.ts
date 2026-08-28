@@ -10,7 +10,19 @@ import type { Journal, JournalEntry, RunSummary, JournalReader, RunStatus } from
 
 // ── Common ──────────────────────────────────────────────────────────────────
 
-/** A cursor-based page. If there's no `nextCursor`, it's the last page. (NOT offset → O(log n) on a btree.) */
+/**
+ * A page. If there's no `nextCursor`, it's the last page.
+ *
+ * `nextCursor` is OPAQUE to the caller: pass it back verbatim, never construct or parse one. That is
+ * the contract; the encoding is not, and every adapter is free to change it.
+ *
+ * This used to claim the cursor was "NOT offset → O(log n) on a btree". It was neither: every
+ * first-party adapter reads it as a row offset (`Number(q.cursor)`) and issues `LIMIT … OFFSET …`,
+ * so a deep page costs a scan of everything before it, and a row inserted or deleted between two
+ * requests shifts the window under the reader. Saying otherwise made the weaker guarantee look like
+ * the stronger one — the reason the claim is written the other way round now is that a keyset cursor
+ * is a change we intend to make, and the opacity above is what keeps it from being a breaking one.
+ */
 export interface Page<T> {
   items: T[];
   nextCursor?: string;

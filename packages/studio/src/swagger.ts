@@ -17,6 +17,27 @@ const runIdParam = [{ name: 'runId', in: 'path', required: true, schema: { type:
 /** Query-parameter shorthand (default type: string). */
 const q = (name: string, type = 'string') => ({ name, in: 'query', schema: { type } });
 
+/**
+ * `cursor` is an OPAQUE continuation token: send back exactly what `nextCursor` gave you, and never
+ * construct, parse or do arithmetic on one.
+ *
+ * It was published here as `integer`, which was true of the implementation and false as a contract.
+ * A reader who took that at face value could compute `cursor = page * limit` — and the server has
+ * already stopped meaning that once (`/runs` now anchors from the other end of the list), while the
+ * fix that actually closes paging drift moves it to a `created_at`+`runId` key, i.e. a string. Every
+ * such change is breaking for anyone who believed the `integer`, and free for anyone who believed
+ * this. Declaring the narrower type bought nothing and mortgaged the wider one.
+ *
+ * `@gnldev/server` already declares it `string` (see `packages/server/src/openapi.ts`); this makes
+ * the two specs agree.
+ */
+const cursorParam = {
+  name: 'cursor',
+  in: 'query',
+  description: 'Opaque continuation token — pass back the `nextCursor` from the previous page verbatim. Do not parse or compute it.',
+  schema: { type: 'string' },
+};
+
 export function openapiSpec(apiBase = '') {
   const base = (apiBase ? apiBase.replace(/\/$/, '') : '') + '/api';
   return {
@@ -28,7 +49,7 @@ export function openapiSpec(apiBase = '') {
       '/metrics': P('get', 'Aggregate metrics (run/cost/token)', [q('days', 'integer')]),
       '/metrics/runs': P('get', 'Per-run metric rows (time-series + latency table)', [q('limit', 'integer')]),
       // API-09: status/agent/q filter the run set; total in the response reflects the FILTERED count.
-      '/runs': P('get', 'Run summaries (paginated with ?limit; total reflects status/agent/q filters when set)', [q('limit', 'integer'), q('cursor', 'integer'), q('status'), q('agent'), q('q')]),
+      '/runs': P('get', 'Run summaries (paginated with ?limit; total reflects status/agent/q filters when set)', [q('limit', 'integer'), cursorParam, q('status'), q('agent'), q('q')]),
       '/runs/{id}': { ...P('get', 'Run journal entries', idParam), ...P('delete', 'GDPR/PII purge — permanently delete all trace of a run', idParam) },
       '/runs/{id}/state': P('get', 'Step N state (time-travel)', [...idParam, q('step', 'integer')]),
       '/runs/{id}/memory-context': P('get', 'Memory provenance for the turn (recall hits + similarity, recent window, WM/OM, echo-trim) — null when not recorded', idParam),
@@ -82,7 +103,7 @@ export function openapiSpec(apiBase = '') {
       // D3-A: cross-workflow run registry; items may carry an optional workflowName (mirrored from the wfrun: record).
       // API-03: `limit`/`cursor` opt into a bounded, paged `{items,nextCursor}` response; omitted → the
       // Legacy flat array (backward-compatible for older callers).
-      '/workflows/runs': P('get', 'Cross-workflow run registry (suspended/completed/canceled); items may include workflowName; paginated with ?limit (flat array when omitted)', [q('status'), q('limit', 'integer'), q('cursor', 'integer')]),
+      '/workflows/runs': P('get', 'Cross-workflow run registry (suspended/completed/canceled); items may include workflowName; paginated with ?limit (flat array when omitted)', [q('status'), q('limit', 'integer'), cursorParam]),
       '/workflows/runs/{id}/cancel': P('post', 'Durably cancel a workflow run', idParam),
       '/workflows/{name}/def': P('get', 'Managed workflow definition', nameParam),
       '/workflows/{name}': { ...P('put', 'Update a managed workflow', nameParam, true), ...P('delete', 'Delete a managed workflow', nameParam) },

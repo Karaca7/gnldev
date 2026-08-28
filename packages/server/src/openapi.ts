@@ -176,7 +176,15 @@ export function buildOpenApi(agentNames: string[], workflowNames: string[] = [],
       summary: 'Run summaries — legacy array with no params, or a {items,nextCursor} page when ?limit/?cursor/?status/?agent is given',
       parameters: [
         { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 1000 } },
-        { name: 'cursor', in: 'query', schema: { type: 'string' } },
+        // Opaque on purpose — see `Page<T>` in @gnldev/durable. It happens to be a row offset today
+        // and is intended to become a `created_at`+`runId` key; a caller that computes one instead
+        // of echoing `nextCursor` breaks on that change, and has no contract to stand on.
+        {
+          name: 'cursor',
+          in: 'query',
+          description: 'Opaque continuation token — pass back the `nextCursor` from the previous page verbatim. Do not parse or compute it.',
+          schema: { type: 'string' },
+        },
         { name: 'status', in: 'query', schema: { type: 'string', enum: ['completed', 'suspended'] } },
         { name: 'agent', in: 'query', schema: { type: 'string' } },
       ],
