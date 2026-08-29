@@ -39,3 +39,5 @@ __pycache__/
 # npm pack output
 *.tgz
 .doccheck/
+# junit output — CI writes it so a red run names the test; nothing should commit it
+test-results.xml

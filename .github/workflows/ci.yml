@@ -38,7 +38,23 @@ jobs:
                pnpm install --no-frozen-lockfile; fi
       - run: pnpm -r build
       - run: pnpm -r typecheck
-      - run: pnpm test
+      # `--reporter=junit` alongside the default one, because a flake that is not recorded cannot be
+      # fixed. One run of this suite went red with a single failing test and a single unhandled
+      # error; the output went to a terminal and was never written down, so the test's NAME was lost
+      # and 21 subsequent full runs — at two CPU frequencies, with and without an oversubscribed
+      # machine — could not reproduce it. The XML costs nothing on a green run and names the test on
+      # a red one. See PUBLISH-BLOCKERS.md, "open".
+      #
+      # `pnpm exec vitest` rather than `pnpm test`, because `pnpm test -- --reporter=junit` silently
+      # drops the flags (measured: the suite ran, the XML was never written). That means the
+      # `pretest` hook does not fire either, so it runs explicitly on the line above.
+      - run: node scripts/check-dist-fresh.mjs
+      - run: pnpm exec vitest run --reporter=default --reporter=junit --outputFile.junit=test-results.xml
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-results
+          path: test-results.xml
       # Every ```ts block in every README and doc, compiled against the packages as built. Three
       # review rounds in a row found quickstarts that threw on their first line; a person reading
       # carefully does not scale to 24 READMEs, and this does.
