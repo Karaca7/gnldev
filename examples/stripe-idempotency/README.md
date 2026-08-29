@@ -26,6 +26,9 @@ pnpm demo
   **1 charge**.
 
 ## Wiring up the real Stripe
+<!-- `stripe` is the reader's dependency, not this repo's. The marker below must stay on the line
+     directly above the fence — check-doc-samples.mjs only looks one line back. -->
+<!-- doccheck: skip -->
 ```ts
 // Real Stripe SDK — idempotencyKey goes in the `Idempotency-Key` HTTP header, NOT the request body:
 import Stripe from 'stripe';

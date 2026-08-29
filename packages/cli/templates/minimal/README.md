@@ -31,7 +31,8 @@ Run `gnl --help` for the full list, or `gnl help <command>` for one command's us
 supports `--json` for scripting and `--config` to point at a non-default config file.
 
 ## Switching to a real model
-Replace `echoModel()` in [src/model.ts](src/model.ts) with an AI SDK model or a string:
+Edit the `assistant` export at the bottom of [src/model.ts](src/model.ts) — `AgentConfig` is already
+imported there:
 
 ```ts
 export const assistant: AgentConfig = {

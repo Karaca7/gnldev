@@ -32,7 +32,7 @@ const skippedForAbsentPackage = [];
  *  because the surrounding prose just showed it. */
 const GLOBALS = `declare global {
   const journal: any; const storage: any; const model: any; const tools: any;
-  const config: any; const cfg: any; const gnl: any; const embed: any;
+  const config: any; const cfg: any; const embed: any;
   const app: any; const api: any; const studio: any; const payments: any;
   const stripe: any; const db: any; const notify: any; const sendEmail: any;
   const chargeCard: any; const rawTools: any; const req: any; const res: any;
@@ -53,10 +53,9 @@ const GLOBALS = `declare global {
   // Turkish translation is checked as strictly as the English original.
   const prepare: any; const order: any; const check: any; const enqueue: any;
   const approve: any; const pass: any; const longText: any; const withOldModel: any;
-  const withNewModel: any; const composite: any; const DAY: number; const GUN: number;
+  const withNewModel: any; const DAY: number; const GUN: number;
   const kontrolEt: any; const kuyrugaAt: any; const onayla: any; const gecir: any;
-  const uzunMetin: any; const indexDocuments: any; const rolloverRun: any;
-  const purgeRun: any; const sweepRuns: any; const redis: any; const PostgresStorage: any;
+  const uzunMetin: any; const redis: any;
   const PG_URL: string;
   type Order = any; type Siparis = any;
 }
@@ -97,7 +96,42 @@ declare global {
   const createStudioRunner: typeof import('@gnldev/studio').createStudioRunner;
   const tool: typeof import('ai').tool;
   const z: typeof import('zod').z;
-  const serve: any; const createServer: any;
+  const serve: typeof import('@hono/node-server').serve;
+  const createServer: any;
+  // A TYPE, not an \`any\`, and not the same mistake as the \`indexDocuments\` ambient this file used to
+  // carry. That one legitimized a MISSING import; this one keeps a sample from repeating an import
+  // the file it edits already has — \`templates/minimal/src/model.ts\` imports \`AgentConfig\` on line
+  // 3, so a README block that imported it again would hand the reader a TS2300 on paste. Real type,
+  // so a wrong field in the sample still fails.
+  type AgentConfig = import('@gnldev/durable').AgentConfig;
+  // Typing \`serve\` alone does NOT reject \`serve(createRestApi(config))\`, and it is worth knowing
+  // why before someone "restores" that as a check: \`createRestApi\` returns a \`FetchHandler\`, which
+  // carries a \`.fetch\`, so it structurally satisfies \`serve\`'s \`Options\` and the one-argument form
+  // is genuinely well-typed. It is bad documentation, not a type error. What caught the §1.4 bug is
+  // the line below.
+  // The REGISTRY, typed — so a sample that calls a method it does not have, or calls one with the
+  // wrong arguments, is caught like any other framework entry point above.
+  //
+  // Worth knowing where the boundary is: typing it here does NOT catch \`createRestApi(gnl)\`, the
+  // §1.4 bug where the guide passed the registry to a function that takes the CONFIG, because every
+  // field of \`CreateGnlConfig\` is optional and so every object is assignable to it. That is a limit
+  // of THIS file, not of the type system — the fix belongs in the callee, and it is now there:
+  // \`createRestApi\` declares \`run?: never; agent?: never\`, which rejects the registry and costs a
+  // real config nothing (measured). Reach for the same shape before concluding a confusion of this
+  // kind is uncatchable.
+  const gnl: ReturnType<typeof import('@gnldev/durable').createGnl>;
+  // The retention/lifecycle surface and \`composite\`, typed for the same reason as everything above:
+  // the GUIDE blocks that use them (§5.2 storage mixing, §7.10 maintenance) carry NO import, so
+  // these names were the only route to the framework and \`any\` left them unchecked. Measured escapes
+  // while they were \`any\`: \`sweepRuns(journal, { olderThan })\` (the field is \`olderThanMs\` — a
+  // wrong name silently means "no threshold"), \`purgeRun(journal, id, { recursive: true })\` (the
+  // third parameter is a \`Set\`, on the GDPR delete path), and \`composite\` taking \`runs\` in its
+  // overrides, which the function's own comment calls out as breaking replay.
+  const composite: typeof import('@gnldev/durable').composite;
+  const sweepRuns: typeof import('@gnldev/durable').sweepRuns;
+  const purgeRun: typeof import('@gnldev/durable').purgeRun;
+  const rolloverRun: typeof import('@gnldev/durable').rolloverRun;
+  const PostgresStorage: typeof import('@gnldev/durable/postgres').PostgresStorage;
 }
 export {};`;
 
@@ -152,6 +186,18 @@ function docFiles() {
   for (const p of readdirSync(join(ROOT, 'packages'))) {
     const r = join(ROOT, 'packages', p, 'README.md');
     if (existsSync(r)) out.push(r);
+  }
+  // Examples and scaffold templates. They were outside this gate while being the most copy-pasted
+  // code in the repo — the README points readers straight at them, and a template's README is the
+  // first thing a `gnl init` user reads. Nothing checked them: the examples have no build step, and
+  // vitest excludes them.
+  for (const dir of ['examples', join('packages', 'cli', 'templates')]) {
+    const base = join(ROOT, dir);
+    if (!existsSync(base)) continue;
+    for (const p of readdirSync(base)) {
+      const r = join(base, p, 'README.md');
+      if (existsSync(r)) out.push(r);
+    }
   }
   return out;
 }
