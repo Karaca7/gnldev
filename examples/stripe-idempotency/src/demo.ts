@@ -1,6 +1,6 @@
 // Run: pnpm demo   (no API key needed — mock Stripe, no network calls)
 //
-// A3: shows that GNL's exactly-once guarantee extends BEYOND the framework, all the way to a real
+// Shows that GNL's exactly-once guarantee extends BEYOND the framework, all the way to a real
 // payment provider — via the `idempotencyKey` durable-tool.ts injects into every tool's `execute`
 // options (see packages/durable/src/durable-tool.ts, `execOpts = { ...options, idempotencyKey }`).
 //
@@ -24,7 +24,7 @@ function section(title: string): void {
   console.log(`\n— ${title} —`);
 }
 
-console.log('A3: provider-side exactly-once (mock Stripe) — crash+resume\n');
+console.log('Provider-side exactly-once (mock Stripe) — crash+resume\n');
 console.log('GNL injects a stable idempotencyKey into every tool execute() (durable-tool.ts). This demo');
 console.log('threads it to a mock Stripe client that mirrors the real SDK\'s Idempotency-Key contract:');
 console.log("  await stripe.charges.create({ amount, currency }, { idempotencyKey });  // real Stripe SDK\n");

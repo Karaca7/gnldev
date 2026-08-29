@@ -1104,6 +1104,6 @@ bet runs the opposite way: **what's critical isn't analytics, it's the RECORD** 
 in your hands and complete, you can pour analytics into any tool you like later; if you keep the
 record incomplete just to have a pretty dashboard, there's no coming back from that. That's why
 Studio isn't just a monitoring dashboard, it's an **operations/governance** panel (time-travel,
-approval queue, regression comparison, tenant/budget — things dedicated tracing tools don't have);
+approval queue, regression comparison, organization/budget — things dedicated tracing tools don't have);
 fleet-wide analytics and alerting are deliberately left to the specialist at the other end of the
 plug.

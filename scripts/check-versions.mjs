@@ -16,7 +16,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const pkgDir = join(root, 'packages');
 
 // `private: true` used to mean "exempt", full stop. That exempted @gnldev/auth-ee, which is private and
-// distributed: it is the paid tier, packed and shipped to customers out of band (docs/RELEASE.md), and a
+// distributed: it is the paid tier, packed and shipped to customers out of band, and a
 // customer who installs it alongside @gnldev/auth is running the same shared-format pairing lockstep
 // exists to protect. The audit fixture was auth-ee at 0.0.7 with the rest of the workspace at 0.1.0 —
 // exit 0, a mismatched paid tier waved through.
