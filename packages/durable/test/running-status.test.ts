@@ -20,6 +20,30 @@ const dead = { ...base, doGenerate: async () => { throw new Error('401 invalid a
 const statusOf = async (journal: any, runId: string) =>
   (await listRunsArray(journal)).find((r) => r.runId === runId)?.status;
 
+/**
+ * Polls until the status is the one expected, instead of sleeping a fixed span and hoping.
+ *
+ * What is being waited for is an EVENT — the write-ahead marker landing — and the `sleep(30)` this
+ * replaces encoded it as a duration, which is the shape that turns a contended machine into a red
+ * with nothing wrong.
+ *
+ * Honest about the margin, because it was measured rather than assumed: the old form did NOT flake.
+ * Twelve runs under 64 busy processes at load ~40 were green, and so were ten runs with the sleep cut
+ * to 1ms — the marker lands effectively at once, so 30ms was never load-bearing. This is the repo's
+ * existing pattern (canceled-status.test.ts) applied for robustness, not a fix for a reproduced
+ * failure. It costs nothing and removes an assumption; it does not close a known flake.
+ */
+async function waitForStatus(journal: any, runId: string, want: string, timeoutMs = 5_000): Promise<string | undefined> {
+  const deadline = Date.now() + timeoutMs;
+  let seen: string | undefined;
+  do {
+    seen = await statusOf(journal, runId);
+    if (seen === want) return seen;
+    await new Promise((r) => setTimeout(r, 10));
+  } while (Date.now() < deadline);
+  return seen;
+}
+
 describe('deriveRunStatus with the running vocabulary', () => {
   it('orders suspended > failed > running > completed, and keeps the legacy answer', () => {
     expect(deriveRunStatus(true, { status: 'running' })).toBe('suspended'); // waiting beats started
@@ -39,9 +63,8 @@ describe('the write-ahead start marker', () => {
     // nothing after this point ever runs: we start the run and abandon the promise.
     const never = { ...base, doGenerate: () => new Promise(() => { /* SIGKILL lands here */ }) } as any;
     void runDurable({ runId: 'abandoned', journal, model: never, prompt: 'x' } as any).catch(() => {});
-    await new Promise((r) => setTimeout(r, 30)); // give the write-ahead a tick to land
 
-    expect(await statusOf(journal, 'abandoned'), 'this used to read completed').toBe('running');
+    expect(await waitForStatus(journal, 'abandoned', 'running'), 'this used to read completed').toBe('running');
     const outcome = await readRunOutcome(journal, 'abandoned');
     expect(outcome?.status).toBe('running');
   });
@@ -59,8 +82,7 @@ describe('the write-ahead start marker', () => {
     const journal = new InMemoryStorage().runs;
     const never = { ...base, doGenerate: () => new Promise(() => {}) } as any;
     void runDurable({ runId: 'r', journal, model: never, prompt: 'x' } as any).catch(() => {});
-    await new Promise((r) => setTimeout(r, 30));
-    expect(await statusOf(journal, 'r')).toBe('running');
+    expect(await waitForStatus(journal, 'r', 'running')).toBe('running');
 
     // The operator resumes with a working model; the run truly ends this time.
     await runDurable({ runId: 'r', journal, model: good, prompt: 'x' } as any);

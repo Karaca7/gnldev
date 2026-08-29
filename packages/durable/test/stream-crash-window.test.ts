@@ -99,11 +99,15 @@ describe('a crash after the tool ran but before the stream ended', () => {
     }
     await reader.cancel().catch(() => {});
     expect(charges(), 'the tool ran during the abandoned stream').toBe(1);
-    // Give the abandoned pipeline a tick to settle before reading the journal.
-    await new Promise((r) => setTimeout(r, 50));
-
-    // The step must be recoverable. Without it, the resume below re-plans and charges again.
-    const step0 = await journal.get(runKeys.model(runId, 0));
+    // Poll for the abandoned pipeline's write instead of sleeping a fixed 50ms: the wait is for the
+    // journal entry to appear, not for a span of time. (Not a reproduced flake — see the measurement
+    // note in running-status.test.ts; this removes the assumption, it does not close a known failure.)
+    const settleBy = Date.now() + 5_000;
+    let step0 = await journal.get(runKeys.model(runId, 0));
+    while (step0 === undefined && Date.now() < settleBy) {
+      await new Promise((r) => setTimeout(r, 10));
+      step0 = await journal.get(runKeys.model(runId, 0));
+    }
     expect(step0, 'model:0 must be journaled once its tool calls have executed').toBeDefined();
 
     // Run 2: same runId, and the provider hands back a DIFFERENT toolCallId this time.

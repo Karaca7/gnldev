@@ -20,7 +20,10 @@ const tsxBin = join(here, '..', '..', '..', 'node_modules', '.bin', 'tsx');
 const childScript = join(here, 'fixtures', 'crash-run.ts');
 
 describe('real process-kill resume', () => {
-  it('child crashes → parent resumes with the same SQLite → charge exactly 1', async () => {
+  // 60s, above the child's own 50s spawnSync bound. Without it the test inherits the 30s default and
+  // dies FIRST, so the subprocess guard — the thing that produces a readable "the child hung" — can
+  // never fire. multi-process-race, sigkill-status and fixture-watchdog already order it this way.
+  it('child crashes → parent resumes with the same SQLite → charge exactly 1', { timeout: 60_000 }, async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gnl-durable-'));
     const dbPath = join(dir, 'runs.db');
     const sePath = join(dir, 'charges.txt');

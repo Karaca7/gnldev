@@ -24,6 +24,29 @@ async function rootSpanOf(journal: any, runId: string) {
   return spans.find((s: any) => !s.parentSpanId && !s.parentSpanContext) ?? spans[0];
 }
 
+/**
+ * Same span, but waits for the write-ahead marker to carry the expected status instead of sleeping a
+ * fixed span first.
+ *
+ * The two abandoned-run tests below start a run they never await, so what they are waiting for is an
+ * EVENT — the marker landing — and the `sleep(30)` this replaces encoded it as a duration. Returns
+ * the last span it saw at the deadline so a real failure still reports the actual status.
+ *
+ * The margin was measured on the sibling case in durable/test/running-status.test.ts rather than
+ * assumed: the fixed-sleep form did not flake, even with the sleep cut to 1ms under load ~40. So this
+ * removes an assumption; it does not close a reproduced failure.
+ */
+async function waitForRootStatus(journal: any, runId: string, want: string, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  let root: any;
+  do {
+    root = await rootSpanOf(journal, runId).catch(() => undefined);
+    if (root?.attributes['gnl.status'] === want) return root;
+    await new Promise((r) => setTimeout(r, 10));
+  } while (Date.now() < deadline);
+  return root;
+}
+
 describe('exporting a run that failed', () => {
   it('reports ERROR, not OK', async () => {
     const journal = new InMemoryStorage().runs;
@@ -50,9 +73,8 @@ describe('exporting a run that failed', () => {
     // Abandoned mid-work: the write-ahead landed, no terminal ever did (the SIGKILL case).
     const never = { ...base, doGenerate: () => new Promise(() => {}) } as any;
     void runDurable({ runId: 'stuck', journal, model: never, prompt: 'x' } as any).catch(() => {});
-    await new Promise((r) => setTimeout(r, 30));
 
-    const root = await rootSpanOf(journal, 'stuck');
+    const root = await waitForRootStatus(journal, 'stuck', 'running');
     // OTel's OK means "ended fine"; this run has not ended. Exporting it as OK was the dashboard
     // showing green precisely while the process was dead.
     expect(root.status.code).not.toBe(SpanStatusCode.OK);
@@ -64,7 +86,9 @@ describe('exporting a run that failed', () => {
     const journal = new InMemoryStorage().runs;
     const never = { ...base, doGenerate: () => new Promise(() => {}) } as any;
     void runDurable({ runId: 'stopped', journal, model: never, prompt: 'x' } as any).catch(() => {});
-    await new Promise((r) => setTimeout(r, 30));
+    // Wait for the marker BEFORE cancelling: the cancel has to land on a run that is already
+    // running, or it writes its verdict against nothing and the test measures the wrong sequence.
+    await waitForRootStatus(journal, 'stopped', 'running');
     await cancelAgentRun(journal, 'stopped', { reason: 'operator' });
 
     const root = await rootSpanOf(journal, 'stopped');

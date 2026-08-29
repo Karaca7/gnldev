@@ -30,7 +30,10 @@ const child1Script = join(here, 'fixtures', 'suspend-cross-process-child1.ts');
 const child2Script = join(here, 'fixtures', 'suspend-cross-process-child2.ts');
 
 describe('real cross-process suspend/approval persistence', () => {
-  it('child1 suspends (exits normally) → parent (new instance) sees suspended + reads toolCallId/args → child2 approves and resumes → tool ran once, run completed', async () => {
+  // 120s, not 60s like the single-child tests: this one spawns TWO children in sequence, each with
+  // its own 50s spawnSync bound, so the worst case a passing run has to be allowed to reach is 100s.
+  // At the 30s default the test dies before either guard can report which child hung.
+  it('child1 suspends (exits normally) → parent (new instance) sees suspended + reads toolCallId/args → child2 approves and resumes → tool ran once, run completed', { timeout: 120_000 }, async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gnl-durable-suspend-'));
     const dbPath = join(dir, 'runs.db');
     const sePath = join(dir, 'charges.txt');

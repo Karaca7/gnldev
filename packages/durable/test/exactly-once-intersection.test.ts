@@ -44,7 +44,9 @@ const tsxBin = join(here, '..', '..', '..', 'node_modules', '.bin', 'tsx');
 const childScript = join(here, 'fixtures', 'crash-run-lock.ts');
 
 describe('INTERSECTION — I (model-claim) + J (lock fencing) + K (tool retry): real crash/resume', () => {
-  it('child (holding lock) crashes hard → parent takes over via fencing after TTL → charge EXACTLY 1, lock clean', async () => {
+  // 60s, above the child's own 50s spawnSync bound — otherwise the 30s default fires first and the
+  // subprocess guard is unreachable. Same ordering as multi-process-race.test.ts.
+  it('child (holding lock) crashes hard → parent takes over via fencing after TTL → charge EXACTLY 1, lock clean', { timeout: 60_000 }, async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gnl-durable-intersect-'));
     const dbPath = join(dir, 'runs.db');
     const sePath = join(dir, 'charges.txt');

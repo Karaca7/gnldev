@@ -142,10 +142,16 @@ describe('AUDIT-3: an errored stream reads failed, not completed', () => {
 
     const res = await streamDurable({ runId, journal, model, prompt: 'x' } as any);
     try { for await (const _ of (res as any).fullStream) { /* consume */ } } catch { /* the error */ }
-    // give the async onFinish/onError writes a tick to land
-    await new Promise((r) => setTimeout(r, 50));
-
-    const outcome = await readRunOutcome(journal, runId);
+    // Poll for the async onFinish/onError write rather than sleeping a fixed 50ms: what is waited for
+    // is the write landing, not a duration. The deadline still fails the test if the write never
+    // happens, which is the regression this guards. (Not a reproduced flake — the sibling case in
+    // running-status.test.ts was measured and its fixed sleep held even at 1ms under load.)
+    const deadline = Date.now() + 5_000;
+    let outcome = await readRunOutcome(journal, runId);
+    while (outcome?.status !== 'failed' && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 10));
+      outcome = await readRunOutcome(journal, runId);
+    }
     expect(outcome?.status, 'measured pre-fix: the final record said completed').toBe('failed');
   });
 });
