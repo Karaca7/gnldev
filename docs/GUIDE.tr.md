@@ -210,14 +210,14 @@ Hücreler adaptörlerin kendi `capabilities` matrisinin birebir aktarımı (`pos
 
 ### 5.3 Somut tablo yapıları — hangi tablo ne için, ne zaman kullanılır?
 
-SQLite ve Postgres adaptörleri ilk açılışta AYNI adlarla **12 tablo** kurar (`init()` — idempotent:
+SQLite ve Postgres adaptörleri ilk açılışta AYNI adlarla **13 tablo** kurar (`init()` — idempotent:
 tablo varsa dokunmaz). Limanların tablolara dağılımı:
 
 ```mermaid
 graph LR
     runs["runs limanı"] --> T1["gnl_run_journal<br/>(defterin kendisi)"]
     runs --> T2["gnl_runs<br/>(koşu özetleri/vitrin)"]
-    memory["memory limanı"] --> T3["gnl_threads"] & T4["gnl_messages"] & T5["gnl_working_memory"] & T6["gnl_observations"]
+    memory["memory limanı"] --> T3["gnl_threads"] & T4["gnl_messages"] & T5["gnl_working_memory"] & T6["gnl_observations"] & T13["gnl_message_batches<br/>(en-fazla-bir-kez kimliği)"]
     vectors["vectors limanı"] --> T7["gnl_vectors"]
     work["work limanı"] --> T8["gnl_work_log"] & T9["gnl_work_kv"]
     cache["cache limanı"] --> T10["gnl_cache"]
@@ -300,9 +300,19 @@ ve metrikler (`incrBy` — bkz. `metrics.ts`), Studio'nun okuduğu organizasyon 
 dahil. `gnl_runs` gibi türetilmiş veridir ve aynı retention yolundan süpürülür (`deletePrefix` bunu
 da kapsar — `retention.ts`).
 
+**⑬ `gnl_message_batches` — bir mesaj öbeğinin en-fazla-bir-kez kimliği.** Kolonlar:
+`thread_id, batch_key, seq_from, seq_to, ts` (`(thread_id, batch_key)` birincil anahtar). ② ve
+⑫'nin aksine türetilmiş veri **değildir**: `appendMessagesOnce` anahtarı
+`INSERT ... ON CONFLICT DO NOTHING` ile, **satırları yazan transaction'ın İÇİNDE** claim eder; claim
+kaybederse "bu öbek zaten yazılmış" demektir ve mesajlara dokunulmaz — ikisi hiçbir zaman birbirini
+yalanlayamaz. `seq_from/seq_to` öbeğin kapladığı aralığı tutar; `deleteMessagesAfter` böylece silme
+sınırının ötesinde biten öbeklerin işaretlerini de temizleyebilir, yoksa yeniden üretilen bir tur
+"zaten uygulanmış" görünürdü. *Ne zaman?* Koşunun yaptığı her hafıza eklemesinde — öbek başına 1
+satır; aynı öbeğin tekrarı satırı zaten orada bulur ve durur.
+
 > Akılda kalsın diye: **① defter, ② vitrin, ③-⑥ hafıza, ⑦ kütüphane, ⑧-⑨ postane, ⑩ buzdolabı,
-> ⑪ künye, ⑫ çetele.** Kritik garanti yalnız ①'de yaşar; gerisi konfor/hız katmanlarıdır ve
-> `composite()` ile başka motorlara taşınabilir.
+> ⑪ künye, ⑫ çetele, ⑬ yırtılmış bilet koçanı.** Kritik garanti ①'de — mesaj eklemeleri için de
+> ⑬'te — yaşar; gerisi konfor/hız katmanlarıdır ve `composite()` ile başka motorlara taşınabilir.
 
 ---
 
@@ -462,7 +472,7 @@ reddeder.
 ### 7.4 RAG — doküman arşivinden cevap
 
 ```ts
-import { chunkDocuments, PostgresVectorStore, createRagTool, GraphRag } from '@gnldev/rag';
+import { chunkDocuments, indexDocuments, PostgresVectorStore, createRagTool, GraphRag } from '@gnldev/rag';
 
 // 1) Dokümanları parçala (chunk: uzun metni aranabilir küçük parçalara bölme):
 const parcalar = chunkDocuments([{ id: 'el-kitabi', text: uzunMetin }], { strategy: 'markdown' });
@@ -530,14 +540,16 @@ LLM-hakem puanları da deftere yazıldığından tekrar koşularda aynı puan d�
 ### 7.8 Sunucu, istemci, Studio
 
 ```ts
-// Sunucu: registry'yi otomatik REST API yapar (OpenAPI şemasıyla):
+// Sunucu: KONFİGÜRASYONU (registry nesnesini değil) otomatik REST API + OpenAPI şemasına çevirir.
 import { createRestApi } from '@gnldev/server';
-serve(createRestApi(gnl));                      // POST /agents/asistan/run, SSE stream, /metrics...
+import { serve } from '@hono/node-server';
+const api = createRestApi(config);              // createGnl'e verdiğin nesnenin aynısı
+serve({ fetch: api.fetch, port: 3000 });        // POST /agents/asistan/run, SSE stream, /metrics...
 
 // İstemci (tarayıcı/React):
 import { GnlClient } from '@gnldev/client';
-const api = new GnlClient({ baseUrl: 'http://localhost:3000' });
-await api.run('asistan', { runId: 'talep-42', prompt: '...' });
+const client = new GnlClient({ baseUrl: 'http://localhost:3000' });
+await client.run('asistan', { runId: 'talep-42', prompt: '...' });
 // runId isteğe bağlı — vermezsen istemci üretir, yani her yeniden deneme YENİ bir koşu olur ve
 // exactly-once koruması almaz. Yan etkisi olan her çağrıda kendi runId'ni ver.
 
@@ -718,8 +730,9 @@ Evet; iddiaların çoğu **gerçek motorlarda canlı testlerle** kanıtlı — t
   `SIGKILL` ile öldürülüyor — exit handler yok, flush yok — ve ebeveyn koşuyu `completed` değil
   `running` okuyor; write-ahead tasarımının var oluş sebebi tam da bu. (Yukarıdaki failover testi
   ise Postgres'in kendisini SIGKILL'liyor — üçüncü bir durum.)
-- Toplam: **3.589 geçen test** (48 atlanan, 432 dosya — `npx vitest run`), ayrıca
-  `GNL_INTEGRATION=1` ve `GNL_FAILOVER=1` ile gerçek-altyapı paketleri.
+- Toplam: **3.699 geçen test, 62 atlanan, 441 dosya** (29 Ağu 2026 ölçümü; elinizdeki commit'in
+  rakamı için `npx vitest run`), ayrıca `GNL_INTEGRATION=1` ve `GNL_FAILOVER=1` ile gerçek-altyapı
+  paketleri.
 
 ---
 
@@ -828,7 +841,7 @@ token parası yanmaz, yan etki tekrarlanmaz.
 
 Dürüst sınır: koşu M kez resume edilirse fotokopi M kez çekilir (her seferinde N sayfa kopyalanır).
 Dosya BİNLERCE sayfaya ulaşmış VE sık sık devralınıyorsa fotokopinin kendisi yorar — işte o zaman
-dosyayı kapatıp yeni klasör açarsın: `rolloverRun` (11.4).
+dosyayı kapatıp yeni klasör açarsın: `rolloverRun` (§11.4).
 
 ### 11.3 Biten koşuların yaşam döngüsü: `sweepRuns` + `purgeRun`
 
@@ -923,7 +936,7 @@ bozmadan verir — eski dönem, silinene KADAR tam kanıt olarak durur.
 | Koşuların toplamı | Koşu sayısıyla doğrusal | `sweepRuns` (cron'da) + `purgeRun` (GDPR) |
 | Kuyruk/olay kayıtları | Olay başına 1 kayıt | `sweepLog` |
 | Konuşma geçmişleri | Mesaj başına 1 satır | `sweepThreads` + `purgeThread` |
-| Resume okuma maliyeti | Koşu adımıyla doğrusal ama TEK sorguda | C2 replay-cache; sık-resume + dev koşuda → rollover |
+| Resume okuma maliyeti | Koşu adımıyla doğrusal ama TEK sorguda | replay-cache (§11.2); sık-resume + dev koşuda → rollover |
 
 ---
 
@@ -1026,7 +1039,7 @@ Tek cümlelik özet: **resume = geçmişe sadakat (üretim güvenliği), replay/
 | Web çatısı | **Hono** | Server/Studio/auth'un HTTP katmanı. Express yerine Hono: hem Node'da hem edge'de (Cloudflare Workers) aynen çalışır, çok küçüktür — "küçük edge bundle" iddiasının temeli. |
 | Depolama | SQLite / PostgreSQL / Redis | §5'teki adaptörler; hepsi OPSİYONEL bağımlılık (kullanmadığın sürücü yüklenmez — lazy import). |
 | Serileştirme | superjson | Kayıt→metin çevirimi; düz JSON'dan farkı `Date` gibi tipleri kaybetmemesi. |
-| Test | Vitest + pg-mem + Docker | 432 dosyada 3.589 geçen test; pg-mem = bellek-içi sahte Postgres (hızlı); Docker compose'ları = GERÇEK PG/Redis entegrasyonu + canlı failover senaryosu. |
+| Test | Vitest + pg-mem + Docker | 441 dosyada 3.699 geçen test (29 Ağu 2026); pg-mem = bellek-içi sahte Postgres (hızlı); Docker compose'ları = GERÇEK PG/Redis entegrasyonu + canlı failover senaryosu. |
 | Paketleme | — | Gerekmiyor: `createRestApi()` web standardı bir fetch handler döndürüyor, her platform onu zaten kendi yöntemiyle paketliyor. |
 | Studio arayüzü | React + TanStack Query + Recharts | Panel ön yüzü: arayüz + veri çekme/önbellek + grafikler. |
 | Gözlemlenebilirlik | OTLP/HTTP (elle, ~8KB) | İzleri dış araçlara gönderme; koca OTel SDK yerine elle yazılmış çevirici (ince-kal felsefesi). Canlı mod ayrıca OTel SDK'sını opsiyonel kullanır. |

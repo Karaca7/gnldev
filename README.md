@@ -168,7 +168,7 @@ The table below covers the ones you interact with directly.
 (`superAdmin`/`admin`/`client`/`viewer`), and the `resourceId` rules that keep one end user's
 conversations, memory and runs apart from another's are all in `@gnldev/auth` and `@gnldev/server`.
 (Studio is an operator console and refuses an application credential outright rather than serving one
-per end user — see [@gnldev/auth](packages/auth/README.md).) None of them switch on when you pay: a
+per end user — see [@gnldev/auth](./packages/auth/README.md).) None of them switch on when you pay: a
 security default that arrives with an invoice is the wrong shape, and an unpaid deployment being the
 less isolated one was a bug, not a business model.
 
@@ -224,6 +224,7 @@ serve({ fetch: createRestApi(config).fetch, port: Number(process.env.PORT ?? 300
 `createRestApi` returns a plain fetch handler, so it also mounts straight into an existing server —
 `toNodeHandler` from `@gnldev/server/node` bridges it to Express, Fastify, Koa, Nest or bare
 `node:http`, and on Deno, Bun or Workers the handler is already the shape those runtimes expect.
+
 **Journal warning:** `node:sqlite` doesn't work on serverless/edge runtimes → use a network-backed journal
 (`@gnldev/durable/postgres` or `/redis`, D1 on Cloudflare). `SqliteStorage` is only for long-lived Node
 processes.

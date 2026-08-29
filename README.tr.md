@@ -10,15 +10,35 @@ kendisine kadar uzanır, belirsizlikte (crash sonrası sonuç bilinmiyorsa) sess
 AI SDK biliyorsan bunu da biliyorsun.
 
 ```ts
-import { runDurable } from '@gnldev/durable';
+import { runDurable, gnlTool } from '@gnldev/durable';
 import { SqliteStorage } from '@gnldev/durable/sqlite';
+import { openai } from '@ai-sdk/openai';
+import { tool } from 'ai';
+import { z } from 'zod';
+
+const chargeCard = gnlTool(
+  tool({
+    description: 'Müşterinin kartını çek',
+    inputSchema: z.object({ amount: z.number() }),
+    execute: async ({ amount }) => payments.charge(amount),
+  }),
+  {
+    sideEffect: true,      // para hareket ediyor — journal'dan asla replay edilmez
+    idempotency: 'args',   // model aynı işi yeni bir toolCallId ile yeniden planlasa da tekrar çalışmaz
+  },
+);
 
 const res = await runDurable({
   runId: 'order-123',                       // idempotency anahtarı (genelde orderId/sessionId)
   journal: new SqliteStorage('runs.db').runs,
-  model, tools: { chargeCard }, prompt: 'Siparişi iptal et, benzer ürün öner',
+  model: openai('gpt-4o'),
+  tools: { chargeCard },
+  prompt: 'Siparişi iptal et, benzer ürün öner',
 });
-// Çökme sonrası: AYNI runId ile tekrar çağır → kart 2. kez çekilmez, loop kaldığı yerden biter.
+// Çökme sonrası: AYNI runId ile tekrar çağır → kart 2. kez çekilmez. Tamamlanan adımlar journal'dan
+// replay edilir; yalnızca bitmemiş olan yeniden koşar. Çökme, tahsilat yapıldıktan SONRA ama journal'a
+// yazılmadan ÖNCE açılan pencereye denk geldiyse resume tahminde bulunmaz — SideEffectRetryBlockedError
+// FIRLATIR; aşağıdaki "Dürüst konumlandırma" bölümüne bak.
 ```
 
 ## Neden? (koz — code-verified)
@@ -128,7 +148,7 @@ Aşağıdaki tablo doğrudan kullandığınız paketleri kapsar.
 | **`@gnldev/rag`** | vector store (dev: in-memory · **prod: pgvector**) · **`chunkText`/`chunkDocuments`** (recursive/markdown/character) · **`GraphRag`** (benzerlik-grafı retrieval) · `createRagTool` · `llmReranker` · `SemanticMemory` |
 | **`@gnldev/workflow`** | then/parallel/branch · foreach/loop · **`retry` (bildirimsel retry-policy, sayaç journal'da)** · `wf.runResumable()` (top-level export değil, `Workflow` **metodu**) + `sleep`/`waitFor` (evented/scheduled) |
 | **`@gnldev/processors`** | piiRedactor · moderationProcessor · toolFilter · **`toolSearch` (semantik tool seçimi, journal'lı)** · tokenLimit · promptInjectionDetector · outputLimit |
-| **`@gnldev/evals`** | **16 hazır scorer** (faithfulness/hallucination/…) · llmJudge · `scoreRun` · `evalDataset` (resumable) · **`createDatasetsManager`** (versiyon geçmişi + deney `compare`) |
+| **`@gnldev/evals`** | **16 hazır scorer** — 8 LLM-hakem (faithfulness/hallucination/…), 4 modelsiz metin scorer'ı, 3 kural-tabanlı scorer (exactMatch/contains/regexScore) + embeddingSimilarity (embedding fonksiyonunu siz verirsiniz) · llmJudge · `scoreRun` · `evalDataset` (resumable) · **`createDatasetsManager`** (versiyon geçmişi + deney `compare`) |
 | **`@gnldev/mcp`** | MCP client (`mcpTools`) **+ server** (`createMcpServer`, server-side exactly-once) |
 | **`@gnldev/server`** | `createRestApi` + OpenAPI · **fail-closed auth** (production'da provider yoksa kurulum hata verir; bilinçli açık erişim `allowOpenAccess: true`) · **409/422 resumable sözleşmesi** (blok/limit hataları `BLOCKED_ERROR_CODES` tek kaynağından `resumable`/`retry` ayrımıyla döner) |
 | **`@gnldev/otel`** | `exportRunToOtlp` + **`otlpPresets`** (Langfuse/Braintrust/Honeycomb/Datadog/Collector + jenerik API-key OTLP) · **canlı mod** (`@gnldev/otel/live`) |
@@ -145,7 +165,8 @@ Aşağıdaki tablo doğrudan kullandığınız paketleri kapsar.
 **İzolasyon ücretsiz.** Organizasyon sınırı, dört kimlik sınıfı
 (`superAdmin`/`admin`/`client`/`viewer`) ve bir son kullanıcının sohbetini, belleğini ve koşularını
 diğerinden ayıran `resourceId` kuralları — hepsi `@gnldev/auth` ve `@gnldev/server` içinde. (Studio bir
-operatör konsoludur: son kullanıcı başına hizmet vermek yerine uygulama kimliğini tümden reddeder.)
+operatör konsoludur: son kullanıcı başına hizmet vermek yerine uygulama kimliğini tümden reddeder —
+bkz. [@gnldev/auth](./packages/auth/README.md).)
 Hiçbiri ödeme yapınca açılmıyor: faturayla birlikte gelen bir güvenlik varsayılanı yanlış şekildir, ve ödemeyen
 kurulumun daha az izole olması bir hataydı, iş modeli değil.
 
@@ -195,6 +216,11 @@ import { createRestApi } from '@gnldev/server';
 import { serve } from '@hono/node-server';
 serve({ fetch: createRestApi(config).fetch, port: Number(process.env.PORT ?? 3000) });
 ```
+`createRestApi` web standardı bir fetch handler döndürür, dolayısıyla mevcut bir sunucuya da doğrudan
+takılır — `@gnldev/server/node`'daki `toNodeHandler` onu Express, Fastify, Koa, Nest ya da çıplak
+`node:http` ile birleştirir; Deno, Bun ve Workers'ta ise handler zaten o runtime'ların beklediği
+biçimdedir.
+
 **Journal uyarısı:** serverless/edge runtime'larda `node:sqlite` çalışmaz → ağ-tabanlı journal kullanın (`@gnldev/durable/postgres` veya `/redis`, Cloudflare'de D1). `SqliteStorage` yalnız uzun-ömürlü Node süreçleri içindir.
 
 ## Dürüst konumlandırma
@@ -208,6 +234,9 @@ sağlayıcıya kadar takip edilir, hâlâ belirsizse sistem **sessizce tekrar et
 recover merdiveni `packages/durable/test/crash-window.test.ts`'te) — opak step-snapshot'lı bir durable agent'ın vermediği budur. Bu tür framework'ler
 daha geniş/olgun (voice/deployer/editor/auth — bizde bilinçli pas) ama hiçbir özelliği bu garantilerle gelmiyor.
 Bizim kozumuz **correctness**; ödeme/finans/transaksiyonel ve uzun-koşan/dağıtık iş yüklerinde belirleyici.
+
+---
+
 ## Neden `WorkflowAgent` değil?
 
 Yerinde bir soru, ve cevaplanması en önemli olanı: AI SDK ajanları için dayanıklılık artık SDK'da bir
@@ -280,10 +309,6 @@ fonksiyon aldığı için, fan-out içindeki ajan aynı yardımcıyı yeniden ku
 
 ---
 
-
-
----
-
 ## Dokümantasyon
 
 - **[docs/GUIDE.tr.md](./docs/GUIDE.tr.md)** — tam rehber: nedir, bir koşu nasıl işler, journal'ın
@@ -296,6 +321,9 @@ fonksiyon aldığı için, fan-out içindeki ajan aynı yardımcıyı yeniden ku
   sağlayıcı-taraflı exactly-once: journal'dan sağlayıcıya taşınan aynı anahtar.
 - **[examples/showcase](./examples/showcase)** — API anahtarı gerektirmeden paketleri uçtan uca
   koşturan, kendini doğrulayan tek dosya: `pnpm --filter @gnldev/showcase demo`.
+- **[CHANGELOG.md](./CHANGELOG.md)** — ne değişti; uyumu bozan her şey için geçiş notlarıyla birlikte.
+- **[VERSIONING.md](./VERSIONING.md)** — paketler lockstep ilerler; proje 0.x'teyken bir minor
+  yükseltmenin ne anlama geldiği ve neyin geriye dönük uyumu bozan (breaking) değişiklik sayıldığı.
 
 ## Katkı
 

@@ -35,7 +35,7 @@ for (const name of readdirSync(pkgDir)) {
   const manifest = join(pkgDir, name, 'package.json');
   if (!existsSync(manifest)) continue;
   // Per-package try/catch: a malformed manifest used to abort with a bare SyntaxError stack that named
-  // no file, leaving whoever hit it in CI to guess which of ~27 packages it came from.
+  // no file, leaving whoever hit it in CI to guess which of ~26 packages it came from.
   let pkg;
   try {
     pkg = JSON.parse(readFileSync(manifest, 'utf8'));

@@ -214,14 +214,14 @@ The cells are the adapters' own `capabilities` matrices, verbatim (`postgres-sto
 
 ### 5.3 Concrete table structures — which table is used for what, and when?
 
-The SQLite and Postgres adapters create **12 tables** with identical names on first startup
+The SQLite and Postgres adapters create **13 tables** with identical names on first startup
 (`init()` — idempotent: if a table exists, it's left untouched). How the ports map to tables:
 
 ```mermaid
 graph LR
     runs["runs port"] --> T1["gnl_run_journal<br/>(the journal itself)"]
     runs --> T2["gnl_runs<br/>(run summaries/listing)"]
-    memory["memory port"] --> T3["gnl_threads"] & T4["gnl_messages"] & T5["gnl_working_memory"] & T6["gnl_observations"]
+    memory["memory port"] --> T3["gnl_threads"] & T4["gnl_messages"] & T5["gnl_working_memory"] & T6["gnl_observations"] & T13["gnl_message_batches<br/>(at-most-once identity)"]
     vectors["vectors port"] --> T7["gnl_vectors"]
     work["work port"] --> T8["gnl_work_log"] & T9["gnl_work_kv"]
     cache["cache port"] --> T10["gnl_cache"]
@@ -309,9 +309,20 @@ and metrics (`incrBy` — see `metrics.ts`), including the per-organization budg
 reads. Like `gnl_runs` it is derived data, and it is swept by the same retention path
 (`deletePrefix` covers it — `retention.ts`).
 
+**⑬ `gnl_message_batches` — the at-most-once identity for a batch of messages.** Columns:
+`thread_id, batch_key, seq_from, seq_to, ts` (`(thread_id, batch_key)` is the primary key). Unlike ②
+and ⑫ it is **not** derived data: `appendMessagesOnce` claims the key with
+`INSERT ... ON CONFLICT DO NOTHING` **inside the same transaction that writes the rows**, so a claim
+that loses means "this batch already landed" and the messages are left untouched — the two can never
+disagree. `seq_from/seq_to` record the range the batch occupied, so `deleteMessagesAfter` can drop
+the markers of batches that ended past the deletion point; otherwise a regenerated turn would look
+"already applied". *When?* On every memory append a run makes — one row per batch; a retry of the
+same batch finds the row already there and stops.
+
 > To remember it easily: **① the journal, ② the listing, ③–⑥ memory, ⑦ the library, ⑧–⑨ the
-> mailroom, ⑩ the fridge, ⑪ the ID card, ⑫ the tally sheet.** The critical guarantee lives only
-> in ①; the rest are comfort/speed layers and can be moved to other engines with `composite()`.
+> mailroom, ⑩ the fridge, ⑪ the ID card, ⑫ the tally sheet, ⑬ the torn ticket stub.** The critical
+> guarantee lives in ① — and, for message appends, in ⑬; the rest are comfort/speed layers and can
+> be moved to other engines with `composite()`.
 
 ---
 
@@ -473,7 +484,7 @@ rather than guessing what to strip.
 ### 7.4 RAG — answering from a document archive
 
 ```ts
-import { chunkDocuments, PostgresVectorStore, createRagTool, GraphRag } from '@gnldev/rag';
+import { chunkDocuments, indexDocuments, PostgresVectorStore, createRagTool, GraphRag } from '@gnldev/rag';
 
 // 1) Split documents into chunks (chunk: breaking long text into small, searchable pieces):
 const chunks = chunkDocuments([{ id: 'handbook', text: longText }], { strategy: 'markdown' });
@@ -538,9 +549,9 @@ await m.runExperiment({ dataset, run: withOldModel, scorers, experimentId: 'v1' 
 await m.runExperiment({ datasetId: dataset.id, run: withNewModel, scorers, experimentId: 'v2' });
 const diff = await m.compare(dataset.id, 'v1', 'v2');  // which questions regressed, which improved
 ```
-If the suite crashes midway, completed test cases are skipped (**resumable evals** — uncommon, because it needs the eval run to be journaled like any other
-don't have this); LLM-judge scores are also written to the journal, so repeated runs return the
-same score (and no money is burned again).
+If the suite crashes midway, completed test cases are skipped (**resumable evals** — uncommon,
+because it needs the eval run to be journaled like any other); LLM-judge scores are also written to
+the journal, so repeated runs return the same score (and no money is burned again).
 
 ### 7.8 Server, client, Studio
 
@@ -734,8 +745,9 @@ themselves live under `packages/durable/test/`:
   no exit handler, no flush — and the parent then reads the run as `running`, never `completed`,
   which is what the write-ahead design exists to make possible. (The failover test above SIGKILLs
   Postgres itself, which is a third thing again.)
-- Total: **3,589 passing tests** (48 skipped, 432 files — `npx vitest run`), plus
-  real-infrastructure suites gated behind `GNL_INTEGRATION=1` and `GNL_FAILOVER=1`.
+- Total: **3,699 passing tests, 62 skipped, across 441 files** (measured 2026-08-29; run
+  `npx vitest run` for the figure as of the commit you have), plus real-infrastructure suites gated
+  behind `GNL_INTEGRATION=1` and `GNL_FAILOVER=1`.
 
 ---
 
@@ -1056,7 +1068,7 @@ former; it's tested with the latter.
 | Web framework | **Hono** | The HTTP layer for Server/Studio/auth. Hono instead of Express: runs identically on Node and at the edge (Cloudflare Workers), and is very small — the foundation of the "small edge bundle" claim. |
 | Storage | SQLite / PostgreSQL / Redis | The adapters from §5; all OPTIONAL dependencies (a driver you don't use is never loaded — lazy import). |
 | Serialization | superjson | Record-to-text conversion; unlike plain JSON, it doesn't lose types like `Date`. |
-| Testing | Vitest + pg-mem + Docker | 3,589 passing tests across 432 files; pg-mem = an in-memory fake Postgres (fast); Docker compose files = REAL PG/Redis integration + a live failover scenario. |
+| Testing | Vitest + pg-mem + Docker | 3,699 passing tests across 441 files (2026-08-29); pg-mem = an in-memory fake Postgres (fast); Docker compose files = REAL PG/Redis integration + a live failover scenario. |
 | Bundling | — | Not needed: `createRestApi()` returns a web-standard fetch handler, so each platform bundles it the way it already bundles anything else. |
 | Studio UI | React + TanStack Query + Recharts | The panel's front end: UI + data fetching/caching + charts. |
 | Observability | OTLP/HTTP (hand-rolled, ~8KB) | Sends traces to external tools; a hand-written translator instead of the massive OTel SDK (the stay-thin philosophy). Live mode also optionally uses the OTel SDK. |

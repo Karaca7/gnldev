@@ -1,6 +1,6 @@
 // Emits dist/THIRD-PARTY-NOTICES.txt after the Vite build.
 //
-// WHY this package and no other: the other 24 packages compile with `tsc`, so their dist contains
+// WHY this package and no other: the other 25 packages compile with `tsc`, so their dist contains
 // only their OWN code and their dependencies stay declared in package.json for npm to resolve.
 // studio-ui is bundled with Vite — React, recharts, framer-motion, the Geist fonts and everything
 // they pull in are COPIED INTO dist/assets/*.js. Redistributing that code carries the licenses'
