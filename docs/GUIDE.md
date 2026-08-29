@@ -745,7 +745,7 @@ themselves live under `packages/durable/test/`:
   no exit handler, no flush — and the parent then reads the run as `running`, never `completed`,
   which is what the write-ahead design exists to make possible. (The failover test above SIGKILLs
   Postgres itself, which is a third thing again.)
-- Total: **3,699 passing tests, 62 skipped, across 441 files** (measured 2026-08-29; run
+- Total: **3,705 passing tests, 62 skipped, across 448 files** (measured 2026-08-29; run
   `npx vitest run` for the figure as of the commit you have), plus real-infrastructure suites gated
   behind `GNL_INTEGRATION=1` and `GNL_FAILOVER=1`.
 
@@ -1068,7 +1068,7 @@ former; it's tested with the latter.
 | Web framework | **Hono** | The HTTP layer for Server/Studio/auth. Hono instead of Express: runs identically on Node and at the edge (Cloudflare Workers), and is very small — the foundation of the "small edge bundle" claim. |
 | Storage | SQLite / PostgreSQL / Redis | The adapters from §5; all OPTIONAL dependencies (a driver you don't use is never loaded — lazy import). |
 | Serialization | superjson | Record-to-text conversion; unlike plain JSON, it doesn't lose types like `Date`. |
-| Testing | Vitest + pg-mem + Docker | 3,699 passing tests across 441 files (2026-08-29); pg-mem = an in-memory fake Postgres (fast); Docker compose files = REAL PG/Redis integration + a live failover scenario. |
+| Testing | Vitest + pg-mem + Docker | 3,705 passing tests across 448 files (2026-08-29); pg-mem = an in-memory fake Postgres (fast); Docker compose files = REAL PG/Redis integration + a live failover scenario. |
 | Bundling | — | Not needed: `createRestApi()` returns a web-standard fetch handler, so each platform bundles it the way it already bundles anything else. |
 | Studio UI | React + TanStack Query + Recharts | The panel's front end: UI + data fetching/caching + charts. |
 | Observability | OTLP/HTTP (hand-rolled, ~8KB) | Sends traces to external tools; a hand-written translator instead of the massive OTel SDK (the stay-thin philosophy). Live mode also optionally uses the OTel SDK. |

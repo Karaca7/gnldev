@@ -730,7 +730,7 @@ Evet; iddiaların çoğu **gerçek motorlarda canlı testlerle** kanıtlı — t
   `SIGKILL` ile öldürülüyor — exit handler yok, flush yok — ve ebeveyn koşuyu `completed` değil
   `running` okuyor; write-ahead tasarımının var oluş sebebi tam da bu. (Yukarıdaki failover testi
   ise Postgres'in kendisini SIGKILL'liyor — üçüncü bir durum.)
-- Toplam: **3.699 geçen test, 62 atlanan, 441 dosya** (29 Ağu 2026 ölçümü; elinizdeki commit'in
+- Toplam: **3.705 geçen test, 62 atlanan, 448 dosya** (29 Ağu 2026 ölçümü; elinizdeki commit'in
   rakamı için `npx vitest run`), ayrıca `GNL_INTEGRATION=1` ve `GNL_FAILOVER=1` ile gerçek-altyapı
   paketleri.
 
@@ -1039,7 +1039,7 @@ Tek cümlelik özet: **resume = geçmişe sadakat (üretim güvenliği), replay/
 | Web çatısı | **Hono** | Server/Studio/auth'un HTTP katmanı. Express yerine Hono: hem Node'da hem edge'de (Cloudflare Workers) aynen çalışır, çok küçüktür — "küçük edge bundle" iddiasının temeli. |
 | Depolama | SQLite / PostgreSQL / Redis | §5'teki adaptörler; hepsi OPSİYONEL bağımlılık (kullanmadığın sürücü yüklenmez — lazy import). |
 | Serileştirme | superjson | Kayıt→metin çevirimi; düz JSON'dan farkı `Date` gibi tipleri kaybetmemesi. |
-| Test | Vitest + pg-mem + Docker | 441 dosyada 3.699 geçen test (29 Ağu 2026); pg-mem = bellek-içi sahte Postgres (hızlı); Docker compose'ları = GERÇEK PG/Redis entegrasyonu + canlı failover senaryosu. |
+| Test | Vitest + pg-mem + Docker | 448 dosyada 3.705 geçen test (29 Ağu 2026); pg-mem = bellek-içi sahte Postgres (hızlı); Docker compose'ları = GERÇEK PG/Redis entegrasyonu + canlı failover senaryosu. |
 | Paketleme | — | Gerekmiyor: `createRestApi()` web standardı bir fetch handler döndürüyor, her platform onu zaten kendi yöntemiyle paketliyor. |
 | Studio arayüzü | React + TanStack Query + Recharts | Panel ön yüzü: arayüz + veri çekme/önbellek + grafikler. |
 | Gözlemlenebilirlik | OTLP/HTTP (elle, ~8KB) | İzleri dış araçlara gönderme; koca OTel SDK yerine elle yazılmış çevirici (ince-kal felsefesi). Canlı mod ayrıca OTel SDK'sını opsiyonel kullanır. |
