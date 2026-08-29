@@ -33,25 +33,37 @@ describe('@gnldev/evals evalDataset — concurrency (P1.4)', () => {
     expect(res.aggregate['contains']).toBe(1);
   });
 
-  it('concurrency > 1 runs cases in parallel — wall time close to one delay, not N delays', async () => {
+  // Counts overlap instead of timing it. Parallelism has a direct observable — how many `run` calls
+  // are in flight at once — and the clock is only a proxy for it. The proxy was both flakier and
+  // WEAKER than the thing it stood for:
+  //
+  //   flakier: it compared two wall-clock measurements taken back to back (parallel ≈ 40ms vs serial
+  //            ≈ 160ms, asserting parallel < 70% of serial). That is ~120ms of absolute headroom
+  //            spread across two independent samples, so one scheduler stall during the first sample
+  //            and not the second turns it red with nothing wrong.
+  //
+  //   weaker:  a bug that silently halved the requested concurrency — 4 asked for, 2 applied — takes
+  //            2×40 = 80ms against a 112ms threshold and PASSES. Arithmetic, not speculation. The
+  //            peak counter reports 2 and fails, which is the whole point of the option.
+  it('concurrency > 1 actually overlaps — peak in-flight equals the requested concurrency', async () => {
     const n = 4;
     const dataset = delayedDataset(n);
+    let inFlight = 0;
+    let peak = 0;
     const run = async (input: any) => {
+      peak = Math.max(peak, ++inFlight);
       await sleep(DELAY_MS);
+      inFlight--;
       return `echo:${input}`;
     };
 
-    const t0 = Date.now();
     await evalDataset({ dataset, run, scorers: [contains('echo')], concurrency: n });
-    const parallelMs = Date.now() - t0;
+    expect(peak, 'concurrency was requested but the cases did not overlap').toBe(n);
 
-    const t1 = Date.now();
+    // And the default really is sequential: one at a time, never two.
+    peak = 0;
     await evalDataset({ dataset, run, scorers: [contains('echo')], concurrency: 1 });
-    const serialMs = Date.now() - t1;
-
-    // parallel run of n cases at DELAY_MS each should take roughly 1x DELAY_MS, serial roughly nx.
-    // Generous margin to avoid flakiness: parallel must be meaningfully faster than serial.
-    expect(parallelMs).toBeLessThan(serialMs * 0.7);
+    expect(peak, 'concurrency: 1 overlapped cases').toBe(1);
   });
 
   it('result order stays index-aligned to dataset.cases regardless of completion order under concurrency', async () => {
