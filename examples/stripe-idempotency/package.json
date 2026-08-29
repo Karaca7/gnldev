@@ -6,7 +6,8 @@
   "type": "module",
   "description": "Provider-side exactly-once: threads GNL's injected idempotencyKey to a mock Stripe client, showing the guarantee extends beyond the framework to the real payment provider. No API key required (mock Stripe, no network calls).",
   "scripts": {
-    "demo": "tsx src/demo.ts"
+    "demo": "tsx src/demo.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@gnldev/durable": "workspace:*"

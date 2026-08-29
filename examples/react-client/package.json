@@ -6,7 +6,8 @@
   "description": "@gnldev/client/react demo: useChat + streaming + interrupt approve, against an API-key-free backend.",
   "scripts": {
     "server": "tsx src/server.ts",
-    "dev": "vite"
+    "dev": "vite",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@gnldev/client": "workspace:*",

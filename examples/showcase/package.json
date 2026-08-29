@@ -8,7 +8,8 @@
     "demo": "tsx src/demo.ts",
     "studio": "tsx src/studio.ts",
     "bench": "tsx src/benchmark.ts",
-    "bundle": "tsx src/bundle-size.ts"
+    "bundle": "tsx src/bundle-size.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@gnldev/a2a": "workspace:*",

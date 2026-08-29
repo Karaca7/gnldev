@@ -8,19 +8,21 @@
 //
 // No API key needed: the model is a mock LanguageModelV2 that scripts the tool calls.
 // Run:  pnpm --filter @gnldev/showcase exec tsx src/ai-sdk-idempotency.ts
-import { generateText, stepCountIs } from 'ai';
+import { generateText, stepCountIs, tool } from 'ai';
+import { z } from 'zod';
 import { InMemoryJournal, withIdempotency } from '@gnldev/durable';
 
 // ── The side-effectful tool: charge a card. A real one would hit Stripe; here it just counts. ──
 let charges = 0;
-const chargeCard = {
+const chargeCard = tool({
   description: 'Charge the customer card for an order.',
-  execute: async (args: { orderId: string; amount: number }) => {
+  inputSchema: z.object({ orderId: z.string(), amount: z.number() }),
+  execute: async (args) => {
     charges++;
     console.log(`  [side effect] chargeCard EXECUTED for ${args.orderId} ($${args.amount}) — total charges so far: ${charges}`);
     return { ok: true, orderId: args.orderId, amount: args.amount };
   },
-};
+});
 
 // ── A shared journal: dedup persists across BOTH runs below (cross-run window is the default). ──
 const journal = new InMemoryJournal();

@@ -2,6 +2,7 @@
 // (file: import). NO API key required. Writes to `gnl-demo.db` → inspect visually with `pnpm studio`.
 import { rmSync } from 'node:fs';
 import { z } from 'zod';
+import { tool } from 'ai';
 import { runDurable, resumeRun, getRunCost, forkRun, reconstructState, toJournal, createGnl, rolloverRun } from '@gnldev/durable';
 import { SqliteStorage } from '@gnldev/durable/sqlite';
 import { createAgentTool } from '@gnldev/durable';
@@ -30,13 +31,20 @@ async function section(name: string, fn: () => Promise<string>) {
 rmSync('gnl-demo.db', { force: true });
 const storage = new SqliteStorage('gnl-demo.db'); // all store ports (run+memory+cache+work)
 const journal = storage.runs; // low-level RunJournal (durable run/inspection)
+// The array-`listRuns` view of the same journal. `runDurable` wants the paginated `RunJournal`
+// above; the read-side helpers (`scoreRun`, `exportRun`, `getRunCost`, `forkRun`) and the optional
+// counter methods are typed against the older `JournalReader`, and `toJournal` is the adapter that
+// exists to bridge them. Both handles address the same rows — the wrapper holds no state.
+const reader = toJournal(journal);
 
 console.log('\n=== showcase: no API key, durable end-to-end ===\n');
 
 await section('@gnldev/durable — exactly-once (charge→crash→resume)', async () => {
   const charges = { n: 0 };
   const crash = { active: true };
-  const tools = () => ({ charge: { execute: async () => ({ charged: (charges.n++, 20) }) } });
+  const tools = () => ({
+    charge: tool({ description: 'Charge the card', inputSchema: z.object({ amount: z.number() }), execute: async () => ({ charged: (charges.n++, 20) }) }),
+  });
   const model = () => mkModel(async ({ prompt }: any) => {
     const d = countToolResults(prompt);
     if (d === 0) return toolCall('charge', 'c', { amount: 20 });
@@ -72,7 +80,7 @@ await section('@gnldev/rag — retrieval + LLM reranker', async () => {
     { id: '1', text: 'refund policy: 14 days' }, { id: '2', text: 'shipping time: 3 days' }, { id: '3', text: 'refund and shipping' },
   ]);
   const tool = createRagTool({ store, embed, topK: 3, rerank: llmReranker({ model: mkModel(async () => finalText('0,2,1')) }), rerankTopK: 2 });
-  const res: any = await tool.execute!({ query: 'refund' }, { toolCallId: 'r' });
+  const res: any = await tool.execute!({ query: 'refund' }, { toolCallId: 'r', messages: [], context: undefined });
   assert(res.length === 2, 'rerankTopK was not applied');
   return `${res.length} documents after rerank`;
 });
@@ -103,7 +111,9 @@ await section('@gnldev/durable — multi-agent (createAgentTool)', async () => {
 await section('@gnldev/durable — suspend/resume (human approval)', async () => {
   const charges = { n: 0 };
   const guard = ({ args }: any) => ((args as any).amount > 1000 ? { action: 'require-approval' as const } : { action: 'allow' as const });
-  const tools = () => ({ charge: { execute: async () => ({ charged: (charges.n++, 5000) }) } });
+  const tools = () => ({
+    charge: tool({ description: 'Charge the card', inputSchema: z.object({ amount: z.number() }), execute: async () => ({ charged: (charges.n++, 5000) }) }),
+  });
   const model = () => agentModel('charge', 'big', { amount: 5000 }, 'Done.');
   const r1 = await runDurable({ runId: 'appr-1', journal, model: model(), tools: tools(), guard, prompt: 'large charge' });
   assert(r1.interrupts.length === 1 && charges.n === 0, 'was not suspended');
@@ -164,17 +174,17 @@ await section('@gnldev/cache — cross-run cache', async () => {
 });
 
 await section('@gnldev/evals — scoreRun + dataset bulk', async () => {
-  const s = await scoreRun(journal, 'order-1', [contains('Charged')]);
+  const s = await scoreRun(reader, 'order-1', [contains('Charged')]);
   assert(s.scores['contains'].score === 1, 'scoreRun incorrect');
-  const ds = await evalDataset({ dataset: { id: 'd', cases: [{ id: 'c1', input: 'x', expected: 'echo:x' }] }, run: async (i) => `echo:${i}`, scorers: [contains('echo')], journal });
+  const ds = await evalDataset({ dataset: { id: 'd', cases: [{ id: 'c1', input: 'x', expected: 'echo:x' }] }, run: async (i) => `echo:${i}`, scorers: [contains('echo')], journal: reader });
   assert(ds.aggregate['contains'] === 1, 'dataset eval incorrect');
   return `scoreRun + evalDataset (aggregate=${ds.aggregate['contains']})`;
 });
 
 await section('@gnldev/otel — trace export (waterfall)', async () => {
-  const { traceId, spans, exporter } = await exportRun(journal, 'order-1', { serviceName: 'demo' });
+  const { traceId, spans, exporter } = await exportRun(reader, 'order-1', { serviceName: 'demo' });
   const fin = (exporter as any).getFinishedSpans();
-  const cost = await getRunCost(journal, 'order-1');
+  const cost = await getRunCost(reader, 'order-1');
   const wf = fin.map((s: any) => `${s.name}(${(s.duration[0] * 1000 + s.duration[1] / 1e6).toFixed(1)}ms)`).join(' → ');
   assert(spans >= 2, 'no spans');
   return `traceId=${traceId.slice(0, 8)}… ${spans} span · $${cost.costUsd.toFixed(4)}\n     ${wf}`;
@@ -184,17 +194,17 @@ await section('@gnldev/durable — time-travel + fork', async () => {
   const entries = await journal.readRun('order-1');
   const state = reconstructState(entries, 1);
   assert(state.messages.length >= 1, 'no state reconstruct');
-  const fork = await forkRun(journal, 'order-1', 1, 'order-1-fork');
+  const fork = await forkRun(reader, 'order-1', 1, 'order-1-fork');
   assert(fork.copiedModel >= 1, 'fork did not copy');
   return `step-1 state + fork (${fork.copiedModel} model, ${fork.copiedTool} tool copied)`;
 });
 
 await section('@gnldev/studio — state endpoint + fork', async () => {
-  const app = createStudioApp({ reader: toJournal(journal), resume: async () => ({ text: 'ok' }) });
+  const app = createStudioApp({ reader, resume: async () => ({ text: 'ok' }) });
   const call = (path: string) => app(new Request(new URL(path, 'http://demo.local')));
-  const caps = await (await call('/api/capabilities')).json();
+  const caps = await (await call('/api/capabilities')).json() as any;
   assert(caps.fork === true, 'fork capability disabled');
-  const st = await (await call('/api/runs/order-1/state?step=1')).json();
+  const st = await (await call('/api/runs/order-1/state?step=1')).json() as any;
   assert(st.step === 1, 'state endpoint incorrect');
   return `studio: fork enabled + state reconstruction works`;
 });
@@ -244,7 +254,7 @@ await section('@gnldev/workflow — retry(attempts) (fails twice → succeeds on
   // Journal proof of the counter: 2 failed attempts were counted (a successful attempt doesn't
   // increment it). retry() keeps this in the journal's COUNTERS, not under a plain key — see
   // bumpAttempts() in @gnldev/workflow, which leaves the plain field untouched by design.
-  const used = (await journal.getCounters('retry-1:wf:charge:attempts'))?.n;
+  const used = (await reader.getCounters!('retry-1:wf:charge:attempts'))?.n;
   assert(used === 2, `attempts counter is ${used}, should be 2`);
   return `2 failed attempts (journal attempts=${used}) → 3rd attempt succeeded`;
 });
@@ -260,8 +270,8 @@ await section('@gnldev/rag — chunkDocuments (markdown) → GraphRag indirect-r
   await indexDocuments(graph, embed, chunks);
   const flatTool = createRagTool({ store: flat, embed, topK: 3 });
   const graphTool = createRagTool({ store: graph, embed, topK: 3 });
-  const flatRes: any = await flatTool.execute!({ query: 'refund' }, { toolCallId: 'f' });
-  const graphRes: any = await graphTool.execute!({ query: 'refund' }, { toolCallId: 'g' });
+  const flatRes: any = await flatTool.execute!({ query: 'refund' }, { toolCallId: 'f', messages: [], context: undefined });
+  const graphRes: any = await graphTool.execute!({ query: 'refund' }, { toolCallId: 'g', messages: [], context: undefined });
   // "shipping delay compensation": not directly similar to the query (doesn't show up in flat search)
   // but is strongly linked to 'refund shipping form' → GraphRag surfaces it via neighbor expansion.
   assert(!flatRes.some((r: any) => r.text.includes('compensation')), 'flat search returned the indirect chunk');
@@ -290,7 +300,7 @@ await section('@gnldev/processors — toolSearch (4 tools → 1 selection, journ
 
 await section('@gnldev/durable — rolloverRun (period rollover → context moved to the new period)', async () => {
   // Period 1: a 2-step run (tool call + final).
-  await runDurable({ runId: 'ro-1', journal, model: agentModel('note', 'n1', { text: 'Ada' }, 'Note taken.'), tools: { note: { execute: async (a: any) => ({ saved: a.text }) } }, prompt: 'my name is Ada, take a note' });
+  await runDurable({ runId: 'ro-1', journal, model: agentModel('note', 'n1', { text: 'Ada' }, 'Note taken.'), tools: { note: tool({ description: 'Save a note', inputSchema: z.object({ text: z.string() }), execute: async (a) => ({ saved: a.text }) }) }, prompt: 'my name is Ada, take a note' });
   // Rollover: the old run's final state is carried into the new period's :input seed (nothing is deleted).
   const rr = await rolloverRun(journal, 'ro-1');
   assert(rr.newRunId === 'ro-1@2' && rr.seededMessages >= 2, `rollover seed is empty (${rr.seededMessages})`);

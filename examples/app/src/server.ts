@@ -4,7 +4,7 @@ import { Hono } from 'hono';
 import { createWorker } from '@gnldev/queue';
 import { createConsumer } from '@gnldev/events';
 import { exportRun } from '@gnldev/otel';
-import { getRunCost, RunBusyError, SideEffectRetryBlockedError, RetryLimitExceededError } from '@gnldev/durable';
+import { getRunCost, toJournal, RunBusyError, SideEffectRetryBlockedError, RetryLimitExceededError } from '@gnldev/durable';
 import type { Storage } from '@gnldev/durable';
 import { APP_HTML } from './ui.js';
 import { ORDERS, type OrderRow } from './knowledge.js';
@@ -25,7 +25,11 @@ export function buildServer(opts: {
   state: AppState;
 }) {
   const { storage, gnl, resume, memory, state } = opts;
-  const journal = storage.runs; // OTEL/cost via the low-level RunJournal
+  // OTEL/cost read through the array-`listRuns` bridge. `storage.runs` is the paginated `RunJournal`,
+  // and `exportRun`/`getRunCost` take the older `JournalReader`; `toJournal` is the adapter that
+  // exists for exactly this, and passing the raw journal is a type error rather than a silent
+  // mismatch — the examples had no typecheck to report it until now.
+  const journal = toJournal(storage.runs);
   const app = new Hono();
 
   // K1: gnl.run/resume (messages, approve) are called without try/catch — a double-clicked approval or

@@ -9,6 +9,9 @@ import { scoreRun, contains, exactMatch } from '@gnldev/evals';
 
 const storage = new SqliteStorage('gnl-demo.db');
 const journal = storage.runs;
+// One bridge, reused: the Studio app and `scoreRun` both want the array-`listRuns` reader, while
+// `createStudioRunner` takes the paginated journal. Same rows either way — `toJournal` is stateless.
+const reader = toJournal(journal);
 
 // Networks demo: seed an a2a-shaped edge (the real createA2ATool output looks exactly like this: {text,remoteAgent,runId}).
 // Since the demo's local a2a mock doesn't write these fields, we add them here to show the Networks view.
@@ -49,14 +52,17 @@ const githubMcp = {
 };
 
 const app = createStudioApp({
-  reader: toJournal(journal),
+  reader,
   resume: async () => ({ text: 'demo resume' }),
-  // Governance demo: tenant budgets (usage bar + overage badge in the Tenants view).
-  budgets: { default: { tokenLimit: 2000 }, perTenant: { globex: { tokenLimit: 5000 } } },
+  // Governance demo: org budgets (usage bar + overage badge in the Organizations view).
+  // `perOrg`, not `perTenant` — the key was renamed with the rest of the org vocabulary, and the old
+  // spelling is not an error at runtime, just an ignored extra property: globex silently fell back to
+  // the 2000 default instead of its 5000 limit. Nothing reports that but a typecheck.
+  budgets: { default: { tokenLimit: 2000 }, perOrg: { globex: { tokenLimit: 5000 } } },
   gnl: createStudioRunner(gnl, { ...config, journal }),
   scorers: {
     list: () => Object.keys(scorerFns),
-    score: (runId, names, opts) => scoreRun(journal, runId, names.map((n) => scorerFns[n]?.()).filter(Boolean), opts),
+    score: (runId, names, opts) => scoreRun(reader, runId, names.map((n) => scorerFns[n]?.()).filter(Boolean), opts),
   },
   a2a: true, // gnl-demo.db has router-1 → a2a:* calls → Networks is populated
   mcp: [{ id: 'github', name: 'GitHub (demo)', client: githubMcp }],
