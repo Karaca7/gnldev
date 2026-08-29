@@ -53,7 +53,12 @@ describe('useLiveRuns (F6 SSE fallback)', () => {
     expect(es.closed).toBe(true);
 
     invalidate.mockClear();
-    vi.advanceTimersByTime(5000);
+    // The async variant, like every other fake-timer site in this repo: it drains the microtask queue
+    // between firings, so a polling callback that grows an `await` before it invalidates keeps
+    // working. The sync form fires the timer and asserts in the same tick, which passes today only
+    // because the path happens to be synchronous — exactly the assumption `flush()` above exists to
+    // avoid making.
+    await vi.advanceTimersByTimeAsync(5000);
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['runs'] });
   });
 
@@ -65,7 +70,7 @@ describe('useLiveRuns (F6 SSE fallback)', () => {
     renderHook(() => useLiveRuns(), { wrapper: wrapper(qc) });
     await flush();
 
-    vi.advanceTimersByTime(5000);
+    await vi.advanceTimersByTimeAsync(5000);
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['runs'] });
   });
 

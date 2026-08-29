@@ -21,7 +21,13 @@ beforeAll(() => {
   // If dist is stale (e.g. src changed but wasn't built) build before the test.
   execFileSync('pnpm', ['--filter', 'create-gnl', 'build'], { cwd: repoRoot, stdio: 'pipe' });
   expect(existsSync(binPath)).toBe(true);
-});
+  // 120s, because the default 30s hookTimeout is not a safe ceiling for a real build and a hook that
+  // times out takes EVERY test in this file with it. Measured here: a warm build is ~1s, but a cold
+  // one under 64 busy processes is 10-12s — and that is on sixteen cores. CI runners have two, where
+  // the same work is several times slower and 30s stops being generous. Same reasoning as
+  // vitest.config.ts's raised testTimeout: a red that means "the machine was busy" on the first CI
+  // run of a public repository reads as "the project does not build".
+}, 120_000);
 
 describe('create-gnl bin (child process)', () => {
   it('writes gnl.config.ts + src/model.ts + package.json + README.md to the target dir', () => {

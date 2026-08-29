@@ -102,14 +102,21 @@ async function driveCap(api: (r: Request) => Promise<Response>, token: string, c
   return { status: res.status, body: (await res.text()).slice(0, 90) };
 }
 
-/** Capabilities reported true whose route answers "not enabled" or "not for you". */
+/** Capabilities reported true whose route answers "not enabled", "not for you", or nothing at all. */
 async function unusableTruths(api: (r: Request) => Promise<Response>, token: string) {
   const c = await caps(api, token);
   const out: string[] = [];
   for (const cap of Object.keys(GATED)) {
     if (c[cap] !== true) continue;
     const { status, body } = await driveCap(api, token, cap);
-    if (status === 501 || status === 403) out.push(`${cap} -> ${GATED[cap]![0]} ${GATED[cap]![1]} ${status} ${body}`);
+    // 599 is `driveCap`'s own timeout, and it belongs here rather than in the silence. Collecting
+    // only 501/403 meant a route that never answered was counted as usable — the one outcome that
+    // reads as "fine" while proving nothing, and it fails OPEN: under load this suite would quietly
+    // stop checking the property it exists for. These are in-process handler calls with no network,
+    // so 3s is not a tight budget; reaching it is a finding, not a slow machine.
+    if (status === 501 || status === 403 || status === 599) {
+      out.push(`${cap} -> ${GATED[cap]![0]} ${GATED[cap]![1]} ${status} ${body}`);
+    }
   }
   return out;
 }

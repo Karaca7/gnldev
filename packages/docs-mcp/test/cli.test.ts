@@ -28,12 +28,28 @@ function startCli(): RpcClient {
   });
   const rl = createInterface({ input: child.stdout, terminal: false });
   const pending: any[] = [];
-  const waiters: Array<(v: any) => void> = [];
+  const waiters: Array<{ resolve: (v: any) => void; reject: (e: Error) => void }> = [];
+  // Kept for diagnostics: when a wait times out, the child's stderr is the only thing that explains
+  // why, and it is otherwise thrown away.
+  let stderr = '';
+  child.stderr.on('data', (b: Buffer) => { stderr += b.toString(); });
 
   rl.on('line', (line: string) => {
-    const parsed = JSON.parse(line);
+    // Parse defensively. `JSON.parse` throwing in here is an exception inside a readline callback —
+    // it escapes as an unhandled error, which vitest reports away from the test that caused it and
+    // with no hint of the offending line. A non-JSON line on stdout is also a genuine protocol
+    // violation for a stdio JSON-RPC server, so it must fail a test rather than crash the run.
+    let parsed: any;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      const err = new Error(`gnl-docs-mcp wrote a non-JSON line to stdout: ${JSON.stringify(line.slice(0, 200))}`);
+      const w = waiters.shift();
+      if (w) w.reject(err); else pending.push(err);
+      return;
+    }
     const w = waiters.shift();
-    if (w) w(parsed);
+    if (w) w.resolve(parsed);
     else pending.push(parsed);
   });
 
@@ -45,8 +61,23 @@ function startCli(): RpcClient {
       child.stdin.write(line + '\n');
     },
     next() {
-      if (pending.length > 0) return Promise.resolve(pending.shift());
-      return new Promise((resolve) => waiters.push(resolve));
+      if (pending.length > 0) {
+        const head = pending.shift();
+        return head instanceof Error ? Promise.reject(head) : Promise.resolve(head);
+      }
+      // Bounded, so a child that dies or never answers fails HERE with the reason, instead of
+      // hanging to the 30s suite timeout and reporting only that the test was slow. 20s is far
+      // above any real reply (the whole suite runs in seconds) and still under the ceiling.
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          const i = waiters.findIndex((w) => w.resolve === settle);
+          if (i >= 0) waiters.splice(i, 1);
+          reject(new Error(`gnl-docs-mcp sent no reply within 20s. stderr:\n${stderr.slice(-2000) || '(empty)'}`));
+        }, 20_000);
+        const settle = (v: any) => { clearTimeout(timer); resolve(v); };
+        const fail = (e: Error) => { clearTimeout(timer); reject(e); };
+        waiters.push({ resolve: settle, reject: fail });
+      });
     },
     close() {
       child.stdin.end();
