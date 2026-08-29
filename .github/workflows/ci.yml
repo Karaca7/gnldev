@@ -132,6 +132,6 @@ jobs:
       # Postgres half of the fix had no test anywhere that could turn red.
       # postgres-vector-store is here because it is env-gated the same way and was running nowhere:
       # skipped by default for want of a server, and absent from this line. `scripts/check-real-backends.mjs`
-      # runs the same three files locally — the two lists are meant to stay identical, since a repository
+      # runs the same files locally — the two lists are meant to stay identical, since a repository
       # with no remote never reaches this job at all.
-      - run: pnpm exec vitest run packages/durable/test/integration-real.test.ts packages/durable/test/prefix-astral-postgres.test.ts packages/rag/test/postgres-vector-store.test.ts
+      - run: pnpm exec vitest run packages/durable/test/integration-real.test.ts packages/durable/test/prefix-astral-postgres.test.ts packages/rag/test/postgres-vector-store.test.ts packages/otel/test/metrics-org-postgres.test.ts

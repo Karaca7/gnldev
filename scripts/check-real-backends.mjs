@@ -117,7 +117,10 @@ try {
     run('pnpm', ['exec', 'vitest', 'run',
       'packages/durable/test/integration-real.test.ts',
       'packages/durable/test/prefix-astral-postgres.test.ts',
-      'packages/rag/test/postgres-vector-store.test.ts'], { env }).status === 0);
+      'packages/rag/test/postgres-vector-store.test.ts',
+      // Organization isolation for the metrics export: an in-memory journal addresses counters by
+      // exact key, so the cross-tenant read this guards against cannot even be written against it.
+      'packages/otel/test/metrics-org-postgres.test.ts'], { env }).status === 0);
 
   step('real model provider', () => {
     if (!process.env.NVIDIA_API_KEY && !process.env.OPENAI_API_KEY) {

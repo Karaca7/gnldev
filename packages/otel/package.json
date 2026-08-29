@@ -30,6 +30,10 @@
       "types": "./dist/live.d.ts",
       "default": "./dist/live.js"
     },
+    "./metrics": {
+      "types": "./dist/metrics.d.ts",
+      "default": "./dist/metrics.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [

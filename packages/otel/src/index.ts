@@ -147,6 +147,10 @@ export { traceIdFor, spanIdFor, mapEntry } from './spans.js';
 // Zero-dependency OTLP/HTTP JSON exporter (no OTel SDK, fetch only). Added alongside
 // ExportRun; does not change the existing API.
 export { toOtlpJson, exportRunToOtlp, otlpTraceId, otlpSpanId } from './otlp.js';
+// Counters → OTLP metrics. Also reachable as `@gnldev/otel/metrics`, which is the leaner route:
+// this entry point statically imports the OTel trace SDK, and the metrics path needs none of it.
+export { toOtlpMetricsJson, nextEpoch } from './metrics.js';
+export type { ToOtlpMetricsOptions, MetricsEpoch, OtlpMetricsPayload, OtlpMetric } from './metrics.js';
 export type {
   OtlpPayload,
   OtlpSpan,

@@ -72,7 +72,9 @@ function attrValue(v: unknown): OtlpAttributeValue | undefined {
   return { stringValue: String(v) };
 }
 
-function toKv(attrs: Record<string, unknown>): OtlpKeyValue[] {
+/** Package-internal: shared with metrics.ts so the two bodies encode attributes identically.
+ *  NOT re-exported from index.ts — this is not part of the package's public surface. */
+export function toKv(attrs: Record<string, unknown>): OtlpKeyValue[] {
   const out: OtlpKeyValue[] = [];
   for (const [key, v] of Object.entries(attrs)) {
     const value = attrValue(v);
@@ -82,7 +84,8 @@ function toKv(attrs: Record<string, unknown>): OtlpKeyValue[] {
 }
 
 /** ms → nanosecond string (BigInt: no precision loss). */
-function nano(ms: number): string {
+/** Package-internal, shared with metrics.ts: ms → the uint64-as-string nanoseconds OTLP/JSON wants. */
+export function nano(ms: number): string {
   return (BigInt(Math.round(ms)) * 1_000_000n).toString();
 }
 
