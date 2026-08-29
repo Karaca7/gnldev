@@ -1634,7 +1634,19 @@ export { pipeAgentStream, interruptsFromSteps, sseResponse } from './sse.js';
  * Hono host:      app.mount('/api', createRestApi(config))
  * Anything else:  bridge it (see @gnldev/studio/node for the same job on the Studio side)
  * Standalone:     serve({ fetch: createRestApi(config).fetch })
+ *
+ * The `run?: never; agent?: never` is a guard, not decoration. Every field of `CreateGnlConfig` is
+ * optional, so ANY object satisfies it — including the REGISTRY that `createGnl(config)` returns,
+ * which is the one thing callers reach for by mistake (`createRestApi(gnl)` instead of
+ * `createRestApi(config)`). It typechecked, started, and then answered every request from an empty
+ * config: no agents, no journal, and nothing anywhere saying so. `run` and `agent` exist on the
+ * registry and on no config, so naming them `never` rejects exactly that object and costs a real
+ * config nothing. Documented because it was shipped wrong in the guide first, and because a
+ * signature that looks decorative is the kind that gets "simplified" away.
  */
-export function createRestApi(config: CreateGnlConfig, opts: RestApiOptions = {}): FetchHandler {
+export function createRestApi(
+  config: CreateGnlConfig & { run?: never; agent?: never },
+  opts: RestApiOptions = {},
+): FetchHandler {
   return toFetchHandler(restApiApp(config, opts));
 }
