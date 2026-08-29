@@ -12,7 +12,7 @@
 import { tool, stepCountIs } from 'ai';
 import { z } from 'zod';
 import { InMemoryJournal, runDurable } from '@gnldev/durable';
-import { printCase } from './report.js';
+import { caseResult } from './report.js';
 
 const usage = { inputTokens: 10, outputTokens: 5, totalTokens: 15 };
 
@@ -63,7 +63,7 @@ export async function runCheckpointResend() {
   crash.active = false;
   await runDurable({ ...runArgs, model: mockModel(crash) }); // "checkpoint resend": SAME runId, SAME journal
 
-  return printCase({
+  return caseResult({
     id: 'checkpoint-resend',
     title: '180s+ tool call, silently resent from the checkpoint after a crash',
     unprotectedCalls,

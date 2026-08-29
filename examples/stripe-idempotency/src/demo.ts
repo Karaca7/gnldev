@@ -16,9 +16,7 @@
 //   C) with GNL    — durableTool + a `recover()` hook (H9 ladder): asks Stripe "did this idempotencyKey
 //      (bonus)       already succeed?" BEFORE retrying — `execute` doesn't even run a second time, no
 //                    human approval needed.
-import { InMemoryJournal, durableTool } from '@gnldev/durable';
-import type { DurableCtx } from '@gnldev/durable';
-import { MockStripe } from './mock-stripe.js';
+import { scenarioUnprotected, scenarioApprovedRetry, scenarioRecover } from './scenarios.js';
 
 function section(title: string): void {
   console.log(`\n— ${title} —`);
@@ -29,100 +27,32 @@ console.log('GNL injects a stable idempotencyKey into every tool execute() (dura
 console.log('threads it to a mock Stripe client that mirrors the real SDK\'s Idempotency-Key contract:');
 console.log("  await stripe.charges.create({ amount, currency }, { idempotencyKey });  // real Stripe SDK\n");
 
-// ── Scenario A: unprotected (no GNL) — naive retry, a DIFFERENT idempotencyKey on EVERY attempt ──
-let chargesA: number, executeCallsA: number;
-{
-  section('Scenario A: unprotected (no GNL)');
-  const stripe = new MockStripe();
-  let executeCalls = 0;
-  const chargeNaive = async (amount: number) => {
-    executeCalls++;
-    // no stable key travels to the provider on retry → Stripe can't tell this is the SAME request
-    return stripe.chargesCreate({ amount, currency: 'usd' }, { idempotencyKey: `naive-${executeCalls}-${Math.random().toString(36).slice(2)}` });
-  };
-  await chargeNaive(2000); // original attempt (succeeds at Stripe)
-  await chargeNaive(2000); // crash+resume → naive retry, NEW key
-  console.log(`  execute ran ${executeCalls} times → Stripe recorded ${stripe.chargeCount} charge(s)`);
-  executeCallsA = executeCalls;
-  chargesA = stripe.chargeCount;
-}
+// The scenarios live in scenarios.ts and are asserted by test/stripe-idempotency.test.ts. This file
+// only prints them, so what CI checks and what a reader sees here cannot drift apart.
+section('Scenario A: unprotected (no GNL)');
+const a = await scenarioUnprotected();
+console.log(`  execute ran ${a.executeCalls} times → Stripe recorded ${a.charges} charge(s)`);
 
-// ── Scenario B: with GNL — crash AFTER Stripe commits the charge, BEFORE the journal write; approved retry, NO recover ──
-let chargesB: number, executeCallsB: number;
-{
-  section('Scenario B: with GNL (idempotencyKey injected, approved retry, no recover)');
-  const stripe = new MockStripe();
-  let executeCalls = 0;
-  const chargeCard = {
-    sideEffect: true, // explicit — a payment IS a side effect (also the default per H7)
-    execute: async (input: { amount: number }, options: any) => {
-      executeCalls++;
-      // Real Stripe SDK: stripe.charges.create({ amount, currency: 'usd' }, { idempotencyKey: options.idempotencyKey });
-      const charge = await stripe.chargesCreate({ amount: input.amount, currency: 'usd' }, { idempotencyKey: options.idempotencyKey });
-      if (executeCalls === 1) throw new Error("CRASH: Stripe committed the charge but the connection dropped BEFORE the response reached the process");
-      return charge;
-    },
-  };
-  const journal = new InMemoryJournal();
-  const ctx: DurableCtx = { journal, runId: 'order-77', approvals: { 'call-charge': true } };
-  const dt = durableTool(chargeCard as any, ctx, 'chargeCard');
+section('Scenario B: with GNL (idempotencyKey injected, approved retry, no recover)');
+const b = await scenarioApprovedRetry();
+if (b.firstAttemptError) console.log(`  attempt 1: ${b.firstAttemptError}`);
+console.log(`  execute ran ${b.executeCalls} times (GNL allowed the approved retry) → Stripe has ${b.charges} charge(s)`);
+console.log(`  attempt 2 result: ${JSON.stringify(b.result)}`);
 
-  try {
-    await dt.execute!({ amount: 2000 }, { toolCallId: 'call-charge' }); // attempt 1: crashes AFTER Stripe commits
-  } catch (e: any) {
-    console.log(`  attempt 1: ${e.message}`);
-  }
-  const result = await dt.execute!({ amount: 2000 }, { toolCallId: 'call-charge' }); // approved retry — execute RUNS AGAIN
-  console.log(`  execute ran ${executeCalls} times (GNL allowed the approved retry) → Stripe has ${stripe.chargeCount} charge(s)`);
-  console.log(`  attempt 2 result: ${JSON.stringify(result)}`);
-  executeCallsB = executeCalls;
-  chargesB = stripe.chargeCount;
-}
-
-// ── Scenario C (bonus): with GNL + recover() — execute NEVER runs again, NO approval needed ──
-let chargesC: number, executeCallsC: number;
-{
-  section('Scenario C (bonus): with GNL + recover() hook — automatic, no approval needed');
-  const stripe = new MockStripe();
-  let executeCalls = 0;
-  const chargeCard = {
-    sideEffect: true,
-    execute: async (input: { amount: number }, options: any) => {
-      executeCalls++;
-      const charge = await stripe.chargesCreate({ amount: input.amount, currency: 'usd' }, { idempotencyKey: options.idempotencyKey });
-      if (executeCalls === 1) throw new Error("CRASH: Stripe committed the charge but the connection dropped BEFORE the response reached the process");
-      return charge;
-    },
-    // H9: ask the PROVIDER for the truth instead of blocking on human approval.
-    recover: async (_input: unknown, { idempotencyKey }: { idempotencyKey: string }) => {
-      const existing = await stripe.findByIdempotencyKey(idempotencyKey);
-      return existing ? { done: true, output: existing } : { done: false };
-    },
-  };
-  const journal = new InMemoryJournal();
-  const ctx: DurableCtx = { journal, runId: 'order-78' }; // NO approvals — recover() resolves it automatically
-  const dt = durableTool(chargeCard as any, ctx, 'chargeCard');
-
-  try {
-    await dt.execute!({ amount: 2000 }, { toolCallId: 'call-charge' });
-  } catch (e: any) {
-    console.log(`  attempt 1: ${e.message}`);
-  }
-  const result = await dt.execute!({ amount: 2000 }, { toolCallId: 'call-charge' }); // recover() answers, NO approval needed
-  console.log(`  execute ran only ${executeCalls} time(s) (recover() asked Stripe, the tool was NOT called a 2nd time) → Stripe has ${stripe.chargeCount} charge(s)`);
-  console.log(`  recovered result: ${JSON.stringify(result)}`);
-  executeCallsC = executeCalls;
-  chargesC = stripe.chargeCount;
-}
+section('Scenario C (bonus): with GNL + recover() hook — automatic, no approval needed');
+const c = await scenarioRecover();
+if (c.firstAttemptError) console.log(`  attempt 1: ${c.firstAttemptError}`);
+console.log(`  execute ran only ${c.executeCalls} time(s) (recover() asked Stripe, the tool was NOT called a 2nd time) → Stripe has ${c.charges} charge(s)`);
+console.log(`  recovered result: ${JSON.stringify(c.result)}`);
 
 console.log('\n=== SUMMARY ===');
 console.log('| scenario                                   | execute calls   | Stripe charge count   |');
 console.log('|-------------------------------------------|-----------------|-----------------------|');
-console.log(`| A) unprotected                             | ${executeCallsA}               | ${chargesA}                     |`);
-console.log(`| B) GNL (idempotencyKey, approved retry)    | ${executeCallsB}               | ${chargesB}                     |`);
-console.log(`| C) GNL (idempotencyKey + recover)          | ${executeCallsC}               | ${chargesC}                     |`);
+console.log(`| A) unprotected                             | ${a.executeCalls}               | ${a.charges}                     |`);
+console.log(`| B) GNL (idempotencyKey, approved retry)    | ${b.executeCalls}               | ${b.charges}                     |`);
+console.log(`| C) GNL (idempotencyKey + recover)          | ${c.executeCalls}               | ${c.charges}                     |`);
 
-const ok = chargesA === 2 && chargesB === 1 && chargesC === 1 && executeCallsC === 1;
+const ok = a.charges === 2 && b.charges === 1 && c.charges === 1 && c.executeCalls === 1;
 console.log(ok
   ? '\n✅ The card was charged ONLY ONCE with GNL (scenarios B and C) — the unprotected scenario charged it twice (scenario A).'
   : '\n❌ UNEXPECTED RESULT');

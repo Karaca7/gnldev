@@ -9,7 +9,7 @@
 // packages/durable/test/args-idempotency.test.ts.
 import { stepCountIs } from 'ai';
 import { InMemoryJournal, runDurable } from '@gnldev/durable';
-import { printCase } from './report.js';
+import { caseResult } from './report.js';
 
 const usage = { inputTokens: 10, outputTokens: 5, totalTokens: 15 };
 
@@ -59,7 +59,7 @@ export async function runDuplicateToolCallIds() {
     tools: protectedTools as any, stopWhen: stepCountIs(6), prompt: 'charge $20',
   });
 
-  return printCase({
+  return caseResult({
     id: 'duplicate-toolcall-ids',
     title: 'model calls the same tool + same arguments 5 DIFFERENT toolCallIds in one turn',
     unprotectedCalls,

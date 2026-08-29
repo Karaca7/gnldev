@@ -3,7 +3,13 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     // Includes .tsx: so studio-ui view tests also run in the root run (they were silently skipped when only .ts).
-    include: ['packages/*/test/**/*.test.{ts,tsx}'],
+    //
+    // `examples/*` is here for one reason: two of them are EVIDENCE, not illustration. The README
+    // cites incident-proofs and stripe-idempotency as proof that the guarantee holds and that it
+    // reaches the provider, and neither was run by anything — `pnpm proofs` and `pnpm demo` print a
+    // table for a human, and typecheck only proves they compile. A regression in the tool claim or in
+    // `idempotencyKey` injection would have left the cited proof wrong with the suite still green.
+    include: ['packages/*/test/**/*.test.{ts,tsx}', 'examples/*/test/**/*.test.{ts,tsx}'],
     environment: 'node',
     /**
      * Vitest's default is 5s, which this suite exceeds under load rather than because anything is slow.

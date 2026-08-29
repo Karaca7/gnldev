@@ -14,7 +14,7 @@ import { tool, stepCountIs } from 'ai';
 import { z } from 'zod';
 import { InMemoryJournal, runDurable, resumeRun } from '@gnldev/durable';
 import type { Guard } from '@gnldev/durable';
-import { printCase } from './report.js';
+import { caseResult } from './report.js';
 
 const usage = { inputTokens: 10, outputTokens: 5, totalTokens: 15 };
 
@@ -65,7 +65,7 @@ export async function runDoubleApproval() {
   await resumeRun('shell-run-1', resumeArgs); // 1st delivery of the approval event → tool actually runs
   await resumeRun('shell-run-1', resumeArgs); // 2nd (duplicate) delivery → journal already has 'succeeded'
 
-  return printCase({
+  return caseResult({
     id: 'double-approval',
     title: 'tool runs twice after approval (the approval event is processed twice)',
     unprotectedCalls,
