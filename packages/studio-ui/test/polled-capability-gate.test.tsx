@@ -72,9 +72,16 @@ describe('usePolled capability gate', () => {
     });
 
     // The mirror. Without it a stub that answered nothing at all would make the test above pass.
+    //
+    // `waitFor`, not the helper's fixed 20ms, because this is the one direction where the wait is
+    // load-bearing. The absence tests assert that nothing happened, so a wait that runs long only
+    // makes them stricter; this one asserts that something DID happen, and a render+query chain that
+    // takes 21ms would fail it with the gate working. Same idiom as the useCapabilities wait in the
+    // helper and the last test in this file. (Not a reproduced flake: twelve runs under 64 busy
+    // processes at load ~55 were green. It removes the assumption.)
     it(`${c.name}: with caps.${c.cap} === true, ${c.endpoint} IS requested`, async () => {
       const { urls } = await renderGated(c.hook, { [c.cap]: true });
-      expect(urls.filter((u) => u.endsWith(c.endpoint)).length).toBeGreaterThan(0);
+      await waitFor(() => expect(urls.filter((u) => u.endsWith(c.endpoint)).length).toBeGreaterThan(0));
     });
 
     // A capability the server simply does not send (older host, or the flag left off the payload) is

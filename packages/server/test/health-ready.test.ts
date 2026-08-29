@@ -122,7 +122,16 @@ describe('liveness and readiness', () => {
   it('collapses a burst of probes into one read, and still answers every one of them', async () => {
     // /ready is unauthenticated, so anyone who can reach the port sets the rate. Against a real database
     // Each request would be a real query — and when storage hangs, a parked connection for 2s each.
-    const { journal, counter } = countingJournal(20);
+    // 200ms, not 20ms: the read's duration IS the coalescing window, and the assertion below allows
+    // only one slip past it. At 20ms a 20ms hiccup between the first probe reaching the journal and
+    // the last one doing so opens a third window and turns this red with the coalescing working
+    // perfectly. 200ms is ten times the plausible spread and still ten times under readyBudgetMs
+    // (2000), so the probe still answers `ready` and nothing about the assertion changes.
+    //
+    // Measured, so nobody reads this as a fix for a failure that was seen: the 20ms form did not
+    // flake — twelve runs under 64 busy processes at load ~55 were green. This widens a margin; it
+    // does not close a reproduced gap.
+    const { journal, counter } = countingJournal(200);
     const api = createRestApi({ journal, agents: {} } as any);
 
     const responses = await Promise.all(Array.from({ length: 20 }, () => hit(api, '/ready')));

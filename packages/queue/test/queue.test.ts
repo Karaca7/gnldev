@@ -368,6 +368,12 @@ describe('@gnldev/queue', () => {
     });
   });
 
+  // Read as fragile once and left alone deliberately, so the next reader does not redo the analysis.
+  // The framing "160ms of pokes against a 150ms handler, so 10ms of margin" is the wrong measure:
+  // what matters is whether ANY poke lands while the lock is stale, and the stale window runs from
+  // the 20ms TTL to the handler's end — about seven of the eight pokes fall inside it. Contention
+  // also stretches the handler and the poke interval together, so it widens the window rather than
+  // closing it. Measured: twelve runs under 64 busy processes at load ~55, all green.
   it('Y2: heartbeat:false → old behavior (documented risk): on a long handler the TTL expires, the second worker can take over', async () => {
     const storage = new InMemoryStorage();
     const runs = { n: 0 };
