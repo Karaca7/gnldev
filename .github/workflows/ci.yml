@@ -40,18 +40,19 @@ jobs:
       - run: pnpm -r typecheck
       # `--reporter=junit` alongside the default one, because a flake that is not recorded cannot be
       # fixed. One run of this suite went red with a single failing test and a single unhandled
-      # error; the output went to a terminal and was never written down, so the test's NAME was lost
-      # and 21 subsequent full runs — at two CPU frequencies, with and without an oversubscribed
-      # machine — could not reproduce it. The XML costs nothing on a green run and names the test on
-      # a red one. See PUBLISH-BLOCKERS.md, "open".
+      # error; the output went to a terminal and was never written down, so the test's name was lost
+      # and no later run reproduced it.
       #
-      # `pnpm exec vitest` rather than `pnpm test`, because `pnpm test -- --reporter=junit` silently
-      # drops the flags (measured: the suite ran, the XML was never written). That means the
-      # `pretest` hook does not fire either, so it runs explicitly on the line above.
-      - run: node scripts/check-dist-fresh.mjs
-      - run: pnpm exec vitest run --reporter=default --reporter=junit --outputFile.junit=test-results.xml
+      # Note the flags carry WITHOUT `--`. With it, vitest ignores everything after the separator —
+      # the suite runs and the XML is never written, which is easy to misread as pnpm dropping them.
+      # Written down because the wrong reading costs a working `pretest` hook: `pnpm test` fires it,
+      # `pnpm exec vitest` does not.
+      #
+      # `always()`, not `failure()`: the green runs are the baseline a flake hunt compares against —
+      # which test is creeping toward its limit, which one retried — and the XML is free on them.
+      - run: pnpm test --reporter=default --reporter=junit --outputFile.junit=test-results.xml
       - uses: actions/upload-artifact@v4
-        if: failure()
+        if: always()
         with:
           name: test-results
           path: test-results.xml

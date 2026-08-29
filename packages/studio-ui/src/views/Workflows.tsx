@@ -10,6 +10,7 @@ import {
 } from '../api';
 import { Btn, Spinner, Badge, StatusBadge, EmptyState, ErrorBox, JsonBlock, cn, useStatusLabel } from '../components';
 import { ConfirmDialog, toast } from '../ui';
+import { currentLocale } from '../i18n/locale';
 import { diffWorkflowSteps } from './workflow-diff';
 
 type Status = 'idle' | 'running' | 'done' | 'suspended' | 'failed' | 'cancelled';
@@ -953,7 +954,7 @@ function SuspendedRunRow({ item, workflows, canResume, canCancel, busy, onCancel
         <span className="truncate font-mono text-xs font-semibold" title={item.runId}>{item.runId}</span>
         {item.stepId && <Badge tone="info">{item.stepId}</Badge>}
         {item.waitId && <Badge tone="muted">wait: {item.waitId}</Badge>}
-        <span className="text-[10px] text-muted-foreground">{t('inboxUpdatedAtLabel')} {new Date(item.updatedAt).toLocaleString()}</span>
+        <span className="text-[10px] text-muted-foreground">{t('inboxUpdatedAtLabel')} {new Date(item.updatedAt).toLocaleString(currentLocale())}</span>
         <div className="ml-auto flex shrink-0 gap-1.5">
           {canResume && (
             <Btn variant="outline" size="xs" onClick={() => setExpanded((e) => !e)}>
@@ -1054,7 +1055,7 @@ function NodePanel({ node, state, suspend, edges, gnodes, order, allStatus, runI
         <Row k={t('statusRowLabel')}><NodeStatusBadge s={state?.status ?? 'idle'} /></Row>
         {idx >= 0 && <Row k={t('orderRowLabel')}>{idx + 1} / {order.length}</Row>}
         {state?.ms != null && <Row k={t('stepDurationRowLabel')}>{Math.max(0, Math.round(state.ms))} ms</Row>}
-        {state?.ts != null && <Row k={t('timeRowLabel')}>{new Date(state.ts).toLocaleTimeString()}</Row>}
+        {state?.ts != null && <Row k={t('timeRowLabel')}>{new Date(state.ts).toLocaleTimeString(currentLocale())}</Row>}
       </div>
 
       {/* What-if fork: outputs up to this step are copied into a new branch, then re-run from here. */}
@@ -1244,7 +1245,7 @@ function HistMenu({ runs, active, onOpen, onDiff }: {
                   <Badge tone={h.suspended ? 'warning' : 'success'}>{h.suspended ? 'susp' : 'ok'}</Badge>
                   <span className="truncate font-mono">{h.runId}</span>
                 </span>
-                <span className="shrink-0 text-muted-foreground">{h.startedAt ? new Date(h.startedAt).toLocaleTimeString() : t('stepsCountLabel', { count: h.steps })}</span>
+                <span className="shrink-0 text-muted-foreground">{h.startedAt ? new Date(h.startedAt).toLocaleTimeString(currentLocale()) : t('stepsCountLabel', { count: h.steps })}</span>
               </button>
               {onDiff && active !== h.runId && (
                 <button type="button" title={t('compareWithActiveTitle')} onClick={() => { onDiff(h.runId); setOpen(false); }}

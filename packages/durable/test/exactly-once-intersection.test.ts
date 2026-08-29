@@ -56,6 +56,10 @@ describe('INTERSECTION — I (model-claim) + J (lock fencing) + K (tool retry): 
       // Run 1 — child process: acquires the lock (ttl=150ms), performs the charge (succeeded), then process.exit(1).
       // process.exit does NOT run the finally block → the lock stays 'alive' in the journal (owner=child).
       const child = spawnSync(tsxBin, [childScript, dbPath, sePath, runId, '150'], { encoding: 'utf8', timeout: 50_000, env: spawnFixtureEnv() });
+      // See process-kill.test.ts: a timed-out child comes back as `status: null`, which slips past a
+      // bare `not.toBe(0)` and reads as a crash. Reachable since the ceiling went to 60s.
+      expect(child.error, 'the child did not exit on its own — spawnSync gave up on it').toBeUndefined();
+      expect(typeof child.status).toBe('number');
       expect(child.status).not.toBe(0); // really crashed
       expect(Number(readFileSync(sePath, 'utf8'))).toBe(1); // the charge happened once (BEFORE the crash)
 

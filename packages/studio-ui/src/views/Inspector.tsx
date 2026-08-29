@@ -299,7 +299,7 @@ function StatCards() {
   return (
     <StatStrip
       items={[
-        { label: t('statRuns'), value: total.toLocaleString() },
+        { label: t('statRuns'), value: total.toLocaleString(currentLocale()) },
         { label: t('statSuccess'), value: total ? successRate.toFixed(1) + '%' : '—' },
         { label: t('statCost'), value: '$' + avgCost.toFixed(4) },
         { label: t('statTokens'), value: fmt(d?.tokens ?? 0) },
@@ -1794,7 +1794,7 @@ function ProcessorReportCard({ r }: { r: ProcessorReport }) {
             visually distinct from the neutral phase chip beside it without spending the brand accent. */}
         <Badge tone="info">{r.name}</Badge>
         <Badge tone="muted">{PROCESSOR_PHASE_LABEL[r.phase]}</Badge>
-        {r.ts != null && <span className="ml-auto font-mono text-[10px] text-muted-foreground">{new Date(r.ts).toLocaleString()}</span>}
+        {r.ts != null && <span className="ml-auto font-mono text-[10px] text-muted-foreground">{new Date(r.ts).toLocaleString(currentLocale())}</span>}
       </div>
       {summary && <p className="mt-2 text-sm">{summary}</p>}
       <details className="mt-2">

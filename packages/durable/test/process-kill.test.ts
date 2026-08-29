@@ -30,6 +30,13 @@ describe('real process-kill resume', () => {
     try {
       // Run 1 — child process: performs the charge, then process.exit(1)
       const child = spawnSync(tsxBin, [childScript, dbPath, sePath], { encoding: 'utf8', timeout: 50_000, env: spawnFixtureEnv() });
+      // `not.toBe(0)` alone is not enough: `spawnSync` reports a TIMED-OUT child as `status: null`,
+      // and `null !== 0` passes — a hung child would read as "it really crashed". Harmless while the
+      // test ceiling was below the child's 50s bound, because the run died before the timeout could
+      // happen; raising the ceiling to 60s made that path reachable. Assert the spawn itself was
+      // clean, then that the exit was a real non-zero CODE.
+      expect(child.error, 'the child did not exit on its own — spawnSync gave up on it').toBeUndefined();
+      expect(typeof child.status).toBe('number');
       expect(child.status).not.toBe(0); // it really crashed
       // ...by crashing, not by the fixture watchdog giving up — otherwise this passes for the wrong reason.
       expect(child.stderr ?? '').not.toContain('fixture watchdog');

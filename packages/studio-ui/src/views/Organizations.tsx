@@ -268,8 +268,8 @@ export function Organizations() {
       }
     />
     <StatStrip items={[
-      { label: t('statOrgs'), value: rows.length.toLocaleString() },
-      { label: t('statRuns'), value: totals.runs.toLocaleString() },
+      { label: t('statOrgs'), value: rows.length.toLocaleString(currentLocale()) },
+      { label: t('statRuns'), value: totals.runs.toLocaleString(currentLocale()) },
       { label: t('statTokens'), value: fmtNum(totals.tokens) },
       { label: t('statSpend'), value: '$' + totals.cost.toFixed(4) },
     ]} />

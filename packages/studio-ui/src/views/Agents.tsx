@@ -530,7 +530,7 @@ export function Agents() {
     <StatStrip items={[
       // `managed.error` degrades these to "—" instead of a fabricated "0" — totalCount also depends
       // On managed.data (via managedOnly), so it's unreliable whenever managed errored, same as statManaged.
-      { label: t('statAgents'), value: managed.error ? '—' : totalCount.toLocaleString() },
+      { label: t('statAgents'), value: managed.error ? '—' : totalCount.toLocaleString(currentLocale()) },
       { label: t('statManaged'), value: managed.error ? '—' : String(managed.data?.agents?.length ?? 0) },
       { label: t('statCodeDefined'), value: String(agents.data?.length ?? 0) },
     ]} />

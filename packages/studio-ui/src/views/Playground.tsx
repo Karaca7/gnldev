@@ -9,6 +9,7 @@ import { Btn, Spinner, Empty, EmptyState, ErrorBox, Badge, JsonBlock, cn } from 
 import { Markdown } from '../markdown';
 import { Stagger, StaggerItem, Reveal } from '../motion';
 import { toast, ConfirmDialog } from '../ui';
+import { currentLocale } from '../i18n/locale';
 
 type Attachment = { name: string; type: string; dataUrl: string };
 export type Msg =
@@ -258,7 +259,7 @@ function relTime(ts: number | undefined, t: TFunction): string {
   const m = Math.floor(s / 60); if (m < 60) return t('minutesAgo', { count: m });
   const h = Math.floor(m / 60); if (h < 24) return t('hoursAgo', { count: h });
   const d = Math.floor(h / 24); if (d < 7) return t('daysAgo', { count: d });
-  return new Date(ts).toLocaleDateString();
+  return new Date(ts).toLocaleDateString(currentLocale());
 }
 
 export function Playground() {

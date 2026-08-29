@@ -66,20 +66,31 @@ function startCli(): RpcClient {
         return head instanceof Error ? Promise.reject(head) : Promise.resolve(head);
       }
       // Bounded, so a child that dies or never answers fails HERE with the reason, instead of
-      // hanging to the 30s suite timeout and reporting only that the test was slow. 20s is far
-      // above any real reply (the whole suite runs in seconds) and still under the ceiling.
+      // hanging to the test's own ceiling and reporting only that the test was slow.
+      //
+      // 10s, and the number matters: each `it` in this file declares `}, 20_000)`, and ITS clock
+      // starts before this one does. A deadline at 20s can therefore never win — the test times out
+      // first and the diagnostic below is dead code. Anything comfortably under the ceiling works;
+      // the whole suite runs in under a second, so 10s is already 10x any real reply.
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
           const i = waiters.findIndex((w) => w.resolve === settle);
           if (i >= 0) waiters.splice(i, 1);
-          reject(new Error(`gnl-docs-mcp sent no reply within 20s. stderr:\n${stderr.slice(-2000) || '(empty)'}`));
-        }, 20_000);
+          reject(new Error(`gnl-docs-mcp sent no reply within 10s. stderr:\n${stderr.slice(-2000) || '(empty)'}`));
+        }, 10_000);
+        // `unref` so a still-armed timer cannot hold the process open on its own.
+        (timer as unknown as { unref?: () => void }).unref?.();
         const settle = (v: any) => { clearTimeout(timer); resolve(v); };
         const fail = (e: Error) => { clearTimeout(timer); reject(e); };
         waiters.push({ resolve: settle, reject: fail });
       });
     },
     close() {
+      // Settle whatever is still waiting BEFORE killing the child. Without this a timer armed by
+      // `next()` outlives the test: the `it` ceiling fires first, the test is already settled, and
+      // the late rejection surfaces as an unhandled error attributed to no test at all — the exact
+      // `1 failed + 1 error` shape this harness was hardened to stop producing.
+      for (const w of waiters.splice(0)) w.reject(new Error('gnl-docs-mcp client closed while a reply was still pending'));
       child.stdin.end();
       child.kill();
     },

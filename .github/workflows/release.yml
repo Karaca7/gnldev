@@ -66,7 +66,15 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r build
       - run: pnpm -r typecheck
-      - run: pnpm test
+      # Recorded like ci.yml's run, and for a stronger reason: this is the suite that guards the dist
+      # about to reach npm, on a runner the gates never touched. A flake here is the most expensive
+      # one to have to reproduce, so it must not be the only run that goes unrecorded.
+      - run: pnpm test --reporter=default --reporter=junit --outputFile.junit=test-results.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: publish-test-results
+          path: test-results.xml
 
       # Every publishable package carries the same version (single-version policy), so there are
       # three ways a release can be wrong and this step checks all three. The earlier version only

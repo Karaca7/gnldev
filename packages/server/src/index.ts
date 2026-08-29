@@ -453,8 +453,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
    * authenticated admin carrying NO org binding read BOTH organizations' runs (200), while the same
    * request under a provider declaring `multiOrganization: true` was refused (403). Declaring the
    * PAID capability was what made the deployment safe — so the sentence "the tier that does not pay
-   * is the less isolated one" was literally true, and RISK-AUDIT-AUTH's own cross-cutting note says
-   * isolation must not depend on a paid feature flag.
+   * is the less isolated one" was literally true. Isolation must not depend on a paid feature flag.
    *
    * `capabilities()` cannot carry this either way: it is an object the CALLER supplies (auth/types.ts),
    * so it states an intent, never proves one. What does prove it is that the host configured `org` —

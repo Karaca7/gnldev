@@ -9,6 +9,7 @@ import {
 import { Spinner, Empty, ErrorBox, Badge, Btn, StatStrip, PageHeader } from '../components';
 import { toast, ConfirmDialog, Dialog } from '../ui';
 import { Reveal } from '../motion';
+import { currentLocale } from '../i18n/locale';
 // I18n init side effect: so that useTranslation also works if this view is rendered directly
 // (without App) (see src/i18n/index.ts) — main.tsx already does this, this re-ensures it here.
 import '../i18n';
@@ -28,7 +29,7 @@ const TTL_OPTIONS: { key: string; ms: number | '' }[] = [
   { key: 'ttl30Days', ms: 30 * 24 * 60 * 60 * 1000 },
 ];
 
-const fmtDate = (ms?: number) => (ms ? new Date(ms).toLocaleString() : undefined);
+const fmtDate = (ms?: number) => (ms ? new Date(ms).toLocaleString(currentLocale()) : undefined);
 
 /**
  * Presentational-only checkbox grid for the (read-only, GNL-owned) permission catalog — grouped by
@@ -405,9 +406,9 @@ export function Users() {
       }
     />
     <StatStrip items={[
-      { label: t('statUsers'), value: rows.length.toLocaleString() },
-      { label: t('statActive'), value: activeCount.toLocaleString() },
-      { label: t('statAdmins'), value: adminCount.toLocaleString() },
+      { label: t('statUsers'), value: rows.length.toLocaleString(currentLocale()) },
+      { label: t('statActive'), value: activeCount.toLocaleString(currentLocale()) },
+      { label: t('statAdmins'), value: adminCount.toLocaleString(currentLocale()) },
     ]} />
     <div className="min-h-0 flex-1 overflow-auto space-y-3 p-5">
       {canManage && (

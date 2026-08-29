@@ -95,9 +95,15 @@ async function driveCap(api: (r: Request) => Promise<Response>, token: string, c
     headers['content-type'] = 'application/json';
     init.body = JSON.stringify({ query: 'x', message: 'h', key: 'k', input: {}, name: 'w', runId: 'r1', prompt: 'p' });
   }
+  // 1s per route, not 3s, and the arithmetic is the reason: `unusableTruths` drives all 27 GATED
+  // capabilities SERIALLY, so a 3s bound puts the worst case at 81s against a 60s `it` ceiling —
+  // the test would die as "timed out" instead of printing the list of unusable capabilities, which
+  // is the whole output. At 1s the worst case is 27s. Nothing legitimate comes near either number:
+  // these are in-process handler calls with no network, and a promise chain settles on microtasks,
+  // which run before any timer — so the bound can only be reached by a genuine hang.
   const res = await Promise.race([
     api(new Request(`http://x${path}`, init)),
-    new Promise<Response>((r) => setTimeout(() => r(new Response('<<timeout>>', { status: 599 })), 3000)),
+    new Promise<Response>((r) => setTimeout(() => r(new Response('<<timeout>>', { status: 599 })), 1000)),
   ]);
   return { status: res.status, body: (await res.text()).slice(0, 90) };
 }
