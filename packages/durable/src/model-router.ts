@@ -4,11 +4,47 @@
 import { claim, runKeys } from './journal.js';
 import type { Journal } from './journal.js';
 
+/**
+ * Prefixes that map to a FIRST-PARTY `@ai-sdk/*` package, resolved lazily.
+ *
+ * Four of these for a long time, which quietly made the other dozen look unsupported: a host writing
+ * `groq/llama-3.3` got "Unknown provider" and a pointer to `registerModelProvider`, for a package the
+ * AI SDK publishes and maintains. Registering a factory by hand to reach an official provider is
+ * ceremony, and the error read as a limitation of this library rather than a gap in one table.
+ *
+ * The key is the PREFIX and it is not cosmetic: `resolveModel` looks the factory up as
+ * `mod[provider] ?? mod.default`, so a prefix that does not match the package's exported name finds
+ * nothing. Every entry here is one where they agree (`@ai-sdk/groq` exports `groq`), which is also
+ * why `bedrock` and `vertex` are spelled by their EXPORT rather than by their package name.
+ *
+ * Adding a line costs nothing at runtime — the import happens only when a spec names that prefix, and
+ * an absent package produces `npm i @ai-sdk/…` rather than a failure to start. What it costs is this
+ * table going stale again, so `registerModelProvider` remains the answer for anything not here:
+ * every OpenAI-compatible endpoint (NVIDIA NIM, Together, vLLM, Ollama, a gateway) belongs to that
+ * path permanently, because those are one API shape at many addresses, not packages anyone will ship.
+ */
 const PROVIDER_PKG: Record<string, string> = {
   openai: '@ai-sdk/openai',
   anthropic: '@ai-sdk/anthropic',
   google: '@ai-sdk/google',
   mistral: '@ai-sdk/mistral',
+  groq: '@ai-sdk/groq',
+  xai: '@ai-sdk/xai',
+  deepseek: '@ai-sdk/deepseek',
+  cohere: '@ai-sdk/cohere',
+  cerebras: '@ai-sdk/cerebras',
+  perplexity: '@ai-sdk/perplexity',
+  fireworks: '@ai-sdk/fireworks',
+  togetherai: '@ai-sdk/togetherai',
+  azure: '@ai-sdk/azure',
+  bedrock: '@ai-sdk/amazon-bedrock',
+  vertex: '@ai-sdk/google-vertex',
+  replicate: '@ai-sdk/replicate',
+  // `@ai-sdk/gateway` is deliberately NOT here. It is a meta-provider — it routes to the others rather
+  // than serving models itself — so a `gateway/` prefix would mean something different from every
+  // other line. It is also the name model-provider-registry.test.ts registers to prove a custom
+  // provider can be removed again, and promoting it to a built-in would make that test fail on the
+  // shadow guard. A host that wants it registers it, which is the honest shape for a router anyway.
 };
 
 /**
