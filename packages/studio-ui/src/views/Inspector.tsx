@@ -166,7 +166,12 @@ export function Inspector() {
             placeholder={total === undefined ? t('searchPlaceholderNoCount') : t('searchPlaceholder', { count: total })}
             className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm outline-none"
           />
-          <div className="flex items-center gap-1">
+          {/* flex-wrap + shrink-0: altı çip sabit genişlikli kenar çubuğuna tek satırda sığmıyor.
+              Sarmasız hâlde flex öğeleri eziliyor, son çip taşıyor ve bir üstteki satırla çakışıyordu.
+              Türkçede kaçınılmaz — etiketler İngilizcenin neredeyse iki katı ("Tümü · Çalışıyor ·
+              Tamamlandı · Askıda · Başarısız · İptal edildi"), yani hepsini tek satıra sığdırmaya
+              çalışmak yanlış hedef. shrink-0 ayrıca etiketlerin kırpılmasını engelliyor. */}
+          <div className="flex flex-wrap items-center gap-1">
             {(['all', 'running', 'completed', 'suspended', 'failed', 'canceled'] as const).map((s) => (
               <button
                 key={s}
@@ -174,7 +179,7 @@ export function Inspector() {
                 aria-pressed={statusF === s}
                 onClick={() => setStatusF(s)}
                 className={cn(
-                  'rounded-md border px-2 py-0.5 font-mono text-[10px] transition-colors',
+                  'shrink-0 rounded-md border px-2 py-0.5 font-mono text-[10px] transition-colors',
                   // D6-4: this is a filter-toggle selection state, not the "live/primary" identity — brand/lime
                   // Was over-applied here (bucket "general accent"); a neutral filled pill (bg-muted + bold
                   // Text) marks the active filter without spending the brand accent on it.
