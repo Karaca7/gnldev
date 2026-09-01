@@ -288,11 +288,29 @@ use `@gnldev/rag`'s `PostgresVectorStore`, which owns its own `vector(dim)` tabl
 **⑧ `gnl_work_log` — queue/event log.** Columns: `ns (namespace — which queue/topic, e.g.,
 'evt:order'), id (record id; ns+id is the primary key → the same event CANNOT be inserted twice
 = idempotent publishing), payload (content), ts`. *When?* When `@gnldev/queue` adds a job, when
-`@gnldev/events` publishes an event. Append-only; old entries are swept with `sweepLog`.
+`@gnldev/events` publishes an event. Append-only — and **nothing in the framework prunes it**.
+`sweepLog` does not: it takes a `Journal` and sweeps `appendLog`-based namespaces (the audit log,
+for instance), which is a different store from the `WorkStore` that owns this table. The `WorkStore`
+interface has no delete operation at all, so a queue or topic grows without bound. What is available
+is a ceiling rather than a broom: `emit(..., { maxDepth })` refuses to publish once a topic reaches
+the given depth. Reclaiming rows is an operator job (a direct `DELETE` against the table).
 
 **⑨ `gnl_work_kv` — queue management notes.** Free-form key-value: job status, scheduler
 definitions, and most importantly **ack markers** (ack marker: "consumer Y received event X" —
-written via CAS → the same event can't be delivered to the same consumer TWICE).
+written via CAS → the same event can't be delivered to the same consumer TWICE). The key families
+`@gnldev/events` keeps here are `evtack:` (the ack marker), `evtcursor:` (each consumer's read
+position), `evtatt:` (failed attempts + when the next one is due), `evtdead:` (the dead-letter
+record behind `listDeadEvents`) and `evtrescan:` (the flag `retryDeadEvent` sets so the next poll
+re-scans from the start of the log). All are per topic **and** per consumer name.
+
+**The parts of those keys are escaped, which matters the moment you write the `DELETE` above by
+hand.** `:` is both the delimiter and an ordinary character in a topic, a consumer name and an event
+id, so each part is rewritten before it is joined: `:` → `%3A` and `%` → `%25`. A consumer named
+`billing:eu` on topic `refunds` is therefore stored under `evtack:refunds:billing%3Aeu:<id>`, and
+a `LIKE 'evtack:refunds:billing:eu:%'` finds nothing. The same escape reaches the log namespace in ⑧:
+topic `orders:eu` is stored as `gnl_work_log.ns = 'evt:orders%3Aeu'`. That one is not tidiness —
+`WorkStore.list(ns)` is a whole-value match here, but the Redis adapter derives a key from the
+namespace and used to read it back with a prefix scan, which handed one topic another's events.
 
 **⑩ `gnl_cache` — TTL-based cache.** `key, value, expires_at`. For reuse ACROSS runs (e.g., the
 embedding of the same text across two runs → compute it once). Expired entries aren't read and
@@ -475,6 +493,32 @@ client-echoed messages were trimmed. The frozen input says *what* the model saw;
 Threads → a conversation → a turn's **memory** row. Unanswered questions (a run that died before its
 first token) appear in the same ledger as ghost rows.
 
+The record also carries two fields that only appear when something went wrong, both of them about
+**input processors**. `incomingUnrecoverable` is set when the processor chain left no recoverable copy
+of the turn, so the thread was stored with an answer and no question; its value says which way that
+happened — `messages-dropped` (the chain returned no `messages` array at all), `boundary-lost`
+(nothing recognizable survived, so where history ends and the new turn begins is unknown), or
+`turn-dropped` (the split is known and the chain removed the turn from it). The pre-processor messages
+are deliberately *not* used as a fallback — they are the unmasked ones — so `incomingCount` becomes
+`0` and the run also warns on `console.warn`; keep the new turn in `messages` as an array to fix it.
+`incomingDedupedByShape` is set when this turn was dropped as a duplicate of the stored one on the
+**post-processor** shapes: once memory holds the masked question, the comparison can only run on
+masked text, so two genuinely different raw questions that redact to the same string are
+indistinguishable and the second is treated as a retry. What that costs is the turn *count*, not
+content — the model saw one identical string either way.
+
+**A row the chain appends behind your turn is shown to the model and never stored** (`chainAppended`).
+An input processor that adds its own message after the caller's — a compliance reminder, a
+`[trimmed]` marker, an injected policy line — used to have that row counted as part of the user's
+turn and written into the thread. Because it is *stored*, it came back as history and the chain
+appended a fresh one on top of it: measured over 10 turns, 30 messages in memory of which 10 were the
+processor's note (33% of the rows), and the model saw the reminder once on turn 1 and **ten times** on
+turn 10. The turn now ends where the caller stopped writing, so the note reaches the model exactly
+once per turn and the thread holds the conversation only. `:memctx.incomingCount` still counts the
+frozen input's whole trailing block (that is what regression replay slices with) and `chainAppended`
+says how many of those were the chain's — "what memory holds" is `incomingCount - chainAppended`. The
+field is absent when the chain appended nothing, which is every run without input processors.
+
 **Counterfactual replay (prove it, don't infer it).** "The model must have read it from the recall
 snippet" is an inference — Studio's Regression tab can turn it into an experiment: *re-run without
 memory* strips exactly what the provenance record proves was injected and re-asks the same turn with
@@ -571,9 +615,9 @@ await client.run('assistant', { runId: 'order-42', prompt: '...' });
 
 // Studio: web control panel — npx @gnldev/studio --db runs.db
 // (or --config gnl.config.ts, which also serves the Playground; it needs one or the other)
-// 19 views (one nav row per route — see studio-ui's NAV list in src/App.tsx): run timeline,
+// 20 views (one nav row per route — see studio-ui's NAV list in src/App.tsx): run timeline,
 // TIME-TRAVEL (jump back to a past step and FORK from there), approval queue, cost, traces,
-// organization/budget management, network tree, playground...
+// organization/budget management, network tree, dead-letter, playground...
 ```
 
 ### 7.9 Deployment and observability
@@ -707,7 +751,7 @@ buys the first list and costs the second.
 | **Model fallback is persistent** | The model that actually won is written to the journal; a resume sticks with it instead of re-rolling the dice |
 | **Dynamic agent-network decisions are frozen** | A routing decision made once is recorded, so a replay follows the same path |
 | **Resumable evals** | A test suite continues where it stopped instead of starting over |
-| **Governance surface** | Studio ships 19 views: approval queue, policy, budget, audit, regression comparison |
+| **Governance surface** | Studio ships 20 views: approval queue, policy, budget, audit, dead-letter, regression comparison |
 | **Edge-native** | A thin core with optional dependencies, small enough to run inside a Workers-class bundle |
 
 **What it cost — deliberately, not by omission**
@@ -900,8 +944,11 @@ graph TB
     style P fill:#c62828,color:#fff
 ```
 
-- Side journals are swept too: `sweepLog` (queue/event records), `sweepThreads` (old conversation
-  histories). In other words, "retention" policy applies to all data types, not just runs.
+- Side journals are swept too — but only the ones that live in the **journal**: `sweepLog` takes a
+  `Journal` and sweeps `appendLog`-based namespaces (the audit log, for instance), and
+  `sweepThreads` deletes old journal-based BasicMemory conversation histories. Note what is
+  **not** on this list: the queue/event log (`gnl_work_log`) belongs to the `WorkStore`, whose
+  interface has no delete operation at all, so nothing in the framework prunes it — see §5.3 ⑧.
 
 - **One thing is deliberately NOT swept: cross-run dedup keys.** `idempotencyWindow: 'cross-run'`
   writes an `xrun:…` record whose entire job is to answer "did this argument already run?" *forever* —
@@ -961,8 +1008,10 @@ these three guarantees — the old period stands as full proof until it's actual
 |---|---|---|
 | A single run's journal | 1–2 records per step (linear) | Run ends → `sweepRuns`; if it doesn't → `rolloverRun` |
 | Total across runs | Linear with run count | `sweepRuns` (via cron) + `purgeRun` (GDPR) |
-| Queue/event records | 1 record per event | `sweepLog` |
-| Conversation histories | 1 row per message | `sweepThreads` + `purgeThread` |
+| Queue/event records (`gnl_work_log`) | 1 record per event | **Nothing in the framework** — the `WorkStore` interface has no delete operation. A ceiling, not a broom: `emit(..., { maxDepth })`; reclaiming rows is a manual `DELETE` (§5.3 ⑧) |
+| Journal durable-log namespaces (audit log, …) | 1 record per append | `sweepLog(journal, ns, …)` |
+| Conversation histories, journal BasicMemory (`mem:<threadId>:*`) | Messages accumulate inside a single journal record per thread | `sweepThreads` + `purgeThread` |
+| Conversation histories, `@gnldev/memory` (`gnl_threads`/`gnl_messages`) | 1 row per message | A different store — `AgentMemory.deleteThread`; `sweepThreads` does NOT reach it |
 | Resume read cost | Linear with run steps, but in a SINGLE query | replay-cache (§11.2); frequent-resume + huge-run → rollover |
 
 ---

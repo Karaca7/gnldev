@@ -280,11 +280,31 @@ pgvector tablosu değil ve olmayacak — motor içi ANN araması için `@gnldev/
 **⑧ `gnl_work_log` — kuyruk/olay defteri.** Kolonlar: `ns (namespace — hangi kuyruk/konu,
 örn. 'evt:siparis'), id (kayıt kimliği; ns+id birincil anahtar → aynı olay iki kez EKLENEMEZ =
 idempotent yayın), payload (içerik), ts`. *Ne zaman?* `@gnldev/queue` iş ekleyince, `@gnldev/events`
-olay yayınlayınca. Yalnız-ekle çalışır; eskiler `sweepLog` ile süpürülür.
+olay yayınlayınca. Yalnız-ekle çalışır — ve **framework'te onu budayan hiçbir şey yok**. `sweepLog`
+budamaz: o bir `Journal` alır ve `appendLog` tabanlı namespace'leri (örneğin denetim defterini)
+süpürür; bu tabloya sahip olan `WorkStore` ise bambaşka bir depodur. `WorkStore` arayüzünde hiçbir
+silme operasyonu yoktur, yani bir kuyruk ya da konu sınırsız büyür. Elde olan bir süpürge değil, bir
+tavandır: `emit(..., { maxDepth })`, konu verilen derinliğe ulaşınca yayını reddeder. Satırları geri
+kazanmak operatörün işidir (tabloya doğrudan `DELETE`).
 
 **⑨ `gnl_work_kv` — kuyruk yönetim notları.** Serbest anahtar-değer: işlerin durumu, zamanlayıcı
 tanımları ve en önemlisi **teslim işaretleri** (ack marker: "X olayını Y tüketicisi aldı" —
-CAS ile yazılır → aynı olay aynı tüketiciye İKİ KEZ teslim edilemez).
+CAS ile yazılır → aynı olay aynı tüketiciye İKİ KEZ teslim edilemez). `@gnldev/events`'in burada
+tuttuğu anahtar aileleri: `evtack:` (teslim işaretinin kendisi), `evtcursor:` (her tüketicinin
+okuma konumu), `evtatt:` (başarısız denemeler + bir sonrakinin ne zaman geleceği), `evtdead:`
+(`listDeadEvents`'in arkasındaki ölü-mektup kaydı) ve `evtrescan:` (`retryDeadEvent`'in yazdığı,
+bir sonraki yoklamanın defterin başından yeniden taramasını sağlayan bayrak). Hepsi konu **ve**
+tüketici adı başınadır.
+
+**Bu anahtarların parçaları kaçışlanır; yukarıdaki `DELETE`'i elle yazdığınız anda önemi ortaya
+çıkar.** `:` hem ayraç hem de konu adında, tüketici adında ve olay kimliğinde gayet olağan bir
+karakter, o yüzden her parça birleştirilmeden önce yeniden yazılır: `:` → `%3A`, `%` → `%25`.
+`refunds` konusundaki `billing:eu` adlı tüketici bu yüzden `evtack:refunds:billing%3Aeu:<id>`
+altında durur; `LIKE 'evtack:refunds:billing:eu:%'` hiçbir şey bulmaz. Aynı kaçışlama ⑧'deki defter
+ad alanına da uzanır: `orders:eu` konusu `gnl_work_log.ns = 'evt:orders%3Aeu'` olarak durur. Bu bir
+düzen kaygısı değil — `WorkStore.list(ns)` burada tam-değer eşleşmesidir, ama Redis adaptörü ad
+alanından bir anahtar türetiyor ve onu önek taramasıyla geri okuyordu; bu da bir konuya başka bir
+konunun olaylarını teslim ediyordu.
 
 **⑩ `gnl_cache` — süreli önbellek.** `key, value, expires_at (son kullanma zamanı)`. Koşular
 ARASI tekrar kullanım için (örn. aynı metnin embedding'i iki koşuda → bir kez hesapla).
@@ -463,6 +483,32 @@ kırpıldığı. Donmuş girdi modelin *ne* gördüğünü söyler; bu kayıt *h
 **memory** satırı. Cevapsız kalan sorular (ilk token'dan önce ölen run) aynı defterde hayalet satır
 olarak görünür.
 
+Kayıt ayrıca yalnız bir şey ters gittiğinde beliren iki alan taşır; ikisi de **input processor**'larla
+ilgilidir. `incomingUnrecoverable`, processor zinciri turun kurtarılabilir bir kopyasını bırakmadığında
+yazılır — yani thread'e cevap kaydedilmiş, soru kaydedilmemiştir; değeri bunun hangi yoldan olduğunu
+söyler: `messages-dropped` (zincir hiç `messages` dizisi döndürmedi), `boundary-lost` (tanınabilir
+hiçbir şey hayatta kalmadı, geçmişin nerede bitip yeni turun nerede başladığı bilinmiyor) ya da
+`turn-dropped` (sınır biliniyor ve zincir turu oradan çıkardı). Processor öncesi mesajlar bilerek
+yedek olarak *kullanılmaz* — maskesiz olanlar onlardır — bu yüzden `incomingCount` `0` olur ve koşu
+ayrıca `console.warn` ile uyarır; düzeltmek için yeni turu `messages` içinde dizi olarak bırakın.
+`incomingDedupedByShape` ise bu turun, kayıtlı olanın kopyası sayılarak **processor sonrası** şekiller
+üzerinden düşürüldüğünde yazılır: memory bir kez maskeli soruyu tuttuğunda karşılaştırma ancak maskeli
+metin üzerinde yapılabilir, dolayısıyla aynı dizeye maskelenen gerçekten farklı iki soru burada ayırt
+edilemez ve ikincisi retry sayılır. Bunun bedeli içerik değil, tur *sayısıdır* — model her iki halde de
+aynı tek dizeyi görmüştür.
+
+**Zincirin turunuzun arkasına eklediği satır modele gösterilir, ama saklanmaz** (`chainAppended`).
+Kendi mesajını çağıranınkinin arkasına ekleyen bir input processor — bir uyum hatırlatması, bir
+`[kırpıldı]` işareti, enjekte edilen bir politika satırı — eskiden o satırı kullanıcının turunun
+parçası saydırıp thread'e yazdırıyordu. *Saklandığı* için de geçmiş olarak geri geliyor ve zincir
+üstüne bir yenisini ekliyordu: 10 tur boyunca ölçüldü, bellekte 30 mesajın 10'u processor'ın notuydu
+(satırların %33'ü) ve model hatırlatmayı 1. turda bir kez, 10. turda **on kez** gördü. Tur artık
+çağıranın yazmayı bıraktığı yerde biter; not modele tur başına tam bir kez ulaşır, thread'de ise
+yalnız konuşma kalır. `:memctx.incomingCount` hâlâ donmuş girdinin tüm kuyruk bloğunu sayar (regresyon
+yeniden koşması bununla kırpar), `chainAppended` ise bunların kaçının zincire ait olduğunu söyler —
+"bellekte ne var" = `incomingCount - chainAppended`. Zincir hiçbir şey eklemediyse alan yoktur; input
+processor'ı olmayan her koşu böyledir.
+
 **Kontrfaktüel yeniden koşma (çıkarım değil, kanıt).** "Model bunu recall parçasından okumuştur" bir
 çıkarımdır — Studio'nun Regression sekmesi bunu deneye çevirir: *hafızasız yeniden koş*, provenance
 kaydının enjekte edildiğini kanıtladığı kısmı çıkarıp aynı turu aynı modelle yeniden sorar ve iki
@@ -555,9 +601,9 @@ await client.run('asistan', { runId: 'talep-42', prompt: '...' });
 
 // Studio: web kontrol paneli — npx @gnldev/studio --db runs.db
 // (ya da --config gnl.config.ts; o zaman Playground da açılır. Biri mutlaka gerekir)
-// 19 görünüm (route başına bir nav satırı — studio-ui'daki NAV listesi, src/App.tsx): koşu zaman
+// 20 görünüm (route başına bir nav satırı — studio-ui'daki NAV listesi, src/App.tsx): koşu zaman
 // çizelgesi, TIME-TRAVEL (geçmiş bir adıma dönüp oradan ÇATALLAMA), onay kuyruğu, maliyet, izler,
-// organizasyon/bütçe yönetimi, ağ ağacı, playground...
+// organizasyon/bütçe yönetimi, ağ ağacı, ölü-mektup, playground...
 ```
 
 ### 7.9 Yayınlama (deploy) ve izleme
@@ -691,7 +737,7 @@ koşu.** Bu tercih birinci listeyi kazandırıyor, ikincisine mal oluyor.
 | **Model fallback kalıcı** | Gerçekte kazanan model journal'a yazılır; resume zarı yeniden atmaz, ona yapışır |
 | **Dinamik ajan ağı kararları donar** | Bir kez verilen yönlendirme kararı kaydedilir, replay aynı yolu izler |
 | **Resumable evals** | Test paketi baştan başlamaz, durduğu yerden devam eder |
-| **Yönetişim yüzeyi** | Studio 19 görünümle gelir: onay kuyruğu, politika, bütçe, denetim, regresyon karşılaştırma |
+| **Yönetişim yüzeyi** | Studio 20 görünümle gelir: onay kuyruğu, politika, bütçe, denetim, ölü-mektup, regresyon karşılaştırma |
 | **Edge-native** | İnce çekirdek + opsiyonel bağımlılıklar; Workers sınıfı bir bundle'a sığacak kadar küçük |
 
 **Maliyeti — eksiklikten değil, bilinçli olarak**
@@ -875,8 +921,11 @@ graph TB
     style P fill:#c62828,color:#fff
 ```
 
-- Yan defterler de süpürülür: `sweepLog` (kuyruk/olay kayıtları), `sweepThreads` (eski konuşma
-  geçmişleri). Yani "retention" (saklama politikası) yalnız koşulara değil tüm veri türlerine işler.
+- Yan defterler de süpürülür — ama yalnız **journal'da** yaşayanlar: `sweepLog` bir `Journal` alır
+  ve `appendLog` tabanlı namespace'leri (örneğin denetim defterini) süpürür; `sweepThreads` ise
+  journal tabanlı BasicMemory'deki eski konuşma geçmişlerini siler. Bu listede **olmayana** dikkat:
+  kuyruk/olay defteri (`gnl_work_log`) `WorkStore`'a aittir, onun arayüzünde hiçbir silme
+  operasyonu yoktur, yani framework'te onu budayan hiçbir şey yoktur — bkz. §5.3 ⑧.
 
 - **Bir şey bilerek süpürülmüyor: cross-run dedup anahtarları.** `idempotencyWindow: 'cross-run'`,
   tek işi *"bu argüman daha önce koştu mu?"* sorusunu **sonsuza dek** cevaplamak olan bir `xrun:…`
@@ -934,8 +983,10 @@ bozmadan verir — eski dönem, silinene KADAR tam kanıt olarak durur.
 |---|---|---|
 | Bir koşunun defteri | Adım başına 1-2 kayıt (doğrusal) | Koşu biter → `sweepRuns`; bitmiyorsa → `rolloverRun` |
 | Koşuların toplamı | Koşu sayısıyla doğrusal | `sweepRuns` (cron'da) + `purgeRun` (GDPR) |
-| Kuyruk/olay kayıtları | Olay başına 1 kayıt | `sweepLog` |
-| Konuşma geçmişleri | Mesaj başına 1 satır | `sweepThreads` + `purgeThread` |
+| Kuyruk/olay kayıtları (`gnl_work_log`) | Olay başına 1 kayıt | **Framework'te hiçbir şey** — `WorkStore` arayüzünde silme operasyonu yok. Süpürge değil tavan: `emit(..., { maxDepth })`; satırları geri kazanmak elle `DELETE` (§5.3 ⑧) |
+| Journal durable-log namespace'leri (denetim defteri, …) | Ekleme başına 1 kayıt | `sweepLog(journal, ns, …)` |
+| Konuşma geçmişleri, journal BasicMemory (`mem:<threadId>:*`) | Mesajlar thread başına tek journal kaydının içinde birikir | `sweepThreads` + `purgeThread` |
+| Konuşma geçmişleri, `@gnldev/memory` (`gnl_threads`/`gnl_messages`) | Mesaj başına 1 satır | Bambaşka bir depo — `AgentMemory.deleteThread`; `sweepThreads` oraya ULAŞMAZ |
 | Resume okuma maliyeti | Koşu adımıyla doğrusal ama TEK sorguda | replay-cache (§11.2); sık-resume + dev koşuda → rollover |
 
 ---
