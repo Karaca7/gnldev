@@ -94,7 +94,9 @@ describe('@gnldev/events', () => {
     const c = createConsumer(work, 'pay', (p: any) => {
       attempts[p.id] = (attempts[p.id] ?? 0) + 1;
       if (p.id === 'p2' && attempts.p2 === 1) throw new Error('boom');
-    }, { name: 'A' });
+      // retryDelayMs: 0 — retries are spaced out by default now (60s → 1h, see retry-delay.test.ts).
+      // This test is about NOT LOSING the event, not about when the retry lands.
+    }, { name: 'A', retryDelayMs: 0 });
     await emit(work, 'pay', { id: 'p1' }, { id: 'p1' });
     await emit(work, 'pay', { id: 'p2' }, { id: 'p2' });
     await emit(work, 'pay', { id: 'p3' }, { id: 'p3' });
@@ -114,7 +116,15 @@ describe('@gnldev/events', () => {
   });
 
   // K2 — if a failed event remains on a fully-consumed page, the cursor is NOT ADVANCED (otherwise the event is never scanned again = loss).
-  it('a failed event locks the page cursor; once fixed the cursor advances, each event counted exactly once', async () => {
+  //
+  // CHANGED (head-of-line fix): this test used to assert `poll() === 49` — that a failure on page 1
+  // also stopped the PASS, so page 2 (e50..e59) waited for the next poll. The frozen cursor is still
+  // right; stopping the pass was not, and the two had been fused into one `return`. Measured cost of
+  // the fusion (real SQLite, 120 events, the 4th always failing): poll1=49, poll2=0, poll3=0 — 70
+  // events undelivered for as long as the handler stayed broken. So the old number was not a
+  // guarantee this package meant to make, and it is asserted here as 59 now: the whole log is
+  // delivered in one pass, and the bookmark still refuses to move past e10. See head-of-line.test.ts.
+  it('a failed event locks the page cursor but not the pass; once fixed the cursor advances, each event counted exactly once', async () => {
     const work = new InMemoryStorage().work;
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const N = 60; // page size 50 → e10 is on the fully-consumed 1st page
@@ -123,18 +133,19 @@ describe('@gnldev/events', () => {
     const c = createConsumer(work, 'bulk3', (p: any) => {
       attempts[p.id] = (attempts[p.id] ?? 0) + 1;
       if (p.id === 'e10' && failE10) throw new Error('boom');
-    }, { name: 'A' });
+    }, { name: 'A', retryDelayMs: 0 }); // as above: the retry SPACING is pinned in retry-delay.test.ts
     for (let i = 0; i < N; i++) await emit(work, 'bulk3', { id: `e${i}` }, { id: `e${i}` });
 
-    // First poll: on page 1 (e0..e49) e10 fails → the rest of the page is processed but the cursor
-    // does NOT ADVANCE and page 2 isn't reached (49 delivered). e50..e59 remain for the next poll.
-    expect(await c.poll()).toBe(49);
+    // First poll: on page 1 (e0..e49) e10 fails → the rest of the page is processed, page 2
+    // (e50..e59) is processed too (59 delivered), but the PERSISTED cursor does not advance past
+    // the page holding e10 — nothing behind a still-retryable event may be marked as passed.
+    expect(await c.poll()).toBe(59);
     expect(await work.get('evtcursor:bulk3:A')).toBeUndefined(); // cursor is locked — e10 can't be lost
 
-    // Second poll: e10 is fixed → on page 1 only e10 is retried (the rest are skipped via marker),
-    // once the page is clear the cursor advances and page 2 (e50..e59) is also delivered.
+    // Second poll: e10 is fixed → the whole log is rescanned but only e10 reaches the handler (the
+    // rest are skipped via marker), and with the page clear the cursor advances for good.
     failE10 = false;
-    expect(await c.poll()).toBe(11);
+    expect(await c.poll()).toBe(1);
     expect(await work.get('evtcursor:bulk3:A')).toBeDefined();
 
     for (let i = 0; i < N; i++) expect(attempts[`e${i}`]).toBe(i === 10 ? 2 : 1); // no double delivery (e10: 1 failure + 1 success)
