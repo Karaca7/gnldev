@@ -137,16 +137,22 @@ export interface PollResult {
 /**
  * Fires triggers that are due ('pending' && now≥nextRunAt). Double-firing is prevented via the run-lock;
  * The real exactly-once guarantee comes from the durable workflow run (per-fireCount runId).
+ *
+ * Y2: the lock is kept alive by a heartbeat while the workflow runs (`lockTtlMs`, default 60s, renewed
+ * Every ttl/3) — a long workflow no longer lets a second poller take the fire over. And EVERY state
+ * Write is a CAS (`putIfMatch`) against the state read at the start of the fire, so even if a takeover
+ * Does happen the late poller cannot write its stale result back.
  */
 export async function pollScheduler(
   journal: Journal,
   runner: WorkflowRunner,
   now: number = Date.now(),
-  opts: { owner?: string; retryMs?: number; budgetGuard?: BudgetGuard } = {},
+  opts: { owner?: string; retryMs?: number; budgetGuard?: BudgetGuard; lockTtlMs?: number } = {},
 ): Promise<PollResult> {
   if (!journal.listKeys) throw new Error('@gnldev/scheduler: journal.listKeys is required (trigger enumeration)');
   const owner = opts.owner ?? `sched-${Math.random().toString(36).slice(2, 8)}`;
   const retryMs = opts.retryMs ?? 30_000;
+  const lockTtlMs = opts.lockTtlMs ?? 60_000;
   const out: PollResult = { fired: 0, rescheduled: 0, failed: 0, skipped: 0 };
 
   const defKeys = await journal.listKeys('sched:def:');
@@ -157,17 +163,66 @@ export async function pollScheduler(
     if (!def || !state || state.status !== 'pending' || now < state.nextRunAt) continue;
 
     const runId = `sched:${id}:${state.fireCount}`;
-    const lock = await acquireRunLock(journal, runId, owner, 60_000, now);
+    const lock = await acquireRunLock(journal, runId, owner, lockTtlMs, now);
     if (!lock) continue; // another poller holds this fire
+
+    // Y2 (heartbeat): the lock TTL used to be a FIXED 60s that was never renewed — a workflow running
+    // Longer than that let the lock expire, a second poller took it over and fired the SAME trigger
+    // Again. The core's `RunLock.renew()` (run-lock.ts) exists exactly for this: "long-running jobs
+    // Should call this at an interval shorter than the ttl". We renew every ttl/3 for as long as the
+    // Trigger is in flight — the same pattern as @gnldev/queue's createWorker.
+    // A renew returning FALSE (a real takeover) or THROWING (a transient journal hiccup) is only
+    // LOGGED here: it deliberately does NOT gate the STATE WRITES below, because those are already
+    // Gated by something stronger and exact — see `commit`. A `lockLost` flag (the queue's approach)
+    // Would be a delayed approximation for that job and can be flipped by a mere network blip.
+    // KNOWN LIMIT — the CAS covers the WRITE, not the EXECUTION: when renew() returns false the
+    // Workflow this poller already started KEEPS RUNNING to completion, so during a takeover window
+    // The same runId can be in flight in two pollers at once (only one of them can commit). The
+    // Durable run's own per-runId guarantee is what keeps that convergent; making the poller actually
+    // STOP would need runWorkflow's AbortSignal to be plumbed through from here — it is not, today.
+    // A `lockLost` flag would not have fixed this either (the workflow is already running).
+    const heartbeat = setInterval(() => {
+      lock
+        .renew(lockTtlMs)
+        .then((ok) => {
+          if (!ok) console.warn(`[scheduler] the lock was taken over (trigger ${id}, run ${runId}) — the CAS on the state write will decide the result.`);
+        })
+        .catch((err) => console.warn(`[scheduler] renew transient error (trigger ${id}), the next tick will retry:`, err));
+    }, Math.max(1, Math.floor(lockTtlMs / 3)));
+
+    // Fencing: every state write is a CAS against the state we read AT THE START of this fire
+    // (`expected = state`). CAS — not a "do I still hold the lock?" hunch — is the AUTHORITY FOR THE
+    // WRITE (and only for the write; execution is not fenced, see the KNOWN LIMIT above): the
+    // Lock is advisory and any ownership check is inherently a read at a point in time (it can go
+    // Stale between the check and the write), whereas putIfMatch decides ATOMICALLY at write time,
+    // Inside the journal. If somebody else advanced the trigger (took the fire over and wrote its
+    // Own result), our record no longer matches and this write is REJECTED — a late poller can no
+    // Longer roll fireCount/nextRunAt back or resurrect `attempts`. The write of the poller that
+    // Genuinely holds the lock always matches, so a correct poller is never blocked.
+    // A journal WITHOUT putIfMatch falls back to an unconditional put (old behavior, documented risk
+    // — the same fallback as run-lock.ts / claim()).
+    const commit = async (next: TriggerState, what: string): Promise<boolean> => {
+      if (!journal.putIfMatch) {
+        await journal.put(STATE(id), next);
+        return true;
+      }
+      if (await journal.putIfMatch(STATE(id), state, next)) return true;
+      console.warn(`[scheduler] stale state write rejected (trigger ${id}, ${what}) — another poller advanced this trigger; this poller's result is DISCARDED.`);
+      return false;
+    };
+
     try {
       // 1.4: optional budget/quota hook — checked before runner.runWorkflow is CALLED.
       if (opts.budgetGuard) {
         try {
           await opts.budgetGuard({ triggerId: id, workflowName: def.name, input: def.input, now });
         } catch (e) {
-          await journal.put(STATE(id), { ...state, nextRunAt: now + retryMs }); // attempts DOES NOT increase
-          await journal.put(BUDGET_SKIP(id), { error: String((e as any)?.message ?? e), at: now });
-          out.skipped++;
+          // attempts DOES NOT increase; the diagnostic record is only written if the CAS was won (a
+          // Stale poller must not leave a budget-skip note on someone else's fire either).
+          if (await commit({ ...state, nextRunAt: now + retryMs }, 'budget-skip')) {
+            await journal.put(BUDGET_SKIP(id), { error: String((e as any)?.message ?? e), at: now });
+            out.skipped++;
+          }
           continue;
         }
       }
@@ -177,11 +232,11 @@ export async function pollScheduler(
       } catch (e) {
         const attempts = state.attempts + 1;
         if (attempts >= def.maxAttempts) {
-          await journal.put(STATE(id), { ...state, attempts, status: 'failed' });
-          await journal.put(FAIL(id), { error: String((e as any)?.message ?? e), at: now });
-          out.failed++;
-        } else {
-          await journal.put(STATE(id), { ...state, attempts, nextRunAt: now + backoff(attempts) });
+          if (await commit({ ...state, attempts, status: 'failed' }, 'failed')) {
+            await journal.put(FAIL(id), { error: String((e as any)?.message ?? e), at: now });
+            out.failed++;
+          }
+        } else if (await commit({ ...state, attempts, nextRunAt: now + backoff(attempts) }, 'retry')) {
           out.rescheduled++;
         }
         continue;
@@ -189,21 +244,26 @@ export async function pollScheduler(
 
       if (result.suspended) {
         // Workflow suspended → the same runId should be resumed later (fireCount unchanged).
-        await journal.put(STATE(id), { ...state, nextRunAt: now + retryMs });
-        out.rescheduled++;
+        if (await commit({ ...state, nextRunAt: now + retryMs }, 'suspended')) out.rescheduled++;
       } else if (def.kind === 'at') {
-        await journal.put(STATE(id), { ...state, status: 'done' });
-        out.fired++;
+        if (await commit({ ...state, status: 'done' }, 'done')) out.fired++;
       } else {
-        await journal.put(STATE(id), {
+        const next: TriggerState = {
           nextRunAt: computeNext(def, state.nextRunAt, now),
           attempts: 0,
           fireCount: state.fireCount + 1,
           status: 'pending',
-        });
-        out.fired++;
+        };
+        if (await commit(next, 'reschedule')) out.fired++;
       }
     } finally {
+      // MUST run BEFORE release(): release() keeps the SAME fencing token (it only pushes `expires`
+      // Into the past), so a heartbeat tick that survives this fire would find its own token still in
+      // The record and RESURRECT the lock it just released (expires: 0 → now+ttl) — blocking every
+      // Later poll of the same runId (a suspended trigger's resume, most visibly). Pinned by test.
+      clearInterval(heartbeat);
+      // If the lock was genuinely taken over, release() is a no-op anyway (the fencing token no
+      // Longer matches — run-lock.ts mkLock.release), so we never free somebody else's lock.
       await lock.release();
     }
   }
@@ -289,13 +349,13 @@ export interface Scheduler {
 export function createScheduler(
   journal: Journal,
   runner: WorkflowRunner,
-  opts: { pollMs?: number; owner?: string; retryMs?: number; backoff?: boolean; maxPollMs?: number; budgetGuard?: BudgetGuard } = {},
+  opts: { pollMs?: number; owner?: string; retryMs?: number; backoff?: boolean; maxPollMs?: number; budgetGuard?: BudgetGuard; lockTtlMs?: number } = {},
 ): Scheduler {
   const pollMs = opts.pollMs ?? 1000;
   const backoffOn = opts.backoff ?? false;
   const maxPollMs = opts.maxPollMs ?? pollMs * 32;
   const poll = (now: number = Date.now()) =>
-    pollScheduler(journal, runner, now, { owner: opts.owner, retryMs: opts.retryMs, budgetGuard: opts.budgetGuard });
+    pollScheduler(journal, runner, now, { owner: opts.owner, retryMs: opts.retryMs, budgetGuard: opts.budgetGuard, lockTtlMs: opts.lockTtlMs });
 
   // Phase 8.1: the tick/backoff/"polling" flag loop now lives in @gnldev/durable's shared createPollLoop
   // (it used to be triplicated across queue/events/scheduler) — behavior is identical: pollScheduler only
