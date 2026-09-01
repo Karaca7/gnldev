@@ -17,6 +17,7 @@
 // `client` is deliberately a WHITELIST, not "admin minus a few things": a write whose permission this
 // file does not name is denied. A route added later without a name costs a 403 (visible, reported)
 // instead of silently widening what every deployed application credential can reach.
+import { createHash } from 'node:crypto';
 import type { AuthProvider, Principal, Decision, AuthContext, Cred } from './types.js';
 import { safeEqual } from './safe-equal.js';
 import { PLATFORM_ADMIN_ROLE } from './scope.js';
@@ -42,6 +43,46 @@ export const CLIENT_WRITES: ReadonlySet<string> = new Set([
 /** Basic auth header value (same base64 logic as studio basicAuth). */
 function basicValue(user: string, pass: string): string {
   return 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64');
+}
+
+/**
+ * Stable per-token identity for a class configured with a bearer token and no `user` — i.e. exactly
+ * the shape `gnl add host` scaffolds (`{ token: v }`, see packages/cli/src/hosts.ts's `APP_TS`) and
+ * the shape `GNL_ADMIN_TOKEN`/`GNL_VIEWER_TOKEN` produce. Without this, such a principal's `id` was
+ * always absent, and anything keyed on `Principal.id` — @gnldev/studio's dead-letter-scan admission
+ * budget being the measured case (`server.ts`'s `deadScanCaller`) — could not tell two holders of
+ * DIFFERENT tokens apart, so the fairness bound it exists for silently did not apply to a single
+ * deployment's own admin/viewer tokens.
+ *
+ * A hash, not the token itself, so that whatever does read it never holds something that unlocks the
+ * credential. WHAT READS IT TODAY is exactly one thing: studio's dead-letter admission map
+ * (`deadScanCaller`). Audit records (`@gnldev/auth-ee`'s `audit.ts`) and `GET /me` read `principal.id`
+ * and do not see this field at all — an earlier draft of this note claimed they did, from when the
+ * fingerprint still lived on `id`. It is stated as a fact about today rather than a guarantee: if a
+ * surface ever does expose it, the dictionary-attack note below becomes live rather than theoretical.
+ * `sha256`, prefixed and NOT truncated: a short/truncated digest of a low-entropy,
+ * human-picked token is realistically dictionary-attackable regardless of digest length, so
+ * truncating would only look safer; keeping the full 32-byte digest doesn't make that easier than it
+ * already is. The `token:` prefix marks the value as SYNTHETIC (never a real username/user-store id)
+ * everywhere it surfaces, matching the one already in use for the `platform-admin` role tag.
+ *
+ * It lands on `credentialId`, NOT on `id`, and every class gets one including `client`. The first
+ * attempt put it on `id` and excluded `client` to protect that class's documented contract; measuring
+ * the other classes showed the exclusion was aimed at the wrong thing. `resolveResourceId` prefers
+ * `principal.id` UNCONDITIONALLY over the subject a request named, so an operator that sent
+ * `resourceId: 'user-42'` got the fingerprint back instead — `user-42` and `user-99` in one bucket,
+ * silently. The reasoning that made this look safe was that an operator "works across an
+ * organization's data by design and names nobody"; that sentence explains why an operator is not
+ * REQUIRED to name a subject, not that it never does, and the code accepted one before.
+ *
+ * `credentialId` has no such reach: it is a budget key, nothing treats it as an owner, so `client` can
+ * carry one too — a customer's backend is a legitimate subject for a spending limit while remaining,
+ * as designed, no subject at all for memory. `id` keeps its old meaning exactly: the basic-auth `user`
+ * when there is one, otherwise absent, and that absence still tells `resolveResourceId` the truth.
+ * This also leaves `actorOf`'s `x-gnl-actor` attribution untouched, which the first attempt overrode.
+ */
+function tokenId(token: string): string {
+  return `token:${createHash('sha256').update(token, 'utf8').digest('hex')}`;
 }
 
 /** Accepted Authorization header values + bearer token set for a role (for SSE query fallback). */
@@ -109,8 +150,13 @@ export function roleAuth(cfg: {
   };
 
   /**
-   * Principal of the matched class: id (if basic user is present) + organization bound to the identity
-   * (Cred.orgId).
+   * Principal of the matched class: id + organization bound to the identity (Cred.orgId).
+   *
+   * `id` is the basic-auth `user` and nothing else — unchanged, pre-existing behavior. A bearer token
+   * yields no `id`, and that absence is what tells `resolveResourceId` this deployment has no
+   * per-caller subject. `credentialId` is filled separately, for every class, from `tokenId` — a
+   * stable fingerprint of the credential that presented itself, for budget/admission keying only (see
+   * `tokenId` and the `Principal.credentialId` doc comment for why the two must not be merged).
    *
    * `superAdmin` carries `admin` too, so every existing `roles.includes('admin')` check — here, in
    * @gnldev/server, in @gnldev/studio — keeps working without knowing the class exists; the added
@@ -122,9 +168,11 @@ export function roleAuth(cfg: {
    */
   const principalOfRole = (role: 'admin' | 'viewer' | typeof CLIENT_ROLE, cred?: Cred, platform = false): Principal => {
     const roles = role === 'admin' && platform ? ['admin', PLATFORM_ADMIN_ROLE] : [role];
+    const credentialId = cred?.token ? tokenId(cred.token) : undefined;
     return {
       roles: cred?.platformAdmin && !roles.includes(PLATFORM_ADMIN_ROLE) ? [...roles, PLATFORM_ADMIN_ROLE] : roles,
       ...(cred?.user ? { id: cred.user } : {}),
+      ...(credentialId ? { credentialId } : {}),
       ...(cred?.orgId ? { orgId: cred.orgId } : {}),
     };
   };

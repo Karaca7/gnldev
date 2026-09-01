@@ -7,6 +7,26 @@
  */
 export interface Principal {
   id?: string;
+  /**
+   * WHICH CREDENTIAL spoke, never WHO — the two are different questions and this field exists because
+   * one field could not answer both.
+   *
+   * `id` is a SUBJECT: it answers "whose data is this", and `resolveResourceId`
+   * (packages/server/src/index.ts) hands it straight to the memory layer as `ThreadRecord.resourceId`,
+   * overriding any subject the request named. `credentialId` is a BUDGET KEY: it answers "who is
+   * spending", and is safe to synthesize precisely because nothing reads it as an owner.
+   *
+   * Measured, which is why the separation is enforced rather than advised: filling `id` with a token
+   * fingerprint made `resolveResourceId` return that fingerprint for a caller that had explicitly sent
+   * `resourceId: 'user-42'`, collapsing `user-42` and `user-99` into ONE bucket with no error — the
+   * shared-bucket regression that function's own comment records as measured and fixed, and a silent
+   * drop where its stated rule is "an INVALID value is a 400, not a silent drop".
+   *
+   * So: rate limiting, admission control and quota accounting may key on this. Memory scoping,
+   * ownership and access-control decisions MUST NOT — for those, an absent `id` means the deployment
+   * genuinely has no per-caller identity, and that absence is load-bearing information.
+   */
+  credentialId?: string;
   roles: string[];
   /** The field name identifying an organization — auth-ee/server/studio and stored records use this name. */
   orgId?: string;

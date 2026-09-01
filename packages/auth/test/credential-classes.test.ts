@@ -118,4 +118,63 @@ describe('credential classes', () => {
     const app = appWith({ superAdmin: { token: 'same' }, client: { token: 'same' } });
     expect((await post(app, '/manage', 'same')).status).toBe(200);
   });
+
+  // Studio's dead-letter-scan admission budget (packages/studio/src/server.ts `deadScanCaller`) needs
+  // an unforgeable per-caller key, and a pure bearer-token credential — the shape `gnl add host`
+  // scaffolds and `GNL_ADMIN_TOKEN`/`GNL_VIEWER_TOKEN` produce — carried none. That silently disabled
+  // the bound (measured: one shared admin token starved a legitimate operator 0/20 under concurrent
+  // load). The key belongs on `credentialId`, not `id`: `id` is a memory SUBJECT that
+  // `resolveResourceId` prefers over the one a request names, and putting a fingerprint there
+  // collapsed two explicitly-named subjects into one bucket (measured below).
+  describe('token-only credentials get a stable credentialId (admission fix)', () => {
+    it('every class authenticated by bearer token alone carries a credentialId — client included', () => {
+      const auth = roleAuth(CFG)!;
+      const superAdmin = auth.authenticate(new Request('http://x', { headers: as('super') }));
+      const admin = auth.authenticate(new Request('http://x', { headers: as('adm') }));
+      const viewer = auth.authenticate(new Request('http://x', { headers: as('viw') }));
+      const client = auth.authenticate(new Request('http://x', { headers: as('cli') }));
+      for (const p of [superAdmin, admin, viewer, client]) {
+        expect(p?.credentialId, JSON.stringify(p)).toMatch(/^token:[0-9a-f]{64}$/);
+      }
+    });
+
+    it('NO class gets a synthetic `id` — absence is what keeps memory scoping honest', () => {
+      // packages/server/src/index.ts's `resolveResourceId` returns `principal.id` unconditionally when
+      // present, ignoring the `resourceId` the request named. So a fingerprint on `id` does not just
+      // affect `client`: an operator that sent `resourceId: 'user-42'` got the fingerprint instead,
+      // putting 'user-42' and 'user-99' in ONE memory bucket with no error — the cross-user regression
+      // that function's history documents as measured and fixed, arriving through a different door.
+      // A budget key must not be able to answer "whose data is this", so it lives on its own field.
+      const auth = roleAuth(CFG)!;
+      for (const tok of ['super', 'adm', 'viw', 'cli']) {
+        const p = auth.authenticate(new Request('http://x', { headers: as(tok) }));
+        expect(p?.id, `${tok}: ${JSON.stringify(p)}`).toBeUndefined();
+      }
+    });
+
+    it('the credentialId is a deterministic function of the token — stable per token, distinct across', () => {
+      const auth = roleAuth(CFG)!;
+      const first = auth.authenticate(new Request('http://x', { headers: as('adm') }));
+      const second = auth.authenticate(new Request('http://x', { headers: as('adm') }));
+      expect(first?.credentialId).toBe(second?.credentialId);
+      const viewer = auth.authenticate(new Request('http://x', { headers: as('viw') }));
+      expect(viewer?.credentialId).not.toBe(first?.credentialId);
+    });
+
+    it('the raw token never appears in the derived credentialId (no leak)', () => {
+      const auth = roleAuth({ admin: { token: 'super-secret-admin-token' } })!;
+      const p = auth.authenticate(new Request('http://x', { headers: as('super-secret-admin-token') }));
+      expect(p?.credentialId).not.toContain('super-secret-admin-token');
+    });
+
+    it('basic-auth `id` is unchanged, and the two fields coexist without either winning', () => {
+      // `id` = the human-chosen name (pre-existing behavior, untouched); `credentialId` = which
+      // credential presented itself. Different questions, so a credential that answers both answers
+      // both — neither overwrites the other.
+      const auth = roleAuth({ admin: { token: 'adm', user: 'ops', pass: 'pw' } })!;
+      const viaBearer = auth.authenticate(new Request('http://x', { headers: as('adm') }));
+      expect(viaBearer?.id).toBe('ops');
+      expect(viaBearer?.credentialId).toMatch(/^token:[0-9a-f]{64}$/);
+    });
+  });
 });
