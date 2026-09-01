@@ -139,6 +139,13 @@ export function Scheduler() {
                   {trg.status === 'failed' && trg.lastError && (
                     <div className="mt-0.5 max-w-xs truncate text-[11px] text-destructive" title={trg.lastError}>{trg.lastError}</div>
                   )}
+                  {/* Said, not left blank: a failed trigger with no line under it reads as "failed
+                      without a recorded reason". The text is written by the host's own workflow while
+                      it runs on the trigger's `input`, so the server withholds it without
+                      `payloads:read` and flags that it did. */}
+                  {trg.status === 'failed' && trg.lastErrorRestricted && (
+                    <div className="mt-0.5 max-w-xs truncate text-[11px] italic text-muted-foreground" title={t('lastErrorRestricted')}>{t('lastErrorRestrictedShort')}</div>
+                  )}
                 </td>
               </StaggerItem>
             ))}

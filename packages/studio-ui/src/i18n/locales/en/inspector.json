@@ -169,6 +169,13 @@
   "memEchoTrimmed_one": "{{count}} client-echoed message trimmed before persisting",
   "memRecentTruncated": "… and {{count}} more (record capped)",
   "memRecentTruncated_one": "… and {{count}} more (record capped)",
+  "memIncomingUnrecoverable": "The input processors left no recoverable copy of this turn, so the thread holds this answer with no question. The pre-processor messages were deliberately not used as a fallback — they are unmasked. Reason:",
+  "memLossReason": {
+    "messages-dropped": "The processor chain returned no `messages` array at all (flattened into a prompt, or a partial input).",
+    "boundary-lost": "The chain rebuilt every message, so nothing anchored the history/incoming split any more.",
+    "turn-dropped": "The split was known and the chain removed this turn from it (a trim that could not protect it)."
+  },
+  "memDedupedByShape": "deduplicated on the masked shapes — the turn count may be short by one if two different raw inputs redact to the same text",
   "ghostTurnLabel": "unanswered",
   "ghostTurnTitle": "This question's run died before its first token — the write-ahead kept the message, but no run exists for it.",
   "ghostCount": "{{count}} unanswered",

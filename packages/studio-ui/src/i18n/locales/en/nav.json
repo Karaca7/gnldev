@@ -5,6 +5,7 @@
   "agents": "Agents",
   "tools": "Tools",
   "workflows": "Workflows",
+  "deadEvents": "Dead-letter",
   "jobs": "Jobs",
   "cache": "Cache",
   "scheduler": "Scheduler",

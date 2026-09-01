@@ -169,6 +169,13 @@
   "memEchoTrimmed_one": "{{count}} istemci ekosu kaydedilmeden kırpıldı",
   "memRecentTruncated": "… ve {{count}} tane daha (kayıt sınırlı)",
   "memRecentTruncated_one": "… ve {{count}} tane daha (kayıt sınırlı)",
+  "memIncomingUnrecoverable": "Girdi işlemcileri bu turun kurtarılabilir bir kopyasını bırakmadı; thread bu cevabı sorusuz tutuyor. İşlemci öncesi mesajlar bilerek yedek olarak kullanılmadı — onlar maskelenmemiş. Sebep:",
+  "memLossReason": {
+    "messages-dropped": "İşlemci zinciri hiç `messages` dizisi döndürmedi (prompt'a düzleştirildi ya da kısmi girdi).",
+    "boundary-lost": "Zincir bütün mesajları yeniden kurdu, geçmiş/gelen ayrımını tutturacak hiçbir dayanak kalmadı.",
+    "turn-dropped": "Ayrım biliniyordu ve zincir bu turu oradan çıkardı (turu koruyamayan bir kırpma)."
+  },
+  "memDedupedByShape": "maskelenmiş şekiller üzerinden tekilleştirildi — iki farklı ham girdi aynı metne maskeleniyorsa tur sayısı bir eksik olabilir",
   "ghostTurnLabel": "cevapsız",
   "ghostTurnTitle": "Bu sorunun run'ı ilk token'dan önce öldü — write-ahead mesajı korudu ama ortada bir run yok.",
   "ghostCount": "{{count}} cevapsız",

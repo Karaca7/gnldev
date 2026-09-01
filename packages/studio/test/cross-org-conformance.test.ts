@@ -118,6 +118,9 @@ const VERDICTS: Record<string, { verdict: Verdict; why: string }> = {
   'POST /users/:id/revoke': { verdict: 'org-scoped', why: 'an org admin manages its own users' },
   'GET /jobs': { verdict: 'org-scoped', why: 'refused unless the host queue declares orgScoped' },
   'POST /jobs/:id/retry': { verdict: 'org-scoped', why: 'refused unless the host queue declares orgScoped' },
+  'GET /dead-events': { verdict: 'org-scoped', why: 'quarantined payloads are org data; refused unless the host events object declares orgScoped' },
+  'GET /dead-events/topics': { verdict: 'org-scoped', why: 'which topics and consumers exist is org data; refused unless the host events object declares orgScoped' },
+  'POST /dead-events/release': { verdict: 'org-scoped', why: "a release re-runs that organization's handler; refused unless the host events object declares orgScoped" },
   'GET /cache/stats': { verdict: 'org-scoped', why: 'refused unless the host cache declares orgScoped' },
   'POST /cache/invalidate': { verdict: 'org-scoped', why: 'refused unless the host cache declares orgScoped' },
   'POST /knowledge/search': { verdict: 'org-scoped', why: 'refused unless the host vector store declares orgScoped' },
@@ -347,6 +350,17 @@ function hostObjects(optIn: boolean) {
       listJobs: (ctx?: { orgId?: string }) => [{ id: 'j1', type: mine(ctx?.orgId), status: 'done', attempts: 1 }],
       retry: (_id: string, ctx?: { orgId?: string }) => rec('queue.retry', ctx, mine(ctx?.orgId)),
     },
+    // The events dead-letter. All three entry points take a ctx, so an opted-in host CAN honour it —
+    // unlike `queue.listJobs`/`cache.stats`, which were shipped taking no argument at all.
+    events: {
+      ...flag,
+      topics: (ctx?: { orgId?: string }) => [{ topic: mine(ctx?.orgId), consumers: ['acme-consumer'] }],
+      listDead: (topic: string, consumer: string, ctx?: { orgId?: string }) => [{
+        id: 'e1', topic, consumer, status: 'quarantined' as const,
+        error: mine(ctx?.orgId), attempts: 8, at: 1, payload: { note: mine(ctx?.orgId) },
+      }],
+      release: (_t: string, _c: string, _id: string, ctx?: { orgId?: string }) => rec('events.release', ctx, true),
+    },
     cache: {
       ...flag,
       stats: (ctx?: { orgId?: string }) => ({ hits: ctx?.orgId === 'acme' ? 1 : 0, misses: 0, hitRate: 1, size: 1 }),
@@ -477,6 +491,16 @@ async function bodyOf(res: Response, ms = 1200): Promise<string> {
   } catch { return '<<body unreadable>>'; }
 }
 
+/**
+ * Query parameters a route VALIDATES before doing anything — the same reasoning as the generic body
+ * below, for the routes whose required arguments do not live in the path. `GET /dead-events` answers
+ * 400 without a topic AND a consumer (a topic fans out, so neither alone names a list), and a 400 to
+ * both callers is indistinguishable from isolation.
+ */
+const QUERY: Record<string, string> = {
+  'GET /dead-events': '?topic=orders.created&consumer=acme-consumer',
+};
+
 async function drive(api: (r: Request) => Promise<Response>, route: { method: string; path: string }, who: Record<string, string>) {
   const init: RequestInit = { method: route.method, headers: { ...who } };
   if (!['GET', 'HEAD'].includes(route.method)) {
@@ -497,10 +521,13 @@ async function drive(api: (r: Request) => Promise<Response>, route: { method: st
       // handler that reads `body.orgId` (grepped), and it is the field the route compares against the
       // calling identity — so a stranger sending it is the universal probe in body form.
       orgId: 'acme',
+      // `POST /dead-events/release` addresses a record by the TRIPLE (topic, consumer, id) — `id`
+      // alone is already above, and without the other two the route 400s before reaching the host.
+      topic: 'orders.created', consumer: 'acme-consumer',
     });
   }
   const res = await Promise.race([
-    api(new Request(`http://x${concrete(route.path)}`, init)),
+    api(new Request(`http://x${concrete(route.path)}${QUERY[`${route.method} ${route.path}`] ?? ''}`, init)),
     new Promise<Response>((resolve) => setTimeout(() => resolve(new Response('<<no response>>', { status: 599 })), 4000)),
   ]);
   return { status: res.status, body: await bodyOf(res) };
@@ -599,6 +626,7 @@ describe('the ownership control — acme must SEE what globex must not', () => {
     'GET /agents', 'GET /users', 'DELETE /users/:id', 'PATCH /users/:id', 'POST /users/:id/revoke',
     'POST /cache/invalidate', 'GET /cache/stats',
     'GET /jobs', 'POST /jobs/:id/retry', 'POST /knowledge/search', 'GET /managed-agents',
+    'GET /dead-events', 'GET /dead-events/topics',
     'GET /metrics', 'GET /metrics/runs', 'GET /organizations',
     'GET /runs', 'GET /runs/:id', 'POST /runs/:id/cancel', 'POST /runs/:id/compensate',
     'GET /runs/:id/cost', 'GET /runs/:id/diff',
@@ -635,6 +663,9 @@ describe('the ownership control — acme must SEE what globex must not', () => {
   /** Controlled by the recorded host call instead of the body — see the write-route block below. */
   const WRITE_CONTROLLED = ['POST /workflows', 'PUT /workflows/:name', 'DELETE /workflows/:name',
     'POST /agents/:name/run', 'POST /tools/:name/execute', 'POST /chat', 'POST /datasets/:id/run',
+    // Answers a bare `{ok:true}` to both callers, exactly like `POST /jobs/:id/retry` — the observable
+    // is which organization the host was told about when the release was handed over.
+    'POST /dead-events/release',
     // Moved out of UNCONTROLLED_REASONS. Its recorded reason ("streamed body, and the stub runner
     // answers identically") described the RESPONSE, and the response really is unusable — but the route
     // hands `gnl.stream` the caller's organization the same way `/agents/:name/run` hands it to
@@ -1086,8 +1117,21 @@ describe('the ownership control — acme must SEE what globex must not', () => {
  * leaks, and nothing here can tell.
  */
 describe('an opting-in host is told which organization is asking', () => {
-  /** Refused outright while the host has not opted in — the shipped default, and it is safe. */
-  const REFUSED_WITHOUT_OPTIN = ['GET /jobs', 'GET /cache/stats', 'GET /workflows/:name/def'];
+  /**
+   * Refused outright while the host has not opted in — the shipped default, and it is safe.
+   *
+   * The three dead-letter routes are here because the list was HAND-MAINTAINED and stopped at three
+   * entries while the surface grew. Measured before they were added: deleting
+   * `requireScopedHost(c, 'events')` from all three handlers left the studio suite at 619/619 green —
+   * the routes behaved correctly and nothing in the repository said they had to. `events` is the same
+   * shape as `queue` (a host object wrapping its own WorkStore), and `POST /dead-events/release` is
+   * the one that matters most: it re-runs another organization's handler, in that organization's
+   * production, on its data.
+   */
+  const REFUSED_WITHOUT_OPTIN = [
+    'GET /jobs', 'GET /cache/stats', 'GET /workflows/:name/def',
+    'GET /dead-events', 'GET /dead-events/topics', 'POST /dead-events/release',
+  ];
 
   /** The routes whose host method received no organization at all before the interfaces were threaded. */
   const WAS_UNKEEPABLE = ['GET /jobs', 'GET /workflows', 'GET /workflows/:name/def'];
@@ -1233,6 +1277,7 @@ describe('a write reaches the host under the calling organization', () => {
     ['POST /workflows', 'POST', '/workflows', 'workflowStore.set'],
     ['PUT /workflows/:name', 'PUT', '/workflows/:name', 'workflowStore.set'],
     ['POST /jobs/:id/retry', 'POST', '/jobs/:id/retry', 'queue.retry'],
+    ['POST /dead-events/release', 'POST', '/dead-events/release', 'events.release'],
     ['POST /cache/invalidate', 'POST', '/cache/invalidate', 'cache.invalidate'],
   ])('%s tells the host which organization asked', async (_label, method, path, what) => {
     const { api } = await makeApi(true);

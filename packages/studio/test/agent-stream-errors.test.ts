@@ -8,7 +8,7 @@
 // (after pipeAgentStream has started writing SSE frames) are a DIFFERENT contract, unaffected by
 // this fix — they surface as an SSE `error` event (see stream-finish-error.test.ts).
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal, RunLimitExceededError } from '@gnldev/durable';
+import { InMemoryJournal, RunLimitExceededError, RunThreadMismatchError } from '@gnldev/durable';
 import { createStudioApp, type StudioAgentRunner } from '../src/server.js';
 import { call } from './call.js';
 
@@ -53,4 +53,47 @@ describe('/agents/:name/stream — error taxonomy parity with /agents/:name/run 
     expect(body.error).toBe('boom');
     expect(body.code).toBeUndefined();
   });
+});
+
+/**
+ * The same taxonomy for a `runId` re-used on another thread.
+ *
+ * `RunThreadMismatchError` matched nothing in `runErrorResponse`, so both routes flattened it to the
+ * generic 400 — dropping the `code` AND the `detail` that names the two threads, which is the whole
+ * reason the error is typed. @gnldev/server answers `409 run_thread_mismatch`; a caller should not have
+ * to learn which host it is talking to, so this asserts they agree.
+ *
+ * No `resumable`, unlike every other entry in this file: the others clear and the same runId then
+ * succeeds. This one never will for this thread, so advertising it as retryable is a loop.
+ */
+describe('/agents/:name/{run,stream} — a runId re-used on another thread', () => {
+  const mismatch = () => new RunThreadMismatchError(
+    'runId "r1" was started for thread "A" and is now being run for thread "B".',
+    { runId: 'r1', startedForThread: 'A', requestedThread: 'B' },
+  );
+  /** Throws from whichever entry point the route under test calls. */
+  const runnerThatThrows = (err: unknown): StudioAgentRunner => ({
+    listAgents: () => [{ name: 'flaky', model: 'custom', hasTools: false, maxSteps: 6 }],
+    run: async () => { throw err; },
+    stream: async () => { throw err; },
+  });
+
+  for (const route of ['/api/agents/flaky/run', '/api/agents/flaky/stream']) {
+    it(`${route} → 409 + code=run_thread_mismatch + detail (NOT a flat 400)`, async () => {
+      const app = createStudioApp({ reader: new InMemoryJournal(), gnl: runnerThatThrows(mismatch()) });
+
+      const res = await call(app, route, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ runId: 'r1', threadId: 'B', prompt: 'hi' }),
+      });
+
+      expect(res.status, 'the mismatch was flattened to the generic 400').toBe(409);
+      expect(res.headers.get('content-type'), 'an error body, not an SSE stream').not.toContain('text/event-stream');
+      const body = await res.json();
+      expect(body.code, 'a consumer still has to match on the message string').toBe('run_thread_mismatch');
+      expect(body.detail, 'the refusal does not say which threads collided')
+        .toEqual({ runId: 'r1', startedForThread: 'A', requestedThread: 'B' });
+      expect(body.resumable, 'a runId that can never succeed was advertised as retryable').toBeUndefined();
+    });
+  }
 });

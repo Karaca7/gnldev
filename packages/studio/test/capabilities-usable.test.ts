@@ -49,6 +49,8 @@ const GATED: Record<string, [method: string, path: string]> = {
   a2a: ['GET', '/a2a-network'],
   queue: ['GET', '/jobs'],
   queueManage: ['POST', '/jobs/j1/retry'],
+  deadEvents: ['GET', '/dead-events/topics'],
+  eventsManage: ['POST', '/dead-events/release'],
   cache: ['GET', '/cache/stats'],
   cacheManage: ['POST', '/cache/invalidate'],
   scheduler: ['GET', '/scheduler/triggers'],
@@ -72,6 +74,7 @@ async function fullyConfigured() {
     datasets: { list: () => [], run: async () => ({ ok: true }) },
     mcp: [{ name: 'm' }], a2a: true,
     queue: { listJobs: () => [], retry: () => 'j' },
+    events: { topics: () => [], listDead: () => [], release: () => true },
     cache: { stats: () => ({ hits: 0, misses: 0, hitRate: 0, size: 0 }), invalidate: () => 1 },
     vectors: { search: () => [] },
     workflowStore: { list: () => [], get: () => undefined, set: () => {}, delete: () => {} },
@@ -93,7 +96,10 @@ async function driveCap(api: (r: Request) => Promise<Response>, token: string, c
   const init: RequestInit = { method, headers };
   if (method !== 'GET') {
     headers['content-type'] = 'application/json';
-    init.body = JSON.stringify({ query: 'x', message: 'h', key: 'k', input: {}, name: 'w', runId: 'r1', prompt: 'p' });
+    // `topic`/`consumer` join the generic body for the same reason the others are there: without
+    // them `POST /dead-events/release` answers 400 before it ever reaches the capability's surface,
+    // and a 400 proves nothing about whether the capability is usable.
+    init.body = JSON.stringify({ query: 'x', message: 'h', key: 'k', input: {}, name: 'w', runId: 'r1', prompt: 'p', topic: 't', consumer: 'c', id: 'e1' });
   }
   // 1s per route, not 3s, and the arithmetic is the reason: `unusableTruths` drives all 27 GATED
   // capabilities SERIALLY, so a 3s bound puts the worst case at 81s against a 60s `it` ceiling —

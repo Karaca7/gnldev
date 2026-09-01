@@ -117,9 +117,15 @@ export function openapiSpec(apiBase = '') {
       '/threads/{id}/working-memory': P('get', 'Thread working memory', idParam),
       '/jobs': P('get', 'Queue/jobs list'),
       '/jobs/{id}/retry': P('post', 'Re-queue a failed (dead-letter) job', idParam, true),
+      // Deliberately NOT under /events — that path is the SSE change stream above. A dead-letter
+      // record is addressed by the triple (topic, consumer, id): a topic fans out, so one event
+      // carries one quarantine record per consumer.
+      '/dead-events/topics': P('get', 'Topic + consumer inventory for the dead-letter view (empty when the host does not enumerate them)'),
+      '/dead-events': P('get', "Quarantined event deliveries for one topic+consumer (@gnldev/events dead-letter). Both parameters are required (400 otherwise). Event bodies are withheld unless payload=1 AND the caller carries payloads:read (otherwise each record reports payloadRestricted: true); the handler's error text needs payloads:read too (errorRestricted: true without it) because it is produced from the body and routinely quotes it. EXPENSIVE — scans the whole topic log; one scan runs at a time deployment-wide. A different scan WAITS for the slot and is answered a scan later; 429 + Retry-After (code dead_scan_busy) means either the queue was full/too slow or you already have a scan outstanding. 504 dead_scan_timeout means the store stopped answering, 503 dead_scan_store_wedged that too many such scans are still outstanding to start another. Call it on demand, never on a poll", [q('topic'), q('consumer'), q('payload')]),
+      '/dead-events/release': P('post', 'Release a quarantined event back for delivery to one consumer ({ topic, consumer, id }). Updates the record IN PLACE (status becomes released) rather than re-emitting under a new id; 400 if the triple is incomplete / 409 if it was never quarantined or has since been delivered / 501 if the host implements no release', [], true),
       '/cache/stats': P('get', 'Cache hit/miss ratio + size'),
       '/cache/invalidate': P('post', 'Invalidate a cache key (or all known keys if omitted)', [], true),
-      '/scheduler/triggers': P('get', 'Scheduler trigger introspection (read-only)'),
+      '/scheduler/triggers': P('get', "Scheduler trigger introspection (read-only). The scheduled `input` and the workflow's `lastError` are withheld without payloads:read (a failed trigger then reports lastErrorRestricted: true) — both are data the host's code was handed or produced, not configuration"),
       '/knowledge/search': P('post', 'Vector search', [], true),
       '/scorers': P('get', 'Scorer list'),
       '/datasets': P('get', 'Eval dataset list'),

@@ -32,6 +32,11 @@ export interface Capabilities {
   scopeRefused?: string[];
   /** "Retry" action in the Jobs view (on if the host implements queue.retry). */
   queueManage?: boolean;
+  /** Dead-letter view (@gnldev/events quarantine list — on if the host passed the `events` option).
+   *  NOT the `/events` SSE change stream, which is unconditional and unrelated. */
+  deadEvents?: boolean;
+  /** "Release" action in the Dead-letter view (on if the host implements events.release). */
+  eventsManage?: boolean;
   /** Cache view (@gnldev/cache hit/miss ratio + size — on if the host passed the `cache` option). */
   cache?: boolean;
   /** Manual invalidate button in the Cache view (on if the host implements cache.invalidate). */
@@ -151,6 +156,44 @@ export function queryRetry(failureCount: number, error: unknown): boolean {
   return !isAuthError(error) && failureCount < 1;
 }
 export interface JobStatus { id: string; type: string; status: string; attempts: number; }
+/**
+ * One quarantined event delivery (GET /dead-events) — the shape @gnldev/events' `listDeadEvents`
+ * returns. Addressed by the triple `(topic, consumer, id)`, never by `id` alone: a topic fans out, so
+ * the same event carries one dead-letter record for every consumer whose handler gave up on it.
+ */
+export interface DeadEvent {
+  id: string;
+  topic: string;
+  consumer: string;
+  /** `quarantined` = parked. `released` = handed back, awaiting the next poll. `delivered` = it later succeeded (kept as history). */
+  status: 'quarantined' | 'released' | 'delivered';
+  /**
+   * The handler's own failure text — present only when the caller carries `payloads:read`.
+   *
+   * It is gated alongside the body rather than with the rest of the row because it is PRODUCED from
+   * the body: a handler that validates an event quotes the value it rejected, so this field carries
+   * the payload by another name (measured: `ValidationError: ssn '123-45-6789' invalid…`).
+   */
+  error?: string;
+  /** This record has failure text the caller may not read. Never set together with `error`. */
+  errorRestricted?: boolean;
+  attempts: number;
+  at: number;
+  /** Set once released — a release stamps the record, it does not remove it. */
+  releasedAt?: number;
+  /** How many times it has been handed back. */
+  releases?: number;
+  /**
+   * The event body as the producer emitted it — present only when the caller carries `payloads:read`
+   * (the server withholds it otherwise; see `payloadRestricted`). `undefined` is ambiguous on its own,
+   * Which is exactly why the server sends the flag rather than leaving the field missing.
+   */
+  payload?: unknown;
+  /** The caller asked for the body and may not see it. Never set together with `payload`. */
+  payloadRestricted?: boolean;
+}
+/** One (topic, consumer) pair the dead-letter view can be pointed at (GET /dead-events/topics). */
+export interface EventTopic { topic: string; consumers: string[] }
 /** Structurally compatible with @gnldev/cache `stats()` (server GET /cache/stats). */
 export interface CacheStats { hits: number; misses: number; hitRate: number; size: number; }
 /** Structurally compatible with @gnldev/scheduler `TriggerInfo` (server GET /scheduler/triggers). */
@@ -160,6 +203,7 @@ export interface SchedulerTrigger {
   kind: 'at' | 'every' | 'cron';
   /** kind='at' → epoch ms; kind='every' → period (ms); kind='cron' → a 5-field cron expression. */
   value: number | string;
+  /** The scheduled workflow's argument. Withheld without `payloads:read` — nothing here renders it. */
   input?: unknown;
   nextRunAt: number;
   attempts: number;
@@ -167,7 +211,13 @@ export interface SchedulerTrigger {
   fireCount: number;
   status: 'pending' | 'done' | 'failed';
   misfire: 'skip' | 'catchup';
+  /**
+   * The failed workflow's own error text — withheld without `payloads:read`, because the workflow
+   * ran on `input` and its message can quote it (same reasoning as `DeadEvent.error`).
+   */
   lastError?: string;
+  /** This trigger failed with text the caller may not read. Never set together with `lastError`. */
+  lastErrorRestricted?: boolean;
   lastErrorAt?: number;
 }
 export interface VectorMatch { id: string; text: string; score: number; metadata?: Record<string, unknown>; }
@@ -246,6 +296,22 @@ export interface MemoryContextRecord {
   /** The window messages themselves (capped) — absent on records written before the field existed. */
   recent?: RecalledMessageRef[];
   observationCount?: number; workingMemoryChars?: number; incomingCount: number; echoTrimmed: number;
+  /**
+   * SILENT DATA LOSS, made visible: the input-processor chain left no recoverable copy of this turn,
+   * so the thread was stored with an answer and NO question (`incomingCount` is then 0). The value
+   * says which of the three ways it happened — `messages-dropped` (the chain returned no `messages`
+   * array at all), `boundary-lost` (it rebuilt everything, so nothing anchors the history/incoming
+   * split), `turn-dropped` (the split is known and the chain removed the turn from it). Absent on
+   * every healthy run, and on records written before @gnldev/durable started stamping it.
+   */
+  incomingUnrecoverable?: 'messages-dropped' | 'boundary-lost' | 'turn-dropped';
+  /**
+   * The turn was deduplicated on the POST-processor (masked) shapes. What is lost is the turn COUNT,
+   * not content: two genuinely different raw questions that redact to the same string are
+   * indistinguishable at that point, and the model sees one identical string either way. A note, not
+   * a warning. Absent when the dedupe did not fire.
+   */
+  incomingDedupedByShape?: true;
 }
 export interface AgentMeta { name: string; model: string; system?: string; hasTools: boolean; maxSteps?: number; tools?: ToolMeta[]; orgs?: string[]; }
 // ── Agent approval registry (governance — structurally compatible with @gnldev/durable's agent-registry.ts) ──
@@ -522,6 +588,25 @@ export const api = {
   jobs: () => get<JobStatus[]>('/jobs'),
   /** Re-queues a failed (dead-letter) job (only call when caps.queueManage is on). */
   retryJob: (id: string) => post<{ ok: boolean; id: string }>(`/jobs/${encodeURIComponent(id)}/retry`, {}),
+  /** The (topic, consumer) pairs the dead-letter list can be pointed at — empty if the host does not enumerate them. */
+  deadEventTopics: () => get<EventTopic[]>('/dead-events/topics'),
+  /**
+   * Quarantined deliveries for ONE topic+consumer. EXPENSIVE server-side (it scans the whole topic
+   * Log), so this is fetched on an explicit operator action and never on an interval — and the server
+   * Runs one such scan at a time, answering 429 to a second, different one.
+   *
+   * `payload=1` is sent ALWAYS and is not the thing that decides whether bodies come back: the server
+   * Additionally requires `payloads:read`, and a caller without it gets `payloadRestricted: true` per
+   * Record instead of the body (and instead of losing the list). Asking unconditionally is what lets
+   * The row expander explain WHICH of the two happened without a second request — and a second request
+   * Would mean a second whole-log scan, which is the one thing this surface must not do.
+   */
+  deadEvents: (topic: string, consumer: string) =>
+    get<DeadEvent[]>(`/dead-events?topic=${encodeURIComponent(topic)}&consumer=${encodeURIComponent(consumer)}&payload=1`),
+  /** Hands a quarantined event back for delivery to ONE consumer (only call when caps.eventsManage is
+   *  On). Unlike retryJob this does not open a second record — the existing one becomes `released`. */
+  releaseDeadEvent: (topic: string, consumer: string, id: string) =>
+    post<{ ok: boolean }>('/dead-events/release', { topic, consumer, id }),
   cacheStats: () => get<CacheStats>('/cache/stats'),
   /** If key is given, only that key is deleted; if not given, (best-effort) all keys known to the host
    *  Are deleted (only call when caps.cacheManage is on). */
@@ -841,6 +926,33 @@ export const useScorers = () => useQuery({ queryKey: ['scorers'], queryFn: api.s
 export const useDatasets = () => useQuery({ queryKey: ['datasets'], queryFn: api.datasets });
 
 export const useJobs = () => usePolled('queue', ['jobs'], api.jobs, 3000);
+/**
+ * Dead-letter surfaces are NOT `usePolled`, and that is the point rather than an omission.
+ *
+ * `listDeadEvents` reads the WHOLE topic log and does a `get` per event — the exact O(n) scan
+ * @gnldev/events' cursor exists to keep out of the delivery path. Putting it on a 3s interval like
+ * `useJobs` would have Studio re-scanning every event a topic has ever carried, twenty times a
+ * minute, for as long as the tab is open. So the topic inventory is fetched once (cheap, and a host
+ * registers its consumers at boot) and the list itself only when the operator asks for it: `enabled`
+ * is off until a topic AND a consumer are chosen, and `staleTime: Infinity` means re-mounting the
+ * view does not silently re-run the scan. The view's Refresh button is what re-runs it.
+ */
+export const useDeadEventTopics = () => {
+  const caps = useCapabilities();
+  return useQuery({
+    queryKey: ['dead-event-topics'], queryFn: api.deadEventTopics,
+    enabled: caps.data?.deadEvents === true, staleTime: Infinity,
+  });
+};
+export const useDeadEvents = (topic: string | null, consumer: string | null) => {
+  const caps = useCapabilities();
+  return useQuery({
+    queryKey: ['dead-events', topic, consumer],
+    queryFn: () => api.deadEvents(topic!, consumer!),
+    enabled: caps.data?.deadEvents === true && !!topic && !!consumer,
+    staleTime: Infinity,
+  });
+};
 export const useCacheStats = () => usePolled('cache', ['cache-stats'], api.cacheStats, 5000);
 export const useSchedulerTriggers = () => usePolled('scheduler', ['scheduler-triggers'], api.schedulerTriggers, 5000);
 // Governance: approvals inbox refreshes every 5s, organization counters every 10s; audit is keyed by filters.

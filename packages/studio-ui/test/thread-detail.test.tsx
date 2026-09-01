@@ -132,4 +132,66 @@ describe('ThreadDetail', () => {
     fireEvent.click(screen.getByText('r-1'));
     expect(opened).toEqual(['r-1']);
   });
+
+  /**
+   * The two memory-context fields @gnldev/durable stamps when a turn's input could not be preserved.
+   * These are the only silent losses in the whole memory path: the run itself completes, the answer
+   * is stored, and nothing else in the UI would ever say the question is missing.
+   */
+  it('incomingUnrecoverable is surfaced as an ALARM, with the SDK reason and what it means', async () => {
+    stubFetch({
+      '/threads/th-1/messages': [],
+      '/runs/r-1/memory-context': {
+        context: {
+          v: 1, threadId: 'th-1', recalled: [], recentCount: 3,
+          // The count the durable side forces to 0 when it reports a loss — an answer with no question.
+          incomingCount: 0, echoTrimmed: 0, incomingUnrecoverable: 'boundary-lost',
+        },
+      },
+    });
+    wrap(<ThreadDetail threadId="th-1" runs={RUNS} metricsById={METRICS} onOpenRun={() => {}} />);
+
+    fireEvent.click(screen.getAllByText('memory')[0]!);
+    await waitFor(() => expect(screen.getByText(/no recoverable copy of this turn/i)).toBeTruthy());
+    // The raw enum is kept verbatim: it is the SDK's own vocabulary and what an operator greps for.
+    expect(screen.getByText('boundary-lost')).toBeTruthy();
+    // …and it is explained, so the enum is not the whole message.
+    expect(screen.getByText(/rebuilt every message/i)).toBeTruthy();
+    // It is an alert, not a quiet provenance line — double-coded, so this does not rest on colour.
+    expect(screen.getByRole('status')).toBeTruthy();
+  });
+
+  it('incomingDedupedByShape is a NEUTRAL note — it can cost a turn count, never content', async () => {
+    stubFetch({
+      '/threads/th-1/messages': [],
+      '/runs/r-1/memory-context': {
+        context: {
+          v: 1, threadId: 'th-1', recalled: [], recentCount: 3,
+          incomingCount: 1, echoTrimmed: 0, incomingDedupedByShape: true,
+        },
+      },
+    });
+    wrap(<ThreadDetail threadId="th-1" runs={RUNS} metricsById={METRICS} onOpenRun={() => {}} />);
+
+    fireEvent.click(screen.getAllByText('memory')[0]!);
+    await waitFor(() => expect(screen.getByText(/deduplicated on the masked shapes/i)).toBeTruthy());
+    expect(screen.getByText('dedupe')).toBeTruthy();
+    // NOT an alert: nothing was lost but a count, and crying wolf here would devalue the row above.
+    expect(screen.queryByRole('status'), 'a dedupe note was raised to the same level as a data loss').toBeNull();
+  });
+
+  it('a healthy record shows neither row', async () => {
+    stubFetch({
+      '/threads/th-1/messages': [],
+      '/runs/r-1/memory-context': {
+        context: { v: 1, threadId: 'th-1', recalled: [], recentCount: 3, incomingCount: 1, echoTrimmed: 0 },
+      },
+    });
+    wrap(<ThreadDetail threadId="th-1" runs={RUNS} metricsById={METRICS} onOpenRun={() => {}} />);
+
+    fireEvent.click(screen.getAllByText('memory')[0]!);
+    await waitFor(() => expect(screen.getByText(/3 messages from the recent window/)).toBeTruthy());
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.queryByText('dedupe')).toBeNull();
+  });
 });

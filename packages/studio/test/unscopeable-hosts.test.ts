@@ -36,6 +36,17 @@ const blindHosts = () => ({
   vectors: { search: async () => [{ text: 'globex private doc' }] },
   cache: { stats: async () => ({ size: 9 }), invalidate: async () => 9 },
   queue: { listJobs: async () => [{ id: 'globex-job' }], retry: async () => 'new-job' },
+  // Added late, and that is the finding: the dead-letter shipped with the same shape as `queue` and
+  // none of this file's coverage. `requireScopedHost(c, 'events')` was deletable from all three of its
+  // routes with the studio suite green.
+  events: {
+    topics: async () => [{ topic: 'globex.orders', consumers: ['globex-billing'] }],
+    listDead: async () => [{
+      id: 'globex-evt', topic: 'globex.orders', consumer: 'globex-billing',
+      status: 'quarantined' as const, error: 'globex private failure', attempts: 8, at: 1,
+    }],
+    release: async () => true,
+  },
 });
 
 const wfStore = (defs: Map<string, unknown>) => ({
@@ -52,6 +63,9 @@ describe('host objects with no organization boundary', () => {
     ['POST', '/jobs/globex-job/retry', undefined],
     ['GET', '/cache/stats', undefined],
     ['POST', '/cache/invalidate', JSON.stringify({})],
+    ['GET', '/dead-events?topic=globex.orders&consumer=globex-billing', undefined],
+    ['GET', '/dead-events/topics', undefined],
+    ['POST', '/dead-events/release', JSON.stringify({ topic: 'globex.orders', consumer: 'globex-billing', id: 'globex-evt' })],
   ])('refuses %s %s to an organization-scoped identity', async (method, path, body) => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const app = createStudioApi({ reader: new InMemoryJournal(), auth: boundAdmin, org: {}, ...blindHosts() } as never);
@@ -89,7 +103,7 @@ describe('host objects with no organization boundary', () => {
     createStudioApi({ reader: new InMemoryJournal(), org: {}, ...blindHosts() } as never);
 
     const said = warn.mock.calls.map((c) => String(c[0])).join('\n');
-    for (const what of ['vectors', 'cache', 'queue']) {
+    for (const what of ['vectors', 'cache', 'queue', 'events']) {
       expect(said, `nothing was said about \`${what}\` — a deployment could ship this unaware`).toContain(what);
     }
   });
@@ -121,7 +135,7 @@ describe('host objects with no organization boundary', () => {
     createStudioApi({ reader: new InMemoryJournal(), auth: eeProvider, ...blindHosts() } as never);
 
     const said = warn.mock.calls.map((c) => String(c[0])).join('\n');
-    for (const what of ['vectors', 'cache', 'queue']) {
+    for (const what of ['vectors', 'cache', 'queue', 'events']) {
       expect(said, `warned about \`${what}\` on a deployment where nothing is refused`).not.toContain(`\`${what}\``);
     }
   });

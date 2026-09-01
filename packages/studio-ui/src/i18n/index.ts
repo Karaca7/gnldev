@@ -25,6 +25,7 @@ import enTools from './locales/en/tools.json';
 import enWorkflows from './locales/en/workflows.json';
 import enEvals from './locales/en/evals.json';
 import enJobs from './locales/en/jobs.json';
+import enDeadEvents from './locales/en/deadEvents.json';
 import enCache from './locales/en/cache.json';
 import enScheduler from './locales/en/scheduler.json';
 import enKnowledge from './locales/en/knowledge.json';
@@ -47,6 +48,7 @@ import trTools from './locales/tr/tools.json';
 import trWorkflows from './locales/tr/workflows.json';
 import trEvals from './locales/tr/evals.json';
 import trJobs from './locales/tr/jobs.json';
+import trDeadEvents from './locales/tr/deadEvents.json';
 import trCache from './locales/tr/cache.json';
 import trScheduler from './locales/tr/scheduler.json';
 import trKnowledge from './locales/tr/knowledge.json';
@@ -76,14 +78,14 @@ const resources = {
   en: {
     common: enCommon, nav: enNav, inspector: enInspector, observability: enObservability,
     playground: enPlayground, agents: enAgents, tools: enTools, workflows: enWorkflows,
-    evals: enEvals, jobs: enJobs, cache: enCache, scheduler: enScheduler, knowledge: enKnowledge,
+    evals: enEvals, jobs: enJobs, deadEvents: enDeadEvents, cache: enCache, scheduler: enScheduler, knowledge: enKnowledge,
     networks: enNetworks, mcp: enMcp, approvals: enApprovals, audit: enAudit,
     organizations: enOrganizations, users: enUsers, policy: enPolicy, promptEditor: enPromptEditor,
   },
   tr: {
     common: trCommon, nav: trNav, inspector: trInspector, observability: trObservability,
     playground: trPlayground, agents: trAgents, tools: trTools, workflows: trWorkflows,
-    evals: trEvals, jobs: trJobs, cache: trCache, scheduler: trScheduler, knowledge: trKnowledge,
+    evals: trEvals, jobs: trJobs, deadEvents: trDeadEvents, cache: trCache, scheduler: trScheduler, knowledge: trKnowledge,
     networks: trNetworks, mcp: trMcp, approvals: trApprovals, audit: trAudit,
     organizations: trOrganizations, users: trUsers, policy: trPolicy, promptEditor: trPromptEditor,
   },

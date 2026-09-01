@@ -66,6 +66,22 @@ const staggerItem: Variants = {
 
 type MotionTag = ComponentType<any>;
 
+/**
+ * `as` IS HONOURED UNDER REDUCED MOTION TOO, and dropping it was not cosmetic.
+ *
+ * Both wrappers used to return a bare `<div>` on the reduced-motion branch, discarding whatever `as`
+ * the caller passed. Four tables pass `motion.tbody` / `motion.tr` (Jobs, Scheduler, Observability,
+ * Dead-letter), so with `prefers-reduced-motion: reduce` the DOM became
+ * `<table><thead>…</thead><div><div>…</div></div></table>`: the row group and every row turned into
+ * divs, the `<td>`s lost their row context, and the table stopped being a table for anyone reading it
+ * through assistive technology — triggered by an accessibility preference, on the users most likely
+ * to be relying on that structure.
+ *
+ * The element is kept and only the ANIMATION is dropped. A motion component rendered with no
+ * `variants`/`initial`/`animate` emits its plain host element and animates nothing, so the reduced-
+ * motion promise is unchanged while the markup stays correct.
+ */
+
 /** A list/table container whose children are `StaggerItem` — each row appears ~45ms apart
  *  (feels like being written to the journal in sequence). `as` can be given `motion.ul`/`motion.tbody`
  *  (default `motion.div`). Under reduced motion it's a plain container, no animation. */
@@ -73,8 +89,8 @@ export function Stagger({
   children, className, as,
 }: { children: ReactNode; className?: string; as?: MotionTag }) {
   const reduce = useReducedMotion();
-  if (reduce) return <div className={className}>{children}</div>;
   const Comp = as ?? motion.div;
+  if (reduce) return <Comp className={className}>{children}</Comp>;
   return (
     <Comp className={className} variants={staggerContainer} initial="hidden" animate="show">
       {children}
@@ -88,8 +104,8 @@ export function StaggerItem({
   children, className, as,
 }: { children: ReactNode; className?: string; as?: MotionTag }) {
   const reduce = useReducedMotion();
-  if (reduce) return <div className={className}>{children}</div>;
   const Comp = as ?? motion.div;
+  if (reduce) return <Comp className={className}>{children}</Comp>;
   return (
     <Comp className={className} variants={staggerItem}>
       {children}

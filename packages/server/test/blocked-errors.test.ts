@@ -83,3 +83,50 @@ describe('@gnldev/server — K1 blocked errors (side_effect_retry_blocked/run_bu
     expect(body.resumable).toBe(true);
   });
 });
+
+/**
+ * A `runId` re-used for a DIFFERENT thread is a caller mistake, and the wire has to say so.
+ *
+ * `RunThreadMismatchError` carries a `name` and a `detail` so an HTTP layer can map it instead of
+ * matching the message string — and nothing mapped it: it matched neither `limitErrorResponse` nor
+ * `blockedErrorCode`, so it fell through to the generic 400, which serialises `message` alone.
+ * Measured on both routes: no `code`, and the `detail` naming the two threads was built and dropped.
+ *
+ * 409 rather than 400 (well-formed request, collides with an existing conversation) and no `resumable`
+ * — the three blocked errors above want a client to retry the same runId, and this one never will
+ * succeed for this thread.
+ */
+describe('@gnldev/server — a runId re-used on another thread', () => {
+  const mkModel = (): any => ({
+    specificationVersion: 'v2', provider: 'mock', modelId: 'm', supportedUrls: {},
+    doGenerate: async () => ({ content: [{ type: 'text', text: 'ok' }], finishReason: 'stop', usage, warnings: [] }),
+  });
+
+  for (const route of ['/agents/a/run', '/agents/a/stream']) {
+    it(`${route} → 409 + code=run_thread_mismatch + the detail naming both threads`, async () => {
+      const app = createRestApi(
+        {
+          journal: new InMemoryJournal(),
+          memory: { loadContext: async () => ({ messages: [] }), append: async () => {}, getMessages: async () => [] },
+          agents: { a: { model: mkModel() } },
+        } as never,
+        {},
+      );
+      const post = (body: unknown) => call(app, route, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+      });
+
+      // PRECONDITION: the runId is established for thread A. Without it the second call is a first
+      // call and the assertion below would pass against nothing.
+      expect((await post({ runId: 'rx', threadId: 'A', prompt: 'ilk' })).status).toBe(200);
+
+      const res = await post({ runId: 'rx', threadId: 'B', prompt: 'ikinci' });
+      expect(res.status, 'the mismatch fell through to the generic error path').toBe(409);
+      const body = await res.json();
+      expect(body.code, 'a consumer still has to match on the message string').toBe('run_thread_mismatch');
+      expect(body.detail, 'the refusal does not say which threads collided')
+        .toEqual({ runId: 'rx', startedForThread: 'A', requestedThread: 'B' });
+      expect(body.resumable, 'a runId that can never succeed was advertised as retryable').toBeUndefined();
+    });
+  }
+});

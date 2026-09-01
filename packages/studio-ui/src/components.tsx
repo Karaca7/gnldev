@@ -212,8 +212,12 @@ export function Spinner({ label }: { label?: string }) {
   const { t } = useTranslation('common');
   // Record-dot (index.css): the same live-pulse pattern is shared with the playback indicator in
   // Inspector — reuses the existing lime accent language instead of inventing a new indicator.
+  // `role="status"` — a polite live region, so the label is ANNOUNCED when the spinner appears and
+  // when it goes away, instead of being text a screen-reader user has to go looking for. `ViewSkeleton`
+  // below already does this (it was written as the sighted-equivalent of this component and got the
+  // semantics Spinner was missing); the two now behave the same for anyone not looking at the screen.
   return (
-    <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
+    <div role="status" className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
       <span className="record-dot record-dot--live" aria-hidden />
       {label ?? t('loading')}
     </div>

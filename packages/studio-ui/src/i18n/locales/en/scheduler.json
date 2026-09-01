@@ -24,5 +24,7 @@
   "colTrigger": "Trigger",
   "colNextRun": "Next run",
   "colMisfire": "Misfire",
-  "colStatusAttempts": "Status / attempts"
+  "colStatusAttempts": "Status / attempts",
+  "lastErrorRestrictedShort": "reason hidden",
+  "lastErrorRestricted": "The failure text is hidden for your account. Your workflow writes it while running on the trigger's scheduled input, so it can quote it — which puts it behind the `payloads:read` permission. Your server logs record the failure in full."
 }

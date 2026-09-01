@@ -31,6 +31,18 @@ function hosts(orgScoped = false) {
   ]);
   return {
     queue: { ...flag, listJobs: () => [{ id: 'j1', type: 't', status: 'failed', attempts: 1 }], retry: () => 'j2' },
+    // The events dead-letter — the same shape as `queue` (a host object over its own WorkStore) and
+    // therefore the same refusal. It was NOT in this fixture when the three routes shipped, which is
+    // why `requireScopedHost(c, 'events')` could be deleted from all three with the suite still green.
+    events: {
+      ...flag,
+      topics: () => [{ topic: 'orders.created', consumers: ['billing'] }],
+      listDead: () => [{
+        id: 'e1', topic: 'orders.created', consumer: 'billing', status: 'quarantined' as const,
+        error: SECRET_PROMPT, attempts: 8, at: 1,
+      }],
+      release: () => true,
+    },
     cache: { ...flag, stats: () => ({ hits: 1, misses: 1, hitRate: 0.5, size: 2 }), invalidate: () => 1 },
     vectors: { ...flag, search: () => [{ id: 'v1', text: 'ACME-CONFIDENTIAL-CHUNK', score: 1 }] },
     workflowStore: {
@@ -87,6 +99,11 @@ const post = (app: any, path: string, body: unknown, headers: Record<string, str
 const READ_REFUSING: Array<[what: string, label: string, send: (app: any, h: Record<string, string>) => Promise<Response>]> = [
   ['queue', 'GET /jobs', (a, h) => get(a, '/jobs', h)],
   ['queue', 'POST /jobs/j1/retry', (a, h) => post(a, '/jobs/j1/retry', {}, h)],
+  ['events', 'GET /dead-events', (a, h) => get(a, '/dead-events?topic=orders.created&consumer=billing', h)],
+  ['events', 'GET /dead-events/topics', (a, h) => get(a, '/dead-events/topics', h)],
+  // The write half, and the one with a side effect in somebody else's production: a release hands the
+  // event back to whatever consumer owns it, so it re-runs THAT organization's handler.
+  ['events', 'POST /dead-events/release', (a, h) => post(a, '/dead-events/release', { topic: 'orders.created', consumer: 'billing', id: 'e1' }, h)],
   ['cache', 'GET /cache/stats', (a, h) => get(a, '/cache/stats', h)],
   ['cache', 'POST /cache/invalidate', (a, h) => post(a, '/cache/invalidate', {}, h)],
   ['vectors', 'POST /knowledge/search', (a, h) => post(a, '/knowledge/search', { query: 'x' }, h)],
@@ -233,14 +250,14 @@ describe('GET /capabilities', () => {
   // refusing, so the nav offered pages that 403 and the pollers behind them 403ed on a timer.
   it('reports the surfaces behind unscopeable objects as false to an org-bound identity', async () => {
     const c = await caps(orgApp(), ORG);
-    for (const k of ['knowledge', 'queue', 'queueManage', 'cache', 'cacheManage', 'workflowManage', 'memory']) {
+    for (const k of ['knowledge', 'queue', 'queueManage', 'cache', 'cacheManage', 'workflowManage', 'memory', 'deadEvents', 'eventsManage']) {
       expect(c[k], `capabilities.${k} is advertised to a caller every one of whose requests is refused`).toBe(false);
     }
   });
 
   it('reports them as true to an unscoped operator', async () => {
     const c = await caps(operatorApp(), OPERATOR);
-    for (const k of ['knowledge', 'queue', 'queueManage', 'cache', 'cacheManage', 'workflowManage', 'memory']) {
+    for (const k of ['knowledge', 'queue', 'queueManage', 'cache', 'cacheManage', 'workflowManage', 'memory', 'deadEvents', 'eventsManage']) {
       expect(c[k], `capabilities.${k} went false for a caller who is refused nothing`).toBe(true);
     }
   });
@@ -256,7 +273,7 @@ describe('GET /capabilities', () => {
   it('advertises nothing that the endpoint behind it refuses', async () => {
     const app = orgApp();
     const c = await caps(app, ORG);
-    const capOf: Record<string, string> = { queue: 'queue', cache: 'cache', vectors: 'knowledge', workflowStore: 'workflowManage' };
+    const capOf: Record<string, string> = { queue: 'queue', cache: 'cache', vectors: 'knowledge', workflowStore: 'workflowManage', events: 'deadEvents' };
 
     for (const [what, label, send] of REFUSING) {
       const res = await send(app, ORG);

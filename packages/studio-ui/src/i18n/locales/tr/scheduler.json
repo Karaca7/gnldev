@@ -24,5 +24,7 @@
   "colTrigger": "Tetikleme",
   "colNextRun": "Sonraki çalışma",
   "colMisfire": "Misfire",
-  "colStatusAttempts": "Durum / deneme"
+  "colStatusAttempts": "Durum / deneme",
+  "lastErrorRestrictedShort": "gerekçe gizli",
+  "lastErrorRestricted": "Hata metni hesabınıza kapalı. Bu metni, tetikleyicinin zamanlanmış girdisi üzerinde çalışırken sizin iş akışınız yazar ve girdiden alıntı yapabilir — bu yüzden `payloads:read` iznine bağlıdır. Hatanın tamamı sunucu loglarınızdadır."
 }

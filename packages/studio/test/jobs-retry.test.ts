@@ -89,3 +89,56 @@ describe('POST /jobs/:id/retry', () => {
     expect(res.status).toBe(501);
   });
 });
+
+/**
+ * GET /jobs is PROJECTED through an allowlist, not forwarded.
+ *
+ * The shipped bridge is safe by accident: the real `@gnldev/queue.listJobs` builds a summary with
+ * exactly the four `StudioJob` fields and leaves the job's payload and error text in the store. But
+ * `StudioQueue` is a HOST duck-type, so "safe" was a property of somebody else's object — a host that
+ * maps its own rows (the obvious way to bridge a queue that is NOT @gnldev/queue) forwards whatever
+ * those rows carry to a `catalog:read`-only caller.
+ *
+ * Untested until now: widening `JOB_FIELDS` with the host's own field names left the suite green.
+ */
+describe('GET /jobs', () => {
+  it('copies the four StudioJob fields and nothing else the host attached', async () => {
+    const app = createStudioApi({
+      reader: new InMemoryJournal(),
+      queue: {
+        listJobs: () => [{
+          id: 'j1', type: 'refund', status: 'failed', attempts: 5,
+          // A hand-rolled bridge's own row: the argument the job was enqueued with, and the text the
+          // worker wrote about it.
+          payload: { customerEmail: 'jane@customer.example', ssn: '123-45-6789' },
+          lastError: "ValidationError: ssn '123-45-6789' invalid",
+          workerHost: 'worker-3.internal',
+        }] as never,
+      },
+      auth: {
+        authenticate: () => ({ id: 'support', roles: ['viewer'], permissions: ['catalog:read'] }),
+        authorize: (p: { permissions?: string[] } | null, _r: Request, ctx: { permission?: string }) =>
+          ((p?.permissions ?? []).includes(ctx.permission ?? '')
+            ? { allow: true } : { allow: false as const, status: 403 as const, reason: 'no' }),
+        capabilities: () => ({ rbac: true }),
+      } as never,
+    });
+
+    const res = await call(app, '/jobs');
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text, 'the job argument reached a grant whose own description promises no customer data').not.toContain('123-45-6789');
+    expect(text).not.toContain('worker-3.internal');
+    expect(await JSON.parse(text)).toEqual([{ id: 'j1', type: 'refund', status: 'failed', attempts: 5 }]);
+  });
+
+  it('drops a field the host simply did not set, rather than sending `undefined`', async () => {
+    // `pickFields` skips `undefined`, so a partial host row stays a partial row instead of gaining
+    // four null-ish keys the UI would then render as columns.
+    const app = createStudioApi({
+      reader: new InMemoryJournal(),
+      queue: { listJobs: () => [{ id: 'j1', status: 'pending' }] as never },
+    });
+    expect(await (await call(app, '/jobs')).json()).toEqual([{ id: 'j1', status: 'pending' }]);
+  });
+});

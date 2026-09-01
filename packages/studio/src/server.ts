@@ -4,7 +4,7 @@ import { toFetchHandler, type FetchHandler } from './handler.js';
 import { Hono, type Context } from 'hono';
 import { sseResponse } from './sse.js';
 
-import { ORG_RECORD_PRE, asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, countLog, purgeRun, purgeOrganization, orgPurgedKey, sweepRuns, sweepLog, POLICY_KEY, PRICING_KEY, effectivePricingTable, DEFAULT_PRICING, readPricing, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, knownModelProviders, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent } from '@gnldev/durable';
+import { ORG_RECORD_PRE, asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, countLog, purgeRun, purgeOrganization, orgPurgedKey, sweepRuns, sweepLog, POLICY_KEY, PRICING_KEY, effectivePricingTable, DEFAULT_PRICING, readPricing, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, knownModelProviders, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent } from '@gnldev/durable';
 import type { PolicyDoc, PolicyRule, BudgetLimit, PricingDoc } from '@gnldev/durable';
 import type { JournalReader, Journal, WorkflowLike, MetricsRunRow } from '@gnldev/durable';
 import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, principalScope, assertAssignablePrivileges, CLIENT_ROLE, type AuthProvider, type Principal } from '@gnldev/auth';
@@ -328,6 +328,116 @@ export interface StudioQueue {
   retry?(id: string, ctx?: StudioCallbackCtx): Promise<string | null> | string | null;
 }
 
+/**
+ * Dead-letter view: one quarantined delivery, shaped exactly like @gnldev/events' `DeadEvent`.
+ *
+ * Addressed by the TRIPLE `(topic, consumer, id)`, not by an id — a queue hands one job to one
+ * worker, but a topic FANS OUT, so the same event is quarantined separately for every consumer whose
+ * handler failed on it. An id alone names N records, and releasing "the" one would be a guess.
+ */
+export interface StudioDeadEvent {
+  id: string;
+  topic: string;
+  consumer: string;
+  /**
+   * `quarantined` = parked, not being delivered. `released` = handed back, awaiting the next poll.
+   * `delivered` = it eventually succeeded; the record survives as history (dead-letter history is
+   * permanent for audit, same choice as the queue's `qfail`).
+   */
+  status: 'quarantined' | 'released' | 'delivered';
+  /**
+   * The last handler error, as @gnldev/events stringified it — `String(err?.message ?? err)`, the
+   * message and nothing else (no stack). NOT configuration: it is text the HOST's handler produced
+   * while running on `payload`, so it carries whatever that code chose to say about the data.
+   *
+   * That is not a hypothetical. Every validation library in common use quotes the value it rejected,
+   * and the measured end-to-end answer for a handler that did so was
+   * `"ValidationError: ssn '123-45-6789' invalid for customer jane@customer.example"` — the payload,
+   * in the field beside the one that withheld the payload. It therefore sits behind the same
+   * permission (`payloads:read`); a caller without it gets `errorRestricted: true` instead.
+   *
+   * Optional on the wire, `string` for a host: the host always supplies it, the SERVER decides
+   * whether it leaves the process.
+   */
+  error?: string;
+  /**
+   * Set when `error` was withheld for want of `payloads:read` (never present alongside `error`).
+   *
+   * Same reason `payloadRestricted` exists: an absent `error` on its own is ambiguous — it reads as
+   * "no error was recorded", which for a quarantined event is a claim the API would be making up.
+   */
+  errorRestricted?: boolean;
+  attempts: number;
+  /** When it was quarantined (epoch ms). */
+  at: number;
+  /** Set once released — a release does NOT clear the record, it stamps it. */
+  releasedAt?: number;
+  /** How many times it has been handed back (quarantine → release → quarantine again). */
+  releases?: number;
+  /**
+   * The event body, exactly as the producer emitted it — END-USER DATA, not configuration.
+   *
+   * The host hands it over because `listDeadEvents` returns it; whether it leaves this process is a
+   * SEPARATE decision, taken per request in `GET /dead-events`. It is withheld unless the caller both
+   * asks for it (`?payload=1`) and carries `payloads:read`, and it is never in the default response —
+   * `catalog:read`, which is all the route itself requires, is the configuration permission and this
+   * is not configuration.
+   */
+  payload?: unknown;
+}
+
+/** One `(topic, consumer)` pair the dead-letter view can be pointed at. */
+export interface StudioEventTopic { topic: string; consumers: string[] }
+
+/**
+ * Events dead-letter view (fed by @gnldev/events `listDeadEvents` / `retryDeadEvent`). Studio has no
+ * DEPENDENCY on @gnldev/events — the host wraps its own WorkStore, same pattern as Queue/Cache.
+ */
+export interface StudioEvents {
+  /**
+   * The host's explicit claim that this object keeps its own organization boundary — that it honours
+   * the `ctx.orgId` it is handed on every call. Same contract, and the same default refusal, as
+   * `StudioQueue.orgScoped`: studio cannot verify it and will not serve an organization-scoped caller
+   * a store that has no organization boundary.
+   */
+  orgScoped?: boolean;
+  /**
+   * Which topics and consumers exist. Optional, but without it the view has nothing to address:
+   * `listDead` needs a topic AND a consumer, and an operator who has to remember both by heart is
+   * back at the Node REPL this view exists to replace. Omit it and the view falls back to free text.
+   */
+  topics?(ctx?: StudioCallbackCtx): Promise<StudioEventTopic[]> | StudioEventTopic[];
+  /**
+   * Quarantined deliveries for ONE `(topic, consumer)` pair — the host typically wraps
+   * `listDeadEvents(work, topic, consumer)`.
+   *
+   * EXPENSIVE by construction: it reads the whole topic log and does a `get` per event. It is a
+   * management call, not a feed — studio never polls it, and neither should a host (see the UI's
+   * explicit refresh action).
+   *
+   * `ctx.signal` is fired when Studio gives up waiting (`deadEventScan.timeoutMs`, default 30 s). It
+   * is the ONLY member of this interface that gets one, because this is the only call whose failure
+   * mode is "never answers": the slot it holds is deployment-wide, so a store that accepts the query
+   * and goes quiet used to close the endpoint until a restart. Honouring it (pass it to your driver,
+   * to `fetch`) makes the abandonment real instead of merely observed; ignoring it costs one wasted
+   * query and nothing else — Studio stops waiting either way.
+   */
+  listDead(topic: string, consumer: string, ctx?: StudioCallbackCtx & { signal?: AbortSignal }): Promise<StudioDeadEvent[]> | StudioDeadEvent[];
+  /**
+   * If given, `POST /dead-events/release` works (the host typically wraps `retryDeadEvent(work, topic,
+   * consumer, eventId)`): hands a quarantined event back for delivery to that ONE consumer, in place.
+   *
+   * NOT the queue's retry, and the difference is visible to the operator. `retry` re-enqueues a job
+   * under a NEW id, so the list afterwards holds two rows; a release UPDATES the existing record
+   * (`status: 'released'`, `releases` incremented) and the list still holds one. It is also
+   * per-consumer on purpose — re-emitting the event would redeliver it to every healthy consumer too.
+   *
+   * Returns `false` when there is nothing to release: the event was never quarantined, or it has
+   * since been DELIVERED. The server reflects that as a 409, exactly as it does `retry`'s `null`.
+   */
+  release?(topic: string, consumer: string, id: string, ctx?: StudioCallbackCtx): Promise<boolean> | boolean;
+}
+
 /** Cache view: hit/miss ratio + size (duck-type compatible with @gnldev/cache `stats()`). */
 export interface StudioCacheStats { hits: number; misses: number; hitRate: number; size: number; }
 /** Cache view contract — studio has no DEPENDENCY on @gnldev/cache; the host wraps its own cache instance
@@ -446,7 +556,55 @@ export const PERMISSION_CATALOG: PermissionCatalogEntry[] = [
   { id: 'money:read', label: 'View spend', group: 'read', description: 'Usage, cost, price table, organization budgets' },
   { id: 'audit:read', label: 'View the audit log', group: 'read', description: 'Who did what, and when' },
   { id: 'users:read', label: 'View users', group: 'read', description: 'The organization\'s user list' },
-  { id: 'catalog:read', label: 'View configuration', group: 'read', description: 'Agents, tools, workflows, policy, providers — no customer data' },
+  /**
+   * "No customer data" was the description this permission carried, and it was NOT true.
+   *
+   * MEASURED with a grant of exactly `['runs:read','catalog:read']`, against a real @gnldev/events
+   * quarantine (a handler that threw `ValidationError: ssn '123-45-6789' invalid for customer
+   * jane@customer.example`), the DEFAULT `GET /dead-events` answer was:
+   *
+   *   [{"error":"ValidationError: ssn '123-45-6789' invalid for customer jane@customer.example",
+   *     …,"payloadRestricted":true}]
+   *
+   * The same row that announced the body was withheld handed over the body's contents. The gate is
+   * now on `payloads:read` (below) for that field and for the scheduler's.
+   *
+   * `POST /knowledge/search` was the last route that broke this description: it sat behind THIS
+   * permission alone and returned indexed corpus text verbatim — measured, `[{"text":"globex private
+   * doc"}]` reaching an acme-bound identity. It is closed the same way, but ROUTE-LEVEL rather than by
+   * projection, because the whole response is the corpus and there is no field left to withhold. The
+   * description below is now true of every route that reads it, which is the only state worth
+   * shipping: it is what an admin makes the grant decision on.
+   */
+  { id: 'catalog:read', label: 'View configuration', group: 'read', description: 'Agents, tools, workflows, policy, providers, and the operational lists — not the data flowing through them' },
+  /**
+   * Split out of `catalog:read` rather than folded into `threads:read`, and neither was arbitrary.
+   *
+   * A quarantined event's PAYLOAD is whatever the producer emitted — an order, an invoice line, a
+   * support ticket someone typed. That is customer data, so it cannot sit behind a permission whose
+   * own description promises configuration. But it is not a conversation either: the checkbox
+   * labelled "View conversations" controlling event bodies would surprise the admin who ticks it.
+   *
+   * IT IS NOT ONLY THE BODY, and that is why this is `payloads:read` rather than `events:read`. Three
+   * fields on two `catalog:read` routes carry data that came from OUTSIDE the configuration, and
+   * gating one of them is a patch rather than a rule:
+   *   - `StudioDeadEvent.payload`   — the producer's event body.
+   *   - `StudioDeadEvent.error`     — `String(err?.message ?? err)` from the host's handler, which ran
+   *                                   ON that body. Validation libraries quote the value they
+   *                                   rejected, so this field carries the payload by another route.
+   *   - `TriggerInfo.input`/`.lastError` (`GET /scheduler/triggers`) — the scheduled workflow's own
+   *                                   argument, and the same `String(err?.message ?? err)` about it
+   *                                   (@gnldev/scheduler writes it at `sched:fail:`).
+   * One permission covers all four because they are one thing: the payload a host's code was handed,
+   * and the text that code produced from it. An admin who ticks "payloads and failure text" is not
+   * surprised by either half.
+   *
+   * BACKWARD COMPATIBLE by construction: `*:read` matches `payloads:read` through the same wildcard
+   * every other named read uses, so every existing grant — and every role preset, all of which start
+   * from `*:read` — keeps seeing exactly what it saw. Only an admin who has deliberately narrowed a
+   * user to a named subset can now be missing it, which is the point of naming it.
+   */
+  { id: 'payloads:read', label: 'View payloads and failure text', group: 'read', description: 'Event bodies, scheduled trigger inputs, indexed knowledge text, and the error text a handler produced from them' },
   { id: 'run:write', label: 'Fork/resume runs', group: 'run', description: 'Fork a run or resume an approval' },
   { id: 'run:delete', label: 'Delete/purge runs', group: 'run', description: 'Permanently purge a run (GDPR)' },
   { id: 'users:write', label: 'Manage users', group: 'admin', description: 'Create / update / delete / revoke users' },
@@ -509,6 +667,45 @@ export interface StudioApiOptions {
   a2a?: boolean;
   /** If given, the Queue/Jobs view works. */
   queue?: StudioQueue;
+  /** If given, the Dead-letter view works (@gnldev/events quarantine list + release). */
+  events?: StudioEvents;
+  /**
+   * Bounds on `GET /dead-events`, the most expensive read this API serves (a whole topic log, one
+   * `get` per event — 1 470 ms for 20 000 events, measured on SQLite). Both have defaults; a host
+   * only touches them if its topics are much larger or its store much slower than that.
+   */
+  deadEventScan?: {
+    /**
+     * How long the host's `listDead` may take before Studio stops waiting and answers 504 (default
+     * 30 000). The scan runs one at a time deployment-wide, so a store that accepts the query and
+     * never answers used to hold that slot — and therefore the endpoint — until the process
+     * restarted. `ctx.signal` is fired at the same moment for a host that can cancel.
+     */
+    timeoutMs?: number;
+    /**
+     * How long a request WAITS for the single scan slot before it is refused with 429 + `Retry-After`
+     * (default 5 000). Waiting rather than refusing is what keeps one caller from starving the
+     * others; this is the bound on how long the waiting may last. It is also the `Retry-After` a
+     * caller is given before this deployment has completed a scan it could quote instead.
+     */
+    queueWaitMs?: number;
+    /**
+     * How many requests may be waiting for that slot at once (default 64). Past it, 429 — the
+     * deployment is saturated. Only a deployment with more than 64 operators refreshing the
+     * dead-letter view within one scan ever reaches it.
+     */
+    queueDepth?: number;
+    /**
+     * How many scans that blew `timeoutMs` may still be running inside the host before this endpoint
+     * refuses to start another (default 2, answered with 503 `dead_scan_store_wedged`).
+     *
+     * A timeout releases Studio's slot but cannot stop the host's query — `ctx.signal` is cooperative
+     * — so without this a caller in a loop piles unwatched whole-log reads onto a store that is
+     * already not answering (measured: eight sequential requests, eight concurrent host scans). The
+     * count falls again as those scans settle, so a store that is merely slow recovers on its own.
+     */
+    maxAbandonedScans?: number;
+  };
   /** If given, the Cache view works (@gnldev/cache hit/miss ratio + manual invalidate). */
   cache?: StudioCache;
   /** If given, the Knowledge (vector search) view works. */
@@ -650,7 +847,7 @@ function isReader (x: any): x is JournalReader {
  */
 function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   const opts: StudioApiOptions = isReader(input) ? { reader: input } : input;
-  const { reader: rawReaderIn, resume, compensate, chat, gnl, memory, workflows, scorers, datasets, mcp, a2a, queue, cache, vectors, workflowInputs, workflowStore: _wfStoreOpt, compileWorkflow, auth } = opts;
+  const { reader: rawReaderIn, resume, compensate, chat, gnl, memory, workflows, scorers, datasets, mcp, a2a, queue, events, cache, vectors, workflowInputs, workflowStore: _wfStoreOpt, compileWorkflow, auth } = opts;
   // The host may hand back `storage.runs` (a RunJournal → Page) rather than a bridged reader — the
   // README's quickstart does exactly that. Every listRuns consumer below expects the array contract.
   const rawReader = asReaderJournal(rawReaderIn as object) as typeof rawReaderIn;
@@ -768,6 +965,10 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     { what: 'vectors', obj: vectors, fix: 'set `orgScoped: true` on it once it honours the `orgId` it is handed' },
     { what: 'cache', obj: cache, fix: 'set `orgScoped: true` on it once it honours the `orgId` it is handed' },
     { what: 'queue', obj: queue, fix: 'set `orgScoped: true` on it once it honours the `orgId` it is handed' },
+    // Same shape as `queue`, and the same reason: the host wraps its own WorkStore, and a released
+    // dead-letter event is delivered by whatever consumer owns it — releasing another organization's
+    // quarantined event re-runs that organization's handler.
+    { what: 'events', obj: events, fix: 'set `orgScoped: true` on it once it honours the `orgId` it is handed' },
     { what: 'workflowStore', obj: _wfStoreOpt, fix: 'omit `workflowStore` to use the journal-derived store, which IS org-scoped, '
       + 'or set `orgScoped: true` on yours once it honours the `orgId` its methods are handed' },
   ];
@@ -1227,7 +1428,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     | 'run.purge' | 'run.regression' | 'run.compensate' | 'run.cancel' | 'retention.sweep' | 'policy.update' | 'pricing.update'
     | 'org.budget' | 'org.create' | 'org.delete'
     | 'user.create' | 'user.delete' | 'user.revoke' | 'user.update'
-    | 'job.retry' | 'cache.invalidate' | 'run.otel-export' | 'workflow.cancel'
+    | 'job.retry' | 'event.release' | 'cache.invalidate' | 'run.otel-export' | 'workflow.cancel'
     | 'agent.approve' | 'agent.block';
   /**
    * Actor attribution — priority: an authenticated principal.id (e.g. a basic-auth user) > the
@@ -1443,6 +1644,14 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       // "Retry" action in the Jobs view: on if the host implemented queue.retry (RBAC is also
       // Enforced server-side on every request via allow(c,'write') — this is only button visibility).
       queueManage: !!queue?.retry && reach('queue'),
+      // Dead-letter view (@gnldev/events quarantine): on if the host gave an events object. Named
+      // `deadEvents` rather than `events`, because `/events` is already this API's SSE change stream
+      // and a capability that reads as "the SSE stream is on" would be read that way.
+      deadEvents: !!events && reach('events'),
+      // "Release" action in the Dead-letter view: on if the host implemented events.release (RBAC is
+      // also enforced server-side on every request via allow(c,'write') — this is only button
+      // visibility, same pattern as queueManage/cacheManage).
+      eventsManage: !!events?.release && reach('events'),
       // Cache view (@gnldev/cache hit/miss + size): on if the host gave a cache instance.
       cache: !!cache && reach('cache'),
       // Manual invalidate button: on if the host implemented cache.invalidate (RBAC is again enforced
@@ -3073,6 +3282,17 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       const err = e as ToolLoopDetectedError;
       return c.json({ error: err.message, code: 'tool_loop_detected', detail: err.detail, resumable: true }, 422);
     }
+    // A `runId` re-used for a different conversation. 409 rather than the generic 400: the request is
+    // well-formed and collides with something that already exists. NO `resumable`, unlike everything
+    // else here — the others clear and the same runId then succeeds, while this one never will for this
+    // thread, so `true` would put a client in a loop. Same status, code and body as @gnldev/server's
+    // `threadMismatchResponse`, because a caller should not have to learn which host it is talking to;
+    // without it this fell through to the generic 400, which drops both the code and the `detail` that
+    // names the two threads.
+    if (e instanceof RunThreadMismatchError || (e as any)?.name === 'RunThreadMismatchError') {
+      const err = e as RunThreadMismatchError;
+      return c.json({ error: err.message, code: 'run_thread_mismatch', detail: err.detail }, 409);
+    }
     // A provider failure is not one of OURS — it matches nothing above and used to fall through to
     // The generic 400, telling the caller its request was malformed when the request was fine.
     // Measured: a free endpoint answering 429 arrived as `400 "Failed after 3 attempts…"`, which a
@@ -3337,11 +3557,22 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   });
 
   // ── Queue / Jobs (if queue is given) ──────────────────────────────────────────
+  /**
+   * PROJECTED through an allowlist, like the dead-letter list beside it (see `pickFields`).
+   *
+   * This route used to return `listJobs()` verbatim. The shipped bridge is safe by accident — the real
+   * `@gnldev/queue.listJobs` builds a summary with exactly the four `StudioJob` fields and leaves the
+   * job's payload and error text in the store — but `StudioQueue` is a HOST duck-type, so "safe" was a
+   * property of somebody else's object rather than of this gate. A host that maps its own rows (the
+   * obvious way to bridge a queue that is not @gnldev/queue) forwards whatever those rows carry to a
+   * `catalog:read`-only caller. The same class of hole the dead-letter route was measured with.
+   */
   app.get('/jobs', async (c) => {
     if (!(await allowP(c.req.raw, 'catalog:read'))) return deny(c.req.raw, 'read');
     if (!queue) return c.json([]);
     { const denied = requireScopedHost(c, 'queue'); if (denied) return denied; }
-    return c.json(await queue.listJobs({ orgId: callerOrg(c) }));
+    const jobs = await queue.listJobs({ orgId: callerOrg(c) });
+    return c.json(jobs.map((j) => pickFields(j, JOB_FIELDS)));
   });
 
   // Re-queue a failed (dead-letter/qfail) job (if queue.retry is given — the host typically wraps
@@ -3360,6 +3591,817 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     }
     await audit(c, 'job.retry', id, { newId });
     return c.json({ ok: true, id: newId });
+  });
+
+  // ── Events dead-letter (@gnldev/events quarantine) ────────────────────────────
+  //
+  // NOT under `/events`. That path is already this API's SSE change stream (see GET /events above),
+  // and it is a route, not a prefix — hanging a dead-letter list off it would either shadow the
+  // stream or make the two indistinguishable to anyone reading the spec. A quarantined delivery and a
+  // live change feed share the word "event" and nothing else, so they get separate paths.
+  //
+  // The addressing is the other reason this is not a copy of /jobs. A queue hands one job to one
+  // worker, so `:id` names it; a topic FANS OUT, so a single event has one quarantine record PER
+  // CONSUMER and only the triple `(topic, consumer, id)` names one. That triple travels in the query
+  // string / body rather than the path: topic names routinely contain `.`, `:` and `/`
+  // (`orders.created`, `billing/invoices`), and a path segment forces every one of those callers
+  // through `%2F`, which routers and proxies normalize inconsistently.
+
+  /**
+   * ONE dead-letter scan RUNNING at a time, deployment-wide, and one per CALLER pending — the only
+   * brake on the most expensive read this API serves.
+   *
+   * MEASURED, on real SQLite, before any of this existed. A 20 000-event topic with NOTHING
+   * quarantined: one 60-byte `GET /dead-events` → 200, 0 rows, 1 470 ms, 20 400 store calls; ten of
+   * them fired at once → 15 511 ms of wall time in which the single-threaded event loop served nobody
+   * else. Ten cheap GETs, and every other Studio request — runs, traces, the SSE stream — waits.
+   *
+   * WHY A LIMIT AND NOT A CACHE. The obvious alternative is a short-lived result cache, and it is the
+   * wrong tool here: the ONLY way an operator re-runs this scan is the view's Refresh button, which
+   * exists precisely to get a fresh answer (`DeadEvents.tsx` invalidates the query to force it). A
+   * cache would make the one affordance the page has do nothing.
+   *
+   * THE FIRST VERSION OF THIS BRAKE WAS A GLOBAL "BUSY → 429", AND IT WAS A DENIAL-OF-SERVICE. Its
+   * stated reasoning was "queueing bounds nothing: a thousand requests still buy a thousand scans" —
+   * true of an UNFAIR queue and false of this one, and the price of getting that wrong was measured:
+   *
+   *   one attacker connection, ONE request in flight at a time, a fresh (topic, consumer) each round
+   *   → a legitimate operator holding a different token was refused 20 times out of 20.
+   *
+   * 60-byte GETs and `catalog:read` — any read token on the deployment — bought a total outage of the
+   * endpoint, across organizations. A refusal keyed on "is ANYONE scanning" is a refusal the cheapest
+   * possible caller controls.
+   *
+   * SO ADMISSION IS PER CALLER AND EXECUTION IS GLOBAL, which are two different questions:
+   *
+   *   ADMISSION (this map + `deadScanOutstanding`), and ONLY for a caller this process can actually
+   *     TELL APART — see `deadScanCaller`. Such a principal may have a SMALL FIXED NUMBER of scans
+   *     pending or running at once; past that it is refused — self-inflicted, so the 429 tells the
+   *     caller something true about itself and nothing about anyone else. This is what bounds the work
+   *     for an identified caller: a thousand CONCURRENT requests from one token still buy that same
+   *     small number of scans.
+   *
+   *     A cap and not a lock, which is a correction rather than a detail: at one, the allowance was
+   *     spent by the caller's own scan, so anyone else behind the SAME credential was refused on
+   *     arrival. See `deadScanOutstanding` for the measurement — a shared token made the identified
+   *     case strictly worse than the anonymous one it was written to fix.
+   *   EXECUTION (`deadScanWaiters`). One scan runs at a time, deployment-wide, and the rest WAIT in
+   *     FIFO rather than being refused. The event loop is protected exactly as before — concurrency
+   *     is still one — but the caller that arrives while somebody else is scanning gets its answer a
+   *     scan later instead of an error. FIFO is what removes the starvation: the attacker cannot
+   *     re-arm until its own scan completes, by which time the operator is already at the head.
+   *
+   * AN UNIDENTIFIABLE CALLER GETS THE QUEUE AND NOTHING ELSE, which is the correction to the first
+   * version of this split. That one keyed admission on `[orgId ?? '', id ?? '']`, so with auth off —
+   * the shape `gnl init` scaffolds and the shape Studio's own quickstart runs — EVERY request hashed
+   * to the same `["",""]` and the per-caller bound became the deployment-wide refusal it replaced.
+   * MEASURED, one attacker connection with one request in flight and a fresh triple each round:
+   *
+   *   auth off, before: operator alone → 200 (precondition); under attack → 200 in 0 of 20 attempts
+   *   auth on,  before: same attack    → 200 in 20 of 20 attempts
+   *
+   * "AUTH OFF" NAMES THE WRONG SET, and reading this line as the whole of the unidentified branch is
+   * how the gap below survived a review. `roleAuth` filled `Principal.id` only under basic auth, while
+   * `gnl add host` scaffolds a bearer token and `GNL_ADMIN_TOKEN` is one — so auth ON, with a valid
+   * token, landed here too, and the budget was off in the deployments the framework generates.
+   * Measured in that state with one shared admin token and 65 attacker connections: operator served 0
+   * of 20, i.e. the "before" row above, reproduced through the fix. Closed at the source:
+   * `@gnldev/auth` now derives a stable `Principal.credentialId` from the presented token, and
+   * `deadScanCaller` prefers it. `credentialId` and not `id` because `id` is a MEMORY SUBJECT that
+   * `resolveResourceId` prefers over the one a request names — putting a fingerprint there put two
+   * explicitly-named end users in one memory bucket (measured in @gnldev/server).
+   *
+   * What still reaches this branch is a custom `AuthProvider` returning bare `{roles}`. That is a
+   * realistic API-key bridge rather than a corner case, so it now WARNS once per process
+   * (`warnNoAdmissionBudget`) instead of failing open in silence.
+   *
+   * The comment above this code called the collapse "the honest answer — there are no tenants there
+   * to be fair between". A single deployment has several operators and several tabs whether or not it
+   * has an auth provider, so it was neither honest nor an answer. The fix is not to invent an
+   * identity out of a header or a socket (a caller that picks its own identity mints a fresh one per
+   * request and walks straight back into the starvation) but to charge nothing to a caller that
+   * cannot be named: it queues, FIFO, exactly like everyone else. Its work is still bounded, by
+   * concurrency one and by `deadScanQueueWaitMs`, and the queue's DEPTH is bounded separately below
+   * so that "everyone queues" cannot become "everyone is a waiter object".
+   *
+   * That also NARROWS a cross-tenant oracle, and an earlier version of this paragraph claimed it
+   * closed one. Under the global refusal, org A's probe returned 200 when org B was idle and 429 when
+   * org B was scanning — one tenant could time another's operator activity, and the length of the 429
+   * window measured the size of its topic log. The ADMISSION 429 is now A's own business. But the
+   * SATURATION 429 is still the deployment's, and B's scan is what saturates it: measured with `org`
+   * resolved and acme running a 7 s scan, globex — which had started nothing — was refused
+   * `429 dead_scan_busy` after 5 003 ms. The channel is weaker, not gone: it now costs the observer a
+   * full `deadScanQueueWaitMs` per sample instead of an instant answer, and it reports "someone is
+   * scanning" rather than "org B is scanning", since any tenant's scan saturates the same slot.
+   *
+   * That residual is the same shape as the LATENCY signal below and is not removable for the same
+   * reason: at concurrency one, a 1.5-second whole-log read on a single-threaded event loop already
+   * slows every other route in the process, so a busy deployment is observable whatever this endpoint
+   * answers. Removing it means more than one scan slot, which is the thing the whole design refuses.
+   * Documented as residual — which is what the previous wording should have said about the 429 too.
+   *
+   * Identical requests still COALESCE: two operators (or two tabs) pointed at the same
+   * `(org, topic, consumer)` share the one scan and both get the real answer.
+   *
+   * The UI cannot trip any of this on its own: its Load/Refresh button is `busy` (and therefore
+   * disabled) for the duration of the scan, so a single tab has at most one in flight.
+   */
+  const deadScans = new Map<string, Promise<StudioDeadEvent[]>>();
+
+  /**
+   * How long the host's own scan may take before Studio stops waiting for it (ms).
+   *
+   * WITHOUT IT THE ENDPOINT COULD BE CLOSED PERMANENTLY, and that was measured too: a `listDead` that
+   * never settles (a Postgres WorkStore with a hung connection is the realistic shape) left the slot
+   * occupied for the life of the process — `+40 ms → 429`, `+240 ms → 429`, and only a restart cleared
+   * it. The scan's sync-throw and async-reject paths always released the slot; "never answers" is a
+   * third path, and `.finally` on a promise that never settles never runs.
+   *
+   * 30 s is ~20× the measured 1 470 ms whole-log read of a 20 000-event topic, so it fires for a stuck
+   * store rather than for a big one. A deployment with genuinely enormous topics raises it.
+   */
+  const deadScanTimeoutMs = opts.deadEventScan?.timeoutMs ?? 30_000;
+  /**
+   * How long a request may WAIT for the single execution slot before it is refused (ms).
+   *
+   * The bound on the queue is time, not depth: a waiter costs a promise and an open socket, and what
+   * actually needs limiting is how long a client is held. Past this, 429 with a `Retry-After` derived
+   * from real scan times — an answer the caller can act on, rather than a connection left hanging.
+   */
+  const deadScanQueueWaitMs = opts.deadEventScan?.queueWaitMs ?? 5_000;
+  /**
+   * How many requests may be WAITING for the single slot at once.
+   *
+   * It exists because admission no longer refuses an unidentifiable caller (see above): without a
+   * depth bound, "everyone queues" would let one client hold an arbitrary number of waiter objects.
+   * The number is derived rather than picked — the queue is already bounded in TIME at
+   * `deadScanQueueWaitMs` (5 s) and a scan measured 1 470 ms, so at most ~4 waiters can ever reach the
+   * head before the rest time out anyway. 64 is an order of magnitude above that: deep enough that no
+   * real operator population is ever refused by it, shallow enough that the list cannot grow without
+   * bound. Past it: 429, with the SATURATION message — which is true of the deployment and says
+   * nothing about the caller.
+   */
+  const deadScanQueueDepth = opts.deadEventScan?.queueDepth ?? 64;
+  /**
+   * How many timed-out host scans may still be OUT THERE before this endpoint stops starting more.
+   *
+   * `withScanDeadline` stops Studio waiting; it cannot stop the host computing, and `ctx.signal` is
+   * cooperative. A host that ignores it keeps its query running after Studio has answered 504 and
+   * released the slot — so the concurrency-one guarantee holds only for scans Studio is still
+   * WATCHING. MEASURED against a host that ignores the signal, one caller, eight sequential requests
+   * at a 20 ms deadline: `504×8`, and eight whole-log reads running at once against a store that was
+   * already not answering. The comment that used to sit on the deadline said ignoring the signal
+   * "costs one wasted query and nothing else"; that is true of one request and false of a loop.
+   *
+   * So abandoned scans are COUNTED (up on the timeout, down whenever the host promise finally
+   * settles) and a new scan is refused past this many. Two is deliberately small: a store that has
+   * failed to answer twice is not a store that wants a third query. A host that never settles at all
+   * pins the counter and this endpoint stays refusing — that is the trade, and it is the honest one:
+   * the alternative is to keep opening whole-log reads against a wedged store forever. The refusal is
+   * 503 and names the condition, so it is distinguishable from both the busy 429 and the 504.
+   */
+  const deadScanMaxAbandoned = opts.deadEventScan?.maxAbandonedScans ?? 2;
+
+  /**
+   * WHO is scanning, for admission — the AUTHENTICATED principal, or nobody.
+   *
+   * `undefined` means "this process cannot tell this caller apart from any other", and the caller is
+   * then charged no admission at all: it goes to the FIFO queue. That is the whole fix for the
+   * starvation measured above, and the reason it is stated as a capability rather than a fallback —
+   * an admission bucket shared by callers who are not the same caller is not a bound, it is a shared
+   * fate.
+   *
+   * WHAT COUNTS AS TELLING THEM APART is `principal.id`, and nothing else:
+   *
+   *   • NOT `actorOf` / `x-gnl-actor`, NOT `x-gnl-org`, NOT any other header. A caller that picks its
+   *     own identity mints a fresh one per request and the budget stops existing.
+   *   • NOT the ORG on its own. `Principal.id` is optional, and an API-key bridge that returns
+   *     `{ orgId, permissions }` is a realistic provider — under the old key every caller in that org
+   *     collapsed into one bucket and starved each other. MEASURED, two such callers asking for
+   *     different triples at once: `200 / 429`. An org is not a caller.
+   *   • NOT the org resolved from the REQUEST (`callerOrg`, which falls back to the `x-gnl-org` ALS).
+   *     `p.orgId` is identity-bound and cannot be re-picked; the ALS value can. It is included only
+   *     as a qualifier ON an identity, so the same id under two organizations is two buckets and a
+   *     caller cannot mint a third by changing a header.
+   *
+   * `callerOrg` DOES key the coalescing map, which is a different question with a different answer:
+   * there, using the request's org is mandatory (two organizations must never share one scan's rows),
+   * and forgery buys the forger nothing but its own separate scan. Admission is the opposite — the
+   * key must be unforgeable, so it comes only from the identity. The two disagreeing silently is what
+   * produced a cross-organization 429: with `org` configured and no auth provider, the coalescing key
+   * saw acme and globex as different while admission saw both as `["",""]`, so globex was told "your
+   * own dead-letter scan is still running" about a scan it had never started (measured: `200 / 429`).
+   * Now neither caller is identified, so neither is admission-refused, and the only 429 either can
+   * see is the saturation one — which is about the deployment and is true.
+   */
+  const deadScanCaller = (c: Context): string | undefined => {
+    const p = principalOf(c.req.raw);
+    // `credentialId` before `id`, and it is why the budget exists at all in the common deployment:
+    // `roleAuth` only fills `id` under basic auth, while `gnl add host` scaffolds a bearer token — so
+    // keying on `id` alone left every token-authenticated deployment, including `GNL_ADMIN_TOKEN`, in
+    // the unidentified branch below. MEASURED there with a single shared admin token and 65 attacker
+    // connections: operator served 0/20. The starvation this admission model closes was still fully
+    // open in the deployments the framework itself generates.
+    //
+    // Both are unforgeable (identity-bound, never a header) and either alone is a complete key, so the
+    // fallback widens WHO gets a budget without weakening what the key means. `credentialId` is the
+    // narrower, more useful subject when both exist: two people sharing one token share its budget,
+    // which is the honest accounting — they share the credential.
+    const caller = p?.credentialId ?? p?.id;
+    if (caller === undefined) warnNoAdmissionBudget();
+    return caller ? JSON.stringify([p?.orgId ?? '', caller]) : undefined;
+  };
+  /**
+   * The unidentified branch must not be SILENT. It is the branch that charges no admission at all, so
+   * a deployment that lands in it has the fairness bound switched off — and the failure mode of a
+   * security control that is off is that everyone believes it is on.
+   *
+   * This is not hypothetical and the comment above used to imply it was: it read the branch as
+   * "auth is off", when the shape that actually reached it was auth ON with a valid bearer token,
+   * because the provider produced no per-caller field. That was true of `roleAuth` (fixed: it now
+   * fills `Principal.credentialId`) and remains true of any custom `AuthProvider` returning bare
+   * `{roles}` — a realistic API-key bridge. Measured in that state, one shared token and 65 attacker
+   * connections: the operator was served 0 of 20.
+   *
+   * Once per process, not per request: a wedged deployment would otherwise print this on every poll.
+   */
+  let warnedNoAdmission = false;
+  const warnNoAdmissionBudget = (): void => {
+    if (warnedNoAdmission) return;
+    warnedNoAdmission = true;
+    console.warn(
+      '@gnldev/studio: the dead-letter scan admission budget is DISABLED for this deployment — your ' +
+      'auth provider returns a principal with neither `id` nor `credentialId`, so callers cannot be ' +
+      'told apart and none can be charged for a scan. One caller can then hold the scan queue and ' +
+      'starve everyone else. Return a stable `credentialId` (what `roleAuth` derives from the ' +
+      'presented token) or an `id` from your AuthProvider to turn it on.',
+    );
+  };
+  /**
+   * principal → how many DISTINCT scans it currently has pending or running.
+   *
+   * This was a single-owner LOCK (principal → the one key it holds), refusing a caller's second triple
+   * outright, and its comment called that "sharing a budget". It is not: it is first-arrival-wins, and
+   * under a SHARED credential — the shape this whole mechanism exists to serve, since `gnl add host`
+   * scaffolds one bearer token for a team — it inverted the fix. Measured, one shared admin token and a
+   * SINGLE sequential attacker connection:
+   *
+   *   owner lock, shared token                 → operator served  0 of 20
+   *   no identity at all (before credentialId) → operator served 20 of 20
+   *
+   * Naming the caller made it strictly worse than not naming it, and cheaper to exploit than the
+   * 65-connection flood the lock was written against. Two colleagues on one token do it to each other
+   * by accident.
+   *
+   * A COUNT with a small cap keeps the property the lock was for and drops the one it accidentally had.
+   * The flood it must stop is CONCURRENT — 65 sockets from one source filling the queue — and a cap
+   * bounds that however many sockets are opened. A SEQUENTIAL caller (an attacker re-arming after each
+   * reply, or an ordinary second operator) holds one, so the next request still enters the FIFO and is
+   * served in turn rather than being told a false thing about a scan it never started.
+   */
+  const deadScanOutstanding = new Map<string, number>();
+  /**
+   * Two, not one: one is what produced the starvation above — a caller's own in-flight scan consumed
+   * the entire allowance, leaving nothing for anyone else behind the same credential. Larger buys an
+   * attacker more of the queue for the same single credential. Two is the smallest value at which a
+   * second party behind one credential can still queue.
+   *
+   * PRICE, measured rather than waved at: it doubles what a holder of MANY valid credentials can take.
+   * Under the old lock, N credentials bought N waiter slots; under the cap they buy 2N. Measured at the
+   * default `queueDepth` of 64: 32 distinct tokens filled the queue and the 33rd was refused `'full'`
+   * immediately. That is a real widening and it is the deliberate trade — a compromised pool of tokens
+   * is a harder thing to come by than the single shared token every scaffolded deployment ships with,
+   * and the starvation on that one was total (0 of 20) rather than a factor of two.
+   */
+  const DEAD_SCAN_PER_CALLER = 2;
+  /** FIFO of requests waiting for the single execution slot. */
+  const deadScanWaiters: { identified: boolean; admit (ok: boolean): void }[] = [];
+  let deadScanBusy = false;
+  /** Host scans Studio stopped waiting for and that have not settled yet. See `deadScanMaxAbandoned`. */
+  let deadScanAbandoned = 0;
+
+  /** Hands the slot to the next waiter, or frees it. Called exactly once per acquired slot. */
+  const releaseDeadScanSlot = (): void => {
+    const next = deadScanWaiters.shift();
+    if (next) next.admit(true);
+    else deadScanBusy = false;
+  };
+
+  /**
+   * `'slot'` = the slot is yours. `'timeout'` = you waited `deadScanQueueWaitMs` and did not get it.
+   * `'full'` = the queue was already at its budget for you and you were never enqueued.
+   *
+   * THE QUEUE HAS TWO BUDGETS, because FIFO drop-tail is fair only between callers that cost the same.
+   * Admission already limits an IDENTIFIED caller to one scan, so such a caller can hold at most one
+   * waiter — the queue cannot be flooded by anyone this process can name. An UNIDENTIFIED caller has
+   * no such bound (that is what "unidentified" costs), so with one shared budget a single source
+   * opening connections takes every slot: measured with the default `queueDepth` of 64, the operator
+   * is served in full up to 8 attacker connections and 0 of 10 at 65 — the exact starvation this design
+   * replaced, bought back for the price of 65 concurrent 60-byte GETs. Where between 8 and 65 the cliff
+   * falls depends on how long a scan takes relative to the queue budget, so no intermediate number is
+   * quoted: it would be a property of the fixture, not of the deployment.
+   *
+   * So the unnameable pool gets HALF the depth and the rest is reserved for callers that can be
+   * charged. An identified operator now reaches the queue while an anonymous flood is in progress,
+   * which is the property that was lost. What this does NOT do is make a deployment with no auth
+   * provider fair: there, everyone is in the unidentified pool and nothing distinguishes the operator
+   * from the flood. That is not solvable here — a caller that picks its own identity mints a fresh one
+   * per request, and socket/header identity is either forgeable or shared behind a proxy. The answer
+   * for those deployments is an auth provider, which is what `warnNoAdmissionBudget` now says out loud
+   * rather than leaving to be discovered under load.
+   */
+  const acquireDeadScanSlot = (identified: boolean): Promise<'slot' | 'timeout' | 'full'> => {
+    if (!deadScanBusy) { deadScanBusy = true; return Promise.resolve('slot'); }
+    // `>> 1` and not a ratio option: another knob here is another pair of settings a host can put in
+    // contradiction (see the deadline-versus-queue-wait interaction two functions down), and half is
+    // the only split that needs no justification of its own.
+    // `max(1, …)`: halving must never reach zero, or a host that configured `queueDepth: 1` would
+    // have no queue at all for anonymous callers — the split is meant to bound the pool, not to
+    // delete it. Caught by the existing `queueDepth: 1` test, which is why it is spelled out here.
+    const budget = identified ? deadScanQueueDepth : Math.max(1, deadScanQueueDepth >> 1);
+    const used = identified ? deadScanWaiters.length : deadScanWaiters.filter((w) => !w.identified).length;
+    if (used >= budget) return Promise.resolve('full');
+    return new Promise<'slot' | 'timeout'>((resolve) => {
+      let settled = false;
+      const waiter = {
+        identified,
+        admit (ok: boolean) {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve(ok ? 'slot' : 'timeout');
+        },
+      };
+      const timer = setTimeout(() => {
+        const i = deadScanWaiters.indexOf(waiter);
+        if (i >= 0) deadScanWaiters.splice(i, 1);
+        waiter.admit(false);
+      }, deadScanQueueWaitMs);
+      (timer as unknown as { unref?: () => void }).unref?.();
+      deadScanWaiters.push(waiter);
+    });
+  };
+
+  /**
+   * What a scan actually costs, as an EWMA PER ORGANIZATION — the number behind `Retry-After`.
+   *
+   * `Retry-After: 1` was a decoration: measured, the scan it was telling callers to wait out took
+   * 1 470 ms, so a compliant client came back on the dot and was refused again. A caller's own
+   * completed scans are the only honest estimate available, and they are already being timed.
+   *
+   * PER ORGANIZATION, because one number for the whole process is a SIZE ORACLE. The value is
+   * literally "how long a whole-topic-log read takes here", and a dead-letter log's read time is
+   * proportional to its length — so a single global EWMA answers "how much traffic does the other
+   * tenant have" to anyone who can provoke a 429. Measured, with `org` configured and acme running a
+   * 2 500 ms scan: globex, which had never scanned anything, was refused with `Retry-After: 3`. The
+   * bucket is `callerOrg` — the SAME org the coalescing key and the host call use, so the advice a
+   * caller gets is about the scans it can actually cause. A forged `x-gnl-org` therefore buys a fresh
+   * empty bucket and no information, which is the point.
+   *
+   * BOUNDED at `EWMA_BUCKETS` and evicted LEAST-RECENTLY-USED: with header-resolved orgs the bucket
+   * name comes from the request, so an unbounded map would be a memory leak a caller controls.
+   * Eviction costs a caller nothing but the fallback below.
+   *
+   * A plain `Map` gives insertion order, and `set` on an existing key does NOT move it — so the first
+   * version evicted first-SEEN rather than least-recently-used, and a hot old bucket went before a
+   * cold new one. Measured: after 256 forged `x-gnl-org` values each completed one scan, acme's own
+   * ~2 500 ms measurement was gone and it was answered from the fallback (`Retry-After` 3 → 5) by
+   * callers it has no relationship with. Re-inserting on touch is what makes "recently used" mean
+   * anything: a bucket touched DURING the noise now outlives the strangers that arrived before it.
+   *
+   * It does not, and cannot, save an IDLE tenant — with 256 buckets and 256 newcomers the map is
+   * simply full, and that eviction happens under any policy. The measurement above conflated the two;
+   * what the order actually buys is that being active protects you, which it previously did not. The
+   * attack was never cheap either (256 scans must COMPLETE, minutes at concurrency 1) and never leaked
+   * memory — only the accuracy of the hint — which is why the fix is three lines and not a redesign.
+   *
+   * NOT elapsed-adjusted ("your scan started 900 ms ago, come back in 600 ms"): under-shooting buys
+   * the client a second 429, which is the failure being fixed. Clamped to [1 s, 60 s] — a whole
+   * minute is already past the point where a client should be polling this endpoint at all.
+   */
+  const deadScanEwmaMs = new Map<string, number>();
+  const EWMA_BUCKETS = 256;
+  const recordDeadScan = (bucket: string, ms: number): void => {
+    const prev = deadScanEwmaMs.get(bucket);
+    // delete THEN set: that is the whole of the LRU. A bare `set` leaves an existing key where it
+    // first landed in insertion order, which is the position eviction reads.
+    deadScanEwmaMs.delete(bucket);
+    deadScanEwmaMs.set(bucket, prev === undefined ? ms : Math.round(prev * 0.7 + ms * 0.3));
+    while (deadScanEwmaMs.size > EWMA_BUCKETS) {
+      const oldest = deadScanEwmaMs.keys().next();
+      if (oldest.done) break;
+      deadScanEwmaMs.delete(oldest.value);
+    }
+  };
+  /**
+   * WITH NO MEASUREMENT FOR THIS BUCKET the answer is the queue budget, not `1`.
+   *
+   * The very first 429 a deployment serves is the one a client is most likely to obey literally, and
+   * it was the one with nothing behind it: `deadScanEwmaMs` started at 0, `Math.max(1, 0)` made it a
+   * second, and the code's own comment called that value "a decoration" while still emitting it.
+   * `deadScanQueueWaitMs` is a real number about this deployment — a refused caller has just failed
+   * to reach the head of the queue within it, so "at least that long" is the weakest true statement
+   * available. It is also the floor a host raises by raising the queue budget, rather than a constant.
+   */
+  const deadScanRetryAfter = (bucket: string): string => {
+    const ewma = deadScanEwmaMs.get(bucket);
+    // A refusal is a USE of this bucket: the caller being turned away is the one the estimate is for,
+    // and it is exactly when losing it hurts. Refreshing here is what keeps a caller that is being
+    // refused in a burst from having its own measurement evicted out from under it mid-burst.
+    if (ewma !== undefined) { deadScanEwmaMs.delete(bucket); deadScanEwmaMs.set(bucket, ewma); }
+    return String(Math.min(60, Math.max(1, Math.ceil((ewma ?? deadScanQueueWaitMs) / 1000))));
+  };
+
+  /** Tagged so the route can turn a rejected SHARED scan into the right status for every joiner. */
+  const scanError = (code: 'dead_scan_busy' | 'dead_scan_timeout' | 'dead_scan_store_wedged', message: string): Error =>
+    Object.assign(new Error(message), { gnlScanCode: code });
+
+  /**
+   * Stops WAITING on the host scan after `deadScanTimeoutMs`; it cannot stop the host computing.
+   *
+   * The AbortController is the cooperative half — a host whose `listDead` honours `ctx.signal` (a
+   * Postgres driver's `AbortSignal`, `fetch`) really does stop. A host that ignores it keeps running,
+   * and the point stands anyway: this promise settles, so the slot is released and the endpoint
+   * reopens. That is the difference between a wedged store costing one request and costing the
+   * process.
+   *
+   * WHAT IT CANNOT DO ON ITS OWN is keep the concurrency-one promise, and that is why the abandoned
+   * scan is COUNTED here rather than forgotten. Releasing the slot while the host is still reading
+   * means the next request starts a second real query; a caller in a loop turns "one wasted query"
+   * into as many as it likes. The counter comes back down the moment the host's promise settles —
+   * including with a rejection, which is why both handlers decrement — so a store that is merely slow
+   * recovers by itself. See `deadScanMaxAbandoned` for what happens once it is up.
+   */
+  const withScanDeadline = <T>(work: Promise<T>, ac: AbortController): Promise<T> =>
+    new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        ac.abort();
+        deadScanAbandoned++;
+        const settle = (): void => { deadScanAbandoned--; };
+        // Also the only handler that will ever be attached to `work` on this path — without it an
+        // abandoned scan that eventually rejects is an unhandled rejection, which crashes some hosts.
+        work.then(settle, settle);
+        reject(scanError('dead_scan_timeout',
+          `the dead-letter scan did not finish within ${deadScanTimeoutMs} ms and was abandoned — the `
+          + 'event store is not answering. The scan slot has been released; nothing was changed.'));
+      }, deadScanTimeoutMs);
+      (timer as unknown as { unref?: () => void }).unref?.();
+      work.then(
+        (v) => { clearTimeout(timer); resolve(v); },
+        (e) => { clearTimeout(timer); reject(e); },
+      );
+    });
+
+  /**
+   * Copy ONLY these fields of a host record onto the wire — an allowlist, not a denylist.
+   *
+   * `rows.map(({ payload, error, ...rest }) => …)` named the two fields it knew about and forwarded
+   * everything else. `StudioEvents` is a HOST duck-type: whatever object the host's `listDead`
+   * returns is what gets spread. Measured — a host record carrying
+   * `lastErrorDetail: "ssn '123-45-6789'"` reached a `catalog:read`-only caller verbatim, on the same
+   * row as `errorRestricted: true`. An unknown field is not a known-safe field, and only the server
+   * can decide which is which.
+   */
+  const isScalar = (v: unknown): boolean => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean';
+  /**
+   * The allowlist names a field AND the shape its declared type gives it, because naming alone is not
+   * a boundary. Measured against the name-only version: the fix above moved `dbDsn` out of a host's
+   * topic row, and putting the SAME data one level in walked straight back through —
+   * `consumers: [{name: 'billing', dbDsn: 'postgres://u:pw@h/db', lastFailure: "ssn '123-45-6789'"}]`
+   * was served whole to a `catalog:read`-only caller, as was
+   * `attempts: {n: 8, workerHost: 'worker-3.internal', dsn: '…'}` on a dead-letter row. The row's own
+   * `toJSON` is already skipped, but the FIELD VALUE's was still honoured, so a getter or a `toJSON`
+   * on an allowlisted key was a second way in.
+   *
+   * Every shape here comes from the declared wire type, not from taste: `StudioDeadEvent` and
+   * `StudioJob` are scalars end to end, and `StudioEventTopic.consumers` is `string[]` — "an inventory
+   * of names". A value that does not match is DROPPED, not coerced and not stringified: the host
+   * contradicted the type it declares, and there is no reading of `{n, dsn}` as an attempt count that
+   * is safe to guess at. Dropping matches what an unrecognised field NAME already gets.
+   *
+   * IT IS A STRUCTURAL BOUNDARY, NOT A CONTENT ONE, and the difference is worth stating because the
+   * fix reads like more than it is. Measured after it: `consumers: ["billing ssn 123-45-6789"]` and
+   * `topic: "orders 123-45-6789"` still reach the wire, because a `string[]` of names is exactly what
+   * the type asks for and studio cannot know what a consumer is called here. What the allowlist stops
+   * is a host attaching data it never declared — a whole object, a getter, a `toJSON` — which is the
+   * shape every measured leak on these routes actually had. A host that writes a secret into a field
+   * whose declared purpose is a name is outside its reach, and that is the reason the two fields known
+   * to carry host data (`error`, `payload`) are gated on a PERMISSION instead of on a shape.
+   *
+   * `status` is deliberately checked as a scalar and not against its three declared values: refusing
+   * an unrecognised status would blank the one field that says whether a record is stuck, on exactly
+   * the deployment whose host is behaving unexpectedly. Widening the type is the host's mistake to
+   * see, not ours to hide.
+   */
+  const pickFields = <T extends object>(row: T, fields: readonly (readonly [string, 'scalar' | 'strings'])[]): Record<string, unknown> => {
+    const out: Record<string, unknown> = {};
+    for (const [f, shape] of fields) {
+      const v = (row as Record<string, unknown>)?.[f];
+      if (v === undefined) continue;
+      if (shape === 'scalar') { if (isScalar(v)) out[f] = v; continue; }
+      if (Array.isArray(v) && v.every((e) => typeof e === 'string')) out[f] = [...v];
+    }
+    return out;
+  };
+  /** The operational half of a quarantine record: how much is stuck, is it growing, has releasing helped. */
+  const DEAD_EVENT_FIELDS = [
+    ['id', 'scalar'], ['topic', 'scalar'], ['consumer', 'scalar'], ['status', 'scalar'],
+    ['attempts', 'scalar'], ['at', 'scalar'], ['releasedAt', 'scalar'], ['releases', 'scalar'],
+  ] as const;
+  /** Exactly `StudioJob` — the four fields the real `@gnldev/queue.listJobs` returns. */
+  const JOB_FIELDS = [['id', 'scalar'], ['type', 'scalar'], ['status', 'scalar'], ['attempts', 'scalar']] as const;
+  /** Exactly `StudioEventTopic` — the inventory, and nothing the host hung off the same object. */
+  const TOPIC_FIELDS = [['topic', 'scalar'], ['consumers', 'strings']] as const;
+
+  /**
+   * The `(topic, consumer)` inventory the dead-letter list has to be pointed at. Optional on the host
+   * side; an empty list means the view asks for a topic and consumer as free text instead.
+   *
+   * PROJECTED through an allowlist, like `/dead-events` and `/jobs`. It was the one route in this
+   * group still returning the host object verbatim, and the hole is identical rather than analogous:
+   * `StudioEventTopic` is a duck-type, so a host that builds the inventory from its own quarantine
+   * rows attaches whatever those rows carry. Measured, a host returning
+   * `{topic, consumers, sampleFailure: "ssn '123-45-6789'", dbDsn: 'postgres://u:pw@h/db'}` — a
+   * `catalog:read`-only caller received all four fields. Nothing about "an inventory of names" makes
+   * it safe; what makes it safe is that the server, not the host, decides which names leave.
+   */
+  app.get('/dead-events/topics', async (c) => {
+    if (!(await allowP(c.req.raw, 'catalog:read'))) return deny(c.req.raw, 'read');
+    if (!events?.topics) return c.json([]);
+    { const denied = requireScopedHost(c, 'events'); if (denied) return denied; }
+    const inventory = await events.topics({ orgId: callerOrg(c) });
+    // Reading an allowlisted key can THROW: `topic` may be a getter, and this is somebody else's
+    // object. Measured, one that threw answered 500 `Internal Server Error` with a stack pointing into
+    // `pickFields`. The dead-letter list two routes down already defends the same duck-type against
+    // `[null, 42]` for the same reason; the argument there — "a host duck-type either is defended
+    // against or is not" — does not stop at this route. A row that cannot be read is skipped rather
+    // than failing the whole inventory: the other topics are still true, and an operator looking at a
+    // wedged store needs the part that answers.
+    const projected: Record<string, unknown>[] = [];
+    for (const t of inventory) {
+      try { projected.push(pickFields(t, TOPIC_FIELDS)); } catch { /* unreadable row: not an inventory entry */ }
+    }
+    return c.json(projected);
+  });
+
+  /**
+   * Quarantined deliveries for one topic+consumer (the host typically wraps @gnldev/events'
+   * `listDeadEvents`). Both parameters are REQUIRED and validated before anything else is consulted:
+   * a request that names no consumer is malformed whether or not this deployment has an event bus,
+   * and answering it with an empty list would read as "nothing is quarantined".
+   *
+   * EXPENSIVE — `listDeadEvents` scans the entire topic log and does a `get` per event. Nothing here
+   * polls it, the UI refreshes it only on an explicit operator action, and `deadScans` above caps the
+   * damage a caller that ignores both can do.
+   *
+   * THE PAYLOAD IS NOT PART OF THE DEFAULT ANSWER, and that is a correctness fix rather than a
+   * preference. This route requires `catalog:read`, the CONFIGURATION permission;
+   * `StudioDeadEvent.payload` is whatever the producer emitted, which is customer data by definition.
+   * Measured with a grant of exactly `['runs:read','catalog:read']`: `GET /threads` → 403
+   * `missing threads:read`, while `GET /dead-events` → 200 with `{"customerEmail":…,"ssn":…}` in
+   * every row. Two things now have to be true before a body leaves this process — the caller ASKED
+   * (`?payload=1`) and the caller MAY (`payloads:read`) — and a caller that asked without the
+   * permission is told so per record (`payloadRestricted: true`) rather than losing the list, because
+   * reading the quarantine is legitimately part of `catalog:read` and only the bodies are not.
+   *
+   * `error` IS GATED TOO, and it took a second measurement to see why. It was left behind on purpose
+   * when the payload gate went in — "the only evidence column, and Studio cannot clean someone else's
+   * string" — which is true and was not enough. Re-measured end to end against a real quarantine
+   * (@gnldev/events `String(err?.message ?? err)`, a handler that quoted the value it rejected the way
+   * every validation library does), the answer to `['runs:read','catalog:read']` was:
+   *
+   *   [{"error":"ValidationError: ssn '123-45-6789' invalid for customer jane@customer.example",
+   *     "attempts":2,…,"payloadRestricted":true}]
+   *
+   * One row, contradicting itself. The SSN the gate exists to withhold travelled in the field beside
+   * the flag announcing it had been withheld — and in the DEFAULT answer, so unlike `payload` it did
+   * not even need asking for. So `error` moves behind `payloads:read` as well.
+   *
+   * NO `?payload=1`-STYLE OPT-IN FOR IT, deliberately. The opt-in guards `payload` because a body is
+   * bulk data a client can receive by accident; `error` is one short field the table renders in every
+   * row, and an opt-in would blank that column for every caller including the ones entitled to it.
+   * The permission is the whole gate here.
+   *
+   * REJECTED: truncating `error` to N characters instead of gating it. It does not work, and the
+   * reason is measurable rather than aesthetic — PII arrives at the FRONT of a validation message.
+   * `ValidationError: ssn '123-45-6789'` is 34 characters; `ECONNREFUSED 10.0.0.5:5432` is 26 and
+   * `502 Bad Gateway from https://api.stripe.com/v1/charges` is 53. Every threshold that keeps the
+   * short infrastructure errors readable also keeps the whole SSN, and every threshold that cuts the
+   * SSN cuts them too. There is no N that separates the two, so the number would only be there to
+   * look like a control.
+   *
+   * WHAT A CALLER WITHOUT THE PERMISSION STILL GETS, because "the list survives" has to mean
+   * something: id, topic, consumer, status, attempts, releases and both timestamps — enough to answer
+   * "how much is stuck, is it growing, has releasing it helped", which is the question an operator
+   * who may not read customer data is entitled to an answer to. It does not answer "why", and that is
+   * the point of the split rather than a shortfall of it: the why is in the payload and in the text
+   * the handler wrote about the payload. @gnldev/events also logs the full error to the host's own
+   * console at quarantine time, so the answer exists for whoever may read the logs.
+   */
+  app.get('/dead-events', async (c) => {
+    if (!(await allowP(c.req.raw, 'catalog:read'))) return deny(c.req.raw, 'read');
+    const topic = c.req.query('topic');
+    const consumer = c.req.query('consumer');
+    if (!topic || !consumer) {
+      return c.json({
+        error: 'both `topic` and `consumer` are required — a topic fans out, so an event carries one '
+          + 'dead-letter record per consumer and only the pair names a single list',
+      }, 400);
+    }
+    if (!events) return c.json([]);
+    { const denied = requireScopedHost(c, 'events'); if (denied) return denied; }
+    const orgId = callerOrg(c);
+    // Keyed on the ORGANIZATION as well as the pair: coalescing two callers onto one scan must never
+    // hand one organization the answer computed for another.
+    // Encoded as an array, NOT joined on a delimiter. Any single delimiter character can be forged
+    // by the caller: this used to join on a NUL, and a `%00` in the query string decodes to exactly
+    // that — so `topic=a%00b&consumer=c` and `topic=a&consumer=b%00c` built the SAME key, coalesced
+    // onto one scan, and the second caller was handed the first one's rows with a 200 (measured).
+    // JSON encoding is unambiguous because the encoder escapes whatever the parts contain. It is
+    // also the reason the delimiter is gone from the source: written literally, a NUL is invisible
+    // in a diff and in review. Same class of bug @gnldev/events escapes its own key parts for.
+    const key = JSON.stringify([orgId ?? '', topic, consumer]);
+    // The SAME org, for the same reason, everywhere a number about this caller's scans is produced:
+    // the coalescing key above, the host call below, and the `Retry-After` bucket.
+    const bucket = orgId ?? '';
+    let scan = deadScans.get(key);
+    if (!scan) {
+      // The store has stopped answering and there are already `deadScanMaxAbandoned` reads out there
+      // that nobody is waiting for. Starting another is not a retry, it is a second victim.
+      if (deadScanAbandoned >= deadScanMaxAbandoned) {
+        return c.json({
+          error: `the event store is not answering — ${deadScanAbandoned} dead-letter scans have already `
+            + 'passed their deadline and are still outstanding, so no new whole-topic-log read is being '
+            + 'started. Nothing was changed.',
+          code: 'dead_scan_store_wedged',
+        }, 503, { 'Retry-After': deadScanRetryAfter(bucket) });
+      }
+      // EVERYTHING from here to `deadScans.set` is synchronous, and that is load-bearing rather than
+      // stylistic: the admission record and the shared promise have to be published in the same tick
+      // the decision is taken. An `await` in between (waiting for the slot BEFORE registering) meant
+      // that a second identical request, arriving on the next microtask, saw an owner but no promise
+      // to join — and the caller was refused for a scan that was about to be its own.
+      //
+      // `who === undefined` = a caller this process cannot name (see `deadScanCaller`). It is charged
+      // no admission at all and goes straight to the FIFO queue; the only refusal it can see is the
+      // saturation one, which is a true statement about the deployment rather than a false one about
+      // a scan it never started.
+      const who = deadScanCaller(c);
+      if (who !== undefined) {
+        if ((deadScanOutstanding.get(who) ?? 0) >= DEAD_SCAN_PER_CALLER) {
+          return c.json({
+            error: `you already have ${DEAD_SCAN_PER_CALLER} dead-letter scans in flight — this endpoint `
+              + 'reads a whole topic log, so a caller may hold only a few at once. Wait for one, or retry '
+              + 'after `Retry-After`.',
+            code: 'dead_scan_busy',
+          }, 429, { 'Retry-After': deadScanRetryAfter(bucket) });
+        }
+        deadScanOutstanding.set(who, (deadScanOutstanding.get(who) ?? 0) + 1);
+      }
+      const ac = new AbortController();
+      scan = (async () => {
+        const slot = await acquireDeadScanSlot(who !== undefined);
+        if (slot !== 'slot') {
+          throw scanError('dead_scan_busy', slot === 'full'
+            ? 'the dead-letter scanner is saturated — this deployment runs one whole-topic-log read at a '
+              + `time and ${deadScanQueueDepth} requests are already waiting for it. Retry after `
+              + '`Retry-After`.'
+            : 'the dead-letter scanner is saturated — this deployment runs one whole-topic-log read at a '
+              + 'time and the queue did not clear in time. Retry after `Retry-After`.');
+        }
+        const startedAt = Date.now();
+        try {
+          // The SAME brake, re-read now that the slot is actually held. Checking it only at the door
+          // (above, before this closure) let the queue walk straight past it: a request admitted when
+          // the counter was 0 can sit in the FIFO while the scans ahead of it time out, and it then
+          // starts a fresh whole-log read against a store already known to be wedged. Measured with
+          // `timeoutMs 300 < queueWaitMs 5000` and 20 concurrent requests: 17 unwatched full-log reads
+          // went out and the counter reported 9 outstanding, against `maxAbandonedScans: 2`.
+          //
+          // Unreachable on the defaults (30 s deadline > 5 s queue wait, so nothing waits long enough
+          // to overtake the brake) — which is exactly why it was worth writing down: the two options
+          // are documented independently and neither says the brake stops working when one is set
+          // above the other. Inside the `try`, so the `finally` below returns the slot.
+          if (deadScanAbandoned >= deadScanMaxAbandoned) {
+            throw scanError('dead_scan_store_wedged',
+              `the event store is not answering — ${deadScanAbandoned} dead-letter scans passed their `
+              + 'deadline while this request waited for the scan slot, so it was not started. Nothing '
+              + 'was changed.');
+          }
+          const out = await withScanDeadline(
+            (async () => events.listDead(topic, consumer, { orgId, signal: ac.signal }))(),
+            ac,
+          );
+          // ONLY a scan that actually finished is evidence of what a scan costs. In `finally` this
+          // also ran on the timeout path, where the elapsed time is `deadScanTimeoutMs` by
+          // construction — the deadline, not a measurement. Measured: one 4 s timeout, then a real
+          // 10 ms scan, and the next refused caller was told `Retry-After: 5`. A host failure is
+          // excluded for the mirror-image reason: a store that throws in 1 ms would drag the estimate
+          // down and buy a compliant client a 429 it was told to expect not to get.
+          recordDeadScan(bucket, Date.now() - startedAt);
+          return out;
+        } finally {
+          releaseDeadScanSlot();
+        }
+      })().finally(() => {
+        deadScans.delete(key);
+        if (who !== undefined) {
+          const n = (deadScanOutstanding.get(who) ?? 1) - 1;
+          if (n > 0) deadScanOutstanding.set(who, n); else deadScanOutstanding.delete(who);
+        }
+      });
+      deadScans.set(key, scan);
+    }
+    let rows: StudioDeadEvent[];
+    try {
+      rows = await scan;
+    } catch (e) {
+      // A SHARED scan's failure has to reach every joiner as the same answer, so the status is
+      // reconstructed from the error rather than decided where it was thrown.
+      const code = (e as { gnlScanCode?: string })?.gnlScanCode;
+      if (code === 'dead_scan_busy') {
+        return c.json({ error: (e as Error).message, code }, 429, { 'Retry-After': deadScanRetryAfter(bucket) });
+      }
+      // 504 and not 500: nothing here is broken, the store upstream did not answer. Same distinction
+      // the provider-error mapping makes elsewhere in this file.
+      if (code === 'dead_scan_timeout') return c.json({ error: (e as Error).message, code }, 504);
+      // The post-slot re-read of the abandoned-scan brake. Same status and code as the door check, so
+      // a client cannot tell — and should not have to — which of the two refused it.
+      if (code === 'dead_scan_store_wedged') {
+        return c.json({ error: (e as Error).message, code }, 503, { 'Retry-After': deadScanRetryAfter(bucket) });
+      }
+      throw e; // a real host failure — unchanged, the framework's 500
+    }
+    // AFTER the await, deliberately: the scan above may be SHARED with another request, so the
+    // decision about what leaves this process has to be taken per request. Two callers coalesced onto
+    // one scan get different answers here if they carry different grants.
+    //
+    // The permission is now checked UNCONDITIONALLY, where it used to be checked only for a caller
+    // that asked for bodies. That ordering existed so nobody was measured against a permission they
+    // did not need — and `error` is exactly the case that made the premise false: it ships in the
+    // default answer, so every caller needs measuring against `payloads:read` whether or not they
+    // asked for a body.
+    const mayReadData = await allowP(c.req.raw, 'payloads:read');
+    const asked = c.req.query('payload') === '1';
+    return c.json(rows.map((row) => {
+      // ALLOWLIST (`DEAD_EVENT_FIELDS`), not the `{ payload, error, ...rest }` this replaces. The rest
+      // spread forwarded every field the host happened to put on the record, and a host record is not
+      // this server's schema — see `pickFields`.
+      const out = pickFields(row, DEAD_EVENT_FIELDS);
+      // `errorRestricted` is set only when there was an error to withhold — it is a statement about
+      // THE RECORD ("this one has failure text you may not read"), so claiming it for a record with
+      // no error would be inventing one. `payloadRestricted` below is unconditional on purpose: it
+      // answers a different question, about the REQUEST ("you asked for bodies; you may not have
+      // them"), which is true whatever the individual record turned out to hold.
+      //
+      // `row?.` for the same reason `pickFields` has it, and it was inconsistent without it: the
+      // allowlist above tolerated a host record that is `null` or a scalar, and the two lines below
+      // then threw on it — measured, a `listDead` returning `[null, 42]` answered 500. It is not a
+      // denial of service (the slot is released either way), which is exactly why it was worth
+      // fixing rather than arguing about: a host duck-type either is defended against or is not.
+      if (row?.error !== undefined) {
+        if (mayReadData) out.error = row.error;
+        else out.errorRestricted = true;
+      }
+      if (asked) {
+        if (mayReadData) { if (row?.payload !== undefined) out.payload = row.payload; }
+        else out.payloadRestricted = true;
+      }
+      return out;
+    }));
+  });
+
+  /**
+   * Release a quarantined event back for delivery to ONE consumer (the host typically wraps
+   * @gnldev/events' `retryDeadEvent`).
+   *
+   * `false` → 409, the same shape as `queue.retry`'s `null`: there was nothing to release because the
+   * event was never quarantined, or it has since been delivered. What differs from the queue is the
+   * AFTERMATH — retry opens a new job and leaves two rows, a release stamps the existing record and
+   * leaves one. The audit target is the event id with the topic+consumer in `detail`, because the id
+   * on its own does not identify the record that changed.
+   */
+  app.post('/dead-events/release', async (c) => {
+    if (!(await allow(c.req.raw, 'write'))) return deny(c.req.raw, 'write');
+    if (!events?.release) {
+      return c.json({ error: 'dead-event release is not supported (events not given or release not implemented)' }, 501);
+    }
+    const body = (await c.req.json().catch(() => ({}))) as { topic?: unknown; consumer?: unknown; id?: unknown };
+    const { topic, consumer, id } = body;
+    if (typeof topic !== 'string' || !topic || typeof consumer !== 'string' || !consumer || typeof id !== 'string' || !id) {
+      return c.json({ error: 'topic, consumer and id (non-empty strings) are all required — a dead-letter record is addressed by the triple, not by the event id' }, 400);
+    }
+    // Same reason as the queue's: releasing another organization's quarantined event re-runs that
+    // organization's handler.
+    { const denied = requireScopedHost(c, 'events'); if (denied) return denied; }
+    if (!(await events.release(topic, consumer, id, { orgId: callerOrg(c) }))) {
+      return c.json({
+        error: `event '${id}' is not releasable for consumer '${consumer}' on topic '${topic}' — it was never `
+          + 'quarantined, or it has since been delivered',
+      }, 409);
+    }
+    await audit(c, 'event.release', id, { topic, consumer });
+    return c.json({ ok: true });
   });
 
   // ── Cache (if cache is given): hit/miss ratio + manual invalidate (@gnldev/cache stats()/invalidate() duck-type) ──
@@ -3390,22 +4432,55 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // Running scheduler instance (see @gnldev/scheduler's `listTriggers` — reads the SAME sched:def:/
   // Sched:state:/sched:fail: keys as pollScheduler, never MUTATES any state). Returns an empty list if
   // The journal isn't writable + doesn't support listKeys (or the host doesn't use @gnldev/scheduler at all) (same pattern as queue/jobs).
+  /*
+   * TWO OF ITS FIELDS ARE NOT CONFIGURATION, and they are the same two the dead-letter route gates.
+   * `TriggerInfo.input` is the scheduled workflow's own argument, verbatim — the exact analogue of
+   * `StudioDeadEvent.payload`, and per-customer whenever a trigger is. `TriggerInfo.lastError` is
+   * `String(err?.message ?? err)` from the host's own workflow (@gnldev/scheduler writes it to
+   * `sched:fail:<id>`), which ran ON that input, so it can quote it the same way a handler's does.
+   *
+   * This route used to return `listTriggers()` VERBATIM under `catalog:read` alone. Gating the event
+   * body while a scheduled body walked out of the next endpoint would be a patch, not a rule — the
+   * rule is that `catalog:read` is the configuration permission and `payloads:read` is the one for
+   * what flows through it.
+   *
+   * `input` gets no `…Restricted` marker and `lastError` does: nothing in the UI has ever rendered
+   * `input` (it was pure over-exposure, so its absence cannot be misread), while `lastError` IS
+   * rendered under a failed trigger, where a missing one would read as "failed for no stated reason".
+   */
   app.get('/scheduler/triggers', async (c) => {
     if (!(await allowP(c.req.raw, 'catalog:read'))) return deny(c.req.raw, 'read');
     if (!writable || typeof rw.listKeys !== 'function' || typeof rw.get !== 'function') return c.json([]);
-    return c.json(await listTriggers(rw as unknown as Journal));
+    const triggers = await listTriggers(rw as unknown as Journal);
+    if (await allowP(c.req.raw, 'payloads:read')) return c.json(triggers);
+    return c.json(triggers.map(({ input: _input, lastError, ...rest }) => ({
+      ...rest,
+      ...(lastError !== undefined ? { lastErrorRestricted: true as const } : {}),
+    })));
   });
 
   // ── Knowledge / vector search (if vectors is given) ────────────────────────────
   app.post('/knowledge/search', async (c) => {
     if (!(await allowP(c.req.raw, 'catalog:read'))) return deny(c.req.raw, 'read');
+    // AND `payloads:read`, because the response IS customer data. `catalog:read` is the CONFIGURATION
+    // permission — agents, tools, workflows, policy — and it is what an admin reads before granting.
+    // This route returns indexed corpus text verbatim: measured, an acme-bound identity got back
+    // `[{"text":"globex private doc"}]`. Every other route in this file that reaches through the
+    // configuration to the data behind it (a dead-letter body, a scheduled trigger's input) is gated
+    // the same way; this one was the exception that made `catalog:read`'s own description false.
+    //
+    // ROUTE-LEVEL, not a field projection like its siblings: there is no `textRestricted: true` worth
+    // returning, because a search result without its text is not a narrower answer, it is no answer.
+    //
+    // BACKWARD COMPATIBLE by construction, same as when `payloads:read` was introduced: `*:read`
+    // matches it through the wildcard every named read uses, and every role preset starts from
+    // `*:read`. Only an admin who deliberately narrowed someone to a named subset has to add it.
+    if (!(await allowP(c.req.raw, 'payloads:read'))) return deny(c.req.raw, 'read');
     if (!vectors) return c.json([]);
     { const denied = requireScopedHost(c, 'vectors'); if (denied) return denied; }
     const body = (await c.req.json().catch(() => ({}))) as { query?: string; topK?: number };
     if (!body.query?.trim()) return c.json([]);
-    // Read-gated, and it reads the WHOLE corpus: measured, an acme-bound identity got back
-    // `[{"text":"globex private doc"}]`. The host owns the index, so only the host can filter it — but
-    // it needs to know who asked.
+    // The host owns the index, so only the host can filter it — but it needs to know who asked.
     return c.json(await vectors.search(body.query, body.topK, { orgId: callerOrg(c) }));
   });
 

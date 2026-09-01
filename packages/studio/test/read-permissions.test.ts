@@ -222,3 +222,65 @@ describe('Studio refuses an application credential', () => {
     expect((await call(a, '/runs', { headers: { authorization: 'Bearer V' } })).status).toBe(200);
   });
 });
+
+/**
+ * `POST /knowledge/search` returns the indexed corpus, so it is gated on `payloads:read` too.
+ *
+ * It used to sit behind `catalog:read` ALONE — the permission whose own description promises "not the
+ * data flowing through them". Measured before this: an acme-bound identity got back
+ * `[{"text":"globex private doc"}]`. Every sibling that reaches through the configuration to the data
+ * behind it (a dead-letter body, a scheduled trigger's input) was already gated this way; this route
+ * was the exception that made the description false.
+ *
+ * ROUTE-LEVEL rather than a field projection, unlike the siblings: a search result without its text is
+ * not a narrower answer, it is no answer.
+ */
+describe('knowledge search is gated on the data permission, not the configuration one', () => {
+  /** A vectors host that would hand back corpus text if the gate let the caller through. */
+  // `orgScoped: true`: the host declaring its own boundary, so the org machinery is satisfied and this
+  // block measures the PERMISSION and nothing else. Without it the route refuses for org reasons and
+  // both personas look identical.
+  const vectors = { orgScoped: true, search: async () => [{ text: 'CORPUS-METNI', score: 1 }] } as never;
+  const searchApi = () => {
+    const j = new InMemoryJournal();
+    const auth = {
+      authenticate: (req: Request) => {
+        const t = req.headers.get('authorization')?.replace('Bearer ', '') ?? '';
+        return PEOPLE[t] ? { id: t, orgId: 'acme', roles: ['viewer'], permissions: PEOPLE[t] } : null;
+      },
+      // Mirrors rbacApi above EXACTLY, including the explicit 403: `{allow:false}` alone defaults to
+      // 401, which would make the refusal below say "not authenticated" instead of "not permitted".
+      authorize: (p: { permissions?: string[] } | null, _r: Request, ctx: { permission?: string; action: string; path?: string }) => {
+        const fromPath = ctx.path?.split('/').filter(Boolean)[0];
+        const need = ctx.permission ?? `${fromPath ?? 'unknown'}:${ctx.action}`;
+        return (p?.permissions ?? []).some((g) => matches(g, need))
+          ? { allow: true }
+          : { allow: false as const, status: 403 as const, reason: `need ${need}` };
+      },
+      capabilities: () => ({ sso: true, rbac: true, audit: true, multiOrganization: true, users: true, plan: 'pro' }),
+    };
+    return createStudioApi({ reader: j, journal: j, auth: auth as never, org: {}, vectors }) as never;
+  };
+  const search = (app: never, who: string) => call(app, '/knowledge/search', {
+    method: 'POST', headers: { authorization: `Bearer ${who}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ query: 'x' }),
+  });
+
+  it('a `catalog:read` grant without `payloads:read` is refused', async () => {
+    // PRECONDITION: this persona DOES hold catalog:read — otherwise the refusal below proves only that
+    // the old gate still works.
+    expect(PEOPLE.support, 'the support persona no longer holds catalog:read').toContain('catalog:read');
+    expect(PEOPLE.support, 'the support persona already holds payloads:read').not.toContain('payloads:read');
+
+    const res = await search(searchApi(), 'support');
+    expect(res.status, 'the configuration permission still reaches the corpus').toBe(403);
+    expect(JSON.stringify(await res.json().catch(() => ({}))), 'corpus text leaked in the refusal')
+      .not.toContain('CORPUS-METNI');
+  });
+
+  it('`*:read` still reaches it — no existing grant lost access', async () => {
+    const res = await search(searchApi(), 'everything');
+    expect(res.status, 'a wildcard read grant was broken by the new gate').toBe(200);
+    expect(JSON.stringify(await res.json())).toContain('CORPUS-METNI');
+  });
+});

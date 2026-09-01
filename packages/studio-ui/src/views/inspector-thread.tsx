@@ -105,6 +105,31 @@ export function MemoryContextPanel({ runId, threadId, threadMessages }: {
           <span className="text-muted-foreground">{t('memEchoTrimmed', { count: ctx.echoTrimmed })}</span>
         </div>
       )}
+      {/* The one row in this panel that is an ALARM rather than provenance: the input processors left
+          no recoverable copy of the turn, so the thread holds this run's answer and no question. It
+          gets a tinted box instead of a quiet eyebrow line because it is a silent loss — nothing else
+          in the UI shows it, and the run itself looks perfectly successful. Double-coded: the tone is
+          carried by the `lost` label and the sentence, not by color alone. */}
+      {ctx.incomingUnrecoverable && (
+        <div role="status" className="flex items-baseline gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-[11px]">
+          <span className="microlabel shrink-0 text-destructive">lost</span>
+          <span className="min-w-0 text-foreground">
+            {t('memIncomingUnrecoverable')}{' '}
+            {/* The REASON stays untranslated: it is the SDK's own enum (see @gnldev/durable
+                IncomingLossReason) and it is what an operator greps the logs for. */}
+            <span className="font-mono text-destructive">{ctx.incomingUnrecoverable}</span>
+            <span className="block text-muted-foreground">{t(`memLossReason.${ctx.incomingUnrecoverable}`)}</span>
+          </span>
+        </div>
+      )}
+      {/* Neutral by design: the dedupe compared MASKED shapes, so what it can have cost is the turn
+          COUNT, never content. A note, not a warning. */}
+      {ctx.incomingDedupedByShape && (
+        <div className="flex items-baseline gap-2 text-[11px]">
+          <span className="microlabel shrink-0 text-muted-foreground">dedupe</span>
+          <span className="text-muted-foreground">{t('memDedupedByShape')}</span>
+        </div>
+      )}
     </div>
   );
 }
