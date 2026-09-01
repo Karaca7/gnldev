@@ -90,6 +90,25 @@ export class SuiteVersionMismatchError extends Error {
 }
 
 /**
+ * A runId owns one conversation (see run.ts's frozen-input hardening): the caller re-used a runId
+ * that already froze its `:input` under a DIFFERENT threadId. Thrown BEFORE any journal write for the
+ * new attempt — see `assertThreadOwnership` in run.ts, which is called before `runStarted`/
+ * `resolveApprovals` for exactly this reason: a run/thread mismatch is the caller's mistake, not a
+ * running attempt, so it must not flip a possibly-already-'completed' run to 'failed' (see
+ * `outcome.ts`'s `NOT_A_RUN_FAILURE`) and must not journal an approval decision for a call that was
+ * never evaluated.
+ */
+export class RunThreadMismatchError extends Error {
+  constructor(
+    message: string,
+    public readonly detail: { runId: string; startedForThread: string; requestedThread: string },
+  ) {
+    super(message);
+    this.name = 'RunThreadMismatchError';
+  }
+}
+
+/**
  * K1: maps the class name of the three "blocked" errors above → the snake_case error code sent to
  * The client. The SINGLE source of truth — @gnldev/server (sse.ts), @gnldev/agui (route.ts) and
  * @gnldev/studio (server.ts) all use this same map here (previously each package had its own copy that

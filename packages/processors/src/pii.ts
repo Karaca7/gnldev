@@ -76,6 +76,17 @@ function countInputRedactions(
  * Breaks, different separators) can slip through; it can also produce false positives (e.g. a
  * Random 16-digit number). Use it as a noise-reduction / first-line-of-defense layer, not as a real
  * Compliance/security boundary.
+ *
+ * SCOPE, measured — WHAT THE OUTPUT SIDE DOES NOT COVER: `processOutput` transforms the
+ * `{text, messages}` view, so `result.text` and `result.response.messages` come back masked on both
+ * `runDurable` and `streamDurable`, and so does persisted thread memory. `result.steps` and
+ * `result.content` DO NOT — they still hold the model's raw output, and a caller reading either one
+ * sees unredacted PII. This is not fixable inside the hook: a processor's output arity is
+ * unconstrained (a summariser legally returns one message for a turn that produced three), so no
+ * mapping back onto per-step records exists, and `content` is a parts array rather than messages.
+ * Read `text`/`response.messages`; treat `steps`/`content` as raw. On the STREAM path the
+ * `textStream`/`fullStream` deltas are raw as well — they reach the client before the turn ends, so
+ * use `on: 'input'` (or `runDurable`) if the wire itself must never carry it.
  */
 export function piiRedactor(opts: PiiRedactorOptions = {}): Processor {
   const types = opts.types ?? DEFAULT_TYPES;

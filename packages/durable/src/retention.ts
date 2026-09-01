@@ -202,7 +202,7 @@ export async function purgeThread(journal: Journal, threadId: string): Promise<n
 /**
  * GDPR/KVKK deletion runbook, as ONE function — permanently deletes EVERYTHING an organization owns
  * In the ROOT journal: because `withOrg` prefixes every key unconditionally, ONE
- * `deletePrefix('org:<id>:')` covers the org's runs + journals + memory + queue/events + usage/budget
+ * `deletePrefix('org:<id>:')` covers the org's runs + journals + memory + usage/budget
  * Counters (`gnl_counters`/`ctr:` — swept since the P1.6 deletePrefix fix; this function is the reason
  * That fix was load-bearing) + materialized metrics + workflow registry records (`org:<id>:wfrun:*`) +
  * Cross-run dedup keys (`org:<id>:xrun:*`).
@@ -210,6 +210,13 @@ export async function purgeThread(journal: Journal, threadId: string): Promise<n
  * PREFIX-BOUNDARY SAFETY: the trailing ':' makes the sweep exact — org 'acme' can never catch org
  * 'acme2' (`org:acme2:` does not start with `org:acme:`). Callers MUST reject org ids containing ':'
  * (the studio org-delete route already does).
+ *
+ * NOT DELETED, AND THIS ONE IS A GAP RATHER THAN A CHOICE: everything `@gnldev/queue` and
+ * `@gnldev/events` write. Those live in the WorkStore (`gnl_work_log` / `gnl_work_kv`, `wl:` / `wk:`
+ * on redis), and this function deletes through the *Journal* — measured on all four adapters, an
+ * org's work rows survive the purge. A deployment that runs queues or an event bus under `withOrg`
+ * and needs a real erasure has to sweep those tables itself; there is no framework surface for it
+ * (`WorkStore` has no delete at all). Do not read the paragraph above as covering them.
  *
  * DELIBERATELY NOT DELETED (the honest rest of the runbook):
  * Root `__audit__` entries that carry this org as a PAYLOAD field: the audit trail is a root-level

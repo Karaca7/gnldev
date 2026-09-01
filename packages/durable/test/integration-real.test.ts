@@ -423,6 +423,155 @@ describe.skipIf(!RUN)('REAL Redis — SET NX / TTL / MGET (FakeRedis fidelity ch
     expect(dupGot.length).toBeLessThanOrEqual(4); // the handler runs at most once per replica
   });
 
+  it('WorkStore.list(ns) on a real Redis is an EXACT namespace match, not a prefix scan (parity with in-memory/sqlite/pg)', async () => {
+    // The port says `list(ns)` returns the records appended under EXACTLY that ns. InMemory keys a
+    // Map by ns and sqlite/pg run `WHERE ns = ?`, so the contract is theirs for free; this adapter
+    // has no ns column — it writes `<pfx>wl:<ns>:<id>` and reads a namespace back with SCAN MATCH.
+    // Measured here before `encNs`: `list('nspar')` also returned 'nspar:child''s record, and the
+    // two appends below collapsed onto ONE Redis key, so the second was refused by SET NX and lost
+    // WITHOUT AN ERROR. Both halves are adapter-level, so they are asserted with plain namespaces
+    // rather than through @gnldev/events — every WorkStore caller inherits them.
+    await a.work.append('nspar', { tag: 'PARENT' }, 'p-1');
+    await b.work.append('nspar:child', { tag: 'CHILD' }, 'c-1');
+    const parent = await a.work.list('nspar');
+    expect(parent.items.map((i) => i.id)).toEqual(['p-1']); // ['c-1','p-1'] = the child leaked in
+    expect((await b.work.list('nspar:child')).items.map((i) => i.id)).toEqual(['c-1']);
+
+    // The ns/id BOUNDARY: ('nsbnd:eu', 'x') and ('nsbnd', 'eu:x') are two different records that
+    // used to address the same key. append is first-write-wins, so the loser vanished silently.
+    await a.work.append('nsbnd:eu', { tag: 'A-first' }, 'x');
+    await b.work.append('nsbnd', { tag: 'B-PAID' }, 'eu:x');
+    expect((await b.work.list('nsbnd:eu')).items.map((i) => [i.id, (i.payload as any).tag]))
+      .toEqual([['x', 'A-first']]);
+    expect((await a.work.list('nsbnd')).items.map((i) => [i.id, (i.payload as any).tag]))
+      .toEqual([['eu:x', 'B-PAID']]); // [] or [['x','A-first']] = 'B-PAID' was never written
+  });
+
+  // The OTHER escape at the same SCAN sites, and the one that had nine unescaped call sites: the
+  // caller's `keyPrefix` is caller input (`new RedisStorage({ keyPrefix })`) and it went into the
+  // MATCH pattern raw everywhere except `work.list`. A prefix containing a glob metacharacter is
+  // therefore a PATTERN, and it matches the neighbouring store's keys.
+  //
+  // Run here rather than only on fake-redis.ts because the fake's globToRegExp implements `\`, `*`
+  // and `?` but NOT `[...]` — a character class is the form an operator would plausibly produce
+  // (`gnl:[prod]:`) and only a real Redis 7 actually interprets it. The `*` form is pinned without
+  // Docker in events/test/log-namespace.test.ts.
+  it('a glob metacharacter in keyPrefix does not read the store next door (REAL Redis MATCH)', async () => {
+    const meta = new RedisStorage({ client: clientA, keyPrefix: `${SEED}X[a]:` });
+    const neighbour = new RedisStorage({ client: clientB, keyPrefix: `${SEED}Xa:` });
+    await neighbour.runs.put('nrun:model:0', { who: 'NEIGHBOUR' });
+    await meta.runs.put('brun:model:0', { who: 'MINE' });
+
+    // MEASURED with the raw prefix on Redis 7: `['un:model:0']`. Not "my keys plus a stray" — the
+    // store sees ONLY the neighbour's key and NONE of its own, because `[a]` matches the single
+    // character `a` and therefore does not match the three literal characters `[a]` in this store's
+    // own keys. It is then sliced at MY (two bytes longer) prefix length, so `nrun:model:0` comes
+    // back as `un:model:0`: a journal key that exists in no store at all.
+    expect(await meta.runs.listKeys!('')).toEqual(['brun:model:0']);
+    expect(await meta.runs.readRun('nrun')).toEqual([]); // the neighbour's run is not mine
+    expect((await meta.runs.listRuns()).items.map((r) => r.runId)).toEqual(['brun']);
+    expect(await neighbour.runs.listKeys!('')).toEqual(['nrun:model:0']); // unharmed the other way
+    // deletePrefix scans too: a purge must not reach across the boundary either.
+    await meta.runs.deletePrefix!('nrun:');
+    expect(await neighbour.runs.get('nrun:model:0')).toEqual({ who: 'NEIGHBOUR' });
+  });
+
+  it('DISTRIBUTED PUBSUB: a `:` in a topic or consumer name does not collide on a real Redis WorkStore', async () => {
+    // The escaping in events' key builders is the fix for a MEASURED silent loss: `evtack:` and its
+    // siblings join (topic, consumer, id) with `:`, so `topic='a' + consumer='b:c'` and
+    // `topic='a:b' + consumer='c'` used to produce the SAME marker — one consumer's ack swallowed the
+    // other's event permanently, with no dead-letter row and no warning.
+    //
+    // The unit tests cover this on the in-memory store. This runs it where the keys are actually
+    // Redis keys, because that is the layer the escape has to survive: the escaped `%3A` travels
+    // through the client, the server's keyspace and back. Realistic names (`billing:eu`) are the
+    // reason escaping was chosen over rejecting `:` outright.
+    //
+    // TWO SCENARIOS, deliberately on different axes, because one set of ids cannot serve both.
+    //
+    // (1) THE NAMESPACE LEAK needs DISTINCT ids. This test used to give both events the id `inv-1`,
+    //     and an audit measured that it was passing for the wrong reason: `list('evt:inv')` returned
+    //     the foreign topic's record on 12 runs out of 12, and the only thing keeping it green was
+    //     that the leaked record carried the SAME id, so the first consumer's ack marker suppressed
+    //     it. Records sort by `(ts, id)`, so with the tie forced it went red on 4 runs in 10 — a
+    //     test that was simultaneously unstable AND blind to the leak it was named after.
+    //
+    // (2) THE ACK-MARKER SWAP needs the SAME id, and making every id distinct is what stopped this
+    //     test from proving the thing it is named after. A later audit measured that: with `enc`
+    //     deleted outright, NONE of the behavioural assertions below moved — the first red came from
+    //     a raw-Redis-key assertion, i.e. from mechanism. The two identities only alias when the
+    //     event id is shared, so scenario (2) below shares it, in its own topic pair (`ack`/`ack:eu`)
+    //     so that (1)'s no-tie property is untouched. It stays deterministic because it never relies
+    //     on ordering inside one namespace: the two ids live in two namespaces the ADAPTER keeps
+    //     apart, and the polls are sequential, so "the second consumer gets nothing" is a fixed
+    //     outcome rather than a race.
+    const seenP: string[] = [];
+    const seenQ: string[] = [];
+    const cP = createConsumer(a.work, 'inv', async (p: any) => { seenP.push(p.tag); }, { name: 'eu:mail' });
+    const cQ = createConsumer(b.work, 'inv:eu', async (p: any) => { seenQ.push(p.tag); }, { name: 'mail' });
+
+    await emit(a.work, 'inv', { tag: 'PLAIN-TOPIC' }, { id: 'inv-plain-1' });
+    await emit(b.work, 'inv:eu', { tag: 'COLON-TOPIC' }, { id: 'inv-eu-1' });
+
+    await cP.poll();
+    await cQ.poll();
+
+    // Neither consumer may receive the other's payload: `inv` and `inv:eu` are separate topics whose
+    // logs merely serialize to neighbouring key prefixes. With distinct ids no ack marker can mask a
+    // leak, so a leaked record shows up as an extra delivery here.
+    expect(seenP).toEqual(['PLAIN-TOPIC']);
+    expect(seenQ).toEqual(['COLON-TOPIC']);
+
+    // Exactly-once still holds for both (a fix that narrowed the scan into re-delivering is not green).
+    expect(await cP.poll()).toBe(0);
+    expect(await cQ.poll()).toBe(0);
+    expect(seenP).toEqual(['PLAIN-TOPIC']);
+    expect(seenQ).toEqual(['COLON-TOPIC']);
+
+    // (2) THE ACK-MARKER SWAP — the failure the `:`-in-a-consumer-name escape actually exists for,
+    // and the one the distinct ids above cannot reach. `evtack:` joins (topic, consumer, id) with
+    // `:`, so topic `ack` + consumer `eu:box` and topic `ack:eu` + consumer `box` BOTH render
+    // `evtack:ack:eu:box:<id>` — one marker for two identities, as soon as they share an event id.
+    // The two topics genuinely do share one here: an event id is caller-chosen and an order number,
+    // a request id or a UUIDv5 of a payload is routinely the same across a regional split.
+    // R polls first and writes the marker; S then finds its OWN event already "acked" and delivers
+    // NOTHING — poll() returns 0 forever, listDeadEvents is empty, nothing is logged.
+    const seenR: string[] = [];
+    const seenS: string[] = [];
+    const cR = createConsumer(a.work, 'ack', async (p: any) => { seenR.push(p.tag); }, { name: 'eu:box' });
+    const cS = createConsumer(b.work, 'ack:eu', async (p: any) => { seenS.push(p.tag); }, { name: 'box' });
+
+    await emit(a.work, 'ack', { tag: 'R-EVENT' }, { id: 'shared-1' });
+    await emit(b.work, 'ack:eu', { tag: 'S-EVENT' }, { id: 'shared-1' }); // the SAME id, on purpose
+
+    expect(await cR.poll()).toBe(1);
+    expect(await cS.poll()).toBe(1); // 0 = R's ack marker swallowed S's event
+    expect(seenR).toEqual(['R-EVENT']);
+    expect(seenS).toEqual(['S-EVENT']); // [] = the silent, permanent loss this escape removes
+    expect(await cR.poll()).toBe(0); // …and neither marker is so narrow that it stopped acking
+    expect(await cS.poll()).toBe(0);
+
+    // Mechanism corroboration ONLY — every claim above is already load-bearing without it. This
+    // states WHICH key the two identities would have had to share, so a future reader can see the
+    // alias rather than infer it from a delivery count.
+    expect(await a.work.get('evtack:ack:eu:box:shared-1')).toBeUndefined();
+
+    // The silent-loss half (F2), through the public API: `emit` returns an id for both, and both
+    // must actually be readable — under one topic each. Before the fix the second emit reported
+    // success and stored nothing, because topic `pay:eu` + id `k` had taken the same Redis key.
+    const e1 = await emit(a.work, 'pay:eu', { tag: 'A-first' }, { id: 'k' });
+    const e2 = await emit(b.work, 'pay', { tag: 'B-PAID' }, { id: 'eu:k' });
+    expect([e1, e2]).toEqual(['k', 'eu:k']); // both reported success before the fix as well
+    const seenPayEu: string[] = [];
+    const seenPay: string[] = [];
+    const cPayEu = createConsumer(a.work, 'pay:eu', async (p: any) => { seenPayEu.push(p.tag); }, { name: 'led' });
+    const cPay = createConsumer(b.work, 'pay', async (p: any) => { seenPay.push(p.tag); }, { name: 'led' });
+    await cPayEu.poll();
+    await cPay.poll();
+    expect(seenPayEu).toEqual(['A-first']);
+    expect(seenPay).toEqual(['B-PAID']); // [] = the second emit's payload never reached the server
+  });
+
   it('readRun with real MGET: ordering + content correct (the bulkGet path)', async () => {
     const runId = 'mget-run';
     // Separate the timestamps against the Decision #4 tie-break flake (same note as PG — order = created_at, key).

@@ -29,11 +29,17 @@ import { RunBusyError } from './errors.js';
  *   {status:'canceled'}. Writing again from the throw site would be a second machine for one fact —
  *   Racing the first, on a path (the mid-flight model-step gate) that fires once per worker that
  *   Notices. One writer, at the choke point that knows the ORIGINAL decision's timestamp.
+ * RunThreadMismatchError: the caller's own mistake (a runId re-used for a different thread), asserted
+ *   Before the attempt does anything — never a verdict on how the run itself went. Critically, this
+ *   RunId may already carry a 'completed' outcome from a PRIOR, correctly-scoped attempt; classifying
+ *   The mismatch as a failure would let a later, wrong call overwrite that earlier success with
+ *   'failed' (measured: run.ts's assertThreadOwnership fires before runStarted/resolveApprovals for
+ *   The same reason — see its own doc — but the outer catch here is the second half of that fix).
  *
- * Matched by name rather than by instanceof: cancel.ts/compensation.ts import from run.ts's side of
- * The graph, and importing them back here would be a cycle for no gain.
+ * Matched by name rather than by instanceof: cancel.ts/compensation.ts/errors.ts import from run.ts's
+ * Side of the graph, and importing them back here would be a cycle for no gain.
  */
-const NOT_A_RUN_FAILURE = new Set(['CompensatedRunError', 'RunCanceledError']);
+const NOT_A_RUN_FAILURE = new Set(['CompensatedRunError', 'RunCanceledError', 'RunThreadMismatchError']);
 
 /**
  * How a run's error relates to its outcome record. RunBusyError alone cannot answer this — it is

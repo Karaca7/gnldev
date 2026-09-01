@@ -138,9 +138,70 @@ function pageOf<T>(all: T[], start: number, limit: number): Page<T> {
   const next = start + limit;
   return { items: all.slice(start, start + limit), nextCursor: next < all.length ? String(next) : undefined };
 }
-/** Escape Redis glob (MATCH) meta-characters → a dynamic prefix/id matches literally. */
+/**
+ * Escape Redis glob (MATCH) meta-characters → a dynamic prefix/id matches literally.
+ *
+ * Apply it to the WHOLE pattern up to the trailing `*`, not just to the caller-supplied tail. The
+ * fixed part carries `keyPrefix`, which is caller input too (`new RedisStorage({ keyPrefix })`), and
+ * it was going into SCAN raw at nine of the ten call sites. MEASURED on Redis 7 with
+ * `keyPrefix: 'X[a]:'` next to a store using `Xa:` — `listKeys('')` returned `['un:model:0']`:
+ *   · `X[a]:rj:*` is a character class, so it matched the NEIGHBOUR's keys (a cross-store read), and
+ *   · it did NOT match this store's OWN keys, whose text contains the three literal characters
+ *     `[a]` where the class matches exactly one — the store was blind to itself, and
+ *   · the neighbour's key was then sliced at THIS prefix's (longer) length, so the adapter returned
+ *     a journal key that exists in no store at all.
+ * Low severity — an operator has to choose such a prefix — but it is a silent cross-store read, and
+ * the character-wise escape makes it impossible rather than unlikely: globEscape is a no-op on every
+ * prefix that has no glob character in it, so nothing else moves.
+ * Pinned: durable/test/integration-real.test.ts (real Redis, `[a]`) and, without Docker,
+ * events/test/log-namespace.test.ts (`*`, because fake-redis.ts's glob has no character classes).
+ *
+ * Only the MATCH pattern is escaped. SCAN returns REAL keys, so every `k.slice(this.ns().length)`
+ * below must keep using the UNESCAPED length — escaping the slice offset would break them all.
+ */
 function globEscape(s: string): string {
   return s.replace(/[\\*?[\]]/g, (c) => '\\' + c);
+}
+/**
+ * Escapes a WorkStore NAMESPACE before it is joined into a Redis key with `:`.
+ *
+ * `WorkStore.list(ns)` is defined on the port as "the records appended under exactly this ns" — a
+ * whole-value match, which is what the other three adapters do (InMemory keys a Map by ns;
+ * SQLite/Postgres run `WHERE ns = ?`). This adapter has no ns column: it stores a record at
+ * `<pfx>wl:<ns>:<id>` and reads a namespace back with a `SCAN MATCH <pfx>wl:<ns>:*` PREFIX scan. With
+ * `:` unescaped that join is not injective, and MEASURED on a real Redis 7 it broke the contract in
+ * both directions:
+ *
+ *   READ  ns 'evt:orders' scanned `wl:evt:orders:*`, which also matches every record of the SEPARATE
+ *         namespace 'evt:orders:eu' → a consumer of topic `orders` was handed `orders:eu`'s events.
+ *   WRITE append(ns='evt:inv:eu', id='x') and append(ns='evt:inv', id='eu:x') both address
+ *         `wl:evt:inv:eu:x`. append is `SET NX`, first-write-wins → the second record was NEVER
+ *         WRITTEN while `append` still returned its id. Silent loss, with no error and no trace.
+ *
+ * Escaping `:` (the delimiter) and `%` (the escape character itself, so the mapping is injective)
+ * makes the escaped ns colon-free, so the FIRST `:` after the `wl:` prefix is always the ns/id
+ * boundary: one ns ↔ one key space, and no ns's scan prefix can be another ns's scan prefix.
+ *
+ * Same escape SHAPE as @gnldev/events' `enc` (`%3A`/`%25`) — one ontology. Deliberately a SECOND
+ * IMPLEMENTATION, not a shared symbol: the two escapes sit at different layers and have to be able to
+ * fail independently (events escapes the topic so it does not depend on a store property it cannot
+ * observe; this escapes the ns so EVERY WorkStore caller is safe, not just that package). Importing
+ * one from the other would make deleting either silently reconfigure the other, which is the opposite
+ * of the defence in depth. Each layer is pinned on its own — see events/test/log-namespace.test.ts,
+ * which asserts the `%` half separately at the adapter and at the package.
+ *
+ * COST: every `wl:` key whose ns contains `:` or `%` moves (`wl:evt:orders:e1` → `wl:evt%3Aorders:e1`).
+ * Nothing is published, so no live store holds one, and the cost is zero TODAY for that reason alone —
+ * NOT because the moved set is small. It is not: `@gnldev/events` puts a `:` in every namespace it
+ * uses (`evt:<topic>`), and under an organization-scoped store EVERY ns is rewritten to `org:<id>:<ns>`
+ * (org-storage.ts `scopedWork`), so even the queue's plain `qjob` reaches this adapter as
+ * `org:acme:qjob` and moves to `wl:org%3Aacme%3Aqjob:<id>`. Only an UNSCOPED store's colon-free
+ * namespaces are byte-identical. On a live deployment (a managed host's managed store is the first one that
+ * will have real data in it) the old log records would be invisible to `list` and would have to be
+ * renamed. The KV/ack half (`wk:`) is a whole-key GET/SET and is NOT affected.
+ */
+function encNs(ns: string): string {
+  return ns.replace(/%/g, '%25').replace(/:/g, '%3A');
 }
 /** Collect all matching keys by rolling SCAN forward until cursor '0' (NOT KEYS → doesn't block in prod).
  * Redis SCAN's guarantee is at-least-once: the same key CAN come back MULTIPLE TIMES during a rehash →
@@ -326,7 +387,7 @@ class RedisRunJournal implements RunJournal {
    *  Keys are scanned (unlike listRuns's full-keyspace scan) — listStaleRuns only calls this for
    *  Stale CANDIDATES, so it does NOT incur full-keyspace cost. */
   private async isRunSuspended(runId: string): Promise<boolean> {
-    const keys = await scanAll(this.client, this.ns() + globEscape(runId + ':') + '*');
+    const keys = await scanAll(this.client, globEscape(this.ns() + runId + ':') + '*');
     const values = await bulkGet(this.client, keys);
     for (const s of values) {
       if (s == null) continue;
@@ -561,7 +622,7 @@ class RedisRunJournal implements RunJournal {
     return Number(sec) * 1000 + Math.floor(Number(usec) / 1000);
   }
   async listKeys(prefix: string): Promise<string[]> {
-    const keys = await scanAll(this.client, this.ns() + globEscape(prefix) + '*');
+    const keys = await scanAll(this.client, globEscape(this.ns() + prefix) + '*');
     const cut = this.ns().length;
     return keys.map((k) => k.slice(cut));
   }
@@ -574,7 +635,7 @@ class RedisRunJournal implements RunJournal {
    *  RunId (e.g. `mem-appended:<runId>` or `net:<runId>:` prefixes also pass through here) — in that
    *  Case ZREM deletes a non-matching member (no-op, a harmless extra round-trip). */
   async deletePrefix(prefix: string): Promise<number> {
-    const keys = await scanAll(this.client, this.ns() + globEscape(prefix) + '*');
+    const keys = await scanAll(this.client, globEscape(this.ns() + prefix) + '*');
     const n = keys.length ? await this.client.del(...keys) : 0;
     if (this.client.zrem) {
       const rid = prefix.endsWith(':') ? prefix.slice(0, -1) : prefix;
@@ -585,7 +646,7 @@ class RedisRunJournal implements RunJournal {
     // An org purge (GDPR) must not leave `org:<id>:__usage__` behind, and rebuildMetrics's wipe must
     // Not keep stale `__metrics__:` counters. Not included in the return count (parity with sqlite/pg,
     // Which don't count the gnl_counters rows either).
-    const ctrKeys = await scanAll(this.client, this.pfx + CTR + globEscape(prefix) + '*');
+    const ctrKeys = await scanAll(this.client, globEscape(this.pfx + CTR + prefix) + '*');
     if (ctrKeys.length) await this.client.del(...ctrKeys);
     return n;
   }
@@ -602,7 +663,7 @@ class RedisRunJournal implements RunJournal {
    *    The same path as the bulkGet from the N+1 efficiency fix.
    */
   async readRunStats(runId: string): Promise<{ entries: number; bytes: number }> {
-    const keys = await scanAll(this.client, this.ns() + globEscape(runId + ':') + '*');
+    const keys = await scanAll(this.client, globEscape(this.ns() + runId + ':') + '*');
     const cut = this.ns().length;
     // As in readRun, only this run's model/tool entries are counted (input/proc/cfg are EXCLUDED) —
     // Here, WITHOUT fetching the value, filtering is done via parseJournalKey on the key TEXT itself.
@@ -622,7 +683,7 @@ class RedisRunJournal implements RunJournal {
     return { entries: relevant.length, bytes };
   }
   async readRun(runId: string): Promise<JournalEntry[]> {
-    const keys = await scanAll(this.client, this.ns() + globEscape(runId + ':') + '*');
+    const keys = await scanAll(this.client, globEscape(this.ns() + runId + ':') + '*');
     const cut = this.ns().length;
     const values = await bulkGet(this.client, keys);
     const entries: JournalEntry[] = [];
@@ -641,7 +702,7 @@ class RedisRunJournal implements RunJournal {
   async listRuns(q?: ListQuery): Promise<Page<RunSummary>> {
     // Brute-force: scan all rj: entries, summarize per run. Even if the same key is written twice (UPSERT)
     // It's a SINGLE Redis key → NOT DOUBLE-COUNTED (same result as sqlite touchRun's recompute semantics).
-    const keys = await scanAll(this.client, this.ns() + '*');
+    const keys = await scanAll(this.client, globEscape(this.ns()) + '*');
     const values = await bulkGet(this.client, keys);
     const cut = this.ns().length;
     const byRun = new Map<string, { m: number; t: number; s: boolean; c0: number }>();
@@ -727,7 +788,8 @@ class RedisRunJournal implements RunJournal {
 // ── WorkStore (append-log + KV + CAS ack) ─────────────────────────────────────
 class RedisWorkStore implements WorkStore {
   constructor(private client: RedisLike, private pfx: string) {}
-  private logNs = (ns: string) => `${this.pfx}${WL}${ns}:`;
+  /** See `encNs`: the ns is escaped so the ns→key mapping is injective (`list` is an exact match). */
+  private logNs = (ns: string) => `${this.pfx}${WL}${encNs(ns)}:`;
   private kvKey = (key: string) => `${this.pfx}${WK}${key}`;
 
   async append(ns: string, payload: unknown, id?: string): Promise<string> {
@@ -737,7 +799,14 @@ class RedisWorkStore implements WorkStore {
     return eid;
   }
   async list<T = unknown>(ns: string, q?: ListQuery): Promise<Page<LogRecord<T>>> {
-    const keys = await scanAll(this.client, this.logNs(globEscape(ns)) + '*');
+    // TWO escapes, in this order, doing two different jobs. `encNs` (inside logNs) makes the pattern
+    // address exactly ONE namespace; globEscape then stops a `*`/`?`/`[` in the key text from
+    // widening the match. This line used to run only the second one, on the raw `ns` — which is why
+    // `evt:orders` still matched `evt:orders:eu`'s records: a glob escape cannot fix a delimiter
+    // ambiguity, `:` is not a glob metacharacter. globEscape covers the WHOLE pattern including the
+    // caller's `keyPrefix` — here and, since this round, at the other nine SCAN sites too (they used
+    // to escape only their variable tail; see globEscape). See `encNs`.
+    const keys = await scanAll(this.client, globEscape(this.logNs(ns)) + '*');
     const values = await bulkGet(this.client, keys);
     const rows: LogRecord<T>[] = [];
     for (const s of values) {
@@ -880,7 +949,7 @@ export class RedisStorage implements Storage {
     const SPACES: Array<[string, string, boolean]> = [[RJ, 'runs', false], [CTR, 'runs', true], [WK, 'work', false], [META, 'meta', false]];
     for (const [space, store, isHash] of SPACES) {
       const full = this.pfx + space;
-      const keys = await scanAll(full + '*');
+      const keys = await scanAll(globEscape(full) + '*');
       let n = 0;
       for (const k of keys) {
         const bare = k.slice(full.length);
