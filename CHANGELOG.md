@@ -111,6 +111,19 @@ would be worse than saying that.
   transient journal error — which is exactly what a retry is for. The chain is now rehydrated from
   the frozen record instead; if that record cannot be read the turn is refused and stamped
   (`incomingUnrecoverable`) rather than persisted raw.
+- **`exportRun` can now redact the one free-text value a span carries (`@gnldev/otel`).** A failed
+  run's error message travels as `gnl.error` and as the root span's status message, and it is not
+  always your own text — a provider refusing a request commonly echoes the offending input back inside
+  it. `piiRedactor` did not cover this path and could not: it hooks
+  `processInput`/`processOutput`/`processToolResult`, while a run's verdict is written by
+  `recordRunOutcome`, which no processor is consulted about. Measured with the redactor installed, an
+  address in a provider's refusal still reached the span raw, and from there whatever collector
+  `endpoint` names. New `redact` option, plus `piiTextRedactor()` in `@gnldev/processors` so the
+  wiring is one line and shares `piiRedactor`'s defaults. Left **off by default** — the message is the
+  main debugging value a trace carries and the package cannot know whether the endpoint is your own.
+  A redactor that throws or returns a non-string drops the message rather than falling back to the raw
+  text. The zero-dependency `exportRunToOtlp` path and `live.ts` never carried the message and are
+  unchanged.
 
 ### Breaking
 

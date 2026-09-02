@@ -110,3 +110,60 @@ describe('exporting a run that failed', () => {
     expect(root.attributes['gnl.status']).toBe('completed');
   });
 });
+
+// The reason a failed run carries is not always the host's own text. A provider that refuses a
+// Request commonly echoes the offending input back inside the message, so the run's verdict can hold
+// User data — and it reaches this exporter through a path no processor is consulted about:
+// `piiRedactor` hooks processInput/processOutput/processToolResult, while the verdict is written by
+// `recordRunOutcome` in @gnldev/durable. Measured with the redactor installed, the address still
+// Arrived raw in the span, and from there in whatever collector `endpoint` names.
+describe('redacting the one free-text value a span carries', () => {
+  const PII = 'victim.customer@realbank.example';
+  const refusing = {
+    ...base,
+    doGenerate: async () => { throw new Error(`Invalid request: message contained disallowed content: "${PII}"`); },
+  } as any;
+  const maskEmails = (t: string) => t.replace(/[\w.+-]+@[\w.-]+/g, '[REDACTED_EMAIL]');
+
+  const rootWith = async (runId: string, opts: any) => {
+    const journal = new InMemoryStorage().runs;
+    await runDurable({ runId, journal, model: refusing, prompt: 'x' } as any).catch(() => {});
+    const { exporter } = await exportRun(journal, runId, opts);
+    const spans = (exporter as any).getFinishedSpans();
+    return spans.find((s: any) => !s.parentSpanId && !s.parentSpanContext) ?? spans[0];
+  };
+
+  it('without `redact`, the message travels as-is — the documented default', async () => {
+    const root = await rootWith('raw', {});
+    // Pinned deliberately: the message is the main debugging value a trace carries and this package
+    // Cannot know whether `endpoint` is the host's own collector, so the choice is the caller's.
+    expect(String(root.attributes['gnl.error'])).toContain(PII);
+  });
+
+  it('with `redact`, it reaches NEITHER the attribute nor the status message', async () => {
+    const root = await rootWith('masked', { redact: maskEmails });
+    // Both sites, because a mask on one of them is not a mask.
+    expect(String(root.attributes['gnl.error'] ?? '')).not.toContain(PII);
+    expect(String(root.status.message ?? ''), 'the status message leaks it just as far').not.toContain(PII);
+    // Still actionable — only the address was removed, not the reason.
+    expect(String(root.attributes['gnl.error'])).toContain('disallowed content');
+    expect(root.status.code).toBe(SpanStatusCode.ERROR);
+  });
+
+  it('a redactor that throws drops the message rather than falling back to the raw text', async () => {
+    const root = await rootWith('boom', { redact: () => { throw new Error('bad regex'); } });
+    // Fail CLOSED. Falling back to the raw text would send exactly the value the redactor was
+    // Installed to keep out, at the moment it is least likely to be noticed.
+    expect(String(root.attributes['gnl.error'] ?? '')).not.toContain(PII);
+    expect(String(root.status.message ?? '')).not.toContain(PII);
+    // The run is still reported as failed — losing the reason must not lose the verdict.
+    expect(root.status.code).toBe(SpanStatusCode.ERROR);
+    expect(root.attributes['gnl.status']).toBe('failed');
+  });
+
+  it('a redactor that returns a non-string is treated the same way', async () => {
+    const root = await rootWith('wrong-type', { redact: (() => undefined) as any });
+    expect(String(root.attributes['gnl.error'] ?? '')).not.toContain(PII);
+    expect(root.status.code).toBe(SpanStatusCode.ERROR);
+  });
+});

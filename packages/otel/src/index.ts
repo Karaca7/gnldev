@@ -23,6 +23,31 @@ export interface ExportRunOptions {
   modelId?: string;
   /** service.name attribute. */
   serviceName?: string;
+  /**
+   * Applied to every free-text attribute this exporter emits. Today that is exactly one value — a
+   * failed run's `outcome.error`, which reaches both the `gnl.error` attribute and the root span's
+   * status message. Everything else emitted here is a model id, a finish reason, a token count or a
+   * tool status; `mapEntry` never reads prompt, response or tool-result text.
+   *
+   * It exists because a processor chain does NOT cover this path. `piiRedactor` runs in
+   * `processInput`/`processOutput`/`processToolResult`, while the run's verdict is written from a
+   * different place entirely (`recordRunOutcome` in @gnldev/durable), which no processor sees.
+   * Measured with the redactor installed: a provider that echoes the offending input back in its
+   * refusal — `Invalid request: message contained disallowed content: "<address>"` — still put that
+   * address into the span raw, and from there into whatever collector `endpoint` names, which is
+   * commonly a third party's.
+   *
+   * Off by default rather than redacting unconditionally: the message is the main debugging value a
+   * trace carries, and this package cannot know whether the endpoint is the host's own collector.
+   * One line to turn on, sharing `piiRedactor`'s defaults:
+   *
+   *   import { piiTextRedactor } from '@gnldev/processors';
+   *   await exportRun(journal, runId, { endpoint, redact: piiTextRedactor() });
+   *
+   * A redactor that throws or returns a non-string DROPS the message rather than falling back to the
+   * raw text — the raw text is the exact value it was installed to keep out.
+   */
+  redact?: (text: string) => string;
 }
 
 export interface ExportRunResult {
@@ -59,6 +84,19 @@ export async function exportRun(
     : undefined;
   const runFailed = outcome?.status === 'failed';
   const runCanceled = outcome?.status === 'canceled';
+  // The one free-text value that leaves this exporter — see `redact` on the options for why the
+  // Processor chain never touched it. Computed once so the status message and the attribute cannot
+  // Disagree about what was masked.
+  const errorText = ((): string | undefined => {
+    const raw = outcome?.error;
+    if (!raw || !opts.redact) return raw;
+    try {
+      const out = opts.redact(raw);
+      return typeof out === 'string' ? out : undefined;
+    } catch {
+      return undefined; // fail CLOSED: a broken redactor must not resurrect the raw text
+    }
+  })();
   const exporter = opts.exporter ?? (opts.endpoint ? await otlpExporter(opts.endpoint) : new InMemorySpanExporter());
 
   // Deterministic id queues: root traceId + (for the root + each entry) spanId.
@@ -127,12 +165,12 @@ export async function exportRun(
   // paging an on-call because an operator cancelled a run is exactly the false alarm that trains
   // people to ignore the signal. `gnl.status` carries the fact for anyone filtering on it.
   root.setStatus(failed
-    ? { code: SpanStatusCode.ERROR, ...(outcome?.error ? { message: outcome.error } : {}) }
+    ? { code: SpanStatusCode.ERROR, ...(errorText ? { message: errorText } : {}) }
     : stillRunning || runCanceled ? { code: SpanStatusCode.UNSET } : { code: SpanStatusCode.OK });
   // Same precedence as deriveRunStatus in @gnldev/durable: canceled is terminal and wins over even
   // suspended (a canceled run's pending approval can never be applied), then suspended is a live state.
   root.setAttribute('gnl.status', runCanceled ? 'canceled' : anySuspended ? 'suspended' : failed ? 'failed' : stillRunning ? 'running' : 'completed');
-  if (runFailed && outcome?.error) root.setAttribute('gnl.error', outcome.error);
+  if (runFailed && errorText) root.setAttribute('gnl.error', errorText);
   root.end(lastTs > firstTs ? lastTs : firstTs);
 
   // Guarantee the export via forceFlush; DO NOT call shutdown (the caller owns the exporter; on InMemory,

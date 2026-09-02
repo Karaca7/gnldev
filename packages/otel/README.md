@@ -22,7 +22,27 @@ const { traceId, spans } = await exportRun(journal, 'order-123', {
 
 ## API
 - `exportRun(journal, runId, opts?) → { traceId, spans, exporter }`
-  - `opts`: `exporter?` (ready-made SpanExporter) · `endpoint?` (OTLP-HTTP, set up lazily) · `serviceName?` · `pricing?` · `modelId?`
+  - `opts`: `exporter?` (ready-made SpanExporter) · `endpoint?` (OTLP-HTTP, set up lazily) · `serviceName?` · `pricing?` · `modelId?` · `redact?`
+
+### `redact` — the one free-text value a span carries
+
+Spans from this package hold model ids, finish reasons, token counts and tool statuses; prompts, responses and tool results are never read. The single exception is a **failed run's error message**, which travels as `gnl.error` and as the root span's status message.
+
+That message is not always your own text — a provider refusing a request commonly echoes the offending input back inside it. And a processor chain does not cover this path: `piiRedactor` hooks `processInput`/`processOutput`/`processToolResult`, while a run's verdict is written by `recordRunOutcome` in `@gnldev/durable`, which no processor sees. So with the redactor installed, the address still reaches your collector — which for a hosted backend is a third party.
+
+It stays raw by default, because the message is the main debugging value a trace carries and this package cannot know whether `endpoint` is your own collector. One line turns it on, sharing `piiRedactor`'s defaults:
+
+```ts
+import { exportRun } from '@gnldev/otel';
+import { piiTextRedactor } from '@gnldev/processors';
+
+await exportRun(journal, 'order-123', {
+  endpoint: 'http://localhost:4318/v1/traces',
+  redact: piiTextRedactor(),
+});
+```
+
+A redactor that throws or returns a non-string **drops** the message rather than falling back to the raw text — the run is still exported as failed, only the reason is withheld.
 
 ## How it works
 Each model/tool journal entry maps to a span; trace/span ids are derived from runId+seq (deterministic) → exporting the same run again produces the same trace. Cost/token span attributes are added via `getRunCost`.
