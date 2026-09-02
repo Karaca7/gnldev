@@ -4939,7 +4939,23 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       } catch (e: any) {
         return c.json({ error: `eval gate could not run: ${String(e?.message ?? e)}` }, 500);
       }
-      const failing = Object.entries(aggregate).filter(([, v]) => v < minAvg);
+      // A GATE THAT MEASURED NOTHING HAS NOT PASSED. Two degenerate answers used to sail through, both
+      // because `filter` cannot flag what it never sees: an EMPTY aggregate — the dataset ran with no
+      // scorers attached, so `evalDataset` builds `{}`, `Object.entries({})` is `[]`, `failing` is empty
+      // and `passed` is true — and a NON-FINITE average, since `NaN < minAvg` is false so it is not
+      // "failing" either. Both answer "promote it" to the question "is this version good enough", which
+      // is the one direction a gate must never fail in. Neither is reachable from a shipped code path
+      // today (no caller passes `scorers: []`, and every shipped scorer guards its own arithmetic), but
+      // that is a property of today's callers, not of the gate.
+      const measured = Object.entries(aggregate);
+      if (measured.length === 0) {
+        return c.json({
+          error: 'eval gate could not decide: the dataset produced no scores. Attach at least one scorer '
+            + 'to the datasets manager, or remove the gate — a gate with nothing to measure is not a pass.',
+          aggregate,
+        }, 412);
+      }
+      const failing = measured.filter(([, v]) => !Number.isFinite(v) || v < minAvg);
       const passed = failing.length === 0;
       await audit(c, 'agent.gate', name, { version: target.version, datasetId: opts.evalGate.datasetId, minAvg, aggregate, passed });
       if (!passed) {

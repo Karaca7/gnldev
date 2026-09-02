@@ -58,3 +58,47 @@ describe('eval gate (promote gate)', () => {
     expect(caps.evalGate).toBe(true);
   });
 });
+
+/**
+ * A gate that measured nothing has not passed.
+ *
+ * The decision was `Object.entries(aggregate).filter(([, v]) => v < minAvg)` and `passed` meant "the
+ * filter found nothing". Two degenerate answers therefore promoted: an EMPTY aggregate, which a
+ * dataset run with no scorers attached produces (`evalDataset` builds `{}`), and a NON-FINITE average,
+ * because `NaN < minAvg` is false. Neither is reachable from a shipped caller today — but that is a
+ * property of today's callers, and the gate is the thing standing between a bad version and
+ * production.
+ */
+describe('the gate refuses to decide on a degenerate measurement', () => {
+  it('an EMPTY aggregate blocks the promote instead of allowing it', async () => {
+    const app = makeApp({ aggregate: {} });
+    await post(app, '/managed-agents', { name: 'writer', model: 'm/1' });
+
+    const res = await post(app, '/managed-agents/writer/promote', { version: 1 });
+    expect(res.status, 'a suite that scored nothing was read as a pass').toBe(412);
+    expect((await res.json()).error).toContain('no scores');
+
+    // The version really did not go live — the status code alone would not prove that.
+    const list = await (await call(app, '/managed-agents')).json();
+    expect(list.agents[0].active, 'the promote went through anyway').toBeNull();
+  });
+
+  it('a NaN average blocks the promote — `NaN < minAvg` is false, which is not the same as passing', async () => {
+    const app = makeApp({ aggregate: { accuracy: NaN, style: 0.9 } });
+    await post(app, '/managed-agents', { name: 'writer', model: 'm/1' });
+
+    const res = await post(app, '/managed-agents/writer/promote', { version: 1 });
+    expect(res.status, 'an unmeasurable scorer was read as a pass').toBe(412);
+    expect((await res.json()).error).toContain('accuracy');
+
+    const list = await (await call(app, '/managed-agents')).json();
+    expect(list.agents[0].active).toBeNull();
+  });
+
+  it('a healthy suite still promotes — the guard did not close the door on everyone', async () => {
+    const app = makeApp({ aggregate: { accuracy: 0.9, style: 0.95 } });
+    await post(app, '/managed-agents', { name: 'writer', model: 'm/1' });
+    expect(await (await post(app, '/managed-agents/writer/promote', { version: 1 })).json())
+      .toMatchObject({ ok: true, active: 1 });
+  });
+});

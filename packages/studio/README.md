@@ -75,7 +75,11 @@ gnl-studio --config gnl.config.ts       # + Playground (run agents in the browse
 By default the CLI only binds to `127.0.0.1` (so an auth-less Studio doesn't unintentionally spread across
 the network); pass `--host 0.0.0.0` for external access — which requires either `auth` in the config or an
 explicit `--allow-open-network`, because an unauthenticated admin surface on a network address is
-refused rather than warned about (it exits 1 and says which of the two to pick). `createStudioApp`/`createStudioApi` without `auth`
+refused rather than warned about, and the message says which of the two to pick. The port is never opened
+either way. `gnl studio` then exits 1; `gnl dev` prints the refusal but does NOT exit — it runs the server
+in a `tsx watch` child, and a watcher stays up waiting for a file change. Nothing is listening, but a
+supervisor or CI step waiting on an exit code waits forever, so use `gnl studio` where an exit code is
+what you are checking. `createStudioApp`/`createStudioApi` without `auth`
 can only be set up open in `NODE_ENV=production` DELIBERATELY, via the `allowOpenAccess: true` option — if
 the flag is missing, setup throws with a clear error; outside production it warns once via `console.warn`
 on the first request, so a silent fail-open cannot survive a deploy unnoticed. The CLI treats binding to loopback as an
