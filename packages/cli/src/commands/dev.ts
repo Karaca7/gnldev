@@ -33,12 +33,22 @@ export const devCommand: Command = {
 
     const child = spawn(process.execPath, [tsxBin, 'watch', devEntry], {
       stdio: 'inherit',
+      // These three are this command's private channel to `dev-entry`, not an interface. Spreading
+      // `process.env` and only overwriting when a flag was PASSED let an inherited value decide
+      // instead: measured, `GNL_HOST=0.0.0.0 GNL_ALLOW_OPEN_NETWORK=1 gnl dev` bound every interface
+      // with no flag on the command line, and the banner then blamed `--allow-open-network` for a
+      // Decision nobody had made. `bind.ts` says why that matters — the flag exists so the answer is
+      // RECORDED in the command line rather than assumed — and one line in a shell profile or a
+      // `docker-compose` env block would have opened every `gnl dev` in that shell from then on.
+      //
+      // `gnl studio` never read them, so this was a leaking internal, not a documented escape hatch.
+      // The parent's decision is now the only source: absent flags mean absent variables.
       env: {
         ...process.env,
         GNL_CONFIG: configPath,
-        ...(host ? { GNL_HOST: host } : {}),
-        ...(port ? { GNL_PORT: port } : {}),
-        ...(allowOpen ? { GNL_ALLOW_OPEN_NETWORK: '1' } : {}),
+        GNL_HOST: host,
+        GNL_PORT: port,
+        GNL_ALLOW_OPEN_NETWORK: allowOpen ? '1' : undefined,
       },
     });
     // Forward termination to the tsx child. Without this a SIGTERM to `gnl dev` exited the parent and
