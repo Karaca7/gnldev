@@ -333,7 +333,22 @@ export interface WorkflowRunResult {
   canceled?: boolean;
   stepId?: string;
   reason?: unknown;
-  steps: { id: string; kind: string; output: unknown }[];
+  /**
+   * `fallback` is present only when the step's `output` came from a `retry(..., { fallback })`
+   * Substitute rather than from the step itself. Without it the two are indistinguishable in the
+   * Record — a "charged via provider A" step reads identically whether it worked first time or blew
+   * Up twice and landed on provider B, which is the reading an operator is most likely to get wrong.
+   *
+   * `stepId` is the load-bearing half. `attempts` is the number CONSUMED before the substitution, and
+   * Since a fallback is only reached once the budget is spent it normally equals `policy.attempts` —
+   * Which the workflow definition already states. It differs only when a resumed run meets a policy
+   * That has since been lowered, so read it as "attempts consumed", not as this run's failure count.
+   *
+   * TOP-LEVEL steps only. A `retry` inside a nested `asStep` workflow writes its marker under the
+   * Inner step's prefixed key, and this list does not enumerate inner steps at all — so a substitution
+   * There is invisible here, exactly as the inner step's output already is.
+   */
+  steps: { id: string; kind: string; output: unknown; fallback?: { attempts: number; stepId: string } }[];
 }
 
 export interface CreateGnlConfig {
@@ -394,6 +409,17 @@ export interface NetworkConfig {
 }
 
 /** Derives a kind from a composite step id (parallel(a+b) / branch(..) / foreach(..) / loop(..) → kind). */
+/**
+ * A retry's fallback marker, as written by @gnldev/workflow. Structural rather than imported — the
+ * Dependency only runs one way (see the WorkflowLike note above) — and checked field by field,
+ * Because a truthy-only test once let an ordinary step output stand in for one.
+ */
+function isFallbackMarker(v: unknown): v is { __gnlFallback: true; attempts: number; stepId: string } {
+  if (!v || typeof v !== 'object') return false;
+  const m = v as Record<string, unknown>;
+  return m.__gnlFallback === true && typeof m.attempts === 'number' && typeof m.stepId === 'string';
+}
+
 function workflowStepKind(id: string): string {
   return id.startsWith('parallel(') ? 'parallel'
     : id.startsWith('branch(') ? 'branch'
@@ -819,7 +845,25 @@ export function createGnl(config: CreateGnlConfig) {
     }
     const steps: WorkflowRunResult['steps'] = [];
     for (const s of wf.build()) {
-      steps.push({ id: s.id, kind: workflowStepKind(s.id), output: await journal.get(`${runId}:wf:${s.id}`) });
+      // A plain `get`, deliberately: @gnldev/workflow writes this marker with a plain `put` for
+      // Exactly this reason. Its retry COUNTER cannot be read here — on a backend with `incrBy` it
+      // Lives in a counter map rather than the field, so a naive read would return nothing on
+      // Postgres/Redis while looking correct in memory, and the reader that knows the difference is
+      // In @gnldev/workflow, which this file must not import (see the structural-type note above).
+      //
+      // The `_` is that package's reserved-control-key prefix, and the brand is checked rather than
+      // Trusted: an unprefixed key was ALSO the key of a nested step named `fallback`, whose ordinary
+      // Output then came back as a substitution marker and made a step that never failed report that
+      // It had. The prefix stops that collision; the brand stops any other value from posing as one,
+      // Since what is read here is a journal a host also writes to.
+      const raw = await journal.get<unknown>(`${runId}:wf:${s.id}:_fallback`);
+      const fallback = isFallbackMarker(raw) ? { attempts: raw.attempts, stepId: raw.stepId } : undefined;
+      steps.push({
+        id: s.id,
+        kind: workflowStepKind(s.id),
+        output: await journal.get(`${runId}:wf:${s.id}`),
+        ...(fallback ? { fallback } : {}),
+      });
     }
     return { runId, output, suspended, paused, canceled, stepId, reason, steps };
   }

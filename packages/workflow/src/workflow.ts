@@ -55,6 +55,23 @@ export interface StepCtx {
 const resumeKey = (runId: string, waitId: string) => `${runId}:wf:_resume:${waitId}`;
 /** Durable cancel flag — once written, NO worker will run further steps of this run (cross-process). */
 const canceledKey = (runId: string) => `${runId}:wf:_canceled`;
+
+/**
+ * Where a retry records that a step's output came from its fallback rather than from the step.
+ *
+ * The `_` is the reserved-control-key convention (`_suspend`, `_resume:*`, `_canceled`) and it is
+ * Load-bearing here rather than cosmetic. A nested workflow's steps live at
+ * `<runId>:wf:<outerId>:<innerId>`, so a plain `:fallback` suffix is ALSO the key of an inner step
+ * Literally named `fallback` — measured, its output was then read back as a substitution marker, and
+ * A step that never failed reported that it had. That is worse than the ambiguity this marker exists
+ * To remove: it does not fail to say, it says the wrong thing.
+ *
+ * The prefix also puts the key inside `forkWorkflowRun`'s existing `:_` skip, which is what a fork
+ * Needs: the marker describes a specific output and must not outlive it (see the explicit copy there).
+ */
+const FALLBACK_MARKER_BRAND = '__gnlFallback' as const;
+const fallbackMarkerKey = (runId: string, keyPrefix: string | undefined, stepId: string) =>
+  `${runId}:wf:${keyPrefix ?? ''}${stepId}:_fallback`;
 /**
  * Top-level status registry key. Deliberately NOT under `<runId>:` — a `wfrun:` prefix scan
  * (`listKeys('wfrun:')`) enumerates every workflow run in ONE query, which a runId-prefixed key
@@ -481,6 +498,14 @@ export async function forkWorkflowRun(
     if (flat !== undefined) {
       await journal.put(`${dstRunId}:wf:${id}`, flat);
       copiedSteps.push(id);
+      // The fallback marker travels WITH the output it describes, and only with it. Copying it
+      // Unconditionally (which the `:_`-skipping sweep below would never do, but an earlier
+      // Unprefixed key did) produced a fork whose record claimed a substitution for an output that
+      // Was never copied: measured on a source that crashed between writing the marker and writing
+      // The step output, the fork then reported "failed twice, fell back to B" for a step it ran
+      // Itself and got right first time. A provenance record must not outlive its subject.
+      const marker = await journal.get(`${srcRunId}:wf:${id}:_fallback`);
+      if (marker !== undefined) await journal.put(`${dstRunId}:wf:${id}:_fallback`, marker);
     }
     // Nested sub-workflow steps live under `<runId>:wf:<id>:<inner>` — sweep them when the journal
     // Can list, skipping control keys (`_suspend`, `_resume:*`, ...) and retry counters.
@@ -667,7 +692,25 @@ export function retry<I = any, O = any>(s: Step<I, O>, policy: RetryPolicy<I, O>
           }
         }
       }
-      if (policy.fallback) return (await runStep(policy.fallback, input, ctx)) as O;
+      if (policy.fallback) {
+        const out = (await runStep(policy.fallback, input, ctx)) as O;
+        // The fallback's output is written under the RETRIED step's id (this wrapper carries `s.id`),
+        // So the record cannot say which of the two produced it: a "charged via provider A" step reads
+        // Identically whether it worked first time or failed twice and landed on provider B. The
+        // `:attempts` counter next to it does not close the gap — it may live in a counter map rather
+        // Than a field, and the introspection in @gnldev/durable cannot import the reader that knows
+        // The difference without a circular dependency.
+        //
+        // A plain `put` for that reason: whatever reads this only needs `journal.get`. Written after
+        // The fallback, so a crash in between leaves no claim of a substitution that never ran; the
+        // Repeat on resume is a same-value overwrite.
+        await ctx.journal.put(fallbackMarkerKey(ctx.runId, ctx.keyPrefix, s.id), {
+          [FALLBACK_MARKER_BRAND]: true,
+          attempts: used,
+          stepId: policy.fallback.id,
+        });
+        return out;
+      }
       throw new RetryExhaustedError(s.id, policy.attempts, lastErr);
     },
   };

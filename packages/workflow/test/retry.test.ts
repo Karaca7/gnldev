@@ -54,6 +54,34 @@ describe('retry', () => {
     expect(fb.runs).toBe(1);
   });
 
+  // The fallback's output is stored under the RETRIED step's id, so the record alone could not say
+  // Which of the two produced it: a "charged via provider A" step read identically whether it worked
+  // First time or failed twice and landed on provider B. `:attempts` sitting next to it does not
+  // Close that — on a backend with `incrBy` the counter lives in a counter map rather than the
+  // Field, so a reader that only calls `get` sees nothing.
+  it('records that the output came from the fallback, readable with a plain get', async () => {
+    const journal = mkJournal();
+    const c = { runs: 0 };
+    const wf = workflow<number>().then(
+      retry(flaky(99, c), { attempts: 2, fallback: step('backup', async (n: number) => -n) }),
+    );
+    await wf.run(7, { runId: 'r3', journal });
+
+    expect(journal.map.get('r3:wf:is')).toBe(-7);
+    expect(journal.map.get('r3:wf:is:_fallback')).toEqual({ __gnlFallback: true, attempts: 2, stepId: 'backup' });
+  });
+
+  it('a step that succeeded on its own carries no fallback marker — including after a retry', async () => {
+    const journal = mkJournal();
+    const c = { runs: 0 };
+    // Fails once, then succeeds: retried, but the output is the step's own.
+    const wf = workflow<number>().then(
+      retry(flaky(1, c), { attempts: 3, fallback: step('backup', async (n: number) => -n) }),
+    );
+    expect(await wf.run(5, { runId: 'r4', journal })).toBe(10);
+    expect(journal.map.get('r4:wf:is:_fallback'), 'a retry is not a substitution').toBeUndefined();
+  });
+
   it('without a fallback, throws RetryExhaustedError (stepId + attempts + cause)', async () => {
     const journal = mkJournal();
     const c = { runs: 0 };

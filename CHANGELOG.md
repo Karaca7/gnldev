@@ -209,6 +209,16 @@ whether or not anyone is on the other side of them yet.
 
 ### Added
 
+- **A workflow step tells you when its output came from a `retry` fallback.** The substitute's output
+  is journaled under the RETRIED step's id, so `runWorkflow`'s step list — what Studio renders — showed
+  a "charged via provider A" step identically whether it succeeded first time or failed twice and
+  landed on provider B. The `:attempts` counter beside it does not close the gap: on a backend with
+  `incrBy` it lives in a counter map rather than the field, and the reader that knows the difference is
+  in `@gnldev/workflow`, which `registry.ts` must not import without making the dependency circular.
+  `WorkflowRunResult.steps[].fallback` now carries `{ attempts, stepId }`, written by the retry
+  combinator as a plain record so the introspection needs only a `get`. Absent when the step produced
+  its own output — a retry that eventually succeeded is not a substitution.
+
 - **`RunStatus` gained `'failed'`.** A run that threw recorded nothing, so a 401 on the first model
   call or a cost ceiling tripping mid-run read back as `'completed'` — and `exportRun` sent it to OTel
   with `SpanStatusCode.OK`. Runs now write an outcome at each terminal boundary. A *suspended* run is
