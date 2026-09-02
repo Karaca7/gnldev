@@ -12,7 +12,7 @@
 import type { Context } from 'hono';
 import { toFetchHandler, type FetchHandler } from './handler.js';
 import { Hono } from 'hono';
-import { limitBreachFromSteps, blockedFromSteps, BLOCKED_ERROR_CODES } from '@gnldev/durable';
+import { limitBreachFromSteps, blockedFromSteps, BLOCKED_ERROR_CODES, blockedErrorCode } from '@gnldev/durable';
 import type { CreateGnlConfig } from '@gnldev/durable';
 import { createGnl } from '@gnldev/durable';
 import { streamSSE } from 'hono/streaming';
@@ -183,6 +183,31 @@ function aguiRouteApp(config: CreateGnlConfig, opts: CreateAguiRouteOptions = {}
         context: body.context,
       });
     } catch (e: any) {
+      // A refusal thrown BEFORE the stream exists is still one of ours, and it used to arrive as a bare
+      // 400 with the reason flattened into prose. `streamDurable` asserts thread ownership and takes the
+      // run lock before it returns anything, so `RunThreadMismatchError`, `RunBusyError`,
+      // `SideEffectRetryBlockedError` and `RetryLimitExceededError` all land here — the same errors
+      // @gnldev/server answers with a status and a `code`. A client talking to this route had to match
+      // on the sentence instead, which is the practice the typed errors exist to end.
+      //
+      // Errors raised MID-stream are a different contract and are untouched: once frames are flowing
+      // they surface as an SSE `error` event (see pipeAguiStream), because a response already committed to
+      // 200 cannot become a 409.
+      const name = (e as { name?: string })?.name;
+      if (name === 'RunThreadMismatchError') {
+        return c.json({ error: e.message, code: 'run_thread_mismatch', detail: e.detail }, 409);
+      }
+      const blocked = blockedErrorCode(e);
+      if (blocked) {
+        const body = { error: e?.message ?? String(e), code: blocked, detail: e?.detail };
+        return blocked === 'retry_limit_exceeded'
+          ? c.json(body, 422)
+          : c.json({ ...body, resumable: true }, 409);
+      }
+      if (name === 'RunLimitExceededError' || name === 'ToolLoopDetectedError') {
+        const code = name === 'RunLimitExceededError' ? 'run_limit_exceeded' : 'tool_loop_detected';
+        return c.json({ error: e.message, code, detail: e.detail, resumable: true }, 422);
+      }
       return c.json({ error: String(e?.message ?? e) }, 400);
     }
     return pipeAguiStream(c, body.runId, result, { threadId });

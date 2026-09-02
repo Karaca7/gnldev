@@ -205,3 +205,37 @@ describe('@gnldev/agui createAguiRoute + pipeAguiStream', () => {
     expect(bad.status).toBe(400);
   });
 });
+
+/**
+ * A refusal thrown BEFORE the stream exists reaches the client as a status, not as prose.
+ *
+ * `streamDurable` asserts thread ownership and takes the run lock before it returns anything, so those
+ * refusals land in this route's setup `catch` — which answered a bare 400 with the reason flattened
+ * into a sentence, dropping the `code` and `detail` the typed errors carry. @gnldev/server answers the
+ * same errors with a status and a code; a client should not have to learn which host it reached.
+ *
+ * This block had ZERO coverage: replacing the whole catch body left all 18 tests green, because the
+ * one error-path test above returns before the try is ever entered.
+ */
+describe('a refusal raised before the stream starts', () => {
+  const post = (app: any, body: unknown) => call(app, '/agents/chat/run', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+  });
+
+  it('a runId re-used on another thread → 409 + code + the detail naming both threads', async () => {
+    const journal = new InMemoryJournal();
+    const app = createAguiRoute({ journal, agents: { chat: { model: textMock() } } });
+
+    // PRECONDITION: the runId is established for thread A. Without it the second call is a first call.
+    const first = await post(app, { runId: 'rx', threadId: 'A', prompt: 'ilk' });
+    expect(first.status, 'PRECONDITION: the first run did not start').toBe(200);
+    await first.text(); // drain, so the run completes and freezes its input
+
+    const res = await post(app, { runId: 'rx', threadId: 'B', prompt: 'ikinci' });
+    expect(res.status, 'the mismatch was flattened into a bare 400').toBe(409);
+    const body = await res.json();
+    expect(body.code, 'a client still has to match on the sentence').toBe('run_thread_mismatch');
+    expect(body.detail).toEqual({ runId: 'rx', startedForThread: 'A', requestedThread: 'B' });
+    expect(body.resumable, 'a runId that can never succeed was advertised as retryable').toBeUndefined();
+  });
+});
