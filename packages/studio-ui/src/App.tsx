@@ -7,7 +7,7 @@ import {
   Activity, Boxes, Workflow, Network, Plug, Inbox, ScrollText, Building2, Shield,
   FlaskConical, Gauge, Wrench, Moon, Sun, Languages, MessageSquare, BookOpen, ListChecks, Library, LogOut, Users as UsersIcon,
   AlertTriangle, Database, Clock, Menu, Search, Scale, DollarSign, MailWarning } from 'lucide-react';
-import { useCapabilities, useMe, api, ApiError, shouldForceReauth, type Capabilities } from './api';
+import { useCapabilities, useMe, api, ApiError, isCredentialError, shouldForceReauth, type Capabilities } from './api';
 import { Spinner, ViewSkeleton, Btn, ErrorBox, Badge, cn } from './components';
 import { CommandPalette, type CommandItem } from './ui';
 import { getToken, setToken, clearToken } from './auth';
@@ -502,9 +502,22 @@ function Login({ sso, onAuthed }: { sso?: boolean; onAuthed: () => void }) {
       await api.runs(); // gated read → validates the token
       onAuthed();
     } catch (err) {
+      // A 403 here means the token WORKED and `runs:read` is not in its grants — the probe endpoint
+      // Happens to be one this caller may not see. Treating that as a bad token locked such a caller
+      // Out of the product entirely: measured, a valid token granting `threads:read` + `agents:run`
+      // Got `403 permission denied: runs:read`, was cleared, and was reported as invalid. There was no
+      // Second attempt that could succeed, because the probe never changes.
+      //
+      // The same conflation the session guard had, one screen earlier — fixing only the post-login
+      // Loop would have left the door itself locked. `isCredentialError` is the single place that
+      // Decides what "your credential is no good" means, so it decides here too.
+      if (!isCredentialError(err) && err instanceof ApiError) {
+        onAuthed(); // the server answered as an identified caller; the views gate themselves
+        return;
+      }
       clearToken();
       setError(
-        err instanceof ApiError && (err.status === 401 || err.status === 403)
+        isCredentialError(err)
           ? t('invalidToken')
           : t('connectionFailed', { error: String(err) }),
       );

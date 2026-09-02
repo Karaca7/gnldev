@@ -48,18 +48,25 @@ const CAPS_OFF = {
 
 // ── A2: scope refusal vs. a bad token ────────────────────────────────────────
 describe('org_scope_refused is a place, not an identity', () => {
-  // The decision itself. A plain 403 and a 401 still mean "your token is no good" → re-login.
-  it('shouldForceReauth is false for a 403 coded org_scope_refused and true for a plain 403 / a 401', () => {
+  // The decision itself. Only a 401 means "your credential is no good"; every 403 means "identified,
+  // not allowed" and must leave the session alone.
+  //
+  // This test used to require the opposite for an uncoded 403, which narrowed the exclusion to
+  // refusals CARRYING `org_scope_refused` — and a permission denial carries no code, so it fell into
+  // the loop the exclusion existed to prevent. That is the common case, not a corner: composing
+  // narrow grants is what the Users screen is for.
+  it('shouldForceReauth is false for every 403 — coded or not — and true only for a 401', () => {
     const authed = { authRequired: true, hasToken: true };
     const scoped = new ApiError(403, 'writes are not supported in an org context', { code: 'org_scope_refused', error: 'nope' });
+    const denied = new ApiError(403, 'permission denied: threads:read'); // auth-ee/rbac.ts:73, no code
     const plain403 = new ApiError(403, 'Forbidden');
     const plain401 = new ApiError(401, 'Unauthorized');
     expect(shouldForceReauth({ err: scoped, ...authed })).toBe(false);
-    expect(shouldForceReauth({ err: plain403, ...authed })).toBe(true);
+    expect(shouldForceReauth({ err: denied, ...authed })).toBe(false);
+    expect(shouldForceReauth({ err: plain403, ...authed })).toBe(false);
     expect(shouldForceReauth({ err: plain401, ...authed })).toBe(true);
-    // …and the exclusion is narrow: the scope refusal is still an auth-status error, it just isn't
-    // grounds for throwing the session away.
-    expect(isAuthError(scoped)).toBe(true);
+    // The scope label is still parsed and still used elsewhere (the views below read it to explain
+    // WHY a card is empty); it just no longer carries the whole burden of not destroying the session.
     expect(isScopeError(scoped)).toBe(true);
     expect(isScopeError(plain403)).toBe(false);
     expect(isScopeError(new Error('network down'))).toBe(false);
@@ -85,9 +92,10 @@ describe('org_scope_refused is a place, not an identity', () => {
     expect(shouldForceReauth({ err, authRequired: true, hasToken: true })).toBe(false);
   });
 
-  // A 403 whose body is NOT JSON (a proxy's HTML page, an empty body) must stay a plain 403 —
-  // otherwise a gateway error would masquerade as a scope refusal and the dead session would persist.
-  it('a 403 with an unparseable body yields no .code and still forces re-auth', async () => {
+  // A 403 whose body is NOT JSON (a proxy's HTML page, an empty body) must stay a plain 403 — a
+  // gateway error must not masquerade as a labelled scope refusal, because views read that label to
+  // explain WHY a card is empty.
+  it('a 403 with an unparseable body yields no .code', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: false, status: 403, statusText: 'Forbidden',
       headers: { get: () => 'text/html' },
@@ -95,7 +103,10 @@ describe('org_scope_refused is a place, not an identity', () => {
     })));
     const err = await api.cacheStats().then(() => null, (e) => e);
     expect((err as ApiError).code).toBeUndefined();
-    expect(shouldForceReauth({ err, authRequired: true, hasToken: true })).toBe(true);
+    // It does not end the session either. This line used to require the opposite, on the reasoning
+    // that an unlabelled 403 might mean a dead session — but a dead session is answered 401. A proxy
+    // Returning 403 says nothing about the credential, so throwing it away helps nobody.
+    expect(shouldForceReauth({ err, authRequired: true, hasToken: true })).toBe(false);
   });
 });
 

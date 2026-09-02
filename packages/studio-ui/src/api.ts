@@ -131,20 +131,57 @@ export function isScopeError(err: unknown): boolean {
 }
 
 /**
- * Mid-session 401/403 → should we fall back to a clean login?
+ * Is this the server saying the CREDENTIAL is no good?
+ *
+ * Only 401 — and the reason is about COVERAGE, not about what a 403 means in the abstract.
+ *
+ * A first version of this note claimed no 403 ever indicates a bad credential. That is false, and
+ * measured: on the free `roleAuth` path a WRITE with no valid identity answers 403, not 401
+ * (`auth/role-auth.ts:202`, and the same choice in `adapter.ts:37` and `gate.ts:143`, both
+ * `action === 'write' ? 403 : 401`).
+ *
+ * What holds is narrower and sufficient: every READ answers 401 for an unidentified caller
+ * (`role-auth.ts:206`, `auth-ee/rbac.ts:68` — measured across five provider configurations), and
+ * there is no screen in this UI that does not read. So a revoked or expired token still produces a
+ * 401 within the first render, and the session still ends. Ignoring 403 costs nothing that 401 does
+ * not already cover, and buys the case below.
+ *
+ * The residual: a reverse proxy in front of Studio that answers 403 to EVERYTHING would never trip
+ * the automatic sign-out. Manual logout is unaffected — it is bound to no query.
+ *
+ * The cost of collapsing it was a loop with no exit. Measured: a principal whose grants omit
+ * `threads:read` lands on `/inspector` (the default route), `useThreads` fires, 403 comes back, and
+ * the token — a perfectly valid one — is cleared. Signing in again returns them to the same page and
+ * the same 403. `threads:read` sits in the permission catalogue described as "View conversations —
+ * end users' own words", which is exactly the grant an operator withholds on purpose, and the Users
+ * screen exists to compose such sets.
+ *
+ * An earlier fix took the same shape but only exempted refusals CARRYING `org_scope_refused`, so a
+ * permission denial — which carries no code — fell straight back into the loop. Keyed on status now,
+ * so a new kind of 403 cannot reopen it.
+ */
+export function isCredentialError(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 401;
+}
+
+/**
+ * Mid-session rejection → should we fall back to a clean login?
  * Returns true ONLY when auth is ON (authRequired) AND a token is present. When there is no
  * Token (we're already on the Login screen), always returns false to avoid a re-login loop —
  * The 401 there is shown by the Login component with its own error message.
  *
- * A SCOPE refusal is excluded, and the case is not hypothetical: the nav hides a row the caller's
- * capabilities exclude, but every route stays registered, so typing `/cache` mounts the view anyway.
- * `useCacheStats` then polls `GET /cache/stats`, which answers 403 for an organization-bound admin —
- * and this function, matching on status alone, cleared their token and flushed the cache. They were
- * signed out for visiting a page. Every 5s, on every login, until they stopped using the URL.
+ * A 403 never gets here (see `isCredentialError`), and that is not a refinement — it is the whole
+ * Behaviour. Every route stays registered even when the nav hides its row, so typing `/cache` or
+ * Landing on the default `/inspector` mounts a view whose hooks fire regardless of the caller's
+ * Grants. Answering those refusals by clearing the token signed people out for VISITING A PAGE: every
+ * 5s, on every login, until they stopped using the URL.
+ *
+ * Fixed once for organization-scope refusals only, by exempting the `org_scope_refused` code. A
+ * Permission denial carries no code, so it went straight back into the same loop — and that is the
+ * Common case, since composing narrow grants is what the Users screen is for.
  */
 export function shouldForceReauth(input: { err: unknown; authRequired: boolean; hasToken: boolean }): boolean {
-  if (isScopeError(input.err)) return false;
-  return input.authRequired && input.hasToken && isAuthError(input.err);
+  return input.authRequired && input.hasToken && isCredentialError(input.err);
 }
 
 /**
