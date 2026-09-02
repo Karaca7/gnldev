@@ -23,16 +23,19 @@ export const PII_PATTERNS: Record<PiiType, RegExp> = {
   // Corruption in the payload this most often sees.
   //
   // Digit GROUPS are bounded instead, separators must be single characters, and an ISO date cannot
-  // Start a match. Verified both directions rather than tightened by eye: eleven real formats
-  // (E.164, parenthesised, dotted, Turkish local, unbroken international) all still mask — nothing
-  // Was traded away for the precision.
+  // Start a match; `looksLikePhone` then rules on the digits.
   //
-  // NOT a loose pattern plus a rejecting validator, which was tried and measured DANGEROUS: a greedy
-  // Candidate swallows `1234-56-78 555-123-4567` whole, fails a digit-count check, and `String.replace`
-  // Has already consumed the span — leaving a real phone number in the clear. Over-matching is safe
-  // Only while every match is masked; the moment a match can be refused, the tightness has to live in
-  // The pattern itself.
-  phone: /(?!\d{4}-\d{2}-\d{2})(?<![\d(])\(?\+?\d{1,3}\)?[ .-]?\(?\d{2,4}\)?(?:[ .-]?\d{2,4}){2,3}(?!\d)/g,
+  // Measured against 24 written forms across a dozen countries, and against non-PII text that must
+  // Survive. An earlier version of this pattern was checked against eleven formats CHOSEN AFTER the
+  // Rule was written, all of them shapes it already accepted — it passed, while `+49 30 12345678`,
+  // `+90 5321112233`, `0212 5551234` and `(212) 5551234` went through unmasked, and adding one space
+  // To `+905321112233` was enough to turn its masking off. A set assembled to fit the rule measures
+  // The rule against itself; the list in `builtins.test.ts` is now deliberately wider than the rule.
+  //
+  // The refusal is safe here only because `replaceValidated` does not consume a rejected span — see
+  // Its note. With `String.replace`, a candidate that spanned `1234567890 555-123-4567`, failed the
+  // Digit count and was skipped took the real number with it.
+  phone: /(?!\d{4}-\d{2}-\d{2})(?<![\d(\w])\(?\+?\d{1,4}\)?(?:[ .-]?\(?\d{1,4}\)?){0,6}(?![\w])/g,
   // Country + check digits + up to 30 alphanumerics, printed either compact or in 4-char groups.
   iban: /\b[A-Z]{2}\d{2}(?:[ -]?[A-Z0-9]{4}){2,7}(?:[ -]?[A-Z0-9]{1,3})?\b/g,
 };
@@ -67,7 +70,13 @@ export function looksLikePhone(s: string): boolean {
   const groups = s.match(/\d+/g) ?? [];
   const digits = groups.reduce((n, g) => n + g.length, 0);
   if (digits < 7 || digits > 15) return false;
-  return groups.length === 1 || groups.every((g) => g.length <= 5);
+  if (/\s{2,}/.test(s)) return false; // a run of spaces joins two unrelated numbers, not a number
+  // Only the LAST group may be long: what precedes a subscriber number is a country or area code,
+  // Which is short. An earlier rule required EVERY group to be short, which is how the most common
+  // Written forms in several countries stopped being masked — `+49 30 12345678`, `+90 5321112233`,
+  // `0212 5551234`, `(212) 5551234` all leaked, and adding one space to `+905321112233` was enough to
+  // Turn its masking off. Measured against 24 real formats rather than a set chosen to fit the rule.
+  return groups.slice(0, -1).every((g) => g.length <= 4);
 }
 
 /** Card check digit (Luhn). Rejects runs too short to be a card so a stray 12-digit id cannot pass. */
@@ -142,6 +151,44 @@ export function globalize(re: RegExp): RegExp {
   return new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`);
 }
 
+/**
+ * Replaces every match that passes `test`, and — the point of writing this by hand rather than using
+ * `String.replace` with a callback — does NOT consume the ones that fail.
+ *
+ * A rejected match is a span the scanner looked at and declined, not a span it has dealt with.
+ * `String.replace` advances past it regardless, so a candidate that swallowed a real identifier and
+ * Then failed its own checksum took that identifier out of reach of every later pattern. Measured,
+ * With the checksum enabled and by default:
+ *
+ *   `ref 1111 2222 4111 1111 1111 1111`  → the valid card inside came back unmasked
+ *   `id 1234567890 555-123-4567`         → nothing at all was masked
+ *
+ * Both are the failure mode a validator is supposed to prevent, caused by the validator. Resuming at
+ * `index + 1` costs a rescan of the rejected span and removes the class: whatever real identifier
+ * Starts inside it is still found. Everything else about the scan is unchanged — matches that pass
+ * Are replaced exactly as before, and a pattern with no `test` behaves identically to `replace`.
+ */
+export function replaceValidated(
+  s: string,
+  re: RegExp,
+  replacement: string,
+  test?: (match: string) => boolean,
+): { text: string; count: number } {
+  const g = globalize(re);
+  let out = '';
+  let last = 0;
+  let count = 0;
+  let m: RegExpExecArray | null;
+  while ((m = g.exec(s)) !== null) {
+    if (m[0] === '') { g.lastIndex++; continue; } // a zero-width match would spin forever
+    if (test && !test(m[0])) { g.lastIndex = m.index + 1; continue; }
+    out += s.slice(last, m.index) + replacement;
+    last = m.index + m[0].length;
+    count++;
+  }
+  return { text: out + s.slice(last), count };
+}
+
 export const patternMask = (p: PiiPattern): string => p.mask ?? `[REDACTED_${p.name.toUpperCase()}]`;
 
 export interface RedactOptions {
@@ -168,13 +215,9 @@ export function applyRedactions(
   const hit: string[] = [];
 
   const step = (name: string, re: RegExp, replacement: string, test?: (m: string) => boolean) => {
-    let n = 0;
-    out = out.replace(globalize(re), (m) => {
-      if (validate && test && !test(m)) return m; // shape matched, the identifier's own check did not
-      n++;
-      return replacement;
-    });
-    if (n > 0) { hit.push(name); total += n; }
+    const { text, count } = replaceValidated(out, re, replacement, validate ? test : undefined);
+    out = text;
+    if (count > 0) { hit.push(name); total += count; }
   };
 
   // Custom patterns run FIRST, and that order is load-bearing rather than cosmetic: the built-in

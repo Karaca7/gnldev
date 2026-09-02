@@ -57,6 +57,17 @@ describe('piiRedactor', () => {
     expect(redact('TR33 0006 1005 1978 6457 8413 26')).toBe('[REDACTED_IBAN]');
   });
 
+  // `iban` leads ORDER for a reason, and the reason was not pinned: with it last, the digit-hungry
+  // Patterns reach an IBAN first and it comes back `TR[REDACTED_PHONE]` — country prefix stranded,
+  // Wrong name in the audit report.
+  it('iban is matched before the digit-hungry patterns can claim it', () => {
+    const redact = piiTextRedactor();
+    const out = redact('hesap NO9386011117947 kapandi');
+    expect(out).toBe('hesap [REDACTED_IBAN] kapandi');
+    // A short IBAN is the case that exposes it — a 26-character TR one is too long for `phone`.
+    expect(out).not.toContain('NO');
+  });
+
   // The point of the checksum: a card is separated from any sixteen digits. Before this, an order
   // Number was masked as a card and the operator lost it for nothing.
   it('a card passes Luhn; an order number of the same shape stays readable', () => {
@@ -82,24 +93,44 @@ describe('piiRedactor', () => {
     ]) expect(redact(text), text).toBe(text);
   });
 
+  // The list is deliberately wider than the rule that has to satisfy it. An earlier version of this
+  // Test held six formats, all of them shapes the rule already accepted, and it passed while
+  // `+49 30 12345678`, `+90 5321112233`, `0212 5551234` and `(212) 5551234` were silently going
+  // Through unmasked — a set chosen to fit the rule measures the rule against itself.
   it('...while every real phone format still masks', () => {
     const redact = piiTextRedactor();
-    for (const [text, want] of [
-      ['call +90 555 123 4567 now', 'call [REDACTED_PHONE] now'],
-      ['call 555-123-4567 now', 'call [REDACTED_PHONE] now'],
-      ['call (212) 555-1234 now', 'call [REDACTED_PHONE] now'],
-      ['call 5551234567 now', 'call [REDACTED_PHONE] now'],
-      ['ara 0532 111 22 33 x', 'ara [REDACTED_PHONE] x'],
-      ['call +442071838750 now', 'call [REDACTED_PHONE] now'],
-    ]) expect(redact(text), text).toBe(want);
+    for (const text of [
+      '+90 555 123 4567', '555-123-4567', '(212) 555-1234', '5551234567', '0532 111 22 33',
+      '555.123.4567', '+442071838750', '+1 (212) 555-1234', '+90(532)111 22 33',
+      // Short prefix + one long block: the most common written form in several countries, and the
+      // Group of formats a "every group must be short" rule dropped.
+      '+49 30 12345678', '+90 5321112233', '+90 532 1112233', '0212 5551234', '(212) 5551234',
+      '+90(532)1112233',
+      // Many short groups — the mirror case, where a small cap on group COUNT truncated the match.
+      '+33 1 23 45 67 89', '+886 2 2345 6789', '+81 3 1234 5678', '00 90 532 111 22 33',
+      '+1-800-555-0199', '212 555 1234', '+7 495 123-45-67', '+34 612 34 56 78', '0090 532 111 2233',
+    ]) expect(redact(`ara ${text} lutfen`), text).toBe('ara [REDACTED_PHONE] lutfen');
   });
 
-  // Why the tightness lives in the PATTERN and not in a validator that refuses loose matches: a
-  // Greedy candidate swallows the whole span, the refusal comes too late to give it back, and a real
-  // Phone number is left in the clear. Over-matching is only safe while every match is masked.
-  it('a phone next to a date-like run is still masked, not swallowed and released', () => {
-    const out = piiTextRedactor()('log 1234-56-78 555-123-4567 bitti');
-    expect(out).not.toContain('555-123-4567');
+  // A rejected match is a span the scanner declined, not one it has dealt with. `String.replace`
+  // Advances past it either way, so a candidate that swallowed a real identifier and then failed its
+  // Own checksum took that identifier out of reach of every later pattern — the exact failure a
+  // Validator exists to prevent, caused by the validator. `replaceValidated` resumes at index+1.
+  //
+  // An earlier version of this test made the general claim from ONE example, which happened to be
+  // Saved by the ISO-date lookahead rather than by anything structural. These are the cases that
+  // Were actually leaking.
+  it('a rejected candidate does not take a real identifier down with it', () => {
+    const redact = piiTextRedactor();
+    for (const [text, mustNotContain] of [
+      // The candidate spans both numbers, fails the digit-count rule, and used to consume the phone.
+      ['id 1234567890 555-123-4567 bitti', '555-123-4567'],
+      ['ref 20240115093012 555-123-4567 son', '555-123-4567'],
+      ['log 1234-56-78 555-123-4567 bitti', '555-123-4567'],
+      // Same shape with a checksum: the card window starts one group early, Luhn refuses it, and the
+      // Genuine card inside came back in the clear.
+      ['ref 1111 2222 4111 1111 1111 1111 son', '4111 1111 1111 1111'],
+    ]) expect(redact(text), text).not.toContain(mustNotContain);
   });
 
   // The five original built-ins are US-shaped — `ssn` exists nowhere else — so a deployment with a

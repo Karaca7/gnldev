@@ -201,7 +201,7 @@ export function piiRedactor(opts: PiiRedactorOptions = {}): Processor {
         messages: output.messages ? redactMessages(output.messages, types, mask, extra, validate) : output.messages,
       };
       const { total, types: hitTypes } = countInputRedactions(
-        { prompt: output.text, messages: output.messages }, types, mask,
+        { prompt: output.text, messages: output.messages }, types, mask, extra, validate,
       );
       if (total > 0) void recordProcessorReport(ctx, 'pii-redactor', 'output', { redactedCount: total, types: hitTypes });
       return out;

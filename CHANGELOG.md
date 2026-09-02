@@ -345,11 +345,19 @@ whether or not anyone is on the other side of them yet.
   Measured: it masked `2024-01-15 10` out of a timestamp, the whole of `1.2.3 - 4.5.6`, a run id, and
   two digits separated by eight spaces — text corruption in exactly the payload it most often runs
   over, since error messages and logs carry timestamps. Now bounded by digit groups, with single-
-  character separators and no match starting on an ISO date. Verified in both directions rather than
-  tightened by eye: eleven real formats (E.164, parenthesised, dotted, Turkish local, unbroken
-  international) all still mask. A loose pattern with a rejecting validator was tried first and
-  measured DANGEROUS — a greedy candidate swallows `1234-56-78 555-123-4567` whole, fails the check,
-  and the span is already consumed, leaving a real number in the clear.
+  character separators and no match starting on an ISO date, and checked against **24** written forms
+  across a dozen countries as well as against text that has to survive. Both directions, because the
+  first attempt was verified against eleven formats chosen *after* the rule was written — all of them
+  shapes it already accepted — and passed while `+49 30 12345678`, `+90 5321112233`, `0212 5551234`
+  and `(212) 5551234` were going through unmasked; adding one space to `+905321112233` was enough to
+  turn its masking off. Only the LAST digit group may be long now: what precedes a subscriber number
+  is a country or area code, which is short.
+- **A match that fails its checksum is skipped, not consumed.** `String.replace` advances past a
+  rejected span either way, so a candidate that swallowed a real identifier and then failed its own
+  check took that identifier out of reach of every later pattern — the exact failure a validator
+  exists to prevent, caused by the validator. Measured, on by default: `ref 1111 2222 4111 1111 1111
+  1111` left the valid card inside unmasked, and `id 1234567890 555-123-4567` masked nothing at all.
+  Scanning now resumes one character into a rejected span.
 - **`piiRedactor` can now mask identifiers its built-in types cannot name (`extraPatterns`).** The
   five built-ins are US-shaped — `ssn` exists nowhere else — so a national id, an IBAN, a patient
   record number or an internal customer id had no type that matched it, and the only ways to react

@@ -44,6 +44,34 @@ describe('piiRedactor → recordProcessorReport (real journal)', () => {
     });
   });
 
+  // The output side took its own path to the counter and was passing neither `extraPatterns` nor
+  // `validate` — so a report could name fewer types than the redaction masked, or not be written at
+  // All when only a custom pattern matched. The input side was correct, which is what kept it hidden.
+  it('the output-side report sees custom patterns too, not just the built-ins', async () => {
+    const journal = new InMemoryJournal();
+    const ctx = createProcessorCtx(journal, 'run-pii-out-custom');
+    const p = piiRedactor({ on: 'output', extraPatterns: [{ name: 'mrn', pattern: /\bMRN-\d{6}\b/g }] });
+    const out = p.processOutput!({ text: 'MRN-482100 ve MRN-991100 ve a@b.com' } as any, ctx) as any;
+    expect(out.text).toBe('[REDACTED_MRN] ve [REDACTED_MRN] ve [REDACTED_EMAIL]');
+    await flush();
+    const reports = await readProcessorReports(journal, 'run-pii-out-custom');
+    expect(reports[0]).toMatchObject({
+      phase: 'output',
+      findings: { redactedCount: 3, types: ['mrn', 'email'] },
+    });
+  });
+
+  it('the output-side report reflects validate:false as well', async () => {
+    const journal = new InMemoryJournal();
+    const ctx = createProcessorCtx(journal, 'run-pii-out-blunt');
+    const p = piiRedactor({ on: 'output', validate: false });
+    // Not a real card (fails Luhn) — masked only because validation is off, so the count must say 1.
+    p.processOutput!({ text: 'order 1234567812345678' } as any, ctx);
+    await flush();
+    const reports = await readProcessorReports(journal, 'run-pii-out-blunt');
+    expect(reports[0]).toMatchObject({ phase: 'output', findings: { redactedCount: 1, types: ['creditCard'] } });
+  });
+
   it('no report is written when there is NO redaction', async () => {
     const journal = new InMemoryJournal();
     const ctx = createProcessorCtx(journal, 'run-pii-clean');

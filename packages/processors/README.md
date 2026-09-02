@@ -57,8 +57,14 @@ masking anything.
 `phone` has no checksum to appeal to, so it is bounded by shape instead: 7–15 digits, and short
 groups once a number is split. That replaced a pattern which counted *characters*, and so masked
 `2024-01-15 10` out of a timestamp, the whole of `1.2.3 - 4.5.6`, and a run id — text corruption in
-exactly the payload it most often runs over. Eleven real formats (E.164, parenthesised, dotted,
-Turkish local, unbroken international) were checked to still mask; nothing was traded for it.
+exactly the payload it most often runs over. It is checked against 24 written forms across a dozen
+countries, and against non-PII text that has to survive — both directions, because a first attempt
+verified against a set chosen *after* the rule was written passed while `+49 30 12345678`,
+`+90 5321112233` and `0212 5551234` were going through unmasked.
+
+A match that fails its checksum is **skipped, not consumed**. That matters: with a plain
+`String.replace`, a candidate spanning `1234567890 555-123-4567` failed the digit count and took the
+real number out of reach of every later pattern — a leak caused by the validator meant to prevent one.
 
 ### Masking an identifier the built-ins cannot name
 
