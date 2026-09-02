@@ -56,10 +56,21 @@ export function buildFeatureText(f: DocFeature, docsUrl: string = DEFAULT_DOCS_U
   return lines.join('\n');
 }
 
+/**
+ * Caps a value that is echoed back to the caller.
+ *
+ * What this server returns lands in an assistant's context window, so an argument that is repeated
+ * verbatim is an amplifier: a 500 KB slug produced a 500 KB answer, measured. The echo is worth
+ * keeping — it is how the model sees what it got wrong — but not at any length.
+ */
+export function echoed(value: string, max = 120): string {
+  return value.length <= max ? value : `${value.slice(0, max)}… (${value.length} chars)`;
+}
+
 /** Error text for an unknown slug — also includes the list of valid slugs (so the LLM can easily self-correct). */
 export function buildUnknownSlugText(slug: string): string {
   const valid = FEATURES.map((f) => f.slug).join(', ');
-  return `Unknown slug: '${slug}'. Valid slugs: ${valid}`;
+  return `Unknown slug: '${echoed(slug)}'. Valid slugs: ${valid}`;
 }
 
 export interface LocalSearchHit {
@@ -89,10 +100,10 @@ export function searchLocal(query: string): LocalSearchHit[] {
 
 export function buildSearchResultsText(query: string, hits: LocalSearchHit[]): string {
   if (hits.length === 0) {
-    return `No results for '${query}'. Call gnl_docs_overview() for the full list of features.`;
+    return `No results for '${echoed(query)}'. Call gnl_docs_overview() for the full list of features.`;
   }
   const lines: string[] = [];
-  lines.push(`# Search: "${query}" (${hits.length} results)`);
+  lines.push(`# Search: "${echoed(query)}" (${hits.length} results)`);
   lines.push('');
   for (const h of hits) {
     lines.push(`- [${h.slug}] ${h.title} — ${h.oneLiner}`);
@@ -118,8 +129,8 @@ export function searchRemoteFullText(query: string, llmsFullTxt: string): string
       lines.push(`  match: ${matchLine.trim().slice(0, 200)}`);
     }
   }
-  if (count === 0) return `No results for '${query}'. Call gnl_docs_overview() for the full list of features.`;
-  return [`# Search: "${query}" (${count} results)`, '', ...lines].join('\n');
+  if (count === 0) return `No results for '${echoed(query)}'. Call gnl_docs_overview() for the full list of features.`;
+  return [`# Search: "${echoed(query)}" (${count} results)`, '', ...lines].join('\n');
 }
 
 export { FEATURES_BY_SLUG };

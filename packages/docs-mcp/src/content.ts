@@ -651,7 +651,15 @@ import { liveObservability } from '@gnldev/otel/live';`,
   },
 ];
 
-/** slug -> DocFeature quick lookup map. */
-export const FEATURES_BY_SLUG: Record<string, DocFeature> = Object.fromEntries(
-  FEATURES.map((f) => [f.slug, f]),
+/**
+ * slug -> DocFeature quick lookup map.
+ *
+ * Null-prototyped: with the ordinary one, `FEATURES_BY_SLUG['__proto__']` (or `constructor`,
+ * `toString`, `valueOf`, `hasOwnProperty`) returns an inherited member instead of `undefined`, which
+ * is truthy — so the caller's "unknown slug" branch was skipped and the tool answered a JSON-RPC
+ * -32603 `f.apis is not iterable` instead of the tidy message every other unknown slug gets.
+ */
+export const FEATURES_BY_SLUG: Record<string, DocFeature> = Object.assign(
+  Object.create(null) as Record<string, DocFeature>,
+  Object.fromEntries(FEATURES.map((f) => [f.slug, f])),
 );

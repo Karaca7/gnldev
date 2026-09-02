@@ -5,6 +5,9 @@
 
 export const DEFAULT_DOCS_URL = 'https://gnl.dev';
 const FETCH_TIMEOUT_MS = 2500;
+/** Ceiling on a fetched document, in characters. Roughly 8x the real llms-full.txt, so a growing doc
+ *  Site has room; anything past it is not a document this tool should be relaying. */
+const MAX_REMOTE_CHARS = 2_000_000;
 
 export interface RemoteDocs {
   llmsTxt: string;
@@ -15,6 +18,39 @@ export interface RemoteDocs {
 export function resolveDocsUrl(env: NodeJS.ProcessEnv = process.env): string {
   const raw = env.GNL_DOCS_URL ?? DEFAULT_DOCS_URL;
   return raw.replace(/\/+$/, '');
+}
+
+/**
+ * The same address with any userinfo removed — for the links this server PRINTS.
+ *
+ * `GNL_DOCS_URL` exists so a deployment can point at an internal mirror, and an internal mirror is
+ * exactly the kind that sits behind basic auth. The fetch needs those credentials; the answer does
+ * not. Measured before this split existed: `https://alice:s3cr3t@docs.internal.example` put the token
+ * into an assistant's context 33 times in a single `gnl_docs_overview` call, once per feature link.
+ *
+ * Falls back to the raw string when the value will not parse — a malformed URL should degrade to the
+ * old behaviour rather than throw, and one that cannot be parsed has no userinfo to strip anyway.
+ */
+export function publicDocsUrl(env: NodeJS.ProcessEnv = process.env): string {
+  const raw = resolveDocsUrl(env);
+  try {
+    const u = new URL(raw);
+    // A URL with no scheme is not a URL WITHOUT userinfo — `new URL('alice:pw@host')` parses `alice:`
+    // As the SCHEME, leaves `username` empty, and an early return keyed on userinfo handed the whole
+    // String back with the password in it. Anything that is not http(s) is not an address this server
+    // Should be printing anyway.
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return DEFAULT_DOCS_URL;
+    u.username = '';
+    u.password = '';
+    // Query and fragment go too. Userinfo is not the only place a mirror carries a credential — a
+    // Signed URL puts it in `?token=`, and neither belongs in a link this server prints 33 times.
+    u.search = '';
+    u.hash = '';
+    return u.toString().replace(/\/+$/, '');
+  } catch {
+    // Unparseable: it cannot be shown, because whatever is in it cannot be inspected either.
+    return DEFAULT_DOCS_URL;
+  }
 }
 
 /**
@@ -60,6 +96,14 @@ async function fetchText(url: string): Promise<string | null> {
     const res = await fetch(url, { signal: ac.signal });
     if (!res.ok) return null;
     const body = await res.text();
+    // The only bound used to be the 2.5s timeout, which bounds the CLOCK, not the answer: a 200 MB
+    // Body served quickly came back whole — measured, 209,715,206 characters in one tool result — and
+    // This text goes straight into an assistant's context window.
+    //
+    // Refused rather than truncated, which is the same call `looksLikeDocs` makes: half a document
+    // Read as a whole one is worse than the embedded copy, and the embedded copy is complete and true
+    // Even when it is a little stale.
+    if (body.length > MAX_REMOTE_CHARS) return null;
     return looksLikeDocs(body, res.headers.get('content-type')) ? body : null;
   } catch {
     return null;
