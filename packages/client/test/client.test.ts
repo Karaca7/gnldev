@@ -1,6 +1,6 @@
 // @gnldev/client: run/listAgents with mock fetch, split-frame SSE stream, pure accumulator.
 import { describe, it, expect } from 'vitest';
-import { GnlClient, applyStreamEvent, appendUserMessage, initialChatState, parseSSEStream } from '../src/index.js';
+import { GnlClient, GnlHttpError, applyStreamEvent, appendUserMessage, initialChatState, parseSSEStream } from '../src/index.js';
 
 function jsonResponse(obj: unknown): Response {
   return new Response(JSON.stringify(obj), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -87,12 +87,18 @@ describe('GnlClient core', () => {
     expect(runId).toBe('r2');
   });
 
-  it('meaningful error when stream has no body', async () => {
+  it('a failed stream reports its STATUS, whether or not it had a body', async () => {
+    // This asserted `/no stream body/` while the only guard was `!res.body`. A 500 has a status worth
+    // reporting and an empty body is the least interesting thing about it; now the status check runs
+    // first and the emptiness is incidental. `!res.body` still guards the genuinely strange case — a
+    // 2xx that carries nothing — which is a protocol violation rather than a refusal.
     const mockFetch = (async () => new Response(null, { status: 500 })) as unknown as typeof fetch;
     const client = new GnlClient({ baseUrl: 'http://x', fetch: mockFetch });
-    await expect(async () => {
-      for await (const _ of client.stream('chat', { prompt: 'hi' })) void _;
-    }).rejects.toThrow(/no stream body/);
+    let thrown: any = null;
+    try { for await (const _ of client.stream('chat', { prompt: 'hi' })) void _; } catch (e) { thrown = e; }
+    expect(thrown).toBeInstanceOf(GnlHttpError);
+    expect(thrown.status).toBe(500);
+    expect(String(thrown.message), 'an empty body left the error with nothing to say').toContain('500');
   });
 });
 
@@ -136,5 +142,71 @@ describe('accumulator (pure reducer)', () => {
       { role: 'user', content: 'hi' },
       { role: 'assistant', content: 'Answer', reasoning: 'Think… ok.' },
     ]);
+  });
+});
+
+/**
+ * A refusal is a response too — the client has to READ it, not only its body.
+ *
+ * `run`/`resume` were `(await res.json()) as RunResult`: a cast, not a check. A refusal arrives as
+ * `{error, code, detail}` with no `runId`, so the cast asserted a required `string` that was
+ * `undefined` — a caller passing it back to `resume()` passed nothing, with the types agreeing. And
+ * `stream()`'s only guard was `!res.body`, which a JSON error body passes: fed to the SSE frame parser
+ * it produced no frames and threw nothing, so a UI stopped its spinner over an unchanged screen.
+ */
+describe('a non-2xx response reaches the caller', () => {
+  const REFUSAL = {
+    error: 'runId "r1" was started for thread "A" and is now being run for thread "B"',
+    code: 'run_thread_mismatch',
+    detail: { runId: 'r1', startedForThread: 'A', requestedThread: 'B' },
+  };
+  const refuse = (status: number, headers: Record<string, string> = {}) => async () =>
+    new Response(JSON.stringify(REFUSAL), { status, headers: { 'content-type': 'application/json', ...headers } });
+
+  it('stream() throws a typed error instead of yielding nothing', async () => {
+    const client = new GnlClient({ baseUrl: 'http://x', fetch: refuse(409) as never });
+    const seen: unknown[] = [];
+    let thrown: any = null;
+    try {
+      for await (const ev of client.stream('bot', { runId: 'r1' })) seen.push(ev);
+    } catch (e) { thrown = e; }
+
+    // Measured before: 0 events AND nothing thrown — indistinguishable from a stream that simply ended.
+    expect(thrown, 'a refusal ended the stream silently').not.toBeNull();
+    expect(thrown).toBeInstanceOf(GnlHttpError);
+    expect(thrown.status).toBe(409);
+    expect(thrown.code, 'the caller still has to parse the sentence').toBe('run_thread_mismatch');
+    expect(thrown.detail).toEqual(REFUSAL.detail);
+    expect(seen, 'a refusal produced events').toEqual([]);
+  });
+
+  it('run() keeps its promise about runId, and says which refusal it was', async () => {
+    const client = new GnlClient({ baseUrl: 'http://x', fetch: refuse(429, { 'retry-after': '7' }) as never });
+    const r = await client.run('bot', { runId: 'r1' });
+
+    // The type says `runId: string`. The server omits it from every error body; the client knows it.
+    expect(r.runId, 'the declared-required runId came back undefined').toBe('r1');
+    expect(r.status).toBe(429);
+    expect(r.code).toBe('run_thread_mismatch');
+    expect(r.retryAfter, 'the server named a wait and it was dropped').toBe(7);
+    expect(Array.isArray(r.interrupts), 'interrupts is declared as an array').toBe(true);
+  });
+
+  it('a successful response is unchanged — no refusal fields invented', async () => {
+    const ok = async () => new Response(JSON.stringify({ ok: true, runId: 'r1', text: 'merhaba', interrupts: [] }),
+      { status: 200, headers: { 'content-type': 'application/json' } });
+    const client = new GnlClient({ baseUrl: 'http://x', fetch: ok as never });
+    expect(await client.run('bot', { runId: 'r1' })).toEqual({ ok: true, runId: 'r1', text: 'merhaba', interrupts: [] });
+  });
+
+  it('a non-JSON error body still produces a usable error', async () => {
+    const html = async () => new Response('<html>502 Bad Gateway</html>', { status: 502, headers: { 'content-type': 'text/html' } });
+    const client = new GnlClient({ baseUrl: 'http://x', fetch: html as never });
+    let thrown: any = null;
+    try { for await (const _ of client.stream('bot', { runId: 'r1' })) { /* drain */ } } catch (e) { thrown = e; }
+    expect(thrown, 'a proxy error page was swallowed').toBeInstanceOf(GnlHttpError);
+    expect(thrown.status).toBe(502);
+    expect(thrown.code, 'a code was invented for a body that had none').toBeUndefined();
+    expect(String(thrown.message)).toContain('502');
   });
 });

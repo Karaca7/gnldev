@@ -19,6 +19,72 @@ export function genRunId(): string {
   return 'run-' + Date.now().toString(36) + '-' + Math.floor(Math.random() * 1e9).toString(36);
 }
 
+/**
+ * One place that reads the RESPONSE rather than only its body.
+ *
+ * `run`/`resume` used to be `(await res.json()) as RunResult` — a cast, not a check. A refusal came
+ * back as `{error, code, detail}` with no `runId`, and the cast asserted a `runId: string` that was
+ * `undefined`; a caller feeding it to `resume()` was passing nothing and the types agreed. And `code`,
+ * `resumable` and `Retry-After` were dropped on the floor, so a 409 that clears on approval, a 422 that
+ * never will, and a 429 that wants a wait were indistinguishable.
+ *
+ * `runId` comes from the CALLER's side, which is the only side that always knows it.
+ */
+/**
+ * A refusal the server made deliberately, carried to the caller intact.
+ *
+ * The streaming path had no way to report one: its only guard was `!res.body`, and a JSON error body
+ * IS a body, so a 409/422/429 was handed to the SSE frame parser, produced no frames, and ended the
+ * loop. Measured — zero events, nothing thrown; in a React hook that is a spinner that stops with the
+ * screen unchanged, which is worse than an error because there is nothing to act on or report.
+ *
+ * Thrown rather than yielded: a stream that will never carry a token has not "ended", it failed, and
+ * `for await` cannot express that difference on its own.
+ */
+export class GnlHttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code?: string,
+    readonly detail?: unknown,
+    readonly retryAfter?: number,
+  ) {
+    super(message);
+    this.name = 'GnlHttpError';
+  }
+
+  /** Builds one from a failed Response, tolerating a body that is not JSON. */
+  static async from(res: Response): Promise<GnlHttpError> {
+    const raw = await res.text().catch(() => '');
+    let body: { error?: string; code?: string; detail?: unknown } = {};
+    try { body = raw ? JSON.parse(raw) : {}; } catch { /* not JSON: the text below is what there is */ }
+    const ra = Number(res.headers.get('retry-after'));
+    return new GnlHttpError(
+      // `||` and not `??`: an empty body is a string, so `?? ` keeps it and the error carries no message
+      // at all. Measured by the existing "no stream body" test, which is what an empty 500 looks like.
+      body.error || raw.slice(0, 300) || `HTTP ${res.status}`,
+      res.status,
+      body.code,
+      body.detail,
+      Number.isFinite(ra) && ra >= 0 ? ra : undefined,
+    );
+  }
+}
+
+async function asRunResult(res: Response, runId: string): Promise<RunResult> {
+  const body = (await res.json().catch(() => ({}))) as Partial<RunResult> & { error?: string };
+  if (res.ok) return { ...body, runId: body.runId ?? runId } as RunResult;
+  const ra = Number(res.headers.get('retry-after'));
+  return {
+    ...body,
+    runId: body.runId ?? runId,
+    interrupts: body.interrupts ?? [],
+    error: body.error ?? `HTTP ${res.status}`,
+    status: res.status,
+    ...(Number.isFinite(ra) && ra >= 0 ? { retryAfter: ra } : {}),
+  } as RunResult;
+}
+
 export class GnlClient {
   private baseUrl: string;
   private headers: Record<string, string>;
@@ -50,7 +116,7 @@ export class GnlClient {
       headers: this.headers,
       body: JSON.stringify({ ...input, runId }),
     });
-    return (await res.json()) as RunResult;
+    return asRunResult(res, runId);
   }
 
   /** Continue after approval: same runId + approvals → suspended tool is released (input recorded in the journal). */
@@ -65,7 +131,7 @@ export class GnlClient {
       headers: this.headers,
       body: JSON.stringify({ ...input, runId, approvals }),
     });
-    return (await res.json()) as RunResult;
+    return asRunResult(res, runId);
   }
 
   /** Run an agent with streaming (POST /agents/:name/stream) — yields SSE events. */
@@ -77,6 +143,11 @@ export class GnlClient {
       body: JSON.stringify({ ...input, runId }),
       signal,
     });
+    // A REFUSAL HAS A BODY TOO, which is why `!res.body` alone was not a guard. A 409/422/429 answers
+    // with a JSON error object, so `res.body` is a perfectly good ReadableStream — it just is not SSE.
+    // Fed to the frame parser it produced no frames and no error: measured, the loop yielded 0 events
+    // and threw nothing, so a UI stopped its spinner and showed neither a message nor a failure.
+    if (!res.ok) throw await GnlHttpError.from(res);
     if (!res.body) {
       const err = await res.text().catch(() => '');
       throw new Error(`@gnldev/client: no stream body (HTTP ${res.status}) ${err}`);

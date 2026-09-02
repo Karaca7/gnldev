@@ -11,13 +11,34 @@ export interface AgentMeta {
   maxSteps: number;
 }
 
-/** run/resume response. */
+/**
+ * run/resume response.
+ *
+ * `runId` is always present, and the client is what guarantees it: the server omits it from every
+ * error body, but the client either generated the id or was handed it, so it fills it back in. It was
+ * typed as a required `string` before that was true — a caller passing `r.runId` to `resume()` after a
+ * refusal was passing `undefined` with the type system agreeing.
+ *
+ * The refusal fields are the ones @gnldev/server and @gnldev/studio actually send. Without them every
+ * failure looked the same to a caller: a 409 that clears on approval, a 422 that never will, and a 429
+ * that wants you to wait all arrived as one `error` string.
+ */
 export interface RunResult {
   ok?: boolean;
   runId: string;
   text?: string;
   interrupts: Interrupt[];
   error?: string;
+  /** HTTP status, so a caller can act without parsing the sentence. Absent on success. */
+  status?: number;
+  /** Machine-readable refusal, e.g. 'run_thread_mismatch', 'run_busy', 'retry_limit_exceeded'. */
+  code?: string;
+  /** The refusal's structured half — which threads collided, which limit was hit. */
+  detail?: unknown;
+  /** Server's own answer to "will the same runId succeed later". */
+  resumable?: boolean;
+  /** Seconds to wait, when the server named one (from the Retry-After header). */
+  retryAfter?: number;
 }
 
 /** run/stream input. If runId is not given, the client generates one (idempotency key). */
