@@ -26,6 +26,9 @@ describe('scaffold', () => {
     expect(res.files).toContain(join('src', 'model.ts'));
     expect(res.files).toContain('.gitignore');
     expect(res.files).not.toContain('gitignore');
+    // `src/auth.ts` and the model setup read keys from `process.env`; a .env is the usual way to
+    // Supply them, and neither template ignored it. Asserted for BOTH templates below rather than
+    // Here — measured, an assertion in this test alone left `templates/full` free to drop the line.
     expect(res.files).not.toContain(join('test', 'e2e.test.ts'));
 
     const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
