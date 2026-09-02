@@ -636,7 +636,7 @@ function dropEchoedHistory(history: any[], incoming: any[], compare: any[] = inc
     const text = typeof c === 'string' ? c
       : Array.isArray(c) ? c.map((p: any) => (typeof p?.text === 'string' ? p.text : JSON.stringify(p))).join('')
       : JSON.stringify(c);
-    return `${m?.role} ${text}`;
+    return `${m?.role}\u0000${text}`;
   };
   // Where in the thread this POST starts. A client re-POSTs a SUFFIX of the conversation (often all of
   // it), so every incoming row that lands inside `history` must match at ITS OWN position, and the rows
