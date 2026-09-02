@@ -56,10 +56,13 @@ z.object({ to: z.string(), cc: z.string().optional() })
 →  required: ["to", "cc"],  cc: { type: ["string", "null"] }
 ```
 
-Without the second half the parameter would be silently promoted to mandatory, and
-`strictJsonSchema` defaults to `true` in the AI SDK's OpenAI provider, so the model would have no way
-to leave it out. Keys that were genuinely required are left alone. An `enum` gets `null` added to its
-values too, since widening only `type` would leave a node nothing can satisfy.
+Without the second half the parameter is silently promoted to mandatory. Under `strict: true` the
+model then has no way to leave it out; without strict, `required` is still what it is told the tool
+wants. Keys that were genuinely required are left alone.
+
+An `enum` gets `null` added to its **values** too, and a `const` is wrapped in `anyOf` rather than
+widened in place — in both cases changing only `type` would leave a node whose type admits `null`
+while its value constraint forbids it, which nothing can satisfy.
 
 ## License
 

@@ -51,7 +51,9 @@ describe('openaiStrict', () => {
 
   // The other half of "all fields required". Forcing an optional key into `required` without also
   // Letting it be null changes the tool's contract: the model can no longer say "not supplied", and
-  // `strictJsonSchema` defaults to true in the AI SDK's OpenAI provider, so it is enforced.
+  // Under `strict: true` the model then cannot leave it out at all; without strict, `required` is
+  // Still what it is told the tool wants. (An earlier note here claimed the provider defaults
+  // `strictJsonSchema` to true — that default belongs to the structured-output path, not tools.)
   it('a field that was optional stays optional in effect — required, but null-accepting', () => {
     const tools = toolWith(z.object({ u: z.string(), n: z.number().optional() }));
     const s = schemaOf(applyToolCompat(tools, 'openai/gpt-4o', defaultRules));
@@ -73,6 +75,29 @@ describe('openaiStrict', () => {
     // Type admits null while its enum still rejects it — satisfiable by nothing.
     expect(s.properties.kind.type).toEqual(['string', 'null']);
     expect(s.properties.kind.enum).toContain(null);
+  });
+
+  // A `const` node carries a `type` as well, so it matched the type branch and returned before the
+  // Const check ever ran — leaving `{type:['string','null'], const:'yes'}`, whose type admits null
+  // While its const forbids it. Exactly the unsatisfiable node the enum case fixes, one branch away.
+  it('an optional literal is widened by wrapping, since a single value cannot be widened in place', () => {
+    const tools = toolWith(z.object({ u: z.string(), l: z.literal('yes').optional() }));
+    const s = schemaOf(applyToolCompat(tools, 'openai/gpt-4o', defaultRules));
+    expect(s.required).toEqual(expect.arrayContaining(['u', 'l']));
+    // The value `null` has to satisfy the node — with `const` still sitting beside a nullable `type`,
+    // Nothing could.
+    expect(s.properties.l.anyOf).toEqual([{ type: 'string', const: 'yes' }, { type: 'null' }]);
+    expect(s.properties.l.const, 'const must not remain at the top level next to a null type').toBeUndefined();
+  });
+
+  // The nested-object test above measures the optional field INSIDE an object, which `walk` reaches
+  // On its own. An optional object is a different claim, and skipping `allowNull` for `type:'object'`
+  // Nodes left every test green.
+  it('an optional OBJECT is widened too, not just the fields inside one', () => {
+    const tools = toolWith(z.object({ u: z.string(), meta: z.object({ a: z.string() }).optional() }));
+    const s = schemaOf(applyToolCompat(tools, 'openai/gpt-4o', defaultRules));
+    expect(s.properties.meta.type).toEqual(['object', 'null']);
+    expect(s.properties.meta.properties.a.type, 'the inner field was required and stays so').toBe('string');
   });
 
   it('groq provider is also caught', () => {

@@ -380,10 +380,12 @@ whether or not anyone is on the other side of them yet.
   demands that — but never did the other half, so `z.string().optional()` arrived as required with
   `type: "string"` and no `null`: the model could neither supply nothing nor say nothing was supplied.
   The rule's own comment claimed optionality was carried "via nullable", making this an unwritten step
-  rather than a documented limit, and `strictJsonSchema` defaults to `true` in the AI SDK's OpenAI
-  provider, so it was enforced rather than advisory. Previously-optional keys are now widened to accept
-  `null`; genuinely required keys are untouched. An `enum` has `null` added to its **values** as well,
-  since widening only `type` leaves a node nothing can satisfy. Nested objects included.
+  rather than a documented limit. Under `strict: true` the model then cannot leave the field out at
+  all; without strict, `required` is still what it is told the tool wants. Previously-optional keys are
+  now widened to accept `null`; genuinely required keys are untouched. An `enum` has `null` added to
+  its **values** as well, and a `const` is wrapped in `anyOf` rather than widened in place — in both
+  cases changing only `type` leaves a node whose type admits `null` while its value constraint forbids
+  it, which nothing satisfies. Nested objects and optional objects included.
 - **The dead-letter scan no longer lets one caller starve the rest — and naming a caller is no longer
   worse than not naming one.** Three rounds of measurement on the same endpoint, recorded together
   because each fix exposed the next:

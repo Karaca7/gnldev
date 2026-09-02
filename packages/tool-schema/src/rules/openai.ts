@@ -33,10 +33,17 @@ import { walk, stripStringFormats } from './util.js';
  * Widens a schema so it also accepts `null` — the second half of "everything is required".
  *
  * Forcing a key into `required` without this says the model MUST produce a value for a parameter its
- * Author marked optional, and `strictJsonSchema` defaults to `true` in the AI SDK's OpenAI provider,
- * So the constraint is enforced rather than advisory. Measured before this existed: a
- * `z.string().optional()` field came out as `required` with `type:'string'` and no null — the model
- * Had no way to say "not supplied", which is a different tool contract than the one that was written.
+ * Author marked optional. Measured before this existed: a `z.string().optional()` field came out as
+ * `required` with `type:'string'` and no null — the model had no way to say "not supplied", which is
+ * A different tool contract than the one that was written.
+ *
+ * How hard that bites depends on the call. An earlier version of this note claimed the AI SDK's
+ * OpenAI provider defaults `strictJsonSchema` to true, so the constraint was always enforced; that is
+ * Wrong for tool schemas — measured, `strict` is sent only when the tool sets it
+ * (`...tool.strict != null ? { strict: tool.strict } : {}`), and the `?? true` default belongs to the
+ * Structured-output path. Under `strict: true` this is a hard constraint the model cannot satisfy
+ * Without inventing a value; without it, `required` is still what the model is told the tool wants.
+ * Either way the schema described a contract its author did not write.
  *
  * In place where the node's own `type` can carry it; wrapped in `anyOf` when the node is a `$ref`,
  * `enum`, `const`, `oneOf` or `allOf`, none of which can express nullability without changing what
@@ -44,6 +51,15 @@ import { walk, stripStringFormats } from './util.js';
  */
 function allowNull(prop: any): any {
   if (!prop || typeof prop !== 'object') return prop;
+
+  // `const` FIRST, and that order is the fix rather than a detail. A `const` node normally carries a
+  // `type` too (zod emits `z.literal('yes')` as `{type:'string', const:'yes'}`), so the type branch
+  // Below matched it and returned before ever reaching the const check — leaving
+  // `{type:['string','null'], const:'yes'}`, whose type admits null while its const forbids it.
+  // Nothing satisfies that, which is the same unsatisfiable-node bug this rule fixes for `enum`,
+  // Surviving one branch away from it. A single permitted value cannot be widened in place the way an
+  // Enum's list can, so the node is wrapped instead.
+  if (prop.const !== undefined) return { anyOf: [prop, { type: 'null' }] };
 
   if (Array.isArray(prop.type) || typeof prop.type === 'string' || Array.isArray(prop.enum)) {
     // An `enum` restricts the VALUE set, so widening `type` alone would leave a node whose type
@@ -62,8 +78,7 @@ function allowNull(prop: any): any {
     if (!prop.anyOf.some((s: any) => s?.type === 'null')) prop.anyOf = [...prop.anyOf, { type: 'null' }];
     return prop;
   }
-  const constrained = prop.$ref !== undefined || prop.const !== undefined
-    || Array.isArray(prop.oneOf) || Array.isArray(prop.allOf);
+  const constrained = prop.$ref !== undefined || Array.isArray(prop.oneOf) || Array.isArray(prop.allOf);
   return constrained ? { anyOf: [prop, { type: 'null' }] } : prop;
 }
 
