@@ -316,6 +316,44 @@ whether or not anyone is on the other side of them yet.
   overwrite the verdict of the runId's own earlier, correctly-scoped attempt.
 
 ### Fixed
+- **`piiRedactor` checks an identifier's own check digit before masking it.** Any sixteen digits were
+  a card: measured, `order 1234567812345678` came back `[REDACTED_CREDITCARD]`, losing the order
+  number without protecting anything. `creditCard` is now validated with Luhn and the new `iban` type
+  with mod-97, so a match that fails its own arithmetic is left alone. The trade is stated rather than
+  hidden — a card typed with a wrong digit fails Luhn and is then not masked; `validate: false`
+  restores masking on shape alone. Custom patterns take a `test` of their own, because shipping
+  checksums for the built-ins while handing callers a bare regex would be the asymmetry.
+- **`iban` is a built-in type.** It carries a checksum, so it has no false positives to trade against,
+  and it covers ~80 countries — a better-founded default than `ssn`, which is one country's. Before
+  it, an IBAN was picked up by the phone pattern: `TR330006100519786457841326` came out
+  `TR[REDACTED_PHONE]`, leaving the country prefix behind under the wrong name.
+- **The `phone` pattern no longer eats text that is not a phone number.** It counted CHARACTERS, and
+  its character class held spaces and dashes, so three digits spread over a wide span cleared the bar.
+  Measured: it masked `2024-01-15 10` out of a timestamp, the whole of `1.2.3 - 4.5.6`, a run id, and
+  two digits separated by eight spaces — text corruption in exactly the payload it most often runs
+  over, since error messages and logs carry timestamps. Now bounded by digit groups, with single-
+  character separators and no match starting on an ISO date. Verified in both directions rather than
+  tightened by eye: eleven real formats (E.164, parenthesised, dotted, Turkish local, unbroken
+  international) all still mask. A loose pattern with a rejecting validator was tried first and
+  measured DANGEROUS — a greedy candidate swallows `1234-56-78 555-123-4567` whole, fails the check,
+  and the span is already consumed, leaving a real number in the clear.
+- **`piiRedactor` can now mask identifiers its built-in types cannot name (`extraPatterns`).** The
+  five built-ins are US-shaped — `ssn` exists nowhere else — so a national id, an IBAN, a patient
+  record number or an internal customer id had no type that matched it, and the only ways to react
+  were to drop a built-in from `types` (which removes coverage rather than adding any) or to mutate
+  the exported `PII_PATTERNS`, which changes behavior for every redactor in the process. Custom
+  patterns run **before** the built-ins, which is load-bearing rather than cosmetic: the built-in
+  `phone` pattern is greedy enough to swallow an 11-digit national id (measured — it comes back
+  `[REDACTED_PHONE]`), so one applied afterwards would find its text already masked under the wrong
+  name. Custom names are counted in `recordProcessorReport` too, so the audit trail cannot describe
+  fewer types than the redaction masked. A pattern missing the `g` flag gets it added instead of
+  quietly masking only the first occurrence. `piiTextRedactor` takes the same option.
+- **A `types` entry with no pattern behind it is refused instead of silently masking nothing.**
+  `piiRedactor({ types: ['iban'] })` returned the text untouched and reported nothing, so a
+  deployment could believe a type was covered while the value went through in the clear. TypeScript
+  caught it only for callers passing a literal — config arriving from JS, JSON or an env var reached
+  it unchecked. Now throws at construction (config time, not mid-run), as does a malformed
+  `extraPatterns` entry.
 - **An optional tool parameter is no longer silently promoted to mandatory on OpenAI
   (`@gnldev/tool-schema`).** The `openai-strict` rule listed every property in `required` — strict mode
   demands that — but never did the other half, so `z.string().optional()` arrived as required with

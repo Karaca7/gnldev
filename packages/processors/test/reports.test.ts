@@ -25,6 +25,25 @@ describe('piiRedactor → recordProcessorReport (real journal)', () => {
     expect(reports[0]).toMatchObject({ name: 'pii-redactor', phase: 'input', findings: { redactedCount: 2, types: ['email'] } });
   });
 
+  // The count is derived by a second walk over the same text, so it can disagree with the redaction
+  // That actually ran. If a custom pattern masked a value but the report never named it, an operator
+  // Auditing "which types appeared" would be told less than the redaction did.
+  it('a custom pattern is named in the report, with the count the redaction actually made', async () => {
+    const journal = new InMemoryJournal();
+    const ctx = createProcessorCtx(journal, 'run-pii-custom');
+    const p = piiRedactor({ extraPatterns: [{ name: 'iban', pattern: /TR\d{24}/g }] });
+    const out = p.processInput!({ prompt: 'TR330006100519786457841326 ve TR100006100519786457841327 ve a@b.com' }, ctx) as any;
+    // The redaction itself, so the report is compared against something measured rather than assumed.
+    expect(out.prompt).toBe('[REDACTED_IBAN] ve [REDACTED_IBAN] ve [REDACTED_EMAIL]');
+    await flush();
+    const reports = await readProcessorReports(journal, 'run-pii-custom');
+    expect(reports[0]).toMatchObject({
+      name: 'pii-redactor',
+      phase: 'input',
+      findings: { redactedCount: 3, types: ['iban', 'email'] },
+    });
+  });
+
   it('no report is written when there is NO redaction', async () => {
     const journal = new InMemoryJournal();
     const ctx = createProcessorCtx(journal, 'run-pii-clean');
