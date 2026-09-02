@@ -52,7 +52,21 @@ export function notBuiltHtml(): string {
 export function mountSpa(app: Hono, apiBase = ''): boolean {
   const dist = distDir();
   if (!dist) return false;
-  app.get('/', (c) => c.html(injectedIndex(dist, apiBase)));
+  app.get('/', (c) => {
+    // The same two headers `/swagger` already sets, on the page that actually matters: this is the
+    // Admin surface, it holds the bearer token in localStorage, and one click on it can purge a run,
+    // Promote a managed agent or approve a pending tool call. Without `frame-ancestors` a page
+    // Elsewhere could put it in an invisible frame and collect those clicks.
+    //
+    // `img-src` is the second half of the model-output exfiltration fix in @gnldev/studio-ui: the
+    // Markdown and media renderers no longer emit remote <img> tags, and this makes that a property
+    // Of the deployment rather than of one component — a future renderer cannot reopen the channel.
+    // Kept narrow deliberately: a full policy would need `script-src`/`style-src` matched to what
+    // Vite emits, and a wrong one breaks the panel silently. These two are exact.
+    c.header('Content-Security-Policy', "frame-ancestors 'none'; img-src 'self' data:");
+    c.header('X-Frame-Options', 'DENY'); // the same statement for anything old enough to predate CSP
+    return c.html(injectedIndex(dist, apiBase));
+  });
 
   /**
    * The bundle's third-party notices, served from the running product.

