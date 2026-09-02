@@ -49,6 +49,32 @@ describe('openaiStrict', () => {
     expect(s.required).toEqual(expect.arrayContaining(['u', 'n']));
   });
 
+  // The other half of "all fields required". Forcing an optional key into `required` without also
+  // Letting it be null changes the tool's contract: the model can no longer say "not supplied", and
+  // `strictJsonSchema` defaults to true in the AI SDK's OpenAI provider, so it is enforced.
+  it('a field that was optional stays optional in effect — required, but null-accepting', () => {
+    const tools = toolWith(z.object({ u: z.string(), n: z.number().optional() }));
+    const s = schemaOf(applyToolCompat(tools, 'openai/gpt-4o', defaultRules));
+    expect(s.required).toEqual(expect.arrayContaining(['u', 'n']));
+    expect(s.properties.n.type).toEqual(['number', 'null']);
+    // A genuinely required field must NOT be widened — that would loosen a contract nobody loosened.
+    expect(s.properties.u.type).toBe('string');
+  });
+
+  it('nullability reaches nested objects, and an enum widens its VALUES too', () => {
+    const tools = toolWith(z.object({
+      nested: z.object({ a: z.string(), b: z.string().optional() }),
+      kind: z.enum(['x', 'y']).optional(),
+    }));
+    const s = schemaOf(applyToolCompat(tools, 'openai/gpt-4o', defaultRules));
+    expect(s.properties.nested.properties.b.type).toEqual(['string', 'null']);
+    expect(s.properties.nested.required).toEqual(expect.arrayContaining(['a', 'b']));
+    // zod emits this as {type:'string', enum:[...]}; widening only `type` would leave a node whose
+    // Type admits null while its enum still rejects it — satisfiable by nothing.
+    expect(s.properties.kind.type).toEqual(['string', 'null']);
+    expect(s.properties.kind.enum).toContain(null);
+  });
+
   it('groq provider is also caught', () => {
     const tools = toolWith(z.object({ x: z.string() }));
     const out = applyToolCompat(tools, { provider: 'groq.chat', modelId: 'llama-3.1' }, defaultRules);

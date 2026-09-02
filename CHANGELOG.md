@@ -316,6 +316,15 @@ whether or not anyone is on the other side of them yet.
   overwrite the verdict of the runId's own earlier, correctly-scoped attempt.
 
 ### Fixed
+- **An optional tool parameter is no longer silently promoted to mandatory on OpenAI
+  (`@gnldev/tool-schema`).** The `openai-strict` rule listed every property in `required` — strict mode
+  demands that — but never did the other half, so `z.string().optional()` arrived as required with
+  `type: "string"` and no `null`: the model could neither supply nothing nor say nothing was supplied.
+  The rule's own comment claimed optionality was carried "via nullable", making this an unwritten step
+  rather than a documented limit, and `strictJsonSchema` defaults to `true` in the AI SDK's OpenAI
+  provider, so it was enforced rather than advisory. Previously-optional keys are now widened to accept
+  `null`; genuinely required keys are untouched. An `enum` has `null` added to its **values** as well,
+  since widening only `type` leaves a node nothing can satisfy. Nested objects included.
 - **The dead-letter scan no longer lets one caller starve the rest — and naming a caller is no longer
   worse than not naming one.** Three rounds of measurement on the same endpoint, recorded together
   because each fix exposed the next:

@@ -3,8 +3,9 @@ import { walk, stripStringFormats } from './util.js';
 
 /**
  * OpenAI (and groq) strict / structured-output compatibility:
- * every object node gets `additionalProperties:false` + all properties become `required`
- *    (OpenAI strict mode requires this; optionality is represented on the provider side via nullable)
+ * every object node gets `additionalProperties:false` + all properties become `required`, and a
+ *    Property that WAS optional is widened to accept `null` so it stays optional in effect — strict
+ *    Mode has no other way to express it (see `allowNull`)
  * unsupported string `format`/`pattern` → moved into the description
  *
  * Why: the AI SDK's OpenAI provider silently rejects e.g. a Zod `.url()` (→ format:'uri') schema.
@@ -28,6 +29,44 @@ import { walk, stripStringFormats } from './util.js';
  * Note that groq is not a dependency here and never has been: the term exists so a caller who
  * Brings their own groq provider is handled, not because this package integrates one.
  */
+/**
+ * Widens a schema so it also accepts `null` — the second half of "everything is required".
+ *
+ * Forcing a key into `required` without this says the model MUST produce a value for a parameter its
+ * Author marked optional, and `strictJsonSchema` defaults to `true` in the AI SDK's OpenAI provider,
+ * So the constraint is enforced rather than advisory. Measured before this existed: a
+ * `z.string().optional()` field came out as `required` with `type:'string'` and no null — the model
+ * Had no way to say "not supplied", which is a different tool contract than the one that was written.
+ *
+ * In place where the node's own `type` can carry it; wrapped in `anyOf` when the node is a `$ref`,
+ * `enum`, `const`, `oneOf` or `allOf`, none of which can express nullability without changing what
+ * They mean. A node with no type constraint at all already permits null and is left untouched.
+ */
+function allowNull(prop: any): any {
+  if (!prop || typeof prop !== 'object') return prop;
+
+  if (Array.isArray(prop.type) || typeof prop.type === 'string' || Array.isArray(prop.enum)) {
+    // An `enum` restricts the VALUE set, so widening `type` alone would leave a node whose type
+    // Admits null while its enum still forbids it — unsatisfiable, which is the bug being fixed
+    // Rather than a narrower version of it. Zod emits `.enum([...]).optional()` in exactly this
+    // Shape (`{type:'string', enum:[...]}`), so it is the common case, not a corner.
+    if (Array.isArray(prop.enum) && !prop.enum.includes(null)) prop.enum = [...prop.enum, null];
+    if (Array.isArray(prop.type)) {
+      if (!prop.type.includes('null')) prop.type = [...prop.type, 'null'];
+    } else if (typeof prop.type === 'string' && prop.type !== 'null') {
+      prop.type = [prop.type, 'null'];
+    }
+    return prop;
+  }
+  if (Array.isArray(prop.anyOf)) {
+    if (!prop.anyOf.some((s: any) => s?.type === 'null')) prop.anyOf = [...prop.anyOf, { type: 'null' }];
+    return prop;
+  }
+  const constrained = prop.$ref !== undefined || prop.const !== undefined
+    || Array.isArray(prop.oneOf) || Array.isArray(prop.allOf);
+  return constrained ? { anyOf: [prop, { type: 'null' }] } : prop;
+}
+
 export const openaiStrict: ToolSchemaRule = {
   name: 'openai-strict',
   shouldApply: (m) =>
@@ -39,6 +78,11 @@ export const openaiStrict: ToolSchemaRule = {
       if (isObject) {
         n.additionalProperties = false;
         if (n.properties && typeof n.properties === 'object') {
+          // Which keys were optional BEFORE this rule makes everything required — read first,
+          // Because the next statement destroys the answer.
+          const optional = new Set(Object.keys(n.properties));
+          for (const k of Array.isArray(n.required) ? n.required : []) optional.delete(k);
+          for (const k of optional) (n.properties as any)[k] = allowNull((n.properties as any)[k]);
           n.required = Object.keys(n.properties);
         }
       }
