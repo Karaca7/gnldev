@@ -54,6 +54,46 @@ describe('@gnldev/chat-adapter toUIMessages', () => {
     expect(JSON.stringify(msgs)).not.toContain('__gnl_suspend');
   });
 
+  // The other two sentinels reach history through the same reconstruction, and had no test on this
+  // Path either — the suspend case above was standing in for all three.
+  it('sentinel-masks a BLOCKED tool in history, without carrying its internal detail across', async () => {
+    const j = new InMemoryJournal();
+    await j.put(runKeys.model('r4', 0), {
+      content: [{ type: 'tool-call', toolCallId: 'c4', toolName: 'chargeCard', input: '{"amount":10}' }],
+      finishReason: 'tool-calls',
+    });
+    await j.put(runKeys.tool('r4', 'c4'), {
+      status: 'failed',
+      output: { __gnl_blocked: { code: 'side_effect_retry_blocked', message: 'refused', detail: { raw: 'INTERNAL' } } },
+    });
+    const msgs = toUIMessages(await j.readRun('r4'), { runId: 'r4' });
+
+    const toolPart = (msgs[0].parts as any[]).find((p) => p.type === 'tool-chargeCard');
+    expect(toolPart.output).toEqual({ blocked: true, code: 'side_effect_retry_blocked', message: 'refused' });
+    const wire = JSON.stringify(msgs);
+    expect(wire).not.toContain('__gnl_blocked');
+    expect(wire, 'the internal detail must not ride along').not.toContain('INTERNAL');
+  });
+
+  it('sentinel-masks a LIMIT-EXCEEDED tool in history', async () => {
+    const j = new InMemoryJournal();
+    await j.put(runKeys.model('r5', 0), {
+      content: [{ type: 'tool-call', toolCallId: 'c5', toolName: 'search', input: '{"q":"x"}' }],
+      finishReason: 'tool-calls',
+    });
+    await j.put(runKeys.tool('r5', 'c5'), {
+      status: 'failed',
+      output: { __gnl_limit_exceeded: { kind: 'tool_loop', message: 'too many calls', detail: { seen: 'INTERNAL' } } },
+    });
+    const msgs = toUIMessages(await j.readRun('r5'), { runId: 'r5' });
+
+    const toolPart = (msgs[0].parts as any[]).find((p) => p.type === 'tool-search');
+    expect(toolPart.output).toEqual({ blocked: true, code: 'tool_loop', message: 'too many calls' });
+    const wire = JSON.stringify(msgs);
+    expect(wire).not.toContain('__gnl_limit_exceeded');
+    expect(wire).not.toContain('INTERNAL');
+  });
+
   it('a tool-call with no journaled result yet is state input-available (not output-available)', async () => {
     const j = new InMemoryJournal();
     await j.put(runKeys.model('r3', 0), {
