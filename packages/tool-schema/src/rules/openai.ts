@@ -82,15 +82,74 @@ function allowNull(prop: any): any {
   return constrained ? { anyOf: [prop, { type: 'null' }] } : prop;
 }
 
+/**
+ * Collapses an `allOf` of plain objects into the single object it describes.
+ *
+ * `additionalProperties: false` and `allOf` do not compose: each branch is validated on its own, so
+ * `{a,b}` against `allOf: [{a, addl:false}, {b, addl:false}]` fails BOTH — the first rejects `b`, the
+ * second rejects `a`. Nothing satisfies it. Measured on `z.intersection(z.object({a}), z.object({b}))`,
+ * which is the ordinary way to write this, and the rule below was producing exactly that shape.
+ *
+ * An intersection of object types IS one object with the union of the properties, so merging is the
+ * meaning rather than an approximation — and the result is something OpenAI strict accepts, which an
+ * `allOf` is not. Kept conservative: only branches that are plain `properties` objects merge, and a
+ * Property named in two branches leaves the whole thing alone, because picking a winner would be
+ * inventing a schema the author did not write. Anything not merged keeps its `allOf` and simply does
+ * not get `additionalProperties` (see the walk), which is at least satisfiable.
+ */
+function mergeObjectAllOf(node: any): boolean {
+  if (!Array.isArray(node?.allOf) || node.allOf.length === 0) return false;
+  const plain = (b: any) =>
+    b && typeof b === 'object' && b.properties && typeof b.properties === 'object'
+    && (b.type === undefined || b.type === 'object')
+    && !b.$ref && !b.anyOf && !b.oneOf && !b.allOf && !b.patternProperties && !b.enum && !b.const;
+  if (!node.allOf.every(plain)) return false;
+
+  const properties: Record<string, unknown> = {};
+  const required: string[] = [];
+  for (const b of node.allOf) {
+    for (const [k, v] of Object.entries(b.properties as Record<string, unknown>)) {
+      if (k in properties) return false; // the same key in two branches — do not choose for the author
+      properties[k] = v;
+    }
+    for (const r of Array.isArray(b.required) ? b.required : []) required.push(r);
+  }
+  delete node.allOf;
+  node.type = 'object';
+  node.properties = properties;
+  if (required.length) node.required = [...new Set(required)];
+  return true;
+}
+
 export const openaiStrict: ToolSchemaRule = {
   name: 'openai-strict',
   shouldApply: (m) =>
     m.provider.includes('openai') || m.modelId.includes('openai') || m.provider.includes('groq'),
   transform(schema: JsonSchema) {
+    // Two passes, because the second needs an answer the first has to produce: which object nodes are
+    // BRANCHES of an `allOf` that could not be merged. `walk` visits a branch on its own and cannot
+    // Say what contains it, and a branch is exactly where `additionalProperties: false` is fatal —
+    // Every branch is checked against the same value, so each rejects the other's properties and
+    // Nothing satisfies the whole. Measured: an `allOf` of a plain object and a `$ref`, with distinct
+    // Keys, came out impossible to satisfy.
+    const inUnmergedAllOf = new WeakSet<object>();
+    walk(schema, (n) => {
+      if (!Array.isArray((n as any).allOf)) return;
+      if (mergeObjectAllOf(n)) return; // became a plain object — the ordinary rules now apply to it
+      for (const branch of (n as any).allOf) if (branch && typeof branch === 'object') inUnmergedAllOf.add(branch);
+    });
+
     walk(schema, (n) => {
       stripStringFormats(n);
       const isObject = n.type === 'object' || (n.properties && typeof n.properties === 'object');
-      if (isObject) {
+      // Two ways `additionalProperties: false` turns an `allOf` schema into an impossible one, and
+      // Both are excluded here. On a BRANCH it rejects the sibling branches' properties. On the node
+      // That CARRIES the allOf it is worse: `additionalProperties` only ever pairs with that node's
+      // Own `properties`, and a composition node has none — so `{type:'object', allOf:[…],
+      // AdditionalProperties:false}` permits no properties at all. A schema that permits too much
+      // Beats one nothing can satisfy.
+      const composes = Array.isArray((n as any).allOf);
+      if (isObject && !composes && !inUnmergedAllOf.has(n as object)) {
         n.additionalProperties = false;
         if (n.properties && typeof n.properties === 'object') {
           // Which keys were optional BEFORE this rule makes everything required — read first,

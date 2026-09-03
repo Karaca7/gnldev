@@ -246,3 +246,43 @@ describe('a rule written against durable\'s declaration', () => {
     }
   });
 });
+
+// `additionalProperties: false` and `allOf` do not compose: each branch is validated against the same
+// value on its own, so `{a,b}` against `allOf:[{a,addl:false},{b,addl:false}]` fails BOTH. Measured on
+// `z.intersection(z.object({a}), z.object({b}))` — the ordinary way to write it — the rule was
+// producing a schema nothing could satisfy.
+describe('openaiStrict and allOf', () => {
+  it('an intersection of plain objects becomes the one object it describes', () => {
+    const tools = toolWith(z.intersection(z.object({ a: z.string() }), z.object({ b: z.string() })));
+    const s = schemaOf(applyToolCompat(tools, 'openai/gpt-4o', defaultRules));
+    expect(s.allOf, 'an intersection of objects IS an object').toBeUndefined();
+    expect(Object.keys(s.properties)).toEqual(['a', 'b']);
+    expect(s.required).toEqual(expect.arrayContaining(['a', 'b']));
+    // And now the constraint is safe to apply, because there is a single object to apply it to.
+    expect(s.additionalProperties).toBe(false);
+  });
+
+  it('an allOf that cannot be merged keeps its branches satisfiable', () => {
+    const raw = {
+      type: 'object',
+      allOf: [
+        { type: 'object', properties: { a: { type: 'string' } }, required: ['a'] },
+        { $ref: '#/$defs/X' },
+      ],
+      $defs: { X: { type: 'object', properties: { b: { type: 'string' } } } },
+    };
+    const tools = { demo: tool({ description: 'd', inputSchema: jsonSchema(raw as any), execute: async () => 'ok' }) };
+    const s = schemaOf(applyToolCompat(tools, 'openai/gpt-4o', defaultRules));
+    // A `$ref` branch cannot be merged, so the composition stays — and neither the branch nor the
+    // Node carrying it may claim "no other properties", or the two halves cancel each other out.
+    expect(s.allOf[0].additionalProperties, 'a branch rejecting its siblings\' keys').toBeUndefined();
+    expect(s.additionalProperties, 'a composition node has no properties of its own').toBeUndefined();
+  });
+
+  it('a conflicting key is left alone rather than resolved by guesswork', () => {
+    const tools = toolWith(z.intersection(z.object({ a: z.string() }), z.object({ a: z.number() })));
+    const s = schemaOf(applyToolCompat(tools, 'openai/gpt-4o', defaultRules));
+    // The author wrote `string AND number`; picking one would be inventing a schema they did not.
+    expect(s.allOf, 'the contradiction is theirs to see').toBeTruthy();
+  });
+});
