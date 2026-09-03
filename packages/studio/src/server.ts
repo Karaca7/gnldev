@@ -13,6 +13,19 @@ import { mountSpa, notBuiltHtml } from './spa.js';
 import { openapiSpec, swaggerHtml } from './swagger.js';
 import { pipeAgentStream } from './sse.js';
 
+/**
+ * Is this `<runId>:wf:<rest>` key a STEP, or one of the engine's bookkeeping records?
+ *
+ * @gnldev/workflow reserves a leading `_` on any path segment for control records (`_suspend`,
+ * `_canceled`, `_resume:<waitId>`, a retry's `<id>:_fallback`) and writes retry counters as
+ * `<id>:attempts`. Its own fork sweep skips exactly these. The Studio readers skipped only the
+ * literal `_suspend`, so a run whose retry fell back to a substitute rendered four rows for one
+ * step — the output, the counter, the marker, and the substitute.
+ */
+export function isWorkflowStepKey(rest: string): boolean {
+  if (rest.startsWith('_') || rest.includes(':_')) return false;
+  return !rest.endsWith(':attempts');
+}
 /** Scheduler view trigger row (same shape as @gnldev/scheduler `listTriggers` — see GET /scheduler/triggers). */
 export type { TriggerInfo } from '@gnldev/scheduler';
 
@@ -4542,6 +4555,13 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   });
 
   // Run a workflow LIVE (admin) — SSE: streams in real time as steps land in the journal (poll-to-stream).
+  //
+  // NOTE on `isWorkflowStepKey`: three places below list `<runId>:wf:*` and turn each key into a row.
+  // All three filtered exactly one name, `_suspend`, so every other bookkeeping key was rendered as a
+  // Step the workflow never had: `_canceled`, `_resume:<waitId>`, a retry's `<id>:attempts`, and a
+  // Substitution marker `<id>:_fallback`. @gnldev/workflow reserves the `_` prefix for exactly this
+  // Distinction and its own fork sweep already honours it (`tail.includes(':_') || endsWith(':attempts')`);
+  // The reader did not. A run whose retry fell back showed four rows for one step.
   // Without changing the engine: start runWorkflow + poll the `<runId>:wf:*` keys. Requires listKeys+get.
   // What-if fork (workflow): copy the output of the first `upto` steps to a new runId → with the same
   // Input, the copied ones REPLAY on resume, and the selected step onward re-runs. The workflow
@@ -4620,7 +4640,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
           if (seen.has(k)) continue;
           seen.add(k);
           const stepId = k.slice(pre.length);
-          if (stepId === '_suspend') continue;
+          if (!isWorkflowStepKey(stepId)) continue;
           const output = await jget(k).catch(() => undefined);
           await stream.writeSSE({ event: 'step', data: JSON.stringify({ stepId, output, ts: Date.now() }) });
         }
@@ -4653,7 +4673,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       const stepId = k.slice(pre.length);
       const v = await rw.get(k);
       if (stepId === '_suspend') suspend = v;
-      else steps.push({ stepId, output: v });
+      else if (isWorkflowStepKey(stepId)) steps.push({ stepId, output: v });
     }
     return c.json({ runId, steps, suspended: !!suspend, suspend });
   });
@@ -4681,7 +4701,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       let e = byRun.get(runId);
       if (!e) { e = { steps: new Set(), suspend: false }; byRun.set(runId, e); }
       if (rest === '_suspend') e.suspend = true;
-      else e.steps.add(rest);
+      else if (isWorkflowStepKey(rest)) e.steps.add(rest);
     }
     const runs: { runId: string; startedAt?: number; steps: number; status: 'completed' | 'suspended'; suspended: boolean }[] = [];
     for (const [runId, e] of byRun) {
