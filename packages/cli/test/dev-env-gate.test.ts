@@ -24,6 +24,8 @@ vi.mock('node:child_process', () => ({
 
 import { devCommand } from '../src/commands/dev.js';
 
+// Any existing file: the pre-spawn check is about EXISTENCE, and these tests are about env.
+const CFG = 'package.json';
 const saved = { ...process.env };
 beforeEach(() => { spawned.length = 0; });
 afterEach(() => { process.env = { ...saved }; });
@@ -32,7 +34,7 @@ describe('gnl dev does not let the environment make the bind decision', () => {
   it('an inherited GNL_HOST / GNL_ALLOW_OPEN_NETWORK does not reach the child', async () => {
     process.env.GNL_HOST = '0.0.0.0';
     process.env.GNL_ALLOW_OPEN_NETWORK = '1';
-    await devCommand.run({ argv: [] } as any);
+    await devCommand.run({ argv: ['--config', CFG] } as any);
 
     expect(spawned).toHaveLength(1);
     // Node drops env keys whose value is `undefined` (verified), so an absent flag means an absent
@@ -42,7 +44,7 @@ describe('gnl dev does not let the environment make the bind decision', () => {
   });
 
   it('the flags still travel when they ARE given', async () => {
-    await devCommand.run({ argv: ['--host', '0.0.0.0', '--allow-open-network'] } as any);
+    await devCommand.run({ argv: ['--config', CFG, '--host', '0.0.0.0', '--allow-open-network'] } as any);
     expect(spawned[0]!.env.GNL_HOST).toBe('0.0.0.0');
     expect(spawned[0]!.env.GNL_ALLOW_OPEN_NETWORK).toBe('1');
   });
@@ -50,7 +52,7 @@ describe('gnl dev does not let the environment make the bind decision', () => {
   it('a flag beats an inherited value rather than merging with it', async () => {
     process.env.GNL_HOST = '0.0.0.0';
     process.env.GNL_ALLOW_OPEN_NETWORK = '1';
-    await devCommand.run({ argv: ['--host', '127.0.0.1'] } as any);
+    await devCommand.run({ argv: ['--config', CFG, '--host', '127.0.0.1'] } as any);
     expect(spawned[0]!.env.GNL_HOST).toBe('127.0.0.1');
     // The acknowledgement was inherited, not typed — it must not survive alongside an explicit host.
     expect(spawned[0]!.env.GNL_ALLOW_OPEN_NETWORK).toBeUndefined();
@@ -60,13 +62,32 @@ describe('gnl dev does not let the environment make the bind decision', () => {
   // Alternative was editing gnl.config to move off 3000. It carries no security decision.
   it('PORT is still inherited — that fallback is intended', async () => {
     process.env.PORT = '4567';
-    await devCommand.run({ argv: [] } as any);
+    await devCommand.run({ argv: ['--config', CFG] } as any);
     expect(spawned[0]!.env.GNL_PORT).toBe('4567');
   });
 
   it('the rest of the environment is still passed through', async () => {
     process.env.OPENAI_API_KEY = 'sk-test';
-    await devCommand.run({ argv: [] } as any);
+    await devCommand.run({ argv: ['--config', CFG] } as any);
     expect(spawned[0]!.env.OPENAI_API_KEY, 'the child still needs the ordinary environment').toBe('sk-test');
+  });
+});
+
+// A config path that does not exist is the one startup failure `tsx watch` cannot hold open: there is
+// no file to watch, so creating it later triggers nothing — measured, zero reruns — and `gnl dev`
+// waited for an event that could never arrive. Every OTHER early failure (syntax error, busy port,
+// refused bind) recovers on the next save, which is what a watcher is for, so only this one is
+// refused up front.
+describe('gnl dev refuses a config that does not exist, before spawning a watcher', () => {
+  it('throws with the path it looked at, and never spawns', async () => {
+    await expect(devCommand.run({ argv: ['--config', 'definitely-not-here.ts'] } as any))
+      .rejects.toThrow(/not found \(looked in .*definitely-not-here\.ts\)/);
+    expect(spawned, 'a watcher with nothing to watch is the hang').toHaveLength(0);
+  });
+
+  it('an existing config still spawns', async () => {
+    // This file is its own fixture — any real path proves the check is about existence, not shape.
+    await devCommand.run({ argv: ['--config', CFG] } as any);
+    expect(spawned).toHaveLength(1);
   });
 });

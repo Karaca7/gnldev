@@ -24,6 +24,24 @@ export const devCommand: Command = {
     const { fileURLToPath } = await import('node:url');
     const { readFileSync } = await import('node:fs');
 
+    // Checked HERE, before the watcher exists, because this is the one startup failure `tsx watch`
+    // Cannot hold open for you. Measured: every other early failure — a syntax error in the config, a
+    // Busy port, a refused bind — leaves the watcher waiting and RECOVERS the moment you fix the file
+    // (verified including a cold start on a broken config, and a refused bind fixed by adding `auth`
+    // To the config: the server came up on the rerun). That is what a watcher is for.
+    //
+    // A config path that does not exist is different in kind: there is no file to watch, so creating
+    // It later triggers nothing — measured, zero reruns — and `gnl dev` waits for an event that can
+    // Never arrive. Failing before the spawn turns the one dead hang into an ordinary error.
+    const { existsSync } = await import('node:fs');
+    const { resolve: resolvePath } = await import('node:path');
+    if (!existsSync(resolvePath(configPath))) {
+      throw new Error(
+        `config '${configPath}' not found (looked in ${resolvePath(configPath)}).\n` +
+        `  Run this from your project root, or point at it with \`gnl dev --config <path>\`.`,
+      );
+    }
+
     const require = createRequire(import.meta.url);
     const tsxPkgPath = require.resolve('tsx/package.json');
     const tsxPkg = JSON.parse(readFileSync(tsxPkgPath, 'utf8'));
