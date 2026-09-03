@@ -1078,7 +1078,7 @@ describe('host records are projected, not forwarded', () => {
       events: {
         topics: () => [{
           topic: 'orders.created', consumers: ['billing'],
-          sampleFailure: "ssn '123-45-6789'", dbDsn: 'postgres://u:pw@h/db',
+          sampleFailure: "ssn '123-45-6789'", dbDsn: 'postgres://u:pw@postgres/db',
         }],
         listDead: () => [],
       } as never,
@@ -1100,7 +1100,7 @@ describe('host records are projected, not forwarded', () => {
         listDead: () => [{
           id: 'e1', topic: 'orders.created', consumer: 'billing', status: 'quarantined', attempts: 2, at: 1,
           // Everything below is the host's own, and none of it is this server's schema.
-          lastErrorDetail: "ssn '123-45-6789'", rawRow: { email: 'jane@customer.example' }, dbDsn: 'postgres://u:pw@h/db',
+          lastErrorDetail: "ssn '123-45-6789'", rawRow: { email: 'jane@customer.example' }, dbDsn: 'postgres://u:pw@postgres/db',
         }] as never,
       } as never,
     });
@@ -1136,7 +1136,7 @@ describe('host records are projected, not forwarded', () => {
  */
 describe('the projection allowlist is a shape, not just a name', () => {
   const SSN = '123-45-6789';
-  const DSN = 'postgres://u:pw@h/db';
+  const DSN = 'postgres://u:pw@postgres/db';
 
   it('a nested object under an allowlisted TOPIC field does not ride out on it', async () => {
     const app = createStudioApi({

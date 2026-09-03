@@ -4080,7 +4080,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
    * The allowlist names a field AND the shape its declared type gives it, because naming alone is not
    * a boundary. Measured against the name-only version: the fix above moved `dbDsn` out of a host's
    * topic row, and putting the SAME data one level in walked straight back through —
-   * `consumers: [{name: 'billing', dbDsn: 'postgres://u:pw@h/db', lastFailure: "ssn '123-45-6789'"}]`
+   * `consumers: [{name: 'billing', dbDsn: 'postgres://u:pw@postgres/db', lastFailure: "ssn '123-45-6789'"}]`
    * was served whole to a `catalog:read`-only caller, as was
    * `attempts: {n: 8, workerHost: 'worker-3.internal', dsn: '…'}` on a dead-letter row. The row's own
    * `toJSON` is already skipped, but the FIELD VALUE's was still honoured, so a getter or a `toJSON`
@@ -4134,7 +4134,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
    * group still returning the host object verbatim, and the hole is identical rather than analogous:
    * `StudioEventTopic` is a duck-type, so a host that builds the inventory from its own quarantine
    * rows attaches whatever those rows carry. Measured, a host returning
-   * `{topic, consumers, sampleFailure: "ssn '123-45-6789'", dbDsn: 'postgres://u:pw@h/db'}` — a
+   * `{topic, consumers, sampleFailure: "ssn '123-45-6789'", dbDsn: 'postgres://u:pw@postgres/db'}` — a
    * `catalog:read`-only caller received all four fields. Nothing about "an inventory of names" makes
    * it safe; what makes it safe is that the server, not the host, decides which names leave.
    */
