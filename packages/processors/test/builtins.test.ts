@@ -243,3 +243,27 @@ describe('toolFilter', () => {
     expect(Object.keys(toolFilter({ allow: ['a'] }).processTools!(tools, ctx as any))).toEqual(['a']);
   });
 });
+
+// The email pattern's local part used to retry from every position inside a run of word characters,
+// consuming the whole run each time before failing to find `@`. Measured on a single line with no
+// address in it: 10k chars 78ms, 40k 1284ms, 80k 5290ms — quadratic, on input a model transcript or
+// a tool result can easily produce. The lookbehind makes a failure at one position rule out every
+// position inside the run.
+describe('redaction cost is linear in the input', () => {
+  it('a long run of word characters does not take quadratic time', () => {
+    const redact = piiTextRedactor();
+    const started = Date.now();
+    redact(`${'a'.repeat(80_000)}@`); // the worst case: one long local part, no domain to complete it
+    const ms = Date.now() - started;
+    // Generous by two orders of magnitude against the 5290ms this measured before, so the assertion
+    // Is about the complexity class rather than about this machine's speed.
+    expect(ms, `80k characters took ${ms}ms`).toBeLessThan(500);
+  });
+
+  it('...and still masks what it did before', () => {
+    const redact = piiTextRedactor();
+    expect(redact('mail ali.veli+etiket@alt.ornek.com x')).toBe('mail [REDACTED_EMAIL] x');
+    expect(redact('x-y@z-w.co.uk')).toBe('[REDACTED_EMAIL]');
+    expect(redact('not@an'), 'a domain with no dot is not an address').toBe('not@an');
+  });
+});
