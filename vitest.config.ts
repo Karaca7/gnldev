@@ -9,7 +9,7 @@ export default defineConfig({
     // reaches the provider, and neither was run by anything — `pnpm proofs` and `pnpm demo` print a
     // table for a human, and typecheck only proves they compile. A regression in the tool claim or in
     // `idempotencyKey` injection would have left the cited proof wrong with the suite still green.
-    include: ['packages/*/test/**/*.test.{ts,tsx}', 'examples/*/test/**/*.test.{ts,tsx}'],
+    include: ['packages/*/test/**/*.test.{ts,tsx}', 'examples/*/test/**/*.test.{ts,tsx}', 'test/**/*.test.{ts,tsx}'],
     environment: 'node',
     /**
      * Vitest's default is 5s, which this suite exceeds under load rather than because anything is slow.
