@@ -5,8 +5,19 @@
 
 export const DEFAULT_DOCS_URL = 'https://gnl.dev';
 const FETCH_TIMEOUT_MS = 2500;
-/** Ceiling on a fetched document, in characters. Roughly 8x the real llms-full.txt, so a growing doc
- *  Site has room; anything past it is not a document this tool should be relaying. */
+/**
+ * Ceiling on a fetched document, in characters.
+ *
+ * The margin cannot be stated against the real `llms-full.txt` — today that URL answers with an
+ * access page rather than the document, so there is nothing to measure. Against the only measurable
+ * reference, the embedded copy at ~32k characters, this is roughly 60x. An earlier version of this
+ * note claimed "8x the real llms-full.txt", which was a number nobody had measured.
+ *
+ * Read it as a sanity ceiling rather than a context budget: it exists to stop the 200 MB case (a body
+ * that came back whole because the only other bound was a 2.5s clock), not to fit a model's window —
+ * 2M characters is already larger than most. Worth re-checking against the real file once the doc
+ * site is reachable; tracked on an internal publish checklist that is not part of this repository.
+ */
 const MAX_REMOTE_CHARS = 2_000_000;
 
 export interface RemoteDocs {
