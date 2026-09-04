@@ -468,7 +468,7 @@ export interface RunOptions {
    * CreateGnl — the documented main path could not enable strict tool-policy, strict replay, timeouts, or
    * Model-step exclusivity. Opt-in; forwarded to runDurable/streamDurable (toolPolicy also to sub-agents).
    */
-  toolPolicy?: 'strict';
+  toolPolicy?: 'strict' | 'strict-critical';
   replay?: 'strict' | 'lenient';
   timeouts?: { modelStepMs?: number; toolMs?: number; claimTtlMs?: number };
   exclusiveModelStep?: { ttlMs?: number };

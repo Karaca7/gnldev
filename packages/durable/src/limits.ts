@@ -167,8 +167,23 @@ export interface RunLimits {
    * (the documented duplicate-toolCallId pattern) run before either succeeds — `idempotency: 'args'`'s claim/poll ladder is the
    * Correct tool there, this guard covers the cross-step window; (3) 'warn' proves nothing was
    * Prevented — it is the adoption ramp toward the stricter modes, not the destination.
+   *
+   * FAZ-3 object form — `{ action, scope, ttlMs }`:
+   * `scope: 'thread'` widens the marker to THE CONVERSATION (key `xthr:<threadId>:dup-…`, taintScope
+   *    Precedent): "this thread already fired that exact effect YESTERDAY, in another run" is caught,
+   *    Which the per-run marker is structurally blind to. Pair it with `action: 'suspend'` for the
+   *    Chat story — the ambiguous repeat becomes an approval question carrying `firstToolCallId`, so
+   *    The UI can show the FIRST result next to the question (an uninformed approval is not an
+   *    Approval). Requires threadId (loud warn + run-scope fallback without one).
+   * `ttlMs` (optional) expires the marker: past it, an identical call is NOT treated as a duplicate.
+   *    DEFAULT IS NO TTL — deliberately (heyet İhtilaf F): a false positive costs one extra approval
+   *    Question, a false negative fires the effect twice; the marker lives as long as the thread and
+   *    Dies with it (`purgeThread` sweeps `xthr:<threadId>:`).
+   * Plain-string form ≡ `{ action, scope: 'run' }` — every existing caller byte-for-byte unchanged.
    */
-  sideEffectDuplicates?: 'off' | 'warn' | 'reflect' | 'block' | 'suspend';
+  sideEffectDuplicates?:
+    | 'off' | 'warn' | 'reflect' | 'block' | 'suspend'
+    | { action: 'off' | 'warn' | 'reflect' | 'block' | 'suspend'; scope?: 'run' | 'thread'; ttlMs?: number };
   /**
    * How far one human approval reaches.
    *

@@ -93,7 +93,14 @@ export function withIdempotency<T extends ToolSet>(tools: T, opts: WithIdempoten
  */
 export async function releaseFailedClaim(
   journal: Journal,
-  opts: { toolName: string; args: unknown; key?: (toolName: string, args: unknown) => string },
+  opts: {
+    toolName: string;
+    args: unknown;
+    key?: (toolName: string, args: unknown) => string;
+    /** FAZ-3: release a THREAD-window claim (`idempotencyWindow: 'thread'`) — addresses
+     *  `xthr:<threadId>:args-…` instead of the cross-run `xrun:args-…` family. */
+    threadId?: string;
+  },
 ): Promise<boolean> {
   // CAS, not a delete. The first version read the record, checked it said 'failed', and then deleted —
   // and the gap between those two steps is a double charge: a concurrent retry (a tool marked
@@ -111,7 +118,9 @@ export async function releaseFailedClaim(
     );
   }
   const hash = argsHash(opts.key ? opts.key(opts.toolName, opts.args) : opts.args);
-  const claimKey = runKeys.toolCrossRun(opts.toolName, hash);
+  const claimKey = opts.threadId !== undefined
+    ? runKeys.toolThread(opts.threadId, opts.toolName, hash)
+    : runKeys.toolCrossRun(opts.toolName, hash);
   const rec = await journal.get<{ status?: string }>(claimKey);
   if (rec === undefined) {
     // `false` on its own is overloaded: "nothing was ever claimed" and "you looked in the wrong place"

@@ -252,6 +252,18 @@ export const runKeys = {
     assertNoColonInToolName(toolName);
     return `xrun:args-${toolName}-${hash}`;
   },
+  /**
+   * FAZ-3 `idempotencyWindow: 'thread'` — like `toolCrossRun` (invisible to parseJournalKey, mirrored
+   * Under the run via mirrorUnderRun, org-prefixed automatically by withOrg) but carrying the
+   * ThreadId, which is the structural fix for xrun's immortal-key problem: `purgeThread` sweeps
+   * `xthr:<threadId>:` and the thread's dedup state dies WITH the thread. The thread-scoped
+   * Duplicate MARKER (durable-tool's dup guard, `scope: 'thread'`) shares this prefix for the same
+   * Reason — one sweep reclaims both families.
+   */
+  toolThread: (threadId: string, toolName: string, hash: string) => {
+    assertNoColonInToolName(toolName);
+    return `xthr:${threadId}:args-${toolName}-${hash}`;
+  },
   /** Non-deterministic processor step — invisible to parseJournalKey. */
   proc: (runId: string, name: string) => `${runId}:proc:${name}`,
   /** Memory append idempotency marker — resume/retry doesn't double-write. Two-phase record (see run.ts
@@ -428,7 +440,7 @@ export interface DurableCtx {
    * (at least one of idempotent | sideEffect | recover). An undeclared tool is caught with a clear
    * Error AT THE START of the run (not surprised mid-run) — ends the "developer forgot to mark it" class of bug.
    */
-  toolPolicy?: 'strict';
+  toolPolicy?: 'strict' | 'strict-critical';
   /**
    * K1 (internal — set by runDurable/streamDurable): because the AI SDK's `executeTools` swallows
    * Errors THROWN from tool.execute and converts them to 'tool-error', throwing block errors inside

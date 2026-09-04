@@ -8,6 +8,7 @@ import { CompensatedRunError, runCompensated } from './compensation.js';
 import { recordIncident } from './incidents.js';
 import { markRunTainted, readRunTaint } from './taint.js';
 import { checkToolGate, recordToolOutcome } from './limits.js';
+import type { RunLimits } from './limits.js';
 import { createProcessorCtx } from './processor.js';
 import type { DurableCtx, Journal, ToolJournalRecord } from './journal.js';
 import type { JournalReader } from './journal.js';
@@ -81,12 +82,16 @@ interface DupMarker {
  * Writer crashed without releasing) → also taken over, using the same TTL discipline as the tool
  * Claim itself. A live marker — someone genuinely executing right now — loses.
  */
-async function claimDupMarker(journal: Journal, dupKey: string, next: DupMarker, staleTtlMs: number): Promise<boolean> {
+async function claimDupMarker(journal: Journal, dupKey: string, next: DupMarker, staleTtlMs: number, windowTtlMs?: number): Promise<boolean> {
   const raw = await journal.get<DupMarker>(dupKey);
   if (raw === undefined) return claim(journal, dupKey, next);
   const cur = raw as DupMarker;
   const now = journal.now ? await journal.now() : Date.now();
-  const takeable = cur.released === true || (cur.inFlight === true && now - cur.at > staleTtlMs);
+  // FAZ-3 windowTtlMs: a COMPLETED marker older than the configured dedup window is not a duplicate
+  // Of anything anymore — takeable like a released one. An IN-FLIGHT marker is never window-expired
+  // (a live executor is arbitrated by staleTtlMs alone, same as before).
+  const windowExpired = windowTtlMs !== undefined && cur.inFlight !== true && now - cur.at > windowTtlMs;
+  const takeable = cur.released === true || windowExpired || (cur.inFlight === true && now - cur.at > staleTtlMs);
   if (!takeable) return false;
   if (journal.putIfMatch) return journal.putIfMatch(dupKey, raw, next);
   await journal.put(dupKey, next); // single-process fallback — the same documented bound as claim()
@@ -96,6 +101,31 @@ async function claimDupMarker(journal: Journal, dupKey: string, next: DupMarker,
 const dupMarkerKey = (runId: string, toolName: string, hash: string): string =>
   // ToolName VERBATIM in the key — same accepted practice as runKeys.toolByArgs/toolCrossRun (journal.ts).
   runKeys.proc(runId, `dup-${toolName}-${hash}`);
+
+// FAZ-3 thread-scoped duplicate marker — under the SAME `xthr:<threadId>:` prefix as
+// RunKeys.toolThread (not the plan's cosmetic `thread:` prefix) so ONE purgeThread sweep reclaims
+// The thread's whole dedup state: args-window records AND these markers.
+const threadDupMarkerKey = (threadId: string, toolName: string, hash: string): string =>
+  `xthr:${threadId}:dup-${toolName}-${hash}`;
+
+/** FAZ-3 — 'thread' scoping asked for without a threadId: fall back LOUDLY (once per tool+feature),
+ *  Never silently — a silent fallback reports dedup the caller isn't getting. */
+const threadScopeWarned = new Set<string>();
+function warnThreadScopeFallback(feature: string, toolName: string): void {
+  const k = `${feature}:${toolName}`;
+  if (threadScopeWarned.has(k)) return;
+  threadScopeWarned.add(k);
+  console.warn(
+    `@gnldev/durable: '${toolName}' asked for thread-scoped ${feature} but this call has NO threadId — ` +
+    `falling back to run scope. Pass threadId (RunOptions.threadId / the chat route sets it) to get the thread window.`,
+  );
+}
+
+/** FAZ-3 — sideEffectDuplicates accepts a plain action string (≡ run scope) or `{action, scope, ttlMs}`. */
+function dupConfigOf(raw: RunLimits['sideEffectDuplicates']): { action: 'off' | 'warn' | 'reflect' | 'block' | 'suspend'; scope: 'run' | 'thread'; ttlMs?: number } {
+  if (raw && typeof raw === 'object') return { action: raw.action, scope: raw.scope ?? 'run', ...(raw.ttlMs !== undefined ? { ttlMs: raw.ttlMs } : {}) };
+  return { action: raw ?? 'warn', scope: 'run' };
+}
 
 /**
  * Under the `cross-run` window the journal key deliberately carries no runId (`xrun:args-…`), so the
@@ -196,7 +226,10 @@ async function writeToolTerminal(
   await ctx.journal.put(key, stampFormat(stamped));
   await mirrorUnderRun(ctx, key, stamped, toolCallId);
   if (dupKey && record.status === 'succeeded') {
-    const success: DupMarker = { firstToolCallId: toolCallId, at: Date.now() };
+    // Journal clock for the stamp (K2, BOTH ends): windowExpired/ttl decisions read `at` with the
+    // Storage clock — a wall-clock stamp from a writer whose clock lags the storage makes a
+    // Long-lived thread marker expire EARLY (the unsafe direction: a duplicate fires).
+    const success: DupMarker = { firstToolCallId: toolCallId, at: ctx.journal.now ? await ctx.journal.now() : Date.now() };
     const won = await claim(ctx.journal, dupKey, success);
     if (!won) {
       // The row exists. Two of the shapes it can hold are OURS to overwrite, and leaving either in
@@ -317,9 +350,11 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
   // `idempotency` nor `idempotencyKey` is given) — a cross-run dedup window only makes sense keyed by
   // Arguments, never by the AI SDK's per-call toolCallId. Default window is 'run' — behavior for
   // EVERY EXISTING caller (who never sets this field) is BYTE-FOR-BYTE unchanged.
-  const window: 'run' | 'cross-run' = tool.idempotencyWindow ?? 'run';
+  // FAZ-3: 'thread' joins as the third window arm — implies 'args' mode for the same reason
+  // 'cross-run' does (a shared window only makes sense keyed by arguments, never by per-call ids).
+  const window: 'run' | 'cross-run' | 'thread' = tool.idempotencyWindow ?? 'run';
   const mode: 'call' | 'args' =
-    window === 'cross-run' || tool.idempotency === 'args' || typeof tool.idempotencyKey === 'function' ? 'args' : 'call';
+    window !== 'run' || tool.idempotency === 'args' || typeof tool.idempotencyKey === 'function' ? 'args' : 'call';
   return {
     ...tool,
     execute: async (input: any, options: any) => {
@@ -339,11 +374,20 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       // In the 'cross-run' window the journal key drops the `${runId}:` prefix
       // (runKeys.toolCrossRun) — the SAME arguments from ANY run land on the SAME record. 'run' window
       // (default) is UNCHANGED (runKeys.toolByArgs, run-scoped).
+      // FAZ-3: the 'thread' window needs a threadId AT CALL TIME; without one there is nothing to
+      // Scope by — fall back to the run window loudly (see warnThreadScopeFallback).
+      let effWindow: 'run' | 'cross-run' | 'thread' = window;
+      if (window === 'thread' && !ctx.threadId) {
+        warnThreadScopeFallback('idempotencyWindow', toolName);
+        effWindow = 'run';
+      }
       const key = mode !== 'args'
         ? runKeys.tool(ctx.runId, toolCallId)
-        : window === 'cross-run'
+        : effWindow === 'cross-run'
           ? runKeys.toolCrossRun(toolName, hash)
-          : runKeys.toolByArgs(ctx.runId, toolName, hash);
+          : effWindow === 'thread'
+            ? runKeys.toolThread(ctx.threadId!, toolName, hash)
+            : runKeys.toolByArgs(ctx.runId, toolName, hash);
       // M1 downstream exactly-once: in 'args' mode, toolName+hash is carried INSTEAD OF toolCallId → even
       // If the model produces a NEW toolCallId with the SAME arguments, downstream (Stripe etc.) dedup
       // Stays CONSISTENT (otherwise every new toolCallId would spawn a different provider idempotencyKey).
@@ -366,8 +410,12 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       const orgPart = orgScope ? `org:${orgScope}:` : '';
       const idempotencyKey = mode !== 'args'
         ? `${orgPart}${ctx.runId}:${toolCallId}`
-        : window === 'cross-run'
+        : effWindow === 'cross-run'
           ? `${orgPart}${toolName}:${hash}`
+          : effWindow === 'thread'
+            // The downstream key follows the window's scope, same principle as cross-run above: a
+            // Retried run ON THIS THREAD reusing the same arguments must reuse the SAME provider key.
+            ? `${orgPart}thr:${ctx.threadId}:${toolName}:${hash}`
             : `${orgPart}${ctx.runId}:${toolName}:${hash}`;
 
       // 1) Exactly-once: if a succeeded/denied/reflected record exists, do NOT execute, return from the
@@ -462,6 +510,30 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           return await consumeExistingRecord(ctx, key, record, toolCallId);
         }
         // Approved === true → run below
+      } else if (record === undefined && tool.confirm && approved !== true) {
+        // FAZ-3 `confirm` — the tool's OWN first-call human gate, handled by the runtime directly
+        // (no guard factory: a two-step ceremony where forgetting the factory leaves the flag
+        // Silently unenforced is exactly the failure class this replaces). Denial is terminal;
+        // Anything else suspends with the STANDARD sentinel → same approvals flow as guard
+        // Suspensions. A pre-supplied approval skips this arm entirely (else-if chain) and still
+        // Meets the guard below on its way to execute.
+        // `record === undefined` is LOAD-BEARING (denetçi blokeri): this arm answers the FRESH call
+        // Only. A 'failed'/'running' record reaching here means a crashed or in-flight attempt — the
+        // Effect may already have fired, and overwriting that record with 'suspended' would show the
+        // Human a "confirm before it runs" question (hiding that it may HAVE run) and bypass the
+        // Recover/reclaim ladder below, which owns exactly that case.
+        if (approved === false) {
+          const output = { __denied: true, reason: 'Confirmation denied.' };
+          await writeToolTerminal(ctx, key, { status: 'denied', output }, toolCallId, toolName, hash);
+          return output;
+        }
+        const reason =
+          (typeof tool.confirm === 'object' && typeof tool.confirm.reason === 'function'
+            ? tool.confirm.reason(input)
+            : undefined) ?? `'${toolName}' requires explicit confirmation before it runs.`;
+        const sentinel = { __gnl_suspend: { toolCallId, toolName, args: input, reason } };
+        await writeToolTerminal(ctx, key, { status: 'suspended', output: sentinel }, toolCallId, toolName, hash);
+        return sentinel;
       } else if (ctx.guard) {
         // 3) General policy: check at the gate before execute (gate the side effect).
         // TAINT PHASE 2 (taint-aware guard): the guard sees the run's taint mark (undefined = clean)
@@ -505,12 +577,32 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       // Scope guards: 'args' mode dedups on its own (fast-path above); an EXPLICIT approval for this
       // ToolCallId means a human already blessed this exact repeat (stand down); replay never gets
       // Here (the fast-path returns the journaled record first).
-      const dupAction = ctx.limits?.sideEffectDuplicates ?? 'warn';
-      const dupKey = mode === 'call' && sideEffect && dupAction !== 'off' ? dupMarkerKey(ctx.runId, toolName, hash) : undefined;
+      const dupCfg = dupConfigOf(ctx.limits?.sideEffectDuplicates);
+      const dupAction = dupCfg.action;
+      // FAZ-3 scope: 'thread' widens the marker to the conversation (xthr:<threadId>:dup-…) — the
+      // "created it yesterday, in another run of this chat" case the per-run marker cannot see.
+      let dupScope = dupCfg.scope;
+      if (dupScope === 'thread' && !ctx.threadId) {
+        warnThreadScopeFallback('sideEffectDuplicates scope', toolName);
+        dupScope = 'run';
+      }
+      const dupWhere = dupScope === 'thread' ? `thread '${ctx.threadId}'` : `run '${ctx.runId}'`;
+      const dupKey = mode === 'call' && sideEffect && dupAction !== 'off'
+        ? dupScope === 'thread'
+          ? threadDupMarkerKey(ctx.threadId!, toolName, hash)
+          : dupMarkerKey(ctx.runId, toolName, hash)
+        : undefined;
       // Visible at the same-step race check further down, just before execute.
       let claimedDup = false;
       if (dupKey && approved !== true) {
-        const marker = await ctx.journal.get<DupMarker>(dupKey);
+        let marker = await ctx.journal.get<DupMarker>(dupKey);
+        // FAZ-3 optional ttlMs: an EXPIRED marker is not a duplicate anymore (the storage clock
+        // Decides, same discipline as claim staleness). Default is NO ttl — deliberately: a false
+        // Positive costs one extra approval question, a false negative fires the effect twice.
+        if (marker && dupCfg.ttlMs !== undefined) {
+          const nowMs = ctx.journal.now ? await ctx.journal.now() : Date.now();
+          if (nowMs - marker.at > dupCfg.ttlMs) marker = undefined;
+        }
         // Only a COMPLETED marker speaks here. A released one is a slot a failed attempt gave back —
         // Not a duplicate of anything. An in-flight one is either a live concurrent executor or a
         // Crashed one's leftover; both are arbitrated ATOMICALLY by claimDupMarker just before
@@ -531,8 +623,8 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           if (dupAction === 'block' || (dupAction === 'reflect' && (marker.nudged || !nudgeWon))) {
             const ignoredNudge = dupAction === 'reflect';
             const message =
-              `@gnldev/durable: side-effect tool '${toolName}' already succeeded with identical arguments in run ` +
-              `'${ctx.runId}' (first: ${marker.firstToolCallId})${ignoredNudge ? ' and repeated identically even after a reconsider nudge' : ''} ` +
+              `@gnldev/durable: side-effect tool '${toolName}' already succeeded with identical arguments in ` +
+              `${dupWhere} (first: ${marker.firstToolCallId})${ignoredNudge ? ' and repeated identically even after a reconsider nudge' : ''} ` +
               `— duplicate blocked, this call was NOT EXECUTED`;
             const detail = { toolName, argsHash: hash, firstToolCallId: marker.firstToolCallId, toolCallId };
             await recordIncident(ctx.journal, ctx.runId, { at: Date.now(), source: 'duplicate-guard', action: 'block', toolName, toolCallId, message, detail });
@@ -543,8 +635,8 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
             // Suspensions (Studio Approvals, resumeRun approvals[toolCallId]) — a human decides the
             // Ambiguous case; an approval executes it exactly once (see `approved !== true` above).
             const reason =
-              `Duplicate side effect: '${toolName}' already succeeded with identical arguments in this run ` +
-              `(first: ${marker.firstToolCallId}). A human must approve executing it again.`;
+              `Duplicate side effect: '${toolName}' already succeeded with identical arguments in ` +
+              `${dupWhere} (first: ${marker.firstToolCallId}). A human must approve executing it again.`;
             const sentinel = { __gnl_suspend: { toolCallId, toolName, args: input, reason } };
             await recordIncident(ctx.journal, ctx.runId, {
               at: Date.now(), source: 'duplicate-guard', action: 'suspend', toolName, toolCallId,
@@ -881,10 +973,10 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
             // startsWith('xrun:') — and then names releaseFailedClaim, which looks for
             // `xrun:args-<tool>-<hash>`, finds nothing and returns false without saying why. The
             // second disjunct (`:xrun:`) could not match any key runKeys produces at all.
-            const crossRun = window === 'cross-run';
+            const crossRun = effWindow === 'cross-run' || effWindow === 'thread';
             const remedy = crossRun
-              ? `this is a cross-run claim, so the refusal is permanent and applies to every run: ` +
-                `release it with releaseFailedClaim(journal, { toolName: '${toolName}', args }) once you ` +
+              ? `this is a ${effWindow === 'thread' ? `thread-scoped claim (thread '${ctx.threadId}')` : 'cross-run claim'}, so the refusal spans every run ${effWindow === 'thread' ? 'on this thread' : ''}: ` +
+                `release it with releaseFailedClaim(journal, { toolName: '${toolName}', args${effWindow === 'thread' ? `, threadId: '${ctx.threadId}'` : ''} }) once you ` +
                 `have established the side effect did not happen, or give the tool a recover() hook so ` +
                 `that question is answered automatically`
               : ctx.noApprovals
@@ -1003,14 +1095,15 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       if (dupKey && approved !== true) {
         const dupTtl = tool.claimTtlMs ?? ctx.claimTtlMs ?? Math.max(CLAIM_TTL_MS, tool.timeoutMs ?? ctx.toolTimeoutMs ?? 0);
         claimedDup = await claimDupMarker(ctx.journal, dupKey, {
-          firstToolCallId: toolCallId, at: Date.now(), inFlight: true,
-        }, dupTtl);
+          // Journal clock (K2, both ends) — staleness AND windowExpired compare against this stamp.
+          firstToolCallId: toolCallId, at: ctx.journal.now ? await ctx.journal.now() : Date.now(), inFlight: true,
+        }, dupTtl, dupCfg.ttlMs);
         if (!claimedDup) {
           // A twin got here first. 'warn' is documented as permissive and stays that way; every
           // stricter policy means this call must not run.
           const message =
             `@gnldev/durable: side-effect tool '${toolName}' is already executing with identical ` +
-            `arguments in run '${ctx.runId}' — this concurrent duplicate was NOT EXECUTED`;
+            `arguments in ${dupWhere} — this concurrent duplicate was NOT EXECUTED`;
           const detail = { toolName, argsHash: hash, toolCallId };
           if (dupAction !== 'warn') {
             await recordIncident(ctx.journal, ctx.runId, { at: Date.now(), source: 'duplicate-guard', action: 'block', toolName, toolCallId, message, detail });
@@ -1070,7 +1163,8 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
         // A SENTINEL, not `put(key, undefined)`: that never deleted the row, so putIfAbsent kept
         // Losing against it and the "release" was a poison pill (see DupMarker.released).
         if (dupKey && claimedDup) {
-          await ctx.journal.put(dupKey, { firstToolCallId: toolCallId, at: Date.now(), released: true } satisfies DupMarker);
+          // Journal clock for the stamp — same K2 both-ends rule as the claim/finalize writes above.
+          await ctx.journal.put(dupKey, { firstToolCallId: toolCallId, at: ctx.journal.now ? await ctx.journal.now() : Date.now(), released: true } satisfies DupMarker);
         }
         // NOTE: taint is marked at INVOCATION now (see ), so a FAILED untrusted tool is already
         // Tainted — its error body (also attacker-authorable) is covered without a post-hoc mark here.
@@ -1107,7 +1201,7 @@ function warnTaintCannotFire(ctx: DurableCtx, tools: Record<string, any>): void 
 export function durableTools<T extends Record<string, any>>(tools: T, ctx: DurableCtx): T {
   warnTaintCannotFire(ctx, tools);
   // H10b: strict tool policy — catch an undeclared tool before it's WRAPPED, before the run starts.
-  if (ctx.toolPolicy === 'strict') {
+  if (ctx.toolPolicy === 'strict' || ctx.toolPolicy === 'strict-critical') {
     const undeclared = Object.entries(tools)
       .filter(([, t]: [string, any]) =>
         typeof t?.execute === 'function' &&
@@ -1115,9 +1209,29 @@ export function durableTools<T extends Record<string, any>>(tools: T, ctx: Durab
       .map(([name]) => name);
     if (undeclared.length) {
       throw new Error(
-        `@gnldev/durable: toolPolicy 'strict' — these tools do not declare their side-effect intent: ` +
+        `@gnldev/durable: toolPolicy '${ctx.toolPolicy}' — these tools do not declare their side-effect intent: ` +
           `[${undeclared.join(', ')}]. Add idempotent: true|false, sideEffect: true|false ` +
           `or recover() to each (recover is recommended for critical tools — it automates exactly-once).`,
+      );
+    }
+  }
+  // FAZ-3 'strict-critical' — the banking/defense/medical rung: declaring intent is not enough, a
+  // Side-effect tool must also ANSWER THE CRASH WINDOW. recover() answers it automatically ("ask the
+  // External system"); a deterministic idempotencyKey answers it structurally (the business key
+  // Dedups downstream). Without either, the crash window ends in a human unblocking a
+  // Blocked-retry by hand — acceptable by explicit choice, not by silence.
+  if (ctx.toolPolicy === 'strict-critical') {
+    const unanswered = Object.entries(tools)
+      .filter(([, t]: [string, any]) =>
+        typeof t?.execute === 'function' &&
+        (t.sideEffect === true || t.idempotent === false) &&
+        typeof t.recover !== 'function' && typeof t.idempotencyKey !== 'function')
+      .map(([name]) => name);
+    if (unanswered.length) {
+      throw new Error(
+        `@gnldev/durable: toolPolicy 'strict-critical' — these side-effect tools have no crash-window ` +
+          `answer: [${unanswered.join(', ')}]. Give each a recover() hook (consults the external system) ` +
+          `or a deterministic idempotencyKey (business-key dedup, carried downstream).`,
       );
     }
   }

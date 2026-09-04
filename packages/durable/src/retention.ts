@@ -196,7 +196,10 @@ export async function purgeRun(
  *  Own deletion API (AgentMemory.deleteThread) — this helper is for journal-based memory. */
 export async function purgeThread(journal: Journal, threadId: string): Promise<number> {
   const del = requireDelete(journal);
-  return del(`mem:${threadId}:`);
+  // FAZ-3: the thread owns its dedup state too — `idempotencyWindow: 'thread'` records and
+  // Thread-scoped duplicate markers both live under `xthr:<threadId>:` PRECISELY so this one sweep
+  // Reclaims them with the thread (the cross-run family's immortal-key problem does not recur here).
+  return (await del(`mem:${threadId}:`)) + (await del(`xthr:${threadId}:`));
 }
 
 /**

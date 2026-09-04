@@ -71,7 +71,7 @@ export type RunDurableArgs = GenerateTextOptions & {
   replayCacheMaxBytes?: number;
   /** H10b (opt-in production mode): 'strict' → every tool MUST declare its side-effect intent
    *  (idempotent | sideEffect | recover). An undeclared tool causes a clear error at run start. */
-  toolPolicy?: 'strict';
+  toolPolicy?: 'strict' | 'strict-critical';
   /** 8.7 Processor pipeline: input/output/tool transformers (PII/moderation/tool-filter). */
   processors?: Processor[];
   /** 8.8 Provider-specific tool-schema compatibility (opt-in): true → default set; array → those rules. */
@@ -133,7 +133,7 @@ export type StreamDurableArgs = StreamTextOptions & {
   /** H8c: replay-cache RAM threshold (see RunDurableArgs). */
   replayCacheMaxBytes?: number;
   /** H10b: strict tool policy (see RunDurableArgs). */
-  toolPolicy?: 'strict';
+  toolPolicy?: 'strict' | 'strict-critical';
   /** Y1/Y3: timeouts + claim TTL (see RunDurableArgs). */
   timeouts?: { modelStepMs?: number; toolMs?: number; claimTtlMs?: number };
   /**
@@ -2267,7 +2267,7 @@ export interface ResumeAgentConfig {
   timeouts?: { modelStepMs?: number; toolMs?: number; claimTtlMs?: number };
   exclusiveModelStep?: { ttlMs?: number };
   schemaCompat?: boolean | ToolSchemaRuleLike[];
-  toolPolicy?: 'strict';
+  toolPolicy?: 'strict' | 'strict-critical';
 }
 
 /**

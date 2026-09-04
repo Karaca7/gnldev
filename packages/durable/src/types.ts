@@ -129,8 +129,34 @@ export interface AnyTool {
    * DIFFERENT run's call to the SAME arguments onto the SAME retry/approval ladder (claim/
    *         Poll/retry/recover) — this is INTENTIONAL (the natural consequence of sharing the window),
    *         Not a bug.
+   * 'thread' (FAZ-3): the window spans every run OF ONE CONVERSATION — "this thread already created
+   *     That product yesterday" dedups, while another user's thread legitimately creates its own.
+   *     IMPLIES 'args' mode, keys under `xthr:<threadId>:` (runKeys.toolThread) so `purgeThread`
+   *     Reclaims the records WITH the thread (the cross-run 'immortal key' problem does not recur).
+   *     Requires a `threadId` at call time — without one it falls back to 'run' with a LOUD
+   *     Console.warn (silent fallback would report dedup the caller isn't getting).
+   * USE THE RIGHT LAYER: silent windows are for DETERMINISTIC business keys (an orderId/SKU via
+   *     `idempotencyKey`) where dedup is unambiguously correct. For LLM-derived raw args, silence is
+   *     Wrong by design — an identical-looking second request may be a genuine second intent; that
+   *     Case belongs to the suspend ladder (`limits.sideEffectDuplicates: 'suspend'` or `confirm`),
+   *     Where a human answers.
    */
-  idempotencyWindow?: 'run' | 'cross-run';
+  idempotencyWindow?: 'run' | 'cross-run' | 'thread';
+  /**
+   * FAZ-3 — first-call HUMAN gate, declared on the tool itself (no guard factory needed). SCOPE: the
+   * Gate is PER toolCallId ('call' mode) / per dedup key ('args' mode) — a model issuing a NEW call
+   * Of the same tool asks again; it is not a once-per-tool switch. The fresh call suspends with the
+   * Standard `__gnl_suspend` sentinel and waits for
+   * `approvals[toolCallId]` — the SAME approvals flow as guard suspensions (Studio inbox, chat
+   * `approve()`), so nothing new to wire. `true` uses a generic reason; `{ reason }` derives one from
+   * The args ("charge 5000 TRY to card ****42 — confirm?"). A pre-supplied approval skips the gate
+   * (and still passes the guard, if one exists). Deny writes a terminal 'denied' record.
+   * WHERE IT SITS in the dedup hierarchy (docs): deterministic dedup (idempotencyKey/unique
+   * Constraint) > human gate (`confirm`, suspend ladders) > probabilistic mitigations (working
+   * Memory). `confirm` is the tool-author's declaration that this effect is consequential enough to
+   * Ask a human EVERY first time — not a substitute for an idempotencyKey.
+   */
+  confirm?: boolean | { reason?: (args: unknown) => string };
 }
 
 /** Agent tool set (name → tool). */
@@ -148,7 +174,7 @@ export type ToolSet = Record<string, AnyTool>;
 export type ToolDurability = Pick<
   AnyTool,
   | 'sideEffect' | 'idempotent' | 'idempotency' | 'idempotencyKey' | 'idempotencyWindow'
-  | 'untrusted' | 'maxRetries' | 'timeoutMs' | 'claimTtlMs' | 'recover' | 'compensate'
+  | 'untrusted' | 'maxRetries' | 'timeoutMs' | 'claimTtlMs' | 'recover' | 'compensate' | 'confirm'
 >;
 
 /**
