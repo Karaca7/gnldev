@@ -38,6 +38,8 @@ export type { ModelPricing, PricingDoc } from './pricing.js';
 export {
   DivergenceError, RunBusyError, SideEffectRetryBlockedError, RetryLimitExceededError,
   ReplicationNotAcknowledgedError, SuiteVersionMismatchError, RunThreadMismatchError,
+  RunInputMismatchError, RunActorMismatchError, RunSweptError,
+  CALLER_CONFLICT_CODES, callerConflictCode,
   BLOCKED_ERROR_CODES, blockedErrorCode, upstreamFailure,
 } from './errors.js';
 export type { UpstreamFailure } from './errors.js';
@@ -97,6 +99,8 @@ export { withOrg, orgScopeOf, orgPrefix, isPlatformKey, assertOrgRegistered, ass
 export { withOrgStorage, orgStorageScopeOf } from './org-storage.js';
 export { orgPurgedKey, purgeRun, purgeThread, purgeOrganization, sweepRuns, sweepLog, sweepThreads, createRetentionSweeper } from './retention.js';
 export type { LogSweepTarget, RetentionSweeperOptions, RetentionSweepSummary, RetentionSweeper } from './retention.js';
+export { recordIdemConflict, readIdemLedger } from './idem-ledger.js';
+export type { IdemConflictRecord } from './idem-ledger.js';
 // Phase 8.1: the common poll-loop core for queue/events/scheduler (a setTimeout chain with backoff).
 export { createPollLoop } from './polling.js';
 export type { PollLoopOptions, PollLoop } from './polling.js';

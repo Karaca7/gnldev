@@ -45,6 +45,10 @@ export interface AgentToolConfig {
    * Journal too → the total (parent + all sub-agents) can NEVER bypass the parent's ceiling.
    */
   limits?: RunLimits;
+  /** FAZ-4 K12: the parent's tool policy, inherited AS-IS — registry.ts's JSDoc promised this for
+   *  Years while nothing forwarded it; under 'strict-critical' a delegated sub-agent's undeclared
+   *  Side-effect tool must not be the hole in the fence. */
+  toolPolicy?: 'strict' | 'strict-critical';
   /** require-approval decisions (passed to the nested run) — approvals flow from here during a network resume. */
   approvals?: Record<string, boolean>;
   /**
@@ -80,6 +84,7 @@ export async function runSubAgent(
     prompt: task,
     stopWhen: stepCountIs(config.maxSteps ?? 8),
     limits: config.limits,
+    ...(config.toolPolicy ? { toolPolicy: config.toolPolicy } : {}),
   } as any);
   return { text: res.text, interrupts: res.interrupts };
 }
@@ -125,6 +130,7 @@ export function createAgentTool(
         prompt: task,
         stopWhen: stepCountIs(config.maxSteps ?? 8),
         limits: config.limits,
+        ...(config.toolPolicy ? { toolPolicy: config.toolPolicy } : {}),
       } as any);
       return { text: res.text, interrupts: res.interrupts };
     },

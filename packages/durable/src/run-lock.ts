@@ -123,15 +123,23 @@ function mkLock(journal: Journal, runId: string, owner: string, token: string): 
       // Otherwise the lock we mean to free stays live until TTL). Bounded, so a hot takeover race can
       // Never spin. Fallback without putIfMatch keeps the old best-effort behavior (single-process
       // Sufficient, documented risk — the core-hardening review).
-      for (let attempt = 0; attempt < 3; attempt++) {
-        const cur = await journal.get<LockRecord>(key);
-        if (!cur || cur.token !== token) return; // stale owner → rejected, silent no-op
-        const dead: LockRecord = { owner, expires: 0, token };
-        if (!journal.putIfMatch) {
-          await journal.put(key, dead);
-          return;
+      try {
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const cur = await journal.get<LockRecord>(key);
+          if (!cur || cur.token !== token) return; // stale owner → rejected, silent no-op
+          const dead: LockRecord = { owner, expires: 0, token };
+          if (!journal.putIfMatch) {
+            await journal.put(key, dead);
+            return;
+          }
+          if (await journal.putIfMatch(key, cur, dead)) return;
         }
-        if (await journal.putIfMatch(key, cur, dead)) return;
+      } catch {
+        // Release is BEST-EFFORT by contract (every caller's posture is "release; TTL reclaims on
+        // Failure") — a storage error here must not surface into the caller's cleanup path. The old
+        // Plain-put release could throw too, but only on `put`; the CAS rewrite added get/putIfMatch
+        // Round-trips, and queue's renew-failure tests measured those errors ESCAPING through
+        // finally-release. The lock simply stays until TTL, which is exactly the documented fallback.
       }
     },
   };

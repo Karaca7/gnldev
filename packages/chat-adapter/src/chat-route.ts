@@ -9,7 +9,7 @@ import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { convertToModelMessages } from 'ai';
 import type { UIMessage } from 'ai';
-import { createGnl, RunThreadMismatchError, blockedErrorCode, upstreamFailure } from '@gnldev/durable';
+import { createGnl, RunThreadMismatchError, blockedErrorCode, callerConflictCode, upstreamFailure } from '@gnldev/durable';
 import type { CreateGnlConfig } from '@gnldev/durable';
 import { toUIMessageStreamResponse } from './ui-stream.js';
 
@@ -48,6 +48,14 @@ function typedErrorResponse(c: Context, e: unknown): Response | undefined {
     const err = e as RunThreadMismatchError;
     // 409 without `resumable`: same runId + this thread never succeeds — see server's rationale.
     return c.json({ error: err.message, code: 'run_thread_mismatch', detail: err.detail }, 409);
+  }
+  // FAZ-4 caller-conflict family — same 409-without-resumable posture as thread mismatch above.
+  // K9: the map is durable's single CALLER_CONFLICT_CODES export (thread mismatch is answered by the
+  // Dedicated branch above; its entry here is harmless duplication by design).
+  const conflictCode = callerConflictCode(e);
+  if (conflictCode && conflictCode !== 'run_thread_mismatch') {
+    const err = e as { message?: string; detail?: unknown };
+    return c.json({ error: err.message, code: conflictCode, detail: err.detail }, 409);
   }
   const code = blockedErrorCode(e);
   if (code) {

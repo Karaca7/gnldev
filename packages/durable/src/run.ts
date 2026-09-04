@@ -4,7 +4,9 @@ import type { StreamTextResult } from 'ai';
 import { withDurableModel } from './durable-model.js';
 import { durableTools } from './durable-tool.js';
 import { acquireRunLock } from './run-lock.js';
-import { RunBusyError, SideEffectRetryBlockedError, RetryLimitExceededError, RunThreadMismatchError } from './errors.js';
+import { RunBusyError, SideEffectRetryBlockedError, RetryLimitExceededError, RunThreadMismatchError, RunInputMismatchError, RunActorMismatchError, RunSweptError } from './errors.js';
+import { argsHash } from './hash.js';
+import { recordIdemConflict } from './idem-ledger.js';
 import { createProcessorCtx, composePrepareStep, composeOnStepFinish, durableProcessorStep, ProcessorRetry, RetryExhaustedByProcessorError, type StepHookFailure } from './processor.js';
 import { loadReplayCache, runKeys, claim } from './journal.js';
 // Statically safe: model-router imports only ./journal, and the provider packages it can reach are
@@ -72,6 +74,20 @@ export type RunDurableArgs = GenerateTextOptions & {
   /** H10b (opt-in production mode): 'strict' → every tool MUST declare its side-effect intent
    *  (idempotent | sideEffect | recover). An undeclared tool causes a clear error at run start. */
   toolPolicy?: 'strict' | 'strict-critical';
+  /** FAZ-4 (critical profile): refuse a runId re-used with DIFFERENT content — the raw caller input
+   *  Is fingerprinted at freeze time; a later call whose fingerprint differs gets
+   *  RunInputMismatchError (409, no resumable). Exemption: approvals addressing a toolCallId whose
+   *  Journal record is genuinely 'suspended' (the chat approval re-POST carries a grown history). */
+  strictInput?: boolean;
+  /** FAZ-4: append PII-free refusal records (`idem:conflict:*`) for busy/mismatch/swept conflicts — see idem-ledger.ts. */
+  conflictLedger?: boolean;
+  /** FAZ-4: what a retention-swept runId's late retry does — 'ignore' (default, re-runs: today's
+   *  Behavior) or 'reject' (RunSweptError; the critical profile's choice). */
+  tombstonePolicy?: 'ignore' | 'reject';
+  /** FAZ-4: opaque caller identity, bound into the frozen input FIRST-WINS — a different actor
+   *  Re-driving the runId gets RunActorMismatchError. Absent on either side = no check (auth-less
+   *  Profile has no protection here — documented, not silent). */
+  actor?: string;
   /** 8.7 Processor pipeline: input/output/tool transformers (PII/moderation/tool-filter). */
   processors?: Processor[];
   /** 8.8 Provider-specific tool-schema compatibility (opt-in): true → default set; array → those rules. */
@@ -134,6 +150,20 @@ export type StreamDurableArgs = StreamTextOptions & {
   replayCacheMaxBytes?: number;
   /** H10b: strict tool policy (see RunDurableArgs). */
   toolPolicy?: 'strict' | 'strict-critical';
+  /** FAZ-4 (critical profile): refuse a runId re-used with DIFFERENT content — the raw caller input
+   *  Is fingerprinted at freeze time; a later call whose fingerprint differs gets
+   *  RunInputMismatchError (409, no resumable). Exemption: approvals addressing a toolCallId whose
+   *  Journal record is genuinely 'suspended' (the chat approval re-POST carries a grown history). */
+  strictInput?: boolean;
+  /** FAZ-4: append PII-free refusal records (`idem:conflict:*`) for busy/mismatch/swept conflicts — see idem-ledger.ts. */
+  conflictLedger?: boolean;
+  /** FAZ-4: what a retention-swept runId's late retry does — 'ignore' (default, re-runs: today's
+   *  Behavior) or 'reject' (RunSweptError; the critical profile's choice). */
+  tombstonePolicy?: 'ignore' | 'reject';
+  /** FAZ-4: opaque caller identity, bound into the frozen input FIRST-WINS — a different actor
+   *  Re-driving the runId gets RunActorMismatchError. Absent on either side = no check (auth-less
+   *  Profile has no protection here — documented, not silent). */
+  actor?: string;
   /** Y1/Y3: timeouts + claim TTL (see RunDurableArgs). */
   timeouts?: { modelStepMs?: number; toolMs?: number; claimTtlMs?: number };
   /**
@@ -432,6 +462,11 @@ async function persistInput(
   threadId?: string,
   agentName?: string,
   resourceId?: string,
+  // FAZ-4: the RAW caller input's fingerprint (computed BEFORE memory prep mutates `input.messages` —
+  // Post-prep content grows with the thread, so a post-prep hash would 409 every legitimate resume)
+  // And the opaque actor identity. Both first-wins with the rest of the entry.
+  rawInputHash?: string,
+  actor?: string,
 ): Promise<void> {
   const key = runKeys.input(runId); // ':input' doesn't match parseJournalKey → invisible in the reader
   // `alreadyFrozen` is the SAME read, done once by the caller because the frozen-input adoption needs
@@ -456,7 +491,73 @@ async function persistInput(
   // Step FINISHES — a single-step streamed run has exactly one visible row, at the very end, so a
   // Ts-span duration read 0ms (live repro: a 27s stream recorded as 0ms). Additive field; readers of
   // The input blob ignore unknown fields.
-  await journal.put(key, stampFormat({ at: Date.now(), prompt: input.prompt, messages: input.messages, system: input.system, ...(threadId ? { threadId } : {}), ...(agentName ? { agent: agentName } : {}), ...(resourceId ? { resourceId } : {}) })); // H13
+  await journal.put(key, stampFormat({ at: Date.now(), prompt: input.prompt, messages: input.messages, system: input.system, ...(threadId ? { threadId } : {}), ...(agentName ? { agent: agentName } : {}), ...(resourceId ? { resourceId } : {}), ...(rawInputHash ? { hash: rawInputHash } : {}), ...(actor ? { actor } : {}) })); // H13
+}
+
+/** FAZ-4 admissibility gate — runs right after assertThreadOwnership in BOTH entry points, BEFORE
+ * RunStarted (a refused attempt must not flip outcome state, same K2/K3 posture as the thread
+ * Guard). Order: tombstone → actor → input fingerprint. Every refusal optionally lands in the
+ * Idem-conflict ledger (PII-free) before it is thrown. */
+async function assertRunAdmissible(
+  journal: Journal,
+  runId: string,
+  frozen: FrozenInput | undefined,
+  rawInputHash: string,
+  opts: { strictInput?: boolean; conflictLedger?: boolean; tombstonePolicy?: 'ignore' | 'reject'; actor?: string; approvals?: Record<string, boolean> },
+): Promise<void> {
+  const refuse = async (err: Error, code: string, detail: Record<string, string | number>): Promise<never> => {
+    if (opts.conflictLedger) await recordIdemConflict(journal, { runId, code, ...(opts.actor ? { actor: opts.actor } : {}), detail });
+    throw err;
+  };
+  if (opts.tombstonePolicy === 'reject') {
+    const tomb = await journal.get<{ at?: number }>(`${runId}:swept`);
+    if (tomb !== undefined) {
+      await refuse(
+        new RunSweptError(
+          `@gnldev/durable: run '${runId}' was retention-swept — its dedup window died with it, and a late retry must not silently re-run the side effects (tombstonePolicy 'reject'). Use a fresh runId, or verify the external system first.`,
+          { runId, ...(tomb.at !== undefined ? { sweptAt: tomb.at } : {}) },
+        ),
+        'run_swept',
+        tomb.at !== undefined ? { sweptAt: tomb.at } : {},
+      );
+    }
+  }
+  if (frozen?.actor && opts.actor && frozen.actor !== opts.actor) {
+    await refuse(
+      new RunActorMismatchError(
+        `@gnldev/durable: run '${runId}' belongs to actor '${frozen.actor}' — '${opts.actor}' may not re-drive it.`,
+        { runId, ownerActor: frozen.actor, requestedActor: opts.actor },
+      ),
+      'run_actor_mismatch',
+      { ownerActor: frozen.actor, requestedActor: opts.actor },
+    );
+  }
+  if (opts.strictInput && frozen?.hash !== undefined && frozen.hash !== rawInputHash) {
+    // ESCAPE 1 — driving the run with the frozen record's OWN stored content is by definition a
+    // Replay, not new content: resumeRun feeds `:input` back verbatim, and its messages are the
+    // POST-prep view while `hash` fingerprints the PRE-prep raw input (see persistInput) — without
+    // This, forwarding strictInput through resume would self-409 every memory-backed crash-resume.
+    // One extra hash, computed only on the mismatch path.
+    if (rawInputHash === argsHash({ prompt: frozen.prompt, messages: frozen.messages, system: frozen.system })) return;
+    // ESCAPE 2 — bound to the JOURNAL's approval trace (heyet İhtilaf B), NOT to the mere presence
+    // Of an approvals field: the addressed toolCallId must have a RECORD in this run. Any status, on
+    // Purpose: after the approval lands the record moves suspended→succeeded/denied, and the SAME
+    // Re-POST retried by an at-least-once client must replay — answering a request that deserves
+    // Idempotent replay with "use a fresh runId" would be the contract lying (denetçi K18 bulgusu).
+    // An approval naming a toolCallId this run never journaled still earns nothing.
+    for (const toolCallId of Object.keys(opts.approvals ?? {})) {
+      const rec = await journal.get<{ status?: string }>(runKeys.tool(runId, toolCallId));
+      if (rec !== undefined) return;
+    }
+    await refuse(
+      new RunInputMismatchError(
+        `@gnldev/durable: run '${runId}' was started with DIFFERENT input (fingerprint ${frozen.hash} != ${rawInputHash}) — one runId carries one request; use a fresh runId for new content.`,
+        { runId, expectedHash: frozen.hash, actualHash: rawInputHash },
+      ),
+      'run_input_mismatch',
+      { expectedHash: frozen.hash, actualHash: rawInputHash },
+    );
+  }
 }
 
 /**
@@ -976,7 +1077,7 @@ const BOUNDARY_LOST = -1;
 const PROMPT_IS_TURN = -2;
 
 /** What `persistInput` froze under `:input` (plus the format stamp, which readers ignore). */
-type FrozenInput = { prompt?: unknown; messages?: unknown; system?: unknown; threadId?: string };
+type FrozenInput = { prompt?: unknown; messages?: unknown; system?: unknown; threadId?: string; hash?: string; actor?: string };
 
 /**
  * The turn's span inside the message array: `[start, end)`. `start` is the history/incoming boundary
@@ -2028,7 +2129,10 @@ async function runDurableGuarded(args: RunDurableArgs): Promise<DurableResult> {
   const lock = (args as any).lock;
   if (lock) {
     const handle = await acquireRunLock(args.journal, args.runId, lock.owner, lock.ttlMs);
-    if (!handle) throw Object.assign(new RunBusyError(`run '${args.runId}' is locked by another process`), { atLockAcquisition: true });
+    if (!handle) {
+      if ((args as any).conflictLedger) await recordIdemConflict(args.journal, { runId: args.runId, code: 'run_busy', ...((args as any).actor ? { actor: (args as any).actor } : {}) });
+      throw Object.assign(new RunBusyError(`run '${args.runId}' is locked by another process`), { atLockAcquisition: true });
+    }
     // B4 (heartbeat): the lock was acquired ONCE and never renewed — a run that legitimately outlives
     // `ttlMs` let a second worker take over mid-run (two live runs of the same runId). Renew on a beat
     // Shorter than the TTL (ttlMs/2, min 1ms) so the lock stays held for as long as the body runs.
@@ -2051,7 +2155,7 @@ async function runDurableGuarded(args: RunDurableArgs): Promise<DurableResult> {
 }
 
 async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
-  const { journal, runId, guard, approvals, memory, threadId, resourceId, agentName, replay, lock: _lock, processors, schemaCompat, limits, exclusiveModelStep, replayCacheMaxBytes, toolPolicy, timeouts, model: modelInput, tools, stopWhen, ...rest } =
+  const { journal, runId, guard, approvals, memory, threadId, resourceId, agentName, replay, lock: _lock, processors, schemaCompat, limits, exclusiveModelStep, replayCacheMaxBytes, toolPolicy, timeouts, strictInput, conflictLedger, tombstonePolicy, actor, model: modelInput, tools, stopWhen, ...rest } =
     args as RunDurableArgs & Record<string, any>;
   // `ModelInput` is `LanguageModelV4 | string`, and until now only createGnl honoured the string
   // Half: passing 'nvidia/…' straight to runDurable type-checked and then died inside the AI SDK
@@ -2062,7 +2166,17 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   // applyInputProcessors). Read + asserted BEFORE runStarted/resolveApprovals — see
   // assertThreadOwnership's own doc for why the order matters (K2/K3 hardening).
   const frozenInput = await journal.get<FrozenInput>(runKeys.input(runId));
-  assertThreadOwnership(frozenInput, runId, threadId);
+  try {
+    assertThreadOwnership(frozenInput, runId, threadId);
+  } catch (e) {
+    // FAZ-4 ledger: the flagship conflict leaves a trace too (best-effort, PII-free).
+    if (conflictLedger && e instanceof RunThreadMismatchError) await recordIdemConflict(journal, { runId, code: 'run_thread_mismatch', ...(actor ? { actor } : {}) });
+    throw e;
+  }
+  // FAZ-4: fingerprint the RAW caller input BEFORE memory prep mutates rest.messages (post-prep
+  // Content grows with the thread — hashing it would 409 every legitimate resume).
+  const rawInputHash = argsHash({ prompt: rest.prompt, messages: rest.messages, system: rest.system });
+  await assertRunAdmissible(journal, runId, frozenInput, rawInputHash, { strictInput, conflictLedger, tombstonePolicy, actor, approvals });
   // WRITE-AHEAD outcome: this attempt has STARTED. A run SIGKILLed anywhere past this line reads
   // 'running' — never 'completed', which is what the absence of any record used to mean. Sits after
   // the lock (the guarded path acquires before calling here), so a caller that never got in never
@@ -2111,7 +2225,7 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
     }
   }
 
-  await persistInput(journal, runId, rest, frozenInput !== undefined, threadId, agentName, resourceId);
+  await persistInput(journal, runId, rest, frozenInput !== undefined, threadId, agentName, resourceId, rawInputHash, actor);
   await persistMemoryContext(journal, runId, memCtx);
   // Freeze `limits` into the journal on the first run (idempotent via `claim` — the FIRST
   // Run's limits win, a later resume never overwrites them). resumeRun reads this back when the caller
@@ -2268,6 +2382,20 @@ export interface ResumeAgentConfig {
   exclusiveModelStep?: { ttlMs?: number };
   schemaCompat?: boolean | ToolSchemaRuleLike[];
   toolPolicy?: 'strict' | 'strict-critical';
+  /** FAZ-4 (critical profile): refuse a runId re-used with DIFFERENT content — the raw caller input
+   *  Is fingerprinted at freeze time; a later call whose fingerprint differs gets
+   *  RunInputMismatchError (409, no resumable). Exemption: approvals addressing a toolCallId whose
+   *  Journal record is genuinely 'suspended' (the chat approval re-POST carries a grown history). */
+  strictInput?: boolean;
+  /** FAZ-4: append PII-free refusal records (`idem:conflict:*`) for busy/mismatch/swept conflicts — see idem-ledger.ts. */
+  conflictLedger?: boolean;
+  /** FAZ-4: what a retention-swept runId's late retry does — 'ignore' (default, re-runs: today's
+   *  Behavior) or 'reject' (RunSweptError; the critical profile's choice). */
+  tombstonePolicy?: 'ignore' | 'reject';
+  /** FAZ-4: opaque caller identity, bound into the frozen input FIRST-WINS — a different actor
+   *  Re-driving the runId gets RunActorMismatchError. Absent on either side = no check (auth-less
+   *  Profile has no protection here — documented, not silent). */
+  actor?: string;
 }
 
 /**
@@ -2310,6 +2438,12 @@ export async function resumeRun(
     ...(opts.exclusiveModelStep ? { exclusiveModelStep: opts.exclusiveModelStep } : {}),
     ...(opts.schemaCompat !== undefined ? { schemaCompat: opts.schemaCompat } : {}),
     ...(opts.toolPolicy ? { toolPolicy: opts.toolPolicy } : {}),
+    // FAZ-4 K5: fields added to ResumeAgentConfig MUST land in this selective forward list too — an
+    // Interface field missing here is born dead and silently drops the protection the caller asked for.
+    ...(opts.strictInput !== undefined ? { strictInput: opts.strictInput } : {}),
+    ...(opts.conflictLedger !== undefined ? { conflictLedger: opts.conflictLedger } : {}),
+    ...(opts.tombstonePolicy ? { tombstonePolicy: opts.tombstonePolicy } : {}),
+    ...(opts.actor ? { actor: opts.actor } : {}),
     ...(input.messages ? { messages: input.messages } : {}),
     ...(input.prompt ? { prompt: input.prompt } : {}),
     ...(input.system ? { system: input.system } : {}),
@@ -2393,13 +2527,16 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   // P2-cancel: same terminal-refusal contract as compensation — a durably-canceled run never
   // (re)starts or resumes (the per-step mid-flight gate lives in durable-model.ts).
   await assertNotCanceled(args.journal, args.runId);
-  const { journal, runId, guard, approvals, memory, threadId, resourceId, agentName, replay, lock, processors, schemaCompat, limits, exclusiveModelStep, replayCacheMaxBytes, toolPolicy, timeouts, model, tools, stopWhen, onBlocked, ...rest } =
+  const { journal, runId, guard, approvals, memory, threadId, resourceId, agentName, replay, lock, processors, schemaCompat, limits, exclusiveModelStep, replayCacheMaxBytes, toolPolicy, timeouts, strictInput, conflictLedger, tombstonePolicy, actor, model, tools, stopWhen, onBlocked, ...rest } =
     args as StreamDurableArgs & Record<string, any>;
   // (a): opt-in run-lock — acquire BEFORE the setup work (reject a concurrent stream/run of the
   // Same runId with RunBusyError). Released on stream finish/error (see the onFinish/onError wrappers).
   // No heartbeat by design (see StreamDurableArgs.lock) — a streamed lock relies on ttlMs for takeover.
   const lockHandle = lock ? await acquireRunLock(journal, runId, lock.owner, lock.ttlMs) : null;
-  if (lock && !lockHandle) throw Object.assign(new RunBusyError(`run '${runId}' is locked by another process`), { atLockAcquisition: true });
+  if (lock && !lockHandle) {
+    if (conflictLedger) await recordIdemConflict(journal, { runId, code: 'run_busy', ...(actor ? { actor } : {}) });
+    throw Object.assign(new RunBusyError(`run '${runId}' is locked by another process`), { atLockAcquisition: true });
+  }
   // (a): EVERYTHING after a successful acquire runs under a release-on-throw guard. The setup awaits
   // Below (thread-ownership assert, runStarted, approvals, memory prep, persistInput...) can all
   // Throw or reject, and each used to strand the just-acquired lock until TTL: a thread-mismatch
@@ -2416,7 +2553,17 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   // ONE read of `:input`, shared with persistInput below — parity with runDurableInner. Read + asserted
   // BEFORE runStarted/resolveApprovals — see assertThreadOwnership's own doc (K2/K3 hardening).
   const frozenInput = await journal.get<FrozenInput>(runKeys.input(runId));
-  assertThreadOwnership(frozenInput, runId, threadId);
+  try {
+    assertThreadOwnership(frozenInput, runId, threadId);
+  } catch (e) {
+    // FAZ-4 ledger: the flagship conflict leaves a trace too (best-effort, PII-free).
+    if (conflictLedger && e instanceof RunThreadMismatchError) await recordIdemConflict(journal, { runId, code: 'run_thread_mismatch', ...(actor ? { actor } : {}) });
+    throw e;
+  }
+  // FAZ-4: fingerprint the RAW caller input BEFORE memory prep mutates rest.messages (post-prep
+  // Content grows with the thread — hashing it would 409 every legitimate resume).
+  const rawInputHash = argsHash({ prompt: rest.prompt, messages: rest.messages, system: rest.system });
+  await assertRunAdmissible(journal, runId, frozenInput, rawInputHash, { strictInput, conflictLedger, tombstonePolicy, actor, approvals });
   // WRITE-AHEAD outcome — the stream twin of runDurableInner's. A stream abandoned mid-flight (the
   // process died, neither onFinish nor onError ran) reads 'running' instead of 'completed'.
   await runStarted(journal, runId, Date.now());
@@ -2461,7 +2608,7 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
     }
   }
 
-  await persistInput(journal, runId, rest, frozenInput !== undefined, threadId, agentName, resourceId);
+  await persistInput(journal, runId, rest, frozenInput !== undefined, threadId, agentName, resourceId, rawInputHash, actor);
   await persistMemoryContext(journal, runId, memCtx);
   // Freeze `limits` on the first run (parity with runDurableInner) — idempotent via `claim`.
   if (limits) await claim(journal, runKeys.cfgLimits(runId), limits);

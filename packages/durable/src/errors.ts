@@ -109,11 +109,78 @@ export class RunThreadMismatchError extends Error {
 }
 
 /**
+ * FAZ-4 (critical profile) — the SAME runId arrived with DIFFERENT content than the input frozen at
+ * Run start (fingerprint mismatch). Same family as RunThreadMismatchError: a caller mistake with no
+ * Resolution path for THIS runId+content pair → 409 without `resumable`. Exemption at the check
+ * Site: an approval addressed to a toolCallId whose journal record is genuinely 'suspended' (the
+ * Chat approval re-POST legitimately carries a grown message history). PII-free: hashes only.
+ */
+export class RunInputMismatchError extends Error {
+  constructor(
+    message: string,
+    public readonly detail: { runId: string; expectedHash: string; actualHash: string },
+  ) {
+    super(message);
+    this.name = 'RunInputMismatchError';
+  }
+}
+
+/**
+ * FAZ-4 (critical profile) — the runId was started by one actor and re-used by ANOTHER (`actor`
+ * Bound into the frozen input, first-wins). No actor on either side = no check (an auth-less profile
+ * Has no protection here — documented, not silent).
+ */
+export class RunActorMismatchError extends Error {
+  constructor(
+    message: string,
+    public readonly detail: { runId: string; ownerActor: string; requestedActor: string },
+  ) {
+    super(message);
+    this.name = 'RunActorMismatchError';
+  }
+}
+
+/**
+ * FAZ-4 (critical profile, `tombstonePolicy: 'reject'`) — the runId was retention-swept
+ * (`${runId}:swept` tombstone) and a late retry arrived AFTER the dedup window died with the run.
+ * Re-running it silently would repeat the side effects the swept journal used to dedup; the critical
+ * Profile refuses instead. The REAL contract remains: retention window ≥ client retry horizon.
+ */
+export class RunSweptError extends Error {
+  constructor(
+    message: string,
+    public readonly detail: { runId: string; sweptAt?: number },
+  ) {
+    super(message);
+    this.name = 'RunSweptError';
+  }
+}
+
+/**
  * K1: maps the class name of the three "blocked" errors above → the snake_case error code sent to
  * The client. The SINGLE source of truth — @gnldev/server (sse.ts), @gnldev/agui (route.ts) and
  * @gnldev/studio (server.ts) all use this same map here (previously each package had its own copy that
  * Needed to stay in sync).
  */
+/**
+ * FAZ-4 K9: the caller-conflict family's SINGLE code map — server, chat-adapter AND agui all consume
+ * This one export (a literal copy per consumer is exactly the drift that left agui unmapped in the
+ * First cut). Same contract for every member: 409 WITHOUT `resumable` (the id/content/actor is what
+ * Needs fixing; no retry clears it).
+ */
+export const CALLER_CONFLICT_CODES: Record<string, string> = {
+  RunThreadMismatchError: 'run_thread_mismatch',
+  RunInputMismatchError: 'run_input_mismatch',
+  RunActorMismatchError: 'run_actor_mismatch',
+  RunSweptError: 'run_swept',
+};
+
+/** Name-matched like blockedErrorCode below (dist/src class-identity resilience). */
+export function callerConflictCode(err: unknown): string | undefined {
+  const name = (err as { name?: unknown } | null | undefined)?.name;
+  return typeof name === 'string' ? CALLER_CONFLICT_CODES[name] : undefined;
+}
+
 export const BLOCKED_ERROR_CODES: Record<string, string> = {
   SideEffectRetryBlockedError: 'side_effect_retry_blocked',
   RetryLimitExceededError: 'retry_limit_exceeded',

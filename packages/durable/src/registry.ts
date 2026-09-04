@@ -1,4 +1,5 @@
 import { nestedAgentRunId } from './journal.js';
+import { randomUUID } from 'node:crypto';
 import type { ToolSchemaRuleLike } from './types.js';
 import { stepCountIs, tool as aiTool, jsonSchema } from 'ai';
 import { runDurable, streamDurable } from './run.js';
@@ -388,6 +389,26 @@ export interface CreateGnlConfig {
    * Documented integration was silently doing nothing.
    */
   schemaCompat?: boolean | ToolSchemaRuleLike[];
+  /**
+   * FAZ-4 — the banking/defense/medical bundle, as ONE opt-in switch. `'critical'` applies, for
+   * Every run()/stream() call (explicit opts still win, field by field):
+   *   toolPolicy 'strict-critical'          (side-effect tools must answer the crash window)
+   *   limits.sideEffectDuplicates 'suspend' (the ambiguous repeat becomes a human question)
+   *   exclusiveModelStep on                 (closes the concurrent same-runId model-claim gap)
+   *   lock on                               (auto owner, ttl 300s — a concurrent duplicate 409s)
+   *   strictInput + actor binding on        (one runId = one request, one owner)
+   *   conflictLedger on                     (every refusal leaves a PII-free trace)
+   *   tombstonePolicy 'reject'              (a swept runId's late retry is refused, not re-run)
+   * JOURNAL GUIDANCE (documented, not enforced): prefer Postgres. If Redis is a hard requirement,
+   * Configure `waitReplicas: { replicas: 1, timeoutMs: 1000, onTimeout: 'throw' }` — and know the
+   * Honest bound: the throw fires AFTER the write, so an unacknowledged claim becomes VISIBLE, not
+   * Undone; treat thrown claims as a reconciliation suspect list.
+   * SCOPE, stated honestly (denetçi K6): the overlay wraps run() and stream() — the agent entry
+   * Points. runWorkflow()/runNetwork() are NOT covered yet (workflow steps have their own FAZ-1
+   * Claim protocol; a preset-level story for those paths is backlog) — a critical deployment
+   * Exposing /workflows must apply its protections there explicitly.
+   */
+  preset?: 'critical';
 }
 
 /**
@@ -469,6 +490,11 @@ export interface RunOptions {
    * Model-step exclusivity. Opt-in; forwarded to runDurable/streamDurable (toolPolicy also to sub-agents).
    */
   toolPolicy?: 'strict' | 'strict-critical';
+  /** FAZ-4 (critical profile) — see run.ts RunOptions for full semantics; forwarded verbatim. */
+  strictInput?: boolean;
+  conflictLedger?: boolean;
+  tombstonePolicy?: 'ignore' | 'reject';
+  actor?: string;
   replay?: 'strict' | 'lenient';
   timeouts?: { modelStepMs?: number; toolMs?: number; claimTtlMs?: number };
   exclusiveModelStep?: { ttlMs?: number };
@@ -501,6 +527,14 @@ export function createGnl(config: CreateGnlConfig) {
   const journal: Journal = config.storage ? config.storage.runs : config.journal!;
   if (!journal) throw new Error('createGnl: `storage` or `journal` is required');
   const memSource: Storage | Journal = config.storage ?? config.journal!;
+  // FAZ-4 journal guidance (best-effort detection, warn-only): the critical profile's claims should
+  // Not ride async replication — see CreateGnlConfig.preset's JOURNAL GUIDANCE note.
+  if (config.preset === 'critical' && /redis/i.test(journal?.constructor?.name ?? '')) {
+    console.warn(
+      "@gnldev/durable: preset 'critical' is running on a Redis journal — prefer Postgres for the critical profile, " +
+      "or configure waitReplicas { replicas: 1, timeoutMs: 1000, onTimeout: 'throw' } and treat thrown claims as a reconciliation suspect list.",
+    );
+  }
   const resolvedMemory: Memory | undefined =
     config.memory === false
       ? undefined
@@ -584,7 +618,7 @@ export function createGnl(config: CreateGnlConfig) {
 
   /** C5: converts `a.agents` names into `agent_<name>` tools (model factory that freezes fallback into the nested runId).
    * If `limits` is given (the parent's RunOptions.limits), it's inherited by the sub-agent AS-IS. */
-  async function buildSubAgentTools(names: string[] | undefined, rc: RequestContext, limits?: RunLimits): Promise<ToolSet> {
+  async function buildSubAgentTools(names: string[] | undefined, rc: RequestContext, limits?: RunLimits, toolPolicy?: 'strict' | 'strict-critical'): Promise<ToolSet> {
     const out: ToolSet = {};
     for (const subName of names ?? []) {
       const sub = agent(subName); // early, clear error if not registered
@@ -597,6 +631,7 @@ export function createGnl(config: CreateGnlConfig) {
           guard: sub.guard,
           maxSteps: sub.maxSteps,
           limits,
+          ...(toolPolicy ? { toolPolicy } : {}), // FAZ-4 K12: the JSDoc's 'toolPolicy also to sub-agents' is now true
         },
         // The description field flows to both the network router and the agent-as-tool introduction (single source).
         { description: sub.description ?? `Delegate a task to the '${subName}' agent` },
@@ -606,6 +641,18 @@ export function createGnl(config: CreateGnlConfig) {
   }
 
   async function run(name: string, opts: RunOptions) {
+    if (config.preset === 'critical') {
+      opts = {
+        ...opts,
+        toolPolicy: opts.toolPolicy ?? 'strict-critical',
+        lock: opts.lock ?? { owner: `critical-${randomUUID()}`, ttlMs: 300_000 },
+        exclusiveModelStep: opts.exclusiveModelStep ?? {},
+        limits: { sideEffectDuplicates: 'suspend', ...(opts.limits ?? {}) },
+        strictInput: opts.strictInput ?? true,
+        conflictLedger: opts.conflictLedger ?? true,
+        tombstonePolicy: opts.tombstonePolicy ?? 'reject',
+      };
+    }
     const a = agent(name);
     const rc = opts.context ?? {};
     // P1.7: a server-sealed resourceId/threadId (sealRequestContext) ALWAYS wins over opts.resourceId/
@@ -615,7 +662,7 @@ export function createGnl(config: CreateGnlConfig) {
     const effectiveThreadId = serverIdentity.threadId ?? opts.threadId;
     const model = await materializeModel(opts.model ?? (await resolveDyn(a.model, rc)), opts.runId);
     const agentTools = a.tools ? await resolveDyn(a.tools, rc) : undefined;
-    const subTools = await buildSubAgentTools(a.agents, rc, opts.limits);
+    const subTools = await buildSubAgentTools(a.agents, rc, opts.limits, opts.toolPolicy);
     const wfTools = buildWorkflowTools(a.workflows);
     const system = opts.system ?? (a.system ? await resolveDyn(a.system, rc) : undefined);
     const processors = [...(config.processors ?? []), ...(a.processors ?? [])];
@@ -642,6 +689,11 @@ export function createGnl(config: CreateGnlConfig) {
       ...(opts.lock ? { lock: opts.lock } : {}), // : forward the distributed run-lock to runDurable (see the RunOptions.lock note)
       // Forward the protections that were previously runDurable-only.
       ...(opts.toolPolicy ? { toolPolicy: opts.toolPolicy } : {}),
+      // FAZ-4 critical-profile forwards (no-ops unless set — see RunOptions).
+      ...(opts.strictInput !== undefined ? { strictInput: opts.strictInput } : {}),
+      ...(opts.conflictLedger !== undefined ? { conflictLedger: opts.conflictLedger } : {}),
+      ...(opts.tombstonePolicy ? { tombstonePolicy: opts.tombstonePolicy } : {}),
+      ...(opts.actor ? { actor: opts.actor } : {}),
       ...(config.schemaCompat ? { schemaCompat: config.schemaCompat } : {}),
       ...(opts.replay ? { replay: opts.replay } : {}),
       ...(opts.timeouts ? { timeouts: opts.timeouts } : {}),
@@ -689,6 +741,18 @@ export function createGnl(config: CreateGnlConfig) {
   // P1.6b: streamed runs' materialized-metrics recording lives in streamDurable's onFinish (run.ts,
   // Next to recordRunUsage) — the former TODO here is closed; no backfill dependency remains.
   async function stream(name: string, opts: RunOptions) {
+    if (config.preset === 'critical') {
+      opts = {
+        ...opts,
+        toolPolicy: opts.toolPolicy ?? 'strict-critical',
+        lock: opts.lock ?? { owner: `critical-${randomUUID()}`, ttlMs: 300_000 },
+        exclusiveModelStep: opts.exclusiveModelStep ?? {},
+        limits: { sideEffectDuplicates: 'suspend', ...(opts.limits ?? {}) },
+        strictInput: opts.strictInput ?? true,
+        conflictLedger: opts.conflictLedger ?? true,
+        tombstonePolicy: opts.tombstonePolicy ?? 'reject',
+      };
+    }
     const a = agent(name);
     const rc = opts.context ?? {};
     // P1.7: same server-identity precedence as run() above — see RunOptions.threadId/resourceId JSDoc.
@@ -697,7 +761,7 @@ export function createGnl(config: CreateGnlConfig) {
     const effectiveThreadId = serverIdentity.threadId ?? opts.threadId;
     const model = await materializeModel(opts.model ?? (await resolveDyn(a.model, rc)), opts.runId);
     const agentTools = a.tools ? await resolveDyn(a.tools, rc) : undefined;
-    const subTools = await buildSubAgentTools(a.agents, rc, opts.limits);
+    const subTools = await buildSubAgentTools(a.agents, rc, opts.limits, opts.toolPolicy);
     const wfTools = buildWorkflowTools(a.workflows);
     const system = opts.system ?? (a.system ? await resolveDyn(a.system, rc) : undefined);
     const processors = [...(config.processors ?? []), ...(a.processors ?? [])];
@@ -724,6 +788,11 @@ export function createGnl(config: CreateGnlConfig) {
       // It — see the stream lock note above; the only difference is no self-renew heartbeat).
       ...(opts.lock ? { lock: opts.lock } : {}),
       ...(opts.toolPolicy ? { toolPolicy: opts.toolPolicy } : {}),
+      // FAZ-4 critical-profile forwards (no-ops unless set — see RunOptions).
+      ...(opts.strictInput !== undefined ? { strictInput: opts.strictInput } : {}),
+      ...(opts.conflictLedger !== undefined ? { conflictLedger: opts.conflictLedger } : {}),
+      ...(opts.tombstonePolicy ? { tombstonePolicy: opts.tombstonePolicy } : {}),
+      ...(opts.actor ? { actor: opts.actor } : {}),
       ...(opts.replay ? { replay: opts.replay } : {}),
       ...(opts.timeouts ? { timeouts: opts.timeouts } : {}),
       ...(opts.exclusiveModelStep ? { exclusiveModelStep: opts.exclusiveModelStep } : {}),

@@ -12,7 +12,7 @@
 import type { Context } from 'hono';
 import { toFetchHandler, type FetchHandler } from './handler.js';
 import { Hono } from 'hono';
-import { limitBreachFromSteps, blockedFromSteps, BLOCKED_ERROR_CODES, blockedErrorCode } from '@gnldev/durable';
+import { limitBreachFromSteps, blockedFromSteps, BLOCKED_ERROR_CODES, blockedErrorCode, callerConflictCode } from '@gnldev/durable';
 import type { CreateGnlConfig } from '@gnldev/durable';
 import { createGnl } from '@gnldev/durable';
 import { streamSSE } from 'hono/streaming';
@@ -201,6 +201,12 @@ function aguiRouteApp(config: CreateGnlConfig, opts: CreateAguiRouteOptions = {}
       const name = (e as { name?: string })?.name;
       if (name === 'RunThreadMismatchError') {
         return c.json({ error: e.message, code: 'run_thread_mismatch', detail: e.detail }, 409);
+      }
+      // FAZ-4 caller-conflict family (K9: durable's single map — this route was the consumer the
+      // First cut forgot; a critical-profile input/actor/swept refusal must not collapse to a bare 400).
+      const conflict = callerConflictCode(e);
+      if (conflict) {
+        return c.json({ error: e.message, code: conflict, detail: e.detail }, 409);
       }
       const blocked = blockedErrorCode(e);
       if (blocked) {

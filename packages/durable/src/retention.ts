@@ -258,6 +258,24 @@ export interface SweepOptions {
   olderThanMs: number;
   /** Suspended (awaiting-approval) runs are preserved (default true) — pending work isn't silently deleted. */
   keepSuspended?: boolean;
+  /**
+   * FAZ-4: even with keepSuspended, a suspended run older than THIS (ms, by last activity) becomes
+   * Sweepable — the answer to "suspended runs accumulate forever" (retention deliberately protects
+   * Them; layers 2-3 raise the suspend volume, so an expiry arm stopped being optional). Uses the
+   * SLOW scan (the indexed fast path cannot age suspended runs separately). Undefined = today's
+   * Behavior: suspended runs are never swept.
+   */
+  suspendedTtlMs?: number;
+  /**
+   * FAZ-4: write a `${runId}:swept` TOMBSTONE after purging each run. A late retry of that runId can
+   * Then be REFUSED under `tombstonePolicy: 'reject'` (the critical profile) instead of silently
+   * Re-running side effects whose dedup window died with the journal. LIFECYCLE, stated honestly:
+   * Under 'reject' the tombstone is effectively PERMANENT: after the purge the run's only key is the
+   * Tombstone itself, which no sweep scan lists (it is invisible to the run readers) — removal only
+   * Happens on the 'ignore'+re-run+second-sweep chain. The safe direction, but know it. The REAL
+   * Contract is and remains: retention window >= client retry horizon.
+   */
+  tombstones?: boolean;
   /** Testability: "now" (default Date.now()). */
   now?: number;
 }
@@ -290,12 +308,15 @@ export async function sweepRuns(journal: Journal & Partial<JournalReader>, opts:
   // Ids directly without pulling ALL of every run's entries (the old O(entire-DB) scan). The result
   // Contract is the same; keptSuspended/keptNoTs are reported as 0 by definition on this path
   // (SQL already filtered).
-  if (typeof (journal as Journal).listStaleRuns === 'function') {
+  // FAZ-4: suspendedTtlMs needs the slow scan — the indexed query cannot age suspended runs on a
+  // SEPARATE cutoff (it either includes them at the general cutoff or not at all).
+  if (typeof (journal as Journal).listStaleRuns === 'function' && opts.suspendedTtlMs === undefined) {
     const cutoff = now - opts.olderThanMs;
     const stale = await (journal as Journal).listStaleRuns!(cutoff, { includeSuspended: !keepSuspended });
     const fast: SweepResult = { scanned: stale.length, purged: [], keptSuspended: 0, keptNoTs: 0, deletedEntries: 0 };
     for (const runId of stale) {
       fast.deletedEntries += await purgeRun(journal, runId);
+      if (opts.tombstones) await journal.put(`${runId}:swept`, { at: now });
       fast.purged.push(runId);
     }
     return fast;
@@ -309,18 +330,24 @@ export async function sweepRuns(journal: Journal & Partial<JournalReader>, opts:
     result.scanned++;
     const entries = await journal.readRun(r.runId);
     const summary = summarizeRun(r.runId, entries);
-    if (keepSuspended && summary.status === 'suspended') {
-      result.keptSuspended++;
-      continue;
-    }
     const stamps = entries.map((e) => e.ts).filter((t): t is number => t != null);
-    if (stamps.length === 0) {
+    const lastActivity = stamps.length ? Math.max(...stamps) : undefined;
+    if (keepSuspended && summary.status === 'suspended') {
+      // FAZ-4 expiry arm: a suspended run past suspendedTtlMs stops being protected — nobody is
+      // Coming to approve it, and layers 2-3 made suspends routine enough that "forever" leaks.
+      const expired = opts.suspendedTtlMs !== undefined && lastActivity !== undefined && now - lastActivity > opts.suspendedTtlMs;
+      if (!expired) {
+        result.keptSuspended++;
+        continue;
+      }
+    }
+    if (lastActivity === undefined) {
       result.keptNoTs++; // age can't be measured → safe side: preserve
       continue;
     }
-    const lastActivity = Math.max(...stamps);
-    if (now - lastActivity > opts.olderThanMs) {
+    if (now - lastActivity > opts.olderThanMs || (summary.status === 'suspended' && opts.suspendedTtlMs !== undefined && now - lastActivity > opts.suspendedTtlMs)) {
       result.deletedEntries += await purgeRun(journal, r.runId);
+      if (opts.tombstones) await journal.put(`${r.runId}:swept`, { at: now });
       result.purged.push(r.runId);
     }
   }

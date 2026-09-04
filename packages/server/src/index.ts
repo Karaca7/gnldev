@@ -3,7 +3,7 @@
 import { Hono, type Context } from 'hono';
 import { toFetchHandler, type FetchHandler } from './handler.js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { createGnl, agentVisibleToOrg, withOrg, withOrgStorage, ORG_RECORD_PRE, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, asReaderJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, sealRequestContext, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry } from '@gnldev/durable';
+import { createGnl, agentVisibleToOrg, withOrg, withOrgStorage, ORG_RECORD_PRE, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, asReaderJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, sealRequestContext, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry, callerConflictCode } from '@gnldev/durable';
 import type { CreateGnlConfig, Journal, JournalReader, BudgetLimit, UsageCostCache, RunLimits } from '@gnldev/durable';
 import { makeGate, normalizeAuth, principalOf, isPlatformAdmin, CLIENT_ROLE, type AuthProvider, type ReadWriteAuth, type Principal } from '@gnldev/auth';
 // P0.4 @gnldev/workflow is zero-dependency (see its package.json) — depending on it
@@ -357,6 +357,21 @@ function threadMismatchResponse(c: Context, e: unknown): Response | undefined {
   if (!(e instanceof RunThreadMismatchError) && (e as { name?: string })?.name !== 'RunThreadMismatchError') return undefined;
   const err = e as RunThreadMismatchError;
   return c.json({ error: err.message, code: 'run_thread_mismatch', detail: err.detail }, 409);
+}
+
+/**
+ * FAZ-4 caller-conflict family — same 409-without-resumable contract as threadMismatchResponse
+ * above (the id/content/actor is what needs fixing, not the request shape; none clears on retry).
+ */
+function callerConflictResponse(c: Context, e: unknown): Response | undefined {
+  // K9: the code map is durable's CALLER_CONFLICT_CODES export — one source, three consumers
+  // (server, chat-adapter, agui); a literal copy per consumer is exactly the drift that left one
+  // Route unmapped. threadMismatchResponse still answers first in every chain, so its entry here is
+  // Unreachable duplication, kept for consumers that skip the dedicated renderer.
+  const code = callerConflictCode(e);
+  if (!code) return undefined;
+  const err = e as { message?: string; detail?: unknown };
+  return c.json({ error: err.message, code, detail: err.detail }, 409);
 }
 
 function blockedErrorResponse(c: Context, e: unknown): Response | undefined {
@@ -986,7 +1001,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
       // Not saying. Additive field, so existing clients are unaffected.
       return c.json({ ok: true, runId: body.runId, text: r.text, interrupts: r.interrupts, finishReason: r.finishReason });
     } catch (e: any) {
-      return limitErrorResponse(c, e) ?? threadMismatchResponse(c, e) ?? blockedErrorResponse(c, e) ?? upstreamErrorResponse(c, e) ?? c.json({ error: String(e?.message ?? e) }, 400);
+      return limitErrorResponse(c, e) ?? threadMismatchResponse(c, e) ?? callerConflictResponse(c, e) ?? blockedErrorResponse(c, e) ?? upstreamErrorResponse(c, e) ?? c.json({ error: String(e?.message ?? e) }, 400);
     } finally {
       unregisterInflight(key, ctrl);
     }
@@ -1062,7 +1077,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
       // Not saying. Additive field, so existing clients are unaffected.
       return c.json({ ok: true, runId: body.runId, text: r.text, interrupts: r.interrupts, finishReason: r.finishReason });
     } catch (e: any) {
-      return limitErrorResponse(c, e) ?? threadMismatchResponse(c, e) ?? blockedErrorResponse(c, e) ?? upstreamErrorResponse(c, e) ?? c.json({ error: String(e?.message ?? e) }, 400);
+      return limitErrorResponse(c, e) ?? threadMismatchResponse(c, e) ?? callerConflictResponse(c, e) ?? blockedErrorResponse(c, e) ?? upstreamErrorResponse(c, e) ?? c.json({ error: String(e?.message ?? e) }, 400);
     }
   });
 
@@ -1267,7 +1282,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
       });
     } catch (e: any) {
       unregisterInflight(key, ctrl);
-      return limitErrorResponse(c, e) ?? threadMismatchResponse(c, e) ?? blockedErrorResponse(c, e) ?? upstreamErrorResponse(c, e) ?? c.json({ error: String(e?.message ?? e) }, 400);
+      return limitErrorResponse(c, e) ?? threadMismatchResponse(c, e) ?? callerConflictResponse(c, e) ?? blockedErrorResponse(c, e) ?? upstreamErrorResponse(c, e) ?? c.json({ error: String(e?.message ?? e) }, 400);
     }
     // P0.3 cleanup: `s.gnl.stream(...)` above only resolves the STREAM RESULT object — the actual
     // FullStream consumption (and hence "this generation is done") happens INSIDE pipeAgentStream's
@@ -1330,7 +1345,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
       const result = await s.gnl.runWorkflow(name, body.input, wfOpts);
       return c.json({ ok: true, ...result });
     } catch (e: any) {
-      return limitErrorResponse(c, e) ?? threadMismatchResponse(c, e) ?? blockedErrorResponse(c, e) ?? upstreamErrorResponse(c, e) ?? c.json({ error: String(e?.message ?? e) }, 400);
+      return limitErrorResponse(c, e) ?? threadMismatchResponse(c, e) ?? callerConflictResponse(c, e) ?? blockedErrorResponse(c, e) ?? upstreamErrorResponse(c, e) ?? c.json({ error: String(e?.message ?? e) }, 400);
     } finally {
       if (wfKey) unregisterInflight(wfKey, ctrl);
     }
