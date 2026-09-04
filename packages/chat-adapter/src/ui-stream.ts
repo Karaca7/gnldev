@@ -12,16 +12,20 @@
 // Always builds the masked chunk stream first, then wraps it with `createUIMessageStreamResponse`.
 //
 // Chunk type names below (`tool-input-start`, `tool-input-available`, `tool-output-available`,
-// `data-${string}`) are verified against the installed `ai@5.0.204` package's `UIMessageChunk`
-// Definition (node_modules/.pnpm/ai@5.0.204.../dist/index.d.ts) — NOT guessed / NOT copied from another
-// Framework's chunk-stream types (which target a different AI SDK major in places).
+// `data-${string}`) are verified against the INSTALLED `ai` major's `UIMessageChunk` definition —
+// Tsc compiles this file against that .d.ts, so a renamed chunk type fails the build rather than
+// Silently passing through unmasked. (Originally verified on ai@5; re-verified on the ai@7 upgrade.)
 import { createUIMessageStreamResponse } from 'ai';
 import type { AsyncIterableStream, StreamTextResult, UIMessage, UIMessageChunk, UIMessageStreamOptions } from 'ai';
 import { maskSentinelOutput } from './sentinel-mask.js';
 
-/** A `data-gnl-interrupt` chunk's payload — one entry per newly-masked suspend in this transform call. */
+/** A `data-gnl-interrupt` chunk's payload — one entry per newly-masked suspend in this transform call.
+ * FAZ-2: `runId` (when the caller provided one) is the approval ADDRESS — without it the client's
+ * "approve" re-POST derives a FRESH runId from its new message id, the approval lands on a brand-new
+ * Run, and the suspended run stays suspended forever (retention keeps suspended runs deliberately →
+ * Unbounded accumulation). Approve by re-POSTing with THIS runId — see `approvalPayload`/`approve`. */
 export interface GnlInterruptData {
-  interrupts: Array<{ toolCallId: string; toolName: string; args: unknown; reason?: string }>;
+  interrupts: Array<{ toolCallId: string; toolName: string; args: unknown; reason?: string; runId?: string }>;
 }
 
 /**
@@ -37,7 +41,7 @@ export interface GnlInterruptData {
  * Itself carries only `toolCallId`, not `toolName` — see the UIMessageChunk union in ai@5's .d.ts) so the
  * Masked suspend payload can still report which tool is awaiting approval.
  */
-function maskSentinelChunks(): TransformStream<UIMessageChunk, UIMessageChunk> {
+function maskSentinelChunks(runId?: string): TransformStream<UIMessageChunk, UIMessageChunk> {
   const toolNames = new Map<string, string>();
   return new TransformStream<UIMessageChunk, UIMessageChunk>({
     transform(chunk, controller) {
@@ -52,7 +56,9 @@ function maskSentinelChunks(): TransformStream<UIMessageChunk, UIMessageChunk> {
         if (display !== chunk.output) {
           controller.enqueue({ ...chunk, output: display });
           if (interrupt) {
-            const data: GnlInterruptData = { interrupts: [interrupt] };
+            // FAZ-2: stamp the run's id onto the interrupt — the client must approve THIS run, not a
+            // Freshly-derived one (see GnlInterruptData's JSDoc).
+            const data: GnlInterruptData = { interrupts: [runId ? { ...interrupt, runId } : interrupt] };
             controller.enqueue({ type: 'data-gnl-interrupt', data } as UIMessageChunk);
           }
           return;
@@ -70,25 +76,31 @@ function maskSentinelChunks(): TransformStream<UIMessageChunk, UIMessageChunk> {
  */
 export function toUIMessageStream<UI_MESSAGE extends UIMessage = UIMessage>(
   result: Pick<StreamTextResult<any, any, any>, 'toUIMessageStream'>,
-  opts?: UIMessageStreamOptions<UI_MESSAGE>,
+  opts?: UIMessageStreamOptions<UI_MESSAGE> & { runId?: string },
 ): AsyncIterableStream<UIMessageChunk> {
-  const native = result.toUIMessageStream(opts);
+  // FAZ-2: `runId` is OURS (stamped onto interrupt chunks), not the AI SDK's — split it off before
+  // Handing the rest to the native stream builder.
+  const { runId, ...native } = opts ?? {};
+  const nativeStream = result.toUIMessageStream(native as UIMessageStreamOptions<UI_MESSAGE>);
   // PipeThrough on a WHATWG ReadableStream keeps async-iterability (verified: Node's native
   // ReadableStream implements Symbol.asyncIterator; ai's own AsyncIterableStream helper relies on the
   // Same `pipeThrough(new TransformStream())` pattern — see ai/dist/index.mjs's createAsyncIterableStream).
-  return native.pipeThrough(maskSentinelChunks()) as AsyncIterableStream<UIMessageChunk>;
+  return nativeStream.pipeThrough(maskSentinelChunks(runId)) as AsyncIterableStream<UIMessageChunk>;
 }
 
 /**
  * `UIMessageStreamResponseInit` (the native method's other option half) is NOT exported by the `ai`
  * Package (private type) — this mirrors its structural shape (verified against
- * `toUIMessageStreamResponse`'s declared parameter in ai@5's .d.ts) without importing a name that isn't
- * Part of the package's public surface.
+ * `toUIMessageStreamResponse`'s declared parameter in the INSTALLED ai major's .d.ts; originally on
+ * Ai@5, re-checked on the ai@7 upgrade) without importing a name that isn't part of the package's
+ * Public surface.
  */
 export interface ToUIMessageStreamResponseOptions<UI_MESSAGE extends UIMessage = UIMessage>
   extends UIMessageStreamOptions<UI_MESSAGE>,
     ResponseInit {
   consumeSseStream?: (options: { stream: ReadableStream<string> }) => PromiseLike<void> | void;
+  /** FAZ-2: stamped onto `data-gnl-interrupt` chunks as the approval address (see GnlInterruptData). */
+  runId?: string;
 }
 
 /**

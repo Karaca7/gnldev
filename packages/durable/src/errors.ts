@@ -118,6 +118,11 @@ export const BLOCKED_ERROR_CODES: Record<string, string> = {
   SideEffectRetryBlockedError: 'side_effect_retry_blocked',
   RetryLimitExceededError: 'retry_limit_exceeded',
   RunBusyError: 'run_busy',
+  // FAZ-1: @gnldev/workflow's side-effect claim refusal (StepRetryBlockedError, workflow.ts). Matched
+  // By NAME here (blockedErrorCode works via err.name) — workflow stays zero-dependency, and a blocked
+  // Workflow step surfacing through runWorkflow → server/agui/studio still renders a typed code
+  // Instead of falling through to the generic 400.
+  StepRetryBlockedError: 'step_retry_blocked',
 };
 
 /**

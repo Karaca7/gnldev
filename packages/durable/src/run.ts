@@ -2400,6 +2400,19 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   // No heartbeat by design (see StreamDurableArgs.lock) — a streamed lock relies on ttlMs for takeover.
   const lockHandle = lock ? await acquireRunLock(journal, runId, lock.owner, lock.ttlMs) : null;
   if (lock && !lockHandle) throw Object.assign(new RunBusyError(`run '${runId}' is locked by another process`), { atLockAcquisition: true });
+  // (a): EVERYTHING after a successful acquire runs under a release-on-throw guard. The setup awaits
+  // Below (thread-ownership assert, runStarted, approvals, memory prep, persistInput...) can all
+  // Throw or reject, and each used to strand the just-acquired lock until TTL: a thread-mismatch
+  // Told the caller to fix the id with a 409 while run_busy blocked the CORRECT retry for the whole
+  // TTL. TTL is the crash insurance, not the wiring for a known exit.
+  try {
+    return await afterAcquire();
+  } catch (err) {
+    if (lockHandle) { try { await lockHandle.release(); } catch { /* best-effort; TTL reclaims */ } }
+    throw err;
+  }
+
+  async function afterAcquire(): Promise<StreamTextResult<any, any, any>> {
   // ONE read of `:input`, shared with persistInput below — parity with runDurableInner. Read + asserted
   // BEFORE runStarted/resolveApprovals — see assertThreadOwnership's own doc (K2/K3 hardening).
   const frozenInput = await journal.get<FrozenInput>(runKeys.input(runId));
@@ -2618,6 +2631,16 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
       if (lockHandle) { try { await lockHandle.release(); } catch { /* best-effort; TTL reclaims */ } }
       if (prevOnError) await prevOnError(ev);
     };
+    // (a): release on ABORT too — AI SDK 7 fires `onAbort` (NOT onFinish/onError) when the caller's
+    // AbortSignal trips mid-stream, so "TTL reclaims on abandonment" was covering a path that is not
+    // Abandonment at all. With the chat route's default lock + forwarded request signal, "user hit
+    // Stop / closed the tab" was the COMMON path that stranded the lock: the very next regenerate
+    // Derives the SAME runId and ate 409 run_busy until the TTL expired.
+    const prevOnAbort = (options as any).onAbort;
+    (options as any).onAbort = async (ev: any) => {
+      if (lockHandle) { try { await lockHandle.release(); } catch { /* best-effort; TTL reclaims */ } }
+      if (prevOnAbort) await prevOnAbort(ev);
+    };
   }
   let rawStream: any;
   // OUTPUT-PROCESSOR PARITY WITH runDurable. Measured before this existed, with the same redactor
@@ -2659,15 +2682,10 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
     return value && typeof value === 'object' ? { ...(value as any), messages: pout.messages } : value;
   };
 
-  try {
-    // (b): wrap the result so the terminal promises (result.text & friends) REJECT with the
-    // Typed streamFinishError when a block/limit sentinel fired — see guardStreamTerminalPromises.
-    rawStream = streamText(options);
-    return guardStreamTerminalPromises(rawStream, procCtx ? maskTerminal : undefined);
-  } catch (err) {
-    // StreamText threw synchronously during setup → release the lock we just acquired (onFinish/onError
-    // Will never fire for this call).
-    if (lockHandle) { try { await lockHandle.release(); } catch { /* best-effort */ } }
-    throw err;
-  }
+  // (b): wrap the result so the terminal promises (result.text & friends) REJECT with the
+  // Typed streamFinishError when a block/limit sentinel fired — see guardStreamTerminalPromises.
+  // A synchronous streamText throw is released by afterAcquire's caller-side catch above.
+  rawStream = streamText(options);
+  return guardStreamTerminalPromises(rawStream, procCtx ? maskTerminal : undefined);
+  } // afterAcquire — post-acquire body under the release-on-throw guard
 }

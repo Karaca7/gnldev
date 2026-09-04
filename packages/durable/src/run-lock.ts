@@ -114,9 +114,25 @@ function mkLock(journal: Journal, runId: string, owner: string, token: string): 
     // Owner-check (fencing): if the current record no longer carries THIS acquisition's token (a
     // Takeover happened or there's no record at all), release is a no-op — it never overwrites another owner's lock.
     release: async () => {
-      const cur = await journal.get<LockRecord>(key);
-      if (!cur || cur.token !== token) return; // stale owner → rejected, silent no-op
-      await journal.put(key, { owner, expires: 0, token });
+      // SAME CAS discipline as renew(): the old get→put pair was a TOCTOU window — a takeover
+      // Landing between the token check and the write was erased by the plain put (a half-release of
+      // The NEW owner's live lock). putIfMatch writes only if the record we token-checked is still in
+      // Place. A false CAS has TWO causes and the retry loop tells them apart: a takeover (the next
+      // Get sees a foreign token → silent no-op, correct) vs OUR OWN in-flight renew() landing in
+      // Between (the next get sees our token with a fresh `expires` → retry against the fresh record,
+      // Otherwise the lock we mean to free stays live until TTL). Bounded, so a hot takeover race can
+      // Never spin. Fallback without putIfMatch keeps the old best-effort behavior (single-process
+      // Sufficient, documented risk — the core-hardening review).
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const cur = await journal.get<LockRecord>(key);
+        if (!cur || cur.token !== token) return; // stale owner → rejected, silent no-op
+        const dead: LockRecord = { owner, expires: 0, token };
+        if (!journal.putIfMatch) {
+          await journal.put(key, dead);
+          return;
+        }
+        if (await journal.putIfMatch(key, cur, dead)) return;
+      }
     },
   };
 }

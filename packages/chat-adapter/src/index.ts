@@ -12,3 +12,6 @@ export type { CreateChatRouteOptions } from './chat-route.js';
 
 export { maskSentinelOutput } from './sentinel-mask.js';
 export type { MaskedToolOutput } from './sentinel-mask.js';
+
+export { approvalPayload, approve } from './approve.js';
+export type { ApprovableInterrupt, ApproveOptions } from './approve.js';

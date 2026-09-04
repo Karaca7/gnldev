@@ -181,3 +181,93 @@ describe('Y2 renew (heartbeat)', () => {
     expect(await journal.get(key)).toEqual(afterTakeover); // B's record remained UNTOUCHED
   });
 });
+
+// Faz 0.1 (dedup-hardening) — release()'s token check (get) and its write used to be two separate
+// steps: a takeover landing IN BETWEEN was erased by the plain put (a half-release zeroing the NEW
+// owner's live lock). release() now writes via putIfMatch — same CAS discipline as renew().
+describe('release TOCTOU (CAS)', () => {
+  it('a takeover landing between the token check and the write is NOT overwritten', async () => {
+    const journal = new InMemoryJournal();
+    const key = 'r:lock';
+
+    // A journal facade whose get() serves the PRE-takeover record once armed — reproducing the exact
+    // interleaving: release() token-checks BEFORE the takeover, its write lands AFTER it.
+    let staleRec: unknown;
+    const facade: any = {
+      get: async (k: string) => (k === key && staleRec !== undefined ? staleRec : journal.get(k)),
+      put: (k: string, v: unknown) => journal.put(k, v),
+      putIfAbsent: (k: string, v: unknown) => journal.putIfAbsent(k, v),
+      putIfMatch: (k: string, e: unknown, v: unknown) => journal.putIfMatch(k, e, v),
+    };
+
+    const lockA = await acquireRunLock(facade, 'r', 'A', 50);
+    expect(lockA).not.toBeNull();
+    staleRec = await journal.get(key); // A's live record — the stale view release() will see
+
+    await new Promise((r) => setTimeout(r, 60)); // A's TTL passes
+    const lockB = await acquireRunLock(journal, 'r', 'B', 5000); // takeover, fresh fencing token
+    expect(lockB).not.toBeNull();
+    const recB = await journal.get<any>(key);
+    expect(recB.token).toBe(lockB!.token);
+
+    // A's stale release: the token check passes against the STALE record (the TOCTOU window), but
+    // the CAS write compares against the STORE and must refuse — B's live lock stays untouched.
+    await lockA!.release();
+    const after = await journal.get<any>(key);
+    expect(after).toEqual(recB); // the old plain put would have left {owner:'A', expires:0} here
+    expect(after.expires).toBeGreaterThan(Date.now());
+
+    // B's own release still works (happy path is not broken by the CAS).
+    await lockB!.release();
+    const released = await journal.get<any>(key);
+    expect(released.expires).toBe(0);
+  });
+});
+
+// Faz 0 kontrol bulguları (Deniz + Rüzgar) — release'in CAS'ı kendi in-flight renew'una kaybettiği
+// interleaving ve putIfMatch'siz fallback yolu pinlendi.
+describe('release CAS retry + fallback', () => {
+  it('release retries when it loses the CAS to its OWN in-flight renew — the lock is freed, not left until TTL', async () => {
+    const journal = new InMemoryJournal();
+    const key = 'r2:lock';
+    let staleOnce: unknown; // when armed, the next get(key) serves this pre-renew record ONCE
+    const facade: any = {
+      get: async (k: string) => {
+        if (k === key && staleOnce !== undefined) {
+          const s = staleOnce;
+          staleOnce = undefined;
+          return s;
+        }
+        return journal.get(k);
+      },
+      put: (k: string, v: unknown) => journal.put(k, v),
+      putIfAbsent: (k: string, v: unknown) => journal.putIfAbsent(k, v),
+      putIfMatch: (k: string, e: unknown, v: unknown) => journal.putIfMatch(k, e, v),
+    };
+    const lock = await acquireRunLock(facade, 'r2', 'A', 5000);
+    expect(lock).not.toBeNull();
+    const preRenew = await journal.get(key);
+    await lock!.renew(10_000); // the heartbeat lands (fresh expires, SAME token)
+    // Release()'s FIRST token check sees the pre-renew record → its CAS loses exactly like a queue
+    // Worker whose last heartbeat tick raced its own finally-release. The retry must re-read, see its
+    // OWN token, and free the lock — a single-attempt release left it live until TTL here.
+    staleOnce = preRenew;
+    await lock!.release();
+    const after = await journal.get<any>(key);
+    expect(after.expires).toBe(0);
+  });
+
+  it('release without putIfMatch keeps the old best-effort put (fallback path pinned)', async () => {
+    const journal = new InMemoryJournal();
+    const facade: any = {
+      get: (k: string) => journal.get(k),
+      put: (k: string, v: unknown) => journal.put(k, v),
+      putIfAbsent: (k: string, v: unknown) => journal.putIfAbsent(k, v),
+      // PutIfMatch deliberately absent — the adapter-without-CAS profile
+    };
+    const lock = await acquireRunLock(facade, 'r3', 'A', 5000);
+    expect(lock).not.toBeNull();
+    await lock!.release();
+    expect((await journal.get<any>('r3:lock')).expires).toBe(0);
+  });
+});

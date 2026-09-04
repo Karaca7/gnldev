@@ -140,7 +140,12 @@ export function pipeAguiStream(c: Context, runId: string, result: any, opts?: Pi
         return;
       }
       const interrupts = interruptsFromSteps(steps);
-      if (interrupts.length) await emit({ event: 'interrupt', data: { interrupts } });
+      // FAZ-2 (chat-adapter parity): the approval ADDRESS travels with the interrupt — a client that
+      // Resumes without this runId starts a fresh run and the suspended one leaks forever. Parity is
+      // Measured by SCHEMA POSITION, not field name: chat-adapter stamps runId INSIDE each record
+      // (ui-stream.ts), so a shared client helper (approvalPayload) must find it there on BOTH
+      // Adapters — the envelope copy stays for consumers already reading it.
+      if (interrupts.length) await emit({ event: 'interrupt', data: { interrupts: interrupts.map((i) => ({ ...i, runId })), runId } });
       const finishReason = await Promise.resolve(result.finishReason).catch(() => undefined);
       const usage = await Promise.resolve(result.usage).catch(() => undefined);
       await emit({ event: 'done', data: { runId, finishReason, usage } });

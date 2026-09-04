@@ -26,6 +26,20 @@ export interface JournalLike {
    * Engine path works without it.
    */
   listKeys?(prefix: string): Promise<string[]>;
+  /**
+   * Optional (CAS): conditional replace — writes `value` and returns `true` ONLY if the current
+   * Record equals `expected` (serialized equality); `false` without touching anything otherwise.
+   * Structurally compatible with @gnldev/durable Journal.putIfMatch. Used by the side-effect claim
+   * Takeover (a stale claim is adopted atomically — two resuming workers can't both run the step).
+   * If undefined, falls back to best-effort get→put (single-process safe, documented risk).
+   */
+  putIfMatch?(key: string, expected: unknown, value: unknown): Promise<boolean>;
+  /**
+   * Optional: the STORAGE's own clock (ms epoch) — structurally compatible with @gnldev/durable
+   * Journal.now. Claim-staleness decisions use it when present, so wall-clock skew between workers
+   * Cannot disrupt takeover timing (same posture as run-lock's H2).
+   */
+  now?(): Promise<number>;
 }
 
 export interface StepCtx {
@@ -48,6 +62,14 @@ export interface StepCtx {
    * Unique across nested workflows the same way you already must for `_suspend`.
    */
   resumeData?<T = unknown>(waitId: string): Promise<T | undefined>;
+  /**
+   * This step's own journal key (`<runId>:wf:<keyPrefix><stepId>`) — ENGINE-INJECTED by `runStep`
+   * Before every step run, so inside a step's `run()` it is always present (optional only because
+   * The ctx object callers construct doesn't carry it). Single source of truth with the record key.
+   * Carry it to external APIs (e.g. as a Stripe-style Idempotency-Key header) and the journal's
+   * Exactly-once extends into the downstream system: a crash-window duplicate then dedupes THERE too.
+   */
+  idempotencyKey?: string;
 }
 
 // ── P0.4 key builders (single source of truth for the new key shapes) ──────────
@@ -93,13 +115,86 @@ const WFRUN_PRE = 'wfrun:';
 export interface Step<I = any, O = any> {
   id: string;
   run(input: I, ctx: StepCtx): Promise<O>;
+  /** FAZ-1 (optional): side-effect durability contract — see `StepDurability` and `step()`'s 3rd arg. */
+  durability?: StepDurability<I, O>;
+}
+
+/**
+ * FAZ-1 — durability contract for a step whose body fires a NON-IDEMPOTENT external effect (an HTTP
+ * POST, a charge, an email). Without it, the engine journals the step AFTER it runs — a crash between
+ * The effect and the journal write leaves no record, and the resume re-fires the effect (the classic
+ * Crash-window duplicate). With `sideEffect: true` the engine writes a WRITE-AHEAD CLAIM
+ * (`<stepKey>:_claim`) before executing, so a resume can TELL "never started" from "died mid-flight":
+ *   Claim absent            → never started, run normally.
+ *   Output present          → completed, replay (unchanged).
+ *   Claim live (< ttl)      → another worker / a very recent attempt is in flight → StepRetryBlockedError.
+ *   Claim stale or `failed` → THE CRASH WINDOW: the effect may or may not have fired. `recover` is
+ *     Asked first ("check the external system — did it land?"); without `recover`, the engine refuses
+ *     To guess (StepRetryBlockedError with state 'unresolved') instead of silently double-firing.
+ * A step WITHOUT `sideEffect` keeps today's path byte-for-byte (no claim key is ever written).
+ */
+export interface StepDurability<I = any, O = any> {
+  /** Declare the step's body non-idempotent → the write-ahead claim protocol above activates. */
+  sideEffect?: boolean;
+  /**
+   * Crash-window resolver: consult the EXTERNAL system ("does a payment with this idempotencyKey
+   * exist?") and report. `{done: true, output}` → the effect landed; `output` is journaled as the
+   * Step's record and the body is NOT re-run. `{done: false}` → the effect never landed; the claim is
+   * Taken over (CAS) and the body runs for real. Any other shape is rejected loudly (same shape
+   * Discipline as @gnldev/durable's recover — a malformed recovery must not masquerade as an output).
+   */
+  recover?(input: I, opts: { idempotencyKey: string }): Promise<{ done: true; output: O } | { done: false }>;
+  /**
+   * How long a claim with no output record is presumed IN-FLIGHT before a resume treats it as a
+   * Crash (default 60s). Calibrate ABOVE the step's real worst-case duration: a too-short TTL lets a
+   * Resume adopt a step that is still running on another worker (double side effect — the exact thing
+   * This exists to prevent); a too-long one only delays recovery after a genuine crash.
+   */
+  claimTtlMs?: number;
+}
+
+const DEFAULT_CLAIM_TTL_MS = 60_000;
+
+/** The write-ahead claim record (at `<stepKey>:_claim` — inside the `:_` control-key namespace). */
+interface StepClaimRecord {
+  startedAt: number;
+  /** The attempt ended in a CLEAN suspend (WorkflowSuspended) — re-running on resume is the step's documented contract. */
+  released?: true;
+  /** The attempt THREW — the effect is uncertain, but we know it's not in flight → resume skips the TTL wait and goes straight to recover/blocked. */
+  failed?: true;
+}
+
+/**
+ * FAZ-1 — a side-effect step's resume was refused. Two states:
+ * 'in-flight': a live claim exists (another worker, or an attempt younger than claimTtlMs) — retry
+ *   After the TTL; the block clears on its own.
+ * 'unresolved': the previous attempt died inside the crash window (stale claim / stamped `failed`)
+ *   And the step has no `recover` — the engine will not guess whether the effect fired. Provide
+ *   `recover()` on the step, or resolve manually after checking the external system:
+ *   · effect LANDED   → `journal.put(detail.key, <the real output>)` — the resume replays it.
+ *   · effect NOT fired → `journal.put(`${detail.key}:_claim`, { startedAt: Date.now(), released: true })`
+ *     — the resume adopts the claim and re-runs the step.
+ */
+export class StepRetryBlockedError extends Error {
+  constructor(
+    stepId: string,
+    public readonly detail: { key: string; state: 'in-flight' | 'unresolved'; ageMs?: number; claimTtlMs?: number },
+  ) {
+    super(
+      detail.state === 'in-flight'
+        ? `@gnldev/workflow: step '${stepId}' has a live side-effect claim (age ${detail.ageMs ?? '?'}ms < ttl ${detail.claimTtlMs ?? '?'}ms) — another worker may be running it; retry after the TTL.`
+        : `@gnldev/workflow: step '${stepId}' died inside the side-effect crash window — the effect may have fired. Provide 'recover()' on the step, or verify the external system and write '${detail.key}' manually.`,
+    );
+    this.name = 'StepRetryBlockedError';
+  }
 }
 
 export function step<I = any, O = any>(
   id: string,
   run: (input: I, ctx: StepCtx) => Promise<O>,
+  opts?: StepDurability<I, O>,
 ): Step<I, O> {
-  return { id, run };
+  return opts ? { id, run, durability: opts } : { id, run };
 }
 
 // Atomic claim — identical contract to `claim` in @gnldev/durable (packages/durable/src/journal.ts;
@@ -123,13 +218,141 @@ async function runStep(s: Step, input: any, ctx: StepCtx): Promise<any> {
   const key = `${ctx.runId}:wf:${ctx.keyPrefix ?? ''}${s.id}`;
   const cached = await ctx.journal.get(key);
   if (cached !== undefined) return cached;
-  const out = await s.run(input, ctx);
+  // FAZ-1: the step's journal key doubles as its idempotencyKey — single source of truth, injected
+  // Into ctx so the step body can hand it to external APIs (see StepCtx.idempotencyKey).
+  const ctx2: StepCtx = { ...ctx, idempotencyKey: key };
+  if (s.durability?.sideEffect) return runSideEffectStep(s, s.durability, input, ctx2, key);
+  const out = await s.run(input, ctx2);
   if (await claim(ctx.journal, key, out)) return out;
   // Race lost: the winner's record is the single source of truth. If the winner wrote `undefined`
   // (indistinguishable in the plain shape) we fall back to our own output — both results are products
   // Of the same step anyway.
   const winner = await ctx.journal.get(key);
   return winner === undefined ? out : winner;
+}
+
+/** The storage's clock when it has one (multi-worker skew safety — run-lock's H2 posture), else local. */
+async function clockOf(journal: JournalLike): Promise<number> {
+  return journal.now ? journal.now() : Date.now();
+}
+
+/** Adopt an existing claim atomically. CAS operand is the RAW record we read (durable-tool's war
+ * Story: hashing/reshaping the operand makes the CAS compare a record that was never stored). A lost
+ * CAS means another resume adopted it first → blocked, the winner runs. Fallback without putIfMatch
+ * Is best-effort put (single-process safe — same posture as `claim` above). */
+async function adoptClaim(
+  journal: JournalLike,
+  claimKey: string,
+  cur: StepClaimRecord,
+  next: StepClaimRecord,
+  stepId: string,
+  key: string,
+  info?: { ageMs?: number; claimTtlMs?: number },
+): Promise<void> {
+  if (journal.putIfMatch) {
+    if (!(await journal.putIfMatch(claimKey, cur, next))) {
+      throw new StepRetryBlockedError(stepId, { key, state: 'in-flight', ...info });
+    }
+    return;
+  }
+  await journal.put(claimKey, next);
+}
+
+function assertRecoverShape(r: unknown, stepId: string): asserts r is { done: true; output: unknown } | { done: false } {
+  const v = r as { done?: unknown } | null | undefined;
+  const ok = !!v && typeof v === 'object' && (v.done === true ? 'output' in v : v.done === false);
+  if (!ok) {
+    throw new Error(
+      `@gnldev/workflow: recover('${stepId}') must return {done:true, output} or {done:false} — got ${JSON.stringify(r)?.slice(0, 120)}. A malformed recovery must not masquerade as a step output.`,
+    );
+  }
+}
+
+// FAZ-1 — the side-effect path: write-ahead claim BEFORE execute, so the effect can never fire
+// Without a trace. Protocol details on StepDurability's JSDoc. Ordering is the whole point: the old
+// Get→run→claim sequence journaled the step only AFTER its body ran, so the CAS chose which OUTPUT
+// Survived but never prevented a duplicate EFFECT.
+async function runSideEffectStep(
+  s: Step,
+  d: StepDurability,
+  input: any,
+  ctx: StepCtx,
+  key: string,
+): Promise<any> {
+  const journal = ctx.journal;
+  const claimKey = `${key}:_claim`; // `:_` control-key namespace → skipped by fork's sweep (a fork gets a fresh claim budget)
+  const ttl = d.claimTtlMs ?? DEFAULT_CLAIM_TTL_MS;
+
+  let mine: StepClaimRecord = { startedAt: await clockOf(journal) };
+  if (!(await claim(journal, claimKey, mine))) {
+    // A claim already exists: crash-resume, a clean suspend, or a concurrent worker.
+    const done = await journal.get(key);
+    if (done !== undefined) return done; // completed between the cache check and here
+    const cur = await journal.get<StepClaimRecord>(claimKey); // RAW record — the CAS operand
+    const at = await clockOf(journal);
+    if (!cur) {
+      // The claim was lost but the record can't be read either (raced with a purge) → one more atomic try.
+      mine = { startedAt: at };
+      if (!(await claim(journal, claimKey, mine))) {
+        throw new StepRetryBlockedError(s.id, { key, state: 'in-flight' });
+      }
+    } else if (cur.released) {
+      // A clean suspend: re-running on resume is the step's documented contract (suspendWorkflow) — adopt and run.
+      mine = { startedAt: at };
+      await adoptClaim(journal, claimKey, cur, mine, s.id, key, { ageMs: at - cur.startedAt, claimTtlMs: ttl });
+      const landed = await journal.get(key);
+      if (landed !== undefined) return landed; // a sibling completed between our reads — replay, don't re-fire
+    } else if (!cur.failed && at - cur.startedAt < ttl) {
+      throw new StepRetryBlockedError(s.id, { key, state: 'in-flight', ageMs: at - cur.startedAt, claimTtlMs: ttl });
+    } else {
+      // THE CRASH WINDOW: a stale claim (process death) or a stamped `failed` attempt — the effect
+      // May or may not have fired. Ask the external system first; never guess.
+      if (!d.recover) {
+        throw new StepRetryBlockedError(s.id, { key, state: 'unresolved', ageMs: at - cur.startedAt, claimTtlMs: ttl });
+      }
+      const r = await d.recover(input, { idempotencyKey: key });
+      assertRecoverShape(r, s.id);
+      if (r.done) {
+        if (await claim(journal, key, r.output)) return r.output;
+        const winner = await journal.get(key);
+        return winner === undefined ? r.output : winner;
+      }
+      // The effect never landed → adopt the claim (atomically — two resumes must not both re-run) and execute.
+      mine = { startedAt: at };
+      await adoptClaim(journal, claimKey, cur, mine, s.id, key, { ageMs: at - cur.startedAt, claimTtlMs: ttl });
+      // A sibling resume's recover({done:true}) writes the OUTPUT without touching the claim — one
+      // Last point-read closes that window before re-firing (heyet: Deniz'in çift-recover senaryosu).
+      const landed = await journal.get(key);
+      if (landed !== undefined) return landed;
+    }
+  }
+  try {
+    const out = await s.run(input, ctx);
+    if (await claim(journal, key, out)) return out;
+    const winner = await journal.get(key);
+    return winner === undefined ? out : winner;
+  } catch (e) {
+    // Stamp what we KNOW onto the claim so the resume needn't wait out the TTL: a clean suspend is
+    // Safe to re-run; a throw means "not in flight, effect uncertain". Best-effort CAS against OUR
+    // Record — a takeover in between wins, and a stamp failure must never mask the step's own error.
+    const stamp: StepClaimRecord =
+      e instanceof WorkflowSuspended ? { ...mine, released: true } : { ...mine, failed: true };
+    try {
+      if (journal.putIfMatch) {
+        await journal.putIfMatch(claimKey, mine, stamp);
+      } else {
+        // No CAS: narrow the window with a read-compare — never stamp over a claim that is no
+        // Longer ours (a takeover adopted it while our attempt was still failing).
+        const cur = await journal.get<StepClaimRecord>(claimKey);
+        if (cur && cur.startedAt === mine.startedAt && !cur.released && !cur.failed) {
+          await journal.put(claimKey, stamp);
+        }
+      }
+    } catch {
+      /* the step's own error wins */
+    }
+    throw e;
+  }
 }
 
 export class Workflow<I = any, O = any> {
@@ -160,7 +383,9 @@ export class Workflow<I = any, O = any> {
           // Journal each leg under THIS parallel, for the same reason as branch above: the legs are
           // the caller's steps and may appear in more than one parallel. The returned record is still
           // keyed by the leg's own id, so the output shape does not change.
-          steps.map(async (s) => [s.id, await runStep({ id: `${pid}/${s.id}`, run: s.run }, input, ctx)] as const),
+          // FAZ-1: carry the leg's durability — rebuilding the step as a bare {id, run} silently
+          // Dropped the claim protocol for a leg the user EXPLICITLY marked sideEffect (heyet blokeri).
+          steps.map(async (s) => [s.id, await runStep({ id: `${pid}/${s.id}`, run: s.run, ...(s.durability ? { durability: s.durability } : {}) }, input, ctx)] as const),
         );
         return Object.fromEntries(entries);
       },
@@ -177,13 +402,19 @@ export class Workflow<I = any, O = any> {
         // Scope the chosen arm under this branch. The arms are the caller's own steps, so reusing one
         // step object in two branches would otherwise put both under its own id and replay the first.
         const arm = cond(input) ? ifStep : elseStep;
-        return runStep({ id: `${bid}/${arm.id}`, run: arm.run }, input, ctx);
+        // FAZ-1: same durability carry as parallel above — an arm marked sideEffect keeps its claim.
+        return runStep({ id: `${bid}/${arm.id}`, run: arm.run, ...(arm.durability ? { durability: arm.durability } : {}) }, input, ctx);
       },
     };
     return new Workflow<I, NO>([...this.steps, composite]);
   }
 
-  /** Run `run` for each item (journaled separately per item → completed ones are skipped on resume). */
+  /** Run `run` for each item (journaled separately per item → completed ones are skipped on resume).
+   * FAZ-1 note: the iteration body is a bare function — it has NO StepDurability surface, so a
+   * Side-effecting body is NOT claim-protected here (a crash after the effect re-runs that index on
+   * Resume). Need the claim protocol per item? Put the effect in a `step(..., {sideEffect:true})`
+   * Inside a nested workflow via `asStep`, or make the body idempotent (carry ctx.idempotencyKey +
+   * The index to the external call). Same applies to loop/dowhile/dountil below. */
   foreach<IT, OT>(
     itemsOf: IT[] | ((input: O) => IT[]),
     run: (item: IT, index: number, ctx: StepCtx) => Promise<OT>,
@@ -465,6 +696,10 @@ export interface WorkflowRunStatus {
  *  · the ORIGINAL INPUT is not recorded by the engine, so the caller passes it again when running
  *    The fork. For a fork past step 0 it only feeds already-cached steps and is inert.
  *  · retry counters are deliberately NOT copied — a forked step deserves its full retry budget.
+ *  · FAZ-1: `:_claim` records are NOT copied either (the `:_` sweep skip) — the fork gets a fresh
+ *    Claim budget. Corollary the operator must own: forking AT a step whose source run is blocked
+ *    'unresolved' (crash-window) side-steps that protection — the fork re-runs the step under a NEW
+ *    IdempotencyKey, so the effect can fire a second time. Verify the external system first.
  */
 export async function forkWorkflowRun(
   journal: JournalLike,
@@ -674,6 +909,10 @@ export function retry<I = any, O = any>(s: Step<I, O>, policy: RetryPolicy<I, O>
   if (!(policy.attempts >= 1)) throw new Error(`@gnldev/workflow: retry('${s.id}') requires attempts >= 1`);
   return {
     id: s.id,
+    // FAZ-1: the wrapper carries the wrapped step's durability — a sideEffect step keeps its
+    // Write-ahead claim under retry (the claim then covers the whole attempt sequence: one claim,
+    // N in-process attempts, and a crash mid-sequence still resolves through recover/blocked).
+    ...(s.durability ? { durability: s.durability as StepDurability } : {}),
     run: async (input, ctx) => {
       const attemptsKey = `${ctx.runId}:wf:${ctx.keyPrefix ?? ''}${s.id}:attempts`;
       let used = await readAttempts(ctx.journal, attemptsKey); // resume: consumed attempts are counted
@@ -686,6 +925,20 @@ export function retry<I = any, O = any>(s: Step<I, O>, policy: RetryPolicy<I, O>
           lastErr = e;
           used += 1;
           await bumpAttempts(ctx.journal, attemptsKey, used);
+          // FAZ-1: a sideEffect step's throw leaves the effect UNCERTAIN — the exact ambiguity the
+          // Crash-window state machine refuses to guess about. An in-process re-fire must clear the
+          // SAME bar: consult recover between attempts ({done:true} → that IS the step's output,
+          // Journaled by the caller; {done:false} → certified not-landed, the next attempt may fire).
+          // Without recover there is no honest way to re-run a non-idempotent body — the error
+          // Propagates (the claim's `failed` stamp then routes the cross-process resume through the
+          // Same recover/blocked discipline).
+          if (s.durability?.sideEffect) {
+            if (!s.durability.recover) throw e;
+            const idempotencyKey = ctx.idempotencyKey ?? `${ctx.runId}:wf:${ctx.keyPrefix ?? ''}${s.id}`;
+            const r = await s.durability.recover(input, { idempotencyKey });
+            assertRecoverShape(r, s.id);
+            if (r.done) return r.output as O;
+          }
           if (used < policy.attempts && policy.backoffMs != null) {
             const ms = typeof policy.backoffMs === 'function' ? policy.backoffMs(used) : policy.backoffMs;
             if (ms > 0) await new Promise((r) => setTimeout(r, ms));
