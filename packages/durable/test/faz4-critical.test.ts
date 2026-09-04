@@ -8,7 +8,7 @@
 // 5) conflict ledger: refusals leave PII-free `idem:conflict:` records; readIdemLedger reads them,
 //    and THROWS without listKeys (an empty answer must not misread as "no conflicts").
 // 6) preset 'critical' (createGnl): toolPolicy/strictInput actually flow into runs.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { stepCountIs } from 'ai';
 import { InMemoryJournal, runKeys } from '../src/journal.js';
 import { runDurable } from '../src/run.js';
@@ -229,5 +229,43 @@ describe('FAZ-4 denetçi düzeltmeleri', () => {
     await expect(
       runDurable(base(journal, 'sp1', { model: textModel(), prompt: 'x', tombstonePolicy: 'reject' }) as any),
     ).rejects.toBeInstanceOf(RunSweptError);
+  });
+});
+
+// runWorkflow anon-fallback sözleşmesi (kullanıcı bulgusu #1): loud warn + echo'lu runId + aynı-ms
+// çakışmasına karşı sayaç.
+describe('runWorkflow anon-fallback contract', () => {
+  it('warns loudly, echoes the generated runId, and two same-tick calls never share one', async () => {
+    const gnl = createGnl({
+      journal: new InMemoryJournal(),
+      workflows: {
+        w: { async run(input: unknown) { return { got: input }; }, build: () => [] } as any,
+      },
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const [a, b] = await Promise.all([gnl.runWorkflow('w', { n: 1 }), gnl.runWorkflow('w', { n: 2 })]);
+      expect(a.runId).toMatch(/^wf-w-\d+-\d+$/); // echoed — the caller CAN retry against it
+      expect(b.runId).toMatch(/^wf-w-\d+-\d+$/);
+      expect(a.runId).not.toBe(b.runId); // same-tick calls must not share a journal
+      expect(warn.mock.calls.some((c) => String(c[0]).includes('without a runId'))).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('an explicit runId stays silent and verbatim', async () => {
+    const gnl = createGnl({
+      journal: new InMemoryJournal(),
+      workflows: { w: { async run() { return 1; }, build: () => [] } as any },
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const r = await gnl.runWorkflow('w', {}, { runId: 'my-stable-id' });
+      expect(r.runId).toBe('my-stable-id');
+      expect(warn.mock.calls.some((c) => String(c[0]).includes('without a runId'))).toBe(false);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

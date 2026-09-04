@@ -135,6 +135,10 @@ export interface AnyTool {
    *     Reclaims the records WITH the thread (the cross-run 'immortal key' problem does not recur).
    *     Requires a `threadId` at call time — without one it falls back to 'run' with a LOUD
    *     Console.warn (silent fallback would report dedup the caller isn't getting).
+   * SINGLE-HOME BOUND (all shared windows): 'cross-run' and 'thread' dedup live in ONE journal
+   *     Store — independent journals (multi-region) are independent windows; route a business key's
+   *     Traffic to its home journal or the "exactly once" here silently becomes "once per region"
+   *     (full statement: the Journal interface JSDoc's SCOPE note).
    * USE THE RIGHT LAYER: silent windows are for DETERMINISTIC business keys (an orderId/SKU via
    *     `idempotencyKey`) where dedup is unambiguously correct. For LLM-derived raw args, silence is
    *     Wrong by design — an identical-looking second request may be a genuine second intent; that

@@ -1,5 +1,7 @@
 import { nestedAgentRunId } from './journal.js';
 import { randomUUID } from 'node:crypto';
+
+let wfAnonCounter = 0; // runWorkflow's anon-fallback uniqueness within a process — see the warn below
 import type { ToolSchemaRuleLike } from './types.js';
 import { stepCountIs, tool as aiTool, jsonSchema } from 'ai';
 import { runDurable, streamDurable } from './run.js';
@@ -403,6 +405,12 @@ export interface CreateGnlConfig {
    * Configure `waitReplicas: { replicas: 1, timeoutMs: 1000, onTimeout: 'throw' }` — and know the
    * Honest bound: the throw fires AFTER the write, so an unacknowledged claim becomes VISIBLE, not
    * Undone; treat thrown claims as a reconciliation suspect list.
+   * SINGLE-HOME BOUND (the guarantee's edge, restated where the guarantee is SOLD — full statement
+   * On the Journal interface JSDoc): every exactly-once promise here — locks, fingerprints,
+   * Ledger, tombstones, dedup windows — holds for any number of workers sharing ONE journal store.
+   * Two regions with independent journals are two independent dedup windows; a runId must always be
+   * ROUTED to its home journal (per-run ownership). This is a routing contract, not a consensus
+   * Feature, and a multi-region deployment that ignores it silently halves every guarantee above.
    * SCOPE, stated honestly (denetçi K6): the overlay wraps run() and stream() — the agent entry
    * Points. runWorkflow()/runNetwork() are NOT covered yet (workflow steps have their own FAZ-1
    * Claim protocol; a preset-level story for those paths is backlog) — a critical deployment
@@ -881,7 +889,19 @@ export function createGnl(config: CreateGnlConfig) {
   async function runWorkflow(name: string, input: unknown, opts?: { runId?: string; maxSteps?: number; resume?: Record<string, unknown>; signal?: AbortSignal }): Promise<WorkflowRunResult> {
     const wf = config.workflows?.[name];
     if (!wf) throw new Error(`workflow '${name}' is not registered`);
-    const runId = opts?.runId ?? `wf-${name}-${Date.now()}`;
+    // The generated fallback is the SAME contract as the chat route's anon fallback: LOUD, never
+    // Silent — a fresh id per call means a retry of this exact call re-runs every step (zero dedup),
+    // Which is the framework breaking its own rule quietly. The id is returned on the result
+    // (WorkflowRunResult.runId) so the caller can retry against it; the counter closes the same-ms
+    // Collision (two calls in one tick used to SHARE a runId and read each other's step replays).
+    let runId = opts?.runId;
+    if (!runId) {
+      runId = `wf-${name}-${Date.now()}-${wfAnonCounter++}`;
+      console.warn(
+        `@gnldev/durable: runWorkflow('${name}') called without a runId — generated '${runId}'. A retry of ` +
+        `this call will NOT dedupe (every step re-runs). Pass a stable runId (it is echoed on result.runId) for exactly-once.`,
+      );
+    }
     const ctx = { runId, journal: journal };
     let output: unknown;
     let suspended = false;
