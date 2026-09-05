@@ -26,5 +26,9 @@
   "colTool": "tool",
   "colToken": "token",
   "openInInspector": "Inspector'da aç",
-  "noMatchingRuns": "Eşleşen run yok"
+  "noMatchingRuns": "Eşleşen run yok",
+  "semanticTitle": "Semantik kapı",
+  "semanticSuspends": "{{count}} soru",
+  "semanticWarns": "{{count}} telemetri",
+  "semanticDescription": "Anlamca benzer mükerrer adayları: sorulan sorular vs yalnız-telemetri düşüşleri (kimlik uyuşmazlığı, embedder kesintileri). Araç başına: soru/telemetri."
 }

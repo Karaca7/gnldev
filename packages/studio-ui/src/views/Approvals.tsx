@@ -14,6 +14,17 @@ import '../i18n';
  * Approval inbox: pending tool approvals for ALL suspended runs, in one central place.
  * Approve/Deny → existing resume endpoint; the decision lands in the audit log (server side).
  */
+const EXPIRED_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
+
+function ageOf(ts: number, now: number): string {
+  const ms = now - ts;
+  const d = Math.floor(ms / 86_400_000);
+  if (d > 0) return `${d}d`;
+  const h = Math.floor(ms / 3_600_000);
+  if (h > 0) return `${h}h`;
+  return `${Math.max(1, Math.floor(ms / 60_000))}m`;
+}
+
 export function Approvals() {
   const { t } = useTranslation('approvals');
   const approvals = useApprovals();
@@ -44,6 +55,9 @@ export function Approvals() {
   if (approvals.isLoading) return <Spinner />;
   if (approvals.error) return <ErrorBox error={approvals.error} />;
   const items = approvals.data?.items ?? [];
+  // K2: the staleness decision's BOTH ends come from the server side — suspendedAt is a journal
+  // Timestamp, so the baseline is the server's clock (a skewed client must not mint stale badges).
+  const nowBase = approvals.data?.serverNow ?? Date.now();
 
   return (
     <div className="flex flex-col">
@@ -72,6 +86,11 @@ export function Approvals() {
                 <Link to={`/inspector?run=${encodeURIComponent(it.runId)}`} className="flex items-center gap-1 font-mono text-xs text-muted-foreground hover:text-foreground hover:underline" title={t('openInInspector')}>
                   {it.runId} <ExternalLink size={11} />
                 </Link>
+                {it.suspendedAt !== undefined && (
+                  nowBase - it.suspendedAt > EXPIRED_AFTER_MS
+                    ? <Badge tone="destructive">{t('expiredBadge', { age: ageOf(it.suspendedAt, nowBase) })}</Badge>
+                    : <span className="text-[11px] text-muted-foreground">{t('waitingFor', { age: ageOf(it.suspendedAt, nowBase) })}</span>
+                )}
                 <div className="ml-auto flex gap-1.5">
                   <Btn variant="ok" size="xs" busy={busy === it.toolCallId} onClick={() => decide(it.runId, it.toolCallId, true)}>
                     <Check size={13} /> {t('approve')}

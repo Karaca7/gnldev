@@ -70,6 +70,10 @@ export interface StepCtx {
    * Exactly-once extends into the downstream system: a crash-window duplicate then dedupes THERE too.
    */
   idempotencyKey?: string;
+  /** FAZ-8 (critical preset'in runtime ağı): true iken, `sideEffect: true` beyan edip `recover`
+   *  Taşımayan bir adım claim'inden ÖNCE reddedilir — build()'in göremediği kombinatör kolları ve
+   *  Nested çocuklar dahil her yolda. Registry critical'de kurar; elle kullanılabilir. */
+  strictSideEffects?: boolean;
 }
 
 // ── P0.4 key builders (single source of truth for the new key shapes) ──────────
@@ -280,6 +284,13 @@ async function runSideEffectStep(
   key: string,
 ): Promise<any> {
   const journal = ctx.journal;
+  if (ctx.strictSideEffects && typeof d.recover !== 'function') {
+    // The critical preset's runtime net (K6): build()-time scanning cannot see a parallel leg's or a
+    // Nested child's declaration — this point CAN, because every path funnels through runStep.
+    throw new Error(
+      `@gnldev/workflow: strictSideEffects — step '${s.id}' declares sideEffect without recover(); the crash window must be answered (give recover(), or run without the critical policy).`,
+    );
+  }
   const claimKey = `${key}:_claim`; // `:_` control-key namespace → skipped by fork's sweep (a fork gets a fresh claim budget)
   const ttl = d.claimTtlMs ?? DEFAULT_CLAIM_TTL_MS;
 

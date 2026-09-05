@@ -9,6 +9,11 @@ import type { StreamBreach } from './run.js';
 import { resolveModel, withModelFallback, type FallbackCandidate } from './model-router.js';
 import { createAgentTool, runSubAgent } from './agent-tool.js';
 import { runNetwork as runNetworkCore, type NetworkResult, type NetworkTarget } from './network.js';
+import { acquireRunLock } from './run-lock.js';
+import { claim as journalClaim } from './journal.js';
+import { argsHash } from './hash.js';
+import { RunBusyError, RunSweptError, RunInputMismatchError } from './errors.js';
+import { recordIdemConflict } from './idem-ledger.js';
 import { durableProcessorStep } from './processor.js';
 import { recordRunScores } from './metrics.js';
 import { assertSuiteConsistent } from './suite-consistency.js';
@@ -414,9 +419,9 @@ export interface CreateGnlConfig {
    * SCOPE, stated honestly (denetçi K6): the overlay wraps run() and stream() — the agent entry
    * Points. runNetwork() inherits the two protections that MAP to nested delegations (toolPolicy
    * 'strict-critical' + sideEffectDuplicates 'suspend'); locks/fingerprints stay per-entry-point.
-   * RunWorkflow() is NOT covered (workflow steps have their own FAZ-1 claim protocol; a
-   * Preset-level story there is backlog) — a critical deployment exposing /workflows must apply
-   * Its protections explicitly.
+   * RunWorkflow() (FAZ-8) is covered with the protections that MAP to workflows: required runId,
+   * SideEffect-steps-must-carry-recover, tombstone reject, input fingerprint and a heartbeated
+   * Run-lock — step-level exactly-once stays FAZ-1's claim protocol, which workflows already carry.
    */
   preset?: 'critical';
 }
@@ -900,6 +905,90 @@ export function createGnl(config: CreateGnlConfig) {
   async function runWorkflow(name: string, input: unknown, opts?: { runId?: string; maxSteps?: number; resume?: Record<string, unknown>; signal?: AbortSignal }): Promise<WorkflowRunResult> {
     const wf = config.workflows?.[name];
     if (!wf) throw new Error(`workflow '${name}' is not registered`);
+    // FAZ-8: the critical preset now covers the WORKFLOW entry path with the protections that MAP
+    // To it (the old honest-scope note said "apply them explicitly" — this is that, done once here):
+    //   runId REQUIRED            (exactly-once without a stable key is a contradiction)
+    //   step policy               (a declared sideEffect step must carry recover — strict-critical's analog)
+    //   tombstone reject          (a swept id's late retry is refused, not silently re-run)
+    //   input fingerprint         (one runId = one input; frozen first-wins at `<runId>:wf:_input`)
+    //   run-lock + heartbeat      (a concurrent duplicate of the same workflow run gets RunBusyError)
+    // Refusals land in the conflict ledger (best-effort — workflow opts carry no auditOnReject yet).
+    if (config.preset === 'critical') {
+      if (!opts?.runId) {
+        throw new Error(
+          `@gnldev/durable: preset 'critical' requires an explicit runId for runWorkflow('${name}') — the generated fallback gives a retry ZERO dedup, which the critical profile exists to forbid.`,
+        );
+      }
+      // FAST-FAIL half: top-level build() steps refuse before the run starts. Combinator legs and
+      // Nested (asStep) children carry their durability inside closures build() cannot see — THOSE
+      // Are caught by the RUNTIME net (ctx.strictSideEffects → the workflow engine refuses the step
+      // Before its claim; denetçi K6). Two layers on purpose: early where possible, airtight where not.
+      for (const st of wf.build()) {
+        const d = (st as { durability?: { sideEffect?: boolean; recover?: unknown } }).durability;
+        if (d?.sideEffect === true && typeof d.recover !== 'function') {
+          throw new Error(
+            `@gnldev/durable: preset 'critical' — workflow '${name}' step '${st.id}' declares sideEffect without recover(); the crash window must be answered before the run starts (strict-critical's workflow analog).`,
+          );
+        }
+      }
+      const wfRunId = opts.runId;
+      if ((await journal.get(`${wfRunId}:swept`)) !== undefined) {
+        await recordIdemConflict(journal, { runId: wfRunId, code: 'run_swept' });
+        throw new RunSweptError(
+          `@gnldev/durable: workflow run '${wfRunId}' was retention-swept — its dedup window is gone; a late retry must not silently re-run the steps (critical profile). Use a fresh runId.`,
+          { runId: wfRunId },
+        );
+      }
+      const inputHash = argsHash(input);
+      const frozen = await journal.get<{ hash?: string }>(`${wfRunId}:wf:_input`);
+      // RESUME ESCAPES (denetçi blokeri — F7'nin K6 dersi, workflow'a taşınmış hali): the REAL resume
+      // Surfaces (Studio inbox, @gnldev/server's resume route) re-send NO input — `input` arrives
+      // Undefined and `opts.resume` carries the HITL payload. Both are journal-anchored resume
+      // Intents, not new content: admit them instead of 409'ing the approval path to death.
+      const resumeIntent = frozen !== undefined && (input === undefined || opts?.resume !== undefined);
+      if (frozen === undefined) {
+        // K4: the claim's boolean IS decision data — a same-instant twin with DIFFERENT input can
+        // Lose the claim silently and then run as if ITS input were the frozen one. The loser
+        // Re-reads and holds itself to the winner's fingerprint.
+        const won = await journalClaim(journal, `${wfRunId}:wf:_input`, { hash: inputHash, at: Date.now() });
+        if (!won) {
+          const winner = await journal.get<{ hash?: string }>(`${wfRunId}:wf:_input`);
+          if (winner?.hash !== undefined && winner.hash !== inputHash) {
+            await recordIdemConflict(journal, { runId: wfRunId, code: 'run_input_mismatch', detail: { expectedHash: winner.hash, actualHash: inputHash } });
+            throw new RunInputMismatchError(
+              `@gnldev/durable: workflow run '${wfRunId}' was concurrently started with DIFFERENT input (fingerprint ${winner.hash} != ${inputHash}) — one runId carries one request.`,
+              { runId: wfRunId, expectedHash: winner.hash, actualHash: inputHash },
+            );
+          }
+        }
+      } else if (!resumeIntent && frozen.hash !== undefined && frozen.hash !== inputHash) {
+        await recordIdemConflict(journal, { runId: wfRunId, code: 'run_input_mismatch', detail: { expectedHash: frozen.hash, actualHash: inputHash } });
+        throw new RunInputMismatchError(
+          `@gnldev/durable: workflow run '${wfRunId}' was started with DIFFERENT input (fingerprint ${frozen.hash} != ${inputHash}) — one runId carries one request; use a fresh runId for new content.`,
+          { runId: wfRunId, expectedHash: frozen.hash, actualHash: inputHash },
+        );
+      }
+      const lockTtl = 300_000;
+      const lockHandle = await acquireRunLock(journal, wfRunId, `critical-wf-${randomUUID()}`, lockTtl);
+      if (!lockHandle) {
+        await recordIdemConflict(journal, { runId: wfRunId, code: 'run_busy' });
+        throw Object.assign(new RunBusyError(`workflow run '${wfRunId}' is locked by another process`), { atLockAcquisition: true });
+      }
+      let hbInflight: Promise<unknown> = Promise.resolve();
+      const beat = setInterval(() => { hbInflight = lockHandle.renew(lockTtl).catch(() => false); }, Math.floor(lockTtl / 2));
+      (beat as { unref?: () => void }).unref?.();
+      try {
+        return await runWorkflowInner(name, wf, input, opts, true);
+      } finally {
+        clearInterval(beat);
+        try { await hbInflight; } catch { /* a failed renew changes nothing about release */ }
+        await lockHandle.release();
+      }
+    }
+    return runWorkflowInner(name, wf, input, opts);
+  }
+
+  async function runWorkflowInner(name: string, wf: WorkflowLike, input: unknown, opts?: { runId?: string; maxSteps?: number; resume?: Record<string, unknown>; signal?: AbortSignal }, strictSideEffects?: boolean): Promise<WorkflowRunResult> {
     // The generated fallback is the SAME contract as the chat route's anon fallback: LOUD, never
     // Silent — a fresh id per call means a retry of this exact call re-runs every step (zero dedup),
     // Which is the framework breaking its own rule quietly. The id is returned on the result
@@ -913,7 +1002,7 @@ export function createGnl(config: CreateGnlConfig) {
         `this call will NOT dedupe (every step re-runs). Pass a stable runId (it is echoed on result.runId) for exactly-once.`,
       );
     }
-    const ctx = { runId, journal: journal };
+    const ctx = { runId, journal: journal, ...(strictSideEffects ? { strictSideEffects: true } : {}) };
     let output: unknown;
     let suspended = false;
     let paused = false;

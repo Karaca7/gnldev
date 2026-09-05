@@ -4,7 +4,7 @@ import { toFetchHandler, type FetchHandler } from './handler.js';
 import { Hono, type Context } from 'hono';
 import { sseResponse } from './sse.js';
 
-import { ORG_RECORD_PRE, asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, countLog, purgeRun, purgeOrganization, orgPurgedKey, sweepRuns, sweepLog, POLICY_KEY, PRICING_KEY, effectivePricingTable, DEFAULT_PRICING, readPricing, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, knownModelProviders, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent } from '@gnldev/durable';
+import { ORG_RECORD_PRE, asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, countLog, purgeRun, purgeOrganization, orgPurgedKey, sweepRuns, sweepLog, POLICY_KEY, PRICING_KEY, effectivePricingTable, DEFAULT_PRICING, readPricing, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, knownModelProviders, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent, callerConflictCode } from '@gnldev/durable';
 import type { PolicyDoc, PolicyRule, BudgetLimit, PricingDoc } from '@gnldev/durable';
 import type { JournalReader, Journal, WorkflowLike, MetricsRunRow } from '@gnldev/durable';
 import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, principalScope, assertAssignablePrivileges, CLIENT_ROLE, type AuthProvider, type Principal } from '@gnldev/auth';
@@ -2065,13 +2065,50 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // Aggregate metrics (dashboard): run counts + total cost/tokens.
   // ── Governance endpoints: approval queue / audit / organizations ───────────────────
   // Approval queue (inbox): the pending tool approvals of ALL suspended runs in a single list.
+  // FAZ-8 — semantic-guard telemetry (the design report's v1 signal surface: score distribution
+  // Lives in incident details; this aggregates suspend/warn counts per tool + the recent tail so the
+  // Calibration debt is VISIBLE without a single silent number anywhere).
+  app.get('/semantic-guard', async (c) => {
+    if (!(await allowP(c.req.raw, 'runs:read'))) return deny(c.req.raw, 'read');
+    // SCOPED reader, same as /runs/:id/incidents (denetçi K10): reading incidents through the ROOT
+    // Journal while listing runs through the scoped one breaks BOTH ways — an org caller gets the
+    // Empty-success lie (org keys are prefixed, root lookups miss them), and a key collision reads
+    // Across the tenant boundary.
+    const kj = rw as unknown as import('@gnldev/durable').Journal;
+    const totals = { suspend: 0, warn: 0 };
+    const byTool: Record<string, { suspend: number; warn: number }> = {};
+    const recent: { runId: string; at?: number; action: string; toolName: string; message: string }[] = [];
+    if (!writable || typeof kj.listKeys !== 'function') {
+      return c.json({ totals, byTool, recent, unavailable: 'journal has no listKeys — incidents cannot be enumerated' });
+    }
+    // Cap: this aggregates on every 10s UI poll — unbounded N+1 over a retention-sized journal grows
+    // Linearly forever. The most RECENT slice carries the calibration signal; the cap is reported.
+    const allRuns = await reader.listRuns();
+    const runs = allRuns.slice(0, 500);
+    for (const r of runs) {
+      const incidents = await readIncidents(kj, r.runId).catch(() => []);
+      for (const i of incidents) {
+        if (i.source !== 'semantic-guard') continue;
+        const bucket = i.action === 'suspend' ? 'suspend' : 'warn';
+        totals[bucket]++;
+        (byTool[i.toolName] ??= { suspend: 0, warn: 0 })[bucket]++;
+        recent.push({ runId: r.runId, at: i.at, action: i.action, toolName: i.toolName, message: i.message });
+      }
+    }
+    recent.sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
+    return c.json({ totals, byTool, recent: recent.slice(0, 50), scannedRuns: runs.length, totalRuns: allRuns.length });
+  });
+
   app.get('/approvals', async (c) => {
     if (!(await allowP(c.req.raw, 'runs:read'))) return deny(c.req.raw, 'read');
     const runs = await reader.listRuns();
-    const items: { runId: string; toolCallId: string; toolName: string; args?: unknown; reason?: string }[] = [];
+    const items: { runId: string; toolCallId: string; toolName: string; args?: unknown; reason?: string; suspendedAt?: number }[] = [];
     for (const r of runs) {
       if (r.status !== 'suspended') continue;
       const entries = await reader.readRun(r.runId);
+      // FAZ-8 (suspended-expiry inbox): the run's LAST activity — the UI ages the row and flags the
+      // Abandoned ones (retention deliberately protects suspended runs; visibility is the counterweight).
+      const suspendedAt = entries.reduce((mx, e) => Math.max(mx, (e as { ts?: number }).ts ?? 0), 0) || undefined;
       // The sentinel in a suspended tool record carries args/reason → shows context in the inbox
       const meta = new Map<string, { args?: unknown; reason?: string }>();
       for (const e of entries) {
@@ -2081,7 +2118,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       }
       const st = reconstructState(entries, entries.length);
       for (const pnd of st.pending) {
-        items.push({ runId: r.runId, toolCallId: pnd.toolCallId, toolName: pnd.toolName, ...(meta.get(pnd.toolCallId) ?? {}) });
+        items.push({ runId: r.runId, toolCallId: pnd.toolCallId, toolName: pnd.toolName, ...(suspendedAt !== undefined ? { suspendedAt } : {}), ...(meta.get(pnd.toolCallId) ?? {}) });
       }
     }
     // Approval webhook: the SAME pattern as the budget alert — a SINGLE POST per pending approval via a
@@ -2099,7 +2136,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
         } catch { /* alert is best-effort — swallow */ }
       }
     }
-    return c.json({ items });
+    return c.json({ items, serverNow: Date.now() });
   });
 
   // Audit trail: the __audit__ log — NEWEST FIRST; exact-match action + substring q filters.
@@ -4533,6 +4570,12 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
           };
           return c.json({ ok: true, ...(await gnl.runWorkflow(name, body.input, Object.keys(wfOpts).length ? wfOpts : undefined, { orgId: callerOrg(c) })) });
         } catch (e: any) {
+          // K9/K10: the critical preset's workflow gates throw the SAME conflict family the agent
+          // Routes map — flattening them to 400 here made one error wear two shapes on two surfaces.
+          const conflict = callerConflictCode(e);
+          if (conflict) return c.json({ error: String(e?.message ?? e), code: conflict, detail: e?.detail }, 409);
+          const blocked = blockedErrorCode(e);
+          if (blocked) return c.json({ error: String(e?.message ?? e), code: blocked, ...(blocked !== 'retry_limit_exceeded' ? { resumable: true } : {}), detail: e?.detail }, blocked === 'retry_limit_exceeded' ? 422 : 409);
           return c.json({ error: String(e?.message ?? e) }, 400);
         }
       }

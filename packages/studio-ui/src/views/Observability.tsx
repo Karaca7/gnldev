@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, Cell, CartesianGrid,
 } from 'recharts';
-import { useMetrics, useMetricsRuns, type MetricsRun, type MetricsDayEntry } from '../api';
+import { useMetrics, useMetricsRuns, type MetricsRun, type MetricsDayEntry, useSemanticGuard } from '../api';
 import { Spinner, StatusBadge, Empty, ErrorBox, PageHeader, useStatusLabel } from '../components';
 import { Stagger, StaggerItem, Reveal } from '../motion';
 import { currentLocale } from '../i18n/locale';
@@ -157,6 +157,7 @@ export function Observability() {
   // Meaningful over the FULL run set — the default 200-run cap (API-10, sized for Inspector's
   // 50-row list) would silently truncate them. Its own cache key, so Inspector's capped query stands.
   const runRows = useMetricsRuns(null);
+  const semGuard = useSemanticGuard();
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [nameFilter, setNameFilter] = useState('');
 
@@ -196,6 +197,25 @@ export function Observability() {
       {/* Header only — deliberately not touching this file's scroll/height structure (recharts'
           ResponsiveContainer below depends on it); see the PageHeader migration notes. */}
       <PageHeader title={t('title')} description={t('description')} />
+      {/* FAZ-8 — semantic-guard telemetry card: the calibration debt's only v1 signal, surfaced.
+          Renders only when the gate has ever fired (zero-noise for deployments not using it). */}
+      {semGuard.data && (semGuard.data.totals.suspend > 0 || semGuard.data.totals.warn > 0) && (
+        <div className="rounded-md border p-3">
+          <div className="mb-1 flex items-center gap-2 text-sm font-semibold">
+            {t('semanticTitle')}
+            <span className="rounded bg-warning/15 px-1.5 py-0.5 text-[11px]">{t('semanticSuspends', { count: semGuard.data.totals.suspend })}</span>
+            <span className="rounded bg-muted px-1.5 py-0.5 text-[11px]">{t('semanticWarns', { count: semGuard.data.totals.warn })}</span>
+          </div>
+          <p className="mb-2 text-xs text-muted-foreground">{t('semanticDescription')}</p>
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(semGuard.data.byTool).map(([tool, v]) => (
+              <span key={tool} className="rounded border px-2 py-0.5 font-mono text-[11px]">
+                {tool}: {v.suspend}/{v.warn}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
       {/* NOT live (not SSE): useMetrics/useMetricsRuns refresh themselves via periodic polling
           (5s/10s respectively — see api.ts refetchInterval). useLiveRuns()'s SSE invalidation
           only targets the ['runs'] key and does NOT COVER the ['metrics']/['metrics-runs']

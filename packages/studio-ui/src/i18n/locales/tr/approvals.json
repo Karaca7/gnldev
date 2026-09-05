@@ -12,5 +12,7 @@
   "approveSuccess": "Onaylandı — run devam ediyor",
   "denySuccess": "Reddedildi",
   "conflictError": "Bu onay başka bir yerde zaten karara bağlanmış: {{error}}",
-  "actionError": "İşlem başarısız: {{error}}"
+  "actionError": "İşlem başarısız: {{error}}",
+  "expiredBadge": "bayat — {{age}} bekliyor",
+  "waitingFor": "{{age}} bekliyor"
 }

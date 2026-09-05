@@ -414,7 +414,13 @@ export interface ToolExecResult { ok?: boolean; result?: unknown; error?: string
 export interface RunResult { ok?: boolean; runId?: string; text?: string; interrupts?: Interrupt[]; error?: string; }
 export interface Interrupt { toolCallId: string; toolName: string; args?: unknown; reason?: string; }
 // ── Governance types (approvals / audit / organizations endpoints) ──────────────
-export interface ApprovalItem { runId: string; toolCallId: string; toolName: string; args?: unknown; reason?: string; }
+export interface ApprovalItem { runId: string; toolCallId: string; toolName: string; args?: unknown; reason?: string; /** FAZ-8: the run's last activity — the inbox ages rows and flags abandoned ones. */ suspendedAt?: number; }
+export interface SemanticGuardSummary {
+  totals: { suspend: number; warn: number };
+  byTool: Record<string, { suspend: number; warn: number }>;
+  recent: { runId: string; at?: number; action: string; toolName: string; message: string }[];
+  unavailable?: string;
+}
 export interface AuditItem { id: string; at?: number; actor: string; action: string; target: string; org?: string; detail?: unknown; }
 export interface OrganizationRow {
   id: string; label?: string; runs: number; tokens: number; costUsd: number;
@@ -672,7 +678,8 @@ export const api = {
   executeTool: (name: string, body: { input?: unknown; durable?: boolean; approve?: { runId: string; toolCallId: string; approved: boolean } }) =>
     post<ToolExecResult>(`/tools/${encodeURIComponent(name)}/execute`, body),
   score: (id: string, scorers: string[], expected?: string) => post<any>(`/runs/${encodeURIComponent(id)}/score`, { scorers, expected }),
-  approvals: () => get<{ items: ApprovalItem[] }>('/approvals'),
+  approvals: () => get<{ items: ApprovalItem[]; /** FAZ-8: age decisions use the SERVER clock (K2 — both ends of a staleness decision from one source). */ serverNow?: number }>('/approvals'),
+  semanticGuard: () => get<SemanticGuardSummary>('/semantic-guard'),
   audit: (params?: AuditFilters) => {
     const qs = new URLSearchParams();
     if (params?.limit != null) qs.set('limit', String(params.limit));
@@ -994,6 +1001,8 @@ export const useCacheStats = () => usePolled('cache', ['cache-stats'], api.cache
 export const useSchedulerTriggers = () => usePolled('scheduler', ['scheduler-triggers'], api.schedulerTriggers, 5000);
 // Governance: approvals inbox refreshes every 5s, organization counters every 10s; audit is keyed by filters.
 export const useApprovals = () => usePolled('approvals', ['approvals'], api.approvals, 5000);
+/** FAZ-8: semantic-guard telemetry — not capability-gated; on an OLDER server the request 404s and the card stays HIDDEN (data undefined), it does not show zeros. */
+export const useSemanticGuard = () => useQuery({ queryKey: ['semantic-guard'], queryFn: api.semanticGuard, refetchInterval: 10000, retry: false });
 export const useAudit = (filters?: AuditFilters) =>
   useQuery({ queryKey: ['audit', filters], queryFn: () => api.audit(filters) });
 // API-02: this is a review surface, not a live feed — 30s (was 10s) avoids re-triggering a per-org

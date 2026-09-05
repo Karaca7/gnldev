@@ -26,5 +26,9 @@
   "colTool": "tool",
   "colToken": "token",
   "openInInspector": "Open in Inspector",
-  "noMatchingRuns": "No matching runs"
+  "noMatchingRuns": "No matching runs",
+  "semanticTitle": "Semantic guard",
+  "semanticSuspends": "{{count}} question(s)",
+  "semanticWarns": "{{count}} telemetry",
+  "semanticDescription": "Meaning-similar duplicate candidates: questions asked vs telemetry-only drops (identity mismatch, embedder outages). Per tool: questions/telemetry."
 }

@@ -12,5 +12,7 @@
   "approveSuccess": "Approved — run continues",
   "denySuccess": "Denied",
   "conflictError": "This approval was already decided elsewhere: {{error}}",
-  "actionError": "Action failed: {{error}}"
+  "actionError": "Action failed: {{error}}",
+  "expiredBadge": "stale — waiting {{age}}",
+  "waitingFor": "waiting {{age}}"
 }
