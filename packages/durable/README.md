@@ -331,6 +331,9 @@ What each protection answers, in one line each:
   `idem:conflict:*` record: codes, hashes and the actor id, never content. The family lives OUTSIDE
   the run's sweep prefix — the audit's subject cannot erase its own refusal history. Read it with
   `readIdemLedger(journal)`, which THROWS without `listKeys` rather than lying with an empty answer.
+- **`auditOnReject: 'require'`** — the conflict-ledger append becomes a PRECONDITION of the
+  refusal: if the audit store cannot record the "no", the caller gets the audit error, never an
+  unrecorded 409. Default `'best-effort'` (the refusal always lands; a failed append warns).
 - **`tombstonePolicy: 'reject'`** — a retention-swept runId's late retry is refused
   (`409 run_swept`) instead of silently re-running side effects whose dedup window died with the
   journal. Pair with `sweepRuns({ tombstones: true })`; the REAL contract stays: retention window ≥
@@ -350,7 +353,11 @@ covered yet — apply protections there explicitly.
 constraints, fingerprints) > human gate (`confirm`, suspend ladders) > probabilistic (semantic
 candidates, working memory). And the recipe that no framework can automate away: give critical tools
 a **read-before-write** sibling (`createProduct` ↔ `findProduct`) so the agent checks the system of
-record before acting — the source of truth is never the conversation, and the LAST line of defense
+record before acting — and for the same-key half, the framework leg exists: a tool-level
+`lookup(input, { idempotencyKey })` hook is consulted before the FIRST attempt of a side-effect tool
+(`{exists: true, output}` journals the found result without firing; a throw is fail-open with a loud
+warn). `lookup` answers BEFORE the first attempt; `recover` answers the crash window AFTER a failure
+— distinct on purpose — the source of truth is never the conversation, and the LAST line of defense
 is always a unique constraint or upsert in the external system itself.
 
 ## Semantic duplicate-candidate gate (`sideEffectDuplicates.semantic`)

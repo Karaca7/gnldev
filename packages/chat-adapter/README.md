@@ -39,6 +39,9 @@ WHOLE conversation, so every later turn would replay turn 1 from the journal for
   loser gets a typed `409 { code: 'run_busy', resumable: true }` + `Retry-After`, and retrying the
   same runId lands on the journal replay. `lock: false` restores the old behavior. Scope note: this
   serializes CONCURRENT duplicates; serial retries were already deduped by the runId derivation.
+- **`X-Gnl-Idempotency-Status` on success responses**: `new` on a fresh run, `replay` when this
+  runId had prior journaled input (a retry/resume landing on journal state) — an observability
+  contract for client-side reconciliation, not a byte-identity guarantee.
 - **Typed errors instead of a flat 400**: `run_thread_mismatch` / `run_input_mismatch` /
   `run_actor_mismatch` / `run_swept` → 409 without `resumable` (fix the id, not the request);
   `run_busy` → 409 + `Retry-After`; `retry_limit_exceeded` → 422; upstream provider failures →

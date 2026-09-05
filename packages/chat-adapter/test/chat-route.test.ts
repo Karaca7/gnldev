@@ -605,3 +605,22 @@ describe('FAZ-2 denetçi düzeltmeleri: lock release yolları', () => {
     await replay.text();
   });
 });
+
+// FAZ-7 — motorun replay sinyali header sözleşmesi.
+describe('FAZ-7 X-Gnl-Idempotency-Status', () => {
+  it("ilk çağrı 'new', aynı runId'nin tekrarı 'replay'", async () => {
+    const app = createChatRoute({ journal: new InMemoryJournal(), agents: { chat: { model: textMock(), maxSteps: 4 } } });
+    const post = () =>
+      app.request('/agents/chat/chat', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id: 'is1', messages: [{ id: 'm1', role: 'user', parts: [{ type: 'text', text: 'hi' }] }] }),
+      });
+    const first = await post();
+    expect(first.headers.get('X-Gnl-Idempotency-Status')).toBe('new');
+    await first.text();
+    const retry = await post();
+    expect(retry.headers.get('X-Gnl-Idempotency-Status')).toBe('replay');
+    await retry.text();
+  });
+});

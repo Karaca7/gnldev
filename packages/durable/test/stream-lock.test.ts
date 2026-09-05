@@ -3,10 +3,9 @@
 // stream the same runId concurrently with no serialization. This suite pins the opt-in lock: a
 // concurrent stream of a locked runId gets RunBusyError, and the lock is released when the stream ends.
 //
-// DELIBERATE LIMITATION (see StreamDurableArgs.lock): unlike runDurable there is NO self-renewing
-// heartbeat — a stream's lifecycle isn't function-scoped, so a self-renewing timer on an abandoned
-// stream would hold the lock forever. The lock serializes the START + is released on stream finish;
-// a stream outliving ttlMs (or abandoned) is reclaimed at TTL. Use a generous ttlMs.
+// FAZ-7 UPDATE: the streamed lock now self-renews on a ttl/2 heartbeat (parity with runDurable),
+// hard-capped at STREAM_LOCK_MAX_HOLD_MS so the old objection — "an abandoned stream would hold the
+// lock forever" — stays answered: abandonment costs a bounded hold, then TTL reclaims.
 import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '../src/journal.js';
 import { streamDurable } from '../src/run.js';

@@ -123,6 +123,9 @@ export function useChat(client: GnlClient, name: string, opts: UseChatOptions = 
   const useStream = opts.stream ?? true;
 
   const send = useCallback(async () => {
+    // UX dedup, NEVER correctness (heyet sınırı): a double-click while a turn is in flight is
+    // Swallowed client-side; the authority remains the server lock + journal claims.
+    if (agent.loading) return;
     const prompt = input.trim();
     if (!prompt) return;
     setInput('');

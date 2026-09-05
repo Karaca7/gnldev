@@ -81,6 +81,9 @@ export type RunDurableArgs = GenerateTextOptions & {
   strictInput?: boolean;
   /** FAZ-4: append PII-free refusal records (`idem:conflict:*`) for busy/mismatch/swept conflicts — see idem-ledger.ts. */
   conflictLedger?: boolean;
+  /** FAZ-7: 'require' makes the ledger append a PRECONDITION of the refusal — its failure propagates
+   *  Instead of warning (never refuse unrecorded). Default 'best-effort'. Only meaningful with conflictLedger. */
+  auditOnReject?: 'best-effort' | 'require';
   /** FAZ-4: what a retention-swept runId's late retry does — 'ignore' (default, re-runs: today's
    *  Behavior) or 'reject' (RunSweptError; the critical profile's choice). */
   tombstonePolicy?: 'ignore' | 'reject';
@@ -138,14 +141,16 @@ export type StreamDurableArgs = StreamTextOptions & {
    * RELEASED when the stream finishes (the same `onFinish` lifecycle the memory-append uses; also
    * Released on stream error).
    *
-   * DELIBERATE LIMITATION vs runDurable: there is NO self-renewing heartbeat (runDurable's B4 renew).
-   * A stream is consumed lazily by the caller AFTER streamDurable returns — its lifecycle is not bounded
-   * By a function scope, so a self-renewing timer on an ABANDONED stream (created, never drained) would
-   * Keep renewing and hold the lock forever. Instead the lock serializes the START and is released on
-   * Finish; a stream that outlives `ttlMs` (or is abandoned before `onFinish`) is reclaimed at TTL —
-   * Pick a generous `ttlMs`. If you need the mid-run heartbeat guarantee, use `runDurable`.
+   * FAZ-7: the streamed lock SELF-RENEWS on a ttl/2 heartbeat (parity with runDurable's B4 renew).
+   * The old objection — a stream's lifecycle is not function-scoped, so an ABANDONED stream (created,
+   * Never drained, no abort) would renew forever — is answered with a BOUND instead of a refusal:
+   * Renewal is hard-capped by `maxHoldMs` (default STREAM_LOCK_MAX_HOLD_MS = 60min); past the cap the
+   * Beat stops with a loud warn and TTL reclaims. `ttlMs` is therefore the crash-takeover window
+   * Again, not a worst-case-duration estimate. Renewal is deliberately NOT chunk-liveness-gated: a
+   * Long tool call emits no chunks, and pausing renewal there would hand the lock to a takeover
+   * Mid-run — the exact double-execution this lock prevents.
    */
-  lock?: { owner: string; ttlMs: number };
+  lock?: { owner: string; ttlMs: number; maxHoldMs?: number };
   /** H8c: replay-cache RAM threshold (see RunDurableArgs). */
   replayCacheMaxBytes?: number;
   /** H10b: strict tool policy (see RunDurableArgs). */
@@ -157,6 +162,9 @@ export type StreamDurableArgs = StreamTextOptions & {
   strictInput?: boolean;
   /** FAZ-4: append PII-free refusal records (`idem:conflict:*`) for busy/mismatch/swept conflicts — see idem-ledger.ts. */
   conflictLedger?: boolean;
+  /** FAZ-7: 'require' makes the ledger append a PRECONDITION of the refusal — its failure propagates
+   *  Instead of warning (never refuse unrecorded). Default 'best-effort'. Only meaningful with conflictLedger. */
+  auditOnReject?: 'best-effort' | 'require';
   /** FAZ-4: what a retention-swept runId's late retry does — 'ignore' (default, re-runs: today's
    *  Behavior) or 'reject' (RunSweptError; the critical profile's choice). */
   tombstonePolicy?: 'ignore' | 'reject';
@@ -521,10 +529,10 @@ async function assertRunAdmissible(
   runId: string,
   frozen: FrozenInput | undefined,
   rawInputHash: string,
-  opts: { strictInput?: boolean; conflictLedger?: boolean; tombstonePolicy?: 'ignore' | 'reject'; actor?: string; approvals?: Record<string, boolean> },
+  opts: { strictInput?: boolean; conflictLedger?: boolean; auditOnReject?: 'best-effort' | 'require'; tombstonePolicy?: 'ignore' | 'reject'; actor?: string; approvals?: Record<string, boolean> },
 ): Promise<void> {
   const refuse = async (err: Error, code: string, detail: Record<string, string | number>): Promise<never> => {
-    if (opts.conflictLedger) await recordIdemConflict(journal, { runId, code, ...(opts.actor ? { actor: opts.actor } : {}), detail });
+    if (opts.conflictLedger) await recordIdemConflict(journal, { runId, code, ...(opts.actor ? { actor: opts.actor } : {}), detail }, opts.auditOnReject ?? 'best-effort');
     throw err;
   };
   if (opts.tombstonePolicy === 'reject') {
@@ -2148,7 +2156,7 @@ async function runDurableGuarded(args: RunDurableArgs): Promise<DurableResult> {
   if (lock) {
     const handle = await acquireRunLock(args.journal, args.runId, lock.owner, lock.ttlMs);
     if (!handle) {
-      if ((args as any).conflictLedger) await recordIdemConflict(args.journal, { runId: args.runId, code: 'run_busy', ...((args as any).actor ? { actor: (args as any).actor } : {}) });
+      if ((args as any).conflictLedger) await recordIdemConflict(args.journal, { runId: args.runId, code: 'run_busy', ...((args as any).actor ? { actor: (args as any).actor } : {}) }, (args as any).auditOnReject ?? 'best-effort');
       throw Object.assign(new RunBusyError(`run '${args.runId}' is locked by another process`), { atLockAcquisition: true });
     }
     // B4 (heartbeat): the lock was acquired ONCE and never renewed — a run that legitimately outlives
@@ -2173,7 +2181,7 @@ async function runDurableGuarded(args: RunDurableArgs): Promise<DurableResult> {
 }
 
 async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
-  const { journal, runId, guard, approvals, memory, threadId, resourceId, agentName, replay, lock: _lock, processors, schemaCompat, limits, exclusiveModelStep, replayCacheMaxBytes, toolPolicy, timeouts, strictInput, conflictLedger, tombstonePolicy, actor, model: modelInput, tools, stopWhen, ...rest } =
+  const { journal, runId, guard, approvals, memory, threadId, resourceId, agentName, replay, lock: _lock, processors, schemaCompat, limits, exclusiveModelStep, replayCacheMaxBytes, toolPolicy, timeouts, strictInput, conflictLedger, tombstonePolicy, actor, auditOnReject, model: modelInput, tools, stopWhen, ...rest } =
     args as RunDurableArgs & Record<string, any>;
   // `ModelInput` is `LanguageModelV4 | string`, and until now only createGnl honoured the string
   // Half: passing 'nvidia/…' straight to runDurable type-checked and then died inside the AI SDK
@@ -2188,13 +2196,13 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
     assertThreadOwnership(frozenInput, runId, threadId);
   } catch (e) {
     // FAZ-4 ledger: the flagship conflict leaves a trace too (best-effort, PII-free).
-    if (conflictLedger && e instanceof RunThreadMismatchError) await recordIdemConflict(journal, { runId, code: 'run_thread_mismatch', ...(actor ? { actor } : {}) });
+    if (conflictLedger && e instanceof RunThreadMismatchError) await recordIdemConflict(journal, { runId, code: 'run_thread_mismatch', ...(actor ? { actor } : {}) }, auditOnReject ?? 'best-effort');
     throw e;
   }
   // FAZ-4: fingerprint the RAW caller input BEFORE memory prep mutates rest.messages (post-prep
   // Content grows with the thread — hashing it would 409 every legitimate resume).
   const rawInputHash = argsHash({ prompt: rest.prompt, messages: rest.messages, system: rest.system });
-  await assertRunAdmissible(journal, runId, frozenInput, rawInputHash, { strictInput, conflictLedger, tombstonePolicy, actor, approvals });
+  await assertRunAdmissible(journal, runId, frozenInput, rawInputHash, { strictInput, conflictLedger, auditOnReject, tombstonePolicy, actor, approvals });
   // WRITE-AHEAD outcome: this attempt has STARTED. A run SIGKILLed anywhere past this line reads
   // 'running' — never 'completed', which is what the absence of any record used to mean. Sits after
   // the lock (the guarded path acquires before calling here), so a caller that never got in never
@@ -2407,6 +2415,9 @@ export interface ResumeAgentConfig {
   strictInput?: boolean;
   /** FAZ-4: append PII-free refusal records (`idem:conflict:*`) for busy/mismatch/swept conflicts — see idem-ledger.ts. */
   conflictLedger?: boolean;
+  /** FAZ-7: 'require' makes the ledger append a PRECONDITION of the refusal — its failure propagates
+   *  Instead of warning (never refuse unrecorded). Default 'best-effort'. Only meaningful with conflictLedger. */
+  auditOnReject?: 'best-effort' | 'require';
   /** FAZ-4: what a retention-swept runId's late retry does — 'ignore' (default, re-runs: today's
    *  Behavior) or 'reject' (RunSweptError; the critical profile's choice). */
   tombstonePolicy?: 'ignore' | 'reject';
@@ -2460,6 +2471,7 @@ export async function resumeRun(
     // Interface field missing here is born dead and silently drops the protection the caller asked for.
     ...(opts.strictInput !== undefined ? { strictInput: opts.strictInput } : {}),
     ...(opts.conflictLedger !== undefined ? { conflictLedger: opts.conflictLedger } : {}),
+    ...(opts.auditOnReject ? { auditOnReject: opts.auditOnReject } : {}),
     ...(opts.tombstonePolicy ? { tombstonePolicy: opts.tombstonePolicy } : {}),
     ...(opts.actor ? { actor: opts.actor } : {}),
     ...(input.messages ? { messages: input.messages } : {}),
@@ -2539,20 +2551,57 @@ function shapeJsonTools(
 // Declared, not inferred — same reason as createAgentTool: inference names a pnpm-internal
 // provider-utils path in the emitted .d.ts (TS2742). `StreamTextResult` comes from `ai`, the peer we
 // already require, so the published surface stays describable in terms we actually depend on.
+/** FAZ-7: how long a streamed lock keeps self-renewing before TTL is allowed to reclaim it — the
+ *  Abandonment bound (a dropped, never-drained stream holds the lock at most this long). */
+const STREAM_LOCK_MAX_HOLD_MS = 60 * 60_000;
+
 export async function streamDurable(args: StreamDurableArgs): Promise<StreamTextResult<any, any, any>> {
   // Same refusal as runDurable — a compensated run never streams either.
   await assertNotCompensated(args.journal, args.runId);
   // P2-cancel: same terminal-refusal contract as compensation — a durably-canceled run never
   // (re)starts or resumes (the per-step mid-flight gate lives in durable-model.ts).
   await assertNotCanceled(args.journal, args.runId);
-  const { journal, runId, guard, approvals, memory, threadId, resourceId, agentName, replay, lock, processors, schemaCompat, limits, exclusiveModelStep, replayCacheMaxBytes, toolPolicy, timeouts, strictInput, conflictLedger, tombstonePolicy, actor, model, tools, stopWhen, onBlocked, ...rest } =
+  const { journal, runId, guard, approvals, memory, threadId, resourceId, agentName, replay, lock, processors, schemaCompat, limits, exclusiveModelStep, replayCacheMaxBytes, toolPolicy, timeouts, strictInput, conflictLedger, tombstonePolicy, actor, auditOnReject, model, tools, stopWhen, onBlocked, ...rest } =
     args as StreamDurableArgs & Record<string, any>;
   // (a): opt-in run-lock — acquire BEFORE the setup work (reject a concurrent stream/run of the
   // Same runId with RunBusyError). Released on stream finish/error (see the onFinish/onError wrappers).
-  // No heartbeat by design (see StreamDurableArgs.lock) — a streamed lock relies on ttlMs for takeover.
+  // FAZ-7: heartbeat parity with run() — see StreamDurableArgs.lock for the maxHoldMs bound.
   const lockHandle = lock ? await acquireRunLock(journal, runId, lock.owner, lock.ttlMs) : null;
+  // FAZ-7 (backlog kapanışı): the streamed lock now SELF-RENEWS — with the bound the OLD design
+  // Refused it over: an ABANDONED stream (never drained, no abort — no exit callback ever fires)
+  // Would renew forever. The renewal is therefore HARD-CAPPED (STREAM_LOCK_MAX_HOLD_MS): past the
+  // Cap the beat stops and TTL reclaims, so abandonment costs a bounded hold, not eternity.
+  // Deliberately NOT chunk-liveness-gated: a long tool call emits no chunks, and pausing renewal
+  // There would hand the lock to a takeover MID-RUN — the exact double-execution this lock prevents.
+  // Same discipline as runDurableGuarded's beat otherwise: ttl/2 interval, unref'd, in-flight renew
+  // AWAITED before release. Every exit path releases through ONE function — K8 made structural.
+  let hbInflight: Promise<unknown> = Promise.resolve();
+  const hbStartedAt = Date.now();
+  const hbMaxHold = (lock as { maxHoldMs?: number } | undefined)?.maxHoldMs ?? STREAM_LOCK_MAX_HOLD_MS;
+  const hbTimer = lockHandle && lock
+    ? setInterval(() => {
+        if (Date.now() - hbStartedAt > hbMaxHold) {
+          clearInterval(hbTimer!);
+          // LOUD (K23): a legitimate stream outliving the cap loses renewal SILENTLY otherwise — the
+          // Later TTL takeover would then read as an unexplained double-execution.
+          console.warn(
+            `@gnldev/durable: stream lock for '${runId}' hit its renewal cap (${hbMaxHold}ms) — renewals stopped; ` +
+            `TTL (${lock.ttlMs}ms) can now reclaim it. A stream legitimately running this long should raise lock.maxHoldMs.`,
+          );
+          return;
+        }
+        hbInflight = lockHandle.renew(lock.ttlMs).catch(() => false);
+      }, Math.max(1, Math.floor(lock.ttlMs / 2)))
+    : undefined;
+  (hbTimer as { unref?: () => void } | undefined)?.unref?.();
+  const releaseStreamLock = async (): Promise<void> => {
+    if (!lockHandle) return;
+    if (hbTimer) clearInterval(hbTimer);
+    try { await hbInflight; } catch { /* a failed renew changes nothing about release */ }
+    try { await lockHandle.release(); } catch { /* best-effort; TTL reclaims */ }
+  };
   if (lock && !lockHandle) {
-    if (conflictLedger) await recordIdemConflict(journal, { runId, code: 'run_busy', ...(actor ? { actor } : {}) });
+    if (conflictLedger) await recordIdemConflict(journal, { runId, code: 'run_busy', ...(actor ? { actor } : {}) }, auditOnReject ?? 'best-effort');
     throw Object.assign(new RunBusyError(`run '${runId}' is locked by another process`), { atLockAcquisition: true });
   }
   // (a): EVERYTHING after a successful acquire runs under a release-on-throw guard. The setup awaits
@@ -2563,7 +2612,7 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   try {
     return await afterAcquire();
   } catch (err) {
-    if (lockHandle) { try { await lockHandle.release(); } catch { /* best-effort; TTL reclaims */ } }
+    await releaseStreamLock();
     throw err;
   }
 
@@ -2575,13 +2624,13 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
     assertThreadOwnership(frozenInput, runId, threadId);
   } catch (e) {
     // FAZ-4 ledger: the flagship conflict leaves a trace too (best-effort, PII-free).
-    if (conflictLedger && e instanceof RunThreadMismatchError) await recordIdemConflict(journal, { runId, code: 'run_thread_mismatch', ...(actor ? { actor } : {}) });
+    if (conflictLedger && e instanceof RunThreadMismatchError) await recordIdemConflict(journal, { runId, code: 'run_thread_mismatch', ...(actor ? { actor } : {}) }, auditOnReject ?? 'best-effort');
     throw e;
   }
   // FAZ-4: fingerprint the RAW caller input BEFORE memory prep mutates rest.messages (post-prep
   // Content grows with the thread — hashing it would 409 every legitimate resume).
   const rawInputHash = argsHash({ prompt: rest.prompt, messages: rest.messages, system: rest.system });
-  await assertRunAdmissible(journal, runId, frozenInput, rawInputHash, { strictInput, conflictLedger, tombstonePolicy, actor, approvals });
+  await assertRunAdmissible(journal, runId, frozenInput, rawInputHash, { strictInput, conflictLedger, auditOnReject, tombstonePolicy, actor, approvals });
   // WRITE-AHEAD outcome — the stream twin of runDurableInner's. A stream abandoned mid-flight (the
   // process died, neither onFinish nor onError ran) reads 'running' instead of 'completed'.
   await runStarted(journal, runId, Date.now());
@@ -2781,7 +2830,7 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
       }
       // (a): the stream has finished (completed OR suspended) → release the run-lock so a resume
       // Can proceed. Token-fenced + idempotent: a no-op if the lock was already taken over/released.
-      if (lockHandle) { try { await lockHandle.release(); } catch { /* release is best-effort; TTL reclaims */ } }
+      await releaseStreamLock();
       if (prevOnFinish) await prevOnFinish(ev);
     };
     // (a): also release on a stream error (onFinish may not fire on the error path). release()
@@ -2793,7 +2842,7 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
       const err = (ev as { error?: unknown })?.error ?? ev;
       streamFailed = true; // onFinish still fires after an error — it must not record a success over this
       if (isRunFailure(err)) await runFailed(journal, runId, err, Date.now());
-      if (lockHandle) { try { await lockHandle.release(); } catch { /* best-effort; TTL reclaims */ } }
+      await releaseStreamLock();
       if (prevOnError) await prevOnError(ev);
     };
     // (a): release on ABORT too — AI SDK 7 fires `onAbort` (NOT onFinish/onError) when the caller's
@@ -2803,7 +2852,7 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
     // Derives the SAME runId and ate 409 run_busy until the TTL expired.
     const prevOnAbort = (options as any).onAbort;
     (options as any).onAbort = async (ev: any) => {
-      if (lockHandle) { try { await lockHandle.release(); } catch { /* best-effort; TTL reclaims */ } }
+      await releaseStreamLock();
       if (prevOnAbort) await prevOnAbort(ev);
     };
   }
@@ -2851,6 +2900,11 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   // Typed streamFinishError when a block/limit sentinel fired — see guardStreamTerminalPromises.
   // A synchronous streamText throw is released by afterAcquire's caller-side catch above.
   rawStream = streamText(options);
-  return guardStreamTerminalPromises(rawStream, procCtx ? maskTerminal : undefined);
+  const guarded = guardStreamTerminalPromises(rawStream, procCtx ? maskTerminal : undefined);
+  // FAZ-7: the replay signal HTTP layers asked for (X-Gnl-Idempotency-Status) — true when this runId
+  // Had frozen input before this call (a resume/replay), false on a fresh run. A plain property on
+  // The result; the proxy forwards reads/writes to the target.
+  (guarded as unknown as { __gnlPriorRun?: boolean }).__gnlPriorRun = frozenInput !== undefined;
+  return guarded;
   } // afterAcquire — post-acquire body under the release-on-throw guard
 }

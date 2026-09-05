@@ -412,9 +412,11 @@ export interface CreateGnlConfig {
    * ROUTED to its home journal (per-run ownership). This is a routing contract, not a consensus
    * Feature, and a multi-region deployment that ignores it silently halves every guarantee above.
    * SCOPE, stated honestly (denetçi K6): the overlay wraps run() and stream() — the agent entry
-   * Points. runWorkflow()/runNetwork() are NOT covered yet (workflow steps have their own FAZ-1
-   * Claim protocol; a preset-level story for those paths is backlog) — a critical deployment
-   * Exposing /workflows must apply its protections there explicitly.
+   * Points. runNetwork() inherits the two protections that MAP to nested delegations (toolPolicy
+   * 'strict-critical' + sideEffectDuplicates 'suspend'); locks/fingerprints stay per-entry-point.
+   * RunWorkflow() is NOT covered (workflow steps have their own FAZ-1 claim protocol; a
+   * Preset-level story there is backlog) — a critical deployment exposing /workflows must apply
+   * Its protections explicitly.
    */
   preset?: 'critical';
 }
@@ -491,7 +493,7 @@ export interface RunOptions {
    * Same runId) → only tools marked `idempotency: 'args'` get deduped. The lock SERIALIZES the run: only
    * One runs, the other gets RunBusyError. (Not needed for single-worker usage.)
    */
-  lock?: { owner: string; ttlMs: number };
+  lock?: { owner: string; ttlMs: number; /** FAZ-7 stream-only: renewal cap (default 60min) — the abandonment bound; test-injectable. */ maxHoldMs?: number };
   /**
    * These protections lived only on the low-level runDurable args and were unreachable through
    * CreateGnl — the documented main path could not enable strict tool-policy, strict replay, timeouts, or
@@ -501,6 +503,7 @@ export interface RunOptions {
   /** FAZ-4 (critical profile) — see run.ts RunOptions for full semantics; forwarded verbatim. */
   strictInput?: boolean;
   conflictLedger?: boolean;
+  auditOnReject?: 'best-effort' | 'require';
   tombstonePolicy?: 'ignore' | 'reject';
   actor?: string;
   replay?: 'strict' | 'lenient';
@@ -700,6 +703,7 @@ export function createGnl(config: CreateGnlConfig) {
       // FAZ-4 critical-profile forwards (no-ops unless set — see RunOptions).
       ...(opts.strictInput !== undefined ? { strictInput: opts.strictInput } : {}),
       ...(opts.conflictLedger !== undefined ? { conflictLedger: opts.conflictLedger } : {}),
+      ...(opts.auditOnReject ? { auditOnReject: opts.auditOnReject } : {}),
       ...(opts.tombstonePolicy ? { tombstonePolicy: opts.tombstonePolicy } : {}),
       ...(opts.actor ? { actor: opts.actor } : {}),
       ...(config.schemaCompat ? { schemaCompat: config.schemaCompat } : {}),
@@ -743,9 +747,9 @@ export function createGnl(config: CreateGnlConfig) {
   // The only difference (per streamDurable's docs): output processors only apply to messages that get
   // Persisted — streamed text-deltas can't be retroactively transformed.
   // (a): streamDurable now ENFORCES the run-lock (acquire at start, release on stream finish) →
-  // Opts.lock is forwarded. NOTE the documented difference from run(): a streamed lock does NOT
-  // Self-renew (no heartbeat — see StreamDurableArgs.lock), so a stream outliving ttlMs can be taken
-  // Over. Use a generous ttlMs, or run() if you need the mid-run heartbeat guarantee.
+  // Opts.lock is forwarded. FAZ-7: the streamed lock now SELF-RENEWS on a ttl/2 heartbeat (parity
+  // With run()) — the old "no heartbeat, use a generous ttl" bound is closed; ttlMs is back to being
+  // The crash-takeover window, not a worst-case-duration estimate.
   // P1.6b: streamed runs' materialized-metrics recording lives in streamDurable's onFinish (run.ts,
   // Next to recordRunUsage) — the former TODO here is closed; no backfill dependency remains.
   async function stream(name: string, opts: RunOptions) {
@@ -793,12 +797,13 @@ export function createGnl(config: CreateGnlConfig) {
       ...(processors.length ? { processors } : {}),
       ...(opts.limits ? { limits: opts.limits } : {}),
       // + B3(a): same protection forwards as run(), now INCLUDING lock (streamDurable enforces
-      // It — see the stream lock note above; the only difference is no self-renew heartbeat).
+      // It — see the stream lock note above; FAZ-7: heartbeat parity with run() included).
       ...(opts.lock ? { lock: opts.lock } : {}),
       ...(opts.toolPolicy ? { toolPolicy: opts.toolPolicy } : {}),
       // FAZ-4 critical-profile forwards (no-ops unless set — see RunOptions).
       ...(opts.strictInput !== undefined ? { strictInput: opts.strictInput } : {}),
       ...(opts.conflictLedger !== undefined ? { conflictLedger: opts.conflictLedger } : {}),
+      ...(opts.auditOnReject ? { auditOnReject: opts.auditOnReject } : {}),
       ...(opts.tombstonePolicy ? { tombstonePolicy: opts.tombstonePolicy } : {}),
       ...(opts.actor ? { actor: opts.actor } : {}),
       ...(opts.replay ? { replay: opts.replay } : {}),
@@ -841,7 +846,13 @@ export function createGnl(config: CreateGnlConfig) {
               system: sub.system ? await resolveDyn(sub.system, rc) : undefined,
               guard: sub.guard,
               maxSteps: sub.maxSteps,
-              limits: opts.limits,
+              // FAZ-7: the critical preset now reaches the network path's sub-agents with the two
+              // Protections that MAP here (tool policy + the duplicate ladder). Locks/fingerprints
+              // Are per-run concerns of the CALLER's entry point, not of nested delegations.
+              limits: config.preset === 'critical'
+                ? { sideEffectDuplicates: 'suspend', ...(opts.limits ?? {}) }
+                : opts.limits,
+              ...(config.preset === 'critical' ? { toolPolicy: 'strict-critical' as const } : {}),
               approvals: opts.approvals,
               // The network router runs under opts.runId — carry its taint into each sub-agent.
               parentRunId: opts.runId,

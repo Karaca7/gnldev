@@ -22,10 +22,9 @@ export interface CreateChatRouteOptions {
    * FAZ-2 — per-run concurrency lock, ON by default (`{ ttlMs: 300_000 }`). Two CONCURRENT requests
    * With the same runId (double-click, two tabs, a retry racing the original) used to BOTH execute;
    * Now the loser gets the typed `409 run_busy` (+ Retry-After) and the winner's journal replay
-   * Answers the retry. `lock: false` restores the old behavior. TTL note: a streamed lock does NOT
-   * Self-renew (no heartbeat — engine limitation, see StreamDurableArgs.lock), so ttlMs must exceed
-   * The WORST-CASE turn duration — a multi-tool agent turn routinely outlives 60s, hence the generous
-   * 5-minute default rather than the run() default.
+   * Answers the retry. `lock: false` restores the old behavior. The streamed lock SELF-RENEWS on a
+   * Ttl/2 heartbeat (engine parity with run()), so ttlMs is the crash-takeover window — the generous
+   * 5-minute default simply keeps takeover conservative.
    */
   lock?: { ttlMs?: number } | false;
 }
@@ -190,6 +189,10 @@ export function createChatRoute(
     // Stamped onto `data-gnl-interrupt` chunks (FAZ-2) so an approval addresses THIS run.
     const res = toUIMessageStreamResponse(result, { runId });
     res.headers.set('X-Gnl-Run-Id', runId);
+    // FAZ-7: the engine's replay signal — 'replay' when this runId had frozen input before the call
+    // (a resume/retry landing on journal state), 'new' on a fresh run. An observability contract for
+    // Reconciliation, NOT a byte-identity guarantee.
+    res.headers.set('X-Gnl-Idempotency-Status', (result as { __gnlPriorRun?: boolean })?.__gnlPriorRun ? 'replay' : 'new');
     return res;
   });
   return app;

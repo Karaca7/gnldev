@@ -26,17 +26,27 @@ export interface IdemConflictRecord {
 let seq = 0;
 
 /**
- * Best-effort append — a ledger write must never mask or delay the refusal itself
- * (`auditOnReject: 'require'` semantics are a future critical-profile config; today's contract is
- * Documented best-effort). Uses the journal clock when available.
+ * Ledger append. `mode: 'best-effort'` (default): the write must never mask or delay the refusal —
+ * A failure warns. `mode: 'require'` (FAZ-7, RunOptions.auditOnReject): the append is a PRECONDITION
+ * Of the refusal and its failure PROPAGATES — never refuse unrecorded. Journal clock when available.
  */
-export async function recordIdemConflict(journal: Journal, rec: Omit<IdemConflictRecord, 'at'>): Promise<void> {
-  try {
+export async function recordIdemConflict(journal: Journal, rec: Omit<IdemConflictRecord, 'at'>, mode: 'best-effort' | 'require' = 'best-effort'): Promise<void> {
+  // FAZ-7 `mode: 'require'` (auditOnReject): the ledger append happens BEFORE the refusal is
+  // Delivered and its failure PROPAGATES — a regulated deployment that must never refuse
+  // Unrecorded prefers a 500-shaped audit error over an unauditable 409. Default stays best-effort.
+  // ONE key builder for both modes — a literal copy per branch is scheme-drift waiting to happen.
+  // Seq alone is process-LOCAL (same-ms twin workers would collide and overwrite — record loss in a
+  // Non-repudiation ledger); the uuid slice makes the key process-unique.
+  const append = async () => {
     const at = journal.now ? await journal.now() : Date.now();
-    // Seq alone is process-LOCAL — two workers refusing the same runId in the same ms would both
-    // Write `<at>-0` and the second put would OVERWRITE the first (record loss in a non-repudiation
-    // Ledger). The uuid slice makes the key process-unique; append-only stays append-only.
     await journal.put(`idem:conflict:${rec.runId}:${at}-${seq++}-${randomUUID().slice(0, 8)}`, { ...rec, at });
+  };
+  if (mode === 'require') {
+    await append();
+    return;
+  }
+  try {
+    await append();
   } catch (err) {
     console.warn(
       `@gnldev/durable: could not append the idem-conflict ledger entry for '${rec.runId}' (${rec.code}) — ` +

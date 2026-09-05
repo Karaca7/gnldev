@@ -1215,6 +1215,31 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       if (ctx.limits?.approvalScope === 'attempt' && approved === true && sideEffect) {
         await ctx.journal.put(runKeys.approval(ctx.runId, toolCallId), { __gnl_approval_spent: true, at: Date.now() });
       }
+      // FAZ-7 lookup — read-before-write, right before the effect and after every gate that can stop
+      // This call (claiming earlier would be the taint-guard lesson repeated). Two admitted states:
+      // A FRESH first attempt, and a SUSPENDED record arriving here approved (the effect never fired
+      // While it waited — and the critical preset's suspend→approve is precisely where an
+      // Out-of-band twin may have created the object meanwhile; denetçi K6). A failed/running
+      // Record's crash window still belongs to recover, never here.
+      if (typeof tool.lookup === 'function' && sideEffect && (record === undefined || record.status === 'suspended')) {
+        try {
+          const found = await tool.lookup(input, { idempotencyKey, toolCallId });
+          const ok = !!found && typeof found === 'object' && (found.exists === true ? 'output' in found : found.exists === false);
+          if (!ok) throw new TypeError(`lookup() must return {exists:true, output} or {exists:false}; got ${found === null ? 'null' : typeof found}`);
+          if (found.exists) {
+            await writeToolTerminal(ctx, key, {
+              status: 'succeeded', output: found.output, argsHash: hash, toolName,
+              ...(typeof tool.compensate === 'function' ? { input } : {}),
+            }, toolCallId, toolName, hash, dupKey, semPlan);
+            return found.output; // the effect already exists downstream — journaled, never re-fired
+          }
+        } catch (lookupErr) {
+          // Fail-open, LOUDLY: proceeding as not-found is exactly today's behavior; a flaky lookup
+          // Must not block work it cannot decide about (contrast with recover, whose uncertainty
+          // Falls to the approval gate — there the effect MAY have fired; here it has not).
+          console.warn(`@gnldev/durable: '${toolName}' lookup() failed for ${key} — proceeding as not-found:`, lookupErr);
+        }
+      }
       let output: unknown;
       try {
         const p = Promise.resolve(original(input, execOpts));
