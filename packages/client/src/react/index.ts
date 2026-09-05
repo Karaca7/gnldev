@@ -25,6 +25,12 @@ export function useGnlAgent(client: GnlClient, name: string): UseGnlAgent {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const lastInput = useRef<RunInput>({});
+  // The engine journals WHICH entry point ran a model step and refuses a cross-entry replay
+  // ("replay entry-point mismatch"): a run started via /stream cannot be resumed via /run. resume()
+  // below therefore has to go back through the SAME surface the turn came from — measured live: a
+  // streamed tool-approval resumed through client.resume() (always POST /agents/:name/run) was
+  // refused by the engine, so streamed chats could never complete an approval.
+  const lastEntry = useRef<'run' | 'stream'>('run');
 
   const run = useCallback(
     async (input: RunInput) => {
@@ -32,6 +38,7 @@ export function useGnlAgent(client: GnlClient, name: string): UseGnlAgent {
       setError(null);
       if (input.prompt) setState((s) => appendUserMessage(s, input.prompt!));
       lastInput.current = input;
+      lastEntry.current = 'run';
       try {
         const r = await client.run(name, input);
         if (r.error) setError(new Error(r.error));
@@ -53,6 +60,7 @@ export function useGnlAgent(client: GnlClient, name: string): UseGnlAgent {
       setError(null);
       if (input.prompt) setState((s) => appendUserMessage(s, input.prompt!));
       lastInput.current = input;
+      lastEntry.current = 'stream';
       try {
         for await (const ev of client.stream(name, input)) {
           setState((s) => applyStreamEvent(s, ev));
@@ -75,12 +83,22 @@ export function useGnlAgent(client: GnlClient, name: string): UseGnlAgent {
       setError(null);
       setState((s) => ({ ...s, interrupts: [] }));
       try {
-        const r = await client.resume(name, runId, approvals, {
-          prompt: lastInput.current.prompt,
-          messages: lastInput.current.messages,
-        });
-        if (r.error) setError(new Error(r.error));
-        setState((s) => applyRunResult(s, r));
+        if (lastEntry.current === 'stream') {
+          // Same-entry-point resume (see lastEntry above): replay the SAME runId through /stream
+          // with the approvals attached — the journal replays the finished prefix and streams the
+          // now-approved remainder. prompt is NOT re-appended (it is already in `messages` state).
+          for await (const ev of client.stream(name, { ...lastInput.current, runId, approvals })) {
+            setState((s) => applyStreamEvent(s, ev));
+            if (ev.event === 'error') setError(new Error((ev.data as any).error));
+          }
+        } else {
+          const r = await client.resume(name, runId, approvals, {
+            prompt: lastInput.current.prompt,
+            messages: lastInput.current.messages,
+          });
+          if (r.error) setError(new Error(r.error));
+          setState((s) => applyRunResult(s, r));
+        }
       } catch (e: any) {
         setError(e instanceof Error ? e : new Error(String(e)));
       } finally {

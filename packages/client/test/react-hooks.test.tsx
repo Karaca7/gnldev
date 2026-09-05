@@ -192,8 +192,15 @@ describe('useGnlAgent — resume() / reset()', () => {
   });
 
   it('clears pending interrupts as soon as the approval is sent (no double-approve window)', async () => {
+    // Per-call fixture: turn 1 raises the interrupt; the resume replay (now that the approval is
+    // attached) completes without one — which is exactly what a real server answers.
+    let call = 0;
     const { client } = fakeClient({
-      stream: [{ event: 'interrupt', data: { interrupts: [{ toolCallId: 'tc-1' }] } }, { event: 'done', data: { runId: 'r' } }],
+      stream: () =>
+        (async function* () {
+          if (call++ === 0) yield { event: 'interrupt', data: { interrupts: [{ toolCallId: 'tc-1' }] } };
+          yield { event: 'done', data: { runId: 'r' } };
+        })(),
     });
     const { result } = renderHook(() => useGnlAgent(client, 'agent'));
     await act(async () => {
@@ -204,6 +211,26 @@ describe('useGnlAgent — resume() / reset()', () => {
       await result.current.resume({ 'tc-1': true });
     });
     expect(result.current.interrupts).toEqual([]);
+  });
+
+  it('a STREAM-born run resumes through the STREAM surface, same runId + approvals (entry-point parity)', async () => {
+    // The engine journals which entry point ran a step and refuses a cross-entry replay — measured
+    // live: a streamed approval resumed via POST /agents/:name/run was refused with "replay
+    // entry-point mismatch", so streamed chats could never complete an approval. This pins the fix.
+    const { client, calls } = fakeClient({
+      stream: [{ event: 'interrupt', data: { interrupts: [{ toolCallId: 'tc-1' }] } }, { event: 'done', data: { runId: 'r' } }],
+    });
+    const { result } = renderHook(() => useGnlAgent(client, 'agent'));
+    await act(async () => {
+      await result.current.stream({ prompt: 'x', threadId: 'th' });
+    });
+    await act(async () => {
+      await result.current.resume({ 'tc-1': true });
+    });
+    expect(calls.resume).toHaveLength(0); // NOT the non-stream surface
+    expect(calls.stream).toHaveLength(2);
+    expect(calls.stream[1]![0]).toBe('agent');
+    expect(calls.stream[1]![1]).toMatchObject({ runId: 'r', approvals: { 'tc-1': true }, prompt: 'x', threadId: 'th' });
   });
 
   it('reset() clears messages, runId and error', async () => {
@@ -267,7 +294,7 @@ describe('useChat', () => {
     expect(calls.stream[0]![1]).toEqual({ prompt: 'hi', threadId: 'th-1', resourceId: 'res-1' });
   });
 
-  it('approve() resumes the run with a single toolCallId decision', async () => {
+  it('approve() on the default (stream) path resumes via STREAM with the single toolCallId decision', async () => {
     const { client, calls } = fakeClient({
       stream: [{ event: 'interrupt', data: { interrupts: [{ toolCallId: 'tc-9' }] } }, { event: 'done', data: { runId: 'r9' } }],
     });
@@ -279,7 +306,25 @@ describe('useChat', () => {
     await act(async () => {
       await result.current.approve('tc-9', false);
     });
-    expect(calls.resume[0]![2]).toEqual({ 'tc-9': false });
+    expect(calls.resume).toHaveLength(0); // entry-point parity: stream-born → stream resume
+    expect(calls.stream[1]![1]).toMatchObject({ runId: 'r9', approvals: { 'tc-9': false } });
+  });
+
+  it('approve() on the stream:false path still resumes via the non-stream surface', async () => {
+    const { client, calls } = fakeClient({
+      run: async () => ({ runId: 'run-9', text: '', interrupts: [{ toolCallId: 'tc-9' }] }),
+    });
+    const { result } = renderHook(() => useChat(client, 'agent', { stream: false }));
+    act(() => result.current.setInput('refund'));
+    await act(async () => {
+      await result.current.send();
+    });
+    await act(async () => {
+      await result.current.approve('tc-9', true);
+    });
+    expect(calls.stream).toHaveLength(0);
+    expect(calls.resume[0]![1]).toBe('run-9');
+    expect(calls.resume[0]![2]).toEqual({ 'tc-9': true });
   });
 
   it('reset() is wired through to the underlying agent', async () => {
