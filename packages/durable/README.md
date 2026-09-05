@@ -141,6 +141,30 @@ retention/sweep never touches them (purge explicitly with `journal.deletePrefix(
 `withOrg` isolation still applies — including the `options.idempotencyKey` handed to your tool and forwarded to the provider, which carries the org so two organizations using the same `orderId` do NOT collapse into one charge at Stripe. Proof: `test/cross-run-org-key.test.ts`. Proof tests: `test/args-idempotency.test.ts` (reproduces the
 duplicate-toolCallId pattern end-to-end) and `test/cross-run-idempotency.test.ts`.
 
+### Conversation-scoped dedup (`idempotencyWindow: 'thread'` + thread-scoped duplicate marker)
+
+"This thread already created that product YESTERDAY, in another run" is invisible to run-scoped
+dedup. Two conversation-scoped tools close it, both living under `xthr:<threadId>:` so ONE
+`purgeThread` sweep reclaims the thread's whole dedup state (no immortal cross-run keys):
+
+```ts
+// Deterministic business key, silent dedup ACROSS RUNS of one conversation (Stripe semantics):
+gnlTool(tool({ /* … */ }), { sideEffect: true, idempotencyWindow: 'thread', idempotencyKey: (a: any) => a.orderId });
+
+// LLM-shaped args where silence would be wrong — the ambiguous repeat becomes a HUMAN question
+// carrying the first result's address (firstToolCallId):
+limits: { sideEffectDuplicates: { action: 'suspend', scope: 'thread' } }
+```
+
+Use the right layer: silent windows are for DETERMINISTIC business keys, where dedup is
+unambiguously correct. For LLM-derived raw args an identical-looking second request may be a genuine
+second intent — that case belongs to the suspend ladder (or the semantic gate below), where a human
+answers. No default TTL, deliberately: a false positive costs one extra question, a false negative
+fires the effect twice (`ttlMs` opts in). Records need a `threadId` at call time — absent one, the
+window falls back to run scope LOUDLY. `toolPolicy: 'strict-critical'` raises the bar one rung:
+every `sideEffect: true` tool must answer the crash window with `recover()` or a deterministic
+`idempotencyKey`, or the run refuses to start.
+
 ## Governance (policy)
 
 The LLM sees all tools and reasons freely; policy only gates **execution**:
@@ -174,6 +198,24 @@ The approval decision is written to the journal as **first-class** (via `claim`,
 even in the "approved but the process crashed before the tool ran" scenario, the decision is durable — the
 next `runDurable` call applies the decision recorded in the journal even if the `approvals` parameter isn't
 passed again.
+
+**`confirm` — the tool's own first-call human gate.** For a tool consequential enough to ask a human
+EVERY fresh call, declare it on the tool itself — no guard factory to remember (a two-step ceremony
+where forgetting the factory leaves the flag silently unenforced is exactly the failure class this
+replaces):
+
+```ts
+gnlTool(tool({ /* … */ }), {
+  sideEffect: true,
+  confirm: { reason: (args: any) => `charge ${args.amount} to card — confirm?` },  // or just `true`
+});
+```
+
+The fresh call suspends with the standard sentinel into the SAME approvals flow (Studio inbox, the
+chat `approve()` helper); deny writes a terminal denied record; a pre-supplied approval skips the
+gate and still meets the guard. Scope: per toolCallId — a model issuing a new call asks again. A
+crashed (`failed`/`running`) attempt is NOT re-asked "confirm before it runs" — that state belongs to
+the recover/reclaim ladder, which knows the effect may already have fired.
 
 ## Streaming: catching blocked/limit protections
 
@@ -263,6 +305,53 @@ Two things the router enforces, so a host does not have to:
   a whole URL, or anything with a newline is refused at the boundary rather than passed on.
 
 License: Apache-2.0 — see [LICENSE](../../LICENSE).
+
+## Critical profile (`preset: 'critical'`)
+
+The banking/defense/medical bundle as ONE opt-in switch — explicit opts still win field by field:
+
+```ts
+const gnl = createGnl({ journal, agents, preset: 'critical' });
+// = toolPolicy 'strict-critical' + sideEffectDuplicates 'suspend' + exclusiveModelStep
+//   + an automatic per-run lock (ttl 300s) + strictInput + actor binding + conflictLedger
+//   + tombstonePolicy 'reject'
+```
+
+What each protection answers, in one line each:
+
+- **`strictInput`** — one runId carries ONE request: the raw caller input is fingerprinted at freeze
+  time; the same runId arriving with different content gets `409 run_input_mismatch` (Stripe's
+  "same key, different payload" semantics). Legitimate flows stay open: driving the run with its own
+  frozen content is a replay, and an approval addressing any journaled toolCallId admits the
+  re-POST — even retried after the record turned terminal.
+- **`actor`** — the runId binds to its first caller (first-wins); a different actor re-driving it
+  gets `409 run_actor_mismatch`. No actor on either side = no check: an auth-less deployment has no
+  protection here, stated rather than silent.
+- **`conflictLedger`** — every refusal (busy / thread / input / actor / swept) appends a PII-free
+  `idem:conflict:*` record: codes, hashes and the actor id, never content. The family lives OUTSIDE
+  the run's sweep prefix — the audit's subject cannot erase its own refusal history. Read it with
+  `readIdemLedger(journal)`, which THROWS without `listKeys` rather than lying with an empty answer.
+- **`tombstonePolicy: 'reject'`** — a retention-swept runId's late retry is refused
+  (`409 run_swept`) instead of silently re-running side effects whose dedup window died with the
+  journal. Pair with `sweepRuns({ tombstones: true })`; the REAL contract stays: retention window ≥
+  client retry horizon. `sweepRuns({ suspendedTtlMs })` gives abandoned suspended runs an expiry so
+  they stop accumulating forever.
+
+Journal guidance: prefer Postgres. On Redis, configure
+`waitReplicas: { replicas: 1, timeoutMs: 1000, onTimeout: 'throw' }` and know the honest bound — the
+throw fires AFTER the write, so an unacknowledged claim becomes visible, not undone; treat thrown
+claims as a reconciliation suspect list. And the single-home bound, restated where it matters: every
+guarantee above spans any number of workers on ONE journal store; two regions with independent
+journals are two independent dedup windows — route a runId to its home journal. Scope stated
+honestly: the preset wraps `run()`/`stream()`; `runWorkflow()`/`runNetwork()` entry paths are not
+covered yet — apply protections there explicitly.
+
+**The decision hierarchy, which every layer here serves:** deterministic (idempotency keys, unique
+constraints, fingerprints) > human gate (`confirm`, suspend ladders) > probabilistic (semantic
+candidates, working memory). And the recipe that no framework can automate away: give critical tools
+a **read-before-write** sibling (`createProduct` ↔ `findProduct`) so the agent checks the system of
+record before acting — the source of truth is never the conversation, and the LAST line of defense
+is always a unique constraint or upsert in the external system itself.
 
 ## Semantic duplicate-candidate gate (`sideEffectDuplicates.semantic`)
 
