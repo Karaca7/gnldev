@@ -34,6 +34,17 @@ describe('makeGate (fail-open audit)', () => {
     expect(warn).toHaveBeenCalledTimes(1);
     expect(String(warn.mock.calls[0][0])).toContain('allowOpenAccess');
   });
+
+  // The warning above TELLS the reader to set allowOpenAccess. Following that instruction has to
+  // silence it, or the flag reads as inert and the next auth warning gets ignored too.
+  it('non-production + allowOpenAccess: true → open, and does NOT repeat the instruction it followed', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { allow, deny } = makeGate(undefined, { allowOpenAccess: true });
+    const app = new Hono();
+    app.get('/read', async (c) => ((await allow(c.req.raw, 'read')) ? c.json({ ok: true }) : deny(c.req.raw, 'read')));
+    expect((await app.request('/read')).status).toBe(200);
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes('ALL endpoints are open'))).toHaveLength(0);
+  });
 });
 
 // An RBAC-style provider that honours ctx.permission (like @gnldev/auth-ee): the exact permission is matched

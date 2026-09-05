@@ -10,7 +10,13 @@ import { createStudioApp } from '@gnldev/studio';
 import { buildSupport } from './agent.js';
 import { buildServer } from './server.js';
 
-rmSync('support.db', { force: true }); // start fresh; remove this line to keep the journal PERSISTENT across restarts
+// Start fresh; remove this line to keep the journal PERSISTENT across restarts.
+// All three files: WAL mode keeps `-wal`/`-shm` beside the database, and deleting the database
+// alone leaves them describing a file that is gone. After a clean exit that is harmless, but if a
+// previous copy is still holding the old database — a restart faster than the old one shuts down,
+// or two copies started by accident — the open then fails with `disk I/O error` before any of this
+// runs. Measured against exactly that case.
+for (const f of ['support.db', 'support.db-wal', 'support.db-shm']) rmSync(f, { force: true });
 const storage = new SqliteStorage('support.db'); // all store ports (run + memory + cache + work)
 const state = { refunds: { count: 0, total: 0 } };
 

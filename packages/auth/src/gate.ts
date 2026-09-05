@@ -97,7 +97,16 @@ export function makeGate(provider?: AuthProvider, opts?: GateOptions): Gate {
   }
 
   function openSurfaceAllows(req: Request): boolean {
-    if (!warnedOpen && process.env.NODE_ENV !== 'production') {
+    // The warning is an INSTRUCTION ("for deliberate open access use allowOpenAccess: true"), so it
+    // Must stop once the instruction has been followed. It did not: the flag suppressed the
+    // Production throw but not this line, so a developer who set it kept being told to set it — which
+    // Teaches that the flag is inert and that this package's auth warnings can be ignored. Under
+    // NODE_ENV=production the same flag is already accepted as the whole declaration of intent; there
+    // Is no reason for dev to demand it twice and then not honour it.
+    //
+    // Openness WITHOUT the flag still warns, every process, exactly as before — that is the case the
+    // Message was written for.
+    if (!warnedOpen && opts?.allowOpenAccess !== true && process.env.NODE_ENV !== 'production') {
       warnedOpen = true;
       console.warn(
         '@gnldev/auth: no provider given → ALL endpoints are open (opt-in gate not set up). Add auth before production; for deliberate open access use allowOpenAccess: true.',

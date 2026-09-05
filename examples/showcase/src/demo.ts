@@ -28,7 +28,9 @@ async function section(name: string, fn: () => Promise<string>) {
   catch (e) { console.log(`✗ ${name} — ${(e as Error).message}`); fail++; }
 }
 
-rmSync('gnl-demo.db', { force: true });
+// All three: deleting the database without its WAL sidecars fails to reopen with `disk I/O error`
+// whenever a previous copy still holds the old one (see examples/app/src/index.ts).
+for (const f of ['gnl-demo.db', 'gnl-demo.db-wal', 'gnl-demo.db-shm']) rmSync(f, { force: true });
 const storage = new SqliteStorage('gnl-demo.db'); // all store ports (run+memory+cache+work)
 const journal = storage.runs; // low-level RunJournal (durable run/inspection)
 // The array-`listRuns` view of the same journal. `runDurable` wants the paginated `RunJournal`
