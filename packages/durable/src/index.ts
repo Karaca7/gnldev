@@ -102,6 +102,14 @@ export type { LogSweepTarget, RetentionSweeperOptions, RetentionSweepSummary, Re
 export { recordIdemConflict, readIdemLedger } from './idem-ledger.js';
 export { semKey, semTombKey, SEM_TEMPLATE_VERSION } from './semantic-dup.js';
 export type { SemanticDupConfig, SemanticIdentity, SemDupRecord } from './semantic-dup.js';
+// HERMES v1: approval-gated suggestions/lessons (two switches, evidence discipline, optional promotion).
+export {
+  createSuggestions, validateSuggestionsConfig, evidenceQualityOf, normalizeRule,
+  suggKey, personalLessonKey, orgLessonKey, lessonProvenanceKey,
+} from './suggestions.js';
+export type {
+  SuggestionsConfig, SuggestionsApi, SuggestionRecord, SuggestionEvidence, LessonRecord, EvidenceQuality,
+} from './suggestions.js';
 export type { IdemConflictRecord } from './idem-ledger.js';
 // Phase 8.1: the common poll-loop core for queue/events/scheduler (a setTimeout chain with backoff).
 export { createPollLoop } from './polling.js';

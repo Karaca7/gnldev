@@ -193,7 +193,14 @@ export async function purgeRun(
 }
 
 /** Permanently delete a thread's BasicMemory trace (`mem:<threadId>:*`). Rich memory stores use their
- *  Own deletion API (AgentMemory.deleteThread) — this helper is for journal-based memory. */
+ *  Own deletion API (AgentMemory.deleteThread) — this helper is for journal-based memory.
+ *
+ *  HERMES CAVEAT (honest-inventory line, denetçi K12): `sugg:`/`lesson:` records are NOT swept here —
+ *  they are owned by the RESOURCE (user), not the thread. But a suggestion's evidence entries carry
+ *  `threadId` (and `runId`) as provenance fields, and those entries survive both this sweep and
+ *  purgeRun. A deployment erasing a person should purge their suggestion surface too:
+ *  `deletePrefix('sugg:')` filtered by resourceId is not expressible — sweep
+ *  `lesson:res:<resourceId>:` directly and delete their `sugg:` records via the suggestions API/list. */
 export async function purgeThread(journal: Journal, threadId: string): Promise<number> {
   const del = requireDelete(journal);
   // FAZ-3: the thread owns its dedup state too — `idempotencyWindow: 'thread'` records and
@@ -229,6 +236,9 @@ export async function purgeThread(journal: Journal, threadId: string): Promise<n
  *    This function cannot attribute it — that is a deployment-model choice, not a sweep gap.
  * EE user records (auth-ee's own store) — studio's DELETE /organizations/:id removes members when
  *    `opts.users` is wired; call that surface (or the user store directly) alongside this.
+ * (Covered, for the record: HERMES `sugg:`/`lesson:`/`suggstats:` families ARE swept by this
+ *    function — withOrg prefixes them like every other key. The gap for them is per-PERSON deletion,
+ *    documented on purgeThread.)
  */
 export async function purgeOrganization(journal: Journal, orgId: string, now = Date.now()): Promise<number> {
   if (orgId.includes(':')) throw new Error(`@gnldev/durable: purgeOrganization('${orgId}') — org id must not contain ':' (it would break the org:<id>: prefix boundary)`);

@@ -17,6 +17,8 @@ import { recordIdemConflict } from './idem-ledger.js';
 import { durableProcessorStep } from './processor.js';
 import { recordRunScores } from './metrics.js';
 import { assertSuiteConsistent } from './suite-consistency.js';
+import { createSuggestions, validateSuggestionsConfig } from './suggestions.js';
+import type { SuggestionsApi, SuggestionsConfig } from './suggestions.js';
 
 import type { Journal } from './journal.js';
 import type { Storage } from './storage.js';
@@ -424,6 +426,18 @@ export interface CreateGnlConfig {
    * Run-lock — step-level exactly-once stays FAZ-1's claim protocol, which workflows already carry.
    */
   preset?: 'critical';
+  /**
+   * HERMES v1 — onay-kapılı öneri/öğrenme katmanı (see suggestions.ts for the full contract).
+   * Two independent switches: `generate` (may the system PROPOSE memory-lessons after completed
+   * runs?) and `apply` (may APPROVED lessons be injected into system prompts?). Nothing is ever
+   * applied without a human decision (`gnl.suggestions.decide`), approved lessons outlive the
+   * switches, and the org-promotion code path exists only when the `promotion` block is present.
+   * Config contradictions THROW at createGnl time (validateSuggestionsConfig).
+   * SCOPE, stated honestly (K6'nın preset dersi): injection and learning cover run() and stream() —
+   * the agent entry points. Sub-agents (`agents`), network delegations and workflow agent steps do
+   * NOT see lessons; extending them is a deliberate future decision, not an oversight to paper over.
+   */
+  suggestions?: SuggestionsConfig;
 }
 
 /**
@@ -555,6 +569,13 @@ export function createGnl(config: CreateGnlConfig) {
     config.memory === false
       ? undefined
       : config.memory ?? (config.memoryFactory ? config.memoryFactory(memSource) : undefined);
+  // HERMES v1: validated LOUDLY at construction (semantic layer's precedent — a static contradiction
+  // must be impossible to ship), then built once; run()/stream() consult it per call.
+  let suggestionsApi: SuggestionsApi | undefined;
+  if (config.suggestions) {
+    validateSuggestionsConfig(config.suggestions, journal);
+    suggestionsApi = createSuggestions(journal, config.suggestions);
+  }
   function agent(name: string): AgentConfig {
     const a = config.agents?.[name];
     if (!a) throw new Error(`agent '${name}' is not registered`);
@@ -685,13 +706,21 @@ export function createGnl(config: CreateGnlConfig) {
     const mergedTools = { ...config.tools, ...agentTools, ...subTools, ...wfTools };
     // Playground tool allow-list: expose only the requested subset to the model (agent tools unchanged).
     const runTools = opts.tools ? Object.fromEntries(Object.entries(mergedTools).filter(([n]) => opts.tools!.includes(n))) : mergedTools;
+    // HERMES apply: the lesson block is FROZEN per runId (claim, empty included) BEFORE composing the
+    // system prompt — a retry of the same runId sees the identical prompt even if a lesson was
+    // approved in between (strictInput's fingerprint stays honest). See suggestions.ts.
+    let effectiveSystem = system;
+    if (suggestionsApi) {
+      const inj = await suggestionsApi.prepareInjection(opts.runId, effectiveResourceId);
+      if (inj.text) effectiveSystem = effectiveSystem ? `${effectiveSystem}\n\n${inj.text}` : inj.text;
+    }
     const result = await runDurable({
       runId: opts.runId,
       journal: journal,
       agentName: name,
       model,
       tools: runTools,
-      system,
+      system: effectiveSystem,
       guard: a.guard,
       memory: resolvedMemory,
       threadId: effectiveThreadId,
@@ -742,6 +771,23 @@ export function createGnl(config: CreateGnlConfig) {
       recordRunScores(journal, opts.runId, name, scores as Record<string, number | { score: number }>).catch(() => {});
     }
 
+    // HERMES generate: the learning pass runs only on a COMPLETED run (an interrupted run is an
+    // unfinished story — no lesson yet), memoized AT-MOST-ONCE per runId inside generateFor, and
+    // best-effort by contract: a learning failure must never fail an otherwise-successful run.
+    // stream() has no auto-pass (a stream returns before completion); hosts call
+    // gnl.suggestions.generateFor from their finish hook when they want streamed runs to learn.
+    if (suggestionsApi && config.suggestions?.generate && result.interrupts.length === 0) {
+      try {
+        await suggestionsApi.generateFor({
+          runId: opts.runId,
+          resourceId: effectiveResourceId,
+          threadId: effectiveThreadId,
+          ...(typeof opts.prompt === 'string' && opts.prompt ? { prompt: opts.prompt } : {}),
+          output: (result as any).text ?? '',
+        });
+      } catch { /* best-effort — see the contract above */ }
+    }
+
     // P1.6b: materialized metrics recording moved from here DOWN into run.ts's completion choke points
     // (next to recordRunUsage in runDurableInner AND in streamDurable's onFinish) — ONE source covers
     // Run()/stream()/resume/bare-runDurable alike; no registry-level hook needed. See metrics.ts.
@@ -784,13 +830,19 @@ export function createGnl(config: CreateGnlConfig) {
     const processors = [...(config.processors ?? []), ...(a.processors ?? [])];
     const mergedTools = { ...config.tools, ...agentTools, ...subTools, ...wfTools };
     const runTools = opts.tools ? Object.fromEntries(Object.entries(mergedTools).filter(([n]) => opts.tools!.includes(n))) : mergedTools;
+    // HERMES apply: same frozen-injection contract as run() — see the note there.
+    let effectiveSystem = system;
+    if (suggestionsApi) {
+      const inj = await suggestionsApi.prepareInjection(opts.runId, effectiveResourceId);
+      if (inj.text) effectiveSystem = effectiveSystem ? `${effectiveSystem}\n\n${inj.text}` : inj.text;
+    }
     return streamDurable({
       runId: opts.runId,
       journal: journal,
       agentName: name,
       model,
       tools: runTools,
-      system,
+      system: effectiveSystem,
       guard: a.guard,
       memory: resolvedMemory,
       threadId: effectiveThreadId,
@@ -1069,5 +1121,7 @@ export function createGnl(config: CreateGnlConfig) {
    * `undefined` when memory is off (`memory: false`, or neither option given), which is the same
    * answer a caller gets for a deployment that keeps no conversations.
    */
-  return { agent, run, stream, listWorkflows, runWorkflow, runNetwork, listNetworks, memory: resolvedMemory };
+  // HERMES v1: `suggestions` is `undefined` when the config block is absent — the feature's very
+  // handle is opt-in, matching the promotion block's own no-block-no-code-path rule.
+  return { agent, run, stream, listWorkflows, runWorkflow, runNetwork, listNetworks, memory: resolvedMemory, suggestions: suggestionsApi };
 }
