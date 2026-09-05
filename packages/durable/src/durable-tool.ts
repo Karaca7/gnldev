@@ -8,6 +8,8 @@ import { CompensatedRunError, runCompensated } from './compensation.js';
 import { recordIncident } from './incidents.js';
 import { markRunTainted, readRunTaint } from './taint.js';
 import { checkToolGate, recordToolOutcome } from './limits.js';
+import { validateSemanticConfig, assertSemanticIdentity, extractSemFields, canonicalTextOf, findSemanticCandidate, writeSemRecord, semTombKey } from './semantic-dup.js';
+import type { SemPlan } from './semantic-dup.js';
 import type { RunLimits } from './limits.js';
 import { createProcessorCtx } from './processor.js';
 import type { DurableCtx, Journal, ToolJournalRecord } from './journal.js';
@@ -122,8 +124,8 @@ function warnThreadScopeFallback(feature: string, toolName: string): void {
 }
 
 /** FAZ-3 — sideEffectDuplicates accepts a plain action string (≡ run scope) or `{action, scope, ttlMs}`. */
-function dupConfigOf(raw: RunLimits['sideEffectDuplicates']): { action: 'off' | 'warn' | 'reflect' | 'block' | 'suspend'; scope: 'run' | 'thread'; ttlMs?: number } {
-  if (raw && typeof raw === 'object') return { action: raw.action, scope: raw.scope ?? 'run', ...(raw.ttlMs !== undefined ? { ttlMs: raw.ttlMs } : {}) };
+function dupConfigOf(raw: RunLimits['sideEffectDuplicates']): { action: 'off' | 'warn' | 'reflect' | 'block' | 'suspend'; scope: 'run' | 'thread'; ttlMs?: number; semantic?: import('./semantic-dup.js').SemanticDupConfig } {
+  if (raw && typeof raw === 'object') return { action: raw.action, scope: raw.scope ?? 'run', ...(raw.ttlMs !== undefined ? { ttlMs: raw.ttlMs } : {}), ...(raw.semantic ? { semantic: raw.semantic } : {}) };
   return { action: raw ?? 'warn', scope: 'run' };
 }
 
@@ -206,6 +208,10 @@ async function writeToolTerminal(
   /** When set and the record is a SUCCESS, stamps the first-success duplicate marker (claim = first
    *  Writer wins; a repeat's success never overwrites the original firstToolCallId). */
   dupKey?: string,
+  /** FAZ-6: when set and the record is a SUCCESS, writes the semantic dup record (fields sync,
+   *  Vector fail-open) at this same choke point — the suspended path forgetting a write is exactly
+   *  The class this function exists to prevent. */
+  semPlan?: SemPlan,
 ): Promise<void> {
   // Stamp the ORIGINAL toolCallId onto succeeded/denied records here —
   // The single choke point every fresh terminal write goes through — so reconstructState can match
@@ -243,6 +249,19 @@ async function writeToolTerminal(
         if (ctx.journal.putIfMatch) await ctx.journal.putIfMatch(dupKey, raw, success);
         else await ctx.journal.put(dupKey, success);
       }
+    }
+  }
+  if (semPlan && record.status === 'succeeded') {
+    // FAZ-6 write side: the deterministic half (identity/amount/discriminator fields) writes with the
+    // Terminal; the vector is fail-open — an embedder failure costs one future QUESTION, never the
+    // Record, never the tool result. Outage incidents fire once per failure streak, not per call.
+    const embedded = await writeSemRecord(ctx.journal, semPlan, toolCallId);
+    if (embedded.outage) {
+      await recordIncident(ctx.journal, ctx.runId, {
+        at: Date.now(), source: 'semantic-guard', action: 'warn', toolName, toolCallId,
+        message: `@gnldev/durable: semantic embedder has failed repeatedly — semantic dup records are being written WITHOUT vectors (deterministic fields intact); the paraphrase gate is degraded until the embedder recovers`,
+        detail: { toolName, embedModelId: semPlan.cfg.embedModelId },
+      });
     }
   }
   // A FAILED side-effect tool counts toward maxToolCalls (the effect may have executed
@@ -509,7 +528,20 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           // another run's id from there long after this branch was fixed.
           return await consumeExistingRecord(ctx, key, record, toolCallId);
         }
-        // Approved === true → run below
+        // Approved === true → run below.
+        // FAZ-6: if THIS suspension was the semantic gate's question, the human's "run it anyway" IS
+        // The 'different work' verdict — tombstone the (prior, incoming) pair so the SAME question is
+        // Never asked again (best-effort: a lost tombstone merely re-asks, the safe failure).
+        {
+          const semPair = (record.output as { __gnl_suspend?: { semPair?: { priorHash?: string } } } | undefined)?.__gnl_suspend?.semPair;
+          if (semPair?.priorHash && ctx.threadId) {
+            try {
+              await ctx.journal.put(semTombKey(ctx.threadId, toolName, semPair.priorHash, hash), {
+                at: ctx.journal.now ? await ctx.journal.now() : Date.now(), by: toolCallId,
+              });
+            } catch { /* re-asking is the safe failure */ }
+          }
+        }
       } else if (record === undefined && tool.confirm && approved !== true) {
         // FAZ-3 `confirm` — the tool's OWN first-call human gate, handled by the runtime directly
         // (no guard factory: a two-step ceremony where forgetting the factory leaves the flag
@@ -705,6 +737,67 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       // Post-taint duplicate reads better as a duplicate) and BEFORE the loop gate. Mode-independent
       // (unlike the duplicate guard): an args-idempotent side effect's FIRST execution is just as
       // Gateable — the replay fast-path above already short-circuits repeats before reaching here.
+      // FAZ-6 — semantic dup gate (double opt-in: limits.semantic + tool.semanticIdentity). Runs
+      // ONLY on an exact-hash MISS (deterministic > probabilistic: the fast-path replay above never
+      // Reaches here), only for side-effect tools, and never over a pre-approved call. The embedding
+      // Finds CANDIDATES; declared fields decide; the ONLY exit is the standard suspend question.
+      // On every 'none' arm the output path stays byte-identical — the model is told NOTHING (a
+      // Model that "knows it was done" may skip the call itself: indirect silent dedup, banned).
+      // Aktiflik = canlı embed closure'ı; frozen-limits round-trip'inden gelen soyulmuş blok
+      // (embedStripped) İNAKTİFTİR — resume, semantiği yeniden verilmemiş limits'le fail-open koşar.
+      const semCfg = dupCfg.semantic && typeof dupCfg.semantic.embed === 'function' ? dupCfg.semantic : undefined;
+      if (dupCfg.semantic && !semCfg) warnThreadScopeFallback('semantic guard (resumed with frozen limits — re-supply `limits` to reactivate)', toolName);
+      let semPlan: SemPlan | undefined;
+      if (semCfg && tool.semanticIdentity && sideEffect) {
+        if (!ctx.threadId) {
+          warnThreadScopeFallback('semantic guard', toolName);
+        } else {
+          const fields = extractSemFields(tool.semanticIdentity, input);
+          semPlan = {
+            cfg: semCfg, id: tool.semanticIdentity, threadId: ctx.threadId, toolName,
+            argsHash: hash, fields, canonical: canonicalTextOf(tool.semanticIdentity, toolName, input, fields),
+          };
+        }
+      }
+      // `record === undefined` is LOAD-BEARING (K18, the FAZ-3 confirm lesson repeated by the
+      // Denetçi verbatim): this arm answers the FRESH call only. A 'failed'/'running' record means a
+      // Crashed or in-flight attempt — overwriting it with 'suspended' would show the human a
+      // "Similar work — run it?" question while HIDING that this very attempt may already have
+      // Fired, and would bypass the recover/reclaim ladder that owns that state.
+      if (record === undefined && semPlan && approved !== true) {
+        const verdict = await findSemanticCandidate(ctx.journal, semPlan, dupCfg.ttlMs);
+        if (verdict.kind === 'suspend') {
+          const pct = Math.round(verdict.score * 100);
+          const reason = verdict.amountsDiffer.length
+            ? `Semantically similar work already succeeded in this thread (${pct}% match, first: ${verdict.firstToolCallId}) ` +
+              `but the amounts differ (${verdict.amountsDiffer.join(', ')}). A human must decide: new job, or a duplicate with a typo?`
+            : `Semantically similar work already succeeded in this thread (${pct}% match, first: ${verdict.firstToolCallId}): ` +
+              `"${verdict.priorCanonical}". A human must approve executing it again.`;
+          const sentinel = { __gnl_suspend: { toolCallId, toolName, args: input, reason, semPair: { priorHash: verdict.priorHash } } };
+          await recordIncident(ctx.journal, ctx.runId, {
+            at: Date.now(), source: 'semantic-guard', action: 'suspend', toolName, toolCallId, message: reason,
+            detail: { toolName, score: verdict.score, firstToolCallId: verdict.firstToolCallId, priorHash: verdict.priorHash, amountsDiffer: verdict.amountsDiffer },
+          });
+          await writeToolTerminal(ctx, key, { status: 'suspended', output: sentinel }, toolCallId, toolName, hash);
+          return sentinel;
+        }
+        // Telemetry-only arms (the calibration debt's only v1 signal — see the design report):
+        if (verdict.noListKeys) warnThreadScopeFallback('semantic guard (journal has no listKeys)', toolName);
+        if (verdict.outage) {
+          await recordIncident(ctx.journal, ctx.runId, {
+            at: Date.now(), source: 'semantic-guard', action: 'warn', toolName, toolCallId,
+            message: `@gnldev/durable: semantic embedder failing repeatedly — the paraphrase gate is effectively OFF (fail-open); layers 1-4 are unaffected`,
+            detail: { toolName, embedModelId: semPlan.cfg.embedModelId },
+          });
+        }
+        if (verdict.droppedIdentity) {
+          await recordIncident(ctx.journal, ctx.runId, {
+            at: Date.now(), source: 'semantic-guard', action: 'warn', toolName, toolCallId,
+            message: `@gnldev/durable: ${verdict.droppedIdentity} semantically-similar candidate(s) dropped on identity mismatch for '${toolName}' — score alone never suspends (telemetry for threshold calibration)`,
+            detail: { toolName, droppedIdentity: verdict.droppedIdentity },
+          });
+        }
+      }
       const taintAction = ctx.limits?.taintedSideEffects ?? 'warn';
       if (sideEffect && approved !== true && taintAction !== 'off') {
         const taint = await readRunTaint(ctx.journal, ctx.runId);
@@ -929,7 +1022,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
                 status: 'succeeded', output, argsHash: hash, toolName,
                 // A compensate-bearing tool's success stores the RAW args — the unwind needs them.
                 ...(typeof tool.compensate === 'function' ? { input } : {}),
-              }, toolCallId, toolName, hash, dupKey);
+              }, toolCallId, toolName, hash, dupKey, semPlan);
               if (tool.untrusted) {
                 await markRunTainted(ctx.journal, ctx.runId, { toolCallId, toolName, source: 'tool' },
                   ctx.limits?.taintScope === 'thread' ? { threadId: ctx.threadId } : undefined); // AUDIT A4: same opt-in thread carry as the invocation-time mark
@@ -1144,7 +1237,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           status: 'succeeded', output, argsHash: hash, toolName,
           // A compensate-bearing tool's success stores the RAW args — the unwind needs them.
           ...(typeof tool.compensate === 'function' ? { input } : {}),
-        }, toolCallId, toolName, hash, dupKey);
+        }, toolCallId, toolName, hash, dupKey, semPlan);
         // NOTE: taint for `untrusted` tools is now marked at INVOCATION (see above), not here —
         // Marking after execute lost the same-step parallel race against a side-effect tool's taint read.
       } catch (error: any) {
@@ -1200,6 +1293,26 @@ function warnTaintCannotFire(ctx: DurableCtx, tools: Record<string, any>): void 
 
 export function durableTools<T extends Record<string, any>>(tools: T, ctx: DurableCtx): T {
   warnTaintCannotFire(ctx, tools);
+  // FAZ-6 config-time gate: static contradictions THROW here, before any run starts — an
+  // Installed-but-inert semantic gate is false confidence, and a gate whose only exit is an approval
+  // Question must not start where no approvals channel exists (it would suspend forever).
+  const rawDup = ctx.limits?.sideEffectDuplicates;
+  const semActive = !!(rawDup && typeof rawDup === 'object' && rawDup.semantic);
+  if (semActive) {
+    validateSemanticConfig(rawDup);
+    if (ctx.noApprovals) {
+      throw new Error(
+        '@gnldev/durable: sideEffectDuplicates.semantic is active but this caller has NO approvals channel ' +
+        '(withIdempotency) — the semantic gate\'s only exit is an approval question, so it would suspend ' +
+        'forever. Remove the semantic block here, or run through runDurable/streamDurable.',
+      );
+    }
+  }
+  for (const [name, t] of Object.entries(tools)) {
+    if ((t as { semanticIdentity?: unknown })?.semanticIdentity) {
+      assertSemanticIdentity(name, (t as { semanticIdentity: import('./semantic-dup.js').SemanticIdentity }).semanticIdentity);
+    }
+  }
   // H10b: strict tool policy — catch an undeclared tool before it's WRAPPED, before the run starts.
   if (ctx.toolPolicy === 'strict' || ctx.toolPolicy === 'strict-critical') {
     const undeclared = Object.entries(tools)

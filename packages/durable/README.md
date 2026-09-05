@@ -264,6 +264,74 @@ Two things the router enforces, so a host does not have to:
 
 License: Apache-2.0 — see [LICENSE](../../LICENSE).
 
+## Semantic duplicate-candidate gate (`sideEffectDuplicates.semantic`)
+
+**The honest claim, verbatim:** this layer finds past side-effect work that LOOKS similar in meaning
+("create product ABC" said two different ways — where hash-based dedup is blind) and, ONLY when the
+deterministic field comparison also matches (tool name, identity fields, amount fields), puts the
+first result next to an approval question. It never silently skips, blocks or tells the model
+"already done" on your behalf; the final word is always deterministic field equality + a human. It is
+best-effort and fail-open: if your embedder is unreachable or no candidate clears the bar, behavior
+is today's behavior — no regression, and no guarantee either. Decision hierarchy: deterministic >
+human gate > probabilistic — this layer is the third class serving the first two as a candidate
+finder. It does not replace layers 1-4 (hash/claim/confirm/critical); it runs beneath them, and it
+refuses to start where no approvals channel exists. The quality of your `semanticIdentity.keys`
+declaration IS the quality of the protection.
+
+```ts
+// Double opt-in: the run-level block AND the tool-level declaration — either absent, layer inert.
+limits: {
+  sideEffectDuplicates: {
+    action: 'suspend', scope: 'thread',            // required — config-time throw otherwise
+    semantic: {
+      embed: myEmbed,                              // (texts: string[]) => Promise<number[][]>
+      embedModelId: 'text-embedding-3-small',      // required stamp — mixed-model cosine is meaningless
+      minSimilarity: 0.6,                          // candidate threshold (recall side; misses are safe)
+    },
+  },
+},
+
+const createProduct = gnlTool(tool({ /* … */ }), {
+  sideEffect: true,
+  semanticIdentity: {
+    keys: ['sku'],                                 // the business identity — REQUIRED, non-empty
+    amountFields: ['price'],                       // identity-equal + amount-differ → its own question
+    discriminatorFields: ['cancel'],               // negation gate: differ → deterministically not a duplicate
+    describe: (args: any) => `create product ${args.sku}`, // the PII boundary: ONLY this reaches the embedder
+  },
+});
+```
+
+**Local, in-process embeddings (recommended for the critical profile — nothing leaves the machine).**
+The `embed` contract is provider-agnostic; a ~240MB multilingual model behind it removes the API
+bill, the rate limit AND the PII question in one move:
+
+```ts
+// npm i @huggingface/transformers   (~150-400MB RAM at runtime, ~5-20ms per short sentence on CPU)
+import { pipeline } from '@huggingface/transformers';
+const extractor = await pipeline('feature-extraction', 'Xenova/multilingual-e5-small', { dtype: 'q8' });
+const embed = async (texts: string[]) => {
+  // e5 family quirk: inputs want a "query: " prefix — bake it into the adapter, never into callers.
+  const out = await extractor(texts.map((t) => `query: ${t}`), { pooling: 'mean', normalize: true });
+  return out.tolist();
+};
+// embedModelId: 'local:multilingual-e5-small@q8'  ← stamp the QUANTIZATION too — a re-quantized
+// model produces different vectors, and the stamp is what keeps old records out of the comparison.
+// The same closure serves @gnldev/memory's semantic recall — one model, both jobs.
+```
+
+Cost model (documented so the bill is never a surprise): ~1 embed call per guarded side-effect call
+on the happy path (the recall-side vector is cached by args hash and reused for the write). Records
+live in YOUR journal under `xthr:<threadId>:` (~3KB each, no vector DB, no index) and die with the
+thread in the same `purgeThread` sweep as everything else. Not written on failed/suspended work;
+`ttlMs` on the parent block ages records out of consideration. Named TOCTOU bound: two CONCURRENT
+paraphrase twins (different hashes, same identity, in flight together) cannot see each other's
+records — both run; this layer's promise is duplicates SEPARATED IN TIME, concurrency belongs to the
+exact-hash/lock layers below. What this feature is NOT (binding for
+docs and marketing alike): not a "meaning engine", not AI-powered duplicate prevention, not intent
+detection, not "semantically exactly-once" — negation and magnitude are solved by the STRUCTURED
+fields, never by the vector.
+
 ## Production deployment notes (exactly-once preconditions)
 
 The exactly-once guarantee rests on one precondition: **storage never loses an acknowledged write**

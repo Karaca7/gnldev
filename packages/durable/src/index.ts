@@ -100,6 +100,8 @@ export { withOrgStorage, orgStorageScopeOf } from './org-storage.js';
 export { orgPurgedKey, purgeRun, purgeThread, purgeOrganization, sweepRuns, sweepLog, sweepThreads, createRetentionSweeper } from './retention.js';
 export type { LogSweepTarget, RetentionSweeperOptions, RetentionSweepSummary, RetentionSweeper } from './retention.js';
 export { recordIdemConflict, readIdemLedger } from './idem-ledger.js';
+export { semKey, semTombKey, SEM_TEMPLATE_VERSION } from './semantic-dup.js';
+export type { SemanticDupConfig, SemanticIdentity, SemDupRecord } from './semantic-dup.js';
 export type { IdemConflictRecord } from './idem-ledger.js';
 // Phase 8.1: the common poll-loop core for queue/events/scheduler (a setTimeout chain with backoff).
 export { createPollLoop } from './polling.js';

@@ -258,7 +258,9 @@ export const runKeys = {
    * ThreadId, which is the structural fix for xrun's immortal-key problem: `purgeThread` sweeps
    * `xthr:<threadId>:` and the thread's dedup state dies WITH the thread. The thread-scoped
    * Duplicate MARKER (durable-tool's dup guard, `scope: 'thread'`) shares this prefix for the same
-   * Reason — one sweep reclaims both families.
+   * Reason — one sweep reclaims both families. FAZ-6's semantic records (`sem-*`) and their
+   * "Different work" tombstones (`semtomb-*`, see semantic-dup.ts) live here too: FOUR families,
+   * One purgeThread sweep, one lifecycle — the thread's dedup state dies with the thread.
    */
   toolThread: (threadId: string, toolName: string, hash: string) => {
     assertNoColonInToolName(toolName);

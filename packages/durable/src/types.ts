@@ -1,5 +1,6 @@
 // Public API type helpers — types expressing intent instead of `any` (consumers get these from @gnldev/durable).
 import type { LanguageModelV4 } from '@ai-sdk/provider';
+import type { SemanticIdentity } from './semantic-dup.js';
 
 /** An AI SDK model OR a 'provider/model' string (resolved via the model router). */
 export type ModelInput = LanguageModelV4 | string;
@@ -161,6 +162,16 @@ export interface AnyTool {
    * Ask a human EVERY first time — not a substitute for an idempotencyKey.
    */
   confirm?: boolean | { reason?: (args: unknown) => string };
+  /**
+   * FAZ-6 — the tool-level half of the semantic dup gate's DOUBLE opt-in (the run-level half is
+   * `limits.sideEffectDuplicates.semantic`). Declares which arg fields carry the business IDENTITY
+   * (`keys` — required, non-empty, THROWS empty), which carry magnitudes (`amountFields`) and which
+   * Flip the action's meaning (`discriminatorFields` — cancel/direction booleans+enums). The
+   * Embedding only FINDS candidates; these declared fields DECIDE, and a human confirms. The
+   * Declaration's quality IS the protection's quality (a per-call-unique key silently disables the
+   * Layer — documented limit, telemetry is the only signal). See semantic-dup.ts.
+   */
+  semanticIdentity?: SemanticIdentity;
 }
 
 /** Agent tool set (name → tool). */
@@ -178,7 +189,7 @@ export type ToolSet = Record<string, AnyTool>;
 export type ToolDurability = Pick<
   AnyTool,
   | 'sideEffect' | 'idempotent' | 'idempotency' | 'idempotencyKey' | 'idempotencyWindow'
-  | 'untrusted' | 'maxRetries' | 'timeoutMs' | 'claimTtlMs' | 'recover' | 'compensate' | 'confirm'
+  | 'untrusted' | 'maxRetries' | 'timeoutMs' | 'claimTtlMs' | 'recover' | 'compensate' | 'confirm' | 'semanticIdentity'
 >;
 
 /**

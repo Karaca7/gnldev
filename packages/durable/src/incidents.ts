@@ -18,7 +18,7 @@ import type { Journal } from './journal.js';
 export interface RunIncident {
   at: number;
   /** Which mechanism decided (see limits.ts / durable-tool.ts / taint.ts). */
-  source: 'duplicate-guard' | 'loop-detection' | 'max-tool-calls' | 'taint-guard';
+  source: 'duplicate-guard' | 'loop-detection' | 'max-tool-calls' | 'taint-guard' | 'semantic-guard';
   /** What it did: 'warn' executed anyway (named the incident), the rest did not execute the call. */
   action: 'warn' | 'reflect' | 'block' | 'suspend';
   toolName: string;

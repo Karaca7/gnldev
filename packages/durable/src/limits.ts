@@ -92,6 +92,7 @@ import { claim, runKeys, nestedAgentRunId } from './journal.js';
 import { usageAndCostFromModelValue, type RunCostOptions } from './cost.js';
 import { effectivePricingTable } from './pricing.js';
 import type { Journal, JournalReader, ToolJournalRecord } from './journal.js';
+import type { SemanticDupConfig } from './semantic-dup.js';
 
 /** Per-run runaway protection (opt-in): fields that aren't provided are not enforced. */
 export interface RunLimits {
@@ -180,10 +181,18 @@ export interface RunLimits {
    *    Question, a false negative fires the effect twice; the marker lives as long as the thread and
    *    Dies with it (`purgeThread` sweeps `xthr:<threadId>:`).
    * Plain-string form ≡ `{ action, scope: 'run' }` — every existing caller byte-for-byte unchanged.
+   *
+   * FAZ-6 `semantic` bloğu — anlamsal mükerrer-aday kapısı (yalnız `action:'suspend'` +
+   * `scope:'thread'` ile geçerli, aksi CONFIG ANINDA throw): geçmiş side-effect işleri embedding
+   * Benzerliğiyle ADAY olarak bulur, karar her zaman deterministik alan eşitliği + insan onayıdır.
+   * Skor tek başına asla suspend tetiklemez; modele hiçbir şey bildirilmez (kalıcı kural); embedder
+   * Erişilemezse davranış bugünkü davranıştır (fail-open, best-effort). Çift opt-in: bu blok +
+   * Aracın kendi `semanticIdentity` beyanı — ikisi de yoksa katman hiç çalışmaz. Maliyet: korumalı
+   * Çağrı başına ~1 embed (mutlu yolda cache'li), fatura embed closure'ının sahibinindir.
    */
   sideEffectDuplicates?:
     | 'off' | 'warn' | 'reflect' | 'block' | 'suspend'
-    | { action: 'off' | 'warn' | 'reflect' | 'block' | 'suspend'; scope?: 'run' | 'thread'; ttlMs?: number };
+    | { action: 'off' | 'warn' | 'reflect' | 'block' | 'suspend'; scope?: 'run' | 'thread'; ttlMs?: number; semantic?: SemanticDupConfig };
   /**
    * How far one human approval reaches.
    *

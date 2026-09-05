@@ -494,6 +494,24 @@ async function persistInput(
   await journal.put(key, stampFormat({ at: Date.now(), prompt: input.prompt, messages: input.messages, system: input.system, ...(threadId ? { threadId } : {}), ...(agentName ? { agent: agentName } : {}), ...(resourceId ? { resourceId } : {}), ...(rawInputHash ? { hash: rawInputHash } : {}), ...(actor ? { actor } : {}) })); // H13
 }
 
+/** FAZ-6: `limits` is FROZEN to the journal and must stay serializable — the semantic block's
+ * `embed` closure cannot ride along (structuredClone rejects functions, and a resumed run could not
+ * Recover a closure from disk anyway). The frozen copy keeps the DECLARATIVE half (embedModelId,
+ * Thresholds) so introspection stays honest; a resume that recovers limits from the journal runs with
+ * The semantic gate INACTIVE (double opt-in unmet: no embed) unless the caller re-supplies it —
+ * Fail-open, same posture as an unreachable embedder. */
+function serializableLimits(limits: RunLimits): RunLimits {
+  const dup = limits.sideEffectDuplicates;
+  if (!dup || typeof dup !== 'object' || !dup.semantic) return limits;
+  const { embed: _embed, ...semRest } = dup.semantic;
+  // `embedStripped` marks the round-trip copy: the validator treats it as "declaratively present,
+  // Functionally inactive" instead of throwing on the missing closure — WITHOUT the mark, a user who
+  // Simply forgot `embed` would get silent inactivity (false confidence), so the bare-missing case
+  // Still throws (denetçi blokeri: the unmarked strip killed EVERY resume of a semantic-active run,
+  // Including approving the gate's own question).
+  return { ...limits, sideEffectDuplicates: { ...dup, semantic: { ...semRest, embedStripped: true } as unknown as typeof dup.semantic } };
+}
+
 /** FAZ-4 admissibility gate — runs right after assertThreadOwnership in BOTH entry points, BEFORE
  * RunStarted (a refused attempt must not flip outcome state, same K2/K3 posture as the thread
  * Guard). Order: tombstone → actor → input fingerprint. Every refusal optionally lands in the
@@ -2230,7 +2248,7 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   // Freeze `limits` into the journal on the first run (idempotent via `claim` — the FIRST
   // Run's limits win, a later resume never overwrites them). resumeRun reads this back when the caller
   // Doesn't re-supply `limits`, so a resumed run keeps its cost cap / loop / duplicate / taint gates.
-  if (limits) await claim(journal, runKeys.cfgLimits(runId), limits);
+  if (limits) await claim(journal, runKeys.cfgLimits(runId), serializableLimits(limits));
   // WRITE-AHEAD user message (see writeAheadIncoming): journal `:input` first (the WAL), then memory —
   // A run that fails before its first token keeps the user's message visible in the thread.
   if (memory && threadId) await writeAheadIncoming(journal, memory, threadId, runId, incoming, incomingStored, limits);
@@ -2611,7 +2629,7 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   await persistInput(journal, runId, rest, frozenInput !== undefined, threadId, agentName, resourceId, rawInputHash, actor);
   await persistMemoryContext(journal, runId, memCtx);
   // Freeze `limits` on the first run (parity with runDurableInner) — idempotent via `claim`.
-  if (limits) await claim(journal, runKeys.cfgLimits(runId), limits);
+  if (limits) await claim(journal, runKeys.cfgLimits(runId), serializableLimits(limits));
   // WRITE-AHEAD user message (parity with runDurableInner — see writeAheadIncoming). Pre-model, so a
   // Memory failure rejects gnl.stream() itself (a clean JSON error) instead of surfacing mid-SSE.
   if (memory && threadId) await writeAheadIncoming(journal, memory, threadId, runId, incoming, incomingStored, limits);

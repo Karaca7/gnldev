@@ -25,6 +25,8 @@ export interface Interrupt {
   toolName: string;
   args: unknown;
   reason?: string;
+  /** FAZ-6: set when the suspension came from the semantic dup gate — the approval writes the 'different work' tombstone from this. */
+  semPair?: { priorHash: string };
 }
 
 /** Suspend signal returned in place of tool execute (the loop stops via stopWhen). */
