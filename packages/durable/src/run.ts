@@ -84,6 +84,14 @@ export type RunDurableArgs = GenerateTextOptions & {
   /** FAZ-7: 'require' makes the ledger append a PRECONDITION of the refusal — its failure propagates
    *  Instead of warning (never refuse unrecorded). Default 'best-effort'. Only meaningful with conflictLedger. */
   auditOnReject?: 'best-effort' | 'require';
+  /**
+   * Replay-disclosure policy. 'silent' (default): existing behavior — replayed tool results are
+   * indistinguishable to the model, only the result envelope (`replayedToolCalls`) carries the fact.
+   * 'explain': a TRANSIENT per-step note (never persisted, never in thread memory) tells the model —
+   * strictly AFTER the call was already answered from the journal — that the result is the record of
+   * earlier work, so it narrates honestly instead of announcing a fresh success. See withReplayDisclosure.
+   */
+  replayDisclosure?: 'explain' | 'silent';
   /** FAZ-4: what a retention-swept runId's late retry does — 'ignore' (default, re-runs: today's
    *  Behavior) or 'reject' (RunSweptError; the critical profile's choice). */
   tombstonePolicy?: 'ignore' | 'reject';
@@ -165,6 +173,14 @@ export type StreamDurableArgs = StreamTextOptions & {
   /** FAZ-7: 'require' makes the ledger append a PRECONDITION of the refusal — its failure propagates
    *  Instead of warning (never refuse unrecorded). Default 'best-effort'. Only meaningful with conflictLedger. */
   auditOnReject?: 'best-effort' | 'require';
+  /**
+   * Replay-disclosure policy. 'silent' (default): existing behavior — replayed tool results are
+   * indistinguishable to the model, only the result envelope (`replayedToolCalls`) carries the fact.
+   * 'explain': a TRANSIENT per-step note (never persisted, never in thread memory) tells the model —
+   * strictly AFTER the call was already answered from the journal — that the result is the record of
+   * earlier work, so it narrates honestly instead of announcing a fresh success. See withReplayDisclosure.
+   */
+  replayDisclosure?: 'explain' | 'silent';
   /** FAZ-4: what a retention-swept runId's late retry does — 'ignore' (default, re-runs: today's
    *  Behavior) or 'reject' (RunSweptError; the critical profile's choice). */
   tombstonePolicy?: 'ignore' | 'reject';
@@ -186,7 +202,59 @@ export type StreamDurableArgs = StreamTextOptions & {
 };
 
 /** `generateText` result + suspended tool calls (`interrupts`). */
-export type DurableResult = Awaited<ReturnType<typeof generateText>> & { interrupts: Interrupt[] };
+export type DurableResult = Awaited<ReturnType<typeof generateText>> & {
+  interrupts: Interrupt[];
+  /** Replay-disclosure envelope (out-of-band, ALWAYS stamped when non-empty): tool calls this run
+   *  answered from pre-existing journal records instead of executing. UI/adapters may surface it
+   *  (badge, signed suffix); it never enters the model's context by itself — see DurableCtx.replayLog. */
+  replayedToolCalls?: Array<{ toolCallId: string; toolName?: string; status: string; origin: 'self' | 'window' }>;
+};
+
+/**
+ * Replay-disclosure model note (`replayDisclosure: 'explain'`): wraps the (possibly absent)
+ * prepareStep so that the step FOLLOWING a consumed pre-existing record carries one TRANSIENT
+ * system note — the model can then narrate honestly ("this result is the record of earlier work,
+ * nothing ran now") instead of announcing a fresh success or inventing a reason.
+ *
+ * THE PANEL RULE STAYS INTACT, by construction: the note exists only AFTER the model already chose
+ * to call the tool and the engine already answered it — it cannot influence the call decision. And
+ * it is prepareStep-only (a per-step INPUT override), so it is never persisted: neither the journal
+ * nor thread memory ever sees it, and later turns start clean — the model stays blind at decision
+ * time, informed only while narrating.
+ *
+ * HONEST BOUNDS: (1) a replay consumed on the FINAL step gets no note — there is no following live
+ * step to inject into; the envelope is the fallback there. (2) The note is a mid-list 'system'
+ * message — the engine itself replays those (allowSystemInMessages: true), but a provider converter
+ * that rejects mid-list system messages would surface it; measured fine on OpenAI-compatible.
+ * (3) STREAM surface, v1: the note fires (prepareStep is shared) but the ENVELOPE is not stamped on
+ * the stream result — 'the envelope always carries the fact' currently holds for run() only.
+ */
+function withReplayDisclosure(prev: ((step: any) => any) | undefined, ctx: DurableCtx): (step: any) => Promise<any> {
+  let announced = 0;
+  return async (step: any) => {
+    const base = prev ? await prev(step) : undefined;
+    const log = ctx.replayLog ?? [];
+    if (log.length <= announced) return base;
+    const seen = log.slice(announced);
+    announced = log.length;
+    // Only FOREIGN, SUCCEEDED records earn the note: 'self' entries are this very request resuming
+    // (saying "earlier request" would be false — denetçi K4), and a denied/reflected record must not
+    // be narrated as "work already completed". Everything still reaches the envelope, labelled.
+    const fresh = seen.filter((f) => f.origin === 'window' && f.status === 'succeeded');
+    if (fresh.length === 0) return base;
+    const names = [...new Set(fresh.map((f) => f.toolName ?? f.toolCallId))].join(', ');
+    const note = {
+      role: 'system',
+      content:
+        `[gnl] The result(s) of ${names} above were NOT produced by this request — the same work was ` +
+        `already completed earlier and the recorded outcome was returned (nothing executed now). ` +
+        `Tell the user this explicitly, in their language: the operation was not performed again; ` +
+        `what they see is the record of the earlier one.`,
+    };
+    const msgs = (base as { messages?: unknown[] } | undefined)?.messages ?? step.messages;
+    return { ...(base ?? {}), messages: [...msgs, note] };
+  };
+}
 
 function hasSuspend(part: any): boolean {
   return part?.type === 'tool-result' && !!part.output?.__gnl_suspend;
@@ -2181,7 +2249,7 @@ async function runDurableGuarded(args: RunDurableArgs): Promise<DurableResult> {
 }
 
 async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
-  const { journal, runId, guard, approvals, memory, threadId, resourceId, agentName, replay, lock: _lock, processors, schemaCompat, limits, exclusiveModelStep, replayCacheMaxBytes, toolPolicy, timeouts, strictInput, conflictLedger, tombstonePolicy, actor, auditOnReject, model: modelInput, tools, stopWhen, ...rest } =
+  const { journal, runId, guard, approvals, memory, threadId, resourceId, agentName, replay, lock: _lock, processors, schemaCompat, limits, exclusiveModelStep, replayCacheMaxBytes, toolPolicy, timeouts, strictInput, conflictLedger, tombstonePolicy, actor, auditOnReject, replayDisclosure, model: modelInput, tools, stopWhen, ...rest } =
     args as RunDurableArgs & Record<string, any>;
   // `ModelInput` is `LanguageModelV4 | string`, and until now only createGnl honoured the string
   // Half: passing 'nvidia/…' straight to runDurable type-checked and then died inside the AI SDK
@@ -2213,7 +2281,7 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   const resolvedApprovals = await resolveApprovals(journal, runId, approvals);
   // C2: on resume, fetch model/tool entries in a single query → hot replay reads take 1 round-trip instead of N.
   // On the first run there are no entries → undefined (no cache). Consume-once: see ctxGet.
-  const ctx: DurableCtx = { journal, runId, threadId, guard, approvals: resolvedApprovals, replay, limits, toolPolicy, blockedAsSentinel: true, toolTimeoutMs: timeouts?.toolMs, claimTtlMs: timeouts?.claimTtlMs, toolResultProcessors: processors, replayCache: await loadReplayCache(journal, runId, { maxBytes: replayCacheMaxBytes }) };
+  const ctx: DurableCtx = { journal, runId, threadId, guard, approvals: resolvedApprovals, replay, limits, toolPolicy, blockedAsSentinel: true, toolTimeoutMs: timeouts?.toolMs, claimTtlMs: timeouts?.claimTtlMs, toolResultProcessors: processors, replayCache: await loadReplayCache(journal, runId, { maxBytes: replayCacheMaxBytes }), replayLog: [] };
   const procCtx = processors?.length ? createProcessorCtx(journal, runId) : undefined;
 
   // Memory: load thread history (prepend to messages) + inject working memory into the system prompt.
@@ -2311,6 +2379,10 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
     const onStep = composeOnStepFinish(processors as Processor[], procCtx, stepHookFailure);
     if (onStep) options.onStepFinish = onStep;
   }
+  // Replay-disclosure (opt-in): the wrapper composes over whatever prepareStep exists (or none).
+  if (replayDisclosure === 'explain') {
+    options.prepareStep = withReplayDisclosure(options.prepareStep, ctx);
+  }
 
   // D4-retry: generateText + finishError/suspend handling + the output-processor gate, wrapped in the
   // Bounded retry-with-feedback ladder (see runGenerateWithRetryLadder above for the full contract —
@@ -2358,7 +2430,7 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
     await runSucceeded(journal, runId, Date.now());
   }
 
-  return Object.assign(result, { interrupts });
+  return Object.assign(result, { interrupts, ...(ctx.replayLog?.length ? { replayedToolCalls: ctx.replayLog } : {}) });
 }
 
 /** An agent configuration (model/tools/guard) — for resumeRun and studio embed. */
@@ -2381,6 +2453,8 @@ export interface ResumeAgentConfig {
    * `toolPolicy`. The whole protection set must survive resume; pass the SAME config the original run used.
    */
   limits?: RunLimits;
+  /** K5: resume must not silently drop the disclosure policy the original run used. */
+  replayDisclosure?: 'explain' | 'silent';
   processors?: Processor[];
   /**
    * `memory` was the next field in that same list, and it was the one that loses DATA rather than
@@ -2467,6 +2541,7 @@ export async function resumeRun(
     ...(opts.exclusiveModelStep ? { exclusiveModelStep: opts.exclusiveModelStep } : {}),
     ...(opts.schemaCompat !== undefined ? { schemaCompat: opts.schemaCompat } : {}),
     ...(opts.toolPolicy ? { toolPolicy: opts.toolPolicy } : {}),
+    ...(opts.replayDisclosure ? { replayDisclosure: opts.replayDisclosure } : {}),
     // FAZ-4 K5: fields added to ResumeAgentConfig MUST land in this selective forward list too — an
     // Interface field missing here is born dead and silently drops the protection the caller asked for.
     ...(opts.strictInput !== undefined ? { strictInput: opts.strictInput } : {}),
@@ -2561,7 +2636,7 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   // P2-cancel: same terminal-refusal contract as compensation — a durably-canceled run never
   // (re)starts or resumes (the per-step mid-flight gate lives in durable-model.ts).
   await assertNotCanceled(args.journal, args.runId);
-  const { journal, runId, guard, approvals, memory, threadId, resourceId, agentName, replay, lock, processors, schemaCompat, limits, exclusiveModelStep, replayCacheMaxBytes, toolPolicy, timeouts, strictInput, conflictLedger, tombstonePolicy, actor, auditOnReject, model, tools, stopWhen, onBlocked, ...rest } =
+  const { journal, runId, guard, approvals, memory, threadId, resourceId, agentName, replay, lock, processors, schemaCompat, limits, exclusiveModelStep, replayCacheMaxBytes, toolPolicy, timeouts, strictInput, conflictLedger, tombstonePolicy, actor, auditOnReject, replayDisclosure, model, tools, stopWhen, onBlocked, ...rest } =
     args as StreamDurableArgs & Record<string, any>;
   // (a): opt-in run-lock — acquire BEFORE the setup work (reject a concurrent stream/run of the
   // Same runId with RunBusyError). Released on stream finish/error (see the onFinish/onError wrappers).
@@ -2637,7 +2712,7 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   // AUDIT (approval first-class): SAME as runDurableInner — BEFORE ctx is set up (see resolveApprovals).
   const resolvedApprovals = await resolveApprovals(journal, runId, approvals);
   // C2: on resume, load the replay snapshot (same as runDurableInner).
-  const ctx: DurableCtx = { journal, runId, threadId, guard, approvals: resolvedApprovals, replay, limits, toolPolicy, blockedAsSentinel: true, toolTimeoutMs: timeouts?.toolMs, claimTtlMs: timeouts?.claimTtlMs, toolResultProcessors: processors, replayCache: await loadReplayCache(journal, runId, { maxBytes: replayCacheMaxBytes }) };
+  const ctx: DurableCtx = { journal, runId, threadId, guard, approvals: resolvedApprovals, replay, limits, toolPolicy, blockedAsSentinel: true, toolTimeoutMs: timeouts?.toolMs, claimTtlMs: timeouts?.claimTtlMs, toolResultProcessors: processors, replayCache: await loadReplayCache(journal, runId, { maxBytes: replayCacheMaxBytes }), replayLog: [] };
   const procCtx = processors?.length ? createProcessorCtx(journal, runId) : undefined;
 
   // Memory: load thread history + inject into system (BEFORE persistInput → replayable).
@@ -2723,6 +2798,10 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
     // so a processor that blocks a run only takes effect if WE notice and stop.
     const onStep = composeOnStepFinish(processors as Processor[], procCtx, stepHookFailure);
     if (onStep) options.onStepFinish = onStep;
+  }
+  // Replay-disclosure (opt-in): the wrapper composes over whatever prepareStep exists (or none).
+  if (replayDisclosure === 'explain') {
+    options.prepareStep = withReplayDisclosure(options.prepareStep, ctx);
   }
   // Stream finish: output processors (only messages being persisted) + idempotent memory append
   // (marker; stream/non-stream do not double-write, replay-safe). ProcessorTripwire blocks the append

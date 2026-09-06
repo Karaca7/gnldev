@@ -999,7 +999,10 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
       // Response with `finishReason: 'unknown'`, the run was journaled as completed, and the caller
       // Had no way to tell the two apart. The framework already knows which happened; it just was
       // Not saying. Additive field, so existing clients are unaffected.
-      return c.json({ ok: true, runId: body.runId, text: r.text, interrupts: r.interrupts, finishReason: r.finishReason });
+      // `replayedToolCalls` rides along for the same reason as finishReason: the engine knows this
+      // answer came from the journal instead of executing (replay-disclosure envelope), and a UI that
+      // wants to badge it should not have to infer it from prose. Additive; absent on fresh work.
+      return c.json({ ok: true, runId: body.runId, text: r.text, interrupts: r.interrupts, finishReason: r.finishReason, ...((r as { replayedToolCalls?: unknown[] }).replayedToolCalls?.length ? { replayedToolCalls: (r as { replayedToolCalls?: unknown[] }).replayedToolCalls } : {}) });
     } catch (e: any) {
       return limitErrorResponse(c, e) ?? threadMismatchResponse(c, e) ?? callerConflictResponse(c, e) ?? blockedErrorResponse(c, e) ?? upstreamErrorResponse(c, e) ?? c.json({ error: String(e?.message ?? e) }, 400);
     } finally {
@@ -1075,7 +1078,10 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
       // Response with `finishReason: 'unknown'`, the run was journaled as completed, and the caller
       // Had no way to tell the two apart. The framework already knows which happened; it just was
       // Not saying. Additive field, so existing clients are unaffected.
-      return c.json({ ok: true, runId: body.runId, text: r.text, interrupts: r.interrupts, finishReason: r.finishReason });
+      // `replayedToolCalls` rides along for the same reason as finishReason: the engine knows this
+      // answer came from the journal instead of executing (replay-disclosure envelope), and a UI that
+      // wants to badge it should not have to infer it from prose. Additive; absent on fresh work.
+      return c.json({ ok: true, runId: body.runId, text: r.text, interrupts: r.interrupts, finishReason: r.finishReason, ...((r as { replayedToolCalls?: unknown[] }).replayedToolCalls?.length ? { replayedToolCalls: (r as { replayedToolCalls?: unknown[] }).replayedToolCalls } : {}) });
     } catch (e: any) {
       return limitErrorResponse(c, e) ?? threadMismatchResponse(c, e) ?? callerConflictResponse(c, e) ?? blockedErrorResponse(c, e) ?? upstreamErrorResponse(c, e) ?? c.json({ error: String(e?.message ?? e) }, 400);
     }

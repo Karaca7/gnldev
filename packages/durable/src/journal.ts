@@ -415,6 +415,18 @@ export interface DurableCtx {
   journal: Journal;
   runId: string;
   /**
+   * REPLAY-DISCLOSURE collector (out-of-band): every pre-existing TERMINAL record consumed by this
+   * run — the engine's honest ledger of "this tool result was NOT produced by this call". Populated
+   * by consumeExistingRecord (the single choke point every read-and-return path goes through);
+   * suspended records are excluded (an open question is not a replay). What happens with it is the
+   * caller's POLICY: runDurable stamps it onto the result envelope and, only under
+   * `replayDisclosure: 'explain'`, injects a TRANSIENT per-step note so the model can narrate the
+   * "why" honestly. The list itself is never handed to the model — the permanent panel rule (the
+   * model must not know work was done BEFORE deciding to call) stays intact: this fires strictly
+   * AFTER the call was made and the engine already answered it from the journal.
+   */
+  replayLog?: Array<{ toolCallId: string; toolName?: string; status: string; origin: 'self' | 'window' }>;
+  /**
    * (thread-scoped taint): the run's threadId, when the caller gave one (runDurable/
    * StreamDurable pass it through). Pure infra on its own — durable-tool only USES it when
    * `limits.taintScope === 'thread'` (to write the thread taint key alongside the per-run mark).

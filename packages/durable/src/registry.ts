@@ -402,7 +402,10 @@ export interface CreateGnlConfig {
    * FAZ-4 — the banking/defense/medical bundle, as ONE opt-in switch. `'critical'` applies, for
    * Every run()/stream() call (explicit opts still win, field by field):
    *   toolPolicy 'strict-critical'          (side-effect tools must answer the crash window)
-   *   limits.sideEffectDuplicates 'suspend' (the ambiguous repeat becomes a human question)
+   *   limits.sideEffectDuplicates { action:'suspend', scope:'thread' } — the repeat becomes a
+   *     human question EVERY time, across the whole conversation (a deliberate second identical
+   *     job is approved into existence, an accidental one is refused; threadId-less runs fall back
+   *     to run scope with a loud warn — the F3 contract)
    *   exclusiveModelStep on                 (closes the concurrent same-runId model-claim gap)
    *   lock on                               (auto owner, ttl 300s — a concurrent duplicate 409s)
    *   strictInput + actor binding on        (one runId = one request, one owner)
@@ -438,6 +441,13 @@ export interface CreateGnlConfig {
    * NOT see lessons; extending them is a deliberate future decision, not an oversight to paper over.
    */
   suggestions?: SuggestionsConfig;
+  /**
+   * Replay-disclosure policy, forwarded to every run()/stream() (per-call RunOptions wins).
+   * 'explain' lets the model narrate honestly when a tool result came from the journal instead of
+   * executing ("the operation was not performed again") — via a TRANSIENT per-step note that never
+   * persists. Default 'silent' (existing behavior). See RunDurableArgs.replayDisclosure.
+   */
+  replayDisclosure?: 'explain' | 'silent';
 }
 
 /**
@@ -523,6 +533,8 @@ export interface RunOptions {
   strictInput?: boolean;
   conflictLedger?: boolean;
   auditOnReject?: 'best-effort' | 'require';
+  /** Replay-disclosure policy (see CreateGnlConfig.replayDisclosure); this per-call value wins. */
+  replayDisclosure?: 'explain' | 'silent';
   tombstonePolicy?: 'ignore' | 'reject';
   actor?: string;
   replay?: 'strict' | 'lenient';
@@ -684,7 +696,7 @@ export function createGnl(config: CreateGnlConfig) {
         toolPolicy: opts.toolPolicy ?? 'strict-critical',
         lock: opts.lock ?? { owner: `critical-${randomUUID()}`, ttlMs: 300_000 },
         exclusiveModelStep: opts.exclusiveModelStep ?? {},
-        limits: { sideEffectDuplicates: 'suspend', ...(opts.limits ?? {}) },
+        limits: { sideEffectDuplicates: { action: 'suspend', scope: 'thread' }, ...(opts.limits ?? {}) },
         strictInput: opts.strictInput ?? true,
         conflictLedger: opts.conflictLedger ?? true,
         tombstonePolicy: opts.tombstonePolicy ?? 'reject',
@@ -738,6 +750,7 @@ export function createGnl(config: CreateGnlConfig) {
       ...(opts.strictInput !== undefined ? { strictInput: opts.strictInput } : {}),
       ...(opts.conflictLedger !== undefined ? { conflictLedger: opts.conflictLedger } : {}),
       ...(opts.auditOnReject ? { auditOnReject: opts.auditOnReject } : {}),
+      ...((opts.replayDisclosure ?? config.replayDisclosure) ? { replayDisclosure: opts.replayDisclosure ?? config.replayDisclosure } : {}),
       ...(opts.tombstonePolicy ? { tombstonePolicy: opts.tombstonePolicy } : {}),
       ...(opts.actor ? { actor: opts.actor } : {}),
       ...(config.schemaCompat ? { schemaCompat: config.schemaCompat } : {}),
@@ -810,7 +823,7 @@ export function createGnl(config: CreateGnlConfig) {
         toolPolicy: opts.toolPolicy ?? 'strict-critical',
         lock: opts.lock ?? { owner: `critical-${randomUUID()}`, ttlMs: 300_000 },
         exclusiveModelStep: opts.exclusiveModelStep ?? {},
-        limits: { sideEffectDuplicates: 'suspend', ...(opts.limits ?? {}) },
+        limits: { sideEffectDuplicates: { action: 'suspend', scope: 'thread' }, ...(opts.limits ?? {}) },
         strictInput: opts.strictInput ?? true,
         conflictLedger: opts.conflictLedger ?? true,
         tombstonePolicy: opts.tombstonePolicy ?? 'reject',
@@ -861,6 +874,7 @@ export function createGnl(config: CreateGnlConfig) {
       ...(opts.strictInput !== undefined ? { strictInput: opts.strictInput } : {}),
       ...(opts.conflictLedger !== undefined ? { conflictLedger: opts.conflictLedger } : {}),
       ...(opts.auditOnReject ? { auditOnReject: opts.auditOnReject } : {}),
+      ...((opts.replayDisclosure ?? config.replayDisclosure) ? { replayDisclosure: opts.replayDisclosure ?? config.replayDisclosure } : {}),
       ...(opts.tombstonePolicy ? { tombstonePolicy: opts.tombstonePolicy } : {}),
       ...(opts.actor ? { actor: opts.actor } : {}),
       ...(opts.replay ? { replay: opts.replay } : {}),
@@ -907,7 +921,7 @@ export function createGnl(config: CreateGnlConfig) {
               // Protections that MAP here (tool policy + the duplicate ladder). Locks/fingerprints
               // Are per-run concerns of the CALLER's entry point, not of nested delegations.
               limits: config.preset === 'critical'
-                ? { sideEffectDuplicates: 'suspend', ...(opts.limits ?? {}) }
+                ? { sideEffectDuplicates: { action: 'suspend', scope: 'thread' }, ...(opts.limits ?? {}) }
                 : opts.limits,
               ...(config.preset === 'critical' ? { toolPolicy: 'strict-critical' as const } : {}),
               approvals: opts.approvals,

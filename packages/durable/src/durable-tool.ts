@@ -335,6 +335,19 @@ async function consumeExistingRecord(
     await mirrorUnderRun(ctx, key, { ...latest, output }, toolCallId);
     return output;
   }
+  // Replay-disclosure ledger (see DurableCtx.replayLog): this call is being answered by a record it
+  // did not produce — terminal statuses only (the suspended branch above returned already; an open
+  // approval question is not a replay). Appended unconditionally on the consume path so the policy
+  // layers (result envelope, optional in-turn model note) never have to re-derive it.
+  // ORIGIN matters (denetçi K4): the SAME request resuming (crash/approval continuation) must not be
+  // narrated as "done in an earlier request". Key prefix alone cannot decide it — a thread-window
+  // tool's OWN record lives under `xthr:`, not the run prefix (measured: the approval-resume replay
+  // of step A hit the window key and was mislabelled 'window'). The honest test is identity: a resume
+  // replays the model steps and re-emits the SAME toolCallId, so a record that already lists this id
+  // among its resolvers is this call's own past. 'self' entries ride the envelope for observability
+  // but never enter the model note.
+  const isSelf = key.startsWith(`${ctx.runId}:`) || ((record as { resolvedToolCallIds?: string[] }).resolvedToolCallIds ?? []).includes(toolCallId);
+  ctx.replayLog?.push({ toolCallId, toolName: (latest as { toolName?: string }).toolName, status: latest.status, origin: isSelf ? 'self' : 'window' });
   // Written on EVERY consume, not only when this call added an id.
   //
   // The mirror was effectively write-once, and a single transient failure was permanent. Measured, one
@@ -559,10 +572,26 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           await writeToolTerminal(ctx, key, { status: 'denied', output }, toolCallId, toolName, hash);
           return output;
         }
-        const reason =
+        let reason =
           (typeof tool.confirm === 'object' && typeof tool.confirm.reason === 'function'
             ? tool.confirm.reason(input)
             : undefined) ?? `'${toolName}' requires explicit confirmation before it runs.`;
+        // REPEAT CONTEXT on the confirm question: confirm fires BEFORE the duplicate ladder, so
+        // when both would trigger, the human only ever saw confirm's generic text — approving a
+        // DELIBERATE second identical job and approving a fresh one looked the same. A completed
+        // thread-scope duplicate marker for this exact tool+args means the work was already done
+        // in this conversation; say so in the question, so "bilerek istiyorum" is an informed click.
+        // Best-effort read: a marker miss just leaves the generic text (the safe direction).
+        if (ctx.threadId) {
+          try {
+            const prior = await ctx.journal.get<{ at?: number; inFlight?: boolean; released?: boolean; firstToolCallId?: string }>(
+              threadDupMarkerKey(ctx.threadId, toolName, hash),
+            );
+            if (prior && prior.inFlight !== true && prior.released !== true) {
+              reason += ` ⚠ Identical work was ALREADY COMPLETED earlier in this conversation${prior.firstToolCallId ? ` (first result: ${prior.firstToolCallId})` : ''} — approve only if you intend a deliberate repeat.`;
+            }
+          } catch { /* generic text is the safe fallback */ }
+        }
         const sentinel = { __gnl_suspend: { toolCallId, toolName, args: input, reason } };
         await writeToolTerminal(ctx, key, { status: 'suspended', output: sentinel }, toolCallId, toolName, hash);
         return sentinel;
