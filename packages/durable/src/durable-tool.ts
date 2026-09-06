@@ -589,6 +589,29 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
             );
             if (prior && prior.inFlight !== true && prior.released !== true) {
               reason += ` ⚠ Identical work was ALREADY COMPLETED earlier in this conversation${prior.firstToolCallId ? ` (first result: ${prior.firstToolCallId})` : ''} — approve only if you intend a deliberate repeat.`;
+            } else {
+              // SEMANTIC look on the confirm question too. The confirm arm suspends BEFORE the
+              // semantic recall hook (which requires record === undefined) — so on a confirm tool
+              // the semantic gate never got its turn, and "same job, different spelling"
+              // ('lamba-1' vs 'LAMBA-1': different hash, same normalized identity) reached the
+              // human as a GENERIC question. Same candidate finder, same discipline: the score
+              // only finds, the deterministic identity match decides, and here the outcome is
+              // TEXT ON A QUESTION a human answers — never a silent decision. Built locally (the
+              // shared semPlan is constructed further down the chain, past this arm).
+              const cfCfg = dupConfigOf(ctx.limits?.sideEffectDuplicates);
+              const cfSem = cfCfg.semantic && typeof cfCfg.semantic.embed === 'function' ? cfCfg.semantic : undefined;
+              if (cfSem && tool.semanticIdentity && (tool.sideEffect ?? tool.idempotent !== true)) {
+                const cfFields = extractSemFields(tool.semanticIdentity, input);
+                const verdict = await findSemanticCandidate(ctx.journal, {
+                  cfg: cfSem, id: tool.semanticIdentity, threadId: ctx.threadId, toolName,
+                  argsHash: hash, fields: cfFields, canonical: canonicalTextOf(tool.semanticIdentity, toolName, input, cfFields),
+                }, cfCfg.ttlMs);
+                if (verdict.kind === 'suspend') {
+                  reason += verdict.amountsDiffer.length
+                    ? ` ⚠ Work with the SAME business identity was completed earlier in this conversation ("${verdict.priorCanonical}", first result: ${verdict.firstToolCallId}) but the amounts DIFFER (${verdict.amountsDiffer.join(', ')}) — check carefully before approving.`
+                    : ` ⚠ Work with the SAME business identity appears ALREADY COMPLETED earlier in this conversation ("${verdict.priorCanonical}", first result: ${verdict.firstToolCallId}) — approve only if you intend a deliberate repeat.`;
+                }
+              }
             }
           } catch { /* generic text is the safe fallback */ }
         }
