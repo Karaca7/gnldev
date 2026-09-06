@@ -312,7 +312,7 @@ The banking/defense/medical bundle as ONE opt-in switch — explicit opts still 
 
 ```ts
 const gnl = createGnl({ journal, agents, preset: 'critical' });
-// = toolPolicy 'strict-critical' + sideEffectDuplicates 'suspend' + exclusiveModelStep
+// = toolPolicy 'strict-critical' + sideEffectDuplicates {action:'suspend', scope:'thread'} + exclusiveModelStep
 //   + an automatic per-run lock (ttl 300s) + strictInput + actor binding + conflictLedger
 //   + tombstonePolicy 'reject'
 ```
@@ -427,6 +427,78 @@ exact-hash/lock layers below. What this feature is NOT (binding for
 docs and marketing alike): not a "meaning engine", not AI-powered duplicate prevention, not intent
 detection, not "semantically exactly-once" — negation and magnitude are solved by the STRUCTURED
 fields, never by the vector.
+
+## Replay disclosure (honest narration)
+
+When a tool result is answered from the journal instead of executing (the repeat of already-done
+work), the model receives a plain successful result — and would naturally announce a fresh success
+("your order has been created!") for work that did NOT run. Measured live; a user cannot tell the
+replay from the real thing. Two mechanisms close that, without touching the permanent panel rule
+(the model must NEVER know work was done BEFORE deciding to call — that would enable silent,
+unauditable dedup):
+
+- **Envelope (always on):** every consumed pre-existing record lands on the result as
+  `result.replayedToolCalls: [{ toolCallId, toolName, status, origin }]` — out-of-band, never shown
+  to the model. `origin` separates `'window'` (genuinely earlier work) from `'self'` (this very
+  request resuming — an approval continuation must not be narrated as "an earlier request"; the
+  identity test is `resolvedToolCallIds`, not key prefix). `@gnldev/server` forwards the field on
+  run responses; UIs can badge it.
+- **`replayDisclosure: 'explain'` (opt-in, per run or `createGnl` config):** a TRANSIENT system
+  note is injected into the step FOLLOWING the consume — the model then narrates honestly ("the
+  operation was not performed again; this is the record of the earlier one"). The note is
+  prepareStep-only: it never reaches the journal, thread memory, or any later turn (pinned by a
+  memory-attached test), and only `origin:'window'` + `status:'succeeded'` entries earn it. The
+  model stays blind at decision time, informed only while narrating. Honest bounds: a replay
+  consumed on the FINAL step gets no note (no following live step — the envelope covers it), and
+  the stream surface fires the note but does not yet stamp the envelope on the stream result.
+
+### Repeat questions carry their context
+
+Under the critical preset the duplicate policy is thread-scoped suspend: a deliberate identical
+repeat becomes a human question EVERY time — approval creates the second job for real, denial
+doesn't (product rule: never silently swallow an intentional repeat, never silently run one). And
+because the `confirm` gate fires before the duplicate ladder, the confirm question itself is
+decorated rather than left generic:
+
+- exact repeat → `⚠ Identical work was ALREADY COMPLETED earlier in this conversation (first
+  result: <toolCallId>) — approve only if you intend a deliberate repeat.`
+- same normalized identity, different spelling (`'LAMBA-1'` vs `'lamba-1'`) → the confirm arm runs
+  the same semantic candidate finder locally: `⚠ Work with the SAME business identity appears
+  ALREADY COMPLETED …` (the score only finds; identity fields decide; the outcome is text on a
+  HUMAN question — never a silent decision; fail-open if the embedder is down)
+- same identity, different amounts → `⚠ … the amounts DIFFER — check carefully before approving.`
+
+The full behavior matrix (different words / key order / spelling / amounts / genuinely different
+work / approve / deny / score-alone-never-decides / embedder-down) is pinned in
+`test/repeat-matrix.test.ts`.
+
+## Scale characteristics (measured)
+
+Measured on real Postgres, real key schemas, 2048-dim vectors (`scripts/bench-scale.ts` in the
+companion prod-test app). What grows with what:
+
+| Layer | Cost shape | Measured |
+|---|---|---|
+| Exact dedup (hash/marker/lock) | O(1) point reads per tool call | **0.25 ms/read** at 2 000 markers |
+| Semantic recall | linear in THIS THREAD's side-effect records (listKeys + N gets + N cosines, in-process) | 100 recs → **36 ms** · 500 → 160 ms · 2 000 → ~650 ms |
+| Record writes (semantic/marker) | O(1) per successful side effect | ~3–4 ms/record |
+| HERMES suggestion scans | linear in the TENANT's suggestion/lesson count (approval-time, off the hot path) | 2 000 records → ~0.5 s full scan |
+
+The load-bearing property: semantic cost is **thread-local** — it grows with the number of
+side-effect jobs in ONE conversation, not with users, tenants, or total volume. A deployment with
+a million users whose conversations each carry tens of side-effect jobs pays tens of milliseconds
+per gated call; horizontal scale is the ordinary kind (more workers on one journal — the
+single-home routing contract above). Practical bounds, stated honestly:
+
+- A single conversation with **thousands** of side-effect jobs pushes semantic recall toward a
+  second per gated call. That is the designed v1 boundary (in-process brute force, thread scope);
+  cross-thread recall and an external vector index (Qdrant-class) are the deliberate v2, gated on
+  telemetry data — not a rewrite, the recall interface already isolates the scan.
+- HERMES merge/promotion scans are full-prefix scans per tenant; comfortable to ~10⁴
+  suggestions/lessons per tenant, indexable in v2 the same way.
+- Embedding latency is the caller's own closure (one call per gated side effect, content-keyed
+  cache in front): a remote API adds its round trip; the documented local-model recipe keeps it
+  on-machine.
 
 ## Production deployment notes (exactly-once preconditions)
 
