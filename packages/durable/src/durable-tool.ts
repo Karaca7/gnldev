@@ -9,6 +9,7 @@ import { recordIncident } from './incidents.js';
 import { markRunTainted, readRunTaint } from './taint.js';
 import { checkToolGate, recordToolOutcome } from './limits.js';
 import { validateSemanticConfig, assertSemanticIdentity, extractSemFields, canonicalTextOf, findSemanticCandidate, writeSemRecord, semTombKey } from './semantic-dup.js';
+import { xidPlanOf, writeXid, readXid, xidWhen, type XidPlan } from './xid.js';
 import type { SemPlan } from './semantic-dup.js';
 import type { RunLimits } from './limits.js';
 import { createProcessorCtx } from './processor.js';
@@ -124,7 +125,16 @@ function warnThreadScopeFallback(feature: string, toolName: string): void {
 }
 
 /** FAZ-3 — sideEffectDuplicates accepts a plain action string (≡ run scope) or `{action, scope, ttlMs}`. */
-function dupConfigOf(raw: RunLimits['sideEffectDuplicates']): { action: 'off' | 'warn' | 'reflect' | 'block' | 'suspend'; scope: 'run' | 'thread'; ttlMs?: number; semantic?: import('./semantic-dup.js').SemanticDupConfig } {
+function dupConfigOf(raw: RunLimits['sideEffectDuplicates'], effectClass?: import('./policy-matrix.js').EffectClass): { action: 'off' | 'warn' | 'reflect' | 'block' | 'suspend' | 'skip'; scope: 'run' | 'thread'; ttlMs?: number; semantic?: import('./semantic-dup.js').SemanticDupConfig } {
+  if (raw && typeof raw === 'object' && 'byClass' in raw) {
+    // Sınıf-bazlı form (heyet matrisi): aracın beyanı hücreyi seçer; beyansız araç default'a düşer.
+    // `semantic` yalnız üst seviyede taşınır ve seçilen hücreye eklenir — suspend'li hücrelerde
+    // semantik aday bulucu aynen çalışır (skor asla karar vermez, sınıf formunda da).
+    const spec = (effectClass && raw.byClass[effectClass]) || raw.default || { action: 'warn' as const };
+    // `semantic` yalnız üst seviyeden gelir ve YALNIZ suspend hücresine uygulanır — skip/block/warn
+    // hücresinde semantik aday bulucu çalışmaz (tek çıkışı insan sorusudur; o hücrelerde soru yok).
+    return { action: spec.action, scope: spec.scope ?? 'run', ...(spec.ttlMs !== undefined ? { ttlMs: spec.ttlMs } : {}), ...(raw.semantic && spec.action === 'suspend' ? { semantic: raw.semantic } : {}) };
+  }
   if (raw && typeof raw === 'object') return { action: raw.action, scope: raw.scope ?? 'run', ...(raw.ttlMs !== undefined ? { ttlMs: raw.ttlMs } : {}), ...(raw.semantic ? { semantic: raw.semantic } : {}) };
   return { action: raw ?? 'warn', scope: 'run' };
 }
@@ -212,6 +222,9 @@ async function writeToolTerminal(
    *  Vector fail-open) at this same choke point — the suspended path forgetting a write is exactly
    *  The class this function exists to prevent. */
   semPlan?: SemPlan,
+  /** XID (kanallar-arası iş kimliği): SUCCESS'te first-wins yazılır — aynı choke-point gerekçesiyle
+   *  (unutan yol kalmasın). Best-effort; işi asla etkilemez. */
+  xidPlan?: XidPlan,
 ): Promise<void> {
   // Stamp the ORIGINAL toolCallId onto succeeded/denied records here —
   // The single choke point every fresh terminal write goes through — so reconstructState can match
@@ -250,6 +263,9 @@ async function writeToolTerminal(
         else await ctx.journal.put(dupKey, success);
       }
     }
+  }
+  if (xidPlan && record.status === 'succeeded') {
+    await writeXid(ctx.journal, xidPlan, ctx.runId, toolCallId);
   }
   if (semPlan && record.status === 'succeeded') {
     // FAZ-6 write side: the deterministic half (identity/amount/discriminator fields) writes with the
@@ -545,6 +561,23 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
         // FAZ-6: if THIS suspension was the semantic gate's question, the human's "run it anyway" IS
         // The 'different work' verdict — tombstone the (prior, incoming) pair so the SAME question is
         // Never asked again (best-effort: a lost tombstone merely re-asks, the safe failure).
+        // INTENT-OVERRIDE IZI (heyet v1 #2): bu kosum bir suspend sorusuna verilen INSAN ONAYIYLA
+        // geciyor — 'bilerek tekrar' kararinin journal'li izi. Arguman bozarak kandirma yolunun
+        // (iz birakmayan bypass) resmi alternatifi budur. Best-effort: iz kaybi kosumu etkilemez.
+        try {
+          await ctx.journal.put(runKeys.proc(ctx.runId, `override-${toolCallId}`), {
+            at: ctx.journal.now ? await ctx.journal.now() : Date.now(),
+            toolCallId, toolName,
+            reason: (record.output as { __gnl_suspend?: { reason?: string } })?.__gnl_suspend?.reason,
+            kind: (() => {
+              const r0 = (record.output as { __gnl_suspend?: { reason?: string } })?.__gnl_suspend?.reason ?? '';
+              return r0.startsWith('Duplicate side effect') ? 'duplicate'
+                : r0.startsWith('Semantically similar') ? 'semantic'
+                : r0.includes('explicit confirmation') ? 'confirm' : 'other';
+            })(),
+            ...(ctx.channel ? { channel: ctx.channel } : {}),
+          });
+        } catch { /* iz best-effort */ }
         {
           const semPair = (record.output as { __gnl_suspend?: { semPair?: { priorHash?: string } } } | undefined)?.__gnl_suspend?.semPair;
           if (semPair?.priorHash && ctx.threadId) {
@@ -589,6 +622,23 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
             );
             if (prior && prior.inFlight !== true && prior.released !== true) {
               reason += ` ⚠ Identical work was ALREADY COMPLETED earlier in this conversation${prior.firstToolCallId ? ` (first result: ${prior.firstToolCallId})` : ''} — approve only if you intend a deliberate repeat.`;
+            } else if (tool.semanticIdentity && ctx.resourceId && await (async () => {
+              // KANALLAR-ARASI bakış (XID) — semantikten ÖNCE: bu konuşmada iz yok ama aynı iş
+              // kimliği başka kanaldan (batch/API/başka sohbet) tamamlanmış olabilir; soru
+              // "5 dk önce, batch'ten" diyebilmeli. Deterministik ve O(1) — embedder'sız da çalışır.
+              const cfXid = await readXid(ctx.journal, xidPlanOf(tool.semanticIdentity!, toolName, input, ctx.resourceId!, ctx.channel));
+              if (!cfXid || cfXid.first.runId === ctx.runId) return false;
+              let nowC = Date.now(); try { if (ctx.journal.now) nowC = await ctx.journal.now(); } catch { /* fail-open: süsleme saati işi düşüremez */ }
+              const amountsDiffer = Object.keys(cfXid.amounts).filter((k) => {
+                const mine = Number((input as Record<string, unknown>)?.[k]);
+                return Number.isFinite(mine) && cfXid.amounts[k] !== mine;
+              });
+              reason += amountsDiffer.length
+                ? ` ⚠ Work with the SAME business identity was completed ${xidWhen(cfXid, nowC)} (first: ${cfXid.first.toolCallId}) but the amounts DIFFER (${amountsDiffer.join(', ')}) — check carefully before approving.`
+                : ` ⚠ Identical business identity ALREADY COMPLETED ${xidWhen(cfXid, nowC)} (first: ${cfXid.first.toolCallId}) — approve only if you intend a deliberate repeat.`;
+              return true;
+            })()) {
+              // süsleme XID'den geldi — semantik taramaya gerek kalmadı
             } else {
               // SEMANTIC look on the confirm question too. The confirm arm suspends BEFORE the
               // semantic recall hook (which requires record === undefined) — so on a confirm tool
@@ -598,7 +648,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
               // only finds, the deterministic identity match decides, and here the outcome is
               // TEXT ON A QUESTION a human answers — never a silent decision. Built locally (the
               // shared semPlan is constructed further down the chain, past this arm).
-              const cfCfg = dupConfigOf(ctx.limits?.sideEffectDuplicates);
+              const cfCfg = dupConfigOf(ctx.limits?.sideEffectDuplicates, tool.effectClass);
               const cfSem = cfCfg.semantic && typeof cfCfg.semantic.embed === 'function' ? cfCfg.semantic : undefined;
               if (cfSem && tool.semanticIdentity && (tool.sideEffect ?? tool.idempotent !== true)) {
                 const cfFields = extractSemFields(tool.semanticIdentity, input);
@@ -652,6 +702,14 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       // HAVE SIDE EFFECTS unless it is EXPLICITLY marked safe (idempotent: true or sideEffect: false).
       // The exactly-once promise rests on the default rather than on discipline.
       const sideEffect = tool.sideEffect ?? tool.idempotent !== true;
+      // XID planı: semanticIdentity beyanı + resourceId yeter — SEMANTİK LİMİTS İSTEMEZ (deterministik
+      // katman; embedder'sız kurulumlar da kanallar-arası korumayı alır). resourceId yoksa bir kez warn.
+      let xidPlan: XidPlan | undefined;
+      if (tool.semanticIdentity && sideEffect) {
+        if (ctx.resourceId) xidPlan = xidPlanOf(tool.semanticIdentity, toolName, input, ctx.resourceId, ctx.channel);
+        else warnThreadScopeFallback('cross-channel identity (XID) — pass resourceId to enable', toolName);
+      }
+
 
       // // closes the window H7's crash-gate does not cover: the MODEL ITSELF issuing a FRESH identical
       // Call (new toolCallId, same args) of a side-effect tool that already SUCCEEDED in this run.
@@ -661,7 +719,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       // Scope guards: 'args' mode dedups on its own (fast-path above); an EXPLICIT approval for this
       // ToolCallId means a human already blessed this exact repeat (stand down); replay never gets
       // Here (the fast-path returns the journaled record first).
-      const dupCfg = dupConfigOf(ctx.limits?.sideEffectDuplicates);
+      const dupCfg = dupConfigOf(ctx.limits?.sideEffectDuplicates, tool.effectClass);
       const dupAction = dupCfg.action;
       // FAZ-3 scope: 'thread' widens the marker to the conversation (xthr:<threadId>:dup-…) — the
       // "created it yesterday, in another run of this chat" case the per-run marker cannot see.
@@ -670,7 +728,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
         warnThreadScopeFallback('sideEffectDuplicates scope', toolName);
         dupScope = 'run';
       }
-      const dupWhere = dupScope === 'thread' ? `thread '${ctx.threadId}'` : `run '${ctx.runId}'`;
+      let dupWhere = dupScope === 'thread' ? `thread '${ctx.threadId}'` : `run '${ctx.runId}'`;
       const dupKey = mode === 'call' && sideEffect && dupAction !== 'off'
         ? dupScope === 'thread'
           ? threadDupMarkerKey(ctx.threadId!, toolName, hash)
@@ -680,6 +738,19 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       let claimedDup = false;
       if (dupKey && approved !== true) {
         let marker = await ctx.journal.get<DupMarker>(dupKey);
+        // Kanallar-arası bakış (heyet Hüküm B): thread/run marker'ı sessizse XID konuşabilir — aynı
+        // iş kimliği başka kanaldan tamamlanmışsa merdiven AYNEN işler (karar profilin hücresinden,
+        // veri XID'den). Kendi run'ının izi sayılmaz (self ≠ tekrar — origin dersi).
+        let crossOrigin: string | undefined;
+        if (!marker && xidPlan) {
+          const x = await readXid(ctx.journal, xidPlan);
+          if (x && x.first.runId !== ctx.runId) {
+            let nowX = Date.now(); try { if (ctx.journal.now) nowX = await ctx.journal.now(); } catch { /* fail-open */ }
+            marker = { firstToolCallId: x.first.toolCallId, at: x.first.at } as DupMarker;
+            crossOrigin = xidWhen(x, nowX);
+            dupWhere = `another channel (${crossOrigin})`;
+          }
+        }
         // FAZ-3 optional ttlMs: an EXPIRED marker is not a duplicate anymore (the storage clock
         // Decides, same discipline as claim staleness). Default is NO ttl — deliberately: a false
         // Positive costs one extra approval question, a false negative fires the effect twice.
@@ -699,9 +770,12 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           // A later identical retry where `marker.nudged` is set) escalates to block, the safe direction.
           // `nudged` is still persisted on the marker so a sequential retry blocks via the check below.
           let nudgeWon = false;
-          if (dupAction === 'reflect' && !marker.nudged) {
+          if (dupAction === 'reflect' && !marker.nudged && !crossOrigin) {
             const nudgeKey = runKeys.proc(ctx.runId, `dupnudge-${toolName}-${hash}`);
             nudgeWon = await claim(ctx.journal, nudgeKey, { at: Date.now(), toolCallId });
+            // Sentetik (XID-kökenli) marker'ı GERÇEK thread marker'ına dönüştürme (denetçi K4-EK2):
+            // başka kanalın işi bu konuşmanın kaydı olarak mühürlenirdi. crossOrigin'de bu yol kapalı
+            // (yukarıdaki koşul), buradaki put yalnız yerli marker'da koşar.
             await ctx.journal.put(dupKey, { ...marker, nudged: true } satisfies DupMarker);
           }
           if (dupAction === 'block' || (dupAction === 'reflect' && (marker.nudged || !nudgeWon))) {
@@ -714,14 +788,46 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
             await recordIncident(ctx.journal, ctx.runId, { at: Date.now(), source: 'duplicate-guard', action: 'block', toolName, toolCallId, message, detail });
             return { __gnl_limit_exceeded: { toolCallId, toolName, kind: 'duplicateSideEffect', message, detail } };
           }
+          if (dupAction === 'skip') {
+            // SINIF KARARI (notification/delete): koşma, sorma — ama GÖRÜNÜR anlat. Terminal olarak
+            // 'reflected' statüsü yeniden kullanılır (journal şeması değişmez; koşmadı + çıktı döndü +
+            // tekrar çağrıda replay mekaniği birebir aynı). Model bu çıktıyı kullanıcıya söyler
+            // ("daha önce yapılmıştı, tekrarlamadım — istersen yeniden iste"); incident izi düşer:
+            // sessiz olabilir, görünmez olamaz.
+            const output = {
+              __gnl_skipped: true,
+              // MODEL-FACING: nötr, çerçeve-adsız. Override VAADİ BİLEREK YOK (denetçi K30): skip
+              // hücresinde onay yüzeyi doğmaz, "retry et" daveti modeli argüman-bozmaya iterdi.
+              // Kasıtlı tekrarın resmi yolu suspend'li bir akış/insan onayıdır — model bunu söyler.
+              notice:
+                `The tool '${toolName}' was NOT executed: the identical action already completed earlier in ` +
+                `${dupWhere} (first: ${marker.firstToolCallId}). Tell the user this explicitly. Do NOT retry ` +
+                'or alter arguments to force it; a deliberate repeat must go through an approval-capable flow.',
+              detail: { toolName, argsHash: hash, firstToolCallId: marker.firstToolCallId, toolCallId },
+            };
+            await recordIncident(ctx.journal, ctx.runId, {
+              at: Date.now(), source: 'duplicate-guard', action: 'skip', toolName, toolCallId,
+              message: `duplicate skipped: '${toolName}' already succeeded in ${dupWhere} (first: ${marker.firstToolCallId})`,
+              detail: output.detail,
+            });
+            // Terminal 'denied' (BİLİNÇLİ, 'reflected' değil): reflected loop-detection zincirini
+            // işaretler ve bir sonraki meşru farklı işte hard-block eskalasyonu üretirdi (denetçi K12);
+            // denied ise "politika bu çağrıyı reddetti (zaten yapılmış)" — replay'de aynı notice döner,
+            // success yan-yazımları (dup marker/XID) tetiklenmez.
+            await writeToolTerminal(ctx, key, { status: 'denied', output }, toolCallId, toolName, hash);
+            return output;
+          }
           if (dupAction === 'suspend') {
             // Standard __gnl_suspend shape → the duplicate lands in the SAME approvals flow as guard
             // Suspensions (Studio Approvals, resumeRun approvals[toolCallId]) — a human decides the
             // Ambiguous case; an approval executes it exactly once (see `approved !== true` above).
+            const nowS = ctx.journal.now ? await ctx.journal.now() : Date.now();
             const reason =
               `Duplicate side effect: '${toolName}' already succeeded with identical arguments in ` +
               `${dupWhere} (first: ${marker.firstToolCallId}). A human must approve executing it again.`;
-            const sentinel = { __gnl_suspend: { toolCallId, toolName, args: input, reason } };
+            // Zengin payload (heyet v1 #5): bilgisiz onay onay degildir — UI yas/kaynak gosterebilsin.
+            const sentinel = { __gnl_suspend: { toolCallId, toolName, args: input, reason,
+              prior: { toolCallId: marker.firstToolCallId, at: marker.at, ageMs: Math.max(0, nowS - marker.at), ...(crossOrigin ? { origin: crossOrigin } : {}) } } };
             await recordIncident(ctx.journal, ctx.runId, {
               at: Date.now(), source: 'duplicate-guard', action: 'suspend', toolName, toolCallId,
               message: reason, detail: { toolName, argsHash: hash, firstToolCallId: marker.firstToolCallId, toolCallId },
@@ -758,7 +864,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           // Journaled too (recordIncident): a console line evaporates; an operator can query this one.
           const warnMessage =
             `@gnldev/durable: side-effect tool '${toolName}' is about to EXECUTE AGAIN with arguments identical to an ` +
-            `earlier successful call in run '${ctx.runId}' (first: ${marker.firstToolCallId}, now: ${toolCallId}). ` +
+            `earlier successful call in ${crossOrigin ? `another channel (${crossOrigin})` : `run '${ctx.runId}'`} (first: ${marker.firstToolCallId}, now: ${toolCallId}). ` +
             `If repeating this action is harmless, mark the tool \`idempotent: true\` (or \`sideEffect: false\`). ` +
             `If it must never duplicate, set \`idempotency: 'args'\` (+ \`idempotencyKey\` for the business identity, ` +
             `e.g. orderId) or set \`limits.sideEffectDuplicates\` to 'reflect' | 'block' | 'suspend'.`;
@@ -1074,7 +1180,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
                 status: 'succeeded', output, argsHash: hash, toolName,
                 // A compensate-bearing tool's success stores the RAW args — the unwind needs them.
                 ...(typeof tool.compensate === 'function' ? { input } : {}),
-              }, toolCallId, toolName, hash, dupKey, semPlan);
+              }, toolCallId, toolName, hash, dupKey, semPlan, xidPlan);
               if (tool.untrusted) {
                 await markRunTainted(ctx.journal, ctx.runId, { toolCallId, toolName, source: 'tool' },
                   ctx.limits?.taintScope === 'thread' ? { threadId: ctx.threadId } : undefined); // AUDIT A4: same opt-in thread carry as the invocation-time mark
@@ -1282,7 +1388,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
             await writeToolTerminal(ctx, key, {
               status: 'succeeded', output: found.output, argsHash: hash, toolName,
               ...(typeof tool.compensate === 'function' ? { input } : {}),
-            }, toolCallId, toolName, hash, dupKey, semPlan);
+            }, toolCallId, toolName, hash, dupKey, semPlan, xidPlan);
             return found.output; // the effect already exists downstream — journaled, never re-fired
           }
         } catch (lookupErr) {
@@ -1314,7 +1420,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           status: 'succeeded', output, argsHash: hash, toolName,
           // A compensate-bearing tool's success stores the RAW args — the unwind needs them.
           ...(typeof tool.compensate === 'function' ? { input } : {}),
-        }, toolCallId, toolName, hash, dupKey, semPlan);
+        }, toolCallId, toolName, hash, dupKey, semPlan, xidPlan);
         // NOTE: taint for `untrusted` tools is now marked at INVOCATION (see above), not here —
         // Marking after execute lost the same-step parallel race against a side-effect tool's taint read.
       } catch (error: any) {

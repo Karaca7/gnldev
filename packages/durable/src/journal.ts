@@ -432,6 +432,11 @@ export interface DurableCtx {
    * `limits.taintScope === 'thread'` (to write the thread taint key alongside the per-run mark).
    */
   threadId?: string;
+  /** XID (kanallar-arası iş kimliği) için kaynak sahibi — resourceId'siz koşuda XID yazılmaz/okunmaz. */
+  resourceId?: string;
+  /** Kanal etiketi ('chat' | 'api' | 'batch:<id>' | 'cron' ...) — XID origin verisine ve soru
+   *  metinlerine girer ("5 dk önce, sohbetten"). Salt veri; karar okuyanın profilinden gelir. */
+  channel?: string;
   guard?: Guard;
   /** require-approval decisions: toolCallId → whether approved (passed on resume). */
   approvals?: Record<string, boolean>;

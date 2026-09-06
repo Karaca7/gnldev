@@ -18,6 +18,7 @@ import { durableProcessorStep } from './processor.js';
 import { recordRunScores } from './metrics.js';
 import { assertSuiteConsistent } from './suite-consistency.js';
 import { createSuggestions, validateSuggestionsConfig } from './suggestions.js';
+import { PRESET_MATRIX, PRESET_DEFAULT } from './policy-matrix.js';
 import type { SuggestionsApi, SuggestionsConfig } from './suggestions.js';
 
 import type { Journal } from './journal.js';
@@ -428,7 +429,16 @@ export interface CreateGnlConfig {
    * SideEffect-steps-must-carry-recover, tombstone reject, input fingerprint and a heartbeated
    * Run-lock — step-level exactly-once stays FAZ-1's claim protocol, which workflows already carry.
    */
-  preset?: 'critical';
+  preset?: 'critical' | 'assistant' | 'headless';
+  /*
+   * 'assistant' ve 'headless' (heyet matrisi, 7 Eyl 2026): critical'ın sertlik paketini AÇMADAN,
+   * yalnız sınıf-bazlı tekrar politikasını basarlar (policy-matrix.ts):
+   *   assistant → para/bildirim sorar, delete "zaten yapılmıştı" notu, upsert sessiz;
+   *               replayDisclosure default 'explain' (ekranda insan var, dürüst anlatım açık).
+   *   headless  → soracak insan yok: para tekrarı typed-RED (DLQ'ya düşer), bildirim/delete atlar
+   *               + iz; hiçbir hücre suspend üretmez. Zarf/iz her hücrede tam (görünmezlik yasağı).
+   * Workflow/lock/strictInput kapıları bu ikisine GELMEZ — onlar critical'ın kimliğidir.
+   */
   /**
    * HERMES v1 — onay-kapılı öneri/öğrenme katmanı (see suggestions.ts for the full contract).
    * Two independent switches: `generate` (may the system PROPOSE memory-lessons after completed
@@ -535,6 +545,8 @@ export interface RunOptions {
   auditOnReject?: 'best-effort' | 'require';
   /** Replay-disclosure policy (see CreateGnlConfig.replayDisclosure); this per-call value wins. */
   replayDisclosure?: 'explain' | 'silent';
+  /** Kanal etiketi ('chat' | 'api' | 'batch:<id>'...) — XID origin'i; sorular "5 dk önce, sohbetten" diyebilsin. */
+  channel?: string;
   tombstonePolicy?: 'ignore' | 'reject';
   actor?: string;
   replay?: 'strict' | 'lenient';
@@ -696,10 +708,20 @@ export function createGnl(config: CreateGnlConfig) {
         toolPolicy: opts.toolPolicy ?? 'strict-critical',
         lock: opts.lock ?? { owner: `critical-${randomUUID()}`, ttlMs: 300_000 },
         exclusiveModelStep: opts.exclusiveModelStep ?? {},
-        limits: { sideEffectDuplicates: { action: 'suspend', scope: 'thread' }, ...(opts.limits ?? {}) },
+        // Sınıf-bazlı matris (heyet): beyansız araç default hücresiyle BUGÜNKÜ davranışta kalır
+        // (thread-suspend); beyanlı araç kendi hücresini alır (idempotent-write'ta soru sorulmaz vb.).
+        limits: { sideEffectDuplicates: { byClass: PRESET_MATRIX.critical, default: PRESET_DEFAULT.critical }, ...(opts.limits ?? {}) },
         strictInput: opts.strictInput ?? true,
         conflictLedger: opts.conflictLedger ?? true,
         tombstonePolicy: opts.tombstonePolicy ?? 'reject',
+      };
+    } else if (config.preset === 'assistant' || config.preset === 'headless') {
+      // Hafif profiller: YALNIZ tekrar-politikası matrisi (+ assistant'ta dürüst anlatım default'u).
+      // critical'ın kilit/fingerprint/ledger paketi bilinçli olarak gelmez.
+      opts = {
+        ...opts,
+        limits: { sideEffectDuplicates: { byClass: PRESET_MATRIX[config.preset], default: PRESET_DEFAULT[config.preset] }, ...(opts.limits ?? {}) },
+        ...(config.preset === 'assistant' ? { replayDisclosure: opts.replayDisclosure ?? 'explain' } : {}),
       };
     }
     const a = agent(name);
@@ -751,6 +773,7 @@ export function createGnl(config: CreateGnlConfig) {
       ...(opts.conflictLedger !== undefined ? { conflictLedger: opts.conflictLedger } : {}),
       ...(opts.auditOnReject ? { auditOnReject: opts.auditOnReject } : {}),
       ...((opts.replayDisclosure ?? config.replayDisclosure) ? { replayDisclosure: opts.replayDisclosure ?? config.replayDisclosure } : {}),
+      ...(opts.channel ? { channel: opts.channel } : {}),
       ...(opts.tombstonePolicy ? { tombstonePolicy: opts.tombstonePolicy } : {}),
       ...(opts.actor ? { actor: opts.actor } : {}),
       ...(config.schemaCompat ? { schemaCompat: config.schemaCompat } : {}),
@@ -823,10 +846,20 @@ export function createGnl(config: CreateGnlConfig) {
         toolPolicy: opts.toolPolicy ?? 'strict-critical',
         lock: opts.lock ?? { owner: `critical-${randomUUID()}`, ttlMs: 300_000 },
         exclusiveModelStep: opts.exclusiveModelStep ?? {},
-        limits: { sideEffectDuplicates: { action: 'suspend', scope: 'thread' }, ...(opts.limits ?? {}) },
+        // Sınıf-bazlı matris (heyet): beyansız araç default hücresiyle BUGÜNKÜ davranışta kalır
+        // (thread-suspend); beyanlı araç kendi hücresini alır (idempotent-write'ta soru sorulmaz vb.).
+        limits: { sideEffectDuplicates: { byClass: PRESET_MATRIX.critical, default: PRESET_DEFAULT.critical }, ...(opts.limits ?? {}) },
         strictInput: opts.strictInput ?? true,
         conflictLedger: opts.conflictLedger ?? true,
         tombstonePolicy: opts.tombstonePolicy ?? 'reject',
+      };
+    } else if (config.preset === 'assistant' || config.preset === 'headless') {
+      // Hafif profiller: YALNIZ tekrar-politikası matrisi (+ assistant'ta dürüst anlatım default'u).
+      // critical'ın kilit/fingerprint/ledger paketi bilinçli olarak gelmez.
+      opts = {
+        ...opts,
+        limits: { sideEffectDuplicates: { byClass: PRESET_MATRIX[config.preset], default: PRESET_DEFAULT[config.preset] }, ...(opts.limits ?? {}) },
+        ...(config.preset === 'assistant' ? { replayDisclosure: opts.replayDisclosure ?? 'explain' } : {}),
       };
     }
     const a = agent(name);
@@ -875,6 +908,7 @@ export function createGnl(config: CreateGnlConfig) {
       ...(opts.conflictLedger !== undefined ? { conflictLedger: opts.conflictLedger } : {}),
       ...(opts.auditOnReject ? { auditOnReject: opts.auditOnReject } : {}),
       ...((opts.replayDisclosure ?? config.replayDisclosure) ? { replayDisclosure: opts.replayDisclosure ?? config.replayDisclosure } : {}),
+      ...(opts.channel ? { channel: opts.channel } : {}),
       ...(opts.tombstonePolicy ? { tombstonePolicy: opts.tombstonePolicy } : {}),
       ...(opts.actor ? { actor: opts.actor } : {}),
       ...(opts.replay ? { replay: opts.replay } : {}),
@@ -920,8 +954,10 @@ export function createGnl(config: CreateGnlConfig) {
               // FAZ-7: the critical preset now reaches the network path's sub-agents with the two
               // Protections that MAP here (tool policy + the duplicate ladder). Locks/fingerprints
               // Are per-run concerns of the CALLER's entry point, not of nested delegations.
-              limits: config.preset === 'critical'
-                ? { sideEffectDuplicates: { action: 'suspend', scope: 'thread' }, ...(opts.limits ?? {}) }
+              // Matris sub-agent'a da iner (denetçi K6 — F7'nin 'ladder maps to sub-agents' emsali):
+              // assistant'ın 'para sorar' vaadi delegasyonda warn'a düşemez, headless'ın DLQ reddi kaybolamaz.
+              limits: config.preset
+                ? { sideEffectDuplicates: { byClass: PRESET_MATRIX[config.preset], default: PRESET_DEFAULT[config.preset] }, ...(opts.limits ?? {}) }
                 : opts.limits,
               ...(config.preset === 'critical' ? { toolPolicy: 'strict-critical' as const } : {}),
               approvals: opts.approvals,

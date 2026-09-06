@@ -20,7 +20,7 @@ export interface RunIncident {
   /** Which mechanism decided (see limits.ts / durable-tool.ts / taint.ts). */
   source: 'duplicate-guard' | 'loop-detection' | 'max-tool-calls' | 'taint-guard' | 'semantic-guard';
   /** What it did: 'warn' executed anyway (named the incident), the rest did not execute the call. */
-  action: 'warn' | 'reflect' | 'block' | 'suspend';
+  action: 'warn' | 'reflect' | 'block' | 'suspend' | 'skip';
   toolName: string;
   toolCallId: string;
   /** The SAME honest message the console/model/error carried — single source of truth, verbatim. */

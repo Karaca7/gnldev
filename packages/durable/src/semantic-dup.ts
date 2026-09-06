@@ -119,15 +119,32 @@ export function canonicalTextOf(id: SemanticIdentity, toolName: string, args: un
 // ── config-time validation (THROW, not warn — a static contradiction must be impossible to ship) ──
 
 export function validateSemanticConfig(raw: unknown): void {
-  const cfg = raw as { action?: unknown; scope?: unknown; semantic?: Partial<SemanticDupConfig> } | null | undefined;
+  const cfg = raw as { action?: unknown; scope?: unknown; semantic?: Partial<SemanticDupConfig>; byClass?: Record<string, { action?: unknown; scope?: unknown }>; default?: { action?: unknown; scope?: unknown } } | null | undefined;
   const sem = cfg && typeof cfg === 'object' ? cfg.semantic : undefined;
   if (!sem) return;
-  if (cfg!.action !== 'suspend') {
+  // SINIF-BAZLI form (K29): action/scope tek alan değil hücrelerdedir. Semantik yalnız SUSPEND
+  // hücrelerine uygulanır (dupConfigOf) — o hücrelerin (ve default'un, suspend ise) scope'u 'thread'
+  // olmalı; hiç suspend hücresi yoksa semantik ölü ağırlıktır ve LOUD reddedilir (sessiz-inert yasağı).
+  if (cfg && typeof cfg === 'object' && 'byClass' in cfg && cfg.byClass) {
+    const cells = [...Object.values(cfg.byClass), ...(cfg.default ? [cfg.default] : [])];
+    const suspendCells = cells.filter((c) => c && c.action === 'suspend');
+    if (suspendCells.length === 0) {
+      throw new Error("@gnldev/durable: sideEffectDuplicates.semantic with byClass form requires at least one 'suspend' cell — the semantic gate's only exit is the human question; without a suspend cell it would be silently inert.");
+    }
+    for (const c of suspendCells) {
+      if (c!.scope !== 'thread') {
+        throw new Error("@gnldev/durable: byClass form — every 'suspend' cell that the semantic gate can apply to must declare scope: 'thread' (the layer answers \"was this done earlier IN THIS CONVERSATION\").");
+      }
+    }
+    // embed/embedModelId kontrolleri aşağıda ortak yoldan devam eder.
+  } else if (cfg!.action !== 'suspend') {
     throw new Error(
       "@gnldev/durable: sideEffectDuplicates.semantic requires action: 'suspend' — the ONLY exit of the semantic gate is the approval question; any other action would make it a silent (or blocking) decider.",
     );
   }
-  if (cfg!.scope !== 'thread') {
+  const isByClass = !!(cfg && typeof cfg === 'object' && 'byClass' in cfg && cfg.byClass);
+  if (!isByClass && cfg!.scope !== 'thread') {
+    // Düz formun scope kontrolü — byClass formunda scope hücre hücre yukarıda doğrulandı.
     throw new Error(
       "@gnldev/durable: sideEffectDuplicates.semantic requires scope: 'thread' — the layer answers \"was this done earlier IN THIS CONVERSATION\"; no other scope is defined.",
     );

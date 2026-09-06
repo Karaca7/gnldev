@@ -45,6 +45,8 @@ export type RunDurableArgs = GenerateTextOptions & {
   threadId?: string;
   /** Phase 14: resource (user) identity — for resource-scope recall / cross-thread memory. */
   resourceId?: string;
+  /** Kanal etiketi — XID origin'i ve tekrar sorularının "nereden" bilgisi (bkz. DurableCtx.channel). */
+  channel?: string;
   /** The agent's registry name — frozen into the invisible `:input` entry so studio /runs can LABEL
    *  Each run with its agent (surfaced by listRuns, no per-run journal N+1). Optional (direct runDurable
    *  Callers may omit it); the registry passes the agent key. */
@@ -126,6 +128,8 @@ export type StreamDurableArgs = StreamTextOptions & {
   threadId?: string;
   /** Resource (user) identity — for resource-scope recall / cross-thread memory. */
   resourceId?: string;
+  /** Kanal etiketi — XID origin'i ve tekrar sorularının "nereden" bilgisi (bkz. DurableCtx.channel). */
+  channel?: string;
   /** Agent registry name — frozen into the `:input` entry so studio /runs can label the run (see RunDurableArgs). */
   agentName?: string;
   /** Replay determinism mode (M2). Default `'lenient'` — model-step divergence detection is OFF by default
@@ -2249,7 +2253,7 @@ async function runDurableGuarded(args: RunDurableArgs): Promise<DurableResult> {
 }
 
 async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
-  const { journal, runId, guard, approvals, memory, threadId, resourceId, agentName, replay, lock: _lock, processors, schemaCompat, limits, exclusiveModelStep, replayCacheMaxBytes, toolPolicy, timeouts, strictInput, conflictLedger, tombstonePolicy, actor, auditOnReject, replayDisclosure, model: modelInput, tools, stopWhen, ...rest } =
+  const { journal, runId, guard, approvals, memory, threadId, resourceId, channel, agentName, replay, lock: _lock, processors, schemaCompat, limits, exclusiveModelStep, replayCacheMaxBytes, toolPolicy, timeouts, strictInput, conflictLedger, tombstonePolicy, actor, auditOnReject, replayDisclosure, model: modelInput, tools, stopWhen, ...rest } =
     args as RunDurableArgs & Record<string, any>;
   // `ModelInput` is `LanguageModelV4 | string`, and until now only createGnl honoured the string
   // Half: passing 'nvidia/…' straight to runDurable type-checked and then died inside the AI SDK
@@ -2281,7 +2285,7 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   const resolvedApprovals = await resolveApprovals(journal, runId, approvals);
   // C2: on resume, fetch model/tool entries in a single query → hot replay reads take 1 round-trip instead of N.
   // On the first run there are no entries → undefined (no cache). Consume-once: see ctxGet.
-  const ctx: DurableCtx = { journal, runId, threadId, guard, approvals: resolvedApprovals, replay, limits, toolPolicy, blockedAsSentinel: true, toolTimeoutMs: timeouts?.toolMs, claimTtlMs: timeouts?.claimTtlMs, toolResultProcessors: processors, replayCache: await loadReplayCache(journal, runId, { maxBytes: replayCacheMaxBytes }), replayLog: [] };
+  const ctx: DurableCtx = { journal, runId, threadId, resourceId, channel, guard, approvals: resolvedApprovals, replay, limits, toolPolicy, blockedAsSentinel: true, toolTimeoutMs: timeouts?.toolMs, claimTtlMs: timeouts?.claimTtlMs, toolResultProcessors: processors, replayCache: await loadReplayCache(journal, runId, { maxBytes: replayCacheMaxBytes }), replayLog: [] };
   const procCtx = processors?.length ? createProcessorCtx(journal, runId) : undefined;
 
   // Memory: load thread history (prepend to messages) + inject working memory into the system prompt.
@@ -2455,6 +2459,8 @@ export interface ResumeAgentConfig {
   limits?: RunLimits;
   /** K5: resume must not silently drop the disclosure policy the original run used. */
   replayDisclosure?: 'explain' | 'silent';
+  /** K5: kanal etiketi de resume'da düşmez (XID origin tutarlılığı). */
+  channel?: string;
   processors?: Processor[];
   /**
    * `memory` was the next field in that same list, and it was the one that loses DATA rather than
@@ -2542,6 +2548,7 @@ export async function resumeRun(
     ...(opts.schemaCompat !== undefined ? { schemaCompat: opts.schemaCompat } : {}),
     ...(opts.toolPolicy ? { toolPolicy: opts.toolPolicy } : {}),
     ...(opts.replayDisclosure ? { replayDisclosure: opts.replayDisclosure } : {}),
+    ...(opts.channel ? { channel: opts.channel } : {}),
     // FAZ-4 K5: fields added to ResumeAgentConfig MUST land in this selective forward list too — an
     // Interface field missing here is born dead and silently drops the protection the caller asked for.
     ...(opts.strictInput !== undefined ? { strictInput: opts.strictInput } : {}),
@@ -2636,7 +2643,7 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   // P2-cancel: same terminal-refusal contract as compensation — a durably-canceled run never
   // (re)starts or resumes (the per-step mid-flight gate lives in durable-model.ts).
   await assertNotCanceled(args.journal, args.runId);
-  const { journal, runId, guard, approvals, memory, threadId, resourceId, agentName, replay, lock, processors, schemaCompat, limits, exclusiveModelStep, replayCacheMaxBytes, toolPolicy, timeouts, strictInput, conflictLedger, tombstonePolicy, actor, auditOnReject, replayDisclosure, model, tools, stopWhen, onBlocked, ...rest } =
+  const { journal, runId, guard, approvals, memory, threadId, resourceId, channel, agentName, replay, lock, processors, schemaCompat, limits, exclusiveModelStep, replayCacheMaxBytes, toolPolicy, timeouts, strictInput, conflictLedger, tombstonePolicy, actor, auditOnReject, replayDisclosure, model, tools, stopWhen, onBlocked, ...rest } =
     args as StreamDurableArgs & Record<string, any>;
   // (a): opt-in run-lock — acquire BEFORE the setup work (reject a concurrent stream/run of the
   // Same runId with RunBusyError). Released on stream finish/error (see the onFinish/onError wrappers).
@@ -2712,7 +2719,7 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   // AUDIT (approval first-class): SAME as runDurableInner — BEFORE ctx is set up (see resolveApprovals).
   const resolvedApprovals = await resolveApprovals(journal, runId, approvals);
   // C2: on resume, load the replay snapshot (same as runDurableInner).
-  const ctx: DurableCtx = { journal, runId, threadId, guard, approvals: resolvedApprovals, replay, limits, toolPolicy, blockedAsSentinel: true, toolTimeoutMs: timeouts?.toolMs, claimTtlMs: timeouts?.claimTtlMs, toolResultProcessors: processors, replayCache: await loadReplayCache(journal, runId, { maxBytes: replayCacheMaxBytes }), replayLog: [] };
+  const ctx: DurableCtx = { journal, runId, threadId, resourceId, channel, guard, approvals: resolvedApprovals, replay, limits, toolPolicy, blockedAsSentinel: true, toolTimeoutMs: timeouts?.toolMs, claimTtlMs: timeouts?.claimTtlMs, toolResultProcessors: processors, replayCache: await loadReplayCache(journal, runId, { maxBytes: replayCacheMaxBytes }), replayLog: [] };
   const procCtx = processors?.length ? createProcessorCtx(journal, runId) : undefined;
 
   // Memory: load thread history + inject into system (BEFORE persistInput → replayable).

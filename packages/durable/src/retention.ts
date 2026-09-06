@@ -201,6 +201,19 @@ export async function purgeRun(
  *  purgeRun. A deployment erasing a person should purge their suggestion surface too:
  *  `deletePrefix('sugg:')` filtered by resourceId is not expressible — sweep
  *  `lesson:res:<resourceId>:` directly and delete their `sugg:` records via the suggestions API/list. */
+/**
+ * KİŞİ-bazlı silme yüzeyi (GDPR/KVKK md.17): bir resource'un (kullanıcının) kalıcı kimlik ailelerini
+ * süpürür — `xid:res:<rid>:` (kanallar-arası iş kimlikleri: düz-metin kimlik + tutar + ilk-koşum
+ * referansı) ve `lesson:res:<rid>:` (HERMES kişisel dersleri). Denetçi K27-EK: bu yüzey, xid
+ * ailesinin doğduğu diff'te 'yorumda reçete' olarak kalmıştı — çağrılabilir hali budur.
+ * `sugg:` kayıtları resource-önekli DEĞİL (id-anahtarlı) — kişinin önerileri suggestions API'siyle
+ * listelenip tek tek silinir; buradaki dönüş sayısına dahil değildir (belgeli sınır).
+ */
+export async function purgeResource(journal: Journal, resourceId: string): Promise<number> {
+  const del = requireDelete(journal);
+  return (await del(`xid:res:${resourceId}:`)) + (await del(`lesson:res:${resourceId}:`));
+}
+
 export async function purgeThread(journal: Journal, threadId: string): Promise<number> {
   const del = requireDelete(journal);
   // FAZ-3: the thread owns its dedup state too — `idempotencyWindow: 'thread'` records and

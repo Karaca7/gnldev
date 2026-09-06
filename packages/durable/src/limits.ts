@@ -192,7 +192,16 @@ export interface RunLimits {
    */
   sideEffectDuplicates?:
     | 'off' | 'warn' | 'reflect' | 'block' | 'suspend'
-    | { action: 'off' | 'warn' | 'reflect' | 'block' | 'suspend'; scope?: 'run' | 'thread'; ttlMs?: number; semantic?: SemanticDupConfig };
+    | { action: 'off' | 'warn' | 'reflect' | 'block' | 'suspend' | 'skip'; scope?: 'run' | 'thread'; ttlMs?: number; semantic?: SemanticDupConfig }
+    /**
+     * SINIF-BAZLI form (heyet v1 #1): aynı run'da para araçları sorarken bildirim araçları
+     * atlayabilsin. `byClass[tool.effectClass]` kazanır; beyansız araç `default` hücresine düşer
+     * (o da yoksa 'warn' — mevcut motor default'u). `semantic` yalnız default'ta taşınır ve
+     * suspend'li hücrelere uygulanır (skor asla karar vermez kuralı sınıf formunda da aynen).
+     * 'skip': çağrı KOŞMAZ; modele "daha önce yapılmıştı, tekrarlanmadı — kullanıcı isterse
+     * yeniden istesin" sonucu döner (görünür anlatım) + incident izi. Sessiz değil, sorusuz.
+     */
+    | { byClass: Partial<Record<import('./policy-matrix.js').EffectClass, import('./policy-matrix.js').DupSpec>>; default?: import('./policy-matrix.js').DupSpec; semantic?: SemanticDupConfig };
   /**
    * How far one human approval reaches.
    *

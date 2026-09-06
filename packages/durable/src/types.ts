@@ -173,6 +173,12 @@ export interface AnyTool {
    */
   semanticIdentity?: SemanticIdentity;
   /**
+   * Yan-etki SINIFI beyanı (heyet matrisi): tekrarın bedeli işe göre değişir — para durdurur-sorar,
+   * bildirim atlar-söyler, upsert sessiz replay'lenir. Preset'lerin sınıf-bazlı politika matrisi
+   * (policy-matrix.ts) bu beyanla eşleşir; beyansız araç profilin default hücresine düşer.
+   */
+  effectClass?: import('./policy-matrix.js').EffectClass;
+  /**
    * FAZ-7 — read-before-write's framework leg (a LAYER-1 tightening: same-key duplicates; it cannot
    * See a different-args same-intent request — that is the suspend/semantic gates' job). On a FRESH
    * First attempt of a side-effect tool, the engine asks the EXTERNAL system before firing:
@@ -200,7 +206,7 @@ export type ToolSet = Record<string, AnyTool>;
 export type ToolDurability = Pick<
   AnyTool,
   | 'sideEffect' | 'idempotent' | 'idempotency' | 'idempotencyKey' | 'idempotencyWindow'
-  | 'untrusted' | 'maxRetries' | 'timeoutMs' | 'claimTtlMs' | 'recover' | 'compensate' | 'confirm' | 'semanticIdentity' | 'lookup'
+  | 'untrusted' | 'maxRetries' | 'timeoutMs' | 'claimTtlMs' | 'recover' | 'compensate' | 'confirm' | 'semanticIdentity' | 'lookup' | 'effectClass'
 >;
 
 /**
