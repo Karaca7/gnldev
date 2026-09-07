@@ -259,6 +259,9 @@ function scopedWork(work: WorkStore, p: string): WorkStore {
   if (work.putIfMatch) {
     scoped.putIfMatch = (key, expected, value) => work.putIfMatch!(add(p, key), expected, value);
   }
+  if (work.deletePrefix) {
+    scoped.deletePrefix = (prefix) => work.deletePrefix!(add(p, prefix));
+  }
   return scoped;
 }
 

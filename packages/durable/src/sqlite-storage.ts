@@ -1212,6 +1212,15 @@ class SqliteWorkStore implements WorkStore {
       .run(serialize(value), key, serialize(expected));
     return Number(info.changes ?? 0) === 1;
   }
+  /** FAZ-9: both families, one prefix — the log is keyed by NAMESPACE and the KV by key, and under
+   *  `withOrg` both carry the org prefix, so an erasure that swept only one would leave half. */
+  async deletePrefix(prefix: string): Promise<number> {
+    const lr = range('ns', prefix);
+    const li = this.db.prepare(`DELETE FROM gnl_work_log WHERE ${lr.where}`).run(...lr.params);
+    const kr = range('key', prefix);
+    const ki = this.db.prepare(`DELETE FROM gnl_work_kv WHERE ${kr.where}`).run(...kr.params);
+    return Number(li.changes ?? 0) + Number(ki.changes ?? 0);
+  }
 }
 
 // ── CacheStore (TTL'li) ─────────────────────────────────────────────────────────

@@ -320,7 +320,7 @@ export class PostgresStorage implements Storage {
       this.memory = new PgMemoryStore(q, tx, () => this.advisoryLocks);
     }
     this.vectors = new PgVectorStore(q);
-    this.work = new PgWorkStore(q);
+    this.work = new PgWorkStore(q, this.prefixShape);
     this.cache = new PgCacheStore(q);
     this.meta = new PgMetaStore(q);
   }
@@ -1374,7 +1374,10 @@ class PgVectorStore implements VectorStore {
 }
 
 class PgWorkStore implements WorkStore {
-  constructor(private q: Q) {}
+  /** `shape` is shared BY REFERENCE with the journal (see PrefixShape): the prefix comparison below
+   *  needs the same collation clause the probe settled on, or a range scan can miss rows on a
+   *  non-C collation — the exact failure the journal's deletePrefix already guards against. */
+  constructor(private q: Q, private shape: PrefixShape) {}
   async append(ns: string, payload: unknown, id?: string): Promise<string> {
     const eid = id ?? `${ns}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
     await this.q(`INSERT INTO gnl_work_log (ns, id, payload, ts) VALUES ($1,$2,$3,$4) ON CONFLICT (ns, id) DO NOTHING`, [ns, eid, serialize(payload), Date.now()]);
@@ -1405,6 +1408,15 @@ class PgWorkStore implements WorkStore {
   async putIfMatch(key: string, expected: unknown, value: unknown): Promise<boolean> {
     const r = await this.q('UPDATE gnl_work_kv SET value = $1 WHERE key = $2 AND value = $3', [serialize(value), key, serialize(expected)]);
     return Number(r.rowCount ?? 0) === 1;
+  }
+  /** FAZ-9: both families, one prefix (see the sqlite note). */
+  async deletePrefix(prefix: string): Promise<number> {
+    const c = this.shape.collate;
+    const lr = pgRange('ns', c, prefix, 1);
+    const l = await this.q(`DELETE FROM gnl_work_log WHERE ${lr.where}`, lr.params);
+    const kr = pgRange('key', c, prefix, 1);
+    const k = await this.q(`DELETE FROM gnl_work_kv WHERE ${kr.where}`, kr.params);
+    return Number(l.rowCount ?? 0) + Number(k.rowCount ?? 0);
   }
 }
 

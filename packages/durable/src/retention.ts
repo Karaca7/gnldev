@@ -4,6 +4,7 @@
 // Throws a clear error.
 import { runKeys, summarizeRun, nestedAgentRunId } from './journal.js';
 import type { Journal, JournalReader } from './journal.js';
+import type { WorkStore } from './storage.js';
 import { getRunCost } from './cost.js';
 import { USAGE_KEY, usageCountedKey } from './budget.js';
 import type { OrganizationUsage } from './budget.js';
@@ -254,12 +255,12 @@ export async function purgeThread(journal: Journal, threadId: string): Promise<n
  * 'acme2' (`org:acme2:` does not start with `org:acme:`). Callers MUST reject org ids containing ':'
  * (the studio org-delete route already does).
  *
- * NOT DELETED, AND THIS ONE IS A GAP RATHER THAN A CHOICE: everything `@gnldev/queue` and
- * `@gnldev/events` write. Those live in the WorkStore (`gnl_work_log` / `gnl_work_kv`, `wl:` / `wk:`
- * on redis), and this function deletes through the *Journal* — measured on all four adapters, an
- * org's work rows survive the purge. A deployment that runs queues or an event bus under `withOrg`
- * and needs a real erasure has to sweep those tables itself; there is no framework surface for it
- * (`WorkStore` has no delete at all). Do not read the paragraph above as covering them.
+ * NOT DELETED BY THIS FUNCTION, but no longer a gap: everything `@gnldev/queue` and `@gnldev/events`
+ * write lives in the WorkStore (`gnl_work_log` / `gnl_work_kv`, `wl:` / `wk:` on redis), a different
+ * port from the Journal this function sweeps. `purgeOrganizationWork(storage.work, orgId)` is the
+ * matching surface — call BOTH, in either order, to erase an organization completely. They stay two
+ * calls on purpose: a deployment can hold the two stores on different backends (that is what
+ * `composite` is for), so one function cannot honestly promise to reach both.
  *
  * DELIBERATELY NOT DELETED (the honest rest of the runbook):
  * Root `__audit__` entries that carry this org as a PAYLOAD field: the audit trail is a root-level
@@ -273,6 +274,27 @@ export async function purgeThread(journal: Journal, threadId: string): Promise<n
  *    function — withOrg prefixes them like every other key. The gap for them is per-PERSON deletion,
  *    documented on purgeThread.)
  */
+/**
+ * The WorkStore half of an organization's erasure — queue jobs, their markers, and the event log.
+ *
+ * `withOrg` prefixes every work namespace AND every work key, so one prefix sweep is the whole
+ * footprint. Same boundary rule as `purgeOrganization`: the trailing ':' keeps org 'acme' from
+ * catching 'acme2'.
+ *
+ * THROWS on a WorkStore without `deletePrefix` rather than returning 0. This function exists because
+ * an erasure runbook promised something the framework could not do; answering "deleted nothing"
+ * with a success would recreate exactly that problem in a quieter form.
+ */
+export async function purgeOrganizationWork(work: WorkStore, orgId: string): Promise<number> {
+  if (orgId.includes(':')) throw new Error(`@gnldev/durable: purgeOrganizationWork('${orgId}') — org id must not contain ':' (it would break the org:<id>: prefix boundary)`);
+  if (typeof work.deletePrefix !== 'function') {
+    throw new Error(
+      "@gnldev/durable: this WorkStore does not implement `deletePrefix`, so an organization's queue and event records cannot be erased through it (the first-party in-memory/sqlite/postgres/redis adapters all do). Sweep those tables directly, or the erasure is incomplete.",
+    );
+  }
+  return work.deletePrefix(`org:${orgId}:`);
+}
+
 export async function purgeOrganization(journal: Journal, orgId: string, now = Date.now()): Promise<number> {
   if (orgId.includes(':')) throw new Error(`@gnldev/durable: purgeOrganization('${orgId}') — org id must not contain ':' (it would break the org:<id>: prefix boundary)`);
   const del = requireDelete(journal);

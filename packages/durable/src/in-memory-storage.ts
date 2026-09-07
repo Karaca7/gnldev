@@ -278,6 +278,18 @@ class InMemoryWorkStore implements WorkStore {
     this.kv.set(key, true);
     return true;
   }
+  /** FAZ-9: both families in one sweep — a log namespace and a KV key share the same prefix space
+   *  under `withOrg`, so an org purge cannot half-clean. */
+  async deletePrefix(prefix: string): Promise<number> {
+    let n = 0;
+    for (const ns of [...this.logs.keys()]) {
+      if (ns.startsWith(prefix)) { n += this.logs.get(ns)!.length; this.logs.delete(ns); }
+    }
+    for (const k of [...this.kv.keys()]) {
+      if (k.startsWith(prefix)) { this.kv.delete(k); n++; }
+    }
+    return n;
+  }
   /** 8.2: SAME pattern as RunJournal.putIfMatch (stableStringify comparison) — there is NO await
    *  Between has→compare→set → structurally atomic in single-threaded JS. */
   async putIfMatch(key: string, expected: unknown, value: unknown): Promise<boolean> {

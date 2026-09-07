@@ -369,6 +369,21 @@ export interface WorkStore {
    * `lockLost` approximation (a documented risk, the same the core-hardening review philosophy).
    */
   putIfMatch?(key: string, expected: unknown, value: unknown): Promise<boolean>;
+  /**
+   * FAZ-9 (optional): PREFIX delete across BOTH work families — log namespaces AND KV keys.
+   *
+   * WHY IT EXISTS: `withOrg` prefixes every work namespace and key, so one sweep of `org:<id>:` is an
+   * organization's entire queue and event footprint. Until this method there was no delete on this
+   * port at all, which meant `purgeOrganization` — the GDPR/KVKK erasure runbook — deleted an org's
+   * journal and left its queue jobs and event log in place. That gap was documented in the retention
+   * notes and in the legal brief as a promise the framework could not keep; this is the surface that
+   * keeps it.
+   *
+   * Returns the number of records removed (log records + KV entries). Optional like the rest of this
+   * port's extensions: a custom WorkStore without it makes `purgeOrganizationWork` throw a clear
+   * error rather than report a silent success.
+   */
+  deletePrefix?(prefix: string): Promise<number>;
 }
 
 // ── 5) CacheStore = content-addressed cache (optional TTL) ────────────────────

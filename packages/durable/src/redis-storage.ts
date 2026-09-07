@@ -829,6 +829,19 @@ class RedisWorkStore implements WorkStore {
     return res === 'OK';
   }
   /**
+   * FAZ-9: both families, one prefix — with a wrinkle the other adapters do not have. Log namespaces
+   * are stored ENCODED (`encNs`: ':' → '%3A'), KV keys are stored raw, so the same logical prefix
+   * needs two different patterns. Encoding the prefix the same way the namespace was encoded is what
+   * keeps them aligned: 'org:acme:' encodes to 'org%3Aacme%3A', and an encoded namespace starts with
+   * that exactly when its plain form starts with the plain prefix.
+   */
+  async deletePrefix(prefix: string): Promise<number> {
+    const logKeys = await scanAll(this.client, globEscape(`${this.pfx}${WL}${encNs(prefix)}`) + '*');
+    const kvKeys = await scanAll(this.client, globEscape(`${this.pfx}${WK}${prefix}`) + '*');
+    const all = [...new Set([...logKeys, ...kvKeys])];
+    return all.length ? await this.client.del(...all) : 0;
+  }
+  /**
    * 8.2: uses RunJournal's Lua CAS (CAS_LUA, defined in the same module — shared with RedisRunJournal) —
    * But WorkStore has NO RjEnv envelope (put() writes plain `serialize(value)`) → unlike RunJournal, no
    * Pre-GET is needed: `expected`'s serialized form is passed directly as Lua's ARGV[1], the
