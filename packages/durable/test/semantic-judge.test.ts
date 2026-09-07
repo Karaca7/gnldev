@@ -236,6 +236,29 @@ describe('judge — the budget (H10: journal slots that survive resume)', () => 
     expect((await journal.listKeys!('xthr:th:semjudge-')).length).toBe(1); // one record, not overwritten
   });
 
+  it('two workers hitting the SAME stale record still agree (replace is conditional, not blind)', async () => {
+    const journal = new InMemoryJournal();
+    const g = { rec: rec('h1', 'b'), score: 0.9 };
+    // A verdict left behind by an older model — the state a swap produces.
+    await journal.put(semJudgeKey('th', 'pay', 'h1', 'new'), {
+      v: 1, verdict: 'same', judgeModelId: 'an-older-model', judgePromptVersion: JUDGE_PROMPT_VERSION,
+      rulesetVersion: '1', fixtureSetId: 'fx', score: 0.9, toolCallId: 'old', at: 1,
+    });
+    // The two workers disagree. A blind overwrite would let each return its own answer and leave
+    // whichever landed last in the cache — the same shape the claim path exists to prevent.
+    let n = 0;
+    const flip = async () => { await new Promise((r) => setTimeout(r, 5)); return ++n === 1 ? 'SAME' : 'DIFFERENT'; };
+    const [a, b] = await Promise.all([
+      judgeGrayPair(journal, 'r1', 'tc1', planOf('a'), g, cfgOf(flip)),
+      judgeGrayPair(journal, 'r2', 'tc2', planOf('a'), g, cfgOf(flip)),
+    ]);
+    const verdicts = [a, b].map((o) => (o.kind === 'verdict' ? o.verdict : `skip:${o.cause}`));
+    expect(verdicts[0]).toBe(verdicts[1]);
+    const stored = await journal.get<any>(semJudgeKey('th', 'pay', 'h1', 'new'));
+    expect(stored.judgeModelId).toBe('test-judge'); // the stale stamp WAS replaced
+    expect(stored.verdict).toBe(verdicts[0]);       // and the survivor is what both reported
+  });
+
   it('the cache is checked BEFORE the budget: a replay spends no slot', async () => {
     const journal = new InMemoryJournal();
     const fn = vi.fn(async () => 'SAME');

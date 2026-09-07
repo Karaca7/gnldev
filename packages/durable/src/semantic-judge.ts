@@ -334,10 +334,19 @@ export async function judgeGrayPair(
     toolCallId,
     at: journal.now ? await journal.now().catch(() => Date.now()) : Date.now(),
   };
-  // A stale-stamped record found above is the one case where overwriting is correct — it answered a
-  // question this build no longer asks — so that path replaces rather than claims.
+  // A stale-stamped record is the one case where OVERWRITING is correct — it answered a question this
+  // build no longer asks. But "overwrite" is not "write blindly": two workers can reach this branch
+  // from the same stale record, and a plain put would let each return its OWN verdict while the
+  // survivor is whichever landed last. Replacing CONDITIONALLY on the exact record that was read
+  // keeps the agreement the claim path provides — the loser re-reads and serves the winner's answer.
   if (staleStamp) {
-    await journal.put(key, rec).catch(() => {});
+    const replaced = typeof journal.putIfMatch === 'function'
+      ? await journal.putIfMatch(key, cached, rec).catch(() => true)
+      : await journal.put(key, rec).then(() => true).catch(() => true); // no CAS on this journal: documented fallback
+    if (!replaced) {
+      const winner = await journal.get<SemJudgeRecord>(key).catch(() => undefined);
+      if (winner && winner.v === 1) return { kind: 'verdict', verdict: winner.verdict, cached: true, latencyMs };
+    }
     return { kind: 'verdict', verdict, cached: false, latencyMs, staleReplaced: true };
   }
   const won = await claim(journal, key, rec).catch(() => true); // a journal hiccup must not lose the answer
