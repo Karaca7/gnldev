@@ -51,7 +51,7 @@ export const OVERVIEW_SUMMARY = `A thin correctness layer on top of the Vercel A
 
 export const OVERVIEW_DETAIL = `GNL keeps the same agent loop via \`runDurable\`, a drop-in replacement for \`generateText\`/\`streamText\`; it additionally takes a \`journal\` + \`runId\`. Even if the process crashes, calling it again with the same \`runId\` resumes deterministically from where it left off, and completed tool calls never run again. Three tiers: Core (free, @gnldev/durable/@gnldev/server/@gnldev/auth/@gnldev/evals), Studio (@gnldev/studio — inspection/management, free), Enterprise (@gnldev/auth-ee — signed license, RBAC/SSO/multi-organization/budget).`;
 
-/** Full list of the 33 features — mirrors gnl.dev/llms-full.txt. Order = the order field.
+/** Full list of the 34 features — mirrors gnl.dev/llms-full.txt. Order = the order field.
  *  The count is asserted against this array in test/content-counts.test.ts: it said 25 against 26
  *  entries, and this file is the ONLY documentation a user can reach when the docs host is
  *  unreachable, so a wrong number here is the number they get. */
@@ -648,6 +648,33 @@ import { liveObservability } from '@gnldev/otel/live';`,
       `liveObservability(opts) — live spans and cost; instrument()/cost()/flush(); composes under durable and never touches the journal`,
     ],
     example: `await exportRunToOtlp(storage.runs, 'r1', otlpPresets.langfuse({ publicKey, secretKey }));`,
+  },
+  {
+    slug: `semantic-duplicate-gate`,
+    order: 34,
+    title: `Semantic duplicate-candidate gate`,
+    oneLiner: `Finds past work that looks similar in MEANING and turns it into an approval question — the decision stays deterministic + human.`,
+    tier: `core`,
+    package: `@gnldev/durable`,
+    install: `import { createGnl, type RunLimits } from '@gnldev/durable';
+// optional exam for the judge rung: npx gnl-semantic-qualify --judge ./judge.mjs --model <id>`,
+    apis: [
+      `limits.sideEffectDuplicates.semantic — { embed, embedModelId, minSimilarity?, topK? }; requires action:'suspend' + scope:'thread' (config-time throw otherwise)`,
+      `AnyTool.semanticIdentity — { keys (required, non-empty), describe? (THE PII boundary), amountFields?, discriminatorFields? }; a tool without it never enters the layer`,
+      `semantic.rules — the deterministic ladder (opt-in): normalizers may conclude "same", separators may only drop. All algorithmic: no lists or dictionaries to maintain, so rules:true is the whole configuration`,
+      `semantic.judge — { complete, judgeModelId, qualification, maxCallsPerRun?, timeoutMs? }; transport-only closure, the framework owns the prompt, an unqualified judge throws at config time`,
+      `@gnldev/semantic-qualify — the blind bench that issues the required JudgeCert (recall >= 0.70, false alarms <= 0.05)`,
+    ],
+    example: `// Score NEVER decides: the embedding only finds candidates, declared fields decide, and the
+// only exit is the standard approval question. Unreachable embedder or judge → today's behavior.
+const limits: RunLimits = {
+  sideEffectDuplicates: {
+    action: 'suspend', scope: 'thread',
+    semantic: { embed, embedModelId: 'local:multilingual-e5-small@q8', rules: true },
+  },
+};
+// tool side: semanticIdentity: { keys: ['sku'], amountFields: ['price'] }
+await gnl.run('shop', { runId: 'r9', threadId: 't1', prompt: 'order the TV again', limits });`,
   },
 ];
 

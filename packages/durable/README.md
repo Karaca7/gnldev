@@ -428,6 +428,132 @@ docs and marketing alike): not a "meaning engine", not AI-powered duplicate prev
 detection, not "semantically exactly-once" — negation and magnitude are solved by the STRUCTURED
 fields, never by the vector.
 
+### The rule ladder and the judge (`semantic.rules`, `semantic.judge`)
+
+The gate above asks nothing when the identity fields differ — "TV-42" and "tv-42" normalize into one
+job, but "Samsung 42 inch TV" and "SMSNG TV42" do not, and v1 only counts those (`droppedIdentity`).
+Two optional rungs work that residue, both opt-in, neither able to decide anything by itself.
+
+**Why not just lower the threshold:** we measured it. On 300 labelled pairs run through a real
+embedder, "same job, written differently" averaged 0.906 and "different job that looks alike"
+averaged 0.852 — the bands overlap, so every threshold trades recall against false alarms one for
+one. Concretely: `Philips Airfryer XL` vs `XXL` (two different products) scored 0.959, HIGHER than a
+genuine paraphrase pair at 0.740. A score-only arm would ask about neighbouring SKUs and sibling
+companies while missing the abbreviations it exists for, and an operator trained to approve
+question-storms approves the real duplicate too. That arm is not deferred; it is refused.
+
+**The ladder (`rules`) is deterministic, free, and journalled.** Its constitution is encoded in the
+types, because the direction a rule may conclude is the whole safety argument:
+
+| class | may conclude | examples |
+|---|---|---|
+| normalizer | `match` → a question | digit VALUE (`0142` = `142`, `42` ≠ `43`), digit concatenation, character folding (`Danışmanlık A.Ş.` = `danismanlik as`, `Air Fryer` = `Airfryer`) |
+| separator | `separate` → candidate drops | size ladder (`XL` ≠ `XXL`), one-character short-code difference (`abc` ≠ `abd`) |
+
+**Every rule here is an algorithm, not a list — `rules: true` is the whole configuration.** That is a
+deliberate correction, not an oversight. An earlier design had a third class fed by caller-supplied
+dictionaries (synonyms, locale tokens, initials); it was removed once measured, for two reasons that
+are worth stating because they generalise. First, the safety constitution capped that class at
+"defer to the next rung" — which is also what happens when no rule matches, so it could not change a
+single outcome while still asking for upkeep. Second, on both calibration sets **every** ladder
+decision came from the list-free rules; the dictionary surface contributed nothing. A knob that
+changes no behaviour and decays silently is worse than no knob.
+
+Dropping is the safe direction throughout: a `separate` means no question, which is today's
+behaviour. And what needs world knowledge — is Ahmet the same person as Mehmet, is a depot a
+warehouse — goes to the judge, which brings that knowledge with it and needs no maintenance from you.
+
+Open-ended prefix matching and phonetic skeletons are **not in the framework at all** — not disabled,
+absent. Measured directly: a prefix rule that looked sound on one dataset matched `Berg` to `Bergman`
+and `Pro` to `ProHeat` on a fresh one, two different people and two different products.
+
+(`gazetteers` survives as an escape hatch for a genuinely small, stable closed set — twelve
+warehouses, not "Turkish surnames" — and only pays off when a judge is configured, since it saves
+judge calls rather than changing any answer. Default empty; leave it that way unless you have
+measured a reason.)
+
+**The judge (`judge`) is the last rung, and it does not decide either.** It answers one question —
+"do these two records name the same real-world thing?" — and a `same` answer buys exactly one thing:
+a human is asked. `different`, `unsure`, a timeout, an exhausted budget and an unparseable reply all
+mean today's behavior, and every one of them is journalled. The judge is never told the work ran
+before (that is the permanent model-notification ban, projected onto this surface), and it receives
+only the two canonical sentences plus the tool name — never the raw args, amounts or discriminators.
+
+**Read that literally, because the default matters:** the canonical sentence is BY DEFAULT built from
+your declared identity values (`"<toolName>: <identity values>"`), so with no `describe()` override
+your SKUs, invoice references and customer names DO reach the judge provider — a second provider
+beside the embedder. `describe()` is the redaction point for both. If your compliance position is
+"nothing identifying leaves the process", the recipe is the same one as for embeddings: a local model
+behind both closures, or a `describe()` that emits hashed or bucketed identifiers.
+
+```ts
+semantic: {
+  embed: myEmbed, embedModelId: 'local:multilingual-e5-small@q8',
+  rules: true,                                  // defaults; or an object to supply your own lists
+  judge: {
+    // TRANSPORT ONLY: the framework renders the prompt, you own the model and the bill.
+    complete: async ({ system, user }) => (await myModel(system, user)).text,
+    judgeModelId: 'your-judge-model',
+    qualification: cert,                        // from @gnldev/semantic-qualify — REQUIRED
+    maxCallsPerRun: 10,                         // journal-backed slots; survive resume
+    timeoutMs: 8000,
+  },
+},
+```
+
+**The certificate is not ceremony.** On identical fixtures with the identical prompt, one model
+answered 43% of the paraphrase pairs correctly and another 100%. A judge you have not measured is a
+layer that looks installed and is not — so a missing, weak (recall < 0.70 or false alarms > 0.05),
+model-mismatched or prompt-version-mismatched certificate is a **config-time throw**, the sibling of
+v1's empty-`keys` throw. Swapping the model or upgrading past a prompt-version bump invalidates it
+and the exam must be re-sat:
+
+```sh
+npx gnl-semantic-qualify --judge ./my-judge.mjs --model your-judge-model   # → gnl-judge-cert.json
+```
+
+The bench evaluates blind (opaque ids, shuffled order, labels never sent) and scores against the same
+exported constants the runtime enforces. Point it at `--fixtures ./yours.json` to measure something
+your model cannot have seen; the published set stops being held out the moment it is published, and
+the certificate stamps EXAM performance, not field accuracy.
+
+**Cost, stated before you enable it.** The judge runs only on the gray residue, at most once per
+call, bounded by `maxCallsPerRun` slots that are claimed in the journal (so a crash loop cannot re-buy
+the budget, and a timeout burns a slot on purpose). Verdicts are cached symmetrically and stamped
+with model, prompt and ruleset versions, so a replay never pays twice and a swapped model is never
+served the previous one's answers.
+
+**Count first, judge second.** Studio's `/semantic-guard` reports `scan.grayCalls`: the number of
+guarded CALLS that produced a gray residue. The unit is deliberate — one call can surface several
+candidates, but the judge speaks at most once per call, so calls (not candidates) are what a judge
+would cost. Run with `rules` on and `judge` off for a while, read it, then decide. Two traps worth naming: `droppedIdentity` is not a second quote
+(it counts the same candidates from the other side, so adding them double-counts), and its MEANING
+shifts when you enable `rules` — separator drops move into `droppedByRule`, so the same traffic
+reports a smaller `droppedIdentity` after the upgrade and pre/post baselines are not comparable. In
+our measurements the ladder settled about a third of the paraphrases for free and dropped a third to
+a half of the look-alikes before any judge call.
+
+The chain, end to end:
+
+```
+exact-hash → cosine candidate (≥0.60) → identity fields
+    equal            → question (v1, unchanged)
+    ladder match     → question (deterministic, origin: 'rule')
+    ladder separate  → today's behavior + counted (droppedByRule)
+    gray + judge     → 'same' → question · anything else → today's behavior + incident
+    gray, no judge   → today's behavior + counted (grayUnjudged)
+```
+
+Studio's semantic card breaks the questions down by which rung asked (identity / rules / judge)
+beside `precision@suspend`. A judge share climbing over time is the first sign your identity
+declarations or dictionaries stopped matching the traffic.
+
+**What this is NOT** (binding for docs and marketing alike, extending the v1 list): the judge does
+not decide or approve; the ladder does not "catch duplicates" (no guarantee language); this is not
+AI-verified dedup; no synthetic measurement here is a field-accuracy promise; and "a qualified judge"
+never equals "reliable protection" — the live `precision@suspend` number is the only evidence that
+the questions were worth asking.
+
 ## Replay disclosure (honest narration)
 
 When a tool result is answered from the journal instead of executing (the repeat of already-done

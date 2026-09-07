@@ -37,7 +37,7 @@ export function resolveDocsUrl(env: NodeJS.ProcessEnv = process.env): string {
  * `GNL_DOCS_URL` exists so a deployment can point at an internal mirror, and an internal mirror is
  * exactly the kind that sits behind basic auth. The fetch needs those credentials; the answer does
  * not. Measured before this split existed: `https://alice:s3cr3t@docs.internal.example` put the token
- * into an assistant's context 33 times in a single `gnl_docs_overview` call, once per feature link.
+ * into an assistant's context 34 times in a single `gnl_docs_overview` call, once per feature link.
  *
  * Falls back to the raw string when the value will not parse — a malformed URL should degrade to the
  * old behaviour rather than throw, and one that cannot be parsed has no userinfo to strip anyway.
@@ -54,7 +54,7 @@ export function publicDocsUrl(env: NodeJS.ProcessEnv = process.env): string {
     u.username = '';
     u.password = '';
     // Query and fragment go too. Userinfo is not the only place a mirror carries a credential — a
-    // Signed URL puts it in `?token=`, and neither belongs in a link this server prints 33 times.
+    // Signed URL puts it in `?token=`, and neither belongs in a link this server prints 34 times.
     u.search = '';
     u.hash = '';
     return u.toString().replace(/\/+$/, '');
