@@ -32,5 +32,17 @@
   "semanticWarns": "{{count}} telemetri",
   "semanticDescription": "Anlamca benzer mükerrer adayları: sorulan sorular vs yalnız-telemetri düşüşleri (kimlik uyuşmazlığı, embedder kesintileri). Araç başına: soru/telemetri.",
   "semanticPrecision": "İnsan sonuçları: {{denied}} durduruldu (gerçek mükerrer), {{approved}} yine de koştu, {{pending}} bekliyor.",
-  "semanticPrecisionRate": "%{{pct}} gerçek mükerrer yakaladı"
+  "semanticPrecisionRate": "%{{pct}} gerçek mükerrer yakaladı",
+  "semanticOriginLabel": "Soruyu soran:",
+  "semanticOriginIdentity": "kimlik {{count}}",
+  "semanticOriginRule": "kural {{count}}",
+  "semanticOriginJudge": "yargıç {{count}}",
+  "semanticScanLabel": "Sormadan çözülen:",
+  "semanticScanRule": "kural {{count}}",
+  "semanticScanNegation": "negasyon {{count}}",
+  "semanticGrayUnjudged": "{{count}} çağrı yargılanmamış (yargıcın fiyat teklifi)",
+  "semanticJudgeLabel": "Yargıç cevapları:",
+  "semanticJudgeSame": "aynı {{count}}",
+  "semanticJudgeDifferent": "farklı {{count}}",
+  "semanticJudgeSkipped": "cevapsız {{count}}"
 }

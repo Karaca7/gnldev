@@ -198,8 +198,13 @@ export function Observability() {
           ResponsiveContainer below depends on it); see the PageHeader migration notes. */}
       <PageHeader title={t('title')} description={t('description')} />
       {/* FAZ-8 — semantic-guard telemetry card: the calibration debt's only v1 signal, surfaced.
-          Renders only when the gate has ever fired (zero-noise for deployments not using it). */}
-      {semGuard.data && (semGuard.data.totals.suspend > 0 || semGuard.data.totals.warn > 0) && (
+          Renders only when the gate has ever fired (zero-noise for deployments not using it).
+
+          The payload is read DEFENSIVELY: a server that answers 200 with a shape this build does not
+          expect (an older deployment, a proxy, a partial response) must make this card disappear, not
+          take the whole Observability page down with it — the page's job is to show operators what
+          the guards did, and it cannot do that from an error boundary. */}
+      {(semGuard.data?.totals?.suspend ?? 0) + (semGuard.data?.totals?.warn ?? 0) > 0 && semGuard.data && (
         <div className="rounded-md border p-3">
           <div className="mb-1 flex items-center gap-2 text-sm font-semibold">
             {t('semanticTitle')}
@@ -207,8 +212,49 @@ export function Observability() {
             <span className="rounded bg-muted px-1.5 py-0.5 text-[11px]">{t('semanticWarns', { count: semGuard.data.totals.warn })}</span>
           </div>
           <p className="mb-2 text-xs text-muted-foreground">{t('semanticDescription')}</p>
-          {/* precision@suspend — semantik v2'nin veri kapısı: askıların insan sonucu. Eski sunucuda
-              alan yok (additive) ve hiç karar yokken oran gizli — sıfırdan oran uydurulmaz. */}
+          {/* FAZ-7 — WHICH RUNG asked. The three are not interchangeable: identity and rule are
+              deterministic and free, the judge costs a provider call and carries a model's opinion.
+              A judge share that climbs over time is the first sign that identity declarations or the
+              ladder's dictionaries stopped matching the traffic. Absent on an older server. */}
+          {semGuard.data.byOrigin && (semGuard.data.byOrigin.identity + semGuard.data.byOrigin.rule + semGuard.data.byOrigin.judge) > 0 && (
+            <p className="mb-2 flex flex-wrap items-center gap-1.5 text-xs">
+              <span className="text-muted-foreground">{t('semanticOriginLabel')}</span>
+              <span className="rounded border px-1.5 py-0.5 text-[11px]">{t('semanticOriginIdentity', { count: semGuard.data.byOrigin.identity })}</span>
+              <span className="rounded border px-1.5 py-0.5 text-[11px]">{t('semanticOriginRule', { count: semGuard.data.byOrigin.rule })}</span>
+              <span className="rounded border px-1.5 py-0.5 text-[11px]">{t('semanticOriginJudge', { count: semGuard.data.byOrigin.judge })}</span>
+            </p>
+          )}
+          {/* FAZ-7 — what the deterministic half settled WITHOUT asking, and the judge's price quote.
+              `grayUnjudged` is the number to read before enabling a judge: at most one call each. */}
+          {semGuard.data.scan && (semGuard.data.scan.droppedByRule + semGuard.data.scan.droppedDiscriminator + semGuard.data.scan.grayCalls) > 0 && (
+            <p className="mb-2 flex flex-wrap items-center gap-1.5 text-xs">
+              <span className="text-muted-foreground">{t('semanticScanLabel')}</span>
+              <span className="rounded border px-1.5 py-0.5 text-[11px]">{t('semanticScanRule', { count: semGuard.data.scan.droppedByRule })}</span>
+              <span className="rounded border px-1.5 py-0.5 text-[11px]">{t('semanticScanNegation', { count: semGuard.data.scan.droppedDiscriminator })}</span>
+              {semGuard.data.scan.grayCalls > 0 && (
+                <span className="rounded bg-muted px-1.5 py-0.5 text-[11px]">{t('semanticGrayUnjudged', { count: semGuard.data.scan.grayCalls })}</span>
+              )}
+            </p>
+          )}
+          {/* Every arm the judge took — including the ones that asked nothing. A judge that is
+              enabled but never answering (all "no answer") looks identical to no judge at all in
+              the suspend column alone; this row is what tells them apart. */}
+          {semGuard.data.judge && (semGuard.data.judge.same + semGuard.data.judge.different + semGuard.data.judge.unsure + Object.values(semGuard.data.judge.skipped ?? {}).reduce((a, b) => a + b, 0)) > 0 && (
+            <p className="mb-2 flex flex-wrap items-center gap-1.5 text-xs">
+              <span className="text-muted-foreground">{t('semanticJudgeLabel')}</span>
+              <span className="rounded bg-warning/15 px-1.5 py-0.5 text-[11px]">{t('semanticJudgeSame', { count: semGuard.data.judge.same })}</span>
+              <span className="rounded border px-1.5 py-0.5 text-[11px]">{t('semanticJudgeDifferent', { count: semGuard.data.judge.different + semGuard.data.judge.unsure })}</span>
+              {Object.keys(semGuard.data.judge.skipped ?? {}).length > 0 && (
+                <span className="rounded bg-destructive/10 px-1.5 py-0.5 text-[11px]"
+                  title={Object.entries(semGuard.data.judge.skipped).map(([k, v]) => `${k}: ${v}`).join(', ')}>
+                  {t('semanticJudgeSkipped', { count: Object.values(semGuard.data.judge.skipped).reduce((a, b) => a + b, 0) })}
+                </span>
+              )}
+            </p>
+          )}
+          {/* precision@suspend — semantic v2's data gate: the human outcome of each question. Absent
+              on an older server (additive), and the rate stays hidden until a decision exists — a
+              ratio is never invented out of zero. */}
           {semGuard.data.precision && (semGuard.data.precision.approved + semGuard.data.precision.denied + semGuard.data.precision.pending) > 0 && (
             <p className="mb-2 text-xs">
               {t('semanticPrecision', {
@@ -224,7 +270,7 @@ export function Observability() {
             </p>
           )}
           <div className="flex flex-wrap gap-2">
-            {Object.entries(semGuard.data.byTool).map(([tool, v]) => (
+            {Object.entries(semGuard.data.byTool ?? {}).map(([tool, v]) => (
               <span key={tool} className="rounded border px-2 py-0.5 font-mono text-[11px]">
                 {tool}: {v.suspend}/{v.warn}
               </span>

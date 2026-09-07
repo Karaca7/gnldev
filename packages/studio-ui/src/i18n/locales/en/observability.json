@@ -32,5 +32,17 @@
   "semanticWarns": "{{count}} telemetry",
   "semanticDescription": "Meaning-similar duplicate candidates: questions asked vs telemetry-only drops (identity mismatch, embedder outages). Per tool: questions/telemetry.",
   "semanticPrecision": "Human outcomes: {{denied}} stopped (real duplicate), {{approved}} ran anyway, {{pending}} pending.",
-  "semanticPrecisionRate": "{{pct}}% caught real duplicates"
+  "semanticPrecisionRate": "{{pct}}% caught real duplicates",
+  "semanticOriginLabel": "Asked by:",
+  "semanticOriginIdentity": "identity {{count}}",
+  "semanticOriginRule": "rules {{count}}",
+  "semanticOriginJudge": "judge {{count}}",
+  "semanticScanLabel": "Settled without asking:",
+  "semanticScanRule": "rules {{count}}",
+  "semanticScanNegation": "negation {{count}}",
+  "semanticGrayUnjudged": "{{count}} calls unjudged (the judge's price quote)",
+  "semanticJudgeLabel": "Judge answers:",
+  "semanticJudgeSame": "same {{count}}",
+  "semanticJudgeDifferent": "different {{count}}",
+  "semanticJudgeSkipped": "no answer {{count}}"
 }

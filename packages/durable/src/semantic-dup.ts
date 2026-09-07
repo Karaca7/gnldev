@@ -21,6 +21,9 @@
 // Best-effort and fail-open end to end: an unreachable embedder degrades to today's behavior — it
 // Never blocks a tool result and never takes the layers below with it.
 import type { Journal } from './journal.js';
+import { runRuleLadder, rulesConfigOf } from './semantic-rules.js';
+import type { RuleTrace } from './semantic-rules.js';
+import { validateJudgeConfig } from './semantic-judge.js';
 
 /** Run-level half of the double opt-in (`limits.sideEffectDuplicates.semantic`). */
 export interface SemanticDupConfig {
@@ -36,6 +39,22 @@ export interface SemanticDupConfig {
   minSimilarity?: number;
   /** How many best-scoring candidates enter the deterministic phase (default 3). */
   topK?: number;
+  /**
+   * FAZ-7 (v2) — the deterministic rule ladder for candidates whose identity fields are NOT equal.
+   * `true` takes the defaults; an object tunes them. PURE DATA on purpose: it survives the
+   * frozen-limits round-trip intact (unlike the closures beside it), so a resumed run's ladder is
+   * the same ladder. Absent = the ladder does not run and every identity-MISS candidate is gray.
+   *
+   * OPT-IN by decision (heyet H4): the ladder can turn a case that v1 only counted into a question
+   * an operator sees, and a new question source arriving in a minor upgrade is a surprise.
+   */
+  rules?: true | import('./semantic-rules.js').SemanticRulesConfig;
+  /**
+   * FAZ-7 (v2) — the judge for the gray residue. Requires a qualification certificate; see
+   * semantic-judge.ts for why an unexamined judge is refused at config time rather than at runtime.
+   * Absent = the residue stays unasked (v1 behavior) and is counted as `grayUnjudged`.
+   */
+  judge?: import('./semantic-judge.js').SemanticJudgeConfig;
 }
 
 /** Tool-level half of the double opt-in (`tool.semanticIdentity`). */
@@ -158,6 +177,21 @@ export function validateSemanticConfig(raw: unknown): void {
       '@gnldev/durable: sideEffectDuplicates.semantic.embedModelId is required — vectors from different models must never be compared, and the stamp is how records from a swapped model are excluded.',
     );
   }
+  // FAZ-7 (v2): the judge's config-time gate. Deliberately BEHIND the embedStripped early return
+  // above — a resumed run carries a stripped, closure-less block and must not be re-validated as if
+  // the caller had just written it.
+  const j = (sem as SemanticDupConfig).judge;
+  if (j) {
+    for (const w of validateJudgeConfig(j).warnings) console.warn(w);
+    if ((sem as SemanticDupConfig).rules === undefined) {
+      // NOT a throw (heyet H5): a judge without the ladder is expensive, not contradictory — the
+      // throws in this file are reserved for configurations that are installed and inert. Without
+      // rules EVERY identity-MISS candidate is gray, so the judge is fully used, just unfiltered.
+      console.warn(
+        "@gnldev/durable: sideEffectDuplicates.semantic.judge is configured without `rules` — every candidate whose identity fields differ will be sent to the judge. The rule ladder settles a third of them deterministically and drops a third of the look-alikes for free; consider `rules: true`.",
+      );
+    }
+  }
 }
 
 export function assertSemanticIdentity(toolName: string, id: SemanticIdentity): void {
@@ -272,9 +306,42 @@ export async function writeSemRecord(journal: Journal, plan: SemPlan, firstToolC
 
 // ── read side ──
 
+/** A candidate the deterministic half could not settle — the judge's input, carried whole so the
+ *  caller can ask about it without re-scanning. */
+export interface GrayCandidate {
+  rec: SemDupRecord;
+  score: number;
+  trace: RuleTrace[];
+}
+
 export type SemVerdict =
-  | { kind: 'none'; embedFailed?: boolean; outage?: boolean; droppedIdentity?: number; droppedStamp?: number; noListKeys?: boolean }
-  | { kind: 'suspend'; score: number; firstToolCallId: string; priorHash: string; priorCanonical: string; amountsDiffer: string[] };
+  | {
+      kind: 'none';
+      embedFailed?: boolean;
+      outage?: boolean;
+      noListKeys?: boolean;
+      /** Identity mismatch with no ladder configured (v1's only signal, still counted). */
+      droppedIdentity?: number;
+      droppedStamp?: number;
+      /** FAZ-7: negation gate drops — counted now, because a silent drop is still a decision (H18). */
+      droppedDiscriminator?: number;
+      /** FAZ-7: ladder said 'separate' — a deterministic, explainable drop. */
+      droppedByRule?: number;
+      /** FAZ-7: the residue, best-scoring first. Empty/absent when nothing reached gray. */
+      gray?: GrayCandidate[];
+    }
+  | {
+      kind: 'suspend';
+      score: number;
+      firstToolCallId: string;
+      priorHash: string;
+      priorCanonical: string;
+      amountsDiffer: string[];
+      /** 'identity' = v1's deterministic field equality; 'rule' = the ladder normalized both sides
+       *  into equality. Both are deterministic; the distinction drives the message and telemetry. */
+      origin: 'identity' | 'rule';
+      trace?: RuleTrace[];
+    };
 
 /** The candidate scan. Everything probabilistic ends at "candidate"; everything that decides is
  *  Deterministic field equality. Returns 'none' loudly-typed rather than throwing — fail-open. */
@@ -325,14 +392,50 @@ async function scanCandidates(journal: Journal, plan: SemPlan, ttlMs?: number): 
     .sort((a, b) => b.score - a.score)
     .slice(0, topK);
 
+  // MONOTONICITY (heyet H17, the property this loop shape exists to protect): v2 must never take
+  // away a question v1 would have asked. The candidates are walked in score order and ANY identity
+  // (or ladder) match returns immediately; gray candidates are only COLLECTED, never returned early.
+  // Reversing that — returning the first gray for judging — would let a high-scoring gray outrank a
+  // lower-scoring but identity-equal candidate behind it, and the certain question would be lost to
+  // a probabilistic one.
+  const rules = rulesConfigOf(plan.cfg.rules);
   let droppedIdentity = 0;
+  let droppedDiscriminator = 0;
+  let droppedByRule = 0;
+  const gray: GrayCandidate[] = [];
   for (const { rec, score } of scored) {
     const discKeys = plan.id.discriminatorFields ?? [];
-    if (discKeys.some((k) => (rec.discriminators[k] ?? '') !== (plan.fields.discriminators[k] ?? ''))) continue; // negation gate
+    if (discKeys.some((k) => (rec.discriminators[k] ?? '') !== (plan.fields.discriminators[k] ?? ''))) {
+      // Negation gate — deterministic and final: a declared discriminator difference is the tool
+      // author saying "these are opposite actions". It never reaches the ladder or the judge.
+      droppedDiscriminator++;
+      continue;
+    }
     const idEqual = plan.id.keys.every((k) => (rec.identity[k] ?? '') === (plan.fields.identity[k] ?? ''));
-    if (!idEqual) { droppedIdentity++; continue; } // score alone NEVER suspends
-    const amountsDiffer = (plan.id.amountFields ?? []).filter((k) => rec.amounts[k] !== plan.fields.amounts[k]);
-    return { kind: 'suspend', score, firstToolCallId: rec.firstToolCallId, priorHash: rec.argsHash, priorCanonical: rec.canonical, amountsDiffer };
+    if (idEqual) {
+      const amountsDiffer = (plan.id.amountFields ?? []).filter((k) => rec.amounts[k] !== plan.fields.amounts[k]);
+      return { kind: 'suspend', score, firstToolCallId: rec.firstToolCallId, priorHash: rec.argsHash, priorCanonical: rec.canonical, amountsDiffer, origin: 'identity' };
+    }
+    // Score alone still never suspends. What follows is deterministic structure, not similarity.
+    if (!rules) { droppedIdentity++; gray.push({ rec, score, trace: [] }); continue; }
+    const ladder = runRuleLadder(plan.id.keys, rec.identity, plan.fields.identity, rules);
+    if (ladder.kind === 'separate') { droppedByRule++; continue; }
+    if (ladder.kind === 'match') {
+      const amountsDiffer = (plan.id.amountFields ?? []).filter((k) => rec.amounts[k] !== plan.fields.amounts[k]);
+      return {
+        kind: 'suspend', score, firstToolCallId: rec.firstToolCallId, priorHash: rec.argsHash,
+        priorCanonical: rec.canonical, amountsDiffer, origin: 'rule', trace: ladder.trace,
+      };
+    }
+    droppedIdentity++;
+    gray.push({ rec, score, trace: ladder.trace });
   }
-  return { kind: 'none', ...(droppedIdentity ? { droppedIdentity } : {}), ...(droppedStamp ? { droppedStamp } : {}) };
+  return {
+    kind: 'none',
+    ...(droppedIdentity ? { droppedIdentity } : {}),
+    ...(droppedStamp ? { droppedStamp } : {}),
+    ...(droppedDiscriminator ? { droppedDiscriminator } : {}),
+    ...(droppedByRule ? { droppedByRule } : {}),
+    ...(gray.length ? { gray } : {}),
+  };
 }

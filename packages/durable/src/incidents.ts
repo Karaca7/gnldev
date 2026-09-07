@@ -18,7 +18,12 @@ import type { Journal } from './journal.js';
 export interface RunIncident {
   at: number;
   /** Which mechanism decided (see limits.ts / durable-tool.ts / taint.ts). */
-  source: 'duplicate-guard' | 'loop-detection' | 'max-tool-calls' | 'taint-guard' | 'semantic-guard';
+  // FAZ-7: 'semantic-judge' is its OWN source rather than another semantic-guard action, because the
+  // key below is (toolCallId, source, action) — two records the same guard writes for one call with
+  // the same action overwrite each other. That is exactly how a de-escalation record was being lost
+  // (heyet H16); the scan's counters are now one combined 'semantic-guard' warn, and the judge's
+  // own answer lives under this separate source.
+  source: 'duplicate-guard' | 'loop-detection' | 'max-tool-calls' | 'taint-guard' | 'semantic-guard' | 'semantic-judge';
   /** What it did: 'warn' executed anyway (named the incident), the rest did not execute the call. */
   action: 'warn' | 'reflect' | 'block' | 'suspend' | 'skip';
   toolName: string;

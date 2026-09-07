@@ -9,6 +9,8 @@ import { recordIncident } from './incidents.js';
 import { markRunTainted, readRunTaint } from './taint.js';
 import { checkToolGate, recordToolOutcome } from './limits.js';
 import { validateSemanticConfig, assertSemanticIdentity, extractSemFields, canonicalTextOf, findSemanticCandidate, writeSemRecord, semTombKey } from './semantic-dup.js';
+import { SEM_RULESET_VERSION } from './semantic-rules.js';
+import { judgeGrayPair } from './semantic-judge.js';
 import { xidPlanOf, writeXid, readXid, xidWhen, amountsDifferOf, type XidPlan } from './xid.js';
 import type { SemPlan } from './semantic-dup.js';
 import type { RunLimits } from './limits.js';
@@ -114,14 +116,38 @@ const threadDupMarkerKey = (threadId: string, toolName: string, hash: string): s
 /** FAZ-3 — 'thread' scoping asked for without a threadId: fall back LOUDLY (once per tool+feature),
  *  Never silently — a silent fallback reports dedup the caller isn't getting. */
 const threadScopeWarned = new Set<string>();
-function warnThreadScopeFallback(feature: string, toolName: string): void {
-  const k = `${feature}:${toolName}`;
+function warnThreadScopeFallback(feature: string, toolName: string, missing: 'threadId' | 'resourceId' | 'capability' | 'config' = 'threadId'): void {
+  // The CAUSE is part of the dedup key, not just the feature: 'semantic guard, no threadId' and
+  // 'semantic guard, journal cannot list keys' are two different diagnostics about two different
+  // fixes, and keying them together makes whichever fires first silence the other for the process's
+  // lifetime — the same key-collision shape that was hiding de-escalation records (H16).
+  const k = `${feature}:${toolName}:${missing}`;
   if (threadScopeWarned.has(k)) return;
   threadScopeWarned.add(k);
-  console.warn(
-    `@gnldev/durable: '${toolName}' asked for thread-scoped ${feature} but this call has NO threadId — ` +
-    `falling back to run scope. Pass threadId (RunOptions.threadId / the chat route sets it) to get the thread window.`,
-  );
+  // The MISSING PIECE is a parameter, not a constant. This message used to say "has NO threadId"
+  // for every caller, including the XID site whose actual gap is a missing resourceId — so an
+  // operator who already passed a threadId was sent looking for one (measured on the live demo).
+  // A diagnostic that names the wrong cause costs more than no diagnostic.
+  const cause = missing === 'capability'
+    ? 'the journal does not support it'
+    : missing === 'config'
+      ? 'this run resumed with frozen limits, so the closure was stripped'
+      : `this call has NO ${missing}`;
+  const fix = missing === 'capability'
+    ? 'Use a journal that implements listKeys (InMemory/Sqlite/Postgres all do).'
+    : missing === 'config'
+      ? 'Re-supply `limits` on the resume call to reactivate it.'
+      : missing === 'resourceId'
+        ? 'Pass resourceId (RunOptions.resourceId) to enable it.'
+        : 'Pass threadId (RunOptions.threadId / the chat route sets it) to get the thread window.';
+  // The DEGRADE DIRECTION is part of the diagnostic. Only the thread-window cases narrow to run
+  // scope; the rest switch the layer OFF entirely, and telling an operator "falling back" there
+  // would leave them believing a smaller protection is still running when none is.
+  const degrade = missing === 'threadId' ? 'falling back to run scope' : 'the layer is OFF for this call';
+  // 'thread-scoped' stays ONLY where the thread window is what was asked for and lost. Elsewhere it
+  // would describe a narrowing that did not happen.
+  const what = missing === 'threadId' ? `thread-scoped ${feature}` : feature;
+  console.warn(`@gnldev/durable: '${toolName}' asked for ${what} but ${cause} — ${degrade}. ${fix}`);
 }
 
 /** FAZ-3 — sideEffectDuplicates accepts a plain action string (≡ run scope) or `{action, scope, ttlMs}`. */
@@ -569,8 +595,16 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
             at: ctx.journal.now ? await ctx.journal.now() : Date.now(),
             toolCallId, toolName,
             reason: (record.output as { __gnl_suspend?: { reason?: string } })?.__gnl_suspend?.reason,
+            // Sinif YAPISAL alandan gelir; metin oneki YALNIZ bu alan yokken (eski kayitlar) yedektir.
+            // TUM sentinel uretici yuzeyleri `kind` yazar (confirm/guard/duplicate/semantic/taint) —
+            // kismi gecis, alani yazmayan yuzeyi kalici 'other' kovasina hapsederdi (denetci K32).
+            // Onek testi kirilgan cikti: yargic kolunun yeni metni 'Semantically' ile baslamadigi icin
+            // her yargic-kaynakli onay sessizce 'other' yaziliyordu — sorunun HANGI kapidan geldigini
+            // okuyan sorgular yargic kolunu hic gormedi (denetci K32).
             kind: (() => {
-              const r0 = (record.output as { __gnl_suspend?: { reason?: string } })?.__gnl_suspend?.reason ?? '';
+              const sus = (record.output as { __gnl_suspend?: { kind?: string; reason?: string } })?.__gnl_suspend;
+              if (sus?.kind) return sus.kind;
+              const r0 = sus?.reason ?? '';
               return r0.startsWith('Duplicate side effect') ? 'duplicate'
                 : r0.startsWith('Semantically similar') ? 'semantic'
                 : r0.includes('explicit confirmation') ? 'confirm' : 'other';
@@ -662,7 +696,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
             }
           } catch { /* generic text is the safe fallback */ }
         }
-        const sentinel = { __gnl_suspend: { toolCallId, toolName, args: input, reason } };
+        const sentinel = { __gnl_suspend: { toolCallId, toolName, args: input, reason, kind: 'confirm' } };
         await writeToolTerminal(ctx, key, { status: 'suspended', output: sentinel }, toolCallId, toolName, hash);
         return sentinel;
       } else if (ctx.guard) {
@@ -686,7 +720,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           if (approved !== true) {
             // No approval → suspend: the real tool does NOT run; a sentinel is returned, the loop stops via stopWhen.
             const sentinel = {
-              __gnl_suspend: { toolCallId, toolName, args: input, reason: decision.reason },
+              __gnl_suspend: { toolCallId, toolName, args: input, reason: decision.reason, kind: 'guard' },
             };
             await writeToolTerminal(ctx, key, { status: 'suspended', output: sentinel }, toolCallId, toolName, hash);
             return sentinel;
@@ -704,7 +738,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       let xidPlan: XidPlan | undefined;
       if (tool.semanticIdentity && sideEffect) {
         if (ctx.resourceId) xidPlan = xidPlanOf(tool.semanticIdentity, toolName, input, ctx.resourceId, ctx.channel);
-        else warnThreadScopeFallback('cross-channel identity (XID) — pass resourceId to enable', toolName);
+        else warnThreadScopeFallback('cross-channel identity (XID)', toolName, 'resourceId');
       }
 
 
@@ -823,7 +857,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
               `Duplicate side effect: '${toolName}' already succeeded with identical arguments in ` +
               `${dupWhere} (first: ${marker.firstToolCallId}). A human must approve executing it again.`;
             // Zengin payload (heyet v1 #5): bilgisiz onay onay degildir — UI yas/kaynak gosterebilsin.
-            const sentinel = { __gnl_suspend: { toolCallId, toolName, args: input, reason,
+            const sentinel = { __gnl_suspend: { toolCallId, toolName, args: input, reason, kind: 'duplicate',
               prior: { toolCallId: marker.firstToolCallId, at: marker.at, ageMs: Math.max(0, nowS - marker.at), ...(crossOrigin ? { origin: crossOrigin } : {}) } } };
             await recordIncident(ctx.journal, ctx.runId, {
               at: Date.now(), source: 'duplicate-guard', action: 'suspend', toolName, toolCallId,
@@ -901,7 +935,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       // Aktiflik = canlı embed closure'ı; frozen-limits round-trip'inden gelen soyulmuş blok
       // (embedStripped) İNAKTİFTİR — resume, semantiği yeniden verilmemiş limits'le fail-open koşar.
       const semCfg = dupCfg.semantic && typeof dupCfg.semantic.embed === 'function' ? dupCfg.semantic : undefined;
-      if (dupCfg.semantic && !semCfg) warnThreadScopeFallback('semantic guard (resumed with frozen limits — re-supply `limits` to reactivate)', toolName);
+      if (dupCfg.semantic && !semCfg) warnThreadScopeFallback('semantic guard', toolName, 'config');
       let semPlan: SemPlan | undefined;
       if (semCfg && tool.semanticIdentity && sideEffect) {
         if (!ctx.threadId) {
@@ -921,6 +955,11 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       // Fired, and would bypass the recover/reclaim ladder that owns that state.
       if (record === undefined && semPlan && approved !== true) {
         const verdict = await findSemanticCandidate(ctx.journal, semPlan, dupCfg.ttlMs);
+
+        // FAZ A — the deterministic question. UNTOUCHED from v1 except for `origin`: identity
+        // equality and the rule ladder both land here, and both are certain enough to ask about.
+        // v2 may never take away a question v1 would have asked (monotonicity, heyet H17) — which is
+        // why this arm runs before anything is sent to a judge.
         if (verdict.kind === 'suspend') {
           const pct = Math.round(verdict.score * 100);
           const reason = verdict.amountsDiffer.length
@@ -928,28 +967,109 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
               `but the amounts differ (${verdict.amountsDiffer.join(', ')}). A human must decide: new job, or a duplicate with a typo?`
             : `Semantically similar work already succeeded in this thread (${pct}% match, first: ${verdict.firstToolCallId}): ` +
               `"${verdict.priorCanonical}". A human must approve executing it again.`;
-          const sentinel = { __gnl_suspend: { toolCallId, toolName, args: input, reason, semPair: { priorHash: verdict.priorHash } } };
+          const sentinel = { __gnl_suspend: { toolCallId, toolName, args: input, reason, kind: 'semantic', semPair: { priorHash: verdict.priorHash } } };
           await recordIncident(ctx.journal, ctx.runId, {
             at: Date.now(), source: 'semantic-guard', action: 'suspend', toolName, toolCallId, message: reason,
-            detail: { toolName, score: verdict.score, firstToolCallId: verdict.firstToolCallId, priorHash: verdict.priorHash, amountsDiffer: verdict.amountsDiffer },
+            detail: {
+              toolName, score: verdict.score, firstToolCallId: verdict.firstToolCallId, priorHash: verdict.priorHash,
+              amountsDiffer: verdict.amountsDiffer, origin: verdict.origin,
+              ...(verdict.trace?.length ? { trace: verdict.trace } : {}),
+            },
           });
           await writeToolTerminal(ctx, key, { status: 'suspended', output: sentinel }, toolCallId, toolName, hash);
           return sentinel;
         }
-        // Telemetry-only arms (the calibration debt's only v1 signal — see the design report):
-        if (verdict.noListKeys) warnThreadScopeFallback('semantic guard (journal has no listKeys)', toolName);
-        if (verdict.outage) {
+
+        // FAZ B — the gray residue. Reached ONLY when FAZ A asked nothing. One pair, one call.
+        const gray = verdict.gray?.[0];
+        // Read through semPlan (not semCfg): the plan is only built when the config was live, and
+        // the closure check mirrors the embed one — a frozen-limits resume carries a stripped block,
+        // so the judge is inactive rather than half-configured.
+        const judgeCfg = semPlan.cfg.judge && typeof semPlan.cfg.judge.complete === 'function' ? semPlan.cfg.judge : undefined;
+        let judged: import('./semantic-judge.js').JudgeOutcome | undefined;
+        if (gray && judgeCfg) {
+          // OUTSIDE findSemanticCandidate's fail-open try ON PURPOSE (H17): a judge error must not
+          // be able to swallow the scan's telemetry below. judgeGrayPair never throws — every
+          // failure is a typed 'skipped' cause — so this stays fail-open without hiding anything.
+          // MEKANİK sınır, invariant yorumu DEĞİL (denetçi K22): judgeGrayPair'in kendi I/O'ları
+          // .catch'li ama prompt render'ı ve senkron-throw eden özel bir adapter bu kapsamın dışında
+          // kalıyordu — bozuk TEK bir eski kayıt tool çağrısını 'failed'a düşürebilirdi, yani
+          // "yargıç erişilemezse davranış bugünkü davranıştır" vaadinin tam tersi.
+          try {
+            judged = await judgeGrayPair(ctx.journal, ctx.runId, toolCallId, semPlan, gray, judgeCfg);
+          } catch {
+            judged = { kind: 'skipped', cause: 'error' };
+          }
+          if (judged.kind === 'verdict' && judged.verdict === 'same') {
+            const pct = Math.round(gray.score * 100);
+            // Wording note (K12): no "AI", no "the judge decided", no confidence claim. The question
+            // states what was found and asks; the answer is the human's, exactly as in FAZ A.
+            const reason =
+              `Similar work already succeeded in this thread (${pct}% match, first: ${gray.rec.firstToolCallId}): ` +
+              `"${gray.rec.canonical}". The identity fields differ, so this may be the same job written differently. ` +
+              `A human must approve executing it again.`;
+            const sentinel = { __gnl_suspend: { toolCallId, toolName, args: input, reason, kind: 'semantic', semPair: { priorHash: gray.rec.argsHash } } };
+            await recordIncident(ctx.journal, ctx.runId, {
+              at: Date.now(), source: 'semantic-judge', action: 'suspend', toolName, toolCallId, message: reason,
+              detail: {
+                toolName, score: gray.score, firstToolCallId: gray.rec.firstToolCallId, priorHash: gray.rec.argsHash,
+                judgeModelId: judgeCfg.judgeModelId, cached: judged.cached, latencyMs: judged.latencyMs,
+                cert: { fixtureSetId: judgeCfg.qualification.fixtureSetId, paraphraseRecall: judgeCfg.qualification.paraphraseRecall, nearMissFp: judgeCfg.qualification.nearMissFp },
+                // A model/prompt/ruleset bump silently invalidates every cached verdict; the only way
+                // that cost is countable is if the flag reaches a durable record (Studio reads it here).
+                ...(judged.staleReplaced ? { staleReplaced: true } : {}),
+                ...(gray.trace.length ? { trace: gray.trace } : {}),
+              },
+            });
+            await writeToolTerminal(ctx, key, { status: 'suspended', output: sentinel }, toolCallId, toolName, hash);
+            return sentinel;
+          }
+          // 'different' | 'unsure' | skipped(budget|timeout|parse-fail|...) → today's behavior, and
+          // the de-escalation is journalled: a gate that quietly decides nothing happened is the one
+          // thing this layer is not allowed to be.
+          const outcome = judged.kind === 'verdict' ? judged.verdict : `skipped:${judged.cause}`;
           await recordIncident(ctx.journal, ctx.runId, {
-            at: Date.now(), source: 'semantic-guard', action: 'warn', toolName, toolCallId,
-            message: `@gnldev/durable: semantic embedder failing repeatedly — the paraphrase gate is effectively OFF (fail-open); layers 1-4 are unaffected`,
-            detail: { toolName, embedModelId: semPlan.cfg.embedModelId },
+            at: Date.now(), source: 'semantic-judge', action: 'warn', toolName, toolCallId,
+            message:
+              `@gnldev/durable: a similar-looking candidate for '${toolName}' was NOT turned into a question (${outcome}) — ` +
+              `the call proceeds exactly as it would without this layer`,
+            detail: {
+              toolName, outcome, score: gray.score, judgeModelId: judgeCfg.judgeModelId,
+              pair: { priorHash: gray.rec.argsHash, newHash: hash },
+              rulesetVersion: SEM_RULESET_VERSION,
+              cert: { fixtureSetId: judgeCfg.qualification.fixtureSetId, paraphraseRecall: judgeCfg.qualification.paraphraseRecall, nearMissFp: judgeCfg.qualification.nearMissFp },
+              ...(judged.kind === 'verdict' ? { cached: judged.cached, latencyMs: judged.latencyMs, ...(judged.staleReplaced ? { staleReplaced: true } : {}) } : {}),
+              ...(gray.trace.length ? { trace: gray.trace } : {}),
+            },
           });
         }
-        if (verdict.droppedIdentity) {
+
+        // FAZ C — ONE combined scan incident. Three separate writes used to share the incident key
+        // (runId, toolCallId, source, action) and overwrite each other, so whichever counter wrote
+        // last was the only one an operator ever saw (heyet H16).
+        if (verdict.noListKeys) warnThreadScopeFallback('semantic guard', toolName, 'capability');
+        // UNIT: CALLS, not candidates — and the same unit whether or not a judge is configured.
+        // It used to count candidates (up to topK) with the judge off and candidates-minus-one with
+        // it on, so one field carried two units and Studio summed them into a meaningless number.
+        // The judge speaks at most once per call, so a call is what it would cost.
+        const grayCalls = (verdict.gray?.length ?? 0) > 0 ? 1 : 0;
+        const counters = {
+          ...(verdict.droppedIdentity ? { droppedIdentity: verdict.droppedIdentity } : {}),
+          ...(verdict.droppedStamp ? { droppedStamp: verdict.droppedStamp } : {}),
+          ...(verdict.droppedDiscriminator ? { droppedDiscriminator: verdict.droppedDiscriminator } : {}),
+          ...(verdict.droppedByRule ? { droppedByRule: verdict.droppedByRule } : {}),
+          ...(grayCalls ? { grayCalls } : {}),
+          ...(verdict.outage ? { embedderOutage: true } : {}),
+          ...(verdict.noListKeys ? { noListKeys: true } : {}),
+        };
+        if (Object.keys(counters).length > 0) {
           await recordIncident(ctx.journal, ctx.runId, {
             at: Date.now(), source: 'semantic-guard', action: 'warn', toolName, toolCallId,
-            message: `@gnldev/durable: ${verdict.droppedIdentity} semantically-similar candidate(s) dropped on identity mismatch for '${toolName}' — score alone never suspends (telemetry for threshold calibration)`,
-            detail: { toolName, droppedIdentity: verdict.droppedIdentity },
+            message:
+              `@gnldev/durable: semantic scan for '${toolName}' produced no question — ` +
+              `${Object.entries(counters).map(([k, v]) => `${k}=${v}`).join(', ')}` +
+              (verdict.outage ? ' (the embedder is failing repeatedly; the paraphrase gate is effectively OFF, layers 1-4 unaffected)' : ''),
+            detail: { toolName, ...counters, ...(semPlan.cfg.rules !== undefined ? { rulesetVersion: SEM_RULESET_VERSION } : {}), embedModelId: semPlan.cfg.embedModelId },
           });
         }
       }
@@ -970,7 +1090,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
             const reason =
               `Tainted context: untrusted external content from ${src} entered this run before this ` +
               `'${toolName}' call. A human must verify the action serves the user's request (not the fetched content) and approve it.`;
-            const sentinel = { __gnl_suspend: { toolCallId, toolName, args: input, reason } };
+            const sentinel = { __gnl_suspend: { toolCallId, toolName, args: input, reason, kind: 'taint' } };
             await recordIncident(ctx.journal, ctx.runId, { at: Date.now(), source: 'taint-guard', action: 'suspend', toolName, toolCallId, message: reason, detail: taintDetail });
             await writeToolTerminal(ctx, key, { status: 'suspended', output: sentinel }, toolCallId, toolName, hash);
             return sentinel;

@@ -1,0 +1,44 @@
+{
+  "name": "@gnldev/semantic-qualify",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "description": "Qualification bench for GNL's semantic judge: measures a judge closure against blind fixtures and issues the certificate @gnldev/durable requires.",
+  "keywords": [
+    "gnl",
+    "dedup",
+    "idempotency",
+    "evaluation",
+    "qualification"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./fixtures/*": "./fixtures/*"
+  },
+  "files": [
+    "dist",
+    "fixtures"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@gnldev/durable": "workspace:*"
+  },
+  "peerDependencies": {
+    "@gnldev/durable": "workspace:^"
+  },
+  "bin": {
+    "gnl-semantic-qualify": "./dist/cli.js"
+  }
+}

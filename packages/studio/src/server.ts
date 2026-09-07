@@ -2077,16 +2077,31 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     const kj = rw as unknown as import('@gnldev/durable').Journal;
     const totals = { suspend: 0, warn: 0 };
     const byTool: Record<string, { suspend: number; warn: number }> = {};
-    const recent: { runId: string; at?: number; action: string; toolName: string; message: string }[] = [];
+    const recent: { runId: string; at?: number; action: string; toolName: string; message: string; source?: string }[] = [];
+    // Which rung asked: identity equality, the rule ladder, or the judge (FAZ-7 origin breakdown).
+    const byOrigin = { identity: 0, rule: 0, judge: 0 };
     // precision@suspend (tasarım raporunun zorunlu telemetri listesindeki son parça): her semantik
     // askının İNSAN sonucu, aynı toolCallId'nin tool kaydından türetilir — 'denied' = kapı gerçek
     // mükerreri yakaladı; 'succeeded' = insan "yine de koş" dedi (tasarım bunu tombstone'la "farklı
     // iş" hükmü sayar → yanlış alarm payı; bilinçli tekrar da buraya düşer, oran üst sınırdır).
     // Semantik v2 (salt-skor dalı, kalibrasyon) ANCAK bu veriyle tartışılır — veri-kapısı budur.
     const precision = { approved: 0, denied: 0, pending: 0, rate: null as number | null };
+    // FAZ-7 — the two surfaces the cost recipe in the docs actually needs.
+    //
+    // `scan`: what the deterministic half did WITHOUT asking. `grayCalls` is the honest price quote
+    // for turning the judge on: it counts CALLS that produced a gray residue, and the judge spends at
+    // most one call on each — one unit, whether or not a judge is configured. `droppedIdentity` is NOT that quote — with
+    // `rules` enabled a separator drop moves into `droppedByRule`, so the same traffic reports a
+    // smaller `droppedIdentity` after the upgrade, and the two must never be added together.
+    //
+    // `judge`: every arm the judge took, including the ones that asked nothing. Without this the
+    // journal holds each de-escalation while Studio shows only the suspends — which is exactly how
+    // "the judge is enabled" gets mistaken for "the judge is answering".
+    const scan = { droppedIdentity: 0, droppedByRule: 0, droppedDiscriminator: 0, droppedStamp: 0, grayCalls: 0 };
+    const judge = { same: 0, different: 0, unsure: 0, skipped: {} as Record<string, number>, staleReplaced: 0 };
     const semSuspends: { runId: string; toolCallId: string }[] = [];
     if (!writable || typeof kj.listKeys !== 'function') {
-      return c.json({ totals, byTool, precision, recent, unavailable: 'journal has no listKeys — incidents cannot be enumerated' });
+      return c.json({ totals, byTool, byOrigin, scan, judge, precision, recent, unavailable: 'journal has no listKeys — incidents cannot be enumerated' });
     }
     // Cap: this aggregates on every 10s UI poll — unbounded N+1 over a retention-sized journal grows
     // Linearly forever. The most RECENT slice carries the calibration signal; the cap is reported.
@@ -2095,12 +2110,41 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     for (const r of runs) {
       const incidents = await readIncidents(kj, r.runId).catch(() => []);
       for (const i of incidents) {
-        if (i.source !== 'semantic-guard') continue;
+        // FAZ-7: the judge writes under its OWN source (the incident key is
+        // runId:toolCallId:source:action, so a second 'semantic-guard' record for the same call would
+        // overwrite the scan's). A filter that only knew the old name would make every judge
+        // decision invisible here while the journal held it — the heyet marked including this family
+        // a release precondition (H16-d).
+        if (i.source !== 'semantic-guard' && i.source !== 'semantic-judge') continue;
         const bucket = i.action === 'suspend' ? 'suspend' : 'warn';
         totals[bucket]++;
         (byTool[i.toolName] ??= { suspend: 0, warn: 0 })[bucket]++;
-        if (bucket === 'suspend') semSuspends.push({ runId: r.runId, toolCallId: i.toolCallId });
-        recent.push({ runId: r.runId, at: i.at, action: i.action, toolName: i.toolName, message: i.message });
+        // Which rung asked the question: the deterministic fields, the rule ladder, or the judge.
+        // A drift here (judge share climbing) is the first sign that identity declarations or the
+        // ladder's dictionaries stopped matching the traffic.
+        const origin = i.source === 'semantic-judge' ? 'judge' : ((i.detail as { origin?: string } | undefined)?.origin === 'rule' ? 'rule' : 'identity');
+        if (bucket === 'suspend') { byOrigin[origin]++; semSuspends.push({ runId: r.runId, toolCallId: i.toolCallId }); }
+        const d = (i.detail ?? {}) as Record<string, unknown>;
+        if (i.source === 'semantic-guard' && i.action === 'warn') {
+          for (const k of Object.keys(scan) as Array<keyof typeof scan>) {
+            const v = d[k];
+            if (typeof v === 'number') scan[k] += v;
+          }
+        }
+        if (i.source === 'semantic-judge') {
+          if (i.action === 'suspend') judge.same++;
+          else {
+            const outcome = typeof d.outcome === 'string' ? d.outcome : '';
+            if (outcome === 'different') judge.different++;
+            else if (outcome === 'unsure') judge.unsure++;
+            else if (outcome.startsWith('skipped:')) {
+              const cause = outcome.slice('skipped:'.length);
+              judge.skipped[cause] = (judge.skipped[cause] ?? 0) + 1;
+            }
+          }
+          if (d.staleReplaced === true) judge.staleReplaced++;
+        }
+        recent.push({ runId: r.runId, at: i.at, action: i.action, toolName: i.toolName, message: i.message, source: i.source });
       }
     }
     // Sonuç okuması yalnız askı üreten run'larda (askılar nadir; N okuma askı sayısıyla sınırlı).
@@ -2120,7 +2164,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     const decided = precision.approved + precision.denied;
     if (decided > 0) precision.rate = precision.denied / decided;
     recent.sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
-    return c.json({ totals, byTool, precision, recent: recent.slice(0, 50), scannedRuns: runs.length, totalRuns: allRuns.length });
+    return c.json({ totals, byTool, byOrigin, scan, judge, precision, recent: recent.slice(0, 50), scannedRuns: runs.length, totalRuns: allRuns.length });
   });
 
   app.get('/approvals', async (c) => {

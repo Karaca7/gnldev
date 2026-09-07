@@ -1,15 +1,15 @@
-// FAZ-6 — semantik mükerrer-aday kapısı. Pinlenenler:
-// 1) çift opt-in + config çelişkilerinde THROW (action/scope/embedModelId/keys[]/noApprovals)
-// 2) uçtan uca akış: başarı → sem kayıt; parafraz-benzeri tekrar → suspend (firstToolCallId ile);
-//    onay → çalışır + "farklı iş" tombstone'u; aynı çift bir daha SORULMAZ
-// 3) skor tek başına ASLA suspend tetiklemez (identity mismatch → sadece telemetri, çıktı bayt-aynı)
-// 4) negasyon kapıları: cross-tool (toolName filtresi) + intra-tool (discriminatorFields)
-// 5) miktar kapısı: identity eşit + amount farklı → "amounts differ" mesajlı suspend
-// 6) fail-open: embedder çökük → kayıt vektörsüz yazılır, recall sessiz geçer, iş asla bloklanmaz;
-//    3 ardışık hatada BİR outage incident'ı
-// 7) damga disiplini: farklı embedModelId'li kayıt karşılaştırılmaz
-// 8) yaşam döngüsü: purgeThread sem+semtomb ailelerini süpürür; farklı thread aday değildir
-// 9) replay'de embed tekrar ödenmez; threadId yoksa loud warn + katman devre dışı
+// FAZ-6 — the semantic duplicate-candidate gate. What is pinned here:
+// 1) double opt-in, and a THROW on every config contradiction (action/scope/embedModelId/keys[]/noApprovals)
+// 2) end to end: success → a semantic record; a paraphrase-like repeat → suspend (carrying firstToolCallId);
+//    approval → runs and births a "different work" tombstone; that pair is NEVER asked about again
+// 3) score alone NEVER suspends (identity mismatch → telemetry only, output byte-identical)
+// 4) negation gates: cross-tool (the toolName filter) and intra-tool (discriminatorFields)
+// 5) the magnitude gate: identity equal + amount different → a suspend that says "amounts differ"
+// 6) fail-open: a broken embedder still writes the record (without a vector), recall passes quietly,
+//    work is never blocked; three consecutive failures raise ONE outage incident
+// 7) stamp discipline: a record written under a different embedModelId is never compared
+// 8) lifecycle: purgeThread sweeps the sem + semtomb families; another thread is never a candidate
+// 9) a replay never pays for the embedding again; without a threadId the layer loudly stands down
 import { describe, it, expect, vi } from 'vitest';
 import { stepCountIs } from 'ai';
 import { InMemoryJournal } from '../src/journal.js';
@@ -21,9 +21,9 @@ import { semKey, semTombKey } from '../src/semantic-dup.js';
 import type { SemDupRecord } from '../src/semantic-dup.js';
 import { createMockModel, countToolResults, toolCallResult, finalTextResult } from './mock.js';
 
-/** Deterministik sahte embedder: metin → tek-sıcak (one-hot benzeri) vektör. Aynı metin = kosinüs
- *  1.0, farklı metin = 0.0 — testler benzerliği identity-eşit vakalarda AYNI kanonik cümle üzerinden
- *  Kurar (describe() sabitiyle de "benzer ama kimliksiz" vakası üretilir). */
+/** Deterministic fake embedder: text → a one-hot-ish vector. Identical text scores 1.0, different
+ *  text 0.0 — so a test builds similarity by giving both calls the SAME canonical sentence (a
+ *  constant describe() is how the "similar but identity-less" case is staged). */
 function fakeEmbed(counter?: { n: number }) {
   return async (texts: string[]): Promise<number[][]> => {
     if (counter) counter.n += texts.length;
@@ -50,16 +50,16 @@ const base = (journal: InMemoryJournal, runId: string, extra: Record<string, unk
   runId, journal, stopWhen: stepCountIs(6), prompt: 'x', ...extra,
 });
 
-describe('FAZ-6 config kapıları', () => {
+describe('FAZ-6 config gates', () => {
   const dummyEmbed = fakeEmbed();
-  it("semantic + action!=='suspend' → run başlamadan THROW", async () => {
+  it("semantic + action!=='suspend' → THROWS before the run starts", async () => {
     const limits = { sideEffectDuplicates: { action: 'warn' as const, scope: 'thread' as const, semantic: { embed: dummyEmbed, embedModelId: 'm' } } };
     const tools = { t: { sideEffect: true, semanticIdentity: { keys: ['sku'] }, execute: async () => ({ ok: 1 }) } };
     await expect(
       runDurable(base(new InMemoryJournal(), 'c1', { model: model('t', 'x', {})(), tools, threadId: 'th', limits }) as any),
     ).rejects.toThrow(/action: 'suspend'/);
   });
-  it('embedModelId eksik → THROW; keys boş → THROW; noApprovals → THROW', () => {
+  it('missing embedModelId → THROW; empty keys → THROW; noApprovals → THROW', () => {
     const journal = new InMemoryJournal();
     const mk = (limits: any, tools: any, noApprovals = false) => () =>
       durableTools(tools, { journal, runId: 'c2', limits, ...(noApprovals ? { noApprovals: true } : {}) } as any);
@@ -70,8 +70,8 @@ describe('FAZ-6 config kapıları', () => {
   });
 });
 
-describe('FAZ-6 uçtan uca akış', () => {
-  it('başarı → kayıt; benzer tekrar → suspend; onay → çalışır + tombstone; çift bir daha sorulmaz', async () => {
+describe('FAZ-6 end-to-end flow', () => {
+  it('success → record; a similar repeat → suspend; approval → runs + tombstone; that pair is never asked again', async () => {
     const journal = new InMemoryJournal();
     const embeds = { n: 0 };
     const counter = { n: 0 };
@@ -83,8 +83,8 @@ describe('FAZ-6 uçtan uca akış', () => {
         execute: async ({ sku }: any) => { counter.n++; return { created: sku }; },
       },
     };
-    // r1: "ABC ürününü oluştur"
-    await runDurable(base(journal, 'r1', { model: model('createProduct', 'call-1', { sku: 'ABC', note: 'ilk' })(), tools, threadId: 'th-A', limits }) as any);
+    // r1: "create product ABC"
+    await runDurable(base(journal, 'r1', { model: model('createProduct', 'call-1', { sku: 'ABC', note: 'first' })(), tools, threadId: 'th-A', limits }) as any);
     expect(counter.n).toBe(1);
     const semKeys = await journal.listKeys('xthr:th-A:sem-');
     expect(semKeys).toHaveLength(1);
@@ -92,12 +92,12 @@ describe('FAZ-6 uçtan uca akış', () => {
     expect(rec).toMatchObject({ v: 1, toolName: 'createProduct', embedModelId: 'e2e-model', identity: { sku: 'abc' }, firstToolCallId: 'call-1' });
     expect(rec!.vecB64).toBeTruthy();
     expect(rec!.canonical).toBe('createProduct: abc');
-    expect(rec!.canonical).not.toContain('ilk'); // beyan edilmeyen alan embedder'a SIZMAZ
+    expect(rec!.canonical).not.toContain('first'); // beyan edilmeyen alan embedder'a SIZMAZ
 
-    // r2: ertesi gün, farklı sözcüklerle aynı iş (hash farklı, kimlik aynı)
-    const r2model = model('createProduct', 'call-2', { sku: ' abc ', note: 'unutmuşum, tekrar' }); // trim+case-fold normalize kanıtı
+    // r2: next day, the same job in different words (different hash, same identity)
+    const r2model = model('createProduct', 'call-2', { sku: ' abc ', note: 'forgot, again' }); // proof of trim + case-fold normalization
     await runDurable(base(journal, 'r2', { model: r2model(), tools, threadId: 'th-A', limits }) as any);
-    expect(counter.n).toBe(1); // ATEŞLENMEDİ — soru soruldu
+    expect(counter.n).toBe(1); // NOT fired — a question was asked instead
     const susRec = await journal.get<any>('r2:tool:call-2');
     expect(susRec.status).toBe('suspended');
     expect(susRec.output.__gnl_suspend.reason).toContain('call-1'); // ilk sonucun adresi soruda
@@ -105,45 +105,46 @@ describe('FAZ-6 uçtan uca akış', () => {
     const incidents = await readIncidents(journal, 'r2');
     expect(incidents.some((i) => i.source === 'semantic-guard' && i.action === 'suspend')).toBe(true);
 
-    // onay: insan "yine de yap" dedi → çalışır + 'farklı iş' tombstone'u doğar
+    // approval: the human said "do it anyway" → it runs, and a 'different work' tombstone is born
     await runDurable(base(journal, 'r2', { model: r2model(), tools, threadId: 'th-A', limits, approvals: { 'call-2': true } }) as any);
     expect(counter.n).toBe(2);
     const tombs = await journal.listKeys('xthr:th-A:semtomb-');
     expect(tombs).toHaveLength(1);
 
-    // r3: r2 ile AYNI argümanlar → artık KATMAN-3'ün exact-hash marker'ı yakalar (deterministik >
-    // olasılıksal: semantik kapıya hiç inilmez, soru katman-3'ün sorusudur). Katmanlama pini:
-    await runDurable(base(journal, 'r3', { model: model('createProduct', 'call-3', { sku: ' abc ', note: 'unutmuşum, tekrar' })(), tools, threadId: 'th-A', limits }) as any);
+    // r3: the SAME arguments as r2 → now LAYER 3's exact-hash marker catches it (deterministic
+    // beats probabilistic: the semantic gate is never reached, the question belongs to layer 3):
+    await runDurable(base(journal, 'r3', { model: model('createProduct', 'call-3', { sku: ' abc ', note: 'forgot, again' })(), tools, threadId: 'th-A', limits }) as any);
     expect(counter.n).toBe(2);
     const r3rec = await journal.get<any>('r3:tool:call-3');
     expect(r3rec.status).toBe('suspended');
-    expect(r3rec.output.__gnl_suspend.reason).toContain('identical arguments'); // exact katmanın sesi, semantiğin değil
+    expect(r3rec.output.__gnl_suspend.reason).toContain('identical arguments'); // the exact layer's voice, not the semantic one's
 
-    // farklı thread aday DEĞİL
-    await runDurable(base(journal, 'r4', { model: model('createProduct', 'call-4', { sku: 'ABC', note: 'başka konuşma' })(), tools, threadId: 'th-B', limits }) as any);
+    // another thread is NOT a candidate
+    await runDurable(base(journal, 'r4', { model: model('createProduct', 'call-4', { sku: 'ABC', note: 'another conversation' })(), tools, threadId: 'th-B', limits }) as any);
     expect(counter.n).toBe(3);
   });
 
-  it("tombstone: 'farklı iş' hükmü verilen çift, exact-marker yokken bile bir daha SORULMAZ", async () => {
+  it("tombstone: a pair ruled 'different work' is never asked about again, even without an exact marker", async () => {
     const journal = new InMemoryJournal();
     const counter = { n: 0 };
     const limits = semLimits(fakeEmbed(), 'tomb-model');
     const tools = { createProduct: { sideEffect: true, semanticIdentity: { keys: ['sku'] }, execute: async () => { counter.n++; return { ok: 1 }; } } };
-    const argsA = { sku: 'T-1', note: 'ilk' };
-    const argsB = { sku: 'T-1', note: 'ikinci' }; // farklı hash, aynı kimlik → normalde suspend adayı
+    const argsA = { sku: 'T-1', note: 'first' };
+    const argsB = { sku: 'T-1', note: 'second' }; // different hash, same identity → normally a suspend candidate
     await runDurable(base(journal, 't1', { model: model('createProduct', 'c1', argsA)(), tools, threadId: 'th-T', limits }) as any);
-    // İnsan bu çifti daha önce 'farklı iş' saymış gibi tombstone'u elle koy (onay yolunun ürettiği anahtar):
+    // Plant the tombstone by hand, as if a human had already ruled this pair 'different work'
+    // (the same key the approval path writes):
     const { argsHash } = await import('../src/hash.js');
     await journal.put(semTombKey('th-T', 'createProduct', argsHash(argsA), argsHash(argsB)), { at: 1 });
     await runDurable(base(journal, 't2', { model: model('createProduct', 'c2', argsB)(), tools, threadId: 'th-T', limits }) as any);
-    expect(counter.n).toBe(2); // soru sorulmadı — çift hükme bağlanmıştı
-    // Tombstone'suz üçüncü bir varyant hâlâ sorulur (tombstone çifte özgü, battaniye değil):
-    await runDurable(base(journal, 't3', { model: model('createProduct', 'c3', { sku: 'T-1', note: 'üçüncü' })(), tools, threadId: 'th-T', limits }) as any);
+    expect(counter.n).toBe(2); // no question — this pair had already been ruled on
+    // A third variant with no tombstone is still asked about (a tombstone covers a PAIR, not a blanket):
+    await runDurable(base(journal, 't3', { model: model('createProduct', 'c3', { sku: 'T-1', note: 'third' })(), tools, threadId: 'th-T', limits }) as any);
     expect(counter.n).toBe(2);
     expect((await journal.get<any>('t3:tool:c3')).status).toBe('suspended');
   });
 
-  it('replay aynı runId → semantik kapıya hiç inilmez, embed tekrar ödenmez', async () => {
+  it('replaying the same runId never reaches the semantic gate, so the embedding is not paid for twice', async () => {
     const journal = new InMemoryJournal();
     const embeds = { n: 0 };
     const limits = semLimits(fakeEmbed(embeds), 'replay-model');
@@ -155,30 +156,30 @@ describe('FAZ-6 uçtan uca akış', () => {
   });
 });
 
-describe('FAZ-6 karar kapıları (skor asla tek başına karar vermez)', () => {
-  it('identity uyuşmazsa: suspend YOK, çıktı bayt-aynı, sadece telemetri (modele sıfır bildirim)', async () => {
+describe('FAZ-6 decision gates (score alone never decides)', () => {
+  it('identity mismatch: NO suspend, output byte-identical, telemetry only (the model is told nothing)', async () => {
     const journal = new InMemoryJournal();
     const counter = { n: 0 };
     const limits = semLimits(fakeEmbed(), 'id-model');
     const tools = {
       createProduct: {
         sideEffect: true,
-        // describe SABİT → her çağrının kanonik cümlesi aynı → kosinüs 1.0 (yüksek benzerlik) —
-        // ama kimlik alanı FARKLI: skor tek başına suspend tetikleyemez.
+        // A CONSTANT describe() gives every call the same canonical sentence → cosine 1.0 (maximum
+        // similarity) — but the identity field DIFFERS, and score alone cannot suspend.
         semanticIdentity: { keys: ['sku'], describe: () => 'create a product' },
         execute: async ({ sku }: any) => { counter.n++; return { created: sku }; },
       },
     };
     await runDurable(base(journal, 's1', { model: model('createProduct', 'c1', { sku: 'AAA' })(), tools, threadId: 'th-S', limits }) as any);
     const r2 = await runDurable(base(journal, 's2', { model: model('createProduct', 'c2', { sku: 'BBB' })(), tools, threadId: 'th-S', limits }) as any);
-    expect(counter.n).toBe(2); // çalıştı — benzerlik %100 olsa bile kimlik farklı
-    expect(JSON.stringify(r2.steps)).toContain('"created":"BBB"'); // çıktı normal, ekstra alan yok
-    expect(JSON.stringify(r2.steps)).not.toContain('semantic'); // modele sıfır bildirim pini
+    expect(counter.n).toBe(2); // it ran — 100% similarity still is not identity
+    expect(JSON.stringify(r2.steps)).toContain('"created":"BBB"'); // ordinary output, no extra field
+    expect(JSON.stringify(r2.steps)).not.toContain('semantic'); // the model-notification ban, pinned
     const incidents = await readIncidents(journal, 's2');
     expect(incidents.some((i) => i.source === 'semantic-guard' && i.action === 'warn')).toBe(true); // kalibrasyon telemetrisi
   });
 
-  it('cross-tool negasyon: farklı araç asla aday değil (deleteProduct, createProduct kaydını görmez)', async () => {
+  it('cross-tool negation: another tool is never a candidate (deleteProduct cannot see createProduct\'s record)', async () => {
     const journal = new InMemoryJournal();
     const counter = { n: 0 };
     const limits = semLimits(fakeEmbed(), 'x-model');
@@ -188,10 +189,10 @@ describe('FAZ-6 karar kapıları (skor asla tek başına karar vermez)', () => {
     };
     await runDurable(base(journal, 'x1', { model: model('createProduct', 'c1', { sku: 'ABC' })(), tools, threadId: 'th-X', limits }) as any);
     await runDurable(base(journal, 'x2', { model: model('deleteProduct', 'c2', { sku: 'ABC' })(), tools, threadId: 'th-X', limits }) as any);
-    expect(counter.n).toBe(2); // silme, oluşturmanın mükerrer adayı DEĞİL
+    expect(counter.n).toBe(2); // a deletion is NOT a duplicate candidate for a creation
   });
 
-  it('intra-tool negasyon: discriminator farklıysa aday düşer; aynıysa suspend', async () => {
+  it('intra-tool negation: a differing discriminator drops the candidate; an equal one suspends', async () => {
     const journal = new InMemoryJournal();
     const counter = { n: 0 };
     const limits = semLimits(fakeEmbed(), 'd-model');
@@ -203,16 +204,16 @@ describe('FAZ-6 karar kapıları (skor asla tek başına karar vermez)', () => {
       },
     };
     await runDurable(base(journal, 'd1', { model: model('refund', 'c1', { orderId: 'O-1', cancel: false })(), tools, threadId: 'th-D', limits }) as any);
-    // cancel:true = anlamca ZIT iş → çalışmalı
+    // cancel:true is the OPPOSITE action → it must run
     await runDurable(base(journal, 'd2', { model: model('refund', 'c2', { orderId: 'O-1', cancel: true, note: 'z' })(), tools, threadId: 'th-D', limits }) as any);
     expect(counter.n).toBe(2);
-    // cancel:false + aynı orderId (farklı hash) = gerçek mükerrer adayı → suspend
+    // cancel:false + the same orderId (different hash) = a real duplicate candidate → suspend
     await runDurable(base(journal, 'd3', { model: model('refund', 'c3', { orderId: 'O-1', cancel: false, note: 'w' })(), tools, threadId: 'th-D', limits }) as any);
     expect(counter.n).toBe(2);
     expect((await journal.get<any>('d3:tool:c3')).status).toBe('suspended');
   });
 
-  it('miktar kapısı: kimlik eşit + tutar farklı → "amounts differ" mesajlı suspend', async () => {
+  it('the magnitude gate: identity equal + amount different → a suspend that says "amounts differ"', async () => {
     const journal = new InMemoryJournal();
     const counter = { n: 0 };
     const limits = semLimits(fakeEmbed(), 'a-model');
@@ -232,8 +233,8 @@ describe('FAZ-6 karar kapıları (skor asla tek başına karar vermez)', () => {
   });
 });
 
-describe('FAZ-6 fail-open + damga + yaşam döngüsü', () => {
-  it('embedder çökük: kayıt vektörsüz yazılır, iş asla bloklanmaz, 3. ardışık hatada outage incident', async () => {
+describe('FAZ-6 fail-open, stamps and lifecycle', () => {
+  it('a broken embedder: the record is written without a vector, work is never blocked, and the third consecutive failure raises an outage incident', async () => {
     const journal = new InMemoryJournal();
     const counter = { n: 0 };
     const brokenEmbed = async () => { throw new Error('embedder down'); };
@@ -242,32 +243,32 @@ describe('FAZ-6 fail-open + damga + yaşam döngüsü', () => {
     await runDurable(base(journal, 'f1', { model: model('createProduct', 'c1', { sku: 'A' })(), tools, threadId: 'th-F', limits }) as any);
     await runDurable(base(journal, 'f2', { model: model('createProduct', 'c2', { sku: 'B' })(), tools, threadId: 'th-F', limits }) as any);
     await runDurable(base(journal, 'f3', { model: model('createProduct', 'c3', { sku: 'C' })(), tools, threadId: 'th-F', limits }) as any);
-    expect(counter.n).toBe(3); // hiçbir iş bloklanmadı
+    expect(counter.n).toBe(3); // no work was blocked
     const rec = await journal.get<SemDupRecord>(semKey('th-F', 'createProduct', (await journal.listKeys('xthr:th-F:sem-'))[0]!.split('-').pop()!));
-    // kayıtlar var ama vektörsüz:
+    // the records exist, but carry no vector:
     const keys = await journal.listKeys('xthr:th-F:sem-');
     expect(keys.length).toBe(3);
     for (const k of keys) expect((await journal.get<SemDupRecord>(k))!.vecB64).toBeUndefined();
-    // 3. ardışık hata → bir outage incident'ı (f3'ün run'ında)
+    // the third consecutive failure → one outage incident (inside f3's run)
     const inc3 = await readIncidents(journal, 'f3');
     expect(inc3.some((i) => i.source === 'semantic-guard' && String(i.message).includes('failed repeatedly'))).toBe(true);
   });
 
-  it('farklı embedModelId damgalı kayıt asla karşılaştırılmaz', async () => {
+  it('a record stamped with a different embedModelId is never compared', async () => {
     const journal = new InMemoryJournal();
     const counter = { n: 0 };
     const limits = semLimits(fakeEmbed(), 'model-B');
     const tools = { createProduct: { sideEffect: true, semanticIdentity: { keys: ['sku'] }, execute: async () => { counter.n++; return { ok: 1 }; } } };
     await runDurable(base(journal, 'm1', { model: model('createProduct', 'c1', { sku: 'S' })(), tools, threadId: 'th-V', limits }) as any);
-    // kaydı 'model-A' damgasına boz — model değişmiş gibi
+    // corrupt the record's stamp to 'model-A', as if the model had been swapped
     const k = (await journal.listKeys('xthr:th-V:sem-'))[0]!;
     const rec = await journal.get<SemDupRecord>(k);
     await journal.put(k, { ...rec, embedModelId: 'model-A' });
     await runDurable(base(journal, 'm2', { model: model('createProduct', 'c2', { sku: 'S', note: 'y' })(), tools, threadId: 'th-V', limits }) as any);
-    expect(counter.n).toBe(2); // eski-damgalı kayıt dışlandı → soru sorulmadı, iş koştu
+    expect(counter.n).toBe(2); // the stale-stamped record was excluded → no question, the work ran
   });
 
-  it('purgeThread sem + semtomb ailelerini tek süpürmede götürür', async () => {
+  it('purgeThread takes the sem and semtomb families in a single sweep', async () => {
     const journal = new InMemoryJournal();
     await journal.put(semKey('th-P', 't', 'h1'), { v: 1 });
     await journal.put(semTombKey('th-P', 't', 'h1', 'h2'), { at: 1 });
@@ -275,7 +276,7 @@ describe('FAZ-6 fail-open + damga + yaşam döngüsü', () => {
     expect(await journal.listKeys('xthr:th-P:')).toEqual([]);
   });
 
-  it('threadId yoksa: loud warn, katman devre dışı, iş normal koşar, xthr temiz', async () => {
+  it('without a threadId: a loud warn, the layer stands down, work runs normally, xthr stays empty', async () => {
     const journal = new InMemoryJournal();
     const counter = { n: 0 };
     const limits = semLimits(fakeEmbed(), 'nt-model');
@@ -292,12 +293,12 @@ describe('FAZ-6 fail-open + damga + yaşam döngüsü', () => {
   });
 });
 
-// FAZ-6 denetçi bulguları — K18 pini, frozen-limits round-trip'i, eşzamanlı parafraz ikizi ve iki
-// fallback dalı pinlendi.
+// Findings from the FAZ-6 audit — the K18 pin, the frozen-limits round trip, the concurrent
+// paraphrase twin, and the two fallback arms.
 import { resumeRun } from '../src/run.js';
 
-describe('FAZ-6 denetçi düzeltmeleri', () => {
-  it("K18: failed kayıt semantik-suspend ile EZİLMEZ — reclaim merdiveni sahipliğini korur", async () => {
+describe('FAZ-6 audit fixes', () => {
+  it("K18: a failed record is NOT overwritten by a semantic suspend — the reclaim ladder keeps ownership", async () => {
     const journal = new InMemoryJournal();
     const counter = { n: 0 };
     let explode = true;
@@ -309,53 +310,55 @@ describe('FAZ-6 denetçi düzeltmeleri', () => {
         execute: async () => { counter.n++; if (explode) throw new Error('timeout — effect uncertain'); return { ok: 1 }; },
       },
     };
-    // Geçmişte benzer başarı VAR (semantik aday üretecek):
-    await runDurable(base(journal, 'k1', { model: model('charge', 'c1', { orderId: 'O-7', note: 'ilk' })(), tools, threadId: 'th-K', limits }) as any).catch(() => {});
-    expect(counter.n).toBe(1); // ilk deneme ateşledi ve çöktü → kayıt 'failed'
+    // There IS a similar past success (it will produce a semantic candidate):
+    await runDurable(base(journal, 'k1', { model: model('charge', 'c1', { orderId: 'O-7', note: 'first' })(), tools, threadId: 'th-K', limits }) as any).catch(() => {});
+    expect(counter.n).toBe(1); // the first attempt fired and crashed → the record is 'failed'
     expect((await journal.get<any>('k1:tool:c1')).status).toBe('failed');
     explode = false;
-    // Onaysız resume: eski kod semantik aday bulup 'failed'ı 'suspended' ile ezerdi ("benzer iş,
-    // çalıştırayım mı?" — bu denemenin ZATEN koşmuş olabileceğini gizleyerek). Şimdi: kayıt duruyor,
-    // reclaim merdiveni cevap veriyor (side-effect + onaysız → blocked), etki yeniden ATEŞLENMEZ.
-    await runDurable(base(journal, 'k1', { model: model('charge', 'c1', { orderId: 'O-7', note: 'ilk' })(), tools, threadId: 'th-K', limits }) as any).catch(() => {});
+    // Resume without approval: the old code found a semantic candidate and overwrote 'failed' with
+    // 'suspended' ("similar work — shall I run it?"), hiding that THIS attempt may already have
+    // fired. Now the record stands, the reclaim ladder answers (side-effect + unapproved → blocked),
+    // and the effect is never re-fired.
+    await runDurable(base(journal, 'k1', { model: model('charge', 'c1', { orderId: 'O-7', note: 'first' })(), tools, threadId: 'th-K', limits }) as any).catch(() => {});
     const rec = await journal.get<any>('k1:tool:c1');
     expect(rec.status).toBe('failed'); // ezilmedi
-    expect(counter.n).toBe(1); // yeniden ateşlenmedi
+    expect(counter.n).toBe(1); // not re-fired
   });
 
-  it('frozen-limits round-trip: resumeRun (limits verilmeden) THROW ETMEZ, semantik inaktif + iş koşar', async () => {
+  it('frozen-limits round trip: resumeRun without limits does NOT throw — the layer is inactive and the work runs', async () => {
     const journal = new InMemoryJournal();
     const counter = { n: 0 };
     const limits = semLimits(fakeEmbed(), 'rt-model');
     const tools = { createProduct: { sideEffect: true, semanticIdentity: { keys: ['sku'] }, execute: async () => { counter.n++; return { ok: 1 }; } } };
     await runDurable(base(journal, 'rr1', { model: model('createProduct', 'c1', { sku: 'R-1' })(), tools, threadId: 'th-RT', limits }) as any);
-    // resume: limits VERİLMEZ → journal'daki soyulmuş (embedStripped) kopya kullanılır. Eski kod
-    // validateSemanticConfig'te patlıyordu — semantik-aktif HER run'ın resume'u ölüydü.
+    // resume without limits → the stripped (embedStripped) copy from the journal is used. The old
+    // code threw inside validateSemanticConfig, which killed the resume of EVERY semantic-active run.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       await expect(resumeRun('rr1', { journal, model: model('createProduct', 'c1', { sku: 'R-1' })(), tools } as any)).resolves.toBeTruthy();
-      expect(counter.n).toBe(1); // replay — yeniden ateşleme yok
+      expect(counter.n).toBe(1); // replay — nothing re-fires
     } finally { warn.mockRestore(); }
   });
 
-  it('semantik suspend → resumeRun(approvals) uçtan uca: onay koşar + tombstone doğar', async () => {
+  it('semantic suspend → resumeRun(approvals) end to end: the approval runs and a tombstone is born', async () => {
     const journal = new InMemoryJournal();
     const counter = { n: 0 };
     const limits = semLimits(fakeEmbed(), 'ap-model');
     const tools = { createProduct: { sideEffect: true, semanticIdentity: { keys: ['sku'] }, execute: async () => { counter.n++; return { ok: 1 }; } } };
-    await runDurable(base(journal, 'ap1', { model: model('createProduct', 'c1', { sku: 'A-1', note: 'ilk' })(), tools, threadId: 'th-AP', limits }) as any);
-    await runDurable(base(journal, 'ap2', { model: model('createProduct', 'c2', { sku: 'A-1', note: 'tekrar' })(), tools, threadId: 'th-AP', limits }) as any);
+    await runDurable(base(journal, 'ap1', { model: model('createProduct', 'c1', { sku: 'A-1', note: 'first' })(), tools, threadId: 'th-AP', limits }) as any);
+    await runDurable(base(journal, 'ap2', { model: model('createProduct', 'c2', { sku: 'A-1', note: 'again' })(), tools, threadId: 'th-AP', limits }) as any);
     expect(counter.n).toBe(1); // suspend
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
-      // Gerçek onay yolu: resumeRun, limits'i journal'dan (soyulmuş) kurtarır — yine de onay akmalı.
-      await resumeRun('ap2', { journal, model: model('createProduct', 'c2', { sku: 'A-1', note: 'tekrar' })(), tools, approvals: { 'c2': true } } as any);
+      // The real approval path: resumeRun recovers limits (stripped) from the journal, and the
+      // approval must still flow through.
+      await resumeRun('ap2', { journal, model: model('createProduct', 'c2', { sku: 'A-1', note: 'again' })(), tools, approvals: { 'c2': true } } as any);
     } finally { warn.mockRestore(); }
-    expect(counter.n).toBe(2); // onaylanan iş koştu
-    expect(await journal.listKeys('xthr:th-AP:semtomb-')).toHaveLength(1); // hüküm tombstone'landı
+    expect(counter.n).toBe(2); // the approved work ran
+    expect(await journal.listKeys('xthr:th-AP:semtomb-')).toHaveLength(1); // the ruling was tombstoned
   });
 
-  it('eşzamanlı parafraz ikizi (dokümante TOCTOU): ikisi de koşar, iki kayıt, suspend yok', async () => {
+  it('concurrent paraphrase twins (the documented TOCTOU): both run, two records, no suspend', async () => {
     const journal = new InMemoryJournal();
     const counter = { n: 0 };
     const limits = semLimits(fakeEmbed(), 'tw-model');
@@ -370,12 +373,12 @@ describe('FAZ-6 denetçi düzeltmeleri', () => {
       runDurable(base(journal, 'tp1', { model: model('createProduct', 'c1', { sku: 'TW', note: 'a' })(), tools, threadId: 'th-TW', limits }) as any),
       runDurable(base(journal, 'tp2', { model: model('createProduct', 'c2', { sku: 'TW', note: 'b' })(), tools, threadId: 'th-TW', limits }) as any),
     ]);
-    expect(counter.n).toBe(2); // pencere gerçek: iki farklı-hash ikiz recall'da birbirini göremez
+    expect(counter.n).toBe(2); // the window is real: two different-hash twins cannot see each other in recall
     expect((await journal.listKeys('xthr:th-TW:sem-')).length).toBe(2);
-    // Katmanın vaadi ZAMANA YAYILMIŞ mükerrerlik; eşzamanlılık exact-hash/lock katmanlarının işi.
+    // This layer promises to catch duplicates SPREAD OVER TIME; concurrency belongs to the exact-hash and lock layers.
   });
 
-  it("listKeys'siz journal: loud warn benzeri devre dışı kalış, iş normal koşar", async () => {
+  it("a journal without listKeys: the layer stands down loudly and work runs normally", async () => {
     const m = new Map<string, unknown>();
     const journal: any = {
       async get(k: string) { return m.has(k) ? structuredClone(m.get(k)) : undefined; },
@@ -389,12 +392,12 @@ describe('FAZ-6 denetçi düzeltmeleri', () => {
     try {
       await runDurable(base(journal, 'nl1', { model: model('createProduct', 'c1', { sku: 'N', note: 'a' })(), tools, threadId: 'th-NL', limits }) as any);
       await runDurable(base(journal, 'nl2', { model: model('createProduct', 'c2', { sku: 'N', note: 'b' })(), tools, threadId: 'th-NL', limits }) as any);
-      expect(counter.n).toBe(2); // recall taraması devre dışı — iş asla bloklanmadı
+      expect(counter.n).toBe(2); // the recall scan is off — work was never blocked
       expect(warn.mock.calls.some((c) => String(c[0]).includes('listKeys'))).toBe(true);
     } finally { warn.mockRestore(); }
   });
 
-  it('ttlMs: penceresi geçmiş sem kaydı artık aday değildir (karar storage saatiyle)', async () => {
+  it('ttlMs: a semantic record past its window stops being a candidate (aged by the storage clock)', async () => {
     const base2 = new InMemoryJournal();
     const clock = { t: 5_000_000 };
     const journal: any = new Proxy(base2, {
@@ -404,8 +407,227 @@ describe('FAZ-6 denetçi düzeltmeleri', () => {
     const limits = { sideEffectDuplicates: { action: 'suspend' as const, scope: 'thread' as const, ttlMs: 1_000, semantic: { embed: fakeEmbed(), embedModelId: 'ttl-model' } } };
     const tools = { createProduct: { sideEffect: true, semanticIdentity: { keys: ['sku'] }, execute: async () => { counter.n++; return { ok: 1 }; } } };
     await runDurable(base(journal, 'tl1', { model: model('createProduct', 'c1', { sku: 'T', note: 'a' })(), tools, threadId: 'th-TL', limits }) as any);
-    clock.t += 2_000; // pencere geçti (exact marker da aynı ttl ile yaşlanır)
+    clock.t += 2_000; // the window has passed (the exact marker ages on the same ttl)
     await runDurable(base(journal, 'tl2', { model: model('createProduct', 'c2', { sku: 'T', note: 'b' })(), tools, threadId: 'th-TL', limits }) as any);
-    expect(counter.n).toBe(2); // yaşlanmış kayıt soru üretmedi
+    expect(counter.n).toBe(2); // the aged-out record produced no question
+  });
+});
+
+// ── FAZ-7 (semantic v2) — the rule ladder and the judge chain ─────────────────────────────────
+// Pinned here: (1) MONOTONICITY (H17) — v2 never takes away a question v1 would have asked;
+// (2) a ladder 'match' produces a deterministic suspend, a 'separate' drops quietly but is COUNTED;
+// (3) the judge only ever sees the gray residue, and even a 'same' answer only asks a human;
+// (4) ONE combined scan incident (H16); (5) the model is told nothing on every arm;
+// (6) a discriminator difference never REACHES the judge.
+
+const certOf = (over: Record<string, unknown> = {}) => ({
+  v: 1 as const, fixtureSetId: 'fx-test', judgeModelId: 'j-model', judgePromptVersion: '1',
+  paraphraseRecall: 0.95, nearMissFp: 0.01, passedAt: Date.now(), ...over,
+});
+
+describe('FAZ-7 rule ladder (deterministic, no judge)', () => {
+  it("ladder 'match': a differently-spelled but structurally identical identity → suspend (origin:'rule')", async () => {
+    const journal = new InMemoryJournal();
+    const counter = { n: 0 };
+    const limits = semLimits(fakeEmbed(), 'r-model', { rules: true });
+    const tools = {
+      pay: { sideEffect: true, semanticIdentity: { keys: ['ref'], describe: () => 'pay an invoice' },
+        execute: async ({ ref }: any) => { counter.n++; return { paid: ref }; } },
+    };
+    await runDurable(base(journal, 'rl1', { model: model('pay', 'c1', { ref: 'INV-2026-0142' })(), tools, threadId: 'th-RL', limits }) as any);
+    const r2 = await runDurable(base(journal, 'rl2', { model: model('pay', 'c2', { ref: 'inv 2026 142' })(), tools, threadId: 'th-RL', limits }) as any);
+    expect(counter.n).toBe(1); // the second job did NOT run — a human was asked
+    expect(r2.interrupts.length).toBe(1);
+    const inc = (await readIncidents(journal, 'rl2')).find((i) => i.action === 'suspend');
+    expect(inc?.source).toBe('semantic-guard');
+    expect((inc?.detail as any).origin).toBe('rule');
+    expect((inc?.detail as any).trace.map((t: any) => t.rule)).toContain('digit-value');
+  });
+
+  it("ladder 'separate': XL is not XXL — the candidate drops quietly but is COUNTED (work runs, output byte-identical)", async () => {
+    const journal = new InMemoryJournal();
+    const counter = { n: 0 };
+    const limits = semLimits(fakeEmbed(), 'r2-model', { rules: true });
+    const tools = {
+      order: { sideEffect: true, semanticIdentity: { keys: ['sku'], describe: () => 'order a product' },
+        execute: async ({ sku }: any) => { counter.n++; return { ordered: sku }; } },
+    };
+    await runDurable(base(journal, 'sp1', { model: model('order', 'c1', { sku: 'PHI-AF-XL' })(), tools, threadId: 'th-SP', limits }) as any);
+    const r2 = await runDurable(base(journal, 'sp2', { model: model('order', 'c2', { sku: 'PHI-AF-XXL' })(), tools, threadId: 'th-SP', limits }) as any);
+    expect(counter.n).toBe(2); // a different size is different work; NO question
+    expect(JSON.stringify(r2.steps)).not.toContain('semantic'); // the model is told nothing
+    const warn = (await readIncidents(journal, 'sp2')).find((i) => i.source === 'semantic-guard' && i.action === 'warn');
+    expect((warn?.detail as any).droppedByRule).toBe(1); // NOT silent: counted and named
+  });
+
+  it('MONOTONICITY (H17): a high-scoring gray candidate cannot displace an identity-equal one\'s question', async () => {
+    const journal = new InMemoryJournal();
+    const counter = { n: 0 };
+    // Two prior records: one identity-equal (it must produce the question), one merely gray. The
+    // fake embedder scores by canonical text, and since describe() is constant both score 1.0 —
+    // so the loop's ordering is what has to hold.
+    const limits = semLimits(fakeEmbed(), 'm-model', { rules: true });
+    const tools = {
+      pay: { sideEffect: true, semanticIdentity: { keys: ['ref'], describe: () => 'pay' },
+        execute: async ({ ref }: any) => { counter.n++; return { paid: ref }; } },
+    };
+    await runDurable(base(journal, 'mo1', { model: model('pay', 'c1', { ref: 'coupon code invalid', note: 'x' })(), tools, threadId: 'th-MO', limits }) as any);
+    await runDurable(base(journal, 'mo2', { model: model('pay', 'c2', { ref: 'AYNI-REF', note: 'x' })(), tools, threadId: 'th-MO', limits }) as any);
+    expect(counter.n).toBe(2);
+    // Third call: the identity is NORMALIZE-EQUAL ('ayni-ref') while the args differ byte-wise
+    // (lower case + a note), so the exact-hash layer misses it and the semantic layer sees it. A
+    // gray candidate is in the list too — and the certain question must still win.
+    const r3 = await runDurable(base(journal, 'mo3', { model: model('pay', 'c3', { ref: 'ayni-ref', note: 'y' })(), tools, threadId: 'th-MO', limits }) as any);
+    expect(counter.n).toBe(2);
+    expect(r3.interrupts.length).toBe(1);
+    const inc = (await readIncidents(journal, 'mo3')).find((i) => i.action === 'suspend');
+    expect((inc?.detail as any).origin).toBe('identity'); // v1's certain question won
+  });
+});
+
+describe('FAZ-7 judge chain', () => {
+  const judgeTools = (counter: { n: number }) => ({
+    pay: { sideEffect: true, semanticIdentity: { keys: ['ref'], describe: () => 'pay' },
+      execute: async ({ ref }: any) => { counter.n++; return { paid: ref }; } },
+  });
+
+  it("judge says 'same' → a QUESTION for the human (the decision stays theirs), incident source 'semantic-judge'", async () => {
+    const journal = new InMemoryJournal();
+    const counter = { n: 0 };
+    const calls: Array<{ system: string; user: string }> = [];
+    const limits = semLimits(fakeEmbed(), 'j-embed', {
+      rules: true,
+      judge: { complete: async (req: any) => { calls.push(req); return 'SAME'; }, judgeModelId: 'j-model', qualification: certOf() },
+    });
+    const tools = judgeTools(counter);
+    await runDurable(base(journal, 'jg1', { model: model('pay', 'c1', { ref: 'Coupon code invalid' })(), tools, threadId: 'th-JG', limits }) as any);
+    const r2 = await runDurable(base(journal, 'jg2', { model: model('pay', 'c2', { ref: 'Discount code not working' })(), tools, threadId: 'th-JG', limits }) as any);
+    expect(counter.n).toBe(1); // the second job did not run
+    expect(r2.interrupts.length).toBe(1);
+    const inc = (await readIncidents(journal, 'jg2')).find((i) => i.action === 'suspend');
+    expect(inc?.source).toBe('semantic-judge');
+    expect((inc?.detail as any).judgeModelId).toBe('j-model');
+    // The judge is never told the work ran before (the model-notification ban, projected here)
+    expect(calls).toHaveLength(1);
+    expect(`${calls[0]!.system}${calls[0]!.user}`.toLowerCase()).not.toMatch(/already|earlier|previous|duplicate/);
+  });
+
+  it("judge says 'different' → today's behavior plus a de-escalation RECORD (never silent)", async () => {
+    const journal = new InMemoryJournal();
+    const counter = { n: 0 };
+    const limits = semLimits(fakeEmbed(), 'j2-embed', {
+      rules: true,
+      judge: { complete: async () => 'DIFFERENT', judgeModelId: 'j-model', qualification: certOf() },
+    });
+    const tools = judgeTools(counter);
+    await runDurable(base(journal, 'jd1', { model: model('pay', 'c1', { ref: 'Coupon code invalid' })(), tools, threadId: 'th-JD', limits }) as any);
+    const r2 = await runDurable(base(journal, 'jd2', { model: model('pay', 'c2', { ref: 'Discount code not working' })(), tools, threadId: 'th-JD', limits }) as any);
+    expect(counter.n).toBe(2);
+    expect(JSON.stringify(r2.steps)).not.toContain('semantic'); // output byte-identical: nothing reaches the model
+    const warn = (await readIncidents(journal, 'jd2')).find((i) => i.source === 'semantic-judge' && i.action === 'warn');
+    expect((warn?.detail as any).outcome).toBe('different');
+  });
+
+  it('even when the judge crashes the work runs (fail-open) and the cause is recorded', async () => {
+    const journal = new InMemoryJournal();
+    const counter = { n: 0 };
+    const limits = semLimits(fakeEmbed(), 'j3-embed', {
+      rules: true,
+      judge: { complete: async () => { throw new Error('down'); }, judgeModelId: 'j-model', qualification: certOf() },
+    });
+    const tools = judgeTools(counter);
+    await runDurable(base(journal, 'je1', { model: model('pay', 'c1', { ref: 'Coupon code invalid' })(), tools, threadId: 'th-JE', limits }) as any);
+    await runDurable(base(journal, 'je2', { model: model('pay', 'c2', { ref: 'Discount code not working' })(), tools, threadId: 'th-JE', limits }) as any);
+    expect(counter.n).toBe(2);
+    const warn = (await readIncidents(journal, 'je2')).find((i) => i.source === 'semantic-judge' && i.action === 'warn');
+    expect((warn?.detail as any).outcome).toBe('skipped:error');
+  });
+
+  it('a discriminator difference never REACHES the judge (deterministic negation comes first)', async () => {
+    const journal = new InMemoryJournal();
+    const counter = { n: 0 };
+    const judgeFn = vi.fn(async () => 'SAME');
+    const limits = semLimits(fakeEmbed(), 'j4-embed', {
+      rules: true,
+      judge: { complete: judgeFn, judgeModelId: 'j-model', qualification: certOf() },
+    });
+    const tools = {
+      refund: { sideEffect: true, semanticIdentity: { keys: ['ref'], discriminatorFields: ['cancel'], describe: () => 'refund' },
+        execute: async () => { counter.n++; return { ok: 1 }; } },
+    };
+    await runDurable(base(journal, 'dc1', { model: model('refund', 'c1', { ref: 'R-1', cancel: false })(), tools, threadId: 'th-DC', limits }) as any);
+    await runDurable(base(journal, 'dc2', { model: model('refund', 'c2', { ref: 'R-2', cancel: true })(), tools, threadId: 'th-DC', limits }) as any);
+    expect(counter.n).toBe(2);
+    expect(judgeFn).not.toHaveBeenCalled();
+    const warn = (await readIncidents(journal, 'dc2')).find((i) => i.source === 'semantic-guard' && i.action === 'warn');
+    expect((warn?.detail as any).droppedDiscriminator).toBe(1); // H18: now counted
+  });
+
+  it('H16: the scan counters live in ONE combined incident — none of them overwrites another', async () => {
+    const journal = new InMemoryJournal();
+    const counter = { n: 0 };
+    const limits = semLimits(fakeEmbed(), 'h16-embed', { rules: true });
+    const tools = {
+      pay: { sideEffect: true, semanticIdentity: { keys: ['ref'], discriminatorFields: ['kind'], describe: () => 'pay' },
+        execute: async () => { counter.n++; return { ok: 1 }; } },
+    };
+    // Three different drop reasons in one scan: discriminator, rule, identity
+    await runDurable(base(journal, 'h1', { model: model('pay', 'c1', { ref: 'TV-42', kind: 'a' })(), tools, threadId: 'th-H16', limits }) as any);
+    await runDurable(base(journal, 'h2', { model: model('pay', 'c2', { ref: 'ZZZ-9', kind: 'b' })(), tools, threadId: 'th-H16', limits }) as any);
+    await runDurable(base(journal, 'h3', { model: model('pay', 'c3', { ref: 'TV-43', kind: 'a' })(), tools, threadId: 'th-H16', limits }) as any);
+    const warns = (await readIncidents(journal, 'h3')).filter((i) => i.source === 'semantic-guard' && i.action === 'warn');
+    expect(warns).toHaveLength(1); // ONE record — not three that collide on the same key
+    const d = warns[0]!.detail as any;
+    expect((d.droppedByRule ?? 0) + (d.droppedDiscriminator ?? 0)).toBeGreaterThan(0);
+  });
+
+  it('without a judge the gray residue is still COUNTED (grayCalls: the price quote, in CALLS) and work runs', async () => {
+    const journal = new InMemoryJournal();
+    const counter = { n: 0 };
+    const limits = semLimits(fakeEmbed(), 'gu-embed', { rules: true });
+    const tools = judgeTools(counter);
+    await runDurable(base(journal, 'gu1', { model: model('pay', 'c1', { ref: 'Coupon code invalid' })(), tools, threadId: 'th-GU', limits }) as any);
+    await runDurable(base(journal, 'gu2', { model: model('pay', 'c2', { ref: 'Discount code not working' })(), tools, threadId: 'th-GU', limits }) as any);
+    expect(counter.n).toBe(2);
+    const warn = (await readIncidents(journal, 'gu2')).find((i) => i.source === 'semantic-guard' && i.action === 'warn');
+    // The unit is CALLS: one call, one count, however many candidates it surfaced — that is what a
+    // judge would have cost, and it does not shift when the judge is later switched on.
+    expect((warn?.detail as any).grayCalls).toBe(1);
+  });
+
+  it('an uncertified judge throws BEFORE the run starts (silent inertness is impossible)', async () => {
+    const journal = new InMemoryJournal();
+    const limits = semLimits(fakeEmbed(), 'bad-embed', {
+      rules: true, judge: { complete: async () => 'SAME', judgeModelId: 'j-model' },
+    });
+    const tools = judgeTools({ n: 0 });
+    await expect(runDurable(base(journal, 'bad1', { model: model('pay', 'c1', { ref: 'A' })(), tools, threadId: 'th-BAD', limits }) as any))
+      .rejects.toThrow(/qualification/);
+  });
+
+  it('frozen-limits round trip: the judge closure is stripped, resume does not throw, the layer is inactive', async () => {
+    const journal = new InMemoryJournal();
+    const counter = { n: 0 };
+    const limits = semLimits(fakeEmbed(), 'fz-embed', {
+      rules: true, judge: { complete: async () => 'SAME', judgeModelId: 'j-model', qualification: certOf() },
+    });
+    const tools = judgeTools(counter);
+    const r1 = await runDurable(base(journal, 'fz1', { model: model('pay', 'c1', { ref: 'AAA-1' })(), tools, threadId: 'th-FZ', limits }) as any);
+    expect(r1.interrupts.length).toBe(0);
+    // resume without limits: the frozen copy is read from the journal — no closure, but the data survives
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await expect(resumeRun('fz1', { journal, model: model('pay', 'c1', { ref: 'AAA-1' })(), tools } as any)).resolves.toBeTruthy();
+    } finally { warn.mockRestore(); }
+    // Unconditional: this is the ONLY pin for a claim the plan marked blocker-level (an unstripped
+    // judge closure kills the journal write of every judge-enabled run). A conditional assert would
+    // stay green if the key were ever renamed.
+    const frozen = await journal.get<any>('fz1:cfg:limits');
+    expect(frozen).toBeTruthy();
+    {
+      expect(frozen.sideEffectDuplicates.semantic.judge?.complete).toBeUndefined(); // closure soyuldu
+      expect(frozen.sideEffectDuplicates.semantic.judge?.qualification).toBeTruthy(); // the declaration survives
+      expect(frozen.sideEffectDuplicates.semantic.rules).toBe(true); // saf veri aynen
+    }
   });
 });

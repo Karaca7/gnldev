@@ -422,6 +422,15 @@ export interface SemanticGuardSummary {
    *  approved = "yine de koş" ≈ yanlış alarm payı üst sınırı). rate = denied/(denied+approved),
    *  karar yokken null. Eski sunucuda alan hiç yok (additive). */
   precision?: { approved: number; denied: number; pending: number; rate: number | null };
+  /** FAZ-7: which rung asked — deterministic identity, the rule ladder, or the judge. Absent on an
+   *  older server (additive), so the card hides rather than showing three zeros. */
+  byOrigin?: { identity: number; rule: number; judge: number };
+  /** FAZ-7: what the deterministic half did without asking. `grayCalls` is the price quote for
+   *  enabling the judge — the unit is CALLS (≤1 judge call each); it must NOT be added to droppedIdentity — with `rules` on,
+   *  separator drops move into droppedByRule, so droppedIdentity shrinks on the same traffic. */
+  scan?: { droppedIdentity: number; droppedByRule: number; droppedDiscriminator: number; droppedStamp: number; grayCalls: number };
+  /** FAZ-7: every arm the judge took, including the ones that asked nothing. */
+  judge?: { same: number; different: number; unsure: number; skipped: Record<string, number>; staleReplaced: number };
   recent: { runId: string; at?: number; action: string; toolName: string; message: string }[];
   unavailable?: string;
 }

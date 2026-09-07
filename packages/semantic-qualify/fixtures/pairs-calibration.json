@@ -1,0 +1,2706 @@
+{
+  "v": 1,
+  "generator": "claude-sonnet-5",
+  "pairs": [
+    {
+      "id": "d1-dp-01",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "dup-paraphrase",
+      "a": "Samsung 42 inç TV",
+      "b": "SMSNG TV42",
+      "note": "Aynı ürün, marka ve ölçü kısaltılmış."
+    },
+    {
+      "id": "d1-dp-02",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "dup-paraphrase",
+      "a": "Bosch Çamaşır Makinesi 9kg",
+      "b": "bosch-cm-9kg",
+      "note": "Ürün adı yerine sku kodu kullanılmış."
+    },
+    {
+      "id": "d1-dp-03",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "dup-paraphrase",
+      "a": "iPhone 15 Pro Max 256GB",
+      "b": "iphone15promax-256",
+      "note": "Aynı model, boşluksuz sku formu."
+    },
+    {
+      "id": "d1-dp-04",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "dup-paraphrase",
+      "a": "Logitech Kablosuz Mouse",
+      "b": "logitech kablosuz mouse ",
+      "note": "Sadece büyük/küçük harf ve boşluk farkı."
+    },
+    {
+      "id": "d1-dp-05",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "dup-paraphrase",
+      "a": "Nike Air Max 90 - Beyaz",
+      "b": "Nike Air Max 90 Beyaz",
+      "note": "Tire kaldırılmış, aynı ürün."
+    },
+    {
+      "id": "d1-dp-06",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "dup-paraphrase",
+      "a": "Arçelik Buzdolabı No-Frost",
+      "b": "ARCELIK BUZDOLABI NOFROST",
+      "note": "Büyük harf ve Türkçe karakter/boşluk farkı."
+    },
+    {
+      "id": "d1-dp-07",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "dup-paraphrase",
+      "a": "Philips Airfryer XXL",
+      "b": "Philips Air Fryer XXL",
+      "note": "Kelime arasına boşluk eklenmiş."
+    },
+    {
+      "id": "d1-dp-08",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "dup-paraphrase",
+      "a": "Xiaomi Redmi Note 12",
+      "b": "Redmi Note 12 (Xiaomi)",
+      "note": "Marka parantez içine alınmış, sıra değişmiş."
+    },
+    {
+      "id": "d1-dp-09",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "dup-paraphrase",
+      "a": "Türk Kahvesi Makinesi Otantik",
+      "b": "Otantik Türk Kahve Makinesi",
+      "note": "Kelime sırası değişmiş, 'kahvesi' -> 'kahve'."
+    },
+    {
+      "id": "d1-dp-10",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "dup-paraphrase",
+      "a": "LG OLED 55 inç Televizyon",
+      "b": "lg-oled55-tv",
+      "note": "Ürün adı sku koduna indirgenmiş."
+    },
+    {
+      "id": "d1-dp-11",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "dup-paraphrase",
+      "a": "Tefal Ütü BuHarlı",
+      "b": "Tefal Buharlı Ütü",
+      "note": "Hatalı büyük harf düzeltilmiş, sıra değişmiş."
+    },
+    {
+      "id": "d1-dp-12",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "dup-paraphrase",
+      "a": "Dyson V15 Elektrikli Süpürge",
+      "b": "dyson v15 supurge",
+      "note": "Kısaltılmış ve Türkçe karakter düşürülmüş."
+    },
+    {
+      "id": "d1-dp-13",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "dup-paraphrase",
+      "a": "Kboard Mekanik Klavye TR Q",
+      "b": "Mekanik Klavye Kboard TRQ",
+      "note": "Kelime sırası değişmiş, boşluk kaldırılmış."
+    },
+    {
+      "id": "d1-dp-14",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "dup-paraphrase",
+      "a": "Corsair RAM 16GB DDR5",
+      "b": "corsair-ram-16gb-ddr5",
+      "note": "Ürün adı sku formuna çevrilmiş."
+    },
+    {
+      "id": "d1-dp-15",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "dup-paraphrase",
+      "a": "Casio Hesap Makinesi FX-991",
+      "b": "Casio FX991 Hesap Makinesi",
+      "note": "Model kodu öne alınmış, tire kaldırılmış."
+    },
+    {
+      "id": "d1-nm-01",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "near-miss",
+      "a": "TV-42",
+      "b": "TV-43",
+      "note": "Komşu sku kodu, farklı ürün."
+    },
+    {
+      "id": "d1-nm-02",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "near-miss",
+      "a": "Samsung Galaxy S23",
+      "b": "Samsung Galaxy S24",
+      "note": "Farklı nesil aynı seri."
+    },
+    {
+      "id": "d1-nm-03",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "near-miss",
+      "a": "Bosch Bulaşık Makinesi 12 Kişilik",
+      "b": "Bosch Bulaşık Makinesi 13 Kişilik",
+      "note": "Kapasite farklı, farklı model."
+    },
+    {
+      "id": "d1-nm-04",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "near-miss",
+      "a": "iPhone 15 Pro 128GB",
+      "b": "iPhone 15 Pro 256GB",
+      "note": "Depolama kapasitesi farklı, farklı sku."
+    },
+    {
+      "id": "d1-nm-05",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "near-miss",
+      "a": "Nike Air Max 90",
+      "b": "Nike Air Max 95",
+      "note": "Benzer isim, farklı model numarası."
+    },
+    {
+      "id": "d1-nm-06",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "near-miss",
+      "a": "Arçelik Fırın 60cm",
+      "b": "Arçelik Fırın 90cm",
+      "note": "Ölçü farklı, farklı ürün."
+    },
+    {
+      "id": "d1-nm-07",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "near-miss",
+      "a": "SKU-2201",
+      "b": "SKU-2202",
+      "note": "Ardışık sku, farklı ürün."
+    },
+    {
+      "id": "d1-nm-08",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "near-miss",
+      "a": "Philips Airfryer XL",
+      "b": "Philips Airfryer XXL",
+      "note": "Boyut farklı, farklı sku."
+    },
+    {
+      "id": "d1-nm-09",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "near-miss",
+      "a": "Xiaomi Redmi Note 12",
+      "b": "Xiaomi Redmi Note 13",
+      "note": "Model numarası farklı."
+    },
+    {
+      "id": "d1-nm-10",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "near-miss",
+      "a": "LG OLED 55 inç",
+      "b": "LG OLED 65 inç",
+      "note": "Ekran boyutu farklı."
+    },
+    {
+      "id": "d1-nm-11",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "near-miss",
+      "a": "Tefal Ütü 2200W",
+      "b": "Tefal Ütü 2400W",
+      "note": "Güç değeri farklı, farklı model."
+    },
+    {
+      "id": "d1-nm-12",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "near-miss",
+      "a": "Dyson V15",
+      "b": "Dyson V12",
+      "note": "Seri numarası farklı."
+    },
+    {
+      "id": "d1-nm-13",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "near-miss",
+      "a": "Kboard TKL Klavye",
+      "b": "Kboard Full Size Klavye",
+      "note": "Klavye formatı farklı."
+    },
+    {
+      "id": "d1-nm-14",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "near-miss",
+      "a": "Corsair RAM 16GB",
+      "b": "Corsair RAM 32GB",
+      "note": "Kapasite farklı, farklı sku."
+    },
+    {
+      "id": "d1-nm-15",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "near-miss",
+      "a": "Casio FX-991",
+      "b": "Casio FX-570",
+      "note": "Model kodu benzer, farklı ürün."
+    },
+    {
+      "id": "d1-de-01",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "dup-exact",
+      "a": "TV-42",
+      "b": "tv-42 ",
+      "note": "Normalize sonrası birebir aynı (case+trim)."
+    },
+    {
+      "id": "d1-de-02",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "dup-exact",
+      "a": " SKU-1001",
+      "b": "sku-1001",
+      "note": "Baş boşluk ve case farkı, normalize sonrası aynı."
+    },
+    {
+      "id": "d1-de-03",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "dup-exact",
+      "a": "Bosch-CM-9KG",
+      "b": "bosch-cm-9kg",
+      "note": "Sadece case farkı."
+    },
+    {
+      "id": "d1-de-04",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "dup-exact",
+      "a": "iPhone15ProMax",
+      "b": "IPHONE15PROMAX ",
+      "note": "Case ve trim farkı."
+    },
+    {
+      "id": "d1-de-05",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "dup-exact",
+      "a": "LG-OLED55",
+      "b": " lg-oled55",
+      "note": "Baş boşluk, case farkı."
+    },
+    {
+      "id": "d1-de-06",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "dup-exact",
+      "a": "Nike-AirMax90",
+      "b": "nike-airmax90",
+      "note": "Sadece case farkı."
+    },
+    {
+      "id": "d1-de-07",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "dup-exact",
+      "a": "Dyson-V15",
+      "b": "DYSON-V15 ",
+      "note": "Case ve trim farkı."
+    },
+    {
+      "id": "d1-de-08",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "dup-exact",
+      "a": "Corsair-RAM16",
+      "b": "corsair-ram16",
+      "note": "Sadece case farkı."
+    },
+    {
+      "id": "d1-de-09",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "dup-exact",
+      "a": "Casio-FX991",
+      "b": " CASIO-FX991",
+      "note": "Baş boşluk ve case farkı."
+    },
+    {
+      "id": "d1-de-10",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "dup-exact",
+      "a": "Tefal-BH2200",
+      "b": "tefal-bh2200 ",
+      "note": "Sondaki boşluk ve case farkı."
+    },
+    {
+      "id": "d1-de-11",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "dup-exact",
+      "a": "Philips-AF-XXL",
+      "b": "philips-af-xxl",
+      "note": "Sadece case farkı."
+    },
+    {
+      "id": "d1-de-12",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "dup-exact",
+      "a": "Xiaomi-RN12",
+      "b": " XIAOMI-RN12",
+      "note": "Baş boşluk ve case farkı."
+    },
+    {
+      "id": "d1-de-13",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "dup-exact",
+      "a": "Arcelik-BZD-NF",
+      "b": "arcelik-bzd-nf ",
+      "note": "Sondaki boşluk ve case farkı."
+    },
+    {
+      "id": "d1-de-14",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "dup-exact",
+      "a": "Logitech-MX3",
+      "b": "LOGITECH-MX3",
+      "note": "Sadece case farkı."
+    },
+    {
+      "id": "d1-de-15",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "dup-exact",
+      "a": "Kboard-TRQ",
+      "b": "kboard-trq ",
+      "note": "Sondaki boşluk ve case farkı."
+    },
+    {
+      "id": "d1-ur-01",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "unrelated",
+      "a": "TV-42",
+      "b": "buzdolabı rafı BZR-9",
+      "note": "Aynı tool, alakasız iki ürün."
+    },
+    {
+      "id": "d1-ur-02",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "unrelated",
+      "a": "iPhone 15 Pro Max",
+      "b": "Tefal Ütü Buharlı",
+      "note": "Elektronik vs küçük ev aleti."
+    },
+    {
+      "id": "d1-ur-03",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "unrelated",
+      "a": "Nike Air Max 90",
+      "b": "Corsair RAM 16GB",
+      "note": "Ayakkabı vs bilgisayar parçası."
+    },
+    {
+      "id": "d1-ur-04",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "unrelated",
+      "a": "Bosch Çamaşır Makinesi",
+      "b": "Casio Hesap Makinesi",
+      "note": "Beyaz eşya vs ofis ürünü."
+    },
+    {
+      "id": "d1-ur-05",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "unrelated",
+      "a": "Dyson V15 Süpürge",
+      "b": "Logitech Kablosuz Mouse",
+      "note": "Alakasız iki elektronik ürün."
+    },
+    {
+      "id": "d1-ur-06",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "unrelated",
+      "a": "LG OLED Televizyon",
+      "b": "Kboard Mekanik Klavye",
+      "note": "TV vs klavye."
+    },
+    {
+      "id": "d1-ur-07",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "unrelated",
+      "a": "Xiaomi Redmi Note 12",
+      "b": "Philips Airfryer XXL",
+      "note": "Telefon vs mutfak aleti."
+    },
+    {
+      "id": "d1-ur-08",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "unrelated",
+      "a": "Arçelik Buzdolabı",
+      "b": "Samsung Galaxy S23",
+      "note": "Beyaz eşya vs telefon."
+    },
+    {
+      "id": "d1-ur-09",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "unrelated",
+      "a": "Türk Kahvesi Makinesi",
+      "b": "Nike Air Max 95",
+      "note": "Kahve makinesi vs ayakkabı."
+    },
+    {
+      "id": "d1-ur-10",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "unrelated",
+      "a": "Corsair RAM 32GB",
+      "b": "Bosch Bulaşık Makinesi",
+      "note": "Bilgisayar parçası vs beyaz eşya."
+    },
+    {
+      "id": "d1-ur-11",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "unrelated",
+      "a": "Casio FX-991",
+      "b": "Dyson V12 Süpürge",
+      "note": "Hesap makinesi vs süpürge."
+    },
+    {
+      "id": "d1-ur-12",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "unrelated",
+      "a": "Philips Airfryer XL",
+      "b": "LG OLED 65 inç",
+      "note": "Mutfak aleti vs televizyon."
+    },
+    {
+      "id": "d1-ur-13",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "unrelated",
+      "a": "Logitech Mouse",
+      "b": "Xiaomi Redmi Note 13",
+      "note": "Mouse vs telefon."
+    },
+    {
+      "id": "d1-ur-14",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "unrelated",
+      "a": "Kboard TKL Klavye",
+      "b": "Arçelik Fırın 90cm",
+      "note": "Klavye vs fırın."
+    },
+    {
+      "id": "d1-ur-15",
+      "domain": "e-ticaret-siparis",
+      "toolName": "createOrder",
+      "label": "unrelated",
+      "a": "Samsung Galaxy S24",
+      "b": "Tefal Ütü 2400W",
+      "note": "Telefon vs ütü."
+    },
+    {
+      "id": "d2-dp-01",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "dup-paraphrase",
+      "a": "INV-2026-0142",
+      "b": "inv-2026-0142 ",
+      "note": "Sadece case ve trim farkı."
+    },
+    {
+      "id": "d2-dp-02",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "dup-paraphrase",
+      "a": "FT-2026/0087",
+      "b": "FT-2026-0087",
+      "note": "Ayraç slash yerine tire."
+    },
+    {
+      "id": "d2-dp-03",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "dup-paraphrase",
+      "a": "Fatura No: 2026-09-142",
+      "b": "2026-09-0142",
+      "note": "Etiket kaldırılmış, başa sıfır eklenmiş."
+    },
+    {
+      "id": "d2-dp-04",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "dup-paraphrase",
+      "a": "INV202600142",
+      "b": "INV-2026-00142",
+      "note": "Ayraçsız form vs tireli form."
+    },
+    {
+      "id": "d2-dp-05",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "dup-paraphrase",
+      "a": "Eylül 2026 Fatura 142",
+      "b": "2026-09-142",
+      "note": "Ay adı yerine sayısal ay kullanılmış."
+    },
+    {
+      "id": "d2-dp-06",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "dup-paraphrase",
+      "a": "ACME-FT-2026-055",
+      "b": "acme ft 2026 055",
+      "note": "Tireler boşluğa dönüşmüş, case farkı."
+    },
+    {
+      "id": "d2-dp-07",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "dup-paraphrase",
+      "a": "F/2026/312",
+      "b": "F-2026-312",
+      "note": "Slash yerine tire kullanılmış."
+    },
+    {
+      "id": "d2-dp-08",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "dup-paraphrase",
+      "a": "Fatura#2026-0421",
+      "b": "Fatura No 2026-0421",
+      "note": "Kısa gösterim vs uzun etiket."
+    },
+    {
+      "id": "d2-dp-09",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "dup-paraphrase",
+      "a": "INV-26-0142",
+      "b": "INV-2026-0142",
+      "note": "Yıl 2 haneli yerine 4 haneli yazılmış."
+    },
+    {
+      "id": "d2-dp-10",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "dup-paraphrase",
+      "a": "2026 Eylül F-99",
+      "b": "F-2026-09-99",
+      "note": "Ay adı vs sayısal ay, sıra değişmiş."
+    },
+    {
+      "id": "d2-dp-11",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "dup-paraphrase",
+      "a": "TR-FT-2026-777",
+      "b": "FT2026777-TR",
+      "note": "Kısım sırası değişmiş ve birleştirilmiş."
+    },
+    {
+      "id": "d2-dp-12",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "dup-paraphrase",
+      "a": "e-Fatura 2026/0056",
+      "b": "eFatura-2026-0056",
+      "note": "Tire/boşluk ve ayraç farkı."
+    },
+    {
+      "id": "d2-dp-13",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "dup-paraphrase",
+      "a": "INV-0142-2026",
+      "b": "INV-2026-0142",
+      "note": "Fatura no ve yıl sırası yer değiştirmiş."
+    },
+    {
+      "id": "d2-dp-14",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "dup-paraphrase",
+      "a": "Fatura Ref: ABC-42",
+      "b": "ABC42 (Fatura)",
+      "note": "Etiket ve ayraç farklı, aynı referans."
+    },
+    {
+      "id": "d2-dp-15",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "dup-paraphrase",
+      "a": "2026-Q3-INV-018",
+      "b": "INV-018-2026-Q3",
+      "note": "Bileşen sırası değişmiş, aynı fatura."
+    },
+    {
+      "id": "d2-nm-01",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "near-miss",
+      "a": "INV-2026-0142",
+      "b": "INV-2026-0143",
+      "note": "Ardışık fatura numarası, farklı belge."
+    },
+    {
+      "id": "d2-nm-02",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "near-miss",
+      "a": "FT-2026-055",
+      "b": "FT-2026-056",
+      "note": "Ardışık numara, farklı fatura."
+    },
+    {
+      "id": "d2-nm-03",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "near-miss",
+      "a": "F-2026-312",
+      "b": "F-2026-313",
+      "note": "Ardışık numara, farklı fatura."
+    },
+    {
+      "id": "d2-nm-04",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "near-miss",
+      "a": "ACME-FT-2026-001",
+      "b": "ACME-FT-2026-101",
+      "note": "Orta hane farklı, farklı fatura."
+    },
+    {
+      "id": "d2-nm-05",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "near-miss",
+      "a": "INV-2025-0142",
+      "b": "INV-2026-0142",
+      "note": "Yıl farklı, farklı fatura."
+    },
+    {
+      "id": "d2-nm-06",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "near-miss",
+      "a": "2026-09-142",
+      "b": "2026-09-143",
+      "note": "Son hane farklı, ardışık fatura."
+    },
+    {
+      "id": "d2-nm-07",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "near-miss",
+      "a": "TR-FT-2026-777",
+      "b": "TR-FT-2026-778",
+      "note": "Ardışık numara, farklı fatura."
+    },
+    {
+      "id": "d2-nm-08",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "near-miss",
+      "a": "e-Fatura 2026/0056",
+      "b": "e-Fatura 2026/0057",
+      "note": "Ardışık numara, farklı fatura."
+    },
+    {
+      "id": "d2-nm-09",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "near-miss",
+      "a": "Fatura#2026-0421",
+      "b": "Fatura#2026-0431",
+      "note": "Rakam devrik, farklı fatura."
+    },
+    {
+      "id": "d2-nm-10",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "near-miss",
+      "a": "INV-0142-2026",
+      "b": "INV-0142-2027",
+      "note": "Yıl farklı, farklı fatura."
+    },
+    {
+      "id": "d2-nm-11",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "near-miss",
+      "a": "F/2026/312",
+      "b": "F/2027/312",
+      "note": "Yıl farklı, farklı fatura."
+    },
+    {
+      "id": "d2-nm-12",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "near-miss",
+      "a": "2026-Q3-INV-018",
+      "b": "2026-Q3-INV-081",
+      "note": "Rakamlar devrik, farklı fatura."
+    },
+    {
+      "id": "d2-nm-13",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "near-miss",
+      "a": "ABC-42",
+      "b": "ABD-42",
+      "note": "Önek benzer, farklı müşteri/fatura."
+    },
+    {
+      "id": "d2-nm-14",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "near-miss",
+      "a": "INV-26-0142",
+      "b": "INV-26-0242",
+      "note": "Orta hane farklı, farklı fatura."
+    },
+    {
+      "id": "d2-nm-15",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "near-miss",
+      "a": "Fatura Ref: XYZ-100",
+      "b": "Fatura Ref: XYZ-110",
+      "note": "Son iki hane farklı, farklı fatura."
+    },
+    {
+      "id": "d2-de-01",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "dup-exact",
+      "a": "INV-2026-0142",
+      "b": "inv-2026-0142 ",
+      "note": "Case ve trim farkı, normalize sonrası aynı."
+    },
+    {
+      "id": "d2-de-02",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "dup-exact",
+      "a": " FT-2026-055",
+      "b": "ft-2026-055",
+      "note": "Baş boşluk ve case farkı."
+    },
+    {
+      "id": "d2-de-03",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "dup-exact",
+      "a": "F-2026-312",
+      "b": "f-2026-312 ",
+      "note": "Case ve trim farkı."
+    },
+    {
+      "id": "d2-de-04",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "dup-exact",
+      "a": "ACME-FT-2026-001",
+      "b": "acme-ft-2026-001",
+      "note": "Sadece case farkı."
+    },
+    {
+      "id": "d2-de-05",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "dup-exact",
+      "a": "2026-09-142",
+      "b": " 2026-09-142",
+      "note": "Baş boşluk farkı."
+    },
+    {
+      "id": "d2-de-06",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "dup-exact",
+      "a": "TR-FT-2026-777",
+      "b": "tr-ft-2026-777 ",
+      "note": "Case ve trim farkı."
+    },
+    {
+      "id": "d2-de-07",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "dup-exact",
+      "a": "E-FATURA-2026-0056",
+      "b": "e-fatura-2026-0056",
+      "note": "Sadece case farkı."
+    },
+    {
+      "id": "d2-de-08",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "dup-exact",
+      "a": "İNV-2026-0421",
+      "b": "inv-2026-0421",
+      "note": "Türkçe İ/i case-fold farkı."
+    },
+    {
+      "id": "d2-de-09",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "dup-exact",
+      "a": "INV-0142-2026",
+      "b": " INV-0142-2026 ",
+      "note": "Baştaki ve sondaki boşluk."
+    },
+    {
+      "id": "d2-de-10",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "dup-exact",
+      "a": "ABC-42",
+      "b": "abc-42",
+      "note": "Sadece case farkı."
+    },
+    {
+      "id": "d2-de-11",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "dup-exact",
+      "a": "2026-Q3-INV-018",
+      "b": "2026-q3-inv-018",
+      "note": "Sadece case farkı."
+    },
+    {
+      "id": "d2-de-12",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "dup-exact",
+      "a": "XYZ-100",
+      "b": "xyz-100 ",
+      "note": "Case ve trim farkı."
+    },
+    {
+      "id": "d2-de-13",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "dup-exact",
+      "a": "INV-26-0142",
+      "b": "inv-26-0142",
+      "note": "Sadece case farkı."
+    },
+    {
+      "id": "d2-de-14",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "dup-exact",
+      "a": "F/2026/312",
+      "b": "f/2026/312 ",
+      "note": "Case ve trim farkı."
+    },
+    {
+      "id": "d2-de-15",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "dup-exact",
+      "a": "FT2026777-TR",
+      "b": "ft2026777-tr",
+      "note": "Sadece case farkı."
+    },
+    {
+      "id": "d2-ur-01",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "unrelated",
+      "a": "INV-2026-0142",
+      "b": "FT-2026-055",
+      "note": "Farklı fatura serileri, alakasız."
+    },
+    {
+      "id": "d2-ur-02",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "unrelated",
+      "a": "F-2026-312",
+      "b": "ACME-FT-2026-001",
+      "note": "Farklı önek ve numaralama, alakasız."
+    },
+    {
+      "id": "d2-ur-03",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "unrelated",
+      "a": "2026-09-142",
+      "b": "TR-FT-2026-777",
+      "note": "Farklı format, alakasız fatura."
+    },
+    {
+      "id": "d2-ur-04",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "unrelated",
+      "a": "e-Fatura 2026/0056",
+      "b": "Fatura#2026-0421",
+      "note": "Farklı seri, alakasız."
+    },
+    {
+      "id": "d2-ur-05",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "unrelated",
+      "a": "INV-0142-2026",
+      "b": "ABC-42",
+      "note": "Tamamen farklı referans yapısı."
+    },
+    {
+      "id": "d2-ur-06",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "unrelated",
+      "a": "2026-Q3-INV-018",
+      "b": "XYZ-100",
+      "note": "Alakasız fatura referansları."
+    },
+    {
+      "id": "d2-ur-07",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "unrelated",
+      "a": "INV-26-0142",
+      "b": "F/2026/312",
+      "note": "Farklı format, alakasız."
+    },
+    {
+      "id": "d2-ur-08",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "unrelated",
+      "a": "FT2026777-TR",
+      "b": "INV-2026-0142",
+      "note": "Farklı seri, alakasız."
+    },
+    {
+      "id": "d2-ur-09",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "unrelated",
+      "a": "ACME-FT-2026-101",
+      "b": "2026-09-143",
+      "note": "Alakasız iki fatura."
+    },
+    {
+      "id": "d2-ur-10",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "unrelated",
+      "a": "F-2026-313",
+      "b": "e-Fatura 2026/0057",
+      "note": "Farklı seri, alakasız."
+    },
+    {
+      "id": "d2-ur-11",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "unrelated",
+      "a": "TR-FT-2026-778",
+      "b": "Fatura#2026-0431",
+      "note": "Alakasız fatura referansları."
+    },
+    {
+      "id": "d2-ur-12",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "unrelated",
+      "a": "INV-0142-2027",
+      "b": "F/2027/312",
+      "note": "Farklı format, alakasız."
+    },
+    {
+      "id": "d2-ur-13",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "unrelated",
+      "a": "2026-Q3-INV-081",
+      "b": "ABD-42",
+      "note": "Alakasız fatura referansları."
+    },
+    {
+      "id": "d2-ur-14",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "unrelated",
+      "a": "INV-26-0242",
+      "b": "XYZ-110",
+      "note": "Farklı seri, alakasız."
+    },
+    {
+      "id": "d2-ur-15",
+      "domain": "fatura-odeme",
+      "toolName": "payInvoice",
+      "label": "unrelated",
+      "a": "INV-2025-0142",
+      "b": "FT-2026-056",
+      "note": "Farklı yıl ve seri, alakasız."
+    },
+    {
+      "id": "d3-dp-01",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "dup-paraphrase",
+      "a": "Şifremi unuttum",
+      "b": "sifremi unuttum",
+      "note": "Türkçe karakter düşmüş, case farkı."
+    },
+    {
+      "id": "d3-dp-02",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "dup-paraphrase",
+      "a": "Fatura görüntülenmiyor",
+      "b": "Fatura goruntulenmiyor",
+      "note": "Türkçe karakter düşmüş."
+    },
+    {
+      "id": "d3-dp-03",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "dup-paraphrase",
+      "a": "Ödeme hatası alıyorum",
+      "b": "Odeme hatasi aliyorum",
+      "note": "Türkçe karakterler ascii'ye indirgenmiş."
+    },
+    {
+      "id": "d3-dp-04",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "dup-paraphrase",
+      "a": "Uygulama açılmıyor",
+      "b": "App açılmıyor",
+      "note": "'Uygulama' yerine 'App' kullanılmış."
+    },
+    {
+      "id": "d3-dp-05",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "dup-paraphrase",
+      "a": "Kargo takip numarası çalışmıyor",
+      "b": "Kargo takibi çalışmıyor",
+      "note": "Kısaltılmış ifade, aynı konu."
+    },
+    {
+      "id": "d3-dp-06",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "dup-paraphrase",
+      "a": "Hesabıma giriş yapamıyorum",
+      "b": "Giriş yapamıyorum hesabıma",
+      "note": "Kelime sırası değişmiş."
+    },
+    {
+      "id": "d3-dp-07",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "dup-paraphrase",
+      "a": "İade talebi oluşturma",
+      "b": "Iade talebi",
+      "note": "Kısaltılmış başlık, İ/I farkı."
+    },
+    {
+      "id": "d3-dp-08",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "dup-paraphrase",
+      "a": "Ürün hasarlı geldi",
+      "b": "Ürün hasarli geldi",
+      "note": "Türkçe karakter typo'su."
+    },
+    {
+      "id": "d3-dp-09",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "dup-paraphrase",
+      "a": "Şifre sıfırlama linki gelmiyor",
+      "b": "Parola sıfırlama e-postası gelmiyor",
+      "note": "Eşanlamlı kelimeler: şifre/parola, link/e-posta."
+    },
+    {
+      "id": "d3-dp-10",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "dup-paraphrase",
+      "a": "Fatura adresi güncelleme",
+      "b": "Fatura adresini değiştirmek istiyorum",
+      "note": "Uzun paraphrase, aynı talep."
+    },
+    {
+      "id": "d3-dp-11",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "dup-paraphrase",
+      "a": "Sipariş iptali",
+      "b": "Siparişi iptal etmek istiyorum",
+      "note": "Kısa başlık vs uzun cümle, aynı talep."
+    },
+    {
+      "id": "d3-dp-12",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "dup-paraphrase",
+      "a": "Abonelik iptali",
+      "b": "Abonelik iptal",
+      "note": "Sondaki ek düşürülmüş."
+    },
+    {
+      "id": "d3-dp-13",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "dup-paraphrase",
+      "a": "Mobil uygulamada çökme",
+      "b": "Mobil app crash sorunu",
+      "note": "TR/EN karışık ifade, aynı sorun."
+    },
+    {
+      "id": "d3-dp-14",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "dup-paraphrase",
+      "a": "Kupon kodu geçersiz",
+      "b": "İndirim kodu çalışmıyor",
+      "note": "Eşanlamlı: kupon kodu/indirim kodu."
+    },
+    {
+      "id": "d3-dp-15",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "dup-paraphrase",
+      "a": "Teslimat gecikti",
+      "b": "Teslimat gecikmesi",
+      "note": "Fiil yerine isim hali kullanılmış."
+    },
+    {
+      "id": "d3-nm-01",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "near-miss",
+      "a": "Şifremi unuttum",
+      "b": "Şifremi değiştirmek istiyorum",
+      "note": "Benzer kelimeler, farklı niyet (unutma vs değiştirme)."
+    },
+    {
+      "id": "d3-nm-02",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "near-miss",
+      "a": "Fatura görüntülenmiyor",
+      "b": "Fatura indirilemiyor",
+      "note": "Benzer başlık, farklı sorun."
+    },
+    {
+      "id": "d3-nm-03",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "near-miss",
+      "a": "Ödeme hatası alıyorum",
+      "b": "Ödeme iade edilmiyor",
+      "note": "Benzer konu, farklı problem."
+    },
+    {
+      "id": "d3-nm-04",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "near-miss",
+      "a": "Kargo takip numarası çalışmıyor",
+      "b": "Kargo adresi yanlış",
+      "note": "Aynı alan, farklı sorun türü."
+    },
+    {
+      "id": "d3-nm-05",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "near-miss",
+      "a": "Hesabıma giriş yapamıyorum",
+      "b": "Hesabımı silmek istiyorum",
+      "note": "Benzer başlangıç, farklı talep."
+    },
+    {
+      "id": "d3-nm-06",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "near-miss",
+      "a": "İade talebi oluşturma",
+      "b": "Değişim talebi oluşturma",
+      "note": "Benzer yapı, farklı işlem."
+    },
+    {
+      "id": "d3-nm-07",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "near-miss",
+      "a": "Ürün hasarlı geldi",
+      "b": "Ürün eksik geldi",
+      "note": "Benzer cümle kalıbı, farklı şikayet."
+    },
+    {
+      "id": "d3-nm-08",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "near-miss",
+      "a": "Sipariş iptali",
+      "b": "Sipariş adresi değişikliği",
+      "note": "Aynı konu alanı, farklı talep."
+    },
+    {
+      "id": "d3-nm-09",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "near-miss",
+      "a": "Abonelik iptali",
+      "b": "Abonelik yükseltme",
+      "note": "Aynı konu alanı, zıt işlem."
+    },
+    {
+      "id": "d3-nm-10",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "near-miss",
+      "a": "Mobil uygulamada çökme",
+      "b": "Web sitesinde çökme",
+      "note": "Aynı sorun türü, farklı platform."
+    },
+    {
+      "id": "d3-nm-11",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "near-miss",
+      "a": "Kupon kodu geçersiz",
+      "b": "Kupon kodu bulunamadı",
+      "note": "Çok benzer ifade ama farklı hata durumu."
+    },
+    {
+      "id": "d3-nm-12",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "near-miss",
+      "a": "Teslimat gecikti",
+      "b": "Teslimat adresi hatalı",
+      "note": "Aynı alan, farklı sorun."
+    },
+    {
+      "id": "d3-nm-13",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "near-miss",
+      "a": "Şifre sıfırlama linki gelmiyor",
+      "b": "Doğrulama kodu gelmiyor",
+      "note": "Aynı semptom farklı özellik."
+    },
+    {
+      "id": "d3-nm-14",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "near-miss",
+      "a": "Fatura adresi güncelleme",
+      "b": "Teslimat adresi güncelleme",
+      "note": "Aynı fiil kalıbı, farklı alan."
+    },
+    {
+      "id": "d3-nm-15",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "near-miss",
+      "a": "Ürün hasarlı geldi",
+      "b": "Ürün yanlış geldi",
+      "note": "Benzer kalıp, farklı şikayet türü."
+    },
+    {
+      "id": "d3-de-01",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "dup-exact",
+      "a": "Şifremi unuttum",
+      "b": "şifremi unuttum ",
+      "note": "Case ve trim farkı."
+    },
+    {
+      "id": "d3-de-02",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "dup-exact",
+      "a": " Fatura görüntülenmiyor",
+      "b": "fatura görüntülenmiyor",
+      "note": "Baş boşluk ve case farkı."
+    },
+    {
+      "id": "d3-de-03",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "dup-exact",
+      "a": "Ödeme Hatası Alıyorum",
+      "b": "ödeme hatası alıyorum",
+      "note": "Sadece case farkı."
+    },
+    {
+      "id": "d3-de-04",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "dup-exact",
+      "a": "Kargo Takip Numarası Çalışmıyor",
+      "b": "kargo takip numarası çalışmıyor ",
+      "note": "Case ve trim farkı."
+    },
+    {
+      "id": "d3-de-05",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "dup-exact",
+      "a": "İade Talebi",
+      "b": "iade talebi",
+      "note": "Sadece case farkı."
+    },
+    {
+      "id": "d3-de-06",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "dup-exact",
+      "a": "Ürün Hasarlı Geldi",
+      "b": " ürün hasarlı geldi",
+      "note": "Baş boşluk ve case farkı."
+    },
+    {
+      "id": "d3-de-07",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "dup-exact",
+      "a": "Abonelik İptali",
+      "b": "abonelik iptali ",
+      "note": "Case ve trim farkı."
+    },
+    {
+      "id": "d3-de-08",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "dup-exact",
+      "a": "Sipariş İptali",
+      "b": "sipariş iptali",
+      "note": "Sadece case farkı."
+    },
+    {
+      "id": "d3-de-09",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "dup-exact",
+      "a": "Teslimat Gecikti",
+      "b": " teslimat gecikti ",
+      "note": "Baş ve son boşluk farkı."
+    },
+    {
+      "id": "d3-de-10",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "dup-exact",
+      "a": "Kupon Kodu Geçersiz",
+      "b": "kupon kodu geçersiz",
+      "note": "Sadece case farkı."
+    },
+    {
+      "id": "d3-de-11",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "dup-exact",
+      "a": "Hesabıma Giriş Yapamıyorum",
+      "b": "hesabıma giriş yapamıyorum ",
+      "note": "Case ve trim farkı."
+    },
+    {
+      "id": "d3-de-12",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "dup-exact",
+      "a": "Mobil Uygulamada Çökme",
+      "b": "mobil uygulamada çökme",
+      "note": "Sadece case farkı."
+    },
+    {
+      "id": "d3-de-13",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "dup-exact",
+      "a": "Fatura Adresi Güncelleme",
+      "b": " fatura adresi güncelleme",
+      "note": "Baş boşluk ve case farkı."
+    },
+    {
+      "id": "d3-de-14",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "dup-exact",
+      "a": "Şifre Sıfırlama Linki Gelmiyor",
+      "b": "şifre sıfırlama linki gelmiyor ",
+      "note": "Case ve trim farkı."
+    },
+    {
+      "id": "d3-de-15",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "dup-exact",
+      "a": "İNDİRİM Kodu Çalışmıyor",
+      "b": "indirim kodu çalışmıyor",
+      "note": "Tamamı büyük harf vs küçük harf."
+    },
+    {
+      "id": "d3-ur-01",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "unrelated",
+      "a": "Şifremi unuttum",
+      "b": "Kargo takip numarası çalışmıyor",
+      "note": "Alakasız iki destek konusu."
+    },
+    {
+      "id": "d3-ur-02",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "unrelated",
+      "a": "Fatura görüntülenmiyor",
+      "b": "Mobil uygulamada çökme",
+      "note": "Alakasız iki konu."
+    },
+    {
+      "id": "d3-ur-03",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "unrelated",
+      "a": "Ödeme hatası alıyorum",
+      "b": "Ürün hasarlı geldi",
+      "note": "Alakasız iki şikayet."
+    },
+    {
+      "id": "d3-ur-04",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "unrelated",
+      "a": "Hesabıma giriş yapamıyorum",
+      "b": "Abonelik iptali",
+      "note": "Alakasız iki talep."
+    },
+    {
+      "id": "d3-ur-05",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "unrelated",
+      "a": "İade talebi oluşturma",
+      "b": "Teslimat gecikti",
+      "note": "Alakasız iki konu."
+    },
+    {
+      "id": "d3-ur-06",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "unrelated",
+      "a": "Sipariş iptali",
+      "b": "Kupon kodu geçersiz",
+      "note": "Alakasız iki konu."
+    },
+    {
+      "id": "d3-ur-07",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "unrelated",
+      "a": "Fatura adresi güncelleme",
+      "b": "Şifre sıfırlama linki gelmiyor",
+      "note": "Alakasız iki talep."
+    },
+    {
+      "id": "d3-ur-08",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "unrelated",
+      "a": "Ürün hasarlı geldi",
+      "b": "Hesabıma giriş yapamıyorum",
+      "note": "Alakasız iki şikayet."
+    },
+    {
+      "id": "d3-ur-09",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "unrelated",
+      "a": "Teslimat gecikti",
+      "b": "İade talebi oluşturma",
+      "note": "Alakasız iki konu."
+    },
+    {
+      "id": "d3-ur-10",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "unrelated",
+      "a": "Kargo takip numarası çalışmıyor",
+      "b": "Fatura görüntülenmiyor",
+      "note": "Alakasız iki konu."
+    },
+    {
+      "id": "d3-ur-11",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "unrelated",
+      "a": "Abonelik iptali",
+      "b": "Ödeme hatası alıyorum",
+      "note": "Alakasız iki konu."
+    },
+    {
+      "id": "d3-ur-12",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "unrelated",
+      "a": "Mobil uygulamada çökme",
+      "b": "Sipariş iptali",
+      "note": "Alakasız iki konu."
+    },
+    {
+      "id": "d3-ur-13",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "unrelated",
+      "a": "Kupon kodu geçersiz",
+      "b": "Fatura adresi güncelleme",
+      "note": "Alakasız iki konu."
+    },
+    {
+      "id": "d3-ur-14",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "unrelated",
+      "a": "Şifre sıfırlama linki gelmiyor",
+      "b": "Kargo takip numarası çalışmıyor",
+      "note": "Alakasız iki konu."
+    },
+    {
+      "id": "d3-ur-15",
+      "domain": "destek-bileti",
+      "toolName": "openTicket",
+      "label": "unrelated",
+      "a": "Şifremi unuttum",
+      "b": "Ürün hasarlı geldi",
+      "note": "Alakasız iki destek konusu."
+    },
+    {
+      "id": "d4-dp-01",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "dup-paraphrase",
+      "a": "Ahmet Yılmaz - Acme AŞ",
+      "b": "ACME A.Ş. / A. Yılmaz",
+      "note": "Sıra değişmiş, isim kısaltılmış, şirket noktalanmış."
+    },
+    {
+      "id": "d4-dp-02",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "dup-paraphrase",
+      "a": "Elif Demir - Beta Teknoloji Ltd",
+      "b": "Elif Demir / Beta Teknoloji Ltd Şti",
+      "note": "Ayraç değişmiş, unvan genişletilmiş."
+    },
+    {
+      "id": "d4-dp-03",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "dup-paraphrase",
+      "a": "Mehmet Kaya - Gamma San Tic",
+      "b": "Mehmet Kaya - Gamma Sanayi ve Ticaret",
+      "note": "Kısaltma açılmış, aynı şirket."
+    },
+    {
+      "id": "d4-dp-04",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "dup-paraphrase",
+      "a": "Zeynep Arslan - Delta Yazılım",
+      "b": "zeynep arslan - delta yazilim",
+      "note": "Case ve Türkçe karakter farkı."
+    },
+    {
+      "id": "d4-dp-05",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "dup-paraphrase",
+      "a": "Can Öztürk - Epsilon Gıda AŞ",
+      "b": "Can Ozturk - Epsilon Gida A.S.",
+      "note": "Türkçe karakterler ascii'ye indirgenmiş."
+    },
+    {
+      "id": "d4-dp-06",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "dup-paraphrase",
+      "a": "Ayşe Şahin - Zeta Tekstil",
+      "b": "Ayse Sahin - Zeta Tekstil",
+      "note": "Türkçe karakter düşürülmüş."
+    },
+    {
+      "id": "d4-dp-07",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "dup-paraphrase",
+      "a": "Burak Çelik - Theta Lojistik",
+      "b": "B. Çelik - Theta Lojistik",
+      "note": "İsim kısaltılmış, aynı kişi/şirket."
+    },
+    {
+      "id": "d4-dp-08",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "dup-paraphrase",
+      "a": "Deniz Aydın - Iota İnşaat",
+      "b": "Deniz Aydin - Iota Insaat Ltd",
+      "note": "Türkçe karakter düşmüş, unvan eklenmiş."
+    },
+    {
+      "id": "d4-dp-09",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "dup-paraphrase",
+      "a": "Fatma Koç - Kappa Enerji",
+      "b": "Fatma Koç / Kappa Enerji A.Ş",
+      "note": "Ayraç değişmiş, unvan eklenmiş."
+    },
+    {
+      "id": "d4-dp-10",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "dup-paraphrase",
+      "a": "Emre Aksoy - Lambda Medikal",
+      "b": "Emre Aksoy, Lambda Medikal Ltd Şti",
+      "note": "Ayraç ve unvan farklı, aynı kayıt."
+    },
+    {
+      "id": "d4-dp-11",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "dup-paraphrase",
+      "a": "Selin Yıldız - Mu Danışmanlık",
+      "b": "S. Yıldız - Mu Danismanlik",
+      "note": "İsim kısaltılmış, Türkçe karakter düşmüş."
+    },
+    {
+      "id": "d4-dp-12",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "dup-paraphrase",
+      "a": "Onur Polat - Nu Otomotiv",
+      "b": "Onur Polat - NU OTOMOTİV",
+      "note": "Şirket adı tamamı büyük harf."
+    },
+    {
+      "id": "d4-dp-13",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "dup-paraphrase",
+      "a": "Gül Aydemir - Xi Kozmetik",
+      "b": "Gul Aydemir - Xi Kozmetik San",
+      "note": "Türkçe karakter düşmüş, kısaltma eklenmiş."
+    },
+    {
+      "id": "d4-dp-14",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "dup-paraphrase",
+      "a": "Hakan Er - Omicron Turizm",
+      "b": "Hakan ER / Omicron Turizm Ltd",
+      "note": "Soyad büyük harf, unvan eklenmiş."
+    },
+    {
+      "id": "d4-dp-15",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "dup-paraphrase",
+      "a": "İrem Bulut - Pi Yapı Market",
+      "b": "Irem Bulut - Pi Yapi Market",
+      "note": "Türkçe İ/I ve karakter farkı."
+    },
+    {
+      "id": "d4-nm-01",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "near-miss",
+      "a": "Ahmet Yılmaz - Acme AŞ",
+      "b": "Mehmet Yılmaz - Acme AŞ",
+      "note": "Aynı soyad ve şirket, farklı ad — farklı kişi."
+    },
+    {
+      "id": "d4-nm-02",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "near-miss",
+      "a": "Elif Demir - Beta Teknoloji",
+      "b": "Elif Demir - Beta Enerji",
+      "note": "Aynı isim, farklı şirket."
+    },
+    {
+      "id": "d4-nm-03",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "near-miss",
+      "a": "Zeynep Arslan - Delta Yazılım",
+      "b": "Zeynep Arslan - Delta Danışmanlık",
+      "note": "Aynı isim, farklı şirket."
+    },
+    {
+      "id": "d4-nm-04",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "near-miss",
+      "a": "Can Öztürk - Epsilon Gıda",
+      "b": "Cem Öztürk - Epsilon Gıda",
+      "note": "Benzer ilk isim, farklı kişi."
+    },
+    {
+      "id": "d4-nm-05",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "near-miss",
+      "a": "Ayşe Şahin - Zeta Tekstil",
+      "b": "Ayşe Şahin - Zeta Tekstil Aksesuar",
+      "note": "Ana şirket vs yan kuruluş karışıklığı."
+    },
+    {
+      "id": "d4-nm-06",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "near-miss",
+      "a": "Burak Çelik - Theta Lojistik",
+      "b": "Burak Çelik - Theta Otomotiv",
+      "note": "Aynı isim, farklı şirket."
+    },
+    {
+      "id": "d4-nm-07",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "near-miss",
+      "a": "Deniz Aydın - Iota İnşaat",
+      "b": "Deniz Aydın - Iota İnşaat Taahhüt",
+      "note": "Ana şirket vs bağlı şirket."
+    },
+    {
+      "id": "d4-nm-08",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "near-miss",
+      "a": "Fatma Koç - Kappa Enerji",
+      "b": "Fatma Koç - Kappa Elektrik",
+      "note": "Aynı isim, benzer sektörde farklı şirket."
+    },
+    {
+      "id": "d4-nm-09",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "near-miss",
+      "a": "Emre Aksoy - Lambda Medikal",
+      "b": "Emre Aksoy - Lambda Kimya",
+      "note": "Aynı isim, farklı şirket."
+    },
+    {
+      "id": "d4-nm-10",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "near-miss",
+      "a": "Selin Yıldız - Mu Danışmanlık",
+      "b": "Selin Yıldız - Nu Danışmanlık",
+      "note": "Şirket adı tek harf farklı."
+    },
+    {
+      "id": "d4-nm-11",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "near-miss",
+      "a": "Onur Polat - Nu Otomotiv",
+      "b": "Onur Polat - Mu Otomotiv",
+      "note": "Şirket adı tek harf farklı."
+    },
+    {
+      "id": "d4-nm-12",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "near-miss",
+      "a": "Gül Aydemir - Xi Kozmetik",
+      "b": "Gül Aydemir - Xi Kimya",
+      "note": "Aynı isim, farklı şirket."
+    },
+    {
+      "id": "d4-nm-13",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "near-miss",
+      "a": "Hakan Er - Omicron Turizm",
+      "b": "Hakan Er - Omicron Seyahat",
+      "note": "Aynı isim, benzer sektörde farklı şirket."
+    },
+    {
+      "id": "d4-nm-14",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "near-miss",
+      "a": "İrem Bulut - Pi Yapı Market",
+      "b": "İrem Bulut - Pi Yapı Malzeme",
+      "note": "Aynı isim, yakın adlı farklı şirket."
+    },
+    {
+      "id": "d4-nm-15",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "near-miss",
+      "a": "Ahmet Yılmaz - Acme AŞ",
+      "b": "Ahmet Yıldız - Acme AŞ",
+      "note": "Aynı ad ve şirket, farklı soyad — farklı kişi."
+    },
+    {
+      "id": "d4-de-01",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "dup-exact",
+      "a": "Ahmet Yılmaz - Acme AŞ",
+      "b": "ahmet yılmaz - acme aş ",
+      "note": "Case ve trim farkı."
+    },
+    {
+      "id": "d4-de-02",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "dup-exact",
+      "a": " Elif Demir - Beta Teknoloji",
+      "b": "elif demir - beta teknoloji",
+      "note": "Baş boşluk ve case farkı."
+    },
+    {
+      "id": "d4-de-03",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "dup-exact",
+      "a": "Mehmet Kaya - Gamma San Tic",
+      "b": "mehmet kaya - gamma san tic ",
+      "note": "Case ve trim farkı."
+    },
+    {
+      "id": "d4-de-04",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "dup-exact",
+      "a": "Zeynep Arslan - Delta Yazılım",
+      "b": "ZEYNEP ARSLAN - DELTA YAZILIM",
+      "note": "Tamamı büyük harf vs normal."
+    },
+    {
+      "id": "d4-de-05",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "dup-exact",
+      "a": "Can Öztürk - Epsilon Gıda",
+      "b": " can öztürk - epsilon gıda ",
+      "note": "Baş/son boşluk ve case farkı."
+    },
+    {
+      "id": "d4-de-06",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "dup-exact",
+      "a": "Ayşe Şahin - Zeta Tekstil",
+      "b": "ayşe şahin - zeta tekstil",
+      "note": "Sadece case farkı."
+    },
+    {
+      "id": "d4-de-07",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "dup-exact",
+      "a": "Burak Çelik - Theta Lojistik",
+      "b": "burak çelik - theta lojistik ",
+      "note": "Case ve trim farkı."
+    },
+    {
+      "id": "d4-de-08",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "dup-exact",
+      "a": "Deniz Aydın - Iota İnşaat",
+      "b": " deniz aydın - iota i̇nşaat",
+      "note": "Baş boşluk ve case farkı."
+    },
+    {
+      "id": "d4-de-09",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "dup-exact",
+      "a": "Fatma Koç - Kappa Enerji",
+      "b": "fatma koç - kappa enerji ",
+      "note": "Case ve trim farkı."
+    },
+    {
+      "id": "d4-de-10",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "dup-exact",
+      "a": "Emre Aksoy - Lambda Medikal",
+      "b": "emre aksoy - lambda medikal ",
+      "note": "Case ve trim farkı."
+    },
+    {
+      "id": "d4-de-11",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "dup-exact",
+      "a": "Selin Yıldız - Mu Danışmanlık",
+      "b": "selin yıldız - mu danışmanlık ",
+      "note": "Case ve trim farkı."
+    },
+    {
+      "id": "d4-de-12",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "dup-exact",
+      "a": "Onur Polat - Nu Otomotiv",
+      "b": " onur polat - nu otomotiv",
+      "note": "Baş boşluk ve case farkı."
+    },
+    {
+      "id": "d4-de-13",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "dup-exact",
+      "a": "Gül Aydemir - Xi Kozmetik",
+      "b": "gül aydemir - xi kozmetik ",
+      "note": "Case ve trim farkı."
+    },
+    {
+      "id": "d4-de-14",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "dup-exact",
+      "a": "Hakan Er - Omicron Turizm",
+      "b": "HAKAN ER - OMICRON TURIZM",
+      "note": "Tamamı büyük harf, Türkçe karakter düşmüş."
+    },
+    {
+      "id": "d4-de-15",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "dup-exact",
+      "a": "İrem Bulut - Pi Yapı Market",
+      "b": "irem bulut - pi yapı market ",
+      "note": "Case ve trim farkı."
+    },
+    {
+      "id": "d4-ur-01",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "unrelated",
+      "a": "Ahmet Yılmaz - Acme AŞ",
+      "b": "Elif Demir - Beta Teknoloji",
+      "note": "Alakasız iki müşteri kaydı."
+    },
+    {
+      "id": "d4-ur-02",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "unrelated",
+      "a": "Mehmet Kaya - Gamma San Tic",
+      "b": "Zeynep Arslan - Delta Yazılım",
+      "note": "Alakasız iki müşteri kaydı."
+    },
+    {
+      "id": "d4-ur-03",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "unrelated",
+      "a": "Can Öztürk - Epsilon Gıda",
+      "b": "Ayşe Şahin - Zeta Tekstil",
+      "note": "Alakasız iki müşteri kaydı."
+    },
+    {
+      "id": "d4-ur-04",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "unrelated",
+      "a": "Burak Çelik - Theta Lojistik",
+      "b": "Deniz Aydın - Iota İnşaat",
+      "note": "Alakasız iki müşteri kaydı."
+    },
+    {
+      "id": "d4-ur-05",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "unrelated",
+      "a": "Fatma Koç - Kappa Enerji",
+      "b": "Emre Aksoy - Lambda Medikal",
+      "note": "Alakasız iki müşteri kaydı."
+    },
+    {
+      "id": "d4-ur-06",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "unrelated",
+      "a": "Selin Yıldız - Mu Danışmanlık",
+      "b": "Onur Polat - Nu Otomotiv",
+      "note": "Alakasız iki müşteri kaydı."
+    },
+    {
+      "id": "d4-ur-07",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "unrelated",
+      "a": "Gül Aydemir - Xi Kozmetik",
+      "b": "Hakan Er - Omicron Turizm",
+      "note": "Alakasız iki müşteri kaydı."
+    },
+    {
+      "id": "d4-ur-08",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "unrelated",
+      "a": "İrem Bulut - Pi Yapı Market",
+      "b": "Ahmet Yılmaz - Acme AŞ",
+      "note": "Alakasız iki müşteri kaydı."
+    },
+    {
+      "id": "d4-ur-09",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "unrelated",
+      "a": "Elif Demir - Beta Teknoloji",
+      "b": "Mehmet Kaya - Gamma San Tic",
+      "note": "Alakasız iki müşteri kaydı."
+    },
+    {
+      "id": "d4-ur-10",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "unrelated",
+      "a": "Zeynep Arslan - Delta Yazılım",
+      "b": "Can Öztürk - Epsilon Gıda",
+      "note": "Alakasız iki müşteri kaydı."
+    },
+    {
+      "id": "d4-ur-11",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "unrelated",
+      "a": "Ayşe Şahin - Zeta Tekstil",
+      "b": "Burak Çelik - Theta Lojistik",
+      "note": "Alakasız iki müşteri kaydı."
+    },
+    {
+      "id": "d4-ur-12",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "unrelated",
+      "a": "Deniz Aydın - Iota İnşaat",
+      "b": "Fatma Koç - Kappa Enerji",
+      "note": "Alakasız iki müşteri kaydı."
+    },
+    {
+      "id": "d4-ur-13",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "unrelated",
+      "a": "Emre Aksoy - Lambda Medikal",
+      "b": "Selin Yıldız - Mu Danışmanlık",
+      "note": "Alakasız iki müşteri kaydı."
+    },
+    {
+      "id": "d4-ur-14",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "unrelated",
+      "a": "Onur Polat - Nu Otomotiv",
+      "b": "Gül Aydemir - Xi Kozmetik",
+      "note": "Alakasız iki müşteri kaydı."
+    },
+    {
+      "id": "d4-ur-15",
+      "domain": "crm-musteri",
+      "toolName": "createCustomer",
+      "label": "unrelated",
+      "a": "Hakan Er - Omicron Turizm",
+      "b": "İrem Bulut - Pi Yapı Market",
+      "note": "Alakasız iki müşteri kaydı."
+    },
+    {
+      "id": "d5-dp-01",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "dup-paraphrase",
+      "a": "TV-42 / İstanbul Depo",
+      "b": "tv-42 - istanbul deposu",
+      "note": "Case farkı ve ayraç değişmiş, aynı depo."
+    },
+    {
+      "id": "d5-dp-02",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "dup-paraphrase",
+      "a": "SKU-1001 / Ankara Depo",
+      "b": "SKU1001-ANKARA-DEPO",
+      "note": "Ayraçsız birleşik form."
+    },
+    {
+      "id": "d5-dp-03",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "dup-paraphrase",
+      "a": "BZR-9 / İzmir Depo",
+      "b": "BZR9 - Izmir Depo",
+      "note": "Tire kaldırılmış, Türkçe karakter düşmüş."
+    },
+    {
+      "id": "d5-dp-04",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "dup-paraphrase",
+      "a": "TFL-BH2200 / Bursa Depo",
+      "b": "Tefal-BH2200 - Bursa",
+      "note": "Marka açılmış, 'Depo' kelimesi düşmüş."
+    },
+    {
+      "id": "d5-dp-05",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "dup-paraphrase",
+      "a": "COR-RAM16 / Kocaeli Depo",
+      "b": "COR-RAM16 / Kocaeli D.",
+      "note": "Depo kelimesi kısaltılmış."
+    },
+    {
+      "id": "d5-dp-06",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "dup-paraphrase",
+      "a": "XM-RN12 / Antalya Depo",
+      "b": "xm-rn12 antalya depo",
+      "note": "Ayraç kaldırılmış, case farkı."
+    },
+    {
+      "id": "d5-dp-07",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "dup-paraphrase",
+      "a": "DYS-V15 / Gaziantep Depo",
+      "b": "DYS-V15, Gaziantep Ambar",
+      "note": "'Depo' yerine eşanlamlı 'ambar'."
+    },
+    {
+      "id": "d5-dp-08",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "dup-paraphrase",
+      "a": "LG-OLED55 / Adana Depo",
+      "b": "LG OLED55 - Adana Deposu",
+      "note": "Tire boşluğa dönmüş, 'Deposu' eki eklenmiş."
+    },
+    {
+      "id": "d5-dp-09",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "dup-paraphrase",
+      "a": "NIKE-AM90 / Konya Depo",
+      "b": "Nike-AM90 / Konya D.",
+      "note": "Case ve kısaltma farkı."
+    },
+    {
+      "id": "d5-dp-10",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "dup-paraphrase",
+      "a": "ARC-BZD-NF / Samsun Depo",
+      "b": "ARC-BZDNF - Samsun Depo",
+      "note": "İç tire kaldırılmış."
+    },
+    {
+      "id": "d5-dp-11",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "dup-paraphrase",
+      "a": "PHI-AF-XXL / Trabzon Depo",
+      "b": "PHI-AFXXL / Trabzon Depo",
+      "note": "İç tire kaldırılmış."
+    },
+    {
+      "id": "d5-dp-12",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "dup-paraphrase",
+      "a": "CAS-FX991 / Eskişehir Depo",
+      "b": "CAS-FX991 - Eskisehir Depo",
+      "note": "Türkçe karakter düşmüş, ayraç değişmiş."
+    },
+    {
+      "id": "d5-dp-13",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "dup-paraphrase",
+      "a": "LOG-MX3 / Mersin Depo",
+      "b": "LOG-MX3, Mersin Ambarı",
+      "note": "'Depo' yerine eşanlamlı 'ambar'."
+    },
+    {
+      "id": "d5-dp-14",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "dup-paraphrase",
+      "a": "KBD-TRQ / Denizli Depo",
+      "b": "KBD-TRQ / Denizli D.",
+      "note": "Depo kelimesi kısaltılmış."
+    },
+    {
+      "id": "d5-dp-15",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "dup-paraphrase",
+      "a": "SAMS-S23 / Van Depo",
+      "b": "SAMSUNG-S23 / Van Depo",
+      "note": "Marka kısaltması açılmış."
+    },
+    {
+      "id": "d5-nm-01",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "near-miss",
+      "a": "TV-42 / İstanbul Depo",
+      "b": "TV-42 / Ankara Depo",
+      "note": "Aynı ürün kodu, farklı depo — farklı hareket."
+    },
+    {
+      "id": "d5-nm-02",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "near-miss",
+      "a": "SKU-1001 / Ankara Depo",
+      "b": "SKU-1002 / Ankara Depo",
+      "note": "Aynı depo, komşu sku."
+    },
+    {
+      "id": "d5-nm-03",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "near-miss",
+      "a": "BZR-9 / İzmir Depo",
+      "b": "BZR-9 / Bursa Depo",
+      "note": "Aynı ürün kodu, farklı depo."
+    },
+    {
+      "id": "d5-nm-04",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "near-miss",
+      "a": "TFL-BH2200 / Bursa Depo",
+      "b": "TFL-BH2400 / Bursa Depo",
+      "note": "Aynı depo, komşu sku."
+    },
+    {
+      "id": "d5-nm-05",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "near-miss",
+      "a": "COR-RAM16 / Kocaeli Depo",
+      "b": "COR-RAM32 / Kocaeli Depo",
+      "note": "Aynı depo, farklı kapasite sku."
+    },
+    {
+      "id": "d5-nm-06",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "near-miss",
+      "a": "XM-RN12 / Antalya Depo",
+      "b": "XM-RN13 / Antalya Depo",
+      "note": "Aynı depo, komşu sku."
+    },
+    {
+      "id": "d5-nm-07",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "near-miss",
+      "a": "DYS-V15 / Gaziantep Depo",
+      "b": "DYS-V12 / Gaziantep Depo",
+      "note": "Aynı depo, farklı model sku."
+    },
+    {
+      "id": "d5-nm-08",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "near-miss",
+      "a": "LG-OLED55 / Adana Depo",
+      "b": "LG-OLED65 / Adana Depo",
+      "note": "Aynı depo, farklı ekran boyutu."
+    },
+    {
+      "id": "d5-nm-09",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "near-miss",
+      "a": "NIKE-AM90 / Konya Depo",
+      "b": "NIKE-AM95 / Konya Depo",
+      "note": "Aynı depo, komşu model sku."
+    },
+    {
+      "id": "d5-nm-10",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "near-miss",
+      "a": "ARC-BZD-NF / Samsun Depo",
+      "b": "ARC-BZD-NF / Sakarya Depo",
+      "note": "Aynı sku, farklı depo."
+    },
+    {
+      "id": "d5-nm-11",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "near-miss",
+      "a": "PHI-AF-XXL / Trabzon Depo",
+      "b": "PHI-AF-XL / Trabzon Depo",
+      "note": "Aynı depo, farklı boyut sku."
+    },
+    {
+      "id": "d5-nm-12",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "near-miss",
+      "a": "CAS-FX991 / Eskişehir Depo",
+      "b": "CAS-FX570 / Eskişehir Depo",
+      "note": "Aynı depo, farklı model sku."
+    },
+    {
+      "id": "d5-nm-13",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "near-miss",
+      "a": "LOG-MX3 / Mersin Depo",
+      "b": "LOG-MX3 / Manisa Depo",
+      "note": "Aynı sku, farklı depo."
+    },
+    {
+      "id": "d5-nm-14",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "near-miss",
+      "a": "KBD-TRQ / Denizli Depo",
+      "b": "KBD-TKL / Denizli Depo",
+      "note": "Aynı depo, farklı format sku."
+    },
+    {
+      "id": "d5-nm-15",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "near-miss",
+      "a": "SAMS-S23 / Van Depo",
+      "b": "SAMS-S24 / Van Depo",
+      "note": "Aynı depo, komşu model sku."
+    },
+    {
+      "id": "d5-de-01",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "dup-exact",
+      "a": "SKU-1001 / Ankara Depo",
+      "b": "sku-1001 / ankara depo ",
+      "note": "Case ve trim farkı."
+    },
+    {
+      "id": "d5-de-02",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "dup-exact",
+      "a": " BZR-9 / Izmir Depo",
+      "b": "bzr-9 / izmir depo",
+      "note": "Baş boşluk ve case farkı."
+    },
+    {
+      "id": "d5-de-03",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "dup-exact",
+      "a": "TFL-BH2200 / Bursa Depo",
+      "b": "tfl-bh2200 / bursa depo ",
+      "note": "Case ve trim farkı."
+    },
+    {
+      "id": "d5-de-04",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "dup-exact",
+      "a": "COR-RAM16 / Kocaeli Depo",
+      "b": " cor-ram16 / kocaeli depo",
+      "note": "Baş boşluk ve case farkı."
+    },
+    {
+      "id": "d5-de-05",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "dup-exact",
+      "a": "XM-RN12 / Antalya Depo",
+      "b": "xm-rn12 / antalya depo ",
+      "note": "Case ve trim farkı."
+    },
+    {
+      "id": "d5-de-06",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "dup-exact",
+      "a": "DYS-V15 / Gaziantep Depo",
+      "b": "dys-v15 / gaziantep depo",
+      "note": "Sadece case farkı."
+    },
+    {
+      "id": "d5-de-07",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "dup-exact",
+      "a": "LG-OLED55 / Adana Depo",
+      "b": " lg-oled55 / adana depo ",
+      "note": "Baş/son boşluk ve case farkı."
+    },
+    {
+      "id": "d5-de-08",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "dup-exact",
+      "a": "NIKE-AM90 / Konya Depo",
+      "b": "nike-am90 / konya depo",
+      "note": "Sadece case farkı."
+    },
+    {
+      "id": "d5-de-09",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "dup-exact",
+      "a": "ARC-BZD-NF / Samsun Depo",
+      "b": "arc-bzd-nf / samsun depo ",
+      "note": "Case ve trim farkı."
+    },
+    {
+      "id": "d5-de-10",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "dup-exact",
+      "a": "PHI-AF-XXL / Trabzon Depo",
+      "b": "phi-af-xxl / trabzon depo",
+      "note": "Sadece case farkı."
+    },
+    {
+      "id": "d5-de-11",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "dup-exact",
+      "a": "CAS-FX991 / Eskisehir Depo",
+      "b": " cas-fx991 / eskisehir depo",
+      "note": "Baş boşluk ve case farkı."
+    },
+    {
+      "id": "d5-de-12",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "dup-exact",
+      "a": "LOG-MX3 / Mersin Depo",
+      "b": "log-mx3 / mersin depo ",
+      "note": "Case ve trim farkı."
+    },
+    {
+      "id": "d5-de-13",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "dup-exact",
+      "a": "KBD-TRQ / Denizli Depo",
+      "b": "kbd-trq / denizli depo",
+      "note": "Sadece case farkı."
+    },
+    {
+      "id": "d5-de-14",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "dup-exact",
+      "a": "SAMS-S23 / Van Depo",
+      "b": " sams-s23 / van depo ",
+      "note": "Baş/son boşluk ve case farkı."
+    },
+    {
+      "id": "d5-de-15",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "dup-exact",
+      "a": "TV-42 / Istanbul Depo",
+      "b": "tv-42 / istanbul depo",
+      "note": "Sadece case farkı."
+    },
+    {
+      "id": "d5-ur-01",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "unrelated",
+      "a": "TV-42 / İstanbul Depo",
+      "b": "COR-RAM16 / Kocaeli Depo",
+      "note": "Alakasız iki stok hareketi."
+    },
+    {
+      "id": "d5-ur-02",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "unrelated",
+      "a": "SKU-1001 / Ankara Depo",
+      "b": "DYS-V15 / Gaziantep Depo",
+      "note": "Alakasız iki stok hareketi."
+    },
+    {
+      "id": "d5-ur-03",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "unrelated",
+      "a": "BZR-9 / İzmir Depo",
+      "b": "NIKE-AM90 / Konya Depo",
+      "note": "Alakasız iki stok hareketi."
+    },
+    {
+      "id": "d5-ur-04",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "unrelated",
+      "a": "TFL-BH2200 / Bursa Depo",
+      "b": "CAS-FX991 / Eskişehir Depo",
+      "note": "Alakasız iki stok hareketi."
+    },
+    {
+      "id": "d5-ur-05",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "unrelated",
+      "a": "XM-RN12 / Antalya Depo",
+      "b": "LOG-MX3 / Mersin Depo",
+      "note": "Alakasız iki stok hareketi."
+    },
+    {
+      "id": "d5-ur-06",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "unrelated",
+      "a": "LG-OLED55 / Adana Depo",
+      "b": "KBD-TRQ / Denizli Depo",
+      "note": "Alakasız iki stok hareketi."
+    },
+    {
+      "id": "d5-ur-07",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "unrelated",
+      "a": "ARC-BZD-NF / Samsun Depo",
+      "b": "SAMS-S23 / Van Depo",
+      "note": "Alakasız iki stok hareketi."
+    },
+    {
+      "id": "d5-ur-08",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "unrelated",
+      "a": "PHI-AF-XXL / Trabzon Depo",
+      "b": "TV-42 / İstanbul Depo",
+      "note": "Alakasız iki stok hareketi."
+    },
+    {
+      "id": "d5-ur-09",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "unrelated",
+      "a": "SKU-1001 / Ankara Depo",
+      "b": "NIKE-AM90 / Konya Depo",
+      "note": "Alakasız iki stok hareketi."
+    },
+    {
+      "id": "d5-ur-10",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "unrelated",
+      "a": "COR-RAM16 / Kocaeli Depo",
+      "b": "BZR-9 / İzmir Depo",
+      "note": "Alakasız iki stok hareketi."
+    },
+    {
+      "id": "d5-ur-11",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "unrelated",
+      "a": "DYS-V15 / Gaziantep Depo",
+      "b": "CAS-FX991 / Eskişehir Depo",
+      "note": "Alakasız iki stok hareketi."
+    },
+    {
+      "id": "d5-ur-12",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "unrelated",
+      "a": "XM-RN12 / Antalya Depo",
+      "b": "ARC-BZD-NF / Samsun Depo",
+      "note": "Alakasız iki stok hareketi."
+    },
+    {
+      "id": "d5-ur-13",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "unrelated",
+      "a": "LG-OLED55 / Adana Depo",
+      "b": "TFL-BH2200 / Bursa Depo",
+      "note": "Alakasız iki stok hareketi."
+    },
+    {
+      "id": "d5-ur-14",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "unrelated",
+      "a": "LOG-MX3 / Mersin Depo",
+      "b": "SAMS-S23 / Van Depo",
+      "note": "Alakasız iki stok hareketi."
+    },
+    {
+      "id": "d5-ur-15",
+      "domain": "stok-hareketi",
+      "toolName": "adjustStock",
+      "label": "unrelated",
+      "a": "KBD-TRQ / Denizli Depo",
+      "b": "PHI-AF-XXL / Trabzon Depo",
+      "note": "Alakasız iki stok hareketi."
+    }
+  ]
+}

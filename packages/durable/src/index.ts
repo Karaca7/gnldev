@@ -101,7 +101,20 @@ export { orgPurgedKey, purgeRun, purgeThread, purgeResource, purgeBatch, purgeOr
 export type { LogSweepTarget, RetentionSweeperOptions, RetentionSweepSummary, RetentionSweeper } from './retention.js';
 export { recordIdemConflict, readIdemLedger } from './idem-ledger.js';
 export { semKey, semTombKey, SEM_TEMPLATE_VERSION } from './semantic-dup.js';
-export type { SemanticDupConfig, SemanticIdentity, SemDupRecord } from './semantic-dup.js';
+export type { SemanticDupConfig, SemanticIdentity, SemDupRecord, GrayCandidate } from './semantic-dup.js';
+// FAZ-7 (v2): the rule ladder is exported so a deployment can unit-test its own gazetteers and
+// dictionaries against the same function the engine runs — a dictionary nobody can test is a
+// dictionary nobody maintains.
+export { runRuleLadder, rulesConfigOf, DEFAULT_RULES, RULE_CLASS, SEM_RULESET_VERSION, charNorm, squash, tokenize } from './semantic-rules.js';
+export type { SemanticRulesConfig, RuleId, RuleClass, RuleDir, RuleTrace, LadderOutcome } from './semantic-rules.js';
+// The judge's prompt renderer, parser and thresholds are exported for ONE reason: the qualification
+// bench (@gnldev/semantic-qualify) must examine a judge with the EXACT question production asks and
+// score it against the EXACT numbers the runtime enforces. Two copies would be two contracts.
+export {
+  renderJudgePrompt, parseJudgeVerdict, validateJudgeConfig, semJudgeKey,
+  JUDGE_PROMPT_VERSION, JUDGE_CANONICAL_MAX, JUDGE_MIN_RECALL, JUDGE_MAX_FP, JUDGE_CERT_MAX_AGE_MS,
+} from './semantic-judge.js';
+export type { SemanticJudgeConfig, JudgeCert, JudgeVerdict, JudgeOutcome, JudgeCause, SemJudgeRecord } from './semantic-judge.js';
 // Heyet matrisi: kullanım profili × yan-etki sınıfı tekrar politikası.
 export { PRESET_MATRIX, PRESET_DEFAULT } from './policy-matrix.js';
 export { xidKey, xidPlanOf, writeXid, readXid, xidWhen, amountsDifferOf } from './xid.js';

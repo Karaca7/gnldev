@@ -585,13 +585,22 @@ async function persistInput(
 function serializableLimits(limits: RunLimits): RunLimits {
   const dup = limits.sideEffectDuplicates;
   if (!dup || typeof dup !== 'object' || !dup.semantic) return limits;
-  const { embed: _embed, ...semRest } = dup.semantic;
+  // FAZ-7: `judge.complete` is a closure too, and it sits one level deeper — leaving it in place
+  // would throw on EVERY frozen write of a judge-enabled run (structuredClone rejects functions), so
+  // the judge is stripped down to its declarative half by the same rule as `embed`. What stays is
+  // pure data (`rules`, `qualification`, model id): a resumed run's introspection still shows which
+  // ladder and which certificate were in force, while the gate itself is inactive until the caller
+  // re-supplies the closures.
+  const { embed: _embed, judge, ...semRest } = dup.semantic;
+  const semStripped = judge
+    ? { ...semRest, judge: { ...(({ complete: _complete, ...j }) => j)(judge) } as unknown as typeof judge }
+    : semRest;
   // `embedStripped` marks the round-trip copy: the validator treats it as "declaratively present,
   // Functionally inactive" instead of throwing on the missing closure — WITHOUT the mark, a user who
   // Simply forgot `embed` would get silent inactivity (false confidence), so the bare-missing case
   // Still throws (denetçi blokeri: the unmarked strip killed EVERY resume of a semantic-active run,
   // Including approving the gate's own question).
-  return { ...limits, sideEffectDuplicates: { ...dup, semantic: { ...semRest, embedStripped: true } as unknown as typeof dup.semantic } };
+  return { ...limits, sideEffectDuplicates: { ...dup, semantic: { ...semStripped, embedStripped: true } as unknown as typeof dup.semantic } };
 }
 
 /** FAZ-4 admissibility gate — runs right after assertThreadOwnership in BOTH entry points, BEFORE

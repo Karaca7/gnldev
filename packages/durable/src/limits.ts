@@ -189,6 +189,31 @@ export interface RunLimits {
    * Erişilemezse davranış bugünkü davranıştır (fail-open, best-effort). Çift opt-in: bu blok +
    * Aracın kendi `semanticIdentity` beyanı — ikisi de yoksa katman hiç çalışmaz. Maliyet: korumalı
    * Çağrı başına ~1 embed (mutlu yolda cache'li), fatura embed closure'ının sahibinindir.
+   *
+   * FAZ-7 (v2) — kimlik alanları EŞLEŞMEYEN adaylar için iki opsiyonel basamak:
+   *
+   *   `rules`  Deterministik kural merdiveni (saf veri, opt-in). Rakam DEĞERİ ve yazım
+   *            normalizasyonu iki kaydı eşitleyebilir → soru; kapalı-küme ayırıcılar (beden
+   *            merdiveni, kısa-kod farkı) adayı düşürür → bugünkü davranış. TAMAMI ALGORİTMA:
+   *            bakılacak liste, güncellenecek sözlük YOK — `rules: true` konfigürasyonun tamamıdır.
+   *            (Kullanıcı sözlüğü sınıfı vardı; güvenlik tavanı fallthrough değeriyle aynı olduğu
+   *            için hiçbir sonucu değiştiremiyordu ve ölçümde katkısı sıfırdı — KALDIRILDI.)
+   *            Bedava ve journal'lanabilir. Bkz. semantic-rules.ts.
+   *   `judge`  Merdivenin "gri" dediği artık için yargıç closure'ı. KALİFİKASYON SERTİFİKASI
+   *            zorunludur (@gnldev/semantic-qualify): ölçümde bir model parafrazların %43'ünü,
+   *            başka bir model %100'ünü doğru bildi — sınavsız yargıç kurulu görünen ama olmayan
+   *            bir katmandır, o yüzden eksik/zayıf sertifika CONFIG ANINDA throw eder.
+   *
+   * Yargıç da skor gibi KARAR VERMEZ: 'same' cevabı yalnız insana soru sordurur, 'different' ve her
+   * başarısızlık (timeout/bütçe/parse) bugünkü davranıştır ve journal'a yazılır — sessiz dal yoktur.
+   * MALİYET SÖZLEŞMESİ: yargıç YALNIZ gri bantta çağrılır ve run başına `maxCallsPerRun` (varsayılan
+   * 10) slotla sınırlıdır. Açmadan önce üst sınırı KENDİ telemetriniz verir: Studio /semantic-guard'ın
+   * `scan.grayCalls` alanı — gri artık üreten ÇAĞRI sayısı (aday sayısı değil: bir çağrıda birden çok
+   * aday olabilir ama yargıç çağrı başına en fazla bir kez konuşur, o yüzden birim çağrıdır ve alan
+   * yargıç açık/kapalı fark etmeksizin aynı şeyi sayar). İki tuzak: `droppedIdentity` ikinci
+   * bir teklif DEĞİLDİR (aynı adayları öbür yandan sayar, toplanırsa çift sayım olur) ve `rules`
+   * açılınca ANLAMI kayar (ayırıcı düşüşleri `droppedByRule`'a geçer), yani yükseltme öncesi/sonrası
+   * taban çizgileri kıyaslanamaz.
    */
   sideEffectDuplicates?:
     | 'off' | 'warn' | 'reflect' | 'block' | 'suspend'
