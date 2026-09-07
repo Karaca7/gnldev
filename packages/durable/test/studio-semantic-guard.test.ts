@@ -33,6 +33,17 @@ describe('studio /semantic-guard + suspendedAt', () => {
     const item = ap.items.find((i: any) => i.runId === 'sg2');
     expect(item).toBeTruthy();
     expect(typeof item.suspendedAt).toBe('number');
+
+    // precision@suspend — v2'nin veri kapısı: karar yokken oran YOK (sıfırdan oran uydurulmaz)
+    expect(sg.precision).toEqual({ approved: 0, denied: 0, pending: 1, rate: null });
+
+    // sg2 REDDEDİLİR (kapı gerçek mükerreri yakaladı); sg3 yeni askı → ONAYLANIR (yine de koş)
+    await runDurable({ runId: 'sg2', journal, model: model('c2', { sku: 'A', n: 2 }), tools, threadId: 'th', limits, prompt: 'x', stopWhen: stepCountIs(6), approvals: { c2: false } } as any);
+    await runDurable({ runId: 'sg3', journal, model: model('c3', { sku: 'A', n: 3 }), tools, threadId: 'th', limits, prompt: 'x', stopWhen: stepCountIs(6) } as any);
+    await runDurable({ runId: 'sg3', journal, model: model('c3', { sku: 'A', n: 3 }), tools, threadId: 'th', limits, prompt: 'x', stopWhen: stepCountIs(6), approvals: { c3: true } } as any);
+    const sg2 = await get(api, '/semantic-guard');
+    expect(sg2.totals.suspend).toBe(2);
+    expect(sg2.precision).toEqual({ approved: 1, denied: 1, pending: 0, rate: 0.5 });
   });
 
   it("listKeys'siz journal: unavailable alanıyla dürüst cevap", async () => {
@@ -47,5 +58,6 @@ describe('studio /semantic-guard + suspendedAt', () => {
     const sg = await get(api, '/semantic-guard');
     expect(sg.unavailable).toContain('listKeys');
     expect(sg.totals).toEqual({ suspend: 0, warn: 0 });
+    expect(sg.precision).toEqual({ approved: 0, denied: 0, pending: 0, rate: null }); // şekil paritesi
   });
 });

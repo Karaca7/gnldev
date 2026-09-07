@@ -2078,8 +2078,15 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     const totals = { suspend: 0, warn: 0 };
     const byTool: Record<string, { suspend: number; warn: number }> = {};
     const recent: { runId: string; at?: number; action: string; toolName: string; message: string }[] = [];
+    // precision@suspend (tasarım raporunun zorunlu telemetri listesindeki son parça): her semantik
+    // askının İNSAN sonucu, aynı toolCallId'nin tool kaydından türetilir — 'denied' = kapı gerçek
+    // mükerreri yakaladı; 'succeeded' = insan "yine de koş" dedi (tasarım bunu tombstone'la "farklı
+    // iş" hükmü sayar → yanlış alarm payı; bilinçli tekrar da buraya düşer, oran üst sınırdır).
+    // Semantik v2 (salt-skor dalı, kalibrasyon) ANCAK bu veriyle tartışılır — veri-kapısı budur.
+    const precision = { approved: 0, denied: 0, pending: 0, rate: null as number | null };
+    const semSuspends: { runId: string; toolCallId: string }[] = [];
     if (!writable || typeof kj.listKeys !== 'function') {
-      return c.json({ totals, byTool, recent, unavailable: 'journal has no listKeys — incidents cannot be enumerated' });
+      return c.json({ totals, byTool, precision, recent, unavailable: 'journal has no listKeys — incidents cannot be enumerated' });
     }
     // Cap: this aggregates on every 10s UI poll — unbounded N+1 over a retention-sized journal grows
     // Linearly forever. The most RECENT slice carries the calibration signal; the cap is reported.
@@ -2092,11 +2099,28 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
         const bucket = i.action === 'suspend' ? 'suspend' : 'warn';
         totals[bucket]++;
         (byTool[i.toolName] ??= { suspend: 0, warn: 0 })[bucket]++;
+        if (bucket === 'suspend') semSuspends.push({ runId: r.runId, toolCallId: i.toolCallId });
         recent.push({ runId: r.runId, at: i.at, action: i.action, toolName: i.toolName, message: i.message });
       }
     }
+    // Sonuç okuması yalnız askı üreten run'larda (askılar nadir; N okuma askı sayısıyla sınırlı).
+    // Incident anahtarı (runId,toolCallId,source,action) kimliğinde zaten teklese de çift-okumaya
+    // karşı pair-dedup korunur.
+    const seenPair = new Set<string>();
+    for (const s of semSuspends) {
+      const pk = `${s.runId} ${s.toolCallId}`;
+      if (seenPair.has(pk)) continue;
+      seenPair.add(pk);
+      const entries = await reader.readRun(s.runId).catch(() => [] as Awaited<ReturnType<typeof reader.readRun>>);
+      const rec = entries.find((e) => e.kind === 'tool' && e.key.endsWith(`:tool:${s.toolCallId}`))?.value as { status?: string } | undefined;
+      if (rec?.status === 'succeeded') precision.approved++;
+      else if (rec?.status === 'denied') precision.denied++;
+      else precision.pending++; // hâlâ askıda ya da kayıt okunamadı — karara sayılmaz
+    }
+    const decided = precision.approved + precision.denied;
+    if (decided > 0) precision.rate = precision.denied / decided;
     recent.sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
-    return c.json({ totals, byTool, recent: recent.slice(0, 50), scannedRuns: runs.length, totalRuns: allRuns.length });
+    return c.json({ totals, byTool, precision, recent: recent.slice(0, 50), scannedRuns: runs.length, totalRuns: allRuns.length });
   });
 
   app.get('/approvals', async (c) => {

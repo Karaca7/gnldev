@@ -207,6 +207,22 @@ export function Observability() {
             <span className="rounded bg-muted px-1.5 py-0.5 text-[11px]">{t('semanticWarns', { count: semGuard.data.totals.warn })}</span>
           </div>
           <p className="mb-2 text-xs text-muted-foreground">{t('semanticDescription')}</p>
+          {/* precision@suspend — semantik v2'nin veri kapısı: askıların insan sonucu. Eski sunucuda
+              alan yok (additive) ve hiç karar yokken oran gizli — sıfırdan oran uydurulmaz. */}
+          {semGuard.data.precision && (semGuard.data.precision.approved + semGuard.data.precision.denied + semGuard.data.precision.pending) > 0 && (
+            <p className="mb-2 text-xs">
+              {t('semanticPrecision', {
+                denied: semGuard.data.precision.denied,
+                approved: semGuard.data.precision.approved,
+                pending: semGuard.data.precision.pending,
+              })}
+              {semGuard.data.precision.rate !== null && (
+                <span className="ml-1 rounded bg-success/15 px-1.5 py-0.5 text-[11px]">
+                  {t('semanticPrecisionRate', { pct: Math.round(semGuard.data.precision.rate * 100) })}
+                </span>
+              )}
+            </p>
+          )}
           <div className="flex flex-wrap gap-2">
             {Object.entries(semGuard.data.byTool).map(([tool, v]) => (
               <span key={tool} className="rounded border px-2 py-0.5 font-mono text-[11px]">

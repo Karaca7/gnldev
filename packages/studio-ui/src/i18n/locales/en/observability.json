@@ -30,5 +30,7 @@
   "semanticTitle": "Semantic guard",
   "semanticSuspends": "{{count}} question(s)",
   "semanticWarns": "{{count}} telemetry",
-  "semanticDescription": "Meaning-similar duplicate candidates: questions asked vs telemetry-only drops (identity mismatch, embedder outages). Per tool: questions/telemetry."
+  "semanticDescription": "Meaning-similar duplicate candidates: questions asked vs telemetry-only drops (identity mismatch, embedder outages). Per tool: questions/telemetry.",
+  "semanticPrecision": "Human outcomes: {{denied}} stopped (real duplicate), {{approved}} ran anyway, {{pending}} pending.",
+  "semanticPrecisionRate": "{{pct}}% caught real duplicates"
 }

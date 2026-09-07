@@ -418,6 +418,10 @@ export interface ApprovalItem { runId: string; toolCallId: string; toolName: str
 export interface SemanticGuardSummary {
   totals: { suspend: number; warn: number };
   byTool: Record<string, { suspend: number; warn: number }>;
+  /** precision@suspend: her semantik askının insan sonucu (denied = gerçek mükerrer yakalandı,
+   *  approved = "yine de koş" ≈ yanlış alarm payı üst sınırı). rate = denied/(denied+approved),
+   *  karar yokken null. Eski sunucuda alan hiç yok (additive). */
+  precision?: { approved: number; denied: number; pending: number; rate: number | null };
   recent: { runId: string; at?: number; action: string; toolName: string; message: string }[];
   unavailable?: string;
 }

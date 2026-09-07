@@ -30,5 +30,7 @@
   "semanticTitle": "Semantik kapı",
   "semanticSuspends": "{{count}} soru",
   "semanticWarns": "{{count}} telemetri",
-  "semanticDescription": "Anlamca benzer mükerrer adayları: sorulan sorular vs yalnız-telemetri düşüşleri (kimlik uyuşmazlığı, embedder kesintileri). Araç başına: soru/telemetri."
+  "semanticDescription": "Anlamca benzer mükerrer adayları: sorulan sorular vs yalnız-telemetri düşüşleri (kimlik uyuşmazlığı, embedder kesintileri). Araç başına: soru/telemetri.",
+  "semanticPrecision": "İnsan sonuçları: {{denied}} durduruldu (gerçek mükerrer), {{approved}} yine de koştu, {{pending}} bekliyor.",
+  "semanticPrecisionRate": "%{{pct}} gerçek mükerrer yakaladı"
 }
