@@ -502,7 +502,9 @@ semantic: {
 ```
 
 **The certificate is not ceremony.** On identical fixtures with the identical prompt, one model
-answered 43% of the paraphrase pairs correctly and another 100%. A judge you have not measured is a
+answered 43% of the paraphrase pairs correctly and another 100%. A third, from a family unrelated to
+the one that wrote the fixtures, scored 93% — so the spread is about the model, not about whose
+phrasing it recognises. A judge you have not measured is a
 layer that looks installed and is not — so a missing, weak (recall < 0.70 or false alarms > 0.05),
 model-mismatched or prompt-version-mismatched certificate is a **config-time throw**, the sibling of
 v1's empty-`keys` throw. Swapping the model or upgrading past a prompt-version bump invalidates it
