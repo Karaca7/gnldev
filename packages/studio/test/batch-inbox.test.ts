@@ -1,8 +1,9 @@
-// BATCH İŞ-1/İŞ-2 pinleri (hakem: İŞ-1 yayın ön koşulu).
-// İŞ-1: modelsiz batch item-run'ının askısı GET /approvals'ta SATIR üretir (sentinel-fallback) —
-//        "listRuns suspended der ama tıklanacak satır yok" ihlali kapalı.
-// İŞ-2: batch: önekli resume resumeRun'a DÜŞMEZ; karar resolveApprovals'la (spent-slot CAS'lı tek
-//        kaynak) journal'a yazılır ve cevap KAYITLI kararı raporlar.
+// BATCH TASK-1/TASK-2 pins (arbiter: TASK-1 is the release precondition).
+// TASK-1: a model-less batch item-run's suspend produces a ROW in GET /approvals (sentinel-fallback) —
+//        closes the "listRuns says suspended but there's no row to click" violation.
+// TASK-2: a batch:-prefixed resume does NOT fall through to resumeRun; the decision is written to the
+//        journal via resolveApprovals (the single spent-slot-CAS source of truth), and the response
+//        reports the RECORDED decision.
 import { describe, it, expect } from 'vitest';
 import { InMemoryJournal, stampFormat } from '@gnldev/durable';
 import { createStudioApi } from '../src/server.js';
@@ -12,12 +13,12 @@ const drive = (api: unknown) => api as (r: Request) => Promise<Response>;
 function seedBatchSuspend(journal: InMemoryJournal) {
   const runId = 'batch:aylik-1:F-1';
   const sentinel = { __gnl_suspend: { toolCallId: 'item:F-1', toolName: 'payInvoice', args: { ref: 'F-1', amount: 100 }, reason: 'Duplicate side effect: approve to repeat' } };
-  // Modelsiz item-run: tek tool kaydı, model adımı YOK (mini-runner'ın bıraktığı iz)
+  // A model-less item-run: a single tool record, NO model step (the trace the mini-runner leaves behind)
   return journal.put(`${runId}:tool:item:F-1`, stampFormat({ status: 'suspended', output: sentinel, toolName: 'payInvoice' })).then(() => runId);
 }
 
-describe('İŞ-1 — modelsiz askı inbox\'ta görünür', () => {
-  it('batch item askısı GET /approvals satırı üretir (toolName + reason + args ile)', async () => {
+describe('TASK-1 — a model-less suspend shows up in the inbox', () => {
+  it('a batch item suspend produces a GET /approvals row (with toolName + reason + args)', async () => {
     const journal = new InMemoryJournal();
     await seedBatchSuspend(journal);
     const api = drive(createStudioApi({ reader: journal }));
@@ -31,11 +32,11 @@ describe('İŞ-1 — modelsiz askı inbox\'ta görünür', () => {
   });
 });
 
-describe('İŞ-2 — batch resume yalnız karar yazar', () => {
-  it('resume opsiyonu YOKKEN bile batch: kararı kaydedilir; spent-slot CAS tek kaynaktan işler; cevap kayıtlı kararı döner', async () => {
+describe('TASK-2 — batch resume only writes the decision', () => {
+  it('even WITHOUT a resume option, the batch: decision is recorded; spent-slot CAS processes from a single source; the response returns the recorded decision', async () => {
     const journal = new InMemoryJournal();
     const runId = await seedBatchSuspend(journal);
-    const api = drive(createStudioApi({ reader: journal })); // resume verilmedi — normal run'da 501 olurdu
+    const api = drive(createStudioApi({ reader: journal })); // no resume given — a normal run would 501 here
     const res = await api(new Request(`http://s/runs/${encodeURIComponent(runId)}/resume`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ approvals: { 'item:F-1': true } }),
@@ -43,19 +44,19 @@ describe('İŞ-2 — batch resume yalnız karar yazar', () => {
     expect(res.status).toBe(200);
     const body = await res.json() as { decided: Record<string, boolean> };
     expect(body.decided['item:F-1']).toBe(true);
-    expect(await journal.get(`${runId}:approval:item:F-1`)).toBe(true); // resolveApprovals şekli (düz boolean)
+    expect(await journal.get(`${runId}:approval:item:F-1`)).toBe(true); // resolveApprovals's shape (a plain boolean)
 
-    // spent-slot: 'attempt' kapsamının tükettiği karar → taze onay CAS'la üstüne yazılır (kopyada düşen incelik)
+    // spent-slot: a decision consumed by the 'attempt' scope → a fresh approval overwrites it via CAS (a nuance a copy of this logic would drop)
     await journal.put(`${runId}:approval:item:F-1`, { __gnl_approval_spent: true });
     const res2 = await api(new Request(`http://s/runs/${encodeURIComponent(runId)}/resume`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ approvals: { 'item:F-1': true } }),
     }));
     expect((await res2.json() as { decided: Record<string, boolean> }).decided['item:F-1']).toBe(true);
-    expect(await journal.get(`${runId}:approval:item:F-1`)).toBe(true); // spent sentinel taze kararla değişti
+    expect(await journal.get(`${runId}:approval:item:F-1`)).toBe(true); // the spent sentinel was replaced by the fresh decision
   });
 
-  it('bilinmeyen batch runId → 404 (tool kaydı yok)', async () => {
+  it('an unknown batch runId → 404 (no tool record)', async () => {
     const api = drive(createStudioApi({ reader: new InMemoryJournal() }));
     const res = await api(new Request('http://s/runs/batch%3Ayok%3AF-9/resume', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ approvals: { x: true } }),

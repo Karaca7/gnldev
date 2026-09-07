@@ -100,8 +100,8 @@ describe('memory-context provenance (:memctx)', () => {
     const journal = new InMemoryJournal();
     const memory = new BasicMemory(journal);
     // Two turns → turn 2's frozen input = [q1, a1, q2] with memctx.incomingCount = 1.
-    await runDurable({ runId: 'cf-a', journal, memory, threadId: 'tcf', model: replyModel(), prompt: 'ilk soru' });
-    await runDurable({ runId: 'cf-b', journal, memory, threadId: 'tcf', model: replyModel(), prompt: 'ikinci soru' });
+    await runDurable({ runId: 'cf-a', journal, memory, threadId: 'tcf', model: replyModel(), prompt: 'first question' });
+    await runDurable({ runId: 'cf-b', journal, memory, threadId: 'tcf', model: replyModel(), prompt: 'second question' });
 
     const prompts: any[] = [];
     const probe = createMockModel(async ({ prompt }: any) => {
@@ -113,8 +113,8 @@ describe('memory-context provenance (:memctx)', () => {
     // The replayed model saw ONLY the turn's own message — the memory-composed history is gone.
     const users = (prompts[0] ?? []).filter((m: any) => m?.role === 'user');
     expect(users.length).toBe(1);
-    expect(JSON.stringify(users[0])).toContain('ikinci soru');
-    expect(JSON.stringify(prompts[0])).not.toContain('ilk soru');
+    expect(JSON.stringify(users[0])).toContain('second question');
+    expect(JSON.stringify(prompts[0])).not.toContain('first question');
 
     // No provenance record → the strip refuses instead of guessing (memory-less run).
     await runDurable({ runId: 'cf-plain', journal, model: replyModel(), prompt: 'x' });

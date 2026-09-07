@@ -32,6 +32,9 @@ describe('stableStringify — plain-JSON hashes are FROZEN (journal-key compatib
     ['deep-nested', { l1: { l2: { l3: { l4: [1, 'two', false, null] } } } }, '3192f91ccaee8edf'],
     ['orderId-shape', { orderId: 'o1', note: 'first' }, 'a018e4293c5096eb'],
     ['mixed-array', [1, 'a', true, null, { z: 9, y: 8 }], '397c278e3605c335'],
+    // NOT translated on purpose: this row is a FROZEN hash fixture. The string is an input whose
+    // digest is pinned for journal-key compatibility — changing the text changes the key, which is
+    // exactly the compatibility break this table exists to catch.
     ['unicode', { msg: 'merhaba dünya 🌍' }, '0ca9240058cf3a5c'],
     ['numeric-keys', { 2: 'b', 10: 'c', 1: 'a' }, '6a441cd0d8f044b7'],
     ['nested-empty', { a: {}, b: [] }, 'aeeba1e56a144077'],

@@ -49,10 +49,10 @@ describe('piiRedactor', () => {
   // Shape, so the built-in for it has no false positives to trade against.
   it('iban is masked when mod-97 holds, and left alone when it does not', () => {
     const redact = piiTextRedactor();
-    expect(redact('hesap TR330006100519786457841326 kapandi')).toBe('hesap [REDACTED_IBAN] kapandi');
-    expect(redact('DE89370400440532013000 gonderildi')).toBe('[REDACTED_IBAN] gonderildi');
+    expect(redact('account TR330006100519786457841326 closed')).toBe('account [REDACTED_IBAN] closed');
+    expect(redact('DE89370400440532013000 sent')).toBe('[REDACTED_IBAN] sent');
     // One digit changed: not an IBAN, and nothing else may claim it either.
-    expect(redact('hesap TR330006100519786457841327 kapandi')).toBe('hesap TR330006100519786457841327 kapandi');
+    expect(redact('account TR330006100519786457841327 closed')).toBe('account TR330006100519786457841327 closed');
     // Printed in the usual four-character groups.
     expect(redact('TR33 0006 1005 1978 6457 8413 26')).toBe('[REDACTED_IBAN]');
   });
@@ -62,8 +62,8 @@ describe('piiRedactor', () => {
   // Wrong name in the audit report.
   it('iban is matched before the digit-hungry patterns can claim it', () => {
     const redact = piiTextRedactor();
-    const out = redact('hesap NO9386011117947 kapandi');
-    expect(out).toBe('hesap [REDACTED_IBAN] kapandi');
+    const out = redact('account NO9386011117947 closed');
+    expect(out).toBe('account [REDACTED_IBAN] closed');
     // A short IBAN is the case that exposes it — a 26-character TR one is too long for `phone`.
     expect(out).not.toContain('NO');
   });
@@ -73,12 +73,12 @@ describe('piiRedactor', () => {
   it('a card passes Luhn; an order number of the same shape stays readable', () => {
     const redact = piiTextRedactor();
     expect(redact('kart 4111 1111 1111 1111 reddedildi')).toBe('kart [REDACTED_CREDITCARD] reddedildi');
-    expect(redact('siparis 1234567812345678 gonderildi')).toBe('siparis 1234567812345678 gonderildi');
+    expect(redact('order 1234567812345678 sent')).toBe('order 1234567812345678 sent');
   });
 
   it('validate:false goes back to masking on shape alone', () => {
     const blunt = piiTextRedactor({ validate: false });
-    expect(blunt('siparis 1234567812345678 gonderildi')).toBe('siparis [REDACTED_CREDITCARD] gonderildi');
+    expect(blunt('order 1234567812345678 sent')).toBe('order [REDACTED_CREDITCARD] sent');
   });
 
   // The phone pattern used to count characters, not digits, so a timestamp cleared its bar. Error
@@ -149,9 +149,9 @@ describe('piiRedactor', () => {
   // Under the wrong name, which also makes the audit report describe the wrong type.
   it('a custom pattern wins over a greedy built-in, instead of arriving after it', () => {
     const withCustom = piiTextRedactor({ extraPatterns: [{ name: 'tckn', pattern: /\b\d{11}\b/g }] });
-    expect(withCustom('musteri 12345678901 kaydi')).toContain('[REDACTED_TCKN]');
+    expect(withCustom('customer 12345678901 record')).toContain('[REDACTED_TCKN]');
     // Without it, the same text is masked by `phone` — the mislabel this ordering avoids.
-    expect(piiTextRedactor()('musteri 12345678901 kaydi')).toContain('[REDACTED_PHONE]');
+    expect(piiTextRedactor()('customer 12345678901 record')).toContain('[REDACTED_PHONE]');
   });
 
   it('a pattern missing the g flag still masks every occurrence, not just the first', () => {

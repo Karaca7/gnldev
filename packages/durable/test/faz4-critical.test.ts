@@ -160,12 +160,12 @@ describe("FAZ-4 preset 'critical' (createGnl)", () => {
   });
 });
 
-// FAZ-4 denetçi bulguları — resume/terminal-retry kaçışları, stream ikiz kapısı, ledger dalları ve
-// slow-path tombstone+suspendedTtl pinlendi.
+// FAZ-4 audit findings — resume/terminal-retry escapes, the stream twin gate, ledger branches, and
+// the slow-path tombstone+suspendedTtl combo are pinned down.
 import { streamDurable, resumeRun } from '../src/run.js';
 import { createStreamMockModel } from './mock.js';
 
-describe('FAZ-4 denetçi düzeltmeleri', () => {
+describe('FAZ-4 audit fixes', () => {
   it('an at-least-once retry of the SAME approval re-POST after completion replays — no permanent 409 (K18)', async () => {
     const journal = new InMemoryJournal();
     const counter = { n: 0 };
@@ -232,8 +232,8 @@ describe('FAZ-4 denetçi düzeltmeleri', () => {
   });
 });
 
-// runWorkflow anon-fallback sözleşmesi (kullanıcı bulgusu #1): loud warn + echo'lu runId + aynı-ms
-// çakışmasına karşı sayaç.
+// runWorkflow anon-fallback contract (user finding #1): loud warn + an echoed runId + a counter
+// against same-tick collisions.
 describe('runWorkflow anon-fallback contract', () => {
   it('warns loudly, echoes the generated runId, and two same-tick calls never share one', async () => {
     const gnl = createGnl({

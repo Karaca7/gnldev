@@ -118,7 +118,7 @@ describe('@gnldev/server — a runId re-used on another thread', () => {
 
       // PRECONDITION: the runId is established for thread A. Without it the second call is a first
       // call and the assertion below would pass against nothing.
-      expect((await post({ runId: 'rx', threadId: 'A', prompt: 'ilk' })).status).toBe(200);
+      expect((await post({ runId: 'rx', threadId: 'A', prompt: 'first' })).status).toBe(200);
 
       const res = await post({ runId: 'rx', threadId: 'B', prompt: 'ikinci' });
       expect(res.status, 'the mismatch fell through to the generic error path').toBe(409);

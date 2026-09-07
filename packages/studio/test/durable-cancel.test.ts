@@ -1,4 +1,4 @@
-// D3-A (AUDIT-R2 yüzey): studio's durable-flag-only cancel affordances — the studio-side
+// D3-A (AUDIT-R2 surface): studio's durable-flag-only cancel affordances — the studio-side
 // counterparts of @gnldev/server's POST /runs/:id/cancel (P0.3/P2-cancel) and POST /workflows/runs/:id/cancel
 // (P0.4). Studio keeps no in-process AbortController registry (see server.ts's own JSDoc on both routes),
 // so both endpoints are the durable-flag path only: cancelAgentRun's cross-worker flag for agent runs,

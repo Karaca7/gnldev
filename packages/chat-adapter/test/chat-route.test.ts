@@ -327,8 +327,8 @@ describe('createChatRoute typed errors + runId echo', () => {
   });
 });
 
-// Faz 0 kontrol bulgusu (Rüzgar) — conversion throw'u client girdisiyle tetiklenebilir; header
-// sözleşmesi tam da malformed-istek yolunda delinmemeli.
+// Phase 0 audit finding (Rüzgar) — the conversion throw can be triggered by client input; the header
+// contract must not be breached on exactly this malformed-request path.
 describe('createChatRoute malformed messages', () => {
   it('malformed `messages` → typed-route 400 with X-Gnl-Run-Id, not a bare 500', async () => {
     const app = createChatRoute({ journal: new InMemoryJournal(), agents: { chat: { model: textMock(), maxSteps: 4 } } });
@@ -342,12 +342,12 @@ describe('createChatRoute malformed messages', () => {
   });
 });
 
-// FAZ-2 (dedup-hardening) — default per-run lock, Idempotency-Key alias, runId'li interrupt +
-// approve() round-trip, replay parity ve convertToModelMessages determinizm testleri.
+// FAZ-2 (dedup-hardening) — default per-run lock, Idempotency-Key alias, runId-carrying interrupt +
+// approve() round-trip, replay parity, and convertToModelMessages determinism tests.
 import { approvalPayload, approve } from '../src/index.js';
 import { convertToModelMessages } from 'ai';
 
-/** agentMock ailesi: yanıtı geciktiren yavaş model — eşzamanlılık penceresi açmak için. */
+/** The agentMock family: a slow model that delays its response — to open a concurrency window. */
 function slowMock(delayMs: number): any {
   return {
     specificationVersion: 'v2',
@@ -473,7 +473,7 @@ describe('FAZ-2: default lock + approval round-trip', () => {
   });
 });
 
-describe('FAZ-2: replay parity + conversion determinism (heyet test görevleri)', () => {
+describe('FAZ-2: replay parity + conversion determinism (panel test assignments)', () => {
   it('a second stream with the SAME runId replays the SAME chunk sequence (modulo the volatile messageId)', async () => {
     const app = createChatRoute({ journal: new InMemoryJournal(), agents: { chat: { model: textMock(), maxSteps: 4 } } });
     const post = () =>
@@ -496,14 +496,14 @@ describe('FAZ-2: replay parity + conversion determinism (heyet test görevleri)'
     ];
     const once = await convertToModelMessages(structuredClone(history) as any);
     const twice = await convertToModelMessages(structuredClone(history) as any);
-    // Byte stability is the precondition for any future content-fingerprint feature (heyet İhtilaf B):
+    // Byte stability is the precondition for any future content-fingerprint feature (panel dispute B):
     expect(JSON.stringify(twice)).toBe(JSON.stringify(once));
   });
 });
 
-// FAZ-2 denetçi bulguları (K8×2 + K14) — kilit yaşam döngüsünün abort ve kurulum-throw çıkışları
-// pinlendi; default lock'un yeteneksiz (CAS'sız) journal'la route seviyesinde çalıştığı kanıtlandı.
-describe('FAZ-2 denetçi düzeltmeleri: lock release yolları', () => {
+// FAZ-2 audit findings (K8×2 + K14) — the lock lifecycle's abort and setup-throw exits are pinned
+// down; proved that the default lock works at the route level even against a capability-less (CAS-less) journal.
+describe('FAZ-2 audit fixes: lock release paths', () => {
   it('abort releases the lock — the immediate same-runId retry gets 200, not 5 minutes of 409', async () => {
     let calls = 0;
     const abortableMock: any = {
@@ -606,9 +606,9 @@ describe('FAZ-2 denetçi düzeltmeleri: lock release yolları', () => {
   });
 });
 
-// FAZ-7 — motorun replay sinyali header sözleşmesi.
+// FAZ-7 — the engine's replay-signal header contract.
 describe('FAZ-7 X-Gnl-Idempotency-Status', () => {
-  it("ilk çağrı 'new', aynı runId'nin tekrarı 'replay'", async () => {
+  it("the first call is 'new', a repeat of the same runId is 'replay'", async () => {
     const app = createChatRoute({ journal: new InMemoryJournal(), agents: { chat: { model: textMock(), maxSteps: 4 } } });
     const post = () =>
       app.request('/agents/chat/chat', {

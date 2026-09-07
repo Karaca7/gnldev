@@ -42,7 +42,7 @@ const redactor: Processor = {
 };
 
 const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
-const replyModel = (text = 'tamam') => createMockModel(async () => finalTextResult(text));
+const replyModel = (text = 'ok') => createMockModel(async () => finalTextResult(text));
 const forbiddenModel = () => createMockModel(async () => { throw new Error('403 Forbidden'); });
 const streamParts = (text: string) => [
   { type: 'stream-start', warnings: [] },
@@ -62,7 +62,7 @@ describe('a same-runId re-entry runs on the FROZEN input, never on the caller’
     const memory = new BasicMemory(journal);
     const seen: any[] = [];
     const boom = createMockModel(async ({ prompt }: any) => { seen.push(prompt); throw new Error('403 Forbidden'); });
-    const ok = createMockModel(async ({ prompt }: any) => { seen.push(prompt); return finalTextResult('tamam'); });
+    const ok = createMockModel(async ({ prompt }: any) => { seen.push(prompt); return finalTextResult('ok'); });
     const opts = { journal, memory, threadId: 'r1', processors: [redactor] } as const;
 
     // Attempt 1 freezes `:input` (masked) and write-ahead-appends the masked question, then dies.
@@ -94,7 +94,7 @@ describe('a same-runId re-entry runs on the FROZEN input, never on the caller’
     // Hand-rolled rather than createMockStreamModel: its second parameter is a call COUNTER, not a
     // prompt hook, so recording through it would leave `seen` empty and make the assertion below
     // pass on a model that was never called — a proven sham.
-    const base = createMockStreamModel(streamParts('tamam'));
+    const base = createMockStreamModel(streamParts('ok'));
     const model = { ...base, doStream: async (o: any) => { seen.push(o.prompt); return base.doStream(o); } };
 
     const r = await streamDurable({ ...opts, runId: 'r2-1', model, prompt: `SORU ${SECRET}` });
@@ -162,18 +162,18 @@ describe('the turn span may not be narrowed from the START either', () => {
     const memory = new BasicMemory(journal);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const opts = { journal, memory, threadId: 'v1', processors: [swapLastTwo] } as const;
-    await runDurable({ ...opts, runId: 'v1-a', model: replyModel('bir'), prompt: 'ilk soru' });
+    await runDurable({ ...opts, runId: 'v1-a', model: replyModel('one'), prompt: 'first question' });
     await runDurable({
-      ...opts, runId: 'v1-b', model: replyModel('iki'),
-      messages: [{ role: 'user', content: 'ikinci soru' }, { role: 'system', content: 'kısa cevapla' }],
+      ...opts, runId: 'v1-b', model: replyModel('two'),
+      messages: [{ role: 'user', content: 'second question' }, { role: 'system', content: 'answer briefly' }],
     });
 
     const dump = await dumpOf(memory, 'v1');
-    expect(dump).toContain('ikinci soru');
+    expect(dump).toContain('second question');
     // THE failure: the swap moved the caller's FIRST message last, the boundary followed it there,
     // and the row it stepped over fell onto the history side — gone from the thread, `:memctx`
     // reading `incomingCount: 1` as if one message were all the caller sent, and no warning.
-    expect(dump).toContain('kısa cevapla');
+    expect(dump).toContain('answer briefly');
     const rec: any = await journal.get(runKeys.memoryContext('v1-b'));
     expect(rec.incomingCount).toBe(2); // both rows, counted against the frozen input
     expect(rec.incomingUnrecoverable).toBeUndefined();
@@ -192,8 +192,8 @@ describe('the turn span may not be narrowed from the START either', () => {
       processInput: (i) => (i.messages && i.messages.length > 1 ? { ...i, messages: i.messages.slice(0, -1) } : i),
     };
     const opts = { journal, memory, threadId: 'v2', processors: [redactor, dropNewest] } as const;
-    await runDurable({ ...opts, runId: 'v2-a', model: replyModel('bir'), prompt: 'ilk soru' });
-    await runDurable({ ...opts, runId: 'v2-b', model: replyModel('iki'), prompt: `mail: ${SECRET}` });
+    await runDurable({ ...opts, runId: 'v2-a', model: replyModel('one'), prompt: 'first question' });
+    await runDurable({ ...opts, runId: 'v2-b', model: replyModel('two'), prompt: `mail: ${SECRET}` });
 
     expect(warn.mock.calls.flat().join(' ')).toContain('turn-dropped');
     expect(await dumpOf(memory, 'v2')).not.toContain(SECRET);
@@ -219,14 +219,14 @@ describe('dropping a turn as "already stored" needs the LOADED history to say so
     const journal = new InMemoryJournal();
     const memory = new BasicMemory(journal);
     const opts = { journal, memory, threadId: 'w1', processors: [rebuildAndRestate] } as const;
-    await runDurable({ ...opts, runId: 'w1-a', model: replyModel('bir'), prompt: 'ilk soru' });
-    await runDurable({ ...opts, runId: 'w1-b', model: replyModel('iki'), prompt: 'ikinci soru' });
+    await runDurable({ ...opts, runId: 'w1-a', model: replyModel('one'), prompt: 'first question' });
+    await runDurable({ ...opts, runId: 'w1-b', model: replyModel('two'), prompt: 'second question' });
 
     // THE failure: the boundary landed on the restated copy, the row in front of it was the chain's
     // OWN first copy, `historyEndsWithIncoming` matched that and dropped the turn as a retry —
     // thread ["ilk soru","ilk soru","bir","iki"], stamped `incomingDedupedByShape` (which reads
     // "duplicate", not "lost"), the second question nowhere and no warning.
-    expect(await dumpOf(memory, 'w1')).toContain('ikinci soru');
+    expect(await dumpOf(memory, 'w1')).toContain('second question');
     const rec: any = await journal.get(runKeys.memoryContext('w1-b'));
     expect(rec.incomingDedupedByShape).toBeUndefined();
     expect(rec.incomingUnrecoverable).toBeUndefined();
@@ -240,7 +240,7 @@ describe('dropping a turn as "already stored" needs the LOADED history to say so
     await expect(runDurable({ ...opts, runId: 'w2-a', model: forbiddenModel(), prompt: `mail: ${SECRET}` })).rejects.toThrow('403');
     // A different raw address that redacts to the same string: indistinguishable from a retry, and
     // memory really does end with it — both witnesses agree, so the drop is still correct.
-    await runDurable({ ...opts, runId: 'w2-b', model: replyModel('tamam'), prompt: 'mail: baska@ornek.com' });
+    await runDurable({ ...opts, runId: 'w2-b', model: replyModel('ok'), prompt: 'mail: baska@ornek.com' });
 
     const saved = await memory.getMessages('w2');
     expect(saved.filter((m: any) => m?.role === 'user').length).toBe(1);
@@ -260,9 +260,9 @@ describe('`:memctx.incomingCount` counts the frozen input as it was actually fro
       processInput: (i) => ({ ...i, messages: [...(i.messages ?? []), { role: 'system' as const, content: '[NOTE]' }] }),
     };
     const opts = { journal, memory, threadId: 'x1', processors: [redactor, note] } as const;
-    await runDurable({ ...opts, runId: 'x1-a', model: replyModel('BIRINCI-CEVAP'), prompt: 'ilk soru' });
+    await runDurable({ ...opts, runId: 'x1-a', model: replyModel('BIRINCI-CEVAP'), prompt: 'first question' });
     await expect(runDurable({ ...opts, runId: 'x1-b', model: forbiddenModel(), prompt: `mail: ${SECRET}` })).rejects.toThrow('403');
-    await runDurable({ ...opts, runId: 'x1-c', model: replyModel('iki'), prompt: 'mail: baska@ornek.com' });
+    await runDurable({ ...opts, runId: 'x1-c', model: replyModel('two'), prompt: 'mail: baska@ornek.com' });
 
     const rec: any = await journal.get(runKeys.memoryContext('x1-c'));
     const frozen: any = await journal.get(runKeys.input('x1-c'));
@@ -317,7 +317,7 @@ describe('rows the chain contributes inside the turn are counted, so the thread 
     const journal = new InMemoryJournal();
     const memory = new BasicMemory(journal);
     const opts = { journal, memory, threadId: 'y2', processors: [redactor] } as const;
-    await runDurable({ ...opts, runId: 'y2-a', model: replyModel('bir'), prompt: `mail: ${SECRET}` });
+    await runDurable({ ...opts, runId: 'y2-a', model: replyModel('one'), prompt: `mail: ${SECRET}` });
     const rec: any = await journal.get(runKeys.memoryContext('y2-a'));
     expect(rec.chainInserted).toBeUndefined();
     expect(rec.chainAppended).toBeUndefined();
@@ -343,8 +343,8 @@ describe('a chain that leaves no evidence reports the loss instead of guessing p
     const memory = new BasicMemory(journal);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const opts = { journal, memory, threadId: 'z1', processors: [rewriteAndRotate('right')] } as const;
-    await runDurable({ ...opts, runId: 'z1-a', model: replyModel('ASISTAN-CEVABI'), prompt: 'ilk soru' });
-    await runDurable({ ...opts, runId: 'z1-b', model: replyModel('iki'), prompt: 'ikinci soru' });
+    await runDurable({ ...opts, runId: 'z1-a', model: replyModel('ASISTAN-CEVABI'), prompt: 'first question' });
+    await runDurable({ ...opts, runId: 'z1-b', model: replyModel('two'), prompt: 'second question' });
 
     const saved = await memory.getMessages('z1');
     // THE failure: with the count unchanged and no evidence at all, the old index was handed back and
@@ -365,10 +365,10 @@ describe('a chain that leaves no evidence reports the loss instead of guessing p
     const memory = new BasicMemory(journal);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const opts = { journal, memory, threadId: 'z2', processors: [rewriteAndRotate('left')] } as const;
-    await runDurable({ ...opts, runId: 'z2-a', model: replyModel('bir'), prompt: 'ilk soru' });
+    await runDurable({ ...opts, runId: 'z2-a', model: replyModel('one'), prompt: 'first question' });
     const seen: any[] = [];
-    const model = createMockModel(async ({ prompt }: any) => { seen.push(prompt); return finalTextResult('iki'); });
-    await runDurable({ ...opts, runId: 'z2-b', model, prompt: 'ikinci soru' });
+    const model = createMockModel(async ({ prompt }: any) => { seen.push(prompt); return finalTextResult('two'); });
+    await runDurable({ ...opts, runId: 'z2-b', model, prompt: 'second question' });
 
     // The stamp and the warning say a turn was refused; these say WHAT the thread and the model
     // actually ended up with, which is the part a stamp cannot promise. The refusal has to cost the
@@ -376,12 +376,12 @@ describe('a chain that leaves no evidence reports the loss instead of guessing p
     // turn 2, and above all the RAW pre-chain message is not quietly persisted as the fallback.
     const saved = await memory.getMessages('z2');
     const dump = JSON.stringify(saved);
-    expect(dump.split('ilk soru').length - 1).toBe(1); // turn 1's question, once — not re-persisted
-    expect(dump).not.toContain('ikinci soru');         // refused, and NOT written raw either
+    expect(dump.split('first question').length - 1).toBe(1); // turn 1's question, once — not re-persisted
+    expect(dump).not.toContain('second question');         // refused, and NOT written raw either
     expect(saved.filter((m: any) => m?.role === 'user').length).toBe(1);
-    expect(dump).toContain('iki');                     // the answer is there — an answer with no question
+    expect(dump).toContain('two');                     // the answer is there — an answer with no question
     // The model did see the question (that is what makes the loss a loss, not a no-op).
-    expect(JSON.stringify(seen[0])).toContain('ikinci soru');
+    expect(JSON.stringify(seen[0])).toContain('second question');
     expect(((await journal.get(runKeys.memoryContext('z2-b'))) as any).incomingUnrecoverable).toBe('boundary-lost');
     expect(((await journal.get(runKeys.memoryContext('z2-b'))) as any).incomingCount).toBe(0);
     expect(warn.mock.calls.flat().join(' ')).toContain('no recoverable copy of this turn');
@@ -397,17 +397,17 @@ describe('an assistant prefill ends a turn; it does not erase one', () => {
     const journal = new InMemoryJournal();
     const memory = new BasicMemory(journal);
     const opts = { journal, memory, threadId: 'p1' } as const;
-    await runDurable({ ...opts, runId: 'p1-a', model: replyModel('bir'), prompt: 'ilk soru' });
+    await runDurable({ ...opts, runId: 'p1-a', model: replyModel('one'), prompt: 'first question' });
     await runDurable({
-      ...opts, runId: 'p1-b', model: replyModel('iki'),
-      messages: [{ role: 'user', content: 'ikinci soru' }, { role: 'assistant', content: 'Cevap:' }],
+      ...opts, runId: 'p1-b', model: replyModel('two'),
+      messages: [{ role: 'user', content: 'second question' }, { role: 'assistant', content: 'Cevap:' }],
     });
 
     // THE failure: the echo rule anchored on the turn's OWN last message, the slice came out empty,
     // and the question was gone with `incomingCount: 0`, `echoTrimmed: 2` and no warning — a thread
     // holding an answer to a question it does not contain. No processors involved: this predates them.
     const dump = await dumpOf(memory, 'p1');
-    expect(dump).toContain('ikinci soru');
+    expect(dump).toContain('second question');
     expect(dump).toContain('Cevap:');
     const rec: any = await journal.get(runKeys.memoryContext('p1-b'));
     expect(rec.incomingCount).toBe(2);
@@ -418,17 +418,17 @@ describe('an assistant prefill ends a turn; it does not erase one', () => {
     const journal = new InMemoryJournal();
     const memory = new BasicMemory(journal);
     const opts = { journal, memory, threadId: 'p2' } as const;
-    await runDurable({ ...opts, runId: 'p2-a', model: replyModel('bir'), prompt: 'ilk soru' });
+    await runDurable({ ...opts, runId: 'p2-a', model: replyModel('one'), prompt: 'first question' });
     const saved = await memory.getMessages('p2');
     // A useChat-style client POSTs the WHOLE history back, then the new turn — and here also a
     // prefill behind it. Only the two new rows may be persisted; the echo must still be stripped.
     await runDurable({
-      ...opts, runId: 'p2-b', model: replyModel('iki'),
-      messages: [...saved, { role: 'user', content: 'ikinci soru' }, { role: 'assistant', content: 'Cevap:' }],
+      ...opts, runId: 'p2-b', model: replyModel('two'),
+      messages: [...saved, { role: 'user', content: 'second question' }, { role: 'assistant', content: 'Cevap:' }],
     });
     const after = await memory.getMessages('p2');
     expect(after.length).toBe(5); // 2 (turn 1) + question + prefill + answer — nothing re-persisted
-    expect(after.filter((m: any) => JSON.stringify(m).includes('ilk soru')).length).toBe(1);
+    expect(after.filter((m: any) => JSON.stringify(m).includes('first question')).length).toBe(1);
     const rec: any = await journal.get(runKeys.memoryContext('p2-b'));
     expect(rec.echoTrimmed).toBe(2);
     expect(rec.incomingCount).toBe(2);
@@ -457,7 +457,7 @@ describe('the shipped chain (piiRedactor + tokenLimiter + moderation) is unchang
       for (let n = 1; n <= 10; n++) {
         await runDurable({
           journal, memory, threadId: thread, ...(procs ? { processors: procs } : {}),
-          runId: `${thread}-${n}`, model: replyModel(`cevap-${n}`), prompt: `soru-${n}`,
+          runId: `${thread}-${n}`, model: replyModel(`reply-${n}`), prompt: `question-${n}`,
         });
       }
       return memory.getMessages(thread);
@@ -488,8 +488,8 @@ describe('the shipped chain (piiRedactor + tokenLimiter + moderation) is unchang
     const opts = { journal, memory, threadId: 'sc3', processors: chain } as const;
     const spy = () => createMockModel(async ({ prompt }: any) => { seen.push(prompt); return finalTextResult(`cevap ${SECRET}`); });
 
-    await runDurable({ ...opts, runId: 'sc3-1', model: spy(), prompt: `ilk ${SECRET}` });
-    await runDurable({ ...opts, runId: 'sc3-2', model: spy(), prompt: `ikinci ${SECRET}` });
+    await runDurable({ ...opts, runId: 'sc3-1', model: spy(), prompt: `first ${SECRET}` });
+    await runDurable({ ...opts, runId: 'sc3-2', model: spy(), prompt: `second ${SECRET}` });
     await expect(runDurable({ ...opts, runId: 'sc3-3', model: forbiddenModel(), prompt: `ucuncu ${SECRET}` })).rejects.toThrow('403');
     await runDurable({ ...opts, runId: 'sc3-3', model: spy(), prompt: `ucuncu ${SECRET}` });
 

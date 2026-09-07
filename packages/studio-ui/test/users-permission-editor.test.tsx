@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// Users view: rol + checkbox-seviyesi izin editörü (GET /permissions/catalog, POST/PATCH /users
+// Users view: role + checkbox-level permission editor (GET /permissions/catalog, POST/PATCH /users
 // permissions[]). Covers: catalog enabled/disabled render gating, role→preset seeding, "untouched
 // checkbox → pure role" vs "customized → explicit permissions[]" submit logic (create), and the
 // edit dialog's pre-fill + PATCH body shape (including the explicit override-clear via permissions: []).

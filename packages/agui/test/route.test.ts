@@ -227,7 +227,7 @@ describe('a refusal raised before the stream starts', () => {
     const app = createAguiRoute({ journal, agents: { chat: { model: textMock() } } });
 
     // PRECONDITION: the runId is established for thread A. Without it the second call is a first call.
-    const first = await post(app, { runId: 'rx', threadId: 'A', prompt: 'ilk' });
+    const first = await post(app, { runId: 'rx', threadId: 'A', prompt: 'first' });
     expect(first.status, 'PRECONDITION: the first run did not start').toBe(200);
     await first.text(); // drain, so the run completes and freezes its input
 

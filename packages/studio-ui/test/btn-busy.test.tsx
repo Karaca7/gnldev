@@ -41,10 +41,10 @@ describe('a button waiting on the API', () => {
   });
 
   it('drops the decorative arrow while busy so the two do not stack', () => {
-    const { rerender } = render(<Btn arrow>Çalıştır</Btn>);
+    const { rerender } = render(<Btn arrow>Run</Btn>);
     expect(screen.getByRole('button').textContent).toContain('›');
 
-    rerender(<Btn arrow busy>Çalıştır</Btn>);
+    rerender(<Btn arrow busy>Run</Btn>);
     expect(screen.getByRole('button').textContent).not.toContain('›');
   });
 });

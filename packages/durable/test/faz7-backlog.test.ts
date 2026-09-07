@@ -1,12 +1,12 @@
-// FAZ-7 (backlog kapanışı) — pinlenenler:
-// 1) stream lock HEARTBEAT: ttl'i aşan canlı stream'in kilidi devralınamaz (eski belgeli sınır
-//    kapandı); stream bitince kilit yine serbest.
-// 2) `lookup` (read-before-write): exists:true → gövde HİÇ koşmaz, bulunan çıktı journallanır ve
-//    replay olur; exists:false → normal; throw → loud warn + fail-open; taze-olmayan kayıt lookup'a
-//    hiç gitmez (crash penceresi recover'ındır).
-// 3) auditOnReject 'require': ledger yazımı ret'in ÖN KOŞULU — yazım patlarsa ret yerine audit
-//    hatası yayılır; 'best-effort' (default) eski davranış.
-// 4) preset 'critical' network yolu: alt-ajanın bildirimsiz side-effect aracı strict-critical'a takılır.
+// PHASE-7 (backlog closure) — pinned invariants:
+// 1) stream lock HEARTBEAT: a live stream that outlasts its ttl cannot have its lock taken over (a
+//    previously documented gap is now closed); once the stream finishes, the lock is released again.
+// 2) `lookup` (read-before-write): exists:true → the body NEVER runs, the found output is journaled and
+//    replayed; exists:false → runs normally; throw → loud warn + fail-open; a non-fresh record never
+//    reaches lookup at all (the crash window belongs to recover).
+// 3) auditOnReject 'require': the ledger write is a PRECONDITION of the rejection — if the write blows up,
+//    an audit error propagates instead of the rejection; 'best-effort' (default) keeps the old behavior.
+// 4) preset 'critical' network path: a sub-agent's undeclared side-effect tool trips the strict-critical inheritance.
 import { describe, it, expect, vi } from 'vitest';
 import { stepCountIs } from 'ai';
 import { InMemoryJournal } from '../src/journal.js';
@@ -23,14 +23,14 @@ const base = (journal: InMemoryJournal, runId: string, extra: Record<string, unk
 });
 const textModel = () => createMockModel(async () => finalTextResult('done'));
 
-describe('FAZ-7 stream lock heartbeat', () => {
-  it('ttl-aşan CANLI stream devralınamaz (renew çalışıyor); bitişte kilit serbest', async () => {
+describe('PHASE-7 stream lock heartbeat', () => {
+  it('a LIVE stream that outlasts its ttl cannot be taken over (renew is working); the lock is released when it finishes', async () => {
     const journal = new InMemoryJournal();
     const tools = {
       chargeCard: tool({
         description: 'charge',
         inputSchema: z.object({ amount: z.number() }),
-        // Araç ttl'den (40ms) uzun sürer → heartbeat'siz dünyada kilit bu sırada düşerdi.
+        // The tool runs longer than the ttl (40ms) → without a heartbeat, the lock would have dropped by now.
         execute: async ({ amount }) => { await new Promise((r) => setTimeout(r, 600)); return { charged: amount }; },
       }),
     };
@@ -38,20 +38,20 @@ describe('FAZ-7 stream lock heartbeat', () => {
       runId: 'hb1', journal, model: createMockStreamAgent(), tools,
       prompt: 'charge', stopWhen: stepCountIs(6), lock: { owner: 'A', ttlMs: 200 },
     } as any);
-    const textP = r.text; // stream'i sür
-    await new Promise((res) => setTimeout(res, 350)); // ttl (200ms) geçti, araç hâlâ koşuyor
+    const textP = r.text; // drive the stream
+    await new Promise((res) => setTimeout(res, 350)); // ttl (200ms) has passed, the tool is still running
     const thief = await acquireRunLock(journal, 'hb1', 'thief', 60_000);
-    expect(thief).toBeNull(); // ESKİ dünyada burası takeover'dı — heartbeat kilidi canlı tuttu
-    await textP; // bitir
-    await new Promise((res) => setTimeout(res, 100)); // onFinish release'i otursun
+    expect(thief).toBeNull(); // in the OLD world this would have been a takeover — the heartbeat kept the lock alive
+    await textP; // let it finish
+    await new Promise((res) => setTimeout(res, 100)); // let the onFinish release settle
     const after = await acquireRunLock(journal, 'hb1', 'later', 60_000);
-    expect(after).not.toBeNull(); // bitince serbest — sızıntı yok
+    expect(after).not.toBeNull(); // released once done — no leak
     await after!.release();
   });
 });
 
-describe('FAZ-7 stream lock heartbeat — cap dalı (denetçi K15/K23)', () => {
-  it('maxHoldMs aşılınca beat durur (loud warn), TTL devralabilir', async () => {
+describe('PHASE-7 stream lock heartbeat — the cap branch (audit K15/K23)', () => {
+  it('once maxHoldMs is exceeded, the beat stops (loud warn), and TTL can take over', async () => {
     const journal = new InMemoryJournal();
     const tools = {
       chargeCard: tool({
@@ -65,24 +65,24 @@ describe('FAZ-7 stream lock heartbeat — cap dalı (denetçi K15/K23)', () => {
       const r = await streamDurable({
         runId: 'hbcap', journal, model: createMockStreamAgent(), tools,
         prompt: 'charge', stopWhen: stepCountIs(6),
-        lock: { owner: 'A', ttlMs: 120, maxHoldMs: 150 }, // cap enjekte edildi (K23)
+        lock: { owner: 'A', ttlMs: 120, maxHoldMs: 150 }, // cap injected (K23)
       } as any);
       const textP = r.text;
-      await new Promise((res) => setTimeout(res, 450)); // cap (150) + ttl (120) fazlasıyla geçti
+      await new Promise((res) => setTimeout(res, 450)); // cap (150) + ttl (120) have well elapsed
       const thief = await acquireRunLock(journal, 'hbcap', 'thief', 60_000);
-      expect(thief).not.toBeNull(); // beat durdu → TTL devraldı — abandonment sınırı GERÇEK
-      expect(warn.mock.calls.some((c) => String(c[0]).includes('renewal cap'))).toBe(true); // sessiz değil
+      expect(thief).not.toBeNull(); // the beat stopped → TTL took over — the abandonment limit is REAL
+      expect(warn.mock.calls.some((c) => String(c[0]).includes('renewal cap'))).toBe(true); // not silent
       await thief!.release();
       await textP.catch(() => {});
     } finally { warn.mockRestore(); }
   });
 });
 
-describe('FAZ-7 lookup (read-before-write)', () => {
+describe('PHASE-7 lookup (read-before-write)', () => {
   const model = (callId: string, args: unknown) => createMockModel(async ({ prompt }: any) =>
     countToolResults(prompt) === 0 ? toolCallResult('charge', callId, args) : finalTextResult('done'));
 
-  it('exists:true → gövde hiç koşmaz, bulunan çıktı journallanır ve replay olur; idempotencyKey iletilir', async () => {
+  it('exists:true → the body never runs, the found output is journaled and replayed; idempotencyKey is passed through', async () => {
     const journal = new InMemoryJournal();
     const counter = { n: 0 };
     let seenKey: string | undefined;
@@ -94,17 +94,17 @@ describe('FAZ-7 lookup (read-before-write)', () => {
       },
     };
     const r1 = await runDurable(base(journal, 'lk1', { model: model('c1', { amount: 50 }), tools }) as any);
-    expect(counter.n).toBe(0); // dış sistem "zaten var" dedi — etki asla ateşlenmedi
+    expect(counter.n).toBe(0); // the external system said "already there" — the effect never fired
     expect(JSON.stringify(r1.steps)).toContain('"via":"lookup"');
-    expect(seenKey).toContain('lk1'); // downstream anahtar sözleşmesi iletildi
-    // journallandı → replay, lookup bile tekrar çağrılmaz (fast-path):
+    expect(seenKey).toContain('lk1'); // the downstream key contract was honored
+    // journaled → replay, lookup isn't even re-invoked (fast-path):
     seenKey = undefined;
     await runDurable(base(journal, 'lk1', { model: model('c1', { amount: 50 }), tools }) as any);
     expect(seenKey).toBeUndefined();
     expect(counter.n).toBe(0);
   });
 
-  it('exists:false → normal koşar; throw → loud warn + fail-open (bugünkü davranış)', async () => {
+  it('exists:false → runs normally; throw → loud warn + fail-open (current behavior)', async () => {
     const journal = new InMemoryJournal();
     const counter = { n: 0 };
     const mk = (lookup: any) => ({ charge: { sideEffect: true, lookup, execute: async () => { counter.n++; return { ok: 1 }; } } });
@@ -113,12 +113,12 @@ describe('FAZ-7 lookup (read-before-write)', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       await runDurable(base(journal, 'lk3', { model: model('c1', { amount: 2 }), tools: mk(async () => { throw new Error('registry down'); }) }) as any);
-      expect(counter.n).toBe(2); // iş bloklanmadı
+      expect(counter.n).toBe(2); // the job wasn't blocked
       expect(warn.mock.calls.some((c) => String(c[0]).includes('lookup() failed'))).toBe(true);
     } finally { warn.mockRestore(); }
   });
 
-  it('taze olmayan kayıt (failed) lookup\'a gitmez — crash penceresi recover merdiveninindir', async () => {
+  it('a non-fresh (failed) record never reaches lookup — the crash window belongs to the recover ladder', async () => {
     const journal = new InMemoryJournal();
     let lookups = 0;
     let explode = true;
@@ -130,22 +130,22 @@ describe('FAZ-7 lookup (read-before-write)', () => {
       },
     };
     await runDurable(base(journal, 'lk4', { model: model('c1', { amount: 3 }), tools }) as any).catch(() => {});
-    expect(lookups).toBe(1); // taze çağrıda soruldu
+    expect(lookups).toBe(1); // asked on the fresh call
     explode = false;
     await runDurable(base(journal, 'lk4', { model: model('c1', { amount: 3 }), tools }) as any).catch(() => {});
-    expect(lookups).toBe(1); // failed kayıt → merdiven; lookup bir daha SORULMADI
+    expect(lookups).toBe(1); // a failed record → the recover ladder; lookup was NOT asked again
   });
 });
 
-describe('FAZ-7 lookup × suspended→onay (denetçi K6)', () => {
-  it('askıdan onayla dönen çağrıda lookup SORULUR — bekleme sırasında oluşan ikiz yakalanır', async () => {
+describe('PHASE-7 lookup × suspended→approval (audit K6)', () => {
+  it('lookup IS ASKED on a call returning from a suspended approval — a twin created while waiting gets caught', async () => {
     const journal = new InMemoryJournal();
     const counter = { n: 0 };
-    const external = { created: false }; // dış sistem
+    const external = { created: false }; // the external system
     const tools = {
       charge: {
         sideEffect: true,
-        confirm: true, // askıya düşür
+        confirm: true, // force a suspend
         lookup: async () => external.created ? { exists: true as const, output: { via: 'lookup' } } : { exists: false as const },
         execute: async () => { counter.n++; return { via: 'execute' }; },
       },
@@ -154,15 +154,15 @@ describe('FAZ-7 lookup × suspended→onay (denetçi K6)', () => {
       countToolResults(prompt) === 0 ? toolCallResult('charge', 'c1', { amount: 5 }) : finalTextResult('done'));
     await runDurable(base(journal, 'ls1', { model, tools }) as any); // confirm → suspended
     expect(counter.n).toBe(0);
-    external.created = true; // beklerken out-of-band ikiz oluştu
+    external.created = true; // a twin was created out-of-band while waiting
     const r = await runDurable(base(journal, 'ls1', { model, tools, approvals: { 'c1': true } }) as any);
-    expect(counter.n).toBe(0); // onaya rağmen gövde ATEŞLENMEDİ — read-before-write askı yolunda da çalıştı
+    expect(counter.n).toBe(0); // despite approval, the body did NOT fire — read-before-write also works on the suspend path
     expect(JSON.stringify(r.steps)).toContain('"via":"lookup"');
   });
 });
 
-describe("FAZ-7 auditOnReject: 'require'", () => {
-  it('ledger yazımı patlarsa ret YERİNE audit hatası yayılır; best-effort eski davranış', async () => {
+describe("PHASE-7 auditOnReject: 'require'", () => {
+  it('if the ledger write blows up, an audit error propagates INSTEAD OF the rejection; best-effort keeps the old behavior', async () => {
     const mkJournal = (failLedger: boolean) => {
       const inner = new InMemoryJournal();
       const j: any = new Proxy(inner, {
@@ -179,13 +179,13 @@ describe("FAZ-7 auditOnReject: 'require'", () => {
       });
       return j;
     };
-    // require: refusal'ın ön koşulu — audit yazılamıyorsa 409 yerine audit hatası
+    // require: the audit write is a precondition of the refusal — if it can't be written, an audit error replaces the 409
     const j1 = mkJournal(true);
     await runDurable(base(j1, 'ar1', { model: textModel(), prompt: 'A', strictInput: true, conflictLedger: true, auditOnReject: 'require' }) as any);
     await expect(
       runDurable(base(j1, 'ar1', { model: textModel(), prompt: 'B', strictInput: true, conflictLedger: true, auditOnReject: 'require' }) as any),
     ).rejects.toThrow('audit store down');
-    // best-effort (default): ret aynen yayılır, ledger hatası warn'a düşer
+    // best-effort (default): the rejection propagates as-is, the ledger error just gets a warn
     const j2 = mkJournal(true);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
@@ -197,8 +197,8 @@ describe("FAZ-7 auditOnReject: 'require'", () => {
   });
 });
 
-describe("FAZ-7 require × RunBusy sitesi (denetçi küçük)", () => {
-  it('kilit reddi de kayıtsız kalamaz: ledger patlarsa RunBusy yerine audit hatası', async () => {
+describe("FAZ-7 require × the RunBusy site (a minor audit finding)", () => {
+  it('a lock refusal cannot go unrecorded either: if the ledger fails, the audit error surfaces instead of RunBusy', async () => {
     const inner = new InMemoryJournal();
     const journal: any = new Proxy(inner, {
       get: (t, p) => {
@@ -217,12 +217,12 @@ describe("FAZ-7 require × RunBusy sitesi (denetçi küçük)", () => {
         model: textModel(), conflictLedger: true, auditOnReject: 'require',
         lock: { owner: 'me', ttlMs: 60_000 },
       }) as any),
-    ).rejects.toThrow('audit store down'); // RunBusyError değil — önce kayıt, sonra ret
+    ).rejects.toThrow('audit store down'); // not RunBusyError — record first, refuse second
   });
 });
 
 describe("FAZ-7 preset 'critical' network yolu", () => {
-  it('alt-ajanın bildirimsiz side-effect aracı strict-critical kalıtımına takılır', async () => {
+  it('a sub-agent\'s undeclared side-effect tool is caught by the inherited strict-critical policy', async () => {
     const route = JSON.stringify({ action: 'route', agent: 'payer', task: 'pay it' });
     const gnl = createGnl({
       journal: new InMemoryJournal(),
@@ -238,7 +238,7 @@ describe("FAZ-7 preset 'critical' network yolu", () => {
     await expect(gnl.runNetwork('n', { runId: 'nw1', task: 'pay' })).rejects.toThrow(/strict-critical/);
   });
 
-  it("kalıtılan sideEffectDuplicates 'suspend' alt-ajanda çalışır; explicit opts.limits KAZANIR", async () => {
+  it("an inherited sideEffectDuplicates 'suspend' works in the sub-agent; an explicit opts.limits WINS", async () => {
     const routeMsg = JSON.stringify({ action: 'route', agent: 'payer', task: 'pay twice' });
     const finalMsg = JSON.stringify({ action: 'final', answer: 'done' });
     const mkGnl = () => {
@@ -249,7 +249,7 @@ describe("FAZ-7 preset 'critical' network yolu", () => {
         preset: 'critical',
         agents: {
           payer: {
-            // Alt-ajan AYNI argümanlarla iki kez çağırır → run-scope dup marker devreye girer.
+            // The sub-agent calls twice with the SAME arguments → the run-scope dup marker fires.
             model: createMockModel(async ({ prompt }: any) => {
               const done = countToolResults(prompt);
               if (done < 2) return toolCallResult('send', `c${done + 1}`, { to: 'x' });
@@ -265,9 +265,9 @@ describe("FAZ-7 preset 'critical' network yolu", () => {
     };
     const a = mkGnl();
     await a.gnl.runNetwork('n', { runId: 'nw2', task: 'pay' });
-    expect(a.counter.n).toBe(1); // kalıtılan 'suspend': özdeş ikinci çağrı ateşlenmedi (askıya düştü)
+    expect(a.counter.n).toBe(1); // inherited 'suspend': the identical second call never fired (it suspended)
     const b = mkGnl();
     await b.gnl.runNetwork('n', { runId: 'nw3', task: 'pay', limits: { sideEffectDuplicates: 'off' } });
-    expect(b.counter.n).toBe(2); // explicit opts.limits kazandı — kalıtım ezildi
+    expect(b.counter.n).toBe(2); // the explicit opts.limits won — inheritance was overridden
   });
 });

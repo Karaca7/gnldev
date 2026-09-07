@@ -98,7 +98,7 @@ describe('output processors reach the caller on BOTH paths (stream/generate pari
     const journal = new InMemoryJournal();
     const res = await streamDurable({
       runId: 's1', journal, model: createMockStreamModel(textParts(REPLY)),
-      processors: [makeRedactor()], prompt: 'soru',
+      processors: [makeRedactor()], prompt: 'question',
     });
     for await (const _ of res.textStream) { /* an SSE-style consumer */ }
 
@@ -114,7 +114,7 @@ describe('output processors reach the caller on BOTH paths (stream/generate pari
     const journal = new InMemoryJournal();
     const res = await streamDurable({
       runId: 's2', journal, model: createMockStreamModel(textParts(REPLY)),
-      processors: [makeRedactor()], prompt: 'soru',
+      processors: [makeRedactor()], prompt: 'question',
     });
     await expect(res.text).resolves.toBe(`cevap: ${MASK}`);
   });
@@ -123,7 +123,7 @@ describe('output processors reach the caller on BOTH paths (stream/generate pari
     const journal = new InMemoryJournal();
     const res = await streamDurable({
       runId: 's3', journal, model: createMockStreamModel(textParts(REPLY)),
-      processors: [makeRedactor()], prompt: 'soru',
+      processors: [makeRedactor()], prompt: 'question',
     });
     const response: any = await res.response;
     expect(raw(response?.messages)).toBe(false);
@@ -134,11 +134,11 @@ describe('output processors reach the caller on BOTH paths (stream/generate pari
     const journal = new InMemoryJournal();
     const gen: any = await runDurable({
       runId: 'p1', journal, model: createMockModel(async () => finalTextResult(REPLY)),
-      processors: [makeRedactor()], prompt: 'soru',
+      processors: [makeRedactor()], prompt: 'question',
     });
     const str: any = await streamDurable({
       runId: 'p2', journal, model: createMockStreamModel(textParts(REPLY)),
-      processors: [makeRedactor()], prompt: 'soru',
+      processors: [makeRedactor()], prompt: 'question',
     });
     for await (const _ of str.textStream) { /* drain */ }
 
@@ -156,7 +156,7 @@ describe('output processors reach the caller on BOTH paths (stream/generate pari
     const counter = { out: 0 };
     const res = await streamDurable({
       runId: 's4', journal, memory, threadId: 't4', model: createMockStreamModel(textParts(REPLY)),
-      processors: [makeRedactor(counter)], prompt: 'soru',
+      processors: [makeRedactor(counter)], prompt: 'question',
     });
     for await (const _ of res.textStream) { /* drain */ }
     await res.text;
@@ -184,7 +184,7 @@ describe('output processors reach the caller on BOTH paths (stream/generate pari
   it('no processors → the result object is handed back untouched (mask is not installed at all)', async () => {
     const journal = new InMemoryJournal();
     const res = await streamDurable({
-      runId: 's5', journal, model: createMockStreamModel(textParts(REPLY)), prompt: 'soru',
+      runId: 's5', journal, model: createMockStreamModel(textParts(REPLY)), prompt: 'question',
     });
     await expect(res.text).resolves.toBe(REPLY);
   });
@@ -289,7 +289,7 @@ describe('masking must not weaken anything the terminal promises already guarant
 
     const res = await streamDurable({
       runId: 'g3', journal, memory, threadId: 'tg3', model: createMockStreamModel(textParts(REPLY)),
-      processors: [exploding], prompt: 'soru',
+      processors: [exploding], prompt: 'question',
     });
     const seen: string[] = [];
     for await (const c of res.textStream) seen.push(c);
@@ -307,7 +307,7 @@ describe('KNOWN RESIDUAL — steps/content stay raw, and why no honest fix exist
     const journal = new InMemoryJournal();
     const gen: any = await runDurable({
       runId: 'r1', journal, model: createMockModel(async () => finalTextResult(REPLY)),
-      processors: [makeRedactor()], prompt: 'soru',
+      processors: [makeRedactor()], prompt: 'question',
     });
     expect(raw(gen.text)).toBe(false);
     expect(raw(gen.response?.messages)).toBe(false);
@@ -318,7 +318,7 @@ describe('KNOWN RESIDUAL — steps/content stay raw, and why no honest fix exist
 
     const str: any = await streamDurable({
       runId: 'r2', journal, model: createMockStreamModel(textParts(REPLY)),
-      processors: [makeRedactor()], prompt: 'soru',
+      processors: [makeRedactor()], prompt: 'question',
     });
     for await (const _ of str.textStream) { /* drain */ }
     expect(raw(await str.text)).toBe(false);
@@ -357,7 +357,7 @@ describe('KNOWN RESIDUAL — steps/content stay raw, and why no honest fix exist
     const ping = tool({ description: 'ping', inputSchema: z.object({ n: z.number() }), execute: async () => ({ ok: true }) });
 
     const gen: any = await runDurable({
-      runId: 'r3', journal, model, tools: { ping }, prompt: 'soru', stopWhen: stepCountIs(4),
+      runId: 'r3', journal, model, tools: { ping }, prompt: 'question', stopWhen: stepCountIs(4),
       processors: [summarise],
     });
 

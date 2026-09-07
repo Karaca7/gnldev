@@ -53,7 +53,7 @@ const redactor: Processor = {
 };
 
 const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
-const replyModel = (text = 'tamam') => createMockModel(async () => finalTextResult(text));
+const replyModel = (text = 'ok') => createMockModel(async () => finalTextResult(text));
 const forbiddenModel = () => createMockModel(async () => { throw new Error('403 Forbidden'); });
 
 const streamParts = (text: string) => [
@@ -74,7 +74,7 @@ describe('processors + memory: nothing raw reaches the thread', () => {
     const journal = new InMemoryJournal();
     const memory = new BasicMemory(journal);
     const seen: any[] = [];
-    const model = createMockModel(async ({ prompt }: any) => { seen.push(prompt); return finalTextResult('tamam'); });
+    const model = createMockModel(async ({ prompt }: any) => { seen.push(prompt); return finalTextResult('ok'); });
 
     await runDurable({
       runId: 'a1', journal, memory, threadId: 'ta1', model, processors: [redactor],
@@ -115,7 +115,7 @@ describe('processors + memory: nothing raw reaches the thread', () => {
 
     const r = await runDurable({
       runId: 'b1', journal, memory, threadId: 'tb1', model: replyModel(`cevap: ${SECRET}`),
-      processors: [redactor], prompt: 'soru',
+      processors: [redactor], prompt: 'question',
     });
 
     expect(r.text).toBe(`cevap: ${MASK}`); // caller side always worked
@@ -179,7 +179,7 @@ describe('processors + memory: nothing raw reaches the thread', () => {
     ).rejects.toThrow('403');
 
     await runDurable({
-      runId: 'd1', journal, memory, threadId: 'td1', model: replyModel('tamam'), processors: [redactor],
+      runId: 'd1', journal, memory, threadId: 'td1', model: replyModel('ok'), processors: [redactor],
       prompt: `mail: ${SECRET}`,
     });
 
@@ -203,7 +203,7 @@ describe('processors + memory: nothing raw reaches the thread', () => {
     // MASKED copy, that comparison only matches if it happens on the masked shapes as well — the
     // reason the reconcile runs AFTER the processors rather than before.
     await runDurable({
-      runId: 'd2-b', journal, memory, threadId: 'td2', model: replyModel('tamam'), processors: [redactor],
+      runId: 'd2-b', journal, memory, threadId: 'td2', model: replyModel('ok'), processors: [redactor],
       prompt: `mail: ${SECRET}`,
     });
 
@@ -218,8 +218,8 @@ describe('processors + memory: nothing raw reaches the thread', () => {
     const memory = new BasicMemory(journal);
     const opts = { journal, memory, threadId: 'te1', processors: [redactor] } as const;
 
-    await runDurable({ ...opts, runId: 'e1-a', model: replyModel('bir'), prompt: `mail: ${SECRET}` });
-    await runDurable({ ...opts, runId: 'e1-b', model: replyModel('iki'), prompt: `tel: ${SECRET}` });
+    await runDurable({ ...opts, runId: 'e1-a', model: replyModel('one'), prompt: `mail: ${SECRET}` });
+    await runDurable({ ...opts, runId: 'e1-b', model: replyModel('two'), prompt: `tel: ${SECRET}` });
 
     const saved = await memory.getMessages('te1');
     expect(saved.filter((m: any) => m?.role === 'user').length).toBe(2); // both turns, no compounding
@@ -239,9 +239,9 @@ describe('processors + memory: nothing raw reaches the thread', () => {
     };
     const opts = { journal, memory, threadId: 'tf1', processors: [redactor, trimOldest] } as const;
 
-    await runDurable({ ...opts, runId: 'f1-a', model: replyModel('bir'), prompt: 'ilk soru' });
+    await runDurable({ ...opts, runId: 'f1-a', model: replyModel('one'), prompt: 'first question' });
     const seen: any[] = [];
-    const model = createMockModel(async ({ prompt }: any) => { seen.push(prompt); return finalTextResult('iki'); });
+    const model = createMockModel(async ({ prompt }: any) => { seen.push(prompt); return finalTextResult('two'); });
     await runDurable({ ...opts, runId: 'f1-b', model, prompt: `mail: ${SECRET}` });
 
     // The trim really happened (3 messages in, 2 out) — otherwise this test proves nothing.
@@ -300,7 +300,7 @@ describe('processors that leave no copy of the turn: nothing raw, nothing silent
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     await runDurable({
-      runId: 'g1', journal, memory, threadId: 'tg1', model: replyModel('tamam'), processors: [flatten],
+      runId: 'g1', journal, memory, threadId: 'tg1', model: replyModel('ok'), processors: [flatten],
       prompt: `mail: ${SECRET}`,
     });
 
@@ -320,7 +320,7 @@ describe('processors that leave no copy of the turn: nothing raw, nothing silent
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const r = await streamDurable({
-      runId: 'g2', journal, memory, threadId: 'tg2', model: createMockStreamModel(streamParts('tamam')),
+      runId: 'g2', journal, memory, threadId: 'tg2', model: createMockStreamModel(streamParts('ok')),
       processors: [flatten], prompt: `mail: ${SECRET}`,
     });
     await r.text;
@@ -340,9 +340,9 @@ describe('processors that leave no copy of the turn: nothing raw, nothing silent
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const opts = { journal, memory, threadId: 'tg3', processors: [redactor, dropNewest] } as const;
 
-    await runDurable({ ...opts, runId: 'g3-a', model: replyModel('bir'), prompt: 'ilk soru' });
+    await runDurable({ ...opts, runId: 'g3-a', model: replyModel('one'), prompt: 'first question' });
     const seen: any[] = [];
-    const model = createMockModel(async ({ prompt }: any) => { seen.push(prompt); return finalTextResult('iki'); });
+    const model = createMockModel(async ({ prompt }: any) => { seen.push(prompt); return finalTextResult('two'); });
     await runDurable({ ...opts, runId: 'g3-b', model, prompt: `mail: ${SECRET}` });
 
     // The drop really happened: the model never saw turn 2 at all.
@@ -361,10 +361,10 @@ describe('processors that leave no copy of the turn: nothing raw, nothing silent
     const memory = new BasicMemory(journal);
     const opts = { journal, memory, threadId: 'tg4', processors: [redactor, summarize] } as const;
 
-    await runDurable({ ...opts, runId: 'g4-a', model: replyModel('bir'), prompt: 'ilk soru' });
+    await runDurable({ ...opts, runId: 'g4-a', model: replyModel('one'), prompt: 'first question' });
     const seen: any[] = [];
-    const model = createMockModel(async ({ prompt }: any) => { seen.push(prompt); return finalTextResult('iki'); });
-    await runDurable({ ...opts, runId: 'g4-b', model, prompt: `ikinci soru mail: ${SECRET}` });
+    const model = createMockModel(async ({ prompt }: any) => { seen.push(prompt); return finalTextResult('two'); });
+    await runDurable({ ...opts, runId: 'g4-b', model, prompt: `second question mail: ${SECRET}` });
 
     // The summary really replaced the history (3 in, 2 out) and the model DID see turn 2 masked.
     expect(seen[0].length).toBe(2);
@@ -373,7 +373,7 @@ describe('processors that leave no copy of the turn: nothing raw, nothing silent
     // The measured regression: the old end-biased clamp collapsed the split onto the array end, so
     // turn 2 was persisted as an answer with no question — a conversation missing what was asked.
     expect(saved.filter((m: any) => m?.role === 'user').length).toBe(2);
-    expect(JSON.stringify(saved)).toContain(`ikinci soru mail: ${MASK}`);
+    expect(JSON.stringify(saved)).toContain(`second question mail: ${MASK}`);
     expect(JSON.stringify(saved)).not.toContain(SECRET);
   });
 
@@ -383,8 +383,8 @@ describe('processors that leave no copy of the turn: nothing raw, nothing silent
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const opts = { journal, memory, threadId: 'tg5', processors: [redactor, collapse] } as const;
 
-    await runDurable({ ...opts, runId: 'g5-a', model: replyModel('bir'), prompt: 'ilk soru' });
-    await runDurable({ ...opts, runId: 'g5-b', model: replyModel('iki'), prompt: `mail: ${SECRET}` });
+    await runDurable({ ...opts, runId: 'g5-a', model: replyModel('one'), prompt: 'first question' });
+    await runDurable({ ...opts, runId: 'g5-b', model: replyModel('two'), prompt: `mail: ${SECRET}` });
 
     expect(await threadDump(memory, 'tg5')).not.toContain(SECRET);
     expect(warn.mock.calls.flat().join(' ')).toContain('boundary-lost');
@@ -400,7 +400,7 @@ describe('processors that leave no copy of the turn: nothing raw, nothing silent
     // Attempt 1 dies after the write-ahead → the thread tail is the masked question, unanswered.
     await expect(runDurable({ ...opts, runId: 'g6-a', model: forbiddenModel(), prompt: `mail: ${SECRET}` })).rejects.toThrow('403');
     // A DIFFERENT raw address that redacts to the very same string: indistinguishable from a retry.
-    await runDurable({ ...opts, runId: 'g6-b', model: replyModel('tamam'), prompt: 'mail: baska@ornek.com' });
+    await runDurable({ ...opts, runId: 'g6-b', model: replyModel('ok'), prompt: 'mail: baska@ornek.com' });
 
     const saved = await memory.getMessages('tg6');
     expect(saved.filter((m: any) => m?.role === 'user').length).toBe(1); // collapsed, as a retry would be
@@ -441,14 +441,14 @@ describe('the history/incoming boundary survives processors that MOVE the turn',
     };
     const opts = { journal, memory, threadId: 'th1', processors: [trimAndNote] } as const;
 
-    await runDurable({ ...opts, runId: 'h1-a', model: replyModel('bir'), prompt: 'ilk soru' });
+    await runDurable({ ...opts, runId: 'h1-a', model: replyModel('one'), prompt: 'first question' });
     const seen: any[] = [];
-    const model = createMockModel(async ({ prompt }: any) => { seen.push(prompt); return finalTextResult('iki'); });
+    const model = createMockModel(async ({ prompt }: any) => { seen.push(prompt); return finalTextResult('two'); });
     await runDurable({ ...opts, runId: 'h1-b', model, prompt: `mail: ${SECRET}` });
 
     // The net-zero trim really happened — 3 in, 3 out, with the oldest gone and a note appended.
     expect(seen[0].length).toBe(3);
-    expect(JSON.stringify(seen[0])).not.toContain('ilk soru');
+    expect(JSON.stringify(seen[0])).not.toContain('first question');
     expect(JSON.stringify(seen[0])).toContain('older turns trimmed');
 
     const saved = await memory.getMessages('th1');
@@ -484,7 +484,7 @@ describe('the history/incoming boundary survives processors that MOVE the turn',
       processInput: (i) => ({ ...i, messages: [{ role: 'system' as const, content: '[retrieved doc]' }, ...(i.messages ?? [])] }),
     };
     const seen: any[] = [];
-    const model = () => createMockModel(async ({ prompt }: any) => { seen.push(prompt); return finalTextResult('tamam'); });
+    const model = () => createMockModel(async ({ prompt }: any) => { seen.push(prompt); return finalTextResult('ok'); });
     const opts = { journal, memory, threadId: 'th2', processors: [rag] } as const;
 
     await runDurable({ ...opts, runId: 'h2-a', model: model(), prompt: 'soru-1' });
@@ -519,14 +519,14 @@ describe('the history/incoming boundary survives processors that MOVE the turn',
     };
     const opts = { journal, memory, threadId: 'th3', processors: [insertBeforeTurn] } as const;
 
-    await runDurable({ ...opts, runId: 'h3-a', model: replyModel('bir'), prompt: 'ilk soru' });
+    await runDurable({ ...opts, runId: 'h3-a', model: replyModel('one'), prompt: 'first question' });
     const seen: any[] = [];
-    const model = createMockModel(async ({ prompt }: any) => { seen.push(prompt); return finalTextResult('iki'); });
-    await runDurable({ ...opts, runId: 'h3-b', model, prompt: 'ikinci soru' });
+    const model = createMockModel(async ({ prompt }: any) => { seen.push(prompt); return finalTextResult('two'); });
+    await runDurable({ ...opts, runId: 'h3-b', model, prompt: 'second question' });
 
     expect(JSON.stringify(seen[0])).toContain('just-in-time hint'); // the insertion really happened
     const saved = await memory.getMessages('th3');
-    expect(JSON.stringify(saved)).toContain('ikinci soru');
+    expect(JSON.stringify(saved)).toContain('second question');
     expect(JSON.stringify(saved)).not.toContain('just-in-time hint');
     expect(saved.length).toBe(4);
   });
@@ -547,8 +547,8 @@ describe('the history/incoming boundary survives processors that MOVE the turn',
     };
     const opts = { journal, memory, threadId: 'th4', processors: [rebuildAndNote] } as const;
 
-    await runDurable({ ...opts, runId: 'h4-a', model: replyModel('bir'), prompt: 'ayni soru' });
-    await runDurable({ ...opts, runId: 'h4-b', model: replyModel('iki'), prompt: 'ayni soru' });
+    await runDurable({ ...opts, runId: 'h4-a', model: replyModel('one'), prompt: 'ayni soru' });
+    await runDurable({ ...opts, runId: 'h4-b', model: replyModel('two'), prompt: 'ayni soru' });
 
     const saved = await memory.getMessages('th4');
     // Two turns asked, two questions stored — not the history folded back in on top of itself.
@@ -577,7 +577,7 @@ describe('the turn ENDS where the caller stopped writing: rows the chain appends
     const seen: any[] = [];
     const model = createMockModel(async ({ prompt }: any) => { seen.push(prompt); return finalTextResult('cevap'); });
     for (let n = 1; n <= 10; n++) {
-      await runDurable({ journal, memory, threadId: 'e1', processors: [complianceNote], runId: `e1-${n}`, model, prompt: `soru-${n}` });
+      await runDurable({ journal, memory, threadId: 'e1', processors: [complianceNote], runId: `e1-${n}`, model, prompt: `question-${n}` });
     }
 
     const saved = await memory.getMessages('e1');
@@ -595,8 +595,8 @@ describe('the turn ENDS where the caller stopped writing: rows the chain appends
     const journal = new InMemoryJournal();
     const memory = new BasicMemory(journal);
     const opts = { journal, memory, threadId: 'e2', processors: [complianceNote] } as const;
-    await runDurable({ ...opts, runId: 'e2-a', model: replyModel('bir'), prompt: 'ilk soru' });
-    await runDurable({ ...opts, runId: 'e2-b', model: replyModel('iki'), prompt: 'ikinci soru' });
+    await runDurable({ ...opts, runId: 'e2-a', model: replyModel('one'), prompt: 'first question' });
+    await runDurable({ ...opts, runId: 'e2-b', model: replyModel('two'), prompt: 'second question' });
 
     const rec: any = await journal.get(runKeys.memoryContext('e2-b'));
     // incomingCount counts the frozen input's trailing block — question + the appended note — because
@@ -606,13 +606,13 @@ describe('the turn ENDS where the caller stopped writing: rows the chain appends
     expect(rec.chainAppended).toBe(1);
     expect(rec.incomingUnrecoverable).toBeUndefined();
     const frozen: any = await journal.get(runKeys.input('e2-b'));
-    expect(frozen.messages.slice(-rec.incomingCount)[0]).toMatchObject({ content: 'ikinci soru' });
+    expect(frozen.messages.slice(-rec.incomingCount)[0]).toMatchObject({ content: 'second question' });
     // …and the memory-off replay still isolates the turn instead of replaying a slice of history.
     const prompts: any[] = [];
     const probe = createMockModel(async ({ prompt }: any) => { prompts.push(prompt); return finalTextResult('cf'); });
     await replayRun({ journal: journal as any, runId: 'e2-b', model: probe, stripMemoryContext: true });
-    expect(JSON.stringify(prompts[0])).toContain('ikinci soru');
-    expect(JSON.stringify(prompts[0])).not.toContain('ilk soru');
+    expect(JSON.stringify(prompts[0])).toContain('second question');
+    expect(JSON.stringify(prompts[0])).not.toContain('first question');
   });
 
   it('a CHAIN of redact + append, in EITHER order → masked question in memory, note nowhere', async () => {
@@ -625,8 +625,8 @@ describe('the turn ENDS where the caller stopped writing: rows the chain appends
       const journal = new InMemoryJournal();
       const memory = new BasicMemory(journal);
       const opts = { journal, memory, threadId: 'e3', processors: chain as Processor[] } as const;
-      await runDurable({ ...opts, runId: 'e3-a', model: replyModel('bir'), prompt: 'ilk soru' });
-      await runDurable({ ...opts, runId: 'e3-b', model: replyModel('iki'), prompt: `mail: ${SECRET}` });
+      await runDurable({ ...opts, runId: 'e3-a', model: replyModel('one'), prompt: 'first question' });
+      await runDurable({ ...opts, runId: 'e3-b', model: replyModel('two'), prompt: `mail: ${SECRET}` });
 
       const dump = await threadDump(memory, 'e3');
       expect(dump, order).toContain(`mail: ${MASK}`);
@@ -652,11 +652,11 @@ describe('the turn ENDS where the caller stopped writing: rows the chain appends
       },
     };
     const opts = { journal, memory, threadId: 'e9', processors: [restate] } as const;
-    await runDurable({ ...opts, runId: 'e9-a', model: replyModel('bir'), prompt: 'ilk soru' });
-    await runDurable({ ...opts, runId: 'e9-b', model: replyModel('iki'), prompt: 'ikinci soru' });
+    await runDurable({ ...opts, runId: 'e9-a', model: replyModel('one'), prompt: 'first question' });
+    await runDurable({ ...opts, runId: 'e9-b', model: replyModel('two'), prompt: 'second question' });
 
     const saved = await memory.getMessages('e9');
-    expect(saved.filter((m: any) => JSON.stringify(m).includes('ikinci soru')).length).toBe(1);
+    expect(saved.filter((m: any) => JSON.stringify(m).includes('second question')).length).toBe(1);
     expect(saved.length).toBe(4);
   });
 
@@ -675,11 +675,11 @@ describe('the turn ENDS where the caller stopped writing: rows the chain appends
       }),
     };
     const opts = { journal, memory, threadId: 'e8', processors: [normalizeAndNote] } as const;
-    await runDurable({ ...opts, runId: 'e8-a', model: replyModel('bir'), prompt: 'ilk soru' });
-    await runDurable({ ...opts, runId: 'e8-b', model: replyModel('iki'), prompt: 'ikinci soru' });
+    await runDurable({ ...opts, runId: 'e8-a', model: replyModel('one'), prompt: 'first question' });
+    await runDurable({ ...opts, runId: 'e8-b', model: replyModel('two'), prompt: 'second question' });
 
     const dump = await threadDump(memory, 'e8');
-    expect(dump).toContain('ikinci soru');
+    expect(dump).toContain('second question');
     expect(dump).not.toContain(NOTE);
     expect((await memory.getMessages('e8')).length).toBe(4);
   });
@@ -701,19 +701,19 @@ describe('the turn ENDS where the caller stopped writing: rows the chain appends
       },
     };
     const opts = { journal, memory, threadId: 'e4', processors: [swapLastTwo] } as const;
-    await runDurable({ ...opts, runId: 'e4-a', model: replyModel('bir'), prompt: 'ilk soru' });
+    await runDurable({ ...opts, runId: 'e4-a', model: replyModel('one'), prompt: 'first question' });
     await runDurable({
-      ...opts, runId: 'e4-b', model: replyModel('iki'),
+      ...opts, runId: 'e4-b', model: replyModel('two'),
       messages: [
-        { role: 'user', content: 'ikinci soru' },
+        { role: 'user', content: 'second question' },
         { role: 'user', content: 'ek bilgi' },
-        { role: 'system', content: 'kısa cevapla' },
+        { role: 'system', content: 'answer briefly' },
       ],
     });
 
     const dump = await threadDump(memory, 'e4');
-    expect(dump).toContain('ikinci soru');
-    expect(dump).toContain('kısa cevapla');
+    expect(dump).toContain('second question');
+    expect(dump).toContain('answer briefly');
     expect(dump).toContain('ek bilgi'); // THE row a veto-less cut would drop
     const rec: any = await journal.get(runKeys.memoryContext('e4-b'));
     expect(rec.chainAppended).toBeUndefined(); // no row was claimed as chain product
@@ -736,13 +736,13 @@ describe('the turn ENDS where the caller stopped writing: rows the chain appends
     };
     const opts = { journal, memory, threadId: 'e5', processors: [insertInside] } as const;
     await runDurable({
-      ...opts, runId: 'e5-a', model: replyModel('bir'),
-      messages: [{ role: 'user', content: 'birinci parça' }, { role: 'user', content: 'ikinci parça' }],
+      ...opts, runId: 'e5-a', model: replyModel('one'),
+      messages: [{ role: 'user', content: 'first part' }, { role: 'user', content: 'second part' }],
     });
 
     const dump = await threadDump(memory, 'e5');
-    expect(dump).toContain('birinci parça');
-    expect(dump).toContain('ikinci parça'); // THE failure a count-locator would produce: this one gone
+    expect(dump).toContain('first part');
+    expect(dump).toContain('second part'); // THE failure a count-locator would produce: this one gone
   });
 
   it('the shipped processor shapes (redact + trim-oldest + moderation) behave exactly as before', async () => {
@@ -763,7 +763,7 @@ describe('the turn ENDS where the caller stopped writing: rows the chain appends
     const chain = [redactor, trimOldest, moderation];
     const runs = async (procs: Processor[] | undefined, thread: string) => {
       for (let n = 1; n <= 5; n++) {
-        await runDurable({ journal, memory, threadId: thread, ...(procs ? { processors: procs } : {}), runId: `${thread}-${n}`, model: replyModel(`c${n}`), prompt: `soru-${n}` });
+        await runDurable({ journal, memory, threadId: thread, ...(procs ? { processors: procs } : {}), runId: `${thread}-${n}`, model: replyModel(`c${n}`), prompt: `question-${n}` });
       }
       return memory.getMessages(thread);
     };

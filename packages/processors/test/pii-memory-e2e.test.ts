@@ -52,8 +52,8 @@ describe('piiRedactor + memory: the real redactor keeps raw PII out of the threa
       journal,
       memory,
       threadId,
-      model: mockModel(() => 'anladım'),
-      prompt: `hesabımı ${EMAIL} adresine taşı`,
+      model: mockModel(() => 'understood'),
+      prompt: `move my account to ${EMAIL}`,
       processors: [piiRedactor()],
     });
 
@@ -74,8 +74,8 @@ describe('piiRedactor + memory: the real redactor keeps raw PII out of the threa
       threadId,
       // The model answers with a card number the user never typed — output-side redaction is the
       // Only thing standing between that and the thread.
-      model: mockModel(() => `kartınız ${CARD} ile ödendi`),
-      prompt: 'ödeme durumu ne',
+      model: mockModel(() => `your card ${CARD} was charged`),
+      prompt: 'what is the payment status',
       processors: [piiRedactor()],
     });
 
@@ -95,7 +95,7 @@ describe('piiRedactor + memory: the real redactor keeps raw PII out of the threa
       threadId: 'thread-model',
       model: mockModel((options) => {
         seen.push(JSON.stringify(options.prompt ?? options.messages ?? ''));
-        return 'tamam';
+        return 'ok';
       }),
       prompt: `e-postam ${EMAIL}`,
       processors: [piiRedactor()],

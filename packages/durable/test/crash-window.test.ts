@@ -204,7 +204,7 @@ describe("H10 — footnotes turned into code: strict tool policy", () => {
     expect(() =>
       durableTools(
         {
-          odeme: { recover: async () => ({ done: false as const }), execute: async () => 1 },
+          payment: { recover: async () => ({ done: false as const }), execute: async () => 1 },
           posta: { sideEffect: true, execute: async () => 2 },
           ara: { idempotent: true, execute: async () => 3 },
         },

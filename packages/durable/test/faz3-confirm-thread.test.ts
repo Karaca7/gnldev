@@ -206,8 +206,9 @@ describe("FAZ-3 toolPolicy 'strict-critical'", () => {
   });
 });
 
-// FAZ-3 denetçi bulguları — confirm×crash-window zinciri, storage-saat yolu ve eşzamanlı ikiz pinlendi.
-describe('FAZ-3 denetçi düzeltmeleri', () => {
+// FAZ-3 audit findings — the confirm×crash-window chain, the storage-clock path, and the concurrent
+// twin are pinned down.
+describe('FAZ-3 audit fixes', () => {
   it('a crashed CONFIRMED attempt is NOT re-suspended over — the reclaim ladder owns it (bloker)', async () => {
     const journal = new InMemoryJournal();
     const counter = { n: 0 };
@@ -220,7 +221,7 @@ describe('FAZ-3 denetçi düzeltmeleri', () => {
       },
     };
     const mk = chargeModel();
-    // approvalScope 'attempt': the approval is SPENT before the effect — the denetçi's exact
+    // approvalScope 'attempt': the approval is SPENT before the effect — the audit's exact
     // scenario (a standing journaled approval would legitimately allow the ladder's retry instead).
     const limits = { approvalScope: 'attempt' as const };
     await runDurable(baseOpts(journal, 'cf4', { model: mk(), tools, limits }) as any); // confirm suspends

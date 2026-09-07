@@ -1,17 +1,17 @@
-// HERMES v1 — onay-kapılı öneri/öğrenme katmanı. Pinlenenler:
-// 1) config çelişkileri THROW (iki şalter zorunlu, generate→model, embed↔embedModelId, v1'de yalnız
-//    'on-approval', eşik aralıkları, listKeys yokluğu)
-// 2) öğrenme geçişi: tamamlanan run → pending sugg (mekanizma cümlesi ZORUNLU, found:false → yok);
-//    runId başına AT-MOST-ONCE (memo); resourceId yoksa öğrenme yok
-// 3) birleşme: aynı ders ikinci run'da YENİ kayıt açmaz, kanıt ekler; farklı kullanıcı ayrı kayıt
-// 4) kanıt çeşitliliği: aynı kullanıcı+thread+gün tekrarı 1 etkin kanıt + sameSourceWarning
-// 5) onay kapısı: approve → lesson doğar; reject → doğmaz; karar FIRST-WINS
-// 6) enjeksiyon: onaylı ders sonraki run'ın system'ına girer; provenance `<runId>:cfg:lessons`
-//    DONAR (boş dahil) — onay sonrası aynı runId retry'ı yine ders GÖRMEZ; apply:false → hiç girmez
-// 7) etki-altında damga: dersi enjekte edilmiş run, O dersin önerisine kanıt yazarsa tainted →
-//    etkin sayaca girmez
-// 8) terfi: promotion bloğu YOKSA org kod yolu hiç çalışmaz; varsa N farklı kullanıcı onayında
-//    org-scope PENDING sugg doğar (kendiliğinden uygulanmaz), onaylanınca org dersi herkese enjekte
+// HERMES v1 — approval-gated suggestion/learning layer. Pinned invariants:
+// 1) config conflicts THROW (both switches required, generate→model, embed↔embedModelId, v1 only
+//    supports 'on-approval', threshold ranges, missing listKeys)
+// 2) learning transition: completed run → pending sugg (mechanism sentence REQUIRED, found:false → none);
+//    AT-MOST-ONCE per runId (memo); no resourceId → no learning
+// 3) merging: the same lesson on a second run does NOT open a new record, it adds evidence; a different user gets a separate record
+// 4) evidence diversity: a repeat from the same user+thread+day counts as 1 effective evidence + sameSourceWarning
+// 5) approval gate: approve → lesson is born; reject → it isn't; decision is FIRST-WINS
+// 6) injection: an approved lesson enters the next run's system prompt; provenance `<runId>:cfg:lessons`
+//    FREEZES (even when empty) — a retry of the same runId after approval still does NOT see the lesson; apply:false → never injected
+// 7) under-influence tainting: if a run that had a lesson injected writes evidence to THAT lesson's suggestion, it's tainted →
+//    does not count toward the effective tally
+// 8) promotion: without a promotion block, the org code path never runs; with one, N distinct-user approvals
+//    give birth to an org-scope PENDING sugg (not auto-applied), which once approved injects the org lesson for everyone
 import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '../src/journal.js';
 import { createGnl } from '../src/registry.js';
@@ -22,7 +22,7 @@ import {
 import type { SuggestionsConfig, SuggestionRecord } from '../src/suggestions.js';
 import { createMockModel, finalTextResult } from './mock.js';
 
-/** Ajan modeli: düz final metin; system'ı görebilmek için çağrı opsiyonlarını yakalar. */
+/** Agent model: plain final text; captures call options so we can inspect the system prompt. */
 function agentModel(captured?: any[]) {
   return createMockModel(async (opts: any) => {
     captured?.push(opts);
@@ -30,7 +30,7 @@ function agentModel(captured?: any[]) {
   });
 }
 
-/** Öğrenme modeli: sabit ders JSON'u döner; çağrı sayacı at-most-once'ı pinler. */
+/** Learning model: returns a fixed lesson JSON; the call counter pins the at-most-once guarantee. */
 function learnModel(payload: { found: boolean; rule?: string; mechanism?: string }, counter?: { n: number }) {
   return createMockModel(async () => {
     if (counter) counter.n += 1;
@@ -44,32 +44,32 @@ function gnlWith(journal: InMemoryJournal, suggestions: SuggestionsConfig, captu
   return createGnl({ journal, agents: { a: { model: agentModel(captured) } }, suggestions });
 }
 
-describe('HERMES config kapıları', () => {
+describe('HERMES config gates', () => {
   const j = new InMemoryJournal();
-  it('şalterler boolean değilse THROW', () => {
+  it('THROWs when the switches are not boolean', () => {
     expect(() => validateSuggestionsConfig({ generate: true } as any, j)).toThrow(/two-switch|switches/);
   });
-  it('generate:true + model yok → THROW', () => {
+  it('generate:true + no model → THROW', () => {
     expect(() => validateSuggestionsConfig({ generate: true, apply: false } as any, j)).toThrow(/model/);
   });
-  it('embed var embedModelId yok → THROW (damga kuralı)', () => {
+  it('embed present but no embedModelId → THROW (tainting rule)', () => {
     expect(() => validateSuggestionsConfig({ generate: false, apply: true, embed: async () => [[1]] } as any, j)).toThrow(/embedModelId/);
   });
-  it("v1'de strategy yalnız 'on-approval' — 'batch' THROW", () => {
+  it("v1 only supports strategy 'on-approval' — 'batch' THROWs", () => {
     expect(() => validateSuggestionsConfig({ generate: false, apply: true, promotion: { strategy: 'batch' } } as any, j)).toThrow(/on-approval/);
   });
-  it('eşik aralıkları: minUsers 0 ve ratio 1.5 THROW', () => {
+  it('threshold ranges: minUsers 0 and ratio 1.5 THROW', () => {
     expect(() => validateSuggestionsConfig({ generate: false, apply: true, promotion: { strategy: 'on-approval', threshold: { minUsers: 0 } } } as any, j)).toThrow(/minUsers/);
     expect(() => validateSuggestionsConfig({ generate: false, apply: true, promotion: { strategy: 'on-approval', threshold: { ratio: 1.5 } } } as any, j)).toThrow(/ratio/);
   });
-  it('listKeys olmayan journal + generate → THROW', () => {
+  it('journal without listKeys + generate → THROW', () => {
     const bare = { get: async () => undefined, put: async () => {} } as any;
     expect(() => validateSuggestionsConfig({ generate: true, apply: false, model: 'x/y' } as any, bare)).toThrow(/listKeys/);
   });
 });
 
-describe('HERMES öğrenme geçişi', () => {
-  it('tamamlanan run pending öneri doğurur; aynı runId ikinci çağrıda model TEKRAR ÇAĞRILMAZ', async () => {
+describe('HERMES learning transition', () => {
+  it('a completed run gives birth to a pending suggestion; a second call with the same runId does NOT re-invoke the model', async () => {
     const journal = new InMemoryJournal();
     const counter = { n: 0 };
     const gnl = gnlWith(journal, { generate: true, apply: true, model: learnModel(LESSON, counter) });
@@ -85,7 +85,7 @@ describe('HERMES öğrenme geçişi', () => {
     expect(await gnl.suggestions!.list({ status: 'pending' })).toHaveLength(1);
   });
 
-  it('found:false ve mekanizmasız ders ÖNERİ DOĞURMAZ; resourceId yoksa öğrenme yok', async () => {
+  it('found:false or a lesson without a mechanism does NOT give birth to a suggestion; no resourceId means no learning', async () => {
     const journal = new InMemoryJournal();
     const gnl = gnlWith(journal, { generate: true, apply: true, model: learnModel({ found: false }) });
     await gnl.run('a', { runId: 'r1', prompt: 'x', resourceId: 'u1' });
@@ -94,15 +94,15 @@ describe('HERMES öğrenme geçişi', () => {
     const j2 = new InMemoryJournal();
     const g2 = gnlWith(j2, { generate: true, apply: true, model: learnModel({ found: true, rule: 'rule only' }) });
     await g2.run('a', { runId: 'r1', prompt: 'x', resourceId: 'u1' });
-    expect(await g2.suggestions!.list()).toHaveLength(0); // mechanism zorunlu
+    expect(await g2.suggestions!.list()).toHaveLength(0); // mechanism is required
 
     const j3 = new InMemoryJournal();
     const g3 = gnlWith(j3, { generate: true, apply: true, model: learnModel(LESSON) });
-    await g3.run('a', { runId: 'r1', prompt: 'x' }); // resourceId yok
+    await g3.run('a', { runId: 'r1', prompt: 'x' }); // no resourceId
     expect(await g3.suggestions!.list()).toHaveLength(0);
   });
 
-  it('aynı ders ikinci run\'da BİRLEŞİR (tek kayıt, iki kanıt); farklı kullanıcıda AYRI kayıt', async () => {
+  it('the same lesson on a second run MERGES (one record, two evidence entries); a different user gets a SEPARATE record', async () => {
     const journal = new InMemoryJournal();
     const gnl = gnlWith(journal, { generate: true, apply: false, model: learnModel(LESSON) });
     await gnl.run('a', { runId: 'r1', prompt: 'x', resourceId: 'u1', threadId: 't1' });
@@ -111,12 +111,12 @@ describe('HERMES öğrenme geçişi', () => {
     expect(mine).toHaveLength(1);
     expect(mine[0]!.evidence).toHaveLength(2);
     await gnl.run('a', { runId: 'r3', prompt: 'z', resourceId: 'u2', threadId: 't3' });
-    expect(await gnl.suggestions!.list()).toHaveLength(2); // kişisel katman: kullanıcı başına ayrı doğum
+    expect(await gnl.suggestions!.list()).toHaveLength(2); // personal layer: a separate birth per user
   });
 });
 
-describe('HERMES kanıt disiplinleri', () => {
-  it('çeşitlilik: aynı kullanıcı+thread+gün tekrarı 1 etkin kanıt + sameSourceWarning', () => {
+describe('HERMES evidence discipline', () => {
+  it('diversity: a repeat from the same user+thread+day counts as 1 effective evidence + sameSourceWarning', () => {
     const at = Date.now();
     const q = evidenceQualityOf([
       { runId: 'r1', resourceId: 'u1', threadId: 't1', at },
@@ -134,25 +134,25 @@ describe('HERMES kanıt disiplinleri', () => {
     expect(q2.sameSourceWarning).toBe(false);
   });
 
-  it('etki-altında damga: dersi enjekte edilmiş run, o dersin önerisine TAINTED kanıt yazar', async () => {
+  it('under-influence tainting: a run that had the lesson injected writes TAINTED evidence to that same lesson\'s suggestion', async () => {
     const journal = new InMemoryJournal();
     const gnl = gnlWith(journal, { generate: true, apply: true, model: learnModel(LESSON) });
     await gnl.run('a', { runId: 'r1', prompt: 'x', resourceId: 'u1', threadId: 't1' });
     const [sugg] = await gnl.suggestions!.list({ status: 'pending' });
     await gnl.suggestions!.decide(sugg!.id, { approve: true, by: 'op' });
-    // r2: ders enjekte edilir, öğrenme geçişi AYNI dersi tekrar önerir → merge + tainted
+    // r2: the lesson gets injected, and the learning transition proposes the SAME lesson again → merge + tainted
     await gnl.run('a', { runId: 'r2', prompt: 'x again', resourceId: 'u1', threadId: 't1' });
     const rec = await journal.get<SuggestionRecord>(suggKey(sugg!.id));
     expect(rec!.evidence).toHaveLength(2);
     expect(rec!.evidence[1]!.tainted).toBe(true);
     const q = evidenceQualityOf(rec!.evidence);
     expect(q.tainted).toBe(1);
-    expect(q.effective).toBe(1); // gölge kanıt etkin sayaca giremez
+    expect(q.effective).toBe(1); // tainted evidence can't count toward the effective tally
   });
 });
 
-describe('HERMES onay kapısı + enjeksiyon', () => {
-  it('approve → lesson doğar ve SONRAKİ run\'ın system\'ına girer; provenance donar; reject → doğmaz', async () => {
+describe('HERMES approval gate + injection', () => {
+  it('approve → the lesson is born and enters the NEXT run\'s system prompt; provenance freezes; reject → it is never born', async () => {
     const journal = new InMemoryJournal();
     const captured: any[] = [];
     const gnl = gnlWith(journal, { generate: true, apply: true, model: learnModel(LESSON) }, captured);
@@ -168,14 +168,14 @@ describe('HERMES onay kapısı + enjeksiyon', () => {
     const prov = await journal.get<{ ids: string[] }>(lessonProvenanceKey('r2'));
     expect(prov!.ids).toEqual([personalLessonKey('u1', sugg!.id)]);
 
-    // reject yolu: ikinci kullanıcının önerisi reddedilir → ders yok
+    // reject path: a second user's suggestion is rejected → no lesson
     await gnl.run('a', { runId: 'r3', prompt: 'z', resourceId: 'u2', threadId: 't2' });
     const [s2] = await gnl.suggestions!.list({ status: 'pending' });
     await gnl.suggestions!.decide(s2!.id, { approve: false });
     expect(await journal.get(personalLessonKey('u2', s2!.id))).toBeUndefined();
   });
 
-  it('karar FIRST-WINS: ikinci karar alreadyDecided ve İLK hükmü döner', async () => {
+  it('decision is FIRST-WINS: a second decision reports alreadyDecided and returns the FIRST verdict', async () => {
     const journal = new InMemoryJournal();
     const gnl = gnlWith(journal, { generate: true, apply: false, model: learnModel(LESSON) });
     await gnl.run('a', { runId: 'r1', prompt: 'x', resourceId: 'u1' });
@@ -186,19 +186,19 @@ describe('HERMES onay kapısı + enjeksiyon', () => {
     expect(await journal.get(personalLessonKey('u1', sugg!.id))).toBeUndefined();
   });
 
-  it('DONMUŞ enjeksiyon: runId retry\'ı, arada onaylanan dersi GÖRMEZ (boş küme de donar)', async () => {
+  it('FROZEN injection: a retry of the same runId does NOT see a lesson approved in between (an empty set also freezes)', async () => {
     const journal = new InMemoryJournal();
     const captured: any[] = [];
     const gnl = gnlWith(journal, { generate: true, apply: true, model: learnModel(LESSON) }, captured);
-    await gnl.run('a', { runId: 'r1', prompt: 'x', resourceId: 'u1', threadId: 't1' }); // ders yokken koştu → boş donma
+    await gnl.run('a', { runId: 'r1', prompt: 'x', resourceId: 'u1', threadId: 't1' }); // ran before any lesson existed → froze empty
     const [sugg] = await gnl.suggestions!.list();
     await gnl.suggestions!.decide(sugg!.id, { approve: true });
     captured.length = 0;
-    await gnl.run('a', { runId: 'r1', prompt: 'x', resourceId: 'u1', threadId: 't1' }); // aynı runId retry
-    expect(JSON.stringify(captured)).not.toContain(LESSON.rule); // donmuş boş küme kazanır
+    await gnl.run('a', { runId: 'r1', prompt: 'x', resourceId: 'u1', threadId: 't1' }); // retry with the same runId
+    expect(JSON.stringify(captured)).not.toContain(LESSON.rule); // the frozen empty set wins
   });
 
-  it('apply:false → onaylı ders ASLA enjekte edilmez ama kayıt YAŞAR', async () => {
+  it('apply:false → an approved lesson is NEVER injected but the record still LIVES', async () => {
     const journal = new InMemoryJournal();
     const captured: any[] = [];
     const gnl = gnlWith(journal, { generate: true, apply: false, model: learnModel(LESSON) }, captured);
@@ -208,25 +208,25 @@ describe('HERMES onay kapısı + enjeksiyon', () => {
     captured.length = 0;
     await gnl.run('a', { runId: 'r2', prompt: 'y', resourceId: 'u1' });
     expect(JSON.stringify(captured)).not.toContain(LESSON.rule);
-    expect(await journal.get(personalLessonKey('u1', sugg!.id))).toBeDefined(); // şalter dersi silmez
+    expect(await journal.get(personalLessonKey('u1', sugg!.id))).toBeDefined(); // the switch doesn't delete the lesson
   });
 });
 
-describe('HERMES terfi (promotion)', () => {
+describe('HERMES promotion', () => {
   async function approveFor(gnl: ReturnType<typeof createGnl>, user: string, runId: string) {
     await gnl.run('a', { runId, prompt: 'x', resourceId: user, threadId: `t-${user}` });
     const pend = await gnl.suggestions!.list({ status: 'pending', resourceId: user });
     await gnl.suggestions!.decide(pend[0]!.id, { approve: true });
   }
 
-  it('promotion bloğu YOKKEN 3 kullanıcı onayı org önerisi DOĞURMAZ', async () => {
+  it('WITHOUT a promotion block, 3 user approvals do NOT give birth to an org suggestion', async () => {
     const journal = new InMemoryJournal();
     const gnl = gnlWith(journal, { generate: true, apply: true, model: learnModel(LESSON) });
     for (const [i, u] of ['u1', 'u2', 'u3'].entries()) await approveFor(gnl, u, `r${i}`);
     expect(await gnl.suggestions!.list({ scope: 'org' })).toHaveLength(0);
   });
 
-  it("'on-approval': N farklı kullanıcı onayında org-scope PENDING doğar; onaylanınca HERKESE enjekte", async () => {
+  it("'on-approval': N distinct-user approvals give birth to an org-scope PENDING suggestion; once approved it injects for EVERYONE", async () => {
     const journal = new InMemoryJournal();
     const captured: any[] = [];
     const gnl = gnlWith(journal, {
@@ -235,21 +235,21 @@ describe('HERMES terfi (promotion)', () => {
     }, captured);
     await approveFor(gnl, 'u1', 'r1');
     await approveFor(gnl, 'u2', 'r2');
-    expect(await gnl.suggestions!.list({ scope: 'org' })).toHaveLength(0); // eşik altı
+    expect(await gnl.suggestions!.list({ scope: 'org' })).toHaveLength(0); // below threshold
     await approveFor(gnl, 'u3', 'r3');
     const orgs = await gnl.suggestions!.list({ scope: 'org' });
     expect(orgs).toHaveLength(1);
-    expect(orgs[0]!.status).toBe('pending'); // terfi kendiliğinden UYGULANMAZ
+    expect(orgs[0]!.status).toBe('pending'); // promotion is NOT auto-applied
     expect(orgs[0]!.quality.distinctUsers).toBe(3);
 
     await gnl.suggestions!.decide(orgs[0]!.id, { approve: true, by: 'admin' });
     expect(await journal.get(orgLessonKey(orgs[0]!.id))).toBeDefined();
     captured.length = 0;
-    await gnl.run('a', { runId: 'r-new', prompt: 'q', resourceId: 'u9', threadId: 't9' }); // dersi hiç onaylamamış kullanıcı
-    expect(JSON.stringify(captured)).toContain(LESSON.rule); // org dersi herkese
+    await gnl.run('a', { runId: 'r-new', prompt: 'q', resourceId: 'u9', threadId: 't9' }); // a user who never approved the lesson
+    expect(JSON.stringify(captured)).toContain(LESSON.rule); // org lesson goes to everyone
   });
 
-  it('org-yankı damgası: org dersi enjekteli YENİ kullanıcının aynı-kural önerisi TAINTED doğar', async () => {
+  it('org-echo tainting: a NEW user with the org lesson injected who proposes the same rule gets a TAINTED suggestion', async () => {
     const journal = new InMemoryJournal();
     const gnl = gnlWith(journal, {
       generate: true, apply: true, model: learnModel(LESSON),
@@ -258,15 +258,15 @@ describe('HERMES terfi (promotion)', () => {
     for (const [i, u] of ['u1', 'u2', 'u3'].entries()) await approveFor(gnl, u, `r${i}`);
     const [org] = await gnl.suggestions!.list({ scope: 'org' });
     await gnl.suggestions!.decide(org!.id, { approve: true });
-    // u9: kişisel kaydı yok, org dersi enjekte; öğrenme geçişi aynı kuralı yankılar
+    // u9: has no personal record, gets the org lesson injected; the learning transition echoes the same rule
     await gnl.run('a', { runId: 'r-echo', prompt: 'q', resourceId: 'u9', threadId: 't9' });
     const [echo] = await gnl.suggestions!.list({ resourceId: 'u9' });
     expect(echo).toBeDefined();
-    expect(echo!.evidence[0]!.tainted).toBe(true); // gölge, scope sınırından kaçamaz
+    expect(echo!.evidence[0]!.tainted).toBe(true); // the shadow can't escape the scope boundary
     expect(echo!.quality.effective).toBe(0);
   });
 
-  it('tekrar onaylar AYNI org önerisini ikinci kez doğurmaz (deterministik id + claim)', async () => {
+  it('repeated approvals do NOT give birth to the SAME org suggestion a second time (deterministic id + claim)', async () => {
     const journal = new InMemoryJournal();
     const gnl = gnlWith(journal, {
       generate: true, apply: false, model: learnModel(LESSON),
@@ -277,8 +277,8 @@ describe('HERMES terfi (promotion)', () => {
   });
 });
 
-describe('HERMES onarım + eşzamanlılık (denetçi bulguları)', () => {
-  it('decide onarımı: lesson yazımı geçici düşerse SONRAKİ decide etkileri idempotent tamamlar', async () => {
+describe('HERMES repair + concurrency (audit findings)', () => {
+  it('decide repair: if the lesson write transiently fails, a SUBSEQUENT decide idempotently completes the effects', async () => {
     class FlakyJournal extends InMemoryJournal {
       failPutOf: string | undefined;
       override async put(key: string, value: unknown): Promise<void> {
@@ -295,14 +295,14 @@ describe('HERMES onarım + eşzamanlılık (denetçi bulguları)', () => {
     const [sugg] = await gnl.suggestions!.list();
     journal.failPutOf = personalLessonKey('u1', sugg!.id);
     await expect(gnl.suggestions!.decide(sugg!.id, { approve: true })).rejects.toThrow(/transient/);
-    expect(await journal.get(personalLessonKey('u1', sugg!.id))).toBeUndefined(); // yarım kaldı
+    expect(await journal.get(personalLessonKey('u1', sugg!.id))).toBeUndefined(); // left half-done
     const second = await gnl.suggestions!.decide(sugg!.id, { approve: true });
     expect(second.alreadyDecided).toBe(true);
     expect(second.status).toBe('approved');
-    expect(await journal.get(personalLessonKey('u1', sugg!.id))).toBeDefined(); // onarım dersi doğurdu
+    expect(await journal.get(personalLessonKey('u1', sugg!.id))).toBeDefined(); // the repair gave birth to the lesson
   });
 
-  it('GERÇEK eşzamanlı karar yarışı: tek hüküm, ders varlığı hükümle tutarlı', async () => {
+  it('a REAL concurrent decision race: a single verdict, the lesson\'s existence consistent with it', async () => {
     const journal = new InMemoryJournal();
     const gnl = gnlWith(journal, { generate: true, apply: false, model: learnModel(LESSON) });
     await gnl.run('a', { runId: 'r1', prompt: 'x', resourceId: 'u1' });
@@ -311,8 +311,8 @@ describe('HERMES onarım + eşzamanlılık (denetçi bulguları)', () => {
       gnl.suggestions!.decide(sugg!.id, { approve: true, by: 'op-a' }),
       gnl.suggestions!.decide(sugg!.id, { approve: false, by: 'op-b' }),
     ]);
-    expect(a.status).toBe(b.status); // iki operatör aynı hükmü görür
-    expect([a.alreadyDecided, b.alreadyDecided].filter((x) => !x)).toHaveLength(1); // tek kazanan
+    expect(a.status).toBe(b.status); // both operators see the same verdict
+    expect([a.alreadyDecided, b.alreadyDecided].filter((x) => !x)).toHaveLength(1); // a single winner
     const rec = await journal.get<SuggestionRecord>(suggKey(sugg!.id));
     expect(rec!.status).toBe(a.status);
     const lesson = await journal.get(personalLessonKey('u1', sugg!.id));
@@ -320,7 +320,7 @@ describe('HERMES onarım + eşzamanlılık (denetçi bulguları)', () => {
     else expect(lesson).toBeUndefined();
   });
 
-  it('embed benzerliği: FARKLI metinli aynı-anlam ders vektör yolundan BİRLEŞİR', async () => {
+  it('embed similarity: DIFFERENTLY worded lessons with the same meaning MERGE via the vector path', async () => {
     const journal = new InMemoryJournal();
     const counter = { n: 0 };
     const payloads = [
@@ -330,17 +330,17 @@ describe('HERMES onarım + eşzamanlılık (denetçi bulguları)', () => {
     const seqModel = createMockModel(async () => finalTextResult(JSON.stringify(payloads[Math.min(counter.n++, 1)])));
     const gnl = gnlWith(journal, {
       generate: true, apply: false, model: seqModel,
-      embed: async (texts: string[]) => texts.map(() => [1, 0]), // sabit vektör → kosinüs 1.0
+      embed: async (texts: string[]) => texts.map(() => [1, 0]), // fixed vector → cosine 1.0
       embedModelId: 'test-embed',
     });
     await gnl.run('a', { runId: 'r1', prompt: 'x', resourceId: 'u1' });
     await gnl.run('a', { runId: 'r2', prompt: 'y', resourceId: 'u1' });
     const mine = await gnl.suggestions!.list({ resourceId: 'u1' });
-    expect(mine).toHaveLength(1); // exact eşleşmez, vektör birleştirir
+    expect(mine).toHaveLength(1); // no exact match, but the vector path merges them
     expect(mine[0]!.evidence).toHaveLength(2);
   });
 
-  it("listKeys'siz journal'da apply:true da THROW (sessiz-inert şalter yasak)", () => {
+  it("apply:true on a journal without listKeys also THROWs (no silent-inert switches allowed)", () => {
     const bare = { get: async () => undefined, put: async () => {} } as any;
     expect(() => createGnl({ journal: bare, agents: { a: { model: agentModel() } }, suggestions: { generate: false, apply: true } }))
       .toThrow(/listKeys/);

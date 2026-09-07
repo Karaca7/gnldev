@@ -233,9 +233,9 @@ describe('FAZ-1 side-effect write-ahead claim', () => {
   });
 });
 
-// Faz 1 heyet bulguları (bloker + Derya'nın kanıt boşlukları) — kombinatör taşıması, retry×sideEffect
-// disiplini, gerçek eşzamanlılık, CAS'sız journal, journal.now() ve recover çıktı-yarışı pinlendi.
-describe('FAZ-1 heyet düzeltmeleri', () => {
+// Phase 1 panel findings (blocker + Derya's evidence gaps) — combinator carry-through, retry×sideEffect
+// discipline, real concurrency, a CAS-less journal, journal.now(), and the recover output race are all pinned down.
+describe('FAZ-1 panel fixes', () => {
   it('parallel and branch legs KEEP durability — the claim is written inside combinators', async () => {
     const journal = casJournal();
     let fired = 0;

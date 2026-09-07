@@ -57,7 +57,7 @@ async function waitRow(journal: any, runId: string): Promise<MetricsRunRow> {
 describe('streamed-run metrics row (regression: 0ms / 1-step lie)', () => {
   it('InMemoryJournal reader: duration spans the run, steps/tools counted', async () => {
     const journal = new InMemoryJournal();
-    const r = await streamDurable({ runId: 'ms1', journal, model: slowStreamAgent(), tools, prompt: 'soru', agentName: 'demo', stopWhen: stepCountIs(4) });
+    const r = await streamDurable({ runId: 'ms1', journal, model: slowStreamAgent(), tools, prompt: 'question', agentName: 'demo', stopWhen: stepCountIs(4) });
     await r.text;
     const row = await waitRow(journal, 'ms1');
     expect(row.modelSteps).toBe(2);
@@ -69,7 +69,7 @@ describe('streamed-run metrics row (regression: 0ms / 1-step lie)', () => {
   it('toJournal(storage.runs) bridge (the studio host wiring): same correct row', async () => {
     const storage = new InMemoryStorage();
     const journal = toJournal(storage.runs);
-    const r = await streamDurable({ runId: 'ms2', journal, model: slowStreamAgent(), tools, prompt: 'soru', agentName: 'demo', stopWhen: stepCountIs(4) });
+    const r = await streamDurable({ runId: 'ms2', journal, model: slowStreamAgent(), tools, prompt: 'question', agentName: 'demo', stopWhen: stepCountIs(4) });
     await r.text;
     const row = await waitRow(journal, 'ms2');
     expect(row.modelSteps).toBe(2);
@@ -82,7 +82,7 @@ describe('streamed-run metrics row (regression: 0ms / 1-step lie)', () => {
     const { SqliteStorage } = await import('../src/sqlite-storage.js');
     const storage = new SqliteStorage(':memory:');
     const journal = toJournal(storage.runs);
-    const r = await streamDurable({ runId: 'ms3', journal, model: slowStreamAgent(), tools, prompt: 'soru', agentName: 'demo', stopWhen: stepCountIs(4) });
+    const r = await streamDurable({ runId: 'ms3', journal, model: slowStreamAgent(), tools, prompt: 'question', agentName: 'demo', stopWhen: stepCountIs(4) });
     await r.text;
     const row = await waitRow(journal, 'ms3');
     expect(row.modelSteps).toBe(2);
@@ -110,7 +110,7 @@ describe('streamed-run metrics row (regression: 0ms / 1-step lie)', () => {
         ]) };
       },
     };
-    const r = await streamDurable({ runId: 'ms-single', journal, model, prompt: 'soru', agentName: 'demo' });
+    const r = await streamDurable({ runId: 'ms-single', journal, model, prompt: 'question', agentName: 'demo' });
     await r.text;
     const row = await waitRow(journal, 'ms-single');
     expect(row.modelSteps).toBe(1);
@@ -122,7 +122,7 @@ describe('streamed-run metrics row (regression: 0ms / 1-step lie)', () => {
     const { createGnl } = await import('../src/registry.js');
     const storage = new SqliteStorage(':memory:');
     const gnl = createGnl({ storage, agents: { demo: { model: slowStreamAgent(), tools, maxSteps: 4 } } } as any);
-    const r: any = await gnl.stream!('demo', { runId: 'ms4', prompt: 'soru' });
+    const r: any = await gnl.stream!('demo', { runId: 'ms4', prompt: 'question' });
     await r.text;
     const journal = toJournal(storage.runs);
     const row = await waitRow(journal, 'ms4');

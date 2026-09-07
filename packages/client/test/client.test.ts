@@ -193,10 +193,10 @@ describe('a non-2xx response reaches the caller', () => {
   });
 
   it('a successful response is unchanged — no refusal fields invented', async () => {
-    const ok = async () => new Response(JSON.stringify({ ok: true, runId: 'r1', text: 'merhaba', interrupts: [] }),
+    const ok = async () => new Response(JSON.stringify({ ok: true, runId: 'r1', text: 'hello', interrupts: [] }),
       { status: 200, headers: { 'content-type': 'application/json' } });
     const client = new GnlClient({ baseUrl: 'http://x', fetch: ok as never });
-    expect(await client.run('bot', { runId: 'r1' })).toEqual({ ok: true, runId: 'r1', text: 'merhaba', interrupts: [] });
+    expect(await client.run('bot', { runId: 'r1' })).toEqual({ ok: true, runId: 'r1', text: 'hello', interrupts: [] });
   });
 
   it('a non-JSON error body still produces a usable error', async () => {

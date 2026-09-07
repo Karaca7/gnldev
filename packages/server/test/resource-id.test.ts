@@ -104,9 +104,9 @@ function api() {
   const asOperator = call('A');
   return {
     run: (who: string, extra: Record<string, unknown> = {}) =>
-      asClient('POST', '/agents/a/run', { runId: `r-${who}`, prompt: 'merhaba', threadId: `t-${who}`, resourceId: `u-${who}`, ...extra }),
+      asClient('POST', '/agents/a/run', { runId: `r-${who}`, prompt: 'hello', threadId: `t-${who}`, resourceId: `u-${who}`, ...extra }),
     /** A run with NO owner — only an operator can start one, since a client must always name a subject. */
-    runUnowned: (id: string) => asOperator('POST', '/agents/a/run', { runId: id, prompt: 'merhaba', threadId: `t-${id}` }),
+    runUnowned: (id: string) => asOperator('POST', '/agents/a/run', { runId: id, prompt: 'hello', threadId: `t-${id}` }),
     get: (p: string) => asClient('GET', p),
     post: (p: string, body?: unknown) => asClient('POST', p, body),
     /** The operator view: permitted to leave the subject unstated. */

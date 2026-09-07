@@ -224,8 +224,8 @@ describe('release TOCTOU (CAS)', () => {
   });
 });
 
-// Faz 0 kontrol bulguları (Deniz + Rüzgar) — release'in CAS'ı kendi in-flight renew'una kaybettiği
-// interleaving ve putIfMatch'siz fallback yolu pinlendi.
+// Faz 0 review findings (Deniz + Rüzgar) — the interleaving where release's CAS loses to its own
+// in-flight renew, and the putIfMatch-less fallback path, are pinned down.
 describe('release CAS retry + fallback', () => {
   it('release retries when it loses the CAS to its OWN in-flight renew — the lock is freed, not left until TTL', async () => {
     const journal = new InMemoryJournal();
