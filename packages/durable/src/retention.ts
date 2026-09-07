@@ -224,7 +224,14 @@ export async function purgeBatch(journal: Journal, batchId: string): Promise<num
 
 export async function purgeResource(journal: Journal, resourceId: string): Promise<number> {
   const del = requireDelete(journal);
-  return (await del(`xid:res:${resourceId}:`)) + (await del(`lesson:res:${resourceId}:`));
+  // `suggstats:` carries the FULL lesson key (`suggstats:lesson:res:<rid>:<id>`) — the injection
+  // counter's key itself names the person, so it must die with them (GDPR brief audit, K27 EK-3).
+  // deletePrefix sweeps counter rows since P1.6, so this reaches HINCRBY-backed adapters too.
+  return (
+    (await del(`xid:res:${resourceId}:`)) +
+    (await del(`lesson:res:${resourceId}:`)) +
+    (await del(`suggstats:lesson:res:${resourceId}:`))
+  );
 }
 
 export async function purgeThread(journal: Journal, threadId: string): Promise<number> {

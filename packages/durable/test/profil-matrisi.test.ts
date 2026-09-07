@@ -238,4 +238,17 @@ describe('denetçi bulguları — v1 paketi', () => {
     expect((await journal.listKeys!('xid:res:silinecek:')).length).toBe(0);
     expect((await journal.listKeys!('xid:res:kalacak:')).length).toBe(1);
   });
+
+  it('purgeResource suggstats sayaçlarını da süpürür — anahtarın KENDİSİ kişiyi adlandırıyor (GDPR brief denetimi)', async () => {
+    const journal = new InMemoryJournal();
+    // prepareInjection'ın yazdığı şekil: suggstats:<tam lesson anahtarı>
+    await journal.incrBy!('suggstats:lesson:res:silinecek:s-1', { injected: 3 });
+    await journal.incrBy!('suggstats:lesson:res:kalacak:s-2', { injected: 1 });
+    await journal.put('lesson:res:silinecek:s-1', { v: 1, rule: 'x', mechanism: 'y', at: 1 });
+    const { purgeResource } = await import('../src/retention.js');
+    await purgeResource(journal, 'silinecek');
+    expect(await journal.getCounters!('suggstats:lesson:res:silinecek:s-1')).toBeUndefined();
+    expect(await journal.get('lesson:res:silinecek:s-1')).toBeUndefined();
+    expect((await journal.getCounters!('suggstats:lesson:res:kalacak:s-2'))?.injected).toBe(1); // komşu kalır
+  });
 });
