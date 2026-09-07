@@ -204,6 +204,11 @@ export function pipeAgentStream(c: Context, runId: string, result: any, opts?: P
       if (interrupts.length) await emit('interrupt', { interrupts });
       const finishReason = await Promise.resolve(result.finishReason).catch(() => undefined);
       const usage = await Promise.resolve(result.usage).catch(() => undefined);
+      // Replay-disclosure zarfı BİLEREK YOK (ölçüldü): SSE dizisi W3 sözleşmesiyle DETERMİNİSTİKTİR —
+      // aynı runId'nin replay'i bayt-aynı event'leri üretmelidir; zarf ise koşum-anı meta'sıdır (ilk
+      // koşumda window'lu, replay'de self'li) ve done-frame'e girince diziyi koşumdan koşuma
+      // farklılaştırıp resumable-SSE replay pinini kırar. Stream yüzeyinde zarf, sonucun LAZY
+      // `replayedToolCalls` alanındadır — host onFinish'te okur; SSE'ye taşımak v2'nin ayrı işi.
       await emit('done', { runId, finishReason, usage });
     } catch (e: any) {
       await emit('error', { error: String(e?.message ?? e) });

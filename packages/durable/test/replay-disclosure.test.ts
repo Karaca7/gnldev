@@ -203,3 +203,45 @@ describe('confirm sorusunda tekrar bağlamı', () => {
     expect(reasonOf(r3)).toContain('ALREADY COMPLETED');
   });
 });
+
+describe('replay-disclosure — STREAM zarfı (K28 kapanışı)', () => {
+  it('stream sonucu lazy zarf taşır: tüketim öncesi boş, tüketim sonrası dolu', async () => {
+    const { streamDurable } = await import('../src/run.js');
+    // Kendi stream mock'umuz: her koşumda FARKLI toolCallId (gerçek modeller benzersiz üretir —
+    // sabit-id'li paylaşımlı mock, identity-bazlı self testine yanlış pozitif veriyordu).
+    const mkStreamAgent = (callId: string) => ({
+      specificationVersion: 'v4', provider: 'mock', modelId: 'm', supportedUrls: {},
+      doGenerate: async () => { throw new Error('stream-only'); },
+      doStream: async ({ prompt }: any) => {
+        const done = (prompt ?? []).filter((m: any) => m.role === 'tool').length;
+        const usage = { inputTokens: { total: 1, noCache: 1 }, outputTokens: { total: 1, text: 1 } };
+        const arr = done === 0
+          ? [{ type: 'stream-start', warnings: [] }, { type: 'tool-call', toolCallId: callId, toolName: 'chargeCard', input: JSON.stringify({ amount: 20 }) }, { type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool-calls' }, usage }]
+          : [{ type: 'stream-start', warnings: [] }, { type: 'text-start', id: '1' }, { type: 'text-delta', id: '1', delta: 'ok' }, { type: 'text-end', id: '1' }, { type: 'finish', finishReason: { unified: 'stop', raw: 'stop' }, usage }];
+        return { stream: new ReadableStream({ start(c) { for (const p of arr) c.enqueue(p); c.close(); } }) };
+      },
+    });
+    const journal = new InMemoryJournal();
+    const state = { n: 0 };
+    const tools = {
+      chargeCard: {
+        description: 'charge', sideEffect: true, idempotency: 'args' as const, idempotencyWindow: 'thread' as const,
+        recover: async () => ({ done: false as const }),
+        execute: async () => { state.n += 1; return { charged: 20 }; },
+      },
+    };
+    const consume = async (r: any) => { for await (const _ of r.fullStream) { /* tüket */ } };
+    const r1 = await streamDurable({ runId: 'sd-1', journal, threadId: 'th-s', model: mkStreamAgent('call-A'), tools, stopWhen: stepCountIs(4), prompt: 'charge' } as any);
+    await consume(r1);
+    expect(state.n).toBe(1);
+    expect((r1 as any).replayedToolCalls).toBeUndefined(); // taze iş — zarf boş
+
+    const r2 = await streamDurable({ runId: 'sd-2', journal, threadId: 'th-s', model: mkStreamAgent('call-B'), tools, stopWhen: stepCountIs(4), prompt: 'charge' } as any);
+    expect((r2 as any).replayedToolCalls).toBeUndefined(); // TÜKETİM ÖNCESİ: lazy — henüz boş
+    await consume(r2);
+    expect(state.n).toBe(1); // replay, koşmadı
+    const env = (r2 as any).replayedToolCalls;
+    expect(env).toHaveLength(1); // TÜKETİM SONRASI: dolu
+    expect(env[0]).toMatchObject({ toolName: 'chargeCard', origin: 'window' });
+  });
+});

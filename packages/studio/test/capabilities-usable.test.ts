@@ -185,7 +185,9 @@ function isEmptyPayload(body: string): boolean {
   const empty = (x: unknown): boolean => {
     if (x == null || x === 0 || x === false || x === '') return true;
     if (Array.isArray(x)) return x.length === 0;
-    if (typeof x === 'object') return Object.values(x as Record<string, unknown>).every(empty);
+    // `serverNow` is CLOCK metadata, not content (FAZ-8 added it as the age baseline for approval
+    // rows): an empty inbox that also reports the server's time still has nothing for a UI to show.
+    if (typeof x === 'object') return Object.entries(x as Record<string, unknown>).every(([k, v]) => k === 'serverNow' || empty(v));
     return false;
   };
   return empty(v);

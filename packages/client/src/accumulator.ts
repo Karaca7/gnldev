@@ -11,21 +11,28 @@ export interface ChatState {
   messages: ChatMessage[];
   interrupts: Interrupt[];
   runId?: string;
+  /** Replay-disclosure zarfı (done frame'inden): bu turda journal'dan cevaplanan araç çağrıları —
+   *  UI rozeti için makine-okur veri; model kanalına asla girmez. */
+  replayedToolCalls?: Array<{ toolCallId: string; toolName?: string; status: string; origin: 'self' | 'window' }>;
 }
 export const initialChatState: ChatState = { messages: [], interrupts: [] };
 
 /** Append a user message + clear pending interrupts (new turn). */
 export function appendUserMessage(state: ChatState, text: string): ChatState {
-  return { ...state, messages: [...state.messages, { role: 'user', content: text }], interrupts: [] };
+  // replayedToolCalls da YENİ TURDA SİLİNİR (denetçi K12): rozet "bu turun" beyanıdır — taze turda
+  // önceki turun "journal'dan geldi" rozeti kalırsa dürüstlük özelliğinin kendisi yanlış-pozitif üretir.
+  return { ...state, messages: [...state.messages, { role: 'user', content: text }], interrupts: [], replayedToolCalls: undefined };
 }
 
 /** Apply a completed (non-stream) run result: assistant text + interrupts + runId. */
-export function applyRunResult(state: ChatState, r: { runId: string; text?: string; interrupts?: Interrupt[] }): ChatState {
+export function applyRunResult(state: ChatState, r: { runId: string; text?: string; interrupts?: Interrupt[]; replayedToolCalls?: ChatState['replayedToolCalls'] }): ChatState {
   return {
     ...state,
     runId: r.runId,
     messages: r.text ? [...state.messages, { role: 'assistant', content: r.text }] : state.messages,
     interrupts: r.interrupts ?? [],
+    // K28 paritesi: zarf run() yüzeyinden de state'e iner; alan gelmediyse SİLİNİR (bayat rozet yasağı).
+    replayedToolCalls: r.replayedToolCalls?.length ? r.replayedToolCalls : undefined,
   };
 }
 
@@ -55,7 +62,9 @@ export function applyStreamEvent(state: ChatState, ev: StreamEvent): ChatState {
     case 'interrupt':
       return { ...state, interrupts: (ev.data as any).interrupts ?? [] };
     case 'done':
-      return { ...state, runId: (ev.data as any).runId ?? state.runId };
+      // Zarf SSE'den GELMEZ (server determinizm pini) — stream turu alanı yalnız TEMİZLER;
+      // dolduran tek yüzey run() cevabıdır (applyRunResult).
+      return { ...state, runId: (ev.data as any).runId ?? state.runId, replayedToolCalls: undefined };
     default:
       return state;
   }

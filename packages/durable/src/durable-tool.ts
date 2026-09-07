@@ -9,7 +9,7 @@ import { recordIncident } from './incidents.js';
 import { markRunTainted, readRunTaint } from './taint.js';
 import { checkToolGate, recordToolOutcome } from './limits.js';
 import { validateSemanticConfig, assertSemanticIdentity, extractSemFields, canonicalTextOf, findSemanticCandidate, writeSemRecord, semTombKey } from './semantic-dup.js';
-import { xidPlanOf, writeXid, readXid, xidWhen, type XidPlan } from './xid.js';
+import { xidPlanOf, writeXid, readXid, xidWhen, amountsDifferOf, type XidPlan } from './xid.js';
 import type { SemPlan } from './semantic-dup.js';
 import type { RunLimits } from './limits.js';
 import { createProcessorCtx } from './processor.js';
@@ -629,10 +629,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
               const cfXid = await readXid(ctx.journal, xidPlanOf(tool.semanticIdentity!, toolName, input, ctx.resourceId!, ctx.channel));
               if (!cfXid || cfXid.first.runId === ctx.runId) return false;
               let nowC = Date.now(); try { if (ctx.journal.now) nowC = await ctx.journal.now(); } catch { /* fail-open: süsleme saati işi düşüremez */ }
-              const amountsDiffer = Object.keys(cfXid.amounts).filter((k) => {
-                const mine = Number((input as Record<string, unknown>)?.[k]);
-                return Number.isFinite(mine) && cfXid.amounts[k] !== mine;
-              });
+              const amountsDiffer = amountsDifferOf(cfXid, input);
               reason += amountsDiffer.length
                 ? ` ⚠ Work with the SAME business identity was completed ${xidWhen(cfXid, nowC)} (first: ${cfXid.first.toolCallId}) but the amounts DIFFER (${amountsDiffer.join(', ')}) — check carefully before approving.`
                 : ` ⚠ Identical business identity ALREADY COMPLETED ${xidWhen(cfXid, nowC)} (first: ${cfXid.first.toolCallId}) — approve only if you intend a deliberate repeat.`;

@@ -4,7 +4,7 @@ import { toFetchHandler, type FetchHandler } from './handler.js';
 import { Hono, type Context } from 'hono';
 import { sseResponse } from './sse.js';
 
-import { ORG_RECORD_PRE, asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, countLog, purgeRun, purgeOrganization, orgPurgedKey, sweepRuns, sweepLog, POLICY_KEY, PRICING_KEY, effectivePricingTable, DEFAULT_PRICING, readPricing, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, knownModelProviders, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent, callerConflictCode } from '@gnldev/durable';
+import { ORG_RECORD_PRE, asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, countLog, purgeRun, purgeOrganization, orgPurgedKey, sweepRuns, sweepLog, POLICY_KEY, PRICING_KEY, effectivePricingTable, DEFAULT_PRICING, readPricing, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, knownModelProviders, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent, callerConflictCode, resolveApprovals as dResolveApprovals } from '@gnldev/durable';
 import type { PolicyDoc, PolicyRule, BudgetLimit, PricingDoc } from '@gnldev/durable';
 import type { JournalReader, Journal, WorkflowLike, MetricsRunRow } from '@gnldev/durable';
 import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, principalScope, assertAssignablePrivileges, CLIENT_ROLE, type AuthProvider, type Principal } from '@gnldev/auth';
@@ -2110,15 +2110,23 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       // Abandoned ones (retention deliberately protects suspended runs; visibility is the counterweight).
       const suspendedAt = entries.reduce((mx, e) => Math.max(mx, (e as { ts?: number }).ts ?? 0), 0) || undefined;
       // The sentinel in a suspended tool record carries args/reason → shows context in the inbox
-      const meta = new Map<string, { args?: unknown; reason?: string }>();
+      const meta = new Map<string, { args?: unknown; reason?: string; toolName?: string }>();
       for (const e of entries) {
         const v: any = e.value;
         const sus = e.kind === 'tool' && v?.status === 'suspended' ? v?.output?.__gnl_suspend : undefined;
-        if (sus?.toolCallId) meta.set(sus.toolCallId, { args: sus.args, reason: sus.reason });
+        if (sus?.toolCallId) meta.set(sus.toolCallId, { args: sus.args, reason: sus.reason, toolName: sus.toolName });
       }
       const st = reconstructState(entries, entries.length);
       for (const pnd of st.pending) {
         items.push({ runId: r.runId, toolCallId: pnd.toolCallId, toolName: pnd.toolName, ...(suspendedAt !== undefined ? { suspendedAt } : {}), ...(meta.get(pnd.toolCallId) ?? {}) });
+      }
+      // BATCH İŞ-1 (hakem — yayın ön koşulu): pending, MODEL kayıtlarından türetilir; modelsiz
+      // item-run'ların (batch mini-runner) askıları orada görünmez ve "listRuns suspended der ama
+      // tıklanacak satır yok" = sessiz-VE-görünmez ihlali doğardı. Suspended sentinel'i olup
+      // pending'de karşılığı olmayan her kayıt kendi satırını üretir.
+      for (const [tc, m] of meta) {
+        if (st.pending.some((p) => p.toolCallId === tc)) continue;
+        items.push({ runId: r.runId, toolCallId: tc, toolName: (m as { toolName?: string }).toolName ?? 'tool', ...(suspendedAt !== undefined ? { suspendedAt } : {}), args: m.args, reason: m.reason });
       }
     }
     // Approval webhook: the SAME pattern as the budget alert — a SINGLE POST per pending approval via a
@@ -2944,10 +2952,26 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // Approval → resume (admin).
   app.post('/runs/:id/resume', async (c) => {
     if (!(await allowP(c.req.raw, 'run:write'))) return deny(c.req.raw, 'write');
-    if (!resume) return c.json({ error: 'resume is not enabled' }, 501);
     const id = decodeURIComponent(c.req.param('id'));
-    if (!(await runVisible(id))) return c.json({ error: `run '${id}' not found` }, 404);
     const body = (await c.req.json().catch(() => ({}))) as { approvals?: Record<string, boolean> };
+    // BATCH İŞ-2 (hakem Karar 2): batch-doğumlu run resumeRun'la RESUME EDİLMEZ (frozen :input yok —
+    // entry-point dersinin batch hali). Studio'nun onayı yalnız KARARI journal'a claim'ler (düz
+    // boolean, run.ts resolveApprovals'ın okuduğu şekil); koşum bir sonraki batch.run() çağrısında.
+    if (id.startsWith('batch:')) {
+      if (typeof rw.put !== 'function') return c.json({ error: 'journal is read-only — decisions cannot be recorded' }, 501);
+      // Görünürlük: item-run'ın :input'u yok; herhangi bir tool kaydı varlığı yeter (org-scoped rw → sızıntı yok).
+      const anyKey = typeof rw.listKeys === 'function' ? (await rw.listKeys(`${id}:`).catch(() => [] as string[])).length > 0 : true;
+      if (!anyKey) return c.json({ error: `run '${id}' not found` }, 404);
+      // TEK kaynak (denetçi bloker — K9): run.ts'in resolveApprovals'ı; spent-slot CAS'ı ve
+      // first-decision-wins inceliği oradadır, ham claim kopyası ikisini de düşürüyordu. Dönen map
+      // JOURNAL'DAKİ GERÇEK kararlardır — cevap ve audit onu raporlar, dileği değil.
+      const recorded = await dResolveApprovals(rw as never, id, body.approvals);
+      const anyOk = Object.values(recorded ?? {}).some((v) => v === true);
+      await audit(c, anyOk ? 'approve' : 'deny', id, { approvals: recorded, batch: true });
+      return c.json({ ok: true, decided: recorded ?? {}, note: 'decisions recorded — they execute on the next batch run()' });
+    }
+    if (!resume) return c.json({ error: 'resume is not enabled' }, 501);
+    if (!(await runVisible(id))) return c.json({ error: `run '${id}' not found` }, 404);
     const result = await resume(id, body.approvals ?? {}, { orgId: callerOrg(c) });
     // 'approve' if any value in approvals is true, otherwise 'deny' (the detail carries the full decision set)
     const anyApproved = Object.values(body.approvals ?? {}).some((v) => v === true);

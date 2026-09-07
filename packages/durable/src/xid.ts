@@ -78,6 +78,15 @@ export async function readXid(journal: Journal, plan: XidPlan): Promise<XidRecor
   }
 }
 
+/** Kanallar-arası tutar kıyası — confirm süslemesi ve batch preflight'ı AYNI mantığı kullanır
+ *  (kopya = drift; denetçi uygulama listesi). Sayısal olmayan/eksik taraf 'farklı' sayılmaz. */
+export function amountsDifferOf(rec: XidRecord, args: unknown): string[] {
+  return Object.keys(rec.amounts).filter((k) => {
+    const mine = Number((args as Record<string, unknown> | null | undefined)?.[k]);
+    return Number.isFinite(mine) && rec.amounts[k] !== mine;
+  });
+}
+
 /** Soru/rapor metinleri için insan-okur özet: "5 dk önce, sohbetten". */
 export function xidWhen(rec: XidRecord, nowMs: number): string {
   const ageMs = Math.max(0, nowMs - rec.first.at);

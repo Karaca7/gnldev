@@ -28,6 +28,8 @@ export interface RunResult {
   runId: string;
   text?: string;
   interrupts: Interrupt[];
+  /** Replay-disclosure zarfı (server run cevabından): bu turda journal'dan cevaplanan araçlar. */
+  replayedToolCalls?: Array<{ toolCallId: string; toolName?: string; status: string; origin: 'self' | 'window' }>;
   error?: string;
   /** HTTP status, so a caller can act without parsing the sentence. Absent on success. */
   status?: number;

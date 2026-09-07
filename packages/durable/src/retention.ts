@@ -209,6 +209,19 @@ export async function purgeRun(
  * `sugg:` kayıtları resource-önekli DEĞİL (id-anahtarlı) — kişinin önerileri suggestions API'siyle
  * listelenip tek tek silinir; buradaki dönüş sayısına dahil değildir (belgeli sınır).
  */
+/**
+ * BATCH ailesinin silme yüzeyi (denetçi bloker — K27/EK-2): `batch:<batchId>:` tek süpürmede plan
+ * (itemKeys = İŞ REFERANSLARI — PII-komşusu), report (itemKey+detail) ve TÜM item-run kayıtlarını
+ * (args = tam item verisi) alır. SWEEP GÖRÜNMEZLİĞİ, belgeli: batch item-run'ları `:outcome`/`:status`
+ * yazmaz → sweepRuns/listStaleRuns bu aileyi HİÇ görmez; retention'ı olan bir kurulum batch'leri
+ * kendi takvimiyle bu fonksiyonla süpürmelidir (ör. rapor arşivlendikten sonra).
+ */
+export async function purgeBatch(journal: Journal, batchId: string): Promise<number> {
+  if (batchId.includes(':')) throw new Error(`@gnldev/durable: purgeBatch('${batchId}') — batchId must not contain ':' (prefix boundary)`);
+  const del = requireDelete(journal);
+  return del(`batch:${batchId}:`);
+}
+
 export async function purgeResource(journal: Journal, resourceId: string): Promise<number> {
   const del = requireDelete(journal);
   return (await del(`xid:res:${resourceId}:`)) + (await del(`lesson:res:${resourceId}:`));

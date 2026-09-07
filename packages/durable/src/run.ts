@@ -230,8 +230,10 @@ export type DurableResult = Awaited<ReturnType<typeof generateText>> & {
  * step to inject into; the envelope is the fallback there. (2) The note is a mid-list 'system'
  * message — the engine itself replays those (allowSystemInMessages: true), but a provider converter
  * that rejects mid-list system messages would surface it; measured fine on OpenAI-compatible.
- * (3) STREAM surface, v1: the note fires (prepareStep is shared) but the ENVELOPE is not stamped on
- * the stream result — 'the envelope always carries the fact' currently holds for run() only.
+ * (3) STREAM surface: the envelope is a LAZY property on the stream result — empty until the
+ * stream is consumed, populated for finish-time readers (host onFinish). It is deliberately NOT
+ * emitted on the SSE done frame: the SSE sequence is replay-deterministic (W3) and the envelope
+ * differs between first run and replay.
  */
 function withReplayDisclosure(prev: ((step: any) => any) | undefined, ctx: DurableCtx): (step: any) => Promise<any> {
   let announced = 0;
@@ -470,7 +472,7 @@ function composeStopWhen(stopWhen: any, stepHookFailure?: StepHookFailure): any[
  * Read cost: a SINGLE enumeration call via `listKeys` + one `get` per approval record actually FOUND
  * (not for every possible tool/toolCallId — only for approval records that ACTUALLY exist).
  */
-async function resolveApprovals(
+export async function resolveApprovals(
   journal: Journal,
   runId: string,
   approvals: Record<string, boolean> | undefined,
@@ -2991,6 +2993,13 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   // Had frozen input before this call (a resume/replay), false on a fresh run. A plain property on
   // The result; the proxy forwards reads/writes to the target.
   (guarded as unknown as { __gnlPriorRun?: boolean }).__gnlPriorRun = frozenInput !== undefined;
+  // K28 kapanışı: zarf STREAM yüzeyinde de çıkar. LAZY getter — tool replay'leri stream TÜKETİLİRKEN
+  // olur, dönüş anında liste boştur; finish'ten sonra okuyan (server'ın done-frame'i, onFinish
+  // tüketicileri) dolu listeyi görür. Proxy get'i hedefe iletir; own-property getter önce gelir.
+  Object.defineProperty(guarded, 'replayedToolCalls', {
+    get: () => (ctx.replayLog?.length ? ctx.replayLog : undefined),
+    enumerable: false, configurable: true,
+  });
   return guarded;
   } // afterAcquire — post-acquire body under the release-on-throw guard
 }

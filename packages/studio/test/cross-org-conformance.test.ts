@@ -92,6 +92,7 @@ const VERDICTS: Record<string, { verdict: Verdict; why: string }> = {
   'GET /metrics/runs': { verdict: 'org-scoped', why: 'aggregates the org-scoped journal' },
   'GET /audit': { verdict: 'org-scoped', why: 'the audit log is per organization' },
   'GET /approvals': { verdict: 'org-scoped', why: 'pending approvals belong to an org\'s runs' },
+  'GET /semantic-guard': { verdict: 'org-scoped', why: 'aggregates semantic-guard incidents from the org-scoped journal (K24: scoped rw reader)' },
   'GET /events': { verdict: 'org-scoped', why: 'a live feed of the org-scoped journal' },
   'POST /auth/sse-ticket': { verdict: 'org-scoped', why: 'mints a ticket carrying the caller\'s org' },
   'GET /a2a-network': { verdict: 'org-scoped', why: 'extracted from org-scoped run data' },
@@ -883,7 +884,14 @@ describe('the ownership control — acme must SEE what globex must not', () => {
    * did that for `POST /auth/sse-ticket` and it was the right call on the evidence it had; what it did
    * not have was a second observable.
    */
-  const UNCONTROLLED_REASONS: Record<string, string> = {};
+  const UNCONTROLLED_REASONS: Record<string, string> = {
+    // Read-only aggregation over the org-scoped `rw` reader (FAZ-8, K24: deliberately moved OFF the
+    // raw reader). No caller-supplied id reaches a journal key — the route scans `<org>:`-prefixed
+    // runs only and returns counts/recents, so there is no per-id ownership to exercise; the
+    // leak-check above already proves a stranger org reads its own (empty) aggregate, and the
+    // scoped-reader wiring is pinned by studio-semantic-guard.test.ts.
+    'GET /semantic-guard': 'aggregate read over the org-scoped reader; no per-id surface to own',
+  };
 
   /**
    * The recorded-EFFECT control, for the routes whose answer is a constant.

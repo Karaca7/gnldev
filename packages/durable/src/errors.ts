@@ -168,11 +168,22 @@ export class RunSweptError extends Error {
  * First cut). Same contract for every member: 409 WITHOUT `resumable` (the id/content/actor is what
  * Needs fixing; no retry clears it).
  */
+/** Batch: bir batchId bir plan taşır — onaylanan plan ile gelen items uyuşmuyor (run.ts strictInput'un batch hali). */
+export class BatchPlanMismatchError extends Error {
+  readonly detail: { batchId: string; expectedToken?: string; actualToken: string };
+  constructor(message: string, detail: { batchId: string; expectedToken?: string; actualToken: string }) {
+    super(message);
+    this.name = 'BatchPlanMismatchError';
+    this.detail = detail;
+  }
+}
+
 export const CALLER_CONFLICT_CODES: Record<string, string> = {
   RunThreadMismatchError: 'run_thread_mismatch',
   RunInputMismatchError: 'run_input_mismatch',
   RunActorMismatchError: 'run_actor_mismatch',
   RunSweptError: 'run_swept',
+  BatchPlanMismatchError: 'batch_plan_mismatch',
 };
 
 /** Name-matched like blockedErrorCode below (dist/src class-identity resilience). */
