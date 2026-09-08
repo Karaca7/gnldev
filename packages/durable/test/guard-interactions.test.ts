@@ -54,7 +54,12 @@ describe('two-phase deny (suspend first → deny on RESUME) — real bug #3', ()
     expect(r2.interrupts).toHaveLength(0); // NOT re-suspended — this was the bug
     const rec = await journal.get<any>('dd-g:tool:call-1');
     expect(rec).toMatchObject({ status: 'denied' });
-    expect(rec.output.reason).toBe('big charge needs a human'); // the original suspend reason carries into the denial
+    // The original suspend reason still carries into the denial — but QUOTED, behind the outcome.
+    // Verbatim it read as a live request ("needs a human"), and a model handed that alongside
+    // `__denied: true` narrated the refused call as still pending and offered to re-submit it.
+    expect(rec.output.reason).toContain('REFUSED');
+    expect(rec.output.reason).toContain('did NOT run');
+    expect(rec.output.reason).toContain('big charge needs a human'); // provenance survives
     expect(r2.text).toContain('Done');
     // Time-travel/Approvals view agrees: nothing stays pending after a denial.
     expect(reconstructState(await journal.readRun('dd-g')).pending).toEqual([]);

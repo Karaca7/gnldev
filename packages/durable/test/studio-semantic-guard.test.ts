@@ -156,6 +156,52 @@ describe('studio /semantic-guard + suspendedAt', () => {
     expect(sg.precision).toMatchObject({ approved: 1, denied: 0 });
   });
 
+  it('a confirm tool records its repeat question too — the answer used to evaporate', async () => {
+    // Found by running it, not by reading it. `confirm: true` fires BEFORE the semantic recall hook,
+    // so on a confirm tool the gate did all its work (the question carries the ⚠ line) and then
+    // returned without journalling anything. The human answered a repeat question and the answer was
+    // gone. precision@suspend read EMPTY on the tools most worth measuring — and empty looks exactly
+    // like "no questions were asked" rather than "we never wrote them down".
+    const journal = new InMemoryJournal();
+    const embed = async (texts: string[]) => texts.map(() => [1, 0, 0]);
+    const limits = { sideEffectDuplicates: { action: 'suspend' as const, scope: 'thread' as const, semantic: { embed, embedModelId: 'cf' } } };
+    const tools = { createOrder: { sideEffect: true, confirm: true as const, semanticIdentity: { keys: ['sku'] }, execute: async () => ({ ok: 1 }) } };
+    const model = (id: string, args: unknown) => createMockModel(async ({ prompt }: any) =>
+      countToolResults(prompt) === 0 ? toolCallResult('createOrder', id, args) : finalTextResult('done'));
+    const run = (runId: string, id: string, args: unknown, approvals?: Record<string, boolean>) =>
+      runDurable({ runId, journal, model: model(id, args), tools, threadId: 'thc', limits, prompt: 'x', stopWhen: stepCountIs(6), ...(approvals ? { approvals } : {}) } as any);
+
+    await run('cf1', 'c1', { sku: 'AC-12000', qty: 18 });            // confirm asks
+    await run('cf1', 'c1', { sku: 'AC-12000', qty: 18 }, { c1: true }); // approved → runs, sem record written
+    await run('cf2', 'c2', { sku: 'AC-12000', qty: 9 });             // confirm asks, now DECORATED
+    await run('cf2', 'c2', { sku: 'AC-12000', qty: 9 }, { c2: false }); // human: really a duplicate
+
+    const sg = await get(createStudioApi({ reader: journal }), '/semantic-guard');
+    expect(sg.totals.suspend).toBe(1);
+    expect(sg.byOrigin).toMatchObject({ identity: 1 });
+    expect(sg.precision).toMatchObject({ approved: 0, denied: 1, rate: 1 });
+    // The API reports the declaration with the answer attached; it does not pre-filter. Nothing was
+    // waved through here, so `approved` is 0 — and that is what keeps the row off the UI's repair
+    // list. Filtering server-side would throw away the working declarations, which are the baseline
+    // a reader needs to judge the broken ones against.
+    expect(sg.byDeclaration).toEqual([{ toolName: 'createOrder', keys: ['sku'], suspend: 1, approved: 0, denied: 1 }]);
+  });
+
+  it('an ORDINARY confirm question is not a dedup event', async () => {
+    // The other half of the rule. confirm asks on every fresh call by design; counting those denials
+    // as "the gate caught a duplicate" would fill precision@suspend with clicks about something else.
+    const journal = new InMemoryJournal();
+    const embed = async (texts: string[]) => texts.map(() => [1, 0, 0]);
+    const limits = { sideEffectDuplicates: { action: 'suspend' as const, scope: 'thread' as const, semantic: { embed, embedModelId: 'cf' } } };
+    const tools = { createOrder: { sideEffect: true, confirm: true as const, semanticIdentity: { keys: ['sku'] }, execute: async () => ({ ok: 1 }) } };
+    const model = createMockModel(async ({ prompt }: any) =>
+      countToolResults(prompt) === 0 ? toolCallResult('createOrder', 'c1', { sku: 'FIRST-EVER' }) : finalTextResult('done'));
+    await runDurable({ runId: 'cfo1', journal, model, tools, threadId: 'thn', limits, prompt: 'x', stopWhen: stepCountIs(6) } as any);
+
+    const sg = await get(createStudioApi({ reader: journal }), '/semantic-guard');
+    expect(sg.totals).toEqual({ suspend: 0, warn: 0 });
+  });
+
   it('a question recorded before identityKeys existed is omitted, not shown with an empty key list', async () => {
     // `[]` on screen would read as "this tool declares no identity fields" — a different and far
     // more alarming claim than "we did not record it back then". The row disappears instead.

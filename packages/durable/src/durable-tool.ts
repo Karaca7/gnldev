@@ -561,8 +561,21 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
         // `approved === false`. Mirror those semantics here: denial writes a terminal 'denied'
         // Record — the model sees the denial and can continue, and the pending approval resolves.
         if (approved === false) {
+          // TENSE, and it is not cosmetic (measured live). The stored reason is the QUESTION, written
+          // to be read before a decision: "requires explicit confirmation BEFORE IT RUNS", "approve
+          // only if…", "check carefully BEFORE APPROVING". Handing that text back verbatim as the
+          // outcome gave the model a payload that says `__denied: true` and asks for approval in the
+          // same breath — and it narrated exactly that contradiction ("Reddedildi – onay bekleniyor"),
+          // then advised the user how to re-request the very job a human had just refused. The text
+          // is still worth carrying (it holds the ⚠ context), but as a QUOTED PAST QUESTION, with the
+          // outcome stated first in the past tense. The model is told what happened, not re-asked.
           const susReason = (record.output as { __gnl_suspend?: { reason?: string } })?.__gnl_suspend?.reason;
-          const output = { __denied: true, reason: susReason ?? 'Approval denied.' };
+          const output = {
+            __denied: true,
+            reason: susReason
+              ? `A human REFUSED this call — it did NOT run. Do not retry it unless the user asks again. The question they answered was: "${susReason}"`
+              : 'Approval denied.',
+          };
           await writeToolTerminal(ctx, key, { status: 'denied', output }, toolCallId, toolName, hash);
           return output;
         }
@@ -649,6 +662,12 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
         // thread-scope duplicate marker for this exact tool+args means the work was already done
         // in this conversation; say so in the question, so "bilerek istiyorum" is an informed click.
         // Best-effort read: a marker miss just leaves the generic text (the safe direction).
+        // WHICH repeat signal decorated the question — undefined means none did, and the confirm
+        // stays what it has always been: this tool's ordinary "are you sure" gate. Only a DECORATED
+        // question is journalled below, because only then is the human's click an answer ABOUT a
+        // repeat. Counting every confirm denial as "the gate caught a duplicate" would inflate
+        // precision@suspend with clicks that had nothing to do with dedup.
+        let repeatSignal: { source: 'duplicate-guard' | 'semantic-guard'; origin: string; keys?: string[]; firstToolCallId?: string; score?: number } | undefined;
         if (ctx.threadId) {
           try {
             const prior = await ctx.journal.get<{ at?: number; inFlight?: boolean; released?: boolean; firstToolCallId?: string }>(
@@ -656,6 +675,10 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
             );
             if (prior && prior.inFlight !== true && prior.released !== true) {
               reason += ` ⚠ Identical work was ALREADY COMPLETED earlier in this conversation${prior.firstToolCallId ? ` (first result: ${prior.firstToolCallId})` : ''} — approve only if you intend a deliberate repeat.`;
+              // Byte-identical args: deterministic and certain. Recorded so the answer is not lost,
+              // but under the DUPLICATE source — precision@suspend measures whether the SIMILARITY
+              // chain was worth asking, and an exact-hash hit was never in doubt.
+              repeatSignal = { source: 'duplicate-guard', origin: 'marker', ...(prior.firstToolCallId ? { firstToolCallId: prior.firstToolCallId } : {}) };
             } else if (tool.semanticIdentity && ctx.resourceId && await (async () => {
               // KANALLAR-ARASI bakış (XID) — semantikten ÖNCE: bu konuşmada iz yok ama aynı iş
               // kimliği başka kanaldan (batch/API/başka sohbet) tamamlanmış olabilir; soru
@@ -667,6 +690,11 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
               reason += amountsDiffer.length
                 ? ` ⚠ Work with the SAME business identity was completed ${xidWhen(cfXid, nowC)} (first: ${cfXid.first.toolCallId}) but the amounts DIFFER (${amountsDiffer.join(', ')}) — check carefully before approving.`
                 : ` ⚠ Identical business identity ALREADY COMPLETED ${xidWhen(cfXid, nowC)} (first: ${cfXid.first.toolCallId}) — approve only if you intend a deliberate repeat.`;
+              // Deterministic equality on the DECLARED keys, same as the semantic gate's identity
+              // rung — just found through another channel. Same failure mode too: if this question
+              // was unnecessary, the declaration is what was too coarse. So it belongs in the same
+              // column, and byOrigin folds it into 'identity' (anything not 'rule' lands there).
+              repeatSignal = { source: 'semantic-guard', origin: 'xid', keys: tool.semanticIdentity!.keys, firstToolCallId: cfXid.first.toolCallId };
               return true;
             })()) {
               // süsleme XID'den geldi — semantik taramaya gerek kalmadı
@@ -691,10 +719,35 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
                   reason += verdict.amountsDiffer.length
                     ? ` ⚠ Work with the SAME business identity was completed earlier in this conversation ("${verdict.priorCanonical}", first result: ${verdict.firstToolCallId}) but the amounts DIFFER (${verdict.amountsDiffer.join(', ')}) — check carefully before approving.`
                     : ` ⚠ Work with the SAME business identity appears ALREADY COMPLETED earlier in this conversation ("${verdict.priorCanonical}", first result: ${verdict.firstToolCallId}) — approve only if you intend a deliberate repeat.`;
+                  repeatSignal = {
+                    source: 'semantic-guard', origin: verdict.origin, keys: tool.semanticIdentity.keys,
+                    firstToolCallId: verdict.firstToolCallId, score: verdict.score,
+                  };
                 }
               }
             }
           } catch { /* generic text is the safe fallback */ }
+        }
+        // The measurement gap this closes, found by running it rather than reading it: on a tool
+        // with `confirm: true` the semantic gate DOES its work (everything above decorates the
+        // question) but the arm returned without journalling anything. So the human answered a
+        // repeat question and the answer evaporated — precision@suspend stayed empty on exactly the
+        // tools most worth measuring, and read as "no questions asked" rather than "not recorded".
+        // Only decorated questions are written; an ordinary confirm is still not a dedup event.
+        if (repeatSignal) {
+          await recordIncident(ctx.journal, ctx.runId, {
+            at: Date.now(), source: repeatSignal.source, action: 'suspend', toolName, toolCallId, message: reason,
+            detail: {
+              toolName, origin: repeatSignal.origin,
+              // Structural, and the reason this is not just `origin`: a reader must be able to tell
+              // a question the confirm gate asked from one the dedup ladder asked on its own. The
+              // wording differs, the ladder rung differs, and the human's click means the same thing.
+              askedBy: 'confirm',
+              ...(repeatSignal.firstToolCallId ? { firstToolCallId: repeatSignal.firstToolCallId } : {}),
+              ...(repeatSignal.score !== undefined ? { score: repeatSignal.score } : {}),
+              ...(repeatSignal.keys ? { identityKeys: repeatSignal.keys } : {}),
+            },
+          });
         }
         const sentinel = { __gnl_suspend: { toolCallId, toolName, args: input, reason, kind: 'confirm' } };
         await writeToolTerminal(ctx, key, { status: 'suspended', output: sentinel }, toolCallId, toolName, hash);
