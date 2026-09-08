@@ -2099,9 +2099,16 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     // "the judge is enabled" gets mistaken for "the judge is answering".
     const scan = { droppedIdentity: 0, droppedByRule: 0, droppedDiscriminator: 0, droppedStamp: 0, grayCalls: 0 };
     const judge = { same: 0, different: 0, unsure: 0, skipped: {} as Record<string, number>, staleReplaced: 0 };
-    const semSuspends: { runId: string; toolCallId: string }[] = [];
+    // Which identity DECLARATION each question rested on, joined to the human's answer below. This
+    // is the only surface that turns "40% of the questions were wrong" into something a developer
+    // can fix: three false alarms in the traffic run were one tool matching on `sku` alone while the
+    // field that separated the jobs never entered the tool call. `precision` alone cannot say that.
+    // 'approved' here is an UPPER BOUND on false alarms, exactly as in `precision` — a deliberate
+    // repeat the human waved through lands in the same bucket, so this ranks suspects, not verdicts.
+    const byDeclaration = new Map<string, { toolName: string; keys: string[]; suspend: number; approved: number; denied: number }>();
+    const semSuspends: { runId: string; toolCallId: string; declKey?: string }[] = [];
     if (!writable || typeof kj.listKeys !== 'function') {
-      return c.json({ totals, byTool, byOrigin, scan, judge, precision, recent, unavailable: 'journal has no listKeys — incidents cannot be enumerated' });
+      return c.json({ totals, byTool, byOrigin, scan, judge, precision, byDeclaration: [], recent, unavailable: 'journal has no listKeys — incidents cannot be enumerated' });
     }
     // Cap: this aggregates on every 10s UI poll — unbounded N+1 over a retention-sized journal grows
     // Linearly forever. The most RECENT slice carries the calibration signal; the cap is reported.
@@ -2123,8 +2130,22 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
         // A drift here (judge share climbing) is the first sign that identity declarations or the
         // ladder's dictionaries stopped matching the traffic.
         const origin = i.source === 'semantic-judge' ? 'judge' : ((i.detail as { origin?: string } | undefined)?.origin === 'rule' ? 'rule' : 'identity');
-        if (bucket === 'suspend') { byOrigin[origin]++; semSuspends.push({ runId: r.runId, toolCallId: i.toolCallId }); }
         const d = (i.detail ?? {}) as Record<string, unknown>;
+        if (bucket === 'suspend') {
+          byOrigin[origin]++;
+          // Records written before this field existed carry no keys. They are SKIPPED rather than
+          // grouped under an empty set: `[]` on screen reads as "this tool declares nothing", which
+          // is a different — and much more alarming — claim than "we did not record it back then".
+          const rawKeys = d.identityKeys;
+          const keys = Array.isArray(rawKeys) && rawKeys.every((k) => typeof k === 'string') ? (rawKeys as string[]) : undefined;
+          const declKey = keys ? `${i.toolName} ${keys.join(',')}` : undefined;
+          if (declKey && keys) {
+            const row = byDeclaration.get(declKey) ?? { toolName: i.toolName, keys, suspend: 0, approved: 0, denied: 0 };
+            row.suspend++;
+            byDeclaration.set(declKey, row);
+          }
+          semSuspends.push({ runId: r.runId, toolCallId: i.toolCallId, declKey });
+        }
         if (i.source === 'semantic-guard' && i.action === 'warn') {
           for (const k of Object.keys(scan) as Array<keyof typeof scan>) {
             const v = d[k];
@@ -2157,14 +2178,19 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       seenPair.add(pk);
       const entries = await reader.readRun(s.runId).catch(() => [] as Awaited<ReturnType<typeof reader.readRun>>);
       const rec = entries.find((e) => e.kind === 'tool' && e.key.endsWith(`:tool:${s.toolCallId}`))?.value as { status?: string } | undefined;
-      if (rec?.status === 'succeeded') precision.approved++;
-      else if (rec?.status === 'denied') precision.denied++;
+      // Aynı okuma iki sayacı besliyor: genel oran (precision) ve o oranın HANGİ beyandan geldiği
+      // (byDeclaration). İkinci bir readRun turu açmak aynı diski iki kez okumak olurdu.
+      const row = s.declKey ? byDeclaration.get(s.declKey) : undefined;
+      if (rec?.status === 'succeeded') { precision.approved++; if (row) row.approved++; }
+      else if (rec?.status === 'denied') { precision.denied++; if (row) row.denied++; }
       else precision.pending++; // hâlâ askıda ya da kayıt okunamadı — karara sayılmaz
     }
     const decided = precision.approved + precision.denied;
     if (decided > 0) precision.rate = precision.denied / decided;
     recent.sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
-    return c.json({ totals, byTool, byOrigin, scan, judge, precision, recent: recent.slice(0, 50), scannedRuns: runs.length, totalRuns: allRuns.length });
+    // En çok "yine de koş" alan beyan başa: düzeltilecek deklarasyon arayan geliştiricinin sırası bu.
+    const decls = [...byDeclaration.values()].sort((a, b) => b.approved - a.approved || b.suspend - a.suspend);
+    return c.json({ totals, byTool, byOrigin, scan, judge, precision, byDeclaration: decls, recent: recent.slice(0, 50), scannedRuns: runs.length, totalRuns: allRuns.length });
   });
 
   app.get('/approvals', async (c) => {

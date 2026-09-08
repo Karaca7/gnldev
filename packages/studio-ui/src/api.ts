@@ -431,6 +431,12 @@ export interface SemanticGuardSummary {
   scan?: { droppedIdentity: number; droppedByRule: number; droppedDiscriminator: number; droppedStamp: number; grayCalls: number };
   /** FAZ-7: every arm the judge took, including the ones that asked nothing. */
   judge?: { same: number; different: number; unsure: number; skipped: Record<string, number>; staleReplaced: number };
+  /** Which identity declaration each question rested on, with the human's answer. `precision` says
+   *  how many questions were wrong; this says WHICH declaration produced them, which is the part a
+   *  developer can act on. `approved` is the same upper bound as in `precision` — a deliberate repeat
+   *  waved through counts here too. Absent on an older server, and questions recorded before the
+   *  field existed are omitted rather than shown with an empty key list. */
+  byDeclaration?: { toolName: string; keys: string[]; suspend: number; approved: number; denied: number }[];
   recent: { runId: string; at?: number; action: string; toolName: string; message: string }[];
   unavailable?: string;
 }

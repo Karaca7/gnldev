@@ -130,4 +130,58 @@ describe('studio /semantic-guard + suspendedAt', () => {
     const sg = await get(createStudioApi({ reader: journal }), '/semantic-guard');
     expect(sg.judge.staleReplaced).toBe(1);
   });
+
+  it('byDeclaration: a waved-through question names the identity fields it rested on', async () => {
+    // The loop this closes: `precision` can say a question was wrong, but not what to change. The
+    // measured failure it comes from — a tool matching on `sku` alone while the field that actually
+    // separated the two jobs (the warehouse) was absent from the tool's schema, so the engine
+    // compared everything it could see and every value agreed.
+    const journal = new InMemoryJournal();
+    const embed = async (texts: string[]) => texts.map(() => [1, 0, 0]);
+    const limits = { sideEffectDuplicates: { action: 'suspend' as const, scope: 'thread' as const, semantic: { embed, embedModelId: 'bd' } } };
+    // `qty` is deliberately OUTSIDE keys: the two calls are different jobs, and nothing in the
+    // declaration can tell them apart. This is the false alarm, staged.
+    const tools = { createOrder: { sideEffect: true, semanticIdentity: { keys: ['sku'] }, execute: async () => ({ ok: 1 }) } };
+    const model = (id: string, args: unknown) => createMockModel(async ({ prompt }: any) =>
+      countToolResults(prompt) === 0 ? toolCallResult('createOrder', id, args) : finalTextResult('done'));
+    const run = (runId: string, id: string, args: unknown, approvals?: Record<string, boolean>) =>
+      runDurable({ runId, journal, model: model(id, args), tools, threadId: 'thd', limits, prompt: 'x', stopWhen: stepCountIs(6), ...(approvals ? { approvals } : {}) } as any);
+
+    await run('bd1', 'c1', { sku: 'AC-12000', qty: 18 });
+    await run('bd2', 'c2', { sku: 'AC-12000', qty: 10 }); // asked — same sku, and sku is all it knows
+    await run('bd2', 'c2', { sku: 'AC-12000', qty: 10 }, { c2: true }); // human: "different warehouse, run it"
+
+    const sg = await get(createStudioApi({ reader: journal }), '/semantic-guard');
+    expect(sg.byDeclaration).toEqual([{ toolName: 'createOrder', keys: ['sku'], suspend: 1, approved: 1, denied: 0 }]);
+    expect(sg.precision).toMatchObject({ approved: 1, denied: 0 });
+  });
+
+  it('a question recorded before identityKeys existed is omitted, not shown with an empty key list', async () => {
+    // `[]` on screen would read as "this tool declares no identity fields" — a different and far
+    // more alarming claim than "we did not record it back then". The row disappears instead.
+    const journal = new InMemoryJournal();
+    const embed = async (texts: string[]) => texts.map(() => [1, 0, 0]);
+    const limits = { sideEffectDuplicates: { action: 'suspend' as const, scope: 'thread' as const, semantic: { embed, embedModelId: 'bd' } } };
+    const tools = { createOrder: { sideEffect: true, semanticIdentity: { keys: ['sku'] }, execute: async () => ({ ok: 1 }) } };
+    const model = (id: string, args: unknown) => createMockModel(async ({ prompt }: any) =>
+      countToolResults(prompt) === 0 ? toolCallResult('createOrder', id, args) : finalTextResult('done'));
+    const run = (runId: string, id: string, args: unknown) =>
+      runDurable({ runId, journal, model: model(id, args), tools, threadId: 'tho', limits, prompt: 'x', stopWhen: stepCountIs(6) } as any);
+
+    // Different qty on purpose: byte-identical args are caught by the exact-hash marker one layer
+    // above and the semantic gate never runs — the record this test ages would not exist.
+    await run('od1', 'c1', { sku: 'AC-12000', qty: 18 });
+    await run('od2', 'c2', { sku: 'AC-12000', qty: 10 });
+    // Age the record into the shape an older build wrote: everything else, no identityKeys.
+    for (const k of await journal.listKeys!('od2:incident:')) {
+      const hit = await journal.get<any>(k); // stored wrapped as { v: incident }
+      if (hit?.v?.action !== 'suspend') continue;
+      const { identityKeys: _dropped, ...detail } = hit.v.detail;
+      await journal.put(k, { v: { ...hit.v, detail } });
+    }
+
+    const sg = await get(createStudioApi({ reader: journal }), '/semantic-guard');
+    expect(sg.totals.suspend).toBe(1); // the question itself still counts everywhere else
+    expect(sg.byDeclaration).toEqual([]);
+  });
 });

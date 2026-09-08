@@ -269,6 +269,24 @@ export function Observability() {
               )}
             </p>
           )}
+          {/* The declarations behind the questions a human waved through. The row above says HOW MANY
+              were wrong; this says WHICH declaration produced them, and the key list is the fix:
+              questions that all rest on the same one or two fields mean the tool call never carried
+              what separates the jobs. Only waved-through rows are listed — a declaration whose
+              questions were all denied is working, and belongs on no repair list. Rendered defensively
+              like every block here: an older server omits the field entirely. */}
+          {(semGuard.data.byDeclaration ?? []).some((d) => d.approved > 0) && (
+            <div className="mb-2 text-xs">
+              <span className="text-muted-foreground">{t('semanticDeclLabel')}</span>
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {(semGuard.data.byDeclaration ?? []).filter((d) => d.approved > 0).slice(0, 6).map((d) => (
+                  <span key={`${d.toolName} ${d.keys.join(',')}`} className="rounded border px-1.5 py-0.5 font-mono text-[11px]">
+                    {t('semanticDeclRow', { tool: d.toolName, keys: d.keys.join(', '), approved: d.approved, suspend: d.suspend })}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="flex flex-wrap gap-2">
             {Object.entries(semGuard.data.byTool ?? {}).map(([tool, v]) => (
               <span key={tool} className="rounded border px-2 py-0.5 font-mono text-[11px]">

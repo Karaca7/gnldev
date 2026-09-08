@@ -33,6 +33,8 @@
   "semanticDescription": "Anlamca benzer mükerrer adayları: sorulan sorular vs yalnız-telemetri düşüşleri (kimlik uyuşmazlığı, embedder kesintileri). Araç başına: soru/telemetri.",
   "semanticPrecision": "İnsan sonuçları: {{denied}} durduruldu (gerçek mükerrer), {{approved}} yine de koştu, {{pending}} bekliyor.",
   "semanticPrecisionRate": "%{{pct}} gerçek mükerrer yakaladı",
+  "semanticDeclLabel": "Yine de koşulan sorular, dayandıkları kimlik alanlarına göre:",
+  "semanticDeclRow": "{{tool}} · {{keys}} — {{suspend}} sorudan {{approved}} tanesi yine de koştu",
   "semanticOriginLabel": "Soruyu soran:",
   "semanticOriginIdentity": "kimlik {{count}}",
   "semanticOriginRule": "kural {{count}}",

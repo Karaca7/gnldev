@@ -973,6 +973,14 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
             detail: {
               toolName, score: verdict.score, firstToolCallId: verdict.firstToolCallId, priorHash: verdict.priorHash,
               amountsDiffer: verdict.amountsDiffer, origin: verdict.origin,
+              // The declared set the match rested on. Without it a rejected question ("different
+              // job") is a dead end: the operator's answer proves the identity declaration was too
+              // coarse but never says WHICH fields were compared, so nobody can act on it. Measured
+              // failure — three false alarms in the traffic run were all one tool matching on `sku`
+              // alone while the field that separated the jobs (warehouse) was absent from the
+              // schema. FIELD NAMES ONLY, never values: this is the developer's diagnosis, and the
+              // canonical/redaction contract that keeps values out of the vector holds here too.
+              identityKeys: semPlan.id.keys,
               ...(verdict.trace?.length ? { trace: verdict.trace } : {}),
             },
           });
@@ -1014,6 +1022,11 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
               detail: {
                 toolName, score: gray.score, firstToolCallId: gray.rec.firstToolCallId, priorHash: gray.rec.argsHash,
                 judgeModelId: judgeCfg.judgeModelId, cached: judged.cached, latencyMs: judged.latencyMs,
+                // Same field, same reason as FAZ A — and it reads differently here on purpose: these
+                // keys did NOT match, a model said "same job anyway". A rejected question is then
+                // either a wrong judge or a declaration pointing at the wrong fields, and only the
+                // set makes the two distinguishable after the fact.
+                identityKeys: semPlan.id.keys,
                 cert: { fixtureSetId: judgeCfg.qualification.fixtureSetId, paraphraseRecall: judgeCfg.qualification.paraphraseRecall, nearMissFp: judgeCfg.qualification.nearMissFp },
                 // A model/prompt/ruleset bump silently invalidates every cached verdict; the only way
                 // that cost is countable is if the flag reaches a durable record (Studio reads it here).

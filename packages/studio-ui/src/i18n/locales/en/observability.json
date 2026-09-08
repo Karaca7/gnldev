@@ -33,6 +33,8 @@
   "semanticDescription": "Meaning-similar duplicate candidates: questions asked vs telemetry-only drops (identity mismatch, embedder outages). Per tool: questions/telemetry.",
   "semanticPrecision": "Human outcomes: {{denied}} stopped (real duplicate), {{approved}} ran anyway, {{pending}} pending.",
   "semanticPrecisionRate": "{{pct}}% caught real duplicates",
+  "semanticDeclLabel": "Questions that were waved through, by the identity fields they rested on:",
+  "semanticDeclRow": "{{tool}} · {{keys}} — {{approved}} of {{suspend}} ran anyway",
   "semanticOriginLabel": "Asked by:",
   "semanticOriginIdentity": "identity {{count}}",
   "semanticOriginRule": "rules {{count}}",

@@ -574,6 +574,21 @@ Studio's semantic card breaks the questions down by which rung asked (identity /
 beside `precision@suspend`. A judge share climbing over time is the first sign your identity
 declarations or dictionaries stopped matching the traffic.
 
+When a question turns out to be unnecessary — a human read it and ran the work anyway — the card
+also names the declaration it rested on (`byDeclaration`):
+
+```
+createOrder · sku — 4 of 4 questions ran anyway
+```
+
+`precision@suspend` tells you how many questions were wrong; this tells you which declaration
+produced them, which is the part you can change. Questions all resting on the same one or two fields
+usually mean the tool call never carried what separates the jobs — two orders for different
+warehouses are identical to the gate if `createOrder` has no warehouse field. That is a schema fix
+before it is a `semanticIdentity` fix: **the gate can only see what the tool call carries.** Read the
+count as a ranking of suspects, not a verdict — a repeat someone deliberately approved lands in the
+same column.
+
 **What this is NOT** (binding for docs and marketing alike, extending the v1 list): the judge does
 not decide or approve; the ladder does not "catch duplicates" (no guarantee language); this is not
 AI-verified dedup; no synthetic measurement here is a field-accuracy promise; and "a qualified judge"
