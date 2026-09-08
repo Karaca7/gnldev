@@ -204,10 +204,24 @@ export interface RunLimits {
    *            başka bir model %100'ünü doğru bildi — sınavsız yargıç kurulu görünen ama olmayan
    *            bir katmandır, o yüzden eksik/zayıf sertifika CONFIG ANINDA throw eder.
    *
+   * NEREDE İŞE YARAR (ölçüldü, 144 turluk gerçek konuşma trafiği): iyi bir araç modeli kimliği ZATEN
+   * kanonikleştiriyor — "şu televizyondan bir tane daha" → `sku:'TV-42'`, yani önceki çağrıyla birebir
+   * aynı; tam-hash katmanı yakalıyor ve semantik basamaklara sıra gelmiyor (o koşumda merdiven hiç
+   * eşleşmedi, yargıç 12 çağrıda hiç soru sordurmadı). Bu iki basamak, modelin metni OLDUĞU GİBİ
+   * geçirdiği kimlik alanlarında kazanır: bilet konusu, müşteri/şirket adı, serbest açıklama. Kendi
+   * `scan.grayCalls` sayacınız sıfıra yakın kalıyorsa cevabınız odur.
+   *
+   * BEYANDAN ÖNCE ŞEMA: o koşumdaki yanlış alarmların tamamının tek sebebi vardı — farklı depolara
+   * verilen iki sipariş aynı göründü, çünkü `createOrder` şemasında depo alanı YOKTU. İşi ayıran
+   * bilgi araç çağrısına girmiyorsa hiçbir beyan onu ayıramaz; `semanticIdentity.keys` ikinci sorudur,
+   * birincisi aracın girdi şemasının farkı taşıyıp taşımadığıdır.
+   *
    * Yargıç da skor gibi KARAR VERMEZ: 'same' cevabı yalnız insana soru sordurur, 'different' ve her
    * başarısızlık (timeout/bütçe/parse) bugünkü davranıştır ve journal'a yazılır — sessiz dal yoktur.
    * MALİYET SÖZLEŞMESİ: yargıç YALNIZ gri bantta çağrılır ve run başına `maxCallsPerRun` (varsayılan
-   * 10) slotla sınırlıdır. Açmadan önce üst sınırı KENDİ telemetriniz verir: Studio /semantic-guard'ın
+   * 10) slotla sınırlıdır — ÖLÇÜLDÜ: gerçek konuşma trafiğinde korumalı çağrı başına 0.10 yargıç
+   * çağrısı (126 araç turunda 12 çağrı), yani varsayılan bir bütçe değil patolojik thread'e karşı
+   * emniyet supabıdır. Açmadan önce kendi üst sınırınızı telemetriniz verir: Studio /semantic-guard'ın
    * `scan.grayCalls` alanı — gri artık üreten ÇAĞRI sayısı (aday sayısı değil: bir çağrıda birden çok
    * aday olabilir ama yargıç çağrı başına en fazla bir kez konuşur, o yüzden birim çağrıdır ve alan
    * yargıç açık/kapalı fark etmeksizin aynı şeyi sayar). İki tuzak: `droppedIdentity` ikinci

@@ -472,6 +472,25 @@ warehouses, not "Turkish surnames" — and only pays off when a judge is configu
 judge calls rather than changing any answer. Default empty; leave it that way unless you have
 measured a reason.)
 
+**Where these rungs actually earn their keep — measured, and not where we first assumed.** We ran 144
+turns of natural conversation through the real engine with a real tool model writing every argument.
+The ladder matched nothing and the judge, called twelve times, asked nothing. The reason is worth
+knowing before you enable either: a competent tool model CANONICALISES for you. "one more of that
+television" comes back as `sku: "TV-42"` — byte-identical to the earlier call — so the exact-hash
+layer catches it and the semantic rungs never get their turn.
+
+So: on identity fields the model can canonicalise (SKUs, invoice references, order ids) you may not
+need these rungs at all. They earn their keep where the model passes text through as written —
+support-ticket subjects, customer and company names, free-text descriptions — which is exactly where
+"same job, different wording" survives all the way to the tool call. Read your own `scan.grayCalls`
+before deciding; if it stays near zero, that is your answer.
+
+**And before you write the declaration, check the SCHEMA.** Every false alarm in that run had one
+cause: two orders to different warehouses looked identical because `createOrder` had no warehouse
+field. The distinguishing fact never reached the tool call, and no declaration can separate what the
+engine cannot see. `semanticIdentity.keys` is the second question; the first is whether the tool's
+input schema carries what makes two jobs different.
+
 **The judge (`judge`) is the last rung, and it does not decide either.** It answers one question —
 "do these two records name the same real-world thing?" — and a `same` answer buys exactly one thing:
 a human is asked. `different`, `unsure`, a timeout, an exhausted budget and an unparseable reply all
@@ -534,6 +553,11 @@ shifts when you enable `rules` — separator drops move into `droppedByRule`, so
 reports a smaller `droppedIdentity` after the upgrade and pre/post baselines are not comparable. In
 our measurements the ladder settled about a third of the paraphrases for free and dropped a third to
 a half of the look-alikes before any judge call.
+
+**Measured on conversation traffic:** 0.10 judge calls per guarded call (12 calls across 126
+tool-calling turns), and none of them produced a question — the gray band was genuinely made of
+different work. The `maxCallsPerRun` default of 10 is therefore roomy rather than tight; it is a
+backstop against a pathological thread, not a budget you should expect to spend.
 
 The chain, end to end:
 

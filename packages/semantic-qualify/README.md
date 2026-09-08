@@ -82,6 +82,17 @@ Labels: `dup-exact` and `dup-paraphrase` mean the same job; `near-miss` and `unr
 different jobs. `near-miss` is where the value lives — pairs that LOOK alike and are not (neighbouring
 SKUs, sibling companies, adjacent sizes) are what separate a usable judge from a plausible one.
 
+## Before you certify a judge: check you need one
+
+Measured on 144 turns of natural conversation through the real engine, the judge was called twelve
+times and asked nothing, because a competent tool model canonicalises identity for you — "one more of
+that television" arrives as `sku: "TV-42"`, byte-identical to the earlier call, and the exact-hash
+layer catches it long before a judge is consulted.
+
+A judge earns its cost where the model passes text through as written: ticket subjects, customer and
+company names, free-text descriptions. If your identity fields are codes the model normalises, read
+`scan.grayCalls` in Studio first — a number near zero means the exam is not worth sitting yet.
+
 ## Honest limits
 
 These belong next to the number they qualify:
