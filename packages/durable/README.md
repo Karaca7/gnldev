@@ -505,6 +505,14 @@ beside the embedder. `describe()` is the redaction point for both. If your compl
 "nothing identifying leaves the process", the recipe is the same one as for embeddings: a local model
 behind both closures, or a `describe()` that emits hashed or bucketed identifiers.
 
+`describe()` is also where RECALL quality is won or lost for free-text identity fields. Measured
+systematic blind spot: mixed-language term pairs ("Karanlık mod" vs "Dark mode", "dışa aktarma" vs
+"export") score below the candidate threshold, and a record the recall gate never surfaces is never
+seen by the rules or the judge — the miss is silent and final. If an identity field can carry the
+same term in more than one language, normalize it to ONE canonical language inside `describe()`
+(and inside `keys` normalization if the field is also an identity key). This is a per-tool, per-field
+decision — the framework deliberately ships no translation dictionary.
+
 ```ts
 semantic: {
   embed: myEmbed, embedModelId: 'local:multilingual-e5-small@q8',

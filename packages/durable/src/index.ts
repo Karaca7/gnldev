@@ -38,7 +38,8 @@ export type { ModelPricing, PricingDoc } from './pricing.js';
 export {
   DivergenceError, RunBusyError, SideEffectRetryBlockedError, RetryLimitExceededError,
   ReplicationNotAcknowledgedError, SuiteVersionMismatchError, RunThreadMismatchError,
-  RunInputMismatchError, RunActorMismatchError, RunSweptError, BatchPlanMismatchError,
+  RunInputMismatchError, RunActorMismatchError, ThreadOwnerMismatchError, RunSweptError, BatchPlanMismatchError,
+  NotAnAgentRunError,
   CALLER_CONFLICT_CODES, callerConflictCode,
   BLOCKED_ERROR_CODES, blockedErrorCode, upstreamFailure,
 } from './errors.js';
@@ -61,7 +62,7 @@ export { gnlTool } from './types.js';
 // must resolve to nothing rather than to a stringified function.
 export { toolDescriptionText } from './types.js';
 export type { ToolDurability } from './types.js';
-export { runDurable, resumeRun, streamDurable, limitBreachFromSteps, blockedFromSteps, resolveApprovals } from './run.js';
+export { runDurable, resumeRun, streamDurable, limitBreachFromSteps, blockedFromSteps, surfacedInterrupts, resolveApprovals, decisionOf, hasRunProbe, assertRunIdSafe, type ApprovalRecord } from './run.js';
 export type { RunDurableArgs, StreamDurableArgs, DurableResult, ResumeAgentConfig, StreamBreach, MemoryContextRecord } from './run.js';
 // K1/W1 (B): sentinel→error conversion helper for code that consumes streamDurable directly.
 export { streamFinishError } from './run.js';

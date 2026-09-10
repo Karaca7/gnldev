@@ -15,12 +15,36 @@ import { maskSentinelOutput } from '../src/index.js';
 describe('maskSentinelOutput', () => {
   it('masks __gnl_suspend into a pending-approval shape and hands back the raw interrupt', () => {
     const interrupt = { toolCallId: 'c1', toolName: 'chargeCard', args: { amount: 5000 }, reason: 'needs approval' };
-    const { display, interrupt: out } = maskSentinelOutput({ __gnl_suspend: interrupt });
+    const { display, interrupts, interrupt: out } = maskSentinelOutput({ __gnl_suspend: interrupt });
     expect(display).toEqual({ pending: 'approval', toolName: 'chargeCard', reason: 'needs approval' });
     expect(JSON.stringify(display)).not.toContain('__gnl_suspend');
     // The caller needs the raw interrupt to emit a data-gnl-interrupt chunk; it just must not be the
     // Value shown in place of the tool output.
-    expect(out).toBe(interrupt);
+    expect(interrupts).toEqual([interrupt]);
+    expect(interrupts![0]).toBe(interrupt); // an ordinary suspend is passed through, not rebuilt
+    expect(out).toBe(interrupt); // deprecated single — still the same object for existing readers
+  });
+
+  // A proxy suspend carries the parent's toolCallId, and answering THAT id is a documented no-op in
+  // the engine. The unwrap is `surfacedInterrupts`', not this file's — what is asserted here is that
+  // the helper asks for it at all, and hands back every question rather than the first.
+  it('nested suspend: surfaces the child questions, and the deprecated single is only the first of them', () => {
+    const { display, interrupts, interrupt } = maskSentinelOutput({
+      __gnl_suspend: {
+        toolCallId: 'parent-1', toolName: 'agent', args: { task: 't' }, kind: 'nested', reason: 'a sub-agent stopped',
+        nested: {
+          runId: 'agent:parent-1',
+          interrupts: [
+            { toolCallId: 'child-a', toolName: 'chargeCard', args: { amount: 5000 }, reason: 'large amount' },
+            { toolCallId: 'child-b', toolName: 'wire', args: { iban: 'X' } },
+          ],
+        },
+      },
+    });
+    expect(interrupts!.map((i) => i.toolCallId)).toEqual(['child-a', 'child-b']);
+    expect(interrupt!.toolCallId).toBe('child-a'); // and this is exactly why reading it is deprecated
+    // The tool output placeholder still belongs to the suspended (parent) call.
+    expect(display).toMatchObject({ pending: 'approval', toolName: 'agent' });
   });
 
   it('masks __gnl_limit_exceeded, keeping code/message and dropping everything else', () => {

@@ -4,15 +4,15 @@ import { randomUUID } from 'node:crypto';
 let wfAnonCounter = 0; // runWorkflow's anon-fallback uniqueness within a process — see the warn below
 import type { ToolSchemaRuleLike } from './types.js';
 import { stepCountIs, tool as aiTool, jsonSchema } from 'ai';
-import { runDurable, streamDurable } from './run.js';
+import { runDurable, streamDurable, assertRunIdSafe } from './run.js';
 import type { StreamBreach } from './run.js';
 import { resolveModel, withModelFallback, type FallbackCandidate } from './model-router.js';
 import { createAgentTool, runSubAgent } from './agent-tool.js';
 import { runNetwork as runNetworkCore, type NetworkResult, type NetworkTarget } from './network.js';
 import { acquireRunLock } from './run-lock.js';
-import { claim as journalClaim } from './journal.js';
+import { claim as journalClaim, claimIdentityInput } from './journal.js';
 import { argsHash } from './hash.js';
-import { RunBusyError, RunSweptError, RunInputMismatchError } from './errors.js';
+import { RunBusyError, RunSweptError, RunInputMismatchError, ThreadOwnerMismatchError } from './errors.js';
 import { recordIdemConflict } from './idem-ledger.js';
 import { durableProcessorStep } from './processor.js';
 import { recordRunScores } from './metrics.js';
@@ -631,7 +631,8 @@ export function createGnl(config: CreateGnlConfig) {
    * Returned as data (`suspended`, `stepId`, `reason`), not thrown: the agent asked a question and
    * "it is waiting on a human" is an answer.
    */
-  function buildWorkflowTools(names: string[] | undefined): ToolSet {
+  /** `identity` — buildSubAgentTools ile aynı gerekçe: devretmek sahibi düşürmek değildir. */
+  function buildWorkflowTools(names: string[] | undefined, identity?: { resourceId?: string; threadId?: string; actor?: string }): ToolSet {
     const out: ToolSet = {};
     for (const wfName of names ?? []) {
       if (!config.workflows?.[wfName]) {
@@ -667,7 +668,14 @@ export function createGnl(config: CreateGnlConfig) {
         execute: async ({ input }: { input?: Record<string, unknown> }, options: any) => {
           // Parent-scoped, for the same reason as agent-tool's nested runId above: a toolCallId is
           // unique within a completion, not across runs.
-          const r = await runWorkflow(wfName, input ?? {}, { runId: nestedAgentRunId(options?.parentRunId, options?.toolCallId, 'wf') });
+          // Ajan İÇİNDEN doğan iş akışı: ebeveynin kimliğini devralır. "Org düzeyi iş, öznesi yok"
+          // muafiyeti bu doğum yolu için yanlış — bu, belli bir kullanıcının koşumundan çıkıyor.
+          const r = await runWorkflow(wfName, input ?? {}, {
+            runId: nestedAgentRunId(options?.parentRunId, options?.toolCallId, 'wf'),
+            ...(identity?.resourceId ? { resourceId: identity.resourceId } : {}),
+            ...(identity?.threadId ? { threadId: identity.threadId } : {}),
+            ...(identity?.actor ? { actor: identity.actor } : {}),
+          });
           return r.suspended
             ? { suspended: true, stepId: r.stepId, reason: r.reason, runId: r.runId }
             : { output: r.output, runId: r.runId };
@@ -679,7 +687,13 @@ export function createGnl(config: CreateGnlConfig) {
 
   /** C5: converts `a.agents` names into `agent_<name>` tools (model factory that freezes fallback into the nested runId).
    * If `limits` is given (the parent's RunOptions.limits), it's inherited by the sub-agent AS-IS. */
-  async function buildSubAgentTools(names: string[] | undefined, rc: RequestContext, limits?: RunLimits, toolPolicy?: 'strict' | 'strict-critical'): Promise<ToolSet> {
+  /**
+   * `identity` — devredilen işin SAHİBİ. Taint, limits ve toolPolicy bu sınırı yıllardır geçiyordu;
+   * kimlik geçmiyordu, yani "devret" sessizce "koruma katmanını kapat" anlamına geliyordu. Alt koşum
+   * sahipsiz doğunca ownershipDenied `!owner` dalında geçiyor, actor kilidi ateşlemiyor ve
+   * purgeResource o koşumu kişi silme talebinde hiç bulamıyor.
+   */
+  async function buildSubAgentTools(names: string[] | undefined, rc: RequestContext, limits?: RunLimits, toolPolicy?: 'strict' | 'strict-critical', identity?: { resourceId?: string; threadId?: string; actor?: string; channel?: string }): Promise<ToolSet> {
     const out: ToolSet = {};
     for (const subName of names ?? []) {
       const sub = agent(subName); // early, clear error if not registered
@@ -692,6 +706,10 @@ export function createGnl(config: CreateGnlConfig) {
           guard: sub.guard,
           maxSteps: sub.maxSteps,
           limits,
+          ...(identity?.resourceId ? { resourceId: identity.resourceId } : {}),
+          ...(identity?.threadId ? { threadId: identity.threadId } : {}),
+          ...(identity?.actor ? { actor: identity.actor } : {}),
+          ...(identity?.channel ? { channel: identity.channel } : {}),
           ...(toolPolicy ? { toolPolicy } : {}), // FAZ-4 K12: the JSDoc's 'toolPolicy also to sub-agents' is now true
         },
         // The description field flows to both the network router and the agent-as-tool introduction (single source).
@@ -733,8 +751,17 @@ export function createGnl(config: CreateGnlConfig) {
     const effectiveThreadId = serverIdentity.threadId ?? opts.threadId;
     const model = await materializeModel(opts.model ?? (await resolveDyn(a.model, rc)), opts.runId);
     const agentTools = a.tools ? await resolveDyn(a.tools, rc) : undefined;
-    const subTools = await buildSubAgentTools(a.agents, rc, opts.limits, opts.toolPolicy);
-    const wfTools = buildWorkflowTools(a.workflows);
+    const subTools = await buildSubAgentTools(a.agents, rc, opts.limits, opts.toolPolicy, {
+      ...(effectiveResourceId ? { resourceId: effectiveResourceId } : {}),
+      ...(effectiveThreadId ? { threadId: effectiveThreadId } : {}),
+      ...((serverIdentity.resourceId ?? opts.actor) ? { actor: serverIdentity.resourceId ?? opts.actor } : {}),
+      ...(opts.channel ? { channel: opts.channel } : {}),
+    });
+    const wfTools = buildWorkflowTools(a.workflows, {
+      ...(effectiveResourceId ? { resourceId: effectiveResourceId } : {}),
+      ...(effectiveThreadId ? { threadId: effectiveThreadId } : {}),
+      ...((serverIdentity.resourceId ?? opts.actor) ? { actor: serverIdentity.resourceId ?? opts.actor } : {}),
+    });
     const system = opts.system ?? (a.system ? await resolveDyn(a.system, rc) : undefined);
     const processors = [...(config.processors ?? []), ...(a.processors ?? [])];
     const mergedTools = { ...config.tools, ...agentTools, ...subTools, ...wfTools };
@@ -759,6 +786,14 @@ export function createGnl(config: CreateGnlConfig) {
       memory: resolvedMemory,
       threadId: effectiveThreadId,
       resourceId: effectiveResourceId,
+      // SAHİPLİK DAMGASI — ÖNCELİK BURADA KURULUR: mühürlü kimlik kazanır, çağıranın beyanı değil.
+      // Bu satır eklendiğinde aşağıda ayrıca `...(opts.actor ? { actor: opts.actor } : {})` vardı ve
+      // object-literal'de SON yazan kazandığı için damgayı EZİYORDU. Sonuç sessizdi: doğrulanmış
+      // kimlikten basılan damganın üzerine isteğin gövdesinden gelen bir değer geçiyordu — yani
+      // sahiplik kilidi kendi kendine verilebilir hale geliyordu, ki o zaman kilit değildir.
+      // opts.actor SİLİNMEDİ, geri plana alındı: mühür kurmayan hostlar (kendi rotasını yazan
+      // uygulamalar, CLI, testler) için tek kimlik kanalı odur — ama yalnız mühürlü kimlik YOKKEN.
+      ...((serverIdentity.resourceId ?? opts.actor) ? { actor: serverIdentity.resourceId ?? opts.actor } : {}),
       approvals: opts.approvals,
       stopWhen: stepCountIs(a.maxSteps ?? 12),
       ...(opts.temperature != null ? { temperature: opts.temperature } : {}),
@@ -775,7 +810,6 @@ export function createGnl(config: CreateGnlConfig) {
       ...((opts.replayDisclosure ?? config.replayDisclosure) ? { replayDisclosure: opts.replayDisclosure ?? config.replayDisclosure } : {}),
       ...(opts.channel ? { channel: opts.channel } : {}),
       ...(opts.tombstonePolicy ? { tombstonePolicy: opts.tombstonePolicy } : {}),
-      ...(opts.actor ? { actor: opts.actor } : {}),
       ...(config.schemaCompat ? { schemaCompat: config.schemaCompat } : {}),
       ...(opts.replay ? { replay: opts.replay } : {}),
       ...(opts.timeouts ? { timeouts: opts.timeouts } : {}),
@@ -870,8 +904,17 @@ export function createGnl(config: CreateGnlConfig) {
     const effectiveThreadId = serverIdentity.threadId ?? opts.threadId;
     const model = await materializeModel(opts.model ?? (await resolveDyn(a.model, rc)), opts.runId);
     const agentTools = a.tools ? await resolveDyn(a.tools, rc) : undefined;
-    const subTools = await buildSubAgentTools(a.agents, rc, opts.limits, opts.toolPolicy);
-    const wfTools = buildWorkflowTools(a.workflows);
+    const subTools = await buildSubAgentTools(a.agents, rc, opts.limits, opts.toolPolicy, {
+      ...(effectiveResourceId ? { resourceId: effectiveResourceId } : {}),
+      ...(effectiveThreadId ? { threadId: effectiveThreadId } : {}),
+      ...((serverIdentity.resourceId ?? opts.actor) ? { actor: serverIdentity.resourceId ?? opts.actor } : {}),
+      ...(opts.channel ? { channel: opts.channel } : {}),
+    });
+    const wfTools = buildWorkflowTools(a.workflows, {
+      ...(effectiveResourceId ? { resourceId: effectiveResourceId } : {}),
+      ...(effectiveThreadId ? { threadId: effectiveThreadId } : {}),
+      ...((serverIdentity.resourceId ?? opts.actor) ? { actor: serverIdentity.resourceId ?? opts.actor } : {}),
+    });
     const system = opts.system ?? (a.system ? await resolveDyn(a.system, rc) : undefined);
     const processors = [...(config.processors ?? []), ...(a.processors ?? [])];
     const mergedTools = { ...config.tools, ...agentTools, ...subTools, ...wfTools };
@@ -893,6 +936,14 @@ export function createGnl(config: CreateGnlConfig) {
       memory: resolvedMemory,
       threadId: effectiveThreadId,
       resourceId: effectiveResourceId,
+      // SAHİPLİK DAMGASI — ÖNCELİK BURADA KURULUR: mühürlü kimlik kazanır, çağıranın beyanı değil.
+      // Bu satır eklendiğinde aşağıda ayrıca `...(opts.actor ? { actor: opts.actor } : {})` vardı ve
+      // object-literal'de SON yazan kazandığı için damgayı EZİYORDU. Sonuç sessizdi: doğrulanmış
+      // kimlikten basılan damganın üzerine isteğin gövdesinden gelen bir değer geçiyordu — yani
+      // sahiplik kilidi kendi kendine verilebilir hale geliyordu, ki o zaman kilit değildir.
+      // opts.actor SİLİNMEDİ, geri plana alındı: mühür kurmayan hostlar (kendi rotasını yazan
+      // uygulamalar, CLI, testler) için tek kimlik kanalı odur — ama yalnız mühürlü kimlik YOKKEN.
+      ...((serverIdentity.resourceId ?? opts.actor) ? { actor: serverIdentity.resourceId ?? opts.actor } : {}),
       approvals: opts.approvals,
       stopWhen: stepCountIs(a.maxSteps ?? 12),
       ...(opts.temperature != null ? { temperature: opts.temperature } : {}),
@@ -910,7 +961,6 @@ export function createGnl(config: CreateGnlConfig) {
       ...((opts.replayDisclosure ?? config.replayDisclosure) ? { replayDisclosure: opts.replayDisclosure ?? config.replayDisclosure } : {}),
       ...(opts.channel ? { channel: opts.channel } : {}),
       ...(opts.tombstonePolicy ? { tombstonePolicy: opts.tombstonePolicy } : {}),
-      ...(opts.actor ? { actor: opts.actor } : {}),
       ...(opts.replay ? { replay: opts.replay } : {}),
       ...(opts.timeouts ? { timeouts: opts.timeouts } : {}),
       ...(opts.exclusiveModelStep ? { exclusiveModelStep: opts.exclusiveModelStep } : {}),
@@ -930,11 +980,67 @@ export function createGnl(config: CreateGnlConfig) {
    */
   async function runNetwork(
     name: string,
-    opts: { runId: string; task: string; context?: RequestContext; limits?: RunLimits; approvals?: Record<string, boolean> },
+    // `resourceId`/`threadId`/`actor`/`channel` — kimlik alanları BURADA YOKTU, yani ağ yolu bir
+    // özneyi taşıyamıyordu bile: host vermek istese verecek yeri yoktu. Ajan yollarıyla (`run`,
+    // `stream`) aynı şekil; yönlendirme bir kimlik değişimi değildir.
+    opts: { runId: string; task: string; context?: RequestContext; limits?: RunLimits; approvals?: Record<string, boolean>; resourceId?: string; threadId?: string; actor?: string; channel?: string },
   ): Promise<NetworkResult> {
     const net = config.networks?.[name];
     if (!net) throw new Error(`network '${name}' is not registered`);
+    // AYNI SINIF AÇIK, aynı kapı: `runNetworkCore` bu runId'yi anahtar öneki olarak kullanıyor
+    // (`netKeys`), yani ağ yolu da rezerve bir aileyi ele geçirebiliyordu. İç içe alt-ajan id'leri
+    // (`net:<runId>:<i>`) kendi köklerini `net:` yaptığı için oradan sızmıyor — sızan, router'ın
+    // KENDİ koşum kimliği. Süzgeç model çözümlemesinden ve her journal I/O'sundan önce.
+    assertRunIdSafe(opts.runId);
     const rc = opts.context ?? {};
+    // Ajan yollarıyla AYNI öncelik: mühürlü kimlik kazanır, gövdeden gelen ancak mühür yokken.
+    const serverIdentity = serverIdentityOf(rc);
+    const effectiveResourceId = serverIdentity.resourceId ?? opts.resourceId;
+    const effectiveThreadId = serverIdentity.threadId ?? opts.threadId;
+    const effectiveActor = serverIdentity.resourceId ?? opts.actor;
+    // THREAD SAHİPLİĞİ — iş akışı yoluna kurulan kapının (runWorkflow, yukarıda) aynısı, aynı gerekçeyle.
+    // Ağ yolu da gövdeden `threadId` + `resourceId` alıyor, yani `{resourceId:'mallory',
+    // threadId:'t-ayse'}` burada da yazılabiliyordu: `net-x:input` mallory'yi sahip, Ayşe'nin thread'ini
+    // konu yazar ve `purgeResource('mallory')` o koşumdan `purgeThread('t-ayse')`e ulaşır.
+    //
+    // Kapı MÜHÜRLENMİŞ çift üstünde: `serverIdentityOf` zaten gövdeyi eziyor, kapının başka bir çifte
+    // bakması iki yönlü bir kaçak olurdu.
+    //
+    // SINIR: memory yoksa ya da `getThreadResource` yoksa kapı KURULMAZ (ajan ve iş akışı yollarıyla
+    // kelimesi kelimesine aynı koşul) — sahibi doğrulayacak bilgi yokken reddetmek, doğrulanamayan bir
+    // iddiayı suç saymak olurdu. Sahibi HENÜZ olmayan thread de geçer: ilk tur bir thread yaratır.
+    //
+    // Ama OKUNAMAYAN sahip DÜŞÜRÜR — bkz. runWorkflow'daki kardeş kapının yorumu. Burada `.catch`
+    // yok, bilerek: bir okuma hatası "sahibi yok" gibi okunursa kapı tam da deposu arızalıyken
+    // devre dışı kalır.
+    if (resolvedMemory && effectiveThreadId && effectiveResourceId && typeof resolvedMemory.getThreadResource === 'function') {
+      const owner = await resolvedMemory.getThreadResource(effectiveThreadId);
+      if (owner && owner !== effectiveResourceId) {
+        throw new ThreadOwnerMismatchError(
+          `@gnldev/durable: thread "${effectiveThreadId}" belongs to a different resourceId — this network run names "${effectiveResourceId}".`,
+          { threadId: effectiveThreadId, owner, requested: effectiveResourceId },
+        );
+      }
+    }
+    // SAHİP KAYDI — iş akışındakiyle AYNI desen, aynı anahtar, aynı ilk-yazan-kazanır.
+    //
+    // Alt-ajanlar kimliği zaten devralıyordu (aşağıda runSubAgent'a iniyor); sahipsiz kalan ROUTER'IN
+    // KENDİ koşumuydu — ve `<runId>:net:route/step` kayıtları görev metnini ve alt-ajan çıktılarını
+    // taşıyor, yani kişisel veri. Sahibi yazılmayınca `purgeResource` o koşumu hiç saymıyor ve
+    // `ownershipDenied` sahibi bulamayıp sessizce geçiyordu.
+    //
+    // `<runId>:input`'a, ağın kendi `net:` anahtarlarına değil: sahiplik kapısı,
+    // `listRunsPaged({resourceId})` süzgeci ve `purgeResource` üçü de O anahtarı okuyor.
+    // Beyan edilmezse hiçbir şey yazılmaz — "org düzeyi iş, öznesi yok" muafiyeti korunuyor.
+    if (effectiveResourceId || effectiveActor || effectiveThreadId) {
+      await claimIdentityInput(journal, opts.runId, {
+        at: Date.now(),
+        ...(effectiveResourceId ? { resourceId: effectiveResourceId } : {}),
+        ...(effectiveActor ? { actor: effectiveActor } : {}),
+        ...(effectiveThreadId ? { threadId: effectiveThreadId } : {}),
+        network: name,
+      });
+    }
     // Targets are set up BEFORE the router model → an unregistered agent gives a clear error before model resolution.
     // Sub-agent call semantics are CENTRALIZED in runSubAgent (same path as agent-tool; interrupts propagate upward).
     const targets: Record<string, NetworkTarget> = {};
@@ -960,7 +1066,24 @@ export function createGnl(config: CreateGnlConfig) {
                 ? { sideEffectDuplicates: { byClass: PRESET_MATRIX[config.preset], default: PRESET_DEFAULT[config.preset] }, ...(opts.limits ?? {}) }
                 : opts.limits,
               ...(config.preset === 'critical' ? { toolPolicy: 'strict-critical' as const } : {}),
+              // ONAY KANALI — ve BİLİNEN SINIRI. Bu kanal insanın yüzeye çıkan sorularına verdiği
+              // cevaptır: askıya düşen alt ajanın interrupt'ı ÇOCUĞUN kendi toolCallId'siyle
+              // yüzeye çıkar, insan onu cevaplar, cevap buradan geri iner. Sorun tek haritanın
+              // PAYLAŞILAN id uzayında: iki alt ajanın sağlayıcı-id'leri çakışabilir (ikisi de
+              // `call_0` üretebilir), yani bir alt ajana verilen onay ötekinin aynı adlı çağrısını
+              // da açabilir.
+              // durable-tool'daki kardeş kanal bunu kesişimle daraltıyor (nestedApprovalsFor:
+              // haritadan yalnız ÇOCUĞUN sentinel'inde listelenen id'ler iner). Burada aynısı
+              // uygulanamıyor, çünkü ağ kaydı çocuk interrupt listesi TUTMUYOR — daraltmanın
+              // dayanacağı liste yok. Davranış bilerek değiştirilmedi; sınır burada yazılı dursun.
               approvals: opts.approvals,
+              // KİMLİK, taint ile aynı sınırdan. Ağ yolu, agent-as-tool'un kardeşi ve aynı boşluğu
+              // taşıyordu: yönlendirilen iş sahipsiz doğuyordu. Yönlendirme bir kimlik değişimi
+              // değil — router hangi ajanı seçerse seçsin, iş hâlâ aynı kişinin işi.
+              ...(effectiveResourceId ? { resourceId: effectiveResourceId } : {}),
+              ...(effectiveThreadId ? { threadId: effectiveThreadId } : {}),
+              ...(effectiveActor ? { actor: effectiveActor } : {}),
+              ...(opts.channel ? { channel: opts.channel } : {}),
               // The network router runs under opts.runId — carry its taint into each sub-agent.
               parentRunId: opts.runId,
             },
@@ -1004,9 +1127,68 @@ export function createGnl(config: CreateGnlConfig) {
    *  Workflows with runResumable can use them — a plain `run()`-only WorkflowLike has no suspend/cancel
    *  Story to attach them to); a `{status:'canceled'}` result maps into `WorkflowRunResult.canceled`
    *  The SAME way `suspended`/`paused` already do. */
-  async function runWorkflow(name: string, input: unknown, opts?: { runId?: string; maxSteps?: number; resume?: Record<string, unknown>; signal?: AbortSignal }): Promise<WorkflowRunResult> {
+  /**
+   * `resourceId`/`actor`/`threadId` — iş akışı koşumlarının SAHİBİ.
+   *
+   * Bu alanlar yoktu ve sonucu yalnız "eksik alan" değildi: `POST /workflows/runs/:id/cancel`
+   * sahiplik kapısını ÇAĞIRIYOR ama kapı sahibi `<runId>:input`'tan okuyor, iş akışı ise
+   * `<runId>:wf:_input`'a yazıyor — farklı anahtar, yani kontrol HİÇ ateşlemiyordu. Çağrılan ama
+   * hiçbir zaman iş görmeyen bir kapı, olmayan kapıdan daha kötüdür: okuyan onu bir koruma sanır.
+   *
+   * Kimlik `<runId>:input`'a yazılıyor — iş akışının kendi `:wf:_input`'una değil. Sebebi tek bir
+   * alan eklemekten fazlası: sahiplik kapısı, `listRuns({resourceId})` süzgeci ve `purgeResource`
+   * hepsi O anahtarı okuyor. Kimliği başka bir yere koymak, üç yüzeyi de yeniden yazmak demekti.
+   */
+  async function runWorkflow(name: string, input: unknown, opts?: { runId?: string; maxSteps?: number; resume?: Record<string, unknown>; signal?: AbortSignal; resourceId?: string; actor?: string; threadId?: string; context?: RequestContext }): Promise<WorkflowRunResult> {
     const wf = config.workflows?.[name];
     if (!wf) throw new Error(`workflow '${name}' is not registered`);
+    // runId SÜZGECİ — journal'a HERHANGİ bir yazımdan önce. Ajan yolları (`runDurable`/`resumeRun`/
+    // `streamDurable`) bunu girişte çağırıyordu; iş akışı yolu hiç çağırmıyordu ve bu, iş akışı
+    // koşumları `<runId>:input`'a sahip kaydı yazmaya başladığı anda ölçülebilir bir silme silahına
+    // dönüştü: `{runId:'mem', resourceId:'mallory'}` ile `mem:input` doğuyor, o kayıt artık
+    // mallory'nin bir koşumu sayılıyor, `purgeResource('mallory')` onu geziyor, `purgeRun('mem')`
+    // `del('mem:')` yapıyor — `mem:` ise TÜM kullanıcıların thread hafızasının kökü. Kendi verisini
+    // silme hakkı, herkesin verisini silme yetkisine dönüşüyor. `thread`, `om`, `xid` ... aynı sınıf.
+    //
+    // Kontrol BURADA, `critical` bloğundan da önce: o blok `<runId>:swept` okuyor ve
+    // `<runId>:wf:_input` claim'liyor — reddedilecek bir ad, reddedilmeden önce anahtar yaratamaz.
+    // Anonim üretilen `wf-<ad>-<ms>-...` id'leri (runWorkflowInner) süzgeçten doğal geçer: kökleri
+    // rezerve ailelerin hiçbiri değil. Beyan edilmemiş runId burada sorgulanmaz — o yol henüz bir ad
+    // seçmedi; üretilen ad zaten güvenli aileden.
+    if (opts?.runId !== undefined) assertRunIdSafe(opts.runId);
+    // THREAD SAHİPLİĞİ — ajan yolundaki kapının (run.ts, ThreadOwnerMismatchError) iş akışı hali.
+    // Ajan yollarında bu kapı vardı, iş akışı yolunda YOKTU ve sahip kaydı `wfThread`'i sorgusuz
+    // yazıyordu. Ölçülen sonuç: `{runId:'x', resourceId:'mallory', threadId:'t-ayse'}` → `x:input`
+    // mallory'yi sahip, Ayşe'nin thread'ini konu yazar; `purgeResource('mallory')` o koşumdan
+    // `purgeThread('t-ayse')`e ulaşır ve Ayşe'nin hafızası mallory'nin silme hakkıyla silinir.
+    //
+    // Kapı, MÜHÜRLENMİŞ (etkili) çift üstünde çalışır — beyan edilen değil: `serverIdentityOf` zaten
+    // gövdeyi eziyor, kapının başka bir çifte bakması iki yönlü bir kaçak olurdu.
+    //
+    // SINIR, dürüstçe: memory yoksa ya da `getThreadResource` yoksa kapı KURULMAZ. Ajan yolu da tam
+    // olarak bu koşulla susuyor (run.ts:2463 ile kelimesi kelimesine aynı koşul) — parite kasıtlı.
+    // Sahibi doğrulayacak bilgi yokken reddetmek, doğrulanamayan bir iddiayı suç saymak olurdu; ve
+    // sahibi HENÜZ olmayan bir thread (ilk tur) de geçer, yoksa her yeni konuşma reddedilirdi.
+    //
+    // BİLİNMEYEN sahip geçer, OKUNAMAYAN sahip DÜŞÜRÜR. İlk yazışta burada `.catch(() => undefined)`
+    // vardı ve ikisini aynı cevaba indiriyordu: bir okuma hatası "sahibi yok" gibi okunuyor, kapı da
+    // tam deposu arızalıyken — yani en çok gerektiği anda — sessizce devre dışı kalıyordu. İkisi aynı
+    // şey değil: biri masumiyet ("bu thread henüz kimsenin"), diğeri bilgisizlik ("kimin olduğunu
+    // soramadım"). Bilgisizlik geçiş hakkı değildir; hata yayılsın, koşum başlamasın.
+    {
+      const gateIdentity = serverIdentityOf(opts?.context ?? {});
+      const gateResource = gateIdentity.resourceId ?? opts?.resourceId;
+      const gateThread = gateIdentity.threadId ?? opts?.threadId;
+      if (resolvedMemory && gateThread && gateResource && typeof resolvedMemory.getThreadResource === 'function') {
+        const owner = await resolvedMemory.getThreadResource(gateThread);
+        if (owner && owner !== gateResource) {
+          throw new ThreadOwnerMismatchError(
+            `@gnldev/durable: thread "${gateThread}" belongs to a different resourceId — this workflow run names "${gateResource}".`,
+            { threadId: gateThread, owner, requested: gateResource },
+          );
+        }
+      }
+    }
     // FAZ-8: the critical preset now covers the WORKFLOW entry path with the protections that MAP
     // To it (the old honest-scope note said "apply them explicitly" — this is that, done once here):
     //   runId REQUIRED            (exactly-once without a stable key is a contradiction)
@@ -1090,19 +1272,43 @@ export function createGnl(config: CreateGnlConfig) {
     return runWorkflowInner(name, wf, input, opts);
   }
 
-  async function runWorkflowInner(name: string, wf: WorkflowLike, input: unknown, opts?: { runId?: string; maxSteps?: number; resume?: Record<string, unknown>; signal?: AbortSignal }, strictSideEffects?: boolean): Promise<WorkflowRunResult> {
+  async function runWorkflowInner(name: string, wf: WorkflowLike, input: unknown, opts?: { runId?: string; maxSteps?: number; resume?: Record<string, unknown>; signal?: AbortSignal; resourceId?: string; actor?: string; threadId?: string; context?: RequestContext }, strictSideEffects?: boolean): Promise<WorkflowRunResult> {
     // The generated fallback is the SAME contract as the chat route's anon fallback: LOUD, never
     // Silent — a fresh id per call means a retry of this exact call re-runs every step (zero dedup),
     // Which is the framework breaking its own rule quietly. The id is returned on the result
-    // (WorkflowRunResult.runId) so the caller can retry against it; the counter closes the same-ms
-    // Collision (two calls in one tick used to SHARE a runId and read each other's step replays).
+    // (WorkflowRunResult.runId) so the caller can retry against it. The counter closes the same-ms
+    // collision WITHIN one process; across replicas it cannot — see the id's construction below.
     let runId = opts?.runId;
     if (!runId) {
-      runId = `wf-${name}-${Date.now()}-${wfAnonCounter++}`;
+      // Süreç-içi sayaç TEK BAŞINA yetmiyor: modül düzeyinde yaşıyor, yani her replika kendi
+      // sıfırından sayıyor. Ortak bir journal üstünde iki süreç aynı milisaniyede `wf-<ad>-<ms>-0`
+      // üretir ve İKİ FARKLI çağrı tek koşuma düşer — exactly-once sessizce ihlal edilir. Bu yorum
+      // eskiden "sayaç aynı-ms çarpışmasını kapatır" diye açık bir vaat yazıyordu; kapattığı şey
+      // yalnız TEK süreç içindeki çarpışmaydı. Süreçler-arası olanı ancak süreç-dışı bir entropi
+      // kaynağı kapatır. (Doğru çözüm hâlâ istikrarlı bir runId GÖNDERMEK — aşağıdaki uyarı bunu
+      // söylüyor; bu satır yalnız "kötüden daha kötüye" düşmeyi engelliyor.)
+      runId = `wf-${name}-${Date.now()}-${wfAnonCounter++}-${randomUUID().slice(0, 8)}`;
       console.warn(
         `@gnldev/durable: runWorkflow('${name}') called without a runId — generated '${runId}'. A retry of ` +
         `this call will NOT dedupe (every step re-runs). Pass a stable runId (it is echoed on result.runId) for exactly-once.`,
       );
+    }
+    // SAHİP KAYDI — ilk yazan kazanır (koşum kimliği devir boyunca değişmez). `wfrun:` durum
+    // kütüğüyle karışmasın diye ayrı: o "iş akışı nerede", bu "kimin işi".
+    {
+      const wfIdentity = serverIdentityOf(opts?.context ?? {});
+      const owner = wfIdentity.resourceId ?? opts?.resourceId;
+      const wfActor = wfIdentity.resourceId ?? opts?.actor;
+      const wfThread = wfIdentity.threadId ?? opts?.threadId;
+      if (owner || wfActor || wfThread) {
+        await claimIdentityInput(journal, runId, {
+          at: Date.now(),
+          ...(owner ? { resourceId: owner } : {}),
+          ...(wfActor ? { actor: wfActor } : {}),
+          ...(wfThread ? { threadId: wfThread } : {}),
+          workflow: name,
+        });
+      }
     }
     const ctx = { runId, journal: journal, ...(strictSideEffects ? { strictSideEffects: true } : {}) };
     let output: unknown;

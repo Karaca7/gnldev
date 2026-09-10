@@ -26,9 +26,9 @@ function chunkSource(chunks: unknown[]) {
   };
 }
 
-async function drain(chunks: unknown[]): Promise<any[]> {
+async function drain(chunks: unknown[], runId?: string): Promise<any[]> {
   const out: any[] = [];
-  for await (const c of toUIMessageStream(chunkSource(chunks) as any)) out.push(c);
+  for await (const c of toUIMessageStream(chunkSource(chunks) as any, runId ? { runId } : undefined)) out.push(c);
   return out;
 }
 
@@ -91,6 +91,86 @@ describe('live stream sentinel masking', () => {
       { type: 'tool-output-available', toolCallId: 'c4', output: { __gnl_suspend: { toolCallId: 'c4', reason: 'r' } } },
     ]);
     expect(out.find((c) => c.type === 'tool-output-available').output.toolName).toBe('fromInputChunk');
+  });
+
+  // THE FOURTH SURFACE. server/sse, studio/sse and Studio's approval inbox all learned to unwrap a
+  // proxy suspend; this one — the useChat channel, which is where an end user actually sits — was
+  // still handing over the parent's toolCallId, and one at a time. A client following the documented
+  // contract (`approvals[interrupt.toolCallId] = true`) approved an id the engine deliberately
+  // ignores, so nothing moved; and a parent standing in for TWO child questions could not have been
+  // answered by that chunk shape at all, however the client behaved.
+  it('nested suspend: the interrupt chunk carries the CHILD toolCallIds, not the parent proxy', async () => {
+    const out = await drain([
+      { type: 'tool-input-start', toolCallId: 'parent-1', toolName: 'agent' },
+      {
+        type: 'tool-output-available',
+        toolCallId: 'parent-1',
+        output: {
+          __gnl_suspend: {
+            toolCallId: 'parent-1',
+            toolName: 'agent',
+            args: { task: 'settle the invoice' },
+            kind: 'nested',
+            reason: 'A delegated sub-agent stopped for a human: needs approval (nested run \'agent:parent-1\', 2 pending).',
+            nested: {
+              runId: 'agent:parent-1',
+              interrupts: [
+                { toolCallId: 'child-a', toolName: 'chargeCard', args: { amount: 5000 }, reason: 'large amount' },
+                { toolCallId: 'child-b', toolName: 'wire', args: { iban: 'X' }, reason: 'needs approval' },
+              ],
+            },
+          },
+        },
+      },
+    ]);
+
+    const chunk = out.find((c) => c.type === 'data-gnl-interrupt');
+    expect(chunk.data.interrupts.map((i: any) => i.toolCallId)).toEqual(['child-a', 'child-b']);
+    expect(chunk.data.interrupts.map((i: any) => i.toolName)).toEqual(['chargeCard', 'wire']);
+    expect(chunk.data.interrupts[0].args).toEqual({ amount: 5000 });
+    // Both questions reach the browser or neither is answerable: dropping the tail would leave the
+    // run suspended after the user approved everything they were shown.
+    expect(chunk.data.interrupts).toHaveLength(2);
+    // The proxy id is not an approval address — it must not be offered as one.
+    expect(chunk.data.interrupts.some((i: any) => i.toolCallId === 'parent-1')).toBe(false);
+    // The masked output still describes THIS chunk's tool (the parent), which is whose result it is.
+    expect(out.find((c) => c.type === 'tool-output-available').output).toMatchObject({ pending: 'approval', toolName: 'agent' });
+  });
+
+  // The approval ADDRESS (FAZ-2) belongs on every entry, not on whichever one happens to be first —
+  // an interrupt without it sends the client's re-POST to a freshly-derived runId, and the suspended
+  // run waits forever.
+  it('the runId stamp lands on EVERY surfaced interrupt', async () => {
+    const out = await drain([
+      { type: 'tool-input-start', toolCallId: 'parent-2', toolName: 'agent' },
+      {
+        type: 'tool-output-available',
+        toolCallId: 'parent-2',
+        output: {
+          __gnl_suspend: {
+            toolCallId: 'parent-2', toolName: 'agent', args: {}, kind: 'nested',
+            nested: {
+              runId: 'agent:parent-2',
+              interrupts: [
+                { toolCallId: 'child-a', toolName: 'chargeCard', args: {} },
+                { toolCallId: 'child-b', toolName: 'wire', args: {} },
+              ],
+            },
+          },
+        },
+      },
+    ], 'run-77');
+    const entries = out.find((c) => c.type === 'data-gnl-interrupt').data.interrupts;
+    expect(entries.map((i: any) => i.runId)).toEqual(['run-77', 'run-77']);
+  });
+
+  it('an ordinary suspend is a one-element list carrying exactly what it always carried', async () => {
+    const interrupt = { toolCallId: 'c6', toolName: 'chargeCard', args: { amount: 5000 }, reason: 'large amount' };
+    const out = await drain([
+      { type: 'tool-input-start', toolCallId: 'c6', toolName: 'chargeCard' },
+      { type: 'tool-output-available', toolCallId: 'c6', output: { __gnl_suspend: interrupt } },
+    ]);
+    expect(out.find((c) => c.type === 'data-gnl-interrupt').data.interrupts).toEqual([interrupt]);
   });
 
   it('leaves ordinary tool output untouched, and passes other chunk types through', async () => {

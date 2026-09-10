@@ -63,7 +63,10 @@ export interface SemanticIdentity {
    *  Quality of this declaration IS the quality of the protection (documented Achilles heel). */
   keys: string[];
   /** Canonical sentence override — THE PII redaction point: only this string ever reaches the
-   *  Embedder. Default: `"<toolName>: <normalized key values>"`. Receives ONLY the args. */
+   *  Embedder. Default: `"<toolName>: <normalized key values>"`. Receives ONLY the args.
+   *  Also the recall-quality lever: mixed-language term pairs ("Karanlık mod" vs "Dark mode") are a
+   *  measured embedder blind spot, and a pair the recall gate drops never reaches rules or judge —
+   *  normalize free-text identity terms to one canonical language here. No framework dictionary. */
   describe?: (args: unknown) => string;
   /** Magnitude gate: identity-equal candidates whose amounts differ suspend with an explicit
    *  "amounts differ" message instead of a plain duplicate question. Exact equality. */

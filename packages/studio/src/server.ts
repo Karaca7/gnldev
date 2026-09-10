@@ -4,7 +4,7 @@ import { toFetchHandler, type FetchHandler } from './handler.js';
 import { Hono, type Context } from 'hono';
 import { sseResponse } from './sse.js';
 
-import { ORG_RECORD_PRE, asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, countLog, purgeRun, purgeOrganization, orgPurgedKey, sweepRuns, sweepLog, POLICY_KEY, PRICING_KEY, effectivePricingTable, DEFAULT_PRICING, readPricing, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, knownModelProviders, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent, callerConflictCode, resolveApprovals as dResolveApprovals } from '@gnldev/durable';
+import { ORG_RECORD_PRE, asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, countLog, purgeRun, purgeOrganization, orgPurgedKey, sweepRuns, sweepLog, POLICY_KEY, PRICING_KEY, effectivePricingTable, DEFAULT_PRICING, readPricing, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, knownModelProviders, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent, callerConflictCode, surfacedInterrupts, resolveApprovals as dResolveApprovals, hasRunProbe } from '@gnldev/durable';
 import type { PolicyDoc, PolicyRule, BudgetLimit, PricingDoc } from '@gnldev/durable';
 import type { JournalReader, Journal, WorkflowLike, MetricsRunRow } from '@gnldev/durable';
 import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, principalScope, assertAssignablePrivileges, CLIENT_ROLE, type AuthProvider, type Principal } from '@gnldev/auth';
@@ -42,7 +42,22 @@ export type { TriggerInfo } from '@gnldev/scheduler';
  * and made the id the host sees depend on who called. The org travels separately, and a host that
  * ignores it behaves exactly as before — which is why this is a third parameter and not a changed one.
  */
-export interface StudioCallbackCtx { orgId?: string }
+export interface StudioCallbackCtx {
+  orgId?: string;
+  /**
+   * KİM sürüyor — Studio'nun kendi kimliği (`actorOf`: principal id → x-gnl-actor → role:<rol> → 'anon').
+   *
+   * Motorda zaten bir sahiplik kilidi var (run.ts, RunActorMismatchError): bir koşum `actor` ile
+   * damgalanmışsa, FARKLI bir `actor` onu yeniden süremez. Kilit iki ismin de dolu olmasını ister —
+   * damga vardı ama Studio kendini hiç tanıtmadığı için kontrol HİÇ ateşlenmiyordu. Host bunu
+   * `resumeRun`'a geçirdiğinde ayrım kendiliğinden doğar:
+   *   sahipli koşum (müşterinin) + operatör kimliği → reddedilir
+   *   sahipsiz koşum (batch/scheduler)             → operatör cevaplayabilir
+   * Yeni bir kural değil; var olan kilidin karşı tarafını doldurmak.
+   * Host bu alanı yok sayarsa davranış bugünküyle birebir aynı kalır (eklemeli).
+   */
+  actor?: string;
+}
 
 export type StudioResume = (
   runId: string,
@@ -105,8 +120,8 @@ export interface StudioAgentRunner {
    * Optional, so every existing host implementation stays valid — a function of fewer parameters is
    * assignable to one declaring more.
    */
-  run (name: string, opts: { runId: string; prompt?: string; messages?: unknown; threadId?: string; resourceId?: string; approvals?: Record<string, boolean>; model?: string; temperature?: number; topP?: number; system?: string; tools?: string[] }, ctx?: StudioCallbackCtx): Promise<{ text?: string; interrupts?: unknown[]; finishReason?: string }>;
-  stream?(name: string, opts: { runId: string; prompt?: string; messages?: unknown; threadId?: string; resourceId?: string; approvals?: Record<string, boolean>; model?: string; temperature?: number; topP?: number; system?: string; tools?: string[] }, ctx?: StudioCallbackCtx): Promise<any>;
+  run (name: string, opts: { runId: string; prompt?: string; messages?: unknown; threadId?: string; resourceId?: string; actor?: string; approvals?: Record<string, boolean>; model?: string; temperature?: number; topP?: number; system?: string; tools?: string[] }, ctx?: StudioCallbackCtx): Promise<{ text?: string; interrupts?: unknown[]; finishReason?: string }>;
+  stream?(name: string, opts: { runId: string; prompt?: string; messages?: unknown; threadId?: string; resourceId?: string; actor?: string; approvals?: Record<string, boolean>; model?: string; temperature?: number; topP?: number; system?: string; tools?: string[] }, ctx?: StudioCallbackCtx): Promise<any>;
   /** If given, the Tools view shows the tool list. */
   listTools?(): Promise<ToolListItem[]> | ToolListItem[];
   /** If given, tools can be run for TEST purposes (respects the guard; opts.durable → writes to the
@@ -793,6 +808,10 @@ export interface StudioApiOptions {
      * grows: every organization's writes land in the single root log, and nothing removes them.
      */
     auditOlderThanMs?: number;
+    /** Cevapsız kalan bir askının koruma süresi — `keepSuspended` açıkken tek çıkış (retention.ts). */
+    suspendedTtlMs?: number;
+    /** Silinen koşum için mezar taşı — geç gelen bir retry sessizce yeniden koşmasın. */
+    tombstones?: boolean;
   };
   /**
    * Org budgets (GET /organizations): an org's limit is `perOrg[id] ?? default`; exceeded =
@@ -1455,6 +1474,25 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   function actorOf (c: Context): string {
     const p = principalOf(c.req.raw);
     return p?.id ?? c.req.header('x-gnl-actor') ?? (p?.roles[0] ? `role:${p.roles[0]}` : 'anon');
+  }
+  /**
+   * The actor for an AUTHORIZATION decision — the same chain as `actorOf` MINUS the header.
+   *
+   * `x-gnl-actor` is cooperative attribution (a git author line): it lets an operator console with
+   * no per-user auth still say who clicked, and `auth-org.test.ts:34` pins that a real `principal.id`
+   * outranks it. Fine for an audit column, wrong for a gate. Once the ownership lock started reading
+   * this value, a caller could answer its own refusal: `409 belongs to actor 'ayse'` becomes a 200
+   * by repeating the request with `x-gnl-actor: ayse`. Token-only deployments are the whole exposure
+   * — roleAuth's bearer creds deliberately carry no `id` (role-auth.ts), so there the header WAS the
+   * value the lock compared.
+   *
+   * The role fallback stays and is load-bearing, not cosmetic: `role:admin` is not a user identity,
+   * but no `resourceId` equals it, so an operator resuming someone's owned run is still refused.
+   * Returning `undefined` would silence the lock and hand back the hole this closes.
+   */
+  function verifiedActorOf (c: Context): string {
+    const p = principalOf(c.req.raw);
+    return p?.id ?? (p?.roles[0] ? `role:${p.roles[0]}` : 'anon');
   }
   async function audit (c: Context, action: AuditAction, target: string, detail?: unknown): Promise<void> {
     if (!writable) return;
@@ -2196,23 +2234,70 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   app.get('/approvals', async (c) => {
     if (!(await allowP(c.req.raw, 'runs:read'))) return deny(c.req.raw, 'read');
     const runs = await reader.listRuns();
-    const items: { runId: string; toolCallId: string; toolName: string; args?: unknown; reason?: string; suspendedAt?: number }[] = [];
+    const items: { runId: string; toolCallId: string; toolName: string; args?: unknown; reason?: string; suspendedAt?: number; owner?: string; ownerActor?: string }[] = [];
     for (const r of runs) {
       if (r.status !== 'suspended') continue;
       const entries = await reader.readRun(r.runId);
       // FAZ-8 (suspended-expiry inbox): the run's LAST activity — the UI ages the row and flags the
       // Abandoned ones (retention deliberately protects suspended runs; visibility is the counterweight).
       const suspendedAt = entries.reduce((mx, e) => Math.max(mx, (e as { ts?: number }).ts ?? 0), 0) || undefined;
+      // KAPININ OKUMA TARAFI. The action half already refuses: a run stamped with an end user's
+      // `actor` cannot be re-driven by the operator (durable's ownership lock → 409
+      // run_actor_mismatch). The inbox, however, said nothing — so the operator DISCOVERED whose
+      // work a row was by clicking Approve and reading the refusal, then did the same on the next
+      // row. The refusal was right; being unreadable in advance was not.
+      //
+      // TWO FIELDS, NOT ONE, because the lock needs two names (`frozen.actor && opts.actor`): a run
+      // with `resourceId` but NO `actor` stamp is owned yet still resumable — the lock never fires.
+      // Collapsing both into a single "owned" flag would have the UI forbid work the engine accepts.
+      // `owner` is for the label; `ownerActor` is what the refusal actually hangs on.
+      //
+      // ONE point-read per SUSPENDED run, next to the readRun this loop already does — suspends are
+      // rare, so this is not the N+1 that `RunSummary.threadId` exists to avoid on /runs. The
+      // fallback to the summary keeps a read-only journal honest: `listRuns` already surfaces
+      // `resourceId` from the same `:input` entry, so the label survives even where `get` doesn't
+      // exist — and `ownerActor` stays absent there, which is the fail-open side of the lock, not a
+      // silent gap.
+      //
+      // Identity-only records (workflow/network/batch, written by claimIdentityInput) carry these
+      // fields in exactly the same place as a frozen request does; nothing here needs to tell them apart.
+      const frozen = writable
+        ? await rw.get!<{ resourceId?: string; actor?: string }>(`${r.runId}:input`).catch(() => undefined)
+        : undefined;
+      const ownerResource = frozen?.resourceId ?? r.resourceId;
+      const owner = {
+        ...(ownerResource ? { owner: ownerResource } : {}),
+        ...(frozen?.actor ? { ownerActor: frozen.actor } : {}),
+      };
       // The sentinel in a suspended tool record carries args/reason → shows context in the inbox
       const meta = new Map<string, { args?: unknown; reason?: string; toolName?: string }>();
+      // VEKİL ASKI KAYITLARININ KENDİ ID'LERİ — satır üretmezler (aşağıya bak).
+      const proxied = new Set<string>();
       for (const e of entries) {
         const v: any = e.value;
         const sus = e.kind === 'tool' && v?.status === 'suspended' ? v?.output?.__gnl_suspend : undefined;
-        if (sus?.toolCallId) meta.set(sus.toolCallId, { args: sus.args, reason: sus.reason, toolName: sus.toolName });
+        if (!sus) continue;
+        // SORUYU SORANIN KİMLİĞİ. Bir alt ajan insan kapısına çarptığında ebeveynin kaydı da askıya
+        // girer ve sentinel ZORUNLU olarak ebeveynin (vekil) çağrı id'siyle anahtarlanır — askı
+        // kaydı, replay ve consumeExistingRecord hep o id üzerinden çalışır. Ama motor o id'ye
+        // verilen cevabı BİLİNÇLİ olarak yok sayar (durable-tool `isProxySuspend`): karar yalnız
+        // çocuk id'lerinden türer. Gelen kutusu sentinel'i ham okuduğu sürece operatöre tam da o
+        // yok sayılan kimliği gösteriyordu — görünen ama işlemeyen bir "Onayla" düğmesi.
+        // Dönüşüm motorun kendi fonksiyonundan geçer; sıradan bir askıda `[sus]` döner, yani bu
+        // satırların davranışı değişmez.
+        const surfaced = surfacedInterrupts(sus) as Array<{ toolCallId?: string; toolName?: string; args?: unknown; reason?: string }>;
+        if (sus.toolCallId && !surfaced.some((i) => i.toolCallId === sus.toolCallId)) proxied.add(sus.toolCallId);
+        for (const i of surfaced) {
+          if (i.toolCallId) meta.set(i.toolCallId, { args: i.args, reason: i.reason, toolName: i.toolName });
+        }
       }
       const st = reconstructState(entries, entries.length);
       for (const pnd of st.pending) {
-        items.push({ runId: r.runId, toolCallId: pnd.toolCallId, toolName: pnd.toolName, ...(suspendedAt !== undefined ? { suspendedAt } : {}), ...(meta.get(pnd.toolCallId) ?? {}) });
+        // Vekil, `pending`de (MODEL kayıtlarından türetilir) kendi id'siyle durur. Onu da listelemek
+        // tek soruya iki satır çıkarır ve ikisinden biri cevaplanamaz — çocuğun satırı aşağıdaki
+        // meta döngüsünden zaten geliyor.
+        if (proxied.has(pnd.toolCallId)) continue;
+        items.push({ runId: r.runId, toolCallId: pnd.toolCallId, toolName: pnd.toolName, ...(suspendedAt !== undefined ? { suspendedAt } : {}), ...owner, ...(meta.get(pnd.toolCallId) ?? {}) });
       }
       // BATCH İŞ-1 (hakem — yayın ön koşulu): pending, MODEL kayıtlarından türetilir; modelsiz
       // item-run'ların (batch mini-runner) askıları orada görünmez ve "listRuns suspended der ama
@@ -2220,7 +2305,10 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       // pending'de karşılığı olmayan her kayıt kendi satırını üretir.
       for (const [tc, m] of meta) {
         if (st.pending.some((p) => p.toolCallId === tc)) continue;
-        items.push({ runId: r.runId, toolCallId: tc, toolName: (m as { toolName?: string }).toolName ?? 'tool', ...(suspendedAt !== undefined ? { suspendedAt } : {}), args: m.args, reason: m.reason });
+        // Sahiplik İKİ push noktasına da girer: bu satırlar `pending`den değil sentinel'den türüyor
+        // (modelsiz batch item-run'ları), ve yalnız birine eklenirse gelen kutusunun yarısı sessizce
+        // sahipsiz görünürdü — tam da kapatılan delik.
+        items.push({ runId: r.runId, toolCallId: tc, toolName: (m as { toolName?: string }).toolName ?? 'tool', ...(suspendedAt !== undefined ? { suspendedAt } : {}), ...owner, args: m.args, reason: m.reason });
       }
     }
     // Approval webhook: the SAME pattern as the budget alert — a SINGLE POST per pending approval via a
@@ -2232,7 +2320,16 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
         try {
           if ((await rootRw.get!(`__alert__:approval:${it.runId}:${it.toolCallId}`)) === undefined) {
             const payload = { type: 'approval-pending', ...it };
-            await appendLog(rootRw as Journal, '__alert__', payload, `approval:${it.runId}:${it.toolCallId}`);
+            // KALICI İZ YALIN, GİDEN PAYLOAD TAM. İkisi aynı nesneydi ve sonucu şuydu: ham tool
+            // argümanları (sipariş, tutar, müşteri) KÖK ad alanına, `__alert__:approval:<runId>:<tcid>`
+            // altına kalıcı olarak yazılıyordu. Oraya hiçbir silme ulaşmıyor — ne `purgeRun`
+            // (`<runId>:` öneki), ne `purgeOrganization` (`org:<id>:`), ne `purgeResource`.
+            //
+            // Bu kaydın İŞİ zaten "bu askı için bir kez uyardık mı" — bir tekilleştirme işareti.
+            // İşaretin argümanlara ihtiyacı yok; webhook'un var (operatörün kararı için). Yani
+            // veriyi ikinci bir yerde kalıcılaştırmak hiçbir şey kazandırmıyordu.
+            const marker = { type: payload.type, runId: it.runId, toolCallId: it.toolCallId, toolName: it.toolName, at: Date.now() };
+            await appendLog(rootRw as Journal, '__alert__', marker, `approval:${it.runId}:${it.toolCallId}`);
             await postAlert(payload);
           }
         } catch { /* alert is best-effort — swallow */ }
@@ -3038,7 +3135,21 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     // is org-scoped, so another organization's run reads as absent here rather than as an empty fork.
     if (!(await runVisible(id))) return c.json({ error: `run '${id}' not found` }, 404);
     const fork = await forkRun(reader as any, id, body.step ?? 0, body.newRunId);
-    const r = await resume(fork.newRunId, {});
+    // ORG KAPSAMI DÜŞÜYORDU: kardeş çağrı (`:3117`) ctx'i geçiriyor, bu geçirmiyordu — org'a bağlı
+    // bir host köprüsü fork'lanan koşumu YANLIŞ kapsamda sürüyordu. Aktör de aynı sebeple geçiyor:
+    // fork edilen koşum yeni bir runId'dir ve onu kim başlattıysa damgası odur.
+    // Sarmal, kardeş uçla (resume) AYNI: actor eklendiği an `assertRunAdmissible` bu uçtan da
+    // ateşleyebiliyor ve sarmalsız hâli çıplak 500 veriyordu — ölçüldü. Tipli çatışma 409, tipsiz
+    // hata mesajı gövdede ama 5xx kalıyor; iki uçta iki farklı davranış olmasın.
+    let r: Awaited<ReturnType<StudioResume>>;
+    try {
+      r = await resume(fork.newRunId, {}, { orgId: callerOrg(c), actor: verifiedActorOf(c) });
+    } catch (e) {
+      const code = callerConflictCode(e);
+      const err = e as { message?: string; detail?: unknown };
+      if (code) return c.json({ error: err.message, code, ...(err.detail !== undefined ? { detail: err.detail } : {}) }, 409);
+      return c.json({ error: err.message ?? String(e) }, 500);
+    }
     await audit(c, 'fork', id, { step: body.step ?? 0, newRunId: fork.newRunId });
     return c.json({ ok: true, ...fork, ...r });
   });
@@ -3059,17 +3170,65 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       // TEK kaynak (denetçi bloker — K9): run.ts'in resolveApprovals'ı; spent-slot CAS'ı ve
       // first-decision-wins inceliği oradadır, ham claim kopyası ikisini de düşürüyordu. Dönen map
       // JOURNAL'DAKİ GERÇEK kararlardır — cevap ve audit onu raporlar, dileği değil.
-      const recorded = await dResolveApprovals(rw as never, id, body.approvals);
+      // KİMLİKLİ ve SONDALI. Bu çağrı opts'suzdu ve iki şey birden düşüyordu:
+      //   (a) ApprovalRecord actor'süz yazılıyordu — Studio tam da "KİM cevapladı"nın yüzeyi, ve
+      //       imzasız bir karar ne denetlenebilir ne de precision@suspend'de operatör tıkından
+      //       ayrılabilir.
+      //   (b) hasRun verilmediğinden fikir-değiştirme kuralı hiç çalışmıyordu: belirsizlik güvenli
+      //       yöne ("koştu") yatırılıp her ikinci cevap yok sayılıyor, gelen kutusu ise ikinci tıkı
+      //       davet etmeye devam ediyordu — hem de kayıt hâlâ askıdayken, yani iş HENÜZ YAPILMAMIŞKEN.
+      // Sonda motorun KENDİ yardımcısı (hasRunProbe), kopyası değil: "terminal" sözlüğü ve taze
+      // 'running' inceliği orada yaşıyor, ve bir kuralın iki tanımı iki farklı karar demektir.
+      const recorded = await dResolveApprovals(rw as never, id, body.approvals, {
+        actor: verifiedActorOf(c),
+        hasRun: hasRunProbe(rw as never, id),
+      });
       const anyOk = Object.values(recorded ?? {}).some((v) => v === true);
       await audit(c, anyOk ? 'approve' : 'deny', id, { approvals: recorded, batch: true });
       return c.json({ ok: true, decided: recorded ?? {}, note: 'decisions recorded — they execute on the next batch run()' });
     }
     if (!resume) return c.json({ error: 'resume is not enabled' }, 501);
     if (!(await runVisible(id))) return c.json({ error: `run '${id}' not found` }, 404);
-    const result = await resume(id, body.approvals ?? {}, { orgId: callerOrg(c) });
-    // 'approve' if any value in approvals is true, otherwise 'deny' (the detail carries the full decision set)
-    const anyApproved = Object.values(body.approvals ?? {}).some((v) => v === true);
-    await audit(c, anyApproved ? 'approve' : 'deny', id, { approvals: body.approvals });
+    // WHY THIS IS WRAPPED. Measured live: an operator approving a run owned by someone else got
+    // `500 Internal Server Error` with an empty body, while the real sentence — "run 'x' belongs to
+    // actor 'ayse' — 'role:admin' may not re-drive it" — went only to the server's stderr. The refusal
+    // is CORRECT and deliberate; what was broken is that the person it was aimed at could not read it.
+    // A refusal nobody can read teaches nothing, so it gets retried, and the operator concludes the
+    // button is broken rather than that the run has an owner.
+    // Two shapes, both explicit:
+    //   typed caller conflict (run_actor_mismatch, run_swept, …) → 409 + code, the SAME taxonomy
+    //     @gnldev/server already returns (index.ts's conflict helper) — one vocabulary, not two.
+    //   anything else (e.g. the replay entry-point refusal, which is a plain Error with no code) →
+    //     the engine's own message in the body instead of a bare 500. Still 5xx: an unclassified
+    //     failure must not be dressed up as a clean client error.
+    let result: Awaited<ReturnType<StudioResume>>;
+    try {
+      result = await resume(id, body.approvals ?? {}, { orgId: callerOrg(c), actor: verifiedActorOf(c) });
+    } catch (e) {
+      const code = callerConflictCode(e);
+      const err = e as { message?: string; detail?: unknown };
+      if (code) return c.json({ error: err.message, code, ...(err.detail !== undefined ? { detail: err.detail } : {}) }, 409);
+      return c.json({ error: err.message ?? String(e) }, 500);
+    }
+    // THE RECORD, NOT THE WISH. This used to audit `body.approvals` — what the caller ASKED for —
+    // while the batch branch two functions up reads the journal's `recorded` and says in its own
+    // comment that it reports the real decisions "not the wish". Two standards on one endpoint, and
+    // the wish is the wrong one: the engine's decision is first-wins, so a request carrying `false`
+    // against an already-recorded `true` executes the call while the audit line reads "deny". An
+    // audit that can contradict what the engine did is worse than no audit — it is a false witness.
+    // Best-effort read: if the journal cannot answer, fall back to the request rather than skip the
+    // audit entirely (a missing line hides the decision completely).
+    let recorded: Record<string, boolean> = body.approvals ?? {};
+    try {
+      const real = await dResolveApprovals(rw as never, id, undefined);
+      if (real) {
+        const asked = Object.keys(body.approvals ?? {});
+        recorded = Object.fromEntries(asked.filter((k) => k in real).map((k) => [k, real[k]!]));
+        if (Object.keys(recorded).length === 0) recorded = body.approvals ?? {};
+      }
+    } catch { /* journal okunamadı — istenen kaydedilir, satır hiç yazılmamasından iyidir */ }
+    const anyApproved = Object.values(recorded).some((v) => v === true);
+    await audit(c, anyApproved ? 'approve' : 'deny', id, { approvals: recorded, ...(JSON.stringify(recorded) !== JSON.stringify(body.approvals ?? {}) ? { requested: body.approvals } : {}) });
     return c.json({ ok: true, ...result });
   });
 
@@ -3214,11 +3373,22 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     if (typeof (rw as Partial<Journal>).deletePrefix !== 'function') {
       return c.json({ error: 'retention requires journal deletePrefix support' }, 501);
     }
-    const body = (await c.req.json().catch(() => ({}))) as { olderThanMs?: number; keepSuspended?: boolean; auditOlderThanMs?: number };
+    const body = (await c.req.json().catch(() => ({}))) as { olderThanMs?: number; keepSuspended?: boolean; auditOlderThanMs?: number; suspendedTtlMs?: number; tombstones?: boolean };
     const olderThanMs = body.olderThanMs ?? opts.retention?.olderThanMs;
     if (olderThanMs == null) return c.json({ error: 'olderThanMs is required (body or the retention option)' }, 400);
     const keepSuspended = body.keepSuspended ?? opts.retention?.keepSuspended ?? true;
-    const result = await sweepRuns(rw as any, { olderThanMs, keepSuspended });
+    // `suspendedTtlMs` motorda VARDI ama bu uç onu `sweepRuns`'a hiç geçirmiyordu: kurulu ama
+    // ulaşılamaz bir katman. `keepSuspended` varsayılan olarak açık olduğu için cevapsız kalan her
+    // askı ölümsüzdü — ve askıdaki `args` kişisel veri taşıyor. TTL, "kimse onaylamaya gelmeyecek"
+    // hâlinin tek çıkışı; `tombstones` ise silinen koşumun geç gelen bir retry'sinin sessizce
+    // yeniden koşmasını engelliyor (silme, iz bırakmadan yapılırsa ayrı bir sorun doğurur).
+    const suspendedTtlMs = body.suspendedTtlMs ?? opts.retention?.suspendedTtlMs;
+    const tombstones = body.tombstones ?? opts.retention?.tombstones;
+    const result = await sweepRuns(rw as any, {
+      olderThanMs, keepSuspended,
+      ...(suspendedTtlMs != null ? { suspendedTtlMs } : {}),
+      ...(tombstones != null ? { tombstones } : {}),
+    });
     // The audit log is swept only when a retention period was chosen for it, and against the ROOT
     // journal because that is where it lives (see the audit endpoint). The record written just below
     // is newer than any cutoff, so a sweep never erases the evidence of itself.
@@ -3571,6 +3741,11 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
         messages: body.messages,
         threadId: body.threadId,
         resourceId: body.resourceId,
+        // AKTÖR. Playground `resourceId`'yi gövdeden alıyor (operatör kimin adına koşacağını yazar)
+        // ama koşum ACTOR'süz doğuyordu — yani `/runs/:id/resume`'dan 409 yiyen operatör, aynı
+        // onayı yandaki kapıdan bedavaya verebiliyordu. Damga operatörün DOĞRULANMIŞ kimliği:
+        // gövdedeki `resourceId` "kimin adına" bilgisidir, "kim yaptı" değil.
+        actor: verifiedActorOf(c),
         approvals: body.approvals,
         model: body.model ?? mo?.model,
         temperature: body.temperature,
@@ -3610,6 +3785,11 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
         messages: body.messages,
         threadId: body.threadId,
         resourceId: body.resourceId,
+        // AKTÖR. Playground `resourceId`'yi gövdeden alıyor (operatör kimin adına koşacağını yazar)
+        // ama koşum ACTOR'süz doğuyordu — yani `/runs/:id/resume`'dan 409 yiyen operatör, aynı
+        // onayı yandaki kapıdan bedavaya verebiliyordu. Damga operatörün DOĞRULANMIŞ kimliği:
+        // gövdedeki `resourceId` "kimin adına" bilgisidir, "kim yaptı" değil.
+        actor: verifiedActorOf(c),
         approvals: body.approvals,
         model: body.model ?? mo?.model,
         temperature: body.temperature,

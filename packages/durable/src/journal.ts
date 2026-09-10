@@ -5,7 +5,7 @@ import type { Guard } from './guard.js';
 import type { RunLimits } from './limits.js';
 import type { Processor } from './processor.js';
 import { stableStringify } from './hash.js';
-import { isVersionedKey, upgradeFormat } from './format.js';
+import { isVersionedKey, stampFormat, upgradeFormat } from './format.js';
 
 export type ToolJournalRecord = (
   // ToolName — carried so loop detection (checkToolLoop) can match SUCCEEDED records by
@@ -51,7 +51,12 @@ export type ToolJournalRecord = (
   // Stored so seedFromHistory can reconstruct the SAME count from the journal on a first-encounter scan.
   // Optional: absent from old records → treated as not-a-side-effect (harmless, the pre-C3 behavior).
   | { status: 'failed'; error: string; attempts?: number; sideEffect?: boolean; toolName?: string }
-  | { status: 'running'; startedAt: number; toolName?: string } // M4: atomic claim marker (execute in-flight)
+  // M4: atomic claim marker (execute in-flight). `attempts` counts how many times this key has been
+  // Claimed — it survives a stale-claim TAKEOVER so a crash loop ("it ran but died before writing")
+  // Is bounded by the same maxRetries ladder as 'failed'. Without it every takeover stamped a fresh
+  // Marker and the counter reset, so a wedged worker re-ran the tool once per restart, forever.
+  // Optional: absent from old records → durable-tool.ts assumes 1, like 'failed'.
+  | { status: 'running'; startedAt: number; attempts?: number; toolName?: string }
 ) & {
   /**
    * Set on a SHADOW copy written under `${runId}:tool:` for a record whose authoritative key is not
@@ -382,6 +387,40 @@ export async function claim(journal: Journal, key: string, value: unknown): Prom
   if ((await journal.get(key)) !== undefined) return false;
   await journal.put(key, value);
   return true;
+}
+
+/**
+ * WHOSE RUN THIS IS, for the doors that do not go through `persistInput`.
+ *
+ * The workflow, network and batch-item paths never call `run()`, so nothing ever froze an `:input`
+ * for them — and that key is where the ownership gate, `listRunsPaged({resourceId})` and
+ * `purgeResource` ALL look. Each of the three grew its own `claim(journal, `${runId}:input`, {…})`
+ * this round, and each of the three wrote the record UNSTAMPED.
+ *
+ * That last word is the whole reason this helper exists. `runIdOfKey` refuses to call an `:input`
+ * key a run unless the RECORD corroborates the key with a format stamp (`_v`) — deliberately, so a
+ * caller's own `<something>:input` payload cannot conjure a run out of thin air. An unstamped
+ * identity record therefore satisfied every reader that reads it BY KEY (the ownership gate does,
+ * so cancel started refusing correctly) and NONE of the readers that ENUMERATE runs. Measured after
+ * the workflow half shipped: `wf-1:input` holds `{resourceId:'u-ayse', workflow:'w'}`, and
+ * `listRunsPaged({resourceId:'u-ayse'})` still answers `[]` — so `purgeResource('u-ayse')` walks
+ * past the run whose discovery was the stated point of writing the owner down. A deletion that
+ * silently skips half is worse than one that refuses: nobody goes looking for what they were told
+ * was gone. `rollover.ts` had it right all along (`claim(journal, inputKey, stampFormat(seed))`);
+ * the three new writers each missed the same word.
+ *
+ * ONE helper, three call sites, for the same reason `identityOnlyInput` is one: a fourth door will
+ * be added, and a copied `claim(...)` is how it will be added unstamped.
+ *
+ * FIRST-WINS and BEST-EFFORT, both on purpose: a run's owner does not change mid-flight, and an
+ * identity record must never be the thing that fails the run.
+ */
+export async function claimIdentityInput(
+  journal: Journal,
+  runId: string,
+  record: { at: number; resourceId?: string; actor?: string; threadId?: string } & Record<string, unknown>,
+): Promise<void> {
+  await claim(journal, `${runId}:input`, stampFormat(record)).catch(() => {});
 }
 
 /**

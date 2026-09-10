@@ -36,10 +36,23 @@ import { RunBusyError } from './errors.js';
  *   'failed' (measured: run.ts's assertThreadOwnership fires before runStarted/resolveApprovals for
  *   The same reason — see its own doc — but the outer catch here is the second half of that fix).
  *
+ * ThreadOwnerMismatchError: the same shape as the sibling above, one axis over — a request that
+ *   names a SUBJECT the thread does not belong to. Also asserted before the attempt does anything,
+ *   also on a runId that may already carry someone else's 'completed'. It was added to this set the
+ *   day the check was written, because the first version of that check ran LATER (inside memory
+ *   prep) and was measured turning a victim's completed run into 'failed' — an authorisation
+ *   refusal writing into the history of the person it refused.
+ *
+ * NotAnAgentRunError: the third member of the same family, and the one with the most to lose. The
+ *   RunId belongs to a WORKFLOW or a BATCH ITEM — a live run with its own record, written by its own
+ *   Machinery. An agent-path call against it is refused before it reads anything; stamping 'failed'
+ *   From here would put an agent verdict on a workflow's outcome, which is precisely the
+ *   Cross-contamination the refusal exists to prevent.
+ *
  * Matched by name rather than by instanceof: cancel.ts/compensation.ts/errors.ts import from run.ts's
  * Side of the graph, and importing them back here would be a cycle for no gain.
  */
-const NOT_A_RUN_FAILURE = new Set(['CompensatedRunError', 'RunCanceledError', 'RunThreadMismatchError']);
+const NOT_A_RUN_FAILURE = new Set(['CompensatedRunError', 'RunCanceledError', 'RunThreadMismatchError', 'ThreadOwnerMismatchError', 'NotAnAgentRunError']);
 
 /**
  * How a run's error relates to its outcome record. RunBusyError alone cannot answer this — it is

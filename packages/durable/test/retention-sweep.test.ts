@@ -2,9 +2,10 @@
 // Continuation of sweepRuns' safety philosophy: a record/thread whose age cannot be measured is NOT DELETED, and is counted in the report.
 import { describe, it, expect, vi } from 'vitest';
 import {
-  InMemoryJournal, BasicMemory, appendLog, listLog, consumeOnce, sweepLog, sweepThreads,
-  createRetentionSweeper, runKeys,
+  InMemoryJournal, BasicMemory, appendLog, listLog, consumeOnce, sweepLog, sweepThreads, sweepRuns,
+  createRetentionSweeper, runKeys, stampFormat,
 } from '../src/index.js';
+import { claimIdentityInput } from '../src/journal.js';
 
 const HOUR = 60 * 60 * 1000;
 
@@ -143,6 +144,47 @@ describe('sweepThreads (BasicMemory retention)', () => {
     const res = await sweepThreads(journal, { olderThanMs: HOUR, now });
     expect(res.purged).toEqual(['iso-old']);
     expect(await memory.getMessages('date-new')).toHaveLength(1);
+  });
+});
+
+// KİMLİK AMAÇLI `:input` — süpürmenin göremediği kayıt sınıfı.
+//
+// İş akışı / batch / ağ koşumları `<runId>:input`'a bir SAHİP kaydı yazıyor (claimIdentityInput).
+// O kayıtla koşum `listRuns`'ta görünüyor, ama `readRun` ona hiç entry döndürmüyor (`:input`
+// parseJournalKey'e görünmez) → `lastActivity === undefined` → `keptNoTs` → SONSUZA DEK saklanır.
+// Yani kişisel veri taşıyan bir kayıt sınıfı tam olarak her retention penceresinin dışındaydı.
+describe('sweepRuns — kimlik amaçlı :input', () => {
+  /** Hızlı yol (`listStaleRuns`) YAZMA zamanına bakar; buradaki yaş `at` alanında, o yüzden yavaş tarama. */
+  const slowScan = (j: InMemoryJournal) => {
+    (j as unknown as { listStaleRuns?: unknown }).listStaleRuns = undefined;
+    return j;
+  };
+
+  it('yaşlı kimlik kaydı süpürülür, genci kalır', async () => {
+    const journal = slowScan(new InMemoryJournal());
+    const now = Date.now();
+    await claimIdentityInput(journal, 'wf-eski', { at: now - 3 * HOUR, resourceId: 'u-ayse', workflow: 'aylik-rapor' });
+    await claimIdentityInput(journal, 'wf-yeni', { at: now - 1000, resourceId: 'u-ayse', workflow: 'aylik-rapor' });
+    await claimIdentityInput(journal, 'batch:f-1:F-9', { at: now - 3 * HOUR, resourceId: 'u-ayse', batch: 'f-1' });
+    await claimIdentityInput(journal, 'net-eski', { at: now - 3 * HOUR, resourceId: 'u-ayse', network: 'destek' });
+
+    const res = await sweepRuns(journal, { olderThanMs: HOUR, now });
+    expect([...res.purged].sort()).toEqual(['batch:f-1:F-9', 'net-eski', 'wf-eski']);
+    expect(await journal.get(runKeys.input('wf-yeni'))).toBeDefined();
+    expect(await journal.get(runKeys.input('wf-eski'))).toBeUndefined();
+  });
+
+  it("entry'siz GERÇEK ajan koşumu hâlâ keptNoTs — güvenli taraf korunuyor", async () => {
+    // Sınır burası. `at`'i yaş saymak yalnız KENDİNİ kimlik olarak adlandıran kayıtta geçerli;
+    // gerçek bir donmuş girdi hâlâ ölçülemez yaştadır ve silinmez.
+    const journal = slowScan(new InMemoryJournal());
+    const now = Date.now();
+    await journal.put(runKeys.input('ajan-eski'), stampFormat({ at: now - 3 * HOUR, prompt: 'merhaba' }));
+
+    const res = await sweepRuns(journal, { olderThanMs: HOUR, now });
+    expect(res.purged).toEqual([]);
+    expect(res.keptNoTs).toBe(1);
+    expect(await journal.get(runKeys.input('ajan-eski'))).toBeDefined();
   });
 });
 

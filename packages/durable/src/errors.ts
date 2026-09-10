@@ -130,6 +130,29 @@ export class RunInputMismatchError extends Error {
  * Bound into the frozen input, first-wins). No actor on either side = no check (an auth-less profile
  * Has no protection here — documented, not silent).
  */
+/**
+ * A request named a SUBJECT and a THREAD that belong to different people.
+ *
+ * `@gnldev/server` already refuses this at the edge (`threadOwnershipDenied`, 403) — but the edge is
+ * one of several ways in. chat-adapter, agui and batch reach the engine directly, and there the only
+ * thing a thread id had to be was a string: whoever sent it got that conversation's history loaded
+ * into the model's prompt, and this turn appended to it. The check therefore lives with the memory
+ * load rather than with any one route.
+ *
+ * SILENT WHEN EITHER SIDE IS UNKNOWN, deliberately: a first turn creates the thread and has no owner
+ * yet, and a caller that names no subject is the operator case the whole ownership rule exempts.
+ * Refusing an unknown owner would refuse every new conversation.
+ */
+export class ThreadOwnerMismatchError extends Error {
+  constructor(
+    message: string,
+    public readonly detail: { threadId: string; owner: string; requested: string },
+  ) {
+    super(message);
+    this.name = 'ThreadOwnerMismatchError';
+  }
+}
+
 export class RunActorMismatchError extends Error {
   constructor(
     message: string,
@@ -178,10 +201,33 @@ export class BatchPlanMismatchError extends Error {
   }
 }
 
+/**
+ * Bu runId bir AJAN koşumuna ait değil — bir iş akışı, AĞ ya da batch item koşumuna ait.
+ *
+ * `<runId>:input` iki farklı işi birden görüyor: ajan yolunda DONMUŞ GİRDİ (prompt/messages/system),
+ * iş akışı/ağ/batch yolunda ise yalnız KİMLİK ({resourceId, workflow|network|batch, …}) — sahiplik kapısı,
+ * `listRuns({resourceId})` ve `purgeResource` o anahtarı okuduğu için. Ajan yolu anahtarın
+ * VARLIĞINI "girdi donmuş" diye okur, ve bir kimlik kaydını benimsemek prompt/messages/system'ı
+ * undefined'a set eder: boş girdiyle model çağrısı, üstüne o id'nin altına karışan ajan kayıtları.
+ *
+ * Aile gereği 409 + `resumable` YOK: düzeltilecek şey id'nin kendisi, hiçbir retry temizlemez.
+ */
+export class NotAnAgentRunError extends Error {
+  constructor(
+    message: string,
+    public readonly detail: { runId: string; kind: 'workflow' | 'network' | 'batch'; name?: string },
+  ) {
+    super(message);
+    this.name = 'NotAnAgentRunError';
+  }
+}
+
 export const CALLER_CONFLICT_CODES: Record<string, string> = {
   RunThreadMismatchError: 'run_thread_mismatch',
+  NotAnAgentRunError: 'not_an_agent_run',
   RunInputMismatchError: 'run_input_mismatch',
   RunActorMismatchError: 'run_actor_mismatch',
+  ThreadOwnerMismatchError: 'thread_owner_mismatch',
   RunSweptError: 'run_swept',
   BatchPlanMismatchError: 'batch_plan_mismatch',
 };

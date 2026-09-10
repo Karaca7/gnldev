@@ -164,7 +164,14 @@ export async function pollScheduler(
 
     const runId = `sched:${id}:${state.fireCount}`;
     const lock = await acquireRunLock(journal, runId, owner, lockTtlMs, now);
-    if (!lock) continue; // another poller holds this fire
+    if (!lock) {
+      // SESSİZ DEĞİL: bu dal `out.skipped`'a da yazmıyordu, log da basmıyordu — yani zamanlanmış bir
+      // tetik atlandığında hiçbir iz kalmıyordu. Atlama DOĞRU (başka bir poller o ateşlemeyi tutuyor),
+      // ama görünmez olması "sessiz-VE-görünmez hiçbir şey olamaz" kuralının ihlali: operatör
+      // "tetik çalışmadı mı, atlandı mı, çakıştı mı" sorusunu cevaplayamıyordu.
+      out.skipped++;
+      continue;
+    }
 
     // Y2 (heartbeat): the lock TTL used to be a FIXED 60s that was never renewed — a workflow running
     // Longer than that let the lock expire, a second poller took it over and fired the SAME trigger

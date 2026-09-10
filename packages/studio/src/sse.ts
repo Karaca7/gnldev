@@ -7,6 +7,7 @@
 //         Interrupt {interrupts[]} (once the stream ends) · done {runId,finishReason,usage}
 import { streamSSE } from 'hono/streaming';
 import type { Context } from 'hono';
+import { surfacedInterrupts } from '@gnldev/durable';
 import type { Interrupt } from '@gnldev/durable';
 
 /**
@@ -52,11 +53,14 @@ function hasSuspend(part: any): boolean {
   return part?.type === 'tool-result' && !!part.output?.__gnl_suspend;
 }
 
+/** Kept IN SYNC with packages/server/src/sse.ts — including the reason the raw sentinel is NOT
+ *  Pushed: an iç içe askıda o sentinel vekilin id'siyle anahtarlıdır ve motor vekile verilen cevabı
+ *  Yok sayar (bkz. durable `surfacedInterrupts`). Dönüşüm motorun kendi fonksiyonundan geçer. */
 export function interruptsFromSteps(steps: any[]): Interrupt[] {
   const out: Interrupt[] = [];
   for (const step of steps ?? []) {
     for (const part of step?.content ?? []) {
-      if (hasSuspend(part)) out.push(part.output.__gnl_suspend);
+      if (hasSuspend(part)) out.push(...surfacedInterrupts(part.output.__gnl_suspend));
     }
   }
   return out;

@@ -52,13 +52,15 @@ function maskSentinelChunks(runId?: string): TransformStream<UIMessageChunk, UIM
         toolNames.set(chunk.toolCallId, chunk.toolName);
       }
       if (chunk.type === 'tool-output-available') {
-        const { display, interrupt } = maskSentinelOutput(chunk.output, toolNames.get(chunk.toolCallId));
+        const { display, interrupts } = maskSentinelOutput(chunk.output, toolNames.get(chunk.toolCallId));
         if (display !== chunk.output) {
           controller.enqueue({ ...chunk, output: display });
-          if (interrupt) {
-            // FAZ-2: stamp the run's id onto the interrupt — the client must approve THIS run, not a
-            // Freshly-derived one (see GnlInterruptData's JSDoc).
-            const data: GnlInterruptData = { interrupts: [runId ? { ...interrupt, runId } : interrupt] };
+          if (interrupts?.length) {
+            // FAZ-2: stamp the run's id onto each interrupt — the client must approve THIS run, not a
+            // Freshly-derived one (see GnlInterruptData's JSDoc). ALL of them, not just the first: one
+            // suspended parent can be standing in for several child questions, and the useChat channel
+            // was the last surface still promising exactly one (see MaskedToolOutput.interrupts).
+            const data: GnlInterruptData = { interrupts: runId ? interrupts.map((i) => ({ ...i, runId })) : interrupts };
             controller.enqueue({ type: 'data-gnl-interrupt', data } as UIMessageChunk);
           }
           return;

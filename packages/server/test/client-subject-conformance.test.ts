@@ -29,8 +29,15 @@ const NO_SUBJECT: Record<string, string> = {
   'POST /agents/registry/:name/block': 'deployment governance; refused to clients by the write whitelist',
   'GET /openapi.json': 'the schema of the API itself',
   'GET /workflows': 'the workflow catalogue is configuration',
-  'GET /workflows/runs': 'the workflow run registry is org-level bookkeeping, not per-end-user',
-  'POST /workflows/:name/run': 'a workflow is an org-level job; it has no thread and no end-user memory',
+  // 'GET /workflows/runs' USED to sit here as "org-level bookkeeping, not per-end-user". That stopped
+  // being true the moment a workflow run started carrying an owner: the registry lists runs a named
+  // subject started, so the row belongs to somebody. Removed rather than reworded — the walk drives
+  // it now, and it answers 400 like every other inventory endpoint.
+  'POST /workflows/:name/run': 'a workflow can be an org-level job with no subject at all — an '
+    + 'application credential starting a nightly reconciliation names nobody, and that shape is '
+    + 'deliberate (registry.ts writes NO owner when none is declared). What it MUST not do is reach '
+    + 'a run that belongs to someone else: `ownershipDenied` covers the re-entry/resume path, and '
+    + 'strict binding makes a bound caller unable to name a subject other than itself.',
   'GET /usage': 'spend is metered per ORGANIZATION — a client cannot name a subject for it, and is '
     + 'refused outright rather than exempted (403, asserted separately below)',
 };

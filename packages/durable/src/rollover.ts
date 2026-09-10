@@ -166,7 +166,12 @@ export async function rolloverRun(journal: Journal, runId: string, opts?: Rollov
 
   // 3) Materialize the old run's final state (input + all model/tool steps).
   const entries = await readRun.call(journal, runId);
-  const oldInput = upgradeFormat(await journal.get<ReconstructSeed>(runKeys.input(runId)), runKeys.input(runId)); // H13
+  // Tip genişletildi: `:input` kimlik alanlarını da taşıyor (persistInput yazıyor) ve devir onları
+  // aktarmak zorunda — ReconstructSeed yalnız mesaj/sistem yeniden kurulumunu tarifliyor.
+  const oldInput = upgradeFormat(
+    await journal.get<ReconstructSeed & { threadId?: string; resourceId?: string; actor?: string; agent?: string }>(runKeys.input(runId)),
+    runKeys.input(runId),
+  ); // H13
   if (entries.length === 0 && oldInput === undefined) {
     throw new Error(`@gnldev/durable: rolloverRun — no journal record for '${runId}' (no state found to hand over).`);
   }
@@ -175,7 +180,19 @@ export async function rolloverRun(journal: Journal, runId: string, opts?: Rollov
   if (opts?.carry) messages = await opts.carry(messages);
 
   // 4) Write the seed via claim (the race loser discards its own result and reports the winner's seed).
-  const seed = { messages, ...(oldInput?.system !== undefined ? { system: oldInput.system } : {}) };
+  // KİMLİK DE DEVREDİLİR. Tohum yalnız `messages` (+ `system`) taşıyordu; `threadId`, `resourceId`,
+  // `actor` ve `agent` düşüyordu. Sonuç kalıcı: yeni koşumun `:input`'u ilk yazan kazanır, yani
+  // dönem devrinde SAHİPLİ bir koşum SAHİPSİZ doğuyor ve bir daha sahiplenilemiyor. Sahipsizlik
+  // sessizce her kapıyı açar — ownershipDenied `!owner` dalında geçer, actor kilidi ateşlemez,
+  // purgeResource o koşumu hiç bulamaz. Devir bir kimlik değişimi değil, aynı işin devamıdır.
+  const seed = {
+    messages,
+    ...(oldInput?.system !== undefined ? { system: oldInput.system } : {}),
+    ...(oldInput?.threadId !== undefined ? { threadId: oldInput.threadId } : {}),
+    ...(oldInput?.resourceId !== undefined ? { resourceId: oldInput.resourceId } : {}),
+    ...(oldInput?.actor !== undefined ? { actor: oldInput.actor } : {}),
+    ...(oldInput?.agent !== undefined ? { agent: oldInput.agent } : {}),
+  };
   if (!(await claim(journal, inputKey, stampFormat(seed as object)))) {
     const winner = await journal.get<{ messages?: unknown[] }>(inputKey);
     const msgs = Array.isArray(winner?.messages) ? winner!.messages! : [];

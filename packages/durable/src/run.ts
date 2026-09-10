@@ -2,9 +2,9 @@ import { generateText, streamText, stepCountIs } from 'ai';
 import type { ToolSchemaRuleLike } from './types.js';
 import type { StreamTextResult } from 'ai';
 import { withDurableModel } from './durable-model.js';
-import { durableTools } from './durable-tool.js';
+import { durableTools, CLAIM_TTL_MS } from './durable-tool.js';
 import { acquireRunLock } from './run-lock.js';
-import { RunBusyError, SideEffectRetryBlockedError, RetryLimitExceededError, RunThreadMismatchError, RunInputMismatchError, RunActorMismatchError, RunSweptError } from './errors.js';
+import { RunBusyError, SideEffectRetryBlockedError, RetryLimitExceededError, RunThreadMismatchError, RunInputMismatchError, RunActorMismatchError, RunSweptError, ThreadOwnerMismatchError, NotAnAgentRunError } from './errors.js';
 import { argsHash } from './hash.js';
 import { recordIdemConflict } from './idem-ledger.js';
 import { createProcessorCtx, composePrepareStep, composeOnStepFinish, durableProcessorStep, ProcessorRetry, RetryExhaustedByProcessorError, type StepHookFailure } from './processor.js';
@@ -29,7 +29,7 @@ import type { RunLimits } from './limits.js';
 
 import type { LanguageModelV4 } from '@ai-sdk/provider';
 import { systemText, finishReasonText, producedMessages, type InstructionsLike } from './sdk-compat.js';
-import { runFailed, runFailedIfUnrecorded, runStarted, runSucceeded, classifyRunError, isRunFailure } from './outcome.js';
+import { runFailed, runFailedIfUnrecorded, runStarted, runSucceeded, classifyRunError, isRunFailure, readRunOutcome } from './outcome.js';
 
 type GenerateTextOptions = Parameters<typeof generateText>[0];
 type StreamTextOptions = Parameters<typeof streamText>[0];
@@ -266,6 +266,51 @@ function hasSuspend(part: any): boolean {
   return part?.type === 'tool-result' && !!part.output?.__gnl_suspend;
 }
 
+/**
+ * SORUYU SORANIN KİMLİĞİ YÜZEYE ÇIKAR.
+ *
+ * Bir alt ajan insan kapısına çarptığında ebeveynin kaydı da askıya giriyor (agent-tool.ts'in
+ * `kind:'nested'` sentinel'i). O sentinel ZORUNLU olarak EBEVEYNİN çağrı id'siyle anahtarlanır —
+ * askı kaydı, replay ve `consumeExistingRecord` hep o id üzerinden çalışır. Ama o id bir VEKİLDİR:
+ * ortada onunla cevaplanabilecek bir soru yok.
+ *
+ * Vekil id'yi yüzeye çıkarmak ölçülen bir tuzaktı. Standart istemci sözleşmesi
+ * `approvals[interrupt.toolCallId] = true` göndermek; onu yapan istemci sessiz bir no-op döngüsüne
+ * giriyordu — ebeveyn askı kolunu geçiyor, çocuk `{ebeveynId:true}` ile yeniden koşuyor, çocuğun
+ * confirm'ü kendi id'sini bulamıyor, yine askı; her turda da sahte bir insan-onayı izi. `false`
+ * verildiğinde daha sessiz: ebeveyn 'denied' yazılıyor, çocuk koşumu sonsuza dek yetim kalıyor.
+ *
+ * Bu yüzden yüzeye ÇOCUĞUN interrupt'ları çıkar: kendi toolCallId'leri, kendi reason'ları, alt-ajan
+ * bağlamı reason'a eklenmiş hâlde. Genişletme BURADA — koşumun interrupt'larının toplandığı tek
+ * noktada — yapılıyor, sentinel üretiminde değil: journal'daki kayıt (ve onu okuyan askı merdiveni)
+ * olduğu gibi kalıyor, değişen yalnız çağırana DÖNEN liste. Çok kademeli devirde de kendiliğinden
+ * çalışır: çocuğun `res.interrupts`'i de aynı noktadan geçtiği için torunun kimliği yukarı taşınır.
+ *
+ * EXPORTED, ve sebebi ölçülmüş bir arızadır: bu dosya koşumun interrupt'larını doğru topluyordu ama
+ * ÜÇ yüzey (server/sse.ts + studio/sse.ts `interruptsFromSteps`, studio'nun onay gelen kutusu)
+ * interrupt'ı motordan değil kendi başına türetiyordu — step part'larından ya da journal'daki askılı
+ * tool kaydından ham `__gnl_suspend` sentinel'ini çekerek. O sentinel ZORUNLU olarak vekilin
+ * id'siyle anahtarlıdır (askı kaydı, replay ve `consumeExistingRecord` hep o id üzerinden çalışır),
+ * yani o yüzeylerden onaylayan insan tam da durable-tool'un bilinçle yok saydığı kimliği
+ * gönderiyordu: sessiz no-op. Dönüşüm ÜÇ yerde kopyalanmaz — ham sentinel'i alıp yüzeye çıkacak
+ * listeyi döndüren tek fonksiyon budur. `limitBreachFromSteps`/`blockedFromSteps`'in ihraç
+ * edilmesiyle aynı sözleşme: motorun bildiğini yüzeyler yeniden keşfetmesin.
+ */
+export function surfacedInterrupts(sus: any): Interrupt[] {
+  const nested = sus?.kind === 'nested' ? sus.nested : undefined;
+  const inner: any[] = nested?.interrupts ?? [];
+  if (!inner.length) return [sus as Interrupt];
+  return inner.map((i) => ({
+    toolCallId: i.toolCallId,
+    toolName: i.toolName,
+    args: i.args,
+    reason:
+      `A delegated sub-agent (nested run '${nested.runId}') stopped for a human: ` +
+      `${i.reason ?? 'approval required'}`,
+    ...(i.semPair ? { semPair: i.semPair } : {}),
+  }));
+}
+
 // The sentinel returned when durable-tool.ts's loop/maxToolCalls gate is blocked
 // (see the limits.ts header — since the AI SDK swallows tool-execute errors, this sentinel is
 // Used instead of THROWING; the SAME mechanism as suspend, composeStopWhen stops the loop).
@@ -472,10 +517,52 @@ function composeStopWhen(stopWhen: any, stepHookFailure?: StepHookFailure): any[
  * Read cost: a SINGLE enumeration call via `listKeys` + one `get` per approval record actually FOUND
  * (not for every possible tool/toolCallId — only for approval records that ACTUALLY exist).
  */
+/**
+ * The journal shape of one human answer.
+ *
+ * WHY IT IS NO LONGER A BARE BOOLEAN. `true` is a decision with no author, no time and no state, and
+ * all three were load-bearing:
+ *   - WHO: the audit trail could not attribute an approval, and `precision@suspend` counted an
+ *     operator's click and the requester's click in the same bucket.
+ *   - WHEN: an answer and a leftover row were indistinguishable.
+ *   - STATE: first-decision-wins made a not-yet-executed `true` unbeatable, so a later "Deny" lost.
+ *     MEASURED: approve → the turn crashed → deny → the card was charged. No attacker involved;
+ *     an operator's own two clicks and one ordinary crash.
+ *
+ * READ COMPATIBILITY IS PART OF THE SHAPE, not an afterthought: journals in the field hold bare
+ * booleans and the `attempt`-scope spent sentinel. Both keep their meaning (see `decisionOf`), so
+ * this is additive — no migration, no reader that has to know which era a row came from.
+ */
+export interface ApprovalRecord {
+  v: 1;
+  decision: boolean;
+  at: number;
+  /** WHO answered, when the surface knows (see registry's sealed identity / Studio's actorOf). */
+  actor?: string;
+}
+
+/** A spent slot (`approvalScope: 'attempt'`) — a consumed answer, not an answer. */
+const isSpent = (raw: unknown): boolean =>
+  typeof raw === 'object' && raw !== null && (raw as { __gnl_approval_spent?: boolean }).__gnl_approval_spent === true;
+
+/**
+ * The decision inside a row, whichever era wrote it. `undefined` = "no answer yet" (missing row,
+ * spent slot, or anything unrecognised — an unreadable row must never read as approval).
+ */
+export function decisionOf(raw: unknown): boolean | undefined {
+  if (typeof raw === 'boolean') return raw; // legacy row, still a decision
+  if (typeof raw === 'object' && raw !== null && (raw as ApprovalRecord).v === 1) {
+    const d = (raw as ApprovalRecord).decision;
+    return typeof d === 'boolean' ? d : undefined;
+  }
+  return undefined;
+}
+
 export async function resolveApprovals(
   journal: Journal,
   runId: string,
   approvals: Record<string, boolean> | undefined,
+  opts?: { actor?: string; hasRun?: (toolCallId: string) => Promise<boolean> },
 ): Promise<Record<string, boolean> | undefined> {
   // (a) claim every decision from the parameter into the journal (idempotent — first decision wins).
   // A SPENT slot (approvalScope:'attempt' consumed the previous answer before executing) is not a
@@ -484,14 +571,43 @@ export async function resolveApprovals(
   if (approvals) {
     for (const [toolCallId, decision] of Object.entries(approvals)) {
       const key = runKeys.approval(runId, toolCallId);
-      const won = await claim(journal, key, decision);
-      if (!won) {
-        const raw = await journal.get(key);
-        if (typeof raw === 'object' && raw !== null && (raw as { __gnl_approval_spent?: boolean }).__gnl_approval_spent) {
-          if (journal.putIfMatch) await journal.putIfMatch(key, raw, decision);
-          else await journal.put(key, decision); // single-process fallback, same bound as claim()
-        }
+      const record: ApprovalRecord = { v: 1, decision, at: Date.now(), ...(opts?.actor ? { actor: opts.actor } : {}) };
+      const won = await claim(journal, key, record);
+      if (won) continue;
+      const raw = await journal.get(key);
+      // A spent slot is not a decision — the human's fresh answer takes it over (unchanged).
+      if (isSpent(raw)) {
+        if (journal.putIfMatch) await journal.putIfMatch(key, raw, record);
+        else await journal.put(key, record); // single-process fallback, same bound as claim()
+        continue;
       }
+      // CHANGING ONE'S MIND, while it is still possible to change anything.
+      //
+      // first-decision-wins exists so a crash cannot lose an answer, and that stays. What it must NOT
+      // mean is that an answer becomes unbeatable BEFORE the work it answers for has happened: an
+      // approve whose turn then died left a live `true`, and the operator's follow-up "Deny" lost to
+      // it silently — the row stayed `suspended`, so the inbox invited exactly that second click.
+      //
+      // The line drawn here is the EFFECT, not the clock: a differing answer may replace a decision
+      // only while the tool call has not reached a terminal record. Once it has, the decision is
+      // spent history and mutating it would rewrite an outcome rather than direct one. Ownership of
+      // "may THIS caller answer" is a separate question and is not decided here.
+      const previous = decisionOf(raw);
+      if (previous === undefined || previous === decision) continue;
+      const ran = opts?.hasRun ? await opts.hasRun(toolCallId).catch(() => true) : true; // unknown → treat as run (safe direction)
+      if (ran) {
+        // "Has finished" was the whole story while only terminal records closed the window; now a
+        // LIVE claim closes it too, and an operator told "it has finished" about a charge still in
+        // flight would go looking for a completion that isn't there yet.
+        console.warn(
+          `@gnldev/durable: '${runId}' approval conflict — '${toolCallId}' already has a decision (${previous}) ` +
+            `whose tool call is no longer open to a change of mind (it has finished, or is executing right now); ` +
+            `the new answer (${decision}) is ignored.`,
+        );
+        continue;
+      }
+      if (journal.putIfMatch) await journal.putIfMatch(key, raw, record);
+      else await journal.put(key, record);
     }
   }
 
@@ -506,9 +622,9 @@ export async function resolveApprovals(
   const merged: Record<string, boolean> = { ...approvals };
   for (const key of keys) {
     const toolCallId = key.slice(prefix.length);
-    const journalDecision = await journal.get<boolean>(key);
-    // Only a boolean is a decision — a spent sentinel (or anything else) reads as "no answer yet".
-    if (typeof journalDecision !== 'boolean') continue;
+    const journalDecision = decisionOf(await journal.get(key));
+    // No answer yet: missing, spent, or unrecognised. An unreadable row must never read as approval.
+    if (journalDecision === undefined) continue;
     const paramDecision = approvals?.[toolCallId];
     if (paramDecision !== undefined && paramDecision !== journalDecision) {
       console.warn(
@@ -520,6 +636,49 @@ export async function resolveApprovals(
     merged[toolCallId] = journalDecision; // the journal's FIRST decision wins
   }
   return merged;
+}
+
+/**
+ * The answer to resolveApprovals' "has the work happened?", read from the journal. ONE copy, because
+ * the question is asked from FOUR call sites now — runDurableInner, streamDurable, batch.ts's
+ * mini-runner and Studio's resume endpoint — and two copies of a rule this subtle is two rules a
+ * release apart. EXPORTED for exactly that reason: the two outside callers were passing no probe at
+ * all, and `undefined` means "assume it ran", so a human's second answer was silently dropped on the
+ * two surfaces where a human is the one answering.
+ *
+ * "Bu çağrı çalıştı mı" sorusunun cevabı zaten journalda: araç kaydına bakılır. Ayrı bir 'consumed'
+ * bayrağı EKLEMEDİM — ikinci bir gerçeklik kaynağı, ikinci bir senkron sorunu demek.
+ *
+ * TERMİNAL sözlüğü: succeeded | denied | reflected. `!== 'suspended'` yazmak yanlıştı — `failed` ve
+ * BAYAT `running` kayıtları da terminal değil, devralınıp yeniden koşuluyor (durable-tool.ts'in
+ * recover/reclaim merdiveni). Yani yamanın kapatmak istediği hikâyenin ana kolu — "onayla → araç
+ * çöktü → reddet → yine çekildi" — açık kalıyordu: ölçüldü, iki çekim.
+ *
+ * TAZE bir 'running' de "karar uygulanıyor" sayılır, ve bu satır ölçülmüş bir DENETİM İZİ
+ * çelişkisini kapatıyor: onay verildi, execute başladı, execute SÜRERKEN ikinci bir çağrı ret
+ * getirdi. Kayıt terminal olmadığı için ret onayın YERİNE yazılıyor, araç ise yan etkisini bitirip
+ * 'succeeded' yazıyordu. Journal'ın nihai hali "reddedildi ama çalıştı" diyordu. Koşuma zarar yok —
+ * zarar denetim izine, ki bu gate'in var oluş sebebi tam olarak odur. Yarışı kaybetmiş bir cevap
+ * kararı değiştirmez.
+ *
+ * BAYAT 'running' (çökmüş bir çağrı) false kalır, ve bu bilinçli: yarım kalmış bir yan etki hakkında
+ * insan fikir DEĞİŞTİREBİLMELİ — mevcut davranış, korunuyor. Tazelik eşiği durable-tool'un claim
+ * eşiğiyle AYNI (`CLAIM_TTL_MS`, `timeouts.claimTtlMs` ile aynı şekilde geçersiz kılınır): aynı kaydı
+ * "canlı" sayan iki farklı eşik, kapatılan çelişkiyi kenarından geri açardı. Saat de aynı sebeple
+ * PAYLAŞILAN saat (run-lock ve durable-tool emsali) — `startedAt`'i yazan işçi başka bir makinede
+ * olabilir ve bayatlığı yerel saatle ölçmek onu saat kaymasının fonksiyonu yapardı.
+ */
+export function hasRunProbe(journal: Journal, runId: string, claimTtlMs?: number): (toolCallId: string) => Promise<boolean> {
+  return async (toolCallId) => {
+    const rec = await journal.get<{ status?: string; startedAt?: number }>(runKeys.tool(runId, toolCallId));
+    if (rec?.status === 'succeeded' || rec?.status === 'denied' || rec?.status === 'reflected') return true;
+    if (rec?.status !== 'running') return false;
+    const nowTs = journal.now ? await journal.now() : Date.now();
+    // A 'running' with no `startedAt` cannot be dated, so it reads as stale — the SAME verdict
+    // durable-tool's reclaim ladder gives it. The two must agree: a record the ladder will take over
+    // and re-run is a record a human may still re-answer.
+    return typeof rec.startedAt === 'number' && nowTs - rec.startedAt <= (claimTtlMs ?? CLAIM_TTL_MS);
+  };
 }
 
 // Write the run input (prompt/messages/system) to the journal on the first call → resume becomes self-contained.
@@ -1016,11 +1175,21 @@ async function prepareMemoryContext(
   resourceId: string | undefined,
   rest: PreparedInput,
   echoView?: (rows: any[], system?: unknown) => Promise<any[]>,
-): Promise<{ incoming: any[]; wmTool?: Record<string, any>; alreadyStored: boolean; provenance?: MemoryContextRecord; historyCount: number }> {
+): Promise<{ incoming: any[]; wmTool?: Record<string, any>; alreadyStored: boolean; provenance?: MemoryContextRecord; historyCount: number; adoptedResourceId?: string }> {
   const rawIncoming: any[] = rest.messages ?? (rest.prompt != null ? [{ role: 'user', content: rest.prompt }] : []);
   delete rest.prompt;
   const echoSystem = rest.system;
   const echoCompare = echoView ? await echoView(rawIncoming, echoSystem) : rawIncoming;
+  // Özne beyan edilmemişse thread'in sahibi BENİMSENİR (ve `:input`'a o yazılır — persistInput).
+  // Uyuşmazlık KONTROLÜ burada DEĞİL: hiçbir şey yazılmadan önce, çağıranın erken kapısında
+  // (runDurableInner/streamDurableInner). İki yerde kontrol iki gerçeklik demek olurdu; burada
+  // yapılan tek şey, sahibi bilinen bir thread'de sahibi ADINI vermeyen çağırana onu vermek.
+  // Kısa devre korunuyor: özne beyan edilmişse depoya hiç gidilmez.
+  //
+  // OKUMA HATASI YAYILIR (`.catch` yok, bilerek — registry.ts'teki iş akışı/ağ kapılarıyla aynı
+  // karar). Yutulan hata burada "sahibi yok" diye okunuyordu ve `:input` ilk yazan kazandığı için
+  // sonucu KALICI: depo bir an arızalandı diye koşum sonsuza dek sahipsiz doğuyor, `ownershipDenied`
+  // `!owner` dalında sessizce geçiyor ve `purgeResource` o koşumu hiç bulamıyor.
   const rid = resourceId ?? (memory.getThreadResource ? await memory.getThreadResource(threadId) : undefined);
 
   if (typeof memory.loadContext === 'function') {
@@ -1047,7 +1216,7 @@ async function prepareMemoryContext(
     };
     // `historyCount` is the history/incoming BOUNDARY inside `rest.messages` — see
     // reconcileProcessedIncoming for why the split has to be recoverable after the input processors ran.
-    return { incoming, wmTool: mc.tools, alreadyStored, provenance, historyCount: history.length };
+    return { incoming, wmTool: mc.tools, alreadyStored, provenance, historyCount: history.length, ...(rid ? { adoptedResourceId: rid } : {}) };
   }
   // Legacy path (BasicMemory / SemanticMemory) — provenance is the limited truth this path can see:
   // Everything loaded counts as the recent window (no recall refs, no OM).
@@ -1074,7 +1243,7 @@ async function prepareMemoryContext(
     incomingCount: incoming.length,
     echoTrimmed: rawIncoming.length - incoming.length,
   };
-  return { incoming, alreadyStored, provenance, historyCount: history.length };
+  return { incoming, alreadyStored, provenance, historyCount: history.length, ...(rid ? { adoptedResourceId: rid } : {}) };
 }
 
 /**
@@ -1187,6 +1356,73 @@ const PROMPT_IS_TURN = -2;
 
 /** What `persistInput` froze under `:input` (plus the format stamp, which readers ignore). */
 type FrozenInput = { prompt?: unknown; messages?: unknown; system?: unknown; threadId?: string; hash?: string; actor?: string };
+
+/**
+ * NOT EVERY `:input` IS A FROZEN AGENT INPUT.
+ *
+ * The key does two jobs now. On the agent path it holds the frozen request (persistInput). On the
+ * workflow (registry.ts), NETWORK (registry.ts) and batch-item (batch.ts) paths it holds an IDENTITY
+ * record and nothing else — `{at, resourceId?, actor?, threadId?, workflow|network|batch}` — written
+ * there because the ownership gate, `listRunsPaged({resourceId})` and `purgeResource` all read THAT
+ * key and nowhere else. Putting the owner anywhere else would have meant rewriting three surfaces.
+ *
+ * The agent path, meanwhile, decides "this input is already frozen" from the key's TRUTHINESS. So an
+ * identity record read as a frozen input, and `adoptFrozenInput` then assigned its (absent)
+ * prompt/messages/system onto `rest` — i.e. UNDEFINED. Measured on a workflow runId handed to
+ * `runDurable`: an empty request went to the model, and the agent's model/tool rows landed under a
+ * runId that already belongs to a workflow. batch.ts's own header had written the invariant down —
+ * "resumeRun'la RESUME EDİLMEZ (frozen :input yok)" — and the identity write is what made it false.
+ *
+ * BOTH HALVES OF THE TEST ARE LOAD-BEARING. The record NAMES ITSELF (`workflow`/`network`/`batch`),
+ * and it carries none of prompt/messages/system. Either half alone over-reaches: a run started with
+ * `messages` and no `prompt` is a perfectly ordinary frozen input, and a future identity field on a
+ * real agent run must not disqualify it. A genuine persistInput record always has one of the three
+ * (an agent run with no request at all is not a thing this engine produces).
+ *
+ * ONE helper, three call sites (runDurable / streamDurable / resumeRun) — a second copy of this
+ * predicate is a second definition of what "frozen" means.
+ *
+ * EXPORTED because retention asks the same question: an identity record leaves NO readable entry
+ * behind, so the sweep could not date it and kept it forever (see sweepRuns). "Is this a frozen
+ * agent input or a name tag?" must have one answer, not one per module.
+ */
+export function identityOnlyInput(frozen: FrozenInput | undefined): { kind: 'workflow' | 'network' | 'batch'; name?: string } | undefined {
+  if (!frozen || typeof frozen !== 'object') return undefined;
+  const f = frozen as FrozenInput & { workflow?: unknown; network?: unknown; batch?: unknown };
+  // A LIST rather than a chain of ternaries: this predicate has already lagged the vocabulary once —
+  // the network path started writing identity records and the ternary chain didn't know the word, so
+  // a network runId walked into the agent door exactly the way a workflow runId used to.
+  const KINDS = ['workflow', 'network', 'batch'] as const;
+  const kind = KINDS.find((k) => typeof (f as Record<string, unknown>)[k] === 'string');
+  if (kind === undefined) return undefined;
+  if (f.prompt !== undefined || f.messages !== undefined || f.system !== undefined) return undefined;
+  const name = (f as Record<string, unknown>)[kind] as string;
+  return { kind, ...(name ? { name } : {}) };
+}
+
+/**
+ * The refusal, ADDRESSED. The repo's refusal style is that the error names the remedy — and the
+ * remedy here is not "retry", it is "you are holding the wrong kind of id". Dropping through
+ * silently was the measured failure: the agent path proceeded, wrote its own rows under a workflow's
+ * runId, and the `:input` claim (first-wins) meant the identity record could not even be overwritten
+ * — two kinds of record racing for one key.
+ */
+function refuseIdentityOnlyInput(runId: string, id: { kind: 'workflow' | 'network' | 'batch'; name?: string }): NotAnAgentRunError {
+  const n = id.name ?? '?';
+  // The remedy is per-DOOR, because "you are holding the wrong kind of id" is only half an answer —
+  // the other half is which door this id opens.
+  const REMEDY: Record<typeof id.kind, string> = {
+    workflow: `Drive it with runWorkflow('${n}', …, { runId }) — or use a fresh runId for an agent run.`,
+    network: `Drive it with runNetwork('${n}', { runId, task }) — or use a fresh runId for an agent run.`,
+    batch: `Answer a batch item through the batch's own run() with \`approvals\` — or use a fresh runId for an agent run.`,
+  };
+  return new NotAnAgentRunError(
+    `@gnldev/durable: runId "${runId}" belongs to the ${id.kind} '${n}', not to an agent run — its ':input' entry is an ` +
+      `IDENTITY record (owner/thread/actor), not a frozen request, so there is no prompt to resume with. ` +
+      REMEDY[id.kind],
+    { runId, kind: id.kind, ...(id.name ? { name: id.name } : {}) },
+  );
+}
 
 /**
  * The turn's span inside the message array: `[start, end)`. `start` is the history/incoming boundary
@@ -1608,6 +1844,66 @@ function assertThreadOwnership(frozen: FrozenInput | undefined, runId: string, t
  * behind the `procCtx` gate. A worker's local processor configuration is not what decides what a
  * frozen run is allowed to send.
  */
+/**
+ * The RESUME half of the input chain: re-enter every `processInput` with its RETURN VALUE DISCARDED,
+ * so a policy gate still fires on the turn that does the work while a transform cannot double-apply.
+ *
+ * The gap this closes: `processInput` runs before `persistInput`, its output is frozen into `:input`,
+ * and a resume adopted that frozen copy without calling the chain at all. Correct for a redactor,
+ * silently wrong for a tripwire — and a suspended run's REAL turn is the resume: the human approves,
+ * the tool runs, the money moves. Measured with a moderation processor and a user blocked between the
+ * two turns: no throw, and the payment went through. That is a governance hook failing open, the same
+ * failure `composeOnStepFinish` exists to prevent one layer down.
+ *
+ * Each gate is handed the SAME effective input rather than the previous gate's output. Chaining would
+ * be re-running the transform — precisely what is being avoided — and the frozen text already IS the
+ * whole chain's output from attempt 1, so it is what every gate should be judging.
+ *
+ * The ctx is the REAL one, not the silenced proxy `makeEchoView` uses, and that is the point: a
+ * moderation processor routing its decision through `ctx.step` replays attempt 1's verdict from the
+ * journal instead of paying for a second model call, and `recordProcessorReport` is first-wins so the
+ * report is not written twice. Closing the gate does not cost a judge call per resume.
+ *
+ * NOT on a run that already ENDED. The gate exists to protect the turn that does fresh work; a
+ * re-entry of a 'completed' (or 'canceled') run replays from the journal — no model call, no side
+ * effect — so a throw there protects nothing and does real damage: it reaches runDurable's outer
+ * catch, and recordRunOutcome is monotonic-by-time, so the victim's 'completed' verdict is
+ * overwritten by 'failed' with a strictly newer stamp. Measured: an at-least-once redelivery of a
+ * finished run, plus a blocklist change in between, flipped the run's ledger entry to
+ * failed:"blocked" while its output sat right there in the timeline — the same corruption class
+ * assertThreadOwnership was moved before runStarted to prevent. The caller decides (`gateResume`)
+ * because the verdict must be read BEFORE runStarted stamps 'running' over it; by the time this
+ * function runs, the prior outcome is already gone.
+ */
+async function runResumeGates(
+  processors: Processor[],
+  procCtx: ProcessorCtx | undefined,
+  rest: PreparedInput,
+): Promise<void> {
+  if (procCtx === undefined) return; // no processors configured on this worker
+  const gates = processors.filter((p) => typeof p.processInput === 'function' && p.resumeGate !== false);
+  if (gates.length === 0) return;
+  const gateCtx: ProcessorCtx = { ...procCtx, resume: true };
+  // A SHALLOW COPY of `messages`, not the live array. Dropping the return value stops a gate from
+  // REPLACING the input; it does not stop one from EDITING it, and `rest.messages` is the very array
+  // that goes to the model. A third-party processor written as `input.messages.push(...)` — a
+  // perfectly ordinary shape for an attempt-1 transform — therefore appended to the FROZEN thread
+  // once per resume, and the text went to the provider: the back door of "the transform is not
+  // applied a second time".
+  // The copy is deliberately SHALLOW: mutating an element in place is still the processor's own
+  // responsibility. A deep copy would mean cloning the entire thread on every resume — a real cost
+  // on a long conversation, paid to defend against a narrower mistake than the one measured here.
+  const pin: ProcessorInput = {
+    system: systemText(rest.system) || undefined,
+    messages: Array.isArray(rest.messages) ? [...rest.messages] : rest.messages,
+    prompt: rest.prompt,
+  };
+  // Return value dropped on purpose — `rest` is NOT touched here. A throw (ProcessorTripwire, or any
+  // other) propagates to runDurable's outer catch and stamps the run 'failed', which is exactly what
+  // the same throw does on attempt 1.
+  for (const p of gates) await p.processInput!(pin, gateCtx);
+}
+
 async function applyInputProcessors(
   processors: Processor[],
   procCtx: ProcessorCtx | undefined,
@@ -1617,9 +1913,16 @@ async function applyInputProcessors(
   threadId: string | undefined,
   rest: PreparedInput,
   span?: IncomingSpan,
+  /** False when the run's prior outcome is already an ending — see runResumeGates' "NOT on a run that already ENDED". */
+  gateResume = true,
 ): Promise<IncomingSpan | undefined> {
   if (frozen !== undefined) {
-    return adoptFrozenInput(journal, runId, frozen, threadId, rest, span);
+    const adopted = await adoptFrozenInput(journal, runId, frozen, threadId, rest, span);
+    // AFTER adoption, deliberately: the gate must judge what the model will ACTUALLY be sent this
+    // turn, which on a resume is the frozen input — not the caller's raw body, which was just
+    // discarded. A gate reading the body would be vetting a text nobody sends.
+    if (gateResume) await runResumeGates(processors, procCtx, rest);
+    return adopted;
   }
   if (procCtx === undefined) return span; // nothing frozen to adopt and no chain to run
   let pin: ProcessorInput = { system: systemText(rest.system) || undefined, messages: rest.messages, prompt: rest.prompt };
@@ -2145,7 +2448,7 @@ async function runGenerateWithRetryLadder(
     const interrupts: Interrupt[] = [];
     for (const step of (result as any).steps ?? []) {
       for (const part of step.content ?? []) {
-        if (hasSuspend(part)) interrupts.push(part.output.__gnl_suspend);
+        if (hasSuspend(part)) interrupts.push(...surfacedInterrupts(part.output.__gnl_suspend));
       }
     }
 
@@ -2211,10 +2514,55 @@ async function runGenerateWithRetryLadder(
  * Drop-in `generateText`: runs the model + tools through durable wrappers.
  * `resume` = call again with the same `runId` + `journal` (+ `approvals`) → replay from the journal.
  */
+/**
+ * Key families the journal OWNS. A runId is not just an identifier — it is a key PREFIX
+ * (`<runId>:model:0`, `<runId>:tool:<id>`, `<runId>:input`), and `purgeRun` deletes by that prefix
+ * (`retention.ts`, `del(`${runId}:`)`). So a caller who chooses `runId: 'mem'` is not naming a run;
+ * they are naming the memory keyspace, and the next retention sweep deletes it. MEASURED: a run
+ * created with that id, then swept, removed a victim thread's messages.
+ *
+ * runId was the ONLY unvalidated identifier on the write path — `resourceId`, `batchId`, `itemKey`
+ * and `orgId` all have checks. This closes it in the ENGINE rather than at each HTTP surface,
+ * because the surfaces are exactly what keeps being forgotten: chat-adapter, agui, batch, the CLI
+ * and every host route reach `runDurable` directly.
+ *
+ * NOT a charset whitelist. Existing deployments run UUIDs, `chat-<ms>-<n>`, `sim-...` and hand-made
+ * ids; a strict pattern would refuse work that is already journalled. The rule is narrower and aimed
+ * at the actual damage: a runId may not CLAIM a family the journal already owns. The engine's own
+ * composite ids (`batch:`, `sched:`, `net:`, `agent:`, `wfrun:`) are deliberately absent from this
+ * list — they are constructed by the engine and their prefixes really are theirs.
+ */
+const RESERVED_KEY_ROOTS = ['mem', 'xthr', 'xid', 'xrun', 'om', 'thread', 'lesson', 'sugg', 'suggstats', 'org', 'res'];
+
+/** Throws when a runId would claim (or corrupt) a key family that is not its own. */
+export function assertRunIdSafe(runId: unknown): asserts runId is string {
+  if (typeof runId !== 'string' || runId.length === 0) {
+    throw new Error("@gnldev/durable: runId must be a non-empty string — it becomes the prefix of this run's journal keys.");
+  }
+  if (runId.length > 512) {
+    throw new Error(`@gnldev/durable: runId is too long (${runId.length} > 512).`);
+  }
+  // Control characters and whitespace do not survive key round-trips intact across the four adapters
+  // (and make a key impossible to read in a log or a purge confirmation).
+  if (/[\u0000-\u001f\u007f\s]/.test(runId)) {
+    throw new Error("@gnldev/durable: runId must not contain whitespace or control characters — it becomes a journal key.");
+  }
+  const root = runId.split(':', 1)[0]!;
+  if (RESERVED_KEY_ROOTS.includes(root) || root.startsWith('__')) {
+    throw new Error(
+      `@gnldev/durable: runId '${runId.slice(0, 60)}' starts with the reserved key family '${root}:' — ` +
+      "runIds are journal key PREFIXES, and a retention sweep of this run would delete that family. Choose another id.",
+    );
+  }
+}
+
 export async function runDurable(args: RunDurableArgs): Promise<DurableResult> {
   // The failure half of the run's outcome record. The success half is written at the completion choke
   // Point inside runDurableInner, where "did it actually finish" is already established (a suspended
   // Run returns normally with interrupts and must NOT be recorded as completed).
+  // BEFORE the try: a bad runId must reject the CALL, not be recorded as this run's failure —
+  // `runFailed(journal, args.runId, ...)` would itself write under the very prefix being refused.
+  assertRunIdSafe(args.runId);
   try {
     return await runDurableGuarded(args);
   } catch (err) {
@@ -2275,6 +2623,12 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   // applyInputProcessors). Read + asserted BEFORE runStarted/resolveApprovals — see
   // assertThreadOwnership's own doc for why the order matters (K2/K3 hardening).
   const frozenInput = await journal.get<FrozenInput>(runKeys.input(runId));
+  // WHOSE runId IS THIS — asked before the ownership check, because a workflow/batch identity record
+  // is not a frozen agent input at all (see identityOnlyInput). Refused on the SAME read, and before
+  // anything is written: an agent attempt against a workflow's runId used to proceed on an empty
+  // request and leave its rows under that workflow's prefix.
+  const identityOnly = identityOnlyInput(frozenInput);
+  if (identityOnly) throw refuseIdentityOnlyInput(runId, identityOnly);
   try {
     assertThreadOwnership(frozenInput, runId, threadId);
   } catch (e) {
@@ -2282,10 +2636,37 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
     if (conflictLedger && e instanceof RunThreadMismatchError) await recordIdemConflict(journal, { runId, code: 'run_thread_mismatch', ...(actor ? { actor } : {}) }, auditOnReject ?? 'best-effort');
     throw e;
   }
+  // ÖZNE↔THREAD, HİÇBİR ŞEY YAZILMADAN ÖNCE. İlk yazışta bu kontrol prepareMemoryContext'in
+  // içindeydi — yani `runStarted` ve `resolveApprovals`'tan SONRA. Sonucu ölçüldü: reddedilen
+  // çağıran, kurbanın TAMAMLANMIŞ koşumunun outcome'unu 'failed'a çeviriyor ve journal'a kalıcı bir
+  // onay kararı bırakıyordu. Bir yetki reddi, reddettiği kişinin geçmişine yazamaz.
+  // Kardeş hata (RunThreadMismatchError) için aynı gerekçe outcome.ts:33-38'de kelimesi kelimesine
+  // yazılı ve çözümü iki yarımlı: erken fırlat (burası) + outcome'da "koşum başarısızlığı sayma"
+  // listesine gir (NOT_A_RUN_FAILURE).
+  //
+  // BİLİNMEYEN sahip geçer, OKUNAMAYAN sahip DÜŞÜRÜR. Burada `.catch(() => undefined)` vardı ve o
+  // satır iki farklı şeyi tek cevaba indiriyordu: "bu thread'in henüz sahibi yok" ile "sahibinin kim
+  // olduğunu okuyamadım". İkincisi yutulunca kapı tam da deposu arızalıyken devre dışı kalıyor —
+  // yani en çok gerektiği anda. Aynı gerekçe registry.ts'teki iş akışı ve ağ kapılarında da yazılı.
+  if (memory && threadId && resourceId && typeof memory.getThreadResource === 'function') {
+    const owner = await memory.getThreadResource(threadId);
+    if (owner && owner !== resourceId) {
+      throw new ThreadOwnerMismatchError(
+        `@gnldev/durable: thread "${threadId}" belongs to a different resourceId — this run names "${resourceId}".`,
+        { threadId, owner, requested: resourceId },
+      );
+    }
+  }
   // FAZ-4: fingerprint the RAW caller input BEFORE memory prep mutates rest.messages (post-prep
   // Content grows with the thread — hashing it would 409 every legitimate resume).
   const rawInputHash = argsHash({ prompt: rest.prompt, messages: rest.messages, system: rest.system });
   await assertRunAdmissible(journal, runId, frozenInput, rawInputHash, { strictInput, conflictLedger, auditOnReject, tombstonePolicy, actor, approvals });
+  // RESUME-GATE probe, BEFORE runStarted buries the verdict under 'running': a re-entry of a run
+  // that already ENDED replays from the journal and must not be judged by the input gates — a throw
+  // there overwrites the ending with 'failed' (see runResumeGates). 'failed' is NOT an ending here:
+  // its retry does fresh work. Fresh runs (no frozen input) skip the read entirely.
+  const priorOutcome = frozenInput !== undefined ? await readRunOutcome(journal, runId) : undefined;
+  const gateResume = priorOutcome?.status !== 'completed' && priorOutcome?.status !== 'canceled';
   // WRITE-AHEAD outcome: this attempt has STARTED. A run SIGKILLed anywhere past this line reads
   // 'running' — never 'completed', which is what the absence of any record used to mean. Sits after
   // the lock (the guarded path acquires before calling here), so a caller that never got in never
@@ -2293,7 +2674,12 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   await runStarted(journal, runId, Date.now());
   // AUDIT (approval first-class): BEFORE ctx is set up — claim the parameter's approvals into the
   // Journal + merge with the journal's existing approvals (see the resolveApprovals header).
-  const resolvedApprovals = await resolveApprovals(journal, runId, approvals);
+  const resolvedApprovals = await resolveApprovals(journal, runId, approvals, {
+    ...(actor ? { actor } : {}),
+    // Askıdaki (ve bayat/çökmüş) kayıt terminal DEĞİLDİR, yani fikir değiştirmeye açıktır; taze bir
+    // 'running' ise kararın UYGULANDIĞI andır. Tek yardımcı, iki koşum yolu — bkz. hasRunProbe.
+    hasRun: hasRunProbe(journal, runId, timeouts?.claimTtlMs),
+  });
   // C2: on resume, fetch model/tool entries in a single query → hot replay reads take 1 round-trip instead of N.
   // On the first run there are no entries → undefined (no cache). Consume-once: see ctxGet.
   const ctx: DurableCtx = { journal, runId, threadId, resourceId, channel, guard, approvals: resolvedApprovals, replay, limits, toolPolicy, blockedAsSentinel: true, toolTimeoutMs: timeouts?.toolMs, claimTtlMs: timeouts?.claimTtlMs, toolResultProcessors: processors, replayCache: await loadReplayCache(journal, runId, { maxBytes: replayCacheMaxBytes }), replayLog: [] };
@@ -2305,9 +2691,11 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   let incomingStored = false; // retry dedupe — see prepareMemoryContext/writeAheadIncoming
   let memCtx: MemoryContextRecord | undefined; // ':memctx' provenance — frozen next to ':input' below
   let historyCount = 0; // where the loaded history ends inside rest.messages — see reconcileProcessedIncoming
+  // Özne beyan edilmediğinde belleğin BENİMSEDİĞİ thread sahibi — `:input`'a o yazılır (aşağıya bak).
+  let adoptedResourceId: string | undefined;
   let loadedHistory: any[] = []; // what MEMORY returned this turn — the dedupe's second witness
   if (memory && threadId) {
-    ({ incoming, wmTool, alreadyStored: incomingStored, provenance: memCtx, historyCount } = await prepareMemoryContext(memory, threadId, resourceId, rest, makeEchoView(processors, journal, runId)));
+    ({ incoming, wmTool, alreadyStored: incomingStored, provenance: memCtx, historyCount, adoptedResourceId } = await prepareMemoryContext(memory, threadId, resourceId, rest, makeEchoView(processors, journal, runId)));
     loadedHistory = Array.isArray(rest.messages) ? rest.messages.slice(0, historyCount) : [];
     // F4: same-runId re-entry with interleaved turns — drop the re-concat if the stored copy is visible.
     incomingStored = await dropIncomingIfAppendedEarlier(journal, runId, rest, incoming, incomingStored);
@@ -2318,7 +2706,7 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   const trackIncoming = memory && threadId && !incomingStored ? incomingSpan(rest, historyCount) : undefined;
   // `frozenInput` was already read (and its thread ownership asserted) above, before runStarted.
   const span = procCtx || frozenInput !== undefined
-    ? await applyInputProcessors(processors ?? [], procCtx, journal, runId, frozenInput, threadId, rest, trackIncoming)
+    ? await applyInputProcessors(processors ?? [], procCtx, journal, runId, frozenInput, threadId, rest, trackIncoming, gateResume)
     : trackIncoming;
   if ((procCtx || frozenInput !== undefined) && span !== undefined) {
     // `span !== undefined` already implies memory && threadId && !incomingStored (see trackIncoming).
@@ -2334,7 +2722,13 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
     }
   }
 
-  await persistInput(journal, runId, rest, frozenInput !== undefined, threadId, agentName, resourceId, rawInputHash, actor);
+  // SAHİP: beyan edilen ya da BENİMSENEN. Özne verilmediğinde bellek zaten thread'in sahibini
+  // benimsiyor (prepareMemoryContext) — ama `:input`'a ham değer yazılıyordu, yani koşum bellekte
+  // Ayşe'nin, journal'da SAHİPSİZ oluyordu. Sahipsizlik kalıcıdır (`:input` ilk yazan kazanır) ve
+  // sahipsiz bir koşumda `ownershipDenied` sessiz geçer: sonradan gelen bir çağrı kendi öznesini
+  // beyan edip cevabı kurbanın thread'ine yazdırabiliyordu. Belleğin okuduğu sahiple journal'ın
+  // yazdığı sahip AYNI olmalı, yoksa iki farklı gerçeklik olur ve kapı yanlış olanı okur.
+  await persistInput(journal, runId, rest, frozenInput !== undefined, threadId, agentName, resourceId ?? adoptedResourceId, rawInputHash, actor);
   await persistMemoryContext(journal, runId, memCtx);
   // Freeze `limits` into the journal on the first run (idempotent via `claim` — the FIRST
   // Run's limits win, a later resume never overwrites them). resumeRun reads this back when the caller
@@ -2526,13 +2920,20 @@ export async function resumeRun(
   runId: string,
   opts: ResumeAgentConfig & { journal: Journal; approvals?: Record<string, boolean> },
 ): Promise<DurableResult> {
+  assertRunIdSafe(runId); // journal I/O'dan ÖNCE: rezerve bir aile adıyla okuma bile yapılmasın
   const input = upgradeFormat(
-    await opts.journal.get<{ prompt?: unknown; messages?: unknown; system?: unknown; threadId?: string }>(runKeys.input(runId)),
+    await opts.journal.get<{ prompt?: unknown; messages?: unknown; system?: unknown; threadId?: string; resourceId?: string }>(runKeys.input(runId)),
     runKeys.input(runId),
   ); // H13: legacy-format input is upgraded to the current shape on resume
   if (!input) {
     throw new Error(`@gnldev/durable: no recorded input for runId "${runId}" — cannot resume.`);
   }
+  // …and the sibling of that refusal, which used to fall through it: the entry EXISTS but is a
+  // workflow/batch IDENTITY record, so there is still no recorded input. Addressed rather than
+  // silent — the refusal above says what is missing, this one says what the id actually is and
+  // which door drives it (see identityOnlyInput).
+  const identityOnly = identityOnlyInput(input as FrozenInput);
+  if (identityOnly) throw refuseIdentityOnlyInput(runId, identityOnly);
   // `limits` is a runtime value the CLI/embed callers can't re-supply (it isn't part of
   // AgentConfig). If the caller passes `limits`, it wins (explicit override); otherwise recover the
   // Limits frozen at run start from the journal so the resumed run keeps its cost cap / loop /
@@ -2577,6 +2978,12 @@ export async function resumeRun(
     // one fix, not two. (This comment used to say no memory is attached "so this changes nothing
     // else" — true, and the reason the resumed turn never reached the thread.)
     ...(input.threadId ? { threadId: input.threadId } : {}),
+    // Donmuş `resourceId` de kurtarılır — threadId ile AYNI gerekçe, ve atlanması ölçülebilir bir
+    // boşluk bırakıyordu: `ctx.resourceId` olmayınca kanallar-arası kimlik planı (XID) hiç
+    // kurulmuyor, `writeXid` çağrılmıyor. Yani bir insanın BİLEREK onayladığı — dolayısıyla en
+    // riskli — çağrı, kanallar-arası dedup indeksine hiç yazmıyordu: aynı ödeme başka bir kanaldan
+    // tekrar geldiğinde kapı kör kalıyordu. `opts.resourceId` önde kalır (açık geçersiz kılma).
+    ...(opts.resourceId ?? input.resourceId ? { resourceId: opts.resourceId ?? input.resourceId } : {}),
   } as any);
 }
 
@@ -2649,6 +3056,11 @@ function shapeJsonTools(
 const STREAM_LOCK_MAX_HOLD_MS = 60 * 60_000;
 
 export async function streamDurable(args: StreamDurableArgs): Promise<StreamTextResult<any, any, any>> {
+  // R4: bu fonksiyon kapsam DIŞINDA kalmıştı — ve tam da korunması gereken kanal burası.
+  // chat-adapter ve agui `gnl.stream` üzerinden buraya iniyor, runId doğrudan istemciden geliyor.
+  // Doğrulamayı yalnız runDurable/resumeRun'a koymak, yorumun kendi vaadini ("unutulan hep
+  // yüzeyler") tam da unutulan yüzeyde tutmamak demekti.
+  assertRunIdSafe(args.runId);
   // Same refusal as runDurable — a compensated run never streams either.
   await assertNotCompensated(args.journal, args.runId);
   // P2-cancel: same terminal-refusal contract as compensation — a durably-canceled run never
@@ -2713,6 +3125,10 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   // ONE read of `:input`, shared with persistInput below — parity with runDurableInner. Read + asserted
   // BEFORE runStarted/resolveApprovals — see assertThreadOwnership's own doc (K2/K3 hardening).
   const frozenInput = await journal.get<FrozenInput>(runKeys.input(runId));
+  // Parity with runDurableInner — "unutulan hep yüzeyler": chat-adapter and agui reach the engine
+  // through THIS function, so a client-supplied workflow/batch runId arrives here first.
+  const identityOnly = identityOnlyInput(frozenInput);
+  if (identityOnly) throw refuseIdentityOnlyInput(runId, identityOnly);
   try {
     assertThreadOwnership(frozenInput, runId, threadId);
   } catch (e) {
@@ -2720,15 +3136,45 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
     if (conflictLedger && e instanceof RunThreadMismatchError) await recordIdemConflict(journal, { runId, code: 'run_thread_mismatch', ...(actor ? { actor } : {}) }, auditOnReject ?? 'best-effort');
     throw e;
   }
+  // ÖZNE↔THREAD, HİÇBİR ŞEY YAZILMADAN ÖNCE. İlk yazışta bu kontrol prepareMemoryContext'in
+  // içindeydi — yani `runStarted` ve `resolveApprovals`'tan SONRA. Sonucu ölçüldü: reddedilen
+  // çağıran, kurbanın TAMAMLANMIŞ koşumunun outcome'unu 'failed'a çeviriyor ve journal'a kalıcı bir
+  // onay kararı bırakıyordu. Bir yetki reddi, reddettiği kişinin geçmişine yazamaz.
+  // Kardeş hata (RunThreadMismatchError) için aynı gerekçe outcome.ts:33-38'de kelimesi kelimesine
+  // yazılı ve çözümü iki yarımlı: erken fırlat (burası) + outcome'da "koşum başarısızlığı sayma"
+  // listesine gir (NOT_A_RUN_FAILURE).
+  //
+  // OKUNAMAYAN sahip DÜŞÜRÜR — runDurableInner'daki kardeş kapının aynısı, aynı gerekçeyle. Bu
+  // yüzeyde daha da önemli: chat/agui motora BURADAN giriyor, yani yutulan bir okuma hatasının
+  // bedeli en çok kullanılan yolda ödeniyordu.
+  if (memory && threadId && resourceId && typeof memory.getThreadResource === 'function') {
+    const owner = await memory.getThreadResource(threadId);
+    if (owner && owner !== resourceId) {
+      throw new ThreadOwnerMismatchError(
+        `@gnldev/durable: thread "${threadId}" belongs to a different resourceId — this run names "${resourceId}".`,
+        { threadId, owner, requested: resourceId },
+      );
+    }
+  }
   // FAZ-4: fingerprint the RAW caller input BEFORE memory prep mutates rest.messages (post-prep
   // Content grows with the thread — hashing it would 409 every legitimate resume).
   const rawInputHash = argsHash({ prompt: rest.prompt, messages: rest.messages, system: rest.system });
   await assertRunAdmissible(journal, runId, frozenInput, rawInputHash, { strictInput, conflictLedger, auditOnReject, tombstonePolicy, actor, approvals });
+  // RESUME-GATE probe — the stream twin of runDurableInner's, and it matters MORE here: this is the
+  // path chat/agui use, so an at-least-once redelivery of a finished turn arrives on this line.
+  // Read BEFORE runStarted buries the verdict (see runResumeGates' "NOT on a run that already ENDED").
+  const priorOutcome = frozenInput !== undefined ? await readRunOutcome(journal, runId) : undefined;
+  const gateResume = priorOutcome?.status !== 'completed' && priorOutcome?.status !== 'canceled';
   // WRITE-AHEAD outcome — the stream twin of runDurableInner's. A stream abandoned mid-flight (the
   // process died, neither onFinish nor onError ran) reads 'running' instead of 'completed'.
   await runStarted(journal, runId, Date.now());
   // AUDIT (approval first-class): SAME as runDurableInner — BEFORE ctx is set up (see resolveApprovals).
-  const resolvedApprovals = await resolveApprovals(journal, runId, approvals);
+  const resolvedApprovals = await resolveApprovals(journal, runId, approvals, {
+    ...(actor ? { actor } : {}),
+    // SAME probe as runDurableInner's, from the same helper — the mind-change rule cannot mean one
+    // thing on the generate path and another on the path chat/agui actually use (bkz. hasRunProbe).
+    hasRun: hasRunProbe(journal, runId, timeouts?.claimTtlMs),
+  });
   // C2: on resume, load the replay snapshot (same as runDurableInner).
   const ctx: DurableCtx = { journal, runId, threadId, resourceId, channel, guard, approvals: resolvedApprovals, replay, limits, toolPolicy, blockedAsSentinel: true, toolTimeoutMs: timeouts?.toolMs, claimTtlMs: timeouts?.claimTtlMs, toolResultProcessors: processors, replayCache: await loadReplayCache(journal, runId, { maxBytes: replayCacheMaxBytes }), replayLog: [] };
   const procCtx = processors?.length ? createProcessorCtx(journal, runId) : undefined;
@@ -2739,9 +3185,11 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   let incomingStored = false; // retry dedupe — see prepareMemoryContext/writeAheadIncoming
   let memCtx: MemoryContextRecord | undefined; // ':memctx' provenance — parity with runDurableInner
   let historyCount = 0;
+  // runDurableInner ile parite: benimsenen thread sahibi `:input`'a yazılır.
+  let adoptedResourceId: string | undefined;
   let loadedHistory: any[] = []; // parity with runDurableInner — the dedupe's second witness
   if (memory && threadId) {
-    ({ incoming, wmTool, alreadyStored: incomingStored, provenance: memCtx, historyCount } = await prepareMemoryContext(memory, threadId, resourceId, rest, makeEchoView(processors, journal, runId)));
+    ({ incoming, wmTool, alreadyStored: incomingStored, provenance: memCtx, historyCount, adoptedResourceId } = await prepareMemoryContext(memory, threadId, resourceId, rest, makeEchoView(processors, journal, runId)));
     loadedHistory = Array.isArray(rest.messages) ? rest.messages.slice(0, historyCount) : [];
     // F4: same-runId re-entry with interleaved turns — parity with runDurableInner.
     incomingStored = await dropIncomingIfAppendedEarlier(journal, runId, rest, incoming, incomingStored);
@@ -2751,7 +3199,7 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   const trackIncoming = memory && threadId && !incomingStored ? incomingSpan(rest, historyCount) : undefined;
   // `frozenInput` was already read (and its thread ownership asserted) above, before runStarted.
   const span = procCtx || frozenInput !== undefined
-    ? await applyInputProcessors(processors ?? [], procCtx, journal, runId, frozenInput, threadId, rest, trackIncoming)
+    ? await applyInputProcessors(processors ?? [], procCtx, journal, runId, frozenInput, threadId, rest, trackIncoming, gateResume)
     : trackIncoming;
   if ((procCtx || frozenInput !== undefined) && span !== undefined) {
     // Parity with runDurableInner, loss reporting included — a silent question loss must not depend
@@ -2768,7 +3216,13 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
     }
   }
 
-  await persistInput(journal, runId, rest, frozenInput !== undefined, threadId, agentName, resourceId, rawInputHash, actor);
+  // SAHİP: beyan edilen ya da BENİMSENEN. Özne verilmediğinde bellek zaten thread'in sahibini
+  // benimsiyor (prepareMemoryContext) — ama `:input`'a ham değer yazılıyordu, yani koşum bellekte
+  // Ayşe'nin, journal'da SAHİPSİZ oluyordu. Sahipsizlik kalıcıdır (`:input` ilk yazan kazanır) ve
+  // sahipsiz bir koşumda `ownershipDenied` sessiz geçer: sonradan gelen bir çağrı kendi öznesini
+  // beyan edip cevabı kurbanın thread'ine yazdırabiliyordu. Belleğin okuduğu sahiple journal'ın
+  // yazdığı sahip AYNI olmalı, yoksa iki farklı gerçeklik olur ve kapı yanlış olanı okur.
+  await persistInput(journal, runId, rest, frozenInput !== undefined, threadId, agentName, resourceId ?? adoptedResourceId, rawInputHash, actor);
   await persistMemoryContext(journal, runId, memCtx);
   // Freeze `limits` on the first run (parity with runDurableInner) — idempotent via `claim`.
   if (limits) await claim(journal, runKeys.cfgLimits(runId), serializableLimits(limits));

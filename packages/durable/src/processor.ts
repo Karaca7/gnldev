@@ -24,13 +24,45 @@ export interface ProcessorCtx {
   step<T>(name: string, compute: () => Promise<T> | T): Promise<T>;
   /** Run input at the processTools call (a signal like the last user message — used by toolSearch). */
   input?: ProcessorInput;
+  /**
+   * Set on the RESUME GATE pass of `processInput` (see `Processor.resumeGate`). The return value is
+   * DISCARDED on that pass — the only thing that carries is a throw. A processor that only transforms
+   * can ignore this flag entirely; one that does expensive work it does not want repeated should
+   * either route that work through `ctx.step` (replayed, not recomputed) or return early here.
+   */
+  resume?: true;
 }
 
 export interface Processor {
   /** Required, stable, unique — used as a journal key segment. */
   name: string;
-  /** Transform the message/system BEFORE the model (PII redaction, normalization). */
+  /**
+   * Transform the message/system BEFORE the model (PII redaction, normalization).
+   *
+   * Called TWICE over a run's life, in two different modes. On the FIRST attempt it TRANSFORMS: the
+   * Return value is journaled as the run's `:input` and never recomputed. On every RESUME it is called
+   * Again as a GATE (`ctx.resume === true`) over the adopted frozen input — the return value is
+   * DISCARDED and only a THROW carries. See `resumeGate` for why.
+   */
   processInput?(input: ProcessorInput, ctx: ProcessorCtx): Promise<ProcessorInput> | ProcessorInput;
+  /**
+   * Opt OUT of the resume gate pass (default: on).
+   *
+   * The two jobs `processInput` is used for pull in opposite directions. As a TRANSFORM it must not
+   * Run twice — a redactor re-applied over its own output is at best wasted work and at worst a second
+   * Round of masking. As a POLICY GATE (moderation, a denylist, an injection tripwire) it must run on
+   * The turn that actually does the work, and on a suspended run that turn is the RESUME: the human
+   * Approves, the payment goes out, and a gate that only ever saw attempt 1 was inert exactly then.
+   * Measured: a user blocked between the two turns was charged anyway.
+   *
+   * Splitting the two is what the gate pass does — the chain is re-entered with the return value
+   * Thrown away, so the transform cannot double-apply while a throw still stops the run. Default ON,
+   * Because a governance hook that silently fails open is the hardest kind of fault to notice (the
+   * Same call `composeOnStepFinish` makes for the per-step hook). Set `false` for a processor whose
+   * `processInput` cannot honestly be re-entered — one that calls out to something un-repeatable
+   * Without going through `ctx.step`.
+   */
+  resumeGate?: boolean;
   /** Restrict the tool set the model SEES (toolFilter/toolSearch). May be async; NON-deterministic
    *  Selections (embedding-based toolSearch) must journal the decision via `ctx.step` → same tool
    *  Subset on resume. */

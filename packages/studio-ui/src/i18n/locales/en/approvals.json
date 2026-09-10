@@ -14,5 +14,7 @@
   "conflictError": "This approval was already decided elsewhere: {{error}}",
   "actionError": "Action failed: {{error}}",
   "expiredBadge": "stale — waiting {{age}}",
-  "waitingFor": "waiting {{age}}"
+  "waitingFor": "waiting {{age}}",
+  "ownerBadge": "user work · {{owner}}",
+  "ownerLockedTitle": "This run belongs to {{owner}} — the answer goes through their own channel, not this panel."
 }

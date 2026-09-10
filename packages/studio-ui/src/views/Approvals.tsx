@@ -79,7 +79,22 @@ export function Approvals() {
         {items.length === 0 && <EmptyState icon={Inbox} title={t('emptyTitle')} description={t('emptyDescription')} />}
 
         <div className="space-y-2">
-          {items.map((it) => (
+          {items.map((it) => {
+            // WHOSE WORK THIS IS, and whether that stops the operator.
+            //
+            // Two fields, deliberately not one. The engine's ownership lock only fires when BOTH
+            // names are filled (`frozen.actor` AND the resumer's actor) — so a run carrying a
+            // `resourceId` but no `actor` stamp is owned AND still resumable, and Approve on it
+            // returns 200, not 409. Gating the buttons on `owner` would therefore forbid work the
+            // engine accepts; the condition is `ownerActor`.
+            //
+            // Visibility stays with the admin, the decision with the owner: the row is listed and
+            // labelled — never hidden — because an operator who cannot see a queue cannot reason
+            // about it. Before this, the only way to learn a row was someone else's was to press
+            // Approve and read the 409.
+            const locked = !!it.ownerActor;
+            const lockedWhy = t('ownerLockedTitle', { owner: it.owner ?? it.ownerActor });
+            return (
             <div key={`${it.runId}:${it.toolCallId}`} className="rounded-md border border-warning/40 bg-warning/5 p-3">
               <div className="mb-2 flex items-center gap-3">
                 <span className="font-mono text-sm font-semibold">{it.toolName}</span>
@@ -91,15 +106,28 @@ export function Approvals() {
                     ? <Badge tone="destructive">{t('expiredBadge', { age: ageOf(it.suspendedAt, nowBase) })}</Badge>
                     : <span className="text-[11px] text-muted-foreground">{t('waitingFor', { age: ageOf(it.suspendedAt, nowBase) })}</span>
                 )}
+                {/* An owned row says so; org work (batch, scheduler, anything started without a
+                    subject) carries NO chip — the same language Agents.tsx speaks, where only
+                    org-scoped agents get a chip and global ones stay bare. A badge on every other
+                    row would be noise in a queue whose rows are mostly org work. */}
+                {it.owner && <Badge tone="info">{t('ownerBadge', { owner: it.owner })}</Badge>}
                 <div className="ml-auto flex gap-1.5">
-                  <Btn variant="ok" size="xs" busy={busy === it.toolCallId} onClick={() => decide(it.runId, it.toolCallId, true)}>
+                  {/* `title` on a DISABLED button, which works here on purpose: Btn uses
+                      `disabled:cursor-not-allowed` rather than `pointer-events-none`, so the native
+                      tooltip still reaches a dead control (see components.tsx + the disabled-tooltip
+                      contract test). Without it the pair would grey out and explain nothing. */}
+                  <Btn variant="ok" size="xs" disabled={locked} title={locked ? lockedWhy : undefined} busy={busy === it.toolCallId} onClick={() => decide(it.runId, it.toolCallId, true)}>
                     <Check size={13} /> {t('approve')}
                   </Btn>
-                  <Btn variant="deny" size="xs" busy={busy === it.toolCallId} onClick={() => decide(it.runId, it.toolCallId, false)}>
+                  <Btn variant="deny" size="xs" disabled={locked} title={locked ? lockedWhy : undefined} busy={busy === it.toolCallId} onClick={() => decide(it.runId, it.toolCallId, false)}>
                     <X size={13} /> {t('deny')}
                   </Btn>
                 </div>
               </div>
+              {/* The same sentence as the tooltip, in the row itself. A `title` is delivered by
+                  hover only — no keyboard, no touch — and this is the reason two buttons are dead;
+                  a dead control whose explanation needs a mouse explains nothing to half the users. */}
+              {locked && <div className="mb-1.5 text-xs text-muted-foreground">{lockedWhy}</div>}
               {it.reason && <div className="mb-1.5 text-xs text-muted-foreground">{t('reasonLabel', { reason: it.reason })}</div>}
               {it.args !== undefined && (
                 <details>
@@ -108,7 +136,8 @@ export function Approvals() {
                 </details>
               )}
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>

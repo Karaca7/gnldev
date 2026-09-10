@@ -414,7 +414,20 @@ export interface ToolExecResult { ok?: boolean; result?: unknown; error?: string
 export interface RunResult { ok?: boolean; runId?: string; text?: string; interrupts?: Interrupt[]; error?: string; }
 export interface Interrupt { toolCallId: string; toolName: string; args?: unknown; reason?: string; }
 // ── Governance types (approvals / audit / organizations endpoints) ──────────────
-export interface ApprovalItem { runId: string; toolCallId: string; toolName: string; args?: unknown; reason?: string; /** FAZ-8: the run's last activity — the inbox ages rows and flags abandoned ones. */ suspendedAt?: number; }
+export interface ApprovalItem {
+  runId: string; toolCallId: string; toolName: string; args?: unknown; reason?: string;
+  /** FAZ-8: the run's last activity — the inbox ages rows and flags abandoned ones. */
+  suspendedAt?: number;
+  /** WHOSE run this is (`resourceId`, frozen with the run's input). Absent on org work — batch,
+   *  scheduler, anything started without a subject. A LABEL only: an owned run can still be
+   *  resumable, see `ownerActor`. */
+  owner?: string;
+  /** The end user's `actor` stamp. The engine's ownership lock needs BOTH names to fire
+   *  (`frozen.actor && opts.actor`), so this — not `owner` — is what makes the operator's Approve
+   *  answer 409. Absent on an older server (additive), which reads exactly like an unstamped run:
+   *  the row stays actionable, which is what that server would in fact allow. */
+  ownerActor?: string;
+}
 export interface SemanticGuardSummary {
   totals: { suspend: number; warn: number };
   byTool: Record<string, { suspend: number; warn: number }>;

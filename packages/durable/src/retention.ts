@@ -3,7 +3,11 @@
 // Requires the `deletePrefix` port (InMemory/Sqlite/Postgres adapters provide it); otherwise
 // Throws a clear error.
 import { runKeys, summarizeRun, nestedAgentRunId } from './journal.js';
+import { identityOnlyInput } from './run.js';
 import type { Journal, JournalReader } from './journal.js';
+
+/** What sweepRuns needs off a `:input` record: the freeze stamp, plus whatever identityOnlyInput reads. */
+type FrozenInputLike = { at?: number } & Record<string, unknown>;
 import type { WorkStore } from './storage.js';
 import { getRunCost } from './cost.js';
 import { USAGE_KEY, usageCountedKey } from './budget.js';
@@ -223,16 +227,64 @@ export async function purgeBatch(journal: Journal, batchId: string): Promise<num
   return del(`batch:${batchId}:`);
 }
 
+/**
+ * Erases a person's footprint.
+ *
+ * WHAT IT USED TO MISS, and why that mattered more than the missing families themselves: the three
+ * prefixes below are the ones whose KEY names the person, so a prefix sweep finds them. Everything a
+ * person actually DID lives under their RUNS — the suspended tool record with the raw args, the
+ * frozen `:input` (prompt + resourceId), the approval decisions, the override trail, the incidents.
+ * None of those keys mention the resourceId, so no prefix reaches them: after a deletion request the
+ * person's orders, prompts and human answers all stayed in the journal.
+ *
+ * The tool to find them already existed — `listRunsPaged({ resourceId })` — and it reads the very
+ * `:input` field this sweep needs. So the gap was never "we cannot"; it was "nobody wired it". That
+ * is also why the birth paths matter here: a run that never recorded an owner (delegation, network,
+ * workflow, batch, rollover — all fixed alongside this) is invisible to this enumeration, so the
+ * deletion is silently partial. An erasure that quietly skips half a person is worse than one that
+ * refuses: nobody goes looking for what the report said was gone.
+ *
+ * HONEST BOUNDS, stated because this is a legal surface:
+ *  - `__audit__` is NOT swept per person — an audit trail that a data subject can erase is not an
+ *    audit trail. It is swept by AGE (`sweepLog`), which is the retention answer for it.
+ *  - Threads are swept only through the runs found here (their `:input.threadId`). A thread the
+ *    person owns but never ran anything in is unreachable from this side — `purgeThread` is the
+ *    surface for that, and the caller knows the thread ids.
+ *  - Needs `listKeys`+`listRunsPaged`; an adapter without them keeps today's three-prefix behaviour
+ *    rather than silently reporting a fuller erasure than it performed.
+ */
 export async function purgeResource(journal: Journal, resourceId: string): Promise<number> {
   const del = requireDelete(journal);
   // `suggstats:` carries the FULL lesson key (`suggstats:lesson:res:<rid>:<id>`) — the injection
   // counter's key itself names the person, so it must die with them (GDPR brief audit, K27 EK-3).
   // deletePrefix sweeps counter rows since P1.6, so this reaches HINCRBY-backed adapters too.
-  return (
+  let total =
     (await del(`xid:res:${resourceId}:`)) +
     (await del(`lesson:res:${resourceId}:`)) +
-    (await del(`suggstats:lesson:res:${resourceId}:`))
-  );
+    (await del(`suggstats:lesson:res:${resourceId}:`));
+
+  // The person's RUNS — enumerated by the same field the ownership gates read.
+  // Structural read: `listRunsPaged` lives on JournalReader, and a Journal usually IS one (the
+  // storage bridge delegates it straight through) — but a bare custom Journal may not be, and this
+  // must degrade to the three-prefix behaviour rather than throw on a deletion request.
+  const paged = (journal as unknown as {
+    listRunsPaged?: (q: { resourceId: string; limit: number; cursor?: string }) => Promise<{ items: Array<{ runId: string; threadId?: string }>; nextCursor?: string }>;
+  }).listRunsPaged;
+  if (typeof paged !== 'function') return total;
+  const threads = new Set<string>();
+  let cursor: string | undefined;
+  do {
+    const page = await paged.call(journal, { resourceId, limit: 200, ...(cursor ? { cursor } : {}) })
+      .catch(() => ({ items: [] as Array<{ runId: string; threadId?: string }>, nextCursor: undefined as string | undefined }));
+    for (const r of page.items) {
+      if (r.threadId) threads.add(r.threadId);
+      total += await purgeRun(journal, r.runId);
+    }
+    cursor = page.nextCursor;
+  } while (cursor);
+  // Thread-scoped state the runs pointed at (memory, thread dedup window, semantic tombstones).
+  for (const t of threads) total += await purgeThread(journal, t);
+  return total;
 }
 
 export async function purgeThread(journal: Journal, threadId: string): Promise<number> {
@@ -387,8 +439,27 @@ export async function sweepRuns(journal: Journal & Partial<JournalReader>, opts:
     return fast;
   }
 
-  const listed = await journal.listRuns();
-  const runs = Array.isArray(listed) ? listed : (listed as { items: { runId: string }[] }).items;
+  // SAYFALAMA — `listRuns()` argümansız çağrıldığında üç adaptörün üçünde de varsayılan `limit=50`.
+  // Yani süpürme, journal'da kaç koşum olursa olsun EN FAZLA 50 tanesine bakıyordu ve bunu hiçbir
+  // yerde söylemiyordu: 51'inci koşumdan sonrası hiç süpürülmüyor, sessizce büyüyordu.
+  // Bugüne kadar gizli kalmasının sebebi, hızlı yolun (`suspendedTtlMs === undefined`) bu bloğa hiç
+  // girmemesiydi — yani tam da TTL'i açan, süpürmeye en çok ihtiyaç duyan kurulum tavana çarpıyordu.
+  const paged = (journal as unknown as {
+    listRunsPaged?: (q: { limit: number; cursor?: string }) => Promise<{ items: { runId: string }[]; nextCursor?: string }>;
+  }).listRunsPaged;
+  const runs: { runId: string }[] = [];
+  if (typeof paged === 'function') {
+    let cursor: string | undefined;
+    do {
+      const page = await paged.call(journal, { limit: 500, ...(cursor ? { cursor } : {}) });
+      runs.push(...page.items);
+      cursor = page.nextCursor;
+    } while (cursor);
+  } else {
+    // Sayfalamayan bir adaptör: eski davranış aynen korunur (yaptığından fazlasını iddia etmemek).
+    const listed = await journal.listRuns();
+    runs.push(...(Array.isArray(listed) ? listed : (listed as { items: { runId: string }[] }).items));
+  }
   const result: SweepResult = { scanned: 0, purged: [], keptSuspended: 0, keptNoTs: 0, deletedEntries: 0 };
 
   for (const r of runs) {
@@ -396,7 +467,21 @@ export async function sweepRuns(journal: Journal & Partial<JournalReader>, opts:
     const entries = await journal.readRun(r.runId);
     const summary = summarizeRun(r.runId, entries);
     const stamps = entries.map((e) => e.ts).filter((t): t is number => t != null);
-    const lastActivity = stamps.length ? Math.max(...stamps) : undefined;
+    let lastActivity = stamps.length ? Math.max(...stamps) : undefined;
+    // A NAME TAG IS ALSO A RECORD, and it used to be an immortal one. A workflow/batch/network run
+    // writes only an identity record to `<runId>:input` (claimIdentityInput) — enough for listRuns to
+    // report the run, but `:input` is invisible to parseJournalKey so readRun hands back NOTHING.
+    // Age therefore could not be measured, keptNoTs preserved it "on the safe side", and the safe
+    // side turned out to be forever: the one record class that carries a subject's name (resourceId,
+    // threadId, the workflow's own name) sat outside every retention window.
+    // Narrow on purpose — only a record that NAMES ITSELF as identity-only (the same predicate the
+    // agent door refuses on, run.ts's identityOnlyInput) is dated this way. An entry-less run with a
+    // genuine frozen input is still undateable and still kept: `at` describes when the input was
+    // frozen, and for a real run that is a start time, not a last activity.
+    if (lastActivity === undefined) {
+      const frozen = await journal.get<FrozenInputLike>(runKeys.input(r.runId));
+      if (identityOnlyInput(frozen as never) && typeof frozen?.at === 'number') lastActivity = frozen.at;
+    }
     if (keepSuspended && summary.status === 'suspended') {
       // FAZ-4 expiry arm: a suspended run past suspendedTtlMs stops being protected — nobody is
       // Coming to approve it, and layers 2-3 made suspends routine enough that "forever" leaks.

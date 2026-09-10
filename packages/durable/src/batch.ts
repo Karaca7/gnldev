@@ -28,10 +28,10 @@
 // sessiz-VE-görünmez yok (her item raporda + incident/zarf izleri); onDuplicate kararı OKUYAN
 // politikadan gelir (kayıtlar veri taşır).
 import { argsHash } from './hash.js';
-import { runKeys, claim } from './journal.js';
+import { runKeys, claim, claimIdentityInput } from './journal.js';
 import type { Journal, DurableCtx } from './journal.js';
 import { durableTool } from './durable-tool.js';
-import { resolveApprovals } from './run.js';
+import { resolveApprovals, hasRunProbe } from './run.js';
 import { readXid, xidPlanOf, xidWhen, amountsDifferOf } from './xid.js';
 import { BatchPlanMismatchError } from './errors.js';
 import type { AnyTool } from './types.js';
@@ -206,7 +206,34 @@ export function createBatch(journal: Journal, cfg: BatchConfig) {
       const tcid = itemToolCallId(key);
       // Kararlar journal'a claim'lenir (run.ts'in TEK resolveApprovals'ı — kopya yasak: spent-slot
       // CAS inceliği oradadır) → Studio'dan verilen karar parametresiz run()'da da görünür.
-      const resolved = await resolveApprovals(journal, runId, opts.approvals?.[tcid] !== undefined ? { [tcid]: opts.approvals[tcid]! } : undefined);
+      // `hasRun` BAĞLI: onsuz "iş yapıldı mı" sorusu belirsiz kalıyor ve resolveApprovals belirsizliği
+      // güvenli yöne (yapıldı) yatırıyor — yani askıdaki bir item'a verilen İKİNCİ cevap (onayla →
+      // sonra vazgeç) sessizce yok sayılıyordu, hem de iş henüz yapılmamışken. Sonda item'ın KENDİ
+      // runId'siyle kuruluyor: item'ın araç kayıtları `batch:<id>:<key>` altında yaşıyor
+      // (runKeys.tool(runId, tcid)), yani ajan yolundaki sondayla aynı anahtarı okuyor ve aynı
+      // kesinlikte cevap veriyor.
+      // `actor` GEÇİLMİYOR: batch'in kimlik alanı `cfg.resourceId` — "kimin işi", "kim cevapladı"
+      // değil. İnsan cevabı buraya Studio'dan geliyor ve imzasını orada atıyor; burada uydurulan bir
+      // isim, denetim izine yanlış tanık yazmak olurdu.
+      const resolved = await resolveApprovals(
+        journal, runId,
+        opts.approvals?.[tcid] !== undefined ? { [tcid]: opts.approvals[tcid]! } : undefined,
+        { hasRun: hasRunProbe(journal, runId) },
+      );
+      // SAHİP KAYDI — bellekteki ctx yetmiyordu. `cfg.resourceId` yalnız burada, süreç içinde
+      // yaşıyordu; journal onu HİÇ öğrenmiyordu çünkü item koşumları `run()`'dan geçmiyor
+      // (doğrudan `durableTool`) ve dolayısıyla `persistInput` hiç çağrılmıyor.
+      //
+      // Görünür bedeli kişi silmede: `listRunsPaged({resourceId})` sahibi `:input`'tan okuyor, yani
+      // batch item koşumları bir kişinin koşum listesinde HİÇ görünmüyordu — silme talebinin keşif
+      // listesi baştan eksikti ve eksikliği sessizdi. Sahiplik kapıları da aynı sebeple atıl kalıyordu.
+      //
+      // İlk yazan kazanır ve best-effort: bir kimlik kaydı item'ın koşmasını engelleyemez.
+      if (cfg.resourceId) {
+        await claimIdentityInput(journal, runId, {
+          at: Date.now(), resourceId: cfg.resourceId, batch: batchId, itemKey: key,
+        });
+      }
       const ctx: DurableCtx = {
         journal, runId, approvals: resolved,
         ...(cfg.resourceId ? { resourceId: cfg.resourceId } : {}),

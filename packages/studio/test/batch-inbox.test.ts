@@ -5,7 +5,8 @@
 //        journal via resolveApprovals (the single spent-slot-CAS source of truth), and the response
 //        reports the RECORDED decision.
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal, stampFormat } from '@gnldev/durable';
+// Onay kaydı artık imzalı bir nesne; bu testler KARARI sabitliyor, kaydın ŞEKLİNİ değil.
+import { InMemoryJournal, stampFormat, decisionOf } from '@gnldev/durable';
 import { createStudioApi } from '../src/server.js';
 
 const drive = (api: unknown) => api as (r: Request) => Promise<Response>;
@@ -44,7 +45,7 @@ describe('TASK-2 — batch resume only writes the decision', () => {
     expect(res.status).toBe(200);
     const body = await res.json() as { decided: Record<string, boolean> };
     expect(body.decided['item:F-1']).toBe(true);
-    expect(await journal.get(`${runId}:approval:item:F-1`)).toBe(true); // resolveApprovals's shape (a plain boolean)
+    expect(decisionOf(await journal.get(`${runId}:approval:item:F-1`))).toBe(true); // resolveApprovals's shape (a plain boolean)
 
     // spent-slot: a decision consumed by the 'attempt' scope → a fresh approval overwrites it via CAS (a nuance a copy of this logic would drop)
     await journal.put(`${runId}:approval:item:F-1`, { __gnl_approval_spent: true });
@@ -53,7 +54,33 @@ describe('TASK-2 — batch resume only writes the decision', () => {
       body: JSON.stringify({ approvals: { 'item:F-1': true } }),
     }));
     expect((await res2.json() as { decided: Record<string, boolean> }).decided['item:F-1']).toBe(true);
-    expect(await journal.get(`${runId}:approval:item:F-1`)).toBe(true); // the spent sentinel was replaced by the fresh decision
+    expect(decisionOf(await journal.get(`${runId}:approval:item:F-1`))).toBe(true); // the spent sentinel was replaced by the fresh decision
+  });
+
+  it('yazılan karar KİMİN olduğunu taşır, ve fikir hâlâ değiştirilebilir', async () => {
+    // İki eksik, tek çağrıda: bu uç `resolveApprovals`'a hiçbir opsiyon geçmiyordu.
+    //   (a) `actor` yok → ApprovalRecord imzasız yazılıyordu. Studio tam da "KİM cevapladı"nın
+    //       yüzeyi; imzasız bir karar ne denetlenebilir ne de precision@suspend'de operatör
+    //       tıkından ayrılabilir.
+    //   (b) `hasRun` yok → fikir-değiştirme kuralı belirsizliği güvenli yöne yatırıp HER değişikliği
+    //       yok sayıyordu. Yani gelen kutusu ikinci tıkı davet ediyor, tık hiçbir şey yapmıyordu —
+    //       hem de kayıt hâlâ 'suspended' iken, yani iş HENÜZ YAPILMAMIŞKEN.
+    const journal = new InMemoryJournal();
+    const runId = await seedBatchSuspend(journal);
+    const api = drive(createStudioApi({ reader: journal }));
+    const post = (decision: boolean) => api(new Request(`http://s/runs/${encodeURIComponent(runId)}/resume`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ approvals: { 'item:F-1': decision } }),
+    }));
+
+    await post(true);
+    const rec = await journal.get<{ actor?: string }>(`${runId}:approval:item:F-1`);
+    // Auth kurulmamış konsolda bu 'anon'dur ve öyle olması doğru: Studio'nun KENDİ (bilinmeyen)
+    // kimliği, çağıranın beyanı değil (bkz. verifiedActorOf).
+    expect(rec?.actor, 'karar imzasız yazıldı').toBe('anon');
+
+    await post(false); // araç kaydı hâlâ 'suspended' — terminal değil, karar açık
+    expect(decisionOf(await journal.get(`${runId}:approval:item:F-1`)), 'ret sessizce yutuldu').toBe(false);
   });
 
   it('an unknown batch runId → 404 (no tool record)', async () => {

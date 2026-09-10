@@ -62,6 +62,22 @@ export interface ResourceAuthResource {
   type: 'agent' | 'workflow' | 'tool' | 'run';
   id: string;
 }
+/**
+ * The verbs @gnldev/server ACTUALLY dispatches, and the ones it does not.
+ *
+ * DISPATCHED: `'run'` (agent run/stream/resume, workflow run) and `'cancel'` (run/workflow cancel).
+ *
+ * NOT DISPATCHED: `'read'`. It is kept in the union because the union is open (`string & {}`) and a
+ * host may dispatch its own verbs — but nothing in this package ever calls the gate with it, so a
+ * host that writes an `action === 'read'` branch gets a rule that never runs. That was measured as a
+ * real hazard rather than a cosmetic one: a signature that names a verb reads as a promise that the
+ * verb is checked, and the read paths are exactly where subject binding was missing
+ * (`subjectBinding`). Read authorisation lives there, not here.
+ *
+ * `'resume'` IS dispatched — but as `'run'`: resuming executes the agent and carries `approvals`,
+ * so denying `run` while allowing `resume` would be the wrong way round (see the resume endpoint's
+ * own note). The member stays for hosts that want to distinguish them in their own dispatch.
+ */
 export type ResourceAuthAction = 'run' | 'read' | 'cancel' | 'resume' | (string & {});
 
 /** Per-request multi-organization (opt-in): resolve organization from the request → journal is scoped to that organization. */
@@ -123,6 +139,28 @@ export interface RestApiOptions {
    * GET → read, POST → write.
    */
   auth?: AuthProvider | ReadWriteAuth;
+  /**
+   * Who a request is allowed to speak FOR, on the read paths.
+   *
+   * `'declared'` (default, today's behaviour): the expectation comes only from what the CALLER
+   * states (`?resourceId=` or the body). State nobody and nothing is checked — the rule was written
+   * for operators, who work across an organization by design and name nobody.
+   *
+   * `'strict'`: an authenticated NON-OPERATOR identity speaks for ITSELF. `principal.id` becomes the
+   * expectation and a caller-supplied name cannot replace it.
+   *
+   * WHY THE OPTION EXISTS RATHER THAN A STRAIGHT FIX. Measured on a deployment that hands user-store
+   * tokens to end users: `mallory` read `GET /threads` (the whole subject inventory), then
+   * `/threads/t-ayse/messages` (`AYSE-SECRET`), then `/runs/r-ayse` (the full journal) — all 200,
+   * and naming someone else explicitly was 200 as well. The same identity is a SUBJECT when it
+   * writes (`resolveResourceId`) and an OPERATOR when it reads; that asymmetry is the hole.
+   *
+   * It is not flipped by default because doing so turns today's 200s into 403s for every deployment
+   * whose operators read across their organization — which is the documented, intended use. The flag
+   * lets a deployment that gives end users tokens close the hole now; the default follows once the
+   * operator/end-user split has a first-class shape.
+   */
+  subjectBinding?: 'declared' | 'strict';
   /**
    * DELIBERATE permission for a provider-less API in production. Auth remains opt-in; but in
    * NODE_ENV=production, calling createRestApi without `auth` throws a setup ERROR — silent fail-open is
@@ -667,11 +705,33 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     return c.json({ error: 'access denied: this thread belongs to a different resourceId' }, 403);
   }
 
+  /**
+   * The subject an authenticated identity is BOUND to, under `subjectBinding: 'strict'`.
+   *
+   * `undefined` means "not bound" and the caller's own claim is used, exactly as before: no principal
+   * (open deployments), an operator, or a principal the provider gave no id — `roleAuth`'s bearer
+   * tokens deliberately carry no `id` (role-auth.ts), so a token-only setup keeps today's behaviour
+   * even with the flag on. Binding only bites where there IS a per-user identity to bind to.
+   */
+  function boundSubjectOf(c: Context): string | undefined {
+    // Bayrak KONTROLÜ BURADA: üç okuma yolu da aynı kuralı tek yerden okusun. İlk yazışta kontrol
+    // yalnız `ownershipDenied`'daydı ve thread yolları bayraksız da bağlanıyordu — yani varsayılanı
+    // sessizce çevirmiş oluyordum. Testte yakalandı (varsayılan 403 döndü, 200 beklenirken).
+    if (opts.subjectBinding !== 'strict') return undefined;
+    const p = principalOf(c.req.raw);
+    if (!p?.id || isClient(c) || isPlatformAdmin(p)) return undefined;
+    return p.id;
+  }
+
   async function ownershipDenied(c: Context, s: Instance, runId: string, fromBody?: unknown): Promise<Response | undefined> {
     // The query string is the uniform source, so a GET and a POST state the expectation the same way.
     // `fromBody` exists for the POST paths whose caller naturally puts it in the JSON it is already
     // sending; the query still wins, so one route cannot be checked against two different claims.
-    const expected = c.req.query('resourceId') ?? (typeof fromBody === 'string' ? fromBody : undefined);
+    // STRICT binding: an authenticated non-operator speaks for itself, and its own name OUTRANKS
+    // anything the request states — otherwise the caller could simply name the victim and match.
+    // Operators are exempt on purpose: `isPlatformAdmin` and the org-scoped roles work across an
+    // organization and name nobody, which is the documented asymmetry this whole rule rests on.
+    const expected = boundSubjectOf(c) ?? c.req.query('resourceId') ?? (typeof fromBody === 'string' ? fromBody : undefined);
     if (!expected) return undefined;
     let owner: string | undefined;
     try {
@@ -953,6 +1013,13 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     const subject = resolveResourceId(principal?.id, body.resourceId, isClient(c));
     if ('error' in subject) return c.json({ error: subject.error }, 400);
     { const denied = await threadOwnershipDenied(c, s, body.threadId, subject.resourceId); if (denied) return denied; }
+    // KOŞUM SAHİPLİĞİ — `/resume`'un kapattığı deliğin aynısı buraya da geliyordu. Bu rotanın kendi
+    // yorumu "aynı runId + approvals = resume niyeti" diyor (aşağıdaki bütçe kapısı da öyle
+    // davranıyor), ama sahiplik yalnız THREAD üzerinden sorulup KOŞUM üzerinden hiç sorulmuyordu:
+    // threadId gönderilmeyen bir istekte tek kapı da sessiz kalıyordu. Sömürü, sahipsiz doğan
+    // koşumlara dayanıyordu — bu turda o üretim de kapandı (persistInput benimsenen sahibi yazıyor),
+    // ama iki düzeltme birbirinin yerine geçmez: biri sahipsizliği azaltır, bu onu SORAR.
+    { const denied = await ownershipDenied(c, s, body.runId, body.resourceId); if (denied) return denied; }
     // CONSISTENT with 1.3: continuing a suspended run from this endpoint with the SAME runId + approvals
     // (like stream does) is also resume intent → if there's a trace in the journal the budget gate is
     // Skipped; new runIds are still ENFORCED (no regression).
@@ -1247,6 +1314,13 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     const subject = resolveResourceId(principal?.id, body.resourceId, isClient(c));
     if ('error' in subject) return c.json({ error: subject.error }, 400);
     { const denied = await threadOwnershipDenied(c, s, body.threadId, subject.resourceId); if (denied) return denied; }
+    // KOŞUM SAHİPLİĞİ — `/resume`'un kapattığı deliğin aynısı buraya da geliyordu. Bu rotanın kendi
+    // yorumu "aynı runId + approvals = resume niyeti" diyor (aşağıdaki bütçe kapısı da öyle
+    // davranıyor), ama sahiplik yalnız THREAD üzerinden sorulup KOŞUM üzerinden hiç sorulmuyordu:
+    // threadId gönderilmeyen bir istekte tek kapı da sessiz kalıyordu. Sömürü, sahipsiz doğan
+    // koşumlara dayanıyordu — bu turda o üretim de kapandı (persistInput benimsenen sahibi yazıyor),
+    // ama iki düzeltme birbirinin yerine geçmez: biri sahipsizliği azaltır, bu onu SORAR.
+    { const denied = await ownershipDenied(c, s, body.runId, body.resourceId); if (denied) return denied; }
     // 1.3: resume intent via approvals+runId (a pending tool approval) → the budget gate is skipped
     // CONSISTENTLY with /agents/:name/resume (otherwise a pending interrupt in an over-budget
     // Organization would never finish).
@@ -1322,8 +1396,33 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     const s = await scope(c);
     if ('error' in s) return c.json({ error: s.error }, s.status);
     // D4-FGA: runs AFTER the coarse allow(c,'write') gate above.
-    const resourceDenied = await resourceGate(c, principalOf(c.req.raw), { type: 'workflow', id: name }, 'run');
+    const principal = principalOf(c.req.raw);
+    const resourceDenied = await resourceGate(c, principal, { type: 'workflow', id: name }, 'run');
     if (resourceDenied) return resourceDenied;
+    // KİMLİK KAPILARI. Bu rota ajan rotalarındaki üç kapının HİÇBİRİNE uğramıyordu, ve eksiklik
+    // görünmüyordu çünkü iş akışı koşumları sahipsiz doğuyordu: sorulacak bir sahip yoktu. Sahip
+    // kaydı geldi (registry.ts runWorkflowInner) — kapılar da gelmeli, yoksa yazılan sahibi kimse
+    // sormuyor demektir.
+    //
+    // (a) BAĞLI ÖZNE BEYANI EZER — ajan /run'daki `resolveResourceId(principal?.id, …)` kuralının
+    // bu rotadaki karşılığı. Ezmeseydi mallory kurbanın adını gövdeye yazar, sahip kaydı kurbanı
+    // gösterirdi: sahiplik kaydı bir korumadan bir kimliğe bürünme aracına dönerdi.
+    //
+    // `boundSubjectOf` kullanılıyor, `resolveResourceId` değil — ikisi aynı şey değil ve fark
+    // BURADA önemli: `resolveResourceId` her `principal.id`'yi özne sayar, yani basic-auth ile
+    // çalışan bir OPERATÖRÜN org düzeyi iş akışına birdenbire kendi adını sahip yazardı. Bu rotanın
+    // belgeli muafiyeti ("org düzeyi iş, öznesi yok") tam olarak o durumu koruyor. `boundSubjectOf`
+    // operatörü ve uygulama kimliğini muaf tutar, ve yalnız `subjectBinding: 'strict'` altında ısırır.
+    const subject = boundSubjectOf(c) ?? (body.resourceId ? String(body.resourceId) : undefined);
+    // (b) AYNI runId'yle YENİDEN GİRİŞ. Aşağıdaki H2 notu bu rotanın iş akışı için TEK resume
+    // mekanizması olduğunu söylüyor: aynı runId = devam. Yani runId'yi bilen biri kurbanın koşumunu
+    // sürdürüp dönen `steps[].output` içinde adım çıktılarını okuyabiliyordu — `/agents/:name/resume`
+    // için kapatılan deliğin kelimesi kelimesine aynısı, komşu uçta. runId beyan edilmemişse
+    // sorulacak bir koşum da yok (üretilen ad yepyeni).
+    if (body.runId) {
+      const denied = await ownershipDenied(c, s, String(body.runId), body.resourceId);
+      if (denied) return denied;
+    }
     // H2: this endpoint with the same runId is the ONLY resume mechanism for a workflow. If runId is
     // Given AND there's already a trace in the journal (suspended/paused) this is a resume → the budget
     // Gate is skipped (new work is still ENFORCED).
@@ -1342,6 +1441,23 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     try {
       const wfOpts = {
         ...(body.runId ? { runId: body.runId } : {}),
+        // KİMLİK. İş akışı koşumları yapısal olarak sahipsiz doğuyordu ve bunun görünür sonucu şuydu:
+        // `POST /workflows/runs/:id/cancel` sahiplik kapısını çağırıyor ama kapı sahibi hiç bulamıyor,
+        // yani kontrol her zaman sessizce geçiyordu. Muafiyet ("org düzeyi iş, öznesi yok") ajan
+        // İÇİNDEN doğan iş akışları için yanlış: o, belli bir kullanıcının koşumundan çıkıyor.
+        // Beyan edilmezse hiçbir şey yazılmaz — muafiyet korunur, uydurulmuş sahip olmaz.
+        ...(subject ? { resourceId: subject } : {}),
+        ...(body.threadId ? { threadId: String(body.threadId) } : {}),
+        // (c) MÜHÜR — ajan rotalarındaki desenin aynısı (`sealRequestContext`). Gövdenin kendi
+        // `context`'i BİLEREK alınmıyor: bu rota bugün onu hiç okumuyor, dolayısıyla mühürlenecek bir
+        // sızma yüzeyi de yok; `body.context`'i buraya bağlamak, kapatmak için var olan yüzeyi ÖNCE
+        // açmak olurdu. Mühürlenen tek şey sunucunun kendi türettiği kimlik — /agents/:name/resume
+        // ile birebir aynı biçim. Motorun içindeki `serverIdentityOf` mühürlü değeri gövdeden gelene
+        // tercih ediyor, yani thread sahiplik kapısı ve sahip kaydı aynı çifti görüyor.
+        context: sealRequestContext({}, {
+          orgId: s.orgId ?? principal?.orgId,
+          ...(subject ? { resourceId: subject } : {}),
+        }),
         // P0.4 typed resume: `{ [waitId]: payload }` — journaled before any step runs (see waitForResume).
         ...(body.resume ? { resume: body.resume } : {}),
         // Composed with the client's disconnect signal — same non-destructive semantics as P0.2/P0.3 for
@@ -1378,8 +1494,35 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
       }
       status = statusRaw;
     }
+    // WHOSE workflow runs — `/runs` next door does exactly this, and the two lists were reachable
+    // with the SAME credential: the gate went onto the agent-run inventory and this one was left
+    // showing every subject's row to anyone who could read. The exemption this route used to claim
+    // ("org-level bookkeeping, not per-end-user") stopped being true the moment a workflow run
+    // started carrying an owner.
+    const resourceId = boundSubjectOf(c) ?? c.req.query('resourceId');
+    // Before anything is read, for the reason the cancel route states: the requirement is about the
+    // CREDENTIAL, not the target, so an application that has not said who it acts for must not learn
+    // what exists.
+    { const denied = clientSubjectDenied(c, resourceId); if (denied) return denied; }
     try {
-      return c.json(await listWorkflowRuns(s.journal, status ? { status } : {}));
+      const runs = await listWorkflowRuns(s.journal, status ? { status } : {});
+      if (!resourceId) return c.json(runs); // operatör: org boyunca çalışır, kimseyi adlandırmaz
+      // The `wfrun:` record carries no subject — the owner lives in `<runId>:input`, which is where
+      // the ownership gate, `listRunsPaged({resourceId})` and `purgeResource` all look. A point read
+      // per row, only on the filtered path; the registry scan already reads one record per row.
+      const mine: WorkflowRunStatus[] = [];
+      for (const r of runs) {
+        let owner: string | undefined;
+        // An UNREADABLE owner excludes the row. Note this is the opposite call from `ownershipDenied`,
+        // deliberately: there, silence is refusing to call an unanswered question a mismatch; here,
+        // silence would be putting a row nobody can vouch for INTO someone's personal list. A hidden
+        // row is a smaller wrong than a leaked one, and an ownerless run is filtered out for the same
+        // reason `listRunsPaged({resourceId})` filters it out — a subject's list holds that subject's
+        // work, not everything that failed to say otherwise.
+        try { owner = (await s.journal.get<{ resourceId?: string }>(`${r.runId}:input`))?.resourceId; } catch { continue; }
+        if (owner === resourceId) mine.push(r);
+      }
+      return c.json(mine);
     } catch (e: any) {
       return c.json({ error: String(e?.message ?? e) }, 501);
     }
@@ -1443,7 +1586,11 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     const agent = c.req.query('agent');
     // WHOSE runs. An application credential serving many end users lists one user's runs with this;
     // it is the read half of the `resourceId` the run was started with (see resolveResourceId).
-    const resourceId = c.req.query('resourceId');
+    // STRICT: bağlı kimlik kendi listesine iner ve beyanı EZER. Bu satır olmadan /threads'ten
+    // silinen envanter buradan aynen okunuyordu — üstelik `threadId` + `resourceId` alanlarıyla,
+    // yani kapanan deliğin HEDEF LİSTESİNİ geri veriyordu. Aynı sınıf, komşu uç: kapıyı üç yere
+    // koyup dördüncüsünü atlamak, kapıyı hiç koymamakla aynı kapıdan geçilmesini engellemiyor.
+    const resourceId = boundSubjectOf(c) ?? c.req.query('resourceId');
     // Checked BEFORE the no-params shortcut below, which is the branch that would otherwise hand a
     // client the whole organization's run list — the exact read this rule exists to scope.
     { const denied = clientSubjectDenied(c, resourceId); if (denied) return denied; }
@@ -1594,7 +1741,9 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     // An empty list, not a 404/501: "this deployment keeps no conversations" and "this user has none"
     // are the same answer to the caller, and the route existing is what lets a client stop branching.
     { const denied = clientSubjectDenied(c); if (denied) return denied; }
-    const resourceId = c.req.query('resourceId') || undefined;
+    // STRICT: bağlı kimlik KENDİ listesini görür. Bu satır olmadan parametresiz istek
+    // `listAllThreads()`e düşüyor ve tek çağrıda TÜM öznelerin envanterini veriyor — ölçüldü.
+    const resourceId = boundSubjectOf(c) ?? (c.req.query('resourceId') || undefined);
     // Two METHODS, not one with an optional argument — see Memory.listThreads. Passing a bare string
     // to the one-resource method is what silently unfiltered @gnldev/studio's own thread list.
     if (resourceId) {
@@ -1622,7 +1771,9 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     if (!memory?.getMessages) return c.json([]);
     { const denied = clientSubjectDenied(c); if (denied) return denied; }
     const threadId = decodeURIComponent(c.req.param('id'));
-    const expected = c.req.query('resourceId');
+    // STRICT: beklenti çağıranın BEYANI değil KİMLİĞİ. Beyan tek başına bir kontrol değildir —
+    // saldırgan kurbanın adını yazınca eşleşme sağlanıyordu, yani kapı kendi anahtarını dağıtıyordu.
+    const expected = boundSubjectOf(c) ?? c.req.query('resourceId');
     if (expected && memory.getThreadResource) {
       const owner = await memory.getThreadResource(threadId);
       // Names neither the real owner nor whether the thread exists — a caller guessing ids would

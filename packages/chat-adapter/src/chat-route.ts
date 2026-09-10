@@ -9,7 +9,7 @@ import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { convertToModelMessages } from 'ai';
 import type { UIMessage } from 'ai';
-import { createGnl, RunThreadMismatchError, blockedErrorCode, callerConflictCode, upstreamFailure } from '@gnldev/durable';
+import { createGnl, RunThreadMismatchError, blockedErrorCode, callerConflictCode, upstreamFailure, sealRequestContext } from '@gnldev/durable';
 import type { CreateGnlConfig } from '@gnldev/durable';
 import { toUIMessageStreamResponse } from './ui-stream.js';
 
@@ -18,6 +18,28 @@ export interface CreateChatRouteOptions {
   resolveRunId?: (c: Context, body: any) => string | undefined;
   /** Resolve the conversation `threadId` (memory continuity across requests) from the request/body. */
   resolveThreadId?: (c: Context, body: any) => string | undefined;
+  /**
+   * WHO this request acts for — the end user's `resourceId`, read from something the SERVER trusts
+   * (a session cookie, a verified JWT, `principalOf(c.req.raw)?.id`) and NEVER from the body.
+   *
+   * WHY IT EXISTS. GNL has no end-user identity: an end user is a SUBJECT that a trusted application
+   * names, not a principal GNL authenticates (`resolveResourceId` in @gnldev/server states this).
+   * The engine treats the reserved context keys as "the server established this", and this route used
+   * to forward `body.context` verbatim — so the reserved key arrived from whoever sent the request.
+   * MEASURED against a running app: a plain POST carrying
+   * `{"context":{"__gnl_resourceId":"KURBAN-KULLANICI"}}` produced a run owned by that name, and the
+   * ownership stamp followed it. The seal that exists precisely to prevent this (registry.ts's
+   * `sealRequestContext`, whose own comment names the attack) was never applied on this path.
+   *
+   * The route now ALWAYS seals. With no resolver the seal carries no identity, which STRIPS the
+   * reserved keys: a forged subject cannot get through, and none is asserted either.
+   *
+   * HONEST BOUND — it decides what every ownership guarantee downstream is worth: this route ships
+   * with NO auth of its own (see the createChatRoute JSDoc). A resolver reading an unauthenticated
+   * request asserts a subject nobody verified. Put auth in front of this route, or the subject is
+   * only as trustworthy as the caller.
+   */
+  resolveResourceId?: (c: Context, body: any) => string | undefined;
   /**
    * FAZ-2 — per-run concurrency lock, ON by default (`{ ttlMs: 300_000 }`). Two CONCURRENT requests
    * With the same runId (double-click, two tabs, a retry racing the original) used to BOTH execute;
@@ -136,13 +158,21 @@ export function createChatRoute(
       // Runs the turn again. Deliberately NOT content-hashed (two intentional identical requests must
       // Stay two runs); the fix is the contract, not magic: the response's X-Gnl-Run-Id header hands
       // The client the key to retry with.
-      runId = `chat-${Date.now()}-${anonCounter++}`;
+      // Sayaç MODÜL düzeyinde: her replika kendi sıfırından sayar. Ortak journal üstünde iki
+      // süreç aynı milisaniyede `chat-<ms>-0` üretir ve İKİ FARKLI kullanıcının isteği tek koşuma
+      // düşer — dedup yokluğu değil, YANLIŞ dedup: ikinci istek birincinin adımlarını replay eder.
+      // Süreç-dışı entropi bunu kapatır. Doğru çözüm hâlâ istikrarlı bir runId GÖNDERMEK; aşağıdaki
+      // uyarı onu söylüyor, bu satır yalnız çarpışmayı engelliyor.
+      runId = `chat-${Date.now()}-${anonCounter++}-${crypto.randomUUID().slice(0, 8)}`;
       console.warn(
         `[gnl chat-route] no runId derivable (body.runId / resolveRunId / body.id+message.id all absent) — generated '${runId}'. Retries of this request will NOT dedupe; send body.runId (echoed back as X-Gnl-Run-Id) to get exactly-once.`,
       );
     }
     // The conversation id (NOT the per-turn runId) anchors memory — see the runId note in the JSDoc.
     const threadId = opts.resolveThreadId?.(c, body) ?? body.threadId ?? body.id ?? runId;
+    // Bir kez çözülür: hem mühür hem resourceId aynı değeri kullansın. İsteğe bakan bir çözücüyü
+    // iki kez çağırmak, iki farklı cevap alma ihtimali demektir.
+    const subject = opts.resolveResourceId?.(c, body);
     // V1: `tools` is not passed to convertToModelMessages — a conversation whose CLIENT-side history
     // Still carries tool-invocation parts from a prior turn round-trips as best-effort (text/reasoning
     // Are unaffected). Fine for the common case (server-side history via toUIMessages + threadId memory
@@ -170,7 +200,11 @@ export function createChatRoute(
         messages,
         threadId,
         approvals: body.approvals,
-        context: body.context,
+        // HER ZAMAN mühürlü — kimlik bilinmese bile. Ayrılmış anahtarlar motorun "bunu sunucu
+        // doğruladı" kanalıdır; mühürsüz bir gövde o kanalın sahibi olur. Kimlik yoksa anahtarlar
+        // silinir (fail-closed), çözücü varsa sunucunun değeri yazılır.
+        context: sealRequestContext(body.context ?? {}, subject ? { resourceId: subject } : {}),
+        ...(subject ? { resourceId: subject } : {}),
         ...(lock ? { lock } : {}),
         // P0.2 thread the REQUEST's AbortSignal through to generation — a client
         // Disconnect (tab close, useChat's `stop()`, navigation away) stops token generation instead of

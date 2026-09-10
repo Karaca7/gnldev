@@ -33,7 +33,7 @@
 // Assertions look at the event/data fields, they don't care about id).
 import { streamSSE } from 'hono/streaming';
 import type { Context } from 'hono';
-import { limitBreachFromSteps, blockedFromSteps, BLOCKED_ERROR_CODES } from '@gnldev/durable';
+import { limitBreachFromSteps, blockedFromSteps, surfacedInterrupts, BLOCKED_ERROR_CODES } from '@gnldev/durable';
 import type { Interrupt } from '@gnldev/durable';
 
 /**
@@ -79,12 +79,25 @@ function hasSuspend(part: any): boolean {
   return part?.type === 'tool-result' && !!part.output?.__gnl_suspend;
 }
 
-/** Extracts suspended tool calls (Interrupt) from a completed step list (same logic as runDurable). */
+/**
+ * Extracts suspended tool calls (Interrupt) from a completed step list — the SAME logic as
+ * runDurable, and now literally the same function: the sentinel goes straight into durable's
+ * `surfacedInterrupts`.
+ *
+ * It used to push the RAW sentinel, and that was wrong in exactly one shape — the one that matters
+ * most on this channel. A sub-agent that hits a human gate suspends its PARENT's record too, and
+ * that record is keyed by the parent's proxy call id because the suspend record, the replay and
+ * `consumeExistingRecord` all work through it. The engine surfaces the CHILD's interrupts and
+ * durable-tool deliberately IGNORES an answer addressed to the proxy — so a client following the
+ * standard contract (`approvals[interrupt.toolCallId] = true`) against this stream was answering an
+ * id the engine drops on the floor. Chat/SSE is the actual end-user channel: the question appeared,
+ * the human approved it, and nothing happened.
+ */
 export function interruptsFromSteps(steps: any[]): Interrupt[] {
   const out: Interrupt[] = [];
   for (const step of steps ?? []) {
     for (const part of step?.content ?? []) {
-      if (hasSuspend(part)) out.push(part.output.__gnl_suspend);
+      if (hasSuspend(part)) out.push(...surfacedInterrupts(part.output.__gnl_suspend));
     }
   }
   return out;

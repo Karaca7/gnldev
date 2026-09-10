@@ -12,7 +12,7 @@
 import type { Context } from 'hono';
 import { toFetchHandler, type FetchHandler } from './handler.js';
 import { Hono } from 'hono';
-import { limitBreachFromSteps, blockedFromSteps, BLOCKED_ERROR_CODES, blockedErrorCode, callerConflictCode } from '@gnldev/durable';
+import { limitBreachFromSteps, blockedFromSteps, BLOCKED_ERROR_CODES, blockedErrorCode, callerConflictCode, sealRequestContext } from '@gnldev/durable';
 import type { CreateGnlConfig } from '@gnldev/durable';
 import { createGnl } from '@gnldev/durable';
 import { streamSSE } from 'hono/streaming';
@@ -161,6 +161,24 @@ export function pipeAguiStream(c: Context, runId: string, result: any, opts?: Pi
 export interface CreateAguiRouteOptions {
   /** AG-UI threadId resolver (from request + body). If not given, uses body.threadId, else runId. */
   resolveThreadId?: (c: Context, body: any) => string | undefined;
+  /**
+   * WHO this request acts for — resolved from something the SERVER trusts, never from the body.
+   *
+   * This route declares auth out of scope (see createAguiRoute's own note) and that boundary is
+   * right. What was NOT right is what the boundary implied: `body.context` went to the engine
+   * untouched, and the engine reads the reserved context keys as "the server established this". So
+   * a request could name its own subject. Measured on the sibling route (chat-adapter, identical
+   * shape): a POST carrying `{"context":{"__gnl_resourceId":"KURBAN"}}` produced a run owned by
+   * that name — and once ownership stamping landed, the forged name became the LOCK's value too,
+   * i.e. the caller handed itself the key.
+   *
+   * The route now always seals. With no resolver the seal carries no identity, which strips the
+   * reserved keys: no forged subject gets in, and none is asserted either.
+   *
+   * HONEST BOUND: a resolver reading an unauthenticated request asserts a subject nobody verified.
+   * Put auth in front of this route, or the subject is only as good as the caller's honesty.
+   */
+  resolveResourceId?: (c: Context, body: any) => string | undefined;
 }
 
 /**
@@ -177,15 +195,23 @@ function aguiRouteApp(config: CreateGnlConfig, opts: CreateAguiRouteOptions = {}
     const body = (await c.req.json().catch(() => ({}))) as any;
     if (!body.runId) return c.json({ error: 'runId is required (idempotency key)' }, 400);
     const threadId = opts.resolveThreadId?.(c, body) ?? body.threadId ?? body.runId;
+    const subject = opts.resolveResourceId?.(c, body);
     let result: any;
     try {
       result = await gnl.stream(name, {
         runId: body.runId,
         prompt: body.prompt,
         messages: body.messages,
-        threadId: body.threadId,
+        // `threadId`, hesaplanan değer — `body.threadId` DEĞİL. Bu satır ölü koddu: `resolveThreadId`
+        // çağrılıyor, sonucu yalnız SSE zarfına gidiyordu, koşum yine istemcinin dediği thread'e
+        // yazıp okuyordu. Yani host'un kimliği auth'tan türetmek için verdiği TEK kanca hafızayı hiç
+        // etkilemiyordu; host "düzelttim" sanıyordu.
+        threadId,
         approvals: body.approvals,
-        context: body.context,
+        // HER ZAMAN mühürlü — kimlik bilinmese bile. Ayrılmış anahtarlar motorun "bunu sunucu
+        // doğruladı" kanalıdır; mühürsüz bir gövde o kanalın sahibi olur.
+        context: sealRequestContext(body.context ?? {}, subject ? { resourceId: subject } : {}),
+        ...(subject ? { resourceId: subject } : {}),
       });
     } catch (e: any) {
       // A refusal thrown BEFORE the stream exists is still one of ours, and it used to arrive as a bare

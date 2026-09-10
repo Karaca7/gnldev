@@ -43,6 +43,9 @@ describe('FAZ-4 strictInput fingerprint', () => {
     const model = () => createMockModel(async ({ prompt }: any) =>
       countToolResults(prompt) === 0 ? toolCallResult('charge', 'call-c', { amount: 5 }) : finalTextResult('done'));
     await runDurable(base(journal, 'si2', { model: model(), tools, prompt: 'charge it', strictInput: true }) as any);
+    // Sonek: süreç-dışı entropi. Modül sayacı yalnız TEK süreç içindeki aynı-ms çarpışmasını
+    // kapatıyordu; iki replika ortak journalda aynı `wf-<ad>-<ms>-0`ı üretip iki farklı çağrıyı tek
+    // koşuma düşürebiliyordu (exactly-once'ın sessiz ihlali).
     expect(counter.n).toBe(0); // suspended by confirm
     // The approval re-POST carries DIFFERENT input (a grown chat history) + the approval for the
     // toolCallId whose journal record is genuinely 'suspended' → admitted, not 409'd.
@@ -245,8 +248,8 @@ describe('runWorkflow anon-fallback contract', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       const [a, b] = await Promise.all([gnl.runWorkflow('w', { n: 1 }), gnl.runWorkflow('w', { n: 2 })]);
-      expect(a.runId).toMatch(/^wf-w-\d+-\d+$/); // echoed — the caller CAN retry against it
-      expect(b.runId).toMatch(/^wf-w-\d+-\d+$/);
+      expect(a.runId).toMatch(/^wf-w-\d+-\d+-[0-9a-f]{8}$/); // echoed — the caller CAN retry against it
+      expect(b.runId).toMatch(/^wf-w-\d+-\d+-[0-9a-f]{8}$/);
       expect(a.runId).not.toBe(b.runId); // same-tick calls must not share a journal
       expect(warn.mock.calls.some((c) => String(c[0]).includes('without a runId'))).toBe(true);
     } finally {

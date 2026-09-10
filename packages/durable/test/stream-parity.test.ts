@@ -51,7 +51,7 @@ async function waitFor(cond: () => Promise<boolean>, ms = 1000): Promise<void> {
 }
 
 describe('stream-parity: processor pipeline within streamDurable', () => {
-  it('input processor: input is transformed and journaled; does NOT re-run on resume', async () => {
+  it('input processor: input is transformed and journaled; the resume pass is a gate, not a re-transform', async () => {
     const journal = new InMemoryJournal();
     const runs = { input: 0 };
     const redactor: Processor = {
@@ -76,14 +76,42 @@ describe('stream-parity: processor pipeline within streamDurable', () => {
     expect(JSON.stringify(seen1.prompts[0])).toContain('[REDACTED]');
     expect(JSON.stringify(seen1.prompts[0])).not.toContain('SECRET');
 
-    // Resume (same runId): input is journaled → processor does NOT re-run
+    // FINISHED-run replay: wait for the verdict FIRST — the stream's outcome lands in onFinish,
+    // asynchronously to `await r1.text`, so without the wait this half would race between "gate
+    // skipped" and "gate ran" (it passed both ways once; that is a flake, not a guarantee). Once
+    // 'completed' stands, a redelivery is exempt from the gate: nothing fresh runs, and a throw
+    // would clobber the verdict (see resume-input-gate.test.ts, rg-7).
+    await waitFor(async () => (await journal.get<{ status?: string }>('sp1:outcome'))?.status === 'completed');
     const seen2 = { prompts: [] as any[], tools: [] as any[] };
     const r2 = await streamDurable({
       runId: 'sp1', journal, model: textStreamModel('ok', seen2),
       prompt: 'SECRET charge', processors: [redactor], stopWhen: stepCountIs(3),
     });
     await r2.text;
-    expect(runs.input).toBe(1);
+    expect(runs.input).toBe(1); // finished run → the chain is not consulted at all
+    // The frozen input is still attempt 1's, and the model is not consulted either — this run
+    // replays from the journal, so the caller's raw 'SECRET charge' has no path to the provider.
+    expect((await journal.get<{ prompt?: string }>(runKeys.input('sp1')))?.prompt).toBe('[REDACTED] charge');
+    expect(seen2.prompts).toEqual([]);
+
+    // UNFINISHED-run resume — the shape a crash leaves: frozen `:input`, no verdict. THIS is where
+    // the stream path must reach the gate (chat/agui resume on this line); the return value is
+    // still discarded, so the transform cannot double-apply.
+    let gatePasses = 0;
+    const gateSpy: Processor = {
+      name: 'gate-spy',
+      processInput: (pin, ctx) => { if (ctx.resume) gatePasses++; return { ...pin, prompt: String(pin.prompt).replace('SECRET', '[REDACTED]') }; },
+    };
+    await journal.put(runKeys.input('sp1b'), { prompt: '[REDACTED] wire' }); // froze input, died before any outcome
+    const seen3 = { prompts: [] as any[], tools: [] as any[] };
+    const r3 = await streamDurable({
+      runId: 'sp1b', journal, model: textStreamModel('ok', seen3),
+      prompt: 'SECRET wire', processors: [gateSpy], stopWhen: stepCountIs(3),
+    });
+    await r3.text;
+    expect(gatePasses).toBe(1); // the gate ran on the stream path
+    expect((await journal.get<{ prompt?: string }>(runKeys.input('sp1b')))?.prompt).toBe('[REDACTED] wire'); // and rewrote nothing
+    expect(JSON.stringify(seen3.prompts[0] ?? '')).not.toContain('SECRET'); // the model got the frozen prompt, not the caller's raw one
   });
 
   it('tool processor: the tool set the model sees is restricted in streaming too', async () => {

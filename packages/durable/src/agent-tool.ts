@@ -45,6 +45,26 @@ export interface AgentToolConfig {
    * Journal too → the total (parent + all sub-agents) can NEVER bypass the parent's ceiling.
    */
   limits?: RunLimits;
+  /**
+   * WHOSE work the delegation is, carried into the nested run.
+   *
+   * Taint was forwarded here from the start; identity was not. So "delegate" quietly meant "drop the
+   * protection layer": with no `resourceId` the nested run builds no cross-channel identity plan
+   * (durable-tool's XID/`semanticIdentity` both require it), its `:input` records no owner — so
+   * `ownershipDenied` passes on the `!owner` branch, the actor lock never fires, and
+   * `purgeResource` cannot find that run when the person asks to be deleted.
+   *
+   * The asymmetry was the tell: the parent's taint, limits and tool policy all crossed the boundary
+   * because each was noticed once. Identity was never noticed, and a sub-agent is not a different
+   * person — it is the same request, one frame deeper.
+   */
+  resourceId?: string;
+  /** The conversation the delegation belongs to — same reason as `resourceId`. */
+  threadId?: string;
+  /** The verified caller identity (ownership lock). Inherited, never invented. */
+  actor?: string;
+  /** Where the work came in from — kept so a nested run's channel is not silently 'unknown'. */
+  channel?: string;
   /** FAZ-4 K12: the parent's tool policy, inherited AS-IS — registry.ts's JSDoc promised this for
    *  Years while nothing forwarded it; under 'strict-critical' a delegated sub-agent's undeclared
    *  Side-effect tool must not be the hole in the fence. */
@@ -84,6 +104,12 @@ export async function runSubAgent(
     prompt: task,
     stopWhen: stepCountIs(config.maxSteps ?? 8),
     limits: config.limits,
+    // KİMLİK DEVRİ — taint'in geçtiği sınırdan kimliğin de geçmesi. Yoksa alt koşum sahipsiz doğar
+    // ve sahipsizlik kalıcıdır (`:input` ilk yazan kazanır).
+    ...(config.resourceId ? { resourceId: config.resourceId } : {}),
+    ...(config.threadId ? { threadId: config.threadId } : {}),
+    ...(config.actor ? { actor: config.actor } : {}),
+    ...(config.channel ? { channel: config.channel } : {}),
     ...(config.toolPolicy ? { toolPolicy: config.toolPolicy } : {}),
   } as any);
   return { text: res.text, interrupts: res.interrupts };
@@ -111,6 +137,17 @@ export function createAgentTool(
     description: opts?.description ?? 'Delegate a task to an expert sub-agent',
     inputSchema: z.object({ task: z.string().describe('the task/question to give the sub-agent') }),
     execute: async ({ task }, options: any) => {
+      // Ebeveynin insan cevapları — durable-tool bunları `gnlApprovals` olarak iletiyor. Bu satır
+      // olmadan alt koşum bir insan kapısında sonsuza dek askıda kalırdı: soru sorulur, cevap
+      // ebeveyne verilir, çocuğa hiç ulaşmaz.
+      //
+      // `gnlApprovals` ARTIK EBEVEYNİN TÜM HARİTASI DEĞİL: durable-tool onu bu çağrının kayıtlı
+      // sentinel'indeki çocuk soru kimlikleriyle sınırlıyor (bkz. nestedApprovalsFor). Sebep
+      // ölçülebilir bir çakışma: ardışık id üreten sağlayıcılarda ('call_0', 'call_1'…) iki koşumun
+      // id uzayı aynıdır, ve ebeveynin KENDİ bir çağrısına verilmiş "evet" çocuğun bambaşka bir
+      // insan-kapılı çağrısını sessizce açabiliyordu. `config.approvals` — host'un bu alt ajan için
+      // AÇIKÇA yapılandırdığı onaylar — sınırlamanın dışında; oradaki niyet zaten çocuğa aittir.
+      const inheritedApprovals = { ...(config.approvals ?? {}), ...(options?.gnlApprovals ?? {}) };
       // Scope the sub-agent's run to its PARENT — see nestedAgentRunId for why, and for why this
       // must stay derivable from (parentRunId, toolCallId) alone. network.ts has always keyed on
       // the parent (`net:${runId}:${i}`); this is the same shape.
@@ -130,9 +167,54 @@ export function createAgentTool(
         prompt: task,
         stopWhen: stepCountIs(config.maxSteps ?? 8),
         limits: config.limits,
+        approvals: inheritedApprovals,
+        // Aynı devir, agent-as-tool yolunda. (Yukarıdaki kardeşiyle tek fark nestedRunId'nin nereden
+        // geldiği; kimlik açısından ikisi de aynı isteğin bir kare derinidir.)
+        ...(config.resourceId ? { resourceId: config.resourceId } : {}),
+        ...(config.threadId ? { threadId: config.threadId } : {}),
+        ...(config.actor ? { actor: config.actor } : {}),
+        ...(config.channel ? { channel: config.channel } : {}),
         ...(config.toolPolicy ? { toolPolicy: config.toolPolicy } : {}),
       } as any);
+      // ÇOCUĞUN SORUSU EBEVEYNE ÇIKAR.
+      //
+      // Alt koşum bir insan kapısına çarptığında (confirm/guard/duplicate/semantic/taint) askıya
+      // giriyor — ama ebeveyn bunu görmüyordu: `interrupts` sıradan bir araç çıktısı olarak dönüyor,
+      // `hasSuspend` ise yalnız `__gnl_suspend` arıyor. Sonuç ölçüldü: ebeveyn `completed`,
+      // `interrupts: []`, çocuk ise `suspended`. Yani insan kapısı çalıştı ve İNSANA ULAŞMADI —
+      // "son söz insanda" vaadinin sessizce boşa çıktığı hâl.
+      //
+      // Sentinel ebeveynin KENDİ toolCallId'siyle üretiliyor (askı mekanizması onunla anahtarlanır),
+      // ama soruyu doğuran ÇOCUK çağrıları `nested` alanında duruyor: cevap veren kişi neyi
+      // onayladığını görebilmeli, ve onay o çağrı kimlikleriyle geri gelecek (tek harita, ayrı
+      // eşleme yok — bkz. gnlApprovals).
+      if (res.interrupts?.length) {
+        const first = res.interrupts[0]!;
+        return {
+          text: res.text,
+          interrupts: res.interrupts,
+          __gnl_suspend: {
+            toolCallId: options?.toolCallId,
+            toolName: 'agent',
+            args: { task },
+            kind: 'nested',
+            reason:
+              `A delegated sub-agent stopped for a human: ${first.reason ?? 'approval required'} ` +
+              `(nested run '${nestedRunId}', ${res.interrupts.length} pending). Answer with the nested toolCallId(s).`,
+            // Çocuğun interrupt'ları TAM hâliyle saklanıyor (`args`/`semPair` dahil): run.ts bu
+            // listeden yüzeye çıkan soruyu kuruyor, ve insan neyi onayladığını görebilmeli —
+            // kırpılmış bir kayıt "bir alt ajan durdu" bildirimine geri döner. Aynı liste askı
+            // kolunun tek karar kaynağı (bkz. durable-tool `nestedAnswered`) ve ebeveynin onay
+            // haritasından çocuğa NEYİN inebileceğini de bu liste sınırlıyor.
+            nested: { runId: nestedRunId, interrupts: res.interrupts.map((i) => ({ toolCallId: i.toolCallId, toolName: i.toolName, args: i.args, reason: i.reason, ...(i.semPair ? { semPair: i.semPair } : {}) })) },
+          },
+        } as any;
+      }
       return { text: res.text, interrupts: res.interrupts };
     },
+    // `idempotent` KALDIRILDI değil, KOŞULLU: alt koşum kendi journal'ından replay ettiği için
+    // tekrar çağrı yan etki üretmiyor — bu doğru. Ama askı hâlinde ebeveynin kaydı 'suspended'
+    // olur ve onay geldiğinde durable-tool'un askı kolu yeniden çalıştırır; idempotent bayrağı o
+    // kolu engellemiyor (o, çökme-penceresi kapısı için).
   }), { idempotent: true });
 }

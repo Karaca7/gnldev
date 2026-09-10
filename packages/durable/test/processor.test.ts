@@ -10,25 +10,39 @@ import type { Processor } from '../src/processor.js';
 import { countToolResults, toolCallResult, finalTextResult, createMockModel } from './mock.js';
 
 describe('8.7 processor pipeline', () => {
-  it('input processor: transformation is reflected in the journal + does not rerun on resume', async () => {
+  it('input processor: the TRANSFORM is journaled once; the resume pass is a gate, not a second transform', async () => {
+    // Two jobs, one hook. As a transform it must apply exactly once — the journaled `:input` is the
+    // run's single source of truth and re-masking it would corrupt it. As a policy gate it must also
+    // run on the resume of an UNFINISHED run, because for a suspended run THAT is the turn the work
+    // happens on (see resume-input-gate.test.ts — a finished run's replay is exempt: nothing fresh
+    // runs there, and a throw would clobber its 'completed' verdict). So the run suspends on a
+    // confirm tool, and the approval turn re-enters the chain with its return value discarded.
     const journal = new InMemoryJournal();
     let inputCalls = 0;
+    let gatePasses = 0;
     const upper: Processor = {
       name: 'upper',
-      processInput: (i) => {
+      processInput: (i, ctx) => {
         inputCalls++;
+        if (ctx.resume) gatePasses++;
         return { ...i, prompt: typeof i.prompt === 'string' ? i.prompt.toUpperCase() : i.prompt };
       },
     };
-    const model = () => createMockModel(async () => finalTextResult('ok'));
+    const model = () => createMockModel(async ({ prompt }: any) =>
+      countToolResults(prompt) === 0 ? toolCallResult('onayli', 'tc-1', { n: 1 }) : finalTextResult('ok'));
+    const tools = { onayli: { sideEffect: true, confirm: true as const, execute: async () => ({ ok: true }) } };
 
-    await runDurable({ runId: 'r', journal, model: model(), processors: [upper], stopWhen: stepCountIs(4), prompt: 'hello' });
+    await runDurable({ runId: 'r', journal, model: model(), processors: [upper], tools, stopWhen: stepCountIs(4), prompt: 'hello' } as never);
     expect(inputCalls).toBe(1);
+    expect(gatePasses).toBe(0);
     expect((await journal.get<any>('r:input')).prompt).toBe('HELLO'); // transformed input was journaled
 
-    // Resume: same runId → input is already in the journal → processor does NOT rerun.
-    await runDurable({ runId: 'r', journal, model: model(), processors: [upper], stopWhen: stepCountIs(4), prompt: 'hello' });
-    expect(inputCalls).toBe(1);
+    // Approval resume: the frozen input is adopted, and the chain is re-entered as a GATE.
+    await runDurable({ runId: 'r', journal, model: model(), processors: [upper], tools, stopWhen: stepCountIs(4), prompt: 'hello', approvals: { 'tc-1': true } } as never);
+    expect(inputCalls).toBe(2);
+    expect(gatePasses).toBe(1);
+    // What the gate returned went nowhere: the journal still holds attempt 1's transform.
+    expect((await journal.get<any>('r:input')).prompt).toBe('HELLO');
   });
 
   it('non-det output processor: journaled via ctx.step; same on resume; invisible to the :proc: reader', async () => {

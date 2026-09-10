@@ -20,7 +20,11 @@ import type { JournalReader } from './journal.js';
 import type { AnyTool } from './types.js';
 
 // A stale 'running' marker (after a crash) can be reclaimed once it's older than this duration.
-const CLAIM_TTL_MS = 30_000;
+//
+// EXPORTED because run.ts's approval probe asks the same question of the same record — "is this
+// 'running' a live claim or a corpse?" — and a second, privately-owned 30_000 there would be a
+// second answer waiting to drift. One threshold, one meaning of "still in flight".
+export const CLAIM_TTL_MS = 30_000;
 
 // Sensible default used when a tool doesn't specify `maxRetries` (total attempt count).
 // As long as existing tests (success on a single retry) stay under this value, behavior does NOT change.
@@ -408,6 +412,38 @@ async function consumeExistingRecord(
 }
 
 /**
+ * EBEVEYNİN ONAY HARİTASINDAN ÇOCUĞA NE İNER.
+ *
+ * Bir alt koşum süren araca (agent-as-tool) ebeveynin insan cevapları `gnlApprovals` ile iniyor —
+ * askıdaki çocuğun serbest kalmasının tek yolu bu. Ama harita OLDUĞU GİBİ indirildiğinde ikinci bir
+ * kapı açılıyordu: onaylar `toolCallId` ile anahtarlanır, ve iki koşumun id uzayı AYNIDIR. Ardışık
+ * id üreten sağlayıcılarda ('call_0', 'call_1'…) ebeveynin KENDİ bir çağrısına verilmiş "evet",
+ * çocuğun bambaşka bir insan-kapılı çağrısını — aynı ada denk geldiği için — sessizce açıyordu.
+ * İnsan bir soruyu onaylıyor, iki iş çalışıyor.
+ *
+ * Sınır kaydın kendisinden türetiliyor: çocuğa yalnız ÇOCUĞUN SORDUĞU çağrı kimlikleri iner. İlk
+ * koşumda ortada sentinel yok — çocuk henüz hiçbir şey sormadı — ve ebeveynin haritasından HİÇBİR
+ * ŞEY inmez; yeniden koşumda yalnız `nested.interrupts[]` kesişimi iner. Sınırlama YALNIZ bu
+ * kanalda: `config.approvals` (host'un o alt ajan için açıkça yapılandırdığı onaylar) dokunulmaz,
+ * oradaki niyet zaten çocuğa aittir.
+ */
+function nestedApprovalsFor(
+  record: ToolJournalRecord | undefined,
+  approvals: Record<string, boolean> | undefined,
+): Record<string, boolean> | undefined {
+  if (approvals === undefined) return undefined;
+  const sus = record?.status === 'suspended'
+    ? (record.output as { __gnl_suspend?: { kind?: string; nested?: { interrupts?: Array<{ toolCallId?: string }> } } } | undefined)?.__gnl_suspend
+    : undefined;
+  const scoped: Record<string, boolean> = {};
+  if (sus?.kind !== 'nested') return scoped;
+  for (const i of sus.nested?.interrupts ?? []) {
+    if (i.toolCallId !== undefined && approvals[i.toolCallId] !== undefined) scoped[i.toolCallId] = approvals[i.toolCallId]!;
+  }
+  return scoped;
+}
+
+/**
  * Wraps the tool's execute: EXACTLY-ONCE. The key is the toolCallId given by the AI SDK.
  * On replay the model's response is returned identically, producing the SAME toolCallId → if a
  * Succeeded record exists the tool does NOT run again, the output is returned from the journal
@@ -550,10 +586,44 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           ctx.limits?.taintScope === 'thread' ? { threadId: ctx.threadId } : undefined);
       }
 
-      const approved = ctx.approvals?.[toolCallId];
+      // VEKİL ASKI KAYDI: bir alt ajan insan kapısına çarptığında agent-tool `kind:'nested'`
+      // sentinel'ini döndürür ve bu kayıt da askıya girer. O kayıt bir soru SORMADI — çocuğun
+      // sorusunu taşıdı, ve tek bir vekilin altında birden çok çocuk sorusu durabilir.
+      const isProxySuspend =
+        record?.status === 'suspended' &&
+        (record.output as { __gnl_suspend?: { kind?: string } } | undefined)?.__gnl_suspend?.kind === 'nested';
+      // VEKİLE VERİLEN CEVAP BİR CEVAP DEĞİLDİR — ne serbest bırakır, ne 'denied' yazar.
+      //
+      // Ölçülen iki sonuç da kötüydü. `approvals[ebeveynId] = true` sessiz bir no-op döngüsü
+      // kuruyordu: ebeveyn askı kolunu geçiyor, çocuk `{ebeveynId:true}` ile yeniden koşuyor,
+      // çocuğun confirm'ü kendi id'sini bulamıyor, yine askı — üstelik her turda sahte bir
+      // insan-onayı izi. `false` daha sessizdi: ebeveyne 'denied' yazılıyor, çocuk koşumu sonsuza
+      // dek askıda yetim kalıyordu.
+      //
+      // Kaynağında kesiliyor, kolun içinde değil: `approved` bu execute boyunca dup-claim'den
+      // approvalScope harcamasına kadar okunuyor, ve vekil kimliğe verilmiş belirsiz bir cevabın
+      // hiçbirinde söz hakkı yok. Karar YALNIZ çocuk id'lerinden türer (aşağıda `nestedAnswered`);
+      // yüzeye de zaten çocuğun kimliği çıkıyor (run.ts `surfacedInterrupts`), yani standart
+      // istemci sözleşmesi doğru id'yi kendiliğinden taşır.
+      const approved = isProxySuspend ? undefined : ctx.approvals?.[toolCallId];
 
       // 2) Suspended call: if it was previously suspended and there's no approval, return the sentinel again (still suspended).
       if (record && record.status === 'suspended') {
+        // VEKİL ASKI. Bir alt ajan insan kapısına çarptığında ebeveynin bu kaydı da askıya giriyor
+        // (agent-tool'un `kind: 'nested'` sentinel'i) — ama o askı kendi başına bir soru DEĞİL,
+        // çocuğun sorusunun görünür hâli. Dolayısıyla serbest bırakılması da türetilmeli: insan tek
+        // bir soru gördü, tek bir cevap veriyor ve o cevap ÇOCUĞUN çağrı kimliğini taşıyor.
+        //
+        // Bunu yapmazsak insan iki kimliği birden onaylamak zorunda kalır — biri gördüğü soru, biri
+        // hiç görmediği bir ara kayıt. Ölçüldü: onay çocuğa iniyor, çocuk tamamlanıyor, ama ebeveyn
+        // askıda kalıyordu ve koşum hiç bitmiyordu.
+        const nested = (record.output as { __gnl_suspend?: { kind?: string; nested?: { interrupts?: Array<{ toolCallId?: string }> } } })?.__gnl_suspend;
+        // Ret DE bir cevaptır (`!== undefined`): insan çocuğun sorusuna "hayır" dediğinde çocuk
+        // koşumu 'denied' yazıp tamamlanır, ve vekilin de serbest kalıp o nihai cevabı ebeveyne
+        // taşıması gerekir — yoksa reddedilen iş ebeveyni sonsuza dek askıda bırakır.
+        const nestedAnswered =
+          nested?.kind === 'nested' &&
+          (nested.nested?.interrupts ?? []).some((i) => i.toolCallId !== undefined && ctx.approvals?.[i.toolCallId] !== undefined);
         // A resume that DENIES an
         // Already-suspended call used to fall into the `approved !== true` re-suspend return below —
         // The deny was a SILENT NO-OP (the record stayed 'suspended', the approval stayed pending
@@ -579,7 +649,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           await writeToolTerminal(ctx, key, { status: 'denied', output }, toolCallId, toolName, hash);
           return output;
         }
-        if (approved !== true) {
+        if (approved !== true && !nestedAnswered) {
           // The stored sentinel embeds the toolCallId of the run that FIRST suspended. Under the
           // cross-run window a later run reuses that record, so returning it verbatim reported an id
           // this run never emitted — while the approval above is looked up under THIS run's id. The
@@ -597,35 +667,41 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           return await consumeExistingRecord(ctx, key, record, toolCallId);
         }
         // Approved === true → run below.
-        // FAZ-6: if THIS suspension was the semantic gate's question, the human's "run it anyway" IS
-        // The 'different work' verdict — tombstone the (prior, incoming) pair so the SAME question is
-        // Never asked again (best-effort: a lost tombstone merely re-asks, the safe failure).
-        // INTENT-OVERRIDE IZI (heyet v1 #2): bu kosum bir suspend sorusuna verilen INSAN ONAYIYLA
-        // geciyor — 'bilerek tekrar' kararinin journal'li izi. Arguman bozarak kandirma yolunun
-        // (iz birakmayan bypass) resmi alternatifi budur. Best-effort: iz kaybi kosumu etkilemez.
-        try {
-          await ctx.journal.put(runKeys.proc(ctx.runId, `override-${toolCallId}`), {
-            at: ctx.journal.now ? await ctx.journal.now() : Date.now(),
-            toolCallId, toolName,
-            reason: (record.output as { __gnl_suspend?: { reason?: string } })?.__gnl_suspend?.reason,
-            // Sinif YAPISAL alandan gelir; metin oneki YALNIZ bu alan yokken (eski kayitlar) yedektir.
-            // TUM sentinel uretici yuzeyleri `kind` yazar (confirm/guard/duplicate/semantic/taint) —
-            // kismi gecis, alani yazmayan yuzeyi kalici 'other' kovasina hapsederdi (denetci K32).
-            // Onek testi kirilgan cikti: yargic kolunun yeni metni 'Semantically' ile baslamadigi icin
-            // her yargic-kaynakli onay sessizce 'other' yaziliyordu — sorunun HANGI kapidan geldigini
-            // okuyan sorgular yargic kolunu hic gormedi (denetci K32).
-            kind: (() => {
-              const sus = (record.output as { __gnl_suspend?: { kind?: string; reason?: string } })?.__gnl_suspend;
-              if (sus?.kind) return sus.kind;
-              const r0 = sus?.reason ?? '';
-              return r0.startsWith('Duplicate side effect') ? 'duplicate'
-                : r0.startsWith('Semantically similar') ? 'semantic'
-                : r0.includes('explicit confirmation') ? 'confirm' : 'other';
-            })(),
-            ...(ctx.channel ? { channel: ctx.channel } : {}),
-          });
-        } catch { /* iz best-effort */ }
-        {
+        //
+        // Aşağıdaki iki iz de SORUYU SORMUŞ bir kayda aittir: 'bilerek tekrar' izi ve semantik mezar
+        // taşı, ikisi de "insan bu SORUYA evet dedi" cümlesini kaydeder. Vekil kayıt hiç soru
+        // sormamıştı — buraya insanın ÇOCUĞA verdiği cevap yüzünden geldi, ve o cevap 'hayır' bile
+        // olabilir (ret de bir cevaptır, vekili serbest bırakır). Vekil adına bunları yazmak izi
+        // yalanlardı; çocuğun kendi koşumu kendi kararının izini zaten kendi kaydına basıyor.
+        if (!isProxySuspend) {
+          // FAZ-6: if THIS suspension was the semantic gate's question, the human's "run it anyway" IS
+          // The 'different work' verdict — tombstone the (prior, incoming) pair so the SAME question is
+          // Never asked again (best-effort: a lost tombstone merely re-asks, the safe failure).
+          // INTENT-OVERRIDE IZI (heyet v1 #2): bu kosum bir suspend sorusuna verilen INSAN ONAYIYLA
+          // geciyor — 'bilerek tekrar' kararinin journal'li izi. Arguman bozarak kandirma yolunun
+          // (iz birakmayan bypass) resmi alternatifi budur. Best-effort: iz kaybi kosumu etkilemez.
+          try {
+            await ctx.journal.put(runKeys.proc(ctx.runId, `override-${toolCallId}`), {
+              at: ctx.journal.now ? await ctx.journal.now() : Date.now(),
+              toolCallId, toolName,
+              reason: (record.output as { __gnl_suspend?: { reason?: string } })?.__gnl_suspend?.reason,
+              // Sinif YAPISAL alandan gelir; metin oneki YALNIZ bu alan yokken (eski kayitlar) yedektir.
+              // TUM sentinel uretici yuzeyleri `kind` yazar (confirm/guard/duplicate/semantic/taint) —
+              // kismi gecis, alani yazmayan yuzeyi kalici 'other' kovasina hapsederdi (denetci K32).
+              // Onek testi kirilgan cikti: yargic kolunun yeni metni 'Semantically' ile baslamadigi icin
+              // her yargic-kaynakli onay sessizce 'other' yaziliyordu — sorunun HANGI kapidan geldigini
+              // okuyan sorgular yargic kolunu hic gormedi (denetci K32).
+              kind: (() => {
+                const sus = (record.output as { __gnl_suspend?: { kind?: string; reason?: string } })?.__gnl_suspend;
+                if (sus?.kind) return sus.kind;
+                const r0 = sus?.reason ?? '';
+                return r0.startsWith('Duplicate side effect') ? 'duplicate'
+                  : r0.startsWith('Semantically similar') ? 'semantic'
+                  : r0.includes('explicit confirmation') ? 'confirm' : 'other';
+              })(),
+              ...(ctx.channel ? { channel: ctx.channel } : {}),
+            });
+          } catch { /* iz best-effort */ }
           const semPair = (record.output as { __gnl_suspend?: { semPair?: { priorHash?: string } } } | undefined)?.__gnl_suspend?.semPair;
           if (semPair?.priorHash && ctx.threadId) {
             try {
@@ -1283,7 +1359,9 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
         // ahead sees every live claim as expired and takes over work that is still running.
         const nowTs = ctx.journal.now ? await ctx.journal.now() : Date.now();
         if (record === undefined) {
-          const won = await claim(ctx.journal, key, stampFormat({ status: 'running', startedAt: nowTs }));
+          // `attempts: 1` from the very first claim: the crash ladder below counts takeovers, and a
+          // Counter that only starts existing at the first takeover is one attempt short of the truth.
+          const won = await claim(ctx.journal, key, stampFormat({ status: 'running', startedAt: nowTs, attempts: 1 }));
           if (won) break claimLoop; // won → execute below
           record = upgradeFormat(await ctx.journal.get<ToolJournalRecord>(key), key); // H13
           if (record && (record.status === 'succeeded' || record.status === 'denied' || record.status === 'reflected' || record.status === 'suspended')) {
@@ -1391,6 +1469,12 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
         }
         const recovered = !recoverUnavailable && typeof tool.recover === 'function'; // reached here with done:false
 
+        // ONE ladder for both kinds of doubt. 'failed' counts completed failures, 'running' counts
+        // Claims that never reported back (a crash). They are the same budget: a tool that dies
+        // Mid-execute and one that throws are both "attempt N did not produce a result", and giving
+        // The crash path no ceiling meant a wedged worker re-ran the tool once per restart forever.
+        const maxRetries = tool.maxRetries ?? DEFAULT_MAX_RETRIES;
+
         if (record.status === 'failed') {
           const attempts = record.attempts ?? 1;
           // (a) a tool with side effects → NO retry without explicit approval unless recover said 'it did not happen',
@@ -1425,7 +1509,6 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
               { key, attempts },
             ));
           }
-          const maxRetries = tool.maxRetries ?? DEFAULT_MAX_RETRIES;
           if (attempts >= maxRetries) {
             return blockedOrThrow(ctx, toolCallId, toolName, new RetryLimitExceededError(
               `@gnldev/durable: '${toolName}' (${key}) reached the maxRetries (${maxRetries}) limit — permanently failed`,
@@ -1439,12 +1522,26 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           // For the truth (above — AUTOMATIC), (2) an idempotent: true declaration, (3) last resort: human
           // Approval. Side-effectful + no hook + no approval → stop (wait noisily rather than silently
           // Risking a double side effect).
+          const attempts = record.attempts ?? 1;
           if (sideEffect && approved !== true && !recovered) {
             return blockedOrThrow(ctx, toolCallId, toolName, new SideEffectRetryBlockedError(
               `@gnldev/durable: '${toolName}' (${key}) crashed mid-execution (stale 'running') and has side ` +
                 `effects — it MAY have already run. Provide a recover() hook to resolve automatically, ` +
                 `mark idempotent: true, or approve with approvals['${toolCallId}']=true`,
-              { key, attempts: 1 },
+              { key, attempts },
+            ));
+          }
+          // Past this point the crash gate has been SATISFIED — by idempotent: true, by a recover()
+          // Hook, or by a human approval — so the takeover below is allowed to run the tool again.
+          // That permission is per-attempt, not unlimited: "repeating this is harmless" is a claim
+          // About one repeat, and the provider on the other end still has rate limits, quotas and
+          // Bills. The message names the crash explicitly, because a retry ceiling reached without
+          // A single error in the log reads as a mystery otherwise.
+          if (attempts >= maxRetries) {
+            return blockedOrThrow(ctx, toolCallId, toolName, new RetryLimitExceededError(
+              `@gnldev/durable: '${toolName}' (${key}) crashed mid-execution ${attempts} times without ever ` +
+                `reporting a result and reached the maxRetries (${maxRetries}) limit — not retried again`,
+              { key, attempts, maxRetries },
             ));
           }
         }
@@ -1474,11 +1571,27 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
         if (before && (before.status === 'succeeded' || before.status === 'denied' || before.status === 'reflected')) {
           return await consumeExistingRecord(ctx, key, before, toolCallId);
         }
+        // THE COUNTER MUST NOT WALK BACKWARDS. The takeover stamp below counts from `before` (the
+        // fresh re-read) while the catch further down counted from `record` (the read the ladder
+        // judged on) — and in the gap between the two a second worker can take over and crash. Then
+        // A stamps `before.attempts + 1` and, when its own execute throws, writes `record.attempts + 1`
+        // — a SMALLER number over a larger one. Measured: 1 → (B fails, 2) → stamped 3 → written 2,
+        // and a counter that can go down is a ceiling that never fills.
+        // The staleness/ceiling verdicts above were reached on the OLDER read and are deliberately
+        // NOT re-run here: that is a residual window worth naming rather than hiding — at most ONE
+        // extra attempt per round can slip past `maxRetries`, and closing it means re-ordering the
+        // whole ladder around the re-read, which is a bigger change than the bug.
+        if (before && (before.status === 'failed' || before.status === 'running')) record = before;
         // The shared clock, not the local one: staleness is measured via journal.now() (see the claim
         // gate above), so a takeover stamped with a fast local clock would look instantly stale to
         // every other worker — the exact skew class the clock fix removed, re-entering here.
         const nowTakeover = ctx.journal.now ? await ctx.journal.now() : Date.now();
-        const takeover = stampFormat({ status: 'running', startedAt: nowTakeover });
+        // Carry the counter across the takeover. A blind `{status:'running', startedAt}` here was the
+        // Whole leak: the ladder read `record.attempts` on the NEXT round and found nothing, so every
+        // Crash-restart cycle started from zero. `before` (the fresh re-read), not `record` — a worker
+        // May have written a newer non-terminal record in the gap.
+        const priorAttempts = before?.status === 'failed' || before?.status === 'running' ? (before.attempts ?? 1) : 0;
+        const takeover = stampFormat({ status: 'running', startedAt: nowTakeover, attempts: priorAttempts + 1 });
         const took = ctx.journal.putIfMatch
           ? await ctx.journal.putIfMatch(key, rawBefore, takeover)
           : (await ctx.journal.put(key, takeover), true);
@@ -1508,7 +1621,15 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       // Expose the PARENT runId to the tool's execute. A sub-agent tool (agent-tool.ts) runs a
       // Nested run under its own runId; to carry the parent's taint across that boundary it must know who
       // Spawned it. This is the parent's own `ctx.runId` (the run whose model called this tool).
-      const execOpts: any = { ...(options ?? {}), idempotencyKey, parentRunId: ctx.runId };
+      // `approvals` — bir aracın alt koşum sürdüğü hâl için (agent-as-tool / ağ). Ebeveynin insan
+      // cevapları bu araca kadar HİÇ inmiyordu: alt ajan bir insan kapısına çarpıp askıya girse
+      // bile, ebeveyn tarafında onu serbest bırakacak bir yol yoktu. Onay haritası toolCallId ile
+      // anahtarlanıyor ve çocuğun çağrı kimlikleri farklı stringler — yani TEK harita ikisini de
+      // taşıyabiliyor, ayrı bir eşleme gerekmiyor.
+      //
+      // …ama "taşıyabiliyor" HARİTANIN TAMAMI demek değil, ve öyle indirildiğinde ikinci bir kapı
+      // açılıyordu (bkz. nestedApprovalsFor): iki koşumun id uzayı aynıdır.
+      const execOpts: any = { ...(options ?? {}), idempotencyKey, parentRunId: ctx.runId, gnlApprovals: nestedApprovalsFor(record, ctx.approvals) };
       if (timeoutMs) {
         const tSignal = AbortSignal.timeout(timeoutMs);
         execOpts.abortSignal = execOpts.abortSignal ? AbortSignal.any([execOpts.abortSignal, tSignal]) : tSignal;
@@ -1599,6 +1720,21 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
             }
           }
         }
+        // BİR ARACIN İÇİNDEN GELEN ASKI, BAŞARI DEĞİLDİR.
+        //
+        // Alt-ajan aracı (agent-as-tool) çocuğun insan sorusunu `__gnl_suspend` ile yukarı taşıyor.
+        // Bu çıktıyı `succeeded` diye yazmak soruyu DONDURUYORDU: kayıt terminal olduğu için sonraki
+        // koşum onu journal'dan replay ediyor, çocuk bir daha hiç çalışmıyor ve onay hiçbir şeyi
+        // değiştirmiyordu — soru görünür ama cevaplanamaz hâle geliyordu.
+        //
+        // 'suspended' yazmak askı merdivenini olması gereken yere bağlar: onay gelince yukarıdaki
+        // askı kolu aracı yeniden çalıştırır, onaylar çocuğa iner, çocuk tamamlanır.
+        // Yan etki yazımları (dup marker/XID) da bilerek atlanıyor: iş HENÜZ olmadı.
+        const selfSuspend = (output as { __gnl_suspend?: unknown } | null | undefined)?.__gnl_suspend;
+        if (selfSuspend) {
+          await writeToolTerminal(ctx, key, { status: 'suspended', output }, toolCallId, toolName, hash);
+          return output;
+        }
         await writeToolTerminal(ctx, key, {
           status: 'succeeded', output, argsHash: hash, toolName,
           // A compensate-bearing tool's success stores the RAW args — the unwind needs them.
@@ -1608,7 +1744,10 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
         // Marking after execute lost the same-step parallel race against a side-effect tool's taint read.
       } catch (error: any) {
         // Continue the attempts count of a previous 'failed' record if it exists, otherwise this is the first attempt (1).
-        const prevAttempts = record && record.status === 'failed' ? (record.attempts ?? 1) : 0;
+        // A stale 'running' counts too: crash-then-throw is still attempt N+1, and reading only 'failed'
+        // Here let a crash loop launder the counter — one crash between two throws reset it to 1.
+        // 'suspended' is deliberately excluded: an approved resume is the FIRST attempt of that call.
+        const prevAttempts = record && (record.status === 'failed' || record.status === 'running') ? (record.attempts ?? 1) : 0;
         await writeToolTerminal(
           ctx, key,
           // Stamp `sideEffect` so this failed ATTEMPT counts toward maxToolCalls (its

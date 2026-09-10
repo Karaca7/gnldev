@@ -14,5 +14,7 @@
   "conflictError": "Bu onay başka bir yerde zaten karara bağlanmış: {{error}}",
   "actionError": "İşlem başarısız: {{error}}",
   "expiredBadge": "bayat — {{age}} bekliyor",
-  "waitingFor": "{{age}} bekliyor"
+  "waitingFor": "{{age}} bekliyor",
+  "ownerBadge": "kullanıcı işi · {{owner}}",
+  "ownerLockedTitle": "Bu run {{owner}} kullanıcısına ait — cevap bu panelden değil, sahibinin kendi kanalından verilir."
 }
