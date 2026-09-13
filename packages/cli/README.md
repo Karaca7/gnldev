@@ -8,7 +8,7 @@ nothing here reimplements durability, it just puts it in your terminal. **One ru
 hand-rolled ANSI (see
 [Supply-chain hygiene](../../README.md#supply-chain-hygiene)).
 
-> **Not on npm yet** — no `@gnldev/*` package has been published, so neither line below resolves today. Until the first release, run the CLI from a [repo clone](https://github.com/Karaca7/gnl-framework) (`pnpm install && pnpm -r build`, then `node packages/cli/dist/cli.js <command>`).
+> Install: `npm create gnl@latest` scaffolds a fresh project; `pnpm add -D @gnldev/cli` adds the CLI to an existing one. (Or run it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`, then `node packages/cli/dist/cli.js <command>`.)
 
 ```bash
 npm i -g @gnldev/cli   # or: npx @gnldev/cli <command>

@@ -2,7 +2,7 @@
 
 **AG-UI protocol adapter**: converts `@gnldev/server`'s SSE contract ([see `@gnldev/server` README](../server/README.md)) into [AG-UI](https://github.com/ag-ui-protocol/ag-ui) (CopilotKit's open agent↔UI event protocol) event sequences. **Zero `@ag-ui/*` dependency** — event types are hand-defined (AG-UI is an open SSE/JSON protocol, no SDK required).
 
-> **Not on npm yet** — no `@gnldev/*` package has been published. Until the first release, use it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.
+> Install: `pnpm add @gnldev/agui` — or use it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.
 
 ```bash
 npm i @gnldev/agui   # dep: @gnldev/server, hono  ·  peer: @gnldev/durable

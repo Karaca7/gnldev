@@ -5,7 +5,7 @@ state, cost, an OTEL-like trace waterfall, fork, approval (resume). **Playground
 pick an agent from the browser → prompt → **streaming** response → interrupt approval → that run's trace.
 The UI is @gnldev/studio-ui — a React + Vite build, served as prebuilt static assets. It must be built before running; without it the server answers with a "dist not found" page.
 
-> **Not on npm yet** — no `@gnldev/*` package has been published. From a [repo clone](https://github.com/Karaca7/gnl-framework), `pnpm install && pnpm -r build` builds the server *and* the UI bundle the inspector serves.
+> Install: `pnpm add @gnldev/studio` — it ships with the prebuilt UI bundle the inspector serves. (Or build both from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.)
 
 ```bash
 npm i @gnldev/studio   # peer/dep: @gnldev/durable, hono, @hono/node-server

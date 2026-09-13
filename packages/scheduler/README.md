@@ -7,7 +7,7 @@ for what that does and does not promise about the workflow body.
 
 ## Install
 
-> **Not on npm yet** — no `@gnldev/*` package has been published. Until the first release, use it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.
+> Install: `pnpm add @gnldev/scheduler` — or use it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.
 
 ```bash
 npm i @gnldev/scheduler

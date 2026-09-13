@@ -4,7 +4,7 @@
 **replayable** (thanks to durableTool the retrieval is journaled: on resume it comes back from the record
 instead of running again).
 
-> **Not on npm yet** — no `@gnldev/*` package has been published. Until the first release, use it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.
+> Install: `pnpm add @gnldev/rag` — or use it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.
 
 ```bash
 npm i @gnldev/rag   # peer: @gnldev/durable, ai, zod

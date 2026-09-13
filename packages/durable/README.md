@@ -12,7 +12,7 @@ tool and journaling its result cannot be closed by any client-side library — s
 below](#what-never-charged-twice-actually-means). gnl's answer to that window is to refuse to guess: it
 blocks and asks, rather than silently re-running or silently continuing.
 
-> **Not on npm yet** — nothing under `@gnldev/*` has been published. Until the first release, clone the [repo](https://github.com/Karaca7/gnl-framework) and `pnpm install && pnpm -r build`: the core and every adapter come with it.
+> Install: `pnpm add @gnldev/durable` — the storage adapters ship inside the same package. (Or clone the [repo](https://github.com/Karaca7/gnl-framework) and `pnpm install && pnpm -r build`.)
 
 ```bash
 npm i @gnldev/durable ai @ai-sdk/anthropic

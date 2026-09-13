@@ -8,7 +8,7 @@ journal. The key is run-independent (`<namespace>:<argsHash(key)>`) → a result
 `get` counts as a miss, a failed `set` is a no-op, and `getOrCompute` computes anyway. Pass
 `onError` if you want to see those. (`runs`/`memory` stay strict — this leniency is the cache's alone.)
 
-> **Not on npm yet** — no `@gnldev/*` package has been published. Until the first release, use it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.
+> Install: `pnpm add @gnldev/cache` — or use it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.
 
 ```bash
 npm i @gnldev/cache   # peer: @gnldev/durable

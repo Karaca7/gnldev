@@ -2,6 +2,9 @@
   "name": "@gnldev/semantic-qualify",
   "version": "0.1.0",
   "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=22.13.0"
   },

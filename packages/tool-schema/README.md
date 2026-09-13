@@ -8,7 +8,7 @@ schema for the model actually being called.
 
 ## Install
 
-> **Not on npm yet** — no `@gnldev/*` package has been published. Until the first release, use it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.
+> Install: `pnpm add @gnldev/tool-schema` — or use it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.
 
 ```bash
 npm i @gnldev/tool-schema

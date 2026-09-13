@@ -2,7 +2,7 @@
 
 Exposes the `createGnl` registry as **auto-REST + OpenAPI + SSE**. Every endpoint bottoms out in `runDurable` → the journal, replay and the [at-most-once side-effect guarantee](../durable/README.md#what-never-charged-twice-actually-means) are inherited for free. (The durable counterpart to the common auto-REST pattern.)
 
-> **Not on npm yet** — no `@gnldev/*` package has been published. Until the first release, use it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.
+> Install: `pnpm add @gnldev/server` — or use it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.
 
 ```bash
 npm i @gnldev/server   # peer: @gnldev/durable  ·  dep: hono
