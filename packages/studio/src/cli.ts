@@ -21,7 +21,7 @@ const db = getArg('db');
 const configPath = getArg('config');
 const port = Number(getArg('port') ?? 4747);
 // Default is loopback-only (audit #2): the Studio CLI opens without auth, so it must not leak onto
-// The network unintentionally. Deliberate external access is opted into via --host 0.0.0.0 (or another address).
+// the network unintentionally. Deliberate external access is opted into via --host 0.0.0.0 (or another address).
 const host = getArg('host') ?? '127.0.0.1';
 const loopback = isLoopbackHost(host);
 // Deliberate, recorded in the command that ran rather than in a config file — same reason `gnl dev`
@@ -42,12 +42,12 @@ async function main(): Promise<void> {
     const cfg = mod.default ?? mod.config ?? mod;
     const { createGnl } = await import('@gnldev/durable');
     // Dev default: if the config has storage, derive memory so Playground conversations become threads —
-    // This is what powers the History sidebar (thread list + resume). @gnldev/studio deliberately does NOT
-    // Depend on @gnldev/memory (it stays lean; memory is optional), so it's resolved dynamically from the
+    // this is what powers the History sidebar (thread list + resume). @gnldev/studio deliberately does NOT
+    // depend on @gnldev/memory (it stays lean; memory is optional), so it's resolved dynamically from the
     // PROJECT (the dir gnl.config lives in) — the same "resolved from the project" pattern @gnldev/cli's
-    // Runtime.ts uses (createRequire from projectDir, NOT from @gnldev/studio's own location, so a real
-    // Project's `node_modules/@gnldev/memory` is found). Absent/unresolvable → the Playground still runs,
-    // Just without the thread list (prior behavior, no crash).
+    // runtime.ts uses (createRequire from projectDir, NOT from @gnldev/studio's own location, so a real
+    // project's `node_modules/@gnldev/memory` is found). Absent/unresolvable → the Playground still runs,
+    // just without the thread list (prior behavior, no crash).
     let memory: StudioAppOptions['memory'] | undefined;
     let memoryFactory: ((storage: unknown) => unknown) | undefined;
     if (cfg.storage) {
@@ -70,8 +70,8 @@ async function main(): Promise<void> {
           updateThread: (tid: string, patch: { title?: string; metadata?: Record<string, unknown> }) => view.updateThread(tid, patch),
           deleteThread: (tid: string) => view.deleteThread(tid),
         };
-        // CreateGnl's memoryFactory is what makes Playground RUNS write to a thread (the view above only
-        // Reads). Respect a user-provided factory in the config; otherwise use the 'chat' preset.
+        // createGnl's memoryFactory is what makes Playground RUNS write to a thread (the view above only
+        // reads). Respect a user-provided factory in the config; otherwise use the 'chat' preset.
         memoryFactory = cfg.memoryFactory ?? ((storage: unknown) => mem.memoryPreset(storage, 'chat'));
       } else {
         console.warn('gnl studio: config has storage but @gnldev/memory could not be resolved — Playground works, but the thread list/history is off. Install @gnldev/memory in the project to enable it.');

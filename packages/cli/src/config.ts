@@ -1,4 +1,4 @@
-// Gnl.config convention: defineConfig (type helper) + loadConfig (dynamic loader).
+// gnl.config convention: defineConfig (type helper) + loadConfig (dynamic loader).
 import type { CreateGnlConfig } from '@gnldev/durable';
 
 /**
@@ -69,6 +69,21 @@ export interface GnlDevConfig extends CreateGnlConfig {
   studio?: boolean;
   /** OpenAPI title. */
   title?: string;
+  /**
+   * WHO the runs in this deployment belong to — a DECLARATION, read by nothing at runtime.
+   *
+   * It exists because of the difference between two silences. `@gnldev/durable` cannot tell whether a
+   * subject is bound: that is a property of the route in front of the config, so the protections
+   * matrix honestly prints `? identity` when nobody says. But "nobody said" and "this is an internal
+   * tool and there is deliberately no owner" are very different states, and the first is how a
+   * deployment ends up with fail-open ownership gates that nobody ever decided on.
+   *
+   * So `gnl init` asks once and writes the answer down. `'internal'` turns the `?` into an explicit
+   * `○` — unowned, on purpose, said out loud. `'end-users'` is the claim that src/identity.ts is
+   * wired, and the matrix still reports what the SURFACE actually does rather than taking its word
+   * for it: a declaration cannot bind a subject, only a resolver can.
+   */
+  subjects?: 'internal' | 'end-users';
   /**
    * Optional role-based auth (opt-in). If not given, REST + Studio stay OPEN. Can also be supplied via env:
    * GNL_ADMIN_TOKEN / GNL_VIEWER_TOKEN, GNL_ADMIN_USER+GNL_ADMIN_PASS / GNL_VIEWER_USER+GNL_VIEWER_PASS.

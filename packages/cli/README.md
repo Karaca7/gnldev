@@ -18,25 +18,30 @@ npm i -g @gnldev/cli   # or: npx @gnldev/cli <command>
 
 | Command | What |
 |---|---|
-| `gnl init [dir]` | Scaffold a new project (mock model, no API key required). In an interactive terminal it opens a **checkbox feature picker** (↑/↓ move · SPACE toggle · `a` all/none · ENTER confirm · `q`/Esc cancel) — pick from `idempotency-tool` (GNL's edge), `rag`, `mcp`, `memory`, `workflow`, `auth`, `e2e`, and a wired `gnl.config.ts` is generated for exactly those features. |
+| `gnl init [dir]` | Scaffold a new project (mock model, no API key required). In an interactive terminal it opens **one gate question** — Recommended · Let me choose · Same as last time — and, if you choose, **at most three more**: who sets the work going (`--preset`), whose runs these are (`--identity`), where the journal lives (`--store`). Ends by printing the protections matrix it just configured. |
 | `gnl init [dir] --features a,b,c` | Non-interactive compose (skips the checkbox). Same feature ids; an unknown id errors with the valid list (exit 1). |
-| `gnl init [dir] --template minimal\|full [--e2e]` | Preset static starters (non-interactive). `--template full` ships a durable `idempotency: 'args'` tool + an e2e test; `--e2e` adds the durability test to `minimal` too. |
-| `gnl init [dir] --yes` | Non-interactive `minimal`. The prompt also **never opens without a TTY** (`stdin` not a terminal → `minimal`), so CI is safe. |
+| `gnl init [dir] --template minimal [--e2e]` | The static starter (non-interactive). `--e2e` adds a durability test. The retired `--template full` is accepted and resolves to `--features idempotency-tool,e2e`. |
+| `gnl init [dir] --preset ... --identity ... --store ...` | A flag **answers** its question, so that question is not asked. Values: `assistant\|headless\|critical`, `internal\|end-users`, `sqlite\|pg`. A misspelled value exits 1 rather than scaffolding an unprotected project. |
+| `gnl init [dir] --yes` | Every unanswered question takes its recommended default. The prompt also **never opens without a TTY** (`stdin` not a terminal → defaults), so CI and agents are safe. |
 | `gnl add <idempotency-tool\|rag\|mcp\|memory\|workflow\|auth>` | Add a feature recipe to an existing project: writes `src/<feature>.ts` (never overwrites) + prints the `gnl.config.ts` wiring (the config is decoupled — you edit the plain config object, no `defineConfig`). |
 | `gnl dev [--config gnl.config.ts] [--host] [--allow-open-network]` | Hot-reload dev server: REST API + Studio Playground on one port. Restarts when `gnl.config.ts` or `src/` changes. |
 | `gnl studio [--config ...] [--port 4747] [--host] [--allow-open-network]` | Studio (inspector + Playground) standalone |
+| `gnl doctor [--share]` | What is protecting this project (the same matrix `gnl dev` prints, from `describeProtections`), plus two local stamps read out of the journal: the first run, the first time a duplicate guard actually refused something, and the gap between them. `--share` prints a copyable block with **no names in it** — no telemetry, no network call. |
 
 ```bash
-gnl init my-agent --template full && cd my-agent && pnpm install && pnpm test   # proves idempotency
+gnl init my-agent --features idempotency-tool,e2e && cd my-agent && pnpm install && pnpm test   # proves idempotency
 ```
 
 ### Templates
 
-- **`minimal`** (default) — one agent, mock model, SQLite storage, `gnl dev`. The smallest thing that runs.
-- **`full`** — the same, plus a side-effecting `chargeOrder` tool with `idempotency: 'args'`
-  (`idempotencyKey: (a) => a.orderId`) and `test/e2e.test.ts` that reproduces a documented
-  duplicate-toolCallId pattern end-to-end and asserts the order is
-  charged exactly once. This is the template that shows GNL's edge.
+- **`minimal`** (default, and the only one) — one agent, mock model, the journal you chose, `gnl dev`.
+  The smallest thing that runs.
+- **`full`** — **retired.** It was a five-file fork of `minimal` that existed to add one tool and one
+  test, and it drifted from the original in three separate places before anyone noticed. The name
+  still works and produces the same project: it now resolves to
+  `--features idempotency-tool,e2e` — a side-effecting `chargeOrder` tool with `idempotency: 'args'`
+  (`idempotencyKey: (a) => a.orderId`), a mock model that actually calls it, and a `test/e2e.test.ts`
+  reproducing the documented duplicate-toolCallId pattern end to end.
 
 ### Where these listen
 
@@ -66,7 +71,7 @@ same rule `gnl dev`/`gnl studio` already follow: no storage/journal configured �
 
 | Command | What |
 |---|---|
-| `gnl runs [--status completed\|suspended] [--limit N] [--json]` | List runs: id · status · model steps · tool calls · cost · thread, newest first |
+| `gnl runs [--status completed\|suspended] [--work-key <key>] [--limit N] [--json]` | List runs: id · status · model steps · tool calls · cost · thread, newest first. `--work-key` matches the caller's declared name for the work EXACTLY (never a prefix) — the readable question an opaque `run1_` id can no longer answer; a WORK KEY column appears when any run declared one |
 | `gnl run <runId> [--raw] [--json]` | A single run's timeline (materialized messages/tool-calls + cost). `--raw` prints the underlying journal entries instead. |
 | `gnl inspect <runId> --step N [--json]` | **Time-travel in the terminal**: the materialized state at journal entry N (`reconstructState`) — messages so far + any tool-calls still pending. `N` ranges `0..<entries for that run>`; the command tells you the valid range if you're out of bounds. |
 

@@ -13,8 +13,8 @@ export interface ModelInfo {
 
 /**
  * Extensible tool-schema compatibility rule. Must be PURE: runs BEFORE the model call,
- * Never touches the journal, and returns the same output for the same input. Developers can
- * Write their own rule and add it to the pipeline (`[...defaultRules, myRule]`).
+ * never touches the journal, and returns the same output for the same input. Developers can
+ * write their own rule and add it to the pipeline (`[...defaultRules, myRule]`).
  */
 export interface ToolSchemaRule {
   /** Stable, unique name (for logging/diagnostics). */

@@ -56,6 +56,10 @@ const GLOBALS = `declare global {
   const withNewModel: any; const DAY: number; const GUN: number;
   const kontrolEt: any; const kuyrugaAt: any; const onayla: any; const gecir: any;
   const uzunMetin: any; const redis: any;
+  // Stand-ins a doc block names after the prose has introduced them as the reader's own.
+  const myEmbed: any; const myModel: any; const cert: any; const lookupCharge: any;
+  const sweepLog: any; const RETENTION_MS: number; const sendMessage: any;
+  const interrupt: any; const chatId: string; const agents: any;
   const PG_URL: string;
   type Order = any; type Siparis = any;
 }
@@ -132,6 +136,12 @@ declare global {
   const purgeRun: typeof import('@gnldev/durable').purgeRun;
   const rolloverRun: typeof import('@gnldev/durable').rolloverRun;
   const PostgresStorage: typeof import('@gnldev/durable/postgres').PostgresStorage;
+  // REAL exports the READMEs use after their own prose has shown the import. Typed, not opaque, for
+  // the reason this file argues at length above: an \`any\` ambient legitimises the sample instead of
+  // checking it. gnlTool in particular is the durability declaration the dedup ladder is built on —
+  // a README showing it with a wrong option name is the worst possible place for an unchecked block.
+  const gnlTool: typeof import('@gnldev/durable').gnlTool;
+  const step: typeof import('@gnldev/workflow').step;
 }
 export {};`;
 
@@ -179,10 +189,39 @@ function packagePaths() {
   return out;
 }
 
+/**
+ * Documents whose fenced blocks are NOT a promise about the API.
+ *
+ * One entry, and the reason it earns an exclusion rather than a fix says something about how this
+ * script behaves. `RUNID-WORKKEY-HEYET-KARARI.md` is a DECISION RECORD: its ```ts fences hold the
+ * policy axes a future version will accept, written out to argue about the names. They are not code
+ * anybody can paste — the axes do not exist yet, which is what the document is deciding.
+ *
+ * WHY IT MATTERS THAT THEY WERE EXCLUDED AND NOT LEFT RED. tsc reports only SYNTACTIC diagnostics for
+ * a whole program when any file in it has a syntax error, and skips semantic checking entirely.
+ * Those two fragments are object-literal fragments, so they were syntax errors — which meant that for
+ * as long as they were in the program, all 137 blocks were being parsed and none of them were being
+ * TYPE-CHECKED. The gate reported two problems and was silently doing a fraction of its job.
+ *
+ * So an unfixable block is not a small permanent cost here; it disables the check. Either fix it, or
+ * take it out of the program — and say which, which is what this list is.
+ */
+const NOT_CODE_SAMPLES = new Set([
+  'RUNID-WORKKEY-HEYET-KARARI.md',
+  // The semantic-v2 committee report, for the same reason and a second one: its ```ts blocks are
+  // `.d.ts`-shaped API SKETCHES — exported function signatures with no bodies, spread across blocks
+  // that reference each other's types — arguing about a surface while it was being designed. Every
+  // one of them is a declaration TypeScript would demand an implementation for, and giving them
+  // fake implementations would turn a design record into worse code than it is prose.
+  'SEMANTIK-V2-HEYET-RAPORU.md',
+]);
+
 function docFiles() {
   const out = [];
   for (const f of ['README.md', 'README.tr.md']) if (existsSync(join(ROOT, f))) out.push(join(ROOT, f));
-  for (const f of readdirSync(join(ROOT, 'docs'))) if (f.endsWith('.md')) out.push(join(ROOT, 'docs', f));
+  for (const f of readdirSync(join(ROOT, 'docs'))) {
+    if (f.endsWith('.md') && !NOT_CODE_SAMPLES.has(f)) out.push(join(ROOT, 'docs', f));
+  }
   for (const p of readdirSync(join(ROOT, 'packages'))) {
     const r = join(ROOT, 'packages', p, 'README.md');
     if (existsSync(r)) out.push(r);
@@ -331,6 +370,9 @@ writeFileSync(join(OUT, '_modules.d.ts'), [
   "declare module '@ai-sdk/anthropic' { export const anthropic: any; }",
   "declare module '@ai-sdk/openai' { export const openai: any; export const createOpenAI: any; }",
   "declare module '@ag-ui/client' { export const HttpAgent: any; export const AbstractAgent: any; }",
+  // A local embedding model, shown in the semantic-dedup README as one way to supply `embed`. An
+  // optional integration nobody has to install, which is exactly what this list is for.
+  "declare module '@huggingface/transformers' { export const pipeline: any; export const env: any; }",
 ].join('\n'));
 writeFileSync(join(OUT, 'tsconfig.json'), JSON.stringify({
   compilerOptions: {

@@ -1,6 +1,6 @@
 // SemanticMemory — the semantic-recall version of @gnldev/durable's Memory. Embeds past messages and
-// Stores them in the journal; when a new turn (query) arrives, retrieves relevant OLD messages via
-// Vector search. Durable/replayable: the recall result falls into runDurable's input journaling
+// stores them in the journal; when a new turn (query) arrives, retrieves relevant OLD messages via
+// vector search. Durable/replayable: the recall result falls into runDurable's input journaling
 // (frozen on resume); embeddings persist in the journal. (Most semantic-recall implementations don't come with these guarantees.)
 import { cosineSimilarity } from 'ai';
 import { matchFilter } from '@gnldev/durable';
@@ -18,9 +18,9 @@ export interface SemanticMemoryOptions {
 
 /**
  * P1.5 the same recall knobs @gnldev/durable's `RecallOptions` exposes, wired
- * Through SemanticMemory's local (journal-backed) cosine recall — `Memory.getMessages`'s `opts` is
- * Structurally wider here than the base interface (bivariant method params), so this is call-compatible
- * With plain `{query}` callers.
+ * through SemanticMemory's local (journal-backed) cosine recall — `Memory.getMessages`'s `opts` is
+ * structurally wider here than the base interface (bivariant method params), so this is call-compatible
+ * with plain `{query}` callers.
  */
 export interface SemanticGetMessagesOptions {
   query?: string;
@@ -86,7 +86,7 @@ export class SemanticMemory implements Memory {
     if (!hasNorm(q)) return recent.map((e) => e.message);
 
     // P1.5 threshold + filter apply BEFORE topK slicing (a filtered-out /
-    // Below-threshold candidate must not consume a topK slot) — same order as MemoryStore.recall.
+    // below-threshold candidate must not consume a topK slot) — same order as MemoryStore.recall.
     const threshold = opts.threshold ?? 0;
     let scored = log
       .map((e, i) => ({ i, e, score: hasNorm(e.embedding) ? cosineSimilarity(q, e.embedding!) : -1 }))
@@ -96,8 +96,8 @@ export class SemanticMemory implements Memory {
     scored.sort((a, b) => b.score - a.score);
     const hits = scored.slice(0, this.topK);
 
-    // MessageRange: expand each hit with its before/after neighbors BY LOG POSITION, dedup overlapping
-    // Windows, exclude anything already covered by `recent` (avoid duplicating a message twice).
+    // messageRange: expand each hit with its before/after neighbors BY LOG POSITION, dedup overlapping
+    // windows, exclude anything already covered by `recent` (avoid duplicating a message twice).
     const range = normRange(opts.messageRange);
     const picked = new Map<number, LogEntry>();
     for (const h of hits) {

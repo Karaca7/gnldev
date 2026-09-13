@@ -1,8 +1,8 @@
 // PURE (side-effect-free) converter: converts a single event from the @gnldev/server SSE contract
 // ({event, data} — text-delta/tool-call/tool-result/error/interrupt/done, see the header comment in
-// Packages/server/src/sse.ts) into an AG-UI event sequence. State is passed in/returned from OUTSIDE
+// packages/server/src/sse.ts) into an AG-UI event sequence. State is passed in/returned from OUTSIDE
 // (no closed-over mutable state) → the same (gnlEvent, ctx, state) input ALWAYS produces the same
-// Output — compatible with deterministic replay.
+// output — compatible with deterministic replay.
 //
 // TEXT_MESSAGE_START/END framing of text-deltas is tracked here via state: GNL SSE has NO separate
 // "text started/ended" event (only consecutive text-deltas) → START is synthesized on the first delta,
@@ -29,9 +29,9 @@ export interface AguiConvertState {
   textSeq: number;
   /**
    * P0.1: toolCallIds whose START/ARGS were already streamed incrementally via tool-input-* events —
-   * When the complete `tool-call` event later arrives for the same id, it must NOT re-frame
+   * when the complete `tool-call` event later arrives for the same id, it must NOT re-frame
    * START/ARGS/END a second time (the UI would show a duplicate call). Optional so existing
-   * Hand-constructed states keep working (absent = empty).
+   * hand-constructed states keep working (absent = empty).
    */
   streamedToolIds?: string[];
 }
@@ -55,7 +55,7 @@ function closeText(state: AguiConvertState): AguiConvertResult {
 /**
  * Converts a single GNL SSE event into an AG-UI event sequence.
  * If `state` is not given, it starts fresh (`initialAguiConvertState`) — a single state object must
- * Be threaded from start to end for the ENTIRE run (see pipeAguiStream / usage in tests).
+ * be threaded from start to end for the ENTIRE run (see pipeAguiStream / usage in tests).
  */
 export function toAguiEvents(
   gnlEvent: GnlSseEvent,
@@ -81,7 +81,7 @@ export function toAguiEvents(
       };
     }
     // P0.1: REAL incremental args streaming (the spec's native TOOL_CALL_START→ARGS…→END framing) —
-    // The "single delta" simplification below now only applies when no tool-input-* events preceded.
+    // the "single delta" simplification below now only applies when no tool-input-* events preceded.
     case 'tool-input-start': {
       const closed = closeText(state);
       const { toolCallId, toolName } = gnlEvent.data ?? {};
@@ -108,7 +108,7 @@ export function toAguiEvents(
           ...closed.events,
           { type: EventType.TOOL_CALL_START, toolCallId, toolCallName: toolName },
           // Deliberate simplification (only on the non-streamed path): GNL's tool-call event gives
-          // Arguments COMPLETE, so they travel here in a SINGLE delta.
+          // arguments COMPLETE, so they travel here in a SINGLE delta.
           { type: EventType.TOOL_CALL_ARGS, toolCallId, delta: JSON.stringify(input ?? {}) },
           { type: EventType.TOOL_CALL_END, toolCallId },
         ],
@@ -158,9 +158,9 @@ export function toAguiEvents(
     }
     default:
       // P0.1: NO silent drop — every GNL event without a native AG-UI mapping (reasoning-*/source/
-      // File/step-*/tool-error/raw and anything future) travels through the spec's CUSTOM escape hatch
-      // As `gnl.<event>` (the same pattern `gnl.interrupt` above already established). Deliberately
-      // Does NOT close an open text frame: these are out-of-band annotations, not message boundaries.
+      // file/step-*/tool-error/raw and anything future) travels through the spec's CUSTOM escape hatch
+      // as `gnl.<event>` (the same pattern `gnl.interrupt` above already established). Deliberately
+      // does NOT close an open text frame: these are out-of-band annotations, not message boundaries.
       return { events: [{ type: EventType.CUSTOM, name: `gnl.${gnlEvent.event}`, value: gnlEvent.data }], state };
   }
 }

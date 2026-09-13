@@ -5,17 +5,17 @@ import type { ComponentType, ReactNode } from 'react';
  * GNL Studio motion layer — framer-motion wrappers (D-motion foundation).
  *
  * Signature principle (frontend-design + uipro): not a generic fade, but a single orchestrated
- * Moment from GNL's "journal" world — page entry appears with a subtle upward slide like a
- * Terminal prompt, list/table rows arrive as if being appended to the journal in sequence.
+ * moment from GNL's "journal" world — page entry appears with a subtle upward slide like a
+ * terminal prompt, list/table rows arrive as if being appended to the journal in sequence.
  * Stagger/Reveal stay in the 150-300ms band; PageTransition is deliberately quicker (see below —
- * It fires on every nav click, so it must never feel like it's blocking the next page). All of
- * It is ONLY transform/opacity (no layout thrash, GPU-friendly).
+ * it fires on every nav click, so it must never feel like it's blocking the next page). All of
+ * it is ONLY transform/opacity (no layout thrash, GPU-friendly).
  *
- * Prefers-reduced-motion: index.css's `@media (prefers-reduced-motion: reduce)` block only
- * Targets CSS transitions/animations (the pulse dots, transform-carrying transitions) — since
- * Framer-motion runs on JS/WAAPI it doesn't see that rule at all. That's why EVERY wrapper here
- * Makes its own decision via `useReducedMotion()`: it renders a plain `<div>` while reduced
- * Motion is on (no animation, no jump, DOM structure unaffected).
+ * prefers-reduced-motion: index.css's `@media (prefers-reduced-motion: reduce)` block only
+ * targets CSS transitions/animations (the pulse dots, transform-carrying transitions) — since
+ * framer-motion runs on JS/WAAPI it doesn't see that rule at all. That's why EVERY wrapper here
+ * makes its own decision via `useReducedMotion()`: it renders a plain `<div>` while reduced
+ * motion is on (no animation, no jump, DOM structure unaffected).
  *
  * Usage (for POLISH layers):
  *   <PageTransition routeKey={pathname}>...</PageTransition>   → App.tsx route/view transition
@@ -28,8 +28,8 @@ const EASE_OUT = [0.16, 1, 0.3, 1] as const;
 
 // --- PageTransition: route/view transition (wraps App.tsx main content) --------------------
 // Kept short and overlapping on purpose: this fires on every sidebar click, so back-to-back
-// Navigation (3 pages in a row) must not stack up a felt delay. y-offset is small — just enough
-// To read as "a page changed", not a slide worth waiting on.
+// navigation (3 pages in a row) must not stack up a felt delay. y-offset is small — just enough
+// to read as "a page changed", not a slide worth waiting on.
 const pageVariants: Variants = {
   initial: { opacity: 0, y: 4 },
   animate: { opacity: 1, y: 0, transition: { duration: 0.15, ease: EASE_OUT } },
@@ -37,11 +37,11 @@ const pageVariants: Variants = {
 };
 
 /** When the route changes, the current view fades subtly upward while the new one appears from
- *  Below like a terminal prompt. When `routeKey` changes (e.g. `location.pathname`) it triggers
- *  The AnimatePresence exit→enter. `mode="popLayout"`: the exiting view is pulled out of layout
- *  Flow (position: absolute) for its exit animation, so the incoming view renders immediately
- *  Instead of queuing behind it — exit and enter overlap instead of running back-to-back, without
- *  The two views fighting over the same layout space in the meantime. */
+ *  below like a terminal prompt. When `routeKey` changes (e.g. `location.pathname`) it triggers
+ *  the AnimatePresence exit→enter. `mode="popLayout"`: the exiting view is pulled out of layout
+ *  flow (position: absolute) for its exit animation, so the incoming view renders immediately
+ *  instead of queuing behind it — exit and enter overlap instead of running back-to-back, without
+ *  the two views fighting over the same layout space in the meantime. */
 export function PageTransition({ routeKey, children }: { routeKey: string; children: ReactNode }) {
   const reduce = useReducedMotion();
   if (reduce) return <>{children}</>;
@@ -99,7 +99,7 @@ export function Stagger({
 }
 
 /** A single row/card inside `Stagger` — inherits its variant from the parent. `as` can be
- *  Given `motion.li`/`motion.tr` (default `motion.div`). */
+ *  given `motion.li`/`motion.tr` (default `motion.div`). */
 export function StaggerItem({
   children, className, as,
 }: { children: ReactNode; className?: string; as?: MotionTag }) {
@@ -115,8 +115,8 @@ export function StaggerItem({
 
 // --- Reveal: a single item appearing on scroll into view (card/section) ---------------------
 /** Appears subtly upward when it enters the viewport, once (`viewport.once`) — doesn't
- *  Re-trigger repeatedly and distract as the page is scrolled down. `delay` (s) is optional
- *  For a subtle stagger across sequential sections. */
+ *  re-trigger repeatedly and distract as the page is scrolled down. `delay` (s) is optional
+ *  for a subtle stagger across sequential sections. */
 export function Reveal({
   children, className, delay = 0,
 }: { children: ReactNode; className?: string; delay?: number }) {

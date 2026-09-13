@@ -4,9 +4,9 @@
 //
 // Design: implements the `VectorStore` interface → DROP-IN for `createRagTool`/`indexDocuments`.
 // The graph is in-memory and built from upserted chunks (the common graph-RAG approach also works in-memory
-// Over chunks); for a persistent corpus, keeping chunks in a persistent store and rebuilding
+// over chunks); for a persistent corpus, keeping chunks in a persistent store and rebuilding
 // GraphRAG as a query-time layer is the user's pattern. Since it runs durable inside `createRagTool`,
-// The query RESULT is journaled → the graph isn't retraversed on resume/replay (exactly-once RAG preserved).
+// the query RESULT is journaled → the graph isn't retraversed on resume/replay (exactly-once RAG preserved).
 import { cosineSimilarity } from 'ai';
 import { matchesFilter } from './vector-store.js';
 import type { VectorStore, VectorItem, VectorMatch, QueryOptions } from './vector-store.js';
@@ -24,10 +24,10 @@ export interface GraphRagOptions {
 
 /**
  * VectorStore that traverses a similarity graph. Edges are built incrementally on upsert (a new
- * Item is compared against all existing ones — O(n) / item). Query: the best `seeds` direct results
- * Are taken, each seed's neighbors join with a `decay`-attenuated score (for `hops` rounds), the
- * Combined list is sorted by score and `topK` is returned. If a node is reached via multiple paths,
- * The HIGHEST score is kept.
+ * item is compared against all existing ones — O(n) / item). Query: the best `seeds` direct results
+ * are taken, each seed's neighbors join with a `decay`-attenuated score (for `hops` rounds), the
+ * combined list is sorted by score and `topK` is returned. If a node is reached via multiple paths,
+ * the HIGHEST score is kept.
  */
 export class GraphRag implements VectorStore {
   private items: VectorItem[] = [];

@@ -1,7 +1,7 @@
-// Gnl studio [--config gnl.config.ts] [--port 4747] — Studio inspector + Playground.
+// gnl studio [--config gnl.config.ts] [--port 4747] — Studio inspector + Playground.
 // Behavior unchanged from the original cli.ts switch-statement version, only moved into the
-// Command-module shape. Runtime (@gnldev/durable/@gnldev/studio/@gnldev/memory/@hono/node-server) is resolved
-// From the PROJECT (see runtime.ts), not bundled with @gnldev/cli.
+// command-module shape. Runtime (@gnldev/durable/@gnldev/studio/@gnldev/memory/@hono/node-server) is resolved
+// from the PROJECT (see runtime.ts), not bundled with @gnldev/cli.
 import type { Command } from './types.js';
 import { flag, flagBool } from '../args.js';
 import { resolveBind, exposureNotice, isPublishedDevCredential } from '../bind.js';
@@ -26,7 +26,7 @@ export const studioCommand: Command = {
     // Dev default: if storage is present, derive memory → Playground conversations automatically become threads.
     const gnl = d.createGnl({ ...config, ...(storage ? { memoryFactory: config.memoryFactory ?? devMemoryFactory(memory!) } : {}) });
     // `gnl dev` has always resolved an auth provider from config/env; this command simply never did,
-    // So its admin surface was open regardless of what the operator had configured.
+    // so its admin surface was open regardless of what the operator had configured.
     const provider = await resolveAuthProvider(config, await loadAuth(dir), dir);
     // A provider whose only credential is one this package used to SHIP is not auth: the value is
     // readable in the registry. Without this, `--host 0.0.0.0` printed "(auth: protected)" while

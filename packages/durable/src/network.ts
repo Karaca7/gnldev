@@ -1,12 +1,12 @@
 // Dynamic multi-agent routing (common supervisor/`.network()` parity) — DETERMINISM PRESERVED.
 // The router LLM decides on each turn which sub-agent runs; each decision is FROZEN into the
-// Journal via CAS (`<runId>:net:route:<i>`) → on resume/replay the router is NEVER CALLED AGAIN,
-// The same path is followed (applying the "freeze the winner" pattern from withModelFallback to
-// Routing). The sub-agent result also freezes into `<runId>:net:step:<i>` → on parent resume, a
-// Completed sub-agent is skipped entirely (the same synergy as the two-level durable in
-// Agent-tool; the sub-agent's own journal separately handles mid-crash resume). The loop is
-// Bounded by `maxIterations` (default 6); once the limit is exceeded, the router is "forced to
-// Finalize" — an unbounded router loop is structurally impossible.
+// journal via CAS (`<runId>:net:route:<i>`) → on resume/replay the router is NEVER CALLED AGAIN,
+// the same path is followed (applying the "freeze the winner" pattern from withModelFallback to
+// routing). The sub-agent result also freezes into `<runId>:net:step:<i>` → on parent resume, a
+// completed sub-agent is skipped entirely (the same synergy as the two-level durable in
+// agent-tool; the sub-agent's own journal separately handles mid-crash resume). The loop is
+// bounded by `maxIterations` (default 6); once the limit is exceeded, the router is "forced to
+// finalize" — an unbounded router loop is structurally impossible.
 import { generateText } from 'ai';
 import { claim, frozenGet } from './journal.js';
 import type { Journal } from './journal.js';
@@ -42,7 +42,7 @@ export interface RunNetworkOptions {
   maxIterations?: number;
   /**
    * P2-network optional visibility hooks into the router's
-   * Otherwise-silent blocking decisions. See `NetworkObserver` for the full replay-visibility + veto contract.
+   * otherwise-silent blocking decisions. See `NetworkObserver` for the full replay-visibility + veto contract.
    */
   observer?: NetworkObserver;
 }
@@ -56,33 +56,33 @@ export interface DelegationVeto {
 
 /**
  * P2-network (GAP 5/7 — common network-routing observability parity: `routing-agent-*`/`agent-execution-*`
- * Stream events + `onDelegationStart`/`onDelegationComplete`). The router's `generateText` call stays
+ * stream events + `onDelegationStart`/`onDelegationComplete`). The router's `generateText` call stays
  * BLOCKING and journaled/CAS-frozen exactly as before (see the file header) — these hooks ADD
- * Visibility into an otherwise-silent wait, they do NOT change determinism or turn this into a stream.
+ * visibility into an otherwise-silent wait, they do NOT change determinism or turn this into a stream.
  *
  * ALL hooks are OPTIONAL and BEST-EFFORT: each call is individually wrapped — a throwing observer is
- * Caught and logged via `console.warn`, it can NEVER break the run (see the internal `notify()` helper).
+ * caught and logged via `console.warn`, it can NEVER break the run (see the internal `notify()` helper).
  *
  * REPLAY-VISIBILITY CONTRACT (read this before wiring a UI): on a FRESH run every hook fires once,
- * Live, in order `onRouteStart → onRouteDecision → [onAgentStart → onAgentFinish] → onFinal` per
- * Iteration. On RESUME, every hook whose data is already FROZEN in the journal (route decision,
- * Sub-agent result, veto) FIRES AGAIN — so a UI can reconstruct the full timeline from a resumed run —
- * But is marked cached and the underlying router/agent call is NEVER repeated:
+ * live, in order `onRouteStart → onRouteDecision → [onAgentStart → onAgentFinish] → onFinal` per
+ * iteration. On RESUME, every hook whose data is already FROZEN in the journal (route decision,
+ * sub-agent result, veto) FIRES AGAIN — so a UI can reconstruct the full timeline from a resumed run —
+ * but is marked cached and the underlying router/agent call is NEVER repeated:
  * `onRouteDecision`'s `fromCache` is `true` when the decision was read from the journal instead of freshly computed.
  * `onAgentStart`'s `fromCache` is `true` when the step (or its veto) was already frozen — in that
- *     Case its return value is IGNORED: no new veto decision is solicited, the frozen outcome always wins.
+ *     case its return value is IGNORED: no new veto decision is solicited, the frozen outcome always wins.
  * `onAgentFinish` receives `{ cached: true }` (instead of the real result) when replaying a frozen step.
  */
 export interface NetworkObserver {
   /** Fires right before the router is (re)consulted for iteration `iter`. `contextSummary` is the
-   *  Same steps-so-far digest the router itself is prompted with. */
+   *  same steps-so-far digest the router itself is prompted with. */
   onRouteStart?(iter: number, contextSummary: string): void | Promise<void>;
   /** Fires once the routing decision for `iter` is known (route or final). `fromCache` is true on replay. */
   onRouteDecision?(iter: number, decision: RouteDecision, fromCache: boolean): void | Promise<void>;
   /**
    * Fires before a chosen sub-agent runs. Return `{ skip: true, replaceResult? }` (sync or async) to
    * VETO the delegation — the sub-agent is never invoked, and `replaceResult` (default '') is frozen
-   * As this step's result, fed to the router's next turn exactly like a real sub-agent answer would be.
+   * as this step's result, fed to the router's next turn exactly like a real sub-agent answer would be.
    * The veto decision is JOURNALED (`net:<runId>:veto:<iter>`, claim-keyed) so it replays deterministically.
    */
   onAgentStart?(
@@ -99,7 +99,7 @@ export interface NetworkObserver {
 
 /**
  * Best-effort observer invocation: awaits the callback (sync or async) and swallows any throw (logs
- * Via console.warn instead) — an observer bug must NEVER break the run (P2-network).
+ * via console.warn instead) — an observer bug must NEVER break the run (P2-network).
  */
 async function notify<A extends unknown[], R>(
   fn: ((...args: A) => R | Promise<R>) | undefined,
@@ -134,7 +134,7 @@ export interface NetworkResult {
   /** Approval interrupts propagated up from a sub-agent (same contract as runDurable; empty = no interrupt). */
   interrupts: Interrupt[];
   /** If interrupts is non-empty, which step is suspended — after approval, calling again with the SAME
-   *  RunId resumes where it left off (the route decision is frozen, the sub-agent resumes from its own journal). */
+   *  runId resumes where it left off (the route decision is frozen, the sub-agent resumes from its own journal). */
   suspended?: { i: number; agent: string; task: string };
 }
 
@@ -181,7 +181,7 @@ function routerPrompt(opts: RunNetworkOptions, history: NetworkStep[], force: 'f
 
 /**
  * Extracts the FIRST balanced JSON object in the text (string/escape aware). A greedy `\{[\s\S]*\}`
- * Regex would break by capturing from the first '{' to the LAST '}' if the router echoes two template objects at once.
+ * regex would break by capturing from the first '{' to the LAST '}' if the router echoes two template objects at once.
  */
 function firstJsonObject(text: string): string | null {
   const start = text.indexOf('{');
@@ -244,8 +244,8 @@ async function decideOnce(opts: RunNetworkOptions, history: NetworkStep[], force
 
 /**
  * Runs the dynamic agent network: route decision → sub-agent → append to history → repeat; until
- * The router says 'final' or `maxIterations` is exhausted. Every decision and every step result
- * Freezes into the journal → calling again with the same runId (resume) returns the same result without an LLM (exactly-once).
+ * the router says 'final' or `maxIterations` is exhausted. Every decision and every step result
+ * freezes into the journal → calling again with the same runId (resume) returns the same result without an LLM (exactly-once).
  */
 export async function runNetwork(opts: RunNetworkOptions): Promise<NetworkResult> {
   if (Object.keys(opts.agents).length === 0) {
@@ -271,17 +271,17 @@ export async function runNetwork(opts: RunNetworkOptions): Promise<NetworkResult
       throw new Error(`@gnldev/durable network: frozen decision requires agent '${decision.agent}' but it is not registered`);
     }
     // The step result freezes CONDITIONALLY: if the sub-agent was suspended (interrupts is
-    // Non-empty) it is NOT FROZEN — otherwise an empty/half-finished text would become permanent
-    // And even resume couldn't fix it. On calling again with the same runId after approval: the
-    // Route decision is frozen (the router does not run), the sub-agent resumes from its own
-    // Journal, and once it completes, the step freezes then.
+    // non-empty) it is NOT FROZEN — otherwise an empty/half-finished text would become permanent
+    // and even resume couldn't fix it. On calling again with the same runId after approval: the
+    // route decision is frozen (the router does not run), the sub-agent resumes from its own
+    // journal, and once it completes, the step freezes then.
     const stepKey = netKeys.step(opts.runId, i);
     const vetoKey = netKeys.veto(opts.runId, i);
     const stepHit = await opts.journal.get<{ v: Omit<NetworkStep, 'i'> }>(stepKey);
     let res: Omit<NetworkStep, 'i'>;
     if (stepHit !== undefined) {
       // Already fully resolved (executed OR vetoed) in an earlier attempt — pure replay: notify with
-      // The cached markers, do NOT re-invoke the delegation callback for a decision, no re-execution.
+      // the cached markers, do NOT re-invoke the delegation callback for a decision, no re-execution.
       res = stepHit.v;
       if (obs) {
         await notify(obs.onAgentStart, i, decision.agent, decision.task, true);
@@ -289,7 +289,7 @@ export async function runNetwork(opts: RunNetworkOptions): Promise<NetworkResult
       }
     } else {
       // P2-network: a veto may have been journaled in an earlier attempt that crashed BEFORE the step
-      // Itself froze (the two-claim window) — replay that SAME veto instead of asking again.
+      // itself froze (the two-claim window) — replay that SAME veto instead of asking again.
       const vetoHit = await opts.journal.get<{ v: { replaceResult?: string } }>(vetoKey);
       let vetoed: boolean;
       let replaceResult: string | undefined;
@@ -332,7 +332,7 @@ export async function runNetwork(opts: RunNetworkOptions): Promise<NetworkResult
   }
 
   // Limit exhausted → the router is forced to finalize (that decision also freezes). If the router
-  // Still can't produce a final in 2 attempts, best-effort INSTEAD OF CRASHING: the last step's text (derived from frozen steps → deterministic).
+  // still can't produce a final in 2 attempts, best-effort INSTEAD OF CRASHING: the last step's text (derived from frozen steps → deterministic).
   let answer: string;
   try {
     const finalKey = netKeys.route(opts.runId, 'final');

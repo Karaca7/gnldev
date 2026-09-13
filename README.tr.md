@@ -5,7 +5,9 @@
 **Vercel AI SDK üstüne ince bir "correctness katmanı" — server kurmadan durable execution.** AI SDK'nın
 agentic loop'unu (`generateText`/`streamText` + `tools`) değiştirmeden, iki sarmalayıcı + bir journal ile
 ekler: **yan etkili bir tool çağrısı ASLA sessizce iki kere olmaz.** Bunun kesin anlamı **"exactly-once
-effect"**tir — çağrı-bazlı dedup + güvenli-varsayılan: `recover()`/`idempotencyKey` ile garanti sağlayıcının
+effect"**tir — çağrı-bazlı dedup + güvenli-varsayılan; garantinin tam adı
+[**yan etkiler için at-most-once**](./packages/durable/README.md#what-never-charged-twice-actually-means):
+`recover()`/`idempotencyKey` ile garanti sağlayıcının
 kendisine kadar uzanır, belirsizlikte (crash sonrası sonuç bilinmiyorsa) sessiz tekrar yerine **blok + onay**.
 AI SDK biliyorsan bunu da biliyorsun.
 
@@ -29,7 +31,7 @@ const chargeCard = gnlTool(
 );
 
 const res = await runDurable({
-  runId: 'order-123',                       // idempotency anahtarı (genelde orderId/sessionId)
+  runId: 'order-123',                       // BU İŞİN kimliği (bir orderId) — asla sessionId değil
   journal: new SqliteStorage('runs.db').runs,
   model: openai('gpt-4o'),
   tools: { chargeCard },
@@ -41,14 +43,23 @@ const res = await runDurable({
 // FIRLATIR; aşağıdaki "Dürüst konumlandırma" bölümüne bak.
 ```
 
+> **Bir kimlik bir İŞTİR, bir oturum değil.** `runDurable` ham yüzeydir: verdiğin string kimliğin
+> kendisidir, yani oraya bir konuşma id'si koymak sonraki her turu ilk turun replay'ine çevirir.
+> `createGnl` ve HTTP adaptörlerinde ise işi adlandırırsın (`workKey`) ve id'yi motor türetir:
+> [Work identity](./packages/durable/README.md#work-identity-workkey).
+
 ## Neden? (koz — code-verified)
 Agent framework'lerinde durability ya yok ya da **opak snapshot** düzeyinde (ör. policy'ye tabi bir durable agent'ın
 step-snapshot'ı — eşzamanlı resume'da çift çalıştırmayı engelleyen atomik claim yok, bir adımdan replay/fork yok; retry'da
-idempotency kullanıcıya bırakılır → çift-tahsilat riski). GNL'in tek ama keskin farkı: **çağrı-bazında CAS-garantili
-exactly-once effect** — aynı tool çağrısı (`toolCallId`) ASLA iki kez çalışmaz; opt-in `idempotency: 'args'` ile aynı
-**argümanlar** da iki kez çalışmaz — model aynı işi yepyeni bir `toolCallId` ile yeniden planlasa bile (sahadaki baskın
+idempotency kullanıcıya bırakılır → çift-tahsilat riski). GNL'in tek ama keskin farkı: **aynı iş asla sessizce iki
+kez yapılmaz** — aynı tool çağrısı (`toolCallId`) ASLA sessizce iki kez çalışmaz (çağrı-bazında, CAS-garantili tek yürütme);
+opt-in `idempotency: 'args'` ile aynı
+**argümanlar** da sessizce iki kez çalışmaz — model aynı işi yepyeni bir `toolCallId` ile yeniden planlasa bile (sahadaki baskın
 duplicate vakası, aşağıya bak); sonucu belirsiz kalan bir çağrı önce
-`recover()` ile sağlayıcıya sorulur, hâlâ belirsizse sessizce tekrar etmek yerine **bloklanıp insan onayı istenir**
+`recover()` ile sağlayıcıya sorulur, hâlâ belirsizse sessizce tekrar etmek yerine **bloklanıp insan onayı istenir**.
+Aracın, motorun enjekte ettiği `idempotencyKey`'i aşağıya taşıdığı (ya da `recover()` cevapladığı) kurulumda zincir
+uçtan uca tam-bir-kez'e tamamlanır — bu ortak bir garantidir ve öyle söylenir ("asla iki kez tahsil edilmez"
+ifadesinin [gerçek anlamı](packages/durable/README.md#what-never-charged-twice-actually-means))
 — **+ deterministic replay + time-travel.** Her özellik tek bir `Journal` arayüzü üstüne kurulur → bu garantileri
 **miras alır.**
 
@@ -105,7 +116,7 @@ testler: `packages/durable/test/with-idempotency.test.ts`.
 
 | Sadece bizde | Parite (+durable twist) |
 |---|---|
-| exactly-once tool/model/MCP/RAG · **LLM-aware args-bazlı idempotency** (`idempotency: 'args'` / `idempotencyKey` — modelin aynı çağrıyı yeni `toolCallId` ile yeniden planlamasını dedup'lar) · deterministic replay (opt-in `replay: 'strict'` → **tool argümanı** kayması `DivergenceError` fırlatır; **model adımı** kayması strict'te bile yalnız `console.warn` eder, lenient varsayılanda hiç kontrol edilmez — replay dayatılan kısıt değil, **opt-in güvence**) · time-travel + fork · **deterministik model fallback** (kazanan journal'a yazılır, resume yapışır) · **org-scoped journal** (`withOrg` — organizasyon izolasyonu + exactly-once mirası) · **edge-native**: çekirdek **32,4 KiB gzip**, AI SDK dahil **100,0 KiB gzip** = CF Workers ücretsiz limitinin %3,3'ü (`pnpm --filter @gnldev/showcase bundle` ile ölçülür — esbuild, minify, esm/browser) · durable queue (heartbeat'li lock renew) · event bus (exactly-once işaretleme + at-least-once teslim) · network-ötesi A2A (opt-in HMAC-SHA256 imza) · idempotent OTEL · cross-run cache · dış-çağrı **zaman aşımları** (`timeouts: {modelStepMs,toolMs,claimTtlMs}` → `StepTimeoutError`) · **fail-closed auth** (production'da provider yoksa kurulum hata verir) · **onay (approval) kararları journal'da first-class** (onaylandı-ama-tool-çalışmadan-crash senaryosunda resume kararı `approvals` parametresi verilmese bile journal'dan uygular) | agent loop · **requestContext DI** (dinamik model/system/tools) · memory (recall/schema-WM/thread/OM) · workflows (evented) · MCP (client+server) · evals (+datasets) · auto-REST/OpenAPI (409/422 resumable sözleşmesi) · processors · RAG (+rerank) · cost ledger |
+| [at-most-once](./packages/durable/README.md#what-never-charged-twice-actually-means) tool/model/MCP/RAG yan etkisi · **LLM-aware args-bazlı idempotency** (`idempotency: 'args'` / `idempotencyKey` — modelin aynı çağrıyı yeni `toolCallId` ile yeniden planlamasını dedup'lar) · deterministic replay (opt-in `replay: 'strict'` → **tool argümanı** kayması `DivergenceError` fırlatır; **model adımı** kayması strict'te bile yalnız `console.warn` eder, lenient varsayılanda hiç kontrol edilmez — replay dayatılan kısıt değil, **opt-in güvence**) · time-travel + fork · **deterministik model fallback** (kazanan journal'a yazılır, resume yapışır) · **org-scoped journal** (`withOrg` — organizasyon izolasyonu + aynı garantinin mirası) · **edge-native**: çekirdek **32,4 KiB gzip**, AI SDK dahil **100,0 KiB gzip** = CF Workers ücretsiz limitinin %3,3'ü (`pnpm --filter @gnldev/showcase bundle` ile ölçülür — esbuild, minify, esm/browser) · durable queue (heartbeat'li lock renew) · event bus (exactly-once işaretleme + at-least-once teslim) · network-ötesi A2A (opt-in HMAC-SHA256 imza) · idempotent OTEL · cross-run cache · dış-çağrı **zaman aşımları** (`timeouts: {modelStepMs,toolMs,claimTtlMs}` → `StepTimeoutError`) · **fail-closed auth** (production'da provider yoksa kurulum hata verir) · **onay (approval) kararları journal'da first-class** (onaylandı-ama-tool-çalışmadan-crash senaryosunda resume kararı `approvals` parametresi verilmese bile journal'dan uygular) | agent loop · **requestContext DI** (dinamik model/system/tools) · memory (recall/schema-WM/thread/OM) · workflows (evented) · MCP (client+server) · evals (+datasets) · auto-REST/OpenAPI (409/422 resumable sözleşmesi) · processors · RAG (+rerank) · cost ledger |
 
 ## Gereksinimler
 
@@ -149,16 +160,16 @@ Aşağıdaki tablo doğrudan kullandığınız paketleri kapsar.
 | **`@gnldev/workflow`** | then/parallel/branch · foreach/loop · **`retry` (bildirimsel retry-policy, sayaç journal'da)** · `wf.runResumable()` (top-level export değil, `Workflow` **metodu**) + `sleep`/`waitFor` (evented/scheduled) |
 | **`@gnldev/processors`** | piiRedactor · moderationProcessor · toolFilter · **`toolSearch` (semantik tool seçimi, journal'lı)** · tokenLimit · promptInjectionDetector · outputLimit |
 | **`@gnldev/evals`** | **16 hazır scorer** — 8 LLM-hakem (faithfulness/hallucination/…), 4 modelsiz metin scorer'ı, 3 kural-tabanlı scorer (exactMatch/contains/regexScore) + embeddingSimilarity (embedding fonksiyonunu siz verirsiniz) · llmJudge · `scoreRun` · `evalDataset` (resumable) · **`createDatasetsManager`** (versiyon geçmişi + deney `compare`) |
-| **`@gnldev/mcp`** | MCP client (`mcpTools`) **+ server** (`createMcpServer`, server-side exactly-once) |
+| **`@gnldev/mcp`** | MCP client (`mcpTools`) **+ server** (`createMcpServer`, sunucu tarafında journal dedup) |
 | **`@gnldev/server`** | `createRestApi` + OpenAPI · **fail-closed auth** (production'da provider yoksa kurulum hata verir; bilinçli açık erişim `allowOpenAccess: true`) · **409/422 resumable sözleşmesi** (blok/limit hataları `BLOCKED_ERROR_CODES` tek kaynağından `resumable`/`retry` ayrımıyla döner) |
 | **`@gnldev/otel`** | `exportRunToOtlp` + **`otlpPresets`** (Langfuse/Braintrust/Honeycomb/Datadog/Collector + jenerik API-key OTLP) · **canlı mod** (`@gnldev/otel/live`) |
 | **`@gnldev/queue`** | durable job queue + worker · **heartbeat'li lock renew** (uzun handler'larda takeover'ı önler) + opt-in boş-poll backoff |
 | **`@gnldev/events`** | event bus (fan-out) — exactly-once işaretleme + at-least-once teslim; handler idempotent olmalı · **ölü-mektup** (`maxAttempts`/`retryDelayMs` ile aralıklı yeniden denemeler, sonra tüketici başına karantina — `listDeadEvents`/`retryDeadEvent`, Studio'da görülüp serbest bırakılabilir) · opt-in boş-poll backoff |
-| **`@gnldev/a2a`** | uzak agent (network-ötesi exactly-once) · **opt-in HMAC-SHA256 imzalı istek** (`createA2ATool({ secret })` ↔ `createRestApi({ a2aSecret })`, timestamp penceresiyle replay direnci) |
+| **`@gnldev/a2a`** | uzak agent (network-ötesi dedup — aynı runId replay olur) · **opt-in HMAC-SHA256 imzalı istek** (`createA2ATool({ secret })` ↔ `createRestApi({ a2aSecret })`, timestamp penceresiyle replay direnci) |
 | **`@gnldev/cache`** | cross-run cache |
 | **`@gnldev/studio`** | inspector **+ Playground**: agent seç→prompt→streaming yanıt→onay · time-travel/fork + cost/trace/metrics/diff · admin↔API ayrımı + rol auth |
 | **`@gnldev/client`** | type-safe REST/SSE client (framework-agnostik core) + React hook'ları (`@gnldev/client/react`: `useGnlAgent`/`useChat`) |
-| **`@gnldev/cli`** | proje: `gnl init [dir] [--features a,b,c] [--host hono\|node\|express\|fastify\|koa\|nest] [--template minimal\|full] [--e2e] [--yes]` (starter'lar — **`full`, `idempotency: 'args'` tool'u + tekrarlanan-toolCallId desenini yeniden üreten e2e testi taşır**) / `add <idempotency-tool\|rag\|mcp\|memory\|workflow\|auth>` / `dev` / `studio` · inceleme: `runs`/`run`/`inspect` (**terminalde zaman yolculuğu**) · operasyon: `fork`/`resume`/`sweep`/`rm`/`pricing` (hepsi doğrudan `@gnldev/durable`'ın kendi export'larına bağlı, hiçbiri yeniden implement edilmedi) · **bir runtime bağımlılığı** (`tsx`, `gnl.config.ts` yüklemek için; elle yazılmış ANSI/tablo, chalk/ora/commander yok) · `create-gnl` (`npm create gnl`) |
+| **`@gnldev/cli`** | proje: `gnl init [dir] [--features a,b,c] [--host hono\|node\|express\|fastify\|koa\|nest] [--template minimal] [--e2e] [--yes]` (**`--features idempotency-tool,e2e`, `idempotency: 'args'` tool'u + tekrarlanan-toolCallId desenini yeniden üreten e2e testi getirir**; emekli `--template full` adı aynı projeyi üretir) / `add <idempotency-tool\|rag\|mcp\|memory\|workflow\|auth>` / `dev` / `studio` · inceleme: `runs`/`run`/`inspect` (**terminalde zaman yolculuğu**) · operasyon: `fork`/`resume`/`sweep`/`rm`/`pricing` (hepsi doğrudan `@gnldev/durable`'ın kendi export'larına bağlı, hiçbiri yeniden implement edilmedi) · **bir runtime bağımlılığı** (`tsx`, `gnl.config.ts` yüklemek için; elle yazılmış ANSI/tablo, chalk/ora/commander yok) · `create-gnl` (`npm create gnl`) |
 
 ### Ücretsiz ve paralı — çizgi nerede
 
@@ -186,7 +197,7 @@ satın aldığınız fark bu.
 
 ## Örnekler (`examples/`)
 - **`showcase`** — paketleri kendi kendini doğrulayan tek dosya: `pnpm --filter @gnldev/showcase demo` → 22 bölüm 22/22 ✓ (mock model, API key gerekmez) · `bench` (overhead ölçer)
-- **`app`** — **Durable AI Support Desk** (web UI + API): `pnpm --filter @gnldev/app start` → :3100 (UI) + :3100/studio (ops). Ticket→mesaj→onay→exactly-once iade + queue/events/otel.
+- **`app`** — **Durable AI Support Desk** (web UI + API): `pnpm --filter @gnldev/app start` → :3100 (UI) + :3100/studio (ops). Ticket→mesaj→onay→at-most-once iade + queue/events/otel.
 - **`react-client`** — `@gnldev/client/react` demosu (`useChat` + streaming + onay), API key'siz echo backend. `pnpm --filter @gnldev/react-client-example server` + `… dev`.
 
 ## Tedarik zinciri hijyeni
@@ -318,7 +329,7 @@ fonksiyon aldığı için, fan-out içindeki ajan aynı yardımcıyı yeniden ku
 - **[examples/incident-proofs](./examples/incident-proofs)** — gerçek çift-yan-etki olaylarının
   yeniden üretimi ve bu çerçevenin her birinde ne yaptığı.
 - **[examples/stripe-idempotency](./examples/stripe-idempotency)** — sahte Stripe'a karşı
-  sağlayıcı-taraflı exactly-once: journal'dan sağlayıcıya taşınan aynı anahtar.
+  sağlayıcı-taraflı idempotency: journal'dan sağlayıcıya taşınan aynı anahtar.
 - **[examples/showcase](./examples/showcase)** — API anahtarı gerektirmeden paketleri uçtan uca
   koşturan, kendini doğrulayan tek dosya: `pnpm --filter @gnldev/showcase demo`.
 - **[CHANGELOG.md](./CHANGELOG.md)** — ne değişti; uyumu bozan her şey için geçiş notlarıyla birlikte.

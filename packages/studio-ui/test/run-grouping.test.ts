@@ -74,7 +74,10 @@ describe('threadGroupLabel', () => {
 });
 
 // Org derivation from runId: `org:<id>:<rest>` prefix (root view) → { org, displayId }.
-import { parseOrgFromRunId } from '../src/views/Inspector';
+import { parseOrgFromRunId, forkParent, forkRoot, forkLabel } from '../src/views/Inspector';
+
+const HEX = 'a'.repeat(32);
+const DERIVED = `run1_${HEX}`;
 
 describe('parseOrgFromRunId', () => {
   it('org-prefixed runId → org + prefix-stripped displayId', () => {
@@ -94,5 +97,74 @@ describe('parseOrgFromRunId', () => {
   });
   it('a runId that merely contains "org:" mid-string is not treated as org-scoped', () => {
     expect(parseOrgFromRunId('my-org:run-1')).toEqual({ org: null, displayId: 'my-org:run-1' });
+  });
+
+  // PACKAGE #4: this function reads a runId as TEXT, and engine-derived ids are new text. Pinned
+  // because a false positive here is not cosmetic — `displayId` is what the operator copies, and an
+  // id truncated to a "display" form would address a different run (or none).
+  it('an engine-derived runId is never mistaken for an org prefix, with or without a `#` suffix', () => {
+    for (const id of [DERIVED, `${DERIVED}#2`, `${DERIVED}#fork-1`, `${DERIVED}#replay-0`]) {
+      expect(parseOrgFromRunId(id)).toEqual({ org: null, displayId: id });
+    }
+  });
+  it('an org-scoped derived run still strips only the org prefix', () => {
+    expect(parseOrgFromRunId(`org:acme:${DERIVED}#fork-1`)).toEqual({ org: 'acme', displayId: `${DERIVED}#fork-1` });
+  });
+});
+
+// Fork lineage: forkRun mints TWO spellings (raw `<src>:fork:<ts>`, derived `run1_<hex>#fork-<n>`).
+describe('fork lineage (forkParent/forkRoot)', () => {
+  it('raw convention is unchanged', () => {
+    expect(forkParent('order-1:fork:1721900000000')).toBe('order-1');
+    expect(forkRoot('order-1:fork:1:fork:2')).toBe('order-1');
+    expect(forkParent('order-1')).toBeNull();
+  });
+  it('a derived fork points at its base instead of drawing as its own root', () => {
+    expect(forkParent(`${DERIVED}#fork-1`)).toBe(DERIVED);
+    expect(forkParent(`${DERIVED}#fork-12`)).toBe(DERIVED);
+    expect(forkRoot(`${DERIVED}#fork-3`)).toBe(DERIVED);
+  });
+  it('the OTHER `#` suffixes are separate runs, not forks — they stay their own root', () => {
+    for (const id of [DERIVED, `${DERIVED}#2`, `${DERIVED}#replay-0`]) {
+      expect(forkParent(id), id).toBeNull();
+      expect(forkRoot(id), id).toBe(id);
+    }
+  });
+  it('a lookalike that the engine cannot mint is not read as a fork', () => {
+    for (const id of [`${DERIVED}#fork-0`, 'run1_deadbeef#fork-1', `${DERIVED}#fork-1#fork-2`]) {
+      expect(forkParent(id), id).toBeNull();
+    }
+  });
+
+  // The node LABEL used to be `':fork:' + id.slice(lastIndexOf(':fork:') + 6)` — on a derived fork the
+  // lastIndexOf misses and the arithmetic slices off the front of the hash, printing something that
+  // looks like a raw fork id and is not one.
+  it('the tree label is the part that distinguishes a fork from its parent, in both conventions', () => {
+    expect(forkLabel('order-1:fork:1721900000000')).toBe(':fork:1721900000000');
+    expect(forkLabel(`${DERIVED}#fork-2`)).toBe('#fork-2');
+    expect(forkLabel(DERIVED)).toBe(DERIVED); // a root labels itself
+  });
+});
+
+// ---- Engine↔UI regex sync (the mirror the comment on DERIVED_FORK_RE admits to) -----------------
+// DERIVED_FORK_RE is matched by shape, not imported — so nothing above proves the two sides still
+// agree. This block does: every fork id the ENGINE can mint must resolve to its parent here, and
+// every non-fork suffix the engine mints must not. If the engine grows a new generation (`run2_`)
+// or changes the fork spelling, this reddens instead of the lineage view silently going flat.
+import { forkRunId, executionRunId, parseDerivedRunId } from '../../durable/src/hash';
+
+describe('DERIVED_FORK_RE stays in sync with @gnldev/durable', () => {
+  it('every engine-minted fork id resolves to its parent', () => {
+    for (const n of [1, 2, 9, 10, 42]) {
+      const id = forkRunId(DERIVED, n);
+      expect(parseDerivedRunId(id)?.fork, id).toBe(n);
+      expect(forkParent(id), id).toBe(DERIVED);
+    }
+  });
+  it('engine-minted non-fork suffixes are not read as forks — and the engine agrees they are not', () => {
+    for (const id of [DERIVED, executionRunId(DERIVED, 2), executionRunId(DERIVED, 10)]) {
+      expect(parseDerivedRunId(id)?.fork, id).toBeUndefined();
+      expect(forkParent(id), id).toBeNull();
+    }
   });
 });

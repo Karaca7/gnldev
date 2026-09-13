@@ -43,8 +43,24 @@ export interface RunResult {
   retryAfter?: number;
 }
 
-/** run/stream input. If runId is not given, the client generates one (idempotency key). */
+/**
+ * run/stream input. Name EITHER the work (`workKey`) or the run (`runId`); with neither, the client
+ * generates a runId so a retry of the same request is still deduplicated against the journal.
+ */
 export interface RunInput {
+  /**
+   * Your name for a unit of work — not for a conversation. While the run it opened still exists,
+   * another call with the same `workKey` in the same scope is routed to that run instead of starting
+   * a second one. Reuse it to RETRY work, never to add a turn (a conversation is `threadId`).
+   *
+   * A business name (the invoice being issued, tonight's reconciliation batch), not a random retry
+   * token — and keep sensitive data out of it: a workKey is reflected in error details and shown on
+   * Studio screens. The engine derives the run's id from it and returns that id as `RunResult.runId`.
+   *
+   * Mutually exclusive with `runId`: passing both is refused by the server.
+   */
+  workKey?: string;
+  /** A raw id the engine already issued (a resume, a fork, an id you stored). See `workKey`. */
   runId?: string;
   prompt?: string;
   messages?: unknown;

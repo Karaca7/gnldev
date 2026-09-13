@@ -93,8 +93,8 @@ const TOOLING = new Set([
 //   tailwindcss — preflight (its normalize-derived reset) is written verbatim into dist/assets/*.css
 //   vite        — the modulepreload polyfill is written into dist/assets/*.js
 // Both MIT, and MIT's one condition is that the notice travels with the copy. Collected WITHOUT
-// Recursing into their dependencies: rollup, esbuild and the rest genuinely do not ship, and listing a
-// Hundred packages that are not in the bundle would misstate this file in the other direction.
+// recursing into their dependencies: rollup, esbuild and the rest genuinely do not ship, and listing a
+// hundred packages that are not in the bundle would misstate this file in the other direction.
 const EMBEDS_OWN_CODE = ['tailwindcss', 'vite'];
 
 for (const dep of Object.keys(rootDeps)) {

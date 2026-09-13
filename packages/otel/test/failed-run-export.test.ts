@@ -112,11 +112,11 @@ describe('exporting a run that failed', () => {
 });
 
 // The reason a failed run carries is not always the host's own text. A provider that refuses a
-// Request commonly echoes the offending input back inside the message, so the run's verdict can hold
-// User data — and it reaches this exporter through a path no processor is consulted about:
+// request commonly echoes the offending input back inside the message, so the run's verdict can hold
+// user data — and it reaches this exporter through a path no processor is consulted about:
 // `piiRedactor` hooks processInput/processOutput/processToolResult, while the verdict is written by
 // `recordRunOutcome` in @gnldev/durable. Measured with the redactor installed, the address still
-// Arrived raw in the span, and from there in whatever collector `endpoint` names.
+// arrived raw in the span, and from there in whatever collector `endpoint` names.
 describe('redacting the one free-text value a span carries', () => {
   const PII = 'victim.customer@realbank.example';
   const refusing = {
@@ -136,7 +136,7 @@ describe('redacting the one free-text value a span carries', () => {
   it('without `redact`, the message travels as-is — the documented default', async () => {
     const root = await rootWith('raw', {});
     // Pinned deliberately: the message is the main debugging value a trace carries and this package
-    // Cannot know whether `endpoint` is the host's own collector, so the choice is the caller's.
+    // cannot know whether `endpoint` is the host's own collector, so the choice is the caller's.
     expect(String(root.attributes['gnl.error'])).toContain(PII);
   });
 
@@ -153,7 +153,7 @@ describe('redacting the one free-text value a span carries', () => {
   it('a redactor that throws drops the message rather than falling back to the raw text', async () => {
     const root = await rootWith('boom', { redact: () => { throw new Error('bad regex'); } });
     // Fail CLOSED. Falling back to the raw text would send exactly the value the redactor was
-    // Installed to keep out, at the moment it is least likely to be noticed.
+    // installed to keep out, at the moment it is least likely to be noticed.
     expect(String(root.attributes['gnl.error'] ?? '')).not.toContain(PII);
     expect(String(root.status.message ?? '')).not.toContain(PII);
     // The run is still reported as failed — losing the reason must not lose the verdict.

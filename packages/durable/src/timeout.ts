@@ -1,7 +1,7 @@
 // Y1 — external call timeout (opt-in). Used by durable-model (step) and durable-tool (execute).
 
 /** Timeout: the throwing side (model step / tool) goes through the existing error paths —
- *  The model claim is marked 'failed', the tool writes 'failed' (H9 recovery ladder applies). */
+ *  the model claim is marked 'failed', the tool writes 'failed' (H9 recovery ladder applies). */
 export class StepTimeoutError extends Error {
   constructor(
     message: string,

@@ -9,16 +9,16 @@ export interface ScoreSample {
   input?: string;
   /**
    * CONVENTION: the RAG/retrieval context read by context-based LLM-judge scorers (see `scorers.ts` —
-   * Faithfulness, hallucination, contextPrecision). Can be a single string or multiple retrieved
-   * Chunks (string[]). If this field is missing/empty, those scorers do NOT silently return 1.0 —
-   * They return score 0 + "context required" in the reason.
+   * faithfulness, hallucination, contextPrecision). Can be a single string or multiple retrieved
+   * chunks (string[]). If this field is missing/empty, those scorers do NOT silently return 1.0 —
+   * they return score 0 + "context required" in the reason.
    */
   context?: string | string[];
   /**
    * CONVENTION (P1.1): the durable runId this sample was produced from, if any.
    * Populated automatically by `scoreRun` and `evalDataset` (see score-run.ts/dataset.ts) — lets
-   * Journal-backed scorers (e.g. `trajectoryScorerFor` in trajectory.ts) look the run back up without
-   * Every caller having to thread it through by hand.
+   * journal-backed scorers (e.g. `trajectoryScorerFor` in trajectory.ts) look the run back up without
+   * every caller having to thread it through by hand.
    */
   runId?: string;
   [k: string]: unknown;
@@ -85,10 +85,10 @@ function cosine(a: number[], b: number[]): number {
 
 /**
  * Semantic similarity scorer: vectorizes output and expected with `embed` and returns their cosine
- * Similarity as the score — catches near-meaning matches that exact string matching would miss.
+ * similarity as the score — catches near-meaning matches that exact string matching would miss.
  * `embed` is provider-agnostic: e.g. for the AI SDK, `(t) => embed({ model, value: t }).then(r => r.embedding)`.
  * If `threshold` is given, `score` is 0 below / 1 above that threshold (pass-fail); otherwise the raw
- * Similarity (0..1).
+ * similarity (0..1).
  */
 export function embeddingSimilarity(
   embed: (text: string) => Promise<number[]>,

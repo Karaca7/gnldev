@@ -11,19 +11,30 @@ import { Stagger, StaggerItem, Reveal } from '../motion';
 import { currentLocale } from '../i18n/locale';
 
 // RFC4180-like CSV field escaping: fields containing a comma/quote/newline are wrapped in double
-// Quotes (inner quotes are doubled) — pure function, edge cases are covered in test/observability-audit.test.ts.
+// quotes (inner quotes are doubled) — pure function, edge cases are covered in test/observability-audit.test.ts.
 function csvField(v: string | number): string {
   const s = String(v);
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-/** Run table → CSV text (pure function, doesn't touch the DOM — the download side effect is kept separate). */
+/**
+ * Run table → CSV text (pure function, doesn't touch the DOM — the download side effect is kept separate).
+ *
+ * The `workKey` column follows the TABLE's rule rather than being always-on: it is written only when
+ * at least one row carries one. Two reasons, and the second is the one that matters. A deployment
+ * that declares no work names would otherwise export a column of empty cells forever — and an export
+ * is the artifact people build spreadsheets and scripts on, so an always-present empty column is a
+ * shape somebody comes to depend on and then finds unexplained. Absent means "nobody here names
+ * work"; that is information, and a blank column is not.
+ */
 export function runsToCsv(rows: MetricsRun[]): string {
-  const header = ['runId', 'status', 'startTs', 'durationMs', 'modelSteps', 'toolCalls', 'totalTokens', 'costUsd'];
+  const withKeys = rows.some((r) => r.workKey);
+  const header = ['runId', ...(withKeys ? ['workKey'] : []), 'status', 'startTs', 'durationMs', 'modelSteps', 'toolCalls', 'totalTokens', 'costUsd'];
   const lines = [header.join(',')];
   for (const r of rows) {
     lines.push([
-      r.runId, r.status, r.startTs ?? '', r.durationMs ?? '', r.modelSteps, r.toolCalls, r.totalTokens, r.costUsd,
+      r.runId, ...(withKeys ? [r.workKey ?? ''] : []),
+      r.status, r.startTs ?? '', r.durationMs ?? '', r.modelSteps, r.toolCalls, r.totalTokens, r.costUsd,
     ].map(csvField).join(','));
   }
   return lines.join('\n');
@@ -187,6 +198,22 @@ export function Observability() {
         .sort((a, b) => (b.startTs ?? 0) - (a.startTs ?? 0)),
     [rows, statusFilter, nameFilter],
   );
+  // WORK KEY, and why the column is conditional.
+  //
+  // An engine-derived runId is `run1_<32 hex>` — a digest of the agent, the scope, the subject and
+  // the caller's own name for the job. Everything readable left the id at that moment, and this
+  // field is where it went: on a screen full of hashes it is the only thing that says WHICH invoice,
+  // WHICH nightly batch, which device's rollout.
+  //
+  // Shown only when some run in the CURRENT view carries one — the same conditional-column shape the
+  // rest of this app uses. A deployment whose callers never declare a workKey (every raw-runId
+  // caller, and every run written before package #2) would otherwise get a permanently empty column,
+  // which reads as a broken feature rather than as an unused one. Derived from `filtered`, not from
+  // `rows`, so the header and the cells below it can never disagree.
+  const showWorkKey = useMemo(() => filtered.some((r) => r.workKey), [filtered]);
+  // Column count for the "no matching runs" row's colSpan — counted, never a literal, because the
+  // table's width is now a function of the data.
+  const colCount = 8 + (showWorkKey ? 1 : 0);
 
   if (metrics.isLoading || runRows.isLoading) return <Spinner />;
   if (metrics.error) return <ErrorBox error={metrics.error} />;
@@ -439,6 +466,7 @@ export function Observability() {
             <thead className="sticky top-0 bg-card text-muted-foreground">
               <tr>
                 <th className="px-3 py-2 font-medium">{t('colRunId')}</th>
+                {showWorkKey && <th className="px-3 py-2 font-medium">{t('colWorkKey')}</th>}
                 <th className="px-3 py-2 font-medium">{t('colStatus')}</th>
                 <th className="px-3 py-2 font-medium">{t('colStart')}</th>
                 <th className="px-3 py-2 text-right font-medium">{t('colDuration')}</th>
@@ -451,7 +479,7 @@ export function Observability() {
             <Stagger as={motion.tbody}>
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={8}><Empty>{t('noMatchingRuns')}</Empty></td>
+                  <td colSpan={colCount}><Empty>{t('noMatchingRuns')}</Empty></td>
                 </tr>
               ) : filtered.map((r) => (
                 <StaggerItem key={r.runId} as={motion.tr} className="border-t border-border">
@@ -464,6 +492,13 @@ export function Observability() {
                       {r.runId}
                     </Link>
                   </td>
+                  {/* Not mono, and not a link: this is prose the caller wrote, and it addresses
+                      nothing — the id in the cell to its left is what every call still uses. */}
+                  {showWorkKey && (
+                    <td className="max-w-[16rem] truncate px-3 py-1.5" title={r.workKey ?? undefined}>
+                      {r.workKey ?? <span className="text-muted-foreground">—</span>}
+                    </td>
+                  )}
                   <td className="px-3 py-1.5"><StatusBadge status={r.status} /></td>
                   <td className="px-3 py-1.5 font-mono text-muted-foreground">
                     {r.startTs != null ? new Date(r.startTs).toLocaleString(currentLocale(), { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'}

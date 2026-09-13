@@ -1,6 +1,6 @@
 # @gnldev/workflow
 
-**Durable deterministic workflows** — each step journaled exactly-once; crash → resume picks up where it left off. Control flow: `then` / `parallel` / `branch` / `foreach` / `loop`. Suspendable: `runResumable` + `sleep` / `waitFor` (evented + scheduled).
+**Durable deterministic workflows** — every step's result is journaled, so a crash → resume picks up where it left off instead of re-running the finished steps ([at-most-once for side effects](../durable/README.md#what-never-charged-twice-actually-means)). Control flow: `then` / `parallel` / `branch` / `foreach` / `loop`. Suspendable: `runResumable` + `sleep` / `waitFor` (evented + scheduled).
 
 > **Not on npm yet** — no `@gnldev/*` package has been published. Until the first release, use it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.
 
@@ -23,7 +23,7 @@ const out = await wf.run(1, { runId: 'w1', journal: new SqliteStorage('runs.db')
 
 ## API
 - `workflow<I>()` → builder: `.then(step)` · `.parallel([a, b])` · `.branch(pred, ifStep, elseStep)` · `.foreach(...)` · `.loop(...)`
-- `step(id, async (input, ctx) => out)` — every step journaled (exactly-once)
+- `step(id, async (input, ctx) => out)` — every step journaled; a completed step is replayed, not re-run
 - `wf.run(input, { runId, journal })` — one-shot
 - `wf.runResumable(input, ctx)` — for suspending steps (`sleep` / `waitFor`); suspends with `WorkflowSuspended`, resumes on event/time.
 
@@ -39,7 +39,7 @@ effect and the engine writes a **write-ahead claim** before executing:
 ```ts
 step('charge', async (input, ctx) => {
   // ctx.idempotencyKey === `${runId}:wf:charge` — carry it to the provider (Stripe Idempotency-Key)
-  // and the journal's exactly-once extends downstream.
+  // and the journal's dedup extends downstream, to the provider itself.
   return chargeCard(input, { idempotencyKey: ctx.idempotencyKey });
 }, {
   sideEffect: true,

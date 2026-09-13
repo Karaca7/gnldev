@@ -1,5 +1,5 @@
 // Multimodal part rendering (S4): extracts safely displayable content from AI SDK message parts
-// Persisted in the journal — image parts become inline <img>, other file parts become a chip.
+// persisted in the journal — image parts become inline <img>, other file parts become a chip.
 // Security: only data:image/* and http(s) sources; any other scheme (javascript: etc.) is not rendered.
 import { FileText, ImageOff } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -8,13 +8,13 @@ import { useTranslation } from 'react-i18next';
  * Produce a safe <img> src from a part; null if it can't be displayed inline.
  *
  * `http(s)` is deliberately NOT inlined. Journal content is not all the operator's own: a tool result
- * Or a model turn can name any address, and rendering it sends a request the operator never made,
- * Carrying whatever the author encoded in the URL plus the operator's IP and the time they opened the
- * Run. `remoteMediaHref` gives the same part back as something they can open ON PURPOSE — a click is
+ * or a model turn can name any address, and rendering it sends a request the operator never made,
+ * carrying whatever the author encoded in the URL plus the operator's IP and the time they opened the
+ * run. `remoteMediaHref` gives the same part back as something they can open ON PURPOSE — a click is
  * A decision, an automatic fetch is not. Same reasoning as the `img` handler in markdown.tsx.
  */
 export function mediaSrc(p: any): string | null {
-  // Image part: {type:'image', image: string} · file part: {type:'file', data: string, mediaType}
+  // image part: {type:'image', image: string} · file part: {type:'file', data: string, mediaType}
   const raw = typeof p?.image === 'string' ? p.image : typeof p?.data === 'string' ? p.data : null;
   if (!raw) return null;
   if (/^data:image\//i.test(raw)) return raw;
@@ -22,7 +22,7 @@ export function mediaSrc(p: any): string | null {
   if (raw.includes(':') || raw.includes(',')) return null; // unknown scheme/data URL → reject
   // Bare base64 (allowed by the AI SDK): build a data URL from mediaType; assume png for image parts.
   // The media type is interpolated into the URL, so it is matched rather than merely prefix-checked —
-  // It comes from the journal, and `image/png;base64,…` would otherwise be pasted in whole.
+  // it comes from the journal, and `image/png;base64,…` would otherwise be pasted in whole.
   const mt = typeof p?.mediaType === 'string' ? p.mediaType : typeof p?.mimeType === 'string' ? p.mimeType : '';
   if (/^image\/[a-z0-9.+-]+$/i.test(mt)) return `data:${mt};base64,${raw}`;
   if (p?.type === 'image' && !mt) return `data:image/png;base64,${raw}`;
@@ -56,7 +56,7 @@ export function MediaParts({ content }: { content: unknown }) {
             return <img key={i} src={src} alt={p.filename ?? `${t('media')} ${i + 1}`} className="max-h-40 max-w-full rounded-md border border-border object-contain" />;
           }
           // A remote image: shown as its address rather than fetched. The operator can still open it,
-          // Which is the point — the request should be theirs, not the page's.
+          // which is the point — the request should be theirs, not the page's.
           const href = remoteMediaHref(p);
           return href ? (
             <a
@@ -75,7 +75,7 @@ export function MediaParts({ content }: { content: unknown }) {
             </span>
           );
         }
-        // Non-image file part: a mediaType chip; a download link if it's a data: URL.
+        // non-image file part: a mediaType chip; a download link if it's a data: URL.
         const data = typeof p?.data === 'string' && p.data.startsWith('data:') ? p.data : null;
         const label = p.filename ?? p.mediaType ?? t('file');
         return (

@@ -1,9 +1,9 @@
 // Long-running triggers: lock heartbeat (renew) + CAS-fenced state writes.
 // The bug this file pins down: `pollScheduler` used to take a FIXED 60s lock, never renew it, and
-// Write the trigger state with a plain `put` at the end. A workflow running longer than the TTL
-// Therefore let a SECOND poller take the lock over and fire the SAME trigger again, and the late
+// write the trigger state with a plain `put` at the end. A workflow running longer than the TTL
+// therefore let a SECOND poller take the lock over and fire the SAME trigger again, and the late
 // FIRST poller then wrote its STALE state back on top (fireCount/nextRunAt rolled back, `attempts`
-// Resurrected) → a third fire.
+// resurrected) → a third fire.
 // All timing is driven by FAKE TIMERS — no test may actually wait 60 real seconds.
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
@@ -45,7 +45,7 @@ function fastRunner(opts: { suspended?: boolean } = {}) {
 /**
  * An OLDER/custom journal that does NOT implement `putIfMatch` (the documented fallback path in
  * `pollScheduler`'s `commit`). `putIfAbsent` is deliberately KEPT — otherwise `claim()` would also
- * Drop to its own fallback and the test would no longer be isolated to the CAS branch.
+ * drop to its own fallback and the test would no longer be isolated to the CAS branch.
  */
 function noCasJournal(): Journal {
   const inner = new InMemoryJournal();
@@ -94,8 +94,8 @@ describe('scheduler: long-running trigger, lock + fencing', () => {
     await scheduleWorkflow(j, { id: 'e', name: 'wf', every: 60_000 }, t0 - 60_000); // nextRunAt = t0
 
     // A takes the lock, then the clock JUMPS past the TTL without the pending heartbeat interval ever
-    // Firing (setSystemTime moves the wall clock, advanceTimersByTime would run the timer) → the lock
-    // Genuinely expires, a real takeover — no test-only knob in the production API.
+    // firing (setSystemTime moves the wall clock, advanceTimersByTime would run the timer) → the lock
+    // genuinely expires, a real takeover — no test-only knob in the production API.
     const p1 = pollScheduler(j, a.runner, t0, { owner: 'A' });
     await vi.advanceTimersByTimeAsync(0); // A takes the lock and enters the (gated) workflow
     expect(a.calls).toEqual(['sched:e:0']); // precondition: A really is in flight holding the lock
@@ -143,8 +143,8 @@ describe('scheduler: long-running trigger, lock + fencing', () => {
   });
 
   // The heartbeat must be stopped when the fire ends. `release()` KEEPS the fencing token (it only
-  // Pushes `expires` into the past), so a tick that outlives the fire renews a lock that was already
-  // Released — resurrecting it for a full TTL and locking out every later poll of the SAME runId.
+  // pushes `expires` into the past), so a tick that outlives the fire renews a lock that was already
+  // released — resurrecting it for a full TTL and locking out every later poll of the SAME runId.
   it('a released lock is NOT resurrected by a surviving heartbeat (the same runId is resumable)', async () => {
     vi.useFakeTimers({ now: 1_700_000_000_000 });
     const t0 = Date.now();
@@ -159,7 +159,7 @@ describe('scheduler: long-running trigger, lock + fencing', () => {
     expect(r.calls).toEqual(['sched:s:0']);
 
     // ttl/3 = 20s falls inside this window: a heartbeat that survived the fire would tick and push the
-    // Released lock's `expires` from 0 to now+60s.
+    // released lock's `expires` from 0 to now+60s.
     await vi.advanceTimersByTimeAsync(35_000);
 
     const r2 = await pollScheduler(j, r.runner, Date.now(), { owner: 'B', retryMs: 30_000 });
@@ -168,7 +168,7 @@ describe('scheduler: long-running trigger, lock + fencing', () => {
   });
 
   // The remaining CAS gates. A stale poller must not increment its own counters and — the thing the
-  // Code explicitly claims to prevent — must not leave a diagnostic record on SOMEBODY ELSE's fire.
+  // code explicitly claims to prevent — must not leave a diagnostic record on SOMEBODY ELSE's fire.
   it('CAS (budget-skip): a stale poller leaves no budget-skip record on another poller`s fire', async () => {
     vi.useFakeTimers({ now: 1_700_000_000_000 });
     const t0 = Date.now();
@@ -286,11 +286,11 @@ describe('scheduler: long-running trigger, lock + fencing', () => {
 });
 
 // `lockTtlMs` is a PUBLIC, README-documented option (pollScheduler + createScheduler) that had ZERO
-// Coverage: every other test in this file runs on the 60s default, so hard-coding 60_000 and ignoring
-// The option entirely kept the whole suite green. Two separate claims are pinned below, because they
-// Fail to different mutations: (1) the ACQUISITION really uses the given TTL — a shorter TTL means an
-// Earlier real takeover; (2) the HEARTBEAT interval is derived from the given TTL (ttl/3), not from
-// The default — a custom TTL that is being renewed survives past its own expiry.
+// coverage: every other test in this file runs on the 60s default, so hard-coding 60_000 and ignoring
+// the option entirely kept the whole suite green. Two separate claims are pinned below, because they
+// fail to different mutations: (1) the ACQUISITION really uses the given TTL — a shorter TTL means an
+// earlier real takeover; (2) the HEARTBEAT interval is derived from the given TTL (ttl/3), not from
+// the default — a custom TTL that is being renewed survives past its own expiry.
 describe('scheduler: custom lockTtlMs', () => {
   it('a short lockTtlMs really expires that early — the second poller takes over and fires', async () => {
     vi.useFakeTimers({ now: 1_700_000_000_000 });
@@ -301,7 +301,7 @@ describe('scheduler: custom lockTtlMs', () => {
     await scheduleWorkflow(j, { id: 'tt', name: 'wf', every: 60_000 }, t0 - 60_000); // nextRunAt = t0
 
     // A holds the lock with a 9s TTL. The clock then JUMPS to t0+10s: past A's OWN ttl but far short
-    // Of the 60s default — so a takeover here is only possible if `lockTtlMs` was actually honoured.
+    // of the 60s default — so a takeover here is only possible if `lockTtlMs` was actually honoured.
     // (setSystemTime moves the wall clock WITHOUT running the pending heartbeat → a genuine expiry.)
     const p1 = pollScheduler(j, a.runner, t0, { owner: 'A', lockTtlMs: 9_000 });
     await vi.advanceTimersByTimeAsync(0);
@@ -331,7 +331,7 @@ describe('scheduler: custom lockTtlMs', () => {
 
     // Timers RUN for 4s: with a ttl/3 = 3s heartbeat exactly one renew lands, pushing `expires` to
     // 3s + 9s = t0+12s. The clock then jumps to t0+11s — past the ORIGINAL 9s expiry, before the
-    // Renewed one. A heartbeat driven by the DEFAULT ttl (60s/3 = 20s) would not have ticked yet.
+    // renewed one. A heartbeat driven by the DEFAULT ttl (60s/3 = 20s) would not have ticked yet.
     await vi.advanceTimersByTimeAsync(4_000);
     vi.setSystemTime(t0 + 11_000);
 
@@ -378,10 +378,10 @@ describe('scheduler: custom lockTtlMs', () => {
 });
 
 // The `if (!journal.putIfMatch)` fallback in `commit` had NO coverage either: every test above runs
-// On InMemoryJournal, which HAS the CAS. Deleting the branch (i.e. assuming `putIfMatch` always
-// Exists) left the suite green while it would throw TypeError on the first old/custom adapter.
+// on InMemoryJournal, which HAS the CAS. Deleting the branch (i.e. assuming `putIfMatch` always
+// exists) left the suite green while it would throw TypeError on the first old/custom adapter.
 // The fallback is a documented QUALITY DROP — an unconditional put, no fencing — not a crash; pin
-// Exactly that much: it still fires and still writes correctly, and the lost fencing is visible.
+// exactly that much: it still fires and still writes correctly, and the lost fencing is visible.
 describe('scheduler: journal without putIfMatch (documented fallback)', () => {
   it('still fires, advances fireCount and reschedules on the planned grid', async () => {
     vi.useFakeTimers({ now: 1_700_000_000_000 });
@@ -428,7 +428,7 @@ describe('scheduler: journal without putIfMatch (documented fallback)', () => {
 
     // This is the price of an adapter without putIfMatch, and it is stated in the source comment:
     // The late poller's unconditional put OVERWRITES B's result — the same slot is counted as fired
-    // Twice and nextRunAt is dragged back to a time that has already passed (an immediate re-fire).
+    // twice and nextRunAt is dragged back to a time that has already passed (an immediate re-fire).
     // An adapter WITH the CAS keeps fired at 1 and nextRunAt at t0+120s (see the fencing tests above).
     expect(r1.fired).toBe(1);
     expect(r1.fired + r2.fired).toBe(2);

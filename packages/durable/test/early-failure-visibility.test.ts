@@ -35,7 +35,7 @@ async function seed(journal: any) {
 
 describe('runIdOfKey', () => {
   // A run's frozen input is a VERSIONED record — stampFormat gives it `_v`. That marker, not the key
-  // Text, is what runIdOfKey accepts as proof of ownership.
+  // text, is what runIdOfKey accepts as proof of ownership.
   const stamped = { _v: 1, at: 1, prompt: 'x' };
 
   it('claims a versioned :input and the two replayable kinds, and nothing else', () => {
@@ -52,8 +52,8 @@ describe('runIdOfKey', () => {
 
   it('refuses an :input-shaped key whose record the engine did not write', () => {
     // appendLog writes `${ns}:${id}` with a CALLER-supplied id. Before the record check, an audit
-    // Entry logged as id 'input' made `__audit__` an indexed run — and the next retention sweep
-    // Deleted the whole audit namespace. Measured, not imagined.
+    // entry logged as id 'input' made `__audit__` an indexed run — and the next retention sweep
+    // deleted the whole audit namespace. Measured, not imagined.
     expect(runIdOfKey('__audit__:input', { id: 'input', payload: { who: 'alice' }, at: 1 })).toBeNull();
     expect(runIdOfKey('r1:input')).toBeNull();          // no value at all → no proof
     expect(runIdOfKey('r1:input', 'a string')).toBeNull();
@@ -61,8 +61,8 @@ describe('runIdOfKey', () => {
 
   it('refuses the three-segment families, because claiming one can DELETE a foreign namespace', () => {
     // A claimed key puts its "run" in the index, and sweepRuns purges an indexed run by `${runId}:`
-    // Prefix. Had `:proc:` been accepted, a memory thread named 'proc' would make `mem:proc:messages`
-    // Read as run 'mem' — and one sweep would erase the entire memory keyspace.
+    // prefix. Had `:proc:` been accepted, a memory thread named 'proc' would make `mem:proc:messages`
+    // read as run 'mem' — and one sweep would erase the entire memory keyspace.
     expect(runIdOfKey('mem:proc:messages')).toBeNull();
     expect(runIdOfKey('mem:cfg:working')).toBeNull();
     expect(runIdOfKey('r1:proc:__gnl_model_claim:0')).toBeNull();
@@ -70,12 +70,12 @@ describe('runIdOfKey', () => {
     expect(runIdOfKey('r1:approval:call-9')).toBeNull();
     expect(runIdOfKey('r1:incident:call-1:loop-detection:block')).toBeNull();
     // Nothing is lost by that refusal: run.ts writes `:input` unconditionally, before the first model
-    // Call, so any run that persisted anything is still claimed through it.
+    // call, so any run that persisted anything is still claimed through it.
   });
 });
 
 // Every adapter, on its REAL engine (pg-mem executes actual SQL) — the defect lived in each one's own
-// Write path, so a single-backend test would have proved almost nothing.
+// write path, so a single-backend test would have proved almost nothing.
 function pgStorage() {
   const { Pool } = newDb().adapters.createPg();
   return new PostgresStorage({ pool: new Pool() }).runs;

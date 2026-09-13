@@ -26,7 +26,7 @@ export interface RunCostOptions {
 
 /** Usage+cost extracted from a single model-step record — factored out so `getRunCost`'s inner loop
  * AND limits.ts's O(1) incremental counting (see limits.ts `applyModelStep`) SHARE the SAME pricing
- *  Logic (single source of truth — duplicating price computation in two places would risk DRIFT). */
+ *  logic (single source of truth — duplicating price computation in two places would risk DRIFT). */
 export interface ModelStepUsage {
   inputTokens: number;
   outputTokens: number;
@@ -44,8 +44,8 @@ export interface ModelStepUsage {
 
 /**
  * Returns `undefined` if the record has no `usage` at all (e.g. an unexpected/corrupt record) —
- * The caller should interpret this as "this step does not contribute to the count" (SAME as
- * GetRunCost's existing `continue`).
+ * the caller should interpret this as "this step does not contribute to the count" (SAME as
+ * getRunCost's existing `continue`).
  */
 /**
  * The three facts every reader needs off a model record, resolved for BOTH record shapes.

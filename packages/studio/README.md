@@ -257,7 +257,7 @@ view (`getNetworkTrace`).
 
 The UI rewrites `./api` relative to `apiBase` (admin↔API separation, can be mounted under any prefix). The
 Playground's approval flow doesn't go through a separate resume — it goes to `/run` with the **same runId +
-prompt + approvals** → the suspended tool is released (exactly-once is preserved). REST + Studio in one
+prompt + approvals** → the suspended tool is released (the run's [at-most-once guarantee](../durable/README.md#what-never-charged-twice-actually-means) is preserved). REST + Studio in one
 command: [`@gnldev/cli`](../cli) `gnl dev`.
 
 ## License

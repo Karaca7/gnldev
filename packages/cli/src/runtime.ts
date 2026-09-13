@@ -1,15 +1,15 @@
 // Runtime resolver: @gnldev/cli ships with ~zero hard runtime dependencies. Commands (`gnl runs`,
 // `gnl dev`, …) resolve @gnldev/durable/server/studio/memory/auth and hono/@hono/node-server from the
 // PROJECT's own node_modules, not the CLI's — `npx @gnldev/cli init` doesn't pull in the whole runtime,
-// And commands always run against the project's installed version (no CLI ↔ project version conflict).
+// and commands always run against the project's installed version (no CLI ↔ project version conflict).
 //
 // Resolution root: the directory gnl.config lives in (projectDirOf). This follows Node's OWN module
-// Resolution algorithm (createRequire + require.resolve) — the SAME node_modules upward-directory walk
-// That the `import '@gnldev/durable'` line inside gnl.config.ts would follow — so both loadConfig's dynamic
-// Import of gnl.config.ts AND loadDurable(dir) land on the SAME resolved file (the same file:// URL),
-// And Node's ESM module cache (keyed by resolved URL) returns the SAME module instance to both. This is
-// Correctness-critical: if a journal object is built with the project's `@gnldev/durable`, the functions
-// Operating on it (forkRun/reconstructState/…) must come from the SAME instance — two different
+// resolution algorithm (createRequire + require.resolve) — the SAME node_modules upward-directory walk
+// that the `import '@gnldev/durable'` line inside gnl.config.ts would follow — so both loadConfig's dynamic
+// import of gnl.config.ts AND loadDurable(dir) land on the SAME resolved file (the same file:// URL),
+// and Node's ESM module cache (keyed by resolved URL) returns the SAME module instance to both. This is
+// correctness-critical: if a journal object is built with the project's `@gnldev/durable`, the functions
+// operating on it (forkRun/reconstructState/…) must come from the SAME instance — two different
 // @gnldev/durable copies make the same journal transactionally incompatible with each other.
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
@@ -17,7 +17,7 @@ import { dirname, join, resolve } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 
 // `import type` — gives full type checking at compile time, erased by tsc → NOT a runtime
-// Dependency (these packages stay in @gnldev/cli's peerDependencies + devDependencies).
+// dependency (these packages stay in @gnldev/cli's peerDependencies + devDependencies).
 import type * as Durable from '@gnldev/durable';
 import type * as Server from '@gnldev/server';
 import type * as Studio from '@gnldev/studio';
@@ -49,7 +49,7 @@ async function resolveModuleFromProject(spec: string, projectDir: string): Promi
 
 /**
  * Resolves `spec` from `projectDir`'s node_modules + dynamically imports it (NOT from @gnldev/cli's OWN
- * Dependencies). Throws a clear, actionable error if it can't be found.
+ * dependencies). Throws a clear, actionable error if it can't be found.
  */
 export async function resolveFromProject(spec: string, projectDir: string): Promise<unknown> {
   return (await resolveModuleFromProject(spec, projectDir)).mod;
@@ -59,10 +59,10 @@ export async function resolveFromProject(spec: string, projectDir: string): Prom
 // Once the CLI resolves its runtime from the project, it can be OLDER/INCOMPATIBLE with what the core
 // CLI expects (e.g. a new CLI + an old @gnldev/durable → an export the CLI calls doesn't exist → a bare
 // "X is not a function" TypeError). We turn this into a clear error: (1) SHAPE check — do the exports
-// The CLI ACTUALLY calls exist as functions on the module (version-independent, catches both
-// Directions: the old core is missing an export, OR the new core removed one); (2) VERSION check — if
-// The version in package.json is below the CLI's minimum, a clear "upgrade" message. Zero-dep: no
-// Semver package, a manual major.minor.patch comparison (prerelease/build metadata is ignored).
+// the CLI ACTUALLY calls exist as functions on the module (version-independent, catches both
+// directions: the old core is missing an export, OR the new core removed one); (2) VERSION check — if
+// the version in package.json is below the CLI's minimum, a clear "upgrade" message. Zero-dep: no
+// semver package, a manual major.minor.patch comparison (prerelease/build metadata is ignored).
 
 export const REQUIRED_DURABLE_EXPORTS = [
   'forkRun',
@@ -81,7 +81,7 @@ export const REQUIRED_SERVER_EXPORTS = ['createRestApi'] as const;
 export const REQUIRED_STUDIO_EXPORTS = ['createStudioApp', 'createStudioRunner'] as const;
 
 // Every package is still at 0.0.0 (pre-release) — the floor is '0.0.0' for now to avoid false
-// Positives. Once published (first real minor/major), bump these to the actual minimum version the
+// positives. Once published (first real minor/major), bump these to the actual minimum version the
 // CLI needs; the mechanism (assertCompatible/gte) is already in place and tested.
 const MIN_DURABLE = '0.0.0';
 const MIN_SERVER = '0.0.0';
@@ -103,7 +103,7 @@ export function gte(version: string, min: string): boolean {
 
 /** Walks up from `resolvedEntryFile` looking for the package.json with `name === pkgName`
  *  (the package root — node_modules/<pkgName>/package.json). '0.0.0' if not found (unresolved version
- *  Is treated as "don't know", not as a hard failure — the capability check still guards correctness). */
+ *  is treated as "don't know", not as a hard failure — the capability check still guards correctness). */
 function findPackageVersion(resolvedEntryFile: string, pkgName: string): string {
   let dir = dirname(resolvedEntryFile);
   for (let i = 0; i < 8; i++) {
@@ -113,7 +113,7 @@ function findPackageVersion(resolvedEntryFile: string, pkgName: string): string 
         const json = JSON.parse(readFileSync(pj, 'utf8')) as { name?: string; version?: string };
         if (json.name === pkgName) return json.version ?? '0.0.0';
       } catch {
-        // Malformed package.json at this level — keep walking up.
+        // malformed package.json at this level — keep walking up.
       }
     }
     const parent = dirname(dir);
@@ -125,7 +125,7 @@ function findPackageVersion(resolvedEntryFile: string, pkgName: string): string 
 
 /**
  * Throws a clear, actionable error if `mod` (already-imported) is version-too-old or missing an
- * Export the CLI actually calls. Exported for direct unit testing (see runtime.test.ts).
+ * export the CLI actually calls. Exported for direct unit testing (see runtime.test.ts).
  */
 export function assertCompatible(
   mod: Record<string, unknown>,

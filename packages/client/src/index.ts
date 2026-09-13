@@ -20,6 +20,19 @@ export function genRunId(): string {
 }
 
 /**
+ * The runId to send, or `undefined` when the caller named the WORK instead.
+ *
+ * One line with one decision in it, in one place, because the three call sites below had three
+ * copies of the old `input.runId ?? genRunId()` and would have grown three copies of this. Naming
+ * work and naming an id are mutually exclusive at the server; generating a "helpful" id beside a
+ * workKey sends both and gets the request refused.
+ */
+function identityOf(input: RunInput): string | undefined {
+  if (input.runId) return input.runId;
+  return input.workKey ? undefined : genRunId();
+}
+
+/**
  * One place that reads the RESPONSE rather than only its body.
  *
  * `run`/`resume` used to be `(await res.json()) as RunResult` — a cast, not a check. A refusal came
@@ -71,13 +84,23 @@ export class GnlHttpError extends Error {
   }
 }
 
-async function asRunResult(res: Response, runId: string): Promise<RunResult> {
+async function asRunResult(res: Response, runId?: string): Promise<RunResult> {
   const body = (await res.json().catch(() => ({}))) as Partial<RunResult> & { error?: string };
-  if (res.ok) return { ...body, runId: body.runId ?? runId } as RunResult;
+  // WHERE THE ID COMES FROM, in the order of who actually knows it. The body, when the server sent
+  // one. Then `X-Gnl-Run-Id`, which every run/stream response carries and which is the ONLY source
+  // on two paths that used to leave `runId` a lie: a refusal (error bodies have no `runId` field)
+  // and a call that named WORK instead of an id (the caller never had one to fall back to). Then the
+  // caller's own, which is the only side that always knows it on the raw path.
+  // `''` is the honest floor, not a lie: on the workKey path a PRE-RUN refusal (unknown agent,
+  // unaddressable scope) carries neither a body runId nor the header — no run ever existed to name.
+  // The type keeps `runId: string` for every caller who logs or maps on it; test for truthiness
+  // before treating it as an address.
+  const effective = body.runId ?? res.headers.get('X-Gnl-Run-Id') ?? runId ?? '';
+  if (res.ok) return { ...body, runId: effective } as RunResult;
   const ra = Number(res.headers.get('retry-after'));
   return {
     ...body,
-    runId: body.runId ?? runId,
+    runId: effective,
     interrupts: body.interrupts ?? [],
     error: body.error ?? `HTTP ${res.status}`,
     status: res.status,
@@ -108,13 +131,20 @@ export class GnlClient {
     return (await res.json()) as AgentMeta[];
   }
 
-  /** Run an agent durably (POST /agents/:name/run). runId is generated if not given. */
+  /**
+   * Run an agent durably (POST /agents/:name/run).
+   *
+   * A runId is generated ONLY when the caller named neither half of the identity pair. A caller who
+   * passed a `workKey` has named the work, and adding an id beside it would send both halves of an
+   * exclusive pair — the server refuses that, so the convenience would turn a good request into a
+   * 400. The generated fallback is unchanged for everyone else.
+   */
   async run(name: string, input: RunInput = {}): Promise<RunResult> {
-    const runId = input.runId ?? genRunId();
+    const runId = identityOf(input);
     const res = await this._fetch(this.url(`/agents/${encodeURIComponent(name)}/run`), {
       method: 'POST',
       headers: this.headers,
-      body: JSON.stringify({ ...input, runId }),
+      body: JSON.stringify(runId === undefined ? input : { ...input, runId }),
     });
     return asRunResult(res, runId);
   }
@@ -136,11 +166,11 @@ export class GnlClient {
 
   /** Run an agent with streaming (POST /agents/:name/stream) — yields SSE events. */
   async *stream(name: string, input: RunInput = {}, signal?: AbortSignal): AsyncGenerator<StreamEvent> {
-    const runId = input.runId ?? genRunId();
+    const runId = identityOf(input); // see run() — no invented id beside a workKey
     const res = await this._fetch(this.url(`/agents/${encodeURIComponent(name)}/stream`), {
       method: 'POST',
       headers: this.headers,
-      body: JSON.stringify({ ...input, runId }),
+      body: JSON.stringify(runId === undefined ? input : { ...input, runId }),
       signal,
     });
     // A REFUSAL HAS A BODY TOO, which is why `!res.body` alone was not a guard. A 409/422/429 answers
@@ -155,10 +185,20 @@ export class GnlClient {
     for await (const ev of parseSSEStream(res.body)) yield ev as StreamEvent;
   }
 
-  /** Consume the stream with handler callbacks (convenience). Returns the runId used. */
+  /**
+   * Consume the stream with handler callbacks (convenience). Returns the runId the run landed on —
+   * which, when the caller named WORK, is only knowable from the stream's own `done` event: the
+   * engine derived the id and the caller never held it.
+   */
   async streamTo(name: string, input: RunInput, handlers: StreamHandlers, signal?: AbortSignal): Promise<{ runId: string }> {
-    const runId = input.runId ?? genRunId();
-    for await (const ev of this.stream(name, { ...input, runId }, signal)) {
+    const local = identityOf(input);
+    let runId = local ?? '';
+    for await (const ev of this.stream(name, local === undefined ? input : { ...input, runId: local }, signal)) {
+      // The engine's own answer, whatever the caller sent — on the derived path it is the first time
+      // this side sees the id at all.
+      if (ev.event === 'done' && typeof (ev.data as { runId?: unknown })?.runId === 'string') {
+        runId = (ev.data as { runId: string }).runId;
+      }
       switch (ev.event) {
         case 'text-delta':
           handlers.onText?.((ev.data as any).text);

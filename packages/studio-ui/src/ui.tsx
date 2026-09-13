@@ -12,12 +12,12 @@ import { useTranslation } from 'react-i18next';
 import { cn, Btn } from './components';
 
 // Every call site imports `toast` from here (not from 'sonner' directly), which is what lets this
-// Wrapper apply a policy centrally instead of touching every `toast.error(...)` call site.
+// wrapper apply a policy centrally instead of touching every `toast.error(...)` call site.
 // Error toasts default to `duration: Infinity` — unlike success toasts, they interpolate raw
-// Server error messages, which can run long, and sonner's plain 4s default risks the message
-// Being missed with no way to get it back. Callers can still override by passing their own
+// server error messages, which can run long, and sonner's plain 4s default risks the message
+// being missed with no way to get it back. Callers can still override by passing their own
 // `duration`. Paired with `closeButton` on <Toaster> below, so an infinite-duration toast is
-// Never one the user is stuck looking at.
+// never one the user is stuck looking at.
 const sonnerError = sonnerToast.error;
 export const toast = Object.assign(sonnerToast, {
   error: (message: Parameters<typeof sonnerToast.error>[0], data?: Parameters<typeof sonnerToast.error>[1]) =>
@@ -32,8 +32,8 @@ export function Toaster() {
       closeButton
       toastOptions={{
         // Ink surface + a thin lime identity line (left edge) on all toasts; overridden with
-        // Success=Neon Green, error=destructive red (color + text double-coding is already preserved:
-        // Sonner shows an icon+title together, color alone doesn't carry the meaning).
+        // success=Neon Green, error=destructive red (color + text double-coding is already preserved:
+        // sonner shows an icon+title together, color alone doesn't carry the meaning).
         style: {
           background: 'hsl(var(--popover))',
           color: 'hsl(var(--popover-foreground))',
@@ -59,7 +59,7 @@ export function Dialog({
   open: boolean; onOpenChange: (o: boolean) => void; title: ReactNode;
   children?: ReactNode; footer?: ReactNode; width?: string;
   // When false, clicking the overlay or pressing Escape no longer closes the dialog — only an
-  // Explicit Cancel/X/Save inside it can. Defaults to true so every existing call site (Organizations,
+  // explicit Cancel/X/Save inside it can. Defaults to true so every existing call site (Organizations,
   // Agents, Inspector purge, ConfirmDialog, …) keeps Radix's default dismiss-on-outside-click behavior.
   dismissible?: boolean;
 }) {
@@ -145,7 +145,7 @@ export function Dropdown({
                 'cursor-default select-none rounded-sm border-l-2 border-l-transparent px-2 py-1.5 text-sm outline-none transition-colors',
                 'data-[highlighted]:bg-muted data-[disabled]:opacity-50',
                 // Selected/highlighted row edge line: lime for a neutral action ("active/selected state" rule),
-                // Red for a destructive action — color always matches its own meaning.
+                // red for a destructive action — color always matches its own meaning.
                 it.destructive
                   ? 'text-destructive data-[highlighted]:border-l-destructive data-[highlighted]:bg-destructive/10'
                   : 'data-[highlighted]:border-l-brand',
@@ -219,9 +219,9 @@ export function CommandPalette({ items }: { items: CommandItem[] }) {
             <Command.Input
               autoFocus
               placeholder={t('commandPalettePlaceholder')}
-              // Index.css turns the border --ring on focus, which is exactly right here. `field-bare`
-              // Drops only the 3px halo: this field has a BOTTOM border, so a box-shadow would ring the
-              // Whole palette width instead of underlining it.
+              // index.css turns the border --ring on focus, which is exactly right here. `field-bare`
+              // drops only the 3px halo: this field has a BOTTOM border, so a box-shadow would ring the
+              // whole palette width instead of underlining it.
               className="field-bare w-full border-b border-border bg-transparent px-3 py-2.5 text-sm outline-none transition-colors placeholder:text-muted-foreground"
             />
             <Command.List className="max-h-72 overflow-auto p-1.5">

@@ -3,7 +3,7 @@
 // The classifier has its own unit tests; this asks the only question that matters at the edge —
 // does the endpoint actually answer with it. Measured before the fix on a live rig: a free provider
 // answering 429 reached the caller as `400 {"error":"Failed after 3 attempts. Last error: Too Many
-// Requests"}`, and a client with retry logic reads 400 as "never retry" at the exact moment it
+// requests"}`, and a client with retry logic reads 400 as "never retry" at the exact moment it
 // should wait.
 import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';

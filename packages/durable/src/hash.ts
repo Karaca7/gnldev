@@ -225,6 +225,11 @@ function normalizeObject(value: object, key: string, state: Descent): unknown {
     return tagged('Map', entries.map(([k, v]) => [k, v]));
   }
   if (value instanceof Set) {
+    // KNOWN RESIDUE, same class as the `toJSON` note below: a member that serializes to `undefined`
+    // (undefined itself, a function, a symbol) lands in the array as JSON `null`, so `Set([undefined])`
+    // and `Set([null])` share a hash — likewise a Map VALUE of those kinds. Unreachable from the wire
+    // (`JSON.parse` cannot produce them); accepted rather than fixed because the golden vectors are a
+    // contract and re-keying recorded hashes is the larger harm.
     const members = [...value].map((member, i) => descend(state, `<Set member ${i}>`, member, ''));
     members.sort((a, b) => compareTokens(sortToken(a), sortToken(b)));
     return tagged('Set', members);
@@ -297,4 +302,337 @@ function serializeForHash(args: unknown): string {
 /** Secondary integrity signature of tool arguments (the primary key is toolCallId). */
 export function argsHash(args: unknown): string {
   return createHash('sha256').update(serializeForHash(args)).digest('hex').slice(0, 16);
+}
+
+/**
+ * The fingerprint frozen into `:input.hash` — what "one runId carries one request" is checked against.
+ *
+ * THREE fields exactly, named rather than spread, because the hash is a promise about the REQUEST and
+ * a run object carries far more than a request (tools, limits, a model handle). Adding a field here
+ * invalidates every fingerprint already in every journal, so the shape is pinned in one place instead
+ * of being retyped at each call site.
+ *
+ * There were two call sites (`runDurableInner`, `streamDurableInner`) and then a third arrived that
+ * needed the same answer and could not reach it: `rolloverRun` writes the next period's `:input`
+ * DIRECTLY, and `persistInput` — which is where the hash used to be attached — never runs for a key
+ * that is already filled. A seed with no `hash` is a run with no fingerprint, permanently, and inside
+ * `run1_` the fingerprint check is the unconditional one. So the formula became a function.
+ */
+export function rawInputFingerprint(input: { prompt?: unknown; messages?: unknown; system?: unknown }): string {
+  return argsHash({ prompt: input.prompt, messages: input.messages, system: input.system });
+}
+
+/**
+ * Domain separation tag for the run-identity derivation, and the reason `run1_` can ever become
+ * `run2_` without a migration.
+ *
+ * The tag is HASHED, not pasted on. Prefixing the output (`'run1_' + sha256(...)`) would look the
+ * same in a log and be a different thing entirely: two formula generations would then share their
+ * input space, so an id minted by v1 and an id minted by v2 could land on the same 32 hex digits and
+ * one would silently read the other's journal. With the tag inside the tuple the two generations are
+ * disjoint by construction, and old records stay readable while new ones are written — which is the
+ * whole point of the version marker (§3).
+ *
+ * The bill for skipping this is documented rather than imagined: git's SHA-1→SHA-256 transition is
+ * in its sixth year, argo-rollouts took a production outage from an unversioned `ComputeHash`
+ * change, and Kubernetes could not widen its FNV-32 and carries a permanent `collisionCount` scar in
+ * its API for it.
+ */
+export const WORKKEY_DST = 'gnl.run.v1';
+
+/**
+ * Which address a `workKey` is unique WITHIN. `'resource'` scopes a job to the user/resource that
+ * owns it; `'org'` is for work that belongs to the installation rather than to a person (a nightly
+ * reconciliation, a scheduled sweep) and must run once no matter who triggers it.
+ *
+ * The kind is a HASHED FIELD, not a lookup hint, because the asymmetry of getting it wrong is the
+ * asymmetry the design is built around (§6): a wrong `'resource'` is noisy and cheap (the job runs
+ * twice), a wrong `'org'` is silent and dangerous (one tenant is handed another tenant's answer).
+ * Hashing it means the two choices can never name the same run even by accident.
+ */
+export type WorkScopeKind = 'resource' | 'org';
+
+/**
+ * The address itself: WHICH kind of scope, and WHICH one of them.
+ *
+ * Kept as a pair rather than two loose fields because the two halves are only meaningful together —
+ * `'resource'` without a resourceId is not a narrower scope, it is an unanswered question (§6 makes
+ * that combination a throw at the gate, package #3), and `'org'` on an org-less installation carries
+ * the `'~deployment'` sentinel as its value rather than nothing (§10.2). A caller that can pass one
+ * half without the other is a caller who can leave the pair half-stated in the journal.
+ */
+export interface WorkScope {
+  kind: WorkScopeKind;
+  /** resourceId | orgId | the `'~deployment'` sentinel for an installation-wide job. */
+  value: string;
+}
+
+/**
+ * The address of work that belongs to the INSTALLATION rather than to a person or an organization.
+ *
+ * `workScope: 'org'` on a deployment that has no organizations configured is not a mistake — a
+ * single-tenant install is a legitimate main case (the project's own production rig is one), and
+ * throwing there would refuse the very jobs the org scope exists for: the nightly reconciliation, the
+ * cron that must run once. So the scope resolves to the deployment as a whole (§10.2).
+ *
+ * The `~` is the point of the spelling: `assertResourceId` does not admit it, so no real resourceId or
+ * orgId can ever collide with this sentinel — an installation-wide job and a user called
+ * '~deployment' cannot become the same address. And it is not silent: the value is written into the
+ * run's `:input` record as the scope's `value`, so "which address did this actually run under?" is a
+ * question the journal answers rather than a rule the reader has to remember.
+ */
+export const DEPLOYMENT_SCOPE = '~deployment';
+
+/**
+ * A workKey reduced to something safe to keep after the run is gone: 16 hex of sha256 over the text.
+ *
+ * Where it goes (§8, third rule): tombstones, the conflict ledger, logs and telemetry — every place
+ * whose whole point is outliving the record it describes. What it is FOR is diagnosis ("the swept run
+ * was named something", "these two refusals were the same job"), never lookup: nothing resolves a
+ * hash back to a run, and the matching the engine does uses `workDigest`, which is a different
+ * function with a different budget (32 hex, and an agent/scope tuple around it).
+ *
+ * 16 hex is enough precisely because nothing routes on it. And the honest half, which belongs next to
+ * every use: this is a PSEUDONYM, not an anonymisation. sha256 is offline-computable, so a
+ * low-entropy workKey ('invoice-4471') is recoverable by dictionary and keeps its personal-data
+ * status under GDPR. What the hash buys is that a deletion no longer leaves the caller's business
+ * string sitting in a marker that outlives it (§10.3).
+ */
+export function workKeyHash(workKey: string): string {
+  return createHash('sha256').update(workKey).digest('hex').slice(0, 16);
+}
+
+/** A `workKey` is a business name, not a payload; past this length it is neither. */
+const MAX_WORK_KEY_LENGTH = 2048;
+
+/** The engine's namespace on the raw runId surface. Generation 1 of the formula above. */
+export const DERIVED_RUN_ID_PREFIX = 'run1_';
+
+/**
+ * The complete spelling of an engine-derived id: the prefix, 32 lowercase hex, and — optionally —
+ * ONE execution-axis suffix.
+ *
+ * `#<n>` starts at 2 and carries no leading zero (`[2-9]\d*` covers 2..9 and anything opening with
+ * 2-9; `[1-9]\d+` covers 10..19 and the rest), because execution #1 IS the bare id — a `#1` spelling
+ * would be a second name for a run that already has one, and two names for one journal prefix is the
+ * bug class this whole file exists to close. `#replay-<seq>` is the regression path's counter, a
+ * DETERMINISTIC integer rather than the wall clock the old `:replay:${Date.now()}` buried in an id
+ * (§4) — timestamps in an identity kill replay, and replay is what durability means here.
+ * `#fork-<n>` is the third and last suffix: `forkRun`'s "re-run from here" copy, counted from 1
+ * because — unlike an execution number — a fork is never the base run, so there is no fork #0 to
+ * clash with the bare id.
+ *
+ * NO LEADING ZEROS anywhere, and that applies to `replay-` too (`0|[1-9]\d*`, not `\d+`). A suffix
+ * is read back with `Number()`, so `#replay-01` and `#replay-1` would be two spellings of one
+ * identity — the same "two names for one journal prefix" hazard as `#1`, arriving through a
+ * different door. The engine never mints a padded number; refusing the padded spelling is what keeps
+ * that a property instead of a habit.
+ *
+ * Note this is a full-string match: `run1_<32hex>#2#3` and `run1_<32hex>:child` do not pass. Inside
+ * this namespace the engine owns the shape completely, so anything it did not mint is refused rather
+ * than tolerated.
+ */
+const DERIVED_RUN_ID_RE =
+  /^run1_([0-9a-f]{32})(?:#(?:([2-9]\d*|[1-9]\d+)|replay-(0|[1-9]\d*)|fork-([1-9]\d*)))?$/;
+
+/** True for an id the engine could have minted — prefix, digest and at most one axis suffix. */
+export function isDerivedRunId(runId: string): boolean {
+  return DERIVED_RUN_ID_RE.test(runId);
+}
+
+function rejectEmpty(field: string, value: unknown, why: string): asserts value is string {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(`@gnldev/durable: ${field} must be a non-empty string — ${why}`);
+  }
+}
+
+/**
+ * The identity of a unit of work: 32 hex characters derived from the tuple the decision pins (§3).
+ *
+ *     sha256(stableStringify([WORKKEY_DST, agentName, scopeKind, scopeValue, workKey])).slice(0, 32)
+ *
+ * WHY A TUPLE AND NOT A CONCATENATION. `scope + workKey` is not injective: `("a","b:c")` and
+ * `("a:b","c")` are two different pairs that produce one byte string and therefore one identity. A
+ * caller who can choose either half can walk a boundary until it lands on someone else's address.
+ * That is not a thought experiment — it shipped twice in 2026 (CVE-2026-76581, CVSS 9.8, an
+ * unauthenticated admin session through a shifted boundary; CVE-2026-71326, whose official fix note
+ * is the phrase "length prefix"). The standard answer is NIST SP 800-185's TupleHash: length prefix
+ * per field, plus arity, plus a domain tag.
+ *
+ * We do not take a SHA-3 dependency for it, because `stableStringify` already IS an injective tuple
+ * encoding: a JSON array delimits every element and escapes every delimiter that could appear inside
+ * one, so the pair above serializes as `["a","b:c"]` vs `["a:b","c"]` — different bytes, permanently.
+ * The `workKey swallows the separator` case in the test file is the check that this escaping, not
+ * luck, is doing the work.
+ *
+ * WHY 32 HEX AND NOT THE 16 `argsHash` USES. Different risk class, different budget, and this is the
+ * line the next reader will be tempted to "tidy up". `argsHash` truncates to 16 because its
+ * collision window is one dedup decision inside one run, observed by one caller. A runId collision
+ * is identity theft: two tenants' journals answering to one key. At 128 bits, ten years of a billion
+ * runs a year sits around 1.5×10⁻¹⁹; at 64 bits the same traffic is a coin flip. And a hash you
+ * cannot widen later is a permanent scar, not an inconvenience — Kubernetes proved that with FNV-32
+ * (#43449), where the collision could not be engineered away and the API grew a `collisionCount`
+ * field instead. Truncating this is minting `run2_`, and every stored run moves.
+ *
+ * Throws for inputs that are not names. `scopeValue` has no default here on purpose: an org-less
+ * installation using `workScope: 'org'` passes the `'~deployment'` sentinel in from the CALLER (§10.2)
+ * so the choice shows up as a row in the protection matrix, instead of being invented inside a hash
+ * function where nobody can see it.
+ */
+export function workDigest(
+  agentName: string,
+  scopeKind: WorkScopeKind,
+  scopeValue: string,
+  workKey: string,
+): string {
+  rejectEmpty('agentName', agentName, 'the agent name is part of a run identity (renaming an agent starts a new identity for its unfinished work).');
+  rejectEmpty('scopeValue', scopeValue, "it is the address a workKey is unique within — pass the resourceId, the orgId, or the '~deployment' sentinel for an installation-wide job.");
+  rejectEmpty('workKey', workKey, 'it is your name for the unit of work (the invoice being issued, tonight\'s reconciliation).');
+  if (workKey.length > MAX_WORK_KEY_LENGTH) {
+    throw new Error(
+      `@gnldev/durable: workKey is too long (${workKey.length} > ${MAX_WORK_KEY_LENGTH}) — a workKey is ` +
+        'the NAME for work, not the work itself. If you are hashing a payload into it, hash it on your ' +
+        'side and pass the digest.',
+    );
+  }
+  return createHash('sha256')
+    .update(stableStringify([WORKKEY_DST, agentName, scopeKind, scopeValue, workKey]))
+    .digest('hex')
+    .slice(0, 32);
+}
+
+/**
+ * `workDigest` behind the engine's namespace — the id a derived run actually gets.
+ *
+ * This is execution #1 by definition; there is no `#1` spelling (see `DERIVED_RUN_ID_RE`). The id is
+ * opaque, and honestly so: it is a stable PSEUDONYM for the caller's workKey, not an anonymisation of
+ * it. sha256 is offline-computable, so a low-entropy workKey can be recovered by dictionary. What
+ * stops "guess an id and read it" is the ownership gate, not the hash (§11) — unguessability is
+ * defense in depth here, never the primary defense.
+ */
+export function derivedRunId(
+  agentName: string,
+  scopeKind: WorkScopeKind,
+  scopeValue: string,
+  workKey: string,
+): string {
+  return DERIVED_RUN_ID_PREFIX + workDigest(agentName, scopeKind, scopeValue, workKey);
+}
+
+/**
+ * The deliberate second (third, fourth…) run of the SAME work: `run1_<digest>#<n>`, n ≥ 2.
+ *
+ * Rerunning is not an edge case — 3.2% of GitHub Actions workflow runs are reruns (ACM measurement),
+ * which is why "run this again on purpose" gets a first-class spelling instead of forcing callers to
+ * mangle the workKey. A base that already carries an axis is refused rather than extended: `#2#3` has
+ * no meaning, and quietly accepting it would produce an id `assertRunIdSafe` then rejects downstream.
+ *
+ * PURE. Nothing here reads or writes a journal, so nothing here knows whether `#2` is free. Choosing
+ * the next free n (the rollover/replay migration off `@N` and `:replay:<timestamp>:`) is a later
+ * package; this is only the spelling.
+ */
+export function executionRunId(base: string, n: number): string {
+  if (typeof base !== 'string' || base.includes('#')) {
+    throw new Error(
+      `@gnldev/durable: executionRunId got a base that already carries the '#' execution axis ('${String(base).slice(0, 60)}') — ` +
+        'an id has one execution number, not a chain of them.',
+    );
+  }
+  if (!isDerivedRunId(base)) {
+    throw new Error(
+      `@gnldev/durable: executionRunId got '${base.slice(0, 60)}', which is not an engine-derived id — ` +
+        "the '#' axis exists only inside the run1_ namespace.",
+    );
+  }
+  if (!Number.isInteger(n) || n < 2) {
+    throw new Error(
+      `@gnldev/durable: execution number must be an integer ≥ 2 (got ${n}) — execution #1 is the base id itself.`,
+    );
+  }
+  return `${base}#${n}`;
+}
+
+/**
+ * The "re-run from HERE" sibling of an engine-derived run: `run1_<digest>#fork-<n>`, n ≥ 1.
+ *
+ * `forkRun`'s old default target was `${srcRunId}:fork:${Date.now()}` — two separate violations for a
+ * derived source. It buried the wall clock in an identity (§11's explicit ban: an id that changes on
+ * every call cannot be replayed to), and it wore the `run1_` prefix without the shape, which
+ * `assertRunIdSafe` now refuses outright. So a derived fork gets a counted suffix instead, and the
+ * counting happens where the journal can be read (time-travel.ts), not here.
+ *
+ * Counting from 1 rather than 2: `#<n>` starts at 2 because execution #1 already has a name (the bare
+ * id). A fork has no such twin — the base run is not "fork #0" of itself — so 1 is the first fork and
+ * `#fork-0` is refused.
+ *
+ * PURE, and refusing a suffixed base for the same reason `executionRunId` does: one id carries one
+ * suffix. `run1_<d>#2#fork-1` would be a chain, and the honest consequence — a fork of the second
+ * execution is named off the shared BASE, so the id alone no longer says which execution it came
+ * from — is stated at the call site that has to live with it (`forkRun`).
+ */
+export function forkRunId(base: string, n: number): string {
+  if (typeof base !== 'string' || base.includes('#')) {
+    throw new Error(
+      `@gnldev/durable: forkRunId got a base that already carries the '#' execution axis ('${String(base).slice(0, 60)}') — ` +
+        'an id carries one suffix, not a chain of them.',
+    );
+  }
+  if (!isDerivedRunId(base)) {
+    throw new Error(
+      `@gnldev/durable: forkRunId got '${base.slice(0, 60)}', which is not an engine-derived id — ` +
+        "the '#' axis exists only inside the run1_ namespace (a raw runId forks as '<id>:fork:<n>').",
+    );
+  }
+  if (!Number.isInteger(n) || n < 1) {
+    throw new Error(
+      `@gnldev/durable: fork number must be an integer ≥ 1 (got ${n}) — the base run is not fork #0 of itself.`,
+    );
+  }
+  return `${base}#fork-${n}`;
+}
+
+/** What an engine-derived id says about itself, once it is read back apart. */
+export interface DerivedRunIdParts {
+  /** The 32 hex characters of `workDigest`. Not reversible to the workKey — that mapping is stored. */
+  digest: string;
+  /** Present from the second deliberate execution onwards; absent means execution #1. */
+  execution?: number;
+  /** Present on a regression replay: the deterministic counter behind `#replay-<seq>`. */
+  replaySeq?: number;
+  /** Present on a `forkRun` copy: the deterministic counter behind `#fork-<n>`, from 1. */
+  fork?: number;
+}
+
+/**
+ * The id WITHOUT its execution-axis suffix — `run1_<digest>` for every spelling in the namespace.
+ *
+ * The three minting sites (fork, rollover, replay) all need the same first move: given an id that may
+ * already carry a suffix, find the base the suffix counts against. Doing it by hand is doing
+ * `slice(0, indexOf('#'))` in three files, and the fourth site is where it gets done wrong.
+ *
+ * Returns `undefined` for anything outside the namespace — a raw runId has no base because it has no
+ * axis, and the callers branch on exactly that.
+ */
+export function derivedRunIdBase(runId: string): string | undefined {
+  const parts = parseDerivedRunId(runId);
+  return parts ? DERIVED_RUN_ID_PREFIX + parts.digest : undefined;
+}
+
+/**
+ * Reads an id the engine minted; returns `undefined` for everything else — including ids that merely
+ * look derived (`run1_deadbeef`) and the spellings the axis forbids (`#1`, `#0`, `#x`).
+ *
+ * `undefined` rather than a throw because every caller of this is asking a QUESTION ("is this one of
+ * ours?") about an id that legitimately might not be. The refusal of a lookalike belongs on the write
+ * path, and lives there: `assertRunIdSafe`.
+ */
+export function parseDerivedRunId(runId: string): DerivedRunIdParts | undefined {
+  if (typeof runId !== 'string') return undefined;
+  const m = DERIVED_RUN_ID_RE.exec(runId);
+  if (!m) return undefined;
+  const parts: DerivedRunIdParts = { digest: m[1]! };
+  if (m[2] !== undefined) parts.execution = Number(m[2]);
+  if (m[3] !== undefined) parts.replaySeq = Number(m[3]);
+  if (m[4] !== undefined) parts.fork = Number(m[4]);
+  return parts;
 }

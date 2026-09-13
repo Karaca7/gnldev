@@ -16,5 +16,6 @@
   "expiredBadge": "stale — waiting {{age}}",
   "waitingFor": "waiting {{age}}",
   "ownerBadge": "user work · {{owner}}",
+  "workKeyBadge": "work: {{workKey}}",
   "ownerLockedTitle": "This run belongs to {{owner}} — the answer goes through their own channel, not this panel."
 }

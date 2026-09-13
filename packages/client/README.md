@@ -21,8 +21,12 @@ const result = await api.run('support', { prompt: 'where is my order?' });
 console.log(result.text, result.runId);
 ```
 
-`runId` matters: pass the same one again and the server replays the journal instead of repeating
-side effects.
+Naming the run matters — and there are two ways to do it. Pass a **`workKey`**, your name for the
+unit of work (`api.run('billing', { workKey: 'invoice-4471', resourceId: 'u-ayse', prompt })`), and
+the same key later is routed to the same run: the journal replays instead of repeating side effects.
+The engine mints the id and hands it back as `result.runId`. Or pass a raw **`runId`** you already
+hold. Send neither and the client generates a runId for you; send both and the server refuses, so it
+never invents one beside your `workKey`.
 
 ## Streaming
 

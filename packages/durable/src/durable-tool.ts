@@ -32,8 +32,8 @@ const DEFAULT_MAX_RETRIES = 3;
 
 // TASK (args idempotency — SAME-STEP PARALLEL DUPLICATE poll ladder): the side that loses the claim
 // (only `idempotency: 'args'`) polls at these intervals until a terminal record appears — exponential
-// Backoff, capped at POLL_MAX_MS (a balance between noise-free and delay-free). The upper bound is
-// ClaimTtl (already the "stale" threshold) — it does not wait forever.
+// backoff, capped at POLL_MAX_MS (a balance between noise-free and delay-free). The upper bound is
+// claimTtl (already the "stale" threshold) — it does not wait forever.
 const POLL_MIN_MS = 15;
 const POLL_MAX_MS = 200;
 
@@ -42,12 +42,12 @@ function sleep(ms: number): Promise<void> {
 }
 
 // K1: deliver the blocked error according to context. Inside the loop (ctx.blockedAsSentinel, set by
-// RunDurable/streamDurable) do NOT THROW — the AI SDK swallows the throw and turns it into a
+// runDurable/streamDurable) do NOT THROW — the AI SDK swallows the throw and turns it into a
 // 'tool-error', the run doesn't stop, and the model could produce a NEW toolCallId with the same
-// Arguments and route around the guard (double side effect). Return the `__gnl_blocked` sentinel
-// Instead: composeStopWhen stops the loop, runDurableInner converts it to a real error and throws it.
+// arguments and route around the guard (double side effect). Return the `__gnl_blocked` sentinel
+// instead: composeStopWhen stops the loop, runDurableInner converts it to a real error and throws it.
 // Nothing is written to the journal → on resume this call is re-evaluated from scratch (resolved via
-// Approval/recover/idempotent). For direct callers: throw.
+// approval/recover/idempotent). For direct callers: throw.
 function blockedOrThrow(
   ctx: DurableCtx,
   toolCallId: string,
@@ -60,14 +60,14 @@ function blockedOrThrow(
 
 /**
  * AUDIT (Finding B): the terminal tool record was being written by hand at 6 SEPARATE points (denied×2,
- * Suspended, recover-succeeded, succeeded, failed) — each one REPEATED the `ctx.journal.put` + (if
- * Present) `recordToolOutcome` pair; adding a new terminal status carried the risk of forgetting the hook.
+ * suspended, recover-succeeded, succeeded, failed) — each one REPEATED the `ctx.journal.put` + (if
+ * present) `recordToolOutcome` pair; adding a new terminal status carried the risk of forgetting the hook.
  * SINGLE CHOKE POINT: write to the journal, THEN (if ctx.limits is defined) trigger the limits hook —
- * The order/condition is IDENTICAL to the previous 6 call sites, behavior did NOT change.
+ * the order/condition is IDENTICAL to the previous 6 call sites, behavior did NOT change.
  */
 /** Per-(tool,args) first-success marker — see the guard block
- *  In `durableTool` below. Lives under runKeys.proc (invisible to reader/time-travel, purged with the
- *  Run). `nudged` = the reconsider nudge has been delivered for this (tool,args) → escalate to block. */
+ *  in `durableTool` below. Lives under runKeys.proc (invisible to reader/time-travel, purged with the
+ *  run). `nudged` = the reconsider nudge has been delivered for this (tool,args) → escalate to block. */
 interface DupMarker {
   firstToolCallId: string;
   at: number;
@@ -76,10 +76,10 @@ interface DupMarker {
   inFlight?: boolean;
   /**
    * The attempt that held this marker FAILED and gave the slot back. This is a real field rather
-   * Than a deletion because `put(key, undefined)` does not delete a row: `get` reads it as absent,
-   * But `putIfAbsent` still sees the row and loses — so the "release" poisoned every later claim,
-   * And a legitimate retry after a failed attempt was permanently reported as a concurrent
-   * Duplicate. Under `sideEffectDuplicates:'block'` that turned exactly-once into exactly-ZERO
+   * than a deletion because `put(key, undefined)` does not delete a row: `get` reads it as absent,
+   * but `putIfAbsent` still sees the row and loses — so the "release" poisoned every later claim,
+   * and a legitimate retry after a failed attempt was permanently reported as a concurrent
+   * duplicate. Under `sideEffectDuplicates:'block'` that turned exactly-once into exactly-ZERO
    * (audit-measured: executions=0 with no success anywhere). A released marker is claimable.
    */
   released?: boolean;
@@ -88,8 +88,8 @@ interface DupMarker {
 /**
  * Claim the duplicate marker, honouring its lifecycle. Absent → normal first-writer claim. Released
  * (a failed attempt gave it back) → taken over by CAS. In-flight but STALE by the shared clock (its
- * Writer crashed without releasing) → also taken over, using the same TTL discipline as the tool
- * Claim itself. A live marker — someone genuinely executing right now — loses.
+ * writer crashed without releasing) → also taken over, using the same TTL discipline as the tool
+ * claim itself. A live marker — someone genuinely executing right now — loses.
  */
 async function claimDupMarker(journal: Journal, dupKey: string, next: DupMarker, staleTtlMs: number, windowTtlMs?: number): Promise<boolean> {
   const raw = await journal.get<DupMarker>(dupKey);
@@ -97,7 +97,7 @@ async function claimDupMarker(journal: Journal, dupKey: string, next: DupMarker,
   const cur = raw as DupMarker;
   const now = journal.now ? await journal.now() : Date.now();
   // FAZ-3 windowTtlMs: a COMPLETED marker older than the configured dedup window is not a duplicate
-  // Of anything anymore — takeable like a released one. An IN-FLIGHT marker is never window-expired
+  // of anything anymore — takeable like a released one. An IN-FLIGHT marker is never window-expired
   // (a live executor is arbitrated by staleTtlMs alone, same as before).
   const windowExpired = windowTtlMs !== undefined && cur.inFlight !== true && now - cur.at > windowTtlMs;
   const takeable = cur.released === true || windowExpired || (cur.inFlight === true && now - cur.at > staleTtlMs);
@@ -108,12 +108,12 @@ async function claimDupMarker(journal: Journal, dupKey: string, next: DupMarker,
 }
 
 const dupMarkerKey = (runId: string, toolName: string, hash: string): string =>
-  // ToolName VERBATIM in the key — same accepted practice as runKeys.toolByArgs/toolCrossRun (journal.ts).
+  // toolName VERBATIM in the key — same accepted practice as runKeys.toolByArgs/toolCrossRun (journal.ts).
   runKeys.proc(runId, `dup-${toolName}-${hash}`);
 
 // FAZ-3 thread-scoped duplicate marker — under the SAME `xthr:<threadId>:` prefix as
-// RunKeys.toolThread (not the plan's cosmetic `thread:` prefix) so ONE purgeThread sweep reclaims
-// The thread's whole dedup state: args-window records AND these markers.
+// runKeys.toolThread (not the plan's cosmetic `thread:` prefix) so ONE purgeThread sweep reclaims
+// the thread's whole dedup state: args-window records AND these markers.
 const threadDupMarkerKey = (threadId: string, toolName: string, hash: string): string =>
   `xthr:${threadId}:dup-${toolName}-${hash}`;
 
@@ -246,7 +246,7 @@ async function writeToolTerminal(
   toolName: string,
   hash: string,
   /** When set and the record is a SUCCESS, stamps the first-success duplicate marker (claim = first
-   *  Writer wins; a repeat's success never overwrites the original firstToolCallId). */
+   *  writer wins; a repeat's success never overwrites the original firstToolCallId). */
   dupKey?: string,
   /** FAZ-6: when set and the record is a SUCCESS, writes the semantic dup record (fields sync,
    *  Vector fail-open) at this same choke point — the suspended path forgetting a write is exactly
@@ -257,15 +257,15 @@ async function writeToolTerminal(
   xidPlan?: XidPlan,
 ): Promise<void> {
   // Stamp the ORIGINAL toolCallId onto succeeded/denied records here —
-  // The single choke point every fresh terminal write goes through — so reconstructState can match
-  // Pending tool-calls back to this record WITHOUT needing to re-derive the dedupe key (see
+  // the single choke point every fresh terminal write goes through — so reconstructState can match
+  // pending tool-calls back to this record WITHOUT needing to re-derive the dedupe key (see
   // ToolJournalRecord.resolvedToolCallIds in journal.ts). 'suspended'/'failed'/'running' don't need it
   // (they never resolve a pending entry regardless — see reconstructState).
   // Name every terminal record, not just the successful ones. The call sites that build a
   // 'succeeded'/'reflected' record set `toolName` themselves (loop detection needs it there); the
-  // Denied/suspended/failed paths did not, which left a denial — the most audit-relevant entry there
-  // Is — identifiable only by correlating its toolCallId against the model step. Filled here because
-  // This is the one place every terminal write passes through.
+  // denied/suspended/failed paths did not, which left a denial — the most audit-relevant entry there
+  // is — identifiable only by correlating its toolCallId against the model step. Filled here because
+  // this is the one place every terminal write passes through.
   const named: ToolJournalRecord =
     (record as { toolName?: string }).toolName ? record : { ...record, toolName };
   const stamped: ToolJournalRecord =
@@ -276,16 +276,16 @@ async function writeToolTerminal(
   await mirrorUnderRun(ctx, key, stamped, toolCallId);
   if (dupKey && record.status === 'succeeded') {
     // Journal clock for the stamp (K2, BOTH ends): windowExpired/ttl decisions read `at` with the
-    // Storage clock — a wall-clock stamp from a writer whose clock lags the storage makes a
-    // Long-lived thread marker expire EARLY (the unsafe direction: a duplicate fires).
+    // storage clock — a wall-clock stamp from a writer whose clock lags the storage makes a
+    // long-lived thread marker expire EARLY (the unsafe direction: a duplicate fires).
     const success: DupMarker = { firstToolCallId: toolCallId, at: ctx.journal.now ? await ctx.journal.now() : Date.now() };
     const won = await claim(ctx.journal, dupKey, success);
     if (!won) {
       // The row exists. Two of the shapes it can hold are OURS to overwrite, and leaving either in
-      // Place is a live defect: our own in-flight claim from just before execute (never finalized,
-      // It would later read as stale and be taken over — re-running a SUCCEEDED side effect), or a
-      // Released slot from an earlier failed attempt (a later duplicate would take it over and run
-      // Again). A FOREIGN completed marker stays — first success wins, as before.
+      // place is a live defect: our own in-flight claim from just before execute (never finalized,
+      // it would later read as stale and be taken over — re-running a SUCCEEDED side effect), or a
+      // released slot from an earlier failed attempt (a later duplicate would take it over and run
+      // again). A FOREIGN completed marker stays — first success wins, as before.
       const raw = await ctx.journal.get<DupMarker>(dupKey);
       const cur = raw as DupMarker | undefined;
       if (cur && (cur.released === true || (cur.inFlight === true && cur.firstToolCallId === toolCallId))) {
@@ -299,8 +299,8 @@ async function writeToolTerminal(
   }
   if (semPlan && record.status === 'succeeded') {
     // FAZ-6 write side: the deterministic half (identity/amount/discriminator fields) writes with the
-    // Terminal; the vector is fail-open — an embedder failure costs one future QUESTION, never the
-    // Record, never the tool result. Outage incidents fire once per failure streak, not per call.
+    // terminal; the vector is fail-open — an embedder failure costs one future QUESTION, never the
+    // record, never the tool result. Outage incidents fire once per failure streak, not per call.
     const embedded = await writeSemRecord(ctx.journal, semPlan, toolCallId);
     if (embedded.outage) {
       await recordIncident(ctx.journal, ctx.runId, {
@@ -311,9 +311,9 @@ async function writeToolTerminal(
     }
   }
   // A FAILED side-effect tool counts toward maxToolCalls (the effect may have executed
-  // Before the throw). The flag is read off the failed record itself (stamped at the failure site below)
-  // So this single choke point stays the only place recordToolOutcome is called — and seedFromHistory
-  // Reconstructs the identical count from the same journaled flag.
+  // before the throw). The flag is read off the failed record itself (stamped at the failure site below)
+  // so this single choke point stays the only place recordToolOutcome is called — and seedFromHistory
+  // reconstructs the identical count from the same journaled flag.
   if (ctx.limits) {
     const sideEffect = record.status === 'failed' ? record.sideEffect === true : false;
     await recordToolOutcome(ctx.journal, ctx.runId, toolCallId, toolName, hash, record.status, sideEffect, ctx.limits);
@@ -323,11 +323,11 @@ async function writeToolTerminal(
 /**
  * A LATER call that consumes an ALREADY-succeeded/denied record under a
  * DIFFERENT toolCallId (args-mode same-turn duplicates, or a custom `idempotencyKey` collapsing
- * Separate turns onto the same key) doesn't go through `writeToolTerminal` — it just reads and
- * Returns. Without this, reconstructState would never learn that toolCallId was resolved by this
- * Record (it stays "pending" forever on a genuinely completed run). No-op (no extra write) for the
- * Overwhelmingly common case: a replay/resume reusing the SAME toolCallId that's already in the list,
- * Or a 'call'-mode record (whose key IS the toolCallId — no other id can ever reach here).
+ * separate turns onto the same key) doesn't go through `writeToolTerminal` — it just reads and
+ * returns. Without this, reconstructState would never learn that toolCallId was resolved by this
+ * record (it stays "pending" forever on a genuinely completed run). No-op (no extra write) for the
+ * overwhelmingly common case: a replay/resume reusing the SAME toolCallId that's already in the list,
+ * or a 'call'-mode record (whose key IS the toolCallId — no other id can ever reach here).
  */
 /** Returns the record as it now stands — updated when this call added an id, otherwise the original. */
 async function trackResolvedToolCallId<T extends ToolJournalRecord>(ctx: DurableCtx, key: string, record: T, toolCallId: string): Promise<T> {
@@ -446,7 +446,7 @@ function nestedApprovalsFor(
 /**
  * Wraps the tool's execute: EXACTLY-ONCE. The key is the toolCallId given by the AI SDK.
  * On replay the model's response is returned identically, producing the SAME toolCallId → if a
- * Succeeded record exists the tool does NOT run again, the output is returned from the journal
+ * succeeded record exists the tool does NOT run again, the output is returned from the journal
  * (no double side effect).
  */
 export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolName = 'tool'): T {
@@ -454,11 +454,11 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
   const original = tool.execute;
   // TASK (args idempotency): the mode is resolved once FROM THE TOOL DEFINITION (see types.ts
   // AnyTool.idempotency/idempotencyKey). Providing `idempotencyKey` IMPLIES 'args' mode — no need to
-  // Also write `idempotency: 'args'`. Default is 'call' — behavior DOES NOT CHANGE (the existing
-  // ToolCallId-keyed path, unchanged).
+  // also write `idempotency: 'args'`. Default is 'call' — behavior DOES NOT CHANGE (the existing
+  // toolCallId-keyed path, unchanged).
   // `idempotencyWindow: 'cross-run'` ALSO IMPLIES 'args' mode (even if neither
   // `idempotency` nor `idempotencyKey` is given) — a cross-run dedup window only makes sense keyed by
-  // Arguments, never by the AI SDK's per-call toolCallId. Default window is 'run' — behavior for
+  // arguments, never by the AI SDK's per-call toolCallId. Default window is 'run' — behavior for
   // EVERY EXISTING caller (who never sets this field) is BYTE-FOR-BYTE unchanged.
   // FAZ-3: 'thread' joins as the third window arm — implies 'args' mode for the same reason
   // 'cross-run' does (a shared window only makes sense keyed by arguments, never by per-call ids).
@@ -473,11 +473,11 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       // for what happened when the same fact was written onto `tool`.
       let recoverUnavailable = false;
       // TASK (args idempotency): `hash` is the SINGLE source of truth for the duration of this execute
-      // Call — the journal key, the drift detector, the loop-detection hash, AND the idempotencyKey
-      // Carried to the provider ALL derive from it. In 'call' mode (or in 'args' mode when there is NO
-      // Custom `idempotencyKey`) it is IDENTICAL to argsHash(input) (behavior does NOT change); only
-      // When a custom `idempotencyKey` is given is its hash used instead (a hash, NOT the RAW string, so
-      // That characters like ':' don't break the key schema).
+      // call — the journal key, the drift detector, the loop-detection hash, AND the idempotencyKey
+      // carried to the provider ALL derive from it. In 'call' mode (or in 'args' mode when there is NO
+      // custom `idempotencyKey`) it is IDENTICAL to argsHash(input) (behavior does NOT change); only
+      // when a custom `idempotencyKey` is given is its hash used instead (a hash, NOT the RAW string, so
+      // that characters like ':' don't break the key schema).
       const hash = mode === 'args' && typeof tool.idempotencyKey === 'function'
         ? argsHash(tool.idempotencyKey(input))
         : argsHash(input);
@@ -485,7 +485,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       // (runKeys.toolCrossRun) — the SAME arguments from ANY run land on the SAME record. 'run' window
       // (default) is UNCHANGED (runKeys.toolByArgs, run-scoped).
       // FAZ-3: the 'thread' window needs a threadId AT CALL TIME; without one there is nothing to
-      // Scope by — fall back to the run window loudly (see warnThreadScopeFallback).
+      // scope by — fall back to the run window loudly (see warnThreadScopeFallback).
       let effWindow: 'run' | 'cross-run' | 'thread' = window;
       if (window === 'thread' && !ctx.threadId) {
         warnThreadScopeFallback('idempotencyWindow', toolName);
@@ -499,8 +499,8 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
             ? runKeys.toolThread(ctx.threadId!, toolName, hash)
             : runKeys.toolByArgs(ctx.runId, toolName, hash);
       // M1 downstream exactly-once: in 'args' mode, toolName+hash is carried INSTEAD OF toolCallId → even
-      // If the model produces a NEW toolCallId with the SAME arguments, downstream (Stripe etc.) dedup
-      // Stays CONSISTENT (otherwise every new toolCallId would spawn a different provider idempotencyKey).
+      // if the model produces a NEW toolCallId with the SAME arguments, downstream (Stripe etc.) dedup
+      // stays CONSISTENT (otherwise every new toolCallId would spawn a different provider idempotencyKey).
       // In the 'cross-run' window the runId is dropped here too — so the downstream idempotencyKey is
       // ALSO cross-run (a retried run reusing the same arguments must reuse the SAME provider key).
       //
@@ -524,21 +524,21 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           ? `${orgPart}${toolName}:${hash}`
           : effWindow === 'thread'
             // The downstream key follows the window's scope, same principle as cross-run above: a
-            // Retried run ON THIS THREAD reusing the same arguments must reuse the SAME provider key.
+            // retried run ON THIS THREAD reusing the same arguments must reuse the SAME provider key.
             ? `${orgPart}thr:${ctx.threadId}:${toolName}:${hash}`
             : `${orgPart}${ctx.runId}:${toolName}:${hash}`;
 
       // 1) Exactly-once: if a succeeded/denied/reflected record exists, do NOT execute, return from the
-      // Journal (replay) — a 'reflected' nudge replays IDENTICALLY too (the same toolCallId must see the
-      // Same tool result on resume; the gate is NOT re-evaluated against a since-mutated chain).
-      // CtxGet: if a replay snapshot (C2) exists it serves consume-once from there, otherwise the live journal.
+      // journal (replay) — a 'reflected' nudge replays IDENTICALLY too (the same toolCallId must see the
+      // same tool result on resume; the gate is NOT re-evaluated against a since-mutated chain).
+      // ctxGet: if a replay snapshot (C2) exists it serves consume-once from there, otherwise the live journal.
       let record = await ctxGet<ToolJournalRecord>(ctx, key);
       if (record && (record.status === 'succeeded' || record.status === 'denied' || record.status === 'reflected')) {
         // M2 drift detector: if the argsHash of the succeeded record doesn't match the hash of the new
-        // Input the model produced on replay → non-determinism. Since the model middleware replays the
-        // Response identically, this can ONLY happen on a determinism violation. In 'args' mode `hash` is
+        // input the model produced on replay → non-determinism. Since the model middleware replays the
+        // response identically, this can ONLY happen on a determinism violation. In 'args' mode `hash` is
         // ALREADY the value that derives this key → it matches by definition, always (this check only
-        // Carries a REAL determinism signal in 'call' mode; in 'args' mode it's a harmless no-op).
+        // carries a REAL determinism signal in 'call' mode; in 'args' mode it's a harmless no-op).
         if (record.status === 'succeeded' && record.argsHash !== undefined) {
           if (hash !== record.argsHash) {
             const msg = `@gnldev/durable: divergence — '${toolName}' (${key}) produced different args on replay`;
@@ -572,15 +572,15 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       }
 
       // (same-step parallel race): mark taint on the untrusted tool's INVOCATION — here, before
-      // This tool's own gates/execute — NOT after its execute resolves. The AI SDK runs a model step's
-      // Tools in PARALLEL (Promise.all); marking after execute (which is network I/O) let a parallel
-      // Side-effect tool read taint=clean and bypass the gate. This write is fast and execute-independent,
-      // So a parallel side-effect's taint READ (behind claim+guard+dup) lands AFTER it. Runs only on a
-      // Fresh call (replay short-circuits above; the taint is already journaled from the first run) and is
-      // First-wins/idempotent. It is also crash-safe: taint is persisted before execute, so a crash
-      // Mid-fetch still leaves the run tainted on resume.
+      // this tool's own gates/execute — NOT after its execute resolves. The AI SDK runs a model step's
+      // tools in PARALLEL (Promise.all); marking after execute (which is network I/O) let a parallel
+      // side-effect tool read taint=clean and bypass the gate. This write is fast and execute-independent,
+      // so a parallel side-effect's taint READ (behind claim+guard+dup) lands AFTER it. Runs only on a
+      // fresh call (replay short-circuits above; the taint is already journaled from the first run) and is
+      // first-wins/idempotent. It is also crash-safe: taint is persisted before execute, so a crash
+      // mid-fetch still leaves the run tainted on resume.
       // Under the opt-in `taintScope: 'thread'`, the mark ALSO claims the thread key (see
-      // Taint.ts threadTaintKey) so later runs on the same thread inherit it. Per-run mark unchanged.
+      // taint.ts threadTaintKey) so later runs on the same thread inherit it. Per-run mark unchanged.
       if (tool.untrusted) {
         await markRunTainted(ctx.journal, ctx.runId, { toolCallId, toolName, source: 'tool' },
           ctx.limits?.taintScope === 'thread' ? { threadId: ctx.threadId } : undefined);
@@ -625,11 +625,11 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           nested?.kind === 'nested' &&
           (nested.nested?.interrupts ?? []).some((i) => i.toolCallId !== undefined && ctx.approvals?.[i.toolCallId] !== undefined);
         // A resume that DENIES an
-        // Already-suspended call used to fall into the `approved !== true` re-suspend return below —
-        // The deny was a SILENT NO-OP (the record stayed 'suspended', the approval stayed pending
-        // Forever; the Studio Deny button did nothing). Only the FRESH-call guard branch handled
+        // already-suspended call used to fall into the `approved !== true` re-suspend return below —
+        // the deny was a SILENT NO-OP (the record stayed 'suspended', the approval stayed pending
+        // forever; the Studio Deny button did nothing). Only the FRESH-call guard branch handled
         // `approved === false`. Mirror those semantics here: denial writes a terminal 'denied'
-        // Record — the model sees the denial and can continue, and the pending approval resolves.
+        // record — the model sees the denial and can continue, and the pending approval resolves.
         if (approved === false) {
           // TENSE, and it is not cosmetic (measured live). The stored reason is the QUESTION, written
           // to be read before a decision: "requires explicit confirmation BEFORE IT RUNS", "approve
@@ -675,8 +675,8 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
         // yalanlardı; çocuğun kendi koşumu kendi kararının izini zaten kendi kaydına basıyor.
         if (!isProxySuspend) {
           // FAZ-6: if THIS suspension was the semantic gate's question, the human's "run it anyway" IS
-          // The 'different work' verdict — tombstone the (prior, incoming) pair so the SAME question is
-          // Never asked again (best-effort: a lost tombstone merely re-asks, the safe failure).
+          // the 'different work' verdict — tombstone the (prior, incoming) pair so the SAME question is
+          // never asked again (best-effort: a lost tombstone merely re-asks, the safe failure).
           // INTENT-OVERRIDE IZI (heyet v1 #2): bu kosum bir suspend sorusuna verilen INSAN ONAYIYLA
           // geciyor — 'bilerek tekrar' kararinin journal'li izi. Arguman bozarak kandirma yolunun
           // (iz birakmayan bypass) resmi alternatifi budur. Best-effort: iz kaybi kosumu etkilemez.
@@ -714,15 +714,15 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       } else if (record === undefined && tool.confirm && approved !== true) {
         // FAZ-3 `confirm` — the tool's OWN first-call human gate, handled by the runtime directly
         // (no guard factory: a two-step ceremony where forgetting the factory leaves the flag
-        // Silently unenforced is exactly the failure class this replaces). Denial is terminal;
+        // silently unenforced is exactly the failure class this replaces). Denial is terminal;
         // Anything else suspends with the STANDARD sentinel → same approvals flow as guard
-        // Suspensions. A pre-supplied approval skips this arm entirely (else-if chain) and still
-        // Meets the guard below on its way to execute.
+        // suspensions. A pre-supplied approval skips this arm entirely (else-if chain) and still
+        // meets the guard below on its way to execute.
         // `record === undefined` is LOAD-BEARING (denetçi blokeri): this arm answers the FRESH call
-        // Only. A 'failed'/'running' record reaching here means a crashed or in-flight attempt — the
-        // Effect may already have fired, and overwriting that record with 'suspended' would show the
-        // Human a "confirm before it runs" question (hiding that it may HAVE run) and bypass the
-        // Recover/reclaim ladder below, which owns exactly that case.
+        // only. A 'failed'/'running' record reaching here means a crashed or in-flight attempt — the
+        // effect may already have fired, and overwriting that record with 'suspended' would show the
+        // human a "confirm before it runs" question (hiding that it may HAVE run) and bypass the
+        // recover/reclaim ladder below, which owns exactly that case.
         if (approved === false) {
           const output = { __denied: true, reason: 'Confirmation denied.' };
           await writeToolTerminal(ctx, key, { status: 'denied', output }, toolCallId, toolName, hash);
@@ -831,8 +831,8 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       } else if (ctx.guard) {
         // 3) General policy: check at the gate before execute (gate the side effect).
         // TAINT PHASE 2 (taint-aware guard): the guard sees the run's taint mark (undefined = clean)
-        // So policies like `taintGuardian` can gate SENSITIVE tools only when untrusted content has
-        // Entered. The read happens ONLY when a guard is present — guard-less runs pay nothing.
+        // so policies like `taintGuardian` can gate SENSITIVE tools only when untrusted content has
+        // entered. The read happens ONLY when a guard is present — guard-less runs pay nothing.
         const tainted = await readRunTaint(ctx.journal, ctx.runId);
         const decision = await ctx.guard({ toolName, args: input, toolCallId, runId: ctx.runId, tainted });
         if (decision.action === 'deny') {
@@ -854,7 +854,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
             await writeToolTerminal(ctx, key, { status: 'suspended', output: sentinel }, toolCallId, toolName, hash);
             return sentinel;
           }
-          // Approved === true → run below
+          // approved === true → run below
         }
       }
 
@@ -872,13 +872,13 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
 
 
       // // closes the window H7's crash-gate does not cover: the MODEL ITSELF issuing a FRESH identical
-      // Call (new toolCallId, same args) of a side-effect tool that already SUCCEEDED in this run.
+      // call (new toolCallId, same args) of a side-effect tool that already SUCCEEDED in this run.
       // In default 'call' mode that duplicate would silently re-execute (double charge) unless the
-      // Developer remembered `idempotency: 'args'` — the journal KNOWS it's a duplicate, so the
-      // Runtime must at minimum SAY so (default 'warn'), and can steer/stop/escalate on request.
+      // developer remembered `idempotency: 'args'` — the journal KNOWS it's a duplicate, so the
+      // runtime must at minimum SAY so (default 'warn'), and can steer/stop/escalate on request.
       // Scope guards: 'args' mode dedups on its own (fast-path above); an EXPLICIT approval for this
-      // ToolCallId means a human already blessed this exact repeat (stand down); replay never gets
-      // Here (the fast-path returns the journaled record first).
+      // toolCallId means a human already blessed this exact repeat (stand down); replay never gets
+      // here (the fast-path returns the journaled record first).
       const dupCfg = dupConfigOf(ctx.limits?.sideEffectDuplicates, tool.effectClass);
       const dupAction = dupCfg.action;
       // FAZ-3 scope: 'thread' widens the marker to the conversation (xthr:<threadId>:dup-…) — the
@@ -912,22 +912,22 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           }
         }
         // FAZ-3 optional ttlMs: an EXPIRED marker is not a duplicate anymore (the storage clock
-        // Decides, same discipline as claim staleness). Default is NO ttl — deliberately: a false
-        // Positive costs one extra approval question, a false negative fires the effect twice.
+        // decides, same discipline as claim staleness). Default is NO ttl — deliberately: a false
+        // positive costs one extra approval question, a false negative fires the effect twice.
         if (marker && dupCfg.ttlMs !== undefined) {
           const nowMs = ctx.journal.now ? await ctx.journal.now() : Date.now();
           if (nowMs - marker.at > dupCfg.ttlMs) marker = undefined;
         }
         // Only a COMPLETED marker speaks here. A released one is a slot a failed attempt gave back —
-        // Not a duplicate of anything. An in-flight one is either a live concurrent executor or a
-        // Crashed one's leftover; both are arbitrated ATOMICALLY by claimDupMarker just before
-        // Execute, where live loses and stale is taken over — deciding it here from a plain read
-        // Would re-open the TOCTOU this gate exists to close, and it mislabelled a crashed attempt
-        // As "already succeeded", blocking the recover/approval ladder that owns that case.
+        // not a duplicate of anything. An in-flight one is either a live concurrent executor or a
+        // crashed one's leftover; both are arbitrated ATOMICALLY by claimDupMarker just before
+        // execute, where live loses and stale is taken over — deciding it here from a plain read
+        // would re-open the TOCTOU this gate exists to close, and it mislabelled a crashed attempt
+        // as "already succeeded", blocking the recover/approval ladder that owns that case.
         if (marker && !marker.released && !marker.inFlight) {
           // ATOMIC one-time nudge (E4): the reflect nudge is delivered by exactly ONE writer. Claim a
-          // Dedicated nudge key via CAS (`claim`) — the WINNER delivers the nudge; a concurrent LOSER (or
-          // A later identical retry where `marker.nudged` is set) escalates to block, the safe direction.
+          // dedicated nudge key via CAS (`claim`) — the WINNER delivers the nudge; a concurrent LOSER (or
+          // a later identical retry where `marker.nudged` is set) escalates to block, the safe direction.
           // `nudged` is still persisted on the marker so a sequential retry blocks via the check below.
           let nudgeWon = false;
           if (dupAction === 'reflect' && !marker.nudged && !crossOrigin) {
@@ -979,8 +979,8 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           }
           if (dupAction === 'suspend') {
             // Standard __gnl_suspend shape → the duplicate lands in the SAME approvals flow as guard
-            // Suspensions (Studio Approvals, resumeRun approvals[toolCallId]) — a human decides the
-            // Ambiguous case; an approval executes it exactly once (see `approved !== true` above).
+            // suspensions (Studio Approvals, resumeRun approvals[toolCallId]) — a human decides the
+            // ambiguous case; an approval executes it exactly once (see `approved !== true` above).
             const nowS = ctx.journal.now ? await ctx.journal.now() : Date.now();
             const reason =
               `Duplicate side effect: '${toolName}' already succeeded with identical arguments in ` +
@@ -998,7 +998,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           if (dupAction === 'reflect') {
             // Winner of the atomic nudge claim above (nudgeWon) — deliver the ONE reconsider nudge.
             // `marker.nudged` was already persisted above; wording is SECURITY-SENSITIVE (see the
-            // Loop-reflect note): never teach argument fabrication.
+            // loop-reflect note): never teach argument fabrication.
             const output = {
               __gnl_reflected: true,
               // MODEL-FACING (nudge → goes to the provider): deliberately NEUTRAL — no framework branding (avoids fingerprinting).
@@ -1020,7 +1020,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
             return output; // the model sees this result and can reconsider — the run does NOT stop
           }
           // 'warn' (default): the call EXECUTES as before — zero behavior change — but the incident is
-          // Named, with BOTH exits (adoption ramp toward the stricter modes, never a silent duplicate).
+          // named, with BOTH exits (adoption ramp toward the stricter modes, never a silent duplicate).
           // Journaled too (recordIncident): a console line evaporates; an operator can query this one.
           const warnMessage =
             `@gnldev/durable: side-effect tool '${toolName}' is about to EXECUTE AGAIN with arguments identical to an ` +
@@ -1038,29 +1038,29 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
 
       // RunDurable's entry check only covers runs that
       // START after the condemnation — a worker already INSIDE the loop when the operator ran
-      // CompensateRun would keep producing NEW side effects while the unwind reverts the old ones.
+      // compensateRun would keep producing NEW side effects while the unwind reverts the old ones.
       // Close that window at the last responsible moment: a side-effect execution in a condemned run
-      // Is refused via the blocked sentinel (the run stops with CompensatedRunError). Read-only tools
-      // Are not gated (harmless, and the run is about to stop anyway). Cost: one O(1) get per
+      // is refused via the blocked sentinel (the run stops with CompensatedRunError). Read-only tools
+      // are not gated (harmless, and the run is about to stop anyway). Cost: one O(1) get per
       // SIDE-EFFECT execution, only while a run is live.
       if (sideEffect && (await runCompensated(ctx.journal, ctx.runId))) {
         return blockedOrThrow(ctx, toolCallId, toolName, new CompensatedRunError(ctx.runId));
       }
 
       // The prompt-injection
-      // Enforcement point. If untrusted content already entered this run (see taint.ts — an
+      // enforcement point. If untrusted content already entered this run (see taint.ts — an
       // `untrusted: true` tool succeeded, or a processor flagged content), a side-effect call from
-      // Here on is suspect: the runtime cannot know whether the model is serving the USER or the
+      // here on is suspect: the runtime cannot know whether the model is serving the USER or the
       // FETCHED CONTENT, so it applies the configured ladder. Runs AFTER the duplicate guard (a
-      // Post-taint duplicate reads better as a duplicate) and BEFORE the loop gate. Mode-independent
+      // post-taint duplicate reads better as a duplicate) and BEFORE the loop gate. Mode-independent
       // (unlike the duplicate guard): an args-idempotent side effect's FIRST execution is just as
-      // Gateable — the replay fast-path above already short-circuits repeats before reaching here.
+      // gateable — the replay fast-path above already short-circuits repeats before reaching here.
       // FAZ-6 — semantic dup gate (double opt-in: limits.semantic + tool.semanticIdentity). Runs
       // ONLY on an exact-hash MISS (deterministic > probabilistic: the fast-path replay above never
-      // Reaches here), only for side-effect tools, and never over a pre-approved call. The embedding
-      // Finds CANDIDATES; declared fields decide; the ONLY exit is the standard suspend question.
+      // reaches here), only for side-effect tools, and never over a pre-approved call. The embedding
+      // finds CANDIDATES; declared fields decide; the ONLY exit is the standard suspend question.
       // On every 'none' arm the output path stays byte-identical — the model is told NOTHING (a
-      // Model that "knows it was done" may skip the call itself: indirect silent dedup, banned).
+      // model that "knows it was done" may skip the call itself: indirect silent dedup, banned).
       // Aktiflik = canlı embed closure'ı; frozen-limits round-trip'inden gelen soyulmuş blok
       // (embedStripped) İNAKTİFTİR — resume, semantiği yeniden verilmemiş limits'le fail-open koşar.
       const semCfg = dupCfg.semantic && typeof dupCfg.semantic.embed === 'function' ? dupCfg.semantic : undefined;
@@ -1078,10 +1078,10 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
         }
       }
       // `record === undefined` is LOAD-BEARING (K18, the FAZ-3 confirm lesson repeated by the
-      // Denetçi verbatim): this arm answers the FRESH call only. A 'failed'/'running' record means a
-      // Crashed or in-flight attempt — overwriting it with 'suspended' would show the human a
+      // denetçi verbatim): this arm answers the FRESH call only. A 'failed'/'running' record means a
+      // crashed or in-flight attempt — overwriting it with 'suspended' would show the human a
       // "Similar work — run it?" question while HIDING that this very attempt may already have
-      // Fired, and would bypass the recover/reclaim ladder that owns that state.
+      // fired, and would bypass the recover/reclaim ladder that owns that state.
       if (record === undefined && semPlan && approved !== true) {
         const verdict = await findSemanticCandidate(ctx.journal, semPlan, dupCfg.ttlMs);
 
@@ -1239,12 +1239,12 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           }
           if (taintAction === 'reflect') {
             // ONE nudge per distinct (tool,args). UNLIKE the duplicate guard's reflect, an identical
-            // Retry after the nudge EXECUTES (see the limits.ts rationale: for taint, post-nudge
-            // Insistence IS the model's reconsidered judgment — the gate rungs are block/suspend).
+            // retry after the nudge EXECUTES (see the limits.ts rationale: for taint, post-nudge
+            // insistence IS the model's reconsidered judgment — the gate rungs are block/suspend).
             // The pass-through is journaled as a 'warn' incident so the insistence stays visible.
             // ATOMIC one-time nudge (E4): `claim` (CAS via putIfAbsent) instead of a non-atomic
-            // Check-then-put, so under two concurrent workers only the FIRST writer delivers the nudge;
-            // The loser falls through to the 'warn' pass-through below (identical to the sequential retry).
+            // check-then-put, so under two concurrent workers only the FIRST writer delivers the nudge;
+            // the loser falls through to the 'warn' pass-through below (identical to the sequential retry).
             const nudgeKey = runKeys.proc(ctx.runId, `taintnudge-${toolName}-${hash}`);
             if (await claim(ctx.journal, nudgeKey, { at: Date.now(), toolCallId })) {
               const output = {
@@ -1272,7 +1272,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
                 `earlier for these arguments; taint source: ${src})`,
               detail: taintDetail,
             });
-            // Fall through → execute (the model reconsidered and confirmed)
+            // fall through → execute (the model reconsidered and confirmed)
           } else {
             // 'warn' (default): execute, but the provenance is NAMED and journaled — never silent.
             const warnMessage =
@@ -1288,20 +1288,20 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       // TASK W1: loop detection + maxToolCalls (opt-in) — checked BEFORE this call is ACTUALLY EXECUTED
       // (BEFORE the atomic claim, before ANYTHING is written to the journal). Because the AI SDK's
       // `executeTools` swallows an error THROWN from tool.execute and turns it into a 'tool-error' (the
-      // Run does NOT actually stop), a SENTINEL IS RETURNED here instead of THROWING — the SAME pattern
-      // As the guard's `__gnl_suspend`: run.ts's composeStopWhen detects it and stops the loop,
-      // RunDurableInner converts the sentinel into a real error and throws it right after generateText
-      // Returns. Since NOTHING is written to the journal, a blocked call is re-evaluated FROM SCRATCH
-      // Once the limit is raised / on replay (deterministic, approval NOT required).
+      // run does NOT actually stop), a SENTINEL IS RETURNED here instead of THROWING — the SAME pattern
+      // as the guard's `__gnl_suspend`: run.ts's composeStopWhen detects it and stops the loop,
+      // runDurableInner converts the sentinel into a real error and throws it right after generateText
+      // returns. Since NOTHING is written to the journal, a blocked call is re-evaluated FROM SCRATCH
+      // once the limit is raised / on replay (deterministic, approval NOT required).
       if (ctx.limits) {
         const gate = await checkToolGate(ctx.journal as unknown as JournalReader, ctx.runId, toolName, hash, ctx.limits);
         // NOT a stop. The nudge is returned to the model
         // AS THIS CALL'S TOOL RESULT (the same mechanical shape as the guard's 'denied' path: journal a
-        // Terminal record, return the output, the loop CONTINUES and the model can self-correct). The
-        // Record write ALSO sets chain.reflected via recordToolOutcome → an identical repeat AFTER this
-        // Escalates to the hard block below. Journaled (unlike the block sentinel, which writes nothing)
+        // terminal record, return the output, the loop CONTINUES and the model can self-correct). The
+        // record write ALSO sets chain.reflected via recordToolOutcome → an identical repeat AFTER this
+        // escalates to the hard block below. Journaled (unlike the block sentinel, which writes nothing)
         // BECAUSE the run continues: on resume this toolCallId must replay the SAME nudge from the
-        // Journal instead of re-evaluating the gate against a chain that has since moved on.
+        // journal instead of re-evaluating the gate against a chain that has since moved on.
         if (gate?.kind === 'reflect') {
           await recordIncident(ctx.journal, ctx.runId, {
             at: Date.now(), source: 'loop-detection', action: 'reflect', toolName, toolCallId,
@@ -1309,12 +1309,12 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           });
           const repeats = (gate.detail as { repeats?: number }).repeats;
           // GUIDANCE WORDING IS SECURITY-SENSITIVE: it must NOT teach the model how to dodge the
-          // Detector. An earlier draft said "call again with distinguishing arguments (e.g. a new
-          // Order id)" — a confused, instruction-following model could FABRICATE identifiers to force
-          // The repeat through (different args → fresh chain → the detector can't see it, and the
-          // Side effect re-executes with invented data). The wording below inverts that: reuse the
-          // Result; NEVER alter arguments just to retry; a genuinely different action differs on its
-          // Own; if stuck, stop and explain (a graceful end beats a fabricated side effect).
+          // detector. An earlier draft said "call again with distinguishing arguments (e.g. a new
+          // order id)" — a confused, instruction-following model could FABRICATE identifiers to force
+          // the repeat through (different args → fresh chain → the detector can't see it, and the
+          // side effect re-executes with invented data). The wording below inverts that: reuse the
+          // result; NEVER alter arguments just to retry; a genuinely different action differs on its
+          // own; if stuck, stop and explain (a graceful end beats a fabricated side effect).
           const output = {
             __gnl_reflected: true,
             warning: gate.message,
@@ -1339,7 +1339,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
 
       // 4) ATOMIC CLAIM (M4): only the WINNER writes the 'running' marker → only the winner executes.
       // Closes the get-then-put TOCTOU race (two concurrent resumes can't double-run the same tool).
-      // Failed / approved-suspended / stale-running → single-owner reclaim (existing retry semantics preserved).
+      // failed / approved-suspended / stale-running → single-owner reclaim (existing retry semantics preserved).
       // Y3: the staleness threshold is now configurable — legitimate tools running longer than 30s shouldn't be "assumed crashed".
       // A claim must outlive the work it covers. A tool that declares timeoutMs: 120_000 is saying it
       // may legitimately run for two minutes; with the 30s default it was declared crashed while
@@ -1350,7 +1350,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       // TASK (args idempotency — SAME-STEP PARALLEL DUPLICATE): the `for(;;)` below loops multiple times
       // (poll) ONLY in 'args' mode; in 'call' mode EVERY branch either ends with `break`/`return` or
       // (won===false/running-fresh) returns `blockedOrThrow` DIRECTLY — the behavior of the original
-      // If/else-if/else chain is preserved IDENTICALLY, `continue` is used ONLY in the 'args' branches.
+      // if/else-if/else chain is preserved IDENTICALLY, `continue` is used ONLY in the 'args' branches.
       let pollInterval = POLL_MIN_MS;
       claimLoop: for (;;) {
         // The journal's clock, not this process's — run-lock.ts has always done it this way and
@@ -1360,7 +1360,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
         const nowTs = ctx.journal.now ? await ctx.journal.now() : Date.now();
         if (record === undefined) {
           // `attempts: 1` from the very first claim: the crash ladder below counts takeovers, and a
-          // Counter that only starts existing at the first takeover is one attempt short of the truth.
+          // counter that only starts existing at the first takeover is one attempt short of the truth.
           const won = await claim(ctx.journal, key, stampFormat({ status: 'running', startedAt: nowTs, attempts: 1 }));
           if (won) break claimLoop; // won → execute below
           record = upgradeFormat(await ctx.journal.get<ToolJournalRecord>(key), key); // H13
@@ -1372,7 +1372,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
               new RunBusyError(`'${toolName}' (${key}) is being executed by another executor`));
           }
           // 'args' mode: record is no longer undefined (the winner wrote at least 'running', or it may
-          // Already be found 'failed') → loop back to the top and be EVALUATED by the branches below
+          // already be found 'failed') → loop back to the top and be EVALUATED by the branches below
           // (poll if running-fresh, otherwise fall straight into the reclaim ladder).
           continue claimLoop;
         }
@@ -1384,10 +1384,10 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           }
           // TASK (args idempotency): in 'call' mode this would stop the run with RunBusyError — in
           // 'args' mode that is WRONG: a concurrent second call with the same arguments is not an ERROR,
-          // It's a legitimate dedup candidate (the AI SDK can run tools of the same model step in
-          // Parallel). Wait with short-interval polling UNTIL a terminal record is REACHED (upper bound:
-          // ClaimTtl — already the "stale" definition, doesn't wait forever); on timeout (the winner
-          // Likely crashed) fall through to the reclaim ladder below (the stale-running branch) —
+          // it's a legitimate dedup candidate (the AI SDK can run tools of the same model step in
+          // parallel). Wait with short-interval polling UNTIL a terminal record is REACHED (upper bound:
+          // claimTtl — already the "stale" definition, doesn't wait forever); on timeout (the winner
+          // likely crashed) fall through to the reclaim ladder below (the stale-running branch) —
           // RunBusyError is NEVER thrown.
           const remaining = claimTtl - (nowTs - record.startedAt);
           await sleep(Math.max(5, Math.min(pollInterval, remaining)));
@@ -1399,30 +1399,30 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           continue claimLoop; // still running/failed → re-evaluate at the top of the loop (ttl/failed)
         }
 
-        // Failed | approved-suspended | stale-running (INCLUDING poll timeout in 'args' mode) → single-owner reclaim.
+        // failed | approved-suspended | stale-running (INCLUDING poll timeout in 'args' mode) → single-owner reclaim.
         // (H7 `sideEffect` safe-default is hoisted above the duplicate guard — same value, same semantics.)
         //
         // H9 — ASK THE PROVIDER FOR THE TRUTH: if the tool with side effects declared `recover`, the
-        // Uncertainty (stale-running: "did it run?" / failed: "it timed out but did it go through on the
-        // Server?") is resolved by asking the EXTERNAL SYSTEM, NOT A HUMAN → exactly-once is provided
+        // uncertainty (stale-running: "did it run?" / failed: "it timed out but did it go through on the
+        // server?") is resolved by asking the EXTERNAL SYSTEM, NOT A HUMAN → exactly-once is provided
         // AUTOMATICALLY:
-        //   Done:true  → the side effect already happened: record the result, the run continues WITHOUT reproducing it.
-        //   Done:false → it never happened: safely auto-retry.
-        //   Recover throws → the uncertainty couldn't be resolved → safe last resort: the approval gate.
+        //   done:true  → the side effect already happened: record the result, the run continues WITHOUT reproducing it.
+        //   done:false → it never happened: safely auto-retry.
+        //   recover throws → the uncertainty couldn't be resolved → safe last resort: the approval gate.
         const uncertain = record.status === 'running' || record.status === 'failed';
         if (sideEffect && uncertain && approved !== true && !recoverUnavailable && typeof tool.recover === 'function') {
           try {
             const probe = await tool.recover(input, { idempotencyKey, toolCallId });
             // The contract is `{done:true, output} | {done:false}`, and the branch below reads
             // `probe.done`. Anything else — `{ok:true, chargeId}` (what a payment SDK actually
-            // Hands back), undefined, a string — is falsy there and would fall straight into
+            // hands back), undefined, a string — is falsy there and would fall straight into
             // "it never happened, run it again", charging the card a second time.
             //
             // Nothing upstream can stop that: `tools` is the AI SDK's ToolSet, which has no
             // `recover` field, so a wrong shape (or a misspelt `recovr`) type-checks clean. So the
-            // Shape is checked HERE, and an answer we cannot read is treated as what it is — the
-            // Provider did not tell us — which is the same case as recover() throwing: the
-            // Approval gate, never a silent re-run.
+            // shape is checked HERE, and an answer we cannot read is treated as what it is — the
+            // provider did not tell us — which is the same case as recover() throwing: the
+            // approval gate, never a silent re-run.
             const answered =
               typeof probe === 'object' && probe !== null &&
               (('done' in probe && (probe as any).done === false) ||
@@ -1448,7 +1448,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
               }
               return output; // RECOVERED from the provider — no retry, no approval, the run continues automatically
             }
-            // Done:false → the provider said "it never happened" → safely re-executed below.
+            // done:false → the provider said "it never happened" → safely re-executed below.
           } catch (recoverErr) {
             // Couldn't reach the provider / couldn't decide → fall through to the approval gates below
             // (safe side). NOT silently: the operator then sees SideEffectRetryBlockedError telling
@@ -1470,9 +1470,9 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
         const recovered = !recoverUnavailable && typeof tool.recover === 'function'; // reached here with done:false
 
         // ONE ladder for both kinds of doubt. 'failed' counts completed failures, 'running' counts
-        // Claims that never reported back (a crash). They are the same budget: a tool that dies
-        // Mid-execute and one that throws are both "attempt N did not produce a result", and giving
-        // The crash path no ceiling meant a wedged worker re-ran the tool once per restart forever.
+        // claims that never reported back (a crash). They are the same budget: a tool that dies
+        // mid-execute and one that throws are both "attempt N did not produce a result", and giving
+        // the crash path no ceiling meant a wedged worker re-ran the tool once per restart forever.
         const maxRetries = tool.maxRetries ?? DEFAULT_MAX_RETRIES;
 
         if (record.status === 'failed') {
@@ -1517,11 +1517,11 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           }
         } else if (record.status === 'running') {
           // H7 — CRASH WINDOW GATE: a stale 'running' carries the POSSIBILITY that "it ran but died
-          // Before the result could be written" — the journal cannot know (there is no such thing as an
-          // Atomic dual-write to two systems). Resolution ladder: (1) the recover hook asks the provider
-          // For the truth (above — AUTOMATIC), (2) an idempotent: true declaration, (3) last resort: human
-          // Approval. Side-effectful + no hook + no approval → stop (wait noisily rather than silently
-          // Risking a double side effect).
+          // before the result could be written" — the journal cannot know (there is no such thing as an
+          // atomic dual-write to two systems). Resolution ladder: (1) the recover hook asks the provider
+          // for the truth (above — AUTOMATIC), (2) an idempotent: true declaration, (3) last resort: human
+          // approval. Side-effectful + no hook + no approval → stop (wait noisily rather than silently
+          // risking a double side effect).
           const attempts = record.attempts ?? 1;
           if (sideEffect && approved !== true && !recovered) {
             return blockedOrThrow(ctx, toolCallId, toolName, new SideEffectRetryBlockedError(
@@ -1532,10 +1532,10 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
             ));
           }
           // Past this point the crash gate has been SATISFIED — by idempotent: true, by a recover()
-          // Hook, or by a human approval — so the takeover below is allowed to run the tool again.
+          // hook, or by a human approval — so the takeover below is allowed to run the tool again.
           // That permission is per-attempt, not unlimited: "repeating this is harmless" is a claim
-          // About one repeat, and the provider on the other end still has rate limits, quotas and
-          // Bills. The message names the crash explicitly, because a retry ceiling reached without
+          // about one repeat, and the provider on the other end still has rate limits, quotas and
+          // bills. The message names the crash explicitly, because a retry ceiling reached without
           // A single error in the log reads as a mystery otherwise.
           if (attempts >= maxRetries) {
             return blockedOrThrow(ctx, toolCallId, toolName, new RetryLimitExceededError(
@@ -1587,8 +1587,8 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
         // every other worker — the exact skew class the clock fix removed, re-entering here.
         const nowTakeover = ctx.journal.now ? await ctx.journal.now() : Date.now();
         // Carry the counter across the takeover. A blind `{status:'running', startedAt}` here was the
-        // Whole leak: the ladder read `record.attempts` on the NEXT round and found nothing, so every
-        // Crash-restart cycle started from zero. `before` (the fresh re-read), not `record` — a worker
+        // whole leak: the ladder read `record.attempts` on the NEXT round and found nothing, so every
+        // crash-restart cycle started from zero. `before` (the fresh re-read), not `record` — a worker
         // May have written a newer non-terminal record in the gap.
         const priorAttempts = before?.status === 'failed' || before?.status === 'running' ? (before.attempts ?? 1) : 0;
         const takeover = stampFormat({ status: 'running', startedAt: nowTakeover, attempts: priorAttempts + 1 });
@@ -1611,16 +1611,16 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
 
       // Execute + write the result to the journal (exactly-once record; overwrites 'running').
       // M1: inject a stable idempotencyKey → the tool can carry it to an external API (Stripe etc.) and
-      // Extend exactly-once beyond the framework, all the way to the downstream side effect
+      // extend exactly-once beyond the framework, all the way to the downstream side effect
       // (`idempotencyKey` above — `${runId}:${toolCallId}` in 'call' mode, `${runId}:${toolName}:${hash}`
-      // In 'args' mode).
+      // in 'args' mode).
       // Y1 (opt-in): timeout — on timeout a StepTimeoutError is thrown → the catch below writes 'failed'
       // (side-effect uncertainty is resolved via the H9 recover/approval ladder). An AbortSignal is also
-      // Passed to execute (cooperative cancellation): if one already exists, the two are combined.
+      // passed to execute (cooperative cancellation): if one already exists, the two are combined.
       const timeoutMs = tool.timeoutMs ?? ctx.toolTimeoutMs;
       // Expose the PARENT runId to the tool's execute. A sub-agent tool (agent-tool.ts) runs a
-      // Nested run under its own runId; to carry the parent's taint across that boundary it must know who
-      // Spawned it. This is the parent's own `ctx.runId` (the run whose model called this tool).
+      // nested run under its own runId; to carry the parent's taint across that boundary it must know who
+      // spawned it. This is the parent's own `ctx.runId` (the run whose model called this tool).
       // `approvals` — bir aracın alt koşum sürdüğü hâl için (agent-as-tool / ağ). Ebeveynin insan
       // cevapları bu araca kadar HİÇ inmiyordu: alt ajan bir insan kapısına çarpıp askıya girse
       // bile, ebeveyn tarafında onu serbest bırakacak bir yol yoktu. Onay haritası toolCallId ile
@@ -1678,11 +1678,11 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
         await ctx.journal.put(runKeys.approval(ctx.runId, toolCallId), { __gnl_approval_spent: true, at: Date.now() });
       }
       // FAZ-7 lookup — read-before-write, right before the effect and after every gate that can stop
-      // This call (claiming earlier would be the taint-guard lesson repeated). Two admitted states:
+      // this call (claiming earlier would be the taint-guard lesson repeated). Two admitted states:
       // A FRESH first attempt, and a SUSPENDED record arriving here approved (the effect never fired
-      // While it waited — and the critical preset's suspend→approve is precisely where an
-      // Out-of-band twin may have created the object meanwhile; denetçi K6). A failed/running
-      // Record's crash window still belongs to recover, never here.
+      // while it waited — and the critical preset's suspend→approve is precisely where an
+      // out-of-band twin may have created the object meanwhile; denetçi K6). A failed/running
+      // record's crash window still belongs to recover, never here.
       if (typeof tool.lookup === 'function' && sideEffect && (record === undefined || record.status === 'suspended')) {
         try {
           const found = await tool.lookup(input, { idempotencyKey, toolCallId });
@@ -1697,8 +1697,8 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           }
         } catch (lookupErr) {
           // Fail-open, LOUDLY: proceeding as not-found is exactly today's behavior; a flaky lookup
-          // Must not block work it cannot decide about (contrast with recover, whose uncertainty
-          // Falls to the approval gate — there the effect MAY have fired; here it has not).
+          // must not block work it cannot decide about (contrast with recover, whose uncertainty
+          // falls to the approval gate — there the effect MAY have fired; here it has not).
           console.warn(`@gnldev/durable: '${toolName}' lookup() failed for ${key} — proceeding as not-found:`, lookupErr);
         }
       }
@@ -1707,10 +1707,10 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
         const p = Promise.resolve(original(input, execOpts));
         output = timeoutMs ? await withTimeout(p, timeoutMs, toolName) : await p;
         // AUDIT TASK: the tool-result processor chain — runs AFTER execute returns SUCCESSFULLY, BEFORE
-        // It's written to the journal (prompt-injection flagging, etc). The TRANSFORMED output is
-        // Journaled below as 'succeeded': this is the SAME philosophy as processInput's "doesn't run
-        // Again on resume" — on replay this chain does NOT run A SECOND TIME, the exactly-once gate (1)
-        // At the top of the file returns the transformed value from the journal directly.
+        // it's written to the journal (prompt-injection flagging, etc). The TRANSFORMED output is
+        // journaled below as 'succeeded': this is the SAME philosophy as processInput's "doesn't run
+        // again on resume" — on replay this chain does NOT run A SECOND TIME, the exactly-once gate (1)
+        // at the top of the file returns the transformed value from the journal directly.
         if (ctx.toolResultProcessors?.length) {
           const procCtx = createProcessorCtx(ctx.journal, ctx.runId);
           for (const proc of ctx.toolResultProcessors) {
@@ -1741,17 +1741,17 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           ...(typeof tool.compensate === 'function' ? { input } : {}),
         }, toolCallId, toolName, hash, dupKey, semPlan, xidPlan);
         // NOTE: taint for `untrusted` tools is now marked at INVOCATION (see above), not here —
-        // Marking after execute lost the same-step parallel race against a side-effect tool's taint read.
+        // marking after execute lost the same-step parallel race against a side-effect tool's taint read.
       } catch (error: any) {
         // Continue the attempts count of a previous 'failed' record if it exists, otherwise this is the first attempt (1).
         // A stale 'running' counts too: crash-then-throw is still attempt N+1, and reading only 'failed'
-        // Here let a crash loop launder the counter — one crash between two throws reset it to 1.
+        // here let a crash loop launder the counter — one crash between two throws reset it to 1.
         // 'suspended' is deliberately excluded: an approved resume is the FIRST attempt of that call.
         const prevAttempts = record && (record.status === 'failed' || record.status === 'running') ? (record.attempts ?? 1) : 0;
         await writeToolTerminal(
           ctx, key,
           // Stamp `sideEffect` so this failed ATTEMPT counts toward maxToolCalls (its
-          // Effect may have posted before the throw) and seedFromHistory can reconstruct the same count.
+          // effect may have posted before the throw) and seedFromHistory can reconstruct the same count.
           { status: 'failed', error: String(error?.message ?? error), attempts: prevAttempts + 1, sideEffect },
           toolCallId, toolName, hash,
         );
@@ -1759,13 +1759,13 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
         // CONCURRENT twin, and the effect did not complete — leaving it would make every later
         // attempt with these arguments look like a duplicate of something that never happened.
         // A SENTINEL, not `put(key, undefined)`: that never deleted the row, so putIfAbsent kept
-        // Losing against it and the "release" was a poison pill (see DupMarker.released).
+        // losing against it and the "release" was a poison pill (see DupMarker.released).
         if (dupKey && claimedDup) {
           // Journal clock for the stamp — same K2 both-ends rule as the claim/finalize writes above.
           await ctx.journal.put(dupKey, { firstToolCallId: toolCallId, at: ctx.journal.now ? await ctx.journal.now() : Date.now(), released: true } satisfies DupMarker);
         }
         // NOTE: taint is marked at INVOCATION now (see ), so a FAILED untrusted tool is already
-        // Tainted — its error body (also attacker-authorable) is covered without a post-hoc mark here.
+        // tainted — its error body (also attacker-authorable) is covered without a post-hoc mark here.
         throw error;
       }
       return output;
@@ -1775,9 +1775,9 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
 
 /** Makes an entire ToolSet (Record<name, tool>) durable; carries the tool name to the guard. */
 // (armed-but-can-never-fire lint): `untrusted` defaults to falsy, so a taint ladder configured
-// Via `limits.taintedSideEffects` never fires if NO tool is marked `untrusted: true` and no processor can
-// Taint — the guard looks armed but is a no-op. Warn ONCE per store (same WeakSet pattern as journal.ts's
-// ClaimFallbackWarned / limits.ts's limitsFailOpenWarned) — loud but not per-run spam.
+// via `limits.taintedSideEffects` never fires if NO tool is marked `untrusted: true` and no processor can
+// taint — the guard looks armed but is a no-op. Warn ONCE per store (same WeakSet pattern as journal.ts's
+// claimFallbackWarned / limits.ts's limitsFailOpenWarned) — loud but not per-run spam.
 const taintNeverFiresWarned = new WeakSet<object>();
 function warnTaintCannotFire(ctx: DurableCtx, tools: Record<string, any>): void {
   const action = ctx.limits?.taintedSideEffects;
@@ -1799,8 +1799,8 @@ function warnTaintCannotFire(ctx: DurableCtx, tools: Record<string, any>): void 
 export function durableTools<T extends Record<string, any>>(tools: T, ctx: DurableCtx): T {
   warnTaintCannotFire(ctx, tools);
   // FAZ-6 config-time gate: static contradictions THROW here, before any run starts — an
-  // Installed-but-inert semantic gate is false confidence, and a gate whose only exit is an approval
-  // Question must not start where no approvals channel exists (it would suspend forever).
+  // installed-but-inert semantic gate is false confidence, and a gate whose only exit is an approval
+  // question must not start where no approvals channel exists (it would suspend forever).
   const rawDup = ctx.limits?.sideEffectDuplicates;
   const semActive = !!(rawDup && typeof rawDup === 'object' && rawDup.semantic);
   if (semActive) {
@@ -1834,10 +1834,10 @@ export function durableTools<T extends Record<string, any>>(tools: T, ctx: Durab
     }
   }
   // FAZ-3 'strict-critical' — the banking/defense/medical rung: declaring intent is not enough, a
-  // Side-effect tool must also ANSWER THE CRASH WINDOW. recover() answers it automatically ("ask the
-  // External system"); a deterministic idempotencyKey answers it structurally (the business key
-  // Dedups downstream). Without either, the crash window ends in a human unblocking a
-  // Blocked-retry by hand — acceptable by explicit choice, not by silence.
+  // side-effect tool must also ANSWER THE CRASH WINDOW. recover() answers it automatically ("ask the
+  // external system"); a deterministic idempotencyKey answers it structurally (the business key
+  // dedups downstream). Without either, the crash window ends in a human unblocking a
+  // blocked-retry by hand — acceptable by explicit choice, not by silence.
   if (ctx.toolPolicy === 'strict-critical') {
     const unanswered = Object.entries(tools)
       .filter(([, t]: [string, any]) =>

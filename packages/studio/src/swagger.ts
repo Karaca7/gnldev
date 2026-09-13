@@ -1,5 +1,5 @@
 // OpenAPI spec (compact, hand-written) + Swagger UI HTML (CDN). createStudioApp/Admin serves /openapi.json + /swagger.
-// ApiBase is known (the mount prefix) → spec.servers + the swagger url get the correct prefix (e.g. /studio/api).
+// apiBase is known (the mount prefix) → spec.servers + the swagger url get the correct prefix (e.g. /studio/api).
 
 const P = (method: string, summary: string, params: any[] = [], body = false) => ({
   [method]: {
@@ -81,8 +81,8 @@ export function openapiSpec(apiBase = '') {
       '/users/{id}/revoke': P('post', "Revoke a user's token without deleting the user", idParam),
       '/auth/sse-ticket': P('post', 'Issue a single-use SSE ticket (60s TTL, for /events)'),
       // API-04: informative payload — event `change`, data `{"runIds":[...],"at":<epoch ms>}` naming
-      // The runs that changed (added/edited/removed) since the last event; a legacy plain `data:'runs'`
-      // Is still sent when the journal has no cheap countRunsByStatus aggregate to diff against.
+      // the runs that changed (added/edited/removed) since the last event; a legacy plain `data:'runs'`
+      // is still sent when the journal has no cheap countRunsByStatus aggregate to diff against.
       '/events': P('get', "SSE — event 'change', data {runIds,at} naming the runs that changed (legacy plain 'runs' payload as a fallback)", [q('ticket')]),
       '/policy': { ...P('get', 'Get the global tool policy'), ...P('put', "Update the global tool policy ({ rules, ifVersion? }); 409 version_conflict if ifVersion is stale", [], true) },
       '/chat': P('post', 'Live chat (admin)', [], true),
@@ -102,7 +102,7 @@ export function openapiSpec(apiBase = '') {
       '/workflows/{name}/runs': P('get', 'Workflow run history', [...nameParam, q('limit', 'integer')]),
       // D3-A: cross-workflow run registry; items may carry an optional workflowName (mirrored from the wfrun: record).
       // API-03: `limit`/`cursor` opt into a bounded, paged `{items,nextCursor}` response; omitted → the
-      // Legacy flat array (backward-compatible for older callers).
+      // legacy flat array (backward-compatible for older callers).
       '/workflows/runs': P('get', 'Cross-workflow run registry (suspended/completed/canceled); items may include workflowName; paginated with ?limit (flat array when omitted)', [q('status'), q('limit', 'integer'), cursorParam]),
       '/workflows/runs/{id}/cancel': P('post', 'Durably cancel a workflow run', idParam),
       '/workflows/{name}/def': P('get', 'Managed workflow definition', nameParam),
@@ -111,7 +111,7 @@ export function openapiSpec(apiBase = '') {
       '/threads/{id}': { ...P('patch', 'Rename a thread', idParam, true), ...P('delete', 'Delete a thread', idParam) },
       '/threads/{id}/messages': {
         ...P('get', 'Thread messages', idParam),
-        // AfterIndex is INCLUSIVE (the message at afterIndex + every one after it is deleted); -1 = the whole thread.
+        // afterIndex is INCLUSIVE (the message at afterIndex + every one after it is deleted); -1 = the whole thread.
         ...P('delete', "Truncate a thread from a message index onward ({ afterIndex }, inclusive; -1 = all); 200 { ok, removed } / 400 if afterIndex missing / 501 if not supported", idParam, true),
       },
       '/threads/{id}/working-memory': P('get', 'Thread working memory', idParam),
@@ -142,23 +142,23 @@ export function openapiSpec(apiBase = '') {
 
 /**
  * Swagger UI is third-party code executing on the SAME ORIGIN as the studio admin API, and the studio
- * Keeps its bearer token in localStorage there (studio-ui/src/auth.ts). So whatever this page loads can
- * Read that token and drive the admin API — purge runs, promote managed agents, invalidate caches.
+ * keeps its bearer token in localStorage there (studio-ui/src/auth.ts). So whatever this page loads can
+ * read that token and drive the admin API — purge runs, promote managed agents, invalidate caches.
  *
  * It used to load `swagger-ui-dist@5` — a FLOATING major — from unpkg, with no integrity check and no
  * CSP. Anyone able to publish a 5.x, or to tamper with what unpkg served, would have been running code
- * In that position. Pinned to an exact version and bound by SRI, the browser now refuses any bytes that
- * Are not the ones these hashes describe; the CSP below then admits, as script, only that one file (by
- * Its hash) and the one nonced bootstrap.
+ * in that position. Pinned to an exact version and bound by SRI, the browser now refuses any bytes that
+ * are not the ones these hashes describe; the CSP below then admits, as script, only that one file (by
+ * its hash) and the one nonced bootstrap.
  *
  * TO UPGRADE: change SWAGGER_UI_VERSION and recompute BOTH hashes, or the page will (correctly) refuse
- * To load:
+ * to load:
  *   curl -sL https://unpkg.com/swagger-ui-dist@<version>/<file> | openssl dgst -sha384 -binary | openssl base64 -A
  *
  * Residual risk, stated plainly: this closes tampering, not availability — if unpkg is unreachable the
- * Page does not render. A deployment that wants no third-party origin at all should vendor
+ * page does not render. A deployment that wants no third-party origin at all should vendor
  * `swagger-ui-dist` and serve it locally; the spec at /openapi.json is complete on its own and can be
- * Pointed at any external OpenAPI client.
+ * pointed at any external OpenAPI client.
  */
 export const SWAGGER_UI_VERSION = '5.32.13';
 const SWAGGER_UI_CSS_SRI = 'sha384-tRpWwikYYdk1+1Mu0osh0Tz/Ay5xgS+s/Nf2Aa7GVAFtZLFdJlAbozfrq4g+xHBK';
@@ -167,25 +167,25 @@ const SWAGGER_UI_ORIGIN = 'https://unpkg.com';
 
 /**
  * The page's own CSP, carried in a meta tag so it applies wherever the HTML is served from (the studio
- * Mounts /swagger on two routes) without depending on a proxy to add a header. `connect-src 'self'`
- * Keeps the spec fetch (and any "try it out" call) on this origin: injected code cannot exfiltrate to
- * An outside host. `object-src`/`base-uri` 'none' close the usual bypasses.
+ * mounts /swagger on two routes) without depending on a proxy to add a header. `connect-src 'self'`
+ * keeps the spec fetch (and any "try it out" call) on this origin: injected code cannot exfiltrate to
+ * an outside host. `object-src`/`base-uri` 'none' close the usual bypasses.
  *
  * `script-src` names no origin at all. An origin allowlist (`script-src https://unpkg.com`) would have
- * Admitted ANY path on unpkg — an injected `<script src="https://unpkg.com/…">` runs, because an origin
- * Source does not require integrity. Nothing can inject here today (the template is static and apiBase
- * Is operator config), so this is defence in depth rather than a live hole; it costs one constant.
+ * admitted ANY path on unpkg — an injected `<script src="https://unpkg.com/…">` runs, because an origin
+ * source does not require integrity. Nothing can inject here today (the template is static and apiBase
+ * is operator config), so this is defence in depth rather than a live hole; it costs one constant.
  * Instead the policy carries the bundle's own sha384 as a CSP3 hash-source. For an EXTERNAL script a
- * Hash-source only matches when the tag carries an `integrity` attribute whose digest equals it (CSP3
+ * hash-source only matches when the tag carries an `integrity` attribute whose digest equals it (CSP3
  * "external hashes"), so the tag below must keep its integrity= — the same hash, named once.
  *
  * Deliberate asymmetry: `style-src` still names the origin. Hash-sources for external stylesheets have
- * Spottier CSP3 support, and a stylesheet cannot reach the bearer token the way a script can.
+ * spottier CSP3 support, and a stylesheet cannot reach the bearer token the way a script can.
  *
  * Browser support: hash-sources for external scripts land in current Chrome/Firefox/Safari. A browser
- * That does not implement them ignores the hash, matches nothing, and BLOCKS the bundle — the page
- * Fails closed (no Swagger UI, the spec still readable at /openapi.json) rather than open. For an admin
- * Page holding the token that is the right side to fail on.
+ * that does not implement them ignores the hash, matches nothing, and BLOCKS the bundle — the page
+ * fails closed (no Swagger UI, the spec still readable at /openapi.json) rather than open. For an admin
+ * page holding the token that is the right side to fail on.
  */
 function swaggerCsp(nonce: string): string {
   return [

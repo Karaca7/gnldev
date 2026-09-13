@@ -12,7 +12,7 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { scaffold } from '../src/scaffold.js';
+import { scaffold, TEMPLATES } from '../src/scaffold.js';
 import { APP_FILE, HOSTS } from '../src/hosts.js';
 import { RECIPES, recipeContents } from '../src/recipes.js';
 
@@ -44,7 +44,7 @@ describe('the generated app resolves auth rather than mounting an open admin sur
 
 describe('generated credentials are not values anyone can look up', () => {
   // `admin-dev` shipped in this package's published source, so every project scaffolded with it had
-  // The same admin token — and `bind.ts` treats exactly those literals as "no auth at all".
+  // the same admin token — and `bind.ts` treats exactly those literals as "no auth at all".
   it('the auth recipe writes a per-project random token, not a fixed literal', () => {
     // Generated twice: a fixed literal would come out identical, a per-project secret must not.
     const a = recipeContents(RECIPES.auth);
@@ -56,10 +56,12 @@ describe('generated credentials are not values anyone can look up', () => {
   });
 });
 
-// Every template, not one of them. An assertion inside the "minimal" test left `templates/full` free
-// to drop the line: measured, deleting `.env` from full kept all 261 tests green.
+// Driven off TEMPLATES rather than a written-out list. An assertion inside the "minimal" test once
+// left the second template free to drop the line — measured, deleting `.env` from it kept all 261
+// tests green. There is one template today; the list is derived so that a second one is covered the
+// day it appears, rather than the day somebody remembers to add it here.
 describe('every template ignores the file that holds provider keys', () => {
-  it.each(['minimal', 'full'] as const)('%s', (template) => {
+  it.each(TEMPLATES)('%s', (template) => {
     const dir = mkdtempSync(join(tmpdir(), 'gnl-ignore-'));
     try {
       scaffold(dir, { name: 'demo', template });

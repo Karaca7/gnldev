@@ -307,7 +307,7 @@ describe('a thread belongs to ONE end user, on the write paths too', () => {
   it('and the refusal keeps the stranger out of the conversation, not just out of the answer', async () => {
     // The distinguishing assertion. A route that answered 403 AFTER loading the thread would satisfy
     // the status check above and still have leaked Ayşe's history into the model — and appended
-    // Mallory's turn on the way through. `seen` is what the memory layer was actually asked for.
+    // mallory's turn on the way through. `seen` is what the memory layer was actually asked for.
     const { run, post, seen } = api();
     await run('ayse');
     seen.length = 0;

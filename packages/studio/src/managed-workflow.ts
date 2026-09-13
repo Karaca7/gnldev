@@ -1,8 +1,8 @@
 // @gnldev/studio/workflow — compiles a managed (UI-authored) WorkflowDef into a REAL @gnldev/workflow Workflow.
 // Separate sub-export: keeps the @gnldev/workflow import isolated from the studio core (server.ts) → core stays decoupled.
 // The host passes this via `createStudioApp({ compileWorkflow: compileManagedWorkflow })`; the server runs the
-// Compiled Workflow with the same engine (each step is journaled as `${runId}:wf:${stepId}` → exactly-once + suspend/resume,
-// Poll-to-stream / run-state / run-history / inspector all work the same way as for code workflows).
+// compiled Workflow with the same engine (each step is journaled as `${runId}:wf:${stepId}` → exactly-once + suspend/resume,
+// poll-to-stream / run-state / run-history / inspector all work the same way as for code workflows).
 import { workflow, step } from '@gnldev/workflow';
 import type { WorkflowLike } from '@gnldev/durable';
 import type { WorkflowDef } from './server.js';
@@ -20,7 +20,7 @@ function fillPrompt(tmpl: string | undefined, original: unknown, prev: unknown):
 
 /**
  * Managed WorkflowDef → WorkflowLike. Each step calls an agent (a durable sub-run) and returns its text;
- * The `.then` chain passes outputs along. `original` is kept in the closure so {{input}} stays accessible in every step.
+ * the `.then` chain passes outputs along. `original` is kept in the closure so {{input}} stays accessible in every step.
  */
 export function compileManagedWorkflow(def: WorkflowDef, runAgent: RunAgentFn, original: unknown): WorkflowLike {
   let wf = workflow<unknown>();

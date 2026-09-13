@@ -2,8 +2,8 @@
 //
 // WHAT THIS IS, stated with the discipline the heyet mandated: hash-based dedup is byte identity;
 // This layer finds PAST side-effect work that looks similar IN MEANING ("create product ABC" said
-// Two different ways) and — only when the DETERMINISTIC field comparison also matches — surfaces it
-// As an approval question. The embedding is a CANDIDATE FINDER, never a decider:
+// two different ways) and — only when the DETERMINISTIC field comparison also matches — surfaces it
+// as an approval question. The embedding is a CANDIDATE FINDER, never a decider:
 //
 //   exact-hash layers (1-4)  →  hit: replay, this file never runs
 //   toolName hard filter     →  a different tool is never a candidate (cross-tool negation gate)
@@ -13,13 +13,13 @@
 //   __gnl_suspend            →  the ONLY exit: a human answers, shown the first result
 //
 // Score alone NEVER suspends. Nothing here is ever told to the model (a model that "knows it was
-// Done" may skip the call itself — indirect silent dedup; permanent rule). Numbers/amounts never
-// Enter the embedded text. The canonical sentence is built ONLY from validated tool args (never the
-// Thread's free text — the injection boundary). Data lives in the journal under the thread's own
+// done" may skip the call itself — indirect silent dedup; permanent rule). Numbers/amounts never
+// enter the embedded text. The canonical sentence is built ONLY from validated tool args (never the
+// thread's free text — the injection boundary). Data lives in the journal under the thread's own
 // `xthr:<threadId>:` family, so ONE purgeThread sweep reclaims vectors, tombstones and markers
 // Together; records survive RUN retention on purpose (yesterday's work must outlive its run's log).
 // Best-effort and fail-open end to end: an unreachable embedder degrades to today's behavior — it
-// Never blocks a tool result and never takes the layers below with it.
+// never blocks a tool result and never takes the layers below with it.
 import type { Journal } from './journal.js';
 import { runRuleLadder, rulesConfigOf } from './semantic-rules.js';
 import type { RuleTrace } from './semantic-rules.js';
@@ -122,8 +122,8 @@ export function extractSemFields(id: SemanticIdentity, args: unknown): SemFields
   for (const k of id.amountFields ?? []) {
     const n = Number(a[k]);
     // NaN is never stored: NaN !== NaN would flag two identically-amount-less calls as "amounts
-    // Differ", and JSON backends silently turn NaN into null (store-dependent behavior). Absent on
-    // Both sides = equal; absent on one side = differ — stated by construction.
+    // differ", and JSON backends silently turn NaN into null (store-dependent behavior). Absent on
+    // both sides = equal; absent on one side = differ — stated by construction.
     if (Number.isFinite(n)) amounts[k] = n;
   }
   const discriminators: Record<string, string> = {};
@@ -223,13 +223,13 @@ export function cosine(a: Float32Array, b: Float32Array): number {
 }
 
 // Process-local embed cache: pure COST saving, never correctness — decisions read the journal, and a
-// Restart losing this Map costs exactly one extra provider call. Keyed by model+hash so a model swap
-// Can't serve stale vectors. LRU via Map insertion order, capped.
+// restart losing this Map costs exactly one extra provider call. Keyed by model+hash so a model swap
+// can't serve stale vectors. LRU via Map insertion order, capped.
 const EMBED_CACHE_MAX = 500;
 const embedCache = new Map<string, Float32Array>();
 
 // Embedder outage visibility: N consecutive failures → ONE operational incident per streak (a warn
-// Log per call is how a protection stays silently absent for weeks).
+// log per call is how a protection stays silently absent for weeks).
 const OUTAGE_STREAK = 3;
 const embedFailStreaks = new Map<string, number>(); // per embedModelId — a healthy embedder's success must not reset a broken one's streak
 
@@ -242,8 +242,8 @@ export interface EmbedOutcome {
 
 export async function embedCached(cfg: SemanticDupConfig, text: string): Promise<EmbedOutcome> {
   // K20: the cache key must identify the STORED CONTENT ITSELF — an args-derived hash collides
-  // Across tools (createProduct/deleteProduct with the same args) and would serve one tool's
-  // Canonical vector into the OTHER tool's permanent record. The canonical text is short; itself is the key.
+  // across tools (createProduct/deleteProduct with the same args) and would serve one tool's
+  // canonical vector into the OTHER tool's permanent record. The canonical text is short; itself is the key.
   const k = `${cfg.embedModelId}:${SEM_TEMPLATE_VERSION}:${text}`;
   const hit = embedCache.get(k);
   if (hit) return { vec: hit, failed: false, outage: false };
@@ -281,9 +281,9 @@ export async function writeSemRecord(journal: Journal, plan: SemPlan, firstToolC
   const embedded = await embedCached(plan.cfg, plan.canonical);
   try {
     // First-wins stamps, same contract as the dup marker at the same choke point: a repeat's success
-    // Never overwrites the original firstToolCallId/at (the future question must show the FIRST
-    // Result's address, and `at` must not artificially extend a ttl window). A missing vector may be
-    // Backfilled once the embedder recovers — that part is not identity, it is capability.
+    // never overwrites the original firstToolCallId/at (the future question must show the FIRST
+    // result's address, and `at` must not artificially extend a ttl window). A missing vector may be
+    // backfilled once the embedder recovers — that part is not identity, it is capability.
     const cur = await journal.get<SemDupRecord>(semKey(plan.threadId, plan.toolName, plan.argsHash)).catch(() => undefined);
     const rec: SemDupRecord = {
       v: 1,
@@ -350,7 +350,7 @@ export type SemVerdict =
  *  Deterministic field equality. Returns 'none' loudly-typed rather than throwing — fail-open. */
 export async function findSemanticCandidate(journal: Journal, plan: SemPlan, ttlMs?: number): Promise<SemVerdict> {
   // FAIL-OPEN AS A MECHANICAL BOUND, not a promise: every journal read below lives inside this one
-  // Try — a single flaky get/now must degrade to 'none', never throw the TOOL CALL itself into
+  // try — a single flaky get/now must degrade to 'none', never throw the TOOL CALL itself into
   // 'failed' (that would be a regression from today's behavior, the opposite of best-effort).
   try {
     return await scanCandidates(journal, plan, ttlMs);

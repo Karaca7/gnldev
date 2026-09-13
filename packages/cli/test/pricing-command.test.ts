@@ -1,5 +1,5 @@
 // `gnl pricing` through the real plumbing: a temp gnl.config.ts, the real loadConfig, the actual
-// Command.run() including its argument parsing and --json contract.
+// command.run() including its argument parsing and --json contract.
 //
 // The command exists because DEFAULT_PRICING is compiled into @gnldev/durable and providers change
 // prices on their own schedule. A model missing from that table prices at $0, and a $0 step cannot

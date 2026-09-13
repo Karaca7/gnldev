@@ -1,14 +1,14 @@
 // @gnldev/durable/polling — shared poll-loop core (Phase 8.1 review finding: the tick/backoff/"polling"
-// Flag loop in @gnldev/queue, @gnldev/events, @gnldev/scheduler was nearly THREE identical copies). This module
-// Consolidates those three copies into ONE place — external behavior (tick timing, backoff
-// Growth/reset, overlap protection) is preserved exactly; calling packages only pass their own
+// flag loop in @gnldev/queue, @gnldev/events, @gnldev/scheduler was nearly THREE identical copies). This module
+// consolidates those three copies into ONE place — external behavior (tick timing, backoff
+// growth/reset, overlap protection) is preserved exactly; calling packages only pass their own
 // `backoff` default already RESOLVED (queue/events ON, scheduler OFF) — this module doesn't impose its own default.
 //
 // A self-rescheduling setTimeout chain: the next tick is never scheduled until the previous fn()
 // FULLY finishes → the overlap risk that exists with setInterval is structurally absent. The
 // `polling` flag is still extra insurance against possible externally (manually) triggered overlaps.
 // If fn() returns true ("work was done") the interval resets to pollMs; if false ("empty poll") the
-// Interval grows ×2 (capped at maxPollMs) WHEN backoff IS ON, or stays fixed at pollMs WHEN it's OFF.
+// interval grows ×2 (capped at maxPollMs) WHEN backoff IS ON, or stays fixed at pollMs WHEN it's OFF.
 
 export interface PollLoopOptions {
   /** Tick interval (ms). Default 200. */
@@ -26,7 +26,7 @@ export interface PollLoop {
 
 /**
  * `fn` returns whether work was done in a tick (true/false). Errors (if fn() didn't swallow them
- * Internally) are caught and logged here — the chain NEVER dies (the next tick is always scheduled).
+ * internally) are caught and logged here — the chain NEVER dies (the next tick is always scheduled).
  */
 export function createPollLoop(fn: () => Promise<boolean>, opts: PollLoopOptions = {}): PollLoop {
   const pollMs = opts.pollMs ?? 200;
@@ -43,8 +43,8 @@ export function createPollLoop(fn: () => Promise<boolean>, opts: PollLoopOptions
     try {
       progressed = await fn();
     } catch (err) {
-      // Fn() usually swallows its own work/handler errors internally; this is the last resort only
-      // For unexpected (e.g. storage I/O) errors — it matters that the chain NOT DIE (the next tick can still be scheduled).
+      // fn() usually swallows its own work/handler errors internally; this is the last resort only
+      // for unexpected (e.g. storage I/O) errors — it matters that the chain NOT DIE (the next tick can still be scheduled).
       console.warn('@gnldev/durable: poll-loop tick failed (chain continues):', err);
     } finally {
       polling = false;

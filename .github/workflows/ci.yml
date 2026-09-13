@@ -62,6 +62,10 @@ jobs:
       - run: pnpm check:docs
       # VERSIONING.md promises lockstep; a partial bump ships a mismatched pair silently.
       - run: pnpm check:versions
+      # Every error code on the wire has a page under docs/errors. A code is added by the author who
+      # knows why it exists; the page has to be written in that same moment, because nobody
+      # afterwards has the context. This gate is what makes that moment happen.
+      - run: pnpm check:errors
 
 
   integration:

@@ -1,7 +1,7 @@
 // @gnldev/durable/sqlite — node:sqlite implementation of all store ports (dev default).
 // RunJournal = append-only journal (gnl_run_journal) + derived gnl_runs index (indexed readRun/listRuns).
 // MemoryStore = gnl_threads + gnl_messages (per-message PK → idempotent append) + WM + observations.
-// Vectors = 'scan' (brute-force cosine; no pgvector). node:sqlite (loaded at runtime via createRequire).
+// vectors = 'scan' (brute-force cosine; no pgvector). node:sqlite (loaded at runtime via createRequire).
 import { prefixUpperBound } from './organization.js';
 import { assertUniformSeq } from './storage.js';
 import { createRequire } from 'node:module';
@@ -28,62 +28,62 @@ const SCHEMA_VERSION = '1';
 // ── SQLITE_BUSY: bounded retry at the STATEMENT boundary ───────────────────────
 /**
  * WHY (multi-process contention): SQLite admits exactly ONE writer at a time. `busy_timeout` (the
- * Constructor's first pragma) hides most of that contention — but NOT all of it:
+ * constructor's first pragma) hides most of that contention — but NOT all of it:
  *   • SQLite refuses to invoke the busy handler where waiting could deadlock (a read→write lock
- *     Upgrade returns SQLITE_BUSY IMMEDIATELY), and some statements never consult it at all
+ *     upgrade returns SQLITE_BUSY IMMEDIATELY), and some statements never consult it at all
  *     (`PRAGMA journal_mode = WAL` against a concurrent booter fails instantly — measured).
  *   • The timeout is WALL-CLOCK: on a saturated machine (a full test suite, a noisy host) 5s can
- *     Elapse before the OS even schedules this process.
+ *     elapse before the OS even schedules this process.
  * In every one of those cases the caller was handed "database is locked" for a purely TRANSIENT
- * Condition. A durability layer should absorb that (Postgres drivers do the same for transient
- * Conflicts) — and must absorb NOTHING else: only SQLITE_BUSY is retried here; every other error
+ * condition. A durability layer should absorb that (Postgres drivers do the same for transient
+ * conflicts) — and must absorb NOTHING else: only SQLITE_BUSY is retried here; every other error
  * (constraint violations, corruption, misuse) propagates on the FIRST throw, untouched.
  *
  * WHAT IS RETRIED — exactly ONE SQLite statement per attempt. This wrapper sits at the statement
- * Boundary (`exec`, `prepare().run|get|all`), NEVER around a multi-statement block. That placement
- * Is what makes the retry provably safe:
+ * boundary (`exec`, `prepare().run|get|all`), NEVER around a multi-statement block. That placement
+ * is what makes the retry provably safe:
  *   • A statement that fails with SQLITE_BUSY applied NOTHING — it never obtained the write lock, and
  * SQLite rolls back that statement's implicit sub-transaction. There is no half-applied write to
- *     Resume from, so re-executing it cannot apply anything twice.
+ *     resume from, so re-executing it cannot apply anything twice.
  *   • `BEGIN IMMEDIATE` is itself a statement, so the usual contention point IS covered, and retrying
- *     It restarts the transaction from before its first write (a failed BEGIN leaves autocommit mode).
+ *     it restarts the transaction from before its first write (a failed BEGIN leaves autocommit mode).
  * A statement that fails INSIDE an open transaction re-runs alone — the transaction stays open and
- *     Keeps holding its lock, so the already-applied statements are neither lost nor repeated.
+ *     keeps holding its lock, so the already-applied statements are neither lost nor repeated.
  *   • CAS keeps its exact meaning. `putIfAbsent` (INSERT … ON CONFLICT DO NOTHING) and `putIfMatch`
  *     (UPDATE … WHERE value = ?) are decided by the ENGINE at the instant the statement actually
- *     Executes: if a competing process claimed the key while we were backing off, the retry sees
+ *     executes: if a competing process claimed the key while we were backing off, the retry sees
  *     `changes = 0` → `false` = "we lost", which is the TRUTH (our failed attempt wrote nothing).
  * A retry can therefore never manufacture a second winner for the same key.
  * When the bound is exhausted the error is still THROWN: the "never silently swallow, never fake
- * Atomicity" rule (see SqliteRunJournal.withTx) is unchanged — we merely wait a bounded while first.
+ * atomicity" rule (see SqliteRunJournal.withTx) is unchanged — we merely wait a bounded while first.
  *
  * WHY THE BACKOFF IS SYNCHRONOUS: node:sqlite is synchronous and the journal's transaction bodies
- * Must stay await-free — an `await` between BEGIN and COMMIT would let a concurrent caller's
- * Statements join the open transaction (see applyBatch's comment). So the pause blocks the thread
+ * must stay await-free — an `await` between BEGIN and COMMIT would let a concurrent caller's
+ * statements join the open transaction (see applyBatch's comment). So the pause blocks the thread
  * (Atomics.wait — a real sleep, not a spin), exactly as the engine's own busy_timeout wait does.
  *
  * THE BOUND (both halves matter — MEASURED, not guessed). Two very different BUSY regimes exist and
- * One number cannot bound both:
+ * one number cannot bound both:
  *   • FAST regime — the engine returns SQLITE_BUSY without waiting (lock upgrade, `journal_mode`
- *     Pragma). Attempts are ~free, so the ATTEMPT count is the meaningful limit: 10 tries spread over
+ *     pragma). Attempts are ~free, so the ATTEMPT count is the meaningful limit: 10 tries spread over
  *     ≈0.65s of backoff.
  *   • SLOW regime — the busy handler IS consulted and eats the whole `busy_timeout` (measured under a
- *     Saturated 6-way parallel race: the FIRST attempt threw at elapsed=5106ms). Here the attempt
- *     Count is irrelevant and only WALL TIME bounds anything — and the ceiling MUST sit above 5000,
- *     Or the very case this retry exists for gets zero retries. 15s ⇒ ~3 full busy_timeout windows.
+ *     saturated 6-way parallel race: the FIRST attempt threw at elapsed=5106ms). Here the attempt
+ *     count is irrelevant and only WALL TIME bounds anything — and the ceiling MUST sit above 5000,
+ *     or the very case this retry exists for gets zero retries. 15s ⇒ ~3 full busy_timeout windows.
  * Worst case for a caller is therefore ~20s (the last attempt may start just under the ceiling and
- * Then burn its own 5s busy_timeout) — after which the error is THROWN, never swallowed.
+ * then burn its own 5s busy_timeout) — after which the error is THROWN, never swallowed.
  */
 const BUSY_MAX_ATTEMPTS = 10;       // TOTAL executions of the statement (1 initial + 9 retries)
 const BUSY_MAX_ELAPSED_MS = 15_000; // hard ceiling; counts the engine's OWN busy_timeout waits too
 const BUSY_MAX_DELAY_MS = 100;      // backoff: 1,2,4,8,16,32,64,100,100 ms, each +0..100% jitter
 
 /** SQLITE_BUSY only (primary code 5, incl. the BUSY_* extended codes). NOT SQLITE_LOCKED (6) — a
- *  Table-level/shared-cache conflict is not the transient cross-process case and waiting won't fix it. */
+ *  table-level/shared-cache conflict is not the transient cross-process case and waiting won't fix it. */
 function isBusyError(e: unknown): boolean {
   if (e == null || typeof e !== 'object') return false;
   const err = e as { errcode?: unknown; errstr?: unknown; message?: unknown };
-  // Node:sqlite stamps a numeric `errcode` — authoritative, so never second-guess it with a text match
+  // node:sqlite stamps a numeric `errcode` — authoritative, so never second-guess it with a text match
   // (a constraint error whose MESSAGE happened to mention a lock must not be retried).
   if (typeof err.errcode === 'number') return (err.errcode & 0xff) === 5;
   const text = `${String(err.errstr ?? '')} ${String(err.message ?? '')}`;
@@ -122,8 +122,8 @@ function retryOnBusy<T>(fn: () => T): T {
 /**
  * The DatabaseSync handle every store below is given: identical surface (`exec` / `prepare` /
  * `close`), with each statement execution passed through `retryOnBusy`. Wrapping HERE (once, at
- * Construction) rather than at ~25 call sites keeps the retry uniformly at the one granularity that
- * Is safe to repeat — a single statement — instead of leaving it to each caller to get right.
+ * construction) rather than at ~25 call sites keeps the retry uniformly at the one granularity that
+ * is safe to repeat — a single statement — instead of leaving it to each caller to get right.
  */
 class BusyRetryDatabase {
   constructor(readonly inner: any) {}
@@ -158,15 +158,15 @@ type RunRow = {
 };
 /**
  * The materialized flags back into the ONE outcome shape `deriveRunStatus` reads. Written out once
- * Rather than inline at each of the three call sites (listRuns' two queries and countRunsByStatus):
+ * rather than inline at each of the three call sites (listRuns' two queries and countRunsByStatus):
  * The flag→status mapping is precedence-bearing, and three hand-copied ternary chains is exactly how
- * One of them ends up ordering `failed` ahead of `canceled` while the other two do not.
+ * one of them ends up ordering `failed` ahead of `canceled` while the other two do not.
  */
 function outcomeOfRow(r: { failed?: unknown; running?: unknown; canceled?: unknown }): { status: 'canceled' | 'failed' | 'running' } | null {
   return r.canceled ? { status: 'canceled' } : r.failed ? { status: 'failed' } : r.running ? { status: 'running' } : null;
 }
 // P1.5 matchFilter is now shared (storage.ts) — see its JSDoc for the operator
-// Subset ($eq/$ne/$gt/$gte/$lt/$lte/$in/$nin). Import above (was a local exact-equality-only copy).
+// subset ($eq/$ne/$gt/$gte/$lt/$lte/$in/$nin). Import above (was a local exact-equality-only copy).
 function normRange(r?: number | { before: number; after: number }) {
   if (r == null) return { before: 0, after: 0 };
   return typeof r === 'number' ? { before: r, after: r } : r;
@@ -200,12 +200,12 @@ export class SqliteStorage implements Storage {
   constructor(path = ':memory:') {
     this.dbPath = path;
     // Every statement below (and in every store class) goes through the SQLITE_BUSY retry wrapper —
-    // See BusyRetryDatabase. Transient lock contention is absorbed; anything else still throws.
+    // see BusyRetryDatabase. Transient lock contention is absorbed; anything else still throws.
     this.db = new BusyRetryDatabase(new DatabaseSync(path));
     // Busy_timeout MUST be
-    // The FIRST pragma, in its OWN try. It used to be the LAST statement of the shared try below —
-    // When two processes cold-started the same file simultaneously, the WAL switch raced with
-    // Busy_timeout STILL AT 0, threw SQLITE_BUSY, and the shared catch swallowed the error TOGETHER
+    // the FIRST pragma, in its OWN try. It used to be the LAST statement of the shared try below —
+    // when two processes cold-started the same file simultaneously, the WAL switch raced with
+    // busy_timeout STILL AT 0, threw SQLITE_BUSY, and the shared catch swallowed the error TOGETHER
     // WITH the never-executed busy_timeout — so the DDL below then ran unprotected and crashed with
     // "database is locked". Setting the wait first makes every subsequent init statement (WAL switch,
     // DDL, migration) simply WAIT OUT a concurrent booter instead of dying.
@@ -216,8 +216,8 @@ export class SqliteStorage implements Storage {
     }
     // H11a — WRITE SPEED: WAL mode (which the README already promises). The default rollback-journal +
     // FULL fsync was making every INSERT wait for a full disk sync (measured: ~3.7ms/write — slower
-    // Even than a networked Postgres). WAL + synchronous=FULL: commit is still fsync'd (an acked write
-    // Is not lost on a power outage either — the exactly-once precondition is PRESERVED) but the WAL fsync is much cheaper.
+    // even than a networked Postgres). WAL + synchronous=FULL: commit is still fsync'd (an acked write
+    // is not lost on a power outage either — the exactly-once precondition is PRESERVED) but the WAL fsync is much cheaper.
     try {
       this.db.exec('PRAGMA journal_mode = WAL');
       this.db.exec('PRAGMA synchronous = FULL');
@@ -227,7 +227,7 @@ export class SqliteStorage implements Storage {
     }
     this.db.exec(DDL);
     // H11b migration: suspended_count column (for incremental touchRun). Add it if missing from the
-    // Old table + backfill existing rows with a ONE-TIME recount (init cost; O(1) afterward).
+    // old table + backfill existing rows with a ONE-TIME recount (init cost; O(1) afterward).
     // `gnl_vectors.namespace`: the same migration shape as the `gnl_runs` columns below. `CREATE TABLE
     // IF NOT EXISTS` does nothing to a table that already exists, so without this an existing database
     // keeps a four-column `gnl_vectors` and every upsert fails with "no such column: namespace" —
@@ -247,8 +247,8 @@ export class SqliteStorage implements Storage {
     const cols = this.db.prepare(`PRAGMA table_info(gnl_runs)`).all() as { name: string }[];
     if (!cols.some((c) => c.name === 'suspended_count')) {
       // Two processes can BOTH see the column missing and BOTH try
-      // The ALTER — the loser gets "duplicate column name" (the winner already migrated) → benign,
-      // Swallow ONLY that; any other error is real and must surface.
+      // the ALTER — the loser gets "duplicate column name" (the winner already migrated) → benign,
+      // swallow ONLY that; any other error is real and must surface.
       try {
         this.db.exec(`ALTER TABLE gnl_runs ADD COLUMN suspended_count INTEGER NOT NULL DEFAULT 0`);
       } catch (e) {
@@ -258,10 +258,10 @@ export class SqliteStorage implements Storage {
         SELECT COUNT(*) FROM gnl_run_journal j WHERE j.run_id = gnl_runs.run_id AND j.suspended = 1)`);
     }
     // `failed` column: the same shape of migration as suspended_count above. MATERIALIZED at write
-    // Time rather than derived at read time (there is no index on it — the status filter is an
-    // Operator path), because filtering on the serialized outcome value would mean matching the
-    // Word 'failed' inside error MESSAGES. Nothing to backfill — runs written before this have no
-    // Outcome record at all, and 0 is exactly right for them (they read as before).
+    // time rather than derived at read time (there is no index on it — the status filter is an
+    // operator path), because filtering on the serialized outcome value would mean matching the
+    // word 'failed' inside error MESSAGES. Nothing to backfill — runs written before this have no
+    // outcome record at all, and 0 is exactly right for them (they read as before).
     if (!cols.some((c) => c.name === 'failed')) {
       try {
         this.db.exec(`ALTER TABLE gnl_runs ADD COLUMN failed INTEGER NOT NULL DEFAULT 0`);
@@ -270,8 +270,8 @@ export class SqliteStorage implements Storage {
       }
     }
     // `running` (the write-ahead half of the outcome): same shape, same no-backfill argument — an
-    // Outcome with status 'running' only exists from the write-ahead onward, so pre-existing rows
-    // Have nothing to reconstruct it from and 0 reads as before.
+    // outcome with status 'running' only exists from the write-ahead onward, so pre-existing rows
+    // have nothing to reconstruct it from and 0 reads as before.
     if (!cols.some((c) => c.name === 'running')) {
       try {
         this.db.exec(`ALTER TABLE gnl_runs ADD COLUMN running INTEGER NOT NULL DEFAULT 0`);
@@ -280,10 +280,10 @@ export class SqliteStorage implements Storage {
       }
     }
     // `canceled`: same shape, same no-backfill argument again — a cancel recorded no outcome at all
-    // Before this, so there is nothing in an older journal to reconstruct one from, and 0 reads as
-    // Before. Three booleans for one status IS inelegant; they are only ever written together, from a
-    // Single `outcomeStatusOf` value in a single statement (see putCore), so they cannot disagree —
-    // Collapsing them into one materialized `outcome` TEXT column is a schema round of its own.
+    // before this, so there is nothing in an older journal to reconstruct one from, and 0 reads as
+    // before. Three booleans for one status IS inelegant; they are only ever written together, from a
+    // single `outcomeStatusOf` value in a single statement (see putCore), so they cannot disagree —
+    // collapsing them into one materialized `outcome` TEXT column is a schema round of its own.
     if (!cols.some((c) => c.name === 'canceled')) {
       try {
         this.db.exec(`ALTER TABLE gnl_runs ADD COLUMN canceled INTEGER NOT NULL DEFAULT 0`);
@@ -292,10 +292,10 @@ export class SqliteStorage implements Storage {
       }
     }
     // The seed used to be
-    // Check-then-INSERT (SELECT → INSERT if absent) — a TOCTOU: two simultaneous booters both saw no
-    // Row, both inserted, and the loser CRASHED ON BOOT with a UNIQUE constraint. `INSERT OR IGNORE`
-    // Is the engine-atomic form of the same intent (write only if absent; an existing version row —
-    // Whatever it says — is never overwritten, exactly as before).
+    // check-then-INSERT (SELECT → INSERT if absent) — a TOCTOU: two simultaneous booters both saw no
+    // row, both inserted, and the loser CRASHED ON BOOT with a UNIQUE constraint. `INSERT OR IGNORE`
+    // is the engine-atomic form of the same intent (write only if absent; an existing version row —
+    // whatever it says — is never overwritten, exactly as before).
     this.db.prepare(`INSERT OR IGNORE INTO gnl_meta(k,v) VALUES('schema_version', ?)`).run(SCHEMA_VERSION);
     const db = this.db;
     this.runs = new SqliteRunJournal(db);
@@ -314,9 +314,9 @@ export class SqliteStorage implements Storage {
 
   /**
    * H12: reclaiming deleted space on disk. purge/sweep leaves behind empty pages (the engine reuses
-   * Them but doesn't return them to the OS); after a large purge, this method reclaims the disk space.
+   * them but doesn't return them to the OS); after a large purge, this method reclaims the disk space.
    * VACUUM briefly blocks in single-writer SQLite → call it during a cron/maintenance window, NOT on
-   * The hot path. (`full` is ignored on SQLite since VACUUM is already complete.) No-op on a `:memory:` DB.
+   * the hot path. (`full` is ignored on SQLite since VACUUM is already complete.) No-op on a `:memory:` DB.
    */
   /**
    * See `Storage.adoptIntoOrg`. Every table that carries an organization-bearing column is listed here
@@ -405,9 +405,9 @@ export class SqliteStorage implements Storage {
 
   /**
    * P2-migrate the adapter's full DDL as a flat statement array —
-   * Connectionless/pure (no DB access), for CI schema diffing or documenting an out-of-band migration.
+   * connectionless/pure (no DB access), for CI schema diffing or documenting an out-of-band migration.
    * Includes the H11b `suspended_count` migration ALTER the constructor also runs (see migrate.ts's
-   * Header for why this is diffing/documentation rather than a literal one-shot replay script for
+   * header for why this is diffing/documentation rather than a literal one-shot replay script for
    * SQLite specifically: the constructor's own init is eager and can't be disabled).
    */
   exportSchema(): string[] {
@@ -422,9 +422,9 @@ export class SqliteStorage implements Storage {
 
   /**
    * P2-migrate: READ-ONLY dry-run — diffs the LIVE schema (sqlite_master + `PRAGMA table_info`) against
-   * The DDL this adapter expects (parsed once via migrate.ts's `tablesFromDDL`, so "expected" can never
-   * Drift from what the constructor actually creates). Never mutates. Reflects genuine drift even after
-   * Construction (e.g. a manually altered table) — see migrate.ts's header for the construction-time caveat.
+   * the DDL this adapter expects (parsed once via migrate.ts's `tablesFromDDL`, so "expected" can never
+   * drift from what the constructor actually creates). Never mutates. Reflects genuine drift even after
+   * construction (e.g. a manually altered table) — see migrate.ts's header for the construction-time caveat.
    */
   async checkSchema(): Promise<SchemaCheckResult> {
     const expected = tablesFromDDL(DDL);
@@ -448,10 +448,10 @@ export class SqliteStorage implements Storage {
 
   /**
    * P2-migrate: applies exactly the gap checkSchema reports — CREATE TABLE (+ its indexes) for a missing
-   * Table, ADD COLUMN for a missing column — pulled from the SAME DDL text checkSchema/exportSchema
-   * Parse (no hand-copied SQL). Additive ONLY: this never drops or renames anything — destructive schema
-   * Changes are deliberately out of scope, see migrate.ts's header (the run journal is the append-only
-   * Source of truth). `dryRun: true` returns the statements it WOULD run without touching the DB.
+   * table, ADD COLUMN for a missing column — pulled from the SAME DDL text checkSchema/exportSchema
+   * parse (no hand-copied SQL). Additive ONLY: this never drops or renames anything — destructive schema
+   * changes are deliberately out of scope, see migrate.ts's header (the run journal is the append-only
+   * source of truth). `dryRun: true` returns the statements it WOULD run without touching the DB.
    */
   async migrateSchema(opts?: { dryRun?: boolean }): Promise<SchemaMigrationResult> {
     const check = await this.checkSchema();
@@ -475,8 +475,8 @@ export class SqliteStorage implements Storage {
       try {
         this.db.exec(stmt);
       } catch (e) {
-        // Benign only if a concurrent migrator already applied the same ADD COLUMN (mirrors the
-        // Constructor's own H11b duplicate-column swallow, above); any other error is real and surfaces.
+        // benign only if a concurrent migrator already applied the same ADD COLUMN (mirrors the
+        // constructor's own H11b duplicate-column swallow, above); any other error is real and surfaces.
         if (!String((e as Error)?.message ?? e).includes('duplicate column')) throw e;
       }
     }
@@ -530,19 +530,19 @@ class SqliteRunJournal implements RunJournal {
   /**
    * T1 audit fix: the SELECT prev → journal write → gnl_runs delta trio is A SINGLE atomic unit.
    * In autocommit there were two hazards: (1) two PROCESSES both see prev=absent for the same NEW key →
-   * The gnl_runs counter is double-incremented (doesn't happen within a single process since node:sqlite
-   * Is synchronous, but it does across multiple processes); (2) a crash between the suspended write and
-   * The gnl_runs update → stale suspended=0 → retention (sweepRuns's fast path listStaleRuns) could delete a suspended run.
+   * the gnl_runs counter is double-incremented (doesn't happen within a single process since node:sqlite
+   * is synchronous, but it does across multiple processes); (2) a crash between the suspended write and
+   * the gnl_runs update → stale suspended=0 → retention (sweepRuns's fast path listStaleRuns) could delete a suspended run.
    * BEGIN IMMEDIATE: the write lock is acquired upfront → no read→write lock-upgrade BUSY, and
-   * Concurrent processes are fully serialized. If the caller is ALREADY inside a transaction (the
+   * concurrent processes are fully serialized. If the caller is ALREADY inside a transaction (the
    * "within a transaction" error), it proceeds without wrapping — the outer transaction provides
-   * Atomicity (a savepoint is unnecessary: nothing in src/ calls the journal from inside a transaction,
-   * This is purely a safety net for external callers).
+   * atomicity (a savepoint is unnecessary: nothing in src/ calls the journal from inside a transaction,
+   * this is purely a safety net for external callers).
    * Other errors are NOT SWALLOWED — thrown rather than silently dropping atomicity. SQLITE_BUSY is
-   * The one contended-but-transient case, and it is handled WITHOUT weakening that rule: the retry
-   * Lives one level down, per STATEMENT (BusyRetryDatabase — `BEGIN IMMEDIATE` is a statement, so a
-   * Contended lock is retried from before the transaction's first write); once its bound is exhausted
-   * The error still lands here and is still thrown, after this ROLLBACK.
+   * the one contended-but-transient case, and it is handled WITHOUT weakening that rule: the retry
+   * lives one level down, per STATEMENT (BusyRetryDatabase — `BEGIN IMMEDIATE` is a statement, so a
+   * contended lock is retried from before the transaction's first write); once its bound is exhausted
+   * the error still lands here and is still thrown, after this ROLLBACK.
    */
   private withTx<T>(fn: () => T): T {
     let began = false;
@@ -575,9 +575,9 @@ class SqliteRunJournal implements RunJournal {
     ).run(key, p?.runId ?? null, p?.kind ?? null, suspended, serialize(value), Date.now());
     if (!p) {
       // Not a replayable entry — so it gets NO run_id and NO kind in the journal table (readRun and
-      // Time-travel must not start seeing it). But if it belongs to a run, the run itself has to exist
-      // In the index, or a run that died before its first model step is invisible to listRuns and,
-      // Worse, to sweepRuns — its persisted prompt then outlives every retention window.
+      // time-travel must not start seeing it). But if it belongs to a run, the run itself has to exist
+      // in the index, or a run that died before its first model step is invisible to listRuns and,
+      // worse, to sweepRuns — its persisted prompt then outlives every retention window.
       const owner = runIdOfKey(key, value);
       const oc = outcomeStatusOf(key, value);
       if (!owner && oc === null) { upsert(); return; } // genuinely run-less key (queues, events, cache)
@@ -585,10 +585,10 @@ class SqliteRunJournal implements RunJournal {
         upsert();
         if (owner) this.touchRunDelta(owner, null, false, 0);
         // The outcome carries its OWN path rather than riding on run ownership: it is not a versioned
-        // Record, so runIdOfKey (which now demands that proof) does not claim it. The UPDATE only
-        // Touches a row that already exists, so it cannot invent a run. ALL THREE flags from ONE
-        // Status in ONE statement, so they can never disagree — and every transition clears its
-        // Predecessors (running→canceled leaves running=0, which is what the five-way filter reads).
+        // record, so runIdOfKey (which now demands that proof) does not claim it. The UPDATE only
+        // touches a row that already exists, so it cannot invent a run. ALL THREE flags from ONE
+        // status in ONE statement, so they can never disagree — and every transition clears its
+        // predecessors (running→canceled leaves running=0, which is what the five-way filter reads).
         if (oc !== null) {
           const runId = key.slice(0, -':outcome'.length);
           // The write-ahead 'running' is the FIRST write of a brand-new run — before `:input`, before
@@ -606,7 +606,7 @@ class SqliteRunJournal implements RunJournal {
     this.withTx(() => {
       // H11b: an O(1) point read BEFORE writing → is-new-row + old suspended (for the incremental touch).
       // The old touchRun used to SUM ALL rows of the run on every write → write cost GREW with the
-      // Run's length (measured: +8% at 3000 steps, linear). Now it's O(1).
+      // run's length (measured: +8% at 3000 steps, linear). Now it's O(1).
       const prev = this.db.prepare(`SELECT suspended FROM gnl_run_journal WHERE key = ?`).get(key) as { suspended: number } | undefined;
       upsert();
       this.touchRunDelta(p.runId, p.kind, prev === undefined, suspended - (prev?.suspended ?? 0));
@@ -653,7 +653,7 @@ class SqliteRunJournal implements RunJournal {
    * The STORED FORM is PLAIN serialize() TEXT (no envelope) → the comparison happens directly in SQL:
    * `WHERE key=? AND value=serialize(expected)` — the TOCTOU window is closed inside the engine.
    * Contract assumption: the superjson roundtrip is stable (serialize(deserialize(s)) === s) — holds
-   * For plain objects like LockRecord; on a deviation it just won't match → false = the SAFE side (no takeover that round).
+   * for plain objects like LockRecord; on a deviation it just won't match → false = the SAFE side (no takeover that round).
    */
   async putIfMatch(key: string, expected: unknown, value: unknown): Promise<boolean> {
     const p = parseJournalKey(key);
@@ -678,8 +678,8 @@ class SqliteRunJournal implements RunJournal {
     }
     // T1 (symmetric with the Postgres side): there's already no await between UPDATE and recountRun in
     // JS (structurally atomic within a single process) but the CRASH window is a separate concern — if
-    // The process dies between the two, gnl_runs stays stale (this rare path had been untested until
-    // Now). withTx provides the same BEGIN IMMEDIATE/COMMIT protection here too; the cost is negligible (takeover is a rare path).
+    // the process dies between the two, gnl_runs stays stale (this rare path had been untested until
+    // now). withTx provides the same BEGIN IMMEDIATE/COMMIT protection here too; the cost is negligible (takeover is a rare path).
     return this.withTx(() => {
       const ok = Number(upd().changes ?? 0) === 1;
       if (ok) this.recountRun(p.runId); // rare path (takeover) → a full recount is safe and sufficient
@@ -721,10 +721,10 @@ class SqliteRunJournal implements RunJournal {
   }
   /**
    * H11b — O(1) INCREMENTAL gnl_runs update (hot path). The old recompute used to SUM ALL rows of
-   * The run on every write → write cost grew with the run's length. Now: a fresh insert →
-   * Counter +1; an overwrite → counter unchanged; suspended is kept as a SIGNED sum of row transitions
+   * the run on every write → write cost grew with the run's length. Now: a fresh insert →
+   * counter +1; an overwrite → counter unchanged; suspended is kept as a SIGNED sum of row transitions
    * (suspended_count) → it can correctly DECREASE on a suspended-to-succeeded transition (a boolean MAX
-   * Couldn't do that). The `suspended` boolean is derived in the same expression (count+delta > 0).
+   * couldn't do that). The `suspended` boolean is derived in the same expression (count+delta > 0).
    */
   private touchRunDelta(runId: string, kind: 'model' | 'tool' | null, isInsert: boolean, suspendedDelta: number): void {
     const m = isInsert && kind === 'model' ? 1 : 0;
@@ -779,8 +779,8 @@ class SqliteRunJournal implements RunJournal {
     const rr = range('run_id', prefix);
     this.db.prepare(`DELETE FROM gnl_runs WHERE run_id = ? OR (${rr.where})`).run(rid, ...rr.params);
     // Counters (incrBy/H8a) are keys too — the deletePrefix contract (journal.ts) says ALL keys under
-    // The prefix go. Without this, an org purge (GDPR) left `org:<id>:__usage__` behind forever, and
-    // RebuildMetrics's wipe kept stale `__metrics__:` counters (recompute would ADD on top of them).
+    // the prefix go. Without this, an org purge (GDPR) left `org:<id>:__usage__` behind forever, and
+    // rebuildMetrics's wipe kept stale `__metrics__:` counters (recompute would ADD on top of them).
     // Not included in the return count, same as the derived gnl_runs rows above.
     const cr = range('key', prefix);
     this.db.prepare(`DELETE FROM gnl_counters WHERE ${cr.where}`).run(...cr.params);
@@ -797,23 +797,23 @@ class SqliteRunJournal implements RunJournal {
   /**
    * AUDIT (threadId first-class): surface the threadId from the run's invisible `:input` entry
    * (`<run_id>:input`) in A SINGLE query — the (per-row correlated) subquery is NOT N+1, it's part
-   * Of the single SELECT. Ordering (LIMIT/OFFSET) is already applied on `gnl_runs` → the subquery
-   * Only runs for the rows on that page (the SQLite planner applies the subquery to the rows after LIMIT).
+   * of the single SELECT. Ordering (LIMIT/OFFSET) is already applied on `gnl_runs` → the subquery
+   * only runs for the rows on that page (the SQLite planner applies the subquery to the rows after LIMIT).
    *
    * P0.3 filters: `status` is pushed down to SQL as a WHERE on the materialized
    * `gnl_runs.suspended` column — same boolean `listRuns` already derives status FROM (`r.suspended ?
    * 'suspended' : 'completed'`), so it cannot drift from the unfiltered read. `agent` has NO indexed
-   * Column of its own (it lives inside the superjson-serialized `:input` blob) — pushing it into SQL
-   * Would mean parsing that blob in a WHERE clause, which isn't sargable anyway. Honest cost: when
+   * column of its own (it lives inside the superjson-serialized `:input` blob) — pushing it into SQL
+   * would mean parsing that blob in a WHERE clause, which isn't sargable anyway. Honest cost: when
    * `agent` is given, this fetches every (status-filtered) run's summary WITHOUT LIMIT/OFFSET, decodes
    * `:input` for each, filters+paginates in JS (filter BEFORE slicing — never after). Acceptable since
-   * The agent filter is an operator/debug tool, not a hot path; a dedicated `agent` column+index would
-   * Be the fix if this ever becomes a bottleneck at scale.
+   * the agent filter is an operator/debug tool, not a hot path; a dedicated `agent` column+index would
+   * be the fix if this ever becomes a bottleneck at scale.
    */
   async listRuns(q?: ListQuery): Promise<Page<RunSummary>> {
     const { start, limit } = offset(q);
     // Five-way, still entirely in SQL and still on indexed columns — 'canceled' outranks 'suspended',
-    // Which outranks the rest of the recorded outcome, matching deriveRunStatus exactly (see
+    // which outranks the rest of the recorded outcome, matching deriveRunStatus exactly (see
     // journal.ts), so a filtered page and an unfiltered scan can never disagree about the same run.
     const statusWhere =
       q?.status === 'canceled' ? ' WHERE canceled = 1'
@@ -824,26 +824,29 @@ class SqliteRunJournal implements RunJournal {
       : '';
     const statusParams: unknown[] = [];
     const toSummary = (r: RunRow): RunSummary => {
-      const input = r.input_val ? deserialize<{ threadId?: string; agent?: string; resourceId?: string }>(r.input_val) : undefined;
+      const input = r.input_val ? deserialize<{ threadId?: string; agent?: string; resourceId?: string; workKey?: string }>(r.input_val) : undefined;
       return {
         runId: r.run_id, status: deriveRunStatus(!!r.suspended, outcomeOfRow(r)), modelSteps: r.model_steps, toolCalls: r.tool_calls,
         ...(input?.threadId ? { threadId: input.threadId } : {}),
         ...(input?.agent ? { agent: input.agent } : {}),
         ...(input?.resourceId ? { resourceId: input.resourceId } : {}),
+        ...(input?.workKey ? { workKey: input.workKey } : {}),
       };
     };
-    // `agent` and `resourceId` share ONE path: neither is a column, both live inside the `:input` blob,
-    // so both are filtered after the summary is built. Written as a single branch rather than two so a
-    // request carrying BOTH cannot take a branch that applies only one of them — and so the
-    // filter-BEFORE-slice contract (JournalReader.listRunsPaged) is satisfied once, not per filter.
-    if (q?.agent || q?.resourceId) {
+    // `agent`, `resourceId` and `workKey` share ONE path: none is a column, all three live inside the
+    // `:input` blob, so all three are filtered after the summary is built. Written as a single branch
+    // rather than three so a request carrying more than one cannot take a branch that applies only
+    // some of them — and so the filter-BEFORE-slice contract (JournalReader.listRunsPaged) is
+    // satisfied once, not per filter.
+    if (q?.agent || q?.resourceId || q?.workKey) {
       const rows = this.db.prepare(
         `SELECT r.run_id, r.model_steps, r.tool_calls, r.suspended, r.failed, r.running, r.canceled,
                 (SELECT value FROM gnl_run_journal WHERE key = r.run_id || ':input') AS input_val
          FROM gnl_runs r${statusWhere} ORDER BY r.created_at, r.run_id`,
       ).all(...statusParams) as RunRow[];
       const all = rows.map(toSummary)
-        .filter((r) => (q.agent ? r.agent === q.agent : true) && (q.resourceId ? r.resourceId === q.resourceId : true));
+        .filter((r) => (q.agent ? r.agent === q.agent : true) && (q.resourceId ? r.resourceId === q.resourceId : true)
+          && (q.workKey ? r.workKey === q.workKey : true));
       return pageOf(all.slice(start, start + limit), start, limit, all.length);
     }
     const total = (this.db.prepare(`SELECT COUNT(*) AS n FROM gnl_runs${statusWhere}`).get(...statusParams) as { n: number }).n;
@@ -858,18 +861,18 @@ class SqliteRunJournal implements RunJournal {
   /**
    * P1.6b: atomic batch — claim (putIfAbsent semantics) + counter increments + puts as ONE transaction.
    * Written out explicitly (mirroring `withTx`'s BEGIN IMMEDIATE/COMMIT/ROLLBACK idiom) rather than
-   * Reusing `withTx` directly because it needs to `await` the existing `put`/`putIfAbsent`/`incrBy`
-   * Calls in between — `withTx`'s `fn` is synchronous. Those calls detect the already-open transaction
+   * reusing `withTx` directly because it needs to `await` the existing `put`/`putIfAbsent`/`incrBy`
+   * calls in between — `withTx`'s `fn` is synchronous. Those calls detect the already-open transaction
    * (the SAME "within a transaction" reentrancy `withTx` already relies on) and skip their OWN
    * BEGIN/COMMIT → ALL derived bookkeeping (gnl_runs `touchRunDelta` etc.) is reused as-is, no SQL
-   * Duplicated. Claim-loses → `false`, with NOTHING else applied (checked FIRST, before any incr/put).
+   * duplicated. Claim-loses → `false`, with NOTHING else applied (checked FIRST, before any incr/put).
    */
   // P1.6b: ONE synchronous withTx block with ZERO awaits inside — critical, not stylistic. node:sqlite
-  // Is sync, but an `await` between BEGIN and COMMIT yields to the event loop, and a CONCURRENT caller's
-  // Statements would then JOIN this open transaction (its own nested BEGIN is swallowed by withTx) —
-  // Our ROLLBACK could erase its committed-in-good-faith writes. The sync cores (putIfAbsentCore/
-  // IncrByCore/putCore) exist precisely so this block never yields; their internal withTx nesting is
-  // Safe (began=false inner → no premature COMMIT). Claim lost → return false; withTx commits the
+  // is sync, but an `await` between BEGIN and COMMIT yields to the event loop, and a CONCURRENT caller's
+  // statements would then JOIN this open transaction (its own nested BEGIN is swallowed by withTx) —
+  // our ROLLBACK could erase its committed-in-good-faith writes. The sync cores (putIfAbsentCore/
+  // incrByCore/putCore) exist precisely so this block never yields; their internal withTx nesting is
+  // safe (began=false inner → no premature COMMIT). Claim lost → return false; withTx commits the
   // (empty) transaction — nothing was written, so that commit is a no-op by construction.
   async applyBatch(batch: JournalBatch): Promise<boolean> {
     return this.withTx(() => {
@@ -881,7 +884,7 @@ class SqliteRunJournal implements RunJournal {
   }
 
   /** P1.6b: batch point-read — a single `WHERE key IN (...)` instead of N sequential `get` calls;
-   *  Order-preserving, `undefined` for misses (getMany contract, journal.ts). */
+   *  order-preserving, `undefined` for misses (getMany contract, journal.ts). */
   async getMany<T = unknown>(keys: string[]): Promise<(T | undefined)[]> {
     if (keys.length === 0) return [];
     const placeholders = keys.map(() => '?').join(',');
@@ -892,8 +895,8 @@ class SqliteRunJournal implements RunJournal {
 
   /**
    * P1.6b: push-down status aggregate — a single `GROUP BY` over the same materialized `gnl_runs`
-   * Columns, MUST MATCH listRuns' own status derivation (deriveRunStatus: canceled, then suspended,
-   * Then failed, then running) — same columns, same order, so it cannot drift. `canceled` leads the
+   * columns, MUST MATCH listRuns' own status derivation (deriveRunStatus: canceled, then suspended,
+   * then failed, then running) — same columns, same order, so it cannot drift. `canceled` leads the
    * CASE for the same reason it leads deriveRunStatus: a run canceled while suspended is over.
    */
   async countRunsByStatus(): Promise<Record<string, number>> {
@@ -1068,7 +1071,7 @@ class SqliteMemoryStore implements MemoryStore {
   /**
    * FLOW-10: tail-truncate — deletes every row with seq > afterSeq for the thread; afterSeq itself
    * (and everything before it) is kept. `gnl_messages`' PK is (thread_id, seq), so this is a direct
-   * Indexed range delete. Unknown/nonexistent threadId simply matches zero rows → 0, never throws.
+   * indexed range delete. Unknown/nonexistent threadId simply matches zero rows → 0, never throws.
    * Observations (gnl_observations) are a separate table and are intentionally left untouched.
    */
   async deleteMessagesAfter(threadId: string, afterSeq: number): Promise<number> {
@@ -1119,7 +1122,7 @@ class SqliteMemoryStore implements MemoryStore {
       for (let i = lo; i <= hi; i++) picked.set(`${h.tid}:${msgs[i]!.seq}`, msgs[i]!);
     }
     // Provenance: stamp the similarity on the HITS (after the neighbor loop, so a message that is
-    // Both a neighbor and a hit keeps its score). Per-call copies (rowToMsg) — nothing is persisted.
+    // both a neighbor and a hit keeps its score). Per-call copies (rowToMsg) — nothing is persisted.
     for (const h of hits) picked.set(`${h.tid}:${h.m.seq}`, { ...h.m, score: h.score });
     return [...picked.values()].sort((a, b) => a.ts - b.ts || a.seq - b.seq);
   }
@@ -1203,9 +1206,9 @@ class SqliteWorkStore implements WorkStore {
   }
   /**
    * 8.2: SAME pattern as SqliteRunJournal.putIfMatch's `!p` branch (unlike gnl_run_journal's derived
-   * Gnl_runs index, gnl_work_kv has NO derived index → no need to wrap with BEGIN IMMEDIATE, a single
+   * gnl_runs index, gnl_work_kv has NO derived index → no need to wrap with BEGIN IMMEDIATE, a single
    * UPDATE statement is already atomic in SQLite). The STORED FORM is PLAIN serialize() TEXT (no
-   * Envelope) → the comparison happens directly in SQL: `WHERE key=? AND value=serialize(expected)`.
+   * envelope) → the comparison happens directly in SQL: `WHERE key=? AND value=serialize(expected)`.
    */
   async putIfMatch(key: string, expected: unknown, value: unknown): Promise<boolean> {
     const info = this.db.prepare('UPDATE gnl_work_kv SET value = ? WHERE key = ? AND value = ?')

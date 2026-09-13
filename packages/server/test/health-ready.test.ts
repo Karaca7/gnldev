@@ -46,8 +46,8 @@ function throwingJournal() {
 
 /**
  * A working journal that COUNTS the reads /ready makes. `delayMs` keeps a read open long enough that a
- * Burst is genuinely concurrent — without it the first read settles before the twentieth request arrives
- * And the cache, not the coalescing, would be what the burst test measures.
+ * burst is genuinely concurrent — without it the first read settles before the twentieth request arrives
+ * and the cache, not the coalescing, would be what the burst test measures.
  */
 function countingJournal(delayMs = 0) {
   const inner = new InMemoryStorage().runs as any;
@@ -106,7 +106,7 @@ describe('liveness and readiness', () => {
     const started = Date.now();
     const res = await hit(api, '/ready');
     // An unreachable database usually hangs rather than refusing. A probe that never answers is read
-    // As a timeout by some orchestrators and as success by others; answer either way.
+    // as a timeout by some orchestrators and as success by others; answer either way.
     expect(res.status).toBe(503);
     expect(Date.now() - started).toBeLessThan(10_000);
   }, 20_000);
@@ -121,7 +121,7 @@ describe('liveness and readiness', () => {
 
   it('collapses a burst of probes into one read, and still answers every one of them', async () => {
     // /ready is unauthenticated, so anyone who can reach the port sets the rate. Against a real database
-    // Each request would be a real query — and when storage hangs, a parked connection for 2s each.
+    // each request would be a real query — and when storage hangs, a parked connection for 2s each.
     // 200ms, not 20ms: the read's duration IS the coalescing window, and the assertion below allows
     // only one slip past it. At 20ms a 20ms hiccup between the first probe reaching the journal and
     // the last one doing so opens a third window and turns this red with the coalescing working
@@ -173,7 +173,7 @@ describe('liveness and readiness', () => {
 
       const readiness = warn.mock.calls.filter((c) => String(c[0]).includes('readiness probe failed'));
       // Otherwise an unauthenticated caller writes the operator's log for them, and the first useful line
-      // Scrolls away under its own repetitions.
+      // scrolls away under its own repetitions.
       expect(readiness).toHaveLength(1);
       expect(String(readiness[0][0])).toContain('repeats suppressed for 30s');
     } finally {

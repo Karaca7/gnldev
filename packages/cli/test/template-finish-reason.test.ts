@@ -1,23 +1,29 @@
-// The scaffolded templates' mock models must report the finish reason in the shape a v4 provider
-// emits and AI SDK 7 reads: `finishReason: { unified, raw }`. A bare string leaves
-// `finishReason.unified` undefined, and from ai@7.0.70 the agent loop stops BEFORE executing any
-// tool — so `gnl init --template full` shipped an agent that never called its tool, and the
-// template's own `pnpm test` failed 2/2 on a fresh scaffold.
+// The scaffolded mock models must report the finish reason in the shape a v4 provider emits and AI
+// SDK 7 reads: `finishReason: { unified, raw }`. A bare string leaves `finishReason.unified`
+// undefined, and from ai@7.0.70 the agent loop stops BEFORE executing any tool — so
+// `gnl init --template full` shipped an agent that never called its tool, and the project's own
+// `pnpm test` failed 2/2 on a fresh scaffold.
+//
+// TWO models, from two places. `templates/minimal/src/model.ts` is the starter every project begins
+// with; `templates/_idempotency/src/model.ts` is the tool-calling one the charge-tool feature brings
+// with it (it used to be `templates/full`'s, before that template became an alias). The second is the
+// one the regression above was found in, and the only one where the SDK's tool loop is exercised at
+// all — so it is the half that must not be lost when a template directory is.
 //
 // This file lives in packages/cli/test (NOT in templates/*/test): the root vitest config only
 // includes `packages/*/test/**`, so a test placed next to the template would never run in CI. It
 // reaches the template by relative path instead.
 //
-// NOTE ON `ai`: the model factories are not exported by the templates — `assistant.model` IS the
-// model object, so it is imported through the AgentConfig the template exports. The templates'
-// `@gnldev/durable` import is type-only (erased); `./tools.js` resolves to the template's own
-// tools.ts through vite's TS extension resolution.
+// NOTE ON `ai`: the model factories are not exported — `assistant.model` IS the model object, so it
+// is imported through the AgentConfig each file exports. The `@gnldev/durable` import is type-only
+// (erased). `./tools.js` in the charge model resolves through vite's TS extension resolution to the
+// RECIPE's output; there is no tools.ts sitting next to it, so it is aliased below.
 import { describe, it, expect } from 'vitest';
 import { generateText, stepCountIs, tool } from 'ai';
 import { z } from 'zod';
 import { createRequire } from 'node:module';
 import { assistant as minimalAssistant } from '../templates/minimal/src/model.js';
-import { assistant as fullAssistant } from '../templates/full/src/model.js';
+import { assistant as chargeAssistant } from '../templates/_idempotency/src/model.js';
 
 const aiVersion: string = createRequire(import.meta.url)('ai/package.json').version;
 
@@ -34,7 +40,7 @@ async function drain(stream: ReadableStream<any>): Promise<any[]> {
 }
 
 const minimalModel = minimalAssistant.model as any;
-const fullModel = fullAssistant.model as any;
+const chargeModel = chargeAssistant.model as any;
 
 /** A tool-result message shaped like the one the SDK feeds back on the second turn. */
 const AFTER_TOOL_PROMPT = [
@@ -66,10 +72,10 @@ describe('template mock models emit finishReason as {unified, raw}', () => {
     expect(finishPart.finishReason.unified).toBe('stop');
   });
 
-  // Turn 1 is the one that broke the `full` template: 'tool-calls' as a bare string means the loop
-  // never runs chargeOrder, and the template exists to demonstrate exactly-once side effects.
-  it('full toolCallingMock doGenerate turn 1: finishReason is an object with unified === "tool-calls"', async () => {
-    const r = await fullModel.doGenerate({ prompt: [{ role: 'user', content: [{ type: 'text', text: 'charge order-1' }] }] });
+  // Turn 1 is the one that broke: 'tool-calls' as a bare string means the loop never runs
+  // chargeOrder, and this model exists to demonstrate exactly-once side effects.
+  it('charge toolCallingMock doGenerate turn 1: finishReason is an object with unified === "tool-calls"', async () => {
+    const r = await chargeModel.doGenerate({ prompt: [{ role: 'user', content: [{ type: 'text', text: 'charge order-1' }] }] });
     expect(typeof r.finishReason).toBe('object');
     expect(r.finishReason.unified).toBe('tool-calls');
     expect(r.finishReason.raw).toBe('tool-calls');
@@ -77,15 +83,15 @@ describe('template mock models emit finishReason as {unified, raw}', () => {
     expect(r.content[0].toolName).toBe('chargeOrder');
   });
 
-  it('full toolCallingMock doGenerate turn 2 (a tool result is in the prompt): unified === "stop"', async () => {
-    const r = await fullModel.doGenerate({ prompt: AFTER_TOOL_PROMPT });
+  it('charge toolCallingMock doGenerate turn 2 (a tool result is in the prompt): unified === "stop"', async () => {
+    const r = await chargeModel.doGenerate({ prompt: AFTER_TOOL_PROMPT });
     expect(typeof r.finishReason).toBe('object');
     expect(r.finishReason.unified).toBe('stop');
     expect(r.content[0].type).toBe('text');
   });
 
-  it('full toolCallingMock doStream: the finish part carries finishReason.unified === "stop"', async () => {
-    const { stream } = await fullModel.doStream({ prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] });
+  it('charge toolCallingMock doStream: the finish part carries finishReason.unified === "stop"', async () => {
+    const { stream } = await chargeModel.doStream({ prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] });
     const finishPart = (await drain(stream)).find((p) => p.type === 'finish');
     expect(finishPart).toBeTruthy();
     expect(typeof finishPart.finishReason).toBe('object');
@@ -95,8 +101,8 @@ describe('template mock models emit finishReason as {unified, raw}', () => {
   // Guards the OTHER half of the same v4 migration, which is what made the finish-reason half easy to
   // miss: usage counts are nested in v7 and a flat `{inputTokens: 1}` reads as undefined, so a spend
   // ceiling would price the run at zero.
-  it('both templates report v4 nested usage (usage.inputTokens.total), not a flat count', async () => {
-    for (const m of [minimalModel, fullModel]) {
+  it('both scaffolded models report v4 nested usage (usage.inputTokens.total), not a flat count', async () => {
+    for (const m of [minimalModel, chargeModel]) {
       const r = await m.doGenerate({ prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] });
       expect(typeof r.usage.inputTokens).toBe('object');
       expect(r.usage.inputTokens.total).toBe(1);
@@ -107,7 +113,7 @@ describe('template mock models emit finishReason as {unified, raw}', () => {
 });
 
 // ── B2: the consequence, read back through the SDK's own result ─────────────
-describe('the full template model driven through ai\'s generateText', () => {
+describe('the charge model driven through ai\'s generateText', () => {
   // The SDK's OWN reading of the finish reason, which discriminates on the version installed here.
   //
   // The tool-execution consequence only appears from ai@7.0.70, so a test that asserts "the tool
@@ -125,7 +131,7 @@ describe('the full template model driven through ai\'s generateText', () => {
   it('reports finishReason "stop" — a bare string leaves it undefined on this very version', async () => {
     let fired = 0;
     const res = await generateText({
-      model: fullModel,
+      model: chargeModel,
       prompt: 'charge order-1',
       stopWhen: stepCountIs(4),
       tools: {
@@ -141,7 +147,7 @@ describe('the full template model driven through ai\'s generateText', () => {
     // The step that emitted the tool call must report the reason that MEANS "a tool call is pending".
     expect(res.steps[0]?.finishReason, 'the tool-calling turn reported no finish reason').toBe('tool-calls');
     // And the consequence the 7.0.70 loop enforces, kept for when `ai` is bumped past it.
-    expect(fired, 'the template that exists to demonstrate exactly-once side effects performed none').toBe(1);
+    expect(fired, 'the model that exists to demonstrate exactly-once side effects performed none').toBe(1);
     expect(res.text.length).toBeGreaterThan(0);
   });
 

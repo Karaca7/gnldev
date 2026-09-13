@@ -12,9 +12,9 @@ import type { RunLimits } from './limits.js';
 /**
  * carry taint across the sub-agent runId boundary. Taint is keyed per-run, so a nested run
  * (`agent:${toolCallId}`) starts CLEAN even when its parent is tainted — a side effect inside the
- * Sub-agent would then bypass the parent's `taintedSideEffects` ladder. If the parent is tainted at the
- * Moment it spawns the sub-agent, mark the nested run tainted BEFORE it executes any tools, preserving
- * The ORIGINAL provenance and noting it was inherited. Only-stricter / fail-safe: an un-tainted parent
+ * sub-agent would then bypass the parent's `taintedSideEffects` ladder. If the parent is tainted at the
+ * moment it spawns the sub-agent, mark the nested run tainted BEFORE it executes any tools, preserving
+ * the ORIGINAL provenance and noting it was inherited. Only-stricter / fail-safe: an un-tainted parent
  * (or an unknown parentRunId) changes nothing. First-wins/idempotent, so a resume re-marks harmlessly.
  */
 async function inheritParentTaint(journal: Journal, parentRunId: string | undefined, nestedRunId: string): Promise<void> {
@@ -39,10 +39,10 @@ export interface AgentToolConfig {
   maxSteps?: number;
   /**
    * TASK W1 fan-out inheritance: the parent's `limits` is passed to the sub-agent AS-IS → the sub-agent
-   * Independently bounds its own execution against this same ceiling too (prevents a single sub-agent
-   * From spending without limit on its own). Also, the parent's OWN limit check (`limits.ts`
+   * independently bounds its own execution against this same ceiling too (prevents a single sub-agent
+   * from spending without limit on its own). Also, the parent's OWN limit check (`limits.ts`
    * `scopedUsage`) RECURSIVELY sums this sub-agent's (nested `runId = agent:${toolCallId}`) usage in the
-   * Journal too → the total (parent + all sub-agents) can NEVER bypass the parent's ceiling.
+   * journal too → the total (parent + all sub-agents) can NEVER bypass the parent's ceiling.
    */
   limits?: RunLimits;
   /**
@@ -73,9 +73,9 @@ export interface AgentToolConfig {
   approvals?: Record<string, boolean>;
   /**
    * The runId of the parent that spawned this sub-agent. When the parent is tainted, its taint
-   * Is carried into the nested run so the sub-agent's side effects go through the SAME `taintedSideEffects`
-   * Ladder. The agent-as-tool path (`createAgentTool`) reads this per-call from `options.parentRunId`; the
-   * Network path (`runNetwork` → `runSubAgent`) passes the router's runId here.
+   * is carried into the nested run so the sub-agent's side effects go through the SAME `taintedSideEffects`
+   * ladder. The agent-as-tool path (`createAgentTool`) reads this per-call from `options.parentRunId`; the
+   * network path (`runNetwork` → `runSubAgent`) passes the router's runId here.
    */
   parentRunId?: string;
 }
@@ -132,7 +132,7 @@ export function createAgentTool(
 // require, keeps our published surface ours and our dependency list honest.
 ): Tool<{ task: string }, { text: string; interrupts: Interrupt[] }> & { idempotent: boolean } {
   // H7: the nested run is ITSELF durable → a repeated call replays from its own journal, produces
-  // No side effect → idempotent (smooth resume without getting stuck at the crash-window gate).
+  // no side effect → idempotent (smooth resume without getting stuck at the crash-window gate).
   return Object.assign(tool({
     description: opts?.description ?? 'Delegate a task to an expert sub-agent',
     inputSchema: z.object({ task: z.string().describe('the task/question to give the sub-agent') }),
@@ -155,7 +155,7 @@ export function createAgentTool(
       const nestedRunId = nestedAgentRunId(parentRunId, options?.toolCallId);
       const model = typeof config.model === 'function' ? await config.model(nestedRunId) : config.model;
       // The parent runId is injected into the tool's execute options by durable-tool.ts. If the
-      // Parent is tainted, carry that taint into the nested run before it runs any side-effect tool.
+      // parent is tainted, carry that taint into the nested run before it runs any side-effect tool.
       await inheritParentTaint(config.journal, parentRunId, nestedRunId);
       const res = await runDurable({
         runId: nestedRunId,

@@ -12,22 +12,22 @@ import type { JournalReader } from './journal.js';
 
 /**
  * Wraps the model: RECORDS every LLM response into the journal keyed by (runId, stepIndex);
- * On resume, REPLAYS the same response → the agent makes the same decision (deterministic replay).
+ * on resume, REPLAYS the same response → the agent makes the same decision (deterministic replay).
  *
- * StepIndex only advances after a SUCCESSFUL generate; on a transient error (retry) the same
- * Key is reused → retries do not shift the replay key.
+ * stepIndex only advances after a SUCCESSFUL generate; on a transient error (retry) the same
+ * key is reused → retries do not shift the replay key.
  */
 
 // Model-step write-ahead claim record — SAME IDEA as durableTool's 'running'/'succeeded'/'failed'
-// Claim pattern, but carries a model-specific field (reqHash).
+// claim pattern, but carries a model-specific field (reqHash).
 type ModelClaimRecord = { status: 'running' | 'succeeded' | 'failed'; startedAt: number; reqHash?: string };
 
 /**
- * The core-hardening review (opt-in): model-step exclusivity. When enabled, the worker that LOSES the
- * Claim race gets a `RunBusyError` if the existing record is 'running' and FRESH (startedAt newer
- * Than ttlMs ago) → prevents duplicate `doGenerate` (double token cost) under concurrent multi-resume.
+ * the core-hardening review (opt-in): model-step exclusivity. When enabled, the worker that LOSES the
+ * claim race gets a `RunBusyError` if the existing record is 'running' and FRESH (startedAt newer
+ * than ttlMs ago) → prevents duplicate `doGenerate` (double token cost) under concurrent multi-resume.
  * STALE 'running' (crashed owner) continues with the existing behavior — the fast crash-resume window
- * Is NOT BROKEN.
+ * is NOT BROKEN.
  */
 export type ExclusiveStepOptions = { ttlMs?: number };
 
@@ -36,8 +36,8 @@ export type DurableModelOptions = {
   exclusiveStep?: ExclusiveStepOptions;
   /**
    * Y1 (opt-in): model step timeout (ms). Applied to the entire doGenerate in generate; in stream,
-   * Applied to the doStream call (up to the first byte) — NOT to the entire streaming flow (the
-   * Stream already progresses in chunks, the hang risk is in connection setup). On timeout,
+   * applied to the doStream call (up to the first byte) — NOT to the entire streaming flow (the
+   * stream already progresses in chunks, the hang risk is in connection setup). On timeout,
    * StepTimeoutError is thrown → claim is marked 'failed', retry/resume retries the same step
    * (replay key does not shift).
    */
@@ -55,13 +55,13 @@ async function journalNow(ctx: DurableCtx): Promise<number> {
 /**
  * §5.3: write the model-step 'running' claim — with an optional exclusivity gate.
  *
- * Exclusive OFF (default): existing behavior EXACTLY — unconditional `put` (overwrites), never throws.
- * Exclusive ON: tries an atomic `claim` (putIfAbsent); if lost, checks the existing record:
+ * exclusive OFF (default): existing behavior EXACTLY — unconditional `put` (overwrites), never throws.
+ * exclusive ON: tries an atomic `claim` (putIfAbsent); if lost, checks the existing record:
  * 'running' + FRESH (now - startedAt < ttlMs) → `RunBusyError` (another worker is processing that step).
  * 'running' + STALE / 'failed' / other → existing behavior: overwrite, continue (the double-call
- *     Risk is deliberately accepted — the FAST resume after a real crash happens in this window).
+ *     risk is deliberately accepted — the FAST resume after a real crash happens in this window).
  * NOTE: RunBusyError is thrown WITHOUT touching the claim (the record belongs to the other worker) and
- * Since it's not an APICallError, it isn't swallowed by the AI SDK's retry — it reaches the caller as-is.
+ * since it's not an APICallError, it isn't swallowed by the AI SDK's retry — it reaches the caller as-is.
  */
 async function acquireModelClaim(
   ctx: DurableCtx,
@@ -89,8 +89,8 @@ async function acquireModelClaim(
 
 // DETERMINISTIC components of the model request: messages/tool schema/sampling parameters.
 // DELIBERATELY EXCLUDED fields (nondeterministic/opaque → should not produce false positives):
-// AbortSignal (a fresh object on every call), headers (may carry trace/request-id),
-// ProviderOptions (some providers may inject a timestamp/nonce).
+// abortSignal (a fresh object on every call), headers (may carry trace/request-id),
+// providerOptions (some providers may inject a timestamp/nonce).
 const DETERMINISTIC_PARAM_KEYS = [
   'prompt',
   'maxOutputTokens',
@@ -108,7 +108,7 @@ const DETERMINISTIC_PARAM_KEYS = [
 
 /**
  * Hash of the model request's determining input (parity with argsHash — the same
- * StableStringify+sha256 pattern). If a field is not serializable (e.g. a circular reference),
+ * stableStringify+sha256 pattern). If a field is not serializable (e.g. a circular reference),
  * SILENTLY returns `undefined` → the check is SKIPPED, the run is never BROKEN because of this
  * (PROTECTIVE).
  */
@@ -129,16 +129,16 @@ function safeRequestHash(params: LanguageModelV4CallOptions): string | undefined
  * Replay divergence check: DELIBERATELY soft.
  *
  * Observation (discovered while making this change, by running the full test suite): in flows using
- * Memory/input-processor, when the caller calls `runDurable` again with the SAME raw arguments
+ * memory/input-processor, when the caller calls `runDurable` again with the SAME raw arguments
  * (not resumeRun — a common pattern in tests/real usage), the input already written to the journal by
  * `persistInput` is NOT READ BACK; the input processor/memory injection does NOT RUN AGAIN on resume
- * Due to idempotency. Result: the `params` the model SEES in this second call may differ from the
- * First run — but this is HARMLESS because that step is already REPLAYED from the journal (the live
- * Model is never called). This produces a FALSE POSITIVE for a hard error (an existing, working usage
- * Pattern). Therefore: (1) only produce a CHECK/WARNING when `replay:'strict'` (opt-in visibility — no
- * Noise for the default user), (2) NEVER THROW a DivergenceError (only console.warn) — the model
- * Request is a much broader/noisier surface than a tool argument; a hard error risks breaking a
- * Legitimate resume.
+ * due to idempotency. Result: the `params` the model SEES in this second call may differ from the
+ * first run — but this is HARMLESS because that step is already REPLAYED from the journal (the live
+ * model is never called). This produces a FALSE POSITIVE for a hard error (an existing, working usage
+ * pattern). Therefore: (1) only produce a CHECK/WARNING when `replay:'strict'` (opt-in visibility — no
+ * noise for the default user), (2) NEVER THROW a DivergenceError (only console.warn) — the model
+ * request is a much broader/noisier surface than a tool argument; a hard error risks breaking a
+ * legitimate resume.
  */
 async function warnOnModelDivergence(
   ctx: DurableCtx,
@@ -251,10 +251,10 @@ function warnOnPartialReplay(ctx: DurableCtx, hit: StreamStepRecord, key: string
  * (entry-point switch breaks replay silently): a model step is journaled in one of TWO shapes —
  * `wrapGenerate` writes the raw doGenerate result (has `content`, NO `.parts`); `wrapStream` writes
  * `{ parts, rest }` (has a `parts` array). If a run created on one path is resumed on the OTHER, the
- * Replayed record is the wrong shape: a generate record fed to `simulateReadableStream({ chunks: hit.parts })`
- * Has `hit.parts === undefined` → a broken/empty stream; a stream record returned as a generate result is
- * Missing `content`. Both used to fail cryptically (or silently). This throws a CLEAR error naming the
- * Mismatch so the caller resumes through the same entry point (or starts a fresh runId).
+ * replayed record is the wrong shape: a generate record fed to `simulateReadableStream({ chunks: hit.parts })`
+ * has `hit.parts === undefined` → a broken/empty stream; a stream record returned as a generate result is
+ * missing `content`. Both used to fail cryptically (or silently). This throws a CLEAR error naming the
+ * mismatch so the caller resumes through the same entry point (or starts a fresh runId).
  */
 function assertReplayEntryPoint(hit: unknown, expected: 'generate' | 'stream', key: string): void {
   const isStreamRecord = hit != null && typeof hit === 'object' && Array.isArray((hit as { parts?: unknown }).parts);
@@ -283,39 +283,39 @@ export function withDurableModel(model: LanguageModelV4, ctx: DurableCtx, opts?:
     wrapGenerate: async ({ doGenerate, params }) => {
       const key = runKeys.model(ctx.runId, step);
       // Invisible to parseJournalKey (runKeys.proc) → does NOT AFFECT reader/time-travel/forkRun;
-      // Only this middleware's write-ahead ledger.
+      // only this middleware's write-ahead ledger.
       const claimKey = runKeys.proc(ctx.runId, `__gnl_model_claim:${step}`);
       const reqHash = safeRequestHash(params);
       const hit = await ctxGet(ctx, key);
 
       if (hit !== undefined) {
         // Reject a stream-shaped record replayed through the generate path (clear error, not a
-        // Silent missing-content result).
+        // silent missing-content result).
         assertReplayEntryPoint(hit, 'generate', key);
         // Replay divergence — see warnOnModelDivergence documentation (opt-in, soft).
         await warnOnModelDivergence(ctx, claimKey, key, reqHash, 'model step');
         step++;
         // Check on REPLAY too (not just on a fresh call) — if the same runId is called
-        // Repeatedly without the limit CHANGING, it re-throws IMMEDIATELY at the SAME step (progress
-        // Does NOT LEAK); deterministic (same result) since the journal did NOT CHANGE. If the limit
-        // Is raised, this point is passed through.
+        // repeatedly without the limit CHANGING, it re-throws IMMEDIATELY at the SAME step (progress
+        // does NOT LEAK); deterministic (same result) since the journal did NOT CHANGE. If the limit
+        // is raised, this point is passed through.
         if (ctx.limits) await enforceStepLimits(ctx.journal as unknown as JournalReader, ctx.runId, ctx.limits);
         return hit as Awaited<ReturnType<typeof doGenerate>>;
       }
 
       // Write-ahead 'running' claim BEFORE the model call. Purpose: the crash window
       // BETWEEN the model response and journaling it becomes VISIBLE on resume (studio/time-travel can
-      // Read this record and say "this step was left half-done") + reqHash is FIXED here (the
-      // Divergence check above uses it). DELIBERATELY: unlike durableTool, there is NO TTL-based
+      // read this record and say "this step was left half-done") + reqHash is FIXED here (the
+      // divergence check above uses it). DELIBERATELY: unlike durableTool, there is NO TTL-based
       // RunBusyError here — the FAST resume after a real crash (see process-kill.test.ts) happens
-      // Exactly in this window; a hard lock would break a legitimate exactly-once resume. Protection
-      // Against concurrent multi-resume is already provided by the opt-in run-level `lock` (see
+      // exactly in this window; a hard lock would break a legitimate exactly-once resume. Protection
+      // against concurrent multi-resume is already provided by the opt-in run-level `lock` (see
       // `acquireRunLock` in run.ts).
       // §5.3: if opts.exclusiveStep is given, an ADDITIONAL opt-in gate kicks in (see acquireModelClaim).
       // P2-cancel: durable cross-worker cancel gate — checked ONLY on the FRESH path (a replayed step
-      // Above returns untouched: replay reconstructs work that already happened, cancel stops NEW
-      // Spend). A run canceled from anywhere (server ?durable=true, cancelAgentRun) stops here at its
-      // Next model-step boundary regardless of which worker is executing it.
+      // above returns untouched: replay reconstructs work that already happened, cancel stops NEW
+      // spend). A run canceled from anywhere (server ?durable=true, cancelAgentRun) stops here at its
+      // next model-step boundary regardless of which worker is executing it.
       await assertNotCanceled(ctx.journal, ctx.runId);
       await acquireModelClaim(ctx, claimKey, reqHash, opts?.exclusiveStep);
       let result: Awaited<ReturnType<typeof doGenerate>>;
@@ -328,7 +328,7 @@ export function withDurableModel(model: LanguageModelV4, ctx: DurableCtx, opts?:
         await ctx.journal.put(claimKey, { status: 'succeeded', startedAt: Date.now(), reqHash });
       } catch (error) {
         // Transient error: mark the claim as 'failed' → the NEXT attempt (retry/resume) continues
-        // Immediately — the existing "retry does not shift the replay key" behavior is PRESERVED (step did not advance).
+        // immediately — the existing "retry does not shift the replay key" behavior is PRESERVED (step did not advance).
         await ctx.journal.put(claimKey, { status: 'failed', startedAt: Date.now(), reqHash });
         throw error;
       }
@@ -347,7 +347,7 @@ export function withDurableModel(model: LanguageModelV4, ctx: DurableCtx, opts?:
       const hit = await ctxGet<{ parts: any[]; rest: Record<string, unknown>; partial?: boolean }>(ctx, key);
       if (hit !== undefined) {
         // Reject a generate-shaped record (no `.parts`) replayed through the stream path —
-        // Otherwise simulateReadableStream chokes on `undefined` chunks (silent/cryptic broken stream).
+        // otherwise simulateReadableStream chokes on `undefined` chunks (silent/cryptic broken stream).
         assertReplayEntryPoint(hit, 'stream', key);
         // A write-ahead (truncated) record is still replayed — but never in silence (see warnOnPartialReplay).
         warnOnPartialReplay(ctx, hit, key, step);
@@ -364,9 +364,9 @@ export function withDurableModel(model: LanguageModelV4, ctx: DurableCtx, opts?:
       // SAME write-ahead claim as generate (see above — rationale there).
       // §5.3: SAME opt-in exclusivity gate as generate (see acquireModelClaim).
       // P2-cancel: durable cross-worker cancel gate — checked ONLY on the FRESH path (a replayed step
-      // Above returns untouched: replay reconstructs work that already happened, cancel stops NEW
-      // Spend). A run canceled from anywhere (server ?durable=true, cancelAgentRun) stops here at its
-      // Next model-step boundary regardless of which worker is executing it.
+      // above returns untouched: replay reconstructs work that already happened, cancel stops NEW
+      // spend). A run canceled from anywhere (server ?durable=true, cancelAgentRun) stops here at its
+      // next model-step boundary regardless of which worker is executing it.
       await assertNotCanceled(ctx.journal, ctx.runId);
       await acquireModelClaim(ctx, claimKey, reqHash, opts?.exclusiveStep);
       let result: Awaited<ReturnType<typeof doStream>>;

@@ -29,7 +29,7 @@ export const WATCH_MS = Number(process.env.WATCH_MS ?? 30 * 60 * 1000);
 /** Alerts come in as durable jobs rather than as function calls. */
 export const submitAlert = (work: any, alert: Alert) =>
   // The job id IS the incident id: a monitoring system that fires the same alert three times (they
-  // Do) enqueues one job. Dedup at the door is cheaper than dedup at every step behind it.
+  // do) enqueues one job. Dedup at the door is cheaper than dedup at every step behind it.
   enqueue(work, ALERT_JOB, alert, { id: `alert:${alert.incidentId}` });
 
 /** Announces that a service was restarted. The watch is scheduled by a listener, not by the agent. */
@@ -44,8 +44,8 @@ export const announceRestart = (work: any, incidentId: string, service: string) 
  */
 export function buildOps(storage: any, runner: WorkflowRunner, handleAlert: (a: Alert) => Promise<void>) {
   // TWO STORES, and mixing them up is a runtime error rather than a type error: queue and events
-  // Append to the WORK store, while the scheduler keeps triggers in the JOURNAL (it needs listKeys
-  // For trigger enumeration, which the work store does not have). Both live in the same SQLite file.
+  // append to the WORK store, while the scheduler keeps triggers in the JOURNAL (it needs listKeys
+  // for trigger enumeration, which the work store does not have). Both live in the same SQLite file.
   const work = storage.work;
   const journal = storage.runs;
 
@@ -56,14 +56,14 @@ export function buildOps(storage: any, runner: WorkflowRunner, handleAlert: (a: 
   });
 
   // The consumer is the only thing that knows a restart implies a watch. Moving that rule out of the
-  // Agent is what lets you change the follow-up policy without touching the prompt.
+  // agent is what lets you change the follow-up policy without touching the prompt.
   const watcher = createConsumer(
     work,
     RESTARTED_TOPIC,
     async (payload: any) => {
       await scheduleWorkflow(journal, {
         // The trigger id is derived from the incident, and `scheduleWorkflow` is idempotent on it —
-        // So a redelivered event schedules one watch, not one per delivery.
+        // so a redelivered event schedules one watch, not one per delivery.
         id: `watch:${payload.incidentId}`,
         name: WATCH_WORKFLOW,
         input: { incidentId: payload.incidentId, service: payload.service },

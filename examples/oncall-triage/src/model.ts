@@ -70,8 +70,8 @@ function plan(prompt: any[]) {
   const svc = serviceOf(alert);
 
   // The database specialist is a DIFFERENT agent with a different toolset (see specialist.ts), so the
-  // Mock plans a different sequence for it: consult the MCP-provided tool, then answer with the number
-  // It found. Without this branch the specialist would answer from its system prompt alone and its MCP
+  // mock plans a different sequence for it: consult the MCP-provided tool, then answer with the number
+  // it found. Without this branch the specialist would answer from its system prompt alone and its MCP
   // Tools would be wired but never called — a demonstration of nothing.
   if (systemText(prompt).includes('database specialist')) {
     const tag = svc + '-sp';
@@ -109,9 +109,9 @@ const mockModel: any = {
    * The SAME decisions as doGenerate, delivered as chunks.
    *
    * Written out rather than left to throw because the chat route in server.ts streams, and shipping a
-   * Route whose only model cannot feed it is shipping a page that 500s. It also keeps the two paths
-   * Honest with each other: both call `plan()`, so the streamed run and the one-shot run cannot drift
-   * Into telling the reader different stories about what the agent does.
+   * route whose only model cannot feed it is shipping a page that 500s. It also keeps the two paths
+   * honest with each other: both call `plan()`, so the streamed run and the one-shot run cannot drift
+   * into telling the reader different stories about what the agent does.
    */
   doStream: async ({ prompt }: any) => {
     const p = plan(prompt);

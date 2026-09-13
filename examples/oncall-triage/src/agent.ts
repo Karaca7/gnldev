@@ -75,12 +75,12 @@ export async function buildTriage(storage: any, extraTools: Record<string, any> 
     // workload it is the whole point, so it is on.
     //
     // The built-in set is PII — email, phone, card, IBAN, SSN, IP. A DSN password is not PII, it is a
-    // Credential, and `piiRedactor` does not pretend to know your secrets. That gap is real and it is
-    // Measurable: with only the defaults, `postgres://svc:hunter2@pg-primary/orders` reaches the model
-    // Verbatim while the email beside it is masked. `extraPatterns` is where you close it.
+    // credential, and `piiRedactor` does not pretend to know your secrets. That gap is real and it is
+    // measurable: with only the defaults, `postgres://svc:hunter2@pg-primary/orders` reaches the model
+    // verbatim while the email beside it is masked. `extraPatterns` is where you close it.
     //
     // The pattern masks the CREDENTIALS and keeps the host, because at 3am "which database" is the
-    // Question and `[REDACTED]` for the whole URL answers none of it.
+    // question and `[REDACTED]` for the whole URL answers none of it.
     processors: [
       piiRedactor({
         redactToolResults: true,
@@ -90,7 +90,7 @@ export async function buildTriage(storage: any, extraTools: Record<string, any> 
       }),
     ],
     // Rewrites tool schemas for whichever provider is actually in use. Invisible until the day you
-    // Point this at OpenAI in strict mode and a schema it silently rejects takes the agent down.
+    // point this at OpenAI in strict mode and a schema it silently rejects takes the agent down.
     schemaCompat: defaultRules,
     agents,
   });

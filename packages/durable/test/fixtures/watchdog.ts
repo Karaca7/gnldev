@@ -38,7 +38,7 @@ export function spawnFixtureEnv(): NodeJS.ProcessEnv {
  * Arms the watchdog. Call once, at the top of a fixture, before any work.
  *
  * `unref()` on both timers is essential: they must not be the reason the process stays alive, or the
- * Watchdog would itself become the leak it exists to prevent.
+ * watchdog would itself become the leak it exists to prevent.
  */
 export function armFixtureWatchdog(deadlineMs = DEFAULT_DEADLINE_MS): void {
   const deadline = setTimeout(() => {
@@ -48,7 +48,7 @@ export function armFixtureWatchdog(deadlineMs = DEFAULT_DEADLINE_MS): void {
   deadline.unref();
 
   // Set by spawnFixtureEnv() on the test side. Absent → this fixture was started by hand; the deadline
-  // Above still bounds it, and there is no runner whose death would mean anything.
+  // above still bounds it, and there is no runner whose death would mean anything.
   const runner = Number(process.env[FIXTURE_RUNNER_PID_ENV]);
   if (!Number.isInteger(runner) || runner <= 0) return;
 

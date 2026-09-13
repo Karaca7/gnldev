@@ -115,6 +115,7 @@
   "inboxSubmitting": "Devam ettiriliyor…",
   "inboxResumeSuccess": "\"{{runId}}\" devam ettirildi",
   "inboxUpdatedAtLabel": "güncellendi",
+  "inboxWorkKeyLabel": "iş:",
   "runningGuardTitle": "Bir workflow çalışması sürüyor — şimdi ayrılmak onu iptal eder",
   "backToWorkflowsTitle": "Workflow listesine dön",
   "discardChangesTitle": "Değişiklikler silinsin mi?",

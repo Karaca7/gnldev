@@ -1,7 +1,7 @@
 // @gnldev/otel/otlp — ZERO-dependency OTLP/HTTP JSON exporter. DOES NOT USE the OTel SDK (~8KB ethos):
-// Converts the journal (via toTraceSpans) by hand into an OTLP/HTTP JSON body and POSTs it with `fetch`.
+// converts the journal (via toTraceSpans) by hand into an OTLP/HTTP JSON body and POSTs it with `fetch`.
 // DIFFERENT from exportRun in index.ts: here there is no @opentelemetry/sdk-trace-base, just node:crypto +
-// Global fetch. The user sends to THEIR OWN collector/backend (Langfuse/Datadog/Jaeger/Honeycomb…) —
+// global fetch. The user sends to THEIR OWN collector/backend (Langfuse/Datadog/Jaeger/Honeycomb…) —
 // NEVER to our server (see README's "no-telemetry" principle).
 import { createHash } from 'node:crypto';
 import { toTraceSpans } from '@gnldev/durable';
@@ -99,7 +99,7 @@ function spanAttributes(span: TraceSpan): Record<string, unknown> {
   if (src['gen_ai.usage.input_tokens'] != null) out['gen_ai.usage.input_tokens'] = src['gen_ai.usage.input_tokens'];
   if (src['gen_ai.usage.output_tokens'] != null) out['gen_ai.usage.output_tokens'] = src['gen_ai.usage.output_tokens'];
   // The journal only knows the responding model (gen_ai.response.model) — we carry it over to semconv's
-  // Request.model field (request/response model is usually the same; no harm if there's no alias).
+  // request.model field (request/response model is usually the same; no harm if there's no alias).
   if (src['gen_ai.response.model'] != null) out['gen_ai.request.model'] = src['gen_ai.response.model'];
   if (src['gen_ai.response.finish_reason'] != null) out['gen_ai.response.finish_reason'] = src['gen_ai.response.finish_reason'];
   if (src['tool.status'] != null) out['gnl.tool.status'] = src['tool.status'];
@@ -109,7 +109,7 @@ function spanAttributes(span: TraceSpan): Record<string, unknown> {
 /**
  * PURE function (NO network, NO OTel SDK): converts `toTraceSpans` output into an OTLP/HTTP JSON body.
  * 1 root span (`agent.run`) + 1 child span per journal entry; trace/span ids are derived deterministically
- * From runId+seq → converting the same run twice yields the SAME ids (idempotent, replay-consistent).
+ * from runId+seq → converting the same run twice yields the SAME ids (idempotent, replay-consistent).
  */
 export function toOtlpJson(spans: TraceSpan[], opts: ToOtlpJsonOptions): OtlpPayload {
   const { runId } = opts;
@@ -162,8 +162,8 @@ export function toOtlpJson(spans: TraceSpan[], opts: ToOtlpJsonOptions): OtlpPay
 }
 
 // P2 opt-in retry/backoff for the POST above. known limitation: a 5xx or network
-// Blip on the fetch call silently loses the export (no OTel SDK behind this to retry/batch for us —
-// That's the whole point of the zero-dep ~8KB path). Hand-rolled (no new dependency): a plain loop +
+// blip on the fetch call silently loses the export (no OTel SDK behind this to retry/batch for us —
+// that's the whole point of the zero-dep ~8KB path). Hand-rolled (no new dependency): a plain loop +
 // `setTimeout`. ZERO behavior change when `retry` is not given — exactly one fetch call, same as before.
 const DEFAULT_RETRY_ATTEMPTS = 3;
 const MAX_RETRY_AFTER_MS = 30_000;
@@ -173,11 +173,11 @@ export interface OtlpRetryOptions {
   attempts?: number;
   /** Delay before the NEXT retry — fixed ms, or a function of the retry index (0 = delay before the
    *  2nd attempt, 1 = before the 3rd, ...). Default exponential: `500 * 2^n`. Ignored on a 429 that
-   *  Carries a `Retry-After` header (see below). */
+   *  carries a `Retry-After` header (see below). */
   backoffMs?: number | ((attempt: number) => number);
   /**
    * Decide whether a failure should be retried. Called with the HTTP status code for a non-throwing
-   * Response, or the thrown `Error` for a network failure. Default: network errors + 408/429/5xx
+   * response, or the thrown `Error` for a network failure. Default: network errors + 408/429/5xx
    * (a 4xx like 400/401/403 is a permanent rejection — retrying it would just waste attempts).
    */
   retryOn?: (result: number | Error) => boolean;
@@ -197,7 +197,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 /** Retry-After (RFC 9110): either delta-seconds or an HTTP-date. Capped at MAX_RETRY_AFTER_MS so a
- *  Misbehaving/huge value from an untrusted-ish collector can't stall the caller for a long time. */
+ *  misbehaving/huge value from an untrusted-ish collector can't stall the caller for a long time. */
 function retryAfterMs(res: Response): number | undefined {
   const header = res.headers?.get?.('retry-after');
   if (!header) return undefined;
@@ -218,9 +218,9 @@ function delayFor(retry: OtlpRetryOptions, attempt: number, res?: Response): num
 }
 
 /** Runs `doFetch` up to `retry.attempts` times, retrying on `retry.retryOn`-eligible failures. Returns
- *  The last response (even if not ok — SAME "don't throw on 4xx/5xx" contract as the no-retry path) or
- *  Rethrows the last network error once attempts are exhausted (SAME as the no-retry path, which never
- *  Caught fetch's own throw either). */
+ *  the last response (even if not ok — SAME "don't throw on 4xx/5xx" contract as the no-retry path) or
+ *  rethrows the last network error once attempts are exhausted (SAME as the no-retry path, which never
+ *  caught fetch's own throw either). */
 async function fetchWithRetry(doFetch: () => Promise<Response>, retry: OtlpRetryOptions): Promise<Response> {
   const attempts = retry.attempts ?? DEFAULT_RETRY_ATTEMPTS;
   const retryOn = retry.retryOn ?? defaultRetryOn;
@@ -241,7 +241,7 @@ async function fetchWithRetry(doFetch: () => Promise<Response>, retry: OtlpRetry
 
 export interface ExportRunToOtlpOptions {
   /** OTLP/HTTP JSON traces endpoint — e.g. 'http://localhost:4318/v1/traces' (Jaeger/Tempo/Collector) or
-   * The user's own Langfuse/Datadog/Honeycomb OTLP proxy. We never send to a default endpoint ourselves. */
+   * the user's own Langfuse/Datadog/Honeycomb OTLP proxy. We never send to a default endpoint ourselves. */
   endpoint: string;
   /** Additional HTTP headers (e.g. Authorization, x-honeycomb-team). */
   headers?: Record<string, string>;
@@ -272,7 +272,7 @@ export interface ExportRunToOtlpResult {
 
 /**
  * Converts a run from the journal into OTLP/HTTP JSON and POSTs it to the given endpoint. DOES NOT USE
- * The OTel SDK — only `fetch` (Node ≥18 global). The user sends to THEIR OWN backend; for tests use
+ * the OTel SDK — only `fetch` (Node ≥18 global). The user sends to THEIR OWN backend; for tests use
  * `toOtlpJson` without the network, or mock global `fetch` (see test/otlp.test.ts).
  */
 export async function exportRunToOtlp(

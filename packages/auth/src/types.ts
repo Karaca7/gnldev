@@ -1,5 +1,5 @@
 // @gnldev/auth — stable auth contract. The free core defines this; @gnldev/auth-ee (paid) implements the
-// Same interface → premium (RBAC/SSO/multi-organization/audit) plugs in without touching the core.
+// same interface → premium (RBAC/SSO/multi-organization/audit) plugs in without touching the core.
 
 /**
  * The authenticated subject. The free tier only uses `roles`; the `permissions`/`orgId` fields are
@@ -42,9 +42,9 @@ export interface AuthContext {
   resource?: string;
   /**
    * EE fine-grained permission (e.g. 'agents:run', 'users:write'). Set by the gate's `allowP`. When
-   * Present, an RBAC provider matches THIS exact permission instead of deriving one from resource/action
+   * present, an RBAC provider matches THIS exact permission instead of deriving one from resource/action
    * (see @gnldev/auth-ee rbac.ts `requiredPermission`). A free/read-write provider ignores it and falls back
-   * To `action` (the gate already reduces the permission to read/write) → coarse but backward-compatible.
+   * to `action` (the gate already reduces the permission to read/write) → coarse but backward-compatible.
    */
   permission?: string;
 }
@@ -84,9 +84,9 @@ export interface AuthProvider {
 
 /**
  * Credentials for a single role: bearer token and/or basic user+pass. If `orgId` is given, the
- * Identity is BOUND to that organization: hosts (server/studio) derive the organization scope from
- * The principal instead of the header; a different `x-gnl-org` request gets a 403 (organization
- * Isolation is enforced by identity, it cannot be spoofed).
+ * identity is BOUND to that organization: hosts (server/studio) derive the organization scope from
+ * the principal instead of the header; a different `x-gnl-org` request gets a 403 (organization
+ * isolation is enforced by identity, it cannot be spoofed).
  */
 export type Cred = {
   token?: string;
@@ -96,8 +96,8 @@ export type Cred = {
   /**
    * EXPLICIT platform-admin grant (scope: 'platform') — see @gnldev/auth scope.ts. Injects the reserved
    * `platform-admin` role into the principal. Use it to bootstrap a statically-configured root admin
-   * That the strict (EE multi-org) model must recognise as cross-org; WITHOUT it, an unbound identity
-   * Is denied under the strict model (fail-closed). Harmless in the free tier (the role is inert there).
+   * that the strict (EE multi-org) model must recognise as cross-org; WITHOUT it, an unbound identity
+   * is denied under the strict model (fail-closed). Harmless in the free tier (the role is inert there).
    */
   platformAdmin?: boolean;
 };

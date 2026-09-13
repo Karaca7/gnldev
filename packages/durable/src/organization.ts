@@ -1,10 +1,10 @@
 // Multi-organization support: partition the journal by organization. All keys are written/read with the
 // `org:<orgId>:` prefix → runs, memory, queue, cache — EVERYTHING is isolated per organization. ALL of
-// The journal's optional capabilities (putIfAbsent/listKeys/deletePrefix/putIfMatch/now/incrBy/
-// GetCounters/listStaleRuns) and JournalReader's (readRun/listRuns/readRunStats) — if the underlying
-// Journal supports them — are bridged → exactly-once/atomic-CAS/atomic-counter guarantees are also
+// the journal's optional capabilities (putIfAbsent/listKeys/deletePrefix/putIfMatch/now/incrBy/
+// getCounters/listStaleRuns) and JournalReader's (readRun/listRuns/readRunStats) — if the underlying
+// journal supports them — are bridged → exactly-once/atomic-CAS/atomic-counter guarantees are also
 // PRESERVED in the organization view (the same Journal interface). A highly requested feature that has no
-// Counterpart in most agent frameworks.
+// counterpart in most agent frameworks.
 import { listRunsArray } from './journal.js';
 import type { Journal, JournalBatch, JournalReader, JournalEntry, RunSummary } from './journal.js';
 
@@ -167,9 +167,9 @@ export function orgPrefix(orgId: string): string {
 
 /**
  * Scope a journal to an organization. The returned journal implements the same interface (putIfAbsent/
- * ListKeys/readRun/listRuns are bridged if present) → it's handed as-is to runDurable/createGnl/
+ * listKeys/readRun/listRuns are bridged if present) → it's handed as-is to runDurable/createGnl/
  * BasicMemory/queue. Organizations CANNOT SEE each other's keys; the same runId is independent across
- * Different organizations.
+ * different organizations.
  */
 /**
  * Marks a journal as scoped to an organization, so code holding only the `Journal` can still tell.
@@ -261,8 +261,8 @@ export function withOrg(journal: Journal, orgId: string): Journal & Partial<Jour
     out.deletePrefix = (p) => journal.deletePrefix!(prefix + p); // an organization can only delete its own scope
   }
   // H1 (atomic conditional replace): the prefixed key, expected/value are delegated as-is — run-lock.ts's
-  // Expired-lock takeover CAS also stays atomic in the org view (if not bridged it would fall back to
-  // Best-effort get→put, creating a split-brain risk in a multi-organization deployment).
+  // expired-lock takeover CAS also stays atomic in the org view (if not bridged it would fall back to
+  // best-effort get→put, creating a split-brain risk in a multi-organization deployment).
   if (journal.putIfMatch) {
     out.putIfMatch = (key, expected, value) => journal.putIfMatch!(prefix + key, expected, value);
   }
@@ -271,7 +271,7 @@ export function withOrg(journal: Journal, orgId: string): Journal & Partial<Jour
     out.now = () => journal.now!();
   }
   // H8a (atomic counter): the key is prefixed → budget.ts:incrBy/getOrgUsage also use an
-  // Engine-internal atomic increment in the org view (would fall back to legacy get→put if not bridged).
+  // engine-internal atomic increment in the org view (would fall back to legacy get→put if not bridged).
   if (journal.incrBy) {
     out.incrBy = (key, fields) => journal.incrBy!(prefix + key, fields);
   }
@@ -279,7 +279,7 @@ export function withOrg(journal: Journal, orgId: string): Journal & Partial<Jour
     out.getCounters = (key) => journal.getCounters!(prefix + key);
   }
   // P1.6b: atomic batch — every key inside `batch` (claim/incrs/puts) is prefixed the SAME way put()/
-  // IncrBy() prefix their own single key, so the org isolation guarantee carries over unchanged.
+  // incrBy() prefix their own single key, so the org isolation guarantee carries over unchanged.
   if (journal.applyBatch) {
     out.applyBatch = (batch: JournalBatch) => journal.applyBatch!({
       ...(batch.claim ? { claim: { key: prefix + batch.claim.key, value: batch.claim.value } } : {}),
@@ -292,16 +292,16 @@ export function withOrg(journal: Journal, orgId: string): Journal & Partial<Jour
     out.getMany = (keys: string[]) => journal.getMany!(keys.map((k) => prefix + k));
   }
   // P1.6b: `countRunsByStatus` is DELIBERATELY NOT bridged here (unlike every other optional capability
-  // Above) — it's an ENGINE-LEVEL aggregate over the WHOLE underlying store (e.g. SQL `GROUP BY` on
+  // above) — it's an ENGINE-LEVEL aggregate over the WHOLE underlying store (e.g. SQL `GROUP BY` on
   // `gnl_runs`), with NO per-organization filter parameter to push the `org:<id>:` prefix into. Bridging
-  // It naively would leak EVERY organization's counts into this one's view (a real cross-organization data
-  // Leak) — so it's left undefined; callers (studio's /metrics) fall back to the already org-safe
+  // it naively would leak EVERY organization's counts into this one's view (a real cross-organization data
+  // leak) — so it's left undefined; callers (studio's /metrics) fall back to the already org-safe
   // `listRuns`-based count.
   // H8b (stale run scan): the underlying result physically comes back as `org:<orgId>:<runId>`
   // (parseJournalKey counts the ENTIRE prefixed key as the runId — see the run_id column/ZSET member in
-  // Sqlite/postgres/redis-storage.ts). ONLY the ones belonging to THIS organization are FILTERED and the
-  // Prefix is STRIPPED before returning — the same isolation pattern as readRun/listRuns (other
-  // Organizations' runs don't leak).
+  // sqlite/postgres/redis-storage.ts). ONLY the ones belonging to THIS organization are FILTERED and the
+  // prefix is STRIPPED before returning — the same isolation pattern as readRun/listRuns (other
+  // organizations' runs don't leak).
   if (journal.listStaleRuns) {
     out.listStaleRuns = async (cutoffTs, opts) =>
       (await journal.listStaleRuns!(cutoffTs, opts))
@@ -319,7 +319,7 @@ export function withOrg(journal: Journal, orgId: string): Journal & Partial<Jour
   }
   if (typeof reader.listRuns === 'function') {
     // listRunsArray, not a direct `.filter`: the underlying reader may hand back a Page (every
-    // First-party `storage.runs` does, and that is what the README's quickstart passes as `journal`).
+    // first-party `storage.runs` does, and that is what the README's quickstart passes as `journal`).
     // Calling `.filter` on it threw, which took the ORG USAGE/quota path down with it.
     out.listRuns = async (): Promise<RunSummary[]> =>
       (await listRunsArray({ listRuns: (q) => (reader.listRuns as (qq?: unknown) => Promise<unknown>).call(journal, q) }))
@@ -328,20 +328,20 @@ export function withOrg(journal: Journal, orgId: string): Journal & Partial<Jour
   }
   /**
    * P0.3 the underlying `listRunsPaged` has NO concept of "this organization" —
-   * Keys are prefixed BEFORE reaching it (see get/put above), so its own gnl_runs-style index mixes
+   * keys are prefixed BEFORE reaching it (see get/put above), so its own gnl_runs-style index mixes
    * EVERY organization's runs in ONE keyspace. Unlike the unpaged `listRuns` bridge just above (which
-   * Can safely filter-then-strip because it always reads EVERYTHING, no slicing involved), a single
-   * Underlying PAGE can't just be filtered-then-returned: doing so would either under-fill the caller's
-   * Requested `limit` (silently returning fewer items than exist) or — if combined with the underlying
-   * Page's own `nextCursor` — skip over this organization's runs that happened to fall in an
-   * Underlying page dominated by OTHER organizations (exactly the "filter after slicing" bug the
-   * Whole P0.3 filter contract exists to avoid). So this WALKS the underlying store's pages forward
+   * can safely filter-then-strip because it always reads EVERYTHING, no slicing involved), a single
+   * underlying PAGE can't just be filtered-then-returned: doing so would either under-fill the caller's
+   * requested `limit` (silently returning fewer items than exist) or — if combined with the underlying
+   * page's own `nextCursor` — skip over this organization's runs that happened to fall in an
+   * underlying page dominated by OTHER organizations (exactly the "filter after slicing" bug the
+   * whole P0.3 filter contract exists to avoid). So this WALKS the underlying store's pages forward
    * (relying on the numeric cursor-as-offset convention every adapter's `offset()`/`paginate()` helper
-   * Already uses — see sqlite/postgres/redis/in-memory-storage.ts), accumulating only this
-   * Organization's (prefix-stripped) runs, until either `limit` is reached or the underlying store is
-   * Exhausted. Honest cost: an organization holding a small slice of a large shared keyspace pays for
-   * Walking through every OTHER organization's runs along the way — a real Postgres/SQL fix would push
-   * An explicit key-prefix filter into RunJournal.listRuns itself (out of scope for P0.3).
+   * already uses — see sqlite/postgres/redis/in-memory-storage.ts), accumulating only this
+   * organization's (prefix-stripped) runs, until either `limit` is reached or the underlying store is
+   * exhausted. Honest cost: an organization holding a small slice of a large shared keyspace pays for
+   * walking through every OTHER organization's runs along the way — a real Postgres/SQL fix would push
+   * an explicit key-prefix filter into RunJournal.listRuns itself (out of scope for P0.3).
    */
   if (typeof reader.listRunsPaged === 'function') {
     out.listRunsPaged = async (q) => {
@@ -368,7 +368,7 @@ export function withOrg(journal: Journal, orgId: string): Journal & Partial<Jour
     };
   }
   // H8c (run size statistics): runId is prefixed, the result (entries/bytes) is independent of the
-  // Organization — returned as-is. If not bridged, retention/budget's stats path would silently disappear in the org view.
+  // organization — returned as-is. If not bridged, retention/budget's stats path would silently disappear in the org view.
   if (typeof reader.readRunStats === 'function') {
     out.readRunStats = (runId: string) => reader.readRunStats!.call(journal, prefix + runId);
   }

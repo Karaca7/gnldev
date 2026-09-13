@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { usePolicy, useCapabilities, usePermissionsCatalog, api, errMessage, ApiError, type PolicyRule } from '../api';
 import { Spinner, Empty, Badge, Btn, ErrorBox, PageHeader, cn } from '../components';
 import { toast, ConfirmDialog } from '../ui';
-// I18n init side effect: so that useTranslation also works if this view is rendered directly
+// i18n init side effect: so that useTranslation also works if this view is rendered directly
 // (without App) (see src/i18n/index.ts) — main.tsx already does this, this re-ensures it here.
 import '../i18n';
 
@@ -15,7 +15,7 @@ const ACTION_TONE: Record<PolicyRule['action'], 'success' | 'destructive' | 'war
 
 /**
  * Guard/policy editor: rules live in the journal (__policy__), policyGuard reads them live —
- * Save → in effect on the next tool call, no deploy needed. An exact match takes precedence over
+ * save → in effect on the next tool call, no deploy needed. An exact match takes precedence over
  * '*'; every save bumps the version, and the full rule set is written to the audit log.
  */
 /** RBAC role → permission matrix (new design): rows = permissions from the code-defined catalog,
@@ -29,7 +29,7 @@ function RoleMatrix() {
   const roles = Object.keys(cat.data.rolePresets ?? {});
   if (!perms.length || !roles.length) return null;
   // A role grants a permission if its preset lists the exact id, the '*' wildcard (admin), or an
-  // Action-wildcard like '*:read' matching '<resource>:read' — same precedence the backend uses.
+  // action-wildcard like '*:read' matching '<resource>:read' — same precedence the backend uses.
   const grants = (role: string, permId: string): boolean => {
     const preset = cat.data!.rolePresets[role] ?? [];
     if (preset.includes(permId) || preset.includes('*')) return true;
@@ -89,16 +89,16 @@ export function Policy() {
   const [busy, setBusy] = useState(false);
   const [removeIdx, setRemoveIdx] = useState<number | null>(null);
   // FORM-05: indices of rows whose tool name is blank — save() refuses to submit while any are
-  // Set, instead of silently dropping those rows (the old behavior: filter().filter((r) => r.tool)
-  // Dropped them without telling the admin, then still showed "saved").
+  // set, instead of silently dropping those rows (the old behavior: filter().filter((r) => r.tool)
+  // dropped them without telling the admin, then still showed "saved").
   const [emptyToolIdx, setEmptyToolIdx] = useState<Set<number>>(new Set());
   useEffect(() => {
     if (policy.data && !dirty) setRules(policy.data.policy?.rules ?? []);
   }, [policy.data, dirty]);
 
   // Hidden from Nav via the 'policy' capability, but this view is still reachable via URL (the route
-  // Is always registered); without the permission the editor is read-only — the server already
-  // Enforces allow(c,'write'), this is UX-only.
+  // is always registered); without the permission the editor is read-only — the server already
+  // enforces allow(c,'write'), this is UX-only.
   const canManage = !!caps.data?.policy;
 
   const update = (i: number, patch: Partial<PolicyRule>) => {
@@ -119,7 +119,7 @@ export function Policy() {
   const save = async () => {
     const trimmed = rules.map((r) => ({ ...r, tool: r.tool.trim() }));
     // FORM-05: block the save entirely if any row has a blank tool name — refuse silently dropping
-    // It. Highlight the offending rows instead of sending the request.
+    // it. Highlight the offending rows instead of sending the request.
     const empties = new Set(trimmed.reduce<number[]>((acc, r, i) => (r.tool ? acc : (acc.push(i), acc)), []));
     if (empties.size) {
       setEmptyToolIdx(empties);
@@ -136,7 +136,7 @@ export function Policy() {
     setBusy(true);
     try {
       // API-08: send the version we loaded → the server rejects a lost update if another admin
-      // Saved in the meantime (409) instead of silently overwriting their rules.
+      // saved in the meantime (409) instead of silently overwriting their rules.
       const r = await api.savePolicy(clean, policy.data?.policy?.version ?? 0);
       toast.success(t('saveSuccess', { version: r.version }));
       setDirty(false);
@@ -144,8 +144,8 @@ export function Policy() {
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
         // Don't silently drop the user's edits, but don't keep them staged against stale rules
-        // Either: surface the conflict and refetch so they can re-apply their change on top of
-        // The current version.
+        // either: surface the conflict and refetch so they can re-apply their change on top of
+        // the current version.
         toast.error(t('saveConflictError', { error: errMessage(e) }));
         qc.invalidateQueries({ queryKey: ['policy'] });
       } else {

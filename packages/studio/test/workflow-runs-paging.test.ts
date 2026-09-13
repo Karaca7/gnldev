@@ -75,7 +75,11 @@ describe('GET /workflows/runs pagination (API-03)', () => {
 
     const p = await (await call(app, '/workflows/runs?limit=3')).json();
     expect(p.items).toHaveLength(3);
-    expect(getManySpy).toHaveBeenCalledTimes(1);
+    // TWO batched round-trips, still zero per-key gets: one for the registry page, one for the
+    // `:input` records package #4 reads the workflow name / workKey out of (see withRecordedName —
+    // it exists because a derived runId carries no name in its text). The property this test guards
+    // is "no per-key loop", and it survives the second read exactly as it did the first.
+    expect(getManySpy).toHaveBeenCalledTimes(2);
     expect(getSpy).not.toHaveBeenCalled();
   });
 
@@ -98,6 +102,51 @@ describe('GET /workflows/runs pagination (API-03)', () => {
     const p = await (await call(app, '/workflows/runs?limit=3')).json();
     expect(p.items).toHaveLength(3);
     expect(p.items.map((r: any) => r.runId)).toEqual(['run-20', 'run-19', 'run-18']);
-    expect(getSpy).toHaveBeenCalledTimes(3); // early exit, not all 20
+    // 3 registry reads (early exit, not all 20) + 3 `:input` reads — package #4 fills a missing
+    // `workflowName`/`workKey` from the run's own record, because a derived runId has no name in its
+    // text for the UI to parse. The PROPERTY this test guards is unchanged and is the reason the
+    // number is written as `limit`-shaped rather than as a bare 6: the cost tracks the page, never
+    // the registry. These seeded rows all lack a name, so this is the worst case.
+    expect(getSpy).toHaveBeenCalledTimes(3 * 2);
+  });
+
+  // PACKAGE #4 — the name comes from the RECORD, not from the id's text.
+  // studio-ui's `deriveWorkflowName` reads `wf-<name>-<ts>` out of a runId; an engine-derived id
+  // (`run1_<hex>`) has no such text, so a suspended derived run used to reach the inbox nameless and
+  // the operator had to guess which workflow to resume. `registry.runWorkflow` had written the answer
+  // into `<runId>:input` all along (`workflow: <name>`, plus the caller's `workKey`).
+  it('a row without workflowName is filled from `<runId>:input`, and a recorded one is never overwritten', async () => {
+    const journal = new InMemoryJournal();
+    const derived = `run1_${'a'.repeat(32)}#2`;
+    await journal.put(`wfrun:${derived}`, { runId: derived, status: 'suspended', updatedAt: 10 });
+    await journal.put(`${derived}:input`, { _v: 1, at: 1, workflow: 'order-fulfillment', workKey: 'nightly-reconciliation' });
+    // …and a row that already carries a name keeps it, even when the record says something else.
+    await journal.put('wfrun:wf-invoice-1', { runId: 'wf-invoice-1', status: 'suspended', updatedAt: 20, workflowName: 'invoice' });
+    await journal.put('wf-invoice-1:input', { _v: 1, at: 1, workflow: 'something-else' });
+    const app = createStudioApi({ reader: journal });
+
+    const paged = await (await call(app, '/workflows/runs?status=suspended&limit=50')).json();
+    const row = paged.items.find((r: any) => r.runId === derived);
+    expect(row.workflowName).toBe('order-fulfillment');
+    expect(row.workKey).toBe('nightly-reconciliation');
+    expect(paged.items.find((r: any) => r.runId === 'wf-invoice-1').workflowName).toBe('invoice');
+
+    // the legacy flat array (no `limit`) gets the same treatment — one route, one answer
+    const flat = await (await call(app, '/workflows/runs?status=suspended')).json();
+    expect(flat.find((r: any) => r.runId === derived).workflowName).toBe('order-fulfillment');
+  });
+
+  it('an unreadable or absent `:input` leaves the row nameless rather than failing the inbox', async () => {
+    const journal = new InMemoryJournal();
+    await journal.put('wfrun:run-x', { runId: 'run-x', status: 'suspended', updatedAt: 1 });
+    const bare = {
+      listKeys: journal.listKeys.bind(journal),
+      get: async (k: string) => { if (k.endsWith(':input')) throw new Error('boom'); return journal.get(k); },
+      put: journal.put.bind(journal),
+    };
+    const app = createStudioApi({ reader: bare as any });
+    const p = await (await call(app, '/workflows/runs?status=suspended&limit=50')).json();
+    expect(p.items).toHaveLength(1);
+    expect(p.items[0].workflowName).toBeUndefined();
   });
 });

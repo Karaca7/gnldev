@@ -36,17 +36,17 @@ function firstHit(text: string, blocklist: string[]): string | null {
  *
  * HONEST WARNING (naive matching): Matching is a plain, case-insensitive **substring** search
  * (`String.includes`). This is NOT a real security/moderation boundary — it's easily bypassed:
- * Inserting spaces/punctuation ("s e c r e t"), unicode homoglyphs, typos, synonyms, another
- * Language, etc. — none of these are caught. Treat it as a first-line-of-defense / noise-reduction
- * Layer only — do not use it as the SOLE protection mechanism in a critical flow; for real
- * Moderation, layer in a model-based judge (see below) or a dedicated moderation service.
+ * inserting spaces/punctuation ("s e c r e t"), unicode homoglyphs, typos, synonyms, another
+ * language, etc. — none of these are caught. Treat it as a first-line-of-defense / noise-reduction
+ * layer only — do not use it as the SOLE protection mechanism in a critical flow; for real
+ * moderation, layer in a model-based judge (see below) or a dedicated moderation service.
  *
  * For a model-based variant: inside `processInput`/`processOutput`, JOURNAL the LLM-judge call with
  * `ctx.step('moderation', () => judge(...))` → same decision on resume, no duplicate judge call. Example:
- *   ProcessOutput: async (out, ctx) => {
- *     Const verdict = await ctx.step('moderation', () => callJudgeModel(out.text));
- *     If (verdict.blocked) throw new ProcessorTripwire('blocked', 'moderation', verdict);
- *     Return out;
+ *   processOutput: async (out, ctx) => {
+ *     const verdict = await ctx.step('moderation', () => callJudgeModel(out.text));
+ *     if (verdict.blocked) throw new ProcessorTripwire('blocked', 'moderation', verdict);
+ *     return out;
  *   }
  */
 export function moderationProcessor(opts: ModerationOptions): Processor {
@@ -55,7 +55,7 @@ export function moderationProcessor(opts: ModerationOptions): Processor {
 
   if (on === 'input' || on === 'both') {
     // Synchronous throw is PRESERVED (see safety.ts promptInjectionDetector, same rationale) — recordProcessorReport
-    // Is called fire-and-forget (best-effort, swallows errors), doesn't break the tripwire's synchronous behavior.
+    // is called fire-and-forget (best-effort, swallows errors), doesn't break the tripwire's synchronous behavior.
     proc.processInput = (input: ProcessorInput, ctx: ProcessorCtx) => {
       const hit = firstHit(collectText(input), opts.blocklist);
       if (hit) {

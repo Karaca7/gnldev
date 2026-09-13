@@ -50,7 +50,7 @@ describe('SqliteStorage schema tooling', () => {
     const raw = (storage as unknown as { db: any }).db;
     raw.exec('ALTER TABLE gnl_runs DROP COLUMN suspended_count');
     // `failed` (the run-outcome flag) was added the same way suspended_count was, so it belongs in the
-    // Same drift scenario — dropping only one would leave the newer column's migration unproven.
+    // same drift scenario — dropping only one would leave the newer column's migration unproven.
     raw.exec('ALTER TABLE gnl_runs DROP COLUMN failed');
     raw.exec('ALTER TABLE gnl_runs DROP COLUMN running');
     raw.exec('ALTER TABLE gnl_runs DROP COLUMN canceled');
@@ -60,7 +60,7 @@ describe('SqliteStorage schema tooling', () => {
     expect(before.ok).toBe(false);
     expect(before.missingTables).toEqual(['gnl_counters']);
     // Both added-later columns are reported. `failed` (the run-outcome flag) arrived the same way
-    // Suspended_count did, and the introspection picks it up from the DDL without being told.
+    // suspended_count did, and the introspection picks it up from the DDL without being told.
     expect(before.missingColumns.map((c) => c.column).sort()).toEqual(['canceled', 'failed', 'running', 'suspended_count']);
     expect(before.missingColumns.every((c) => c.table === 'gnl_runs')).toBe(true);
 
@@ -134,7 +134,7 @@ describe('PostgresStorage schema tooling (pg-mem)', () => {
     const before = await storage.checkSchema();
     expect(before.ok).toBe(false);
     // Both added-later columns are reported. `failed` (the run-outcome flag) arrived the same way
-    // Suspended_count did, and the introspection picks it up from the DDL without being told.
+    // suspended_count did, and the introspection picks it up from the DDL without being told.
     expect(before.missingColumns.map((c) => c.column).sort()).toEqual(['canceled', 'failed', 'running', 'suspended_count']);
     expect(before.missingColumns.every((c) => c.table === 'gnl_runs')).toBe(true);
     expect(before.missingTables.sort()).toEqual(

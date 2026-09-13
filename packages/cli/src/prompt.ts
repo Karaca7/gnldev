@@ -2,7 +2,7 @@
 //
 // The SELECTION LOGIC is a pure reducer(state, key) → state — fully unit-testable without a TTY.
 // A thin shell (checkboxPrompt) does the impure parts: put stdin in raw mode, decode keypresses into
-// Key events, render the list with the shared ANSI helpers, and loop until the reducer says done.
+// key events, render the list with the shared ANSI helpers, and loop until the reducer says done.
 
 import { bold, cyan, dim, green } from './ansi.js';
 
@@ -68,7 +68,7 @@ export function selection(state: SelectState): string[] {
 }
 
 // --- Impure shell (TTY render + raw stdin) — covered by prompt-shell.test.ts, which swaps
-//      Process.stdin/stdout for fakes and asserts the terminal contract (raw mode restored to its
+//      process.stdin/stdout for fakes and asserts the terminal contract (raw mode restored to its
 // PREVIOUS value, cursor re-shown, stdin paused, no leaked 'data' listener). ----
 
 const ESC = '\x1b';
@@ -154,11 +154,11 @@ export async function checkboxPrompt(
  * Interactive single-select, built on the multi-select above rather than beside it.
  *
  * Same keys, same drawing, same cancel path — the only difference is that the answer is one id, and
- * That is enforced by pre-checking nothing and taking the first selection. A second implementation
- * Would have been a second set of terminal escape bugs.
+ * that is enforced by pre-checking nothing and taking the first selection. A second implementation
+ * would have been a second set of terminal escape bugs.
  *
  * ONLY call when stdin/stdout are a TTY (the caller guards on `process.stdin.isTTY`). Resolves to the
- * Chosen id, `null` when the user picked nothing, or `undefined` if cancelled.
+ * chosen id, `null` when the user picked nothing, or `undefined` if cancelled.
  */
 export async function selectPrompt(
   items: PromptItem[],

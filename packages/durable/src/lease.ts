@@ -1,13 +1,13 @@
 // A time-bounded lease: exactly one process does the unattended work.
 //
 // The problem it solves is dull and expensive. A nightly job that costs real model calls runs on
-// Every instance that has it enabled, so two instances means two bills and two sets of results that
-// Disagree about which was "the" nightly run. "Enable it on one instance" is a documented workaround
-// And workarounds are what people forget during a scale-up.
+// every instance that has it enabled, so two instances means two bills and two sets of results that
+// disagree about which was "the" nightly run. "Enable it on one instance" is a documented workaround
+// and workarounds are what people forget during a scale-up.
 //
 // Built on the same CAS primitives as the run-lock (`putIfAbsent` / `putIfMatch`), for the same
-// Reason: an election that is not atomic elects two leaders under exactly the load that made you
-// Want an election.
+// reason: an election that is not atomic elects two leaders under exactly the load that made you
+// want an election.
 import { claim } from './journal.js';
 import type { Journal } from './journal.js';
 
@@ -27,14 +27,14 @@ const noCasWarned = new WeakSet<object>();
  *   · nobody holds it        → claim it (atomic insert; the loser is simply told no)
  *   · this owner holds it    → renew, so long work does not lose its own lease mid-flight
  *   · somebody's has EXPIRED → take it over by CAS on the exact expired value. Two contenders both
- *     See the same stale lease; only the one whose compare-and-set lands wins, which is the whole
- *     Point of doing it this way rather than "read, decide, write".
+ *     see the same stale lease; only the one whose compare-and-set lands wins, which is the whole
+ *     point of doing it this way rather than "read, decide, write".
  *   · somebody holds a live one → false. Not an error: it means the work is already being done.
  *
  * TTL: make it comfortably longer than the interval between attempts — an expiry that lands while
- * The holder is mid-run hands the work to a second process, which is the thing being prevented. A
- * Lease is wall-clock and therefore skew-sensitive across machines; the ttl has to absorb the skew
- * You actually have, and the exported bound below is a starting point, not a guarantee.
+ * the holder is mid-run hands the work to a second process, which is the thing being prevented. A
+ * lease is wall-clock and therefore skew-sensitive across machines; the ttl has to absorb the skew
+ * you actually have, and the exported bound below is a starting point, not a guarantee.
  */
 export async function acquireLease(
   journal: Journal,

@@ -1,9 +1,9 @@
 // P0.2 the three INTERNAL sentinels durable-tool.ts returns as a tool's `output`
 // (see packages/durable/src/durable-tool.ts + packages/server/src/sse.ts's tool-result handling, which
-// This masking is kept IN SYNC with) must NEVER reach a browser useChat client verbatim — they carry
-// Internal fields (`detail`, raw guard reasons) that are an INTERNAL API, not a wire contract. This one
-// Helper is shared by ui-stream.ts (LIVE stream masking) and messages.ts (HISTORY reconstruction) so the
-// Masked shape can't drift between the two call sites.
+// this masking is kept IN SYNC with) must NEVER reach a browser useChat client verbatim — they carry
+// internal fields (`detail`, raw guard reasons) that are an INTERNAL API, not a wire contract. This one
+// helper is shared by ui-stream.ts (LIVE stream masking) and messages.ts (HISTORY reconstruction) so the
+// masked shape can't drift between the two call sites.
 import { surfacedInterrupts } from '@gnldev/durable';
 import type { Interrupt } from '@gnldev/durable';
 
@@ -37,7 +37,7 @@ export interface MaskedToolOutput {
 
 /**
  * Masks a tool-result `output` value if (and only if) it carries one of the three sentinels; passes
- * Everything else through UNCHANGED. `toolNameHint` backfills `toolName` for a suspend sentinel that
+ * everything else through UNCHANGED. `toolNameHint` backfills `toolName` for a suspend sentinel that
  * (in older journal records) might not carry its own `toolName` field.
  */
 export function maskSentinelOutput(output: unknown, toolNameHint?: string): MaskedToolOutput {

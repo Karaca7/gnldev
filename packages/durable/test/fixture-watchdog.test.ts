@@ -97,7 +97,7 @@ describe('the cross-process fixture watchdog', () => {
       child.stdout.on('data', (d) => { const m = /up pid=(\d+)/.exec(String(d)); if (m) { clearTimeout(t); resolve(Number(m[1])); } });
     });
     // No GNL_FIXTURE_RUNNER_PID → nothing to watch. It must not guess and kill itself; only the
-    // Deadline (long, here) applies.
+    // deadline (long, here) applies.
     await sleep(2_000);
     const stillUp = alive(pid);
     try { child.kill('SIGKILL'); process.kill(pid, 9); } catch { /* gone */ }

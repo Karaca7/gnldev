@@ -13,7 +13,7 @@ if (arg === '--help' || arg === '-h') {
   console.log('  directory, which must be empty.');
   console.log('');
   console.log('  For templates, features and hosts, use the CLI directly:');
-  console.log('    npx @gnldev/cli init [dir] [--template minimal|full] [--features a,b,c] [--yes]');
+  console.log('    npx @gnldev/cli init [dir] [--template minimal] [--features a,b,c] [--yes]');
   process.exit(0);
 }
 

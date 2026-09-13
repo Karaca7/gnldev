@@ -1,15 +1,15 @@
 // The server a project will actually run on, and the file that binds GNL to it.
 //
 // `gnl init` used to ask only which FEATURES you want and to produce no server entry at all —
-// Development is served by `gnl dev`, which stands up its own listener, so nothing feels missing
-// Until the day you deploy and there is nothing to deploy. The recipes below close that: they are
-// Not written from the documentation, they are the ones measured against each running server, with
-// The traps each one sets already avoided.
+// development is served by `gnl dev`, which stands up its own listener, so nothing feels missing
+// until the day you deploy and there is nothing to deploy. The recipes below close that: they are
+// not written from the documentation, they are the ones measured against each running server, with
+// the traps each one sets already avoided.
 //
 // Every recipe produces the SAME two files. `src/app.ts` is server-neutral (`export const app`) and
-// Is what edge targets and the managed runtime consume; `src/server.ts` is the only file that knows
-// Which HTTP framework you picked. Keeping them apart is what lets the choice be real without
-// Becoming a fork in the road.
+// is what edge targets and the managed runtime consume; `src/server.ts` is the only file that knows
+// which HTTP framework you picked. Keeping them apart is what lets the choice be real without
+// becoming a fork in the road.
 
 export interface HostRecipe {
   id: string;
@@ -20,8 +20,8 @@ export interface HostRecipe {
   /**
    * Type packages. `@types/node` is added for EVERY host, not per framework: a server entry reads
    * `process.env.PORT` and imports `node:http`, and the base template never needed either — it had
-   * No server file. Without it the generated project does not typecheck, which is a bad first
-   * Impression from code we wrote.
+   * no server file. Without it the generated project does not typecheck, which is a bad first
+   * impression from code we wrote.
    */
   devDeps?: Record<string, string>;
   /** `src/server.ts`. */
@@ -32,7 +32,7 @@ const APP_TS = `// The GNL surface, with no server attached.
 //
 // Kept separate from src/server.ts on purpose: this file is what runs on the edge (Workers, Vercel,
 // Deno, Bun), none of which uses a Node HTTP framework. Your server choice lives next door and does
-// Not reach in here.
+// not reach in here.
 import { createGnl, toJournal } from '@gnldev/durable';
 import { roleAuth } from '@gnldev/auth';
 import type { CreateGnlConfig } from '@gnldev/durable';
@@ -71,6 +71,29 @@ const auth = roles.admin || roles.viewer ? roleAuth(roles as never) : undefined;
 
 /** The REST API — agents, runs, workflows. A fetch handler: callable, and carrying \`.fetch\`. */
 export const app = createRestApi(config, { title: 'app', auth });
+
+// WHO IS EACH RUN FOR? This host answers it from the AUTHENTICATED principal: with \`auth\` above, the
+// caller's identity becomes the run's \`resourceId\` — the key memory scopes on and the value every
+// ownership gate compares against. Without \`auth\`, there is no principal, the subject can only come
+// from \`body.resourceId\`, and a gate with no verified owner refuses nobody. The startup banner this
+// file prints says which of the two you are in.
+//
+// If you mount @gnldev/chat-adapter or @gnldev/agui instead of (or beside) this REST surface, they have no
+// auth of their own and you MUST name the subject yourself. Both take the same hook:
+//
+//   import { createChatRoute } from '@gnldev/chat-adapter';
+//   export const chat = createChatRoute(config, {
+//     identity: (req) => {
+//       // READ IT FROM SOMETHING THE SERVER TRUSTS — a session cookie, a verified JWT,
+//       // \`principalOf(req)?.id\`. NEVER from the request body: a body-supplied subject is the
+//       // caller naming whoever they like, which is the exact hole the engine's context seal exists
+//       // to close.
+//       const session = mySessionStore.get(req.headers.get('cookie'));
+//       return session ? { resourceId: session.userId, threadId: session.conversationId } : undefined;
+//     },
+//   });
+//
+// Returning nothing is honest and safe: the run is born with no owner rather than a forged one.
 
 /** The Studio inspector + playground. Mount it in development; gate it or drop it in production. */
 export const studio = createStudioApp({
@@ -155,7 +178,7 @@ const server = express();
 
 // Your own routes first, with the body parser scoped to them. A GLOBAL \`express.json()\` ahead of
 // GNL is the misconfiguration that answers "runId is required" to a request that carried one.
-// Server.use('/app', express.json(), yourRouter);
+// server.use('/app', express.json(), yourRouter);
 
 server.use('/studio', toNodeHandler(studio as never));
 server.use('/', toNodeHandler(api));
@@ -184,7 +207,7 @@ const server = Fastify();
 await server.register(middie);
 
 // Your own routes are Fastify routes — they keep its parser, its validation, its 404.
-// Server.get('/app/health', async () => ({ ok: true }));
+// server.get('/app/health', async () => ({ ok: true }));
 
 const apiNode = toNodeHandler(api);
 server.use('/studio', toNodeHandler(studio as never));
@@ -231,7 +254,7 @@ server.use(c2k((req: { url?: string }, res: unknown, _next: () => void) => {
 }));
 
 // Your own parser and routes go AFTER, and only see what the block above let through.
-// Server.use(bodyParser());
+// server.use(bodyParser());
 
 const port = Number(process.env.PORT ?? 3000);
 server.listen(port, process.env.HOST ?? '127.0.0.1'); // loopback by default — HOST=0.0.0.0 for containers
@@ -283,8 +306,8 @@ export function hostById(id: string): HostRecipe | undefined {
  * The paragraph appended to the project README.
  *
  * Asking "which server?" is a promise, and the promise does not hold everywhere — so the answer says
- * Where it does. A user who picks Fastify, deploys to the managed cloud and finds their choice
- * Ignored was mis-sold by the question, not by the platform.
+ * where it does. A user who picks Fastify, deploys to the managed cloud and finds their choice
+ * ignored was mis-sold by the question, not by the platform.
  */
 export function hostReadme(host: HostRecipe): string {
   return [

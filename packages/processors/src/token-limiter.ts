@@ -1,9 +1,9 @@
 // P2 "TokenLimiter" — a fuller sibling of `tokenLimit` (safety.ts).
 // `tokenLimit` keeps only the newest messages that fit the budget (simple sliding window); `tokenLimiter`
-// Adds a pluggable `countTokens` (same convention as @gnldev/memory's `approxTokens`: char/4 heuristic by
-// Default), an explicit oldest-first trim strategy that always protects the system message(s) + the
+// adds a pluggable `countTokens` (same convention as @gnldev/memory's `approxTokens`: char/4 heuristic by
+// default), an explicit oldest-first trim strategy that always protects the system message(s) + the
 // LAST user message, and an 'error' strategy (ProcessorTripwire) for callers who'd rather fail loudly
-// Than silently drop context.
+// than silently drop context.
 import { ProcessorTripwire, recordProcessorReport } from '@gnldev/durable';
 import type { Processor, ProcessorCtx, ProcessorInput } from '@gnldev/durable';
 
@@ -12,7 +12,7 @@ export interface TokenLimiterOptions {
   maxInputTokens: number;
   /**
    * Token counter (default: the char/4 heuristic, SAME as @gnldev/memory's `approxTokens`). For a real
-   * Tokenizer, pass e.g. `gpt-tokenizer`/`tokenx`/`js-tiktoken`: `countTokens: (t) => enc.encode(t).length`.
+   * tokenizer, pass e.g. `gpt-tokenizer`/`tokenx`/`js-tiktoken`: `countTokens: (t) => enc.encode(t).length`.
    */
   countTokens?: (text: string) => number;
   /**
@@ -47,14 +47,14 @@ function lastUserIndex(messages: any[]): number {
 }
 
 /**
- * TokenLimiter — estimates total input tokens (system + messages); over `maxInputTokens`:
+ * tokenLimiter — estimates total input tokens (system + messages); over `maxInputTokens`:
  * 'trim-oldest' (default): drops the OLDEST non-protected messages (index 0 = oldest, matching the
- *   Convention used by `tokenLimit`/`toolSearch`) one at a time until under budget or no candidates
- *   Remain. Protected (NEVER dropped): `role: 'system'` messages (if `keepSystem`, default true) and
- *   The LAST `role: 'user'` message (a run must always keep the request it's actually answering).
+ *   convention used by `tokenLimit`/`toolSearch`) one at a time until under budget or no candidates
+ *   remain. Protected (NEVER dropped): `role: 'system'` messages (if `keepSystem`, default true) and
+ *   the LAST `role: 'user'` message (a run must always keep the request it's actually answering).
  *   `input.system` (the separate system-prompt field) is never trimmed — if it alone exceeds the
- *   Budget, trimming messages cannot help; this is a best-effort trim, not a hard guarantee of
- *   Staying under budget.
+ *   budget, trimming messages cannot help; this is a best-effort trim, not a hard guarantee of
+ *   staying under budget.
  * 'error': throws `ProcessorTripwire` (run stops) instead of trimming anything.
  * Deterministic (pure function of the input + countTokens) → no journaling needed.
  */
@@ -66,7 +66,7 @@ export function tokenLimiter(opts: TokenLimiterOptions): Processor {
   return {
     name: 'token-limiter',
     // DELIBERATE synchronous (NOT async): same rationale as promptInjectionDetector/moderationProcessor —
-    // The 'error' strategy's tripwire must throw SYNCHRONOUSLY. recordProcessorReport is fire-and-forget.
+    // the 'error' strategy's tripwire must throw SYNCHRONOUSLY. recordProcessorReport is fire-and-forget.
     processInput(input: ProcessorInput, ctx: ProcessorCtx) {
       const messages = input.messages ?? [];
       const systemTokens = typeof input.system === 'string' ? countTokens(input.system) : 0;

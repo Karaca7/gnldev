@@ -1,15 +1,15 @@
 // EMBEDDED static GNL doc content — the fallback single source of truth for @gnldev/docs-mcp.
 //
 // Compiled 1:1 from components/docs/nav-data.ts (ordered list of the features:
-// Slug/title/oneLiner/tier/package) and lib/llms-content.ts (per-slug install/apis/example)
-// On the gnl.dev site — content mirrors the official docs, not invented here.
+// slug/title/oneLiner/tier/package) and lib/llms-content.ts (per-slug install/apis/example)
+// on the gnl.dev site — content mirrors the official docs, not invented here.
 // It is embedded here so this package can work on its own even if the site
 // (https://gnl.dev) is down/unreachable; falls back to this if live content can't be
-// Fetched via GNL_DOCS_URL.
+// fetched via GNL_DOCS_URL.
 //
 // If the site content changes, this file must be synced by hand (no automatic sync —
-// No runtime dependency was set up between the site and this package, to avoid a
-// Lockfile race).
+// no runtime dependency was set up between the site and this package, to avoid a
+// lockfile race).
 
 export type DocTier = 'core' | 'studio' | 'ee';
 
@@ -21,8 +21,8 @@ export const TIER_LABEL: Record<DocTier, string> = {
 
 /**
  * Printed under every `ee` feature. Without it the install line for those recipes reads like any
- * Other — `npm install @gnldev/auth-ee` — for a package that is not on the public registry and will
- * Not be, so a reader following it gets E404 and no idea why.
+ * other — `npm install @gnldev/auth-ee` — for a package that is not on the public registry and will
+ * not be, so a reader following it gets E404 and no idea why.
  */
 export const EE_NOTE =
   `\`@gnldev/auth-ee\` is a commercial package and is not published to the public npm registry. ` +

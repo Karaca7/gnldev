@@ -21,19 +21,97 @@ app.route('/api', createChatRoute({ gnl }));
 ```
 
 The route streams back in the AI SDK's UI-message format, so an existing `useChat` frontend works
-unchanged — while the run behind it is journaled, replayable and exactly-once.
+unchanged — while the run behind it is journaled, replayable, and its side effects are
+[at-most-once](../durable/README.md#what-never-charged-twice-actually-means).
 
 You normally do NOT need `resolveRunId`: the default derivation `${body.id}:${lastMessage.id}` gives
-one exactly-once run PER TURN (a network retry of the same turn replays; a new turn runs fresh).
+one durable run PER TURN (a network retry of the same turn replays; a new turn runs fresh).
 Anti-pattern to avoid: `resolveRunId: (_c, body) => body.id` — useChat's `body.id` is stable for the
-WHOLE conversation, so every later turn would replay turn 1 from the journal forever.
+WHOLE conversation, so every later turn would replay turn 1 from the journal forever. What that
+derived string *is* — a name the engine hashes into an id, or the id itself — depends on whether the
+route can name the user; see [the idempotency contract](#the-idempotency-contract).
+
+## Who is this request for? (`identity` / `resolveResourceId`)
+
+This route ships with **no auth of its own** — deliberately, and the same posture as `@gnldev/agui`.
+What that leaves you responsible for is one thing: naming the end user each run acts for.
+
+**Why it is not optional.** GNL has no end-user identity of its own. An end user is a *subject* a
+trusted application names, not a principal GNL authenticates. The engine treats a few reserved
+context keys as "the server established this" — and an early version of this route forwarded
+`body.context` verbatim, so the reserved key arrived from whoever sent the request. Measured against
+a running app: a plain POST carrying `{"context":{"__gnl_resourceId":"VICTIM"}}` produced a run owned
+by that name, and the ownership stamp followed it.
+
+The route now **always seals** the context, so that specific forgery is closed whether or not you
+pass a resolver. What a resolver decides is the other half: whether the run has an owner at all.
+
+```ts
+import { createChatRoute } from '@gnldev/chat-adapter';
+
+const chat = createChatRoute({ gnl }, {
+  // ONE hook for both fields. The same signature @gnldev/agui's route takes.
+  identity: (req) => {
+    const session = db.sessions.get(req.headers.get('cookie'));   // YOUR session store
+    return session ? { resourceId: session.userId, threadId: session.conversationId } : undefined;
+  },
+});
+```
+
+`identity` receives the **web `Request`**, not the Hono context, so a host bridging this route from
+Express or Fastify can use it. It is called once per request and may return `undefined`.
+
+**Read it from something the server trusts** — a session cookie, a verified JWT,
+`principalOf(req)?.id` — and **never from the request body**. A body-supplied subject is the caller
+naming whoever they like, which is the hole the context seal exists to close.
+
+**If you give none.** Nothing is asserted and nothing is forged: runs are born **ownerless**. That is
+safe against impersonation and weak in the other direction — an ownership gate with no owner to
+compare against refuses nobody, so the protection reads as present and is not. Memory also has
+nothing to scope on, so per-user recall and `listThreads` have no subject to key by. In
+`NODE_ENV=production` the route says so once, at construction, with a `console.warn` — it never
+throws, because a deployment whose boundary genuinely lives in front of this route is not broken.
+
+**Precedence**, field by field:
+
+| Field | Order |
+|---|---|
+| `resourceId` | `resolveResourceId(c, body)` → `identity(req).resourceId` → *(none)* |
+| `threadId` | `resolveThreadId(c, body)` → `identity(req).threadId` → `body.threadId` → `body.id` → the runId |
+
+`resolveResourceId` / `resolveThreadId` still win: they are the existing contract, and a newer
+convenience must not quietly take a working deployment's answer away. `identity` outranks the body,
+because it is server-derived and the body is not.
+
+**Honest bound.** A resolver reading an *unauthenticated* request asserts a subject nobody verified.
+Put auth in front of this route — or compose `@gnldev/server`'s `createRestApi` auth middleware
+around it — or the subject is only as trustworthy as the caller.
 
 ## The idempotency contract
 
-- **`X-Gnl-Run-Id` on every response** (success and error): the effective runId — your client's
-  retry key is a header contract, not something to re-derive from useChat internals. Explicit
-  `body.runId` wins; an `Idempotency-Key` header is accepted as an alias AFTER `body.runId` and
-  `resolveRunId` (a gateway-stamped header must not silently override an application decision).
+**Two regimes, decided by whether the route can name a subject.** The per-turn key
+(`${body.id}:${lastMessage.id}`, or an `Idempotency-Key` header when a gateway sends one) is this
+route's name for *the work this turn is*. When `identity` / `resolveResourceId` gives that turn an
+owner, the key is promoted to a **`workKey`**: the engine derives the run's id from it
+(`run1_<digest>`) and the string you sent stops being a journal key. When there is nobody to name —
+the anonymous quickstart, no auth, no session store — the same string stays the raw runId it has
+always been, byte for byte. Deriving an id from a name needs an *address* to make it unique within,
+and a route with no subject has none; refusing those requests would replace a working first five
+minutes with an error message. Your retry contract is identical in both: the same message ids
+produce the same key, and the same key lands on the same run.
+
+One migration note, because the regime is decided by the resolver: **adopting this version — or
+wiring `identity` into a deployment that ran without it — changes which id an in-flight turn's retry
+lands on** (raw key on the old pods, `run1_` on the new). During that window a retried turn can run
+once more. Close the window by draining in-flight requests over the deploy rather than rolling
+through it.
+
+- **`X-Gnl-Run-Id` on every response** (success and error): the opaque id of the run this call
+  landed on — a **correlation handle** for logs, traces and Studio. It is **not your retry key**: to
+  retry, send the same turn again (the same conversation id and the same last-message id). Explicit
+  `body.runId` and `resolveRunId` still win, and both stay raw — they name an *id*, and a host
+  holding one has already decided the addressing. The `Idempotency-Key` header is read AFTER them (a
+  gateway-stamped header must not silently override an application decision).
 - **A per-run lock is ON by default** (`lock: { ttlMs: 300_000 }`): two concurrent requests with the
   same runId (double-click, two tabs, a retry racing the original) no longer both execute — the
   loser gets a typed `409 { code: 'run_busy', resumable: true }` + `Retry-After`, and retrying the

@@ -1,7 +1,7 @@
-// Gnl dev server: REST API (@gnldev/server) + Studio Playground (@gnldev/studio) on a single port.
+// gnl dev server: REST API (@gnldev/server) + Studio Playground (@gnldev/studio) on a single port.
 // All runtime packages (hono, @gnldev/server, @gnldev/durable, @gnldev/studio, @gnldev/auth, @gnldev/memory) are
-// Resolved from the TARGET PROJECT (see runtime.ts) — this module itself only has `import type`s of
-// Them (erased at compile time), so loading @gnldev/cli's own dist does not pull any runtime in.
+// resolved from the TARGET PROJECT (see runtime.ts) — this module itself only has `import type`s of
+// them (erased at compile time), so loading @gnldev/cli's own dist does not pull any runtime in.
 import type * as HonoNs from 'hono';
 import type * as Server from '@gnldev/server';
 import type * as Durable from '@gnldev/durable';
@@ -13,10 +13,11 @@ import type { AuthProvider, Cred } from '@gnldev/auth';
 import type * as Auth from '@gnldev/auth';
 import { devMemoryFactory, devStudioMemory } from './memory.js';
 import type { GnlDevConfig } from './config.js';
+import { identityRow } from './protections-view.js';
 import { loadAuth, loadDurable, loadHono, loadMemory, loadNodeServer, loadServer, loadStudio, loadStudioAi } from './runtime.js';
 
 /** Runtime modules a dev app needs — all resolved from the project (see runtime.ts). `memory` is only
- *  Loaded when `config.storage` is present (it's an optional feature). */
+ *  loaded when `config.storage` is present (it's an optional feature). */
 export interface DevRuntimeModules {
   hono: typeof HonoNs;
   server: typeof Server;
@@ -59,8 +60,8 @@ function freeAuth(config: GnlDevConfig, auth: typeof Auth): AuthProvider | undef
 
 /**
  * Premium provider if EE is installed + a license is present; free otherwise. Dynamic import (resolved
- * From the SAME project as everything else — see runtime.ts) → in a free install, if @gnldev/auth-ee is
- * Missing it silently falls back to free behavior (try/catch).
+ * from the SAME project as everything else — see runtime.ts) → in a free install, if @gnldev/auth-ee is
+ * missing it silently falls back to free behavior (try/catch).
  */
 export async function resolveAuthProvider(config: GnlDevConfig, auth: typeof Auth, projectDir: string): Promise<AuthProvider | undefined> {
   const free = freeAuth(config, auth);
@@ -75,7 +76,7 @@ export async function resolveAuthProvider(config: GnlDevConfig, auth: typeof Aut
       if (config.licenseStrict) throw new Error('gnl: license key present but @gnldev/auth-ee is not installed (licenseStrict)');
     }
     if (ee) {
-      // FailClosed throws on an invalid license → in strict paid deployments there's no silent boot without premium.
+      // failClosed throws on an invalid license → in strict paid deployments there's no silent boot without premium.
       return ee.createEnterpriseAuth({
         licenseKey: license,
         fallback: free,
@@ -95,13 +96,13 @@ export function buildDevApp(config: GnlDevConfig, rt: DevRuntimeModules, auth?: 
   const provider = auth ?? freeAuth(config, rt.auth);
   const app = new rt.hono.Hono();
   // `.mount()` (unlike the old `.route()` with a Hono sub-app) registers one blanket wildcard route per
-  // Call — a `/` mount would swallow every path, including `/studio/*`, if registered first. So the more
-  // Specific `/studio` mount MUST be added before the catch-all `/` REST mount.
+  // call — a `/` mount would swallow every path, including `/studio/*`, if registered first. So the more
+  // specific `/studio` mount MUST be added before the catch-all `/` REST mount.
   if (config.studio !== false) {
     const storage = config.storage;
     if (storage && !rt.memory) throw new Error('gnl: config.storage is set but no @gnldev/memory module was loaded (loadDevRuntime bug)');
     // Dev default: if storage is present, derive memory → Playground conversations automatically become threads.
-    const gnl = rt.durable.createGnl({ ...config, ...(storage ? { memoryFactory: config.memoryFactory ?? devMemoryFactory(rt.memory!) } : {}) });
+    const gnl = rt.durable.createGnl({ ...config, ...(storage && config.memory !== false ? { memoryFactory: config.memoryFactory ?? devMemoryFactory(rt.memory!) } : {}) });
     app.mount(
       '/studio',
       rt.studio.createStudioApp({
@@ -113,8 +114,26 @@ export function buildDevApp(config: GnlDevConfig, rt: DevRuntimeModules, auth?: 
       }),
     );
   }
-  app.mount('/', rt.server.createRestApi(config, { title: config.title, auth: provider }));
+  // `protectionsBanner: false` — serveDev prints the matrix itself, a few lines down, and its copy
+  // knows something this one cannot: that the branch above DERIVED a memory store which the project's
+  // own src/app.ts does not have. Letting both print would put the less informed block on screen too.
+  app.mount('/', rt.server.createRestApi(config, { title: config.title, auth: provider, protectionsBanner: false }));
   return app;
+}
+
+/**
+ * Is `gnl dev` about to hand this project a memory store its own config does not carry?
+ *
+ * Mirrors buildDevApp's condition above rather than re-deciding it: memory is derived only when
+ * Studio is mounted, storage exists, and the config supplied no factory of its own. Kept next to the
+ * derivation so the two cannot drift into disagreeing about what the banner claims.
+ */
+function devOnlyMemory(config: GnlDevConfig): boolean {
+  // `memory: false` is a deliberate opt-out, not an absence: the engine ignores any injected factory
+  // when it is set (createGnl resolves memory to `false` outright), so claiming "derived from
+  // storage" there would print the one lie this banner exists to prevent — and recommend `gnl add
+  // memory` to someone who just said no.
+  return config.studio !== false && !!config.storage && !config.memoryFactory && config.memory === undefined;
 }
 
 /** Boot the dev app (Node). `projectDir` = the directory containing the gnl.config that produced `config`. */
@@ -133,7 +152,7 @@ export async function serveDev(
     throw new Error(`gnl dev: --port must be an integer, got '${bindOpts.port}'`);
   }
   // Previously `serve({ fetch, port })` — with no hostname @hono/node-server binds EVERY interface,
-  // While these very lines printed 'localhost'. See bind.ts.
+  // while these very lines printed 'localhost'. See bind.ts.
   // A provider whose only credential is one this package used to SHIP is not auth: the value is
   // readable in the registry. Without this, `--host 0.0.0.0` printed "(auth: protected)" while
   // accepting `Bearer admin-dev`. See isPublishedDevCredential.
@@ -166,5 +185,35 @@ export async function serveDev(
     if (config.studio !== false) console.log(`          Studio http://${bind.displayHost}:${info.port}/studio   (Playground)`);
     const notice = exposureNotice(bind, !!provider);
     if (notice) console.log(notice);
+    // WHAT IS PROTECTING THIS, under the three lines that say where it is listening.
+    //
+    // The rows are @gnldev/durable's, not a list kept here — the line above about `mode` is the whole
+    // argument: this banner once said "protected" because a provider merely EXISTED, and the provider's
+    // only credential was one published in the npm tarball. A protection list maintained beside the
+    // config it describes says whatever it last said.
+    //
+    // Two rows this process fills in, because the config cannot:
+    //  • identity — `gnl dev` mounts the REST host, whose subject is the authenticated principal when
+    //    there is auth and the request body when there is not. Same reading as createRestApi's own.
+    //  • memory — marked ─ when buildDevApp derived one. That asymmetry is the single most expensive
+    //    thing on this screen: threads work here and quietly do not after deploy.
+    //
+    // GUARDED, not listed in REQUIRED_DURABLE_EXPORTS. The runtime is resolved from the PROJECT
+    // (runtime.ts), so a newer CLI can meet an older @gnldev/durable and call an export that is not
+    // there — the exact "X is not a function" the shape check exists to turn into a sentence. But
+    // that check is a REFUSAL TO START, and refusing to start `gnl dev` over a banner would be a
+    // worse bug than the missing banner. So this one degrades: no matrix, everything else runs.
+    if (typeof rt.durable.describeProtections === 'function') console.log(
+      rt.durable.formatProtections(
+        rt.durable.describeProtections(config, {
+          surface: 'gnl dev',
+          ...(devOnlyMemory(config) ? { devOnly: { memory: true } } : {}),
+          // ONE derivation, shared with `gnl doctor` — see protections-view.ts for why a second copy
+          // of this row would be the same bug the matrix exists to fix.
+          identity: identityRow(config, !!provider && !shippedCreds),
+        }),
+        { title: '          protections' },
+      ).join('\n'),
+    );
   });
 }

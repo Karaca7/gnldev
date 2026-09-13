@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { motion } from 'framer-motion';
 import { ReactFlow, Background, Controls, MiniMap, type Node, type Edge } from '@xyflow/react';
 import dagre from '@dagrejs/dagre';
-import { GitFork, Check, X, Play, Pause, ChevronLeft, ChevronRight, SkipBack, SkipForward, Columns2, FlaskConical, Trash2, Undo2, UploadCloud, Wrench, Ban, Activity } from 'lucide-react';
+import { GitFork, Check, X, Play, Pause, ChevronLeft, ChevronRight, SkipBack, SkipForward, Columns2, FlaskConical, Trash2, Undo2, UploadCloud, Wrench, Ban, Activity, Copy } from 'lucide-react';
 import {
   useRunsPaged, useRun, useRunState, useDiff, useTrace, useRunNetwork, useCapabilities, useLiveRuns, useRunScores, useThreads,
   useProcessorReports, useRunIncidents, useMetrics, useMetricsRuns, type MetricsRun,
@@ -23,12 +23,42 @@ import { currentLocale } from '../i18n/locale';
 type TabId = 'conversation' | 'trace' | 'network' | 'forks' | 'regression' | 'processors' | 'cost' | 'incidents';
 const ALL_TAB_IDS: readonly TabId[] = ['conversation', 'trace', 'network', 'forks', 'regression', 'processors', 'cost', 'incidents'];
 
-// ── fork lineage tree: runId convention `<source>:fork:<ts>` (forkRun's default) ────
-function forkParent(id: string): string | null {
+// ── fork lineage tree: TWO runId conventions, because forkRun mints two ────────────
+//
+// `<source>:fork:<ts>` is the raw-namespace default and has always been read here. Package #4 added
+// the other one: a fork of an ENGINE-DERIVED run is `run1_<32hex>#fork-<n>`, because the raw spelling
+// wears the `run1_` prefix without the shape and the engine refuses it outright. Without this branch
+// every derived fork drew as its own ROOT — the tree quietly said "this run came from nowhere" about
+// precisely the runs whose parent a hash cannot otherwise reveal.
+//
+// The parent of a derived fork is the BASE (`run1_<hex>`), and that is the whole truth available: an
+// id carries one `#` suffix, so a fork of `run1_<hex>#2` is also named off the base. The lineage is
+// therefore accurate about WHICH WORK and — across the execution axis — approximate about which
+// execution. Mirrors @gnldev/durable's `parseDerivedRunId`/`pickForkRunId`; matched by shape rather
+// than imported for the same reason parseOrgFromRunId below reads a key convention directly.
+// Exported (pure) for the same reason `parseOrgFromRunId` below is: the lineage decision is testable
+// without mounting the view, and a two-convention rule is exactly the kind that drifts unpinned.
+const DERIVED_FORK_RE = /^(run1_[0-9a-f]{32})#fork-[1-9]\d*$/;
+export function forkParent(id: string): string | null {
+  const derived = DERIVED_FORK_RE.exec(id);
+  if (derived) return derived[1]!;
   const i = id.lastIndexOf(':fork:');
   return i > 0 ? id.slice(0, i) : null;
 }
-function forkRoot(id: string): string {
+/**
+ * What a NON-ROOT node in the lineage tree is called: the part that distinguishes it from its parent.
+ *
+ * This used to be `':fork:' + id.slice(id.lastIndexOf(':fork:') + 6)`, which reads a runId as text and
+ * therefore had the same blind spot forkParent did — on `run1_<hex>#fork-1` the `lastIndexOf` misses,
+ * the arithmetic runs off the front of the string, and the node draws as `:fork:<random hex>`: a label
+ * that is not merely wrong but LOOKS like a raw fork id somebody could copy. Same two conventions,
+ * same order, one place.
+ */
+export function forkLabel(id: string): string {
+  const parent = forkParent(id);
+  return parent ? id.slice(parent.length) : id;
+}
+export function forkRoot(id: string): string {
   let cur = id;
   for (let p = forkParent(cur); p; p = forkParent(cur)) cur = p;
   return cur;
@@ -36,15 +66,46 @@ function forkRoot(id: string): string {
 
 /**
  * Org derivation from a runId (pure, tested). In the ROOT (unscoped) Studio view, org-scoped runs
- * Surface with an `org:<orgId>:` prefix in their runId (journal key `org:acme:order-1:model:0` →
- * RunId `org:acme:order-1`, see @gnldev/durable parseJournalKey). There is no separate org field on
+ * surface with an `org:<orgId>:` prefix in their runId (journal key `org:acme:order-1:model:0` →
+ * runId `org:acme:order-1`, see @gnldev/durable parseJournalKey). There is no separate org field on
  * RunSummary — it is DERIVED from this prefix here. `displayId` is the prefix-stripped, readable id
- * Shown to the user; the FULL `runId` must still be used for every API call (readRun/fork/purge/…).
+ * shown to the user; the FULL `runId` must still be used for every API call (readRun/fork/purge/…).
  * A runId with no `org:` prefix → `{ org: null, displayId: runId }` (unchanged).
  */
 export function parseOrgFromRunId(runId: string): { org: string | null; displayId: string } {
   const m = /^org:([^:]+):(.+)$/.exec(runId);
   return m ? { org: m[1]!, displayId: m[2]! } : { org: null, displayId: runId };
+}
+
+/**
+ * The FULL run id, onto the clipboard.
+ *
+ * It copies the id and not the workKey, and the asymmetry is the point: a caller already holds the
+ * name they gave the work — they typed it — while `run1_0123…cdef#fork-1` is a 32-hex digest plus an
+ * execution suffix that nobody transcribes correctly off a screen. That string is what `gnl run`
+ * wants, what a log grep needs and what goes into a support ticket, and the header above shows the
+ * ORG-STRIPPED spelling (`displayId`), so reading it off the page is not even reliably enough.
+ *
+ * Mirrors Playground's CopyButton down to the promise handling: the success mark is set inside
+ * `.then()`, never optimistically — a browser that denies clipboard permission must not draw a tick.
+ */
+function CopyRunId({ runId }: { runId: string }) {
+  const { t } = useTranslation('inspector');
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      type="button"
+      title={done ? t('copyRunIdDoneTitle') : t('copyRunIdTitle')}
+      onClick={() => {
+        navigator.clipboard?.writeText(runId)
+          .then(() => { setDone(true); setTimeout(() => setDone(false), 1200); })
+          .catch(() => { /* denied/unsupported — the title stays "copy", which is the truth */ });
+      }}
+      className="shrink-0 text-muted-foreground transition-colors hover:text-foreground"
+    >
+      {done ? <Check size={13} /> : <Copy size={13} />}
+    </button>
+  );
 }
 
 export function Inspector() {
@@ -54,19 +115,19 @@ export function Inspector() {
   const caps = useCapabilities();
   const [statusF, setStatusF] = useState<'all' | RunSummary['status']>('all');
   // The filter tabs printed the raw enum ('completed', 'suspended') in every language — only 'all' was
-  // Ever translated. Same vocabulary as StatusBadge, so a tab and a row never disagree on a word.
+  // ever translated. Same vocabulary as StatusBadge, so a tab and a row never disagree on a word.
   const statusLabel = useStatusLabel();
   const [filter, setFilter] = useState('');
   // API-09: debounce the search box — filtering now happens server-side (GET /runs?q=), so keystrokes
-  // Must not fire a request per character; the debounced value is what actually drives the query.
+  // must not fire a request per character; the debounced value is what actually drives the query.
   const [debouncedFilter, setDebouncedFilter] = useState('');
   useEffect(() => {
     const id = setTimeout(() => setDebouncedFilter(filter), 300);
     return () => clearTimeout(id);
   }, [filter]);
   // API-09: status/q are pushed down to GET /runs (server-side) — `runs`/`runList`/`total` below already
-  // Reflect the active filter, no client-side re-filtering happens anymore (see the old `filtered` memo,
-  // Removed). `total` (shown in the search placeholder) is the server's FILTERED count.
+  // reflect the active filter, no client-side re-filtering happens anymore (see the old `filtered` memo,
+  // removed). `total` (shown in the search placeholder) is the server's FILTERED count.
   const filters = useMemo(
     () => ({ ...(statusF !== 'all' ? { status: statusF } : {}), ...(debouncedFilter ? { q: debouncedFilter } : {}) }),
     [statusF, debouncedFilter],
@@ -79,36 +140,36 @@ export function Inspector() {
   const total = runs.data?.pages.at(-1)?.total;
   // Fork lineage (ForkView/allRuns) and the currently-selected run's status badge intentionally stay
   // UNFILTERED — a fork sibling, or the run the user has selected, may not match the active search/
-  // Status filter but must still resolve (this was already the pre-API-09 behavior: `allRuns` was never
-  // Routed through the client-side filter either). When no filter is active this is the exact SAME
-  // React-query key as `runs` above (see useRunsPaged) → deduped to a single request, no extra cost.
+  // status filter but must still resolve (this was already the pre-API-09 behavior: `allRuns` was never
+  // routed through the client-side filter either). When no filter is active this is the exact SAME
+  // react-query key as `runs` above (see useRunsPaged) → deduped to a single request, no extra cost.
   const allRunsQ = useRunsPaged();
   const allRuns = useMemo(() => (allRunsQ.data?.pages ?? []).flatMap((p) => p.items), [allRunsQ.data]);
   // API-10: ONE /metrics/runs query (limited, see useMetricsRuns) shared by every RunRow AND RunDetail
-  // Below — each used to call useMetricsRuns() ITSELF and re-`.find()` the runId on every render (50
-  // Rows × the full metrics array, on every 10s poll AND every unrelated re-render). Building the
-  // RunId → MetricsRun lookup ONCE here and handing it down as a Map turns that into a single O(1)
-  // Lookup per row, computed once per data change instead of once per row per render.
+  // below — each used to call useMetricsRuns() ITSELF and re-`.find()` the runId on every render (50
+  // rows × the full metrics array, on every 10s poll AND every unrelated re-render). Building the
+  // runId → MetricsRun lookup ONCE here and handing it down as a Map turns that into a single O(1)
+  // lookup per row, computed once per data change instead of once per row per render.
   const mr = useMetricsRuns();
   const metricsById = useMemo(() => new Map((mr.data?.runs ?? []).map((r) => [r.runId, r] as const)), [mr.data]);
   // FLOW-07: the URL (`?run=`/`?tab=`) is the single source of truth for the selected run and active
-  // Tab — this is what makes "paste a link to this exact run+tab" and the browser Back button work.
-  // LocalStorage is only a FALLBACK for the initial value when the URL carries no `run` (e.g. a bare
+  // tab — this is what makes "paste a link to this exact run+tab" and the browser Back button work.
+  // localStorage is only a FALLBACK for the initial value when the URL carries no `run` (e.g. a bare
   // /inspector visit) — it is never written back into the URL. The OLD one-time-consume effect used
-  // To DELETE `?run` right after reading it, which is exactly what broke deep links and Back. The
+  // to DELETE `?run` right after reading it, which is exactly what broke deep links and Back. The
   // Playground "Inspect" link (`/inspector?run=<id>`) still works unchanged: its `run` value becomes
-  // The initial `sel` below, same as before.
+  // the initial `sel` below, same as before.
   const [params, setParams] = useSearchParams();
   const [sel, setSel] = useState<string | null>(() => params.get('run') || localStorage.getItem('gnl-insp-run'));
   const [tab, setTab] = useState<TabId>(() => (params.get('tab') as TabId | null) || 'conversation');
   // Thread-level selection (ThreadDetail — see inspector-thread.tsx). A RUN selection wins the right
-  // Pane; selThread stays set underneath it so RunDetail's back returns to the thread ledger.
+  // pane; selThread stays set underneath it so RunDetail's back returns to the thread ledger.
   const [selThread, setSelThread] = useState<string | null>(() => params.get('thread'));
   // F5-resilient selection; when sel drops to null via purge/onPurged, clear the key too (so a stale runId doesn't come back on F5).
   useEffect(() => { if (sel) localStorage.setItem('gnl-insp-run', sel); else localStorage.removeItem('gnl-insp-run'); }, [sel]);
   // Pull sel/tab FROM the URL when it changes from outside our own writes below — a new `?run=` link
-  // Clicked while Inspector is already mounted (no remount, so the initial useState above doesn't
-  // Re-run), or a browser Back/Forward navigation.
+  // clicked while Inspector is already mounted (no remount, so the initial useState above doesn't
+  // re-run), or a browser Back/Forward navigation.
   useEffect(() => {
     const urlRun = params.get('run');
     const urlTab = params.get('tab') as TabId | null;
@@ -116,25 +177,25 @@ export function Inspector() {
     if (urlRun !== null && urlRun !== sel) setSel(urlRun);
     if (urlTab !== null && urlTab !== tab) setTab(urlTab);
     if (urlThread !== selThread && (urlThread !== null || selThread !== null)) setSelThread(urlThread);
-    // Eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params]);
   // Push sel/tab TO the URL so it always reflects the current selection (replace: this is in-app
-  // Navigation within Inspector, not a new page — it should not pile up history entries).
+  // navigation within Inspector, not a new page — it should not pile up history entries).
   useEffect(() => {
     const next = new URLSearchParams(params);
     if (sel) next.set('run', sel); else next.delete('run');
     if (tab !== 'conversation') next.set('tab', tab); else next.delete('tab');
     if (selThread) next.set('thread', selThread); else next.delete('thread');
     if (next.toString() !== params.toString()) setParams(next, { replace: true });
-    // Eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sel, tab, selThread]);
 
   // Left list view: flat list (default, industry pattern: trace-first) or grouped by thread —
-  // The selection (`sel`) is preserved when the mode changes, only the display shape changes.
+  // the selection (`sel`) is preserved when the mode changes, only the display shape changes.
   const [view, setView] = useState<'runs' | 'threads'>('runs');
   const threadGroups = useMemo(() => groupRunsByThread(runList), [runList]);
   // Thread TITLES: names given in Playground (memory listThreads → title). The group header shows
-  // That name instead of a bare UUID → same language as Playground (this is also the common observability-tool pattern: showing a name, not a bare UUID).
+  // that name instead of a bare UUID → same language as Playground (this is also the common observability-tool pattern: showing a name, not a bare UUID).
   const threads = useThreads();
   const threadTitles = useMemo(() => new Map((threads.data ?? []).map((t) => [t.id, t.title])), [threads.data]);
 
@@ -181,8 +242,8 @@ export function Inspector() {
                 className={cn(
                   'shrink-0 rounded-md border px-2 py-0.5 font-mono text-[10px] transition-colors',
                   // D6-4: this is a filter-toggle selection state, not the "live/primary" identity — brand/lime
-                  // Was over-applied here (bucket "general accent"); a neutral filled pill (bg-muted + bold
-                  // Text) marks the active filter without spending the brand accent on it.
+                  // was over-applied here (bucket "general accent"); a neutral filled pill (bg-muted + bold
+                  // text) marks the active filter without spending the brand accent on it.
                   statusF === s ? 'border-border bg-muted text-foreground font-semibold' : 'border-border text-muted-foreground hover:text-foreground',
                 )}
               >
@@ -338,9 +399,9 @@ function fmtTok(n: number): string {
 
 function RunRow({ run, metricsById, active, onClick }: { run: RunSummary; metricsById: Map<string, MetricsRun>; active: boolean; onClick: () => void }) {
   // New-design row: the AGENT name is the primary label (falls back to the runId when a run has no
-  // Agent — e.g. pre-existing runs / direct runDurable). A status PILL + per-run COST/relative-time
-  // Come from the shared /metrics/runs query (react-query cached — one fetch for the whole list, looked
-  // Up O(1) via the `metricsById` Map the parent builds once — see API-10 in Inspector()).
+  // agent — e.g. pre-existing runs / direct runDurable). A status PILL + per-run COST/relative-time
+  // come from the shared /metrics/runs query (react-query cached — one fetch for the whole list, looked
+  // up O(1) via the `metricsById` Map the parent builds once — see API-10 in Inspector()).
   const { t } = useTranslation('inspector');
   const metric = metricsById.get(run.runId);
   const suspended = run.status === 'suspended';
@@ -387,15 +448,15 @@ export interface ThreadGroup { threadId: string | null; runs: RunSummary[]; }
 /**
  * Pure grouping (tested): group by threadId; runs without a threadId are collected into a single
  * `threadId: null` ("ungrouped") group. Order WITHIN a group stays IDENTICAL to input order (the
- * Caller already provides newest-first). Group order is stable by first-seen order — i.e. the group
- * Whose most recent activity is newest (whose first run in input order is the newest) comes first;
- * The "ungrouped" group is always moved to the very end.
+ * caller already provides newest-first). Group order is stable by first-seen order — i.e. the group
+ * whose most recent activity is newest (whose first run in input order is the newest) comes first;
+ * the "ungrouped" group is always moved to the very end.
  *
  * A run whose `threadId` EQUALS its own `runId` is treated as ungrouped: that's the sentinel the
  * Playground writes when memory is OFF (`threadId: runId`), and any bare `runDurable` that self-threads.
  * It's not a real multi-turn conversation and has no thread record (→ no title), so grouping it on its
- * Own would render a pseudo-thread headed by a raw run id. Folding it into "ungrouped" keeps the Threads
- * View to REAL threads + one ungrouped bucket.
+ * own would render a pseudo-thread headed by a raw run id. Folding it into "ungrouped" keeps the Threads
+ * view to REAL threads + one ungrouped bucket.
  */
 export function groupRunsByThread(runs: RunSummary[]): ThreadGroup[] {
   const order: (string | null)[] = [];
@@ -433,8 +494,8 @@ function ThreadGroupRow({ group, title, sel, selThread, onSelect, onSelectThread
   const hasSuspended = group.runs.some((r) => r.status === 'suspended');
 
   // Declutter (Threads-tab critique): a REAL thread is ONE row — the per-run nesting that used to
-  // Render every run inline moved into ThreadDetail (the right pane), where the turns actually mean
-  // Something. The list is for finding a conversation, the ledger is for reading it.
+  // render every run inline moved into ThreadDetail (the right pane), where the turns actually mean
+  // something. The list is for finding a conversation, the ledger is for reading it.
   if (group.threadId != null) {
     const totalCost = group.runs.reduce((n, r) => n + (metricsById.get(r.runId)?.costUsd ?? 0), 0);
     return (
@@ -507,7 +568,7 @@ function RunDetail({ runId, status, caps, allRuns, allRunsLoading, metricsById, 
   };
   // D3-A: durable-flag-only cancel — studio keeps no in-process abort registry (see server.ts's own
   // JSDoc on POST /runs/:id/cancel), so this is purely "stop at the next step, everywhere" — same
-  // Terminal/no-uncancel posture as Unwind, hence the same confirm-dialog treatment.
+  // terminal/no-uncancel posture as Unwind, hence the same confirm-dialog treatment.
   const doCancel = async () => {
     try {
       await api.cancelRun(runId);
@@ -519,23 +580,27 @@ function RunDetail({ runId, status, caps, allRuns, allRunsLoading, metricsById, 
   };
   // API-11: sourced from /trace instead of a separate /cost request — the server's /trace response
   // ALREADY includes `cost` (same getRunCost call the old /cost endpoint made), so this is one fewer
-  // Full journal read per run selected, and NO extra request when the Trace/Journal tab is opened
-  // Afterwards (same ['trace', runId] query, deduped by react-query — see TraceView/JournalTimeline,
-  // Which already fetch this exact query).
+  // full journal read per run selected, and NO extra request when the Trace/Journal tab is opened
+  // afterwards (same ['trace', runId] query, deduped by react-query — see TraceView/JournalTimeline,
+  // which already fetch this exact query).
   const traceQ = useTrace(runId);
   const cost = traceQ.data?.cost;
   const incidents = useRunIncidents(runId);
   const run = useRun(runId);
   const scores = useRunScores(runId);
   const metric = metricsById.get(runId);
-  const runAgent = allRuns.find((r) => r.runId === runId)?.agent;
+  const runRow = allRuns.find((r) => r.runId === runId);
+  const runAgent = runRow?.agent;
+  // Same row, same trip: `listRuns` reads workKey out of the run's `:input` alongside `agent`, so the
+  // header's label costs nothing the agent name did not already cost.
+  const runWorkKey = runRow?.workKey;
   const suspended = status === 'suspended';
   // Number of runs in the same lineage tree (for the tab badge text): those sharing a common root.
   const family = useMemo(() => allRuns.filter((r) => forkRoot(r.runId) === forkRoot(runId)), [allRuns, runId]);
 
   // FLOW-12: a run purged/retention-swept from another tab (or otherwise gone) must not leave this
-  // One stuck on a dead ErrorBox forever with no matching row in the left list to give the user any
-  // Context. Once the (unfiltered) run list has finished loading and no longer contains this runId,
+  // one stuck on a dead ErrorBox forever with no matching row in the left list to give the user any
+  // context. Once the (unfiltered) run list has finished loading and no longer contains this runId,
   // AND the direct fetch for it 404s, treat it exactly like a purge: clear the selection → Empty state.
   useEffect(() => {
     if (allRunsLoading) return;
@@ -544,8 +609,8 @@ function RunDetail({ runId, status, caps, allRuns, allRunsLoading, metricsById, 
   }, [allRunsLoading, allRuns, runId, run.error, onPurged]);
 
   // Tab defs (shared by the <Tabs> nav below and the guard effect right after it — `tab` now lives in
-  // The parent Inspector/URL, see FLOW-07, so it SURVIVES switching to a different run instead of
-  // Resetting on remount the way local state used to).
+  // the parent Inspector/URL, see FLOW-07, so it SURVIVES switching to a different run instead of
+  // resetting on remount the way local state used to).
   const tabDefs = useMemo(() => [
     { id: 'conversation' as const, label: t('tabJournal') },
     { id: 'trace' as const, label: 'Trace' },
@@ -555,16 +620,16 @@ function RunDetail({ runId, status, caps, allRuns, allRunsLoading, metricsById, 
     ...(caps?.regression ? [{ id: 'regression' as const, label: t('tabRegression') }] : []),
     ...(caps?.processors ? [{ id: 'processors' as const, label: 'Processor' }] : []),
     // Guard incidents (duplicate guard / loop detection): the tab appears ONLY when the run has
-    // Any — an always-present empty tab would be noise (same conditional pattern as Cost).
+    // any — an always-present empty tab would be noise (same conditional pattern as Cost).
     ...(incidents.data?.incidents?.length ? [{ id: 'incidents' as const, label: t('tabIncidents', { count: incidents.data.incidents.length }) }] : []),
   ], [cost, family.length, caps?.regression, caps?.processors, incidents.data, t]);
   // Sanity-check `tab` against the full TabId union — NOT against `tabDefs` above: several entries in
-  // TabDefs are conditional on data that's still LOADING on first render for a freshly-selected run
+  // tabDefs are conditional on data that's still LOADING on first render for a freshly-selected run
   // (cost, incidents.data), so validating against it would bounce a perfectly valid persisted/
-  // Shared-URL tab (e.g. "cost") back to Conversation for a frame before its data arrives. This only
-  // Catches genuinely bogus values (a hand-edited `?tab=` in the URL) — a conditional tab that simply
-  // Doesn't apply to this particular run (e.g. "incidents" with none) just renders an empty panel below,
-  // Same as it already did before `tab` moved into RunDetail.
+  // shared-URL tab (e.g. "cost") back to Conversation for a frame before its data arrives. This only
+  // catches genuinely bogus values (a hand-edited `?tab=` in the URL) — a conditional tab that simply
+  // doesn't apply to this particular run (e.g. "incidents" with none) just renders an empty panel below,
+  // same as it already did before `tab` moved into RunDetail.
   useEffect(() => {
     if (!ALL_TAB_IDS.includes(tab)) onTabChange('conversation');
   }, [tab, onTabChange]);
@@ -575,7 +640,7 @@ function RunDetail({ runId, status, caps, allRuns, allRunsLoading, metricsById, 
     qc.invalidateQueries({ queryKey: ['state', runId] });
   };
   // After a fork, jump straight to the new run so its (paid, already-resumed) result is visible —
-  // Otherwise a user staring at the old run may click "fork" again, spawning another paid run.
+  // otherwise a user staring at the old run may click "fork" again, spawning another paid run.
   const onFork = (newRunId?: string) => {
     refresh();
     if (newRunId) onSelectRun(newRunId);
@@ -600,7 +665,13 @@ function RunDetail({ runId, status, caps, allRuns, allRunsLoading, metricsById, 
               Org-scoped runs show the readable displayId + an org badge; every API call below still
               uses the FULL `runId` prop (readRun/fork/purge/trace) — display and identity are separate. */}
           <h2 className="break-all font-mono text-sm font-semibold">{detailOrg.displayId}</h2>
+          <CopyRunId runId={runId} />
           {detailOrg.org && <Badge tone="info">{t('orgBadge', { org: detailOrg.org })}</Badge>}
+          {/* WHAT THIS RUN WAS FOR, in the caller's own words. The heading beside it is a hash now
+              (`run1_<32 hex>`, optionally `#2`/`#fork-1`), so on a derived run this badge is the only
+              readable thing in the header. Absent — no placeholder — when the caller never declared
+              one, which is every raw-runId call and every run older than the field. */}
+          {runWorkKey && <Badge tone="muted">{t('workKeyBadge', { workKey: runWorkKey })}</Badge>}
           {status && <StatusBadge status={status} />}
           {/* Runtime scorer results (exactly-once, from the journal): name + score badge. */}
           {scores.data && Object.entries(scores.data.scores).map(([name, s]) => (
@@ -727,7 +798,7 @@ function RunDetail({ runId, status, caps, allRuns, allRunsLoading, metricsById, 
 /**
  * OTEL export button (caps.otelExport): sends the run trace to the APM the host has configured
  * (Langfuse/Honeycomb/Datadog/Collector) with ONE CLICK. Security: the target endpoint/API key is NOT
- * On the client — the server only triggers `opts.otelExport(runId)`, the host sends it out with its own configuration.
+ * on the client — the server only triggers `opts.otelExport(runId)`, the host sends it out with its own configuration.
  */
 function OtelExportButton({ runId }: { runId: string }) {
   const { t } = useTranslation('inspector');
@@ -870,8 +941,8 @@ export function ToolCallChips({ content }: { content: any }) {
         const args = fmtToolArgs(p.input ?? p.args);
         return (
           // D6-4: this chip identifies a TOOL call — recolored from brand/lime to the same success/green
-          // Used for "tool" everywhere else in Inspector (Timeline, TraceView, JournalTimeline), instead
-          // Of spending the sparse brand accent on a kind label.
+          // used for "tool" everywhere else in Inspector (Timeline, TraceView, JournalTimeline), instead
+          // of spending the sparse brand accent on a kind label.
           <div key={i} className="rounded-md border border-success/30 bg-success/5 px-2.5 py-1.5">
             <div className="flex items-center gap-1.5 text-[13px]">
               <Wrench size={12} className="text-success" />
@@ -892,9 +963,9 @@ export function ToolCallChips({ content }: { content: any }) {
 
 /**
  * Chat-first bubble (replaces MessageCard): aligned by role — user on the right (bg-muted),
- * Assistant/tool on the left (tool slightly indented + status icon), system collapsed in a <details> at the top.
+ * assistant/tool on the left (tool slightly indented + status icon), system collapsed in a <details> at the top.
  * `entry` is the raw journal entry correlated with the message (if any) — usage/latency is shown inline, and
- * Both the message JSON and entry.value appear together under the raw journal <details>.
+ * both the message JSON and entry.value appear together under the raw journal <details>.
  */
 export function ChatBubble({ m, added, entry, latencyMs }: { m: any; added?: boolean; entry?: JournalEntry; latencyMs?: number }) {
   const { t } = useTranslation('inspector');
@@ -904,12 +975,12 @@ export function ChatBubble({ m, added, entry, latencyMs }: { m: any; added?: boo
   // Tool output: the message's OWN tool-result part is the primary source — reconstructState
   // (durable time-travel.ts) always carries `output` there. The journal `entry` is an ENRICHMENT
   // (status/usage/raw record); reading output only from it made every bubble whose entry
-  // Correlation missed say "(no result)" while the result sat unread in m.content[0].output.
+  // correlation missed say "(no result)" while the result sat unread in m.content[0].output.
   const resultPart = Array.isArray(m?.content) ? m.content.find((p: any) => p?.type === 'tool-result') : undefined;
   const toolOut = (entry?.value as any)?.output ?? resultPart?.output;
   // Failure: primarily the journal record's status (unchanged); when the entry correlation misses
   // (legacy args-mode records without resolvedToolCallIds), fall back to the shape of the message's
-  // Own output — reconstructState's unmatched branch emits the WHOLE record (with `status`) as
+  // own output — reconstructState's unmatched branch emits the WHOLE record (with `status`) as
   // `output`, so a failed legacy tool no longer wears a green check over an error payload.
   const entryFailed = ['failed', 'error'].includes(String((entry?.value as any)?.status));
   const partOut = resultPart?.output as any;
@@ -987,8 +1058,8 @@ export function ChatBubble({ m, added, entry, latencyMs }: { m: any; added?: boo
 /**
  * Chat-first conversation view: merges the old 'timeline' (Journal — raw entry stream) and 'state'
  * (Time-travel — materialized messages) tabs into a SINGLE tab. The default "Chat" mode, while raw journal
- * Mode renders the existing `Timeline` AS-IS (untouched) — the journal remains separately accessible
- * As the single source of truth.
+ * mode renders the existing `Timeline` AS-IS (untouched) — the journal remains separately accessible
+ * as the single source of truth.
  */
 function ConversationView({ runId, steps, canFork, onFork }: { runId: string; steps: number; canFork: boolean; onFork: (newRunId?: string) => void }) {
   const { t } = useTranslation('inspector');
@@ -1018,9 +1089,9 @@ function ConversationView({ runId, steps, canFork, onFork }: { runId: string; st
 
 /**
  * Chat mode: time-travel scrubber (moved from the old StateView) + a ChatBubble list. The message ↔ journal
- * Entry correlation is display-only and NOT FRAGILE — assistant messages are mapped in order to `modelEntries`,
- * Tool messages are mapped to `toolByCall` via `tool_call_id`/`toolCallId`; if the index overflows, the entry
- * Silently stays undefined (usage/latency is shown optionally, it doesn't throw).
+ * entry correlation is display-only and NOT FRAGILE — assistant messages are mapped in order to `modelEntries`,
+ * tool messages are mapped to `toolByCall` via `tool_call_id`/`toolCallId`; if the index overflows, the entry
+ * silently stays undefined (usage/latency is shown optionally, it doesn't throw).
  */
 function ChatReplay({ runId, steps, canFork, onFork }: { runId: string; steps: number; canFork: boolean; onFork: (newRunId?: string) => void }) {
   const { t } = useTranslation('inspector');
@@ -1049,8 +1120,8 @@ function ChatReplay({ runId, steps, canFork, onFork }: { runId: string; steps: n
     setForking(true);
     try {
       // The server resumes the new run IMMEDIATELY after forking (real model call = real cost) — so a
-      // Silently-swallowed error here would leave the user clicking again, spawning another paid fork
-      // Each time. Surface success/failure and switch to the new run so a repeat click isn't tempting.
+      // silently-swallowed error here would leave the user clicking again, spawning another paid fork
+      // each time. Surface success/failure and switch to the new run so a repeat click isn't tempting.
       const res = await api.fork(runId, eff);
       toast.success(t('forkSuccessToast', { runId: res?.newRunId ?? '?' }));
       onFork(res?.newRunId);
@@ -1068,8 +1139,8 @@ function ChatReplay({ runId, steps, canFork, onFork }: { runId: string; steps: n
   const entries = run.data ?? [];
   const modelEntries = useMemo(() => entries.filter((e) => e.kind === 'model'), [entries]);
   // 'call'-mode keys end in the real toolCallId, but 'args'-mode keys end in `args-<tool>-<hash>` —
-  // There the record's own `resolvedToolCallIds` (stamped by durable-tool.ts) carries the REAL id(s),
-  // So index those too. Before this, args-mode tool bubbles never found their journal entry.
+  // there the record's own `resolvedToolCallIds` (stamped by durable-tool.ts) carries the REAL id(s),
+  // so index those too. Before this, args-mode tool bubbles never found their journal entry.
   const toolByCall = useMemo(() => {
     const map = new Map<string, JournalEntry>();
     for (const e of entries) {
@@ -1124,15 +1195,15 @@ function ChatReplay({ runId, steps, canFork, onFork }: { runId: string; steps: n
               if (m?.role === 'assistant') {
                 const idx = assistantIdx++;
                 entry = modelEntries[idx];
-                // Latency = time elapsed from the previous model step to this one (including any tool execution in between).
+                // latency = time elapsed from the previous model step to this one (including any tool execution in between).
                 // There's no "previous" on the first step → don't show it (0ms would be misleading).
                 if (idx > 0 && entry?.ts != null) {
                   const prevTs = modelEntries[idx - 1]?.ts;
                   if (prevTs != null) latencyMs = entry.ts - prevTs;
                 }
               } else if (m?.role === 'tool') {
-                // ReconstructState puts the toolCallId INSIDE the tool-result content part, not on the
-                // Message root — reading only the root made `entry` undefined for every tool bubble.
+                // reconstructState puts the toolCallId INSIDE the tool-result content part, not on the
+                // message root — reading only the root made `entry` undefined for every tool bubble.
                 const part = Array.isArray(m?.content) ? m.content.find((p: any) => p?.type === 'tool-result') : undefined;
                 const callId = m?.tool_call_id ?? m?.toolCallId ?? part?.toolCallId;
                 entry = callId != null ? toolByCall.get(String(callId)) : undefined;
@@ -1154,7 +1225,7 @@ function fmtSpanMs(ms: number): string {
 
 /**
  * A real nested waterfall: each span is one row — name in the left column (tools are indented
- * Under the model step they belong to), a duration bar on a shared time axis on the right.
+ * under the model step they belong to), a duration bar on a shared time axis on the right.
  * The server provides `parent`/`step` fields (server.ts /runs/:id/trace).
  */
 function TraceView({ runId }: { runId: string }) {
@@ -1300,7 +1371,7 @@ function JournalTimeline({ runId }: { runId: string }) {
 
 /**
  * Cost summary (header): total tokens/$ + cachedTokens if present; if `byModel` (model → calls/tokens/$)
- * Is present, shows a breakdown under a <details> — the data already existed on the RunCost type, the display was missing.
+ * is present, shows a breakdown under a <details> — the data already existed on the RunCost type, the display was missing.
  */
 function CostSummary({ cost }: { cost: RunCost }) {
   const { t } = useTranslation('inspector');
@@ -1338,15 +1409,15 @@ function CostSummary({ cost }: { cost: RunCost }) {
 
 // ── Network tab: the dynamic router's in-run routing decisions + sub-agent steps ──
 // Server GET /runs/:id/network (getNetworkTrace) → { routes, steps }; matches the runNetwork.ts source
-// One-to-one. Was never shown in the UI before (filling a gap).
+// one-to-one. Was never shown in the UI before (filling a gap).
 export interface NetworkGraphNode { id: string; label: string; kind: 'router' | 'agent' | 'final'; task?: string; answer?: string }
 export interface NetworkGraphEdge { id: string; source: string; target: string; label?: string }
 
 /**
  * Pure transform (tested): routes/steps → a flat node/edge list. `router` starts at the root; on each
  * `route` decision, an edge labeled "turn i" is added to the target agent and the chain continues from that agent;
- * A `final` decision connects from the last node of the chain (the agent if there is one, otherwise the router)
- * To the final node. The order of i is established by the number within `routes` ('final' is always moved to the very end).
+ * a `final` decision connects from the last node of the chain (the agent if there is one, otherwise the router)
+ * to the final node. The order of i is established by the number within `routes` ('final' is always moved to the very end).
  */
 export function buildNetworkGraph(
   trace: NetworkTrace,
@@ -1380,8 +1451,8 @@ export function buildNetworkGraph(
 }
 
 // D6-4: router used to be 'brand' (lime) here purely as a third distinguishing hue for the graph's node
-// Kinds — not a live/primary signal — so it's now 'border' (the neutral border token, a structural
-// Node), leaving agent/final on their existing info/success tones. `tone` feeds directly into
+// kinds — not a live/primary signal — so it's now 'border' (the neutral border token, a structural
+// node), leaving agent/final on their existing info/success tones. `tone` feeds directly into
 // `hsl(var(--${tone}))` below, so 'border' resolves to the same --border CSS var used everywhere else.
 const NETWORK_KIND_STYLE: Record<NetworkGraphNode['kind'], string> = { router: 'border', agent: 'info', final: 'success' };
 
@@ -1414,7 +1485,7 @@ function toFlowNetwork(nodes: NetworkGraphNode[], edges: NetworkGraphEdge[]): { 
 }
 
 // BROWSER VERIFICATION: xyflow + dagre graph layout (fitView/MiniMap/pan-zoom) can only be
-// Visually verified in a real browser; the pure transform (buildNetworkGraph) is tested separately.
+// visually verified in a real browser; the pure transform (buildNetworkGraph) is tested separately.
 function NetworkGraphView({ trace }: { trace: NetworkTrace }) {
   const { t } = useTranslation('inspector');
   const { flowNodes, flowEdges } = useMemo(() => {
@@ -1449,7 +1520,7 @@ function NetworkRouteList({ trace }: { trace: NetworkTrace }) {
         const decision = r.decision;
         if (decision.action === 'final') {
           // D6-4: matches NETWORK_KIND_STYLE's final=success above (was brand/lime here, an
-          // Inconsistency with the graph view's own "final" node color).
+          // inconsistency with the graph view's own "final" node color).
           return (
             <StaggerItem key={idx} className="rounded-md border border-success/50 bg-success/5 p-2.5">
               <div className="mb-1 flex items-center gap-2 font-mono text-xs">
@@ -1498,7 +1569,8 @@ function NetworkView({ runId }: { runId: string }) {
 }
 
 /**
- * Fork lineage tree (run genealogy): derived from the `<source>:fork:<ts>` naming convention.
+ * Fork lineage tree (run genealogy): derived from forkRun's naming conventions — `<source>:fork:<ts>`
+ * in the raw namespace, `run1_<hex>#fork-<n>` for an engine-derived run (see forkParent).
  * Since every fork is an independent run in the journal, both the tree and the diff between any two branches are cheap.
  */
 function ForkView({ runId, allRuns, onSelectRun }: { runId: string; allRuns: RunSummary[]; onSelectRun: (id: string) => void }) {
@@ -1529,16 +1601,16 @@ function ForkView({ runId, allRuns, onSelectRun }: { runId: string; allRuns: Run
     const summary = family.find((r) => r.runId === id);
     const kids = (children.get(id) ?? []).slice().sort((a, b) => a.runId.localeCompare(b.runId));
     const isCurrent = id === runId;
-    const shortId = depth === 0 ? id : ':fork:' + id.slice(id.lastIndexOf(':fork:') + ':fork:'.length);
+    const shortId = depth === 0 ? id : forkLabel(id);
     return (
       <div>
         <div
           className={cn(
             'flex items-center gap-2 rounded-md border px-2.5 py-1.5',
             // D6-4: "the currently open run" in the lineage tree is a selected-row state, same species
-            // As RunRow's own `active ? 'bg-muted' : ...` in the left list — not the live/primary case.
+            // as RunRow's own `active ? 'bg-muted' : ...` in the left list — not the live/primary case.
             // The record-dot right below still pulses (record-dot--live) for this node, so "current" is
-            // Still double-coded (fill + pulsing dot), just without spending brand on the border/fill too.
+            // still double-coded (fill + pulsing dot), just without spending brand on the border/fill too.
             isCurrent ? 'border-border bg-muted font-medium' : 'border-border',
           )}
           style={{ marginLeft: depth * 24 }}
@@ -1578,10 +1650,10 @@ function ForkView({ runId, allRuns, onSelectRun }: { runId: string; allRuns: Run
 /**
  * Replay-diff: the conversations materialized from two runs' journals, side by side.
  * The common prefix is faded; diverging messages are highlighted info-blue on the left (A, current
- * Branch) and green on the right (B, compared branch) — coded not just by color but also by the "A"/"B"
- * Letter and a "diverged" micro-label (color+text double-coding). D6-4: A used to be brand/lime; that
- * Accent is reserved for the live/record indicator and the primary action elsewhere in Inspector, so
- * This two-way branch coding now uses info/success instead.
+ * branch) and green on the right (B, compared branch) — coded not just by color but also by the "A"/"B"
+ * letter and a "diverged" micro-label (color+text double-coding). D6-4: A used to be brand/lime; that
+ * accent is reserved for the live/record indicator and the primary action elsewhere in Inspector, so
+ * this two-way branch coding now uses info/success instead.
  * "What-if" analysis — shows after which decision point the branches diverge.
  */
 function DiffPair({ a, b }: { a: string; b: string }) {
@@ -1590,7 +1662,7 @@ function DiffPair({ a, b }: { a: string; b: string }) {
   const sb = useRunState(b);
   if (sa.isLoading || sb.isLoading) return <Spinner />;
   // A failed fetch on either side must NOT fall through to "0 common · A +0 · B +0" — this is a
-  // Decision surface (fork vs. base comparison), and a silent-looking "no difference" is worse than an error.
+  // decision surface (fork vs. base comparison), and a silent-looking "no difference" is worse than an error.
   if (sa.error || sb.error) return <ErrorBox error={sa.error ?? sb.error} />;
   const ma = sa.data?.messages ?? [];
   const mb = sb.data?.messages ?? [];
@@ -1647,11 +1719,11 @@ function DiffPair({ a, b }: { a: string; b: string }) {
 }
 
 // ── W5: Regression — re-run a recorded run with a new model/system (replayRun) or compare it
-// Against an existing run (without re-running); both paths return the SAME decision-point diff (durable
-// DiffRuns) → the result display is consolidated into a single DecisionList component.
+// against an existing run (without re-running); both paths return the SAME decision-point diff (durable
+// diffRuns) → the result display is consolidated into a single DecisionList component.
 // D6-4: 'changed' used to map to 'brand' (lime) — recolored to 'info' (kept distinct from 'warning',
-// Already used for 'added', and from 'destructive', already used for 'missing', so all four decision
-// Outcomes stay visually distinguishable without spending the brand accent on a status label).
+// already used for 'added', and from 'destructive', already used for 'missing', so all four decision
+// outcomes stay visually distinguishable without spending the brand accent on a status label).
 const STATUS_TONE: Record<RegressionDiffEntry['status'], 'muted' | 'info' | 'destructive' | 'warning'> = {
   same: 'muted', changed: 'info', missing: 'destructive', added: 'warning',
 };
@@ -1689,7 +1761,7 @@ function DecisionDetail({ entry }: { entry: RegressionDiffEntry }) {
       </div>
     );
   }
-  // Tool
+  // tool
   return (
     <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
       <div className="min-w-0 space-y-1">
@@ -1766,9 +1838,9 @@ function DecisionList({ report }: { report: RegressionReport }) {
 }
 
 // ── Processor (audit/compliance) tab: findings left behind by pii-redactor/prompt-injection/moderation
-// Processors in this run (@gnldev/durable readProcessorReports — GET /runs/:id/processors).
+// processors in this run (@gnldev/durable readProcessorReports — GET /runs/:id/processors).
 // BROWSER VERIFICATION: this view's actual visual layout must be manually verified (within this task's
-// Scope only the code/data-flow was written and auto-tested).
+// scope only the code/data-flow was written and auto-tested).
 /** Short summary for known built-in processors; unknown ones fall back to raw JSON. `t` is passed in by
     the caller (component) — a pure function can't call a hook. */
 function summarizeProcessorFindings(r: ProcessorReport, t: (key: string, opts?: Record<string, unknown>) => string): string | null {
@@ -1979,7 +2051,7 @@ function Approvals({ runId, onDone }: { runId: string; onDone: () => void }) {
       onDone();
     } catch (e) {
       // Multi-tab race: another tab/user may have already resolved this approval (409) →
-      // Show a clear message and still refresh so a stale 'pending' row doesn't linger in the UI.
+      // show a clear message and still refresh so a stale 'pending' row doesn't linger in the UI.
       const conflict = e instanceof ApiError && e.status === 409;
       toast.error(conflict
         ? t('conflictError', { error: errMessage(e) })

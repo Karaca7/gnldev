@@ -1,15 +1,15 @@
 // Agent approval registry — the governance gate for CODE-defined agents. Without it, an agent added to
 // `createGnl({ agents })` is live the moment the server restarts: no admin ever approves that it may
-// Serve production traffic. This registry closes that gap — each agent is recorded on boot and must be
+// serve production traffic. This registry closes that gap — each agent is recorded on boot and must be
 // APPROVED (platform-admin, via Studio) before it serves; an already-approved agent whose CONFIG DRIFTS
 // (new tools / different model / changed system) flips back to `changed` and needs re-approval, so an
-// Approved agent's behavior can't be silently altered. Opt-in at the server (requireAgentApproval) —
-// Existing deployments are byte-for-byte unchanged until they turn it on.
+// approved agent's behavior can't be silently altered. Opt-in at the server (requireAgentApproval) —
+// existing deployments are byte-for-byte unchanged until they turn it on.
 //
 // Journal-backed, root-level (`__agent_registry__:<name>`): approval is a PLATFORM decision (should this
-// Code-agent serve AT ALL), not per-org — an agent's per-org visibility is a separate axis
+// code-agent serve AT ALL), not per-org — an agent's per-org visibility is a separate axis
 // (agentVisibleToOrg). withOrg still prefixes it if used through an org view, but the canonical registry
-// Lives at the root (platform-admin surface), same as `__audit__`.
+// lives at the root (platform-admin surface), same as `__audit__`.
 import type { Journal } from './journal.js';
 import { argsHash } from './hash.js';
 import type { AgentConfig } from './registry.js';
@@ -50,9 +50,9 @@ export interface AgentRegistryRecord {
 /**
  * Stable fingerprint of an agent's config SHAPE — captures what the agent IS so a meaningful change
  * (new tools, different model, changed system prompt, added sub-agents) is detected and re-triggers
- * Approval. DynamicArg fields (model/tools/system given as FUNCTIONS) can't be hashed meaningfully, so
- * They contribute a stable `dyn` marker — the fingerprint still changes if you switch a field between
- * Static and dynamic, but two runs of the same dynamic config match (deterministic).
+ * approval. DynamicArg fields (model/tools/system given as FUNCTIONS) can't be hashed meaningfully, so
+ * they contribute a stable `dyn` marker — the fingerprint still changes if you switch a field between
+ * static and dynamic, but two runs of the same dynamic config match (deterministic).
  */
 export function fingerprintAgent(name: string, cfg: AgentConfig): string {
   const model =
@@ -79,10 +79,10 @@ export function fingerprintAgent(name: string, cfg: AgentConfig): string {
 
 /**
  * Records an agent into the registry (idempotent — call on every boot). First sight → `pending`. If a
- * Record exists: an APPROVED agent whose fingerprint DRIFTED flips to `changed` (re-approval required);
- * Everything else keeps its status (approved-and-matching stays servable; pending/blocked/changed
- * Untouched). Returns the resulting record. Get→put is sufficient (advisory governance state, not an
- * Exactly-once ledger); a concurrent double-boot just writes the same value.
+ * record exists: an APPROVED agent whose fingerprint DRIFTED flips to `changed` (re-approval required);
+ * everything else keeps its status (approved-and-matching stays servable; pending/blocked/changed
+ * untouched). Returns the resulting record. Get→put is sufficient (advisory governance state, not an
+ * exactly-once ledger); a concurrent double-boot just writes the same value.
  */
 export async function recordAgent(journal: Journal, name: string, fingerprint: string): Promise<AgentRegistryRecord> {
   const key = agentRegistryKey(name);
@@ -145,8 +145,8 @@ export async function agentApprovalStatus(journal: Journal, name: string): Promi
 
 /**
  * Whether an agent may serve — true ONLY when `status === 'approved'`. An unrecorded agent (no registry
- * Entry at all) returns `false` under the approval regime — but callers gate this behind an opt-in flag
- * So unrecorded agents in a NON-approval deployment are unaffected (see the server's requireAgentApproval).
+ * entry at all) returns `false` under the approval regime — but callers gate this behind an opt-in flag
+ * so unrecorded agents in a NON-approval deployment are unaffected (see the server's requireAgentApproval).
  */
 export async function isAgentServable(journal: Journal, name: string): Promise<boolean> {
   const rec = await agentApprovalStatus(journal, name);

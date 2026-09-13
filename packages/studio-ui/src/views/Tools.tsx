@@ -5,7 +5,7 @@ import { useTools, useCapabilities, api, errMessage, type ToolListItem, type Too
 import { Btn, Spinner, Empty, EmptyState, ErrorBox, Badge, StatStrip, JsonBlock, cn } from '../components';
 
 // Shared class for form/JSON inputs: ink background + border. The focus recipe (ring + halo) lives in
-// Index.css and applies to every input/textarea/select — do not re-declare it here.
+// index.css and applies to every input/textarea/select — do not re-declare it here.
 const inputCls = 'rounded-md border border-input bg-background px-2 py-1 text-sm outline-none transition-colors';
 
 export function Tools() {
@@ -17,7 +17,7 @@ export function Tools() {
 
   if (tools.isLoading) return <Spinner />;
   // Query error (SEPARATE from the "no tools" empty state): if the fetch fails, tools.data stays
-  // Undefined and the length check below would wrongly show "No tools" — handle the real error first.
+  // undefined and the length check below would wrongly show "No tools" — handle the real error first.
   if (tools.error) return <ErrorBox error={tools.error} />;
   if (!tools.data?.length) return <EmptyState icon={Wrench} title={t('emptyTitle')} description={t('emptyDescription')} />;
 
@@ -66,7 +66,7 @@ function fieldsOf(schema: any): { key: string; type: string; enum?: any[]; requi
 }
 
 // PURE function: coerces a form field's raw string value according to the schema. An empty/
-// Untouched field (v undefined/'') → undefined (so it isn't converted to a number and become
+// untouched field (v undefined/'') → undefined (so it isn't converted to a number and become
 // NaN — the old code produced Number(undefined) and sent NaN to the server).
 export function coerceToolField(f: { type: string }, v: string | undefined): unknown {
   if (v === undefined || v === '') return undefined;
@@ -76,7 +76,7 @@ export function coerceToolField(f: { type: string }, v: string | undefined): unk
 }
 
 // PURE function (testable, DOM-free): coerces and validates all fields — blocks submit if a
-// Number field has NaN or a required field is empty (invalid: which fields to highlight).
+// number field has NaN or a required field is empty (invalid: which fields to highlight).
 export function validateToolInput(
   fields: { key: string; type: string; required: boolean }[],
   vals: Record<string, unknown>,

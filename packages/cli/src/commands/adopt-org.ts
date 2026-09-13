@@ -1,4 +1,4 @@
-// Gnl adopt-org [<id>] [--yes] — moves data written BEFORE organizations were configured into one
+// gnl adopt-org [<id>] [--yes] — moves data written BEFORE organizations were configured into one
 // organization. SAFE BY DEFAULT: without --yes this only PREVIEWS, exactly like `gnl sweep`.
 //
 // The organization id is the OPERATOR'S, and nothing here derives it. On a free deployment there was

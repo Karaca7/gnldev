@@ -88,7 +88,7 @@ Every tool is treated as side-effecting unless it says otherwise (`durable-tool.
 | **Journal** | The heart of GNL: EVERY LLM response and EVERY tool result in a run is written to the database as a key-value pair. It is append-only — only additions, never modifications. |
 | **Replay** | When called again with the same `runId`, GNL reads the journal: recorded steps are returned from the record without re-executing, and only missing steps actually run. |
 | **Resume** | Restarting a run with the same `runId` after a crash/interruption — thanks to replay, it continues right where it left off. |
-| **CAS** | Compare-And-Set: performing "write this key only if it's EMPTY, don't touch it if it's already set" as a SINGLE atomic step in the database engine. Even if two servers try to write at the same time, only ONE wins. The technical foundation of exactly-once. |
+| **CAS** | Compare-And-Set: performing "write this key only if it's EMPTY, don't touch it if it's already set" as a SINGLE atomic step in the database engine. Even if two servers try to write at the same time, only ONE wins. The technical foundation of the at-most-once guarantee. |
 | **Idempotent** | An operation that produces the same result whether called once or ten times (e.g., "don't create a new record if one already exists with this id"). |
 | **HITL** | Human-in-the-loop: the agent pauses before a risky operation and waits for human approval. |
 | **RAG** | Retrieval-Augmented Generation: a technique that first retrieves documents relevant to a question from an archive, then feeds them to the LLM as context. |
@@ -116,7 +116,7 @@ sequenceDiagram
     M-->>G: "call the chargeCard tool"
     G->>J: write LLM response (model:0)
     G->>J: CAS: LOCK the tool record (tool:call-1 = 'running')
-    G->>T: chargeCard(20) — REAL side effect, EXACTLY once
+    G->>T: chargeCard(20) — REAL side effect, guarded by that lock
     T-->>G: { charged: 20 }
     G->>J: write result (tool:call-1 = 'succeeded')
     Note over G: 💥 EVEN IF IT CRASHES RIGHT HERE...
@@ -390,8 +390,8 @@ one: `@gnldev/chat-adapter` and `@gnldev/docs-mcp`. That is 24 manifests in `pac
 which publish to npm.
 
 Key point: **every package is built on top of `@gnldev/durable`** — a RAG query, a queue job, a
-remote agent call are all automatically written to the journal and INHERIT the exactly-once
-guarantee. In competing frameworks these features exist individually, but there's no shared
+remote agent call are all automatically written to the journal and INHERIT the same
+[at-most-once](../packages/durable/README.md#what-never-charged-twice-actually-means) guarantee. In competing frameworks these features exist individually, but there's no shared
 durability foundation.
 
 ---
@@ -445,16 +445,27 @@ const gnl = createGnl({
   },
 });
 
-const r1 = await gnl.run('cashier', { runId: 'payment-7', prompt: 'charge $20' });
+const r1 = await gnl.run('cashier', {
+  workKey: 'payment-7',                          // YOUR NAME for this job, not for the conversation
+  resourceId: 'u-142',                           // whose payment it is — the address the name is unique within
+  prompt: 'charge $20',
+});
 // r1.interrupts → [{ toolCallId: 'call-1', toolName: 'chargeCard', args: {...} }]  → SUSPENDED
 
 // ... a human approved it from Studio (or your own UI) ...
 const r2 = await gnl.run('cashier', {
-  runId: 'payment-7',                            // SAME runId = continue
+  workKey: 'payment-7',                          // SAME workKey = the SAME WORK — the approval
+  resourceId: 'u-142',                           // addresses that job, it does not add a turn
   approvals: { 'call-1': true },
 });
 // The LLM was not called again, and the card was charged EXACTLY once.
 ```
+
+The repeated key here means *"this is the same payment"* — never *"continue the conversation"*. A
+conversation is `threadId`, a separate field ([§7.3](#73-memory-conversation-history)); reuse a
+`workKey` to **retry or resume** a job, never to add a turn to a chat. The engine derives the run's
+id from the key, so `payment-7` never reaches the journal as a key on its own — see
+[Work identity](../packages/durable/README.md#work-identity-workkey).
 
 ### 7.3 Memory (conversation history)
 
@@ -611,7 +622,7 @@ import { GnlClient } from '@gnldev/client';
 const client = new GnlClient({ baseUrl: 'http://localhost:3000' });
 await client.run('assistant', { runId: 'order-42', prompt: '...' });
 // runId is optional — omit it and the client generates one, which means a retry is a NEW run and
-// gets no exactly-once protection. Pass your own whenever the call has a side effect.
+// gets no dedup protection. Pass your own whenever the call has a side effect.
 
 // Studio: web control panel — npx @gnldev/studio --db runs.db
 // (or --config gnl.config.ts, which also serves the Playground; it needs one or the other)
@@ -745,7 +756,7 @@ buys the first list and costs the second.
 
 | Capability | What it means in practice |
 |---|---|
-| **Exactly-once side effects** | A tool call that already ran is never charged twice — enforced with CAS, verified across two OS processes and against real Postgres/Redis in CI |
+| **At-most-once side effects** | A tool call already recorded as done is not run again — enforced with CAS, verified across two OS processes and against real Postgres/Redis in CI |
 | **Deterministic replay** | The same run reconstructs to the same result without calling the model again — the model's response is in the journal, not just the state |
 | **Time-travel + fork** | Jump to any past step and branch from there, visually in Studio |
 | **Model fallback is persistent** | The model that actually won is written to the journal; a resume sticks with it instead of re-rolling the dice |
@@ -760,7 +771,7 @@ buys the first list and costs the second.
 |---|---|
 | Voice (TTS/STT), Slack/WhatsApp channels | Out of scope. These are integration surface, not durability; adding them would widen the core without making a single run safer. |
 | No-code agent editor | Code-first by design. An agent's behaviour lives in reviewable, testable, version-controlled code — a visual editor moves it somewhere a diff cannot follow it. |
-| A large catalogue of storage adapters | Four, plus composite mixing. Each adapter has to prove exactly-once against a real engine, and that proof is expensive; a long list of adapters that were never raced under load would be a liability, not a feature. |
+| A large catalogue of storage adapters | Four, plus composite mixing. Each adapter has to prove at-most-once against a real engine, and that proof is expensive; a long list of adapters that were never raced under load would be a liability, not a feature. |
 | A large catalogue of built-in scorers | Sixteen — 8 LLM-judge, 4 model-free text, 3 rule-based, plus `embeddingSimilarity` — and the judge infrastructure to write your own. (Count them in `packages/evals/src/index.ts`: `scorers.ts` contributes 8, `text-scorers.ts` 4, `scorer.ts` 4. The trajectory scorers are a separate family on top.) |
 
 If your workload is "running twice is a disaster" — payments, finance, legal, healthcare, anything
@@ -777,7 +788,7 @@ themselves live under `packages/durable/test/`:
 - **Multi-server CAS race:** two separate Postgres connection pools write to the same key at the
   same time → EXACTLY ONE winner every time (20 rounds + a 10-way burst). Same for Redis (SET NX).
 - **Live failover** (server replacement): the primary Postgres was **killed with SIGKILL**, a
-  replica was promoted → 30/30 acknowledged writes preserved, exactly-once held. (Precondition:
+  replica was promoted → 30/30 acknowledged writes preserved, the at-most-once guarantee held. (Precondition:
   synchronous replication (`synchronous_commit = on` with a synchronous standby); this guarantee does
   NOT hold under asynchronous setups, documented honestly.)
 - **Lock takeover:** two servers tried to take over an expired lock at the same time → only one
@@ -1140,7 +1151,7 @@ There are two different questions over the same data:
 
 - **"What happened in THIS run?"** → a point read → an OLTP job → GNL's journal + Studio (the
   trace is derived INSTANTLY from the journal; no second copy is kept). The journal CANNOT live in
-  ClickHouse: no CAS → exactly-once breaks down.
+  ClickHouse: no CAS → the at-most-once guarantee breaks down.
 - **"p95 latency trend across 5 million runs?"** → a bulk scan → an OLAP job → GNL hands this off
   to an external tool via the OTLP plug (`otlpPresets`). Amusing detail: the very Langfuse
   instance you plug into also runs ClickHouse under the hood — so your traces end up in

@@ -1,8 +1,8 @@
 // MCP stdio server orchestration: serves the initialize / tools/list / tools/call methods over
 // JSON-RPC 2.0 (protocol layer: protocol.ts). Tool logic first tries to fetch live
 // /llms.txt + /llms-full.txt via GNL_DOCS_URL (docs-source.ts); if unreachable, falls back to
-// The embedded static content in content.ts (text.ts). Transport (readline/stdin/stdout) is NOT
-// Here — see cli.ts.
+// the embedded static content in content.ts (text.ts). Transport (readline/stdin/stdout) is NOT
+// here — see cli.ts.
 import {
   ERR_INTERNAL,
   ERR_INVALID_PARAMS,
@@ -79,7 +79,7 @@ export interface ToolCallResult {
 
 /**
  * Doc content provider: tries the live fetch AT MOST once per process lifetime and caches the
- * Result (success or failure) in memory — it does not re-fetch on every tool call.
+ * result (success or failure) in memory — it does not re-fetch on every tool call.
  */
 export function createDocsProvider(env: NodeJS.ProcessEnv = process.env) {
   // Two values, deliberately. `fetchUrl` may carry basic-auth credentials for an internal mirror;
@@ -142,7 +142,7 @@ export function createDocsProvider(env: NodeJS.ProcessEnv = process.env) {
       if (remote) {
         const section = extractRemoteSection(remote.llmsFullTxt, slug);
         if (section) return fromNetwork(section);
-        // Section not found remotely (slug may be wrong) — fall back to embedded content; if that's also missing, an error text is produced.
+        // section not found remotely (slug may be wrong) — fall back to embedded content; if that's also missing, an error text is produced.
       }
       const f = FEATURES_BY_SLUG[slug];
       return f ? buildFeatureText(f, docsUrl) : buildUnknownSlugText(slug);
@@ -192,7 +192,7 @@ export async function callTool(provider: DocsProvider, name: string, args: any):
 /**
  * Handles a single JSON-RPC message and returns the response; if the message is a notification
  * (no id), returns `null` — per JSON-RPC 2.0, notifications must NEVER get a response (stays
- * Silent even on error).
+ * silent even on error).
  */
 export async function handleMessage(provider: DocsProvider, msg: JsonRpcMessage): Promise<JsonRpcResponse | null> {
   const id: JsonRpcId = msg.id ?? null;

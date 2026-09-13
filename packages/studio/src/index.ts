@@ -1,7 +1,7 @@
 // @gnldev/studio — durable run inspector. Admin↔API split:
-//   CreateStudioApi   → JSON only (mount/auth/programmatic)
-//   CreateStudioAdmin → HTML UI only (local/remote API via apiBase)
-//   CreateStudioApp   → convenience combining both (backward compatible)
+//   createStudioApi   → JSON only (mount/auth/programmatic)
+//   createStudioAdmin → HTML UI only (local/remote API via apiBase)
+//   createStudioApp   → convenience combining both (backward compatible)
 export { createStudioApi, createStudioAdmin, createStudioApp, PERMISSION_CATALOG, ROLE_PERMISSION_PRESETS } from './server.js';
 export type { FetchHandler, RouteInfo } from './handler.js';
 export type {
@@ -31,5 +31,7 @@ export type {
 export { createStudioRunner } from './runner.js';
 export type { GnlLike, RunnerConfigLike, RunnerAgentLike, RunnerToolLike, MakeRunnerOptions } from './runner.js';
 export { pipeAgentStream, interruptsFromSteps } from './sse.js';
+export { STUDIO_ERROR_CODES } from './error-codes.js';
+export type { StudioErrorCode } from './error-codes.js';
 export { bearerAuth, basicAuth, roleAuth } from './auth.js';
 export type { AuthProvider, Principal, Decision, AuthCapabilities, Cred } from './auth.js';

@@ -50,7 +50,7 @@ describe('GET /model-providers', () => {
 
   it('offers the models this deployment has PRICED, with no second place to edit', async () => {
     // Adding a model to the box is then something a user does with `gnl pricing set` or the Studio
-    // Pricing page — surfaces that already exist and that they have to use anyway.
+    // pricing page — surfaces that already exist and that they have to use anyway.
     const journal = new InMemoryJournal();
     await journal.put(PRICING_KEY, { models: { 'nvidia/llama-3.3-70b': { inputPer1M: 0.2, outputPer1M: 0.6 } } });
     const body = await providers(createStudioApi({ reader: journal, journal }));

@@ -13,6 +13,6 @@ pnpm studio    # http://localhost:4321 → time-travel + fork + approval queue (
 ```
 
 ## What it proves
-Every line is a real feature + assertion: exactly-once (charge→crash→resume), PII redaction, schema working memory + tool, RAG + reranker, MCP client+server exactly-once, multi-agent handoff, suspend/resume, evented workflow (waitFor), durable queue, exactly-once event bus, cross-network A2A, cross-run cache, evals (scoreRun + dataset), OTEL trace waterfall + cost, time-travel + fork, studio.
+Every line is a real feature + assertion: at-most-once side effects (charge→crash→resume), PII redaction, schema working memory + tool, RAG + reranker, MCP client+server dedup, multi-agent handoff, suspend/resume, evented workflow (waitFor), durable queue, event bus with CAS ack marking, cross-network A2A, cross-run cache, evals (scoreRun + dataset), OTEL trace waterfall + cost, time-travel + fork, studio.
 
 The `pnpm demo` output = proof that the packages work together **as installed, in a real consumer**.

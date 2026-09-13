@@ -81,7 +81,7 @@ describe('GET /approvals: satır sahibini taşır', () => {
 
   it('SAHİPLİ AMA DAMGASIZ: owner var, ownerActor yok — kilit ateşlemez, satır açık kalır', async () => {
     // Kilit `frozen.actor && opts.actor` ister. `resourceId` tek başına reddi getirmez; bu satırda
-    // Resume 409 DEĞİL, 200 döner. UI'ın düğmeyi kapatma şartı bu yüzden `ownerActor`'dır —
+    // resume 409 DEĞİL, 200 döner. UI'ın düğmeyi kapatma şartı bu yüzden `ownerActor`'dır —
     // `owner`'a bakan bir arayüz, motorun kabul edeceği bir işi kullanıcıya yasaklardı.
     const journal = new InMemoryJournal();
     await gnlOf(journal).run('pay', { runId: 'ao-3', prompt: 'öde', resourceId: 'u-ayse' } as never);
@@ -94,13 +94,13 @@ describe('GET /approvals: satır sahibini taşır', () => {
   it('MODELSİZ satır da (batch/kimlik kaydı yolu) sahibini taşır', async () => {
     // Bu satır `pending`den değil, askılı tool kaydının sentinel\'inden türüyor (batch mini-runner).
     // İki ayrı push noktası var; sahiplik yalnız birine eklenirse gelen kutusunun yarısı sessizce
-    // Sahipsiz görünür — ve sessizce sahipsiz görünen bir kullanıcı işi tam da kapatılan delik.
+    // sahipsiz görünür — ve sessizce sahipsiz görünen bir kullanıcı işi tam da kapatılan delik.
     const journal = new InMemoryJournal();
     const runId = 'batch:aylik-9:F-1';
     const sentinel = { __gnl_suspend: { toolCallId: 'item:F-1', toolName: 'payInvoice', args: { ref: 'F-1' }, reason: 'Duplicate side effect' } };
     await journal.put(`${runId}:tool:item:F-1`, stampFormat({ status: 'suspended', output: sentinel, toolName: 'payInvoice' }));
     // Kimlik-amaçlı `:input` (claimIdentityInput'un yazdığı şekil): frozen bir istek değil, sadece
-    // Kimin olduğu. Okuma tarafı için ayrımın önemi yok — alanlar aynı yerde durur.
+    // kimin olduğu. Okuma tarafı için ayrımın önemi yok — alanlar aynı yerde durur.
     await journal.put(`${runId}:input`, stampFormat({ at: Date.now(), resourceId: 'u-ayse', actor: 'ayse', batch: 'aylik-9' }));
 
     const row = (await inbox(journal)).find((i) => i.runId === runId)!;

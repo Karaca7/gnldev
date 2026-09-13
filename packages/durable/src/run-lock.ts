@@ -1,11 +1,11 @@
 // M4 — Run-level advisory lock. Prevents two concurrent resumes of the same runId (so the live
-// Tail doesn't run twice). Opt-in: only kicks in when `runDurable({ lock })` is given.
+// tail doesn't run twice). Opt-in: only kicks in when `runDurable({ lock })` is given.
 //
 // 4.2 (fencing): since the lock is advisory, a takeover after TTL is possible — if the old owner
-// Still calls `release()` with the `RunLock` reference it's holding, without a fencing token this
-// Call would blindly overwrite the new (takeover) owner's record (a half-release). On every
-// Acquisition a unique `token` is generated and written to the journal; `release()` writes ONLY IF
-// The current record's token in the journal matches its own token — a stale (superseded) owner can no longer release it.
+// still calls `release()` with the `RunLock` reference it's holding, without a fencing token this
+// call would blindly overwrite the new (takeover) owner's record (a half-release). On every
+// acquisition a unique `token` is generated and written to the journal; `release()` writes ONLY IF
+// the current record's token in the journal matches its own token — a stale (superseded) owner can no longer release it.
 import { randomUUID } from 'node:crypto';
 import { claim } from './journal.js';
 import type { Journal } from './journal.js';
@@ -16,17 +16,17 @@ export interface RunLock {
   /**
    * 8.2: unique fencing token for this acquisition (the same token is written to the journal's
    * LockRecord). Exposed read-only for consumers who want to build their own in-engine CAS fencing
-   * Chain in THEIR OWN store (outside RunJournal, e.g. @gnldev/queue's WorkStore) — see @gnldev/queue's
-   * CreateWorker: on terminal writes (qdone/qfail/qatt), WorkStore.putIfMatch uses this token to verify "I'm still the owner".
+   * chain in THEIR OWN store (outside RunJournal, e.g. @gnldev/queue's WorkStore) — see @gnldev/queue's
+   * createWorker: on terminal writes (qdone/qfail/qatt), WorkStore.putIfMatch uses this token to verify "I'm still the owner".
    */
   readonly token: string;
   /**
    * Y2 (heartbeat): extends the duration of the lock we own (`expires = now + ttlMs`).
    * If the fencing token in the current record is NOT this acquisition's token — a takeover
-   * Happened, the record is gone, or the lock was released — returns `false`: a lost/released lock
-   * Is NEVER renewed. `true` = the lock is still ours and the duration was extended. Long-running
-   * Jobs (a queue handler) should call this at an interval shorter than the ttl to prevent the lock
-   * From expiring at TTL end (double execution).
+   * happened, the record is gone, or the lock was released — returns `false`: a lost/released lock
+   * is NEVER renewed. `true` = the lock is still ours and the duration was extended. Long-running
+   * jobs (a queue handler) should call this at an interval shorter than the ttl to prevent the lock
+   * from expiring at TTL end (double execution).
    */
   renew(ttlMs: number): Promise<boolean>;
   release(): Promise<void>;
@@ -43,15 +43,15 @@ const lockKey = (runId: string) => `${runId}:lock`; // ':lock' does not match pa
 
 /**
  * Tries to acquire the lock atomically (`claim`/putIfAbsent). Acquires it → `RunLock` if it's free
- * Or expired; returns `null` if a live lock belongs to someone else. Every successful acquisition
- * Comes with a new fencing token (including on takeover) — so the old owner's handle is invalidated.
+ * or expired; returns `null` if a live lock belongs to someone else. Every successful acquisition
+ * comes with a new fencing token (including on takeover) — so the old owner's handle is invalidated.
  *
  * H1 (takeover atomicity): if the journal supports `putIfMatch`, taking over an expired record is
- * Done via CAS — even if two workers read the same expired record, only ONE can change it (NO
- * Split-brain). If unsupported, falls back to the old best-effort get→put behavior (a documented
- * Risk, the core-hardening review).
+ * done via CAS — even if two workers read the same expired record, only ONE can change it (NO
+ * split-brain). If unsupported, falls back to the old best-effort get→put behavior (a documented
+ * risk, the core-hardening review).
  * H2 (clock-skew): if `now` isn't given and the journal supports `now()`, the TTL decision is made
- * With the storage's own clock → wall-clock skew between workers can't disrupt takeover timing.
+ * with the storage's own clock → wall-clock skew between workers can't disrupt takeover timing.
  */
 export async function acquireRunLock(
   journal: Journal,
@@ -76,13 +76,13 @@ export async function acquireRunLock(
   }
 
   // Expired → take over. If putIfMatch is available it's ATOMIC: change it if the expired record we
-  // Read is still in place; if another worker acted first, false → null (the loser doesn't run).
+  // read is still in place; if another worker acted first, false → null (the loser doesn't run).
   // A new token is written → the old owner's handle cannot release/write (see mkLock: no-op on token mismatch).
   if (journal.putIfMatch) {
     return (await journal.putIfMatch(key, cur, rec)) ? mkLock(journal, runId, owner, token) : null;
   }
   // Fallback (adapter without putIfMatch): best-effort get→put — sufficient for single-process
-  // Resume, split-brain risk in multi-worker is documented (the core-hardening review).
+  // resume, split-brain risk in multi-worker is documented (the core-hardening review).
   await journal.put(key, rec);
   return mkLock(journal, runId, owner, token);
 }
@@ -94,9 +94,9 @@ function mkLock(journal: Journal, runId: string, owner: string, token: string): 
     owner,
     token,
     // Y2 (heartbeat): SAME owner-check (fencing) logic as release() — if the current record no
-    // Longer carries THIS acquisition's token (a takeover happened / no record / lock released),
-    // Returns `false`, the record is NOT TOUCHED (showing a lost lock as "alive" would hide a
-    // Split-brain). If it matches, moves `expires` to `now + ttlMs` — the token DOES NOT CHANGE (same acquisition, just the duration is extended).
+    // longer carries THIS acquisition's token (a takeover happened / no record / lock released),
+    // returns `false`, the record is NOT TOUCHED (showing a lost lock as "alive" would hide a
+    // split-brain). If it matches, moves `expires` to `now + ttlMs` — the token DOES NOT CHANGE (same acquisition, just the duration is extended).
     renew: async (ttlMs: number) => {
       const cur = await journal.get<LockRecord>(key);
       if (!cur || cur.token !== token) return false; // stale owner → rejected, record is not renewed
@@ -104,7 +104,7 @@ function mkLock(journal: Journal, runId: string, owner: string, token: string): 
       const next: LockRecord = { owner, expires: at + ttlMs, token };
       // SAME philosophy as the takeover CAS in acquireRunLock: atomic if putIfMatch is available
       // (change it if the record we read is still in place — if a takeover happened in between,
-      // Returns false, the record is not corrupted). Otherwise falls back to best-effort get→put
+      // returns false, the record is not corrupted). Otherwise falls back to best-effort get→put
       // (sufficient for single-process, the core-hardening review).
       if (journal.putIfMatch) return journal.putIfMatch(key, cur, next);
       await journal.put(key, next);
@@ -112,17 +112,17 @@ function mkLock(journal: Journal, runId: string, owner: string, token: string): 
     },
     // The journal has no delete → release by moving expires into the past (the next acquire takes over).
     // Owner-check (fencing): if the current record no longer carries THIS acquisition's token (a
-    // Takeover happened or there's no record at all), release is a no-op — it never overwrites another owner's lock.
+    // takeover happened or there's no record at all), release is a no-op — it never overwrites another owner's lock.
     release: async () => {
       // SAME CAS discipline as renew(): the old get→put pair was a TOCTOU window — a takeover
-      // Landing between the token check and the write was erased by the plain put (a half-release of
-      // The NEW owner's live lock). putIfMatch writes only if the record we token-checked is still in
-      // Place. A false CAS has TWO causes and the retry loop tells them apart: a takeover (the next
-      // Get sees a foreign token → silent no-op, correct) vs OUR OWN in-flight renew() landing in
-      // Between (the next get sees our token with a fresh `expires` → retry against the fresh record,
-      // Otherwise the lock we mean to free stays live until TTL). Bounded, so a hot takeover race can
-      // Never spin. Fallback without putIfMatch keeps the old best-effort behavior (single-process
-      // Sufficient, documented risk — the core-hardening review).
+      // landing between the token check and the write was erased by the plain put (a half-release of
+      // the NEW owner's live lock). putIfMatch writes only if the record we token-checked is still in
+      // place. A false CAS has TWO causes and the retry loop tells them apart: a takeover (the next
+      // get sees a foreign token → silent no-op, correct) vs OUR OWN in-flight renew() landing in
+      // between (the next get sees our token with a fresh `expires` → retry against the fresh record,
+      // otherwise the lock we mean to free stays live until TTL). Bounded, so a hot takeover race can
+      // never spin. Fallback without putIfMatch keeps the old best-effort behavior (single-process
+      // sufficient, documented risk — the core-hardening review).
       try {
         for (let attempt = 0; attempt < 3; attempt++) {
           const cur = await journal.get<LockRecord>(key);
@@ -136,9 +136,9 @@ function mkLock(journal: Journal, runId: string, owner: string, token: string): 
         }
       } catch {
         // Release is BEST-EFFORT by contract (every caller's posture is "release; TTL reclaims on
-        // Failure") — a storage error here must not surface into the caller's cleanup path. The old
-        // Plain-put release could throw too, but only on `put`; the CAS rewrite added get/putIfMatch
-        // Round-trips, and queue's renew-failure tests measured those errors ESCAPING through
+        // failure") — a storage error here must not surface into the caller's cleanup path. The old
+        // plain-put release could throw too, but only on `put`; the CAS rewrite added get/putIfMatch
+        // round-trips, and queue's renew-failure tests measured those errors ESCAPING through
         // finally-release. The lock simply stays until TTL, which is exactly the documented fallback.
       }
     },

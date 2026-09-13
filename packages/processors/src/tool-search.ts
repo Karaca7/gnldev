@@ -1,12 +1,12 @@
-// ToolSearch — semantic tool-search parity with the common "tool-search processor"/skills pattern.
+// toolSearch — semantic tool-search parity with the common "tool-search processor"/skills pattern.
 // With large tool sets (dozens/hundreds of tools), showing all of them to the model bloats the
-// Context and lowers selection quality; this processor selects the most relevant topK tools by
+// context and lowers selection quality; this processor selects the most relevant topK tools by
 // EMBEDDING similarity to the last user message, and runs the model with only those.
 //
 // Determinism: selection is non-deterministic (embed call) → the selected TOOL NAMES are journaled
-// Via `ctx.step` — on resume/replay, embed is NOT CALLED AGAIN, the model sees the same tool subset.
+// via `ctx.step` — on resume/replay, embed is NOT CALLED AGAIN, the model sees the same tool subset.
 // Safe-side behavior: does NOT NARROW when there is no query, or when the tool count is already
-// Within topK.
+// within topK.
 import type { Processor } from '@gnldev/durable';
 
 export interface ToolSearchOptions {
@@ -48,7 +48,7 @@ function queryOf(input?: { messages?: any[]; prompt?: unknown }): string | undef
 /**
  * Semantic tool-search processor (processTools). Selected names are journaled (`proc:tool-search`)
  * → exactly-once selection; embed does not run on resume. Tool names from the journaled selection
- * That no longer exist are silently skipped (replay doesn't break even if the tool set changes).
+ * that no longer exist are silently skipped (replay doesn't break even if the tool set changes).
  */
 export function toolSearch(opts: ToolSearchOptions): Processor {
   const topK = opts.topK ?? 8;

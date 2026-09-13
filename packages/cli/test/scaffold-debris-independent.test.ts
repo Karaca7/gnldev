@@ -1,10 +1,10 @@
 // A scaffolded project must contain the template, and nothing the template picked up from being USED.
 //
-// `templates/full` is a runnable project that this repo's own tests install and run, so a working
-// checkout grows `templates/full/node_modules/` and, inside it, `.vite/vitest/results.json` — a cache
-// naming which tests last passed. `cpSync(src, dir, { recursive: true })` copied all of it, so a brand
-// new project arrived carrying a stranger's dependency tree and a test-results cache for runs its owner
-// never made.
+// A template directory that this repo's own tests install and run grows a `node_modules/` and, inside
+// it, `.vite/vitest/results.json` — a cache naming which tests last passed. `cpSync(src, dir,
+// { recursive: true })` copied all of it, so a brand new project arrived carrying a stranger's
+// dependency tree and a test-results cache for runs its owner never made. (Measured on the retired
+// `templates/full`; the debris is planted below because a clean clone has none.)
 //
 // Two directions are checked, because a skip list is a rule that can be too narrow OR too wide:
 //   * nothing a template accumulates reaches a scaffold, on BOTH copy paths (the template copy and the
@@ -45,14 +45,20 @@ function walk(dir: string, base = dir): string[] {
 // The debris this exists for. It is genuinely present in a working checkout (the repo's own e2e tests
 // install the template), but a clean clone has none — so it is planted when absent, or the test would
 // pass by having nothing to catch. `node_modules` is gitignored everywhere and no other test reads it.
-const DEBRIS_FILE = join(templatesRoot, 'full', 'node_modules', '.vite', 'vitest', 'results.json');
+const DEBRIS_FILE = join(templatesRoot, 'minimal', 'node_modules', '.vite', 'vitest', 'results.json');
 
-// The e2e copy reads `templates/full/test`, and the debris above is a SIBLING of that directory, not
+// The e2e copy reads a `test/` directory, and the debris above is a SIBLING of that directory, not
 // inside it — so removing the filter from that second `cpSync` changes nothing that can be observed.
 // Measured: it survives as an equivalent mutant. Debris is therefore planted INSIDE the directory the
 // e2e path actually copies, which is a shape a project genuinely produces (a build output beside its
 // tests). `dist/` is gitignored repo-wide, so a planted directory cannot dirty the tree.
-const E2E_DEBRIS_DIR = join(templatesRoot, 'full', 'test', 'dist');
+//
+// TWO of them now, because there are two e2e sources: `_e2e` for the plain durability test and
+// `_idempotency` for the charge-tool one. The compose branch picks between them, so planting in only
+// one would leave the other branch's filter unexercised — which is how the second `cpSync` came to be
+// unfiltered in the first place.
+const E2E_DEBRIS_DIRS = [join(templatesRoot, '_e2e', 'test', 'dist'), join(templatesRoot, '_idempotency', 'test', 'dist')];
+const E2E_DEBRIS_DIR = E2E_DEBRIS_DIRS[0]!;
 const E2E_DEBRIS_FILE = join(E2E_DEBRIS_DIR, 'results.json');
 
 beforeAll(() => {
@@ -60,10 +66,12 @@ beforeAll(() => {
     mkdirSync(dirname(DEBRIS_FILE), { recursive: true });
     writeFileSync(DEBRIS_FILE, '{"version":"planted-by-tests"}');
   }
-  mkdirSync(E2E_DEBRIS_DIR, { recursive: true });
-  writeFileSync(E2E_DEBRIS_FILE, '{"version":"planted-by-tests"}');
+  for (const d of E2E_DEBRIS_DIRS) {
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, 'results.json'), '{"version":"planted-by-tests"}');
+  }
 });
-afterAll(() => { rmSync(E2E_DEBRIS_DIR, { recursive: true, force: true }); });
+afterAll(() => { for (const d of E2E_DEBRIS_DIRS) rmSync(d, { recursive: true, force: true }); });
 
 describe('a scaffolded project', () => {
   it.each(TEMPLATES)('%s carries no build debris from the template directory', (template) => {
@@ -78,7 +86,7 @@ describe('a scaffolded project', () => {
   });
 
   // The e2e path is a SECOND `cpSync`, into `test/`. It was the one easier to forget, and the test
-  // directory of `templates/full` sits inside the same tree that accumulates the debris.
+  // directory it copies sits inside the same tree that accumulates the debris.
   it.each(TEMPLATES)('%s with e2e carries none either — the second copy path is filtered too', (template) => {
     const dir = join(tmp(), 'my-agent');
     scaffold(dir, { template, e2e: true } as never);
@@ -94,8 +102,8 @@ describe('a scaffolded project', () => {
   });
 
   // The COMPOSE path: `features` builds from templates/minimal plus generated files, and its e2e copy
-  // points at `templates/full/test` — the directory sitting next to the debris. It reaches `addE2e`
-  // through a different branch than the plain `e2e: true` above, so it is exercised separately.
+  // points at `templates/_idempotency/test` — the directory sitting next to the debris. It reaches
+  // `addE2e` through a different branch than the plain `e2e: true` above, so it is exercised separately.
   it('composed from features carries no debris either', () => {
     const dir = join(tmp(), 'my-agent');
     const res = scaffold(dir, { features: ['idempotency-tool'], e2e: true } as never);
@@ -115,7 +123,7 @@ describe('a scaffolded project', () => {
     expect(existsSync(DEBRIS_FILE), 'the debris is absent, so this test cannot prove anything').toBe(true);
 
     const dir = join(tmp(), 'my-agent');
-    scaffold(dir, { template: 'full' });
+    scaffold(dir, { template: 'full' as never }); // the retired alias — the compose path, not a copy
 
     expect(walk(dir).filter((p) => p.endsWith('results.json')),
       "a new project arrived with a cache of test runs its owner never made").toEqual([]);
@@ -160,7 +168,7 @@ describe('the skip list', () => {
   // meaningful as the templates change.
   it('leaves the template body itself alone', () => {
     const dir = join(tmp(), 'my-agent');
-    scaffold(dir, { template: 'full' });
+    scaffold(dir, { template: 'full' as never }); // the retired alias: template body + composed e2e
     const paths = walk(dir);
 
     expect(paths.some((p) => basename(p) === 'gnl.config.ts'), 'the template body did not arrive at all').toBe(true);

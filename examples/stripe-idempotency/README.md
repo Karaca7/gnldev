@@ -2,7 +2,7 @@
 
 `durableTool` (packages/durable/src/durable-tool.ts) injects a stable `idempotencyKey` into every tool's
 `execute(input, options)` call — `${runId}:${toolCallId}` by default. This example threads that key to a
-**mock** Stripe client and shows the exactly-once guarantee extending **past the framework**, to the real
+**mock** Stripe client and shows the at-most-once guarantee extending **past the framework**, to the real
 payment provider itself — the same way it would with the real Stripe SDK's `Idempotency-Key` header.
 
 No real Stripe SDK, no network calls, no API key required.

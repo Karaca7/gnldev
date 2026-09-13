@@ -73,7 +73,7 @@ describe('piiRedactor + memory: the real redactor keeps raw PII out of the threa
       memory,
       threadId,
       // The model answers with a card number the user never typed — output-side redaction is the
-      // Only thing standing between that and the thread.
+      // only thing standing between that and the thread.
       model: mockModel(() => `your card ${CARD} was charged`),
       prompt: 'what is the payment status',
       processors: [piiRedactor()],

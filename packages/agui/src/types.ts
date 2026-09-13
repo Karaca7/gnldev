@@ -1,8 +1,8 @@
 // AG-UI (https://github.com/ag-ui-protocol/ag-ui — CopilotKit's open agent↔UI event protocol) core
-// Event types. HONESTY NOTE: this is a hand-extracted TS equivalent of the SUBSET of the known spec we
-// Need, WITHOUT installing the official `@ag-ui/core` package — not verified against the official
-// Conformance test. Fields we're not sure about (rawEvent, RunFinishedEvent.result, TextMessageStart.role
-// Being fixed) are marked in comments; no made-up fields were ADDED.
+// event types. HONESTY NOTE: this is a hand-extracted TS equivalent of the SUBSET of the known spec we
+// need, WITHOUT installing the official `@ag-ui/core` package — not verified against the official
+// conformance test. Fields we're not sure about (rawEvent, RunFinishedEvent.result, TextMessageStart.role
+// being fixed) are marked in comments; no made-up fields were ADDED.
 
 /** The core type tag carried by all AG-UI events. */
 export enum EventType {
@@ -39,7 +39,7 @@ export interface RunFinishedEvent extends BaseAguiEvent {
   threadId: string;
   runId: string;
   /** UNCERTAIN: we're not sure whether/what the official spec's field carrying the run result is called —
-   *  As a best effort we carry GNL's finishReason/usage here. */
+   *  as a best effort we carry GNL's finishReason/usage here. */
   result?: unknown;
 }
 
@@ -53,7 +53,7 @@ export interface TextMessageStartEvent extends BaseAguiEvent {
   type: EventType.TEXT_MESSAGE_START;
   messageId: string;
   /** UNCERTAIN: it's not clear from the spec whether the role is always 'assistant' or can vary — since
-   *  The text streamed on the GNL side is always agent output, we give a fixed 'assistant'. */
+   *  the text streamed on the GNL side is always agent output, we give a fixed 'assistant'. */
   role?: 'assistant';
 }
 
@@ -80,7 +80,7 @@ export interface ToolCallArgsEvent extends BaseAguiEvent {
   type: EventType.TOOL_CALL_ARGS;
   toolCallId: string;
   /** In the official spec this is an incremental JSON chunk (streaming args) — since GNL's tool-call
-   *  Gives arguments COMPLETE (not streaming), here the entire JSON is sent in a SINGLE delta (see README note). */
+   *  gives arguments COMPLETE (not streaming), here the entire JSON is sent in a SINGLE delta (see README note). */
   delta: string;
 }
 

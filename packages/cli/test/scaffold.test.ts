@@ -1,4 +1,8 @@
-// scaffold: writes a template (minimal | full) into a temp dir, verifies placeholder + .gitignore + e2e.
+// scaffold: writes the template into a temp dir, verifies placeholder + .gitignore + e2e.
+//
+// `full` is no longer a directory. It is an ALIAS for the feature set it used to bundle, so the tests
+// that used to prove the template's contents now prove the alias produces the same project — which is
+// the only claim the alias makes.
 import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -27,8 +31,8 @@ describe('scaffold', () => {
     expect(res.files).toContain('.gitignore');
     expect(res.files).not.toContain('gitignore');
     // `src/auth.ts` and the model setup read keys from `process.env`; a .env is the usual way to
-    // Supply them, and neither template ignored it. Asserted for BOTH templates below rather than
-    // Here — measured, an assertion in this test alone left `templates/full` free to drop the line.
+    // supply them, and the template did not ignore it. Asserted over every template rather than here —
+    // measured, an assertion in this test alone left the second template free to drop the line.
     expect(res.files).not.toContain(join('test', 'e2e.test.ts'));
 
     const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
@@ -42,7 +46,7 @@ describe('scaffold', () => {
 
   it("pins every @gnldev range to the CLI's OWN version, not the template's literal", () => {
     const dir = join(tmp(), 'my-agent');
-    scaffold(dir, { template: 'full' });
+    scaffold(dir, { features: ['idempotency-tool', 'rag'] });
     const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
     const cliVersion = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'package.json'), 'utf8')).version;
 
@@ -68,10 +72,14 @@ describe('scaffold', () => {
     expect(pkg.devDependencies.vitest).toBeTruthy();
   });
 
-  it('full: ships the idempotency tool + e2e test + test script', () => {
+  it("the retired 'full' name still produces the project it named — tool, e2e, test script", () => {
+    // The alias's entire promise. Whoever types the old name gets what they got before; what they do
+    // not get is a second template directory whose five shared files drift away from the first.
     const dir = join(tmp(), 'b');
-    const res = scaffold(dir, { template: 'full' });
-    expect(res.template).toBe('full');
+    const res = scaffold(dir, { template: 'full' as never });
+    expect(res.template, 'a retired name resolves to a composition, not a directory').toBe('custom');
+    expect(res.aliasedFrom, 'the caller needs this to say the new spelling once').toBe('full');
+    expect(res.features).toEqual(['idempotency-tool', 'e2e']);
     expect(res.files).toContain(join('src', 'tools.ts'));
     expect(res.files).toContain(join('test', 'e2e.test.ts'));
     const tools = readFileSync(join(dir, 'src', 'tools.ts'), 'utf8');
@@ -80,8 +88,23 @@ describe('scaffold', () => {
     expect(pkg.scripts.test).toBe('vitest run');
   });
 
-  it('rejects an unknown template', () => {
+  it("and it ships a model that actually CALLS the tool — otherwise the demo demonstrates nothing", () => {
+    // The one thing the old template had that the base template does not. Without this the Playground
+    // answers `echo: charge order-1` and the ledger stays empty, which is a quieter project than the
+    // one the name used to produce.
+    const dir = join(tmp(), 'b2');
+    scaffold(dir, { template: 'full' as never });
+    const model = readFileSync(join(dir, 'src', 'model.ts'), 'utf8');
+    expect(model).toContain("toolName: 'chargeOrder'");
+    // And the config is what binds that name to the real tool — one wiring, in the file that holds
+    // every other feature's wiring too.
+    const config = readFileSync(join(dir, 'gnl.config.ts'), 'utf8');
+    expect(config).toContain('tools: { chargeOrder }');
+  });
+
+  it('rejects an unknown template, and the message names the retired ones', () => {
     expect(() => scaffold(join(tmp(), 'c'), { template: 'nope' as any })).toThrow(/unknown template/);
+    expect(() => scaffold(join(tmp(), 'c2'), { template: 'nope' as any })).toThrow(/full/);
   });
 
   it('throws if the target directory is not empty', () => {
@@ -124,7 +147,7 @@ describe('scaffold — feature composition', () => {
     // agentTools → assistant.tools ; configField → top level
     expect(config).toContain('agents: { assistant: { ...assistant, tools: { chargeOrder, searchDocs } } }');
     expect(config).toContain('memoryFactory,');
-    expect(config).toContain('satisfies CreateGnlConfig & { port?: number; studio?: boolean }');
+    expect(config).toContain("satisfies CreateGnlConfig & { port?: number; studio?: boolean; subjects?: 'internal' | 'end-users' }");
   });
 
   it('workflow + auth: configField wiring + auth widens the satisfies type', () => {

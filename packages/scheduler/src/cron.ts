@@ -1,5 +1,5 @@
 // Minimal 5-field cron (minute resolution, UTC). Supports '*', list ',', range '-', step '/'.
-// Dom/dow POSIX OR semantics: if both are restricted, "day-of-month OR day-of-week"; if one is '*', the other decides.
+// dom/dow POSIX OR semantics: if both are restricted, "day-of-month OR day-of-week"; if one is '*', the other decides.
 
 /** Converts a cron field into the set of allowed values within [min,max]. */
 export function parseField(field: string, min: number, max: number): Set<number> {

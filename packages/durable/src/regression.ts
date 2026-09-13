@@ -1,18 +1,18 @@
 // W2 — Replay-based regression core. RERUNS a recorded run with a new model/prompt/tool version
 // (replayRun), diffs the DECISION POINTS (model step + tool call) of the two runs (diffRuns).
 // Scoring (LLM-judge etc.) lives in the evals package — only the interface is DEFINED here,
-// The diff logic has no dependency on evals whatsoever (dependency is one-directional: evals -> durable).
+// the diff logic has no dependency on evals whatsoever (dependency is one-directional: evals -> durable).
 import { runKeys } from './journal.js';
 import type { Journal, JournalEntry, JournalReader } from './journal.js';
 import { runDurable } from './run.js';
 import type { DurableResult, RunDurableArgs } from './run.js';
-import { argsHash, stableStringify } from './hash.js';
+import { argsHash, stableStringify, derivedRunIdBase } from './hash.js';
 import type { Guard } from './guard.js';
 
 // ── Decision point sequence ────────────────────────────────────────────────────
-// ToolCallIds CAN BE DIFFERENT across runs (the model/SDK assigns random ids) → alignment is based
-// Not on toolCallId equality but on "model step + the content order of the tool-calls that step
-// Produced". This makes the decision points of two independent runs comparable positionally.
+// toolCallIds CAN BE DIFFERENT across runs (the model/SDK assigns random ids) → alignment is based
+// not on toolCallId equality but on "model step + the content order of the tool-calls that step
+// produced". This makes the decision points of two independent runs comparable positionally.
 export interface DecisionPoint {
   /** The model step this decision belongs to (for tool, the step of the model step that produced it). */
   step: number;
@@ -37,9 +37,9 @@ function modelStepFromKey(key: string): number {
 
 /**
  * Converts journal entries into a sequence of decision points: model steps in step order, followed
- * Immediately by the tool-calls (if any) produced in that step's content — a PURE function.
+ * immediately by the tool-calls (if any) produced in that step's content — a PURE function.
  * Exported for P1.1 @gnldev/evals' trajectory scorer (`trajectory.ts`) reuses this
- * Same primitive to build the tool-call sequence it scores against expectations — no duplicate logic.
+ * same primitive to build the tool-call sequence it scores against expectations — no duplicate logic.
  */
 export function buildDecisionSequence(entries: JournalEntry[]): DecisionPoint[] {
   const models = entries
@@ -189,10 +189,10 @@ function describePoint(side: 'A' | 'B', p: DecisionPoint): DiffDetail {
  * (only in A) or 'added' (only in B). `divergentAt` is the index of the first non-same point.
  *
  * TRUST BOUNDARY (Decision #3): if the tool-call COUNT changes at the divergence point, the tail
- * Shifts positionally — the `status` labels AND `summary` counts AFTER `divergentAt` may contain
- * Noise (re-alignment is deliberately NOT DONE: LCS-style alignment produces a multi-solution/unstable
- * Diff). The reliable signal is `divergentAt` and everything before it; read the `steps.slice(divergentAt)`
- * Record with this caveat in mind for post-divergence analysis. Scorers should tie their score to
+ * shifts positionally — the `status` labels AND `summary` counts AFTER `divergentAt` may contain
+ * noise (re-alignment is deliberately NOT DONE: LCS-style alignment produces a multi-solution/unstable
+ * diff). The reliable signal is `divergentAt` and everything before it; read the `steps.slice(divergentAt)`
+ * record with this caveat in mind for post-divergence analysis. Scorers should tie their score to
  * `divergentAt` (not to summary).
  */
 export async function diffRuns(reader: JournalReader, runIdA: string, runIdB: string): Promise<RunDiff> {
@@ -249,12 +249,12 @@ export interface ReplayRunConfig {
   /**
    * COUNTERFACTUAL memory-off replay: re-run the turn WITHOUT what memory injected. Reads the run's
    * ':memctx' provenance record (runKeys.memoryContext) and keeps only the turn's own incoming
-   * Message(s) — the recalled/window/observation messages that memory composed in front of them are
-   * Dropped. This turns "the model must have read it from the recall snippet" from an inference into
-   * An experiment: strip the injection, re-ask, diff the answers. Requires a ':memctx' record
+   * message(s) — the recalled/window/observation messages that memory composed in front of them are
+   * dropped. This turns "the model must have read it from the recall snippet" from an inference into
+   * an experiment: strip the injection, re-ask, diff the answers. Requires a ':memctx' record
    * (throws otherwise — runs from before provenance existed can't be stripped honestly).
    * HONEST BOUNDARY: the frozen `system` string is NOT surgically edited — if working memory was
-   * Injected there (provenance.workingMemoryChars), it remains; callers should disclose that.
+   * injected there (provenance.workingMemoryChars), it remains; callers should disclose that.
    */
   stripMemoryContext?: boolean;
 }
@@ -267,10 +267,49 @@ export interface ReplayRunResult {
 let replaySeq = 0;
 
 /**
+ * Where a replay's output goes when the caller did not name it — and where a wall clock used to sit.
+ *
+ * WHAT WAS THERE: `${runId}:replay:${Date.now()}:${replaySeq++}`. The counter gave uniqueness inside
+ * one process; `Date.now()` was there for the other axis — two processes (or the same one after a
+ * restart) both start their counter at 0, and without the timestamp their first replays of the same
+ * run would collide on one id. That was a real concern, and it was answered with the one mechanism
+ * §11 forbids outright: a timestamp inside an identity. It also broke outright for a derived source —
+ * MEASURED: `run1_<digest>:replay:1789…:0` wears the `run1_` prefix without the shape, so
+ * `assertRunIdSafe` refused the replay from inside `runDurable`.
+ *
+ * WHAT IT IS NOW, and why this answers the multi-process case honestly rather than by hoping:
+ * the counter stays, the clock goes, and the JOURNAL breaks the tie. Each candidate seq is checked
+ * against `runKeys.input` — the key every run writes before its first model call — and a taken slot
+ * is skipped. So the second process finds `#replay-0` occupied and takes `#replay-1`; it does not
+ * need to know the first process exists. The module counter survives as a HINT that keeps the common
+ * case one read instead of a scan.
+ *
+ * The residual, stated rather than assumed away: two processes reaching the same free slot in the
+ * same instant both take it. What happens then is not silent — they land on ONE runId with the same
+ * frozen input, so the second is a replay of the first (the recorded answer comes back) or, if the
+ * caller overrode `system`, `strictInput` refuses it with a 409. A replay run is a scratch
+ * comparison, not a side effect, so a refusal or a duplicated answer is the cheap end of the error
+ * scale — cheap enough that it does not justify a lock, and loud enough that it is not a surprise.
+ *
+ * TWO REGIMES, like fork and rollover: `#replay-<seq>` inside `run1_` (counted off the BASE, so a
+ * replay of a replay is a sibling and never a chain), `:replay:<seq>` outside it — the old spelling
+ * minus the timestamp, which is the only part of it that was ever an identity hazard.
+ */
+async function pickReplayRunId(journal: Journal, runId: string): Promise<string> {
+  const base = derivedRunIdBase(runId);
+  for (let i = 0; i < 10_000; i++) {
+    const seq = replaySeq++;
+    const cand = base === undefined ? `${runId}:replay:${seq}` : `${base}#replay-${seq}`;
+    if ((await journal.get(runKeys.input(cand))) === undefined) return cand;
+  }
+  throw new Error(`@gnldev/durable: replayRun could not find a free replay slot for '${runId}'.`);
+}
+
+/**
  * Reads `runId`'s recorded input (`runKeys.input`) and runs it fresh, independently, under a NEW
- * RunId (`runDurable`). This is NOT `forkRun`: it doesn't copy prefixes, doesn't replay any step
- * From the journal — it's a brand-new run with overridable model/tool/system. It never writes to
- * Or touches the original `runId`'s journal records (only writes under `newRunId`).
+ * runId (`runDurable`). This is NOT `forkRun`: it doesn't copy prefixes, doesn't replay any step
+ * from the journal — it's a brand-new run with overridable model/tool/system. It never writes to
+ * or touches the original `runId`'s journal records (only writes under `newRunId`).
  */
 export async function replayRun(cfg: ReplayRunConfig): Promise<ReplayRunResult> {
   const { journal, runId, newRunId, model, tools, system, guard, approvals, stopWhen, replay, stripMemoryContext } = cfg;
@@ -293,7 +332,7 @@ export async function replayRun(cfg: ReplayRunConfig): Promise<ReplayRunResult> 
     messages = messages.slice(-incoming);
   }
 
-  const dst = newRunId ?? `${runId}:replay:${Date.now()}:${replaySeq++}`;
+  const dst = newRunId ?? (await pickReplayRunId(journal, runId));
 
   const result = await runDurable({
     runId: dst,
@@ -316,8 +355,8 @@ export async function replayRun(cfg: ReplayRunConfig): Promise<ReplayRunResult> 
 
 /**
  * Optional function producing a score from a diff result. The concrete Scorer type is defined in
- * The evals package (@gnldev/evals -> @gnldev/durable dependency is one-directional); only a loose
- * Interface is given here.
+ * the evals package (@gnldev/evals -> @gnldev/durable dependency is one-directional); only a loose
+ * interface is given here.
  */
 export type RegressionScorer = (diff: RunDiff) => unknown | Promise<unknown>;
 
@@ -335,7 +374,7 @@ export interface RegressionReport {
 
 /**
  * A thin report skeleton around `diffRuns`: diffs the base/new run, runs `scorer` on the diff if
- * Given. Scoring logic is NOT here — the evals side supplies `scorer`.
+ * given. Scoring logic is NOT here — the evals side supplies `scorer`.
  */
 export async function regressionReport(
   reader: JournalReader,

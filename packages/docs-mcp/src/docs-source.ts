@@ -1,7 +1,7 @@
 // Live doc source: TRIES to fetch /llms.txt + /llms-full.txt via GNL_DOCS_URL (default
-// Https://gnl.dev); if unreachable (no network, timeout, 404, ...) returns null and the caller
-// Falls back to the embedded static copy in content.ts. Zero new dependencies: uses Node's
-// Built-in global fetch + AbortController (no SDK/client library).
+// https://gnl.dev); if unreachable (no network, timeout, 404, ...) returns null and the caller
+// falls back to the embedded static copy in content.ts. Zero new dependencies: uses Node's
+// built-in global fetch + AbortController (no SDK/client library).
 
 export const DEFAULT_DOCS_URL = 'https://gnl.dev';
 const FETCH_TIMEOUT_MS = 2500;
@@ -47,14 +47,14 @@ export function publicDocsUrl(env: NodeJS.ProcessEnv = process.env): string {
   try {
     const u = new URL(raw);
     // A URL with no scheme is not a URL WITHOUT userinfo — `new URL('alice:pw@host')` parses `alice:`
-    // As the SCHEME, leaves `username` empty, and an early return keyed on userinfo handed the whole
-    // String back with the password in it. Anything that is not http(s) is not an address this server
-    // Should be printing anyway.
+    // as the SCHEME, leaves `username` empty, and an early return keyed on userinfo handed the whole
+    // string back with the password in it. Anything that is not http(s) is not an address this server
+    // should be printing anyway.
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return DEFAULT_DOCS_URL;
     u.username = '';
     u.password = '';
     // Query and fragment go too. Userinfo is not the only place a mirror carries a credential — a
-    // Signed URL puts it in `?token=`, and neither belongs in a link this server prints 34 times.
+    // signed URL puts it in `?token=`, and neither belongs in a link this server prints 34 times.
     u.search = '';
     u.hash = '';
     return u.toString().replace(/\/+$/, '');
@@ -66,7 +66,7 @@ export function publicDocsUrl(env: NodeJS.ProcessEnv = process.env): string {
 
 /**
  * When GNL_DOCS_OFFLINE=1/true (or GNL_DOCS_URL='') the fetch is skipped entirely — a
- * Deterministic, fast "always embedded content" mode for tests and network-less environments.
+ * deterministic, fast "always embedded content" mode for tests and network-less environments.
  */
 export function isOffline(env: NodeJS.ProcessEnv = process.env): boolean {
   const flag = (env.GNL_DOCS_OFFLINE ?? '').toLowerCase();
@@ -108,12 +108,12 @@ async function fetchText(url: string): Promise<string | null> {
     if (!res.ok) return null;
     const body = await res.text();
     // The only bound used to be the 2.5s timeout, which bounds the CLOCK, not the answer: a 200 MB
-    // Body served quickly came back whole — measured, 209,715,206 characters in one tool result — and
-    // This text goes straight into an assistant's context window.
+    // body served quickly came back whole — measured, 209,715,206 characters in one tool result — and
+    // this text goes straight into an assistant's context window.
     //
     // Refused rather than truncated, which is the same call `looksLikeDocs` makes: half a document
-    // Read as a whole one is worse than the embedded copy, and the embedded copy is complete and true
-    // Even when it is a little stale.
+    // read as a whole one is worse than the embedded copy, and the embedded copy is complete and true
+    // even when it is a little stale.
     if (body.length > MAX_REMOTE_CHARS) return null;
     return looksLikeDocs(body, res.headers.get('content-type')) ? body : null;
   } catch {

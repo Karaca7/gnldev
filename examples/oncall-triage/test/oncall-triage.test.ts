@@ -45,7 +45,7 @@ describe('the restart is a decision a human makes', () => {
     expect(fleet.restarts).toHaveLength(1);
 
     // A double-clicked Approve button, or a retried HTTP request. The journal already holds the
-    // Outcome of that toolCallId, so the second resume replays it instead of running it.
+    // outcome of that toolCallId, so the second resume replays it instead of running it.
     await resume('i2', approval);
     expect(fleet.restarts).toHaveLength(1);
   });
@@ -109,7 +109,7 @@ describe('page the on-call engineer once, and only once', () => {
     expect(fleet.pages).toHaveLength(1);
 
     // Same runId = the crash-and-restart case. `escalate` is journaled, so it returns its recorded
-    // Result rather than paging a second time.
+    // result rather than paging a second time.
     await wf.run(ALERT, { runId: 'wf-a', journal });
     expect(fleet.pages).toHaveLength(1);
   });
@@ -119,8 +119,8 @@ describe('page the on-call engineer once, and only once', () => {
     await wf.run(ALERT, { runId: 'wf-a', journal });
 
     // A DIFFERENT run for the SAME incident — the monitoring system fired twice, or an operator
-    // Retried. The workflow journal cannot help here: this run has its own key space, and `escalate`
-    // Genuinely has not run in it. Only the argument-keyed, runId-free record stops the second page.
+    // retried. The workflow journal cannot help here: this run has its own key space, and `escalate`
+    // genuinely has not run in it. Only the argument-keyed, runId-free record stops the second page.
     await wf.run(ALERT, { runId: 'wf-b', journal });
     expect(fleet.pages).toHaveLength(1);
   });
@@ -171,7 +171,7 @@ describe('the second opinion comes from another agent, over the network', () => 
 
     const r: any = await (askSpecialist as any).execute({ task: 'why is search slow?' }, { toolCallId: 'a2a-1' });
     // 1840ms is a number that exists only inside the MCP tool's response. Its presence in the answer
-    // Is the evidence that the call actually went out and came back.
+    // is the evidence that the call actually went out and came back.
     expect(r.text).toContain('1840ms');
     expect(r.remoteAgent).toBe('dbSpecialist');
   });

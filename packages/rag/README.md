@@ -1,8 +1,8 @@
 # @gnldev/rag
 
 **Vector store + RAG tool** for AI SDK agents. Used as a tool inside `runDurable`, it's automatically
-**replayable/exactly-once** (thanks to durableTool, retrieval happens once, and comes back from the journal
-on resume).
+**replayable** (thanks to durableTool the retrieval is journaled: on resume it comes back from the record
+instead of running again).
 
 > **Not on npm yet** — no `@gnldev/*` package has been published. Until the first release, use it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.
 
@@ -32,8 +32,8 @@ await runDurable({ runId: 'r1', journal, model, tools: { searchPolicy }, prompt:
 - `SemanticMemory` — vector-based recall (memory integration)
 
 ## How it works
-Since RAG is a tool, it naturally fits into the durable agent loop: retrieval + rerank are journaled
-exactly-once. For cross-run reuse, it can be combined with `@gnldev/cache`.
+Since RAG is a tool, it naturally fits into the durable agent loop: retrieval + rerank are journaled once
+and replayed rather than repeated. For cross-run reuse, it can be combined with `@gnldev/cache`.
 
 ## License
 

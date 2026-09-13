@@ -126,19 +126,19 @@ export function roleAuth(cfg: {
     return undefined;
   }
 
-  // SafeEqual loop instead of Set.has (===): so the secret comparison is constant-time (the number of
-  // Accepted tokens/basics per role is small — loop cost is negligible).
+  // safeEqual loop instead of Set.has (===): so the secret comparison is constant-time (the number of
+  // accepted tokens/basics per role is small — loop cost is negligible).
   const matchRole = (req: Request, role: { headers: Set<string>; tokens: Set<string> }): boolean => {
     const h = req.headers.get('authorization') ?? undefined;
     if (h && [...role.headers].some((v) => safeEqual(h, v))) return true;
     /**
      * EventSource can't send headers → ?token= bearer fallback (bearer tokens only).
      * SECURITY NOTE — log-leak risk: a token carried in the query string can leak into web
-     * Server/proxy access logs, browser history, and (if the URL is shared/redirected) the
+     * server/proxy access logs, browser history, and (if the URL is shared/redirected) the
      * `Referer` header. This fallback only remains because of the EventSource constraint; prefer
      * @gnldev/studio's short-lived (60s TTL) one-time `POST /auth/sse-ticket` → `?ticket=` flow where
-     * Possible (see the `/events` endpoint in packages/studio/src/server.ts) — the persistent secret
-     * Is never carried in the URL.
+     * possible (see the `/events` endpoint in packages/studio/src/server.ts) — the persistent secret
+     * is never carried in the URL.
      */
     // GET only. The constraint this exists for is EventSource, which cannot send headers and only
     // ever issues a GET — so accepting it on POST/DELETE bought nothing, and it authenticated an

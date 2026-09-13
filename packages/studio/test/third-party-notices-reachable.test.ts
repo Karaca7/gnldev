@@ -36,7 +36,7 @@ describe('third-party notices, from the running product', () => {
   it('name the licences whose condition this satisfies', async () => {
     const body = await (await get(app().a, '/THIRD-PARTY-NOTICES.txt')).text();
     // The fonts are the strictest case: OFL-1.1 requires the copyright notice and licence to be
-    // Distributed with the font, and the font files are in dist/assets.
+    // distributed with the font, and the font files are in dist/assets.
     expect(body).toContain('OFL-1.1');
     expect(body).toMatch(/geist/i);
     expect(body).toContain('SIL Open Font License');
@@ -45,12 +45,12 @@ describe('third-party notices, from the running product', () => {
   it('include the two build tools that emit code into the bundle', async () => {
     const body = await (await get(app().a, '/THIRD-PARTY-NOTICES.txt')).text();
     // Excluded as "build-only tooling" on the assumption they never enter dist. Measured against a
-    // Real build, both do: tailwind writes preflight into the CSS, vite writes the modulepreload
-    // Polyfill into the JS.
+    // real build, both do: tailwind writes preflight into the CSS, vite writes the modulepreload
+    // polyfill into the JS.
     expect(body).toMatch(/^tailwindcss@/m);
     expect(body).toMatch(/^vite@/m);
     // Their dependency trees genuinely do NOT ship — listing them would misstate this file the other
-    // Way, so the collection deliberately does not recurse into them.
+    // way, so the collection deliberately does not recurse into them.
     expect(body).not.toMatch(/^rollup@/m);
     expect(body).not.toMatch(/^esbuild@/m);
   });
@@ -59,14 +59,14 @@ describe('third-party notices, from the running product', () => {
     const res = await get(app().a, '/THIRD-PARTY-NOTICES.txt');
     const cc = res.headers.get('cache-control') ?? '';
     // /assets/* is immutable because vite hashes those names. This one does not change name when a
-    // Dependency changes, so a year-long immutable cache would pin a stale legal notice.
+    // dependency changes, so a year-long immutable cache would pin a stale legal notice.
     expect(cc).not.toContain('immutable');
     expect(cc).toContain('max-age');
   });
 
   it('do not require a login — it is a notice about redistributed code', async () => {
     // mountSpa adds no auth of its own; this pins the intent so a later guard does not quietly put a
-    // Published legal document behind a credential.
+    // published legal document behind a credential.
     const res = await get(app().a, '/THIRD-PARTY-NOTICES.txt');
     expect(res.status).toBe(200);
   });

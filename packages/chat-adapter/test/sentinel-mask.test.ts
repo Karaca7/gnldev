@@ -19,7 +19,7 @@ describe('maskSentinelOutput', () => {
     expect(display).toEqual({ pending: 'approval', toolName: 'chargeCard', reason: 'needs approval' });
     expect(JSON.stringify(display)).not.toContain('__gnl_suspend');
     // The caller needs the raw interrupt to emit a data-gnl-interrupt chunk; it just must not be the
-    // Value shown in place of the tool output.
+    // value shown in place of the tool output.
     expect(interrupts).toEqual([interrupt]);
     expect(interrupts![0]).toBe(interrupt); // an ordinary suspend is passed through, not rebuilt
     expect(out).toBe(interrupt); // deprecated single — still the same object for existing readers
@@ -81,8 +81,8 @@ describe('maskSentinelOutput', () => {
     const output = { paid: true, receipt: { id: 'r1' } };
     const { display, interrupt } = maskSentinelOutput(output);
     // ui-stream.ts decides whether to rewrite the chunk with `display !== chunk.output`, so a
-    // Defensive clone here would rewrite every chunk and make the masking indistinguishable from a
-    // Pass-through.
+    // defensive clone here would rewrite every chunk and make the masking indistinguishable from a
+    // pass-through.
     expect(display).toBe(output);
     expect(interrupt).toBeUndefined();
   });

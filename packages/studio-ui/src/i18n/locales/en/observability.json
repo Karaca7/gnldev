@@ -19,6 +19,7 @@
   "statusFilterAriaLabel": "status filter",
   "downloadCsv": "Download CSV",
   "colRunId": "runId",
+  "colWorkKey": "work key",
   "colStatus": "status",
   "colStart": "start",
   "colDuration": "duration",

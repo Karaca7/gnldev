@@ -19,7 +19,7 @@ export type Msg =
 
 // PURE function (testable): match a tool-result to its toolCallId during live streaming.
 // The previous heuristic ("the LAST tool message without an output") wrote to the wrong
-// Bubble under parallel tool calls — id-based matching (like the byCallId pattern in mapMessages) finds the exact result.
+// bubble under parallel tool calls — id-based matching (like the byCallId pattern in mapMessages) finds the exact result.
 export function matchToolResult(msgs: Msg[], toolCallId: string | undefined): number {
   if (!toolCallId) return -1;
   for (let i = msgs.length - 1; i >= 0; i--) {
@@ -30,13 +30,13 @@ export function matchToolResult(msgs: Msg[], toolCallId: string | undefined): nu
 }
 
 // PURE function (testable): write a tool's outcome onto the message it belongs to. Shared by
-// Tool-result and tool-error so the LIVE transcript ends up in the same shape mapMessages produces
-// When the thread is reloaded from the journal — MsgBlock reads "still running" as
+// tool-result and tool-error so the LIVE transcript ends up in the same shape mapMessages produces
+// when the thread is reloaded from the journal — MsgBlock reads "still running" as
 // `output === undefined`, so a failed tool has to land an output in both paths or it pulses forever.
 //
 // Replaces the element instead of assigning through it. The old `(copy[i] as any).output = …`
-// Mutated the very object still held by the previous state, so the message's identity never
-// Changed — harmless while nothing is memoized, and a silent stale render the moment something is.
+// mutated the very object still held by the previous state, so the message's identity never
+// changed — harmless while nothing is memoized, and a silent stale render the moment something is.
 export function applyToolOutcome(msgs: Msg[], toolCallId: string | undefined, output: unknown): Msg[] {
   const i = matchToolResult(msgs, toolCallId);
   if (i < 0) return msgs;
@@ -60,13 +60,13 @@ export type Activity =
   | null;
 
 // PURE function (testable): fold one stream event into the current activity. Returns `undefined`
-// When the event says nothing about what is happening now, so the caller can leave the state alone
-// Instead of flickering through a spurious update.
+// when the event says nothing about what is happening now, so the caller can leave the state alone
+// instead of flickering through a spurious update.
 //
 // The distinction that matters to a waiting user is reasoning vs tool-run: "thinking" is the model
-// Burning time, "running X" is our tool doing so. Those have completely different expected
-// Durations and completely different things to do about them, and until now both looked identical —
-// A greyed-out button.
+// burning time, "running X" is our tool doing so. Those have completely different expected
+// durations and completely different things to do about them, and until now both looked identical —
+// a greyed-out button.
 export function activityFromEvent(type: string, data?: unknown): Activity | undefined {
   const toolName = (data as { toolName?: string } | undefined)?.toolName;
   switch (type) {
@@ -85,7 +85,7 @@ export function activityFromEvent(type: string, data?: unknown): Activity | unde
 }
 
 // PURE function (testable): "8s", "1:07". Seconds up to a minute, then m:ss — long enough to be
-// Reassuring, short enough not to look like a countdown.
+// reassuring, short enough not to look like a countdown.
 export function fmtElapsed(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
@@ -97,7 +97,7 @@ export const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024; // 5MB
 // PURE function (testable, DOM-independent): returns a clear rejection reason if the limit is exceeded.
 // The i18n-dependent message is passed in via the optional `tooLargeMsg` callback (the same
 // "robust" pattern as threadGroupLabel) — stays hook-free, and falls back to the EN default when
-// Called without the 2nd argument in tests.
+// called without the 2nd argument in tests.
 export function validateAttachment(
   file: { size: number; type?: string },
   tooLargeMsg?: (mb: string) => string,
@@ -110,9 +110,9 @@ export function validateAttachment(
 }
 
 // Fallback resource for a local, NO-AUTH studio (a personal dev tool — one user, one machine). When
-// Auth IS on (shared/hosted studio, several developers), the resource is scoped to the authenticated
-// User id instead (see `resourceId` in Playground, derived from GET /me) so each developer only sees
-// Their OWN Playground conversations — otherwise everyone's threads would pool under one resource.
+// auth IS on (shared/hosted studio, several developers), the resource is scoped to the authenticated
+// user id instead (see `resourceId` in Playground, derived from GET /me) so each developer only sees
+// their OWN Playground conversations — otherwise everyone's threads would pool under one resource.
 const RESOURCE_ID = 'studio-user';
 /** Per-user resource when authenticated; the shared fallback when auth is off (id === null). */
 function resourceForUser(meId: string | null | undefined): string {
@@ -152,8 +152,8 @@ const savedOverrides: {
 
 // Shared by mapMessages and userMessageServerIndex (FLOW-10): extracts a user message's text the
 // SAME way in both places, so the server-index lookup lines up with what mapMessages would have
-// Rendered as a user bubble (a user entry with no text is skipped by mapMessages, and must be
-// Skipped here too, or the ordinal count would drift).
+// rendered as a user bubble (a user entry with no text is skipped by mapMessages, and must be
+// skipped here too, or the ordinal count would drift).
 function extractUserText(m: any): string {
   return typeof m.content === 'string' ? m.content
     : Array.isArray(m.content) ? m.content.filter((p: any) => p?.type === 'text' && p.text).map((p: any) => p.text).join(' ')
@@ -162,8 +162,8 @@ function extractUserText(m: any): string {
 
 // Convert messages coming from the server (AI SDK core-message format — response.messages) to the
 // Playground's Msg type. content is an array of parts: 'text' → user/assistant bubble; a 'tool-call'
-// Inside an assistant message → opens a tool Msg (same fields as the live streamAgent's tool-call
-// Event: toolName/input); the tool result arrives SEPARATELY, in a role:'tool' message as a
+// inside an assistant message → opens a tool Msg (same fields as the live streamAgent's tool-call
+// event: toolName/input); the tool result arrives SEPARATELY, in a role:'tool' message as a
 // 'tool-result'/'tool-error' part, and is written as output onto the tool Msg matched by toolCallId
 // (same pattern as the live streamAgent's tool-result event).
 export function mapMessages(data: any[]): Msg[] {
@@ -210,23 +210,23 @@ export function mapMessages(data: any[]): Msg[] {
 }
 
 // FLOW-10 — PURE functions (testable): translate a LOCAL `msgs` index (edit/regenerate target) into
-// The matching index on the SERVER's GET /threads/:id/messages array, so DELETE
+// the matching index on the SERVER's GET /threads/:id/messages array, so DELETE
 // /threads/:id/messages can truncate the persisted thread, not just the local view.
 //
 // `msgs` and the server array are NOT 1:1: mapMessages fans a single assistant server entry out into
-// Several local Msg entries (interleaved text/tool-call blocks), and a role:'tool' server entry
-// Merges into an EXISTING tool Msg's `output` rather than adding one. A user server entry, however,
+// several local Msg entries (interleaved text/tool-call blocks), and a role:'tool' server entry
+// merges into an EXISTING tool Msg's `output` rather than adding one. A user server entry, however,
 // ALWAYS maps to exactly 0 or 1 local Msg (0 only when its text is empty — which can't happen here,
-// Since both submitEdit and regenerate only ever target a non-empty user turn). So instead of
-// Tracking per-Msg source indices through both the history-load path AND every live-append call site
+// since both submitEdit and regenerate only ever target a non-empty user turn). So instead of
+// tracking per-Msg source indices through both the history-load path AND every live-append call site
 // (send/streamAgent callbacks/decide), we anchor on a stable, cheap-to-compute quantity both sides
-// Agree on: "this is the Nth user turn in the conversation" — that ordinal is the same on the local
+// agree on: "this is the Nth user turn in the conversation" — that ordinal is the same on the local
 // `msgs` array and on the freshly-fetched server array, because every user turn sent through this UI
-// Is exactly the one persisted server-side (edit/regenerate are both `!busy`-gated, so by the time
-// Either runs, every prior turn has already finished streaming and been persisted).
+// is exactly the one persisted server-side (edit/regenerate are both `!busy`-gated, so by the time
+// either runs, every prior turn has already finished streaming and been persisted).
 
 /** 0-based ordinal of the user message at local `msgs` index `i` among all user messages in `msgs`
- *  Up to and including `i` (i.e. "this is the Nth user turn"). `msgs[i]` must be a user message. */
+ *  up to and including `i` (i.e. "this is the Nth user turn"). `msgs[i]` must be a user message. */
 export function userOrdinalAt(msgs: Msg[], i: number): number {
   let n = -1;
   for (let k = 0; k <= i && k < msgs.length; k++) if (msgs[k].role === 'user') n++;
@@ -234,10 +234,10 @@ export function userOrdinalAt(msgs: Msg[], i: number): number {
 }
 
 /** The SERVER array index (matching GET /threads/:id/messages' order) of the `ordinal`-th (0-based)
- *  User turn with non-empty text — mirrors mapMessages' user branch exactly via extractUserText, so
- *  The result lines up with the ordinal computed by userOrdinalAt. Returns -1 when there's no such
- *  Turn (out of range / the two sides couldn't be lined up) — callers must treat that as "can't
- *  Safely truncate", not guess an index. */
+ *  user turn with non-empty text — mirrors mapMessages' user branch exactly via extractUserText, so
+ *  the result lines up with the ordinal computed by userOrdinalAt. Returns -1 when there's no such
+ *  turn (out of range / the two sides couldn't be lined up) — callers must treat that as "can't
+ *  safely truncate", not guess an index. */
 export function userMessageServerIndex(data: any[], ordinal: number): number {
   let n = -1;
   for (let idx = 0; idx < (data?.length ?? 0); idx++) {
@@ -291,9 +291,9 @@ export function Playground() {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [busy, setBusy] = useState(false);
   // What the run is doing RIGHT NOW, and since when. `busy` alone only ever said "a request is open",
-  // Which is why a long turn was indistinguishable from a hung one: the send button greyed out and
-  // Nothing else moved. The server already streams the answer — reasoning-*, tool-input-*, tool-call,
-  // Step-* — the UI just dropped every one of those events on the floor. See `activityFromEvent`.
+  // which is why a long turn was indistinguishable from a hung one: the send button greyed out and
+  // nothing else moved. The server already streams the answer — reasoning-*, tool-input-*, tool-call,
+  // step-* — the UI just dropped every one of those events on the floor. See `activityFromEvent`.
   const [activity, setActivity] = useState<Activity>(null);
   const [step, setStep] = useState(0);
   const [startedAt, setStartedAt] = useState(0);
@@ -306,7 +306,7 @@ export function Playground() {
   const [pinned, setPinned] = useState(true);
   const [cost, setCost] = useState<RunCost | null>(null);
   // Mobile master-detail (<768px): the history sidebar (w-60) used to sit side-by-side with the
-  // Chat column no matter the viewport, squeezing chat down to a sliver on a phone (the reported
+  // chat column no matter the viewport, squeezing chat down to a sliver on a phone (the reported
   // "Send button clipped" bug). Below md, only ONE of {history, chat} is shown at a time.
   const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false);
   // Session overrides (empty → the agent definition is used). Persisted in localStorage (survives F5).
@@ -318,7 +318,7 @@ export function Playground() {
   const [topPOn, setTopPOn] = useState(() => savedOverrides.topPOn ?? false);
   const [topPOv, setTopPOv] = useState(() => savedOverrides.topPOv ?? 1);
   // TOOLS: per-run enable/disable of the SELECTED agent's tools (config panel switches). Names in this
-  // Set are excluded → an allow-list of the remaining tools is passed to the run as a `tools` override.
+  // set are excluded → an allow-list of the remaining tools is passed to the run as a `tools` override.
   const [toolsOff, setToolsOff] = useState<Set<string>>(new Set());
   useEffect(() => {
     localStorage.setItem(OV_KEY, JSON.stringify({ modelOv, systemOv, tempOn, tempOv, topPOn, topPOv }));
@@ -333,11 +333,11 @@ export function Playground() {
   // Smart auto-scroll: only follow while the user is pinned to the bottom.
   useEffect(() => { if (pinned) scrollTranscriptToBottom(); }, [msgs, pending, pinned]);
   // Unmount cleanup: abort any in-flight stream when navigating away (e.g. to Inspector) so it
-  // Doesn't keep burning tokens invisibly — same pattern as Workflows.tsx.
+  // doesn't keep burning tokens invisibly — same pattern as Workflows.tsx.
   useEffect(() => () => { abortRef.current?.abort(); }, []);
   // A11Y-07: the settings popover had no keyboard way to close (only re-clicking ⚙, or clicking the
-  // Aria-hidden backdrop — unreachable from the keyboard). Escape closes it and returns focus to the
-  // Trigger, same as any other non-modal popover.
+  // aria-hidden backdrop — unreachable from the keyboard). Escape closes it and returns focus to the
+  // trigger, same as any other non-modal popover.
   useEffect(() => {
     if (!showSettings) return;
     function onKeyDown(e: KeyboardEvent) {
@@ -348,8 +348,8 @@ export function Playground() {
   }, [showSettings]);
 
   // D3-9: this is a whole-canvas configuration state (the host turned the capability off), not an
-  // Inline note inside an otherwise-populated view — EmptyState is the primitive for that (icon +
-  // Title + description), matching Cache/Evals/Mcp/Jobs/Networks/Audit/Approvals/Workflows. Icon is
+  // inline note inside an otherwise-populated view — EmptyState is the primitive for that (icon +
+  // title + description), matching Cache/Evals/Mcp/Jobs/Networks/Audit/Approvals/Workflows. Icon is
   // Playground's own nav icon (see NAV_GROUPS in App.tsx) so it reads as "this exact feature", not a generic blank.
   if (caps.data && !caps.data.playground) return <EmptyState icon={MessageSquare} title={t('playgroundDisabledTitle')} description={t('playgroundDisabledDescription')} />;
   if (agents.isLoading) return <Spinner />;
@@ -363,8 +363,8 @@ export function Playground() {
     setPinned(el.scrollHeight - el.scrollTop - el.clientHeight < 80);
   }
   // Scroll ONLY the transcript box. `endRef.scrollIntoView()` used to do this, but scrollIntoView walks
-  // The WHOLE ancestor chain and scrolls every scrollable ancestor it finds — which is how a stray 1px
-  // Out-of-flow element (see the `relative` note on the scroll box) turned into a fully blank chat area.
+  // the WHOLE ancestor chain and scrolls every scrollable ancestor it finds — which is how a stray 1px
+  // out-of-flow element (see the `relative` note on the scroll box) turned into a fully blank chat area.
   // Driving scrollTop directly can only ever move this one element, whatever the surrounding layout does.
   function scrollTranscriptToBottom() {
     const el = scrollRef.current; if (!el) return;
@@ -391,8 +391,8 @@ export function Playground() {
     setPending([]);
     setBusy(true);
     // 'waiting' from the very first millisecond, before any event arrives. That gap — request sent,
-    // Model not yet answering — is precisely the one that used to look like a frozen screen, and on
-    // A slow model it is the longest part of the turn.
+    // model not yet answering — is precisely the one that used to look like a frozen screen, and on
+    // a slow model it is the longest part of the turn.
     setActivity({ kind: 'waiting' });
     setStep(0);
     setStartedAt(Date.now());
@@ -443,9 +443,9 @@ export function Playground() {
           else if (ev.type === 'tool-call') setMsgs((m) => [...m, { role: 'tool', name: ev.data.toolName, input: ev.data.input, toolCallId: ev.data.toolCallId }]);
           else if (ev.type === 'tool-result') setMsgs((m) => applyToolOutcome(m, ev.data.toolCallId, ev.data.output));
           // A failing tool used to be dropped here entirely — the event had no case, and the client
-          // Type did not even declare it. MsgBlock derives "running" from `output === undefined`, so
-          // That tool card pulsed "running" FOREVER: the run had long since moved on and the UI
-          // Still claimed work was in flight. {error} is the same shape mapMessages writes for a
+          // type did not even declare it. MsgBlock derives "running" from `output === undefined`, so
+          // that tool card pulsed "running" FOREVER: the run had long since moved on and the UI
+          // still claimed work was in flight. {error} is the same shape mapMessages writes for a
           // 'tool-error' part, so live and reloaded transcripts now agree.
           else if (ev.type === 'tool-error') setMsgs((m) => applyToolOutcome(m, ev.data.toolCallId, { error: ev.data.error }));
           else if (ev.type === 'interrupt') setPending(ev.data.interrupts);
@@ -497,12 +497,12 @@ export function Playground() {
   }
 
   // FLOW-10: truncates the SERVER-side thread to match a local edit/regenerate, so the next run
-  // Doesn't see both the abandoned turn AND the corrected one. `i` is the LOCAL msgs index of the
-  // User message being replaced/re-run — translated to a server array index via the ordinal anchor
-  // Described above userOrdinalAt. MUST be called (and awaited) BEFORE runPrompt appends the new
-  // Turn: computing the ordinal→index mapping from data that already includes the new turn would
-  // Resolve to the same server index, and afterIndex = srcIdx - 1 would then also wipe out the turn
-  // We just ran.
+  // doesn't see both the abandoned turn AND the corrected one. `i` is the LOCAL msgs index of the
+  // user message being replaced/re-run — translated to a server array index via the ordinal anchor
+  // described above userOrdinalAt. MUST be called (and awaited) BEFORE runPrompt appends the new
+  // turn: computing the ordinal→index mapping from data that already includes the new turn would
+  // resolve to the same server index, and afterIndex = srcIdx - 1 would then also wipe out the turn
+  // we just ran.
   async function truncateServerThread(i: number) {
     if (!caps.data?.memory || !thread) return;
     try {
@@ -511,7 +511,7 @@ export function Playground() {
       const srcIdx = userMessageServerIndex(data, ordinal);
       if (srcIdx < 0) { warnStaleServerHistory(); return; } // couldn't line the turn up — be honest instead of guessing
       await api.truncateThreadMessages(thread, srcIdx - 1);
-      // Success → the server thread now matches the local trim, no "stale history" warning needed.
+      // success → the server thread now matches the local trim, no "stale history" warning needed.
     } catch (e) {
       if (e instanceof ApiError && e.status === 501) { warnStaleServerHistory(); return; } // adapter doesn't support truncateMessages → old behavior
       toast.error(errMessage(e)); // any other error: inform, but don't block the run
@@ -546,10 +546,10 @@ export function Playground() {
   }
 
   // Fallback for FLOW-10's truncateServerThread: the host's memory adapter doesn't implement
-  // TruncateMessages (DELETE /threads/:id/messages → 501), or the local edit/regenerate target
-  // Couldn't be safely lined up with a server index. Either way, the LOCAL trim above still happens,
-  // But the server-side thread history still contains the old turn, and it reappears once the page is
-  // Reloaded and restored via loadThread — so we surface this explicitly rather than pretending it worked.
+  // truncateMessages (DELETE /threads/:id/messages → 501), or the local edit/regenerate target
+  // couldn't be safely lined up with a server index. Either way, the LOCAL trim above still happens,
+  // but the server-side thread history still contains the old turn, and it reappears once the page is
+  // reloaded and restored via loadThread — so we surface this explicitly rather than pretending it worked.
   function warnStaleServerHistory() {
     if (caps.data?.memory && thread) toast(t('staleHistoryWarning'));
   }
@@ -587,8 +587,8 @@ export function Playground() {
     setEditing(null);
     setEditVal('');
     // Re-pin: `pinned` tracks how far the user had scrolled in the PREVIOUS conversation. Left at
-    // False, a freshly opened thread would render parked at its oldest message with the "scroll to
-    // Bottom" affordance already showing. A conversation always opens on its newest turn.
+    // false, a freshly opened thread would render parked at its oldest message with the "scroll to
+    // bottom" affordance already showing. A conversation always opens on its newest turn.
     setPinned(true);
     try {
       setMsgs(mapMessages(await api.messages(t.id)));
@@ -599,12 +599,12 @@ export function Playground() {
   }
 
   // Switching agents starts a FRESH conversation. The messages on screen — and the ACTIVE thread — belong
-  // To the previous agent: keeping them would not only show its history under a different agent, it would
-  // Append the new agent's turns into the old agent's thread. Nothing is lost with memory on — the old
-  // Thread stays in the History list, one click away. Per-agent tool toggles are dropped too (they name
-  // The previous agent's tools). The select is disabled while a run is in flight, so this never races a stream.
+  // to the previous agent: keeping them would not only show its history under a different agent, it would
+  // append the new agent's turns into the old agent's thread. Nothing is lost with memory on — the old
+  // thread stays in the History list, one click away. Per-agent tool toggles are dropped too (they name
+  // the previous agent's tools). The select is disabled while a run is in flight, so this never races a stream.
   // FORM-08: the composer (input + attachments) is NOT part of that "fresh conversation" decision — a user
-  // Who wrote a long prompt and then reconsiders which agent to send it to must not lose it, so this keeps it.
+  // who wrote a long prompt and then reconsiders which agent to send it to must not lose it, so this keeps it.
   function changeAgent(name: string) {
     if (name === agent) return;
     setAgent(name);
@@ -613,8 +613,8 @@ export function Playground() {
   }
 
   // Clean chat: the next send creates a new thread. `keepComposer` (FORM-08) preserves the in-progress
-  // Input/attachments across the reset — used by changeAgent and the "New chat" button, where the reset is
-  // About the conversation/thread, not about whatever the user was in the middle of typing. Other callers
+  // input/attachments across the reset — used by changeAgent and the "New chat" button, where the reset is
+  // about the conversation/thread, not about whatever the user was in the middle of typing. Other callers
   // (e.g. a deleted active thread) keep the full reset, including the composer.
   function newConversation(keepComposer = false) {
     runIdRef.current = '';
@@ -631,7 +631,7 @@ export function Playground() {
   }
 
   // Configuration fields (agent · model · temperature · top-p · system · tools) — rendered in BOTH the
-  // Persistent desktop left panel and the mobile Settings dropdown (single source, closes over state).
+  // persistent desktop left panel and the mobile Settings dropdown (single source, closes over state).
   const configFields = (
     <div className="space-y-4">
       <div>
@@ -912,7 +912,7 @@ export function Playground() {
 
 function HistorySidebar({ open, activeId, busy, onSelect, onNew, onDeleted, configSlot, resourceId }: {
   /** Mobile-only master-detail toggle (see the `mobileHistoryOpen` state in Playground) — always
-   *  Visible at md+ regardless of this flag. */
+   *  visible at md+ regardless of this flag. */
   open: boolean;
   activeId: string; busy: boolean; onSelect: (t: ThreadRecord) => void; onNew: () => void; onDeleted: (id: string) => void;
   /** The Configuration fields, rendered as a collapsible section UNDER the thread list (state is owned by
@@ -931,9 +931,9 @@ function HistorySidebar({ open, activeId, busy, onSelect, onNew, onDeleted, conf
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
   // FORM-07: closing the rename row (Enter/Escape/✓/✕) removes the focused <input> from the DOM, which
-  // Fires a native blur on it — without this guard that blur would ALSO call onBlur's saveRename, double
+  // fires a native blur on it — without this guard that blur would ALSO call onBlur's saveRename, double
   // submitting on Enter/✓ and, worse, silently overriding Escape/✕'s cancel with a save. Set right
-  // Before every one of those closes; onBlur checks it and, if set, skips the save-on-blur path once.
+  // before every one of those closes; onBlur checks it and, if set, skips the save-on-blur path once.
   const suppressRenameBlurRef = useRef(false);
   function closeRenaming(save: boolean, id: string) {
     suppressRenameBlurRef.current = true;
@@ -995,8 +995,8 @@ function HistorySidebar({ open, activeId, busy, onSelect, onNew, onDeleted, conf
                     onChange={(e) => setRenameVal(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter') closeRenaming(true, th.id); else if (e.key === 'Escape') closeRenaming(false, th.id); }}
                     // FORM-07: clicking away (a different thread row, outside the sidebar, …) now SAVES
-                    // Instead of silently discarding the typed title — saveRename is a no-op on an empty
-                    // Title. ✓/✕ below cover the discoverable, mouse-driven path (mirrors the delete flow).
+                    // instead of silently discarding the typed title — saveRename is a no-op on an empty
+                    // title. ✓/✕ below cover the discoverable, mouse-driven path (mirrors the delete flow).
                     onBlur={() => { if (suppressRenameBlurRef.current) { suppressRenameBlurRef.current = false; return; } saveRename(th.id); }}
                     className="w-full min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1 text-sm outline-none"
                   />
@@ -1147,9 +1147,9 @@ function MsgBlock({ msg, canEdit, onEdit, streaming }: { msg: Msg; canEdit?: boo
       <div className={cn(
         'relative max-w-[80%] rounded-lg px-3 py-2 text-sm',
         // VIS-07: user bubble is a TINT, not a full lime fill — a full-saturation `bg-primary` on every
-        // Turn of a long conversation buried the one control that should read as "primary action" (Send,
-        // And Stop while streaming) in a wall of lime, and pending approval cards (border-warning/bg-warning)
-        // Got lost in it too. index.css's contract for lime is a sparse/high-impact accent, not a fill.
+        // turn of a long conversation buried the one control that should read as "primary action" (Send,
+        // and Stop while streaming) in a wall of lime, and pending approval cards (border-warning/bg-warning)
+        // got lost in it too. index.css's contract for lime is a sparse/high-impact accent, not a fill.
         isUser ? 'whitespace-pre-wrap border border-brand/40 bg-brand/10 text-foreground' : 'border-l-2 border-success/40 bg-muted',
       )}>
         {msg.role === 'user' && msg.files && msg.files.length > 0 && (
@@ -1180,12 +1180,12 @@ function MsgBlock({ msg, canEdit, onEdit, streaming }: { msg: Msg; canEdit?: boo
 
 /**
  * "What is happening right now", rendered where the next message will appear — the place the user is
- * Already looking. Replaces inferring liveness from a greyed-out Send button.
+ * already looking. Replaces inferring liveness from a greyed-out Send button.
  *
  * Mounted only while a run is open, so its 1s tick has no life outside that: the interval starts and
- * Stops with the row instead of being a timer Playground has to remember to clear. The elapsed
- * Counter is the load-bearing part — it keeps moving when the stream is silent, which is exactly the
- * Stretch (model thinking before the first token) that used to be indistinguishable from a hang.
+ * stops with the row instead of being a timer Playground has to remember to clear. The elapsed
+ * counter is the load-bearing part — it keeps moving when the stream is silent, which is exactly the
+ * stretch (model thinking before the first token) that used to be indistinguishable from a hang.
  */
 function ActivityRow({ activity, step, startedAt }: { activity: Activity; step: number; startedAt: number }) {
   const { t } = useTranslation('playground');

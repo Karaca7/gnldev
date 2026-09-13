@@ -125,3 +125,15 @@ describe('toNodeHandler — binding to a Node server', () => {
     expect((await fetch(`${base}/runs`)).status).toBe(200);
   });
 });
+
+// The one string here that no enumerable map guards: node.ts prints the literal because depending on
+// @gnldev/server at runtime for one constant is not worth a package edge. This pin is the substitute
+// for that edge — if the server renames the code (and its docs page moves with the map), this
+// reddens instead of Studio quietly printing a code that no longer has a page.
+import { EDGE_ERROR_CODES } from '../../server/src/edge-errors';
+
+describe('the body_consumed_upstream literal', () => {
+  it('matches the enumerable edge code it deliberately does not import at runtime', () => {
+    expect(EDGE_ERROR_CODES.bodyConsumedUpstream).toBe('body_consumed_upstream');
+  });
+});

@@ -28,7 +28,7 @@ describe('the admin SPA is served with a framing and image policy', () => {
     const csp = res.headers.get('content-security-policy') ?? '';
     expect(csp).toContain("frame-ancestors 'none'");
     // In <meta> form these directives are defined to be ignored — the same trap `/swagger` hit — so
-    // What matters is that they arrive as headers.
+    // what matters is that they arrive as headers.
     expect(res.headers.get('x-frame-options')).toBe('DENY');
   });
 

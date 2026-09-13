@@ -249,7 +249,7 @@ describe('release CAS retry + fallback', () => {
     const preRenew = await journal.get(key);
     await lock!.renew(10_000); // the heartbeat lands (fresh expires, SAME token)
     // Release()'s FIRST token check sees the pre-renew record → its CAS loses exactly like a queue
-    // Worker whose last heartbeat tick raced its own finally-release. The retry must re-read, see its
+    // worker whose last heartbeat tick raced its own finally-release. The retry must re-read, see its
     // OWN token, and free the lock — a single-attempt release left it live until TTL here.
     staleOnce = preRenew;
     await lock!.release();

@@ -28,7 +28,7 @@ export interface McpToolsOptions {
   /**
    * A fixed idempotencyKey (optional, external). In the normal flow, EVERY execute call receives
    * `options.idempotencyKey` from `runDurable`'s `durableTool` wrapper (`${runId}:${toolCallId}`, see
-   * Packages/durable/src/durable-tool.ts line 227/232) — execute reads THIS here and carries it into the
+   * packages/durable/src/durable-tool.ts line 227/232) — execute reads THIS here and carries it into the
    * MCP request as `params._meta.idempotencyKey` (MCP spec: `_meta` is a free/'loose' meta field) →
    * SERVER-SIDE exactly-once is also active via the real SDK Client/Server. OUTSIDE `runDurable`
    * (when there is no durable context), the fixed value given here is used. If neither is present,
@@ -48,7 +48,7 @@ function toolsFromDefs(client: McpClientLike, defs: McpToolDef[], opts: McpTools
       inputSchema: jsonSchema(t.inputSchema ?? { type: 'object', properties: {}, additionalProperties: true }),
       execute: async (args: any, toolOpts?: any) => {
         // If there is a durable context, toolOpts.idempotencyKey already arrives derived from runId:toolCallId;
-        // Otherwise (e.g. usage outside runDurable) fall back to opts.idempotencyKey (if given externally).
+        // otherwise (e.g. usage outside runDurable) fall back to opts.idempotencyKey (if given externally).
         const idempotencyKey = toolOpts?.idempotencyKey ?? opts.idempotencyKey;
         const res = await client.callTool({
           name: t.name,
@@ -66,7 +66,7 @@ function toolsFromDefs(client: McpClientLike, defs: McpToolDef[], opts: McpTools
 /**
  * Lists the MCP server's tools and converts each to an AI SDK `tool()`. execute calls MCP
  * `callTool`. When the result is passed to `runDurable`, `durableTool` wraps it → the MCP call is
- * Journaled (not re-called on resume). An optional prefix avoids name collisions.
+ * journaled (not re-called on resume). An optional prefix avoids name collisions.
  */
 export async function createMcpTools(client: McpClientLike, opts: McpToolsOptions = {}): Promise<Record<string, any>> {
   const { tools } = await client.listTools();
@@ -151,15 +151,15 @@ export interface McpToolsHandle {
 
 /**
  * Connects to an MCP server (stdio or streamable-http), discovers its tools via `tools/list`, and
- * Converts each to an AI SDK tool (execute → `tools/call`). The connection is established LAZILY:
- * The `mcpTools(...)` call itself does no I/O — the transport opens on the first `tools()`/`describeTools()`
- * Call, and the discovery result is shared for the lifetime of this handle. `close()` closes the transport.
+ * converts each to an AI SDK tool (execute → `tools/call`). The connection is established LAZILY:
+ * the `mcpTools(...)` call itself does no I/O — the transport opens on the first `tools()`/`describeTools()`
+ * call, and the discovery result is shared for the lifetime of this handle. `close()` closes the transport.
  *
  * DURABILITY: MCP tool calls are already journaled inside `runDurable` (see README) — there is NO
  * SEPARATE journal/exactly-once logic here, nothing is reproduced. The `idempotencyKey`
  * (`${runId}:${toolCallId}`) coming from `runDurable`'s `durableTool` wrapper is carried to execute via
  * `params._meta` → in addition to CLIENT-SIDE (in-process, journal) exactly-once, if the other side is
- * Also using `createMcpServer({ journal })`, SERVER-SIDE exactly-once also runs over the wire.
+ * also using `createMcpServer({ journal })`, SERVER-SIDE exactly-once also runs over the wire.
  */
 export function mcpTools(opts: McpToolsConnectOptions): McpToolsHandle {
   let clientPromise: Promise<McpClientLike> | undefined;

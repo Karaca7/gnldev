@@ -14,7 +14,7 @@ function toJsonSchema(input: unknown): JsonSchema | undefined {
       return structuredClone(s.jsonSchema) as JsonSchema;
     }
   } catch {
-    // AsSchema didn't accept it → it might be a raw JSON Schema object (below)
+    // asSchema didn't accept it → it might be a raw JSON Schema object (below)
   }
   const obj = input as any;
   if (typeof obj === 'object' && (obj.type || obj.properties || obj.anyOf || obj.oneOf)) {
@@ -57,7 +57,7 @@ export function applyToolCompat(
       try {
         js = r.transform(js, info) ?? js;
       } catch {
-        // A rule error shouldn't drop the tool; skip that rule
+        // a rule error shouldn't drop the tool; skip that rule
       }
     }
     out[name] = { ...t, inputSchema: jsonSchema(js) };

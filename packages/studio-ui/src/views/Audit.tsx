@@ -5,23 +5,23 @@ import { useAudit, type AuditItem } from '../api';
 import { Spinner, EmptyState, ErrorBox, Badge, StatStrip, JsonBlock, PageHeader } from '../components';
 import { currentLocale } from '../i18n/locale';
 // Note: unlike the other views, this one deliberately has NO '../i18n' side-effect import —
-// This file's pure functions (auditToCsv/ACTIONS) are imported directly in a node environment
+// this file's pure functions (auditToCsv/ACTIONS) are imported directly in a node environment
 // (without jsdom, see test/observability-audit.test.ts); i18n/index.ts's getStoredLang()
-// Accesses localStorage unconditionally and blows up in a node environment. In the real app,
-// Main.tsx already imports './i18n' before App, so the `Audit` component works fine in real usage.
+// accesses localStorage unconditionally and blows up in a node environment. In the real app,
+// main.tsx already imports './i18n' before App, so the `Audit` component works fine in real usage.
 
 // Shared class for form/filter inputs. The focus recipe (ring + halo) lives in index.css and applies
-// To every input/textarea/select — do not re-declare it here.
+// to every input/textarea/select — do not re-declare it here.
 const inputCls = 'rounded-md border border-input bg-background px-2 py-1 text-xs outline-none transition-colors';
 
 // The server's /audit does NOT take cursor/offset, only `limit` (newest first, trimmed to
-// Limit — see packages/studio/src/server.ts). There's no real pagination (cursor); "load more"
-// Increases the limit and refetches. Server-side upper bound is 1000 (server.ts: Math.min(1000, …)).
+// limit — see packages/studio/src/server.ts). There's no real pagination (cursor); "load more"
+// increases the limit and refetches. Server-side upper bound is 1000 (server.ts: Math.min(1000, …)).
 const AUDIT_PAGE = 200;
 const AUDIT_MAX = 1000;
 
 // RFC4180-like CSV field escaping: fields containing comma/quote/newline are wrapped in double
-// Quotes (inner quotes are doubled) — pure function, edge cases covered in test/observability-audit.test.ts.
+// quotes (inner quotes are doubled) — pure function, edge cases covered in test/observability-audit.test.ts.
 function csvField(v: string | number): string {
   const s = String(v);
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;

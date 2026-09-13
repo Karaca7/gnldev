@@ -26,8 +26,8 @@ describe('piiRedactor → recordProcessorReport (real journal)', () => {
   });
 
   // The count is derived by a second walk over the same text, so it can disagree with the redaction
-  // That actually ran. If a custom pattern masked a value but the report never named it, an operator
-  // Auditing "which types appeared" would be told less than the redaction did.
+  // that actually ran. If a custom pattern masked a value but the report never named it, an operator
+  // auditing "which types appeared" would be told less than the redaction did.
   it('a custom pattern is named in the report, with the count the redaction actually made', async () => {
     const journal = new InMemoryJournal();
     const ctx = createProcessorCtx(journal, 'run-pii-custom');
@@ -46,7 +46,7 @@ describe('piiRedactor → recordProcessorReport (real journal)', () => {
 
   // The output side took its own path to the counter and was passing neither `extraPatterns` nor
   // `validate` — so a report could name fewer types than the redaction masked, or not be written at
-  // All when only a custom pattern matched. The input side was correct, which is what kept it hidden.
+  // all when only a custom pattern matched. The input side was correct, which is what kept it hidden.
   it('the output-side report sees custom patterns too, not just the built-ins', async () => {
     const journal = new InMemoryJournal();
     const ctx = createProcessorCtx(journal, 'run-pii-out-custom');

@@ -38,7 +38,7 @@ describe('StatusBadge speaks the reader’s language', () => {
 
   it('leaves an unknown status exactly as it was', async () => {
     // The badge is fed statuses from runs, jobs AND workflows. One it does not know must still render
-    // Its raw string — not vanish, and not show a missing-key marker.
+    // its raw string — not vanish, and not show a missing-key marker.
     render(<StatusBadge status="quarantined" />);
     expect(screen.getByText('quarantined')).toBeTruthy();
   });
@@ -82,7 +82,7 @@ describe('both locales define the whole status vocabulary', () => {
       }
     }
     // A Turkish bundle that merely copies the English string is a missing translation wearing a
-    // Translation's clothes — these particular words differ in both languages.
+    // translation's clothes — these particular words differ in both languages.
     const en = i18n.getResourceBundle('en', 'common') as Record<string, string>;
     const tr = i18n.getResourceBundle('tr', 'common') as Record<string, string>;
     for (const k of ['statusCompleted', 'statusSuspended', 'statusFailed', 'statusCancelled']) {

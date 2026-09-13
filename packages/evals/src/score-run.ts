@@ -18,8 +18,8 @@ function extractFinalText(entries: JournalEntry[]): string {
 
 /**
  * Scores a run from its JOURNAL TRACE (post-execution, deterministic). Same journal → same
- * Output → same score for rule-based scorers. If the journal is writable, each scorer result is
- * Memoized under `${runId}:proc:eval:${name}` → even llmJudge returns the SAME score on resume
+ * output → same score for rule-based scorers. If the journal is writable, each scorer result is
+ * memoized under `${runId}:proc:eval:${name}` → even llmJudge returns the SAME score on resume
  * (something most eval frameworks don't have: journal-based replayable scoring). Can be disabled with `memo:false`.
  */
 export async function scoreRun(
@@ -30,8 +30,8 @@ export async function scoreRun(
 ): Promise<ScoreRunResult> {
   const entries = await reader.readRun(runId);
   const output = extractFinalText(entries);
-  // RunId is included so trajectory-style scorers (see trajectory.ts's trajectoryScorerFor) can look
-  // This run's decision sequence back up without any extra wiring at the call site (P1.1).
+  // runId is included so trajectory-style scorers (see trajectory.ts's trajectoryScorerFor) can look
+  // this run's decision sequence back up without any extra wiring at the call site (P1.1).
   const sample: ScoreSample = { output, expected: opts.expected, runId };
 
   const j = reader as Partial<Journal>;

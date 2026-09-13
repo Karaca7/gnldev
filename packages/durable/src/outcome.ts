@@ -49,15 +49,22 @@ import { RunBusyError } from './errors.js';
  *   From here would put an agent verdict on a workflow's outcome, which is precisely the
  *   Cross-contamination the refusal exists to prevent.
  *
+ * RunOwnerMismatchError: the ThreadOwnerMismatch precedent, one address over — a stranger addressing
+ *   a DERIVED run (`run1_<digest>`) that belongs to somebody else. It joins this set on the day the
+ *   check is written rather than after the same measurement is taken twice: the derived namespace is
+ *   exactly where a stranger CAN spell a live run's id (the digest is computable), so the refused
+ *   call arrives against an id that very often already carries the owner's 'completed'. Letting it
+ *   through as a failure would mean the leak we just refused still edits the victim's history.
+ *
  * Matched by name rather than by instanceof: cancel.ts/compensation.ts/errors.ts import from run.ts's
- * Side of the graph, and importing them back here would be a cycle for no gain.
+ * side of the graph, and importing them back here would be a cycle for no gain.
  */
-const NOT_A_RUN_FAILURE = new Set(['CompensatedRunError', 'RunCanceledError', 'RunThreadMismatchError', 'ThreadOwnerMismatchError', 'NotAnAgentRunError']);
+const NOT_A_RUN_FAILURE = new Set(['CompensatedRunError', 'RunCanceledError', 'RunThreadMismatchError', 'ThreadOwnerMismatchError', 'RunOwnerMismatchError', 'NotAnAgentRunError']);
 
 /**
  * How a run's error relates to its outcome record. RunBusyError alone cannot answer this — it is
- * Thrown at two very different moments, and the audit measured the blanket exclusion getting the
- * Second one wrong:
+ * thrown at two very different moments, and the audit measured the blanket exclusion getting the
+ * second one wrong:
  *
  *   'not-a-failure'  — terminal refusals (compensated/canceled) and the LOCK-ACQUISITION refusal:
  *                      this caller never got in, the run belongs to whoever holds the lock, and
@@ -98,15 +105,15 @@ export async function recordRunOutcome(
   try {
     const key = runKeys.outcome(runId);
     // The shared clock when the journal has one: two workers' outcomes are ordered against each
-    // Other, and local clocks are exactly what cannot do that.
+    // other, and local clocks are exactly what cannot do that.
     const at = journal.now ? await journal.now() : outcome.at;
     const next: RunOutcomeRecord = { ...outcome, at };
     // MONOTONIC, not last-writer-wins. The audit measured the failure: worker A dies on a 401 but its
     // 'failed' put is slow; the lock is already free, worker B resumes the SAME run, succeeds, writes
     // 'completed' — then A's stale put lands and a run that succeeded reads 'failed', permanently.
     // A verdict may only be replaced by a NEWER one, and the replacement is CAS'd so a concurrent
-    // Newer write is never clobbered by this one. Three attempts, then yield — this is observability,
-    // Losing the race to a fresher verdict is the correct outcome.
+    // newer write is never clobbered by this one. Three attempts, then yield — this is observability,
+    // losing the race to a fresher verdict is the correct outcome.
     for (let i = 0; i < 3; i++) {
       const raw = await journal.get<RunOutcomeRecord>(key);
       const cur = raw as RunOutcomeRecord | undefined;
@@ -152,7 +159,7 @@ export async function recordRunOutcome(
     }
   } catch {
     // Advisory: the run's own result is already decided. Losing this costs an operator the reason,
-    // Not the framework its correctness.
+    // not the framework its correctness.
   }
 }
 
@@ -168,18 +175,18 @@ export const runFailedIfUnrecorded = (journal: Journal, runId: string, err: unkn
 
 /**
  * The write-ahead start marker. Recorded at every attempt's entry (a resume is a new attempt), so a
- * Run killed between here and its terminal write reads 'running' — never 'completed', which is what
- * The absence of any record used to mean. Monotonic like every outcome write: it cannot bury a
- * Strictly newer terminal, and a stale attempt's late start cannot resurrect a finished run.
+ * run killed between here and its terminal write reads 'running' — never 'completed', which is what
+ * the absence of any record used to mean. Monotonic like every outcome write: it cannot bury a
+ * strictly newer terminal, and a stale attempt's late start cannot resurrect a finished run.
  */
 export const runStarted = (journal: Journal, runId: string, at: number): Promise<void> =>
   recordRunOutcome(journal, runId, { status: 'running', at });
 
 /**
  * The operator's ending. Written by `cancelAgentRun` — the durable cancel's single choke point — with
- * The `at` of the WINNING flag record, so a re-cancel keeps stamping the original decision's moment
- * Rather than sliding it forward. `notAfterTerminal` because a cancel can only decide how a run ended
- * If it had not already ended (see recordRunOutcome), and no straggling start marker may bury it.
+ * the `at` of the WINNING flag record, so a re-cancel keeps stamping the original decision's moment
+ * rather than sliding it forward. `notAfterTerminal` because a cancel can only decide how a run ended
+ * if it had not already ended (see recordRunOutcome), and no straggling start marker may bury it.
  */
 export const runCanceled = (journal: Journal, runId: string, at: number): Promise<void> =>
   recordRunOutcome(journal, runId, { status: 'canceled', at }, { notAfterTerminal: true });

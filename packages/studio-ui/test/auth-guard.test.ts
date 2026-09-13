@@ -10,7 +10,7 @@ import { ApiError, isAuthError, isCredentialError, isScopeError, shouldForceReau
 describe('a valid token survives every refusal that is about the RESOURCE', () => {
   const authed = { authRequired: true, hasToken: true };
   // Not because a 403 can never indicate a bad credential — on the free roleAuth path a WRITE with
-  // No identity answers 403 (role-auth.ts:202). Because every READ answers 401, and every screen reads.
+  // no identity answers 403 (role-auth.ts:202). Because every READ answers 401, and every screen reads.
   const refusals = [
     new ApiError(403, 'permission denied: threads:read'),               // auth-ee/rbac.ts:73
     new ApiError(403, 'unauthorized (admin required)'),                  // auth/role-auth.ts:202
@@ -72,12 +72,12 @@ describe('a scope refusal is not a bad token', () => {
   });
 
   // This used to assert the opposite — that an uncoded 403 forces re-login. Dropping it is safe not
-  // Because 403 never means a bad credential (on the free roleAuth path a WRITE with no identity
-  // Answers 403), but because every READ answers 401 and every screen reads: a revoked token still
-  // Ends the session within the first render.
+  // because 403 never means a bad credential (on the free roleAuth path a WRITE with no identity
+  // answers 403), but because every READ answers 401 and every screen reads: a revoked token still
+  // ends the session within the first render.
   //
   // The cost of the old assertion: a principal without `threads:read` lands on the default route,
-  // Its hook 403s, and a valid token is thrown away — on every login, forever.
+  // its hook 403s, and a valid token is thrown away — on every login, forever.
   it('a plain 403 does NOT — a permission denial is not a bad credential', () => {
     expect(shouldForceReauth({ err: new ApiError(403, 'forbidden'), authRequired: true, hasToken: true })).toBe(false);
     // The shape the server actually sends for a withheld grant.

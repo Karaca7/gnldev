@@ -1,6 +1,6 @@
 # @gnldev/otel
 
-Converts the journal into a real **OpenTelemetry trace** and sends it to a SpanExporter (or an OTLP endpoint). Deterministic span ids → **idempotent**; since it's produced post-hoc from the journal, it stays complete even after a crash and consistent across replays = **crash-proof / exactly-once observability** (live-instrumenting frameworks cannot offer this).
+Converts the journal into a real **OpenTelemetry trace** and sends it to a SpanExporter (or an OTLP endpoint). Deterministic span ids → **idempotent**; since it's produced post-hoc from the journal, it stays complete even after a crash and consistent across replays = **crash-proof, idempotent observability** — exporting the same run twice produces the same trace rather than a duplicate (live-instrumenting frameworks cannot offer this).
 
 > **Not on npm yet** — no `@gnldev/*` package has been published. Until the first release, use it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.
 

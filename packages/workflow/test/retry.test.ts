@@ -55,10 +55,10 @@ describe('retry', () => {
   });
 
   // The fallback's output is stored under the RETRIED step's id, so the record alone could not say
-  // Which of the two produced it: a "charged via provider A" step read identically whether it worked
-  // First time or failed twice and landed on provider B. `:attempts` sitting next to it does not
-  // Close that — on a backend with `incrBy` the counter lives in a counter map rather than the
-  // Field, so a reader that only calls `get` sees nothing.
+  // which of the two produced it: a "charged via provider A" step read identically whether it worked
+  // first time or failed twice and landed on provider B. `:attempts` sitting next to it does not
+  // close that — on a backend with `incrBy` the counter lives in a counter map rather than the
+  // field, so a reader that only calls `get` sees nothing.
   it('records that the output came from the fallback, readable with a plain get', async () => {
     const journal = mkJournal();
     const c = { runs: 0 };

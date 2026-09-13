@@ -25,8 +25,8 @@ describe('piiRedactor', () => {
   });
 
   // A Processor only ever sees processInput/processOutput/processToolResult. Text that reaches an
-  // Exporter by another route — a run's failure message, written by recordRunOutcome — needs the same
-  // Mask and had no way to reuse it, because the default type list is private to this module.
+  // exporter by another route — a run's failure message, written by recordRunOutcome — needs the same
+  // mask and had no way to reuse it, because the default type list is private to this module.
   it('piiTextRedactor masks the same things as the processor, for text no processor sees', () => {
     const redact = piiTextRedactor();
     const out = redact('refused: "a@b.com" from 10.0.0.1');
@@ -46,7 +46,7 @@ describe('piiRedactor', () => {
   });
 
   // An identifier that carries its own check digit can be recognised by arithmetic rather than by
-  // Shape, so the built-in for it has no false positives to trade against.
+  // shape, so the built-in for it has no false positives to trade against.
   it('iban is masked when mod-97 holds, and left alone when it does not', () => {
     const redact = piiTextRedactor();
     expect(redact('account TR330006100519786457841326 closed')).toBe('account [REDACTED_IBAN] closed');
@@ -58,8 +58,8 @@ describe('piiRedactor', () => {
   });
 
   // `iban` leads ORDER for a reason, and the reason was not pinned: with it last, the digit-hungry
-  // Patterns reach an IBAN first and it comes back `TR[REDACTED_PHONE]` — country prefix stranded,
-  // Wrong name in the audit report.
+  // patterns reach an IBAN first and it comes back `TR[REDACTED_PHONE]` — country prefix stranded,
+  // wrong name in the audit report.
   it('iban is matched before the digit-hungry patterns can claim it', () => {
     const redact = piiTextRedactor();
     const out = redact('account NO9386011117947 closed');
@@ -69,7 +69,7 @@ describe('piiRedactor', () => {
   });
 
   // The point of the checksum: a card is separated from any sixteen digits. Before this, an order
-  // Number was masked as a card and the operator lost it for nothing.
+  // number was masked as a card and the operator lost it for nothing.
   it('a card passes Luhn; an order number of the same shape stays readable', () => {
     const redact = piiTextRedactor();
     expect(redact('kart 4111 1111 1111 1111 reddedildi')).toBe('kart [REDACTED_CREDITCARD] reddedildi');
@@ -82,7 +82,7 @@ describe('piiRedactor', () => {
   });
 
   // The phone pattern used to count characters, not digits, so a timestamp cleared its bar. Error
-  // Messages and logs carry timestamps, which is the payload this most often runs over.
+  // messages and logs carry timestamps, which is the payload this most often runs over.
   it('phone no longer eats timestamps, version ranges or run ids', () => {
     const redact = piiTextRedactor();
     for (const text of [
@@ -94,16 +94,16 @@ describe('piiRedactor', () => {
   });
 
   // The list is deliberately wider than the rule that has to satisfy it. An earlier version of this
-  // Test held six formats, all of them shapes the rule already accepted, and it passed while
+  // test held six formats, all of them shapes the rule already accepted, and it passed while
   // `+49 30 12345678`, `+90 5321112233`, `0212 5551234` and `(212) 5551234` were silently going
-  // Through unmasked — a set chosen to fit the rule measures the rule against itself.
+  // through unmasked — a set chosen to fit the rule measures the rule against itself.
   it('...while every real phone format still masks', () => {
     const redact = piiTextRedactor();
     for (const text of [
       '+90 555 123 4567', '555-123-4567', '(212) 555-1234', '5551234567', '0532 111 22 33',
       '555.123.4567', '+442071838750', '+1 (212) 555-1234', '+90(532)111 22 33',
       // Short prefix + one long block: the most common written form in several countries, and the
-      // Group of formats a "every group must be short" rule dropped.
+      // group of formats a "every group must be short" rule dropped.
       '+49 30 12345678', '+90 5321112233', '+90 532 1112233', '0212 5551234', '(212) 5551234',
       '+90(532)1112233',
       // Many short groups — the mirror case, where a small cap on group COUNT truncated the match.
@@ -113,13 +113,13 @@ describe('piiRedactor', () => {
   });
 
   // A rejected match is a span the scanner declined, not one it has dealt with. `String.replace`
-  // Advances past it either way, so a candidate that swallowed a real identifier and then failed its
-  // Own checksum took that identifier out of reach of every later pattern — the exact failure a
-  // Validator exists to prevent, caused by the validator. `replaceValidated` resumes at index+1.
+  // advances past it either way, so a candidate that swallowed a real identifier and then failed its
+  // own checksum took that identifier out of reach of every later pattern — the exact failure a
+  // validator exists to prevent, caused by the validator. `replaceValidated` resumes at index+1.
   //
   // An earlier version of this test made the general claim from ONE example, which happened to be
-  // Saved by the ISO-date lookahead rather than by anything structural. These are the cases that
-  // Were actually leaking.
+  // saved by the ISO-date lookahead rather than by anything structural. These are the cases that
+  // were actually leaking.
   it('a rejected candidate does not take a real identifier down with it', () => {
     const redact = piiTextRedactor();
     for (const [text, mustNotContain] of [
@@ -128,16 +128,16 @@ describe('piiRedactor', () => {
       ['ref 20240115093012 555-123-4567 son', '555-123-4567'],
       ['log 1234-56-78 555-123-4567 bitti', '555-123-4567'],
       // Same shape with a checksum: the card window starts one group early, Luhn refuses it, and the
-      // Genuine card inside came back in the clear.
+      // genuine card inside came back in the clear.
       ['ref 1111 2222 4111 1111 1111 1111 son', '4111 1111 1111 1111'],
     ]) expect(redact(text), text).not.toContain(mustNotContain);
   });
 
   // The five original built-ins are US-shaped — `ssn` exists nowhere else — so a deployment with a
-  // National id or an internal customer number had nothing that named its own data.
+  // national id or an internal customer number had nothing that named its own data.
   it('extraPatterns masks an identifier no built-in type can name', () => {
     // A patient record number: no built-in shape comes close, and there is no country whose id list
-    // Could reasonably be shipped here — which is the whole reason this option exists.
+    // could reasonably be shipped here — which is the whole reason this option exists.
     const redact = piiTextRedactor({ extraPatterns: [{ name: 'mrn', pattern: /\bMRN-\d{6}\b/g }] });
     const out = redact('dosya MRN-482100 goruldu');
     expect(out).toContain('[REDACTED_MRN]');
@@ -146,7 +146,7 @@ describe('piiRedactor', () => {
 
   // Order is load-bearing, not cosmetic: the built-in `phone` pattern is greedy enough to swallow an
   // 11-digit national id, so a custom pattern running after it would find its text already masked —
-  // Under the wrong name, which also makes the audit report describe the wrong type.
+  // under the wrong name, which also makes the audit report describe the wrong type.
   it('a custom pattern wins over a greedy built-in, instead of arriving after it', () => {
     const withCustom = piiTextRedactor({ extraPatterns: [{ name: 'tckn', pattern: /\b\d{11}\b/g }] });
     expect(withCustom('customer 12345678901 record')).toContain('[REDACTED_TCKN]');
@@ -166,7 +166,7 @@ describe('piiRedactor', () => {
   });
 
   // This used to be a silent no-op: the text came back untouched and nothing was reported, so a
-  // Deployment could believe a type was covered while the value went through in the clear.
+  // deployment could believe a type was covered while the value went through in the clear.
   it('an unknown type name is refused at construction, not ignored', () => {
     expect(() => piiTextRedactor({ types: ['tckn' as any] })).toThrow(/unknown PII type/);
     expect(() => piiRedactor({ types: ['tckn' as any] })).toThrow(/mask nothing/);
@@ -256,7 +256,7 @@ describe('redaction cost is linear in the input', () => {
     redact(`${'a'.repeat(80_000)}@`); // the worst case: one long local part, no domain to complete it
     const ms = Date.now() - started;
     // Generous by two orders of magnitude against the 5290ms this measured before, so the assertion
-    // Is about the complexity class rather than about this machine's speed.
+    // is about the complexity class rather than about this machine's speed.
     expect(ms, `80k characters took ${ms}ms`).toBeLessThan(500);
   });
 

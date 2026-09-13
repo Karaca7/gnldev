@@ -58,7 +58,7 @@ describe('a fallback substitution is visible in the workflow run record', () => 
 });
 
 // A marker that can be forged is worse than no marker: the first fails to answer, the second answers
-// Wrongly. Each of these produced a fabricated `fallback` before the key was moved into the reserved
+// wrongly. Each of these produced a fabricated `fallback` before the key was moved into the reserved
 // `_` namespace and the brand was checked.
 describe('the marker cannot be fabricated', () => {
   it('an inner step literally named `fallback` is not mistaken for one', async () => {
@@ -74,7 +74,7 @@ describe('the marker cannot be fabricated', () => {
 
   // A documented limit rather than a bug, pinned so it cannot change silently in either direction:
   // This list enumerates top-level steps, so an inner step's substitution is as invisible as the
-  // Inner step's own output already is. The marker IS written, under the prefixed key.
+  // inner step's own output already is. The marker IS written, under the prefixed key.
   it('a substitution inside a nested workflow is not surfaced here — and says so', async () => {
     const journal = new InMemoryJournal();
     const inner = workflow().then(
@@ -113,7 +113,7 @@ describe('the marker cannot be fabricated', () => {
     await gnl.runWorkflow('pay', {}, { runId: 'src' });
 
     // The source crashed between writing the marker and writing the step output — the state a fork
-    // Can legitimately find. The marker must not be copied on its own: the fork would then run
+    // can legitimately find. The marker must not be copied on its own: the fork would then run
     // `charge` itself, succeed, and still report that it had fallen back.
     await journal.put('src:wf:charge', undefined as any);
     const orphaned = await journal.get('src:wf:charge');

@@ -1,6 +1,6 @@
 // What this package hands a host: a request in, a response out — not a Hono instance.
 // See @gnldev/studio/src/handler.ts for the reasoning; the shape is deliberately identical, and
-// Structurally compatible, without either package depending on the other.
+// structurally compatible, without either package depending on the other.
 import type { Hono } from 'hono';
 
 export type FetchHandler = ((request: Request, ...rest: unknown[]) => Promise<Response>) & {

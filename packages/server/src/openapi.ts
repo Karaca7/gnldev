@@ -1,15 +1,25 @@
 // Generate an OpenAPI 3.1 schema from the createGnl agent + workflow registry (auto-docs).
+import { EDGE_ERROR_CODES } from './edge-errors.js';
 
 export function buildOpenApi(agentNames: string[], workflowNames: string[] = [], title = 'gnl agents'): any {
+  // ONE identity per call, and the spec says which two spellings it accepts. `required: ['runId']`
+  // is gone rather than widened to a `oneOf`: a workKey-only request is valid, a runId-only request
+  // is valid, and both together are refused — which `oneOf` can express but no generator renders
+  // usefully. The prose carries it, the 400 enforces it.
   const runBody = {
     required: true,
     content: {
       'application/json': {
         schema: {
           type: 'object',
-          required: ['runId'],
+          description: 'Exactly one of `workKey` or `runId` is required.',
           properties: {
-            runId: { type: 'string', description: 'Idempotency key (exactly-once)' },
+            workKey: {
+              type: 'string',
+              description:
+                'Your name for this unit of work (the invoice being issued, tonight\'s reconciliation) — not for a conversation. The engine derives the run id from it and returns that id in X-Gnl-Run-Id. Sending the same workKey again retries the SAME job; a conversation is `threadId`, a separate field. Keep sensitive data out of it: a workKey is reflected in error details and shown in Studio.',
+            },
+            runId: { type: 'string', description: 'A raw run id you already hold (a resume, a fork, an id you stored). Mutually exclusive with workKey.' },
             prompt: { type: 'string' },
             messages: { type: 'array', items: { type: 'object' } },
             threadId: { type: 'string' },
@@ -46,7 +56,7 @@ export function buildOpenApi(agentNames: string[], workflowNames: string[] = [],
             type: 'object',
             properties: {
               error: { type: 'string' },
-              code: { type: 'string', enum: ['run_limit_exceeded', 'tool_loop_detected'] },
+              code: { type: 'string', enum: [EDGE_ERROR_CODES.runLimitExceeded, EDGE_ERROR_CODES.toolLoopDetected] },
               detail: { type: 'object' },
               resumable: { type: 'boolean' },
             },
@@ -58,7 +68,7 @@ export function buildOpenApi(agentNames: string[], workflowNames: string[] = [],
 
   const paths: Record<string, any> = {};
   // Documented as unauthenticated on purpose — see the route comments in index.ts. An orchestrator
-  // Reading this spec needs to know it can probe these without arranging a credential first.
+  // reading this spec needs to know it can probe these without arranging a credential first.
   paths['/health'] = {
     get: {
       summary: 'Liveness — is the process alive? No storage access; unauthenticated',
@@ -128,7 +138,14 @@ export function buildOpenApi(agentNames: string[], workflowNames: string[] = [],
           schema: {
             type: 'object',
             properties: {
-              runId: { type: 'string', description: 'Idempotency key (optional; if given, can be resumed)' },
+              runId: { type: 'string', description: 'A raw run id (optional; if given, the same id resumes). Mutually exclusive with workKey.' },
+              workKey: { type: 'string', description: 'Your name for this unit of work; the engine derives the run id from it and returns it in X-Gnl-Run-Id.' },
+              workScope: {
+                type: 'string',
+                enum: ['resource', 'org'],
+                description:
+                  "Which address the workKey is unique within. 'resource' (default) scopes the job to the resourceId that named it; 'org' scopes it to the installation — one job no matter who triggers it (a nightly reconciliation, a scheduled sweep). Choosing 'org' by mistake is the quiet mistake: two callers share one run.",
+              },
               input: { description: 'Workflow input (workflow-specific)' },
             },
           },
@@ -170,7 +187,7 @@ export function buildOpenApi(agentNames: string[], workflowNames: string[] = [],
     },
   };
   // P0.3 documents the opt-in pagination/filter query params — with none given
-  // The response is still the legacy RunSummary array (see createRestApi's GET /runs JSDoc).
+  // the response is still the legacy RunSummary array (see createRestApi's GET /runs JSDoc).
   paths['/runs'] = {
     get: {
       summary: 'Run summaries — legacy array with no params, or a {items,nextCursor} page when ?limit/?cursor/?status/?agent is given',

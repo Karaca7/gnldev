@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { useApprovals, api, errMessage, ApiError } from '../api';
 import { Btn, Spinner, EmptyState, ErrorBox, Badge, JsonBlock, PageHeader } from '../components';
 import { toast } from '../ui';
-// I18n init side effect: so useTranslation still works if this view is rendered directly
+// i18n init side effect: so useTranslation still works if this view is rendered directly
 // (without App) (see src/i18n/index.ts) — main.tsx already does this, this re-guarantees it here.
 import '../i18n';
 
@@ -40,7 +40,7 @@ export function Approvals() {
       qc.invalidateQueries({ queryKey: ['runs'] });
     } catch (e) {
       // Multi-tab race: another tab/user may have already resolved this approval (409) →
-      // Show a clear message + refresh the list (so a stale 'pending' row doesn't linger in the UI).
+      // show a clear message + refresh the list (so a stale 'pending' row doesn't linger in the UI).
       const conflict = e instanceof ApiError && e.status === 409;
       toast.error(conflict
         ? t('conflictError', { error: errMessage(e) })
@@ -56,7 +56,7 @@ export function Approvals() {
   if (approvals.error) return <ErrorBox error={approvals.error} />;
   const items = approvals.data?.items ?? [];
   // K2: the staleness decision's BOTH ends come from the server side — suspendedAt is a journal
-  // Timestamp, so the baseline is the server's clock (a skewed client must not mint stale badges).
+  // timestamp, so the baseline is the server's clock (a skewed client must not mint stale badges).
   const nowBase = approvals.data?.serverNow ?? Date.now();
 
   return (
@@ -111,6 +111,12 @@ export function Approvals() {
                     org-scoped agents get a chip and global ones stay bare. A badge on every other
                     row would be noise in a queue whose rows are mostly org work. */}
                 {it.owner && <Badge tone="info">{t('ownerBadge', { owner: it.owner })}</Badge>}
+                {/* WHICH work, next to WHOSE. The two answer different questions and neither stands
+                    in for the other: the owner decides whether this panel may answer at all, the
+                    workKey is the only thing on the row that says what the answer is ABOUT once the
+                    runId is a 32-hex digest. Same rule as the owner chip — declared or nothing, no
+                    placeholder on the rows that never named their work. */}
+                {it.workKey && <Badge tone="muted">{t('workKeyBadge', { workKey: it.workKey })}</Badge>}
                 <div className="ml-auto flex gap-1.5">
                   {/* `title` on a DISABLED button, which works here on purpose: Btn uses
                       `disabled:cursor-not-allowed` rather than `pointer-events-none`, so the native

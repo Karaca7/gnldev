@@ -15,7 +15,7 @@ export interface RagHit {
  * RAG tool that an agent can call. When used inside `runDurable`, `durableTool` journals its result
  * → **replayable & exactly-once RAG** (same documents on resume; no new embed/query call).
  * Most RAG implementations don't give this guarantee. If `rerank` is provided, vector results are reordered
- * By the LLM (the rerank call is also journaled → replayable).
+ * by the LLM (the rerank call is also journaled → replayable).
  */
 export function createRagTool(opts: {
   store: VectorStore;

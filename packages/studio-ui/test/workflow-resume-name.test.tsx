@@ -73,6 +73,16 @@ describe('deriveWorkflowName (pure)', () => {
   it('also matches the dry-run runId variant (dry-wf-<name>-<ts>, see runStepwise)', () => {
     expect(deriveWorkflowName('dry-wf-invoice-1721900000000', ['invoice'])).toBe('invoice');
   });
+
+  // PACKAGE #4: an engine-derived runId is a hash — there is nothing in it to parse, and the honest
+  // answer is null rather than a lucky substring. The name comes from the RECORD now (the server
+  // reads `:input.workflow` into `item.workflowName`), which the test below exercises.
+  it('an engine-derived runId yields nothing, with or without a `#` suffix', () => {
+    const derived = `run1_${'a'.repeat(32)}`;
+    for (const id of [derived, `${derived}#2`, `${derived}#fork-1`, `${derived}#replay-0`]) {
+      expect(deriveWorkflowName(id, ['invoice', 'order-fulfillment']), id).toBeNull();
+    }
+  });
 });
 
 const CAPS = {
@@ -115,5 +125,32 @@ describe('SuspendedRunsInbox resume form (via Workflows view)', () => {
     expect(select.value).toBe('invoice');
     expect(select.disabled).toBe(false);
     expect(screen.getByText('from server')).toBeTruthy();
+  });
+
+  // PACKAGE #4: the derived-id row is the one that used to arrive nameless. Its runId says nothing,
+  // so BOTH readable things on it now come from the record the server passes through — the workflow
+  // name (`:input.workflow`) and the operator's own name for the job (`workKey`).
+  it('a derived runId row still names its workflow, and shows the workKey next to the hash', async () => {
+    const derived = `run1_${'b'.repeat(32)}#2`;
+    stubFetch({
+      '/capabilities': CAPS,
+      '/workflows': WORKFLOWS,
+      '/workflows/runs?status=suspended&limit=50': {
+        items: [
+          { runId: derived, workflowName: 'order-fulfillment', workKey: 'nightly-reconciliation', status: 'suspended', stepId: 'review', waitId: 'approval', updatedAt: 1721900000000 },
+        ],
+      },
+    });
+    wrap(<Workflows />);
+
+    await waitFor(() => expect(screen.getByText('Suspended runs')).toBeTruthy());
+    fireEvent.click(screen.getByText('Suspended runs'));
+    await waitFor(() => expect(screen.getByText(derived)).toBeTruthy());
+    expect(screen.getByText(/nightly-reconciliation/)).toBeTruthy();
+
+    fireEvent.click(screen.getByText('Resume'));
+    const select = (await screen.findByLabelText('Workflow')) as HTMLSelectElement;
+    expect(select.value).toBe('order-fulfillment');
+    expect(screen.getByText('from server')).toBeTruthy(); // recorded, never guessed from the hash
   });
 });

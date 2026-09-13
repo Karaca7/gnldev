@@ -19,8 +19,8 @@ export function spanIdFor(runId: string, seq: number | 'root'): string {
 
 /**
  * An IdGenerator that hands out precomputed ids in sequence. The trace and span queues are SEPARATE →
- * Gives the correct id regardless of the SDK's generateTraceId/generateSpanId call order. If a queue
- * Runs out, falls back deterministically (hash). This way the same run → same trace_id/span_id → idempotent export.
+ * gives the correct id regardless of the SDK's generateTraceId/generateSpanId call order. If a queue
+ * runs out, falls back deterministically (hash). This way the same run → same trace_id/span_id → idempotent export.
  */
 export class QueueIdGenerator implements IdGenerator {
   private ti = 0;

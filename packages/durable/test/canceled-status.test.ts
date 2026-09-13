@@ -35,9 +35,9 @@ const statusOf = async (journal: any, runId: string) =>
 
 /**
  * Wait until a run reaches `want`, up to a deadline. The abandoned-run cases below start a run and
- * Never await it, so the write-ahead lands whenever the event loop gets to it — a fixed sleep passed
- * In isolation and failed inside the full suite, where the machine is saturated (measured). Polling
- * Tests the same fact without encoding a machine's speed into the assertion.
+ * never await it, so the write-ahead lands whenever the event loop gets to it — a fixed sleep passed
+ * in isolation and failed inside the full suite, where the machine is saturated (measured). Polling
+ * tests the same fact without encoding a machine's speed into the assertion.
  */
 async function waitForStatus(journal: any, runId: string, want: string, timeoutMs = 5_000): Promise<string | undefined> {
   const deadline = Date.now() + timeoutMs;

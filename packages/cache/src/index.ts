@@ -1,13 +1,13 @@
 // @gnldev/cache — cross-run content-hash cache built on top of CacheStore. Key is run-independent (`<ns>:<hash>`)
 // → a result computed in one run is reused across OTHER runs. (Within-run reuse is already
-// Journal replay; this closes the across-run gap — e.g. the same RAG query in two runs → embed once.)
+// journal replay; this closes the across-run gap — e.g. the same RAG query in two runs → embed once.)
 //
 // BEST-EFFORT: Cache is an optional accelerator → a store error (e.g. cache storage down) does NOT BLOW UP the run.
-// Get error → miss, set error → no-op, getOrCompute → still computes. (run/memory stays STRICT.)
+// get error → miss, set error → no-op, getOrCompute → still computes. (run/memory stays STRICT.)
 // Value is wrapped in `{ v }` → distinguishes a cached `undefined` from "not present".
 // VISIBILITY: `stats()` returns in-process hit/miss counters + known key count; `invalidate(key?)`
-// Deletes a single key or (best-effort, since CacheStore doesn't offer enumeration, only what this instance knows about)
-// Deletes all of them (the Studio Cache view wraps these — see packages/studio/src/server.ts StudioCache).
+// deletes a single key or (best-effort, since CacheStore doesn't offer enumeration, only what this instance knows about)
+// deletes all of them (the Studio Cache view wraps these — see packages/studio/src/server.ts StudioCache).
 import { argsHash } from '@gnldev/durable';
 import type { CacheStore } from '@gnldev/durable';
 
@@ -28,7 +28,7 @@ export interface CacheStats {
   /** hits / (hits+misses); 0 if there are no requests at all. */
   hitRate: number;
   /** Count of keys this instance KNOWS ABOUT (touched via get/set/getOrCompute) — since CacheStore
-   *  Doesn't offer enumeration, this is NOT the store's ACTUAL total size (see `invalidate()`). */
+   *  doesn't offer enumeration, this is NOT the store's ACTUAL total size (see `invalidate()`). */
   size: number;
 }
 
@@ -38,13 +38,13 @@ export interface Cache {
   /** Returns the cached value if present; otherwise (or on a store error) runs compute(), stores it, and returns it. */
   getOrCompute<T>(key: unknown, compute: () => Promise<T> | T, opts?: CacheSetOptions): Promise<T>;
   /** In-process hit/miss counters + known key count (best-effort, NOT persistent —
-   *  Resets if the process restarts; the store's job is storing values, not counting). */
+   *  resets if the process restarts; the store's job is storing values, not counting). */
   stats(): CacheStats;
   /**
    * If key is given, deletes only that key from the store; if not (best-effort), deletes all keys
-   * This instance KNOWS ABOUT — since CacheStore doesn't offer key enumeration (listKeys), this is
+   * this instance KNOWS ABOUT — since CacheStore doesn't offer key enumeration (listKeys), this is
    * NOT THE SAME THING as clearing the entire store (only covers keys this process has seen through
-   * This cache instance). Store errors are swallowed (same `onError` channel — 'delete').
+   * this cache instance). Store errors are swallowed (same `onError` channel — 'delete').
    * Returns the number of keys deleted.
    */
   invalidate(key?: unknown): Promise<number>;

@@ -1,6 +1,6 @@
 # @gnldev/server
 
-Exposes the `createGnl` registry as **auto-REST + OpenAPI + SSE**. Every endpoint bottoms out in `runDurable` → exactly-once/durability inherited for free. (The durable counterpart to the common auto-REST pattern.)
+Exposes the `createGnl` registry as **auto-REST + OpenAPI + SSE**. Every endpoint bottoms out in `runDurable` → the journal, replay and the [at-most-once side-effect guarantee](../durable/README.md#what-never-charged-twice-actually-means) are inherited for free. (The durable counterpart to the common auto-REST pattern.)
 
 > **Not on npm yet** — no `@gnldev/*` package has been published. Until the first release, use it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.
 
@@ -108,7 +108,48 @@ is not given, behavior is identical to before (aside from the added id).
 For type-safe calls use [`@gnldev/client`](../client) (core) + `@gnldev/client/react` (hooks). For REST + Studio Playground in one command use [`@gnldev/cli`](../cli) `gnl dev`.
 
 ## How it works
-`runId` is the idempotency key; calling `/run` or `/stream` again with the same runId triggers durable replay → side effects happen only once. `runId` is required (400 if missing).
+Every call to `/run` and `/stream` names one of two things, and exactly one:
+
+- **`workKey`** — your name for a unit of work, not for a conversation. The engine derives the run's
+  id from it and returns that id in the `X-Gnl-Run-Id` header. Calling again with the same `workKey`
+  is routed to the same run: durable replay, side effects once. A `workKey` is a *business name* (the
+  invoice being issued, tonight's reconciliation batch) — keep sensitive data out of it, because it
+  is reflected in error details and shown on Studio screens. Coming from `thread_id`? There the same
+  key means *continue this conversation*; here it means *this is the same job*. A conversation is
+  `threadId`, a separate field you can send at the same time.
+- **`runId`** — a raw id you already hold (a resume, a fork, an id you stored).
+
+Sending both is a 400: two identities for one call is a question with no honest answer. Sending
+neither is also a 400. `Idempotency-Key` is accepted as a `workKey` alias — it names the work, which
+is what that header has always meant — and it is read only when the body named nothing itself.
+
+A `workKey` in the default `resource` scope needs a subject to be unique *within*: name the end user
+(`resourceId`, or an authenticated principal), or the call is refused rather than run for nobody.
+
+**How long a `workKey` stays unique:** as long as the run record lives — not a minute longer. Your
+retention window should not be shorter than the longest retry your clients can produce.
+
+**Was this call new work, or an answer you already had?** Every response to `/run` and `/stream`
+carries `X-Gnl-Idempotency-Status`: `new` when this call started the run, `replay` when the run had
+already been driven and the answer came from the journal. Nothing re-ran in the `replay` case — no
+model call, no tool, no charge. It is the header to log if you want to know how much of your traffic
+is retries, and the one to assert on if you are verifying that your client's retry logic is actually
+deduplicating.
+
+**`run_busy` (409) is a narrower condition than it looks.** It does not mean "this id has been used";
+it means the run is executing **right now**, in this process or another one. A per-run lock is taken
+before execution and renewed by a heartbeat while it lasts, and a concurrent second call — a
+double-click, two tabs, a retry racing its original — is declined instead of executing a second time.
+Three consequences:
+
+- The response carries `Retry-After`. The *same* request is correct; it is only early. Honour the
+  delay and send it again — it will replay.
+- A process that dies without releasing holds the run only until the lock's TTL expires (default
+  300 000 ms), after which a retry is admitted and replays from the journal.
+- A long run does not time itself out of its own lock: the heartbeat keeps it alive, so the TTL bounds
+  crash recovery, not run length.
+
+A run that has already **finished** does not produce this at all — it replays (see the header above).
 
 **Auth (opt-in, but no silent openness in production):** `createRestApi(config, { auth })` accepts an `AuthProvider` (the free `@gnldev/auth` `roleAuth`, or the paid `@gnldev/auth-ee`) or a backward-compatible `{read, write}` pair. If `auth` is not given, endpoints are open; but under `NODE_ENV=production` this is only possible DELIBERATELY, via `allowOpenAccess: true` — without the flag, setup throws a clear error ("auth required in production"). Outside production, a setup without auth works, with a one-time `console.warn` on the first request, so a silent fail-open cannot survive unnoticed.
 

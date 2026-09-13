@@ -18,9 +18,9 @@ export function Evals() {
   if (scorers.error) return <ErrorBox error={scorers.error} />;
   if (datasets.error) return <ErrorBox error={datasets.error} />;
   // STATE-09: `caps.data` is already warm on app boot (fetched once, cached), so it resolves well
-  // Before `scorers`/`datasets` (which only start fetching on this view's mount). Rendering the panels
-  // While those two are still in flight used to mount ScoreRunPanel with `scorerNames: []` (seeding its
-  // Checkbox `Set` empty forever, see below) and flash "no datasets" for a beat. Wait for both first.
+  // before `scorers`/`datasets` (which only start fetching on this view's mount). Rendering the panels
+  // while those two are still in flight used to mount ScoreRunPanel with `scorerNames: []` (seeding its
+  // checkbox `Set` empty forever, see below) and flash "no datasets" for a beat. Wait for both first.
   if (scorers.isLoading || datasets.isLoading) return <Spinner />;
 
   return (
@@ -98,7 +98,7 @@ function ScorePill({ v }: { v?: number }) {
 }
 
 // Exported (only) for the regression test — Evals is the sole route-level export otherwise; see
-// Test/evals-score-panel.test.tsx (same pattern as Scheduler.tsx exporting its pure helpers for tests).
+// test/evals-score-panel.test.tsx (same pattern as Scheduler.tsx exporting its pure helpers for tests).
 export function ScoreRunPanel({ scorerNames }: { scorerNames: string[] }) {
   const { t } = useTranslation('evals');
   const runs = useRuns();
@@ -112,11 +112,11 @@ export function ScoreRunPanel({ scorerNames }: { scorerNames: string[] }) {
   const toggle = (n: string) => { setTouched(true); setSel((s) => { const c = new Set(s); c.has(n) ? c.delete(n) : c.add(n); return c; }); };
 
   // STATE-09: `scorerNames` can arrive AFTER this panel first mounts (see Evals' comment above) — reseed
-  // The "all selected" default whenever the list (re)loads, but only as long as the user hasn't manually
-  // Touched a checkbox yet (same untouched-vs-customized convention as Users.tsx's permission editor).
+  // the "all selected" default whenever the list (re)loads, but only as long as the user hasn't manually
+  // touched a checkbox yet (same untouched-vs-customized convention as Users.tsx's permission editor).
   useEffect(() => {
     if (!touched) setSel(new Set(scorerNames));
-    // Eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scorerNames.join(',')]);
 
   const score = async () => {

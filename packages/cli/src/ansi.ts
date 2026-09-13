@@ -1,5 +1,5 @@
 // Minimal zero-dependency ANSI color + table rendering (no chalk/ora - see packages/cli/package.json:
-// The CLI ships with zero NEW runtime dependencies, colors are hand-rolled escape codes).
+// the CLI ships with zero NEW runtime dependencies, colors are hand-rolled escape codes).
 
 const ESC = '\x1b';
 
@@ -27,9 +27,9 @@ export function colorStatus(status: string): string {
   if (status === 'failed') return red(status);
   if (status === 'running') return cyan(status); // live, matching the studio's info tone
   // There is no grey helper here (the palette is four hand-rolled SGR codes, and a 90m bright-black
-  // Is illegible on the light terminals that render it as pale grey). `dim` is the muted tone this
-  // File already owns, and it reads correctly on both backgrounds — the Studio's muted-foreground in
-  // The vocabulary this renderer actually has. Both spellings: the durable RunStatus is 'canceled',
+  // is illegible on the light terminals that render it as pale grey). `dim` is the muted tone this
+  // file already owns, and it reads correctly on both backgrounds — the Studio's muted-foreground in
+  // the vocabulary this renderer actually has. Both spellings: the durable RunStatus is 'canceled',
   // while the workflow engine's own status strings say 'cancelled', and both reach printTable.
   if (status === 'canceled' || status === 'cancelled') return dim(status);
   return status;

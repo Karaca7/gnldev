@@ -58,12 +58,12 @@ export function buildTools(fleet: Fleet, metric: (svc: string, m: string) => num
     },
   });
   // The durability fields are attached rather than passed inline because the AI SDK's `tool()` helper
-  // Types only its own options — inlining them costs the `as any` that would erase `execute`'s
-  // Argument types. Attaching keeps both: full inference above, declared durability here.
+  // types only its own options — inlining them costs the `as any` that would erase `execute`'s
+  // argument types. Attaching keeps both: full inference above, declared durability here.
   //
   // `sideEffect: true` says this call CHANGED something outside the process. It is what makes a
-  // Resumed run refuse to blindly re-run it — which for a restart is the difference between one
-  // Outage and two. (It is also the default for any tool that does not declare `idempotent: true`;
+  // resumed run refuse to blindly re-run it — which for a restart is the difference between one
+  // outage and two. (It is also the default for any tool that does not declare `idempotent: true`;
   // Saying it out loud here is for the reader, not for the runtime.)
   Object.assign(restartService, { sideEffect: true });
 
@@ -76,14 +76,14 @@ export function buildTools(fleet: Fleet, metric: (svc: string, m: string) => num
     },
   });
   // Keyed by ARGUMENTS rather than by call id, and across runs: the same engineer for the same
-  // Incident is one page even if a retry, a resume, or a second alert plans the call again. Models do
-  // Re-emit an identical call with a fresh toolCallId, and call-keyed dedup does not catch that.
+  // incident is one page even if a retry, a resume, or a second alert plans the call again. Models do
+  // re-emit an identical call with a fresh toolCallId, and call-keyed dedup does not catch that.
   //
   // This is the runbook's "page once and only once per incident" expressed as a property of the
-  // System instead of a sentence people are expected to remember at 3am.
+  // system instead of a sentence people are expected to remember at 3am.
   //
   // The cost is stated in the durable types and is real: a cross-run record is NOT tied to a runId,
-  // So run retention never sweeps it. It lives until purged. That is the point — and the bill.
+  // so run retention never sweeps it. It lives until purged. That is the point — and the bill.
   Object.assign(pageEngineer, { sideEffect: true, idempotency: 'args', idempotencyWindow: 'cross-run' });
 
   return { getMetric, readLog, restartService, pageEngineer };

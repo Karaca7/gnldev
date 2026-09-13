@@ -67,7 +67,7 @@ export function langfuse(opts: {
 
 /** Generic API-key-authenticated OTLP/HTTP endpoint: x-api-key (+ optional project name header).
  * `endpoint` is REQUIRED — unlike the other presets this has no hardcoded provider default, so it
- * Works with any OTLP/HTTP collector that authenticates via an `x-api-key`-style header. */
+ * works with any OTLP/HTTP collector that authenticates via an `x-api-key`-style header. */
 export function apiKeyOtlp(opts: { endpoint: string; apiKey: string; project?: string; projectHeader?: string } & Overrides): ExportRunToOtlpOptions {
   return {
     endpoint: opts.endpoint,

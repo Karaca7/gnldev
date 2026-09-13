@@ -71,7 +71,7 @@ for (const [name, make] of adapters) {
 }
 
 // InMemoryJournal is the bare JournalReader — its listRuns takes no query and returns an array. The
-// Paged/filtered contract belongs to RunJournal, so only those are exercised here.
+// paged/filtered contract belongs to RunJournal, so only those are exercised here.
 describe('the status filter', () => {
   for (const [name, make] of adapters.filter(([n]) => n !== 'InMemoryJournal')) {
     it(`partitions runs three ways — ${name}`, async () => {
@@ -133,7 +133,7 @@ describe('what is NOT a failure', () => {
     await acquireRunLock(journal, 'held', 'worker-A', 60_000);
 
     // Worker B is turned away. The run belongs to A and is very possibly succeeding right now —
-    // Stamping 'failed' from here would overwrite a live run's record with a stranger's story.
+    // stamping 'failed' from here would overwrite a live run's record with a stranger's story.
     await runDurable({ runId: 'held', journal, model: good, prompt: 'x', lock: { owner: 'worker-B', ttlMs: 60_000 } } as any)
       .catch(() => {});
     expect(await readRunOutcome(journal, 'held')).toBeUndefined();

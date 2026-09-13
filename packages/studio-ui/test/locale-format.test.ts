@@ -1,10 +1,10 @@
 // Formatting locale: the product default is ENGLISH. Regression guard for the bug where six views
-// Hardcoded 'tr-TR' in toLocale*String calls, so every user — including one with the English UI —
-// Saw Turkish number and date formatting (`1.234.567`, `24 Ağu`).
+// hardcoded 'tr-TR' in toLocale*String calls, so every user — including one with the English UI —
+// saw Turkish number and date formatting (`1.234.567`, `24 Ağu`).
 //
 // NODE environment on purpose: these are pure formatting helpers, no DOM needed. It also proves the
-// Helper is importable WITHOUT i18n/index.ts's localStorage-dependent init (see
-// Src/i18n/locale.ts and the comment block at the top of src/views/Organizations.tsx).
+// helper is importable WITHOUT i18n/index.ts's localStorage-dependent init (see
+// src/i18n/locale.ts and the comment block at the top of src/views/Organizations.tsx).
 import { describe, it, expect, afterEach } from 'vitest';
 import i18n from 'i18next';
 import { currentLocale } from '../src/i18n/locale';

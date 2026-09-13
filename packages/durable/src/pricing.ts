@@ -72,7 +72,7 @@ export const DEFAULT_PRICING: Record<string, ModelPricing> = {
 
 /**
  * A VERSIONED pricing document living in the journal (same pattern as policy.ts/budget.ts) —
- * Editable from Studio, pricing is updated without requiring a deploy. Each write increments `version`
+ * editable from Studio, pricing is updated without requiring a deploy. Each write increments `version`
  * (full history via audit, see PolicyDoc).
  */
 export interface PricingDoc {
@@ -162,9 +162,9 @@ function rejectBadPrice(modelId: string, key: string): undefined {
 
 /**
  * Pricing for modelId: EXACT match FIRST, otherwise a REAL prefix match (`modelId.startsWith(p)` —
- * The previous `includes` was WRONG because it also counted any substring appearing anywhere as a
+ * the previous `includes` was WRONG because it also counted any substring appearing anywhere as a
  * "prefix"). If multiple prefixes match, the LONGEST (most specific) wins (e.g. for 'openai/gpt-4o-mini'
- * With no exact table entry, the 'openai/gpt-4o' prefix wins if it's shorter than the
+ * with no exact table entry, the 'openai/gpt-4o' prefix wins if it's shorter than the
  * 'openai/gpt-4o-mini-preview' prefix).
  */
 export function priceFor(

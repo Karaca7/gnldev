@@ -55,7 +55,7 @@ describe('@gnldev/chat-adapter toUIMessages', () => {
   });
 
   // The other two sentinels reach history through the same reconstruction, and had no test on this
-  // Path either — the suspend case above was standing in for all three.
+  // path either — the suspend case above was standing in for all three.
   it('sentinel-masks a BLOCKED tool in history, without carrying its internal detail across', async () => {
     const j = new InMemoryJournal();
     await j.put(runKeys.model('r4', 0), {

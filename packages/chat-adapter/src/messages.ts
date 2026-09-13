@@ -1,19 +1,19 @@
 // Journal history → `useChat({ messages: … })`-shaped `UIMessage[]`. Built on @gnldev/durable's
 // `reconstructState` (packages/durable/src/time-travel.ts) — a PURE walk over `JournalEntry[]` that
-// Already solves the hard part (matching tool-calls to tool-results, including the args-mode
-// Idempotency dedup cases documented at the top of time-travel.ts). We deliberately do NOT touch
-// Time-travel.ts (shared, sensitive file with its own test suite) — this module only re-derives what it
-// Needs ON TOP of `reconstructState`'s output.
+// already solves the hard part (matching tool-calls to tool-results, including the args-mode
+// idempotency dedup cases documented at the top of time-travel.ts). We deliberately do NOT touch
+// time-travel.ts (shared, sensitive file with its own test suite) — this module only re-derives what it
+// needs ON TOP of `reconstructState`'s output.
 //
 // V1 HONESTY NOTE (documented limitation, not silently dropped): `reconstructState`'s own assistant-
-// Message shape only special-cases `type: 'text'` and `type: 'tool-call'` content parts (see
-// Time-travel.ts ~151-153) — it drops `reasoning` parts. To recover reasoning (and to correctly handle
+// message shape only special-cases `type: 'text'` and `type: 'tool-call'` content parts (see
+// time-travel.ts ~151-153) — it drops `reasoning` parts. To recover reasoning (and to correctly handle
 // STREAMED runs, whose journal shape is `{ parts, rest }` rather than `{ content }` — see
-// Durable-model.ts's wrapStream/wrapGenerate split), this module re-reads the RAW `model` journal entries
-// Itself (paired 1:1, in order, with reconstructState's assistant-role messages — see `seedLen` below)
-// Instead of relying on reconstructState's simplified content. Files/sources ARE dropped for v1 (no
+// durable-model.ts's wrapStream/wrapGenerate split), this module re-reads the RAW `model` journal entries
+// itself (paired 1:1, in order, with reconstructState's assistant-role messages — see `seedLen` below)
+// instead of relying on reconstructState's simplified content. Files/sources ARE dropped for v1 (no
 // `file`/`source` UIMessage parts are produced) — a real limitation, called out here rather than papered
-// Over.
+// over.
 import { reconstructState, settleModelContent } from '@gnldev/durable';
 import type { Interrupt, JournalEntry, ReconstructSeed } from '@gnldev/durable';
 import type { UIMessage } from 'ai';
@@ -46,9 +46,9 @@ function textFromContent(content: unknown): string {
 }
 
 // F2 — durability review: the local `contentFromModelValue` copy was verified byte-for-byte
-// Semantically identical to durable's `settleModelContent` (both settle `{content}` AND streamed
+// semantically identical to durable's `settleModelContent` (both settle `{content}` AND streamed
 // `{parts,rest}` records, both emit text/reasoning/tool-call) — so the copy was deleted and the
-// Shared implementation is imported above. One source; the two can no longer drift.
+// shared implementation is imported above. One source; the two can no longer drift.
 
 /**
  * Reconstructs `useChat`-compatible `UIMessage[]` from a run's journal entries (`journal.readRun(runId)`).
@@ -56,7 +56,7 @@ function textFromContent(content: unknown): string {
  * `tool-${toolName}` part (`state: 'output-available'`, sentinel-masked the SAME way as the live stream
  * see sentinel-mask.ts); an assistant tool-call with NO tool-result yet → `state: 'input-available'`;
  * Reasoning content parts → `reasoning` parts. `tool`-role journal-derived messages are never emitted as
- * Their own `UIMessage` — they're merged into the owning assistant message's tool part.
+ * their own `UIMessage` — they're merged into the owning assistant message's tool part.
  */
 export function toUIMessages(entries: JournalEntry[], opts: ToUIMessagesOptions = {}): UIMessage[] {
   const runId = opts.runId ?? 'run';
@@ -64,8 +64,8 @@ export function toUIMessages(entries: JournalEntry[], opts: ToUIMessagesOptions 
 
   // Mirrors reconstructState's OWN seed-prepend rule (time-travel.ts) so we know which leading slice of
   // `messages` came from the seed (pre-existing/rolled-over history — no raw provider parts available
-  // For it here) vs. which came from actually walking `entries` (and can be paired with a raw `model`
-  // Journal entry below).
+  // for it here) vs. which came from actually walking `entries` (and can be paired with a raw `model`
+  // journal entry below).
   const seedLen = Array.isArray(opts.seed?.messages) ? opts.seed!.messages!.length : typeof opts.seed?.prompt === 'string' ? 1 : 0;
 
   const modelEntries = entries.filter((e) => e.kind === 'model');
@@ -73,9 +73,9 @@ export function toUIMessages(entries: JournalEntry[], opts: ToUIMessagesOptions 
 
   // ToolCallId -> raw (unmasked) tool-result output. Built once from every 'tool'-role message
   // ReconstructState produced — position doesn't matter, toolCallId is unique within a run. A SUSPENDED
-  // Tool-call still gets an entry here (reconstructState renders a 'tool' message for it too — see
-  // Time-travel.ts PASS 3 — with `output` being the raw `__gnl_suspend` sentinel), which is exactly what
-  // Lets the masking below apply to suspended-in-history tool calls, not just live ones.
+  // tool-call still gets an entry here (reconstructState renders a 'tool' message for it too — see
+  // time-travel.ts PASS 3 — with `output` being the raw `__gnl_suspend` sentinel), which is exactly what
+  // lets the masking below apply to suspended-in-history tool calls, not just live ones.
   const toolOutputs = new Map<string, unknown>();
   for (const m of messages) {
     if (m.role !== 'tool') continue;
@@ -113,7 +113,7 @@ export function toUIMessages(entries: JournalEntry[], opts: ToUIMessagesOptions 
           parts.push({ type: `tool-${toolName}`, toolCallId, state: 'output-available', input, output: display } as any);
         } else {
           // No tool-result journaled at all yet (still mid-flight — distinct from a SUSPENDED record,
-          // Which DOES have an entry in `toolOutputs`, see the note above).
+          // which DOES have an entry in `toolOutputs`, see the note above).
           parts.push({ type: `tool-${toolName}`, toolCallId, state: 'input-available', input } as any);
         }
       }

@@ -1,6 +1,6 @@
 // @gnldev/otel — converts the journal into a real OpenTelemetry trace and sends it to a SpanExporter (or an
 // OTLP endpoint). Deterministic ids → idempotent; post-hoc from the journal → complete even after a crash,
-// Consistent across replays = exactly-once / crash-proof observability (frameworks that live-instrument cannot offer this).
+// consistent across replays = exactly-once / crash-proof observability (frameworks that live-instrument cannot offer this).
 import {
   BasicTracerProvider,
   SimpleSpanProcessor,
@@ -65,8 +65,8 @@ async function otlpExporter(endpoint: string): Promise<SpanExporter> {
 
 /**
  * Exports a run from the journal as an OTEL trace: 1 root span `agent.run` + one child span per
- * Model/tool entry. trace_id/span_id are deterministic (hash of runId/seq) → exporting the same run
- * Twice yields the SAME trace (idempotent). Duration is derived from each entry's `ts` (created_at).
+ * model/tool entry. trace_id/span_id are deterministic (hash of runId/seq) → exporting the same run
+ * twice yields the SAME trace (idempotent). Duration is derived from each entry's `ts` (created_at).
  */
 export async function exportRun(
   reader: JournalReader,
@@ -75,9 +75,9 @@ export async function exportRun(
 ): Promise<ExportRunResult> {
   const entries = await reader.readRun(runId);
   // The run's recorded outcome. Without it, a run that DIED — a 401 on the first call, a cost ceiling —
-  // Produced no error-bearing entry and was therefore exported as OK with $0 of cost: the single most
-  // Misleading signal this exporter could send. `get` is optional on a bare JournalReader, so this
-  // Degrades to the old derivation rather than throwing.
+  // produced no error-bearing entry and was therefore exported as OK with $0 of cost: the single most
+  // misleading signal this exporter could send. `get` is optional on a bare JournalReader, so this
+  // degrades to the old derivation rather than throwing.
   const outcome = typeof (reader as { get?: unknown }).get === 'function'
     ? await (reader as unknown as { get<T>(k: string): Promise<T | undefined> })
         .get<{ status?: string; error?: string }>(`${runId}:outcome`).catch(() => undefined)
@@ -85,8 +85,8 @@ export async function exportRun(
   const runFailed = outcome?.status === 'failed';
   const runCanceled = outcome?.status === 'canceled';
   // The one free-text value that leaves this exporter — see `redact` on the options for why the
-  // Processor chain never touched it. Computed once so the status message and the attribute cannot
-  // Disagree about what was masked.
+  // processor chain never touched it. Computed once so the status message and the attribute cannot
+  // disagree about what was masked.
   const errorText = ((): string | undefined => {
     const raw = outcome?.error;
     if (!raw || !opts.redact) return raw;
@@ -174,7 +174,7 @@ export async function exportRun(
   root.end(lastTs > firstTs ? lastTs : firstTs);
 
   // Guarantee the export via forceFlush; DO NOT call shutdown (the caller owns the exporter; on InMemory,
-  // Shutdown would reset the finished spans). SimpleSpanProcessor already exports synchronously on span.end.
+  // shutdown would reset the finished spans). SimpleSpanProcessor already exports synchronously on span.end.
   await provider.forceFlush();
 
   return { traceId, spans: entries.length + 1, exporter };
@@ -183,7 +183,7 @@ export async function exportRun(
 export { traceIdFor, spanIdFor, mapEntry } from './spans.js';
 
 // Zero-dependency OTLP/HTTP JSON exporter (no OTel SDK, fetch only). Added alongside
-// ExportRun; does not change the existing API.
+// exportRun; does not change the existing API.
 export { toOtlpJson, exportRunToOtlp, otlpTraceId, otlpSpanId } from './otlp.js';
 // Counters → OTLP metrics. Also reachable as `@gnldev/otel/metrics`, which is the leaner route:
 // this entry point statically imports the OTel trace SDK, and the metrics path needs none of it.

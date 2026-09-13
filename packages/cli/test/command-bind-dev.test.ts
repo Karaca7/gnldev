@@ -80,7 +80,7 @@ describe('gnl dev hands the bind decision to serve()', () => {
     const anon = await call();
     expect(anon.status, `an unauthenticated read answered ${anon.status}`).toBe(401);
     // The mirror, so the assertion above cannot pass by everything being refused — which is exactly
-    // How the first draft of this file passed while the provider was never resolved at all.
+    // how the first draft of this file passed while the provider was never resolved at all.
     const authed = await call({ authorization: 'Bearer a-real-secret-token' });
     expect(authed.status, 'a valid token must still get through').not.toBe(401);
   });
@@ -90,8 +90,8 @@ describe('gnl dev hands the bind decision to serve()', () => {
   // of that expression left the suite green.
   //
   // The precondition matters more than usual here: with a config shape that resolves NO provider, this
-  // Refusal happens for the ordinary no-auth reason and proves nothing about shipped credentials. So
-  // The paired test below establishes that this same shape, with a real token, is accepted.
+  // refusal happens for the ordinary no-auth reason and proves nothing about shipped credentials. So
+  // the paired test below establishes that this same shape, with a real token, is accepted.
   it('a shipped dev token does not count as auth for the network gate', async () => {
     const { serveDev } = await import('../src/dev-server.js');
     const shipped = { ...baseConfig(), auth: { admin: { token: 'admin-dev' } } } as any; // the literal `gnl add host` scaffolds

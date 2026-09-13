@@ -38,7 +38,7 @@ Ajanı AYNI runId ile tekrar çalıştır.
 → CRM notu:    kayıtlı DEĞİL → şimdi çalışır ✅
 ```
 
-Buna **exactly-once** (tam-bir-kez) ve **deterministic replay** (deterministik tekrar-oynatma: aynı
+Buna **deterministic replay** (deterministik tekrar-oynatma: aynı
 koşu tekrar edildiğinde LLM'e ve araçlara yeniden gitmeden, defterdeki kayıtlardan aynı sonucun
 yeniden kurulması) denir.
 
@@ -86,12 +86,13 @@ Aksini söylemedikçe her araç yan etkili sayılır (`durable-tool.ts`:
 | **Journal (seyir defteri)** | GNL'in kalbi: koşudaki HER LLM cevabı ve HER araç sonucu, anahtar-değer (key-value) olarak veritabanına yazılır. Yalnızca EKLEME yapılır, değiştirilmez (append-only). |
 | **Replay (tekrar oynatma)** | Aynı `runId` ile tekrar çağrıldığında GNL defteri okur: kayıtlı adımlar çalıştırılmadan kayıttan döner, yalnız eksik adımlar gerçekten koşar. |
 | **Resume (devam etme)** | Çökme/kesinti sonrası koşuyu aynı `runId` ile yeniden başlatmak — replay sayesinde kaldığı yerden sürer. |
-| **CAS** | Compare-And-Set (karşılaştır-ve-yaz): "bu anahtar BOŞSA yaz, doluysa dokunma" işleminin veritabanı motorunda TEK atomik adımda yapılması. İki sunucu aynı anda yazmaya kalksa bile yalnız BİRİ kazanır. Exactly-once'ın teknik temeli. |
+| **CAS** | Compare-And-Set (karşılaştır-ve-yaz): "bu anahtar BOŞSA yaz, doluysa dokunma" işleminin veritabanı motorunda TEK atomik adımda yapılması. İki sunucu aynı anda yazmaya kalksa bile yalnız BİRİ kazanır. At-most-once garantisinin teknik temeli. |
 | **Idempotent (tekrar-güvenli)** | Bir işlemin 1 kez de 10 kez de çağrılsa aynı sonucu üretmesi (örn. "bu id ile kayıt varsa yenisini açma"). |
 | **HITL** | Human-in-the-loop (döngüde insan): ajan riskli bir işlemden önce durup insan onayı bekler. |
 | **RAG** | Retrieval-Augmented Generation (getirmeli üretim): soruyla ilgili dokümanları önce bir arşivden bulup LLM'e bağlam olarak verme tekniği. |
 | **Embedding (gömme vektörü)** | Metnin anlamını temsil eden sayı dizisi; iki metnin "anlamca yakınlığı" bu sayılarla ölçülür. |
 | **Workflow (iş akışı)** | Ajan serbest döngüsünün aksine, adımları senin belirlediğin sıralı/dallı süreç (adım 1 → koşula göre adım 2a veya 2b → ...). |
+| **workKey (iş adı)** | Bir İŞE senin verdiğin ad — koşu id'sini motor bu addan türetir. Konuşma kimliği değildir (o `threadId`'dir). Bkz. §7.2b. |
 | **Multi-tenant (çok kiracılı)** | Tek kurulumda birden çok müşterinin verisinin/bütçesinin birbirinden yalıtılması. |
 
 ---
@@ -114,7 +115,7 @@ sequenceDiagram
     M-->>G: "chargeCard aracını çağır"
     G->>J: LLM cevabını yaz (model:0)
     G->>J: CAS: tool kaydını KİLİTLE (tool:call-1 = 'çalışıyor')
-    G->>T: chargeCard(20) — GERÇEK yan etki, TAM 1 kez
+    G->>T: chargeCard(20) — GERÇEK yan etki, o kilidin altında
     T-->>G: { charged: 20 }
     G->>J: sonucu yaz (tool:call-1 = 'başarılı')
     Note over G: 💥 BURADA ÇÖKSE BİLE...
@@ -382,7 +383,8 @@ var: `@gnldev/chat-adapter` ve `@gnldev/docs-mcp`. Yani `packages/` altında 24 
 hepsi npm'e çıkıyor.
 
 Kilit nokta: **her paket `@gnldev/durable`ın üstüne kurulur** — RAG sorgusu da, kuyruk işi de, uzak
-ajan çağrısı da otomatik olarak deftere yazılır ve exactly-once garantisini MİRAS alır. Başka yerlerde
+ajan çağrısı da otomatik olarak deftere yazılır ve aynı
+[at-most-once](../packages/durable/README.md#what-never-charged-twice-actually-means) garantisini MİRAS alır. Başka yerlerde
 bu özellikler ayrı ayrı vardır ama ortak bir dayanıklılık zemini yoktur.
 
 ---
@@ -435,16 +437,91 @@ const gnl = createGnl({
   },
 });
 
-const r1 = await gnl.run('kasiyer', { runId: 'odeme-7', prompt: '20$ çek' });
+const r1 = await gnl.run('kasiyer', {
+  workKey: 'odeme-7',                           // İŞE verdiğin ad — konuşmaya değil
+  resourceId: 'u-142',                          // kimin ödemesi: adın benzersiz olduğu adres
+  prompt: '20$ çek',
+});
 // r1.interrupts → [{ toolCallId: 'call-1', toolName: 'chargeCard', args: {...} }]  → ASKIDA
 
 // ... insan Studio'dan (veya kendi arayüzünden) onayladı ...
 const r2 = await gnl.run('kasiyer', {
-  runId: 'odeme-7',                             // AYNI runId = devam
+  workKey: 'odeme-7',                           // AYNI workKey = AYNI İŞ — onay o işe gider,
+  resourceId: 'u-142',                          // sohbete tur eklemez
   approvals: { 'call-1': true },
 });
 // LLM'e yeniden gidilmedi, kart TAM 1 kez çekildi.
 ```
+
+Buradaki tekrar eden anahtar "bu aynı ödeme" demektir; "konuşmaya devam et" demek değildir. Konuşma
+`threadId`'dir, ayrı bir alandır ([§7.3](#73-hafıza-konuşma-geçmişi)). Bir `workKey`'i işi yeniden
+denemek ya da sürdürmek için kullan, sohbete tur eklemek için asla. Koşu id'sini motor bu anahtardan
+türetir; yani `odeme-7` journal'a kendi başına anahtar olarak hiç girmez.
+
+### 7.2b İş kimliği (`workKey`)
+
+**`workKey`, bir konuşmanın değil, bir İŞİN sizin verdiğiniz adıdır.** Açtığı koşu kaydı yaşadığı
+sürece, aynı `workScope` içinde aynı `workKey` ile gelen çağrı ikinci bir koşu başlatmaz; o koşuya
+yönlendirilir.
+
+`thread_id`'den geliyorsanız: orada aynı anahtar "devam et" demektir, burada "bu aynı iş" demektir —
+yeniden denemek için kullanın, tur eklemek için asla. Konuşma `threadId`'dir, ayrı alandır ve ikisini
+aynı anda gönderebilirsiniz.
+
+`workKey` bir iş adıdır (kesilen fatura, yayımlanan belge, 7742'nin yazılım güncellemesi, bu gecenin
+mutabakatı); rastgele bir yeniden-deneme jetonu değildir. Hassas veri koymayın — hata gövdelerinde
+yansır, Studio ekranlarında görünür.
+
+```ts
+const gnl = createGnl({
+  journal,
+  agents: {
+    faturalama: { model, workScope: 'resource' },  // varsayılan: iş bir KİŞİYE aittir
+    mutabakat: { model, workScope: 'org' },        // kurulum geneli: gecelik toplu iş
+  },
+});
+
+await gnl.run('faturalama', {
+  workKey: 'fatura-2026-04-7742',   // işin adı
+  resourceId: 'u-142',              // adın benzersiz olduğu adres ('resource' kapsamı)
+  prompt: 'Nisan faturasını kes',
+});
+```
+
+Bir çağrıda **ya** `workKey` **ya** `runId` bulunur, ikisi birden asla: tek çağrıya iki kimlik,
+motorun ancak tahminle cevaplayabileceği bir sorudur. Ham motor yüzeyi (`runDurable`, `resumeRun`,
+`forkRun`, `streamDurable`) her zaman ham id alır — resume ve fork bir hash'i tersine çeviremez.
+
+**İkinci çağrıda ne olur.** İki eksen; v1'de her birinin tek bir davranışı var (bu yüzden ortada
+ayarlanacak bir alan da yok), ama adları bugünden sabit:
+
+| Eksen | v1 değeri | İkinci çağrı ne alır |
+| --- | --- | --- |
+| `onConflict` | `'reject'` | İş **şu an koşuyor** → `409 run_busy` + `Retry-After`. |
+| `onReuse` | `'replay'` | İş **bitmiş** → kayıtlı cevap döner, hiçbir şey yeniden koşmaz. |
+
+**`run_busy`'yi mümkün kılan şey bir kilit, ve kilidin bir TTL'i var.** "Şu an koşuyor", journal'ın
+içeriğinden çıkarılmıyor: koşum başlamadan alınan ve koşum sürdükçe kalp atışıyla yenilenen koşum
+başına bir kilit var (`lock: { ttlMs }`, varsayılan 300 000 ms). Bundan iki sonuç çıkıyor ve ikisi de
+garantinin şekli — yanındaki çekinceler değil: kilidi bırakmadan ölen bir süreç koşumu yalnız TTL
+dolana kadar tutar, sonrasında yeniden deneme kabul edilir ve journal'dan tekrar oynar; TTL'ini
+meşru şekilde aşan bir koşum ise kilidi kalp atışıyla canlı tutar. Yani TTL koşumun uzunluğunu
+değil, çökme sonrası kurtarmayı sınırlar.
+
+Ve dipnot değil, madde: **başarısız biten koşunun döndürülecek sonucu yoktur; aynı `workKey`
+yeniden koşabilir.** Başarısız işi yeniden denemek normal durumdur, kaçış kapısı değil.
+
+**Bir `workKey` ne kadar benzersiz kalır: koşu kaydı yaşadığı sürece — bir dakika fazlası değil.**
+Tanıma, metnin değil saklanan kaydın özelliğidir. Süpürme o koşuyu sildiği an anahtar yeniden
+yabancıdır. Yani ayarlanacak sayı "koşuları ne kadar tutayım" değil, bir karşılaştırmadır: **saklama
+pencereniz, istemcilerinizin üretebileceği en uzun yeniden denemeden kısa olmamalı.** Bunu garanti
+edemiyorsanız mezar taşlarını açın (`tombstones: true` + `tombstonePolicy: 'reject'`): geç deneme,
+işi sessizce baştan başlatmak yerine `409 run_swept` ile reddedilir. Mezar taşı bir rettir, cevap
+değil — ve içinde anahtarın yalnız **hash**'i durur.
+
+Son bir dürüstlük cümlesi: **`runId`, `workKey`'inizin kararlı bir takma adıdır (pseudonym),
+anonimleştirilmesi değildir.** Düşük entropili bir anahtar (`fatura-1`) sözlükle geri çözülür ve
+KVKK/GDPR açısından kimliğin statüsü anahtarınkiyle aynı kalır.
 
 ### 7.3 Hafıza (konuşma geçmişi)
 
@@ -597,7 +674,7 @@ import { GnlClient } from '@gnldev/client';
 const client = new GnlClient({ baseUrl: 'http://localhost:3000' });
 await client.run('asistan', { runId: 'talep-42', prompt: '...' });
 // runId isteğe bağlı — vermezsen istemci üretir, yani her yeniden deneme YENİ bir koşu olur ve
-// exactly-once koruması almaz. Yan etkisi olan her çağrıda kendi runId'ni ver.
+// dedup koruması almaz. Yan etkisi olan her çağrıda kendi runId'ni ver.
 
 // Studio: web kontrol paneli — npx @gnldev/studio --db runs.db
 // (ya da --config gnl.config.ts; o zaman Playground da açılır. Biri mutlaka gerekir)
@@ -731,7 +808,7 @@ koşu.** Bu tercih birinci listeyi kazandırıyor, ikincisine mal oluyor.
 
 | Yetenek | Pratikte ne demek |
 |---|---|
-| **Exactly-once yan etki** | Bir kez çalışmış araç çağrısı ikinci kez ücretlendirilmez — CAS ile zorlanır, iki ayrı işletim sistemi süreciyle ve CI'da gerçek Postgres/Redis'e karşı doğrulanır |
+| **At-most-once yan etki** | Tamamlandığı kayda geçmiş bir araç çağrısı ikinci kez çalışmaz — CAS ile zorlanır, iki ayrı işletim sistemi süreciyle ve CI'da gerçek Postgres/Redis'e karşı doğrulanır |
 | **Deterministic replay** | Aynı koşu, modele tekrar gitmeden aynı sonuca kurulur — modelin cevabı journal'da, sadece durum değil |
 | **Time-travel + fork** | Geçmişteki herhangi bir adıma dönüp oradan dallanma, Studio'da görsel olarak |
 | **Model fallback kalıcı** | Gerçekte kazanan model journal'a yazılır; resume zarı yeniden atmaz, ona yapışır |
@@ -746,7 +823,7 @@ koşu.** Bu tercih birinci listeyi kazandırıyor, ikincisine mal oluyor.
 |---|---|
 | Ses (TTS/STT), Slack/WhatsApp kanalları | Kapsam dışı. Bunlar entegrasyon yüzeyi, dayanıklılık değil; eklemek çekirdeği genişletir ama tek bir koşuyu bile daha güvenli yapmaz. |
 | No-code ajan editörü | Tasarım gereği kod-öncelikli. Ajanın davranışı incelenebilir, test edilebilir, sürüm kontrollü kodda durur — görsel editör onu diff'in izleyemediği bir yere taşır. |
-| Geniş depolama adaptörü kataloğu | Dört tane, artı composite karışımı. Her adaptörün exactly-once'ı gerçek bir motora karşı kanıtlaması gerekir ve bu kanıt pahalıdır; yük altında hiç yarıştırılmamış uzun bir adaptör listesi özellik değil, yükümlülüktür. |
+| Geniş depolama adaptörü kataloğu | Dört tane, artı composite karışımı. Her adaptörün at-most-once garantisini gerçek bir motora karşı kanıtlaması gerekir ve bu kanıt pahalıdır; yük altında hiç yarıştırılmamış uzun bir adaptör listesi özellik değil, yükümlülüktür. |
 | Geniş hazır scorer kataloğu | On altı tane — 8 LLM-hakem, 4 modelsiz metin, 3 kural-tabanlı, artı `embeddingSimilarity` — ve kendinizinkini yazabileceğiniz hakem altyapısı. (`packages/evals/src/index.ts`'te sayabilirsiniz: `scorers.ts` 8, `text-scorers.ts` 4, `scorer.ts` 4 katkı veriyor. Trajectory scorer'ları bunların üstünde ayrı bir aile.) |
 
 İş yükünüz "iki kez çalışırsa felaket" cinsindense — ödeme, finans, hukuk, sağlık, uzun-koşan ve
@@ -763,7 +840,7 @@ Evet; iddiaların çoğu **gerçek motorlarda canlı testlerle** kanıtlı — t
 - **Çok-sunucu CAS yarışı:** iki ayrı Postgres bağlantı havuzu aynı anahtara aynı anda yazıyor →
   her seferinde TAM BİR kazanan (20 tur + 10'lu fırtına). Redis'te aynı (SET NX).
 - **Canlı failover** (sunucu değişimi): birincil Postgres **SIGKILL ile öldürüldü**, yedek terfi
-  ettirildi → 30/30 onaylı yazı korundu, exactly-once sürdü. (Ön koşul: **senkron replikasyon** —
+  ettirildi → 30/30 onaylı yazı korundu, at-most-once garantisi sürdü. (Ön koşul: **senkron replikasyon** —
   `synchronous_commit = on` ve senkron bir standby; asenkron kurulumda bu garanti YOKTUR. Koşulun
   kendisi `docker-compose.failover.yml`'de kurulur ve `packages/durable/test/failover-real.test.ts`
   ile test edilir; README'de bu notu aramayın, orada geçmiyor.)
@@ -1110,7 +1187,7 @@ için kolonar depolama; tek satırı atomik güncellemek için değil).
 Aynı veri üzerinde iki farklı soru vardır:
 
 - **"ŞU koşuda ne oldu?"** → nokta okuma → OLTP işi → GNL'in journal'ı + Studio (iz, journal'dan
-  ANLIK türetilir; ikinci kopya tutulmaz). Journal ClickHouse'a KONAMAZ: CAS yok → exactly-once çöker.
+  ANLIK türetilir; ikinci kopya tutulmaz). Journal ClickHouse'a KONAMAZ: CAS yok → at-most-once garantisi çöker.
 - **"5 milyon koşuda p95 gecikme trendi?"** → toplu tarama → OLAP işi → GNL bunu OTLP fişiyle
   dış araca devreder (`otlpPresets`). Komik detay: fişi taktığın Langfuse'un kendisi de arkada
   ClickHouse çalıştırır — yani izlerin yine ClickHouse'a varır, sadece onu SEN işletmezsin.

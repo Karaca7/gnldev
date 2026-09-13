@@ -16,6 +16,8 @@
 import { describe, it, expect } from 'vitest';
 import { InMemoryJournal, nestedAgentRunId } from '../src/journal.js';
 import { createGnl } from '../src/registry.js';
+import { derivedRunId } from '../src/hash.js';
+import { RunInputMismatchError } from '../src/errors.js';
 import { createMockModel, finalTextResult, toolCallResult, countToolResults } from './mock.js';
 
 const TCID = 'call-devret';
@@ -168,5 +170,59 @@ describe('alt ajanın askısı görünür', () => {
     const r = await gnl.run('ana', { runId: 'ns-4', prompt: 'devret' } as never);
     expect(r.interrupts).toEqual([]);
     expect(r.text).toBe('ana bitti');
+  });
+});
+
+// ÜÇÜNCÜ TUR: ÇOCUĞUN SORUSUNA VERİLEN CEVAP, GÖVDE BÜYÜDÜĞÜ İÇİN 409 YİYORDU.
+//
+// Türetilmiş bir id'de girdi parmak izi koşulsuz denetlenir. Bir sohbet yüzeyi onay turunda gövdeyi
+// olduğu gibi geri göndermez: kullanıcının gördüğü mesaj listesi bir tur uzamıştır. O yüzden
+// `assertRunAdmissible`'da iki kaçış var — (1) donmuş kaydın KENDİ içeriği, (2) journal'da izi olan
+// bir onay. İkincisi tam da bu tur için yazılmıştı.
+//
+// Ama ikinci kaçış yalnız `runKeys.tool(ebeveyn, id)`'ye bakıyordu. İç içe askıda yüzeye çıkan
+// kimlik ÇOCUĞUN çağrı id'sidir (yukarıdaki testler bunu mühürlüyor) ve o id ebeveynin kayıtlarında
+// YOK — çocuğun journal'ında. Yani "soruyu gördüğün kimlikle cevapla" sözleşmesine uyan istemci,
+// gövdesi bir tur uzadığı anda 409 yiyordu: soru sorulur, cevap verilir, cevap reddedilir.
+//
+// Kaçış-2 artık ebeveynin ASKIDAKİ kayıtlarındaki iç içe sentinel'lerin `nested.interrupts` listesine
+// de bakıyor — yani yüzeye ÇIKARDIĞI kimliği tanıyor. Uydurma bir id yine hiçbir şey kazanmaz.
+describe('iç içe askı: onayın re-POST\'u büyümüş gövdeyle', () => {
+  const parentRunId = derivedRunId('ana', 'resource', 'u-ayse', 'para-gonderimi');
+  const ilkGovde = [{ role: 'user', content: 'parayı gönder' }];
+  const buyumusGovde = [
+    ...ilkGovde,
+    { role: 'assistant', content: 'onayınızı bekliyorum' },
+    { role: 'user', content: 'evet' },
+  ];
+
+  it('yüzeydeki ÇOCUK kimliğiyle gelen onay 409 DEĞİL, işlenir', async () => {
+    const journal = new InMemoryJournal();
+    const counter = { n: 0 };
+    const r1 = await setup(journal, counter).run('ana', { runId: parentRunId, messages: ilkGovde } as never);
+    const asked = (r1.interrupts[0] as any).toolCallId;
+    expect(asked).toBe(CHILD_TCID);
+
+    const r2 = await setup(journal, counter).run(
+      'ana',
+      { runId: parentRunId, messages: buyumusGovde, approvals: { [asked]: true } } as never,
+    );
+    expect(r2.interrupts.length, 'onaydan sonra hâlâ askıda').toBe(0);
+    expect(counter.n, 'yan etki hiç çalışmadı — onay reddedilmiş').toBe(1);
+    const child = nestedAgentRunId(parentRunId, TCID);
+    expect((await journal.get<{ status?: string }>(`${child}:tool:${CHILD_TCID}`))?.status).toBe('succeeded');
+  });
+
+  it('UYDURMA bir id büyümüş gövdeyi geçirmez — kaçış izi ister, alan varlığını değil', async () => {
+    const journal = new InMemoryJournal();
+    const counter = { n: 0 };
+    await setup(journal, counter).run('ana', { runId: parentRunId, messages: ilkGovde } as never);
+    await expect(
+      setup(journal, counter).run(
+        'ana',
+        { runId: parentRunId, messages: buyumusGovde, approvals: { 'hiç-sorulmamış-id': true } } as never,
+      ),
+    ).rejects.toBeInstanceOf(RunInputMismatchError);
+    expect(counter.n).toBe(0);
   });
 });

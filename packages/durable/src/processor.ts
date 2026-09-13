@@ -1,6 +1,6 @@
 // 8.7 — Processor pipeline (durability-infused). Input/output/tool transformers.
 // Principle: input processors run BEFORE persistInput → the transformed input is journaled →
-// It does NOT RUN AGAIN on resume (drift impossible). Non-deterministic processors journal via `ctx.step`.
+// it does NOT RUN AGAIN on resume (drift impossible). Non-deterministic processors journal via `ctx.step`.
 import { runKeys } from './journal.js';
 import type { Journal } from './journal.js';
 
@@ -40,8 +40,8 @@ export interface Processor {
    * Transform the message/system BEFORE the model (PII redaction, normalization).
    *
    * Called TWICE over a run's life, in two different modes. On the FIRST attempt it TRANSFORMS: the
-   * Return value is journaled as the run's `:input` and never recomputed. On every RESUME it is called
-   * Again as a GATE (`ctx.resume === true`) over the adopted frozen input — the return value is
+   * return value is journaled as the run's `:input` and never recomputed. On every RESUME it is called
+   * again as a GATE (`ctx.resume === true`) over the adopted frozen input — the return value is
    * DISCARDED and only a THROW carries. See `resumeGate` for why.
    */
   processInput?(input: ProcessorInput, ctx: ProcessorCtx): Promise<ProcessorInput> | ProcessorInput;
@@ -49,60 +49,60 @@ export interface Processor {
    * Opt OUT of the resume gate pass (default: on).
    *
    * The two jobs `processInput` is used for pull in opposite directions. As a TRANSFORM it must not
-   * Run twice — a redactor re-applied over its own output is at best wasted work and at worst a second
-   * Round of masking. As a POLICY GATE (moderation, a denylist, an injection tripwire) it must run on
-   * The turn that actually does the work, and on a suspended run that turn is the RESUME: the human
-   * Approves, the payment goes out, and a gate that only ever saw attempt 1 was inert exactly then.
+   * run twice — a redactor re-applied over its own output is at best wasted work and at worst a second
+   * round of masking. As a POLICY GATE (moderation, a denylist, an injection tripwire) it must run on
+   * the turn that actually does the work, and on a suspended run that turn is the RESUME: the human
+   * approves, the payment goes out, and a gate that only ever saw attempt 1 was inert exactly then.
    * Measured: a user blocked between the two turns was charged anyway.
    *
    * Splitting the two is what the gate pass does — the chain is re-entered with the return value
-   * Thrown away, so the transform cannot double-apply while a throw still stops the run. Default ON,
-   * Because a governance hook that silently fails open is the hardest kind of fault to notice (the
-   * Same call `composeOnStepFinish` makes for the per-step hook). Set `false` for a processor whose
+   * thrown away, so the transform cannot double-apply while a throw still stops the run. Default ON,
+   * because a governance hook that silently fails open is the hardest kind of fault to notice (the
+   * same call `composeOnStepFinish` makes for the per-step hook). Set `false` for a processor whose
    * `processInput` cannot honestly be re-entered — one that calls out to something un-repeatable
-   * Without going through `ctx.step`.
+   * without going through `ctx.step`.
    */
   resumeGate?: boolean;
   /** Restrict the tool set the model SEES (toolFilter/toolSearch). May be async; NON-deterministic
-   *  Selections (embedding-based toolSearch) must journal the decision via `ctx.step` → same tool
-   *  Subset on resume. */
+   *  selections (embedding-based toolSearch) must journal the decision via `ctx.step` → same tool
+   *  subset on resume. */
   processTools?(tools: Record<string, any>, ctx: ProcessorCtx): Record<string, any> | Promise<Record<string, any>>;
   /**
    * Transform the final output/messages AFTER the model (output redaction, moderation). D4-retry:
-   * May also throw `ProcessorRetry` — same retry-with-feedback ladder as `processOutputStep` (see its
-   * Doc below), just decided once at the end of the turn instead of after every step.
+   * may also throw `ProcessorRetry` — same retry-with-feedback ladder as `processOutputStep` (see its
+   * doc below), just decided once at the end of the turn instead of after every step.
    */
   processOutput?(output: ProcessorOutput, ctx: ProcessorCtx): Promise<ProcessorOutput> | ProcessorOutput;
   /**
    * AUDIT HOOK (tool-output prompt-injection defense): called AFTER tool execute returns
    * SUCCESSFULLY, BEFORE 'succeeded' is written to the journal (durable-tool.ts). Used to mark
    * (untrustedToolContent) or redact outside-world content. The TRANSFORMED output is written to
-   * The journal → SAME philosophy as processInput's "does not run again on resume": on replay this
-   * Hook does NOT RUN A SECOND TIME, the transformed value in the journal is returned directly via the exactly-once gate.
+   * the journal → SAME philosophy as processInput's "does not run again on resume": on replay this
+   * hook does NOT RUN A SECOND TIME, the transformed value in the journal is returned directly via the exactly-once gate.
    */
   processToolResult?(res: ProcessorToolResult, ctx: ProcessorCtx): Promise<{ output: unknown }> | { output: unknown };
   /**
    * P2-step called before EVERY model
-   * Step INSIDE the tool loop (bridged to the AI SDK's `prepareStep`) — unlike `processInput`, which
-   * Runs once per runDurable call. May override this step's messages/system/activeTools/model
+   * step INSIDE the tool loop (bridged to the AI SDK's `prepareStep`) — unlike `processInput`, which
+   * runs once per runDurable call. May override this step's messages/system/activeTools/model
    * TRANSIENTLY (overrides are NOT persisted — the journal keeps the true conversation; the model's
    * OUTPUT is journaled after, so replayed steps never re-consult this hook's effect).
    * DETERMINISM CONTRACT (same as every processor hook): on resume, FRESH steps re-run this hook — a
-   * Pure function of (stepNumber, messages) is automatically safe; anything non-deterministic must
-   * Journal its decision via `ctx.step` (toolSearch precedent).
+   * pure function of (stepNumber, messages) is automatically safe; anything non-deterministic must
+   * journal its decision via `ctx.step` (toolSearch precedent).
    */
   processInputStep?(step: ProcessorStepInput, ctx: ProcessorCtx): Promise<ProcessorStepOverride | undefined | void> | ProcessorStepOverride | undefined | void;
   /**
    * P2-step: called after EVERY completed model step (bridged to `onStepFinish`) — return value is
-   * Ignored; throwing `ProcessorTripwire` fails the run (fail-loud guardrail between steps).
+   * ignored; throwing `ProcessorTripwire` fails the run (fail-loud guardrail between steps).
    * D4-retry throwing `ProcessorRetry` instead means "this TURN's
-   * Output is unacceptable" — runDurableInner's retry ladder catches it, journals the retry decision,
-   * Appends the feedback as a new user message, and calls generateText again for a FRESH turn (bounded:
-   * Per-processor `maxRetries` default 1, hard global cap 3/run — see run.ts). Honestly TURN-scoped: this
-   * Is NOT step-level retry inside the AI SDK's own tool loop (we don't own that loop).
+   * output is unacceptable" — runDurableInner's retry ladder catches it, journals the retry decision,
+   * appends the feedback as a new user message, and calls generateText again for a FRESH turn (bounded:
+   * per-processor `maxRetries` default 1, hard global cap 3/run — see run.ts). Honestly TURN-scoped: this
+   * is NOT step-level retry inside the AI SDK's own tool loop (we don't own that loop).
    * REPLAY NOTE: generateText cannot tell a replayed step from a fresh one, so this fires for
    * REPLAYED steps too (with byte-identical content — deterministic observation); side-effecting
-   * Observers must go through `ctx.step`/`recordProcessorReport` (both exactly-once). A REPLAYED
+   * observers must go through `ctx.step`/`recordProcessorReport` (both exactly-once). A REPLAYED
    * `ProcessorRetry` is not re-decided by the ladder: it reads the feedback back from the journal
    * (`retry:<attempt>`, via `durableProcessorStep`) instead of trusting the freshly re-thrown value.
    */
@@ -139,9 +139,9 @@ export interface ProcessorStepOutput {
 
 /**
  * P2-step: composes the processors' `processInputStep` hooks into ONE AI SDK `prepareStep` function —
- * Sequential merge: each processor sees the EFFECTIVE (already-overridden) messages, later processors
- * Win on field conflicts (same order semantics as the processInput chain). Returns undefined when no
- * Processor implements the hook → the caller leaves prepareStep unset (zero behavior change).
+ * sequential merge: each processor sees the EFFECTIVE (already-overridden) messages, later processors
+ * win on field conflicts (same order semantics as the processInput chain). Returns undefined when no
+ * processor implements the hook → the caller leaves prepareStep unset (zero behavior change).
  */
 export function composePrepareStep(
   processors: Processor[],
@@ -226,8 +226,8 @@ export class ProcessorTripwire extends Error {
  * D4-retry thrown from `processOutputStep` OR `processOutput` to mean
  * "this TURN's output is unacceptable — append my feedback and let the model try again." Honestly
  * TURN-scoped (see run.ts's retry ladder): a fresh `generateText` call, NOT a retry of a single step
- * Inside the AI SDK's own tool loop (we don't own that loop). `opts.maxRetries` (default 1, enforced by
- * The ladder) bounds how many times THIS processor's retry is honored; a separate hard global cap
+ * inside the AI SDK's own tool loop (we don't own that loop). `opts.maxRetries` (default 1, enforced by
+ * the ladder) bounds how many times THIS processor's retry is honored; a separate hard global cap
  * (3/run) bounds the TOTAL retries regardless of which processor asked (see RetryExhaustedByProcessorError).
  */
 export class ProcessorRetry extends Error {
@@ -243,10 +243,10 @@ export class ProcessorRetry extends Error {
 
 /**
  * D4-retry: thrown by run.ts's retry ladder when a `ProcessorRetry` can no longer be honored — either
- * This processor's own `maxRetries` bound or the hard global cap (3 retries/run) was hit. Carries the
+ * this processor's own `maxRetries` bound or the hard global cap (3 retries/run) was hit. Carries the
  * LAST feedback so the caller can surface why the run gave up. Deliberately a DISTINCT type from
  * `ProcessorTripwire`: a tripwire is "content blocked" (moderation decision made once); this is "we tried
- * To satisfy the processor and ran out of attempts" — a different failure mode worth telling apart.
+ * to satisfy the processor and ran out of attempts" — a different failure mode worth telling apart.
  */
 export class RetryExhaustedByProcessorError extends Error {
   constructor(
@@ -261,10 +261,10 @@ export class RetryExhaustedByProcessorError extends Error {
 
 /**
  * Journals a non-deterministic processor step: `${runId}:proc:${name}` (invisible to
- * ParseJournalKey). Replays if a record exists → same decision on resume, no duplicate LLM-judge
- * Call. The `{ v }` wrapper also makes `undefined` results distinguishable.
+ * parseJournalKey). Replays if a record exists → same decision on resume, no duplicate LLM-judge
+ * call. The `{ v }` wrapper also makes `undefined` results distinguishable.
  * NOTE: this get+put is a memoize (sufficient for single-process resume); for places that need two
- * Concurrent workers to not be able to write different results to the same key, use the CAS variant: journal.ts's `frozenGet`.
+ * concurrent workers to not be able to write different results to the same key, use the CAS variant: journal.ts's `frozenGet`.
  */
 export async function durableProcessorStep<T>(
   journal: Journal,
@@ -292,7 +292,7 @@ export function createProcessorCtx(journal: Journal, runId: string): ProcessorCt
 // ── AUDIT (compliance) reports ─────────────────────────────────────────
 // PURPOSE: make "was PII masked / was injection detected / what did moderation flag in this run"
 // VISIBLE in the journal. Until now, plain processors (pii/moderation/injection) only reflected
-// Their decisions in content transformation (redaction) or a tripwire — "what was found" was NOT
+// their decisions in content transformation (redaction) or a tripwire — "what was found" was NOT
 // STORED as a separate record. This helper is additive: it does not touch the hot path
 // (applyInputProcessors/durableTool/generateText), it only provides a side-record that processors call BY THEIR OWN CHOICE.
 
@@ -306,19 +306,20 @@ export interface ProcessorReport {
 
 /**
  * Records a processor finding into the journal: `${runId}:procreport:${name}:${phase}`. Because
- * This key pattern does NOT CONTAIN `:model:`/`:tool:`, it is INVISIBLE to `parseJournalKey` (same
- * Principle as proc/cfgModel/input — does not leak into reader/time-travel).
+ * this key pattern does NOT CONTAIN `:model:`/`:tool:`, it is INVISIBLE to `parseJournalKey` (same
+ * principle as proc/cfgModel/input — does not leak into reader/time-travel).
  *
  * OVERWRITE-SAFE: SAME get-first pattern as `durableProcessorStep` — returns WITHOUT WRITING
  * ANYTHING if the key already exists. In the scenario where processOutput/processToolResult CAN BE
  * CALLED AGAIN on resume (runDurableInner re-runs generateText on replay, replaying the steps
- * Already recorded in the journal), this guarantees the report is written EXACTLY ONCE — the caller
- * Can freely call recordProcessorReport on EVERY processOutput/processToolResult call, trusting
- * That findings are deterministic (same input → same finding).
+ * already recorded in the journal), this skips the second write on the same replay (get-first, so
+ * not atomic under concurrency — same caveat journal.ts states for the pattern) — the caller
+ * can freely call recordProcessorReport on EVERY processOutput/processToolResult call, trusting
+ * that findings are deterministic (same input → same finding).
  *
  * BEST-EFFORT: even if the journal is missing/broken (e.g. a minimal fake ctx in tests), the error
- * Is SWALLOWED — this is an audit/observability side-record and must NEVER break the main processor
- * Flow (redaction/tripwire) (same best-effort principle as `recordRunUsage` in run.ts).
+ * is SWALLOWED — this is an audit/observability side-record and must NEVER break the main processor
+ * flow (redaction/tripwire) (same best-effort principle as `recordRunUsage` in run.ts).
  */
 export async function recordProcessorReport(
   ctx: ProcessorCtx,

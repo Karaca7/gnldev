@@ -1,8 +1,13 @@
 // Demo agent (mock model — no API key). On the first turn it calls the `chargeOrder` tool,
 // then it summarizes the receipt. Swap `model` for a real provider
 // (e.g. 'anthropic/claude-opus-4-8') and delete the mock to go live.
+//
+// THE TOOL IS WIRED IN gnl.config.ts, NOT HERE. This file only decides what the model SAYS — a
+// tool-call part naming `chargeOrder`. Which tool that name resolves to is the config's job
+// (`agents: { assistant: { ...assistant, tools: { chargeOrder } } }`), which is where every other
+// feature's wiring also lands. Importing the tool here as well would have been a second wiring of the
+// same thing, in the file least likely to be read when one of them stops matching.
 import type { AgentConfig } from '@gnldev/durable';
-import { chargeOrder } from './tools.js';
 
 function toolResultsSeen(prompt: any[]): number {
   let n = 0;
@@ -79,6 +84,5 @@ function toolCallingMock(): any {
 export const assistant: AgentConfig = {
   model: toolCallingMock(),
   system: 'You charge orders exactly once. (Demo: mock model — no API key required.)',
-  tools: { chargeOrder },
   maxSteps: 4,
 };

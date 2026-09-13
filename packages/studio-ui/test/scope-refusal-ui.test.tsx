@@ -105,7 +105,7 @@ describe('org_scope_refused is a place, not an identity', () => {
     expect((err as ApiError).code).toBeUndefined();
     // It does not end the session either. This line used to require the opposite, on the reasoning
     // that an unlabelled 403 might mean a dead session — but a dead session is answered 401. A proxy
-    // Returning 403 says nothing about the credential, so throwing it away helps nobody.
+    // returning 403 says nothing about the credential, so throwing it away helps nobody.
     expect(shouldForceReauth({ err, authRequired: true, hasToken: true })).toBe(false);
   });
 });

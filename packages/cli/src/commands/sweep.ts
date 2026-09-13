@@ -1,10 +1,10 @@
-// Gnl sweep [--older-than 30d] [--include-suspended] [--yes] — retention sweep (sweepRuns): permanently
-// Deletes runs whose last activity is older than the threshold. SAFE BY DEFAULT: without --yes/--force
-// This only PREVIEWS what would be deleted (dry-run), it never mutates. `sweepRuns` itself has no
-// Dry-run mode, so the preview mirrors its exact staleness predicate (age + keepSuspended) read-only
-// Via listRuns/readRun/summarizeRun — the SAME primitives sweepRuns uses internally — but always takes
-// The plain scan path (not the storage-specific listStaleRuns fast path sweepRuns may use for the real
-// Delete); that's a deliberate simplicity/portability trade-off for a preview, not a correctness gap.
+// gnl sweep [--older-than 30d] [--include-suspended] [--yes] — retention sweep (sweepRuns): permanently
+// deletes runs whose last activity is older than the threshold. SAFE BY DEFAULT: without --yes/--force
+// this only PREVIEWS what would be deleted (dry-run), it never mutates. `sweepRuns` itself has no
+// dry-run mode, so the preview mirrors its exact staleness predicate (age + keepSuspended) read-only
+// via listRuns/readRun/summarizeRun — the SAME primitives sweepRuns uses internally — but always takes
+// the plain scan path (not the storage-specific listStaleRuns fast path sweepRuns may use for the real
+// delete); that's a deliberate simplicity/portability trade-off for a preview, not a correctness gap.
 import type * as Durable from '@gnldev/durable';
 import type { SweepResult } from '@gnldev/durable';
 import type { Command } from './types.js';

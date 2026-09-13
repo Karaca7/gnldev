@@ -4,13 +4,13 @@ import type { StreamTextResult } from 'ai';
 import { withDurableModel } from './durable-model.js';
 import { durableTools, CLAIM_TTL_MS } from './durable-tool.js';
 import { acquireRunLock } from './run-lock.js';
-import { RunBusyError, SideEffectRetryBlockedError, RetryLimitExceededError, RunThreadMismatchError, RunInputMismatchError, RunActorMismatchError, RunSweptError, ThreadOwnerMismatchError, NotAnAgentRunError } from './errors.js';
-import { argsHash } from './hash.js';
+import { RunBusyError, runBusyMessage, SideEffectRetryBlockedError, RetryLimitExceededError, RunThreadMismatchError, RunInputMismatchError, RunActorMismatchError, RunOwnerMismatchError, RunSweptError, ThreadOwnerMismatchError, NotAnAgentRunError } from './errors.js';
+import { argsHash, rawInputFingerprint, isDerivedRunId, DERIVED_RUN_ID_PREFIX, type WorkScope, type WorkScopeKind } from './hash.js';
 import { recordIdemConflict } from './idem-ledger.js';
 import { createProcessorCtx, composePrepareStep, composeOnStepFinish, durableProcessorStep, ProcessorRetry, RetryExhaustedByProcessorError, type StepHookFailure } from './processor.js';
 import { loadReplayCache, runKeys, claim } from './journal.js';
 // Statically safe: model-router imports only ./journal, and the provider packages it can reach are
-// Behind dynamic import(), so this costs the core bundle nothing.
+// behind dynamic import(), so this costs the core bundle nothing.
 import { resolveModel, setChainToolShaper } from './model-router.js';
 import { stampFormat, upgradeFormat } from './format.js';
 import { recordRunUsage } from './budget.js';
@@ -40,38 +40,72 @@ export type RunDurableArgs = GenerateTextOptions & {
   runId: string;
   guard?: Guard;
   approvals?: Record<string, boolean>;
-  /** Conversation memory: if provided, thread history is loaded + appended idempotently on completion. */
-  memory?: Memory;
+  /**
+   * Conversation memory: if provided, thread history is loaded + appended idempotently on completion.
+   *
+   * `false` means the SAME thing as absent to every branch below — it is falsy, and every memory path
+   * is guarded by `memory && threadId`. What it adds is intent: it is how a caller says "no memory, on
+   * purpose", which is what silences the `threadId` warning (see warnThreadIgnored). The spelling
+   * mirrors `CreateGnlConfig.memory`, which has carried the same `| false` for the same reason.
+   */
+  memory?: Memory | false;
   threadId?: string;
   /** Phase 14: resource (user) identity — for resource-scope recall / cross-thread memory. */
   resourceId?: string;
   /** Kanal etiketi — XID origin'i ve tekrar sorularının "nereden" bilgisi (bkz. DurableCtx.channel). */
   channel?: string;
   /** The agent's registry name — frozen into the invisible `:input` entry so studio /runs can LABEL
-   *  Each run with its agent (surfaced by listRuns, no per-run journal N+1). Optional (direct runDurable
-   *  Callers may omit it); the registry passes the agent key. */
+   *  each run with its agent (surfaced by listRuns, no per-run journal N+1). Optional (direct runDurable
+   *  callers may omit it); the registry passes the agent key. */
   agentName?: string;
+  /**
+   * THE CALLER'S NAME FOR THIS UNIT OF WORK — recorded, and ONLY recorded.
+   *
+   * Read the sentence twice, because this field's whole design (docs/RUNID-WORKKEY-HEYET-KARARI.md
+   * §1) is that a workKey DERIVES the runId — and here it does not. On this surface the runId is
+   * still the raw one you passed, the journal prefix is still that id, and nothing about routing,
+   * dedup or admission consults this string. It rides into the frozen `:input` entry so the journal
+   * can answer "which run was the invoice job?" (`listRunsPaged({ workKey })`) and so studio has a
+   * label to show. The gate that turns a workKey into `run1_<digest>` is package #3 and does not
+   * exist yet; passing this today buys visibility, not identity.
+   *
+   * The raw-runId surface (§7) stays raw permanently, by the way — resume and fork cannot reverse a
+   * hash, so `runDurable` must always be callable with an id. What changes in #3 is who MINTS it.
+   *
+   * A workKey is a BUSINESS NAME (the invoice being issued, tonight's reconciliation), not a session
+   * id and not a random retry token — and it is echoed in error details and shown on operator
+   * screens, so keep sensitive data out of it.
+   */
+  workKey?: string;
+  /**
+   * Which address the `workKey` above is unique WITHIN — recorded alongside it, and equally inert on
+   * this surface today: the engine does not validate the pair, does not check `value` against
+   * `resourceId`, and does not refuse a `'resource'` scope with no owner. Those are the gate's job
+   * (§6, package #3), and doing half of them here would be the worse outcome — a check that runs on
+   * one door teaches callers a rule the other doors do not keep.
+   */
+  workScope?: WorkScope;
   /**
    * Replay determinism mode (M2). Default `'lenient'`.
    * HONEST BOUND (audit E2): model-step divergence detection is OFF by default — under `'lenient'` a
-   * Replayed model step that produces a DIFFERENT request is NOT flagged at all. Even `'strict'` only
+   * replayed model step that produces a DIFFERENT request is NOT flagged at all. Even `'strict'` only
    * `console.warn`s the divergence (it does NOT throw for the model step; the hard `DivergenceError` is for
-   * Tool-argument drift). Set `'strict'` if you want the model-divergence warning surfaced. (Independent of
-   * This flag, a generate↔stream entry-point mismatch on the SAME runId always throws a clear error — see
-   * RunDurable vs streamDurable.)
+   * tool-argument drift). Set `'strict'` if you want the model-divergence warning surfaced. (Independent of
+   * this flag, a generate↔stream entry-point mismatch on the SAME runId always throws a clear error — see
+   * runDurable vs streamDurable.)
    */
   replay?: 'strict' | 'lenient';
   /** Opt-in run-level lock (M4): if provided, a concurrent resume of the same runId gets `RunBusyError`. */
   lock?: { owner: string; ttlMs: number };
   /**
    * §5.3 (opt-in): model-step exclusivity. If provided, when a concurrent worker's FRESH 'running'
-   * Model claim is seen (startedAt newer than ttlMs ago from now; default 30_000),
+   * model claim is seen (startedAt newer than ttlMs ago from now; default 30_000),
    * `RunBusyError` is thrown → prevents duplicate `doGenerate` (duplicate token cost). A STALE claim
    * (crashed owner) proceeds with existing behavior — the fast crash-resume window is preserved.
    */
   exclusiveModelStep?: { ttlMs?: number };
   /** H8c (optional): replay-cache RAM threshold (bytes; default 32MB). If the journal is larger than this,
-   *  Bulk caching is skipped → point-read replay (same correctness, bounded memory). */
+   *  bulk caching is skipped → point-read replay (same correctness, bounded memory). */
   replayCacheMaxBytes?: number;
   /** H10b (opt-in production mode): 'strict' → every tool MUST declare its side-effect intent
    *  (idempotent | sideEffect | recover). An undeclared tool causes a clear error at run start. */
@@ -110,9 +144,9 @@ export type RunDurableArgs = GenerateTextOptions & {
   /**
    * Y1/Y3 (opt-in): external call timeouts + claim TTL. `modelStepMs` applies to every model step
    * (up to the first byte in streaming), `toolMs` applies to every tool execute (tool.timeoutMs
-   * Overrides per-tool); on timeout, StepTimeoutError flows through the existing failed/retry paths.
+   * overrides per-tool); on timeout, StepTimeoutError flows through the existing failed/retry paths.
    * `claimTtlMs` is the staleness threshold for a 'running' claim (default 30s) — raise it for
-   * Legitimate tools that run longer than 30s.
+   * legitimate tools that run longer than 30s.
    */
   timeouts?: { modelStepMs?: number; toolMs?: number; claimTtlMs?: number };
 };
@@ -123,8 +157,9 @@ export type StreamDurableArgs = StreamTextOptions & {
   runId: string;
   guard?: Guard;
   approvals?: Record<string, boolean>;
-  /** Conversation memory: if provided, thread history is loaded + appended idempotently when the stream ends. */
-  memory?: Memory;
+  /** Conversation memory: if provided, thread history is loaded + appended idempotently when the stream
+   *  ends. `false` = deliberately none — see RunDurableArgs.memory for what that buys. */
+  memory?: Memory | false;
   threadId?: string;
   /** Resource (user) identity — for resource-scope recall / cross-thread memory. */
   resourceId?: string;
@@ -132,13 +167,19 @@ export type StreamDurableArgs = StreamTextOptions & {
   channel?: string;
   /** Agent registry name — frozen into the `:input` entry so studio /runs can label the run (see RunDurableArgs). */
   agentName?: string;
+  /** The caller's name for this unit of work + the address it is unique within — frozen into `:input`
+   *  for visibility ONLY, exactly as on runDurable (no runId derivation, no validation; see
+   *  RunDurableArgs.workKey for the full bound). Carried here because parity is what keeps chat and
+   *  agui, which stream, from being the surfaces where the job's name goes missing. */
+  workKey?: string;
+  workScope?: WorkScope;
   /** Replay determinism mode (M2). Default `'lenient'` — model-step divergence detection is OFF by default
-   *  And warn-only even under `'strict'` (see RunDurableArgs.replay for the full honest bound). */
+   *  and warn-only even under `'strict'` (see RunDurableArgs.replay for the full honest bound). */
   replay?: 'strict' | 'lenient';
   /**
    * Processor pipeline. Input/tool processors run exactly the same as in run (BEFORE the model).
    * Output processors in streaming are applied ONLY to messages being persisted (memory append) —
-   * Text-deltas that have already streamed cannot be retroactively transformed.
+   * text-deltas that have already streamed cannot be retroactively transformed.
    */
   processors?: Processor[];
   /** 8.8 Provider-specific tool-schema compatibility (opt-in): true → default set; array → those rules. */
@@ -149,18 +190,18 @@ export type StreamDurableArgs = StreamTextOptions & {
   exclusiveModelStep?: { ttlMs?: number };
   /**
    * (a) — opt-in run-level lock (same shape as RunDurableArgs.lock): if provided, a concurrent
-   * Stream/run of the same runId gets `RunBusyError` at start. The lock is acquired BEFORE streaming and
+   * stream/run of the same runId gets `RunBusyError` at start. The lock is acquired BEFORE streaming and
    * RELEASED when the stream finishes (the same `onFinish` lifecycle the memory-append uses; also
-   * Released on stream error).
+   * released on stream error).
    *
    * FAZ-7: the streamed lock SELF-RENEWS on a ttl/2 heartbeat (parity with runDurable's B4 renew).
    * The old objection — a stream's lifecycle is not function-scoped, so an ABANDONED stream (created,
-   * Never drained, no abort) would renew forever — is answered with a BOUND instead of a refusal:
+   * never drained, no abort) would renew forever — is answered with a BOUND instead of a refusal:
    * Renewal is hard-capped by `maxHoldMs` (default STREAM_LOCK_MAX_HOLD_MS = 60min); past the cap the
-   * Beat stops with a loud warn and TTL reclaims. `ttlMs` is therefore the crash-takeover window
-   * Again, not a worst-case-duration estimate. Renewal is deliberately NOT chunk-liveness-gated: a
-   * Long tool call emits no chunks, and pausing renewal there would hand the lock to a takeover
-   * Mid-run — the exact double-execution this lock prevents.
+   * beat stops with a loud warn and TTL reclaims. `ttlMs` is therefore the crash-takeover window
+   * again, not a worst-case-duration estimate. Renewal is deliberately NOT chunk-liveness-gated: a
+   * long tool call emits no chunks, and pausing renewal there would hand the lock to a takeover
+   * mid-run — the exact double-execution this lock prevents.
    */
   lock?: { owner: string; ttlMs: number; maxHoldMs?: number };
   /** H8c: replay-cache RAM threshold (see RunDurableArgs). */
@@ -196,11 +237,11 @@ export type StreamDurableArgs = StreamTextOptions & {
   timeouts?: { modelStepMs?: number; toolMs?: number; claimTtlMs?: number };
   /**
    * (b) — streaming block/limit VISIBILITY: invoked ONCE at stream finish when a
-   * Loop/maxToolCalls/duplicate/tainted block or a durable-tool block sentinel fired during the run.
+   * loop/maxToolCalls/duplicate/tainted block or a durable-tool block sentinel fired during the run.
    * Receives the RAW structured breach `{ kind, message, detail }` (the sentinel's own fields — no
-   * Invented user-facing message; the app decides what to show its users). Advisory callback: a throw
-   * From it is swallowed with a console.warn and never breaks the stream or masks the typed error the
-   * Terminal promises reject with.
+   * invented user-facing message; the app decides what to show its users). Advisory callback: a throw
+   * from it is swallowed with a console.warn and never breaks the stream or masks the typed error the
+   * terminal promises reject with.
    */
   onBlocked?: (breach: StreamBreach) => void | Promise<void>;
 };
@@ -313,7 +354,7 @@ export function surfacedInterrupts(sus: any): Interrupt[] {
 
 // The sentinel returned when durable-tool.ts's loop/maxToolCalls gate is blocked
 // (see the limits.ts header — since the AI SDK swallows tool-execute errors, this sentinel is
-// Used instead of THROWING; the SAME mechanism as suspend, composeStopWhen stops the loop).
+// used instead of THROWING; the SAME mechanism as suspend, composeStopWhen stops the loop).
 function hasLimitExceeded(part: any): boolean {
   return part?.type === 'tool-result' && !!part.output?.__gnl_limit_exceeded;
 }
@@ -321,8 +362,8 @@ function hasLimitExceeded(part: any): boolean {
 /**
  * Converts the FIRST sentinel found via `hasLimitExceeded` into a real error (see runDurableInner).
  * Decision #2: @gnldev/server sse.ts also uses this at the end of the stream — the sentinel does not
- * Leak to the client, the breach is converted into an SSE `error` event ({code, detail}). This is
- * Why it is EXPORTED.
+ * leak to the client, the breach is converted into an SSE `error` event ({code, detail}). This is
+ * why it is EXPORTED.
  */
 export function limitBreachFromSteps(steps: any[]): { kind: 'loop' | 'maxToolCalls' | 'duplicateSideEffect' | 'taintedSideEffect'; message: string; detail: any } | undefined {
   for (const step of steps ?? []) {
@@ -334,7 +375,7 @@ export function limitBreachFromSteps(steps: any[]): { kind: 'loop' | 'maxToolCal
 }
 
 // K1: durable-tool's block sentinel (SideEffectRetryBlocked/RetryLimit/RunBusy) — since the AI SDK
-// Swallows tool-execute throws, it is NOT thrown, a sentinel is returned instead (see durable-tool blockedOrThrow).
+// swallows tool-execute throws, it is NOT thrown, a sentinel is returned instead (see durable-tool blockedOrThrow).
 function hasBlocked(part: any): boolean {
   return part?.type === 'tool-result' && !!part.output?.__gnl_blocked;
 }
@@ -342,7 +383,7 @@ function hasBlocked(part: any): boolean {
 /**
  * K1: return the FIRST `__gnl_blocked` sentinel — SAME contract as limitBreachFromSteps:
  * @gnldev/server sse.ts / @gnldev/agui use this at the end of the stream (the sentinel does not leak
- * To the client, it is converted into an error event). This is why it is EXPORTED.
+ * to the client, it is converted into an error event). This is why it is EXPORTED.
  */
 export function blockedFromSteps(steps: any[]): { toolCallId: string; toolName: string; code: string; message: string; detail?: any } | undefined {
   for (const step of steps ?? []) {
@@ -358,18 +399,18 @@ function errorFromBlocked(b: { code: string; message: string; detail?: any }): E
   if (b.code === 'SideEffectRetryBlockedError') return new SideEffectRetryBlockedError(b.message, b.detail);
   if (b.code === 'RetryLimitExceededError') return new RetryLimitExceededError(b.message, b.detail);
   // A worker already inside the loop when the operator
-  // Condemned the run — durable-tool refuses the NEW side effect via this sentinel (see the gate there).
+  // condemned the run — durable-tool refuses the NEW side effect via this sentinel (see the gate there).
   if (b.code === 'CompensatedRunError') return new CompensatedRunError(b.detail?.runId ?? 'unknown');
   return new RunBusyError(b.message);
 }
 
 /**
  * K1/W1 (B): converts the FIRST blocked/limit sentinel in the `steps` array into a real
- * Typed error. runDurableInner uses this; it is also EXPORTED for code that consumes streamDurable
+ * typed error. runDurableInner uses this; it is also EXPORTED for code that consumes streamDurable
  * DIRECTLY (manually reading fullStream, not @gnldev/server sse.ts / @gnldev/agui) — pass it onFinish's
  * `ev.steps`: if a sentinel exists, it returns the TYPED error, otherwise `undefined` (the sentinel
- * Itself never leaks outward). Uses the SAME scan order as blockedFromSteps/limitBreachFromSteps —
- * The conversion logic lives in ONE place (no duplication): runDurableInner also calls this function.
+ * itself never leaks outward). Uses the SAME scan order as blockedFromSteps/limitBreachFromSteps —
+ * the conversion logic lives in ONE place (no duplication): runDurableInner also calls this function.
  */
 export function streamFinishError(steps: any[]): Error | undefined {
   const blocked = blockedFromSteps(steps);
@@ -389,11 +430,11 @@ export function streamFinishError(steps: any[]): Error | undefined {
 
 /**
  * (b): the normalized breach handed to `StreamDurableArgs.onBlocked`. ONE shape for both
- * Sentinel families, REUSING the existing kinds: a limit sentinel keeps its `kind`
+ * sentinel families, REUSING the existing kinds: a limit sentinel keeps its `kind`
  * ('loop' | 'maxToolCalls' | 'duplicateSideEffect' | 'taintedSideEffect'); a durable-tool block
- * Sentinel uses its error `code` as the kind ('SideEffectRetryBlockedError' | 'RetryLimitExceededError' |
+ * sentinel uses its error `code` as the kind ('SideEffectRetryBlockedError' | 'RetryLimitExceededError' |
  * 'CompensatedRunError' | 'RunBusyError'). `message`/`detail` are the sentinel's RAW fields — nothing
- * User-facing is invented here.
+ * user-facing is invented here.
  */
 export interface StreamBreach {
   kind: 'loop' | 'maxToolCalls' | 'duplicateSideEffect' | 'taintedSideEffect' | (string & {});
@@ -402,8 +443,8 @@ export interface StreamBreach {
 }
 
 // (b): normalize the FIRST sentinel (same scan order as streamFinishError — blocked first)
-// Into the StreamBreach shape for the onBlocked callback. For a blocked sentinel without `detail`,
-// Fall back to `{ toolCallId, toolName }` so the app can still identify the blocked call.
+// into the StreamBreach shape for the onBlocked callback. For a blocked sentinel without `detail`,
+// fall back to `{ toolCallId, toolName }` so the app can still identify the blocked call.
 function streamBreachFromSteps(steps: any[]): StreamBreach | undefined {
   const blocked = blockedFromSteps(steps);
   if (blocked) return { kind: blocked.code, message: blocked.message, detail: blocked.detail ?? { toolCallId: blocked.toolCallId, toolName: blocked.toolName } };
@@ -414,12 +455,12 @@ function streamBreachFromSteps(steps: any[]): StreamBreach | undefined {
 
 // (b) — terminal-promise reject: the awaited-result promises a happy-path consumer reads
 // (`result.text` first among them) must REJECT with the typed `streamFinishError(steps)` error when a
-// Block/limit sentinel fired, mirroring runDurable's throw. DELIBERATELY EXCLUDED (they keep the
-// Sentinel contract): `steps` (@gnldev/server sse.ts, @gnldev/agui and @gnldev/studio `await result.steps`
+// block/limit sentinel fired, mirroring runDurable's throw. DELIBERATELY EXCLUDED (they keep the
+// sentinel contract): `steps` (@gnldev/server sse.ts, @gnldev/agui and @gnldev/studio `await result.steps`
 // WITHOUT a catch and post-scan it — rejecting it would replace their structured terminal error with a
-// Generic one), `finishReason`/`usage` (@gnldev/studio's pipe awaits them even on the breach path — a
-// Reject would blank its `done` event), `request`/`warnings` (resolve BEFORE stream finish — gating
-// Them on `steps` would delay them), and the streams themselves (`fullStream`/`textStream`).
+// generic one), `finishReason`/`usage` (@gnldev/studio's pipe awaits them even on the breach path — a
+// reject would blank its `done` event), `request`/`warnings` (resolve BEFORE stream finish — gating
+// them on `steps` would delay them), and the streams themselves (`fullStream`/`textStream`).
 const STREAM_BREACH_REJECT_PROPS = new Set([
   'text', 'reasoningText', 'reasoning', 'sources', 'files', 'content',
   'toolCalls', 'staticToolCalls', 'dynamicToolCalls',
@@ -429,21 +470,21 @@ const STREAM_BREACH_REJECT_PROPS = new Set([
 
 /**
  * Second job of the same Proxy (see guardStreamTerminalPromises): hand the OUTPUT-PROCESSED value to
- * The caller instead of the model's raw one, for the two properties the processor contract actually
- * Covers. Receives the already-resolved raw value plus the run's steps; returns what the getter
- * Resolves with. Must never reject — a masking failure falls back to the raw value (the processor
- * Chain's own errors are reported by streamDurable's onFinish, which owns them).
+ * the caller instead of the model's raw one, for the two properties the processor contract actually
+ * covers. Receives the already-resolved raw value plus the run's steps; returns what the getter
+ * resolves with. Must never reject — a masking failure falls back to the raw value (the processor
+ * chain's own errors are reported by streamDurable's onFinish, which owns them).
  */
 type TerminalMask = (prop: string, value: unknown, steps: any[]) => Promise<unknown>;
 
 // Wraps the streamText result in a Proxy: the listed promise getters are gated on `steps` (which
-// Resolves at the same finish point — no dependence on our own callbacks firing, so no new hang path)
-// And reject with the typed error if a sentinel is present. Everything else passes through untouched
+// resolves at the same finish point — no dependence on our own callbacks firing, so no new hang path)
+// and reject with the typed error if a sentinel is present. Everything else passes through untouched
 // (methods bound to the raw result so private state keeps working). Each wrapped promise gets a no-op
-// Catch attached so merely ACCESSING a property on a breached run never becomes an unhandled rejection.
+// catch attached so merely ACCESSING a property on a breached run never becomes an unhandled rejection.
 //
 // `mask` (only passed when output processors exist) runs AFTER the breach gate: a breached run keeps
-// Rejecting with the typed error, and only a clean run's value is transformed.
+// rejecting with the typed error, and only a clean run's value is transformed.
 function guardStreamTerminalPromises<T extends object>(raw: T, mask?: TerminalMask): T {
   const cache = new Map<string, Promise<unknown>>();
   return new Proxy(raw, {
@@ -499,20 +540,20 @@ function composeStopWhen(stopWhen: any, stepHookFailure?: StepHookFailure): any[
 /**
  * AUDIT (approval first-class): the approval decision was not first-class in the journal —
  * `approvals` was passed as an EXTERNAL parameter on every call; in the 'approved but crashed before
- * The tool ran' scenario (approved, but the process died before execute completed), the decision was
- * Not PERSISTED anywhere → resume would require the `approvals` parameter again, forcing the caller
- * To maintain its own decision history.
+ * the tool ran' scenario (approved, but the process died before execute completed), the decision was
+ * not PERSISTED anywhere → resume would require the `approvals` parameter again, forcing the caller
+ * to maintain its own decision history.
  *
  * This function is called at the START of runDurableInner/streamDurable (BEFORE ctx is set up), in
- * Two steps:
+ * two steps:
  *  (a) writes EVERY decision that comes in via the parameter to the journal with `claim` — idempotent:
  *      `claim` only writes if the key is EMPTY, so the FIRST decision in the journal always wins
  *      (the exactly-once spirit — it NEVER overwrites with a DIFFERENT parameter that arrives later).
  *  (b) if `journal.listKeys` is supported (an optional adapter capability), reads ALL recorded
- *      Approvals for this run and MERGES them with the parameter — on conflict, the (FIRST) decision
- *      In the journal wins and is surfaced via `console.warn`. If `listKeys` is UNAVAILABLE (adapter
- *      Doesn't support it): only (a) is written, the merge stays LIMITED to the parameter — no WORSE
- *      Than today's behavior, it just skips enrichment from the journal (documented fallback).
+ *      approvals for this run and MERGES them with the parameter — on conflict, the (FIRST) decision
+ *      in the journal wins and is surfaced via `console.warn`. If `listKeys` is UNAVAILABLE (adapter
+ *      doesn't support it): only (a) is written, the merge stays LIMITED to the parameter — no WORSE
+ *      than today's behavior, it just skips enrichment from the journal (documented fallback).
  *
  * Read cost: a SINGLE enumeration call via `listKeys` + one `get` per approval record actually FOUND
  * (not for every possible tool/toolCallId — only for approval records that ACTUALLY exist).
@@ -684,9 +725,9 @@ export function hasRunProbe(journal: Journal, runId: string, claimTtlMs?: number
 // Write the run input (prompt/messages/system) to the journal on the first call → resume becomes self-contained.
 /**
  * Freeze the `:memctx` provenance next to `:input` — ONCE, first attempt wins (same semantics: it
- * Describes the attempt whose input was frozen). Best-effort read-model: a failure to read it later
- * Degrades a debugging panel, never the run — but the WRITE is on the run path and not try/caught,
- * Matching persistInput (a journal that can't write is a failed run anyway).
+ * describes the attempt whose input was frozen). Best-effort read-model: a failure to read it later
+ * degrades a debugging panel, never the run — but the WRITE is on the run path and not try/caught,
+ * matching persistInput (a journal that can't write is a failed run anyway).
  */
 async function persistMemoryContext(journal: Journal, runId: string, prov?: MemoryContextRecord): Promise<void> {
   if (!prov) return;
@@ -704,10 +745,21 @@ async function persistInput(
   agentName?: string,
   resourceId?: string,
   // FAZ-4: the RAW caller input's fingerprint (computed BEFORE memory prep mutates `input.messages` —
-  // Post-prep content grows with the thread, so a post-prep hash would 409 every legitimate resume)
-  // And the opaque actor identity. Both first-wins with the rest of the entry.
+  // post-prep content grows with the thread, so a post-prep hash would 409 every legitimate resume)
+  // and the opaque actor identity. Both first-wins with the rest of the entry.
   rawInputHash?: string,
   actor?: string,
+  // Package #2: the caller's DECLARED name for this work, and the address it is unique within. Passed
+  // as one object rather than two more positionals because they are one fact in two halves (see
+  // WorkScope) — and because this parameter list has already learned that a long tail of optional
+  // strings is how the wrong value ends up in the right slot.
+  //
+  // RECORDED, NOT OBEYED. This function does not derive `runId` from `work.workKey`, does not compare
+  // `work.workScope.value` with `resourceId`, and does not refuse anything: the id it writes under is
+  // the one the caller already chose. That derivation is the registry gate (package #3); until then
+  // the only thing the journal gains is the ABILITY to answer "which run was that job?" — which is
+  // what §1 means by the declared name staying a first-class, queryable field.
+  work?: { workKey?: string; workScope?: WorkScope },
 ): Promise<void> {
   const key = runKeys.input(runId); // ':input' doesn't match parseJournalKey → invisible in the reader
   // `alreadyFrozen` is the SAME read, done once by the caller because the frozen-input adoption needs
@@ -725,22 +777,28 @@ async function persistInput(
   // owner. A run belongs to whoever started it.
   //
   // We freeze threadId + the agent NAME together with the input (both optional): studio /runs reads
-  // This to group runs by thread and to LABEL each run with its agent (no per-run journal N+1). It
-  // Sits in the invisible `:input` entry → doesn't leak into reader/time-travel, doesn't affect step counting.
+  // this to group runs by thread and to LABEL each run with its agent (no per-run journal N+1). It
+  // sits in the invisible `:input` entry → doesn't leak into reader/time-travel, doesn't affect step counting.
   // `at` = the run's TRUE start (this write precedes the first model call). recordRunMetrics needs it
-  // Because the visible entries can't carry it: a streamed step's `model:N` row is written when the
-  // Step FINISHES — a single-step streamed run has exactly one visible row, at the very end, so a
-  // Ts-span duration read 0ms (live repro: a 27s stream recorded as 0ms). Additive field; readers of
-  // The input blob ignore unknown fields.
-  await journal.put(key, stampFormat({ at: Date.now(), prompt: input.prompt, messages: input.messages, system: input.system, ...(threadId ? { threadId } : {}), ...(agentName ? { agent: agentName } : {}), ...(resourceId ? { resourceId } : {}), ...(rawInputHash ? { hash: rawInputHash } : {}), ...(actor ? { actor } : {}) })); // H13
+  // because the visible entries can't carry it: a streamed step's `model:N` row is written when the
+  // step FINISHES — a single-step streamed run has exactly one visible row, at the very end, so a
+  // ts-span duration read 0ms (live repro: a 27s stream recorded as 0ms). Additive field; readers of
+  // the input blob ignore unknown fields.
+  //
+  // The workKey joins the SAME first-wins entry, which is the point: a run's name is fixed by
+  // whoever started it, so a later call cannot rename work that is already under way (or already
+  // answered). The `...(x ? {x} : {})` spelling is not cosmetic either — every reader here asks
+  // `'workKey' in record`, and an explicit `undefined` would turn "this caller never declared a
+  // name" into "this caller declared nothing", which are different facts.
+  await journal.put(key, stampFormat({ at: Date.now(), prompt: input.prompt, messages: input.messages, system: input.system, ...(threadId ? { threadId } : {}), ...(agentName ? { agent: agentName } : {}), ...(resourceId ? { resourceId } : {}), ...(rawInputHash ? { hash: rawInputHash } : {}), ...(actor ? { actor } : {}), ...(work?.workKey ? { workKey: work.workKey } : {}), ...(work?.workScope ? { workScope: work.workScope } : {}) })); // H13
 }
 
 /** FAZ-6: `limits` is FROZEN to the journal and must stay serializable — the semantic block's
  * `embed` closure cannot ride along (structuredClone rejects functions, and a resumed run could not
- * Recover a closure from disk anyway). The frozen copy keeps the DECLARATIVE half (embedModelId,
- * Thresholds) so introspection stays honest; a resume that recovers limits from the journal runs with
- * The semantic gate INACTIVE (double opt-in unmet: no embed) unless the caller re-supplies it —
- * Fail-open, same posture as an unreachable embedder. */
+ * recover a closure from disk anyway). The frozen copy keeps the DECLARATIVE half (embedModelId,
+ * thresholds) so introspection stays honest; a resume that recovers limits from the journal runs with
+ * the semantic gate INACTIVE (double opt-in unmet: no embed) unless the caller re-supplies it —
+ * fail-open, same posture as an unreachable embedder. */
 function serializableLimits(limits: RunLimits): RunLimits {
   const dup = limits.sideEffectDuplicates;
   if (!dup || typeof dup !== 'object' || !dup.semantic) return limits;
@@ -755,38 +813,102 @@ function serializableLimits(limits: RunLimits): RunLimits {
     ? { ...semRest, judge: { ...(({ complete: _complete, ...j }) => j)(judge) } as unknown as typeof judge }
     : semRest;
   // `embedStripped` marks the round-trip copy: the validator treats it as "declaratively present,
-  // Functionally inactive" instead of throwing on the missing closure — WITHOUT the mark, a user who
-  // Simply forgot `embed` would get silent inactivity (false confidence), so the bare-missing case
-  // Still throws (denetçi blokeri: the unmarked strip killed EVERY resume of a semantic-active run,
-  // Including approving the gate's own question).
+  // functionally inactive" instead of throwing on the missing closure — WITHOUT the mark, a user who
+  // simply forgot `embed` would get silent inactivity (false confidence), so the bare-missing case
+  // still throws (denetçi blokeri: the unmarked strip killed EVERY resume of a semantic-active run,
+  // including approving the gate's own question).
   return { ...limits, sideEffectDuplicates: { ...dup, semantic: { ...semStripped, embedStripped: true } as unknown as typeof dup.semantic } };
 }
 
+/**
+ * The child toolCallIds this run has SURFACED to a human — read back off the parent's own records.
+ *
+ * A nested suspend writes the parent a `suspended` tool record whose sentinel is `kind: 'nested'` and
+ * whose `nested.interrupts[]` carries the child's questions verbatim (agent-tool.ts). `run.ts`'s
+ * `surfacedInterrupts` turns exactly that list into what the caller sees, so this function reads the
+ * same field from the other direction: given a parent, which ids did we ask about?
+ *
+ * COLD PATH ONLY — called from the input-fingerprint mismatch branch, after escape 1 has already
+ * failed, and at most once per admissibility check (the caller memoises it). Scoped to
+ * `${runId}:tool:`, so a neighbour run whose id EXTENDS this one is not read (its keys sit under
+ * `${runId}:<rest>:tool:`), and capped: a run with thousands of tool records is not worth an
+ * unbounded scan to answer a question about a handful of pending approvals.
+ *
+ * Degrades to "found nothing" without `listKeys` — the same fail-shut direction the escape already
+ * had, since an unrecognised id simply falls through to the 409 it would have gotten anyway.
+ */
+async function nestedSurfacedToolCallIds(journal: Journal, runId: string, max = 500): Promise<Set<string>> {
+  const out = new Set<string>();
+  const lk = journal.listKeys;
+  if (typeof lk !== 'function') return out;
+  const keys = await lk.call(journal, runKeys.tool(runId, ''));
+  for (const key of keys.slice(0, max)) {
+    const rec = await journal.get<{
+      status?: string;
+      output?: { __gnl_suspend?: { kind?: string; nested?: { interrupts?: Array<{ toolCallId?: string }> } } };
+    }>(key);
+    if (rec?.status !== 'suspended') continue;
+    const sus = rec.output?.__gnl_suspend;
+    if (sus?.kind !== 'nested') continue;
+    for (const i of sus.nested?.interrupts ?? []) if (i?.toolCallId) out.add(i.toolCallId);
+  }
+  return out;
+}
+
 /** FAZ-4 admissibility gate — runs right after assertThreadOwnership in BOTH entry points, BEFORE
- * RunStarted (a refused attempt must not flip outcome state, same K2/K3 posture as the thread
- * Guard). Order: tombstone → actor → input fingerprint. Every refusal optionally lands in the
- * Idem-conflict ledger (PII-free) before it is thrown. */
+ * runStarted (a refused attempt must not flip outcome state, same K2/K3 posture as the thread
+ * guard). Order: tombstone → actor → owner → input fingerprint. Every refusal optionally lands in the
+ * idem-conflict ledger (PII-free) before it is thrown.
+ *
+ * PACKAGE #3 added the last two rows of that order, and both of them are conditional on ONE thing:
+ * whether the runId is one the engine minted from a workKey (`isDerivedRunId`). Inside `run1_` the id
+ * is a hash of (agent, scope kind, scope value, workKey), which changes what an id MEANS — it stops
+ * being a name the caller invented and becomes a claim about whose work this is and what the work is.
+ * Two checks follow from that, and neither one is a flag:
+ *
+ *   OWNER (§6, condition 2b) — the subject frozen at birth must match the subject asking now.
+ *   INPUT (§5, condition 4)  — the fingerprint is verified with or without `strictInput`.
+ *
+ * Outside `run1_` nothing here changed by a byte: a raw runId is the caller's own name for their own
+ * key, `strictInput` stays opt-in, and re-driving one from a different subject stays legal (hosts hand
+ * runs between workers under their own rules). The asymmetry is the point — the engine only enforces
+ * the promises it made itself. */
 async function assertRunAdmissible(
   journal: Journal,
   runId: string,
   frozen: FrozenInput | undefined,
   rawInputHash: string,
-  opts: { strictInput?: boolean; conflictLedger?: boolean; auditOnReject?: 'best-effort' | 'require'; tombstonePolicy?: 'ignore' | 'reject'; actor?: string; approvals?: Record<string, boolean> },
+  opts: { strictInput?: boolean; conflictLedger?: boolean; auditOnReject?: 'best-effort' | 'require'; tombstonePolicy?: 'ignore' | 'reject'; actor?: string; resourceId?: string; approvals?: Record<string, boolean> },
 ): Promise<void> {
+  // Computed once: three decisions below read it, and it is a regex over a short string either way.
+  const derived = isDerivedRunId(runId);
   const refuse = async (err: Error, code: string, detail: Record<string, string | number>): Promise<never> => {
     if (opts.conflictLedger) await recordIdemConflict(journal, { runId, code, ...(opts.actor ? { actor: opts.actor } : {}), detail }, opts.auditOnReject ?? 'best-effort');
     throw err;
   };
-  if (opts.tombstonePolicy === 'reject') {
-    const tomb = await journal.get<{ at?: number }>(`${runId}:swept`);
+  // Derived ids don't wait for a profile: the caller never chose `run1_...` and cannot choose a
+  // different one, so a swept-and-silently-rerun outcome would be invisible to them. Same reasoning
+  // as the workflow gate (assertWorkflowAdmissible), where the check is unconditional too.
+  if (opts.tombstonePolicy === 'reject' || derived) {
+    const tomb = await journal.get<{ at?: number; workKeyHash?: string; workScope?: WorkScopeKind }>(`${runId}:swept`);
     if (tomb !== undefined) {
+      // What the marker knows about the dead run travels with the refusal (see RunSweptError.detail
+      // and retention.ts's `tombstoneFor`): a hash and a scope kind, never a workKey. The ledger gets
+      // the same two — it is the "codes, hashes, never content" record, and a hash is what it is for.
+      const swept = {
+        ...(tomb.at !== undefined ? { sweptAt: tomb.at } : {}),
+        ...(tomb.workKeyHash ? { workKeyHash: tomb.workKeyHash } : {}),
+        ...(tomb.workScope ? { workScope: tomb.workScope } : {}),
+      };
       await refuse(
         new RunSweptError(
-          `@gnldev/durable: run '${runId}' was retention-swept — its dedup window died with it, and a late retry must not silently re-run the side effects (tombstonePolicy 'reject'). Use a fresh runId, or verify the external system first.`,
-          { runId, ...(tomb.at !== undefined ? { sweptAt: tomb.at } : {}) },
+          derived
+            ? `@gnldev/durable: the run this workKey names was retention-swept — its dedup window died with it, and a late retry must not silently re-run the side effects. Name the work differently (a new workKey means a new job), or verify the external system first.`
+            : `@gnldev/durable: run '${runId}' was retention-swept — its dedup window died with it, and a late retry must not silently re-run the side effects (tombstonePolicy 'reject'). Use a fresh runId, or verify the external system first.`,
+          { runId, ...swept },
         ),
         'run_swept',
-        tomb.at !== undefined ? { sweptAt: tomb.at } : {},
+        swept,
       );
     }
   }
@@ -800,26 +922,71 @@ async function assertRunAdmissible(
       { ownerActor: frozen.actor, requestedActor: opts.actor },
     );
   }
-  if (opts.strictInput && frozen?.hash !== undefined && frozen.hash !== rawInputHash) {
+  // THE OWNER OF A DERIVED RUN. `resourceId` was already frozen at birth (persistInput, first-wins);
+  // what was missing was anybody comparing it. §6 puts the comparison HERE rather than at the HTTP
+  // edge for two reasons the decision measured: the edge's `ownershipDenied` is not unconditional,
+  // and an embedded deployment has no edge at all.
+  //
+  // BOTH SIDES MUST BE PRESENT, exactly like the actor row above. A call with no subject is the
+  // operator/org case the whole ownership rule exempts, and a run with no frozen subject never
+  // claimed one — refusing either would be inventing an owner in order to enforce ownership. The
+  // honest bound of that choice: on the RAW `runDurable` surface a caller may hand a derived id with
+  // no resourceId and pass; the surfaces that MINT derived ids (the registry gate, package #3) refuse
+  // a scope with no address before they ever get here, which is where fail-closed belongs.
+  if (derived && frozen?.resourceId && opts.resourceId && frozen.resourceId !== opts.resourceId) {
+    await refuse(
+      new RunOwnerMismatchError(
+        `@gnldev/durable: run '${runId}' belongs to a different subject — this call names '${opts.resourceId}'. ` +
+          'An engine-derived id is a hash of a scope and a workKey, so two callers can compute the same id; ' +
+          "the run itself is still one person's. If this work really is shared, declare it in an org workScope " +
+          'and give the callers a scope they both belong to.',
+        { runId, owner: frozen.resourceId, requested: opts.resourceId },
+      ),
+      'run_owner_mismatch',
+      { owner: frozen.resourceId, requested: opts.resourceId },
+    );
+  }
+  if ((opts.strictInput || derived) && frozen?.hash !== undefined && frozen.hash !== rawInputHash) {
     // ESCAPE 1 — driving the run with the frozen record's OWN stored content is by definition a
-    // Replay, not new content: resumeRun feeds `:input` back verbatim, and its messages are the
+    // replay, not new content: resumeRun feeds `:input` back verbatim, and its messages are the
     // POST-prep view while `hash` fingerprints the PRE-prep raw input (see persistInput) — without
-    // This, forwarding strictInput through resume would self-409 every memory-backed crash-resume.
+    // this, forwarding strictInput through resume would self-409 every memory-backed crash-resume.
     // One extra hash, computed only on the mismatch path.
     if (rawInputHash === argsHash({ prompt: frozen.prompt, messages: frozen.messages, system: frozen.system })) return;
     // ESCAPE 2 — bound to the JOURNAL's approval trace (heyet İhtilaf B), NOT to the mere presence
-    // Of an approvals field: the addressed toolCallId must have a RECORD in this run. Any status, on
-    // Purpose: after the approval lands the record moves suspended→succeeded/denied, and the SAME
-    // Re-POST retried by an at-least-once client must replay — answering a request that deserves
-    // Idempotent replay with "use a fresh runId" would be the contract lying (denetçi K18 bulgusu).
+    // of an approvals field: the addressed toolCallId must have a RECORD in this run. Any status, on
+    // purpose: after the approval lands the record moves suspended→succeeded/denied, and the SAME
+    // re-POST retried by an at-least-once client must replay — answering a request that deserves
+    // idempotent replay with "use a fresh runId" would be the contract lying (denetçi K18 bulgusu).
     // An approval naming a toolCallId this run never journaled still earns nothing.
+    //
+    // "IN THIS RUN" HAD TO GROW ONE FRAME. A nested suspend surfaces the CHILD's toolCallId — that is
+    // the whole point of `surfacedInterrupts`, and nested-suspend-visibility.test.ts pins it: the
+    // human must answer with the id they were shown, because the parent's proxy record can stand for
+    // several child questions at once. But that id lives in the CHILD's journal, so the lookup above
+    // missed every one of them, and a client following the documented contract got a 409 the moment
+    // its body grew by a turn — which is exactly what a chat surface's approval round looks like.
+    // The escape now also recognises the ids this run PUT ON SCREEN (`nestedSurfacedToolCallIds`),
+    // read from the parent's own suspended records. A made-up id still earns nothing.
+    let surfaced: Set<string> | undefined;
     for (const toolCallId of Object.keys(opts.approvals ?? {})) {
       const rec = await journal.get<{ status?: string }>(runKeys.tool(runId, toolCallId));
       if (rec !== undefined) return;
+      surfaced ??= await nestedSurfacedToolCallIds(journal, runId);
+      if (surfaced.has(toolCallId)) return;
     }
+    // TWO SENTENCES FOR ONE REFUSAL, because the caller of a derived run did not choose this id and
+    // cannot "use a fresh" one — the advice would name a thing they never touched. Inside `run1_` the
+    // id came from THEIR workKey, so the remedy is stated in the vocabulary they actually hold: a new
+    // job needs a new name. (§5's last line asks for exactly this; the hashes stay in `detail` either
+    // way, which is what a log correlates on.)
     await refuse(
       new RunInputMismatchError(
-        `@gnldev/durable: run '${runId}' was started with DIFFERENT input (fingerprint ${frozen.hash} != ${rawInputHash}) — one runId carries one request; use a fresh runId for new content.`,
+        derived
+          ? `@gnldev/durable: this workKey already names DIFFERENT work (fingerprint ${frozen.hash} != ${rawInputHash}) — ` +
+              'one workKey is one job, and reusing it means "retry that job", never "here is a new one". ' +
+              'A new job needs a new workKey; retrying the old one means sending the same content again.'
+          : `@gnldev/durable: run '${runId}' was started with DIFFERENT input (fingerprint ${frozen.hash} != ${rawInputHash}) — one runId carries one request; use a fresh runId for new content.`,
         { runId, expectedHash: frozen.hash, actualHash: rawInputHash },
       ),
       'run_input_mismatch',
@@ -831,22 +998,22 @@ async function assertRunAdmissible(
 /**
  * (memory-recall half, opt-in `limits.taintScope: 'thread'`): inherit thread taint at RUN
  * START — before any tool executes. Memory recall injects prior-thread messages into a NEW runId with
- * A clean per-run taint slate; if a prior turn on this thread was tainted (thread key claimed by
- * MarkRunTainted under the same opt-in), mark THIS run tainted now so the `taintedSideEffects` ladder
- * Fires for its side effects. Provenance: the ORIGINAL source tool/call is carried, `source` becomes
+ * a clean per-run taint slate; if a prior turn on this thread was tainted (thread key claimed by
+ * markRunTainted under the same opt-in), mark THIS run tainted now so the `taintedSideEffects` ladder
+ * fires for its side effects. Provenance: the ORIGINAL source tool/call is carried, `source` becomes
  * `'inherited'`, and `reason` names the thread. First-wins/idempotent (a resumed run that is already
- * Tainted keeps its original mark). No opt-in or no threadId → zero reads, byte-for-byte old behavior.
+ * tainted keeps its original mark). No opt-in or no threadId → zero reads, byte-for-byte old behavior.
  * The SINGLE shared hook for runDurable and streamDurable — parity must not be broken.
  *
  * TAINT PHASE 3 (opt-in `limits.taintLifetime: 'content-window'`): before inheriting, check whether
- * The tainting content is STILL VISIBLE to the model this run — present in the messages actually
- * Loaded (recent + recalled: `visible.messages` is `rest.messages` AFTER memory/processor prep, which
- * Is exactly what goes to the model) or in working memory (lazy read via the attached Memory). Absent
- * Everywhere → the thread taint is EXPIRED for this run: do NOT inherit. The thread key is kept
+ * the tainting content is STILL VISIBLE to the model this run — present in the messages actually
+ * loaded (recent + recalled: `visible.messages` is `rest.messages` AFTER memory/processor prep, which
+ * is exactly what goes to the model) or in working memory (lazy read via the attached Memory). Absent
+ * everywhere → the thread taint is EXPIRED for this run: do NOT inherit. The thread key is kept
  * LATENT (not cleared) on purpose — a later run whose semantic recall re-surfaces the poisoned
- * Message sees it visible again and the taint REVIVES. Every uncertain case keeps the inherit (see
- * IsThreadTaintExpired in taint.ts). A RESUMED tainted run is unaffected by expiry: its own run-taint
- * Key was already claimed on the original execution, so skipping the inherit changes nothing.
+ * message sees it visible again and the taint REVIVES. Every uncertain case keeps the inherit (see
+ * isThreadTaintExpired in taint.ts). A RESUMED tainted run is unaffected by expiry: its own run-taint
+ * key was already claimed on the original execution, so skipping the inherit changes nothing.
  */
 async function inheritThreadTaint(
   journal: Journal,
@@ -876,6 +1043,46 @@ async function inheritThreadTaint(
   });
 }
 
+/**
+ * Has anyone already been told that this process throws `threadId`s away? One flag for the lifetime of
+ * the module, which is the lifetime of the process.
+ *
+ * A wiring mistake is worth exactly one sentence. Repeating it per request would put a line in the log
+ * for every turn of every conversation, and a warning that appears ten thousand times is one people
+ * learn to filter — which leaves the project back where it started, except noisier.
+ */
+let warnedThreadIgnored = false;
+
+/**
+ * A `threadId` arrived and there is no memory to put it in.
+ *
+ * WHY THIS IS NOT AN ERROR. Every memory branch here is guarded by `memory && threadId`, so the run
+ * itself is fine: it does the work, returns the answer, and journals it. What it does not do is
+ * remember — and until this sentence existed, nothing anywhere said so. The id was accepted, frozen
+ * into `:input`, surfaced on `RunSummary.threadId`, and used by Studio to group runs into a
+ * conversation that had no history behind it. Every one of those is a reason to believe threads work.
+ *
+ * WHY IT IS NOT SILENCEABLE BY ACCIDENT. `memory: false` is the opt-out, and it is a DIFFERENT value
+ * from "absent" on purpose: a project that knows it wants no memory writes one word and never sees
+ * this again, while a project that simply forgot keeps the sentence. Collapsing the two would have
+ * made the warning unsilenceable for the correct case, which is how warnings get turned off wholesale.
+ *
+ * Shaped as error → note → help: what already happened, what it costs, and a line to copy.
+ */
+function warnThreadIgnored(threadId: string, memory: Memory | false | undefined): void {
+  if (memory !== undefined || warnedThreadIgnored) return;
+  warnedThreadIgnored = true;
+  console.warn(
+    `@gnldev/durable: threadId '${threadId}' was accepted and then ignored — no memory is attached to this run.\n` +
+    '  note: the run still works; it just does not remember. Thread history is neither loaded into the\n' +
+    '        prompt nor appended when the turn ends, so the second message in this conversation starts\n' +
+    '        from nothing — and the id still shows up on the run summary and in Studio, which is why\n' +
+    '        this reads as working until someone asks a follow-up question.\n' +
+    '  help: `gnl add memory` writes src/memory.ts, then set `memoryFactory` in gnl.config.ts.\n' +
+    '        Meant to run without it? Pass `memory: false` (or set it in the config) and this stops.',
+  );
+}
+
 // Common fields for runDurable/streamDurable (the slice used in memory/processor preparation).
 type PreparedInput = { prompt?: unknown; messages?: any[]; system?: InstructionsLike };
 
@@ -886,12 +1093,12 @@ type PreparedInput = { prompt?: unknown; messages?: any[]; system?: Instructions
  */
 /**
  * WRITE-AHEAD dedupe input: does the tail of the loaded history already END with exactly the
- * Incoming message(s)? True on a retry of a turn whose write-ahead append (see writeAheadIncoming)
- * Already stored them — SAME runId (crash between append and completion) or a NEW runId re-sending
- * The identical text (studio playground's retry generates a fresh runId per attempt).
+ * incoming message(s)? True on a retry of a turn whose write-ahead append (see writeAheadIncoming)
+ * already stored them — SAME runId (crash between append and completion) or a NEW runId re-sending
+ * the identical text (studio playground's retry generates a fresh runId per attempt).
  * Compared by JSON shape: both sides come from the same construction (the caller's message object,
- * Roundtripped through the store), so key order is stable. Best-effort on purpose — a false NEGATIVE
- * Merely reproduces the pre-write-ahead behavior for that turn (a duplicate row), never worse.
+ * roundtripped through the store), so key order is stable. Best-effort on purpose — a false NEGATIVE
+ * merely reproduces the pre-write-ahead behavior for that turn (a duplicate row), never worse.
  */
 function historyEndsWithIncoming(history: any[], incoming: any[]): boolean {
   if (incoming.length === 0 || history.length < incoming.length) return false;
@@ -904,22 +1111,22 @@ function historyEndsWithIncoming(history: any[], incoming: any[]): boolean {
 
 /**
  * F1 — durability review: server-owned-history contract, enforced at the core. useChat-style
- * Clients POST their ENTIRE message history every turn (see @gnldev/chat-adapter chat-route.ts — the
- * Client's UIMessage[] is converted wholesale); with memory+threadId that whole history became
+ * clients POST their ENTIRE message history every turn (see @gnldev/chat-adapter chat-route.ts — the
+ * client's UIMessage[] is converted wholesale); with memory+threadId that whole history became
  * `incoming`, so every turn re-persisted and re-prompted the echoed early turns — compounding
- * Duplication. Exact-equality dedupe can't catch it: the client's echo of an assistant turn
+ * duplication. Exact-equality dedupe can't catch it: the client's echo of an assistant turn
  * (UIMessage→ModelMessage) is structurally different from the `response.messages` shape memory
- * Stored, so JSON comparison never matches.
+ * stored, so JSON comparison never matches.
  *
  * The rule instead keys off ROLES: once a thread HAS stored history, any assistant/tool message
- * Inside `incoming` can only be an echo of a previous server turn (in a server-memory conversation
- * The client is not a source of assistant output) — so the genuinely NEW input is the block after
- * The LAST non-user message. A first turn (empty history) is left untouched on purpose: seeding a
- * New thread with a few-shot transcript is legitimate and still persists wholesale.
+ * inside `incoming` can only be an echo of a previous server turn (in a server-memory conversation
+ * the client is not a source of assistant output) — so the genuinely NEW input is the block after
+ * the LAST non-user message. A first turn (empty history) is left untouched on purpose: seeding a
+ * new thread with a few-shot transcript is legitimate and still persists wholesale.
  *
  * WITH ONE EXCEPTION, measured: an ASSISTANT PREFILL. Ending a turn with a partial assistant message
  * ("Cevap:", a `{` to force JSON) is an ordinary provider-supported pattern, and the role rule read it
- * As an echo of everything — the anchor was the turn's own LAST message, so the slice came out EMPTY
+ * as an echo of everything — the anchor was the turn's own LAST message, so the slice came out EMPTY
  * and the question vanished with `incomingCount: 0`, no loss stamp and no warning (a thread holding an
  * answer to a question it does not contain). So a TRAILING block of assistant/tool messages is
  * skipped when looking for the echo anchor, which also keeps the full-history + prefill combination
@@ -1199,8 +1406,8 @@ async function prepareMemoryContext(
     // F1: strip client-echoed history first (full-history POSTing clients), THEN the retry dedupe.
     const incoming = dropEchoedHistory(history, rawIncoming, echoCompare);
     // Retry dedupe (see historyEndsWithIncoming): when the loaded history already ends with this
-    // Turn's incoming (a prior attempt write-ahead-appended it), do NOT concat it again — the model
-    // Would see the user message twice and writeAheadIncoming would store it twice.
+    // turn's incoming (a prior attempt write-ahead-appended it), do NOT concat it again — the model
+    // would see the user message twice and writeAheadIncoming would store it twice.
     const alreadyStored = historyEndsWithIncoming(history, incoming);
     rest.messages = alreadyStored ? [...history] : [...history, ...incoming];
     if (mc.system) rest.system = [systemText(rest.system), mc.system].filter(Boolean).join('\n\n');
@@ -1219,7 +1426,7 @@ async function prepareMemoryContext(
     return { incoming, wmTool: mc.tools, alreadyStored, provenance, historyCount: history.length, ...(rid ? { adoptedResourceId: rid } : {}) };
   }
   // Legacy path (BasicMemory / SemanticMemory) — provenance is the limited truth this path can see:
-  // Everything loaded counts as the recent window (no recall refs, no OM).
+  // everything loaded counts as the recent window (no recall refs, no OM).
   const history = await memory.getMessages(threadId, { query: lastUserText(rawIncoming), resourceId: rid });
   const incoming = dropEchoedHistory(history, rawIncoming, echoCompare);
   const alreadyStored = historyEndsWithIncoming(history, incoming);
@@ -1354,8 +1561,11 @@ const BOUNDARY_LOST = -1;
  */
 const PROMPT_IS_TURN = -2;
 
-/** What `persistInput` froze under `:input` (plus the format stamp, which readers ignore). */
-type FrozenInput = { prompt?: unknown; messages?: unknown; system?: unknown; threadId?: string; hash?: string; actor?: string };
+/** What `persistInput` froze under `:input` (plus the format stamp, which readers ignore).
+ *  `resourceId` was always WRITTEN here (see persistInput) and simply never listed — the type
+ *  described the fields the replay path read. The derived-run ownership gate reads it, so it is spelled
+ *  out now rather than reached for through a cast. */
+type FrozenInput = { prompt?: unknown; messages?: unknown; system?: unknown; threadId?: string; resourceId?: string; hash?: string; actor?: string; workKey?: string; workScope?: WorkScope };
 
 /**
  * NOT EVERY `:input` IS A FROZEN AGENT INPUT.
@@ -2078,7 +2288,7 @@ function reportIncomingLoss(
 
 /** 8.7 Tool processors (toolFilter/toolSearch): restrict the tool set the model sees.
  *  `input` is added to the ctx (toolSearch uses the last user message as a signal); async
- *  Processors are supported — a non-deterministic selection is journaled via ctx.step (resume gets the same subset). */
+ *  processors are supported — a non-deterministic selection is journaled via ctx.step (resume gets the same subset). */
 async function applyToolProcessors(
   processors: Processor[],
   procCtx: ProcessorCtx,
@@ -2095,10 +2305,10 @@ async function applyToolProcessors(
   return out;
 }
 
-// Review finding A (see task note): previously claiming the marker with boolean `true`/absent meant
-// That when append threw a TRANSIENT error, the marker was left PERMANENTLY 'claimed' — a legitimate
-// Retry with the same runId ALWAYS lost the claim, so append was skipped FOREVER (permanent loss of
-// Conversation history; the old get→put was at least self-healing). Fix: a two-phase marker —
+// review finding A (see task note): previously claiming the marker with boolean `true`/absent meant
+// that when append threw a TRANSIENT error, the marker was left PERMANENTLY 'claimed' — a legitimate
+// retry with the same runId ALWAYS lost the claim, so append was skipped FOREVER (permanent loss of
+// conversation history; the old get→put was at least self-healing). Fix: a two-phase marker —
 // `{status:'pending', startedAt}` (append has NOT finished yet, only CLAIMED) → promoted to `true`
 // (DONE) once append SUCCEEDS.
 const MEM_APPEND_TTL_MS = 60_000; // staleness threshold for a 'pending' record — same order of magnitude as the H7/§5.3 claim TTLs.
@@ -2110,11 +2320,11 @@ type MemAppendMarker = true | { status: 'pending'; startedAt: number };
  * Returns `undefined` → SKIP the append: the marker is `true` (finished) or another worker has a
  * FRESH (< MEM_APPEND_TTL_MS) pending claim (in-flight, no self-heal needed).
  * Returns an object → YOU do the append: either you won a fresh `claim` on an empty key, or you
- *    Took over a STALE pending claim (crash/transient-error self-heal — see task note finding A). When
- *    Done, promote it to `true` with `markMemoryAppendDone(journal, marker, the-returned-object)`.
+ *    took over a STALE pending claim (crash/transient-error self-heal — see task note finding A). When
+ *    done, promote it to `true` with `markMemoryAppendDone(journal, marker, the-returned-object)`.
  * Takeover is atomic if putIfMatch(CAS) is available: even if two workers see the same stale pending
- * Claim, only ONE takes it over. Otherwise falls back to a best-effort put — the SAME narrow window
- * As the old get→put (documented, the core-hardening review).
+ * claim, only ONE takes it over. Otherwise falls back to a best-effort put — the SAME narrow window
+ * as the old get→put (documented, the core-hardening review).
  */
 async function claimMemoryAppend(
   journal: Journal,
@@ -2139,11 +2349,11 @@ async function claimMemoryAppend(
 /**
  * Promotes the pending record returned by `claimMemoryAppend` to `true` AFTER the append SUCCEEDS.
  * If putIfMatch is available, uses CAS (writes only if the record is still OUR pending claim — if a
- * Takeover happened, it's a no-op, harmless: the new owner will already do/have done its own append).
+ * takeover happened, it's a no-op, harmless: the new owner will already do/have done its own append).
  * NARROW WINDOW (documented, the SAME window as the old get→put): if append succeeds but a crash
- * Happens BEFORE this call starts, the marker stays 'pending' → the NEXT retry takes it over after
- * The TTL and tries the append ONE MORE TIME (double-append) — the safer side compared to a missing
- * Message (old behavior: lost forever), and the window is very narrow (about the width of one put call).
+ * happens BEFORE this call starts, the marker stays 'pending' → the NEXT retry takes it over after
+ * the TTL and tries the append ONE MORE TIME (double-append) — the safer side compared to a missing
+ * message (old behavior: lost forever), and the window is very narrow (about the width of one put call).
  *
  * WHAT "THE SAFER SIDE" COSTS, stated plainly, because the sentence above undersells it. The repeated
  * append writes the WHOLE turn again, and the assistant message it carries holds the same
@@ -2178,22 +2388,22 @@ async function markMemoryAppendDone(
 
 /**
  * WRITE-AHEAD user-message append: persist this turn's `incoming` message(s) to memory BEFORE the
- * First model call. The thread ROW was already write-ahead (AgentMemory.loadContext →
- * EnsureThreadIndexed creates it, titled from the first user message, before any token arrives) —
- * But the MESSAGES only landed at completion, so a run that died before its first token left a
- * Titled-but-EMPTY thread: the user's own message was gone from every read surface even though the
- * Journal's `:input` still held it. Appending `incoming` here closes that asymmetry; the
- * Completion-time append (both call sites below) then persists only the PRODUCED messages.
+ * first model call. The thread ROW was already write-ahead (AgentMemory.loadContext →
+ * ensureThreadIndexed creates it, titled from the first user message, before any token arrives) —
+ * but the MESSAGES only landed at completion, so a run that died before its first token left a
+ * titled-but-EMPTY thread: the user's own message was gone from every read surface even though the
+ * journal's `:input` still held it. Appending `incoming` here closes that asymmetry; the
+ * completion-time append (both call sites below) then persists only the PRODUCED messages.
  *
  * Idempotency is two-layered, mirroring the completion marker:
  * `alreadyStored` (prepareMemoryContext's tail-dedupe) — covers retries across DIFFERENT runIds
- *    Re-sending the identical text (the playground mints a fresh runId per attempt).
+ *    re-sending the identical text (the playground mints a fresh runId per attempt).
  * the `memUserAppended` two-phase marker — covers SAME-runId retries racing concurrently, where
- *    The tail check can't see the other worker's in-flight append.
+ *    the tail check can't see the other worker's in-flight append.
  *
  * DELIBERATELY NOT try/caught: this runs pre-model, so failing the run here is cheap (no tokens
- * Spent) and honest — completing a turn whose user message could not be persisted would produce a
- * Transcript with an answer but no question.
+ * spent) and honest — completing a turn whose user message could not be persisted would produce a
+ * transcript with an answer but no question.
  */
 async function writeAheadIncoming(
   journal: Journal,
@@ -2212,12 +2422,12 @@ async function writeAheadIncoming(
 
 /**
  * F4 — durability review: a SAME-runId re-entry (resume after suspension, retry) whose
- * Write-ahead already landed, but where OTHER turns were appended to the thread in between — the
- * Tail-dedupe no longer matches (this run's incoming isn't the thread tail anymore), so the prompt
- * Would carry the question twice: once inside the loaded history, once re-concatenated at the end.
+ * write-ahead already landed, but where OTHER turns were appended to the thread in between — the
+ * tail-dedupe no longer matches (this run's incoming isn't the thread tail anymore), so the prompt
+ * would carry the question twice: once inside the loaded history, once re-concatenated at the end.
  * Memory itself was never at risk (the memUserAppended marker blocks the re-append); this is purely
- * A prompt-fidelity fix. Keyed off the marker being DONE plus an explicit containment check — if
- * Compaction/windowing dropped the stored copy out of the loaded context, the re-concatenated one is
+ * a prompt-fidelity fix. Keyed off the marker being DONE plus an explicit containment check — if
+ * compaction/windowing dropped the stored copy out of the loaded context, the re-concatenated one is
  * KEPT (prompt correctness beats deduplication when the two conflict). Returns the updated
  * `alreadyStored`.
  */
@@ -2327,15 +2537,15 @@ async function appendBatchOnce(
 
 /**
  * TAINT PHASE 3 (opt-in `taintLifetime: 'content-window'`): after a successful memory append, stamp
- * The appended messages' content hashes into the thread's provenance record IF untrusted content
+ * the appended messages' content hashes into the thread's provenance record IF untrusted content
  * DIRECTLY entered this run (source 'tool'/'processor' — `readDirectRunTaint`; runs that only
  * INHERITED taint are deliberately NOT stamped, see taint.ts directTaintKey). ALL of the run's
- * Appended messages are stamped, not just the untrusted tool result — conservative over-stamping (the
- * Model's same-turn output may quote the poison), safe direction. The SINGLE shared hook for the
- * RunDurable and streamDurable append sites — parity must not be broken. Runs inside the append
- * Marker's `pending` window → written once per run; a crash between append and this write leaves NO
- * Provenance, which the expiry check treats as "cannot prove absence" (keeps taint — fail-safe), and
- * The marker-takeover retry re-appends AND re-stamps. Never throws (recordTaintProvenance discipline).
+ * appended messages are stamped, not just the untrusted tool result — conservative over-stamping (the
+ * model's same-turn output may quote the poison), safe direction. The SINGLE shared hook for the
+ * runDurable and streamDurable append sites — parity must not be broken. Runs inside the append
+ * marker's `pending` window → written once per run; a crash between append and this write leaves NO
+ * provenance, which the expiry check treats as "cannot prove absence" (keeps taint — fail-safe), and
+ * the marker-takeover retry re-appends AND re-stamps. Never throws (recordTaintProvenance discipline).
  */
 async function recordAppendedTaintProvenance(
   journal: Journal,
@@ -2352,7 +2562,7 @@ async function recordAppendedTaintProvenance(
 /**
  * Shadow the AI SDK result's getter-only fields (text/response) with an own data property.
  * If the own field turns out to be non-configurable (an AI SDK version change), defineProperties
- * Throws → fall back to a prototype-chained copy: returns a shadow copy without touching the original object.
+ * throws → fall back to a prototype-chained copy: returns a shadow copy without touching the original object.
  */
 function shadowProps<T extends object>(obj: T, props: Record<string, unknown>): T {
   const descriptors: PropertyDescriptorMap = {};
@@ -2367,18 +2577,18 @@ function shadowProps<T extends object>(obj: T, props: Record<string, unknown>): 
 }
 
 // D4-retry bounded TURN-level retry-with-feedback ladder for
-// RunDurableInner ONLY (see StreamDurableArgs.processors doc / streamDurable body for the honest stream
-// Bound — a stream that already flushed to the client cannot be retried, that's a different contract).
+// runDurableInner ONLY (see StreamDurableArgs.processors doc / streamDurable body for the honest stream
+// bound — a stream that already flushed to the client cannot be retried, that's a different contract).
 // A processor's processOutputStep/processOutput may throw ProcessorRetry to mean "this turn's output is
-// Unacceptable — give the model my feedback and try the WHOLE turn again." We do NOT retry a single
-// Step inside generateText's own tool loop (we don't own that loop): we catch the throw/rejection,
-// Append the feedback as a NEW user message to the SAME options.messages the turn started with (the
-// Rejected attempt's own output is deliberately NOT re-shown — a processor just deemed it unacceptable,
-// Re-injecting it back into context would undercut the point), and call generateText(options) again.
+// unacceptable — give the model my feedback and try the WHOLE turn again." We do NOT retry a single
+// step inside generateText's own tool loop (we don't own that loop): we catch the throw/rejection,
+// append the feedback as a NEW user message to the SAME options.messages the turn started with (the
+// rejected attempt's own output is deliberately NOT re-shown — a processor just deemed it unacceptable,
+// re-injecting it back into context would undercut the point), and call generateText(options) again.
 // `options.model`/`options.tools`/`options.onStepFinish` are built ONCE by the caller and REUSED across
-// Attempts on purpose: withDurableModel's step counter lives in that one closure, so the retry's model
-// Steps continue from where the prior attempt left off onto FRESH journal keys — no collision (see
-// Durable-model.ts). A run with no ProcessorRetry-throwing processor never takes the catch branch below
+// attempts on purpose: withDurableModel's step counter lives in that one closure, so the retry's model
+// steps continue from where the prior attempt left off onto FRESH journal keys — no collision (see
+// durable-model.ts). A run with no ProcessorRetry-throwing processor never takes the catch branch below
 // → byte-identical to pre-D4-retry behavior, zero new journal keys.
 const RETRY_LADDER_GLOBAL_CAP = 3;
 
@@ -2416,8 +2626,8 @@ async function runGenerateWithRetryLadder(
     }
     // Exactly-once + replay-deterministic (durableProcessorStep's memoize): on resume this returns the
     // SAME feedback from the journal instead of trusting the freshly re-thrown value — a replayed step
-    // Re-runs the processor too (see processOutputStep's REPLAY NOTE), but the decision acted on here is
-    // The journaled one, not a fresh re-consultation.
+    // re-runs the processor too (see processOutputStep's REPLAY NOTE), but the decision acted on here is
+    // the journaled one, not a fresh re-consultation.
     const decision = await durableProcessorStep(journal, runId, `retry:${attempt}`, () => ({
       feedback: err.feedback, processor: err.processor,
     }));
@@ -2441,7 +2651,7 @@ async function runGenerateWithRetryLadder(
     if (stepHookFailure.error !== undefined) throw stepHookFailure.error;
 
     // K1 + A block sentinel OR a tool-step limit stopped the composeStopWhen loop → convert
-    // To a real typed error and throw (unrelated to the retry ladder — never retried).
+    // to a real typed error and throw (unrelated to the retry ladder — never retried).
     const finishError = streamFinishError((result as any).steps ?? []);
     if (finishError) throw finishError;
 
@@ -2453,7 +2663,7 @@ async function runGenerateWithRetryLadder(
     }
 
     // 8.7 Output processors: run ONLY on a completed run (not suspended) — same as before D4-retry,
-    // Now with a catch for ProcessorRetry.
+    // now with a catch for ProcessorRetry.
     if (procCtx && interrupts.length === 0) {
       let pout: ProcessorOutput = {
         text: (result as any).text,
@@ -2468,7 +2678,7 @@ async function runGenerateWithRetryLadder(
         if (err instanceof ProcessorRetry) { await honorRetry(err); continue; }
         throw err;
       }
-      // Result.text/response may be getter-only → shadow with an own data property (assign would blow up).
+      // result.text/response may be getter-only → shadow with an own data property (assign would blow up).
       result = shadowProps(result, {
         text: pout.text,
         response: { ...(result as any).response, messages: pout.messages },
@@ -2534,6 +2744,39 @@ async function runGenerateWithRetryLadder(
  */
 const RESERVED_KEY_ROOTS = ['mem', 'xthr', 'xid', 'xrun', 'om', 'thread', 'lesson', 'sugg', 'suggstats', 'org', 'res'];
 
+/**
+ * Every `#` in this id sits inside a VALID embedded derived id — i.e. the engine put it there.
+ *
+ * THE BUG THIS EXISTS FOR, measured end to end before the line was written. A run that has been
+ * rolled over, forked or replayed is called `run1_<digest>#2` (`#fork-1`, `#replay-0`). When such a
+ * run delegates, the ENGINE builds the child's id: `nestedAgentRunId` returns
+ * `agent:run1_<digest>#2:<toolCallId>`, and `net:`/`wf:` produce the same shape. That string does not
+ * START with `run1_`, so it fell past the first branch and landed on the blanket `#` refusal below —
+ * the engine refusing an id the engine had just minted. Not an edge: a long-lived agent's FIRST
+ * delegation after a period handoff died there, permanently, with no id the caller could choose
+ * instead.
+ *
+ * THE FIX IS ON THE FILTER SIDE, deliberately. `nestedAgentRunId` stays a pure function of
+ * (parentRunId, toolCallId) — limits.ts (`sumSubRuns`) and retention.ts (the purge cascade) never
+ * observe a child being created, they RE-DERIVE its id from the parent's tool entries, so any
+ * escaping or rewriting there would make a purge miss a sub-agent's output.
+ *
+ * THE RULE IS THE SHAPE, NOT A PREFIX WHITELIST. Split on ':' — the separator the engine composes
+ * with — and require every segment that contains a '#' to be a whole derived id (`isDerivedRunId`,
+ * anchored). So `agent:run1_<32hex>#2:tc` passes and `benim#işim`, `order-1#2`,
+ * `agent:run1_zzz#2:tc`, `agent:run1_<hex>#2x:tc` and `agent:run1_<hex>#2#3:tc` all still throw.
+ * Listing `agent`/`wf`/`net` instead would bless the prefix rather than the spelling, and the next
+ * composite prefix would arrive with the same bug.
+ *
+ * The bare `run1_<digest>#2` never reaches here — it is judged by the first branch, unchanged.
+ */
+function onlyEmbeddedDerivedHashes(runId: string): boolean {
+  for (const segment of runId.split(':')) {
+    if (segment.includes('#') && !isDerivedRunId(segment)) return false;
+  }
+  return true;
+}
+
 /** Throws when a runId would claim (or corrupt) a key family that is not its own. */
 export function assertRunIdSafe(runId: unknown): asserts runId is string {
   if (typeof runId !== 'string' || runId.length === 0) {
@@ -2547,6 +2790,49 @@ export function assertRunIdSafe(runId: unknown): asserts runId is string {
   if (/[\u0000-\u001f\u007f\s]/.test(runId)) {
     throw new Error("@gnldev/durable: runId must not contain whitespace or control characters — it becomes a journal key.");
   }
+  // The engine's OWN namespace, and the one family on this list that the caller is allowed to spell
+  // — as long as they spell it exactly.
+  //
+  // `runDurable`/`resumeRun`/`forkRun` take a RAW runId and always will: a hash cannot be reversed,
+  // so a caller resuming derived work has nothing to hand back except the derived id itself (§7).
+  // That makes "refuse everything starting with run1_" the wrong rule; the rule is "refuse everything
+  // that WEARS the namespace without being minted by it". `run1_<32 lowercase hex>` with at most one
+  // execution suffix passes; `run1_deadbeef`, uppercase hex, and `run1_<hex>:child` do not.
+  //
+  // Why this is a reservation at all: inside run1_ the digest IS the ownership statement (§5 makes
+  // strictInput unconditional there, with no opt-out). An id that is shaped like a derived id but was
+  // typed by hand carries no such statement, and every gate downstream would read it as if it did.
+  //
+  // '#' is refused everywhere else because the execution axis is the engine's alphabet, not the
+  // caller's (§4). `run1_<hex>#2` means "the second deliberate execution of this exact work"; if
+  // `order-1#2` were also legal the character would mean one thing in one namespace and nothing in
+  // another, and the mapping back from id to workKey — which spans the suffix — would stop being a
+  // function. MEASURED before writing this: no code path in the repo mints a runId containing '#'.
+  //
+  // PACKAGE #4 CLOSED THE OTHER HALF, and the measurement is worth keeping: the three rerun paths
+  // used to paste text onto a runId (`time-travel.ts` `${src}:fork:${Date.now()}`, `rollover.ts`
+  // `${base}@${n}`, `regression.ts` `:replay:${Date.now()}:${seq}`). Given a DERIVED source, the first
+  // and the third produced strings that wear this prefix without the shape — i.e. they threw right
+  // here, from inside the engine, on a call the user made correctly. All three now branch on
+  // `parseDerivedRunId`: a derived source gets `#fork-<n>` / `#<n>` / `#replay-<seq>`, a raw source
+  // keeps its old spelling byte for byte. Two regimes on purpose — `#` stays unspellable outside
+  // `run1_`, and no journal written before today has to move.
+  if (runId.startsWith(DERIVED_RUN_ID_PREFIX)) {
+    if (!isDerivedRunId(runId)) {
+      throw new Error(
+        `@gnldev/durable: runId '${runId.slice(0, 60)}' uses '${DERIVED_RUN_ID_PREFIX}', which is reserved for ` +
+          'engine-derived ids — the engine mints them from a workKey as ' +
+          `'${DERIVED_RUN_ID_PREFIX}<32 lowercase hex>' with an optional '#<n≥2>', '#replay-<seq>' or ` +
+          "'#fork-<n>' suffix, and an id that only looks derived would be trusted like one. " +
+          'Choose an id outside this prefix.',
+      );
+    }
+  } else if (runId.includes('#') && !onlyEmbeddedDerivedHashes(runId)) {
+    throw new Error(
+      `@gnldev/durable: runId '${runId.slice(0, 60)}' contains '#', which the engine reserves for its ` +
+        "execution axis ('<derived id>#2' is the second deliberate run of the same work). Pick another separator.",
+    );
+  }
   const root = runId.split(':', 1)[0]!;
   if (RESERVED_KEY_ROOTS.includes(root) || root.startsWith('__')) {
     throw new Error(
@@ -2554,12 +2840,33 @@ export function assertRunIdSafe(runId: unknown): asserts runId is string {
       "runIds are journal key PREFIXES, and a retention sweep of this run would delete that family. Choose another id.",
     );
   }
+  // The other half of the same rule, and the one the family list cannot express: the two RECORD
+  // separators. `parseJournalKey` reads a key with `^(.*):(model|tool):.+$` — GREEDY, so the split
+  // lands at the LAST occurrence. A run called `pipeline:tool:x` writes `pipeline:tool:x:model:0`,
+  // which parses back as run `pipeline:tool:x` (fine) — but it also writes `pipeline:tool:x:input`,
+  // and every key it owns sits inside the namespace `parseJournalKey` reads as run `pipeline`,
+  // kind `tool`. Two runs then answer for one set of records: `readRun('pipeline')` returns this
+  // run's entries as if they were its own tool records, and `reconstructState` replays them.
+  //
+  // Reachable from OUTSIDE, which is why it is refused here rather than documented. @gnldev/chat-adapter
+  // derives its runId as `${body.id}:${lastMessage.id}` from a client-supplied conversation id, so a
+  // caller who names a conversation `x:tool` picks the separator itself. The rule stays as narrow as
+  // the damage: a bare colon is still legal (that derivation depends on it) — only the two segments
+  // the journal reads as "a record of this kind starts here" are refused.
+  if (/:(?:model|tool):/.test(runId)) {
+    const which = /:model:/.test(runId) ? ':model:' : ':tool:';
+    throw new Error(
+      `@gnldev/durable: runId '${runId.slice(0, 60)}' contains the journal's record separator '${which}' — ` +
+      'that is how a key says "a model/tool record starts here", so this run\'s keys would be read back ' +
+      'as records of a DIFFERENT run. Colons are fine; these two segments are not.',
+    );
+  }
 }
 
 export async function runDurable(args: RunDurableArgs): Promise<DurableResult> {
   // The failure half of the run's outcome record. The success half is written at the completion choke
-  // Point inside runDurableInner, where "did it actually finish" is already established (a suspended
-  // Run returns normally with interrupts and must NOT be recorded as completed).
+  // point inside runDurableInner, where "did it actually finish" is already established (a suspended
+  // run returns normally with interrupts and must NOT be recorded as completed).
   // BEFORE the try: a bad runId must reject the CALL, not be recorded as this run's failure —
   // `runFailed(journal, args.runId, ...)` would itself write under the very prefix being refused.
   assertRunIdSafe(args.runId);
@@ -2578,7 +2885,7 @@ export async function runDurable(args: RunDurableArgs): Promise<DurableResult> {
 
 async function runDurableGuarded(args: RunDurableArgs): Promise<DurableResult> {
   // A COMPENSATED (unwound) run refuses to run/resume — replaying memoized successes
-  // On top of an already-reverted world would silently "complete" a transaction that was undone.
+  // on top of an already-reverted world would silently "complete" a transaction that was undone.
   await assertNotCompensated(args.journal, args.runId);
   // P2-cancel: same terminal-refusal contract as compensation — a durably-canceled run never
   // (re)starts or resumes (the per-step mid-flight gate lives in durable-model.ts).
@@ -2588,14 +2895,14 @@ async function runDurableGuarded(args: RunDurableArgs): Promise<DurableResult> {
     const handle = await acquireRunLock(args.journal, args.runId, lock.owner, lock.ttlMs);
     if (!handle) {
       if ((args as any).conflictLedger) await recordIdemConflict(args.journal, { runId: args.runId, code: 'run_busy', ...((args as any).actor ? { actor: (args as any).actor } : {}) }, (args as any).auditOnReject ?? 'best-effort');
-      throw Object.assign(new RunBusyError(`run '${args.runId}' is locked by another process`), { atLockAcquisition: true });
+      throw Object.assign(new RunBusyError(runBusyMessage(`run '${args.runId}' is already running — it is locked by another process`)), { atLockAcquisition: true });
     }
     // B4 (heartbeat): the lock was acquired ONCE and never renewed — a run that legitimately outlives
     // `ttlMs` let a second worker take over mid-run (two live runs of the same runId). Renew on a beat
-    // Shorter than the TTL (ttlMs/2, min 1ms) so the lock stays held for as long as the body runs.
+    // shorter than the TTL (ttlMs/2, min 1ms) so the lock stays held for as long as the body runs.
     // Best-effort: a failed renew is swallowed (the next beat retries; a genuine takeover fences it out).
     // The timer is unref'd (never keeps the process alive) and cleared in `finally`; any in-flight renew
-    // Is awaited BEFORE release so a late renew can't revive the just-released lock.
+    // is awaited BEFORE release so a late renew can't revive the just-released lock.
     let inflight: Promise<unknown> = Promise.resolve();
     const beat = Math.max(1, Math.floor(lock.ttlMs / 2));
     const heartbeat = setInterval(() => { inflight = handle.renew(lock.ttlMs).catch(() => false); }, beat);
@@ -2612,12 +2919,15 @@ async function runDurableGuarded(args: RunDurableArgs): Promise<DurableResult> {
 }
 
 async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
-  const { journal, runId, guard, approvals, memory, threadId, resourceId, channel, agentName, replay, lock: _lock, processors, schemaCompat, limits, exclusiveModelStep, replayCacheMaxBytes, toolPolicy, timeouts, strictInput, conflictLedger, tombstonePolicy, actor, auditOnReject, replayDisclosure, model: modelInput, tools, stopWhen, ...rest } =
+  // `workKey`/`workScope` are pulled OUT of `rest` deliberately: `rest` is both the frozen input and
+  // the option bag handed to `generateText`, so a declared name left in it would travel to the
+  // provider as an unknown request field and land in `:input` twice under two different meanings.
+  const { journal, runId, guard, approvals, memory, threadId, resourceId, channel, agentName, workKey, workScope, replay, lock: _lock, processors, schemaCompat, limits, exclusiveModelStep, replayCacheMaxBytes, toolPolicy, timeouts, strictInput, conflictLedger, tombstonePolicy, actor, auditOnReject, replayDisclosure, model: modelInput, tools, stopWhen, ...rest } =
     args as RunDurableArgs & Record<string, any>;
   // `ModelInput` is `LanguageModelV4 | string`, and until now only createGnl honoured the string
-  // Half: passing 'nvidia/…' straight to runDurable type-checked and then died inside the AI SDK
-  // With "model.doGenerate is not a function", which tells a newcomer nothing about what they did
-  // Wrong. Resolve it here so the published type is true wherever it appears.
+  // half: passing 'nvidia/…' straight to runDurable type-checked and then died inside the AI SDK
+  // with "model.doGenerate is not a function", which tells a newcomer nothing about what they did
+  // wrong. Resolve it here so the published type is true wherever it appears.
   const model = typeof modelInput === 'string' ? await resolveModel(modelInput) : modelInput;
   // ONE read of `:input`, shared by the ownership check, the adoption and persistInput below (see
   // applyInputProcessors). Read + asserted BEFORE runStarted/resolveApprovals — see
@@ -2658,9 +2968,9 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
     }
   }
   // FAZ-4: fingerprint the RAW caller input BEFORE memory prep mutates rest.messages (post-prep
-  // Content grows with the thread — hashing it would 409 every legitimate resume).
-  const rawInputHash = argsHash({ prompt: rest.prompt, messages: rest.messages, system: rest.system });
-  await assertRunAdmissible(journal, runId, frozenInput, rawInputHash, { strictInput, conflictLedger, auditOnReject, tombstonePolicy, actor, approvals });
+  // content grows with the thread — hashing it would 409 every legitimate resume).
+  const rawInputHash = rawInputFingerprint(rest);
+  await assertRunAdmissible(journal, runId, frozenInput, rawInputHash, { strictInput, conflictLedger, auditOnReject, tombstonePolicy, actor, resourceId, approvals });
   // RESUME-GATE probe, BEFORE runStarted buries the verdict under 'running': a re-entry of a run
   // that already ENDED replays from the journal and must not be judged by the input gates — a throw
   // there overwrites the ending with 'failed' (see runResumeGates). 'failed' is NOT an ending here:
@@ -2673,7 +2983,7 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   // touches the live run's record. Best-effort like every outcome write.
   await runStarted(journal, runId, Date.now());
   // AUDIT (approval first-class): BEFORE ctx is set up — claim the parameter's approvals into the
-  // Journal + merge with the journal's existing approvals (see the resolveApprovals header).
+  // journal + merge with the journal's existing approvals (see the resolveApprovals header).
   const resolvedApprovals = await resolveApprovals(journal, runId, approvals, {
     ...(actor ? { actor } : {}),
     // Askıdaki (ve bayat/çökmüş) kayıt terminal DEĞİLDİR, yani fikir değiştirmeye açıktır; taze bir
@@ -2694,6 +3004,10 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   // Özne beyan edilmediğinde belleğin BENİMSEDİĞİ thread sahibi — `:input`'a o yazılır (aşağıya bak).
   let adoptedResourceId: string | undefined;
   let loadedHistory: any[] = []; // what MEMORY returned this turn — the dedupe's second witness
+  // Said HERE rather than at the entry point, because here is where the id is actually dropped — the
+  // condition below IS the drop, and a warning that sits next to the branch it describes cannot drift
+  // away from it.
+  if (threadId) warnThreadIgnored(threadId, memory);
   if (memory && threadId) {
     ({ incoming, wmTool, alreadyStored: incomingStored, provenance: memCtx, historyCount, adoptedResourceId } = await prepareMemoryContext(memory, threadId, resourceId, rest, makeEchoView(processors, journal, runId)));
     loadedHistory = Array.isArray(rest.messages) ? rest.messages.slice(0, historyCount) : [];
@@ -2728,27 +3042,27 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   // sahipsiz bir koşumda `ownershipDenied` sessiz geçer: sonradan gelen bir çağrı kendi öznesini
   // beyan edip cevabı kurbanın thread'ine yazdırabiliyordu. Belleğin okuduğu sahiple journal'ın
   // yazdığı sahip AYNI olmalı, yoksa iki farklı gerçeklik olur ve kapı yanlış olanı okur.
-  await persistInput(journal, runId, rest, frozenInput !== undefined, threadId, agentName, resourceId ?? adoptedResourceId, rawInputHash, actor);
+  await persistInput(journal, runId, rest, frozenInput !== undefined, threadId, agentName, resourceId ?? adoptedResourceId, rawInputHash, actor, { ...(workKey ? { workKey } : {}), ...(workScope ? { workScope } : {}) });
   await persistMemoryContext(journal, runId, memCtx);
   // Freeze `limits` into the journal on the first run (idempotent via `claim` — the FIRST
-  // Run's limits win, a later resume never overwrites them). resumeRun reads this back when the caller
-  // Doesn't re-supply `limits`, so a resumed run keeps its cost cap / loop / duplicate / taint gates.
+  // run's limits win, a later resume never overwrites them). resumeRun reads this back when the caller
+  // doesn't re-supply `limits`, so a resumed run keeps its cost cap / loop / duplicate / taint gates.
   if (limits) await claim(journal, runKeys.cfgLimits(runId), serializableLimits(limits));
   // WRITE-AHEAD user message (see writeAheadIncoming): journal `:input` first (the WAL), then memory —
-  // A run that fails before its first token keeps the user's message visible in the thread.
+  // a run that fails before its first token keeps the user's message visible in the thread.
   if (memory && threadId) await writeAheadIncoming(journal, memory, threadId, runId, incoming, incomingStored, limits);
   // (opt-in `taintScope: 'thread'`): if a prior turn on this thread was tainted, mark THIS
-  // Run tainted BEFORE the agent loop — the taint gate then fires for this run's side effects.
+  // run tainted BEFORE the agent loop — the taint gate then fires for this run's side effects.
   // PHASE 3: `rest.messages` here is the FINAL visible context (memory + processors already applied)
   // exactly what the model sees, which is what content-window expiry must be judged against.
-  await inheritThreadTaint(journal, runId, threadId, limits, { messages: rest.messages, memory });
+  await inheritThreadTaint(journal, runId, threadId, limits, { messages: rest.messages, memory: memory || undefined });
 
   // Phase 14: also merge in rich memory's updateWorkingMemory tool → durableTools wraps it (journaled).
   let effectiveTools = wmTool ? { ...tools, ...wmTool } : tools;
   if (procCtx && effectiveTools) effectiveTools = await applyToolProcessors(processors!, procCtx, effectiveTools, rest);
 
   // 8.8 Tool-schema compat (opt-in): provider-specific tool-schema transformation. PURE + BEFORE the model
-  // Call + BEFORE durableTools wraps it → doesn't touch the journal, argsHash/toolCallId/replay unaffected.
+  // call + BEFORE durableTools wraps it → doesn't touch the journal, argsHash/toolCallId/replay unaffected.
   // Lazy import: if unused, @gnldev/tool-schema is never loaded (keeps the durable core thin).
   if (schemaCompat && effectiveTools) {
     const { applyToolCompat, defaultRules, detectModel } = await import('@gnldev/tool-schema');
@@ -2779,7 +3093,7 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   };
   if (effectiveTools) options.tools = durableTools(effectiveTools, ctx);
   // P2-step: per-step processor hooks (common per-step-processor parity, v1) — bridged to the AI SDK's own per-iteration
-  // Callbacks. Only set when a processor implements the hook (undefined = zero behavior change).
+  // callbacks. Only set when a processor implements the hook (undefined = zero behavior change).
   if (procCtx && processors?.length) {
     const prep = composePrepareStep(processors as Processor[], procCtx);
     if (prep) options.prepareStep = prep;
@@ -2794,19 +3108,19 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   }
 
   // D4-retry: generateText + finishError/suspend handling + the output-processor gate, wrapped in the
-  // Bounded retry-with-feedback ladder (see runGenerateWithRetryLadder above for the full contract —
-  // Includes the K1/W1 sentinel-to-error conversion and the 8.7 output-processor pass, byte-for-
-  // Byte unchanged for a run with no ProcessorRetry-throwing processor).
+  // bounded retry-with-feedback ladder (see runGenerateWithRetryLadder above for the full contract —
+  // includes the K1/W1 sentinel-to-error conversion and the 8.7 output-processor pass, byte-for-
+  // byte unchanged for a run with no ProcessorRetry-throwing processor).
   const { result: ladderResult, interrupts, produced: processedProduced } = await runGenerateWithRetryLadder(options, processors, procCtx, journal, runId, stepHookFailure);
   let result = ladderResult;
 
   // Memory: idempotent append on completion (not suspended) — resume/retry does NOT double-write.
   // TWO-PHASE MARKER (review finding A — see claimMemoryAppend/markMemoryAppendDone): if the pending
-  // Claim is STALE (crash/transient-error), the NEXT retry SELF-HEALS — with the old boolean-claim,
-  // If append threw an error the marker stayed permanently 'claimed' and history was lost FOREVER.
+  // claim is STALE (crash/transient-error), the NEXT retry SELF-HEALS — with the old boolean-claim,
+  // if append threw an error the marker stayed permanently 'claimed' and history was lost FOREVER.
   // DELIBERATELY NOT WRAPPED in try/catch: let the error propagate to the CALLER (runDurable rejects)
   // thanks to the pending marker, a legitimate retry with the SAME runId retries the append (see the
-  // Memory self-heal tests).
+  // memory self-heal tests).
   if (memory && threadId && interrupts.length === 0) {
     // PRODUCED only — `incoming` was already persisted pre-model by writeAheadIncoming (or was found
     // already stored by the tail-dedupe); re-appending it here would duplicate the turn.
@@ -2822,20 +3136,20 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   }
 
   // 1.1: IF the run COMPLETED (not suspended), increment the organization usage counter —
-  // CheckBudget/getOrgUsage reads this in O(1) (instead of a full-run-scan). Best-effort: if something
-  // Goes wrong, it does NOT affect the run.
+  // checkBudget/getOrgUsage reads this in O(1) (instead of a full-run-scan). Best-effort: if something
+  // goes wrong, it does NOT affect the run.
   if (interrupts.length === 0) {
     try { await recordRunUsage(journal, runId); } catch { /* counter is optional — must not affect the run */ }
     // P1.6b: materialized metrics at the SAME choke point — this covers run()/resume/bare runDurable in
-    // One place (the registry-level hook was removed for exactly this reason: single source, and the
-    // Stream path below gets the same call in its onFinish). Best-effort like the usage counter; the
-    // Claim/applyBatch inside recordRunMetrics makes an accidental double call a no-op.
+    // one place (the registry-level hook was removed for exactly this reason: single source, and the
+    // stream path below gets the same call in its onFinish). Best-effort like the usage counter; the
+    // claim/applyBatch inside recordRunMetrics makes an accidental double call a no-op.
     try {
       await recordRunMetrics(journal, journal as unknown as JournalReader, runId, agentName ? { agentName } : {});
     } catch { /* advisory aggregate — must not affect the run */ }
     // Overwrites any 'failed' from an earlier attempt: a run that was fixed and resumed to success is
-    // Not a failed run. Inside the `interrupts.length === 0` branch, so a suspended run — which returns
-    // Normally, awaiting a human — is not mislabelled as finished.
+    // not a failed run. Inside the `interrupts.length === 0` branch, so a suspended run — which returns
+    // normally, awaiting a human — is not mislabelled as finished.
     await runSucceeded(journal, runId, Date.now());
   }
 
@@ -2853,12 +3167,12 @@ export interface ResumeAgentConfig {
    * ResumeRun used to FORWARD
    * ONLY model/tools/guard/approvals — a resumed run silently LOST its entire protection config
    * (maxCostUsd/maxTokens ceilings, loopDetection, sideEffectDuplicates, taintedSideEffects all
-   * Reverted to defaults). The most dangerous shape of that hole: an approvals resume of a SUSPENDED
-   * Run — the human approves ONE call, and the continuation runs unguarded. Pass the SAME limits the
-   * Original run used.
+   * reverted to defaults). The most dangerous shape of that hole: an approvals resume of a SUSPENDED
+   * run — the human approves ONE call, and the continuation runs unguarded. Pass the SAME limits the
+   * original run used.
    *
    * `limits` alone was not enough — resume also silently dropped `processors` (prompt-injection
-   * Tool-result redaction/flagging), `lock`, `timeouts`, `exclusiveModelStep`, `schemaCompat`, and
+   * tool-result redaction/flagging), `lock`, `timeouts`, `exclusiveModelStep`, `schemaCompat`, and
    * `toolPolicy`. The whole protection set must survive resume; pass the SAME config the original run used.
    */
   limits?: RunLimits;
@@ -2936,8 +3250,8 @@ export async function resumeRun(
   if (identityOnly) throw refuseIdentityOnlyInput(runId, identityOnly);
   // `limits` is a runtime value the CLI/embed callers can't re-supply (it isn't part of
   // AgentConfig). If the caller passes `limits`, it wins (explicit override); otherwise recover the
-  // Limits frozen at run start from the journal so the resumed run keeps its cost cap / loop /
-  // Duplicate / taint gates instead of silently reverting to no-limits.
+  // limits frozen at run start from the journal so the resumed run keeps its cost cap / loop /
+  // duplicate / taint gates instead of silently reverting to no-limits.
   const limits = opts.limits ?? (await opts.journal.get<RunLimits>(runKeys.cfgLimits(runId)));
   return runDurable({
     runId,
@@ -2950,7 +3264,7 @@ export async function resumeRun(
     replay: opts.replay,
     limits,
     // Forward the FULL protection set (not just limits) — processors especially, so
-    // Tool-result redaction runs on the approved call during resume.
+    // tool-result redaction runs on the approved call during resume.
     ...(opts.processors ? { processors: opts.processors } : {}),
     ...(opts.memory ? { memory: opts.memory } : {}),
     ...(opts.resourceId ? { resourceId: opts.resourceId } : {}),
@@ -2962,7 +3276,7 @@ export async function resumeRun(
     ...(opts.replayDisclosure ? { replayDisclosure: opts.replayDisclosure } : {}),
     ...(opts.channel ? { channel: opts.channel } : {}),
     // FAZ-4 K5: fields added to ResumeAgentConfig MUST land in this selective forward list too — an
-    // Interface field missing here is born dead and silently drops the protection the caller asked for.
+    // interface field missing here is born dead and silently drops the protection the caller asked for.
     ...(opts.strictInput !== undefined ? { strictInput: opts.strictInput } : {}),
     ...(opts.conflictLedger !== undefined ? { conflictLedger: opts.conflictLedger } : {}),
     ...(opts.auditOnReject ? { auditOnReject: opts.auditOnReject } : {}),
@@ -2972,8 +3286,8 @@ export async function resumeRun(
     ...(input.prompt ? { prompt: input.prompt } : {}),
     ...(input.system ? { system: input.system } : {}),
     // Recover the threadId frozen into `:input` — a resumed run under `taintScope: 'thread'`
-    // Must keep the thread carry (inherit at start + write the thread key on a NEW post-resume
-    // Untrusted call). It is ALSO the half that makes an attached `memory` work: the append is
+    // must keep the thread carry (inherit at start + write the thread key on a NEW post-resume
+    // untrusted call). It is ALSO the half that makes an attached `memory` work: the append is
     // conditioned on `memory && threadId`, so recovering the id here and forwarding memory above are
     // one fix, not two. (This comment used to say no memory is attached "so this changes nothing
     // else" — true, and the reason the resumed turn never reached the thread.)
@@ -3021,31 +3335,31 @@ function shapeJsonTools(
 /**
  * The durable counterpart of `streamText` — model/tools are wrapped, input is journaled.
  * Memory + processor scope goes through the SAME helpers as runDurable (parity must not be broken);
- * The only difference: output processors are applied only to messages being persisted (streamed
- * Deltas cannot be transformed).
+ * the only difference: output processors are applied only to messages being persisted (streamed
+ * deltas cannot be transformed).
  *
  * K1/W1 NOTE (B) — (b), READ THIS IF YOU CONSUME `fullStream` DIRECTLY: a
- * Loop/maxToolCalls/duplicate/tainted BLOCK does NOT throw from the stream — the blocked/limit/suspend
+ * loop/maxToolCalls/duplicate/tainted BLOCK does NOT throw from the stream — the blocked/limit/suspend
  * SENTINEL (`__gnl_blocked`/`__gnl_limit_exceeded`) leaks into `fullStream` as an internal tool-result
- * Part. This is DELIBERATE: @gnldev/server sse.ts / @gnldev/agui rely on it — they skip the sentinel part in
+ * part. This is DELIBERATE: @gnldev/server sse.ts / @gnldev/agui rely on it — they skip the sentinel part in
  * `fullStream` and, AFTER the stream ends, scan `steps` (`limitBreachFromSteps`/`blockedFromSteps`) to
- * Emit ONE terminal `error` event. Surfacing the breach as a `{type:'error'}` fullStream part instead
- * Would make those consumers emit a DOUBLE error event (the injected part + their post-scan), so it is
+ * emit ONE terminal `error` event. Surfacing the breach as a `{type:'error'}` fullStream part instead
+ * would make those consumers emit a DOUBLE error event (the injected part + their post-scan), so it is
  * NOT done. (Asymmetry: maxCost/maxTokens DO throw from the stream flush — durable-model — so only the
- * Tool-gate blocks are sentinel-only in `fullStream`.) As a DIRECT consumer you catch the breach in one
- * Of THREE ways (recommended first):
+ * tool-gate blocks are sentinel-only in `fullStream`.) As a DIRECT consumer you catch the breach in one
+ * of THREE ways (recommended first):
  *   1. `await result.text` (or any other terminal result promise — content/response/toolCalls/…)
  * REJECTS with the TYPED error when a block/limit fired, mirroring runDurable's throw — a
- *      Happy-path consumer cannot silently miss it. EXCEPTIONS that deliberately keep the sentinel
- *      Contract and NEVER reject for a breach: `steps`, `finishReason`, `usage`, `request`, `warnings`
- *      And the streams (`fullStream`/`textStream`) — sse.ts/agui/studio post-scan `steps` and must not
- *      Get a reject (see guardStreamTerminalPromises).
+ *      happy-path consumer cannot silently miss it. EXCEPTIONS that deliberately keep the sentinel
+ *      contract and NEVER reject for a breach: `steps`, `finishReason`, `usage`, `request`, `warnings`
+ *      and the streams (`fullStream`/`textStream`) — sse.ts/agui/studio post-scan `steps` and must not
+ *      get a reject (see guardStreamTerminalPromises).
  *   2. Pass `onBlocked` (StreamDurableArgs / registry RunOptions): invoked once at stream finish with
- *      The RAW structured breach `{ kind, message, detail }` — ideal when you only read `fullStream`
- *      And never await a terminal promise.
+ *      the RAW structured breach `{ kind, message, detail }` — ideal when you only read `fullStream`
+ *      and never await a terminal promise.
  *   3. Manually call `streamFinishError(steps)` (exported here) with onFinish's `ev.steps` (or your
- *      Accumulated step list) — returns the TYPED error to throw, `undefined` otherwise. This is what
- *      Sse.ts/agui effectively do via `limitBreachFromSteps`/`blockedFromSteps`.
+ *      accumulated step list) — returns the TYPED error to throw, `undefined` otherwise. This is what
+ *      sse.ts/agui effectively do via `limitBreachFromSteps`/`blockedFromSteps`.
  * Prefer `runDurable` if you don't want to own any of this.
  */
 // Declared, not inferred — same reason as createAgentTool: inference names a pnpm-internal
@@ -3066,18 +3380,20 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   // P2-cancel: same terminal-refusal contract as compensation — a durably-canceled run never
   // (re)starts or resumes (the per-step mid-flight gate lives in durable-model.ts).
   await assertNotCanceled(args.journal, args.runId);
-  const { journal, runId, guard, approvals, memory, threadId, resourceId, channel, agentName, replay, lock, processors, schemaCompat, limits, exclusiveModelStep, replayCacheMaxBytes, toolPolicy, timeouts, strictInput, conflictLedger, tombstonePolicy, actor, auditOnReject, replayDisclosure, model, tools, stopWhen, onBlocked, ...rest } =
+  // Same reason as runDurableInner: the declared name leaves `rest` before `rest` becomes both the
+  // frozen input and the `streamText` option bag.
+  const { journal, runId, guard, approvals, memory, threadId, resourceId, channel, agentName, workKey, workScope, replay, lock, processors, schemaCompat, limits, exclusiveModelStep, replayCacheMaxBytes, toolPolicy, timeouts, strictInput, conflictLedger, tombstonePolicy, actor, auditOnReject, replayDisclosure, model, tools, stopWhen, onBlocked, ...rest } =
     args as StreamDurableArgs & Record<string, any>;
   // (a): opt-in run-lock — acquire BEFORE the setup work (reject a concurrent stream/run of the
-  // Same runId with RunBusyError). Released on stream finish/error (see the onFinish/onError wrappers).
+  // same runId with RunBusyError). Released on stream finish/error (see the onFinish/onError wrappers).
   // FAZ-7: heartbeat parity with run() — see StreamDurableArgs.lock for the maxHoldMs bound.
   const lockHandle = lock ? await acquireRunLock(journal, runId, lock.owner, lock.ttlMs) : null;
   // FAZ-7 (backlog kapanışı): the streamed lock now SELF-RENEWS — with the bound the OLD design
-  // Refused it over: an ABANDONED stream (never drained, no abort — no exit callback ever fires)
-  // Would renew forever. The renewal is therefore HARD-CAPPED (STREAM_LOCK_MAX_HOLD_MS): past the
-  // Cap the beat stops and TTL reclaims, so abandonment costs a bounded hold, not eternity.
+  // refused it over: an ABANDONED stream (never drained, no abort — no exit callback ever fires)
+  // would renew forever. The renewal is therefore HARD-CAPPED (STREAM_LOCK_MAX_HOLD_MS): past the
+  // cap the beat stops and TTL reclaims, so abandonment costs a bounded hold, not eternity.
   // Deliberately NOT chunk-liveness-gated: a long tool call emits no chunks, and pausing renewal
-  // There would hand the lock to a takeover MID-RUN — the exact double-execution this lock prevents.
+  // there would hand the lock to a takeover MID-RUN — the exact double-execution this lock prevents.
   // Same discipline as runDurableGuarded's beat otherwise: ttl/2 interval, unref'd, in-flight renew
   // AWAITED before release. Every exit path releases through ONE function — K8 made structural.
   let hbInflight: Promise<unknown> = Promise.resolve();
@@ -3088,7 +3404,7 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
         if (Date.now() - hbStartedAt > hbMaxHold) {
           clearInterval(hbTimer!);
           // LOUD (K23): a legitimate stream outliving the cap loses renewal SILENTLY otherwise — the
-          // Later TTL takeover would then read as an unexplained double-execution.
+          // later TTL takeover would then read as an unexplained double-execution.
           console.warn(
             `@gnldev/durable: stream lock for '${runId}' hit its renewal cap (${hbMaxHold}ms) — renewals stopped; ` +
             `TTL (${lock.ttlMs}ms) can now reclaim it. A stream legitimately running this long should raise lock.maxHoldMs.`,
@@ -3107,12 +3423,12 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   };
   if (lock && !lockHandle) {
     if (conflictLedger) await recordIdemConflict(journal, { runId, code: 'run_busy', ...(actor ? { actor } : {}) }, auditOnReject ?? 'best-effort');
-    throw Object.assign(new RunBusyError(`run '${runId}' is locked by another process`), { atLockAcquisition: true });
+    throw Object.assign(new RunBusyError(runBusyMessage(`run '${runId}' is already streaming — it is locked by another process`)), { atLockAcquisition: true });
   }
   // (a): EVERYTHING after a successful acquire runs under a release-on-throw guard. The setup awaits
-  // Below (thread-ownership assert, runStarted, approvals, memory prep, persistInput...) can all
-  // Throw or reject, and each used to strand the just-acquired lock until TTL: a thread-mismatch
-  // Told the caller to fix the id with a 409 while run_busy blocked the CORRECT retry for the whole
+  // below (thread-ownership assert, runStarted, approvals, memory prep, persistInput...) can all
+  // throw or reject, and each used to strand the just-acquired lock until TTL: a thread-mismatch
+  // told the caller to fix the id with a 409 while run_busy blocked the CORRECT retry for the whole
   // TTL. TTL is the crash insurance, not the wiring for a known exit.
   try {
     return await afterAcquire();
@@ -3157,9 +3473,9 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
     }
   }
   // FAZ-4: fingerprint the RAW caller input BEFORE memory prep mutates rest.messages (post-prep
-  // Content grows with the thread — hashing it would 409 every legitimate resume).
-  const rawInputHash = argsHash({ prompt: rest.prompt, messages: rest.messages, system: rest.system });
-  await assertRunAdmissible(journal, runId, frozenInput, rawInputHash, { strictInput, conflictLedger, auditOnReject, tombstonePolicy, actor, approvals });
+  // content grows with the thread — hashing it would 409 every legitimate resume).
+  const rawInputHash = rawInputFingerprint(rest);
+  await assertRunAdmissible(journal, runId, frozenInput, rawInputHash, { strictInput, conflictLedger, auditOnReject, tombstonePolicy, actor, resourceId, approvals });
   // RESUME-GATE probe — the stream twin of runDurableInner's, and it matters MORE here: this is the
   // path chat/agui use, so an at-least-once redelivery of a finished turn arrives on this line.
   // Read BEFORE runStarted buries the verdict (see runResumeGates' "NOT on a run that already ENDED").
@@ -3188,6 +3504,7 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   // runDurableInner ile parite: benimsenen thread sahibi `:input`'a yazılır.
   let adoptedResourceId: string | undefined;
   let loadedHistory: any[] = []; // parity with runDurableInner — the dedupe's second witness
+  if (threadId) warnThreadIgnored(threadId, memory); // parity with runDurableInner
   if (memory && threadId) {
     ({ incoming, wmTool, alreadyStored: incomingStored, provenance: memCtx, historyCount, adoptedResourceId } = await prepareMemoryContext(memory, threadId, resourceId, rest, makeEchoView(processors, journal, runId)));
     loadedHistory = Array.isArray(rest.messages) ? rest.messages.slice(0, historyCount) : [];
@@ -3222,16 +3539,16 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   // sahipsiz bir koşumda `ownershipDenied` sessiz geçer: sonradan gelen bir çağrı kendi öznesini
   // beyan edip cevabı kurbanın thread'ine yazdırabiliyordu. Belleğin okuduğu sahiple journal'ın
   // yazdığı sahip AYNI olmalı, yoksa iki farklı gerçeklik olur ve kapı yanlış olanı okur.
-  await persistInput(journal, runId, rest, frozenInput !== undefined, threadId, agentName, resourceId ?? adoptedResourceId, rawInputHash, actor);
+  await persistInput(journal, runId, rest, frozenInput !== undefined, threadId, agentName, resourceId ?? adoptedResourceId, rawInputHash, actor, { ...(workKey ? { workKey } : {}), ...(workScope ? { workScope } : {}) });
   await persistMemoryContext(journal, runId, memCtx);
   // Freeze `limits` on the first run (parity with runDurableInner) — idempotent via `claim`.
   if (limits) await claim(journal, runKeys.cfgLimits(runId), serializableLimits(limits));
   // WRITE-AHEAD user message (parity with runDurableInner — see writeAheadIncoming). Pre-model, so a
-  // Memory failure rejects gnl.stream() itself (a clean JSON error) instead of surfacing mid-SSE.
+  // memory failure rejects gnl.stream() itself (a clean JSON error) instead of surfacing mid-SSE.
   if (memory && threadId) await writeAheadIncoming(journal, memory, threadId, runId, incoming, incomingStored, limits);
   // Same run-start thread-taint inheritance as runDurableInner (opt-in; parity).
   // PHASE 3: same content-window visibility input as runDurableInner (parity).
-  await inheritThreadTaint(journal, runId, threadId, limits, { messages: rest.messages, memory });
+  await inheritThreadTaint(journal, runId, threadId, limits, { messages: rest.messages, memory: memory || undefined });
 
   let effectiveTools = wmTool ? { ...tools, ...wmTool } : tools;
   if (procCtx && effectiveTools) effectiveTools = await applyToolProcessors(processors!, procCtx, effectiveTools, rest);
@@ -3262,7 +3579,7 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   };
   if (effectiveTools) options.tools = durableTools(effectiveTools, ctx);
   // P2-step: SAME per-step hook bridging as runDurableInner (parity contract — see the note there).
-  // StreamText supports the same prepareStep/onStepFinish surface; onFinish wrapping below is untouched.
+  // streamText supports the same prepareStep/onStepFinish surface; onFinish wrapping below is untouched.
   if (procCtx && processors?.length) {
     const prep = composePrepareStep(processors as Processor[], procCtx);
     if (prep) options.prepareStep = prep;
@@ -3277,30 +3594,30 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   }
   // Stream finish: output processors (only messages being persisted) + idempotent memory append
   // (marker; stream/non-stream do not double-write, replay-safe). ProcessorTripwire blocks the append
-  // But cannot retroactively stop the stream — use an input processor for moderation in streaming.
+  // but cannot retroactively stop the stream — use an input processor for moderation in streaming.
   // SUSPEND PARITY (audit): IF the run IS SUSPENDED (suspend/limit/block sentinel), completion side
-  // Effects are NOT processed — same principle as runDurableInner. The old behavior wrote the half
-  // Conversation to memory and locked the marker → once resume completed, the FINAL answer never made
-  // It into memory at all.
+  // effects are NOT processed — same principle as runDurableInner. The old behavior wrote the half
+  // conversation to memory and locked the marker → once resume completed, the FINAL answer never made
+  // it into memory at all.
   // ONE processOutput pass per turn, shared by the two things that need it: the memory append (in
-  // OnFinish) and the caller-facing terminal promises (`result.text` / `result.response`, masked in
-  // The Proxy below). Memoised SYNCHRONOUSLY on first call, so whichever arrives first computes and
-  // The other awaits the same promise — the hook keeps its once-per-turn contract either way.
+  // onFinish) and the caller-facing terminal promises (`result.text` / `result.response`, masked in
+  // the Proxy below). Memoised SYNCHRONOUSLY on first call, so whichever arrives first computes and
+  // the other awaits the same promise — the hook keeps its once-per-turn contract either way.
   //
   // WHY the caller-facing half cannot simply read a value onFinish left behind: measured, the SDK
-  // Resolves `steps`/`text`/`response` BEFORE our onFinish body finishes (an async processor is still
-  // Running when they settle). A getter that read a variable set at the end of onFinish would see
+  // resolves `steps`/`text`/`response` BEFORE our onFinish body finishes (an async processor is still
+  // running when they settle). A getter that read a variable set at the end of onFinish would see
   // `undefined` and fall back to raw — non-deterministically. And a getter that WAITED for onFinish
-  // Would add exactly the "dependence on our own callbacks firing" hang path guardStreamTerminalPromises
-  // Was written to avoid. The lazy view here is the way out: if onFinish never runs, the getter
-  // Computes the pass itself from the result's own promises.
+  // would add exactly the "dependence on our own callbacks firing" hang path guardStreamTerminalPromises
+  // was written to avoid. The lazy view here is the way out: if onFinish never runs, the getter
+  // computes the pass itself from the result's own promises.
   let outputPass: Promise<ProcessorOutput | undefined> | undefined;
   const outputProcessed = (view: () => Promise<any>): Promise<ProcessorOutput | undefined> => {
     outputPass ??= (async () => {
       if (!procCtx) return undefined;
       const ev = await view();
       // SUSPEND PARITY with runDurableInner: a suspended/blocked turn is not a finished output, so
-      // The chain does not run on it (and the caller gets the raw value, as it does today).
+      // the chain does not run on it (and the caller gets the raw value, as it does today).
       const stepsArr: any[] = ev?.steps ?? [];
       if (stepsArr.some((s: any) => Array.isArray(s?.content) && s.content.some((p: any) => hasSuspend(p) || hasLimitExceeded(p) || hasBlocked(p)))) return undefined;
       let pout: ProcessorOutput = { text: ev?.text ?? '', messages: producedMessages(ev), result: ev };
@@ -3315,15 +3632,15 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
 
   {
     // Set by the onError wrapper below; also derived from the finish event itself, because some
-    // Providers surface a mid-stream failure only as finishReason:'error' without an error part.
+    // providers surface a mid-stream failure only as finishReason:'error' without an error part.
     let streamFailed = false;
     const prevOnFinish = options.onFinish;
     options.onFinish = async (ev: any) => {
       const stepsArr: any[] = ev?.steps ?? [];
       // (b): visibility callback — a block/limit sentinel at stream finish → hand the caller
-      // The RAW structured breach. Advisory: a throw is swallowed with a console.warn (same policy as
-      // The memory-finalization warn below) — it must never break the stream or mask the typed error
-      // The terminal promises reject with.
+      // the RAW structured breach. Advisory: a throw is swallowed with a console.warn (same policy as
+      // the memory-finalization warn below) — it must never break the stream or mask the typed error
+      // the terminal promises reject with.
       if (onBlocked) {
         const breach = streamBreachFromSteps(stepsArr);
         if (breach) {
@@ -3339,10 +3656,10 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
           let produced: any[] = producedMessages(ev);
           if (procCtx) {
             // NOTE (deliberate limitation): a ProcessorRetry thrown here is NOT retried — unlike
-            // RunDurableInner's retry ladder, this fires AFTER the stream has already flushed to the
-            // Client, so "let the model try again" would mean re-streaming a turn the caller already
-            // Saw — a different contract we deliberately do not contort this into. It is caught by the
-            // Catch below like any other processOutput throw (console.warn, stream itself not broken).
+            // runDurableInner's retry ladder, this fires AFTER the stream has already flushed to the
+            // client, so "let the model try again" would mean re-streaming a turn the caller already
+            // saw — a different contract we deliberately do not contort this into. It is caught by the
+            // catch below like any other processOutput throw (console.warn, stream itself not broken).
             // Use runDurable/generateText for a processor that needs retry-with-feedback.
             const pout = await outputProcessed(async () => ev);
             if (pout) produced = pout.messages;
@@ -3351,7 +3668,7 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
             // TWO-PHASE MARKER — SAME pattern/parity as runDurableInner (see claimMemoryAppend).
             // Here INSIDE a try/catch (below) → if append throws, the marker stays 'pending': the
             // NEXT resume/retry (SAME runId) self-heals after the TTL; on this turn the error is
-            // Made VISIBLE via console.warn but the stream is NOT BROKEN (streamText's own contract).
+            // made VISIBLE via console.warn but the stream is NOT BROKEN (streamText's own contract).
             // PRODUCED only — `incoming` went in pre-model via writeAheadIncoming. Shared with
             // runDurableInner so the two paths cannot drift.
             await appendCompletion(memory, journal, runId, threadId, runKeys.memAppended(runId), incoming, incomingStored, produced, limits);
@@ -3363,13 +3680,13 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
         // 1.1: usage counter only on a COMPLETED run (parity with runDurableInner; not counted while suspended).
         try { await recordRunUsage(journal, runId); } catch { /* counter is optional — must not affect the stream */ }
         // P1.6b: materialized metrics — PARITY with runDurableInner's completion hook (this closes the
-        // Former registry TODO: streamed runs no longer depend on a manual backfill to be counted).
+        // former registry TODO: streamed runs no longer depend on a manual backfill to be counted).
         try {
           await recordRunMetrics(journal, journal as unknown as JournalReader, runId, agentName ? { agentName } : {});
         } catch { /* advisory aggregate — must not affect the stream */ }
         // Parity with runDurableInner: inside the completed branch only, so a suspended stream is not
-        // Recorded as finished. NOT on an errored stream: onFinish fires after onError, and the
-        // Success write here was measured OVERWRITING the failure the error path had just recorded —
+        // recorded as finished. NOT on an errored stream: onFinish fires after onError, and the
+        // success write here was measured OVERWRITING the failure the error path had just recorded —
         // ["failed","completed"], final record completed — on the SSE/chat path of all places.
         // finishReasonText, NOT ===: AI SDK 7 made finishReason an object ({unified, raw}), so the
         // string comparison is permanently false and a failed stream is journaled as a SUCCESS —
@@ -3380,14 +3697,14 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
         else await runFailed(journal, runId, new Error(String(ev?.finishReason ?? 'stream error')), Date.now());
       }
       // (a): the stream has finished (completed OR suspended) → release the run-lock so a resume
-      // Can proceed. Token-fenced + idempotent: a no-op if the lock was already taken over/released.
+      // can proceed. Token-fenced + idempotent: a no-op if the lock was already taken over/released.
       await releaseStreamLock();
       if (prevOnFinish) await prevOnFinish(ev);
     };
     // (a): also release on a stream error (onFinish may not fire on the error path). release()
-    // Is idempotent, so a later onFinish release is harmless. On abandonment (neither fires), TTL reclaims.
+    // is idempotent, so a later onFinish release is harmless. On abandonment (neither fires), TTL reclaims.
     // Previously wrapped ONLY when a lock existed, so an unlocked stream that failed recorded nothing
-    // And read back as 'completed'. Now always wrapped; the release stays conditional.
+    // and read back as 'completed'. Now always wrapped; the release stays conditional.
     const prevOnError = options.onError;
     options.onError = async (ev: any) => {
       const err = (ev as { error?: unknown })?.error ?? ev;
@@ -3398,9 +3715,9 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
     };
     // (a): release on ABORT too — AI SDK 7 fires `onAbort` (NOT onFinish/onError) when the caller's
     // AbortSignal trips mid-stream, so "TTL reclaims on abandonment" was covering a path that is not
-    // Abandonment at all. With the chat route's default lock + forwarded request signal, "user hit
-    // Stop / closed the tab" was the COMMON path that stranded the lock: the very next regenerate
-    // Derives the SAME runId and ate 409 run_busy until the TTL expired.
+    // abandonment at all. With the chat route's default lock + forwarded request signal, "user hit
+    // stop / closed the tab" was the COMMON path that stranded the lock: the very next regenerate
+    // derives the SAME runId and ate 409 run_busy until the TTL expired.
     const prevOnAbort = (options as any).onAbort;
     (options as any).onAbort = async (ev: any) => {
       await releaseStreamLock();
@@ -3409,23 +3726,23 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   }
   let rawStream: any;
   // OUTPUT-PROCESSOR PARITY WITH runDurable. Measured before this existed, with the same redactor
-  // Installed on both entry points:
+  // installed on both entry points:
   //     runDurable    → result.text  'cevap: [MASKED_EMAIL]'
   //     streamDurable → result.text  'cevap: gizli@ornek.com'     ← RAW
   // Only the messages heading for MEMORY were processed here; everything handed back to the caller
-  // Was the model's own output. So the caller who uses the stream for its durability and then reads
+  // was the model's own output. So the caller who uses the stream for its durability and then reads
   // `await result.text` (log it, store it, return it from an HTTP handler) received exactly what an
-  // Output processor exists to prevent — and the same code under runDurable did not. That asymmetry
-  // Is the leak; this closes it.
+  // output processor exists to prevent — and the same code under runDurable did not. That asymmetry
+  // is the leak; this closes it.
   //
   // SCOPE, stated plainly: `text` and `response.messages` are the `{text, messages}` VIEW the
-  // ProcessOutput contract is written in, and they are all that is masked — same line runDurable
-  // Draws (see the KNOWN RESIDUAL note there). `textStream`/`fullStream` are NOT masked and cannot
-  // Be: the deltas were already flushed to the client before the turn ended, and a chunk-wise
-  // Transform is not derivable from a whole-turn hook (a value can straddle two deltas; a
-  // Summarising processor has no per-chunk meaning at all). So on the stream path an output
-  // Processor governs what is PERSISTED and what the terminal promises return — not what the client
-  // Already saw byte-by-byte. Use an INPUT processor, or runDurable, if the delta stream itself must
+  // processOutput contract is written in, and they are all that is masked — same line runDurable
+  // draws (see the KNOWN RESIDUAL note there). `textStream`/`fullStream` are NOT masked and cannot
+  // be: the deltas were already flushed to the client before the turn ended, and a chunk-wise
+  // transform is not derivable from a whole-turn hook (a value can straddle two deltas; a
+  // summarising processor has no per-chunk meaning at all). So on the stream path an output
+  // processor governs what is PERSISTED and what the terminal promises return — not what the client
+  // already saw byte-by-byte. Use an INPUT processor, or runDurable, if the delta stream itself must
   // never carry it.
   const maskTerminal: TerminalMask = async (prop, value, steps) => {
     if (prop !== 'text' && prop !== 'response') return value;
@@ -3438,8 +3755,8 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
       }));
     } catch {
       // The chain threw (tripwire/retry/bug). onFinish reports it; here the ONLY other option is to
-      // Reject a promise that has never rejected for this reason, so the raw value is returned —
-      // Identical to the behaviour before masking existed, never worse.
+      // reject a promise that has never rejected for this reason, so the raw value is returned —
+      // identical to the behaviour before masking existed, never worse.
       return value;
     }
     if (!pout) return value; // no processors, or a suspended/blocked turn — unchanged
@@ -3448,13 +3765,13 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   };
 
   // (b): wrap the result so the terminal promises (result.text & friends) REJECT with the
-  // Typed streamFinishError when a block/limit sentinel fired — see guardStreamTerminalPromises.
+  // typed streamFinishError when a block/limit sentinel fired — see guardStreamTerminalPromises.
   // A synchronous streamText throw is released by afterAcquire's caller-side catch above.
   rawStream = streamText(options);
   const guarded = guardStreamTerminalPromises(rawStream, procCtx ? maskTerminal : undefined);
   // FAZ-7: the replay signal HTTP layers asked for (X-Gnl-Idempotency-Status) — true when this runId
-  // Had frozen input before this call (a resume/replay), false on a fresh run. A plain property on
-  // The result; the proxy forwards reads/writes to the target.
+  // had frozen input before this call (a resume/replay), false on a fresh run. A plain property on
+  // the result; the proxy forwards reads/writes to the target.
   (guarded as unknown as { __gnlPriorRun?: boolean }).__gnlPriorRun = frozenInput !== undefined;
   // K28 kapanışı: zarf STREAM yüzeyinde de çıkar. LAZY getter — tool replay'leri stream TÜKETİLİRKEN
   // olur, dönüş anında liste boştur; finish'ten sonra okuyan (server'ın done-frame'i, onFinish

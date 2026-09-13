@@ -161,6 +161,14 @@ export function createBatch(journal: Journal, cfg: BatchConfig) {
         const x = await readXid(journal, xidPlanOf(cfg.tool.semanticIdentity, cfg.toolName, item, cfg.resourceId, `batch:${batchId}`));
         // self-filter BATCH-SCOPED (hakem tuzak 3): aynı batch'in BAŞKA item'ının yazdığı XID
         // "başka kanal" diye çift raporlanmasın.
+        //
+        // PAKET #4 — BU METİN-AYRIŞTIRMASI BİLEREK DURUYOR. runId'yi string olarak yoklayan yerleri
+        // temizlerken buraya da bakıldı; kırık değil, çünkü `batch:<id>:<item>` motorun KENDİ bastığı
+        // bileşik kimliktir (karar §7'nin istisna satırı) ve türetilmiş uzaya hiç girmez. Önek yalnız
+        // bu ailenin id'lerine uyar: `run1_<hex>` ile başlayan bir XID `batch:` ile başlayamaz, yani
+        // türetilmiş bir koşumun yazdığı kayıt bu süzgeci YANLIŞ tetikleyemez — ki tetikleseydi
+        // sessizce yutulurdu, "başka kanalda zaten yapılmış" uyarısı hiç görünmezdi. Ölçüldü ve
+        // execution-axis.test.ts'te çiviyle tutuluyor.
         if (x && !x.first.runId.startsWith(`batch:${batchId}:`)) {
           let now = Date.now(); try { if (journal.now) now = await journal.now(); } catch { /* görüntü saati — fail-open */ }
           const diff = amountsDifferOf(x, item);

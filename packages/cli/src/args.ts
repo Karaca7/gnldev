@@ -1,5 +1,5 @@
 // Minimal zero-dependency arg parsing — the same flag()/positional() convention cli.ts always used,
-// Factored out so every command module can share it (kept intentionally tiny: no new runtime dep).
+// factored out so every command module can share it (kept intentionally tiny: no new runtime dep).
 
 /** `--name value` anywhere in argv. */
 export function flag(argv: string[], name: string): string | undefined {

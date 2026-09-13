@@ -115,6 +115,7 @@
   "inboxSubmitting": "Resuming…",
   "inboxResumeSuccess": "\"{{runId}}\" resumed",
   "inboxUpdatedAtLabel": "updated",
+  "inboxWorkKeyLabel": "work:",
   "runningGuardTitle": "A workflow run is in progress — leaving now would cancel it",
   "backToWorkflowsTitle": "Back to workflow list",
   "discardChangesTitle": "Discard changes?",

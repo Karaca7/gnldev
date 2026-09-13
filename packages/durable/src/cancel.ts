@@ -1,20 +1,20 @@
 // P2-cancel DURABLE cross-worker cancellation for AGENT runs — the
-// Agent-side twin of @gnldev/workflow's `cancelWorkflowRun` (P0.4) and the missing half of the server's
+// agent-side twin of @gnldev/workflow's `cancelWorkflowRun` (P0.4) and the missing half of the server's
 // P0.3 `/runs/:id/cancel` (which only aborts in-flight generation ON THAT INSTANCE; this flag reaches
-// Every worker and survives restarts).
+// every worker and survives restarts).
 //
 // Mechanism mirrors compensation.ts's condemn tombstone exactly: one journaled flag under a
 // `runKeys.proc` key (invisible to parseJournalKey → reader/time-travel/forkRun see the run's timeline
-// Unchanged), checked at the run entry points (resume refusal, next to `assertNotCompensated`) AND
-// Before every FRESH model step (durable-model.ts) — so a run in-flight on ANOTHER worker stops at its
-// Next model-step boundary. REPLAYED steps deliberately do NOT check the flag: replay is deterministic
-// Reconstruction of work that already happened — canceling must stop NEW spend, never corrupt or hide
-// The existing record (same principle as workflow cancel: journal state is never deleted).
+// unchanged), checked at the run entry points (resume refusal, next to `assertNotCompensated`) AND
+// before every FRESH model step (durable-model.ts) — so a run in-flight on ANOTHER worker stops at its
+// next model-step boundary. REPLAYED steps deliberately do NOT check the flag: replay is deterministic
+// reconstruction of work that already happened — canceling must stop NEW spend, never corrupt or hide
+// the existing record (same principle as workflow cancel: journal state is never deleted).
 //
 // Terminal like compensation: a canceled run refuses to run/resume forever after. Recovery path for a
-// Mistaken cancel is `forkRun` (time-travel.ts) — fork the completed prefix into a NEW runId, same as
-// The compensated-run story. Deliberately NO "uncancel": a cancel may have been ordered for
-// Safety/compliance reasons and silently reviving the same runId would erase that decision's meaning.
+// mistaken cancel is `forkRun` (time-travel.ts) — fork the completed prefix into a NEW runId, same as
+// the compensated-run story. Deliberately NO "uncancel": a cancel may have been ordered for
+// safety/compliance reasons and silently reviving the same runId would erase that decision's meaning.
 import type { Journal } from './journal.js';
 import { runKeys } from './journal.js';
 import { runCanceled } from './outcome.js';
@@ -37,15 +37,15 @@ export class RunCanceledError extends Error {
 
 /**
  * Durably cancels an agent run: any worker running it stops at its next fresh model step, and every
- * Later run/resume attempt throws `RunCanceledError`. Idempotent (re-canceling keeps the FIRST
- * Record's reason/timestamp — the original decision is the audit-relevant one). Never deletes journal
- * State — the completed prefix stays replayable/inspectable (studio timeline, diff, fork all work).
+ * later run/resume attempt throws `RunCanceledError`. Idempotent (re-canceling keeps the FIRST
+ * record's reason/timestamp — the original decision is the audit-relevant one). Never deletes journal
+ * state — the completed prefix stays replayable/inspectable (studio timeline, diff, fork all work).
  *
  * Also the ONE place a run's 'canceled' OUTCOME is recorded. This is the choke point — every cancel
- * Route (server `/runs/:id/cancel?durable`, studio's, a direct call) arrives here, and the flag is what
- * Makes every RunCanceledError downstream possible — so recording from the throw sites instead would
- * Mean N racing writers for one fact. It is written AFTER the flag: the flag is what stops the run,
- * And an outcome saying 'canceled' for a run nothing had actually canceled would be the worse lie.
+ * route (server `/runs/:id/cancel?durable`, studio's, a direct call) arrives here, and the flag is what
+ * makes every RunCanceledError downstream possible — so recording from the throw sites instead would
+ * mean N racing writers for one fact. It is written AFTER the flag: the flag is what stops the run,
+ * and an outcome saying 'canceled' for a run nothing had actually canceled would be the worse lie.
  */
 export async function cancelAgentRun(journal: Journal, runId: string, opts: { reason?: unknown } = {}): Promise<void> {
   const record = { at: Date.now(), ...(opts.reason !== undefined ? { reason: opts.reason } : {}) };
@@ -67,7 +67,7 @@ export async function agentRunCanceled(journal: Journal, runId: string): Promise
 }
 
 /** Throws RunCanceledError if the run was canceled (used by runDurable/streamDurable entry — parity
- *  With `assertNotCompensated`; the per-model-step gate lives in durable-model.ts). */
+ *  with `assertNotCompensated`; the per-model-step gate lives in durable-model.ts). */
 export async function assertNotCanceled(journal: Journal, runId: string): Promise<void> {
   const flag = await agentRunCanceled(journal, runId);
   if (flag !== undefined) throw new RunCanceledError(runId, flag.reason);

@@ -6,7 +6,7 @@ import { api, useCapabilities, useCacheStats, errMessage , isScopeRefused } from
 import { Spinner, Empty, EmptyState, ErrorBox, Btn, cn, PageHeader , ScopeRefusedState } from '../components';
 import { toast, ConfirmDialog } from '../ui';
 import { Stagger, StaggerItem } from '../motion';
-// I18n init side effect: so useTranslation still works if this view is rendered directly
+// i18n init side effect: so useTranslation still works if this view is rendered directly
 // (without App) (see src/i18n/index.ts) — main.tsx already does this, this re-guarantees it here.
 import '../i18n';
 
@@ -18,8 +18,8 @@ export function formatHitRate(hitRate: number): string {
   return `${(hitRate * 100).toFixed(1)}%`;
 }
 /** Hit rate card tone: neutral if there are no requests at all; good/medium/bad thresholds are in
- *  The same spirit as the Observability p95 cards (success/warning/destructive) — doesn't rely on
- *  Color alone, it's double-coded with the percent text. */
+ *  the same spirit as the Observability p95 cards (success/warning/destructive) — doesn't rely on
+ *  color alone, it's double-coded with the percent text. */
 export function hitRateTone(hitRate: number, total: number): 'success' | 'warning' | 'destructive' | 'muted' {
   if (total <= 0) return 'muted';
   if (hitRate >= 0.7) return 'success';
@@ -34,9 +34,9 @@ function Card({ label, value, hint, tone = 'muted' }: {
     success: 'text-success', warning: 'text-warning', destructive: 'text-destructive', muted: 'text-foreground',
   }[tone];
   return (
-    // H-full / min-w-0: same reason as the identical card in Observability — only some of these take
-    // A `hint`, the grid row sizes to the tallest, and the stretched grid item is the StaggerItem
-    // Wrapper rather than this box, so the hint-less cards ended short of the row.
+    // h-full / min-w-0: same reason as the identical card in Observability — only some of these take
+    // a `hint`, the grid row sizes to the tallest, and the stretched grid item is the StaggerItem
+    // wrapper rather than this box, so the hint-less cards ended short of the row.
     <div className="h-full min-w-0 rounded-md border border-border bg-card p-3">
       <div className="microlabel text-muted-foreground">{label}</div>
       <div className={cn('mt-1 text-xl font-semibold tabular-nums', toneCls)}>{value}</div>
@@ -47,7 +47,7 @@ function Card({ label, value, hint, tone = 'muted' }: {
 
 /** Manual invalidate panel (caps.cacheManage): if a key is given, only that key is cleared; if empty
  *  (best-effort) all keys known to the host are cleared — this same server-side limitation is spelled
- *  Out explicitly here (ConfirmDialog). */
+ *  out explicitly here (ConfirmDialog). */
 function InvalidatePanel() {
   const { t } = useTranslation('cache');
   const qc = useQueryClient();
@@ -106,7 +106,7 @@ function InvalidatePanel() {
 }
 
 // Cache: @gnldev/cache hit/miss rate + manual invalidate. Auto-refreshes every 5s (see api.ts
-// UseCacheStats refetchInterval) — same live-list spirit as the Jobs view.
+// useCacheStats refetchInterval) — same live-list spirit as the Jobs view.
 export function Cache() {
   const { t } = useTranslation('cache');
   const caps = useCapabilities();

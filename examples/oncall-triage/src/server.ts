@@ -71,8 +71,8 @@ const authProvider = roleAuth({
   viewer: VIEWER ? { token: VIEWER } : undefined,
 });
 // `roleAuth({})` is undefined — no classes configured means no provider, not a provider that refuses
-// Everyone. `makeGate` then opens the surface, which is why `allowOpenAccess` below is tied to the
-// Same condition instead of being hard-coded true.
+// everyone. `makeGate` then opens the surface, which is why `allowOpenAccess` below is tied to the
+// same condition instead of being hard-coded true.
 const gate = makeGate(authProvider, { allowOpenAccess: !authProvider });
 
 export function buildServer(deps: ServerDeps) {
@@ -103,7 +103,7 @@ export function buildServer(deps: ServerDeps) {
       severity: body.severity ?? 'sev2',
     });
     // 202, not 200: nothing has been triaged yet. Answering 200 with an empty diagnosis is how a
-    // Monitoring system learns to stop trusting the acknowledgement.
+    // monitoring system learns to stop trusting the acknowledgement.
     return c.json({ accepted: true, jobId }, 202);
   });
 
@@ -140,7 +140,7 @@ export function buildServer(deps: ServerDeps) {
   });
 
   // The streaming route. `resolveThreadId` keys memory on the INCIDENT, so an engineer who reloads
-  // The page continues the same conversation instead of starting a fresh one mid-incident.
+  // the page continues the same conversation instead of starting a fresh one mid-incident.
   app.route(
     '/chat',
     createChatRoute(
@@ -153,8 +153,8 @@ export function buildServer(deps: ServerDeps) {
   );
 
   // The generic REST API, gated by the same token as the approval endpoint. It is built from the
-  // Agent config rather than from the `gnl` handle: createRestApi builds its own registry, and
-  // Handing it a live instance would give two owners to one journal.
+  // agent config rather than from the `gnl` handle: createRestApi builds its own registry, and
+  // handing it a live instance would give two owners to one journal.
   const restApi = createRestApi(
     { storage, agents: deps.agents },
     { title: 'On-call Triage API', auth: authProvider, allowOpenAccess: !authProvider },

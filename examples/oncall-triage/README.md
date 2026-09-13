@@ -44,7 +44,7 @@ So this example puts the framework's guarantees where they are load-bearing rath
 | Guarantee | What it is worth here |
 |---|---|
 | **Approval** | A person decides before production is touched — and the run *suspends* rather than blocking, because approval can take an hour and a process holding a socket open for an hour is a process that gets restarted before the answer arrives |
-| **Exactly-once** | The restart runs once across double-clicks, retries and crash-resume |
+| **At-most-once** | The restart is not fired a second time across double-clicks, retries and crash-resume; where the outcome is genuinely unknown the run stops and asks rather than guessing |
 | **Cross-run idempotency** | The same incident pages once, even when the alert fires again as a brand-new run |
 | **Redaction** | The logs this agent reads carry a database password. Without a redactor, running it means posting that password to a model provider |
 | **Durability** | The thirty-minute watch survives the deploy that lands at 3:10am |

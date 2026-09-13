@@ -64,10 +64,10 @@ const incidentWorkflow = buildIncidentWorkflow({
     gnl.run('triage', {
       runId: `triage:${a.incidentId}`,
       // The service goes in the PROMPT, not only in the routing fields. It was in `resourceId` alone
-      // At first, which scopes memory correctly and tells the model nothing: a latency alert reading
+      // at first, which scopes memory correctly and tells the model nothing: a latency alert reading
       // "p99 regression, 2400ms" names no service, so the agent diagnosed a different one than the
-      // Alert was about — confidently, and with a perfect runbook-adherence score, because it followed
-      // The procedure faithfully against the wrong subject.
+      // alert was about — confidently, and with a perfect runbook-adherence score, because it followed
+      // the procedure faithfully against the wrong subject.
       prompt: `[${a.severity}] service=${a.service} — ${a.text}`,
       threadId: a.incidentId,
       resourceId: a.service,
@@ -98,7 +98,7 @@ const ops = buildOps(storage, runner, async (alert) => {
   alerts.push(alert);
   const out = (await incidentWorkflow.run(alert, { runId: `wf:${alert.incidentId}`, journal })) as Resolved;
   // The restart is announced only after it actually happened — the workflow may be sitting on an
-  // Approval, in which case there is nothing to watch yet and the event would schedule a watch over
+  // approval, in which case there is nothing to watch yet and the event would schedule a watch over
   // A restart that never occurred.
   if (!out?.suspended && fleet.restarts.some((r: any) => r.service === alert.service)) {
     await announceRestart(storage.work, alert.incidentId, alert.service);
@@ -108,7 +108,7 @@ const ops = buildOps(storage, runner, async (alert) => {
 ops.worker.start();
 ops.watcher.start();
 // `.catch` is not decoration. A rejected promise from a bare interval callback is an unhandled
-// Rejection, and Node's default is to terminate the process — so one transient scheduler error at
+// rejection, and Node's default is to terminate the process — so one transient scheduler error at
 // 3am takes down the alert intake, the approval endpoint and Studio along with the poll that failed.
 // The tick is the least important thing running here; it must be the least able to kill the rest.
 setInterval(() => {
@@ -141,7 +141,7 @@ const resumeAndRefresh = async (runId: string, approvals: Record<string, boolean
 const { app, adminToken } = buildServer({
   storage, gnl, agents, memory, fleet, resume: resumeAndRefresh,
   // The alert as received, joined with whatever triage concluded — including the toolCallId of the
-  // Decision that is waiting, which is what the approve endpoint needs and nothing else publishes.
+  // decision that is waiting, which is what the approve endpoint needs and nothing else publishes.
   incidents: () =>
     alerts.map((a) => {
       const r = resolved.find((x) => x.incidentId === a.incidentId);

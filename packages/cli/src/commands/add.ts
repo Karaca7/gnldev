@@ -1,4 +1,4 @@
-// Gnl add <feature> — drop a boilerplate recipe into an existing project + print the config wiring.
+// gnl add <feature> — drop a boilerplate recipe into an existing project + print the config wiring.
 // Deliberately does NOT rewrite gnl.config.ts (AST patching is fragile): it writes a src/ file
 // (idempotent — never overwrites) and prints exactly what to add to the config object.
 // Recipes live in ../recipes.ts (shared with `gnl init`'s feature composition).

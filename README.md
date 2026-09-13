@@ -5,7 +5,8 @@
 **A thin correctness layer on top of the Vercel AI SDK — durable execution without standing up a server.**
 It doesn't touch the AI SDK's agentic loop (`generateText`/`streamText` + `tools`) at all; it adds two
 wrappers and a journal on top: **a side-effecting tool call is never silently fired twice.** That's the
-precise meaning of **"exactly-once effect"** here — call-scoped dedup with a safe default: the guarantee
+precise meaning of **"exactly-once effect"** here — call-scoped dedup with a safe default, whose exact name is
+[**at-most-once for side effects**](./packages/durable/README.md#what-never-charged-twice-actually-means): the guarantee
 is carried all the way to the provider itself via `recover()`/`idempotencyKey`, and when the outcome is
 genuinely unknown (e.g. after a crash), the system **blocks and asks for approval** instead of silently
 retrying. If you know the AI SDK, you already know this.
@@ -30,7 +31,7 @@ const chargeCard = gnlTool(
 );
 
 const res = await runDurable({
-  runId: 'order-123',                       // idempotency key (typically an orderId/sessionId)
+  runId: 'order-123',                       // the id of THIS WORK (an orderId) — never a sessionId
   journal: new SqliteStorage('runs.db').runs,
   model: openai('gpt-4o'),
   tools: { chargeCard },
@@ -42,16 +43,25 @@ const res = await runDurable({
 // SideEffectRetryBlockedError rather than guess — see "Honest positioning" below.
 ```
 
+> **One id is one job, never one session.** `runDurable` is the raw surface — the string you pass *is*
+> the identity, so a conversation id there makes every later turn replay the first one forever.
+> Through `createGnl` and the HTTP adapters you name the work instead (`workKey`) and the engine
+> derives the id: [Work identity](./packages/durable/README.md#work-identity-workkey).
+
 ## Why? (the edge — code-verified)
 Agent frameworks either have no durability, or durability only at the level of an **opaque snapshot**
 (e.g. a policy-gated step-snapshot durable agent — no atomic claim to prevent double-execution
 on concurrent resume, no replay/fork from a given step; idempotency on retry is left to the caller →
-double-charge risk). GNL's one sharp difference: **call-scoped, CAS-guaranteed exactly-once effect** — the
-same tool call (`toolCallId`) never runs twice, and with opt-in `idempotency: 'args'` the same **arguments**
-never run twice either, even when the model re-plans the call under a brand-new `toolCallId` (the dominant
+double-charge risk). GNL's one sharp difference: **the same work is never silently done twice** — the
+same tool call (`toolCallId`) is never silently run twice (call-scoped, CAS-guaranteed single execution), and with
+opt-in `idempotency: 'args'` the same **arguments**
+are never silently run twice either, even when the model re-plans the call under a brand-new `toolCallId` (the dominant
 real-world duplicate case — see below); a call whose outcome is unknown is first checked against
 the provider via `recover()`, and if it's still unknown, the system **blocks and asks a human for
-approval** instead of silently retrying — **plus deterministic replay + time-travel.** Every feature is
+approval** instead of silently retrying. When your tool carries the injected `idempotencyKey` downstream
+(or answers `recover()`), the chain completes to end-to-end exactly-once — a joint guarantee, stated as
+one ([what "never charged twice" actually means](packages/durable/README.md#what-never-charged-twice-actually-means)) —
+**plus deterministic replay + time-travel.** Every feature is
 built on a single `Journal` interface, so it **inherits** these guarantees.
 
 ### LLM-aware idempotency (`idempotency: 'args'`)
@@ -107,7 +117,7 @@ suspending. For those, use `runDurable`. Runnable example (no API key):
 
 | Only us | Parity (+ durable twist) |
 |---|---|
-| exactly-once tool/model/MCP/RAG · **LLM-aware args-based idempotency** (`idempotency: 'args'` / `idempotencyKey` — dedups the model re-planning the same call under a new `toolCallId`) · deterministic replay (opt-in `replay: 'strict'` → **tool-argument** drift throws `DivergenceError`; a diverging **model step** only `console.warn`s even under strict, and isn't checked at all under the lenient default — replay is an **opt-in assurance**, not an imposed constraint) · time-travel + fork · **deterministic model fallback** (the winner is written to the journal, resume sticks with it) · **org-scoped journal** (`withOrg` — organization isolation + inherits exactly-once) · **edge-native**: **32.4 KiB gzip** core, **100.0 KiB** gzip including the AI SDK = 3.3% of the CF Workers free-tier limit (measured with `pnpm --filter @gnldev/showcase bundle` — esbuild, minified, esm/browser) · durable queue (lock renewal via heartbeat) · event bus (exactly-once marking + at-least-once delivery) · cross-network A2A (opt-in HMAC-SHA256 signing) · idempotent OTEL · cross-run cache · outbound-call **timeouts** (`timeouts: {modelStepMs,toolMs,claimTtlMs}` → `StepTimeoutError`) · **fail-closed auth** (setup errors out in production if no provider is configured) · **approval decisions are first-class in the journal** (in the approved-but-crashed-before-the-tool-ran scenario, resume applies the decision from the journal even if the `approvals` parameter isn't passed) | agent loop · **requestContext DI** (dynamic model/system/tools) · memory (recall/schema-WM/thread/OM) · workflows (evented) · MCP (client+server) · evals (+datasets) · auto-REST/OpenAPI (409/422 resumable contract) · processors · RAG (+rerank) · cost ledger |
+| [at-most-once](./packages/durable/README.md#what-never-charged-twice-actually-means) tool/model/MCP/RAG effects · **LLM-aware args-based idempotency** (`idempotency: 'args'` / `idempotencyKey` — dedups the model re-planning the same call under a new `toolCallId`) · deterministic replay (opt-in `replay: 'strict'` → **tool-argument** drift throws `DivergenceError`; a diverging **model step** only `console.warn`s even under strict, and isn't checked at all under the lenient default — replay is an **opt-in assurance**, not an imposed constraint) · time-travel + fork · **deterministic model fallback** (the winner is written to the journal, resume sticks with it) · **org-scoped journal** (`withOrg` — organization isolation + inherits the same guarantee) · **edge-native**: **32.4 KiB gzip** core, **100.0 KiB** gzip including the AI SDK = 3.3% of the CF Workers free-tier limit (measured with `pnpm --filter @gnldev/showcase bundle` — esbuild, minified, esm/browser) · durable queue (lock renewal via heartbeat) · event bus (exactly-once marking + at-least-once delivery) · cross-network A2A (opt-in HMAC-SHA256 signing) · idempotent OTEL · cross-run cache · outbound-call **timeouts** (`timeouts: {modelStepMs,toolMs,claimTtlMs}` → `StepTimeoutError`) · **fail-closed auth** (setup errors out in production if no provider is configured) · **approval decisions are first-class in the journal** (in the approved-but-crashed-before-the-tool-ran scenario, resume applies the decision from the journal even if the `approvals` parameter isn't passed) | agent loop · **requestContext DI** (dynamic model/system/tools) · memory (recall/schema-WM/thread/OM) · workflows (evented) · MCP (client+server) · evals (+datasets) · auto-REST/OpenAPI (409/422 resumable contract) · processors · RAG (+rerank) · cost ledger |
 
 ## Requirements
 
@@ -151,16 +161,16 @@ The table below covers the ones you interact with directly.
 | **`@gnldev/workflow`** | then/parallel/branch · foreach/loop · **`retry` (declarative retry policy, counter kept in the journal)** · `wf.runResumable()` (a `Workflow` **method**, not a top-level export) + `sleep`/`waitFor` (evented/scheduled) |
 | **`@gnldev/processors`** | piiRedactor · moderationProcessor · toolFilter · **`toolSearch` (semantic tool selection, journaled)** · tokenLimit · promptInjectionDetector · outputLimit |
 | **`@gnldev/evals`** | **16 built-in scorers** — 8 LLM-judge (faithfulness/hallucination/…), 4 model-free text, 3 rule-based (exactMatch/contains/regexScore) + embeddingSimilarity, which takes an embedding function you supply · llmJudge · `scoreRun` · `evalDataset` (resumable) · **`createDatasetsManager`** (version history + experiment `compare`) |
-| **`@gnldev/mcp`** | MCP client (`mcpTools`) **+ server** (`createMcpServer`, server-side exactly-once) |
+| **`@gnldev/mcp`** | MCP client (`mcpTools`) **+ server** (`createMcpServer`, server-side journal dedup) |
 | **`@gnldev/server`** | `createRestApi` + OpenAPI · **fail-closed auth** (setup errors out in production if no provider is configured; opt in explicitly with `allowOpenAccess: true`) · **409/422 resumable contract** (blocked/limit errors return `resumable`/`retry` from a single `BLOCKED_ERROR_CODES` source of truth) |
 | **`@gnldev/otel`** | `exportRunToOtlp` + **`otlpPresets`** (Langfuse/Braintrust/Honeycomb/Datadog/Collector + generic API-key OTLP) · **live mode** (`@gnldev/otel/live`) |
 | **`@gnldev/queue`** | durable job queue + worker · **lock renewal via heartbeat** (prevents takeover during long-running handlers) + opt-in empty-poll backoff |
 | **`@gnldev/events`** | event bus (fan-out) — exactly-once marking + at-least-once delivery; handlers must be idempotent · **dead-letter** (`maxAttempts`/`retryDelayMs` spaced retries, then per-consumer quarantine — `listDeadEvents`/`retryDeadEvent`, visible and releasable in Studio) · opt-in empty-poll backoff |
-| **`@gnldev/a2a`** | remote agent (cross-network exactly-once) · **opt-in HMAC-SHA256-signed requests** (`createA2ATool({ secret })` ↔ `createRestApi({ a2aSecret })`, replay resistance via a timestamp window) |
+| **`@gnldev/a2a`** | remote agent (cross-network dedup — the same runId replays) · **opt-in HMAC-SHA256-signed requests** (`createA2ATool({ secret })` ↔ `createRestApi({ a2aSecret })`, replay resistance via a timestamp window) |
 | **`@gnldev/cache`** | cross-run cache |
 | **`@gnldev/studio`** | inspector **+ Playground**: pick agent → prompt → streaming response → approval · time-travel/fork + cost/trace/metrics/diff · admin/API separation + role-based auth |
 | **`@gnldev/client`** | type-safe REST/SSE client (framework-agnostic core) + React hooks (`@gnldev/client/react`: `useGnlAgent`/`useChat`) |
-| **`@gnldev/cli`** | project: `gnl init` (**interactive feature checkbox** — pick idempotency-tool/rag/mcp/memory/workflow/auth/e2e → a wired `gnl.config.ts` is generated; non-interactive via `--features a,b,c` / `--template minimal\|full` / `--yes`, prompt never opens without a TTY) / `add <idempotency-tool\|rag\|mcp\|memory\|workflow\|auth>` / `dev` / `studio` · inspect: `runs`/`run`/`inspect` (**time-travel in the terminal**) · operate: `fork`/`resume`/`sweep`/`rm`/`pricing` (all wired straight to `@gnldev/durable`'s own exports, nothing reimplemented) · **one runtime dep** (`tsx`, to load `gnl.config.ts`; hand-rolled ANSI/table + a from-scratch raw-mode checkbox, no chalk/ora/commander/inquirer) · `create-gnl` (`npm create gnl`) |
+| **`@gnldev/cli`** | project: `gnl init` (**interactive feature checkbox** — pick idempotency-tool/rag/mcp/memory/workflow/auth/e2e → a wired `gnl.config.ts` is generated; non-interactive via `--features a,b,c` / `--template minimal` / `--yes`, prompt never opens without a TTY) / `add <idempotency-tool\|rag\|mcp\|memory\|workflow\|auth>` / `dev` / `studio` · inspect: `runs`/`run`/`inspect` (**time-travel in the terminal**) · operate: `fork`/`resume`/`sweep`/`rm`/`pricing` (all wired straight to `@gnldev/durable`'s own exports, nothing reimplemented) · **one runtime dep** (`tsx`, to load `gnl.config.ts`; hand-rolled ANSI/table + a from-scratch raw-mode checkbox, no chalk/ora/commander/inquirer) · `create-gnl` (`npm create gnl`) |
 
 ### Free and paid — where the line is
 
@@ -188,7 +198,7 @@ difference you are buying.
 
 ## Examples (`examples/`)
 - **`showcase`** — a single self-verifying file exercising the packages: `pnpm --filter @gnldev/showcase demo` → 22 sections, 22/22 ✓ (mock model, no API key needed) · `bench` (overhead measurement)
-- **`app`** — **Durable AI Support Desk** (web UI + API): `pnpm --filter @gnldev/app start` → :3100 (UI) + :3100/studio (ops). Ticket → message → approval → exactly-once refund + queue/events/otel.
+- **`app`** — **Durable AI Support Desk** (web UI + API): `pnpm --filter @gnldev/app start` → :3100 (UI) + :3100/studio (ops). Ticket → message → approval → at-most-once refund + queue/events/otel.
 - **`react-client`** — a `@gnldev/client/react` demo (`useChat` + streaming + approval), API-key-free echo backend. `pnpm --filter @gnldev/react-client-example server` + `… dev`.
 
 ## Supply-chain hygiene
@@ -316,13 +326,18 @@ than a `Step`, so an agent inside a fan-out is invoked inline instead of reusing
 
 ## Documentation
 
+- **[docs/QUICKSTART-PROTECTED.md](./docs/QUICKSTART-PROTECTED.md)** — five minutes, ending with a
+  duplicate you watched get refused and a matrix saying what is on and what is off
+  ([Türkçe](./docs/QUICKSTART-PROTECTED.tr.md)).
+- **[docs/errors/](./docs/errors/README.md)** — one page per error code on the wire: what happened,
+  why the framework refused, and the ways out.
 - **[docs/GUIDE.md](./docs/GUIDE.md)** — the complete walkthrough: what it is, how a run works, the
   journal's key schema, the storage ports, and the design trade-offs behind them. Start here if you
   want to understand the engine rather than just call it.
 - **[docs/GUIDE.tr.md](./docs/GUIDE.tr.md)** — the same guide, in Turkish.
 - **[examples/incident-proofs](./examples/incident-proofs)** — reproductions of real double-side-effect
   incidents, and what this framework does differently in each.
-- **[examples/stripe-idempotency](./examples/stripe-idempotency)** — provider-side exactly-once against
+- **[examples/stripe-idempotency](./examples/stripe-idempotency)** — provider-side idempotency against
   a mock Stripe: the same key carried from the journal to the provider.
 - **[examples/showcase](./examples/showcase)** — one self-verifying file that exercises the packages
   end to end with no API key: `pnpm --filter @gnldev/showcase demo`.

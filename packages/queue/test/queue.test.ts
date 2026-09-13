@@ -154,7 +154,7 @@ describe('@gnldev/queue', () => {
       const pokes: Promise<boolean>[] = [];
       for (let i = 0; i < 4; i++) { // pokes at t=30/60/90/120 — all while the handler is running
         await vi.advanceTimersByTimeAsync(30);
-        const rec = await (storage.runs as any).get('job:j:lock'); // explicit lease check
+        const rec = await (storage.runs as any).get('job:j:lease:lock'); // explicit lease check
         expect(rec.owner).toBe('w1');
         expect(rec.expires).toBeGreaterThan(Date.now()); // the heartbeat keeps extending it
         pokes.push(w2.runOnce());
@@ -206,7 +206,7 @@ describe('@gnldev/queue', () => {
 
       const w1p = w1.runOnce();
       await vi.advanceTimersByTimeAsync(0); // let w1 claim the lock and enter the handler
-      const lockKey = 'job:j:lock';
+      const lockKey = 'job:j:lease:lock';
       const pokes: Promise<boolean>[] = [];
       // 4 pokes at t=30/60/90/120 — all WHILE the 150ms handler is still running.
       for (let i = 0; i < 4; i++) {
@@ -268,7 +268,7 @@ describe('@gnldev/queue', () => {
       const w1p = w1.runOnce();
       await vi.advanceTimersByTimeAsync(0); // w1 holds the lock until t=50; its renews (t=16/32/48) all throw
       await vi.advanceTimersByTimeAsync(55); // virtual clock passes the lease end — the lock is now genuinely stale
-      const stale = await (storage.runs as any).get('job:j:lock');
+      const stale = await (storage.runs as any).get('job:j:lease:lock');
       expect(stale.owner).toBe('w1');
       expect(stale.expires).toBeLessThan(Date.now()); // proof: EXPIRED, not "stolen"
       renewBroken = false;
@@ -277,7 +277,7 @@ describe('@gnldev/queue', () => {
       await Promise.all([w1p, w2p]);
 
       expect(runs.length).toBe(2); // at-least-once: the takeover legitimately re-ran the body
-      const owner = await (storage.runs as any).get('job:j:lock');
+      const owner = await (storage.runs as any).get('job:j:lease:lock');
       expect(owner.owner).toBe('w2'); // w1's release() was a no-op (token fencing) — it never freed w2's lock
       expect(qdoneWrites.length).toBe(1); // ONE result: the stale w1 was blocked (lockLost + qown CAS)
       expect(await storage.work.get('qatt:j')).toBeUndefined(); // and it corrupted no attempt counter either

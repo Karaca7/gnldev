@@ -15,6 +15,6 @@ export type { Recipe, RecipeWiring, WiringPlace, CheckboxItem } from './recipes.
 export { reducer, initState, selection, decodeKey, checkboxPrompt } from './prompt.js';
 export type { SelectState, Key, PromptItem } from './prompt.js';
 // Command registry (init/dev/studio · runs/run/inspect · fork/resume/sweep/rm) — for embedding/tests
-// That want to drive a command's Command.run() programmatically instead of spawning the `gnl` binary.
+// that want to drive a command's Command.run() programmatically instead of spawning the `gnl` binary.
 export { commands, commandList, GROUP_LABELS } from './commands/index.js';
 export type { Command, CommandCtx, CommandGroup } from './commands/index.js';

@@ -38,7 +38,7 @@ describe('gnl dev does not let the environment make the bind decision', () => {
 
     expect(spawned).toHaveLength(1);
     // Node drops env keys whose value is `undefined` (verified), so an absent flag means an absent
-    // Variable rather than the string "undefined" — which `resolveBind` would have treated as a host.
+    // variable rather than the string "undefined" — which `resolveBind` would have treated as a host.
     expect(spawned[0]!.env.GNL_HOST, 'an inherited host must not survive').toBeUndefined();
     expect(spawned[0]!.env.GNL_ALLOW_OPEN_NETWORK, 'an inherited acknowledgement must not survive').toBeUndefined();
   });
@@ -59,7 +59,7 @@ describe('gnl dev does not let the environment make the bind decision', () => {
   });
 
   // PORT is a different case and deliberately kept: `--port` falls back to it by design, because the
-  // Alternative was editing gnl.config to move off 3000. It carries no security decision.
+  // alternative was editing gnl.config to move off 3000. It carries no security decision.
   it('PORT is still inherited — that fallback is intended', async () => {
     process.env.PORT = '4567';
     await devCommand.run({ argv: ['--config', CFG] } as any);

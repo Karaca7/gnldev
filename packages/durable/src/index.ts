@@ -31,17 +31,21 @@ export { flattenUsage, finishReasonText, type FlatUsage } from './sdk-compat.js'
 export type { RunCost, RunCostOptions, TraceSpan } from './cost.js';
 export { DEFAULT_PRICING, priceFor, costOf, PRICING_KEY, readPricing, effectivePricingTable } from './pricing.js';
 // Exported for consumers that need the usage/modelId of ONE model step and their own pricing
-// Decision on top — `getRunCost` prices an unknown model at 0, which is right for a total and wrong
-// For a report that has to distinguish "free" from "we have no price for this".
+// decision on top — `getRunCost` prices an unknown model at 0, which is right for a total and wrong
+// for a report that has to distinguish "free" from "we have no price for this".
 export { usageAndCostFromModelValue, modelRecordFacts } from './cost.js';
 export type { ModelPricing, PricingDoc } from './pricing.js';
 export {
   DivergenceError, RunBusyError, SideEffectRetryBlockedError, RetryLimitExceededError,
   ReplicationNotAcknowledgedError, SuiteVersionMismatchError, RunThreadMismatchError,
-  RunInputMismatchError, RunActorMismatchError, ThreadOwnerMismatchError, RunSweptError, BatchPlanMismatchError,
+  RunInputMismatchError, RunActorMismatchError, RunOwnerMismatchError, ThreadOwnerMismatchError, RunSweptError, BatchPlanMismatchError,
   NotAnAgentRunError,
   CALLER_CONFLICT_CODES, callerConflictCode,
-  BLOCKED_ERROR_CODES, blockedErrorCode, upstreamFailure,
+  BLOCKED_ERROR_CODES, blockedErrorCode, upstreamFailure, UPSTREAM_ERROR_CODES,
+  // The error→note→help formatter. Exported because the refusals a user actually meets are split
+  // across packages — @gnldev/server writes the ones that happen before a run starts — and a second
+  // hand-rolled copy of this shape is how three surfaces end up teaching three different lessons.
+  teachingError, runBusyMessage,
 } from './errors.js';
 export type { UpstreamFailure } from './errors.js';
 // Task 3: opt-in sibling-suite version-skew guard (see suite-consistency.ts).
@@ -49,6 +53,32 @@ export { assertSuiteConsistent, versionsEqual } from './suite-consistency.js';
 export type { AssertSuiteConsistentOptions } from './suite-consistency.js';
 export { StepTimeoutError, withTimeout } from './timeout.js';
 export { argsHash, stableStringify } from './hash.js';
+// The run-identity primitive (docs/RUNID-WORKKEY-HEYET-KARARI.md §3-§4). Exported on its own, ahead
+// of any call path that accepts a workKey: package #1 ships the derivation and the reservation so the
+// registry gate (#3) has something already covered by collision vectors to build on.
+export {
+  workDigest,
+  derivedRunId,
+  executionRunId,
+  // Package #4 completes the axis: the third suffix (`#fork-<n>`) and the "strip the suffix" helper
+  // the three minting sites (fork/rollover/replay) all needed before they could count anything.
+  forkRunId,
+  derivedRunIdBase,
+  parseDerivedRunId,
+  isDerivedRunId,
+  WORKKEY_DST,
+  DERIVED_RUN_ID_PREFIX,
+  // Package #3 puts this one to work: the address an `'org'` job runs under when no organization is
+  // configured. Exported because it is a VALUE a reader meets in a run record, not an internal.
+  DEPLOYMENT_SCOPE,
+  type WorkScopeKind,
+  type WorkScope,
+  type DerivedRunIdParts,
+} from './hash.js';
+// Package #2 (the record): the after-the-fact half of a workKey. `workKeyHash` is what a tombstone,
+// the conflict ledger and any log line keep once the run itself is gone — see its own doc for the
+// pseudonym caveat that has to travel with it.
+export { workKeyHash } from './hash.js';
 export { serialize, deserialize } from './serialize.js';
 export { withDurableModel } from './durable-model.js';
 export type { DurableModelOptions, ExclusiveStepOptions } from './durable-model.js';
@@ -92,7 +122,15 @@ export type { Processor, ProcessorInput, ProcessorOutput, ProcessorCtx, Processo
 export { createAgentTool, runSubAgent } from './agent-tool.js';
 export type { AgentToolConfig } from './agent-tool.js';
 export { createGnl, agentVisibleToOrg, sealRequestContext, serverIdentityOf, GNL_RESOURCE_ID_KEY, GNL_ORG_ID_KEY, GNL_THREAD_ID_KEY } from './registry.js';
-export type { CreateGnlConfig, AgentConfig, RunOptions, WorkflowLike, WorkflowMeta, WorkflowRunResult, RequestContext, DynamicArg, ScorerLike, NetworkConfig } from './registry.js';
+// Package #5: the HTTP surfaces resolve the SAME tuple the doors resolve, because they need the id
+// before they call one (gates, cancel registry, `X-Gnl-Run-Id`). See resolveWorkIdentity's own note
+// on why this is exported rather than re-derived per adapter.
+export { resolveWorkIdentity } from './registry.js';
+export type { CreateGnlConfig, AgentConfig, RunOptions, WorkflowLike, WorkflowMeta, WorkflowRunResult, RequestContext, DynamicArg, ScorerLike, NetworkConfig, GnlIdentity, WorkIdentityRequest, ResolvedWorkIdentity } from './registry.js';
+// The protection matrix an entry point prints at startup — ONE derivation, so a banner cannot claim
+// a protection the config does not carry (see protections.ts for the banner that already did).
+export { describeProtections, formatProtections } from './protections.js';
+export type { ProtectionRow, ProtectionMark, ProtectionSource, ProtectionContext } from './protections.js';
 // Dynamic multi-agent routing (Supervisor/`.network()` parity) — decisions are CAS-frozen.
 export { runNetwork, getNetworkTrace, netKeys } from './network.js';
 export type { NetworkResult, NetworkStep, NetworkTarget, RouteDecision, RunNetworkOptions } from './network.js';
@@ -148,7 +186,7 @@ export {
 } from './budget.js';
 export type { BudgetLimit, OrganizationUsage, BudgetCheck, UsageCostCache } from './budget.js';
 // P1.6 materialized metrics layer (incremental per-day/per-agent counters +
-// Per-run fast-path row, riding incrBy/getCounters/putIfAbsent/deletePrefix) — see metrics.ts.
+// per-run fast-path row, riding incrBy/getCounters/putIfAbsent/deletePrefix) — see metrics.ts.
 export {
   recordRunMetrics, recordRunScores, backfillMetrics, rebuildMetrics, readMetricsSummary, readCounter,
   metricsDayKey, metricsAgentDayKey, metricsRunKey, metricsDoneKey, metricsScoresDoneKey,
@@ -174,7 +212,7 @@ export { resolveModel, withModelFallback, setChainToolShaper, registerModelProvi
 export type { FallbackCandidate, ModelProviderFactory } from './model-router.js';
 // W2: Replay-based regression core (diffRuns/replayRun/regressionReport) — see regression.ts.
 // BuildDecisionSequence: also re-exported for P1.1 — @gnldev/evals' trajectory
-// Scorer builds a run's tool-call sequence from this same primitive.
+// scorer builds a run's tool-call sequence from this same primitive.
 export { diffRuns, replayRun, regressionReport, buildDecisionSequence } from './regression.js';
 export type {
   DecisionPoint, DiffDetail, DiffEntry, RunDiff,
@@ -183,7 +221,7 @@ export type {
 } from './regression.js';
 // Persistent storage: `@gnldev/durable/sqlite` (SqliteStorage) · `@gnldev/durable/postgres`
 // (PostgresStorage) · `@gnldev/durable/redis` (RedisStorage — runs/work/cache/meta; memory/vectors are
-// Overridden via composite). For a bare durable run use `new SqliteStorage(path).runs` (RunJournal = journal).
+// overridden via composite). For a bare durable run use `new SqliteStorage(path).runs` (RunJournal = journal).
 // P2-migrate schema introspection/migration façade — see migrate.ts.
 export { runMigrationCheck, tablesFromDDL } from './migrate.js';
 export type { SchemaCheckResult, SchemaMigrationResult, MissingColumn, MigratableStorage, MigrationCheckResult } from './migrate.js';

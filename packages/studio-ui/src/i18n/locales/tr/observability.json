@@ -19,6 +19,7 @@
   "statusFilterAriaLabel": "Status filtresi",
   "downloadCsv": "CSV indir",
   "colRunId": "runId",
+  "colWorkKey": "iş adı",
   "colStatus": "durum",
   "colStart": "başlangıç",
   "colDuration": "süre",

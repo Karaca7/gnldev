@@ -1,6 +1,6 @@
 # @gnldev/memory
 
-Rich semantic-recall memory for `@gnldev/durable` — **journaled, replayable, exactly-once.** One class: `AgentMemory`.
+Rich semantic-recall memory for `@gnldev/durable` — **journaled and replayable**; a write already recorded is replayed rather than applied again ([at-most-once for side effects](../durable/README.md#what-never-charged-twice-actually-means)). One class: `AgentMemory`.
 
 ```ts
 import { AgentMemory } from '@gnldev/memory';
@@ -31,8 +31,8 @@ await runDurable({ runId, journal, model, memory: mem, threadId: 'th-1', resourc
 ## Durable twist (not in typical agent-memory implementations)
 - **Recall is replayable:** `loadContext` runs before `persistInput` → the recall result **freezes** into
   `:input`; resume replays the same context, embed/query never runs again.
-- **WM is exactly-once:** the `updateWorkingMemory` tool is journaled → the merge doesn't repeat on resume
-  (no double-write).
+- **WM merge is recorded, not repeated:** the `updateWorkingMemory` tool is journaled → on resume the merge
+  comes back from the record instead of being applied a second time (no double-write).
 - **OM is replayable:** the same `seq` again → the Observer/Reflector LLM is **never called**, the summary
   is reproduced verbatim (survives even a crash mid-compaction).
 

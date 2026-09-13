@@ -84,7 +84,7 @@ describe('live stream sentinel masking', () => {
 
   // `tool-output-available` carries only a toolCallId, so the name comes from the earlier input chunk.
   // Neutering that map left every test green, while a suspend sentinel with no toolName of its own
-  // Reported `toolName: undefined` to the client.
+  // reported `toolName: undefined` to the client.
   it('carries the tool name across from the input chunk when the sentinel lacks one', async () => {
     const out = await drain([
       { type: 'tool-input-start', toolCallId: 'c4', toolName: 'fromInputChunk' },

@@ -1,6 +1,6 @@
 // @gnldev/otel/live — LIVE (real-time) observability. Unlike the post-hoc exportRun, it emits live OTEL
-// Spans + cost WHILE model/tool calls are ACTUALLY running. The wrappers compose BELOW durable → they
-// Never run on replay (journal cache hit) → the live layer NEVER TOUCHES THE JOURNAL, does not break determinism.
+// spans + cost WHILE model/tool calls are ACTUALLY running. The wrappers compose BELOW durable → they
+// never run on replay (journal cache hit) → the live layer NEVER TOUCHES THE JOURNAL, does not break determinism.
 // It carries real wall-clock time/latency (non-det) — that's why it goes only to the exporter, never the journal.
 import { createRequire } from 'node:module';
 import { wrapLanguageModel } from 'ai';
@@ -41,11 +41,11 @@ export interface LiveObservabilityOptions {
   onCost?: (cost: LiveCost) => void;
   /**
    * FINDING (roots leak guard): the `roots` Map holds one root span per new runId; normally this is
-   * Cleared by `flush(runId)` (or plain `flush()` if never closed). If the caller forgets to do this
+   * cleared by `flush(runId)` (or plain `flush()` if never closed). If the caller forgets to do this
    * (e.g. a long-lived multi-run server), the Map grows unbounded. This is the last-resort guardrail
-   * For that case: once the Map exceeds this size, the OLDEST (insertion-order) root is forcibly ended
-   * And removed. If not given, the guardrail is OFF (default behavior unchanged) — only opted-in callers
-   * Get it. Kept simple: no TTL, just a size limit.
+   * for that case: once the Map exceeds this size, the OLDEST (insertion-order) root is forcibly ended
+   * and removed. If not given, the guardrail is OFF (default behavior unchanged) — only opted-in callers
+   * get it. Kept simple: no TTL, just a size limit.
    */
   maxPendingRuns?: number;
 }
@@ -64,8 +64,8 @@ export interface LiveObservability {
   cost(): LiveCost;
   /**
    * If `runId` is given, closes ONLY that run's root span + removes it from the `roots` Map (does not
-   * Touch other concurrent runs) — this is the cleanup point that must be called as each run finishes
-   * In a multi-run scenario. If `runId` is omitted (old behavior, UNCHANGED), closes ALL open root spans
+   * touch other concurrent runs) — this is the cleanup point that must be called as each run finishes
+   * in a multi-run scenario. If `runId` is omitted (old behavior, UNCHANGED), closes ALL open root spans
    * + clears the Map entirely. In both cases forces a flush to the exporter.
    */
   flush(runId?: string): Promise<void>;
@@ -125,7 +125,7 @@ export function liveObservability(opts: LiveObservabilityOptions = {}): LiveObse
     if (!r) {
       // FINDING (roots leak guardrail): the caller may have forgotten to clean up via `flush(runId)`
       // (a multi-run/long-lived server scenario). If the limit is exceeded, the oldest (first in
-      // Insertion order) root is forcibly ended and removed so the Map doesn't grow unbounded.
+      // insertion order) root is forcibly ended and removed so the Map doesn't grow unbounded.
       // If maxPendingRuns is not given (default), this is disabled — existing behavior is unchanged.
       if (opts.maxPendingRuns !== undefined && roots.size >= opts.maxPendingRuns) {
         const oldestId = roots.keys().next().value as string | undefined;
@@ -266,7 +266,7 @@ export function liveObservability(opts: LiveObservabilityOptions = {}): LiveObse
       const end = Date.now();
       if (runId !== undefined) {
         // CLEANUP POINT: when a run finishes (or is exported), close ONLY that run's root + remove it
-        // From the Map. Does not touch other concurrent runs' roots — this is the actual fix for the roots leak.
+        // from the Map. Does not touch other concurrent runs' roots — this is the actual fix for the roots leak.
         const r = roots.get(runId);
         if (r) {
           r.span.end(end);

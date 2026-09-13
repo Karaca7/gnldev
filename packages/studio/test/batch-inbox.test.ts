@@ -90,4 +90,18 @@ describe('TASK-2 — batch resume only writes the decision', () => {
     }));
     expect(res.status).toBe(404);
   });
+
+  // PAKET #4 çivisi: `startsWith('batch:')` bir METİN yoklamasıdır ve türetilmiş kimlikler geldiğinde
+  // "hangi metinler runId ayrıştırıyor" taraması buraya da uğradı. Davranış KORUNUYOR, ve korunduğu
+  // burada sabitleniyor: türetilmiş bir koşum batch dalına DÜŞMEZ. Düşseydi cevap 200 + "karar
+  // kaydedildi" olurdu ve operatör, hiçbir zaman koşmayacak bir işi onayladığını sanırdı.
+  it('türetilmiş bir runId batch dalına düşmez — resume\'suz kurulumda 501 (batch\'in 200\'ü değil)', async () => {
+    const api = drive(createStudioApi({ reader: new InMemoryJournal() }));
+    for (const id of [`run1_${'a'.repeat(32)}`, `run1_${'a'.repeat(32)}#2`, `run1_${'a'.repeat(32)}#fork-1`]) {
+      const res = await api(new Request(`http://s/runs/${encodeURIComponent(id)}/resume`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ approvals: { x: true } }),
+      }));
+      expect(res.status, id).toBe(501);
+    }
+  });
 });

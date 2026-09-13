@@ -1,12 +1,12 @@
 import { randomBytes } from 'node:crypto';
 // Shared feature recipes — the single source used by BOTH `gnl add <feature>` (writes the src file +
-// Prints hand-wiring) and `gnl init` feature-composition (writes the src file + GENERATES gnl.config.ts).
+// prints hand-wiring) and `gnl init` feature-composition (writes the src file + GENERATES gnl.config.ts).
 //
 // Each recipe is a real, type-correct src file against the current package APIs (@gnldev/rag,
 // @gnldev/memory, @gnldev/mcp, @gnldev/workflow, @gnldev/auth, @gnldev/durable) plus a structured `wiring` describing
-// How it slots into the decoupled gnl.config.ts (agentTool → an agent's `tools`; configField → a
-// Top-level config property). `humanWire` is the corrected instruction `gnl add` prints (the config is
-// Decoupled now — NO `defineConfig({ … })`; you edit the plain config object).
+// how it slots into the decoupled gnl.config.ts (agentTool → an agent's `tools`; configField → a
+// top-level config property). `humanWire` is the corrected instruction `gnl add` prints (the config is
+// decoupled now — NO `defineConfig({ … })`; you edit the plain config object).
 
 /** Where a recipe's export slots into the generated gnl.config.ts. */
 export type WiringPlace = 'agentTool' | 'configField';
@@ -29,7 +29,7 @@ export interface RecipeWiring {
   import: string;
   place: WiringPlace;
   /** agentTool → an entry inside an agent's `tools: { … }` (e.g. `searchDocs`, or a spread `...mcpToolset`).
-   *  ConfigField → a top-level config property (e.g. `memoryFactory`, `workflows: { checkout }`). */
+   *  configField → a top-level config property (e.g. `memoryFactory`, `workflows: { checkout }`). */
   code: string;
 }
 
@@ -57,7 +57,7 @@ export interface Recipe {
   /** Honesty note about maturity / required setup, if any. */
   note?: string;
   /** When the wired field lives on the dev-server config (GnlDevConfig) rather than CreateGnlConfig,
-   *  The generated `satisfies` clause must be widened with this type literal (e.g. auth). */
+   *  the generated `satisfies` clause must be widened with this type literal (e.g. auth). */
   configTypeExt?: string;
 }
 
@@ -67,15 +67,20 @@ export const RECIPES: Record<string, Recipe> = {
     label: 'Idempotent charge tool',
     hint: "GNL's edge",
     file: 'src/tools.ts',
-    // Kept in sync with templates/full/src/tools.ts (the static `--template full` starter).
+    // THIS FILE USED TO EXIST TWICE — here, and as `templates/full/src/tools.ts`. The duplication was
+    // held together by a comment saying "kept in sync", which is a promise that cannot notice being
+    // broken: a sentence-capitaliser walked this literal and left `// IdempotencyWindow:` where the
+    // template still said `idempotencyWindow`, so one of the two copies told you to uncomment a line
+    // that does not compile. A test replaced the promise, and then the second copy was retired
+    // altogether (see scaffold.ts's RETIRED_TEMPLATES) — this is now the only one.
     contents: `// A side-effecting durable tool that showcases GNL's edge: LLM-aware idempotency.
 //
 // \`idempotency: 'args'\` keys the journal by the tool's ARGUMENTS instead of the AI SDK's
-// Per-call \`toolCallId\`. So even when the model re-plans the same call under a brand-new
+// per-call \`toolCallId\`. So even when the model re-plans the same call under a brand-new
 // \`toolCallId\` — the dominant real-world double-charge case (a documented AI SDK pattern) — the tool
-// Runs exactly once and every duplicate gets the journaled result. \`idempotencyKey\` narrows
-// The dedup to a logical key (here: \`orderId\`), so two calls with the same orderId but
-// Otherwise different args still collapse to one execution.
+// runs exactly once and every duplicate gets the journaled result. \`idempotencyKey\` narrows
+// the dedup to a logical key (here: \`orderId\`), so two calls with the same orderId but
+// otherwise different args still collapse to one execution.
 
 // A stand-in "ledger" so the demo/e2e can observe how many times the side effect really ran.
 // In a real app this would be a DB write / a Stripe charge / an email send.
@@ -86,7 +91,7 @@ export const chargeOrder = {
   idempotency: 'args' as const,
   idempotencyKey: (args: any) => String(args.orderId),
   // Uncomment to dedup across runs too (retried jobs / re-triggered agents):
-  // IdempotencyWindow: 'cross-run' as const,
+  // idempotencyWindow: 'cross-run' as const,
   execute: async ({ orderId, amount }: { orderId: string; amount: number }) => {
     ledger.charges.push({ orderId, amount });
     return { charged: amount, orderId, receipt: \`rcpt_\${orderId}\` };
@@ -101,7 +106,9 @@ export const chargeOrder = {
     humanWire: `import { chargeOrder } from './src/tools.js';
 // …then add it to an agent's tools inside the config object:
   agents: { assistant: { ...assistant, tools: { chargeOrder } } }`,
-    note: "GNL's edge: this tool runs exactly once even when the model re-emits the same call under a new toolCallId (a documented AI SDK pattern).",
+    note: "GNL's edge: this tool is never silently run twice, even when the model re-emits the same call under a new toolCallId (a documented AI SDK pattern). "
+      + 'Note that `gnl add` does not touch src/model.ts — your own model has to actually call it. (A fresh '
+      + '`gnl init --features idempotency-tool` ships a mock that does, so you can watch it happen.)',
   },
 
   rag: {
@@ -143,13 +150,13 @@ export const searchDocs = createRagTool({ store, embed, topK: 3 });
     dep: '@gnldev/mcp',
     contents: `// Connect an MCP server and expose its tools to your agent.
 // \`mcpTools(...)\` opens no connection until \`.tools()\` is called; we resolve the toolset here (top-level
-// Await) so it can be spread into an agent's \`tools\`. Until you point it at a real server this is empty,
-// So the app still boots — replace the export below with the two commented lines once you have one.
+// await) so it can be spread into an agent's \`tools\`. Until you point it at a real server this is empty,
+// so the app still boots — replace the export below with the two commented lines once you have one.
 import { mcpTools } from '@gnldev/mcp';
 import type { ToolSet } from 'ai';
 
-// Const handle = mcpTools({ transport: { kind: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', '.'] } });
-// Export const mcpToolset: ToolSet = await handle.tools();
+// const handle = mcpTools({ transport: { kind: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', '.'] } });
+// export const mcpToolset: ToolSet = await handle.tools();
 export const mcpToolset: ToolSet = {};
 `,
     wiring: {

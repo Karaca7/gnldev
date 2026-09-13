@@ -8,7 +8,7 @@ export interface ToolFilterOptions {
 }
 
 /**
- * ToolFilter — restricts the tool set the model SEES (deterministic; no journaling needed).
+ * toolFilter — restricts the tool set the model SEES (deterministic; no journaling needed).
  *
  * WARNING (philosophy): Our core approach is "the LLM sees all tools, `guard` controls EXECUTION"
  * (smart + safe). toolFilter, in contrast, hides a tool from the model ENTIRELY → use it opt-in

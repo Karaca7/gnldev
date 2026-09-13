@@ -4,9 +4,9 @@
 // OPT-IN DEFAULT SET: openaiStrict / gemini / anthropic — the AI SDK's known provider gaps.
 //
 // Opt-in usage with @gnldev/durable:
-//   RunDurable({ ..., schemaCompat: true })                  // default set
-//   RunDurable({ ..., schemaCompat: [...defaultRules, mine] }) // extend
-//   RunDurable({ ..., schemaCompat: [mine] })                 // fully your own set
+//   runDurable({ ..., schemaCompat: true })                  // default set
+//   runDurable({ ..., schemaCompat: [...defaultRules, mine] }) // extend
+//   runDurable({ ..., schemaCompat: [mine] })                 // fully your own set
 //
 // Correctness: rules are PURE; run before the model call, never touch the journal.
 export type { JsonSchema, ModelInfo, ToolSchemaRule } from './types.js';

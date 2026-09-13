@@ -44,15 +44,15 @@ function pageOf<T>(rows: T[], start: number, limit: number, total: number): Page
 }
 /**
  * The materialized `gnl_runs` flags back into the ONE outcome shape `deriveRunStatus` reads — the
- * Twin of sqlite-storage.ts's helper, and written out for the same reason: the flag→status mapping is
- * Precedence-bearing, and hand-copying the ternary chain into listRuns AND countRunsByStatus is
- * Exactly how one of them ends up ordering `failed` ahead of `canceled` while the other does not.
+ * twin of sqlite-storage.ts's helper, and written out for the same reason: the flag→status mapping is
+ * precedence-bearing, and hand-copying the ternary chain into listRuns AND countRunsByStatus is
+ * exactly how one of them ends up ordering `failed` ahead of `canceled` while the other does not.
  */
 function outcomeOfRow(r: { failed?: unknown; running?: unknown; canceled?: unknown }): { status: 'canceled' | 'failed' | 'running' } | null {
   return r.canceled ? { status: 'canceled' } : r.failed ? { status: 'failed' } : r.running ? { status: 'running' } : null;
 }
 // P1.5 matchFilter is now shared (storage.ts) — see its JSDoc for the operator
-// Subset ($eq/$ne/$gt/$gte/$lt/$lte/$in/$nin). Import above (was a local exact-equality-only copy).
+// subset ($eq/$ne/$gt/$gte/$lt/$lte/$in/$nin). Import above (was a local exact-equality-only copy).
 function normRange(r?: number | { before: number; after: number }) {
   if (r == null) return { before: 0, after: 0 };
   return typeof r === 'number' ? { before: r, after: r } : r;
@@ -86,15 +86,15 @@ const DDL = [
   // H11b migration: add the column if missing in an old setup (backfill once at init, below).
   `ALTER TABLE gnl_runs ADD COLUMN IF NOT EXISTS suspended_count INTEGER NOT NULL DEFAULT 0`,
   // `failed`: materialized at write time rather than derived at read time (no index — the status
-  // Filter is an operator path, not a hot one), because filtering on the serialized outcome
-  // Value would mean matching the word 'failed' inside error MESSAGES. Nothing to backfill — a run
-  // Written before outcomes existed has none, and false reads exactly as it did before.
+  // filter is an operator path, not a hot one), because filtering on the serialized outcome
+  // value would mean matching the word 'failed' inside error MESSAGES. Nothing to backfill — a run
+  // written before outcomes existed has none, and false reads exactly as it did before.
   `ALTER TABLE gnl_runs ADD COLUMN IF NOT EXISTS failed BOOLEAN NOT NULL DEFAULT false`,
   // `running` (the write-ahead half): same shape, same no-backfill argument as `failed` above.
   `ALTER TABLE gnl_runs ADD COLUMN IF NOT EXISTS running BOOLEAN NOT NULL DEFAULT false`,
   // `canceled` (the operator's ending): same again. Three booleans for one status IS inelegant; they
-  // Are only ever written together, from a single `outcomeStatusOf` value in a single statement, so
-  // They cannot disagree — collapsing them into one materialized `outcome` column is its own round.
+  // are only ever written together, from a single `outcomeStatusOf` value in a single statement, so
+  // they cannot disagree — collapsing them into one materialized `outcome` column is its own round.
   `ALTER TABLE gnl_runs ADD COLUMN IF NOT EXISTS canceled BOOLEAN NOT NULL DEFAULT false`,
   `CREATE TABLE IF NOT EXISTS gnl_counters (key TEXT NOT NULL, field TEXT NOT NULL, value DOUBLE PRECISION NOT NULL, PRIMARY KEY (key, field))`,
   `CREATE INDEX IF NOT EXISTS gnl_runs_created ON gnl_runs (created_at, run_id)`,
@@ -216,8 +216,8 @@ export class PostgresStorage implements Storage {
   private _pool: Pool;
   /**
    * The underlying connection pool. Exposed so COMPANION stores that live in the SAME Postgres
-   * Database can share this exact pool — notably `@gnldev/auth-ee`'s `createPostgresUserStore(storage.pool)`,
-   * Which puts admin/developer accounts in their own `gnl_ee_*` tables next to the run journal.
+   * database can share this exact pool — notably `@gnldev/auth-ee`'s `createPostgresUserStore(storage.pool)`,
+   * which puts admin/developer accounts in their own `gnl_ee_*` tables next to the run journal.
    */
   get pool(): Pool { return this._pool; }
   private ready?: Promise<void>;
@@ -275,7 +275,7 @@ export class PostgresStorage implements Storage {
     // Lower-fidelity fallbacks (behavior = old autocommit, test-only):
     // if pool.connect is missing (minimal injected pool): no transaction, queries run sequentially via pool.query.
     // pg-mem: accepts BEGIN/COMMIT/ROLLBACK but ROLLBACK does NOT actually UNDO (verified
-    //     Experimentally) → no proof of atomicity under pg-mem; real atomicity proof is in integration-real.test.ts.
+    //     experimentally) → no proof of atomicity under pg-mem; real atomicity proof is in integration-real.test.ts.
     // `atomic: true` means the caller's correctness DEPENDS on the transaction, so the two
     // lower-fidelity fallbacks below must refuse rather than quietly run unwrapped. Without it, a
     // query-only pool made `appendMessages` send its lock and its `SET LOCAL` as separate autocommit
@@ -328,25 +328,25 @@ export class PostgresStorage implements Storage {
     if (!this.ready) {
       this.ready = (async () => {
         // `CREATE TABLE IF NOT EXISTS` is not safe against a concurrent copy of itself. Two sessions
-        // Both pass the existence check, both proceed, and the loser dies inside Postgres' catalog
-        // With `duplicate key value violates unique constraint "pg_type_typname_nsp_index"` — a
-        // Message about an internal index, offering the reader nothing to act on.
+        // both pass the existence check, both proceed, and the loser dies inside Postgres' catalog
+        // with `duplicate key value violates unique constraint "pg_type_typname_nsp_index"` — a
+        // message about an internal index, offering the reader nothing to act on.
         //
         // Measured, not theorised: two PostgresStorage instances opened against a fresh database in
-        // The same moment, one of them rejected exactly like that. Which is the shape of a fleet
-        // Boot — several instances starting together against a database that was created minutes
-        // Ago, the normal case on a managed platform that scales by adding copies.
+        // the same moment, one of them rejected exactly like that. Which is the shape of a fleet
+        // boot — several instances starting together against a database that was created minutes
+        // ago, the normal case on a managed platform that scales by adding copies.
         //
         // A session-level advisory lock serialises the whole block: the first arrival creates the
-        // Schema, the others wait and then find it already there. The key is an arbitrary constant,
-        // Scoped to this database and to us; `pg_advisory_lock` blocks rather than failing, so no
-        // Caller has to retry. Released in `finally` — an error during DDL must not leave every
-        // Other instance waiting forever.
+        // schema, the others wait and then find it already there. The key is an arbitrary constant,
+        // scoped to this database and to us; `pg_advisory_lock` blocks rather than failing, so no
+        // caller has to retry. Released in `finally` — an error during DDL must not leave every
+        // other instance waiting forever.
         // Best-effort, not required. The key is inlined rather than bound: a parameter makes the
-        // Argument's type ambiguous and picks the `text` overload, which does not exist. And a
-        // Backend without advisory locks at all — pg-mem, which this suite runs most of its Postgres
-        // Tests against — must still come up: it has no second writer to race with, so losing the
-        // Lock costs it nothing. Failing here instead would trade a rare boot race for a certain one.
+        // argument's type ambiguous and picks the `text` overload, which does not exist. And a
+        // backend without advisory locks at all — pg-mem, which this suite runs most of its Postgres
+        // tests against — must still come up: it has no second writer to race with, so losing the
+        // lock costs it nothing. Failing here instead would trade a rare boot race for a certain one.
         const locked = await this._pool.query('SELECT pg_advisory_lock(47110001)').then(() => true, () => false);
         try {
           for (const sql of DDL) await this._pool.query(sql);
@@ -391,7 +391,7 @@ export class PostgresStorage implements Storage {
             .then((r: any) => r.rows?.[0]?.ok === true, () => false);
           if (!this.advisoryLocks) {
             // DOWNGRADE, not throw — and with no NODE_ENV branch. Throwing here killed the whole
-            // Storage: a deployment running Postgres purely for the exactly-once journal, never
+            // storage: a deployment running Postgres purely for the exactly-once journal, never
             // touching memory, died on its first query with a message about "concurrent appends to
             // one thread". And branching a correctness guarantee on NODE_ENV means two environments
             // get two different guarantees, which is its own smell. Declaring the port absent lets
@@ -420,11 +420,11 @@ export class PostgresStorage implements Storage {
 
   /**
    * H12: reclaiming deleted space. In Postgres, autovacuum AUTOMATICALLY moves dead rows to the
-   * Freelist (reused → no unbounded growth); this method triggers it manually. The default `VACUUM`
-   * Does NOT LOCK but does NOT RETURN disk to the OS either (keeps it in the freelist — subsequent
-   * Writes reuse it). To actually reclaim disk, use `{ full: true }` → `VACUUM FULL`: this LOCKS the
-   * Table + temporarily needs 2× disk → only during a maintenance window. Postgres doesn't expose file
-   * Size via the API → reclaimedBytes = -1 (unknown).
+   * freelist (reused → no unbounded growth); this method triggers it manually. The default `VACUUM`
+   * does NOT LOCK but does NOT RETURN disk to the OS either (keeps it in the freelist — subsequent
+   * writes reuse it). To actually reclaim disk, use `{ full: true }` → `VACUUM FULL`: this LOCKS the
+   * table + temporarily needs 2× disk → only during a maintenance window. Postgres doesn't expose file
+   * size via the API → reclaimedBytes = -1 (unknown).
    */
   /** See `Storage.adoptIntoOrg`. Same table list and the same platform-key rule as the SQLite adapter. */
   async adoptIntoOrg(orgId: string, opts?: { dryRun?: boolean; allowUnregistered?: boolean; allowInFlight?: boolean }): Promise<AdoptIntoOrgResult> {
@@ -518,7 +518,7 @@ export class PostgresStorage implements Storage {
   /**
    * P2-migrate connectionless — the exact DDL array `ensureReady()` executes
    * (already includes the H11b `suspended_count` ALTER, see the DDL const above). For CI schema diffing
-   * Or an out-of-band migration script.
+   * or an out-of-band migration script.
    */
   exportSchema(): string[] {
     return [...DDL];
@@ -527,9 +527,9 @@ export class PostgresStorage implements Storage {
   /**
    * P2-migrate: READ-ONLY dry-run against information_schema — deliberately bypasses `this.q`/
    * `ensureReady()` (unlike every other method on this class) so calling it does NOT auto-create the
-   * Schema first. That's what makes "disable auto-init, run checkSchema/migrateSchema out-of-band"
-   * Actually work for Postgres: `ensureReady` is already lazy (only `this.q`-routed calls trigger it), so
-   * Simply not routing through it is enough — no constructor change needed. Never mutates.
+   * schema first. That's what makes "disable auto-init, run checkSchema/migrateSchema out-of-band"
+   * actually work for Postgres: `ensureReady` is already lazy (only `this.q`-routed calls trigger it), so
+   * simply not routing through it is enough — no constructor change needed. Never mutates.
    */
   async checkSchema(): Promise<SchemaCheckResult> {
     const expected = tablesFromDDL(DDL);
@@ -559,7 +559,7 @@ export class PostgresStorage implements Storage {
    * P2-migrate: applies exactly the gap checkSchema reports (same additive-only contract as
    * SqliteStorage.migrateSchema — never drops/renames, see migrate.ts's header). Also bypasses
    * `this.q`/`ensureReady()` — queries `this._pool` directly so it never implicitly runs the full DDL
-   * First. `dryRun: true` returns the statements it WOULD run without touching the DB.
+   * first. `dryRun: true` returns the statements it WOULD run without touching the DB.
    */
   async migrateSchema(opts?: { dryRun?: boolean }): Promise<SchemaMigrationResult> {
     const check = await this.checkSchema();
@@ -611,9 +611,9 @@ class PgRunJournal implements RunJournal {
     );
     if (!p) {
       // Not a replayable entry (no run_id / no kind in the journal table — readRun and time-travel must
-      // Not start seeing it), but it may still BELONG to a run. Register the run itself, or one that died
-      // Before its first model step never appears in listRuns and is never reached by sweepRuns — its
-      // Persisted prompt then outlives every retention window.
+      // not start seeing it), but it may still BELONG to a run. Register the run itself, or one that died
+      // before its first model step never appears in listRuns and is never reached by sweepRuns — its
+      // persisted prompt then outlives every retention window.
       const owner = runIdOfKey(key, value);
       const oc = outcomeStatusOf(key, value);
       if (!owner && oc === null) { await upsert(this.q); return; } // genuinely run-less key
@@ -621,8 +621,8 @@ class PgRunJournal implements RunJournal {
         await upsert(q);
         if (owner) await this.touchRunDelta(q, owner, null, false, 0);
         // Own path, not riding on run ownership (see the sqlite twin). The UPDATE only touches an
-        // Existing row, so it cannot invent a run. ALL THREE flags from ONE status in ONE statement,
-        // So they can never disagree — and every transition clears its predecessors.
+        // existing row, so it cannot invent a run. ALL THREE flags from ONE status in ONE statement,
+        // so they can never disagree — and every transition clears its predecessors.
         if (oc !== null) {
           const runId = key.slice(0, -':outcome'.length);
           // First write of a brand-new run may precede its row — see the sqlite twin's comment.
@@ -634,10 +634,10 @@ class PgRunJournal implements RunJournal {
     }
     // T1 audit fix: SELECT prev → journal UPSERT → gnl_runs delta triple, all in ONE transaction.
     // Under autocommit there were two hazards: (1) two workers on the same NEW key both see prev=none →
-    // The counter double-increments; (2) a crash between the suspended write and the gnl_runs update →
-    // Stale suspended=false → retention could delete a suspended run. The transaction ALONE does NOT
+    // the counter double-increments; (2) a crash between the suspended write and the gnl_runs update →
+    // stale suspended=false → retention could delete a suspended run. The transaction ALONE does NOT
     // FIX (1) (under READ COMMITTED both txns still read prev=none from the old snapshot) → first
-    // LockRunRow: writers to the same run get SERIALIZED on the gnl_runs row lock, so the second txn's
+    // lockRunRow: writers to the same run get SERIALIZED on the gnl_runs row lock, so the second txn's
     // SELECT sees the committed prev. H11b's O(1) incremental update (touchRunDelta) is preserved as-is.
     await this.tx(async (q) => {
       await this.lockRunRow(q, p.runId);
@@ -685,10 +685,10 @@ class PgRunJournal implements RunJournal {
   /**
    * H1: atomic conditional replace (expired run-lock takeover, see journal.ts JSDoc).
    * Stored form is the same as SQLite: PLAIN serialize() TEXT (no envelope) → comparison happens
-   * Directly in SQL via `WHERE key=$ AND value=serialize(expected)`; if the affected row count is 1, we won.
+   * directly in SQL via `WHERE key=$ AND value=serialize(expected)`; if the affected row count is 1, we won.
    * The superjson roundtrip stability assumption is the same as the note in SQLite — a mismatch = false = the safe side.
    * NOTE: pg-mem faithfully reports UPDATE rowCount (unlike the RETURNING limitation) → verified in conformance;
-   * The real PG proof is in integration-real.test.ts.
+   * the real PG proof is in integration-real.test.ts.
    */
   async putIfMatch(key: string, expected: unknown, value: unknown): Promise<boolean> {
     const p = parseJournalKey(key);
@@ -711,9 +711,9 @@ class PgRunJournal implements RunJournal {
       }, { atomic: true });
     }
     // T1: UPDATE + recountRun in one transaction (closes the crash → stale gnl_runs window). There is NO
-    // LockRunRow here — so a failed match doesn't create a phantom row in gnl_runs (the lock order stays
-    // Journal→runs; a theoretical deadlock with put requires the rare path × the same key, and PG detects
-    // It and aborts one → the caller sees an error, the takeover just doesn't happen that round = the safe side).
+    // lockRunRow here — so a failed match doesn't create a phantom row in gnl_runs (the lock order stays
+    // journal→runs; a theoretical deadlock with put requires the rare path × the same key, and PG detects
+    // it and aborts one → the caller sees an error, the takeover just doesn't happen that round = the safe side).
     return this.tx(async (q) => {
       const ok = Number((await upd(q)).rowCount ?? 0) === 1;
       if (ok) await this.recountRun(q, p.runId); // rare path (takeover) → a full recount is safe and sufficient
@@ -735,9 +735,9 @@ class PgRunJournal implements RunJournal {
 
   /**
    * H10a — DURABILITY REPORT: queries the setup ITSELF for the precondition of exactly-once ("an
-   * Acked write is never lost"). In multi-server production, asynchronous replication = a lost-write
-   * Window on failover = exactly-once CAN BE VIOLATED (see the core-hardening review) — this method surfaces
-   * That before the run starts. A single node (no replica) is safe for a single worker; noted as such.
+   * acked write is never lost"). In multi-server production, asynchronous replication = a lost-write
+   * window on failover = exactly-once CAN BE VIOLATED (see the core-hardening review) — this method surfaces
+   * that before the run starts. A single node (no replica) is safe for a single worker; noted as such.
    */
   async durabilityReport(): Promise<{
     syncCommit: string;
@@ -757,7 +757,7 @@ class PgRunJournal implements RunJournal {
       connectedStandbys = Number(r.rows[0]?.c ?? 0);
       syncStandbys = Number(r.rows[0]?.s ?? 0);
     } catch {
-      // If we lack view permission, assume 0 (noted in notes)
+      // if we lack view permission, assume 0 (noted in notes)
     }
     const notes: string[] = [];
     const syncOn = !['off', 'local'].includes(syncCommit);
@@ -800,7 +800,7 @@ class PgRunJournal implements RunJournal {
   /**
    * T1: row lock that serializes concurrent writers to the same run — locks the gnl_runs row
    * (creating it if missing) via ON CONFLICT DO UPDATE (even a no-op update takes a row lock);
-   * Held until the end of the transaction. On rollback the created row is also undone → no phantom run remains.
+   * held until the end of the transaction. On rollback the created row is also undone → no phantom run remains.
    */
   private async lockRunRow(q: Q, runId: string): Promise<void> {
     const now = Date.now();
@@ -882,23 +882,23 @@ class PgRunJournal implements RunJournal {
   }
   async readRun(runId: string): Promise<JournalEntry[]> {
     // Decision #4: `key` tie-breaker — Postgres does NOT GUARANTEE order for equal ORDER BY keys; records
-    // Written within the same ms (parallel tool-calls) could otherwise shuffle position between reads. Same semantics as SQLite.
+    // written within the same ms (parallel tool-calls) could otherwise shuffle position between reads. Same semantics as SQLite.
     const r = await this.q('SELECT key, kind, value, created_at FROM gnl_run_journal WHERE run_id = $1 ORDER BY created_at, key', [runId]);
     return r.rows.map((x, seq) => ({ key: x.key, runId, kind: x.kind as JournalEntry['kind'], value: deserialize(x.value), seq, ts: Number(x.created_at) }));
   }
   /**
    * AUDIT (threadId first-class): SAME purpose as the SQLite equivalent — the `<run_id>:input` row is
-   * Embedded into a SINGLE query (NOT an N+1 round-trip). LEFT JOIN INSTEAD OF a correlated subquery:
-   * Pg-mem (test-only in-memory Postgres) does NOT SUPPORT a correlated subquery that references the
-   * Outer alias ("column r.run_id does not exist") — a LEFT JOIN is planned equivalently (and usually
-   * Faster) on real Postgres too, same behavior. `||` is the string concat operator in Postgres.
+   * embedded into a SINGLE query (NOT an N+1 round-trip). LEFT JOIN INSTEAD OF a correlated subquery:
+   * pg-mem (test-only in-memory Postgres) does NOT SUPPORT a correlated subquery that references the
+   * outer alias ("column r.run_id does not exist") — a LEFT JOIN is planned equivalently (and usually
+   * faster) on real Postgres too, same behavior. `||` is the string concat operator in Postgres.
    *
    * P0.3 filters — same split as sqlite-storage.ts's listRuns: `status` pushes
-   * Down to a WHERE on the indexed `gnl_runs.suspended` boolean (matches the SAME derivation used
-   * Below, cannot drift); `agent` has no indexed column (it's inside the `:input` blob) — when given,
-   * This fetches every (status-filtered) row WITHOUT LIMIT/OFFSET, filters+paginates in JS (filter
+   * down to a WHERE on the indexed `gnl_runs.suspended` boolean (matches the SAME derivation used
+   * below, cannot drift); `agent` has no indexed column (it's inside the `:input` blob) — when given,
+   * this fetches every (status-filtered) row WITHOUT LIMIT/OFFSET, filters+paginates in JS (filter
    * BEFORE slicing). Honest scan cost, acceptable for an operator/debug filter — see the sqlite
-   * Comment for the full rationale.
+   * comment for the full rationale.
    */
   async listRuns(q?: ListQuery): Promise<Page<RunSummary>> {
     const { start, limit } = offset(q);
@@ -914,19 +914,21 @@ class PgRunJournal implements RunJournal {
       : '';
     const statusParams: unknown[] = [];
     const toSummary = (x: any): RunSummary => {
-      const input = x.input_val ? deserialize<{ threadId?: string; agent?: string; resourceId?: string }>(x.input_val) : undefined;
+      const input = x.input_val ? deserialize<{ threadId?: string; agent?: string; resourceId?: string; workKey?: string }>(x.input_val) : undefined;
       return {
         runId: x.run_id, status: deriveRunStatus(!!x.suspended, outcomeOfRow(x)), modelSteps: Number(x.model_steps), toolCalls: Number(x.tool_calls),
         ...(input?.threadId ? { threadId: input.threadId } : {}),
         ...(input?.agent ? { agent: input.agent } : {}),
         ...(input?.resourceId ? { resourceId: input.resourceId } : {}),
+        ...(input?.workKey ? { workKey: input.workKey } : {}),
       };
     };
-    // `agent` and `resourceId` share ONE path: neither is a column, both live inside the `:input` blob,
-    // so both are filtered after the summary is built. Written as a single branch rather than two so a
-    // request carrying BOTH cannot take a branch that applies only one of them — and so the
-    // filter-BEFORE-slice contract (JournalReader.listRunsPaged) is satisfied once, not per filter.
-    if (q?.agent || q?.resourceId) {
+    // `agent`, `resourceId` and `workKey` share ONE path: none is a column, all three live inside the
+    // `:input` blob, so all three are filtered after the summary is built. Written as a single branch
+    // rather than three so a request carrying more than one cannot take a branch that applies only
+    // some of them — and so the filter-BEFORE-slice contract (JournalReader.listRunsPaged) is
+    // satisfied once, not per filter.
+    if (q?.agent || q?.resourceId || q?.workKey) {
       const r = await this.q(
         `SELECT r.run_id, r.model_steps, r.tool_calls, r.suspended, r.failed, r.running, r.canceled, j.value AS input_val
          FROM gnl_runs r LEFT JOIN gnl_run_journal j ON j.key = r.run_id || ':input'${statusWhere}
@@ -934,7 +936,8 @@ class PgRunJournal implements RunJournal {
         statusParams,
       );
       const all = r.rows.map(toSummary)
-        .filter((x) => (q.agent ? x.agent === q.agent : true) && (q.resourceId ? x.resourceId === q.resourceId : true));
+        .filter((x) => (q.agent ? x.agent === q.agent : true) && (q.resourceId ? x.resourceId === q.resourceId : true)
+          && (q.workKey ? x.workKey === q.workKey : true));
       return pageOf(all.slice(start, start + limit), start, limit, all.length);
     }
     const total = Number((await this.q(`SELECT COUNT(*) AS n FROM gnl_runs r${statusWhere}`, statusParams)).rows[0].n);
@@ -950,22 +953,22 @@ class PgRunJournal implements RunJournal {
 
   /**
    * P1.6b: atomic batch — claim + counter increments + puts as ONE transaction (a single pinned client
-   * Via `tx`, same helper `put`/`putIfAbsent` use). `put`/`putIfAbsent` themselves can't be REUSED here
+   * via `tx`, same helper `put`/`putIfAbsent` use). `put`/`putIfAbsent` themselves can't be REUSED here
    * (each opens its OWN client via `tx()`, which would be a SEPARATE Postgres session — nesting them
-   * Would silently defeat atomicity) — so the INSERT/UPSERT statements are mirrored inline (identical SQL
-   * To `put`'s `upsert`/`putIfAbsent`'s `ins`), while `touchRunDelta`/`lockRunRow` ARE reused as-is since
-   * They already take an explicit `q` and compose correctly with `tx`'s pinned client.
+   * would silently defeat atomicity) — so the INSERT/UPSERT statements are mirrored inline (identical SQL
+   * to `put`'s `upsert`/`putIfAbsent`'s `ins`), while `touchRunDelta`/`lockRunRow` ARE reused as-is since
+   * they already take an explicit `q` and compose correctly with `tx`'s pinned client.
    *
-   * Pg-mem NOTE (test-only limitation, see the file-header comment + `exactCas` in the conformance
-   * Matrix): pg-mem's `INSERT ... ON CONFLICT DO NOTHING RETURNING`/`rowCount` reports 1 even on a
-   * Genuine conflict — verified experimentally, independent of whether `RETURNING` is present. A
+   * pg-mem NOTE (test-only limitation, see the file-header comment + `exactCas` in the conformance
+   * matrix): pg-mem's `INSERT ... ON CONFLICT DO NOTHING RETURNING`/`rowCount` reports 1 even on a
+   * genuine conflict — verified experimentally, independent of whether `RETURNING` is present. A
    * SELECT-before-INSERT existence check would dodge that specific test-double bug, but would REGRESS
-   * Real-Postgres correctness (a genuine TOCTOU race between two concurrent claims on the SAME key —
-   * Exactly the scenario `applyBatch`'s claim exists to protect). So this mirrors `putIfAbsent`'s
-   * Genuinely-atomic INSERT-based check (correct on real Postgres, proven in integration-real.test.ts);
-   * The pg-mem test suite gates BOTH the boolean AND the resulting counters/puts invariant behind
+   * real-Postgres correctness (a genuine TOCTOU race between two concurrent claims on the SAME key —
+   * exactly the scenario `applyBatch`'s claim exists to protect). So this mirrors `putIfAbsent`'s
+   * genuinely-atomic INSERT-based check (correct on real Postgres, proven in integration-real.test.ts);
+   * the pg-mem test suite gates BOTH the boolean AND the resulting counters/puts invariant behind
    * `caps.exactCas` for this one case (see storage-backend.test.ts) — an accepted, documented gap in the
-   * Test double, not in the adapter.
+   * test double, not in the adapter.
    */
   async applyBatch(batch: JournalBatch): Promise<boolean> {
     return this.tx(async (q) => {
@@ -1004,10 +1007,10 @@ class PgRunJournal implements RunJournal {
   }
 
   /** P1.6b: batch point-read — a single `WHERE key IN (...)` instead of N sequential `get` calls;
-   *  Order-preserving, `undefined` for misses (getMany contract, journal.ts). Dynamic `$N` placeholders
+   *  order-preserving, `undefined` for misses (getMany contract, journal.ts). Dynamic `$N` placeholders
    *  (NOT `= ANY($1::text[])`) — pg-mem does not evaluate the array form correctly (verified
-   *  Experimentally: it returns zero rows even for genuine matches), while plain `IN ($1,$2,...)` works
-   *  Identically on both pg-mem and real Postgres. */
+   *  experimentally: it returns zero rows even for genuine matches), while plain `IN ($1,$2,...)` works
+   *  identically on both pg-mem and real Postgres. */
   async getMany<T = unknown>(keys: string[]): Promise<(T | undefined)[]> {
     if (keys.length === 0) return [];
     const placeholders = keys.map((_, i) => `$${i + 1}`).join(',');
@@ -1018,12 +1021,12 @@ class PgRunJournal implements RunJournal {
 
   /**
    * P1.6b: push-down status aggregate — a single `GROUP BY` over the indexed `gnl_runs.suspended`
-   * Column, MUST MATCH listRuns' own status derivation (deriveRunStatus: suspended, then failed) —
-   * Same columns, same booleans, mapped to the status string in JS (not in SQL) so it cannot drift.
+   * column, MUST MATCH listRuns' own status derivation (deriveRunStatus: suspended, then failed) —
+   * same columns, same booleans, mapped to the status string in JS (not in SQL) so it cannot drift.
    * Grouping by the RAW boolean columns (not a `CASE WHEN ... THEN 'suspended' ...` computed expression) —
-   * Pg-mem's query planner mis-groups a `GROUP BY` on a CASE-derived alias (verified experimentally: rows
-   * For BOTH branches come back labeled with the wrong status); grouping by the underlying column is
-   * Correct on both pg-mem and real Postgres.
+   * pg-mem's query planner mis-groups a `GROUP BY` on a CASE-derived alias (verified experimentally: rows
+   * for BOTH branches come back labeled with the wrong status); grouping by the underlying column is
+   * correct on both pg-mem and real Postgres.
    */
   async countRunsByStatus(): Promise<Record<string, number>> {
     const r = await this.q(`SELECT suspended, failed, running, canceled, COUNT(*) AS n FROM gnl_runs GROUP BY suspended, failed, running, canceled`);
@@ -1289,10 +1292,10 @@ class PgMemoryStore implements MemoryStore {
   }
   /**
    * FLOW-10: truncate a thread's tail — deletes every message with seq > afterSeq (afterSeq itself,
-   * And everything before it, is kept). See MemoryStore.deleteMessagesAfter (storage.ts) for the full
-   * Contract. Same DELETE-then-rowCount pattern as PgRunJournal.deletePrefix above. Boundary cases fall
-   * Out of the WHERE clause naturally: unknown threadId or afterSeq >= the thread's max seq → the WHERE
-   * Matches no rows → 0; afterSeq below the thread's min seq → the WHERE matches every row for that thread.
+   * and everything before it, is kept). See MemoryStore.deleteMessagesAfter (storage.ts) for the full
+   * contract. Same DELETE-then-rowCount pattern as PgRunJournal.deletePrefix above. Boundary cases fall
+   * out of the WHERE clause naturally: unknown threadId or afterSeq >= the thread's max seq → the WHERE
+   * matches no rows → 0; afterSeq below the thread's min seq → the WHERE matches every row for that thread.
    */
   async deleteMessagesAfter(threadId: string, afterSeq: number): Promise<number> {
     const r = await this.q('DELETE FROM gnl_messages WHERE thread_id = $1 AND seq > $2', [threadId, afterSeq]);
@@ -1402,8 +1405,8 @@ class PgWorkStore implements WorkStore {
   }
   /**
    * 8.2: SAME pattern as PgRunJournal.putIfMatch's `!p` branch (gnl_work_kv has NO derived index like
-   * Gnl_run_journal → no need to wrap it in a transaction/row-lock, a single UPDATE is enough). Stored
-   * Form is the same as SQLite: PLAIN serialize() TEXT — comparison via `WHERE key=$ AND value=serialize(expected)`.
+   * gnl_run_journal → no need to wrap it in a transaction/row-lock, a single UPDATE is enough). Stored
+   * form is the same as SQLite: PLAIN serialize() TEXT — comparison via `WHERE key=$ AND value=serialize(expected)`.
    */
   async putIfMatch(key: string, expected: unknown, value: unknown): Promise<boolean> {
     const r = await this.q('UPDATE gnl_work_kv SET value = $1 WHERE key = $2 AND value = $3', [serialize(value), key, serialize(expected)]);

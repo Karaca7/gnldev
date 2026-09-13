@@ -54,13 +54,13 @@ export function mountSpa(app: Hono, apiBase = ''): boolean {
   if (!dist) return false;
   app.get('/', (c) => {
     // The same two headers `/swagger` already sets, on the page that actually matters: this is the
-    // Admin surface, it holds the bearer token in localStorage, and one click on it can purge a run,
-    // Promote a managed agent or approve a pending tool call. Without `frame-ancestors` a page
-    // Elsewhere could put it in an invisible frame and collect those clicks.
+    // admin surface, it holds the bearer token in localStorage, and one click on it can purge a run,
+    // promote a managed agent or approve a pending tool call. Without `frame-ancestors` a page
+    // elsewhere could put it in an invisible frame and collect those clicks.
     //
     // `img-src` is the second half of the model-output exfiltration fix in @gnldev/studio-ui: the
-    // Markdown and media renderers no longer emit remote <img> tags, and this makes that a property
-    // Of the deployment rather than of one component — a future renderer cannot reopen the channel.
+    // markdown and media renderers no longer emit remote <img> tags, and this makes that a property
+    // of the deployment rather than of one component — a future renderer cannot reopen the channel.
     // Kept narrow deliberately: a full policy would need `script-src`/`style-src` matched to what
     // Vite emits, and a wrong one breaks the panel silently. These two are exact.
     c.header('Content-Security-Policy', "frame-ancestors 'none'; img-src 'self' data:");
@@ -72,13 +72,13 @@ export function mountSpa(app: Hono, apiBase = ''): boolean {
    * The bundle's third-party notices, served from the running product.
    *
    * They were generated into dist/ and then reachable by nobody: only '/' and '/assets/*' were
-   * Mounted, so the file 404'd. That is not a tidiness problem. The bundle inlines ~220 packages,
-   * And every one of their licenses — MIT, ISC, BSD, and the fonts' OFL-1.1, which is the most
-   * Explicit of them — carries the same condition: the notice travels with the copy. A notice
-   * Shipped inside a tarball that the product never exposes does not travel with anything.
+   * mounted, so the file 404'd. That is not a tidiness problem. The bundle inlines ~220 packages,
+   * and every one of their licenses — MIT, ISC, BSD, and the fonts' OFL-1.1, which is the most
+   * explicit of them — carries the same condition: the notice travels with the copy. A notice
+   * shipped inside a tarball that the product never exposes does not travel with anything.
    *
    * Unauthenticated, deliberately. It is a legal notice about redistributed code, identical for
-   * Every deployment; putting it behind a login would defeat the point of publishing it.
+   * every deployment; putting it behind a login would defeat the point of publishing it.
    */
   app.get('/THIRD-PARTY-NOTICES.txt', (c) => {
     const p = join(dist, 'THIRD-PARTY-NOTICES.txt');

@@ -1,8 +1,8 @@
 // M3 — Time-travel debugger core. reconstructState (pure): materialize the conversation state at
-// Step N from journal entries. forkRun: copy a prefix to a new runId → continue LIVE from step N
+// step N from journal entries. forkRun: copy a prefix to a new runId → continue LIVE from step N
 // (snapshot-based durability layers cannot do this structurally with an opaque snapshot).
 import { runKeys } from './journal.js';
-import { argsHash } from './hash.js';
+import { argsHash, derivedRunIdBase, forkRunId } from './hash.js';
 import { assertNotCompensated } from './compensation.js';
 import type { Journal, JournalReader, JournalEntry } from './journal.js';
 
@@ -27,13 +27,13 @@ function toolIdFromKey(key: string): string {
 
 /**
  * A tool-call content part's `input` is the RAW provider
- * Value — per the AI SDK `LanguageModelV2` spec this is a JSON-STRING (verified against
- * Durable-model.ts: the journaled model record is `doGenerate()`'s result, untouched). durable-tool.ts,
- * However, computes `argsHash` over the PARSED object it receives in `execute(input, …)` (the AI SDK
- * Parses the JSON string before calling execute). To reproduce the SAME hash from a journal entry we
- * Must parse the string first. Best-effort: if `input` isn't a JSON string (already an object, or a
- * Custom middleware stored it differently), it's hashed as-is — this only degrades fidelity for that
- * One entry (see the SINIR note on `reconstructState` below), it never throws.
+ * value — per the AI SDK `LanguageModelV2` spec this is a JSON-STRING (verified against
+ * durable-model.ts: the journaled model record is `doGenerate()`'s result, untouched). durable-tool.ts,
+ * however, computes `argsHash` over the PARSED object it receives in `execute(input, …)` (the AI SDK
+ * parses the JSON string before calling execute). To reproduce the SAME hash from a journal entry we
+ * must parse the string first. Best-effort: if `input` isn't a JSON string (already an object, or a
+ * custom middleware stored it differently), it's hashed as-is — this only degrades fidelity for that
+ * one entry (see the SINIR note on `reconstructState` below), it never throws.
  */
 function parseModelInput(input: unknown): unknown {
   if (typeof input !== 'string') return input;
@@ -51,18 +51,18 @@ function parseModelInput(input: unknown): unknown {
  * already settled, returned as-is.
  * streaming (`streamDurable`/`streamText`, wrapStream): `{ parts: LanguageModelV2StreamPart[], rest }`
  * raw provider chunks, where text/reasoning arrive as `*-start`/`*-delta` pairs that have to be
- *    Accumulated before they read as content. `tool-call` arrives whole (the LanguageModelV2StreamPart
+ *    accumulated before they read as content. `tool-call` arrives whole (the LanguageModelV2StreamPart
  *    `tool-call` variant already carries the full `input` string), so the partial
  *    `tool-input-start/-delta/-end` chunks are deliberately ignored — the terminal `tool-call`
- *    Supersedes them.
+ *    supersedes them.
  *
  * WHY THIS EXISTS: reconstructState used to read `value.content` directly, so a STREAMED run
- * Reconstructed to nothing — no assistant text and no tool-calls, which also left every tool-call
- * Stuck in `pending`. In Studio's Inspector that surfaced as every assistant bubble saying "(no text)"
- * While the run had plainly succeeded. Both shapes are legitimate and both are written by
- * Durable-model.ts, so settling them here (rather than at each read site) is what keeps the two paths
- * From drifting apart again. `@gnldev/chat-adapter`'s messages.ts carries the same mapping for UIMessage
- * Conversion — that copy is the one place allowed to diverge, since it additionally emits `reasoning`.
+ * reconstructed to nothing — no assistant text and no tool-calls, which also left every tool-call
+ * stuck in `pending`. In Studio's Inspector that surfaced as every assistant bubble saying "(no text)"
+ * while the run had plainly succeeded. Both shapes are legitimate and both are written by
+ * durable-model.ts, so settling them here (rather than at each read site) is what keeps the two paths
+ * from drifting apart again. `@gnldev/chat-adapter`'s messages.ts carries the same mapping for UIMessage
+ * conversion — that copy is the one place allowed to diverge, since it additionally emits `reasoning`.
  */
 export function settleModelContent(value: unknown): any[] {
   const v = value as { content?: unknown; parts?: unknown } | undefined;
@@ -89,27 +89,27 @@ export function settleModelContent(value: unknown): any[] {
 
 /**
  * Walks the ordered journal entries and materializes the state at step `uptoStep` (PURE; no journal
- * Calls). If `seed` (the `:input` invisible to the reader) is given, the original user input is prepended.
+ * calls). If `seed` (the `:input` invisible to the reader) is given, the original user input is prepended.
  *
  * SINIR (args-mode idempotency, opt-in): a tool record's journal key is either
  * `${runId}:tool:${toolCallId}` ('call' mode, the default) or `${runId}:tool:args-${toolName}-${hash}`
  * ('args' mode — see journal.ts runKeys.toolByArgs). In 'args' mode the dedupe id embedded in the key
- * Is NOT a real AI SDK toolCallId, so it can't be matched against `pending` directly. PRIMARY match:
- * The record's own `resolvedToolCallIds` (see journal.ts ToolJournalRecord + durable-tool.ts
- * WriteToolTerminal/trackResolvedToolCallId) — the REAL toolCallId(s) durable-tool.ts observed serving
- * This record, stamped at write time. This is EXACT and is what resolves a custom `idempotencyKey`
- * Function's records too (see types.ts AnyTool.idempotencyKey): that function lives in the tool
- * Definition, not the journal, so it can never be recomputed HERE — `resolvedToolCallIds` sidesteps the
- * Problem entirely by not needing to recompute anything. FALLBACK (records written before this field
- * Existed): recompute the SAME `args-${toolName}-${hash}` form from each pending tool-call's `input`
+ * is NOT a real AI SDK toolCallId, so it can't be matched against `pending` directly. PRIMARY match:
+ * the record's own `resolvedToolCallIds` (see journal.ts ToolJournalRecord + durable-tool.ts
+ * writeToolTerminal/trackResolvedToolCallId) — the REAL toolCallId(s) durable-tool.ts observed serving
+ * this record, stamped at write time. This is EXACT and is what resolves a custom `idempotencyKey`
+ * function's records too (see types.ts AnyTool.idempotencyKey): that function lives in the tool
+ * definition, not the journal, so it can never be recomputed HERE — `resolvedToolCallIds` sidesteps the
+ * problem entirely by not needing to recompute anything. FALLBACK (records written before this field
+ * existed): recompute the SAME `args-${toolName}-${hash}` form from each pending tool-call's `input`
  * (via `argsHash(parseModelInput(...))`) and match on that — best-effort, degrades for a custom
  * `idempotencyKey` (see git history / CHANGELOG: this used to be a KNOWN LIMITATION — a resolved
- * Custom-idempotencyKey tool-call stayed "pending" forever, even on a genuinely completed run; fixed by
+ * custom-idempotencyKey tool-call stayed "pending" forever, even on a genuinely completed run; fixed by
  * `resolvedToolCallIds`, kept here only for old records). A single args-keyed record can resolve
  * MULTIPLE pending entries at once (the documented same-turn duplicate case: N different
- * ToolCallIds, same arguments, one execution) — each resolved pending entry gets its OWN tool-result
- * Message (same output, its own REAL toolCallId — the AI SDK message format requires a real id, not the
- * Dedupe key).
+ * toolCallIds, same arguments, one execution) — each resolved pending entry gets its OWN tool-result
+ * message (same output, its own REAL toolCallId — the AI SDK message format requires a real id, not the
+ * dedupe key).
  */
 export function reconstructState(
   entries: JournalEntry[],
@@ -127,9 +127,9 @@ export function reconstructState(
   const window = entries.slice(0, upto);
 
   // PASS 1 (pure lookup building, no `messages` writes yet): collect every tool-call introduced by a
-  // Model entry in the window, in appearance order.
+  // model entry in the window, in appearance order.
   // Internal only (NOT part of the public `pending` shape — keeping it out preserves the existing
-  // ToEqual({ toolCallId, toolName }) assertions in tests): toolCallId → recomputed args-mode dedupe id.
+  // toEqual({ toolCallId, toolName }) assertions in tests): toolCallId → recomputed args-mode dedupe id.
   const toolCalls: { toolCallId: string; toolName: string }[] = [];
   const argsKeyByToolCallId = new Map<string, string>();
   for (const e of window) {
@@ -143,51 +143,51 @@ export function reconstructState(
   }
 
   // PASS 2 (— time-travel fidelity, args-mode custom idempotencyKey): decide, PER TOOL ENTRY,
-  // Which toolCallId(s) it resolves — independent of the entry's OWN position in `window`.
+  // which toolCallId(s) it resolves — independent of the entry's OWN position in `window`.
   //
   // WHY POSITION-INDEPENDENT: the journal stores ONE row per key, overwritten in place at ITS FIRST
-  // Write position (see journal.ts InMemoryJournal.put / the SQL adapters' UPSERT — position tracks
-  // First-write time, not last-update time). An 'args' mode record can be updated LATER by
-  // TrackResolvedToolCallId (durable-tool.ts) to append a toolCallId from a LATER model step (e.g. a
-  // Custom `idempotencyKey` tool called again, same logical key, in a subsequent turn) — that
-  // ToolCallId's `tool-call` part appears AFTER this record's array position. A single forward pass
-  // That only matches against toolCallIds seen so far would therefore NEVER resolve it (reproduced:
-  // Two chargeOrder-style calls to the same orderId in different turns — the second stayed "pending"
-  // Forever even though `resolvedToolCallIds` correctly listed it). Computing matches against the FULL
+  // write position (see journal.ts InMemoryJournal.put / the SQL adapters' UPSERT — position tracks
+  // first-write time, not last-update time). An 'args' mode record can be updated LATER by
+  // trackResolvedToolCallId (durable-tool.ts) to append a toolCallId from a LATER model step (e.g. a
+  // custom `idempotencyKey` tool called again, same logical key, in a subsequent turn) — that
+  // toolCallId's `tool-call` part appears AFTER this record's array position. A single forward pass
+  // that only matches against toolCallIds seen so far would therefore NEVER resolve it (reproduced:
+  // two chargeOrder-style calls to the same orderId in different turns — the second stayed "pending"
+  // forever even though `resolvedToolCallIds` correctly listed it). Computing matches against the FULL
   // `toolCalls` list up front (this pass, independent of `window` order) fixes it; PASS 3 below still
-  // Renders `messages` in the ORIGINAL entry order using these pre-computed matches.
+  // renders `messages` in the ORIGINAL entry order using these pre-computed matches.
   const claimed = new Set<string>(); // toolCallIds already resolved by an earlier (in window order) record
   const matchesByIndex = new Map<number, { toolCallId: string; toolName: string }[]>();
   window.forEach((e, i) => {
     if (e.kind !== 'tool') return;
     const rec = e.value as any;
     const dedupeId = toolIdFromKey(e.key);
-    // A succeeded/denied record written by a current durable-tool.ts carries `resolvedToolCallIds` —
-    // The REAL toolCallId(s) it resolved (see journal.ts ToolJournalRecord + durable-tool.ts
-    // WriteToolTerminal/trackResolvedToolCallId). This is EXACT (no recomputation needed) and is the
+    // a succeeded/denied record written by a current durable-tool.ts carries `resolvedToolCallIds` —
+    // the REAL toolCallId(s) it resolved (see journal.ts ToolJournalRecord + durable-tool.ts
+    // writeToolTerminal/trackResolvedToolCallId). This is EXACT (no recomputation needed) and is the
     // ONLY way to resolve a custom `idempotencyKey` record, since that function lives in the tool
-    // Definition, not the journal. Records written before this field existed fall back to the old
-    // Best-effort key-recompute matching below.
+    // definition, not the journal. Records written before this field existed fall back to the old
+    // best-effort key-recompute matching below.
     const resolvedIds: string[] | undefined = Array.isArray(rec?.resolvedToolCallIds) ? rec.resolvedToolCallIds : undefined;
     // 'call' mode: dedupeId IS the real toolCallId → matches x.toolCallId directly.
     // 'args' mode: dedupeId is `args-${toolName}-${hash}` → matches the recomputed argsKey, and MAY
-    // Match more than one pending entry (same-turn duplicate calls with identical arguments).
+    // match more than one pending entry (same-turn duplicate calls with identical arguments).
     const candidates = resolvedIds
       ? toolCalls.filter((x) => resolvedIds.includes(x.toolCallId))
       : toolCalls.filter((x) => x.toolCallId === dedupeId || argsKeyByToolCallId.get(x.toolCallId) === dedupeId);
-    // Defensive: a toolCallId already claimed by an earlier record in window order is not re-claimed
+    // defensive: a toolCallId already claimed by an earlier record in window order is not re-claimed
     // (mirrors the previous mutate-and-remove semantics; should not happen in correct operation).
     const matches = candidates.filter((m) => !claimed.has(m.toolCallId));
     matchesByIndex.set(i, matches);
-    // Suspended = still AWAITING APPROVAL, running = still executing → STAYS in pending.
+    // suspended = still AWAITING APPROVAL, running = still executing → STAYS in pending.
     // Only resolved records (succeeded/denied/failed) drop from pending.
     const resolved = rec?.status !== 'suspended' && rec?.status !== 'running';
     if (resolved) for (const m of matches) claimed.add(m.toolCallId);
   });
 
   // PASS 3: render `messages` in the ORIGINAL window order (model/tool interleaving UNCHANGED from
-  // Before — only the matches driving each tool entry's rendering came from a position-independent
-  // Computation above).
+  // before — only the matches driving each tool entry's rendering came from a position-independent
+  // computation above).
   window.forEach((e, i) => {
     if (e.kind === 'model') {
       const assistant: any[] = [];
@@ -207,7 +207,7 @@ export function reconstructState(
       }
     } else {
       // SINIR: no pending entry could be matched back to this record (custom idempotencyKey, or
-      // Input that couldn't be recomputed) — best-effort, same as the pre-fix behavior.
+      // input that couldn't be recomputed) — best-effort, same as the pre-fix behavior.
       messages.push({ role: 'tool', content: [{ type: 'tool-result', toolCallId: dedupeId, output: rec?.output ?? rec }] });
     }
   });
@@ -224,17 +224,68 @@ export interface ForkResult {
 }
 
 /**
+ * Is there already a run living under this id? Used to pick the next free fork number.
+ *
+ * `:input` first, because that is the key every fork copies and every `runDurable` writes — it is the
+ * cheap answer and the right one in the overwhelming majority of cases. But `forkRun` at `step: 0`
+ * copies nothing at all when the source has no frozen input, so `:input` alone can call an occupied
+ * namespace free; where the journal can list keys, the whole namespace is asked instead. A journal
+ * without `listKeys` keeps the cheap answer, stated rather than silently degraded — every adapter
+ * shipped here provides it.
+ */
+async function namespaceTaken(journal: Journal, runId: string): Promise<boolean> {
+  if ((await journal.get(runKeys.input(runId))) !== undefined) return true;
+  const lk = journal.listKeys;
+  if (typeof lk !== 'function') return false;
+  return (await lk.call(journal, `${runId}:`)).length > 0;
+}
+
+/**
+ * The default target for a fork, in the two regimes package #4 leaves standing (§4, condition 5).
+ *
+ * DERIVED SOURCE → `run1_<digest>#fork-<n>`, n counted up from 1 past whatever forks already exist.
+ * The old default was `${srcRunId}:fork:${Date.now()}`, and for a derived source it was not merely
+ * ugly — MEASURED: it produced a string wearing the `run1_` prefix without the shape, so
+ * `assertRunIdSafe` refused the fork the moment anyone tried to resume it. The clock had to go for a
+ * second, independent reason (§11): an identity that differs on every call is an identity nothing can
+ * replay to, and forking twice at the same millisecond quietly collided.
+ *
+ * RAW SOURCE → today's `${srcRunId}:fork:${Date.now()}`, byte for byte. `#` is unspellable outside
+ * `run1_`, and every journal already holding `order-1:fork:1721…` keeps reading exactly as it did.
+ *
+ * HONEST BOUND, and it is the price of "one id carries one suffix": forking `run1_<d>#2` names the
+ * copy off the shared BASE (`run1_<d>#fork-<n>`), because `#2#fork-1` is a chain the axis does not
+ * admit. So the id says WHICH WORK a fork came from, and — across the execution axis — not which
+ * execution of it. The alternative was refusing to fork a second execution at all, which removes a
+ * legitimate operation to protect a label.
+ */
+async function pickForkRunId(journal: Journal, srcRunId: string): Promise<string> {
+  const base = derivedRunIdBase(srcRunId);
+  if (base === undefined) return `${srcRunId}:fork:${Date.now()}`;
+  for (let n = 1; n < 10_000; n++) {
+    const cand = forkRunId(base, n);
+    if (!(await namespaceTaken(journal, cand))) return cand;
+  }
+  throw new Error(`@gnldev/durable: forkRun could not find a free fork number (all '${base}#fork-<n>' are taken).`);
+}
+
+/**
  * Non-destructive "re-run from here": COPY `srcRunId`'s first `step` model steps + the tool
- * Entries they reference + `:input` under `newRunId`. `model:step` and beyond are not copied →
- * Resume replays the prefix and runs LIVE from step N. The journal must provide both write and read.
+ * entries they reference + `:input` under `newRunId`. `model:step` and beyond are not copied →
+ * resume replays the prefix and runs LIVE from step N. The journal must provide both write and read.
+ *
+ * `newRunId` omitted → `pickForkRunId` chooses it, and which spelling you get depends on the source:
+ * `run1_<digest>#fork-<n>` for an engine-derived run, `${srcRunId}:fork:<ts>` for a raw one. Read that
+ * function before assuming the two are interchangeable — the derived branch exists because the raw
+ * spelling is REFUSED inside the `run1_` namespace, not as a matter of taste.
  *
  * SINIR (args-mode idempotency, opt-in): a tool-call referenced by a kept model step may have been
- * Journaled under `runKeys.tool` ('call' mode) OR `runKeys.toolByArgs` ('args' mode) — the model
- * Record alone doesn't say which. Both candidate keys are tried per tool-call and whichever is
+ * journaled under `runKeys.tool` ('call' mode) OR `runKeys.toolByArgs` ('args' mode) — the model
+ * record alone doesn't say which. Both candidate keys are tried per tool-call and whichever is
  * PRESENT is copied to `dst` under the SAME key form (preserving 'args' mode's exactly-once
- * Protection across the fork). Same known limitation as `reconstructState`: a custom `idempotencyKey`
- * Function's key can't be rederived here, so that record is not copied (fork loses exactly-once for
- * That tool and it re-executes on resume — accepted, documented).
+ * protection across the fork). Same known limitation as `reconstructState`: a custom `idempotencyKey`
+ * function's key can't be rederived here, so that record is not copied (fork loses exactly-once for
+ * that tool and it re-executes on resume — accepted, documented).
  */
 export async function forkRun(
   journal: Journal & JournalReader,
@@ -243,10 +294,10 @@ export async function forkRun(
   newRunId?: string,
 ): Promise<ForkResult> {
   // A fork of a COMPENSATED run is the same hazard class as resuming it — the copy
-  // Would replay memoized successes of side effects that were UNWOUND (the tombstone is a proc key,
-  // Invisible to readRun, so the copy itself would silently drop it) → refuse at the source.
+  // would replay memoized successes of side effects that were UNWOUND (the tombstone is a proc key,
+  // invisible to readRun, so the copy itself would silently drop it) → refuse at the source.
   await assertNotCompensated(journal, srcRunId);
-  const dst = newRunId ?? `${srcRunId}:fork:${Date.now()}`;
+  const dst = newRunId ?? (await pickForkRunId(journal, srcRunId));
   const entries = await journal.readRun(srcRunId);
   const models = entries.filter((e) => e.kind === 'model');
   const keep = models.slice(0, Math.max(0, step)); // first `step` model steps

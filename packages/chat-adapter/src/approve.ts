@@ -1,11 +1,11 @@
 // FAZ-2 — the approval round-trip, fixed at the CLIENT edge. The failure this closes (heyet kararı
 // 1.8): a suspended tool emits a `data-gnl-interrupt`; the user clicks "approve"; a naive client
-// Re-POSTs its messages and the route derives a FRESH runId from the new last-message id — the
-// Approval lands on a brand-new run, the suspended run stays suspended forever (retention keeps
-// Suspended runs deliberately → unbounded accumulation), and the tool never fires. The fix is
-// Addressing: an approval must travel with the SUSPENDED run's id (`interrupt.runId`, stamped by
-// Ui-stream.ts) and the SAME conversation identity (`body.id`/threadId — a different thread 409s on
-// The frozen-input guard).
+// re-POSTs its messages and the route derives a FRESH runId from the new last-message id — the
+// approval lands on a brand-new run, the suspended run stays suspended forever (retention keeps
+// suspended runs deliberately → unbounded accumulation), and the tool never fires. The fix is
+// addressing: an approval must travel with the SUSPENDED run's id (`interrupt.runId`, stamped by
+// ui-stream.ts) and the SAME conversation identity (`body.id`/threadId — a different thread 409s on
+// the frozen-input guard).
 //
 // Two surfaces, by integration style:
 //  `approvalPayload(interrupt)`  — pure: the body fields to merge into YOUR request (useChat's
@@ -15,9 +15,9 @@
 //
 // Approval is a BUTTON, not prose: the route reads decisions ONLY from `body.approvals`
 // (chat-route.ts) — a user typing "yes, do it" into the chat input does NOT approve anything, it
-// Starts a fresh turn. Likewise "regenerate" on a completed turn re-POSTs the same runId and gets the
-// Journal REPLAY (safe default); genuinely re-running a side effect goes through this approval
-// Ladder, never through a silent re-execution.
+// starts a fresh turn. Likewise "regenerate" on a completed turn re-POSTs the same runId and gets the
+// journal REPLAY (safe default); genuinely re-running a side effect goes through this approval
+// ladder, never through a silent re-execution.
 
 /** The minimum an approval needs from a `data-gnl-interrupt` entry (see GnlInterruptData). */
 export interface ApprovableInterrupt {
@@ -29,8 +29,8 @@ export interface ApprovableInterrupt {
 
 /**
  * The body fields that turn a chat POST into an approval of `interrupt`. Merge into the SAME request
- * Shape you normally send (same conversation `id`, same `messages`) — runId precedence in the route
- * Guarantees these fields win over derivation.
+ * shape you normally send (same conversation `id`, same `messages`) — runId precedence in the route
+ * guarantees these fields win over derivation.
  */
 export function approvalPayload(
   interrupt: ApprovableInterrupt,

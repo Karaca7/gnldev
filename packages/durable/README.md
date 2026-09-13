@@ -34,7 +34,7 @@ const chargeCard = tool({
 });
 
 const res = await runDurable({
-  runId: 'order-123',                      // ← idempotency key (orderId/sessionId)
+  runId: 'order-123',                      // ← the id of THIS WORK — never a sessionId (see below)
   journal: new SqliteStorage('runs.db').runs,   // ← state lives here
   model: anthropic('claude-opus-4-8'),
   tools: { chargeCard },
@@ -49,6 +49,11 @@ card is never charged a second time:
 ```ts
 const res = await runDurable({ runId: 'order-123', journal, model, tools, prompt: 'Process the order' });
 ```
+
+> **One id is one JOB, never one session.** `runDurable` is the raw surface: the string you pass *is*
+> the identity, so a `sessionId` or a conversation id there makes every later turn replay the first
+> one forever. Through `createGnl` you name the work instead (`workKey`) and the engine derives the
+> id — see [Work identity](#work-identity-workkey).
 
 > <a id="what-never-charged-twice-actually-means"></a>
 > **What "never charged twice" actually means:** the guarantee is **at-most-once**. If a step
@@ -104,6 +109,116 @@ If you know `generateText`, you already know this — same arguments, same retur
 > guarantee across re-plans, opt into `idempotency: 'args'` / `idempotencyKey` (next section) or set
 > `limits.sideEffectDuplicates` to `'block'`/`'suspend'`. The 2-line quick-start example is call-scoped only.
 
+## Work identity (`workKey`)
+
+**A `workKey` is your name for a unit of work — not for a conversation.** While the run it opened
+still exists, another call arriving with the same `workKey` in the same `workScope` is routed to that
+run instead of starting a second one.
+
+**Coming from `thread_id`?** There the same key means *continue this conversation*. Here the same key
+means *this is the same job*: reuse a `workKey` to **retry** work, never to add a turn. A conversation
+is `threadId` — a different field, and you can use both at once.
+
+A `workKey` is a **business name** (the invoice being issued, the document being published, the
+firmware rollout for device 7742, tonight's reconciliation batch), not a random retry token. Keep
+sensitive data out of it — a `workKey` is echoed in error bodies and shown on Studio screens.
+
+```ts
+const gnl = createGnl({
+  journal,
+  agents: {
+    // Default. The job belongs to a PERSON: Ayşe's `invoice-4471` and Mehmet's `invoice-4471` are
+    // two jobs, because the subject is part of the identity.
+    billing: { model, workScope: 'resource' },
+    // The job belongs to the INSTALLATION: tonight's reconciliation runs once, whichever of six
+    // workers woke up first.
+    reconcile: { model, workScope: 'org' },
+  },
+});
+
+await gnl.run('billing', {
+  workKey: 'invoice-2026-04-7742',   // your name for the job
+  resourceId: 'u-142',               // the address it is unique WITHIN ('resource' scope)
+  prompt: 'Issue the April invoice',
+});
+```
+
+Pass **either** a `workKey` **or** a `runId`, never both — two identities for one call is a question
+with no honest answer. A raw `runId` is still first-class and always will be: `runDurable`,
+`resumeRun`, `forkRun` and `streamDurable` take an id, because resume and fork cannot reverse a hash.
+
+### The id you get back
+
+`runId = derive(entityName, workScope, subject, workKey)` — a 128-bit digest behind a `run1_` prefix.
+`@gnldev/server` and `@gnldev/chat-adapter` return it in the `X-Gnl-Run-Id` response header;
+`@gnldev/agui` carries it in the AG-UI event envelope instead, because that route's answer is a
+stream of events and the id belongs on the run's own `RUN_STARTED`, not beside it. In process,
+compute it from the same four inputs:
+
+```ts
+import { derivedRunId } from '@gnldev/durable';
+
+// NOTE THE `agent:` PREFIX — it is part of the entity name, not decoration.
+const id = derivedRunId('agent:billing', 'resource', 'u-142', 'invoice-2026-04-7742');
+// 'run1_<32 hex>' — and the same four inputs always produce the same id
+```
+
+**The entity name carries a TYPE prefix**: `agent:<name>` for the agent doors, `wf:<name>` for
+`runWorkflow`. A workflow and an agent may share a registry name, and without the prefix `pay` the
+pipeline and `pay` the agent would derive ONE id from one `workKey` — two unrelated jobs meeting in
+a single run. If you compute an id yourself to look one up, use the prefix the engine used.
+
+Three consequences worth knowing before you rely on it:
+
+- **`runId` is a stable *pseudonym* of your `workKey`, not an anonymisation of it.** A low-entropy
+  key (`invoice-1`, `order-42`) is recoverable by dictionary, and under GDPR the id keeps whatever
+  personal-data status the key had. Treat the digest as a pseudonym, not as a scrub.
+- **The agent's name is part of the identity.** Two agents cannot collide on one `workKey` — and
+  renaming an agent breaks the resume of its half-finished runs, because the id no longer derives.
+- **Collisions die structurally; secrecy does not.** Anyone can compute the digest offline. What
+  stops a guessed id from being read is the ownership gate, not the hash.
+- **A shape-valid impersonation is indistinguishable.** A caller who knows all four inputs produces
+  the same id a legitimate caller would, and the engine cannot tell the two apart — the protection
+  is the ownership gates, not the derivation; and a slot that already exists is skipped by rollover,
+  never re-born into.
+
+### What happens on the second call
+
+Two axes, whose names are fixed even though v1 gives each exactly one behaviour — there is no field
+to set yet, and inventing a single-valued enum would be furniture. The names live here so that
+tomorrow's second value is an addition rather than a break.
+
+| Axis | v1 value | The second call gets |
+| --- | --- | --- |
+| `onConflict` | `'reject'` | The work is **running right now** → `409 run_busy` + `Retry-After`. |
+| `onReuse` | `'replay'` | The work already **finished** → the recorded answer, nothing re-runs. |
+
+**What makes `run_busy` possible is a lock, and a lock has a TTL.** "Running right now" is not
+inferred from the journal's contents — it is a per-run lock (`lock: { ttlMs }`, default 300 000 ms)
+taken before the run starts and renewed by a heartbeat while it lasts. Two consequences follow, and
+they are the shape of the guarantee rather than caveats to it: a process that dies without releasing
+holds the run only until the TTL expires, after which a retry is admitted and replays from the
+journal; and a run that legitimately outlives its TTL keeps the lock alive by heartbeat, so the TTL
+bounds crash recovery, not run length.
+
+- **A run that ended in FAILURE has no answer to replay, so the same `workKey` is free to run
+  again.** This is a rule, not a footnote: retrying failed work is the normal case, not an escape
+  hatch.
+- The third collision class keeps its own name: **`strictInput`** — same key, different content →
+  `409 run_input_mismatch`. Inside the `run1_` space it is unconditional, with no opt-out: the
+  caller did not choose that id, so "use a fresh runId" was never advice they could act on.
+
+### How long a `workKey` stays unique
+
+**As long as the run record lives — not a minute longer.** Recognition is a property of the stored
+run, not of the text. The moment a sweep deletes that run, the key is a stranger again.
+
+So the number to set is not "how long do I want history"; it is a comparison: **your retention window
+should not be shorter than the longest retry your clients can produce.** If you cannot promise that,
+open the tombstones (`tombstones: true` + `tombstonePolicy: 'reject'`) — a late retry is then refused
+with `409 run_swept` instead of quietly starting the job over. A tombstone is a refusal, not an
+answer, and it stores only a **hash** of the key.
+
 ## LLM-aware idempotency (`idempotency: 'args'`)
 
 Call-keyed exactly-once (the default above, keyed by `toolCallId`) is blind to one real-world case: the
@@ -149,11 +264,12 @@ dedup. Two conversation-scoped tools close it, both living under `xthr:<threadId
 
 ```ts
 // Deterministic business key, silent dedup ACROSS RUNS of one conversation (Stripe semantics):
-gnlTool(tool({ /* … */ }), { sideEffect: true, idempotencyWindow: 'thread', idempotencyKey: (a: any) => a.orderId });
+gnlTool(tool({ inputSchema: z.object({ orderId: z.string() }), execute: async () => ({ ok: true }) }),
+  { sideEffect: true, idempotencyWindow: 'thread', idempotencyKey: (a: any) => a.orderId });
 
 // LLM-shaped args where silence would be wrong — the ambiguous repeat becomes a HUMAN question
-// carrying the first result's address (firstToolCallId):
-limits: { sideEffectDuplicates: { action: 'suspend', scope: 'thread' } }
+// carrying the first result's address (firstToolCallId). This one is a RUN option, not a tool one:
+const limits = { sideEffectDuplicates: { action: 'suspend', scope: 'thread' } };
 ```
 
 Use the right layer: silent windows are for DETERMINISTIC business keys, where dedup is
@@ -205,7 +321,7 @@ where forgetting the factory leaves the flag silently unenforced is exactly the 
 replaces):
 
 ```ts
-gnlTool(tool({ /* … */ }), {
+gnlTool(tool({ inputSchema: z.object({ amount: z.number() }), execute: async () => ({ ok: true }) }), {
   sideEffect: true,
   confirm: { reason: (args: any) => `charge ${args.amount} to card — confirm?` },  // or just `true`
 });
@@ -260,7 +376,7 @@ const tools = durableTools(myTools, { journal, runId });
 ## Examples
 
 ```bash
-npx tsx examples/no-double-charge.ts   # no API key needed (mock model) — exactly-once proof
+npx tsx examples/no-double-charge.ts   # no API key needed (mock model) — at-most-once proof
 ```
 
 ## API
@@ -321,14 +437,18 @@ What each protection answers, in one line each:
 
 - **`strictInput`** — one runId carries ONE request: the raw caller input is fingerprinted at freeze
   time; the same runId arriving with different content gets `409 run_input_mismatch` (Stripe's
-  "same key, different payload" semantics). Legitimate flows stay open: driving the run with its own
+  "same key, different payload" semantics — the *rule* is Stripe's, the *status* is ours: Stripe
+  answers 400, we answer 409, because a conflict is what this is). Legitimate flows stay open: driving the run with its own
   frozen content is a replay, and an approval addressing any journaled toolCallId admits the
   re-POST — even retried after the record turned terminal.
 - **`actor`** — the runId binds to its first caller (first-wins); a different actor re-driving it
   gets `409 run_actor_mismatch`. No actor on either side = no check: an auth-less deployment has no
   protection here, stated rather than silent.
-- **`conflictLedger`** — every refusal (busy / thread / input / actor / swept) appends a PII-free
-  `idem:conflict:*` record: codes, hashes and the actor id, never content. The family lives OUTSIDE
+- **`conflictLedger`** — every refusal (busy / thread / input / actor / swept) appends an
+  `idem:conflict:*` record: codes, **key hashes** and the actor id, never content. Say it precisely,
+  because the difference has legal weight: a hashed `workKey` is a **stable pseudonym**, not an
+  anonymisation — a low-entropy key is recoverable by dictionary, and the record keeps whatever
+  personal-data status the key itself had. The family lives OUTSIDE
   the run's sweep prefix — the audit's subject cannot erase its own refusal history. Read it with
   `readIdemLedger(journal)`, which THROWS without `listKeys` rather than lying with an empty answer.
 - **`auditOnReject: 'require'`** — the conflict-ledger append becomes a PRECONDITION of the
@@ -349,9 +469,11 @@ journals are two independent dedup windows — route a runId to its home journal
 honestly: the preset wraps `run()`/`stream()`; `runWorkflow()`/`runNetwork()` entry paths are not
 covered yet — apply protections there explicitly.
 
-**The decision hierarchy, which every layer here serves:** deterministic (idempotency keys, unique
+**The decision hierarchy, which every layer here serves:** deterministic (work identity, unique
 constraints, fingerprints) > human gate (`confirm`, suspend ladders) > probabilistic (semantic
-candidates, working memory). And the recipe that no framework can automate away: give critical tools
+candidates, working memory). **`workKey` sits at the top of the deterministic layer** — it is the
+run-level answer to "is this the same job?", settled by exact equality before any tool runs, and the
+semantic gate below never overrides it. And the recipe that no framework can automate away: give critical tools
 a **read-before-write** sibling (`createProduct` ↔ `findProduct`) so the agent checks the system of
 record before acting — and for the same-key half, the framework leg exists: a tool-level
 `lookup(input, { idempotencyKey })` hook is consulted before the FIRST attempt of a side-effect tool
@@ -370,13 +492,16 @@ first result next to an approval question. It never silently skips, blocks or te
 best-effort and fail-open: if your embedder is unreachable or no candidate clears the bar, behavior
 is today's behavior — no regression, and no guarantee either. Decision hierarchy: deterministic >
 human gate > probabilistic — this layer is the third class serving the first two as a candidate
-finder. It does not replace layers 1-4 (hash/claim/confirm/critical); it runs beneath them, and it
+finder. Which also fixes where it sits relative to run identity: a run's `workKey` is settled by
+exact equality before any tool executes, and nothing on this layer can turn two work names into one
+job or one work name into two.
+It does not replace layers 1-4 (hash/claim/confirm/critical); it runs beneath them, and it
 refuses to start where no approvals channel exists. The quality of your `semanticIdentity.keys`
 declaration IS the quality of the protection.
 
 ```ts
 // Double opt-in: the run-level block AND the tool-level declaration — either absent, layer inert.
-limits: {
+const limits = {
   sideEffectDuplicates: {
     action: 'suspend', scope: 'thread',            // required — config-time throw otherwise
     semantic: {
@@ -385,9 +510,12 @@ limits: {
       minSimilarity: 0.6,                          // candidate threshold (recall side; misses are safe)
     },
   },
-},
+};
 
-const createProduct = gnlTool(tool({ /* … */ }), {
+const createProduct = gnlTool(tool({
+  inputSchema: z.object({ sku: z.string(), price: z.number(), cancel: z.boolean().optional() }),
+  execute: async () => ({ ok: true }),
+}), {
   sideEffect: true,
   semanticIdentity: {
     keys: ['sku'],                                 // the business identity — REQUIRED, non-empty
@@ -514,7 +642,8 @@ same term in more than one language, normalize it to ONE canonical language insi
 decision — the framework deliberately ships no translation dictionary.
 
 ```ts
-semantic: {
+// The `semantic` block from above, with the two quality layers filled in.
+const semantic = {
   embed: myEmbed, embedModelId: 'local:multilingual-e5-small@q8',
   rules: true,                                  // defaults; or an object to supply your own lists
   judge: {
@@ -525,7 +654,7 @@ semantic: {
     maxCallsPerRun: 10,                         // journal-backed slots; survive resume
     timeoutMs: 8000,
   },
-},
+};
 ```
 
 **The certificate is not ceremony.** On identical fixtures with the identical prompt, one model

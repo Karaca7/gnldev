@@ -16,7 +16,7 @@ describe('mediaSrc', () => {
 
   // This used to return the URL, which made rendering a run send a request to it. Journal content is
   // not all the operator's own — a tool result or a model turn can name any address — so the page
-  // Would fetch on an attacker's behalf, carrying whatever was encoded in the URL plus the operator's
+  // would fetch on an attacker's behalf, carrying whatever was encoded in the URL plus the operator's
   // IP and the moment they opened the run. The part is still reachable, just not automatically.
   it('an http(s) source is NOT inlined; it is offered as a link instead', () => {
     expect(mediaSrc({ type: 'image', image: 'https://example.dev/a.png' })).toBeNull();

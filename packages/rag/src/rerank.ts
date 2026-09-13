@@ -1,5 +1,5 @@
 // LLM reranker: reorders vector results by relevance to the query. When used inside createRagTool,
-// The rerank LLM call also becomes part of the tool's result → durableTool journals it → **replayable rerank** (most RAG implementations don't have this).
+// the rerank LLM call also becomes part of the tool's result → durableTool journals it → **replayable rerank** (most RAG implementations don't have this).
 import { generateText } from 'ai';
 import type { VectorMatch } from './vector-store.js';
 

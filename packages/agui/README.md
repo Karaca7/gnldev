@@ -57,6 +57,91 @@ spec](https://github.com/ag-ui-protocol/ag-ui) are marked with comments in `type
   is threaded in from outside (`initialAguiConvertState`) — a SINGLE state object must be threaded
   through from start to end for an ENTIRE run (this is required for text message framing START/END).
 
+## Who is this request for? (`identity`)
+
+This route declares auth out of scope, and that boundary is right. What it leaves you responsible for
+is naming the end user each run acts for — the subject memory scopes on and every ownership gate
+compares against.
+
+```ts
+import { createAguiRoute } from '@gnldev/agui';
+
+const route = createAguiRoute(config, {
+  // The SAME signature @gnldev/chat-adapter's route takes — write the function once, mount either adapter.
+  identity: (req) => {
+    const session = db.sessions.get(req.headers.get('cookie'));   // YOUR session store
+    return session ? { resourceId: session.userId, threadId: session.conversationId } : undefined;
+  },
+});
+```
+
+It receives the web `Request` (not the Hono context, so an Express or Fastify bridge can use it), is
+called once per request, and may return `undefined`. **Read it from something the server trusts** — a
+session cookie, a verified JWT — and never from the request body: the engine treats its reserved
+context keys as "the server established this", and a body-supplied subject is the caller naming
+whoever they like. The route always seals the context, so that forgery is closed either way; what
+`identity` decides is whether the run has an owner **at all**.
+
+Precedence, field by field: `resolveResourceId` / `resolveThreadId` win (the existing contract), then
+`identity`, then the body. With none of them, runs are born ownerless — ownership gates stay
+fail-open — and in `NODE_ENV=production` the route says so once with a `console.warn`. It never
+throws.
+
+`@gnldev/chat-adapter`'s README carries the long version of the same section, including the attack it was
+measured against.
+
+## Which run is this? (`workKey`, and the two regimes)
+
+Every request names one of two things, and exactly one:
+
+- **`workKey`** — your name for a unit of work. The engine derives the run's id from it, so the same
+  name always lands on the same run: durable replay, side effects once. It is a *business* name (the
+  invoice being issued, tonight's reconciliation), so keep sensitive data out of it — it is reflected
+  in error details and shown on Studio screens.
+- **`runId`** — a raw id you already hold (a resume, a fork, an id you stored).
+
+Sending both is a 400. Sending neither is a 400. `Idempotency-Key` is accepted when the body named
+nothing itself.
+
+**The derived id is not in a header.** `@gnldev/server` and `@gnldev/chat-adapter` return
+`X-Gnl-Run-Id`; this route's answer is a stream of AG-UI events, so the id travels in the event
+envelope where it belongs to the run rather than to the HTTP response.
+
+### Two regimes, decided by whether the route can name a subject
+
+Deriving an id from a name needs an **address** — otherwise the engine cannot tell whose job it is.
+This route ships with no auth, so it has deployments that can name nobody, and the rules differ by
+how the name arrived:
+
+| What arrived | With a subject | With no subject |
+| --- | --- | --- |
+| `body.workKey` | Derived `run1_` id | **400** — fail-closed (the field is new; nobody loses anything) |
+| `Idempotency-Key` | Derived `run1_` id | Stays a raw runId, as it has since FAZ-1 |
+| `body.runId` | Raw id | Raw id |
+
+The header is the forgiving one on purpose: it is usually stamped by a gateway, and turning a working
+deployment's 200 into a 400 is not a fix. An `'org'` workScope is addressed by the organization, so
+org-scoped work runs **without** a subject — that is the nightly-reconciliation case, not a hole. Pass
+`orgId` from `identity` for it, and for parity with `@gnldev/server`: without it, org-scoped work
+derives a *different* id here than it does through REST, which duplicates silently rather than
+failing.
+
+### Refusals
+
+Errors thrown before the stream exists are typed, with the same codes `@gnldev/server` uses — a client
+matches on `code`, never on the sentence.
+
+| Code | Status | Means |
+| --- | --- | --- |
+| `run_busy` | 409 | The same run is executing right now; the duplicate was declined. Honour `Retry-After`. |
+| `run_thread_mismatch` | 409 | This id already belongs to a different conversation. |
+| `run_input_mismatch` | 409 | Same derived id, different content — inside `run1_` this is unconditional. |
+| `run_owner_mismatch` | 409 | The run belongs to a different subject. |
+
+None of the 409s carry `resumable`: no retry clears them, something about the request has to change.
+`run_busy` is the exception in spirit — the *same* request is right, just later. Full pages for each
+are in [`docs/errors`](../../docs/errors).
+
 ## Mapping table (GNL SSE → AG-UI)
 | GNL event | AG-UI event(s) | Note |
 |---|---|---|

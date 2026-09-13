@@ -1,14 +1,14 @@
 // FAZ-4 (critical profile) — append-only idempotency CONFLICT ledger. The general path derives its
 // 409 reporting from the records that already exist (input/outcome/lock); regulated deployments need
-// The refusals THEMSELVES to leave a trace (non-repudiation / reconciliation): "who was told no,
-// When, about which run". Entries are PII-FREE by design — codes, hashes and an opaque actor id,
-// Never message content.
+// the refusals THEMSELVES to leave a trace (non-repudiation / reconciliation): "who was told no,
+// when, about which run". Entries are PII-FREE by design — codes, hashes and an opaque actor id,
+// never message content.
 //
 // Key shape: `idem:conflict:<runId>:<at>-<seq>` — runId-scoped for filtering, but note the family is
 // NOT under `${runId}:` so a run sweep does NOT erase its own refusal history (an audit trail that
-// The subject of the audit can delete is not one). Purge explicitly via
+// the subject of the audit can delete is not one). Purge explicitly via
 // `journal.deletePrefix('idem:conflict:')` (org deployments: withOrg prefixes these keys like every
-// Other, so an org purge sweeps them exactly).
+// other, so an org purge sweeps them exactly).
 import { randomUUID } from 'node:crypto';
 import type { Journal } from './journal.js';
 
@@ -28,15 +28,15 @@ let seq = 0;
 /**
  * Ledger append. `mode: 'best-effort'` (default): the write must never mask or delay the refusal —
  * A failure warns. `mode: 'require'` (FAZ-7, RunOptions.auditOnReject): the append is a PRECONDITION
- * Of the refusal and its failure PROPAGATES — never refuse unrecorded. Journal clock when available.
+ * of the refusal and its failure PROPAGATES — never refuse unrecorded. Journal clock when available.
  */
 export async function recordIdemConflict(journal: Journal, rec: Omit<IdemConflictRecord, 'at'>, mode: 'best-effort' | 'require' = 'best-effort'): Promise<void> {
   // FAZ-7 `mode: 'require'` (auditOnReject): the ledger append happens BEFORE the refusal is
-  // Delivered and its failure PROPAGATES — a regulated deployment that must never refuse
-  // Unrecorded prefers a 500-shaped audit error over an unauditable 409. Default stays best-effort.
+  // delivered and its failure PROPAGATES — a regulated deployment that must never refuse
+  // unrecorded prefers a 500-shaped audit error over an unauditable 409. Default stays best-effort.
   // ONE key builder for both modes — a literal copy per branch is scheme-drift waiting to happen.
   // Seq alone is process-LOCAL (same-ms twin workers would collide and overwrite — record loss in a
-  // Non-repudiation ledger); the uuid slice makes the key process-unique.
+  // non-repudiation ledger); the uuid slice makes the key process-unique.
   const append = async () => {
     const at = journal.now ? await journal.now() : Date.now();
     await journal.put(`idem:conflict:${rec.runId}:${at}-${seq++}-${randomUUID().slice(0, 8)}`, { ...rec, at });

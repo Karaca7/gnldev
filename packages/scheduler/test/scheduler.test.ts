@@ -71,11 +71,15 @@ describe('@gnldev/scheduler', () => {
     expect((await pollScheduler(j, runner, 200)).fired).toBe(0); // done
   });
 
-  it('does not fire when the lock is held by someone else (double-fire protection)', async () => {
+  it('does not fire when the FIRE lock is held by someone else (double-fire protection)', async () => {
     const j = new InMemoryJournal();
     const runner = mockRunner(() => ({ output: 'ok' }));
     await scheduleWorkflow(j, { id: 'L', name: 'wf', at: 0 }, 0);
-    await acquireRunLock(j, 'sched:L:0', 'other', 60_000, 0); // held by someone else
+    // `sched:L:0:fire`, not `sched:L:0`: what this test stands in for is a rival POLLER, and the
+    // poller's lock stopped being the run's lock (see FIRE_LOCK in src/index.ts — while they were the
+    // same key, a critical-preset run was refused by its own caller). A holder of the RUN's key is a
+    // different scenario with a different answer, covered in critical-fire-lock.test.ts.
+    await acquireRunLock(j, 'sched:L:0:fire', 'other', 60_000, 0); // held by another poller
 
     const r = await pollScheduler(j, runner, 0);
     expect(r.fired).toBe(0);

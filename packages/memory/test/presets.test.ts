@@ -25,9 +25,21 @@ describe('defaultEmbed', () => {
 });
 
 describe('memoryPreset', () => {
-  it('chat / assistant → AgentMemory', () => {
+  it('chat / recall → AgentMemory', () => {
     expect(memoryPreset(new InMemoryStorage(), 'chat')).toBeInstanceOf(AgentMemory);
-    expect(memoryPreset(new InMemoryStorage(), 'assistant')).toBeInstanceOf(AgentMemory);
+    expect(memoryPreset(new InMemoryStorage(), 'recall')).toBeInstanceOf(AgentMemory);
+  });
+
+  it("the old 'assistant' value throws, and the message says what to write instead", () => {
+    // Renamed because the word was carrying two unrelated axes. `preset: 'assistant'` on a gnl config
+    // decides what a REPEATED SIDE EFFECT does; this one decided how much conversation history is
+    // recalled. Two switches, one word, no relationship — and a reader who had just learned the first
+    // meaning had every reason to assume the second.
+    //
+    // A throw rather than a silent alias: an alias keeps the collision alive in every project that
+    // uses it, which is the state this rename exists to end. The value was a config-time argument, so
+    // the failure is at wiring time, not mid-run.
+    expect(() => memoryPreset(new InMemoryStorage(), 'assistant' as never)).toThrow(/renamed to 'recall'/);
   });
 
   it('preset thread CRUD + append + getMessages works', async () => {

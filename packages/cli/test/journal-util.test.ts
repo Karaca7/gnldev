@@ -38,8 +38,8 @@ describe('parseDuration', () => {
 
 describe('getJournal', async () => {
   // Mirrors the real module: getJournal now also normalizes a directly-configured `journal`, because
-  // The documented way to configure one is `journal: new SqliteStorage(...).runs` — a RunJournal whose
-  // ListRuns answers with a Page, not the array every reader-side command here consumes.
+  // the documented way to configure one is `journal: new SqliteStorage(...).runs` — a RunJournal whose
+  // listRuns answers with a Page, not the array every reader-side command here consumes.
   const { asReaderJournal } = await import('@gnldev/durable');
   const fakeDurable = { toJournal: (runs: unknown) => ({ __fromStorage: runs }), asReaderJournal } as any;
 
@@ -54,7 +54,7 @@ describe('getJournal', async () => {
     const journal = { id: 'plain-journal' };
     const config = { journal } as unknown as GnlDevConfig;
     // Identity, not just equality: a journal that already satisfies the reader contract must not be
-    // Wrapped, or `storage === journal` checks elsewhere would start disagreeing.
+    // wrapped, or `storage === journal` checks elsewhere would start disagreeing.
     expect(getJournal(config, fakeDurable)).toBe(journal);
   });
 
@@ -63,7 +63,7 @@ describe('getJournal', async () => {
     const config = { journal: new InMemoryStorage().runs } as unknown as GnlDevConfig;
     const j = getJournal(config, fakeDurable) as any;
     // `gnl runs` does `[...(await journal.listRuns())].reverse()` — a Page is not iterable, so this
-    // Threw before the bridge; `gnl sweep` read `.length` off it and swept nothing.
+    // threw before the bridge; `gnl sweep` read `.length` off it and swept nothing.
     expect(Array.isArray(await j.listRuns())).toBe(true);
   });
 

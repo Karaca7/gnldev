@@ -128,7 +128,7 @@ export function chunkText(text: string, opts?: ChunkOptions): Chunk[] {
 /**
  * Split documents → VectorDoc list ready for `indexDocuments`. Chunk id is `<docId>#<i>`
  * (deterministic → re-indexing upserts to the same ids, no duplicate records); metadata
- * Is inherited + a `{ source, chunk }` trail is added (and a `heading` breadcrumb in markdown).
+ * is inherited + a `{ source, chunk }` trail is added (and a `heading` breadcrumb in markdown).
  */
 export function chunkDocuments(docs: VectorDoc[], opts?: ChunkOptions): VectorDoc[] {
   const out: VectorDoc[] = [];

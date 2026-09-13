@@ -50,7 +50,7 @@ export function applyStreamEvent(state: ChatState, ev: StreamEvent): ChatState {
     }
     case 'reasoning-delta': {
       // P0.1: the thinking trace accumulates NEXT TO the answer text (same assistant message,
-      // Separate field) — it used to be silently dropped end-to-end for reasoning models.
+      // separate field) — it used to be silently dropped end-to-end for reasoning models.
       const text = (ev.data as any).text ?? '';
       if (!text) return state;
       const msgs = state.messages.slice();

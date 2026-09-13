@@ -1,7 +1,7 @@
 // MCP FIREWALL. Market evidence: 30 CVEs in 60 days, tool-poisoning, rug-pull — MCP tools:
-// Their DEFINITIONS (description/inputSchema) are untrusted data coming from the server. `@gnldev/durable`'s
-// Guard contract is already pluggable (see guard.ts, policy.ts) — this file, WITHOUT TOUCHING `durable`,
-// Produces an MCP-specific Guard: allowlist/denylist + description-pinning (rug-pull defense) + per-tool limit.
+// their DEFINITIONS (description/inputSchema) are untrusted data coming from the server. `@gnldev/durable`'s
+// guard contract is already pluggable (see guard.ts, policy.ts) — this file, WITHOUT TOUCHING `durable`,
+// produces an MCP-specific Guard: allowlist/denylist + description-pinning (rug-pull defense) + per-tool limit.
 import { claim } from '@gnldev/durable';
 import type { Guard, GuardCall, GuardDecision, Journal, JournalReader } from '@gnldev/durable';
 import type { McpToolSummary } from './index.js';
@@ -24,7 +24,7 @@ export interface McpFirewallOptions {
   journal: Journal;
   /**
    * A LIVE summary of the discovered tools — e.g. `await handle.describeTools()`. Description pinning
-   * Uses this: on every guard call, `toolName`'s CURRENT description/inputSchema hash is read from here
+   * uses this: on every guard call, `toolName`'s CURRENT description/inputSchema hash is read from here
    * (what the server "currently says" — this is exactly what we want to pin, compared against the pinned one).
    */
   tools: ReadonlyArray<McpToolSummary>;
@@ -44,25 +44,25 @@ function matches(name: string, patterns: ReadonlyArray<string | RegExp> | undefi
 /**
  * Produces a Guard specific to MCP tools. Conforms 1:1 to the existing Guard contract
  * (allow/deny/require-approval) — can be passed directly to `runDurable({ guard })` or chained with
- * Another Guard (e.g. `policyGuard`) via `composeGuards`.
+ * another Guard (e.g. `policyGuard`) via `composeGuards`.
  *
  *  1. ALLOWLIST/DENYLIST: if `allow` is not given, fail-open (every tool is free, only `deny` applies);
- *     If `allow` is given, FAIL-CLOSED (every tool not on the list is denied). `deny` is evaluated
+ *     if `allow` is given, FAIL-CLOSED (every tool not on the list is denied). `deny` is evaluated
  * AFTER `allow` (if both match, deny wins).
  *
  *  2. DESCRIPTION PINNING (tool-poisoning/rug-pull defense): a tool's description+inputSchema
- *     Hash (`McpToolSummary.descriptionHash`) is WRITTEN to the journal via `claim()` the FIRST TIME
- *     It is SEEN (key: `__mcp_pin__:<server>:<tool>`) — the winning call is the PERMANENT pin for that
- *     Run/journal. On EVERY subsequent guard call, the current hash from `opts.tools` is compared
- *     Against the pin; if the hash HAS CHANGED (the server sneakily changed the description — rug-pull)
- *     It returns 'require-approval' + a reason message ("tool description changed — poisoning risk") —
- *     The tool WILL NOT RUN without human approval. Since the pin lives in the journal, it stays
+ *     hash (`McpToolSummary.descriptionHash`) is WRITTEN to the journal via `claim()` the FIRST TIME
+ *     it is SEEN (key: `__mcp_pin__:<server>:<tool>`) — the winning call is the PERMANENT pin for that
+ *     run/journal. On EVERY subsequent guard call, the current hash from `opts.tools` is compared
+ *     against the pin; if the hash HAS CHANGED (the server sneakily changed the description — rug-pull)
+ *     it returns 'require-approval' + a reason message ("tool description changed — poisoning risk") —
+ *     the tool WILL NOT RUN without human approval. Since the pin lives in the journal, it stays
  * STABLE across resume/replay (same journal → same decision).
  *
  *  3. maxCallsPerRun: if the per-tool count of SUCCESSFUL (`status:'succeeded'`) calls in the journal
  * REACHES this limit, the next call stops with 'require-approval' (similar to limits.ts's
  *     `maxToolCalls` pattern, but per-tool; if the journal doesn't support `readRun`, fail-open — if it
- *     Can't be counted, it isn't blocked).
+ *     can't be counted, it isn't blocked).
  */
 export function mcpFirewall(opts: McpFirewallOptions): Guard {
   const { server, journal, allow, deny, maxCallsPerRun } = opts;
@@ -120,7 +120,7 @@ export function mcpFirewall(opts: McpFirewallOptions): Guard {
 
 /**
  * Chains two Guards: `first` runs FIRST; if it returns `'allow'`, `second` runs (e.g. `mcpFirewall`
- * First, then `policyGuard`). If `first` returns `deny`/`require-approval`, `second` is NEVER called
+ * first, then `policyGuard`). If `first` returns `deny`/`require-approval`, `second` is NEVER called
  * (short-circuit — the firewall's denial comes before the policy).
  */
 export function composeGuards(first: Guard, second: Guard): Guard {
