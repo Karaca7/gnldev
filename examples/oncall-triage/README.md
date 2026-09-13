@@ -94,7 +94,7 @@ INFO  boot: connected postgres://svc:hunter2@pg-primary/orders
 entry (`src/agent.ts`), and it keeps the host:
 
 ```
-INFO  boot: connected postgres://[REDACTED_DSN_CREDENTIALS]@db-primary/orders
+INFO  boot: connected postgres://[REDACTED_DSN_CREDENTIALS]@pg-primary/orders
 ```
 
 The host stays because at 3am *which database* is the question, and `[REDACTED]` for the whole URL

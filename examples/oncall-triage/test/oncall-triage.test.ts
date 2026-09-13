@@ -75,7 +75,7 @@ describe('the logs the agent reads carry secrets', () => {
     // The HOST survives, deliberately: at 3am "which database" is the question, and masking the whole
     // URL answers none of it. A test that only asserted the absence of the password would pass just
     // as well if the entire log line had been dropped.
-    expect(sent).toContain('db-primary/orders');
+    expect(sent).toContain('pg-primary/orders');
     expect(sent).toContain('[REDACTED_DSN_CREDENTIALS]');
   });
 });

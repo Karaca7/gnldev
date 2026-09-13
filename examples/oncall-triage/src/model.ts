@@ -30,7 +30,7 @@ function stepsThisTurn(prompt: any[]): number {
 
 /** The service an alert is about, from its text. Falls back so a free-text question still works. */
 export function serviceOf(text: string): string {
-  const m = /\b(checkout|search|billing|gateway|db-primary)\b/i.exec(text);
+  const m = /\b(checkout|search|billing|gateway|pg-primary)\b/i.exec(text);
   return m ? m[1].toLowerCase() : 'checkout';
 }
 
