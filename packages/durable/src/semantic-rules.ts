@@ -16,8 +16,8 @@
 // value the fallthrough already returns, so the class could not change a single outcome while still
 // asking for upkeep. The attribution run settled it — on both calibration sets EVERY ladder decision
 // came from the list-free rules (shortcode-edit1, punct-space, digit-value) and the seven-entry
-// default size ladder; the dictionary surface decided nothing. (Deviation recorded in
-// docs/SEMANTIK-V2-HEYET-RAPORU.md.)
+// default size ladder; the dictionary surface decided nothing. (Deviation recorded in the
+// semantic-v2 panel record, which is kept on file and is not part of this repository.)
 //
 // What survives the cut is the same safety argument: a rule may only conclude "same" when no world
 // knowledge is involved. Open-ended prefix matching and phonetic skeletons are NOT IN THIS FILE AT
