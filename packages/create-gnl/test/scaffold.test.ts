@@ -30,17 +30,25 @@ beforeAll(() => {
 }, 120_000);
 
 describe('create-gnl bin (child process)', () => {
-  it('writes gnl.config.ts + src/model.ts + package.json + README.md to the target dir', () => {
+  it('writes the config, the agents, the tool and the proof into the target dir', () => {
     const base = mkdtempSync(join(tmpdir(), 'create-gnl-'));
     created.push(base);
     const target = join(base, 'my-agent');
 
-    const out = execFileSync('node', [binPath, target], { encoding: 'utf8' });
-    expect(out).toContain('gnl project created');
+    // `--yes` because this bin IS `gnl init` now (a 20-line door, not a second scaffolder): without
+    // it the gate would wait for a keypress on a TTY. There is none in a test, so the prompt never
+    // opens — but saying so here keeps the reason visible if that ever changes.
+    const out = execFileSync('node', [binPath, target, '--yes'], { encoding: 'utf8' });
+    expect(out).toContain('created');
 
     expect(existsSync(join(target, 'package.json'))).toBe(true);
     expect(existsSync(join(target, 'gnl.config.ts'))).toBe(true);
-    expect(existsSync(join(target, 'src', 'model.ts'))).toBe(true);
+    // The taxonomy a project grows into, present from the first file — and the proof that the
+    // charge tool actually works, which is the one thing a starter has to demonstrate.
+    expect(existsSync(join(target, 'src', 'agents', 'assistant.ts'))).toBe(true);
+    expect(existsSync(join(target, 'src', 'agents', 'charge-demo.ts'))).toBe(true);
+    expect(existsSync(join(target, 'src', 'tools', 'charge-order.ts'))).toBe(true);
+    expect(existsSync(join(target, 'test', 'proof.test.ts'))).toBe(true);
     expect(existsSync(join(target, 'README.md'))).toBe(true);
     expect(existsSync(join(target, '.gitignore'))).toBe(true);
 
@@ -60,8 +68,8 @@ describe('create-gnl bin (child process)', () => {
     const base = mkdtempSync(join(tmpdir(), 'create-gnl-'));
     created.push(base);
     // first run should succeed
-    execFileSync('node', [binPath, join(base, 'a')], { encoding: 'utf8' });
+    execFileSync('node', [binPath, join(base, 'a'), '--yes'], { encoding: 'utf8' });
 
-    expect(() => execFileSync('node', [binPath, base], { encoding: 'utf8', stdio: 'pipe' })).toThrow();
+    expect(() => execFileSync('node', [binPath, base, '--yes'], { encoding: 'utf8', stdio: 'pipe' })).toThrow();
   });
 });
