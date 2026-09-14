@@ -7,10 +7,18 @@
 // has a gnl.config already depends on.
 export { defineConfig, loadConfig } from './config.js';
 export type { GnlDevConfig } from './config.js';
+// `addHost` is deliberately NOT here. Exporting it put `hosts.d.ts` into the root entry's type
+// graph, and that file declares APP_FILE with its VALUE — a template whose text contains
+// `from '@gnldev/auth'`, which entry-points-independent.test.ts reads as the root dragging an
+// optional peer into a consumer's types. The command modules import it dynamically instead.
 export { scaffold, generateConfig } from './scaffold.js';
 export type { ScaffoldOptions, ScaffoldResult, TemplateName } from './scaffold.js';
 // Feature recipes (shared by `gnl add` + `gnl init` compose) + the pure checkbox reducer (unit-testable).
 export { RECIPES, FEATURE_IDS, CHECKBOX_ITEMS, isFeature } from './recipes.js';
+// Exported for create-gnl's help text: the question COUNT is a fact about this list, and a second
+// copy of it in another package is a sentence that goes stale silently (it said "three" the day the
+// fourth question landed).
+export { QUESTIONS } from './init-answers.js';
 export type { Recipe, RecipeWiring, WiringPlace, CheckboxItem } from './recipes.js';
 export { reducer, initState, selection, decodeKey, checkboxPrompt } from './prompt.js';
 export type { SelectState, Key, PromptItem } from './prompt.js';

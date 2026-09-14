@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "gnl dev",
-    "studio": "gnl studio"
+    "studio": "gnl studio",
+    "test": "vitest run"
   },
   "dependencies": {
     "@gnldev/durable": "^0.1.0",
@@ -22,7 +23,8 @@
     "@gnldev/cli": "^0.1.0",
     "@types/node": "^22.10.0",
     "tsx": "^4.19.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0"
   },
   "engines": {
     "node": ">=22.13"

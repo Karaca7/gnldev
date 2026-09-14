@@ -1,5 +1,7 @@
 // gnl.config convention: defineConfig (type helper) + loadConfig (dynamic loader).
 import type { CreateGnlConfig } from '@gnldev/durable';
+import { readFileSync } from 'node:fs';
+import { parseEnv } from 'node:util';
 
 /**
  * A static credential — structurally `Cred` from `@gnldev/auth`, declared here instead of imported.
@@ -102,11 +104,58 @@ export function defineConfig(config: GnlDevConfig): GnlDevConfig {
   return config;
 }
 
+/**
+ * `.env` in the project root, loaded before the config module runs — because the config is exactly
+ * where provider keys get read (`src/model.ts` does `process.env.NVIDIA_API_KEY`). Without this,
+ * every command that loads the config (`gnl dev`, `gnl studio`, `gnl doctor`, …) silently ignored
+ * the one file every provider's docs tell people to create; measured on a fresh scaffold, the model
+ * answered 401 while `.env` sat correct in the project root. The shell still wins: a variable that
+ * is already set is never overwritten, so CI and `KEY=x gnl dev` behave as they always did. Sits in
+ * `loadConfig` rather than any single command so `gnl dev`'s hot-reload child re-reads it on every
+ * restart — editing `.env` behaves like editing code.
+ */
+function loadDotEnv(): void {
+  try {
+    const parsed = parseEnv(readFileSync('.env', 'utf8'));
+    for (const [k, v] of Object.entries(parsed)) {
+      if (!(k in process.env)) process.env[k] = v;
+    }
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+  }
+}
+
 /** Dynamically load gnl.config (also works with .ts under tsx). Accepts default | config | module. */
 export async function loadConfig(path: string): Promise<GnlDevConfig> {
   const { pathToFileURL } = await import('node:url');
   const { resolve } = await import('node:path');
-  const mod: any = await import(pathToFileURL(resolve(path)).href);
+  loadDotEnv();
+  let mod: any;
+  try {
+    mod = await import(pathToFileURL(resolve(path)).href);
+  } catch (e) {
+    // THE FIRST ERROR A NEW PROJECT CAN PRODUCE, and it used to arrive as Node's own sentence:
+    // "Cannot find package '@gnldev/durable' imported from …/gnl.config.ts". That is accurate and
+    // useless — it names a package the reader never typed, in a file they did not write, and says
+    // nothing about the one thing to do. A scaffold that has not been installed yet is not a broken
+    // project; it is step two of three.
+    const msg = (e as Error).message ?? '';
+    const missing = /Cannot find package '([^']+)'/.exec(msg);
+    if (missing) {
+      const { existsSync } = await import('node:fs');
+      const { dirname, join } = await import('node:path');
+      const here = dirname(resolve(path));
+      const installed = existsSync(join(here, 'node_modules'));
+      throw new Error(
+        `'${missing[1]}' is not installed, so ${path} cannot be loaded.\n` +
+        (installed
+          ? `  It is imported by your config but missing from node_modules — add it:  pnpm add ${missing[1]}\n` +
+            '  (`gnl add <feature>` writes the dependency for you; a hand-written import does not.)'
+          : '  Dependencies have not been installed here yet:  pnpm install'),
+      );
+    }
+    throw e;
+  }
   const cfg = mod.default ?? mod.config ?? mod;
   if (!cfg?.journal && !cfg?.storage) throw new Error(`gnl: '${path}' is not a valid gnl.config (storage or journal required).`);
   return cfg as GnlDevConfig;

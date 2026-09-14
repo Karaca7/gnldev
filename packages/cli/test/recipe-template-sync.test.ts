@@ -28,6 +28,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { RECIPES, recipeContents } from '../src/recipes.js';
+import { generateConfig } from '../src/scaffold.js';
 import { HOSTS, APP_FILE } from '../src/hosts.js';
 
 const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -79,38 +80,52 @@ describe('scaffold sources: commented-out code is still code', () => {
 });
 
 /**
- * The drift is gone because the second copy is gone.
+ * The charge tool's OTHER HALF, wherever it currently lives.
  *
- * There used to be a test here comparing `RECIPES['idempotency-tool']` against
- * `templates/full/src/tools.ts`, because a user met one or the other depending on how they started
- * and the two had to teach the same thing. `--template full` is now an alias for
- * `--features idempotency-tool,e2e`, so both routes reach THIS literal and there is nothing left to
- * keep in sync. Deleting a duplicate is a better outcome than testing one.
- *
- * What survives from that template are the two files it genuinely owned — the tool-calling mock model
- * and the idempotency e2e — now in `templates/_idempotency`, copied in only when the feature is
- * chosen. Neither is compiled anywhere either, so the same class of rot applies and the same kind of
- * check answers it: do they still name what the recipe actually writes?
+ * `templates/full/src/tools.ts` used to be a second copy of the recipe below, held equal to it by a
+ * comment saying "kept in sync" — a promise that cannot notice being broken. That template became a
+ * feature alias, then the feature became the BASE: every scaffold now ships this tool, the
+ * `charge-demo` agent whose mock model calls it, and the proof test that asserts three duplicate
+ * calls charge once. Three files that only work if they agree about one name and one path, and none
+ * of them is compiled here — so the same class of rot applies, and the same kind of check answers
+ * it: do they still name what the recipe actually writes?
  */
-describe('the idempotency feature’s other half', () => {
-  it('the e2e imports the tool from the path the recipe actually writes', () => {
-    const e2e = readFileSync(join(pkgRoot, 'templates', '_idempotency', 'test', 'e2e.test.ts'), 'utf8');
-    expect(e2e).toContain("from '../src/tools.js'");
-    expect(RECIPES['idempotency-tool']!.file).toBe('src/tools.ts');
+describe('the charge tool, the agent that calls it, and the proof that watches', () => {
+  const tmpl = (...p: string[]) => readFileSync(join(pkgRoot, 'templates', 'minimal', ...p), 'utf8');
+
+  it('the proof test imports the tool from the path the recipe actually writes', () => {
+    const proof = tmpl('test', 'proof.test.ts');
+    expect(RECIPES['idempotency-tool']!.file).toBe('src/tools/charge-order.ts');
+    expect(proof).toContain("from '../src/tools/charge-order.js'");
     for (const name of ['chargeOrder', 'ledger']) {
-      expect(e2e, `the e2e imports ${name}`).toContain(name);
+      expect(proof, `the proof imports ${name}`).toContain(name);
       expect(recipeContents(RECIPES['idempotency-tool']!), `the recipe exports ${name}`).toContain(`export const ${name}`);
     }
   });
 
-  it('the model it ships calls the tool the recipe declares', () => {
+  it('the demo agent calls the tool the recipe declares, by the name the config wires', () => {
     // A mock that names a different tool is a demo that silently does nothing — which is exactly the
-    // state `--template full` was in when its finishReason shape regressed.
-    const model = readFileSync(join(pkgRoot, 'templates', '_idempotency', 'src', 'model.ts'), 'utf8');
-    expect(model).toContain("toolName: 'chargeOrder'");
-    // It must NOT import the tool. The file is copied into a project whose gnl.config.ts already
-    // wires it, and — the reason this is asserted rather than left to taste — the model is imported
-    // straight off disk by template-finish-reason.test.ts, where no sibling tools.ts exists.
-    expect(model).not.toContain("from './tools.js'");
+    // state `--template full` was in when its finishReason shape regressed. The default tool name
+    // lives in @gnldev/durable/mock now, so the agent takes it by omission; what must hold here is
+    // that the agent asks for the tool-calling model at all, and that the config wires that agent to
+    // this tool under the name the model emits.
+    const agent = tmpl('src', 'agents', 'charge-demo.ts');
+    expect(agent).toContain('toolCallingModel');
+    expect(agent).toContain('export const chargeDemo');
+    const config = generateConfig([]);
+    expect(config).toContain("import { chargeOrder } from './src/tools/charge-order.js';");
+    expect(config).toContain("'charge-demo': { ...chargeDemo, tools: { chargeOrder } }");
+  });
+
+  it('the model recipes write where the config expects, and export what it imports', () => {
+    // `gnl add model <provider>` writes src/models/<provider>.ts exporting `model`; its instruction
+    // tells the reader to import that into src/agents/assistant.ts. A recipe whose file path and
+    // whose printed instruction disagree is a recipe that scaffolds a broken import.
+    for (const [id, r] of Object.entries(RECIPES).filter(([id]) => id.startsWith('model-'))) {
+      const provider = id.slice('model-'.length);
+      expect(r.file, id).toBe(`src/models/${provider}.ts`);
+      expect(recipeContents(r), id).toContain('export const model');
+      expect(r.humanWire, id).toContain(`../models/${provider}.js`);
+    }
   });
 });

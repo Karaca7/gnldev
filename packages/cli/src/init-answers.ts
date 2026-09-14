@@ -26,9 +26,17 @@
 //               backfilling ownership for records that never had one.
 //   store     — sqlite and postgres are one line apart on day one and a migration on day ninety.
 //
-// Features and hosts are NOT here any more, on purpose. They are additive (`gnl add <feature>`,
-// `gnl add host`), a project that skipped them loses nothing, and asking about them at minute zero
-// asks people to choose between names they have not met yet.
+// Features are NOT here, on purpose. They are additive (`gnl add <feature>`), a project that skipped
+// them loses nothing, and asking about them at minute zero asks people to choose between names they
+// have not met yet.
+//
+// SERVING IS HERE, and it was not always. The first cut of this file removed it with the features,
+// on the argument that a server entry is "two files you can write on the day you deploy". That is
+// true of the FILES and false of the DECISION: a reader who already has an Express app does not want
+// a second server, and one writing a queue worker does not want a server at all — and neither of them
+// could say so, because the only way to express it was a `--host` flag that wrote a server file and
+// was never mentioned on screen. It obeys the iron rule: each answer writes NEW files or none, and
+// the mount answer deliberately writes no server file at all, because that file is the reader's.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -36,11 +44,13 @@ import { dirname, join } from 'node:path';
 export type PresetAnswer = 'assistant' | 'headless' | 'critical';
 export type IdentityAnswer = 'internal' | 'end-users';
 export type StoreAnswer = 'sqlite' | 'pg';
+export type ServingAnswer = 'dev' | 'own' | 'mount';
 
 export interface InitAnswers {
   preset: PresetAnswer;
   identity: IdentityAnswer;
   store: StoreAnswer;
+  serving: ServingAnswer;
 }
 
 /**
@@ -53,7 +63,7 @@ export interface InitAnswers {
  * `○ identity` row saying runs are born ownerless, rather than the `?` an unstated config gets.
  * Unowned-and-said-so is a position; unowned-and-unmentioned is the bug this row exists to end.
  */
-export const DEFAULT_ANSWERS: InitAnswers = { preset: 'assistant', identity: 'internal', store: 'sqlite' };
+export const DEFAULT_ANSWERS: InitAnswers = { preset: 'assistant', identity: 'internal', store: 'sqlite', serving: 'dev' };
 
 export interface AnswerOption<T extends string> {
   id: T;
@@ -81,35 +91,61 @@ export interface Question<T extends string> {
 export const PRESET_QUESTION: Question<PresetAnswer> = {
   id: 'preset',
   flag: 'preset',
-  title: 'Who sets this work going?',
+  // Asked as the CONSEQUENCE, not as the situation. "Who sets this work going?" made a reader
+  // classify themselves ("am I a scheduler?") before they could answer; the thing actually being
+  // decided is what happens on a repeat, and everyone can answer that about their own work.
+  title: 'If the same work arrives twice, what should happen?',
   options: [
-    { id: 'assistant', label: 'A person, on a screen, waiting for the answer', hint: 'a repeat can be turned into a question' },
-    { id: 'headless', label: 'A scheduler or a queue — nobody is watching', hint: 'nobody to ask, so a repeated payment is refused outright' },
-    { id: 'critical', label: 'Money or stock moves, and a double is unacceptable', hint: 'the above, plus a run lock, input fingerprinting, tombstones' },
+    { id: 'assistant', label: 'Ask me — someone is there to decide', hint: 'the repeat becomes a question' },
+    { id: 'headless', label: 'Refuse it — this runs unattended', hint: 'nobody to ask, so it is declined' },
+    // The old label named two industries ("money or stock moves") and left everyone else guessing
+    // whether it meant them. The label is now about the COST of a double; the hint carries the
+    // examples, deliberately spread across kinds of work rather than one domain.
+    { id: 'critical', label: 'Refuse it, and never let two copies race', hint: 'payments, stock, bookings' },
   ],
 };
 
 export const IDENTITY_QUESTION: Question<IdentityAnswer> = {
   id: 'identity',
   flag: 'identity',
-  title: 'Whose runs are these?',
+  title: 'Who does each run belong to?',
   options: [
-    { id: 'internal', label: 'Mine — an internal tool, one operator', hint: 'runs are born ownerless, and the matrix says so' },
-    { id: 'end-users', label: 'My users have accounts, and their data must stay apart', hint: 'writes src/identity.ts + the route wiring' },
+    { id: 'internal', label: 'Just me — an internal tool', hint: 'runs are born with no owner' },
+    { id: 'end-users', label: 'My users — their data must stay apart', hint: 'writes src/identity.ts' },
   ],
 };
 
 export const STORE_QUESTION: Question<StoreAnswer> = {
   id: 'store',
   flag: 'store',
-  title: 'Where does the journal live?',
+  // "Journal" is our word for it. A reader meets it for the first time on this screen, so the
+  // question says what the thing IS — the record every run is kept in — and the word can wait.
+  title: 'Where should the record of every run be kept?',
   options: [
-    { id: 'sqlite', label: 'A file next to the project', hint: 'runs.db — nothing to install' },
-    { id: 'pg', label: 'Postgres', hint: 'reads DATABASE_URL; needs `pnpm add pg`' },
+    { id: 'sqlite', label: 'In a file here', hint: 'runs.db — nothing to install' },
+    { id: 'pg', label: 'In Postgres', hint: 'reads DATABASE_URL' },
   ],
 };
 
-export const QUESTIONS = [PRESET_QUESTION, IDENTITY_QUESTION, STORE_QUESTION] as const;
+/**
+ * The fourth, and the reason it takes 'dev' as its default: `gnl dev` genuinely serves everything
+ * while a project is being built, so "not yet" is a real answer rather than a deferral — and it is
+ * the same answer a worker/queue/cron project keeps forever. The other two write files, and which
+ * files differs: 'own' gets src/app.ts + src/server.ts, 'mount' gets src/app.ts and a printed
+ * recipe for the server the reader already has.
+ */
+export const SERVING_QUESTION: Question<ServingAnswer> = {
+  id: 'serving',
+  flag: 'serving',
+  title: 'How will people reach this?',
+  options: [
+    { id: 'dev', label: 'Not yet — `gnl dev` while I build', hint: 'also for a worker or cron job' },
+    { id: 'own', label: 'Give it its own server', hint: 'a deployable app, chat route included' },
+    { id: 'mount', label: 'It plugs into the server I already run', hint: 'you get the lines to paste' },
+  ],
+};
+
+export const QUESTIONS = [PRESET_QUESTION, IDENTITY_QUESTION, STORE_QUESTION, SERVING_QUESTION] as const;
 
 /** How the gate question's three doors are labelled. `last` is offered only when there are last answers. */
 export type GateChoice = 'recommended' | 'customize' | 'last';
@@ -138,7 +174,10 @@ export type AnswerFlags = Partial<Record<keyof InitAnswers, string | undefined>>
  */
 export function resolveAnswers(flags: AnswerFlags = {}, base: InitAnswers = DEFAULT_ANSWERS, baseSource: AnswerSource = 'default'): ResolvedAnswers {
   const answers = { ...base };
-  const from = { preset: baseSource, identity: baseSource, store: baseSource } as Record<keyof InitAnswers, AnswerSource>;
+  // Built FROM the question list rather than spelled out: a field enumerated by hand here is a field
+  // that silently reports the wrong provenance the day a question is added — which is exactly what
+  // happened when `serving` arrived and the summary went on counting three.
+  const from = Object.fromEntries(QUESTIONS.map((q) => [q.id, baseSource])) as Record<keyof InitAnswers, AnswerSource>;
   const pending: Question<string>[] = [];
   for (const q of QUESTIONS) {
     const given = flags[q.id];

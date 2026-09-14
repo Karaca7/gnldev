@@ -12,8 +12,8 @@ kapalı olduğunu ve kapalı olanların neye mal olduğunu bileceksiniz.
 npx @gnldev/cli init my-agent --yes && cd my-agent && pnpm install
 ```
 
-`--yes` önerilen cevapları alır. Onu atarsanız bir kapı sorusu ve en fazla üç soru daha gelir —
-[hangileri ve neden sadece üç](#ek-üç-soru).
+`--yes` önerilen cevapları alır. Onu atarsanız bir kapı sorusu ve en fazla dört soru daha gelir —
+[hangileri ve neden sadece dört](#ek-dört-soru).
 
 API anahtarı yok. Starter sahte bir model taşır, aşağıdaki her şey sizin makinenizde olur.
 
@@ -129,22 +129,25 @@ Her `─` bu şekildedir. Bu ekranda asla göndermemeniz gereken tek işaret odu
 
 ---
 
-## Ek: üç soru
+## Ek: dört soru
 
-`gnl init` tam olarak üç şeyi sorar, çünkü bunlar bir projenin kendi kodunu okuyarak keşfedemeyeceği
+`gnl init` tam olarak dört şeyi sorar, çünkü bunlar bir projenin kendi kodunu okuyarak keşfedemeyeceği
 ve sonradan ucuza değiştiremeyeceği kararlardır:
 
 | Soru | Bayrak | Neden varsayılan bırakılmıyor |
 | --- | --- | --- |
-| Bu işi kim tetikliyor? | `--preset assistant\|headless\|critical` | Bir tool'un `effectClass`'ı **yalnızca** bir profil üzerinden okunur. Yanlış seçerseniz projedeki her bildirim sessizce etkisiz kalır. |
-| Bu koşumlar kimin? | `--identity internal\|end-users` | Sahiplik, sahipsiz doğmuş koşumlara sonradan eklenemez. |
-| Journal nerede duruyor? | `--store sqlite\|pg` | İlk gün tek satır fark, doksanıncı gün bir göç. |
+| Aynı iş ikinci kez gelirse ne olsun? | `--preset assistant\|headless\|critical` | Bir tool'un `effectClass`'ı **yalnızca** bir profil üzerinden okunur. Yanlış seçerseniz projedeki her bildirim sessizce etkisiz kalır. |
+| Her koşum kime ait? | `--identity internal\|end-users` | Sahiplik, sahipsiz doğmuş koşumlara sonradan eklenemez. |
+| Her koşumun kaydı nerede tutulsun? | `--store sqlite\|pg` | İlk gün tek satır fark, doksanıncı gün bir göç. |
+| İnsanlar buraya nasıl ulaşacak? | `--serving dev\|own\|mount` | `gnl dev` siz geliştirirken her şeyi servis eder, yani "şimdilik hayır" gerçek bir cevaptır — worker/cron projesinin kalıcı cevabı da budur. Diğer ikisi dosya yazar ve yazdıkları farklıdır: `own` `src/server.ts` alır, `mount` zaten sahip olduğunuz sunucuya yapıştıracağınız satırları alır (`--host` çerçeveyi adlandırır). |
 
 Verdiğiniz her bayrak kendi sorusunu **cevaplar**, o soru sorulmaz. `--yes` ya da hiç terminal
 olmaması (CI, bir ajan) varsayılanları alır ve asla beklemez.
 
-Özellikler ve sunucu girişi bilerek soru **değil**: `gnl add <feature>` ve `gnl add host` onları
-ihtiyaç duyduğunuz gün ekler, atlamış bir proje hiçbir şey kaybetmez.
+Özellikler bilerek soru **değil**: `gnl add <feature>` onları ihtiyaç duyduğunuz gün ekler, atlamış
+bir proje hiçbir şey kaybetmez. Sunucu girişi bir süre bu kategorideydi ve çıktı — dördüncü satıra
+bakın: DOSYALAR sonradan eklenebilir, ama "zaten bir sunucum var" ile "sunucusu olmayan bir worker'ım"
+kimsenin söyleyemediği cevaplardı, komut onlar adına tahmin ediyordu.
 
 ---
 

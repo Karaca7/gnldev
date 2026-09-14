@@ -39,6 +39,10 @@
       "types": "./dist/redis-storage.d.ts",
       "default": "./dist/redis-storage.js"
     },
+    "./mock": {
+      "types": "./dist/mock-model.d.ts",
+      "default": "./dist/mock-model.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [

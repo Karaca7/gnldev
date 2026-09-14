@@ -53,11 +53,12 @@ const DEBRIS_FILE = join(templatesRoot, 'minimal', 'node_modules', '.vite', 'vit
 // e2e path actually copies, which is a shape a project genuinely produces (a build output beside its
 // tests). `dist/` is gitignored repo-wide, so a planted directory cannot dirty the tree.
 //
-// TWO of them now, because there are two e2e sources: `_e2e` for the plain durability test and
-// `_idempotency` for the charge-tool one. The compose branch picks between them, so planting in only
-// one would leave the other branch's filter unexercised — which is how the second `cpSync` came to be
-// unfiltered in the first place.
-const E2E_DEBRIS_DIRS = [join(templatesRoot, '_e2e', 'test', 'dist'), join(templatesRoot, '_idempotency', 'test', 'dist')];
+// There were two e2e sources for a while (`_e2e` for the durability test, `_idempotency` for the
+// charge-tool one) and both had to be planted, because the compose branch picked between them and an
+// unplanted branch left its filter unexercised — which is how the second `cpSync` came to be
+// unfiltered in the first place. `_idempotency` is gone: its proof test is part of the base template
+// now, copied by the same `copyTemplate` the first case below covers, so one source is one plant.
+const E2E_DEBRIS_DIRS = [join(templatesRoot, '_e2e', 'test', 'dist')];
 const E2E_DEBRIS_DIR = E2E_DEBRIS_DIRS[0]!;
 const E2E_DEBRIS_FILE = join(E2E_DEBRIS_DIR, 'results.json');
 
@@ -101,9 +102,9 @@ describe('a scaffolded project', () => {
     expect(paths.filter((p) => p.endsWith('results.json')), 'the e2e copy brought a build output sitting beside the tests').toEqual([]);
   });
 
-  // The COMPOSE path: `features` builds from templates/minimal plus generated files, and its e2e copy
-  // points at `templates/_idempotency/test` — the directory sitting next to the debris. It reaches
-  // `addE2e` through a different branch than the plain `e2e: true` above, so it is exercised separately.
+  // The COMPOSE path: `features` builds from templates/minimal plus generated files, and reaches
+  // `addE2e` through a different branch than the plain `e2e: true` above — plus `copyTemplate` for
+  // the base, whose own filter has to hold over a template that now carries a `test/` directory.
   it('composed from features carries no debris either', () => {
     const dir = join(tmp(), 'my-agent');
     const res = scaffold(dir, { features: ['idempotency-tool'], e2e: true } as never);

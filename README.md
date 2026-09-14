@@ -127,17 +127,20 @@ LTS, either upgrade or point `journal` at `@gnldev/durable/postgres` or `/redis`
 pnpm 10 is what the repository is developed and tested against.
 
 ## Quickstart (DX)
-Until the packages land on npm, run the starter from a clone (honest note: `npm create gnl`
-becomes the one-liner only after the npm release):
+One path, three commands (mock model — no API key needed):
 ```bash
-git clone https://github.com/Karaca7/gnl-framework.git gnl && cd gnl
-pnpm install && pnpm -r build
-cd examples && node ../packages/create-gnl/dist/index.js my-agent   # starter (mock model — no API key needed)
-cd my-agent && pnpm install       # inside examples/ → @gnldev/* resolve via workspace links
+npm create gnl@latest my-agent    # one gate, at most three questions — every one skippable with --yes
+cd my-agent && pnpm install
 pnpm dev                          # REST API + Studio Playground (single port). Open http://localhost:3000/studio
                                   # (the REST API is mounted at `/`, which has no index route — bare `/` answers 404)
 ```
-After the npm release: `npm create gnl my-agent` anywhere.
+**Already have an app?** Run `npx gnl init` in its root: it detects the project (`package.json`) and
+writes only *new* files — `gnl.config.ts`, `src/agents/`, `src/tools/` — never editing yours; the exact
+`pnpm add` line is printed instead of touching your manifest.
+**Off the mock, onto a real model:** `npx gnl add model <nvidia|openai|anthropic|openai-compatible>`
+writes the provider file next to the mock and tells you the one import line to change; the key goes
+in `.env`, which `gnl dev`/`studio` load on start (the shell still wins).
+(From a repo clone instead: `pnpm install && pnpm -r build`, then the same commands from `examples/`.)
 Type-safe calls from the frontend:
 ```ts
 import { GnlClient } from '@gnldev/client';                 // or: '@gnldev/client/react' → useChat
@@ -170,7 +173,7 @@ The table below covers the ones you interact with directly.
 | **`@gnldev/cache`** | cross-run cache |
 | **`@gnldev/studio`** | inspector **+ Playground**: pick agent → prompt → streaming response → approval · time-travel/fork + cost/trace/metrics/diff · admin/API separation + role-based auth |
 | **`@gnldev/client`** | type-safe REST/SSE client (framework-agnostic core) + React hooks (`@gnldev/client/react`: `useGnlAgent`/`useChat`) |
-| **`@gnldev/cli`** | project: `gnl init` (**interactive feature checkbox** — pick idempotency-tool/rag/mcp/memory/workflow/auth/e2e → a wired `gnl.config.ts` is generated; non-interactive via `--features a,b,c` / `--template minimal` / `--yes`, prompt never opens without a TTY) / `add <idempotency-tool\|rag\|mcp\|memory\|workflow\|auth>` / `dev` / `studio` · inspect: `runs`/`run`/`inspect` (**time-travel in the terminal**) · operate: `fork`/`resume`/`sweep`/`rm`/`pricing` (all wired straight to `@gnldev/durable`'s own exports, nothing reimplemented) · **one runtime dep** (`tsx`, to load `gnl.config.ts`; hand-rolled ANSI/table + a from-scratch raw-mode checkbox, no chalk/ora/commander/inquirer) · `create-gnl` (`npm create gnl`) |
+| **`@gnldev/cli`** | project: `gnl init` (**interactive feature checkbox** — pick idempotency-tool/rag/mcp/memory/workflow/auth/e2e → a wired `gnl.config.ts` is generated; non-interactive via `--features a,b,c` / `--template minimal` / `--yes`, prompt never opens without a TTY) / `add <idempotency-tool\|rag\|mcp\|memory\|workflow\|auth>` / `add model <provider>` / `dev` / `studio` · inspect: `runs`/`run`/`inspect` (**time-travel in the terminal**) · operate: `fork`/`resume`/`sweep`/`rm`/`pricing` (all wired straight to `@gnldev/durable`'s own exports, nothing reimplemented) · **one runtime dep** (`tsx`, to load `gnl.config.ts`; hand-rolled ANSI/table + a from-scratch raw-mode checkbox, no chalk/ora/commander/inquirer) · `create-gnl` (`npm create gnl`) |
 
 ### Free and paid — where the line is
 

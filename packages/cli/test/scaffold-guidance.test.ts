@@ -17,8 +17,9 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
 import { scaffold, generateConfig, TEMPLATES } from '../src/scaffold.js';
-import { RECIPES } from '../src/recipes.js';
+import { RECIPES, recipeContents } from '../src/recipes.js';
 import { APP_FILE } from '../src/hosts.js';
 
 const dirs: string[] = [];
@@ -98,17 +99,40 @@ describe('src/app.ts — the deployed half', () => {
     expect(APP_FILE).toMatch(/body\.resourceId/);
   });
 
-  it('shows the identity skeleton for the auth-less adapters, with the body ruled out', () => {
-    // The two routes that ship with no auth of their own are exactly where a host must name the
-    // subject itself — and the one wrong answer (read it from the body) is the hole the engine's
-    // context seal exists to close, so the example has to refuse it out loud.
-    expect(APP_FILE).toContain('identity: (req) =>');
-    expect(APP_FILE).toMatch(/NEVER from the request body/);
-    expect(APP_FILE).toMatch(/session cookie|verified JWT/);
+  it('points at the file that names the subject, instead of carrying it as a comment', () => {
+    // app.ts used to hold the whole chat-route example commented out, identity resolver included.
+    // A commented resolver compiles never and is tested never — and this is the one function where a
+    // mistake means "runs are born owned by whoever asked". It is `src/routes/chat.ts` now, so what
+    // app.ts must do is say so.
+    expect(APP_FILE).toContain('src/routes/chat.ts');
+    expect(APP_FILE, 'the example came back as a comment').not.toContain('identity: (req) =>');
+  });
+});
+
+describe('src/routes/chat.ts — the subject, in code rather than in a comment', () => {
+  const chat = recipeContents(RECIPES['chat']!);
+
+  it('is real code: the identity hook is not commented out', () => {
+    const line = chat.split('\n').find((l) => l.includes('identity:'))!;
+    expect(line, 'the identity hook is missing entirely').toBeTruthy();
+    expect(line.trimStart().startsWith('//'), 'the hook is a comment again').toBe(false);
   });
 
-  it('the commented example is a COMMENT — a scaffolded app.ts must still compile', () => {
-    const identityLine = APP_FILE.split('\n').find((l) => l.includes('identity: (req) =>'))!;
-    expect(identityLine.trimStart().startsWith('//')).toBe(true);
+  it('rules out the one wrong answer, out loud', () => {
+    // Reading the subject from the request body is the caller naming whoever they like — the exact
+    // hole the engine's context seal exists to close, so the file has to refuse it by name.
+    expect(chat).toMatch(/NEVER: const resourceId = \(await req\.json\(\)\)\.resourceId;/);
+    expect(chat).toMatch(/session cookie|JWT/);
+  });
+
+  it('defaults to no owner rather than to a guess, and says what that costs', () => {
+    expect(chat).toMatch(/undefined/);
+    expect(chat).toMatch(/born with no owner|○ identity/);
+  });
+
+  it('names the already-written resolver for projects that have one', () => {
+    // `gnl init --identity end-users` writes src/identity.ts; a reader who has it should be told to
+    // use it rather than filling in a second copy here.
+    expect(chat).toContain("import { identity } from '../identity.js';");
   });
 });

@@ -126,17 +126,20 @@ Node 20 LTS'teyseniz ya yükseltin ya da `journal`'ı `@gnldev/durable/postgres`
 yönlendirin. Depo pnpm 10 ile geliştiriliyor ve test ediliyor.
 
 ## Hızlı başlangıç (DX)
-Paketler npm'e çıkana kadar starter klondan koşulur (dürüst not: `npm create gnl` tek-satırlığı
-ancak npm yayınından sonra çalışır):
+Tek yol, üç komut (mock model — API key gerekmez):
 ```bash
-git clone https://github.com/Karaca7/gnl-framework.git gnl && cd gnl
-pnpm install && pnpm -r build
-cd examples && node ../packages/create-gnl/dist/index.js my-agent   # starter (mock model — API key gerekmez)
-cd my-agent && pnpm install       # examples/ içinde → @gnldev/* workspace linkiyle çözülür
+npm create gnl@latest my-agent    # tek kapı, en fazla üç soru — hepsi --yes ile atlanabilir
+cd my-agent && pnpm install
 pnpm dev                          # REST API + Studio Playground (tek port). Aç: http://localhost:3000/studio
                                   # (REST API `/` altına mount'lu ve index route'u yok — çıplak `/` 404 döner)
 ```
-npm yayınından sonra: her yerde `npm create gnl my-agent`.
+**Zaten bir uygulaman mı var?** Kökünde `npx gnl init` koş: projeyi tanır (`package.json`) ve yalnız
+*yeni* dosyalar yazar — `gnl.config.ts`, `src/agents/`, `src/tools/` — seninkilere asla dokunmaz; manifest'i
+düzenlemek yerine ekleyeceğin `pnpm add` satırını basar.
+**Mock'tan gerçek modele:** `npx gnl add model <nvidia|openai|anthropic|openai-compatible>` sağlayıcı
+dosyasını mock'un yanına yazar ve değiştireceğin tek import satırını söyler; anahtar `.env`'e girer —
+`gnl dev`/`studio` açılışta yükler (shell'den gelen değer her zaman kazanır).
+(Klondan çalışmak istersen: `pnpm install && pnpm -r build`, sonra aynı komutlar `examples/` içinden.)
 Frontend'den type-safe çağrı:
 ```ts
 import { GnlClient } from '@gnldev/client';                 // veya: '@gnldev/client/react' → useChat
@@ -169,7 +172,7 @@ Aşağıdaki tablo doğrudan kullandığınız paketleri kapsar.
 | **`@gnldev/cache`** | cross-run cache |
 | **`@gnldev/studio`** | inspector **+ Playground**: agent seç→prompt→streaming yanıt→onay · time-travel/fork + cost/trace/metrics/diff · admin↔API ayrımı + rol auth |
 | **`@gnldev/client`** | type-safe REST/SSE client (framework-agnostik core) + React hook'ları (`@gnldev/client/react`: `useGnlAgent`/`useChat`) |
-| **`@gnldev/cli`** | proje: `gnl init [dir] [--features a,b,c] [--host hono\|node\|express\|fastify\|koa\|nest] [--template minimal] [--e2e] [--yes]` (**`--features idempotency-tool,e2e`, `idempotency: 'args'` tool'u + tekrarlanan-toolCallId desenini yeniden üreten e2e testi getirir**; emekli `--template full` adı aynı projeyi üretir) / `add <idempotency-tool\|rag\|mcp\|memory\|workflow\|auth>` / `dev` / `studio` · inceleme: `runs`/`run`/`inspect` (**terminalde zaman yolculuğu**) · operasyon: `fork`/`resume`/`sweep`/`rm`/`pricing` (hepsi doğrudan `@gnldev/durable`'ın kendi export'larına bağlı, hiçbiri yeniden implement edilmedi) · **bir runtime bağımlılığı** (`tsx`, `gnl.config.ts` yüklemek için; elle yazılmış ANSI/tablo, chalk/ora/commander yok) · `create-gnl` (`npm create gnl`) |
+| **`@gnldev/cli`** | proje: `gnl init [dir] [--features a,b,c] [--host hono\|node\|express\|fastify\|koa\|nest] [--template minimal] [--e2e] [--yes]` (**`--features idempotency-tool,e2e`, `idempotency: 'args'` tool'u + tekrarlanan-toolCallId desenini yeniden üreten e2e testi getirir**; emekli `--template full` adı aynı projeyi üretir) / `add <idempotency-tool\|rag\|mcp\|memory\|workflow\|auth>` / `add model <sağlayıcı>` / `dev` / `studio` · inceleme: `runs`/`run`/`inspect` (**terminalde zaman yolculuğu**) · operasyon: `fork`/`resume`/`sweep`/`rm`/`pricing` (hepsi doğrudan `@gnldev/durable`'ın kendi export'larına bağlı, hiçbiri yeniden implement edilmedi) · **bir runtime bağımlılığı** (`tsx`, `gnl.config.ts` yüklemek için; elle yazılmış ANSI/tablo, chalk/ora/commander yok) · `create-gnl` (`npm create gnl`) |
 
 ### Ücretsiz ve paralı — çizgi nerede
 

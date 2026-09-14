@@ -1,4 +1,4 @@
-// The three questions `gnl init` asks, and every way of not being asked them.
+// The four questions `gnl init` asks, and every way of not being asked them.
 //
 // The DECISION is a pure function (resolveAnswers) and the SCAFFOLD is a pure function of the answers,
 // so the whole thing is testable without a terminal — which matters more here than usual, because the
@@ -33,11 +33,13 @@ function configFor(answers: Partial<InitAnswers>): string {
 }
 
 describe('the questions themselves', () => {
-  it('there are exactly three, and each one has a flag named after it', () => {
-    // The count is the contract. Four questions is a different product decision, and it should cost
-    // somebody a red test and a paragraph rather than a quiet commit.
-    expect(QUESTIONS).toHaveLength(3);
-    expect(QUESTIONS.map((q) => q.id)).toEqual(['preset', 'identity', 'store']);
+  it('there are exactly four, and each one has a flag named after it', () => {
+    // The count is the contract. A fifth question is a different product decision, and it should cost
+    // somebody a red test and a paragraph rather than a quiet commit. (It went 3 → 4 once, for
+    // `serving`: the argument is written at the top of init-answers.ts, which is the paragraph this
+    // test exists to demand.)
+    expect(QUESTIONS).toHaveLength(4);
+    expect(QUESTIONS.map((q) => q.id)).toEqual(['preset', 'identity', 'store', 'serving']);
     for (const q of QUESTIONS) expect(q.flag, `${q.id} must be answerable non-interactively`).toBe(q.id);
   });
 
@@ -57,21 +59,21 @@ describe('resolveAnswers', () => {
   it('with no flags: every question is pending and every answer is the default', () => {
     const r = resolveAnswers({});
     expect(r.answers).toEqual(DEFAULT_ANSWERS);
-    expect(r.pending).toHaveLength(3);
-    expect(Object.values(r.from)).toEqual(['default', 'default', 'default']);
+    expect(r.pending).toHaveLength(4);
+    expect(Object.values(r.from)).toEqual(['default', 'default', 'default', 'default']);
   });
 
   it('a flag ANSWERS its question — so that question is no longer pending', () => {
     const r = resolveAnswers({ preset: 'critical' });
     expect(r.answers.preset).toBe('critical');
     expect(r.from.preset).toBe('flag');
-    expect(r.pending.map((q) => q.id)).toEqual(['identity', 'store']);
+    expect(r.pending.map((q) => q.id)).toEqual(['identity', 'store', 'serving']);
   });
 
-  it('all three flags leave nothing to ask', () => {
-    const r = resolveAnswers({ preset: 'headless', identity: 'end-users', store: 'pg' });
+  it('all four flags leave nothing to ask', () => {
+    const r = resolveAnswers({ preset: 'headless', identity: 'end-users', store: 'pg', serving: 'own' });
     expect(r.pending).toEqual([]);
-    expect(r.answers).toEqual({ preset: 'headless', identity: 'end-users', store: 'pg' });
+    expect(r.answers).toEqual({ preset: 'headless', identity: 'end-users', store: 'pg', serving: 'own' });
   });
 
   it('a misspelled flag throws, and the message lists what was allowed', () => {
@@ -80,10 +82,10 @@ describe('resolveAnswers', () => {
   });
 
   it('remembered answers are a BASE that flags still outrank', () => {
-    const last: InitAnswers = { preset: 'critical', identity: 'end-users', store: 'pg' };
+    const last: InitAnswers = { preset: 'critical', identity: 'end-users', store: 'pg', serving: 'own' };
     const r = resolveAnswers({ store: 'sqlite' }, last, 'last');
-    expect(r.answers).toEqual({ preset: 'critical', identity: 'end-users', store: 'sqlite' });
-    expect(r.from).toEqual({ preset: 'last', identity: 'last', store: 'flag' });
+    expect(r.answers).toEqual({ preset: 'critical', identity: 'end-users', store: 'sqlite', serving: 'own' });
+    expect(r.from).toEqual({ preset: 'last', identity: 'last', store: 'flag', serving: 'last' });
   });
 });
 
@@ -93,7 +95,7 @@ describe('remembering the last answers', () => {
   afterEach(() => { delete process.env.GNL_HOME; });
 
   it('round-trips', () => {
-    const answers: InitAnswers = { preset: 'headless', identity: 'end-users', store: 'pg' };
+    const answers: InitAnswers = { preset: 'headless', identity: 'end-users', store: 'pg', serving: 'mount' };
     writeLastAnswers(answers);
     expect(readLastAnswers()).toEqual(answers);
   });
@@ -202,7 +204,9 @@ describe('the feature and host questions are gone from init', () => {
   it('a plain answered scaffold carries no recipe files', () => {
     const dir = join(tmp(), 'app');
     const res = scaffold(dir, { answers: DEFAULT_ANSWERS });
-    for (const rel of [join('src', 'tools.ts'), join('src', 'rag.ts'), join('src', 'server.ts')]) {
+    // The charge tool is base (every project shows the framework's point), so what must be absent
+    // here is what was never asked for: an optional recipe, and a host server file.
+    for (const rel of [join('src', 'tools', 'rag.ts'), join('src', 'memory.ts'), join('src', 'server.ts')]) {
       expect(res.files, `${rel} arrived without being asked for`).not.toContain(rel);
     }
   });
@@ -211,7 +215,7 @@ describe('the feature and host questions are gone from init', () => {
     // The flags are orthogonal: choosing a profile must not cost you the ability to pick features.
     const dir = join(tmp(), 'app');
     const res = scaffold(dir, { answers: { ...DEFAULT_ANSWERS, preset: 'critical' }, features: ['rag'] });
-    expect(res.files).toContain(join('src', 'rag.ts'));
+    expect(res.files).toContain(join('src', 'tools', 'rag.ts'));
     expect(readFileSync(join(dir, 'gnl.config.ts'), 'utf8')).toContain("preset: 'critical',");
   });
 });
@@ -252,7 +256,7 @@ describe.runIf(existsSync(cliBin))('gnl init without a terminal', () => {
     const cfg = readFileSync(join(cwd, 'app', 'gnl.config.ts'), 'utf8');
     expect(cfg).toContain("preset: 'critical',");
     expect(cfg).toContain('PostgresStorage');
-    expect(out).toMatch(/answered 2 of 3/);
+    expect(out).toMatch(/answered 2 of 4/);
   }, 70_000);
 
   it('prints the protections matrix it DERIVES from the config it just wrote', () => {
@@ -279,6 +283,6 @@ describe.runIf(existsSync(cliBin))('gnl init without a terminal', () => {
     const cwd = tmp();
     runInit(['app', '--preset', 'headless', '--identity', 'end-users'], cwd);
     const remembered = JSON.parse(readFileSync(join(cwd, '.gnl-home', 'init-answers.json'), 'utf8'));
-    expect(remembered).toEqual({ preset: 'headless', identity: 'end-users', store: 'sqlite' });
+    expect(remembered).toEqual({ preset: 'headless', identity: 'end-users', store: 'sqlite', serving: 'dev' });
   }, 70_000);
 });

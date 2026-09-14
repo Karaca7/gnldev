@@ -12,8 +12,8 @@ each of the off ones costs.
 npx @gnldev/cli init my-agent --yes && cd my-agent && pnpm install
 ```
 
-`--yes` takes the recommended answers. Drop it and you get one gate question and at most three more —
-[what they are and why only three](#appendix-the-three-questions).
+`--yes` takes the recommended answers. Drop it and you get one gate question and at most four more —
+[what they are and why only four](#appendix-the-four-questions).
 
 No API key. The starter ships a mock model, so everything below happens on your machine.
 
@@ -134,22 +134,25 @@ Every `─` is that shape. It is the one mark on this screen you should never sh
 
 ---
 
-## Appendix: the three questions
+## Appendix: the four questions
 
-`gnl init` asks about exactly three things, because these are the decisions a project cannot discover
+`gnl init` asks about exactly four things, because these are the decisions a project cannot discover
 by reading its own code and cannot cheaply change later:
 
 | Question | Flag | Why it is not a default |
 | --- | --- | --- |
-| Who sets this work going? | `--preset assistant\|headless\|critical` | A tool's `effectClass` is read **only** through a profile. Pick wrong and every declaration in the project is inert, silently. |
-| Whose runs are these? | `--identity internal\|end-users` | Ownership cannot be added to runs that were born without it. |
-| Where does the journal live? | `--store sqlite\|pg` | One line apart on day one, a migration on day ninety. |
+| If the same work arrives twice, what should happen? | `--preset assistant\|headless\|critical` | A tool's `effectClass` is read **only** through a profile. Pick wrong and every declaration in the project is inert, silently. |
+| Who does each run belong to? | `--identity internal\|end-users` | Ownership cannot be added to runs that were born without it. |
+| Where should the record of every run be kept? | `--store sqlite\|pg` | One line apart on day one, a migration on day ninety. |
+| How will people reach this? | `--serving dev\|own\|mount` | `gnl dev` serves everything while you build, so "not yet" is a real answer — and the same one a worker or cron process keeps. The other two write files, and which files differs: `own` gets `src/server.ts`, `mount` gets the lines for the server you already have (`--host` names the framework). |
 
 Any flag you pass **answers** its question, so it is not asked. `--yes`, or no terminal at all (CI, an
 agent), takes the defaults and never blocks.
 
-Features and a server entry are deliberately **not** questions: `gnl add <feature>` and
-`gnl add host` add them the day you need them, and a project that skipped them lost nothing.
+Features are deliberately **not** questions: `gnl add <feature>` adds them the day you need them, and
+a project that skipped them lost nothing. The server entry was in that category once and moved out —
+see the fourth row: the FILES are additive, but "I already have a server" and "I am a worker with no
+server" are answers nobody could express, so the command guessed for them.
 
 ---
 

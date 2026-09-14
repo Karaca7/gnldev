@@ -19,10 +19,10 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, s
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import { RECIPES, FEATURE_IDS, E2E_FEATURE, recipeContents, type Recipe } from './recipes.js';
+import { RECIPES, FEATURE_IDS, E2E_FEATURE, recipeContents, defaultVariants, type Recipe } from './recipes.js';
 import { DEFAULT_ANSWERS, type InitAnswers } from './init-answers.js';
 import { IDENTITY_FILE } from './identity-file.js';
-import { hostById, APP_FILE, hostReadme } from './hosts.js';
+import { hostById, APP_FILE, hostReadme, type HostMode } from './hosts.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -38,11 +38,13 @@ export const TEMPLATES: readonly TemplateName[] = ['minimal'] as const;
  * the project people expected, and a name that stops being special.
  */
 export const RETIRED_TEMPLATES: Record<string, readonly string[]> = {
-  full: ['idempotency-tool', 'e2e'],
+  // The charge tool half of what `full` meant is the BASE now (every project ships it, with the
+  // charge-demo agent and the proof test) — so the alias resolves to what is left: the replay e2e.
+  full: ['e2e'],
 };
 
 /** templates/<name> — reachable via '..' from both dist and src (test) (at the package root). */
-function templatesDir(name: string): string {
+export function templatesDir(name: string): string {
   return resolve(here, '..', 'templates', name);
 }
 
@@ -77,6 +79,8 @@ export interface ScaffoldOptions {
    * `gnl dev` is serving, and nothing to deploy the day you want to.
    */
   host?: string;
+  /** 'own' writes src/server.ts; 'mount' writes only src/app.ts and leaves the server to the reader. */
+  hostMode?: HostMode;
 }
 
 export interface ScaffoldResult {
@@ -98,21 +102,46 @@ export interface ScaffoldResult {
  * managed runtime consume `app.ts` and never see `server.ts`. Keeping them apart is what lets the
  * question be answered honestly.
  */
-function addHost(dir: string, hostId: string): void {
+export function addHost(dir: string, hostId: string, mode: HostMode = 'own'): void {
   const host = hostById(hostId);
   if (!host) throw new Error(`gnl: unknown host: ${hostId}`);
   mkdirSync(join(dir, 'src'), { recursive: true });
+  // THE CHAT ROUTE COMES WITH THE SERVER, in both modes, because both recipes mount it — and an
+  // import of a file that was never written is a project that does not compile. It used to be a
+  // commented-out block inside app.ts instead, identity resolver and all: the one function where a
+  // mistake means "runs are born owned by whoever asked", in the one form nothing can check.
+  // Projects that answered `serving: dev` (a worker, a cron job, anything not serving HTTP) get it
+  // from `gnl add chat` on the day they need it.
+  const chatRecipe = RECIPES['chat']!;
+  const chatDst = join(dir, chatRecipe.file);
+  if (!existsSync(chatDst)) {
+    mkdirSync(dirname(chatDst), { recursive: true });
+    writeFileSync(chatDst, recipeContents(chatRecipe));
+  }
+  // `src/app.ts` in BOTH modes — it is the server-neutral surface, and mounting needs exactly it.
+  // `src/server.ts` only when this project owns the server: in mount mode the server file is the
+  // reader's, and writing one next to theirs is the fork the iron rule forbids. The lines they need
+  // are printed and appended to the README instead.
   writeFileSync(join(dir, 'src', 'app.ts'), APP_FILE);
-  writeFileSync(join(dir, 'src', 'server.ts'), host.server);
+  if (mode === 'own') writeFileSync(join(dir, 'src', 'server.ts'), host.server);
   patchPkg(dir, (pkg) => {
-    pkg.dependencies = { ...pkg.dependencies, ...(host.deps ?? {}) };
+    // The framework dependency belongs to whoever owns the server. Mounting into an existing app
+    // means that app already declares it — and re-declaring it here is how two versions of Express
+    // end up resolvable in one tree. The bridge packages a mount genuinely needs (middie, koa-connect)
+    // are named in the printed recipe, where the reader can see why.
+    // @gnldev/chat-adapter in BOTH modes: src/routes/chat.ts is this project's file either way, so
+    // its dependency is this project's too. The HOST framework is the one that differs — mounting
+    // means the app that already runs declares it, and a second declaration here is how two versions
+    // of Express end up resolvable in one tree.
+    pkg.dependencies = { ...pkg.dependencies, [chatRecipe.dep!]: frameworkRange() };
+    if (mode === 'own') pkg.dependencies = { ...pkg.dependencies, ...(host.deps ?? {}) };
     // `@types/node` for every host: the server entry reads process.env and imports node: builtins,
     // neither of which the base template ever did.
-    pkg.devDependencies = { ...pkg.devDependencies, '@types/node': '^22.0.0', ...(host.devDeps ?? {}) };
-    pkg.scripts = { ...pkg.scripts, start: 'tsx src/server.ts' };
+    pkg.devDependencies = { ...pkg.devDependencies, '@types/node': '^22.0.0', ...(mode === 'own' ? host.devDeps ?? {} : {}) };
+    if (mode === 'own') pkg.scripts = { ...pkg.scripts, start: 'tsx src/server.ts' };
   });
   const readme = join(dir, 'README.md');
-  if (existsSync(readme)) writeFileSync(readme, readFileSync(readme, 'utf8').trimEnd() + '\n' + hostReadme(host));
+  if (existsSync(readme)) writeFileSync(readme, readFileSync(readme, 'utf8').trimEnd() + '\n' + hostReadme(host, mode));
 }
 
 /** Reads, mutates, and writes back a project's package.json. */
@@ -141,7 +170,7 @@ function addE2e(dir: string, testSrcDir: string): void {
  * check-versions because these manifests live INSIDE the cli package. The comment two functions down
  * records the same bug in its '^0.0.0' incarnation; the mechanism, not another comment, is the fix.
  */
-function frameworkRange(): string {
+export function frameworkRange(): string {
   const require = createRequire(import.meta.url);
   const { version } = require('../package.json') as { version: string };
   return `^${version}`;
@@ -211,9 +240,12 @@ export function generateConfig(recipes: Recipe[], answers: InitAnswers = DEFAULT
   const configFields = recipes.filter((r) => r.wiring.place === 'configField').map((r) => r.wiring.code);
   const typeExts = recipes.map((r) => r.configTypeExt).filter((t): t is string => !!t);
 
-  const agentsLine = agentTools.length
-    ? `  agents: { assistant: { ...assistant, tools: { ${agentTools.join(', ')} } } },`
-    : '  agents: { assistant },';
+  // Two agents from day one: the chat agent, and the proof agent whose tool wiring is the first
+  // agent↔tool connection a reader sees — in the config, where every later one will also live.
+  const assistantEntry = agentTools.length
+    ? `assistant: { ...assistant, tools: { ${agentTools.join(', ')} } }`
+    : 'assistant';
+  const agentsLine = `  agents: { ${assistantEntry}, 'charge-demo': { ...chargeDemo, tools: { chargeOrder } } },`;
   const fieldLines = configFields.map((c) => `  ${c},`);
   // `subjects` is the CLI's own field (GnlDevConfig), not durable's — it declares nothing to the
   // engine and is read by exactly one thing: the protections matrix, which uses it to print an
@@ -235,7 +267,9 @@ export function generateConfig(recipes: Recipe[], answers: InitAnswers = DEFAULT
       ? "import { PostgresStorage } from '@gnldev/durable/postgres';"
       : "import { SqliteStorage } from '@gnldev/durable/sqlite';",
     "import type { CreateGnlConfig } from '@gnldev/durable';",
-    "import { assistant } from './src/model.js';",
+    "import { assistant } from './src/agents/assistant.js';",
+    "import { chargeDemo } from './src/agents/charge-demo.js';",
+    "import { chargeOrder } from './src/tools/charge-order.js';",
     ...imports,
     '',
     '// Generated by `gnl init` — decoupled config: imports only from the project runtime (@gnldev/durable),',
@@ -319,23 +353,37 @@ function scaffoldFeatures(dir: string, name: string, features: string[], forceE2
   mkdirSync(dir, { recursive: true });
   copyTemplate(dir, 'minimal', name);
 
-  const recipes = codeFeatures.map((f) => RECIPES[f]!);
+  // The charge tool is not a feature any more — it is the base. The default project exists to SHOW
+  // the one thing this framework is for, and a starter whose only agent echoes text shows none of
+  // it; the proof test the template ships (test/proof.test.ts) imports this file. The recipe stays
+  // in RECIPES for `gnl add idempotency-tool` (brownfield), and stays the single source: the base
+  // writes the same file the recipe would, so selecting the feature explicitly is a no-op here, not
+  // a conflict. Its wiring is NOT passed to generateConfig — the charge-demo agent line there is
+  // fixed text, and wiring it into `assistant` as well would put one tool on two agents.
+  const baseTool = RECIPES['idempotency-tool']!;
+  const recipes = codeFeatures.filter((f) => f !== 'idempotency-tool').map((f) => RECIPES[f]!);
 
-  // Write each recipe's src file + collect its dependency.
+  // Write each recipe's src file + collect its dependency (the base tool first, same mechanism).
   const deps: Record<string, string> = {};
-  for (const r of recipes) {
+  for (const r of [baseTool, ...recipes]) {
     const target = join(dir, r.file);
     mkdirSync(dirname(target), { recursive: true });
-    writeFileSync(target, recipeContents(r));
+    // A composed scaffold takes the recipe's defaults for its parts: `gnl init --features processors`
+    // is not a conversation, and the defaults are the set the guards recipe ships enabled.
+    writeFileSync(target, recipeContents(r, defaultVariants(r)));
     // The CLI's own version, not a literal — the literal version of this line has been wrong twice
     // ('^0.0.0', then '^0.1.0' about to be wrong at the first minor bump). See frameworkRange.
     if (r.dep) deps[r.dep] = frameworkRange();
   }
 
-  // Merge new deps into package.json (skips any already present from the base template).
-  if (Object.keys(deps).length) {
+  // Merge new deps + any process scripts into package.json (deps already present are skipped).
+  const scripts = Object.fromEntries(
+    [baseTool, ...recipes].filter((r) => r.script).map((r) => [r.script!.name, r.script!.cmd]),
+  );
+  if (Object.keys(deps).length || Object.keys(scripts).length) {
     patchPkg(dir, (pkg) => {
       pkg.dependencies = { ...pkg.dependencies, ...deps };
+      pkg.scripts = { ...pkg.scripts, ...scripts };
     });
   }
 
@@ -350,25 +398,13 @@ function scaffoldFeatures(dir: string, name: string, features: string[], forceE2
     writeFileSync(join(dir, 'src', 'identity.ts'), IDENTITY_FILE);
   }
 
-  // THE CHARGE TOOL NEEDS A MODEL THAT CALLS IT. The base template's mock echoes text and never emits
-  // a tool call — correct for a starter with no tools, and useless for the one feature that exists to
-  // be watched happening. `--template full` shipped a tool-calling mock instead, and dropping it while
-  // keeping the tool would have made the alias a quieter project than the template it replaces: the
-  // Playground would answer "echo: charge order-1" and the ledger would stay empty.
-  //
-  // This is the ONE place a recipe replaces a file the base template wrote, and it is allowed here for
-  // a reason that does not generalise: `src/model.ts` at this moment is generated code in an empty
-  // directory, not a file anyone has touched. `gnl add idempotency-tool` deliberately does NOT do this
-  // — there the file is the user's.
-  if (codeFeatures.includes('idempotency-tool')) {
-    cpSync(join(templatesDir('_idempotency'), 'src', 'model.ts'), join(dir, 'src', 'model.ts'));
-  }
+  // The tool-calling mock that used to be swapped in here for the idempotency feature is gone with
+  // the feature-ness of the tool itself: the base ships a dedicated `charge-demo` agent whose model
+  // (`@gnldev/durable/mock`'s toolCallingModel) calls the tool, next to an `assistant` that stays a
+  // plain chat agent — a scripted charge answering "hello" was the old design's one wart.
 
-  // e2e: idempotency-tool selected → the idempotency e2e (imports ../src/tools.js); else the replay test.
-  if (wantE2e) {
-    const testSrc = codeFeatures.includes('idempotency-tool') ? templatesDir('_idempotency') : templatesDir('_e2e');
-    addE2e(dir, testSrc);
-  }
+  // e2e: the crash-replay test (the idempotency proof is in the base as test/proof.test.ts already).
+  if (wantE2e) addE2e(dir, templatesDir('_e2e'));
 
   return { dir, files: listFiles(dir).sort(), template: 'custom', features: codeFeatures.concat(wantE2e ? [E2E_FEATURE] : []) };
 }
@@ -387,7 +423,7 @@ export function scaffold(targetDir: string, opts: ScaffoldOptions = {}): Scaffol
   const answers = opts.answers ?? DEFAULT_ANSWERS;
   const compose = (features: readonly string[], aliasedFrom?: string): ScaffoldResult => {
     const res = scaffoldFeatures(dir, name, [...features], !!opts.e2e, answers);
-    if (opts.host) addHost(dir, opts.host);
+    if (opts.host) addHost(dir, opts.host, opts.hostMode);
     return { ...res, files: listFiles(dir).sort(), ...(aliasedFrom ? { aliasedFrom } : {}) };
   };
 
@@ -410,21 +446,11 @@ export function scaffold(targetDir: string, opts: ScaffoldOptions = {}): Scaffol
     );
   }
 
-  // ANSWERS TAKE THE COMPOSE PATH, even with no features at all.
-  //
-  // The static path copies `templates/minimal/gnl.config.ts` verbatim, and that file is a fixed text
-  // carrying `preset: 'assistant'` and a sqlite storage. Making the answers land there would mean
-  // rewriting lines inside a copied file — three answers editing one template is the matrix the iron
-  // rule exists to prevent, in the file most likely to be read. `generateConfig` already builds the
-  // whole config from parts, so an answered init composes from zero features and gets its lines
-  // written rather than patched in.
-  if (opts.answers) return compose([]);
-
-  mkdirSync(dir, { recursive: true });
-  copyTemplate(dir, named, name);
-
-  if (opts.e2e) addE2e(dir, templatesDir('_e2e'));
-  if (opts.host) addHost(dir, opts.host);
-
-  return { dir, files: listFiles(dir).sort(), template: named };
+  // EVERY PATH COMPOSES NOW — the static verbatim-copy path is gone, deliberately. It existed so a
+  // template could ship a hand-written gnl.config.ts, which meant the config and the charge tool
+  // lived in two sources (template file vs. generateConfig/RECIPES) held equal by promises. With
+  // answers defaulted, composing from zero features produces the same project the copy did, from
+  // one source; the template directory keeps only what has no second home (package.json, tsconfig,
+  // README, the agents, the proof test).
+  return compose([]);
 }

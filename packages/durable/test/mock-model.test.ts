@@ -1,29 +1,19 @@
-// The scaffolded mock models must report the finish reason in the shape a v4 provider emits and AI
-// SDK 7 reads: `finishReason: { unified, raw }`. A bare string leaves `finishReason.unified`
-// undefined, and from ai@7.0.70 the agent loop stops BEFORE executing any tool — so
-// `gnl init --template full` shipped an agent that never called its tool, and the project's own
-// `pnpm test` failed 2/2 on a fresh scaffold.
+// The mock models must report the finish reason in the shape a v4 provider emits and AI SDK 7
+// reads: `finishReason: { unified, raw }`. A bare string leaves `finishReason.unified` undefined,
+// and from ai@7.0.70 the agent loop stops BEFORE executing any tool — so a scaffold shipped an agent
+// that never called its tool, and the project's own `pnpm test` failed 2/2 out of the box.
 //
-// TWO models, from two places. `templates/minimal/src/model.ts` is the starter every project begins
-// with; `templates/_idempotency/src/model.ts` is the tool-calling one the charge-tool feature brings
-// with it (it used to be `templates/full`'s, before that template became an alias). The second is the
-// one the regression above was found in, and the only one where the SDK's tool loop is exercised at
-// all — so it is the half that must not be lost when a template directory is.
-//
-// This file lives in packages/cli/test (NOT in templates/*/test): the root vitest config only
-// includes `packages/*/test/**`, so a test placed next to the template would never run in CI. It
-// reaches the template by relative path instead.
-//
-// NOTE ON `ai`: the model factories are not exported — `assistant.model` IS the model object, so it
-// is imported through the AgentConfig each file exports. The `@gnldev/durable` import is type-only
-// (erased). `./tools.js` in the charge model resolves through vite's TS extension resolution to the
-// RECIPE's output; there is no tools.ts sitting next to it, so it is aliased below.
+// These models used to be ~60 lines of spec-v4 plumbing copied into every scaffolded project's
+// `src/model.ts` — untypechecked template text, which is why the regression above could happen at
+// all and why this test had to reach into `templates/` by relative path from the CLI package. They
+// live in `src/mock-model.ts` now: compiled, exported as `@gnldev/durable/mock`, and imported by a
+// scaffold in one line. The test moved with them, and keeps doing the half a compiler cannot — the
+// shapes are structural, so only running them against the installed `ai` proves anything.
 import { describe, it, expect } from 'vitest';
 import { generateText, stepCountIs, tool } from 'ai';
 import { z } from 'zod';
 import { createRequire } from 'node:module';
-import { assistant as minimalAssistant } from '../templates/minimal/src/model.js';
-import { assistant as chargeAssistant } from '../templates/_idempotency/src/model.js';
+import { echoModel, toolCallingModel } from '../src/mock-model.js';
 
 const aiVersion: string = createRequire(import.meta.url)('ai/package.json').version;
 
@@ -39,8 +29,8 @@ async function drain(stream: ReadableStream<any>): Promise<any[]> {
   return parts;
 }
 
-const minimalModel = minimalAssistant.model as any;
-const chargeModel = chargeAssistant.model as any;
+const minimalModel = echoModel() as any;
+const chargeModel = toolCallingModel() as any;
 
 /** A tool-result message shaped like the one the SDK feeds back on the second turn. */
 const AFTER_TOOL_PROMPT = [
@@ -50,11 +40,11 @@ const AFTER_TOOL_PROMPT = [
 ];
 
 // ── B1: the shape itself, asserted at RUNTIME (nothing typechecks these template files) ──
-describe('template mock models emit finishReason as {unified, raw}', () => {
+describe('the mock models emit finishReason as {unified, raw}', () => {
   // The exact thing that regressed: a bare string. `typeof` is asserted explicitly, because
   // `finishReason === 'stop'` and `finishReason.unified === 'stop'` are both "truthy and correct
   // looking" from a distance, and only one of them is what AI SDK 7 reads.
-  it('minimal echoModel doGenerate: finishReason is an object with unified === "stop"', async () => {
+  it('echoModel doGenerate: finishReason is an object with unified === "stop"', async () => {
     const r = await minimalModel.doGenerate({ prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] });
     expect(typeof r.finishReason).toBe('object');
     expect(r.finishReason).not.toBeNull();
@@ -64,7 +54,7 @@ describe('template mock models emit finishReason as {unified, raw}', () => {
     expect(r.content[0].text).toBe('echo: hi');
   });
 
-  it('minimal echoModel doStream: the finish part carries finishReason.unified === "stop"', async () => {
+  it('echoModel doStream: the finish part carries finishReason.unified === "stop"', async () => {
     const { stream } = await minimalModel.doStream({ prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] });
     const finishPart = (await drain(stream)).find((p) => p.type === 'finish');
     expect(finishPart).toBeTruthy();
@@ -74,7 +64,7 @@ describe('template mock models emit finishReason as {unified, raw}', () => {
 
   // Turn 1 is the one that broke: 'tool-calls' as a bare string means the loop never runs
   // chargeOrder, and this model exists to demonstrate exactly-once side effects.
-  it('charge toolCallingMock doGenerate turn 1: finishReason is an object with unified === "tool-calls"', async () => {
+  it('toolCallingModel doGenerate turn 1: finishReason is an object with unified === "tool-calls"', async () => {
     const r = await chargeModel.doGenerate({ prompt: [{ role: 'user', content: [{ type: 'text', text: 'charge order-1' }] }] });
     expect(typeof r.finishReason).toBe('object');
     expect(r.finishReason.unified).toBe('tool-calls');
@@ -83,14 +73,14 @@ describe('template mock models emit finishReason as {unified, raw}', () => {
     expect(r.content[0].toolName).toBe('chargeOrder');
   });
 
-  it('charge toolCallingMock doGenerate turn 2 (a tool result is in the prompt): unified === "stop"', async () => {
+  it('toolCallingModel doGenerate turn 2 (a tool result is in the prompt): unified === "stop"', async () => {
     const r = await chargeModel.doGenerate({ prompt: AFTER_TOOL_PROMPT });
     expect(typeof r.finishReason).toBe('object');
     expect(r.finishReason.unified).toBe('stop');
     expect(r.content[0].type).toBe('text');
   });
 
-  it('charge toolCallingMock doStream: the finish part carries finishReason.unified === "stop"', async () => {
+  it('toolCallingModel doStream: the finish part carries finishReason.unified === "stop"', async () => {
     const { stream } = await chargeModel.doStream({ prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] });
     const finishPart = (await drain(stream)).find((p) => p.type === 'finish');
     expect(finishPart).toBeTruthy();
@@ -101,7 +91,7 @@ describe('template mock models emit finishReason as {unified, raw}', () => {
   // Guards the OTHER half of the same v4 migration, which is what made the finish-reason half easy to
   // miss: usage counts are nested in v7 and a flat `{inputTokens: 1}` reads as undefined, so a spend
   // ceiling would price the run at zero.
-  it('both scaffolded models report v4 nested usage (usage.inputTokens.total), not a flat count', async () => {
+  it('both models report v4 nested usage (usage.inputTokens.total), not a flat count', async () => {
     for (const m of [minimalModel, chargeModel]) {
       const r = await m.doGenerate({ prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] });
       expect(typeof r.usage.inputTokens).toBe('object');
@@ -151,7 +141,7 @@ describe('the charge model driven through ai\'s generateText', () => {
     expect(res.text.length).toBeGreaterThan(0);
   });
 
-  it('the minimal template reports finishReason "stop" through the SDK too', async () => {
+  it('echoModel reports finishReason "stop" through the SDK too', async () => {
     const res = await generateText({ model: minimalModel, prompt: 'hi' });
     expect(res.finishReason, 'the SDK could not read the finish reason the model reported').toBe('stop');
     expect(res.text).toBe('echo: hi');
@@ -159,10 +149,10 @@ describe('the charge model driven through ai\'s generateText', () => {
 
   // Records the version the assertions above were made against. The finishReason assertion
   // discriminates from 7.0.0; the `fired` assertion only from 7.0.70. Fails loudly if `ai` ever leaves
-  // the 7.x line the templates' peer range (`^7.0.0`) promises.
+  // the 7.x line this package's peer range (`^7.0.0`) promises.
   it('records the installed ai version', () => {
     expect(aiVersion).toMatch(/^7\./);
     // eslint-disable-next-line no-console
-    console.log(`[template-finish-reason] installed ai version: ${aiVersion}`);
+    console.log(`[mock-model] installed ai version: ${aiVersion}`);
   });
 });

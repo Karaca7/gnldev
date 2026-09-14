@@ -161,11 +161,36 @@ describe('selectPrompt (single-select on top of the same shell)', () => {
     expect(await p).toBe('rag');
   });
 
-  it('picking nothing → null (distinct from cancelling)', async () => {
+  it('enter alone takes what the cursor is on — arrow-then-Enter is an answer', async () => {
+    // The contract this replaced: Enter on an unmarked list meant "none of them", and the first
+    // person to use `gnl init` outside this repo moved to a row, pressed Enter, and was told all
+    // decisions took their default. Every scaffolder they had used answers arrow-then-Enter.
     const { input } = install();
     const p = selectPrompt(items);
     await type(input, ['\r']);
-    expect(await p).toBeNull();
+    expect(await p).toBe(items[0]!.id);
+  });
+
+  it('…and after moving, it takes THAT row', async () => {
+    const { input } = install();
+    const p = selectPrompt(items);
+    await type(input, [`${ESC}[B`, '\r']);
+    expect(await p).toBe(items[1]!.id);
+  });
+
+  it('space still marks, and a marked row wins over the cursor', async () => {
+    const { input } = install();
+    const p = selectPrompt(items);
+    // mark row 0, then move away without marking: the marked one is the answer.
+    await type(input, [' ', `${ESC}[B`, '\r']);
+    expect(await p).toBe(items[0]!.id);
+  });
+
+  it('space is a radio in single mode — the mark moves rather than accumulating', async () => {
+    const { input } = install();
+    const p = selectPrompt(items);
+    await type(input, [' ', `${ESC}[B`, ' ', '\r']);
+    expect(await p).toBe(items[1]!.id);
   });
 
   it('cancelling → undefined', async () => {

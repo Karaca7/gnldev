@@ -21,13 +21,20 @@ function tmp(): string {
 }
 
 describe('scaffold', () => {
-  it('minimal (default): fills the placeholder, gitignore→.gitignore, no e2e', () => {
+  it('the base project: fills the placeholder, gitignore→.gitignore, ships the proof', () => {
     const dir = join(tmp(), 'my-agent');
     const res = scaffold(dir);
 
-    expect(res.template).toBe('minimal');
+    // 'custom' on every path now: the verbatim-copy path is gone, so even a bare scaffold is a
+    // composition (of zero features) and its gnl.config.ts is generated rather than copied.
+    expect(res.template).toBe('custom');
     expect(res.files).toContain('gnl.config.ts');
-    expect(res.files).toContain(join('src', 'model.ts'));
+    // The taxonomy the project grows into, present from the first file: one folder per kind.
+    expect(res.files).toContain(join('src', 'agents', 'assistant.ts'));
+    expect(res.files).toContain(join('src', 'agents', 'charge-demo.ts'));
+    expect(res.files).toContain(join('src', 'tools', 'charge-order.ts'));
+    // The charge tool is BASE, not a feature — so is the proof that watches it work.
+    expect(res.files).toContain(join('test', 'proof.test.ts'));
     expect(res.files).toContain('.gitignore');
     expect(res.files).not.toContain('gitignore');
     // `src/auth.ts` and the model setup read keys from `process.env`; a .env is the usual way to
@@ -79,23 +86,26 @@ describe('scaffold', () => {
     const res = scaffold(dir, { template: 'full' as never });
     expect(res.template, 'a retired name resolves to a composition, not a directory').toBe('custom');
     expect(res.aliasedFrom, 'the caller needs this to say the new spelling once').toBe('full');
-    expect(res.features).toEqual(['idempotency-tool', 'e2e']);
-    expect(res.files).toContain(join('src', 'tools.ts'));
+    // What `full` meant is now split: the charge tool is in every project, so the alias carries the
+    // only half that is still optional.
+    expect(res.features).toEqual(['e2e']);
+    expect(res.files).toContain(join('src', 'tools', 'charge-order.ts'));
     expect(res.files).toContain(join('test', 'e2e.test.ts'));
-    const tools = readFileSync(join(dir, 'src', 'tools.ts'), 'utf8');
+    const tools = readFileSync(join(dir, 'src', 'tools', 'charge-order.ts'), 'utf8');
     expect(tools).toContain("idempotency: 'args'");
     const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
     expect(pkg.scripts.test).toBe('vitest run');
   });
 
-  it("and it ships a model that actually CALLS the tool — otherwise the demo demonstrates nothing", () => {
-    // The one thing the old template had that the base template does not. Without this the Playground
-    // answers `echo: charge order-1` and the ledger stays empty, which is a quieter project than the
-    // one the name used to produce.
+  it("every project ships an agent that actually CALLS the tool — otherwise the demo demonstrates nothing", () => {
+    // Without this the Playground answers `echo: charge order-1` and the ledger stays empty. It used
+    // to be the one thing `--template full` had over the base; it is the base now, as a second agent
+    // whose model comes from @gnldev/durable/mock (the plumbing left the user's tree entirely).
     const dir = join(tmp(), 'b2');
-    scaffold(dir, { template: 'full' as never });
-    const model = readFileSync(join(dir, 'src', 'model.ts'), 'utf8');
-    expect(model).toContain("toolName: 'chargeOrder'");
+    scaffold(dir);
+    const agent = readFileSync(join(dir, 'src', 'agents', 'charge-demo.ts'), 'utf8');
+    expect(agent).toContain('toolCallingModel');
+    expect(agent).toContain("from '@gnldev/durable/mock'");
     // And the config is what binds that name to the real tool — one wiring, in the file that holds
     // every other feature's wiring too.
     const config = readFileSync(join(dir, 'gnl.config.ts'), 'utf8');
@@ -121,15 +131,17 @@ describe('scaffold — feature composition', () => {
 
     expect(res.template).toBe('custom');
     // recipe src files written
-    expect(res.files).toContain(join('src', 'tools.ts'));
-    expect(res.files).toContain(join('src', 'rag.ts'));
+    expect(res.files).toContain(join('src', 'tools', 'charge-order.ts'));
+    expect(res.files).toContain(join('src', 'tools', 'rag.ts'));
     expect(res.files).toContain(join('src', 'memory.ts'));
-    // e2e (idempotency variant) + vitest config
+    // e2e + vitest config. There is one e2e source now (the durability replay); the idempotency
+    // variant it used to choose between is the base template's test/proof.test.ts, which every
+    // project gets whether or not `e2e` was asked for.
     expect(res.files).toContain(join('test', 'e2e.test.ts'));
+    expect(res.files).toContain(join('test', 'proof.test.ts'));
     expect(res.files).toContain('vitest.config.ts');
-    // idempotency-tool selected → the idempotency e2e (references ../src/tools.js)
-    const e2e = readFileSync(join(dir, 'test', 'e2e.test.ts'), 'utf8');
-    expect(e2e).toContain("from '../src/tools.js'");
+    const proof = readFileSync(join(dir, 'test', 'proof.test.ts'), 'utf8');
+    expect(proof).toContain("from '../src/tools/charge-order.js'");
 
     // package.json: new deps added, memory dep already present, vitest + test script from e2e
     const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
@@ -141,11 +153,14 @@ describe('scaffold — feature composition', () => {
     // generated gnl.config.ts: correct imports + wiring, NO @gnldev/cli import
     const config = readFileSync(join(dir, 'gnl.config.ts'), 'utf8');
     expect(config).not.toContain('@gnldev/cli');
-    expect(config).toContain("import { chargeOrder } from './src/tools.js';");
-    expect(config).toContain("import { searchDocs } from './src/rag.js';");
+    expect(config).toContain("import { chargeOrder } from './src/tools/charge-order.js';");
+    expect(config).toContain("import { searchDocs } from './src/tools/rag.js';");
     expect(config).toContain("import { memoryFactory } from './src/memory.js';");
     // agentTools → assistant.tools ; configField → top level
-    expect(config).toContain('agents: { assistant: { ...assistant, tools: { chargeOrder, searchDocs } } }');
+    // chargeOrder is wired to charge-demo (base), so selecting the feature adds nothing new to it;
+    // rag lands on the assistant, which is where an agentTool recipe goes.
+    expect(config).toContain('agents: { assistant: { ...assistant, tools: { searchDocs } }');
+    expect(config).toContain("'charge-demo': { ...chargeDemo, tools: { chargeOrder } }");
     expect(config).toContain('memoryFactory,');
     expect(config).toContain("satisfies CreateGnlConfig & { port?: number; studio?: boolean; subjects?: 'internal' | 'end-users' }");
   });
@@ -154,7 +169,8 @@ describe('scaffold — feature composition', () => {
     const dir = join(tmp(), 'cfg2');
     scaffold(dir, { features: ['workflow', 'auth'] });
     const config = readFileSync(join(dir, 'gnl.config.ts'), 'utf8');
-    expect(config).toContain('agents: { assistant },'); // no agentTools → unchanged assistant
+    // no agentTools → the assistant entry stays a bare reference (the demo agent is always wired)
+    expect(config).toContain("agents: { assistant, 'charge-demo':");
     expect(config).toContain('workflows: { checkout },');
     expect(config).toContain('auth,');
     expect(config).toContain('& { auth?: { admin?: { token?: string }; viewer?: { token?: string } } }');

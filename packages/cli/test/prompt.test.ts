@@ -1,7 +1,7 @@
 // The checkbox selection logic is a PURE reducer(state, key) → state — tested here with synthetic
 // key sequences (no TTY). The impure shell (raw stdin + ANSI render) is exercised by hand.
 import { describe, it, expect } from 'vitest';
-import { reducer, initState, selection, decodeKey, type Key, type PromptItem } from '../src/prompt.js';
+import { reducer, initState, selection, decodeKey, renderLines, type Key, type PromptItem } from '../src/prompt.js';
 
 const items: PromptItem[] = [
   { id: 'a', label: 'Alpha' },
@@ -95,5 +95,39 @@ describe('decodeKey', () => {
     expect(decodeKey('\x03')).toBe('cancel'); // Ctrl-C
     expect(decodeKey('\x1b')).toBe('cancel'); // Esc
     expect(decodeKey('z')).toBeUndefined();
+  });
+});
+
+// ── width: one logical line must never take two screen rows ───────────────────────────────────
+// The repaint moves the cursor up by the number of lines last written. A line wider than the
+// terminal wraps, takes two rows, and the arithmetic silently under-shoots — the header reappears on
+// every keypress and walks down the screen. Measured on the preset question in an 80-column
+// terminal: nineteen copies of the title. So the invariant is width, and it is asserted on the
+// VISIBLE length, since every line here carries colour.
+describe('rendered lines fit the terminal', () => {
+  const visible = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, '');
+  const longItems = [
+    { id: 'a', label: 'A person, on a screen, waiting for the answer', hint: 'a repeat can be turned into a question' },
+    { id: 'b', label: 'A scheduler or a queue — nobody is watching', hint: 'nobody to ask, so a repeated payment is refused outright' },
+    { id: 'c', label: 'Money or stock moves, and a double is unacceptable', hint: 'the above, plus a run lock, input fingerprinting, tombstones' },
+  ];
+
+  it.each([40, 60, 80, 120])('at %i columns every line is within the width', (width) => {
+    const state = initState(longItems, [], { single: true });
+    for (const line of renderLines(state, 'gnl init — Who sets this work going?', width)) {
+      expect(visible(line).length, `"${visible(line)}" is ${visible(line).length} > ${width}`).toBeLessThanOrEqual(width);
+    }
+  });
+
+  it('a clamped line keeps its colours closed and says it was cut', () => {
+    const [, , , first] = renderLines(initState(longItems, [], { single: true }), 'title', 40);
+    expect(visible(first!)).toContain('…');
+    expect(first!.endsWith('\x1b[0m'), 'an open colour sequence bleeds into the next line').toBe(true);
+  });
+
+  it('a line that fits is left exactly alone', () => {
+    const short = [{ id: 'x', label: 'ok' }];
+    const [, , , row] = renderLines(initState(short, [], { single: true }), 't', 80);
+    expect(visible(row!)).toBe('❯ ◯ ok');
   });
 });
