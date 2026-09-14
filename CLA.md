@@ -150,3 +150,33 @@ The acceptance is recorded in the pull request itself: the ticked box, your acco
 stay with the change for the life of the repository. `CONTRIBUTORS.md` indexes those records. It is
 a one-time step per GitHub account; the box is present on every pull request so that each change
 carries its own record, but you are only agreeing once.
+
+## Machine accounts, and why a person still signs
+
+Section 4 is not only a licence grant — it is a set of **representations**: that the work is yours to
+give, that third-party material is identified, that you know of no infringement claim. A machine
+account cannot make those statements. Copyright belongs to a natural person (Law No. 5846 defines
+the author as one), so an automated account ticking a box would leave a record that looks like an
+acceptance with nobody behind it.
+
+This is not a rule against tools. Much of this repository was written with an AI assistant, and its
+commits say so. A generator is an instrument; the responsibility is the person's who used it.
+
+So the rule is about ownership, not authorship:
+
+- **Dependency bots** (`dependabot`, `renovate`, `github-actions`) are exempt, and only they. What
+  they submit is a version number — no original work, so there is nothing to license. The CLA check
+  skips them by name.
+- **Any pull request carrying code** needs a person behind it. Open it from your own account and
+  tick the box, or — if a machine account opened it — say so in a comment yourself:
+
+  ```
+  I, @your-handle, accept the CLA, v1.1 for this contribution.
+  ```
+
+  Without that, the change is not merged. Deliberately a human step rather than a longer list of bot
+  names: a list of which tools write code goes stale faster than anyone maintains it, and the
+  question that actually matters is who stands behind the change.
+
+By ticking the box you are saying you read what you are submitting and stand behind it. That is the
+same standard for hand-written and generated code, and it is the only one that scales.

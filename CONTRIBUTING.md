@@ -16,6 +16,28 @@ read and agree to the CLA. Tick it in every pull request: the check reads the PR
 `reopened` and `synchronize`), so it is a per-PR line rather than a one-time registration. Reading
 the CLA is the one-time part. The check has to pass before a pull request is reviewed.
 
+## Using an AI assistant
+
+You may. Much of this repository was written with one, and the commits say so — there is nothing to
+hide and nothing to declare.
+
+What does not change is who signs. The CLA asks you to state that the work is yours to give and that
+you know of no third-party claim on it; a tool cannot make that statement, and a generator can
+reproduce code it was trained on. So ticking the box means the same thing either way: **you read
+what you are submitting and you stand behind it.**
+
+Two practical consequences:
+
+- Open the pull request from your own account. If a machine account opened it, add a comment saying
+  `I, @your-handle, accept the CLA, v1.1 for this contribution.` — otherwise it is not merged.
+- Review the diff before you send it, in the ordinary sense: you should be able to answer "why is
+  this line here?" for every line. A change nobody can explain costs a reviewer more than it saves a
+  contributor, which is the whole reason this paragraph exists rather than a ban.
+
+(`dependabot`, `renovate` and `github-actions` are exempt from the check by name: a version bump is
+not original work, so there is nothing to license. That exemption is for dependency bots only —
+see [CLA.md](./CLA.md#machine-accounts-and-why-a-person-still-signs).)
+
 ## About this repository's history
 
 The first commit here is a snapshot. Development happens in a private monorepo that also holds

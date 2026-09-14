@@ -43,6 +43,15 @@ jobs:
           # Only dependency bots are exempt, by name. "Is a bot" is no longer a safe proxy for
           # "submits no original authorship" — agentic coding bots open pull requests carrying
           # substantial code, and a blanket type check would let all of it in unaccepted.
+          #
+          # The list stays SHORT on purpose, and is not the mechanism for coding agents. Enumerating
+          # which tools write code is a list that goes stale faster than anyone updates it, and the
+          # question it tries to answer is the wrong one: what matters is not which tool typed the
+          # diff but which PERSON stands behind it. A machine account cannot make Section 4's
+          # representations — the work is mine to give, no third-party claim — so when one opens a
+          # code PR, a human says so in a comment and that is what gets merged. CLA.md
+          # ("Machine accounts, and why a person still signs") is the rule; this check is only its
+          # cheapest half.
           case "$PR_AUTHOR" in
             dependabot\[bot\]|renovate\[bot\]|github-actions\[bot\])
               echo "::notice::$PR_AUTHOR is a dependency bot — nothing to license, skipping."
