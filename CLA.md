@@ -14,9 +14,12 @@
 > the paragraph above promises exactly that, and this is the correction. No acceptance was affected:
 > every commit in this repository to date is the Maintainer's own, so no one had accepted 1.0.
 
-This is the Contributor License Agreement for **gnl** (source repository, npm scope
-`@gnldev`). It applies to any Contribution (code, documentation, or other material) you submit to
-this project, whether by pull request or any other means.
+This is the Contributor License Agreement for **gnl** — the project — whose source repository is
+`Karaca7/gnldev` and whose packages are published under the npm scope `@gnldev`. All three names are
+spelled out because they are no longer the same word: the repository was renamed when `gnl` turned
+out to be the name of a school exercise on several thousand other repositories. It applies to any
+Contribution (code, documentation, or other material) you submit to this project, whether by pull
+request or any other means.
 
 By submitting a Contribution, you agree to the following terms.
 
