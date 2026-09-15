@@ -123,3 +123,37 @@ describe.skipIf(!REAL)('PostgresVectorStore — real pgvector (env-gated)', () =
     await store.close();
   });
 });
+
+// A connection dropped during setup must not be permanent. `ensureReady` memoises its promise so
+// the DDL runs once per store — but memoising a REJECTED promise makes one bad moment final: every
+// later call replays that dead error against a database that recovered long ago. Found on the
+// durable side first (a real Postgres failover in CI), then here by looking for the same shape.
+describe('setup interrupted by a dropped connection', () => {
+  function flakyPool(failFirstDdl: { n: number }): PoolLike {
+    const inner = fakePool();
+    return {
+      async query(sql: string, params: unknown[] = []) {
+        if (/CREATE\s+(EXTENSION|TABLE|INDEX)/i.test(sql) && failFirstDdl.n > 0) {
+          failFirstDdl.n--;
+          throw Object.assign(new Error('terminating connection due to administrator command'), { code: '57P01' });
+        }
+        return inner.query(sql, params);
+      },
+    };
+  }
+
+  it('retries the DDL on the next call instead of replaying the old error forever', async () => {
+    const budget = { n: 1 };                    // exactly one DDL failure, then the backend is fine
+    const store = new PostgresVectorStore({ pool: flakyPool(budget) });
+    const item = [{ id: 'a', text: 'hello', embedding: [1, 0, 0], metadata: {} }];
+
+    await expect(store.upsert(item)).rejects.toThrow(/terminating connection/);
+    expect(budget.n, 'the DDL never ran — the test proved nothing').toBe(0);
+
+    // Same store, healthy backend. Before the fix this threw the identical error, forever.
+    await expect(store.upsert(item)).resolves.toBeUndefined();
+    const res = await store.query([1, 0, 0], 1);
+    expect(res[0]?.id, 'the retry set the table up but the write did not land').toBe('a');
+    await store.close();
+  });
+});
