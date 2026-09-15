@@ -375,7 +375,7 @@ export class PostgresStorage implements Storage {
   }
   private ensureReady(): Promise<void> {
     if (!this.ready) {
-      this.ready = (async () => {
+      const booting = (async () => {
         // `CREATE TABLE IF NOT EXISTS` is not safe against a concurrent copy of itself. Two sessions
         // both pass the existence check, both proceed, and the loser dies inside Postgres' catalog
         // with `duplicate key value violates unique constraint "pg_type_typname_nsp_index"` — a
@@ -461,6 +461,19 @@ export class PostgresStorage implements Storage {
           if (locked) await this._pool.query('SELECT pg_advisory_unlock(47110001)').catch(() => {});
         }
       })();
+      this.ready = booting;
+      // Memoising the promise is the point — the schema is set up once per instance. Memoising a
+      // REJECTED one is not: it makes a transient failure permanent. Measured against a real
+      // Postgres: a backend terminated mid-DDL (`57P01`) left this instance answering every later
+      // call with that same dead error, while a brand-new instance against the same database wrote
+      // fine half a second later. Which is precisely a failover — the database comes back, this
+      // copy does not, and only a restart fixes it.
+      //
+      // Clearing the memo lets the next caller retry the schema work. The identity check is not
+      // decoration: by the time this handler runs, a later call may already have started its own
+      // boot, and undefining that one would make two boots race.
+      booting.catch(() => { if (this.ready === booting) this.ready = undefined; });
+      return booting;
     }
     return this.ready;
   }

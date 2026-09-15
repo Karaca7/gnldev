@@ -53,7 +53,7 @@ export class PostgresVectorStore implements VectorStore {
     if (!this.ready) {
       const dimension = this.dimension ?? dim;
       this.dimension = dimension;
-      this.ready = (async () => {
+      const booting = (async () => {
         await this.pool.query('CREATE EXTENSION IF NOT EXISTS vector');
         await this.pool.query(
           `CREATE TABLE IF NOT EXISTS ${this.table} (
@@ -79,6 +79,15 @@ export class PostgresVectorStore implements VectorStore {
           );
         }
       })();
+      this.ready = booting;
+      // Same reasoning as `PostgresStorage.ensureReady`, and found by looking for the same shape
+      // after CI caught it there: memoising the promise is right, memoising a REJECTED one turns a
+      // dropped connection during setup into a store that never works again, on a database that
+      // recovered seconds later. Clearing the memo lets the next `upsert`/`query` retry the DDL.
+      // `dimension` is deliberately NOT cleared — it was taken from the caller's first vector, not
+      // from the database, so it is still the right answer on the retry.
+      booting.catch(() => { if (this.ready === booting) this.ready = undefined; });
+      return booting;
     }
     return this.ready;
   }

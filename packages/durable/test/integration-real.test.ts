@@ -931,6 +931,15 @@ describe.skipIf(!RUN)('REAL Postgres — a failover does not take the process wi
     try {
       const runId = `${SEED}-failover-${Date.now().toString(36)}`;
       const N = 120;
+      // Get the schema up BEFORE the kill is armed. Without this the 40ms timer raced the DDL in
+      // `ensureReady`, and on a slow runner the kill landed on the boot instead of on the writes:
+      // every write then failed for the same single reason and the honesty invariant below compared
+      // 0 against 0 — green, and measuring nothing. It is also how the leg actually broke: CI's
+      // `Postgres C` job failed at 97ms inside postgres-storage.ts:401, the DDL loop, while the
+      // `en_US.utf8` job passed. Same code, different runner speed. The bug that race exposed is
+      // real and fixed (see the boot-interrupted test below); this line is about pointing the kill
+      // at what this test claims to measure.
+      await s.runs.put(`${runId}:tool:warm`, { status: 'succeeded', output: 'warm' });
       const writes = Array.from({ length: N }, (_, i) =>
         s.runs.put(`${runId}:tool:t${i}`, { status: 'succeeded', output: { i } })
           .then(() => true).catch(() => false));
@@ -945,8 +954,9 @@ describe.skipIf(!RUN)('REAL Postgres — a failover does not take the process wi
       // every write that reported success is in the journal, and every write that reported failure
       // is NOT. A mismatch either way is a silent lie — a lost write that was called durable, or a
       // refused write that landed anyway.
-      expect(stats.entries, `${succeeded} writes reported success but the journal holds ${stats.entries}`)
-        .toBe(succeeded);
+      // +1 for the warm-up write above, which is in the journal but not in `results`.
+      expect(stats.entries, `${succeeded} writes reported success (+1 warm-up) but the journal holds ${stats.entries}`)
+        .toBe(succeeded + 1);
       expect(succeeded, 'the kill landed after everything had already committed — the test proved nothing')
         .toBeLessThan(N);
 
@@ -958,6 +968,46 @@ describe.skipIf(!RUN)('REAL Postgres — a failover does not take the process wi
       await (s as any).close?.();
     }
   }, 30_000);
+
+  // The bug CI found, pinned. It is NOT the same failure as the test above: there the connection
+  // dies during writes and each write rejects on its own; here it dies during the one-time schema
+  // boot, whose promise `ensureReady` memoises. A memoised REJECTION never expires, so the instance
+  // answered every later call with that same dead error — forever, on a database that was healthy
+  // again half a second later. In a fleet that is the copy which failed over and never came back.
+  it('a boot interrupted by the failover does not leave the instance permanently dead', async () => {
+    const dbName = `gnl_boot_${Date.now().toString(36)}`;
+    const admin = new PgPool({ connectionString: PG_URL });
+    await admin.query(`CREATE DATABASE ${dbName}`);
+    // A database of its own, because the boot can only be interrupted where there is DDL left to
+    // run — against the shared one the schema already exists and there is no window to hit.
+    const url = new URL(PG_URL); url.pathname = `/${dbName}`;
+    const killer = new PgPool({ connectionString: url.toString() });
+    const s = new PostgresStorage({ connectionString: url.toString() });
+    try {
+      await killer.query('SELECT 1');   // a session to terminate from, outside the pool under test
+      const boot = s.runs.put('r:tool:a', { status: 'succeeded', output: 1 }).then(() => null, (e: Error) => e);
+      setTimeout(() => { void killBackends(killer); }, 8);
+      const bootErr = await boot;
+      // If the kill missed the window there is nothing to assert — say so rather than pass quietly.
+      if (!bootErr) return;
+
+      await new Promise((r) => setTimeout(r, 400));
+      // Independent proof the backend is fine, so a failure below is about the instance, not the DB.
+      const fresh = new PostgresStorage({ connectionString: url.toString() });
+      await fresh.runs.put('r:tool:fresh', { status: 'succeeded', output: 1 });
+      await (fresh as any).close?.();
+
+      await expect(
+        s.runs.put('r:tool:b', { status: 'succeeded', output: 2 }),
+        'the instance never retried the schema after the backend came back',
+      ).resolves.not.toThrow();
+    } finally {
+      await killer.end();
+      await (s as any).close?.();
+      await admin.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`).catch(() => {});
+      await admin.end();
+    }
+  }, 60_000);
 
   it('every pooled connection gets an error listener — not just the pool', async () => {
     // The behavioural test above passes for one WRONG reason too: if the kill happens to land only
