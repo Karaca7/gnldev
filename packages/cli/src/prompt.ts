@@ -338,6 +338,15 @@ export async function checkboxPrompt(
     // puts the repaint arithmetic back in the state this clamp exists to prevent.
     const lines = renderLines(state, title, drawWidth(output.columns), output.rows || undefined);
     for (const line of lines) output.write(`${ESC}[2K${line}\n`); // clear line + write
+    // A REPAINT CAN BE SHORTER THAN THE ONE BEFORE IT. Widening the window un-truncates the rows, and
+    // a taller window changes how many options the viewport shows — so the block can shrink, and the
+    // rows the previous frame wrote below it stayed on screen as a ghost copy of the list. Blank them
+    // and come back, so the next `[nA` still counts from the top of what is actually drawn.
+    const extra = prevLineCount - lines.length;
+    if (extra > 0) {
+      for (let i = 0; i < extra; i++) output.write(`${ESC}[2K\n`);
+      output.write(`${ESC}[${extra}A`);
+    }
     prevLineCount = lines.length;
   };
 
@@ -349,8 +358,17 @@ export async function checkboxPrompt(
   draw();
 
   return await new Promise<string[] | undefined>((resolve) => {
+    // THE PROMPT IS OPEN WHILE THE WINDOW CHANGES. `draw()` reads the width every time it runs, which
+    // is necessary and was not sufficient: nothing ran it. Resizing the terminal left the block
+    // exactly as it was — rows still truncated at the old narrow width after widening, still
+    // wrapped after narrowing — until the reader pressed a key, and the obvious conclusion from a
+    // window that does not respond is that the program has hung. Reported by a reader doing the one
+    // thing no test here does: making the window bigger and watching.
+    const onResize = (): void => draw();
+    output.on?.('resize', onResize);
     const cleanup = (): void => {
       input.off('data', onData);
+      output.off?.('resize', onResize);
       input.setRawMode?.(wasRaw);
       input.pause();
       output.write(`${ESC}[?25h`); // show cursor

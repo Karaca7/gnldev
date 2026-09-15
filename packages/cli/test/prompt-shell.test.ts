@@ -33,14 +33,25 @@ class FakeStdin extends EventEmitter {
   }
 }
 
-class FakeStdout {
+// An EventEmitter, because a real stdout is one and the prompt now listens to it for 'resize'.
+// It was a plain object, so `output.on?.('resize', …)` silently did nothing here — the optional call
+// that makes the fake work is also the one that would have hidden a missing listener.
+class FakeStdout extends EventEmitter {
   chunks: string[] = [];
+  columns = 80;
+  rows = 24;
   write(s: string): boolean {
     this.chunks.push(s);
     return true;
   }
   get text(): string {
     return this.chunks.join('');
+  }
+  /** What a terminal does when the window changes: new size, then the event. */
+  resizeTo(columns: number, rows = this.rows): void {
+    this.columns = columns;
+    this.rows = rows;
+    this.emit('resize');
   }
 }
 
@@ -205,5 +216,79 @@ describe('selectPrompt (single-select on top of the same shell)', () => {
     const p = selectPrompt(items);
     await type(input, ['a', '\r']); // check everything
     expect(await p).toBe('memory');
+  });
+});
+
+// RESIZING THE WINDOW WHILE THE PROMPT IS OPEN. `draw()` reads the width every time it runs, which
+// made the code LOOK resize-aware; nothing ever ran it between keypresses. So widening the terminal
+// left every row truncated at the old narrow width, and the reader's reasonable conclusion — the
+// program is stuck — was wrong in a way nothing on screen corrected.
+//
+// Reported by a reader making the window bigger and watching. No test here had ever changed a size.
+describe('the window changes while the prompt is open', () => {
+  it('a resize repaints, without a key being pressed', async () => {
+    const { input, output } = install();
+    const p = checkboxPrompt(items, { title: 'pick' });
+    await Promise.resolve();
+    const before = output.chunks.length;
+    output.resizeTo(120);
+    await Promise.resolve();
+    expect(output.chunks.length, 'nothing was redrawn — the block keeps the old width until a keypress').toBeGreaterThan(before);
+    input.emit('data', '\r');
+    await p;
+  });
+
+  it('widening un-truncates the rows', async () => {
+    const { input, output } = install();
+    const long = [{ id: 'a', label: 'an option whose label is comfortably longer than forty columns of terminal' }];
+    const p = checkboxPrompt(long, { title: 'pick' });
+    await Promise.resolve();
+    output.chunks.length = 0;
+    output.resizeTo(30);
+    await Promise.resolve();
+    const narrow = output.text;
+    output.chunks.length = 0;
+    output.resizeTo(200);
+    await Promise.resolve();
+    const wide = output.text;
+    expect(narrow).toContain('…');
+    expect(wide, 'the wider frame still shows the truncation from the narrow one').not.toContain('…');
+    input.emit('data', '\r');
+    await p;
+  });
+
+  it('a shrinking block leaves no ghost rows behind it', async () => {
+    // Fewer options fit after the window gets shorter — or more fit after it gets taller and the
+    // block gets SHORTER because nothing is hidden any more. Either way the previous frame wrote
+    // rows below the new one, and they stayed on screen as a second copy of the list.
+    const { input, output } = install();
+    const many = Array.from({ length: 12 }, (_, i) => ({ id: 'i' + i, label: 'option ' + i }));
+    const p = checkboxPrompt(many, { title: 'pick' });
+    await Promise.resolve();
+    output.resizeTo(80, 8);          // tall list → windowed, few rows
+    await Promise.resolve();
+    output.chunks.length = 0;
+    output.resizeTo(80, 30);         // now everything fits: MORE rows, then back to fewer
+    await Promise.resolve();
+    output.chunks.length = 0;
+    output.resizeTo(80, 8);          // block shrinks again — the ghost case
+    await Promise.resolve();
+    const frame = output.text;
+    // Every line the repaint writes is cleared first; the cleanup rows are bare `[2K` with nothing.
+    const cleared = (frame.match(/\x1b\[2K/g) ?? []).length;
+    const written = (frame.match(/\x1b\[2K[^\n]/g) ?? []).length;
+    expect(cleared, 'the rows the taller frame wrote below the new block were never blanked').toBeGreaterThan(written);
+    input.emit('data', '\r');
+    await p;
+  });
+
+  it('the resize listener is removed when the prompt closes', async () => {
+    const { input, output } = install();
+    const p = checkboxPrompt(items, { title: 'pick' });
+    await Promise.resolve();
+    expect(output.listenerCount('resize')).toBe(1);
+    input.emit('data', '\r');
+    await p;
+    expect(output.listenerCount('resize'), 'a prompt that closes must not keep repainting').toBe(0);
   });
 });
