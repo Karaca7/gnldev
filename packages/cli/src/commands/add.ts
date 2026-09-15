@@ -161,21 +161,26 @@ export const addCommand: Command = {
     // Measured: `gnl add job && pnpm install` produced `Cannot find module '@gnldev/queue'`.
     // (`gnl init` in an EXISTING project is the one place that still only prints — there the
     // manifest is the reader's, and this command is running inside a gnl project by definition.)
-    if (r.dep) {
+    if (r.dep || r.extraDeps?.length) {
       const pkgPath = resolve('package.json');
+      // Every package this recipe's FILE imports, each at the range that is true for it — @gnldev/*
+      // follows the CLI's own version (lockstep), a third-party provider does not. Computed OUTSIDE
+      // the try: a recipe missing a range is our bug and should be loud, not swallowed into the
+      // fallback line that a project with no readable manifest gets.
+      const { recipeDeps } = await import('../scaffold.js');
+      const needed = recipeDeps(r);
       try {
         const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { dependencies?: Record<string, string> };
-        if (pkg.dependencies?.[r.dep] === undefined) {
-          // The CLI's own version: these packages move in lockstep, so the range a scaffold pins is
-          // the one that shipped this command.
-          const { frameworkRange } = await import('../scaffold.js');
-          pkg.dependencies = { ...pkg.dependencies, [r.dep]: frameworkRange() };
+        // Deps already present are left alone: the reader's pin wins over ours.
+        const wanted = Object.entries(needed).filter(([d]) => pkg.dependencies?.[d] === undefined);
+        if (wanted.length) {
+          pkg.dependencies = { ...pkg.dependencies, ...Object.fromEntries(wanted) };
           writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
-          console.log(`${green('✓')} added ${bold(r.dep)} to dependencies`);
+          for (const [d] of wanted) console.log(`${green('✓')} added ${bold(d)} to dependencies`);
           console.log(`\n${dim('then: pnpm install')}`);
         }
       } catch {
-        console.log(`\n${dim(`then: pnpm add ${r.dep}`)}`);
+        console.log(`\n${dim(`then: pnpm add ${Object.keys(needed).join(' ')}`)}`);
       }
     }
   },

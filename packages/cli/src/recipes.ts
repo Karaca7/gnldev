@@ -79,6 +79,26 @@ export interface Recipe {
   /** npm dependency to add to package.json (omit if already in the base template — e.g. memory/auth). */
   dep?: string;
   /**
+   * The version range for `dep` when it is NOT a `@gnldev/*` package.
+   *
+   * A framework package takes the CLI's own version (see `frameworkRange`) because they move in
+   * lockstep. A third-party one has no such relationship, and stamping the CLI's version onto it was
+   * measured doing exactly that: `gnl add model openai` wrote `"@ai-sdk/openai": "^0.1.0"` — a range
+   * that either does not resolve or silently installs a provider three majors behind the `ai` the
+   * template pins. Required for every non-@gnldev dep, enforced by `recipe-deps.test.ts`
+   * rather than by this sentence.
+   */
+  depRange?: string;
+  /**
+   * Packages the written FILE imports beyond `dep` — same range rules, same automatic install.
+   *
+   * `dep` is singular because most recipes are, and the one that is not was invisible: the otel file
+   * imports `piiTextRedactor` from `@gnldev/processors` on purpose (a span carries prompts, and a
+   * trace backend is usually the least access-controlled copy of your data), so a project that ran
+   * `gnl add otel` typechecked against a package it had never installed.
+   */
+  extraDeps?: string[];
+  /**
    * A package.json script this recipe brings with it, for the recipes whose output is a PROCESS
    * rather than a config line — a queue worker and a scheduler poller are long-running loops, not
    * things `gnl dev` mounts. Without this they would be files nobody has a way to start.
@@ -100,6 +120,29 @@ export interface Recipe {
    *  the generated `satisfies` clause must be widened with this type literal (e.g. auth). */
   configTypeExt?: string;
 }
+
+/**
+ * The range each AI SDK provider installs — PER PACKAGE, because they do not share a major.
+ *
+ * The first cut of this was one shared constant, `^4.0.0`, taken from the generation
+ * `@gnldev/durable` develops against (`@ai-sdk/openai@4`). It was wrong for half the table:
+ * `@ai-sdk/openai-compatible` has never published a 4.x — its newest is 3.0.48 — so
+ * `gnl add model nvidia` wrote a range npm answers with E404, which is the exact failure this whole
+ * change set exists to remove, re-introduced one constant lower. Nothing in the repo caught it:
+ * `@ai-sdk/openai-compatible` appears in no manifest and no lockfile here, so there was no local
+ * truth to compare against, and the test compared all four recipes to a fifth package's range.
+ *
+ * So the ranges live per provider, and `recipe-deps.test.ts` asks the REGISTRY whether each one
+ * resolves rather than asking another file in this repo. A version range is a claim about npm, and
+ * npm is the only thing that can confirm it.
+ *
+ * Declared before RECIPES because `modelRecipe` reads it while the object literal is being built.
+ */
+const AI_SDK_PROVIDER_RANGES: Record<string, string> = {
+  '@ai-sdk/openai': '^4.0.0',
+  '@ai-sdk/anthropic': '^4.0.0',
+  '@ai-sdk/openai-compatible': '^3.0.0',
+};
 
 export const RECIPES: Record<string, Recipe> = {
   'idempotency-tool': {
@@ -599,6 +642,8 @@ export const embeddings = createCache(config.storage!.cache, 'embeddings');
     hint: 'journal → traces',
     file: 'src/otel.ts',
     dep: '@gnldev/otel',
+    // The file below imports the redactor too, and a declared import is a declared dependency.
+    extraDeps: ['@gnldev/processors'],
     contents: `// Runs, as traces your existing tooling already understands (Jaeger, Tempo, Honeycomb, …).
 //
 // Exported FROM THE JOURNAL, not collected live: the trace is built from what was recorded, so it
@@ -691,6 +736,9 @@ function modelRecipe(provider: string, label: string, dep: string, contents: str
     file,
     contents,
     dep,
+    // This provider's own newest major — see AI_SDK_PROVIDER_RANGES for why it is not one shared
+    // constant. A provider missing from that table is a recipe that cannot say what it installs.
+    depRange: AI_SDK_PROVIDER_RANGES[dep] ?? (() => { throw new Error(`gnl: no AI SDK range declared for ${dep}`); })(),
     env,
     wiring: {
       import: `import { model } from './${file.replace(/\.ts$/, '.js')}';`,

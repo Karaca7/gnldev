@@ -21,7 +21,7 @@
 //   --template minimal               the static starter; --template full is a retired alias
 import type { Command } from './types.js';
 import { positional, flag, flagBool } from '../args.js';
-import { TEMPLATES, RETIRED_TEMPLATES, type TemplateName } from '../scaffold.js';
+import { TEMPLATES, RETIRED_TEMPLATES, recipeDeps, type TemplateName } from '../scaffold.js';
 import { FEATURE_IDS, RECIPES, recipeContents, type Recipe } from '../recipes.js';
 import { HOST_IDS, HOSTS } from '../hosts.js';
 import {
@@ -287,8 +287,15 @@ export const initCommand: Command = {
       write(RECIPES['idempotency-tool']!.file, recipeContents(RECIPES['idempotency-tool']!));
       for (const r of recipes) write(r.file, recipeContents(r));
 
+      // EVERY package the files above import, asked of the one function that knows — not `r.dep`,
+      // which is singular and therefore silently dropped the second import the otel recipe makes
+      // (`piiTextRedactor` from @gnldev/processors). This path only needs the NAMES: the line it
+      // prints is the reader's to run, and `pnpm add` picks the range. `pg` rides along for the same
+      // reason it does in a fresh scaffold — the config written two lines up imports PostgresStorage,
+      // and the driver is an optional peer that nobody would think to ask for.
       const deps = ['@gnldev/durable', '@gnldev/server', '@gnldev/studio', '@gnldev/memory', '@gnldev/auth', 'ai', 'zod',
-        ...recipes.map((r) => r.dep).filter((d): d is string => !!d)];
+        ...recipes.flatMap((r) => Object.keys(recipeDeps(r))),
+        ...(resolved.answers.store === 'pg' ? ['pg'] : [])];
       console.log(`\n${cyan('Add the dependencies (package.json is yours — nothing was edited):')}`);
       console.log(`  pnpm add ${[...new Set(deps)].join(' ')}`);
       console.log(`  pnpm add -D @gnldev/cli tsx typescript @types/node`);

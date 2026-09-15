@@ -75,6 +75,13 @@ scripting and `--config` for a non-default config path.
 
 ## Frontend
 
+Not installed by default — a project that is only a worker or a cron job should not carry a browser
+client it never imports:
+
+```bash
+pnpm add @gnldev/client
+```
+
 ```ts
 import { GnlClient } from '@gnldev/client';
 const gnl = new GnlClient({ baseUrl: 'http://localhost:3000' });

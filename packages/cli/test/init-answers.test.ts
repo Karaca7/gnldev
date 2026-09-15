@@ -188,6 +188,27 @@ describe('the end-users answer writes a file, and only a file', () => {
         if (rel === 'gnl.config.ts') continue;              // the config is where lines are allowed
         if (rel === join('src', 'identity.ts')) continue;    // a NEW file, also allowed
         const text = readFileSync(join(dir, rel), 'utf8');
+        // package.json is the OTHER place a line is allowed, and only in the ONE field that holds
+        // lines. An answer that puts a config line in gnl.config.ts may have to make that line
+        // runnable — `storage: new PostgresStorage(…)` needs the pg driver, and refusing to install
+        // it does not keep the project uniform, it keeps it broken. So the manifest is compared
+        // FIELD BY FIELD instead of being waved through.
+        //
+        // Only `dependencies` is exempt, and that is measured rather than assumed: across every
+        // combination below, `scripts` and `devDependencies` come out IDENTICAL. Exempting them too
+        // would have been a hole wide enough for a future answer to add a `Recipe.script` and never
+        // be seen — an answer that gives one project a `worker` script and another none is exactly
+        // the structural fork this test exists to catch.
+        if (rel === 'package.json') {
+          const strip = (t: string) => {
+            const { dependencies: _d, ...rest } = JSON.parse(t) as Record<string, unknown>;
+            return JSON.stringify(rest);
+          };
+          const seenPkg = baseline.get(rel);
+          if (seenPkg === undefined) baseline.set(rel, text);
+          else if (strip(seenPkg) !== strip(text)) forked.push(`${rel} (differs outside dependencies under ${JSON.stringify(answers)})`);
+          continue;
+        }
         const seen = baseline.get(rel);
         if (seen === undefined) baseline.set(rel, text);
         else if (seen !== text) forked.push(`${rel} (differs under ${JSON.stringify(answers)})`);

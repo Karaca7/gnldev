@@ -133,7 +133,7 @@ export function addHost(dir: string, hostId: string, mode: HostMode = 'own'): vo
     // its dependency is this project's too. The HOST framework is the one that differs — mounting
     // means the app that already runs declares it, and a second declaration here is how two versions
     // of Express end up resolvable in one tree.
-    pkg.dependencies = { ...pkg.dependencies, [chatRecipe.dep!]: frameworkRange() };
+    pkg.dependencies = { ...pkg.dependencies, ...recipeDeps(chatRecipe) };
     if (mode === 'own') pkg.dependencies = { ...pkg.dependencies, ...(host.deps ?? {}) };
     // `@types/node` for every host: the server entry reads process.env and imports node: builtins,
     // neither of which the base template ever did.
@@ -174,6 +174,32 @@ export function frameworkRange(): string {
   const require = createRequire(import.meta.url);
   const { version } = require('../package.json') as { version: string };
   return `^${version}`;
+}
+
+/** The node-postgres range @gnldev/durable peers on — see the `answers.store === 'pg'` branch. */
+const PG_RANGE = '^8.0.0';
+
+/**
+ * Every package a recipe brings, each at the range that is true for IT — the one place that decides.
+ *
+ * The rule the callers used to each get wrong in their own way: lockstep applies to `@gnldev/*` and
+ * to nothing else. `gnl add model nvidia` wrote the CLI's version onto `@ai-sdk/openai-compatible`,
+ * and `gnl add otel` wrote a file importing a package it never declared. Both are the same missing
+ * function, so both callers now ask this one.
+ *
+ * A non-@gnldev dependency with no `depRange` is a recipe bug, not a runtime condition: the range is
+ * a property of the recipe, known when it is written. `recipe-deps.test.ts` fails the build
+ * instead of letting a project find out at install time.
+ */
+export function recipeDeps(r: Pick<Recipe, 'dep' | 'depRange' | 'extraDeps'>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const dep of [r.dep, ...(r.extraDeps ?? [])]) {
+    if (!dep) continue;
+    if (dep.startsWith('@gnldev/')) out[dep] = frameworkRange();
+    else if (r.depRange) out[dep] = r.depRange;
+    else throw new Error(`gnl: recipe dependency '${dep}' is missing depRange (non-@gnldev deps must name their own range)`);
+  }
+  return out;
 }
 
 /**
@@ -238,7 +264,13 @@ export function generateConfig(recipes: Recipe[], answers: InitAnswers = DEFAULT
   const imports = recipes.map((r) => r.wiring.import);
   const agentTools = recipes.filter((r) => r.wiring.place === 'agentTool').map((r) => r.wiring.code);
   const configFields = recipes.filter((r) => r.wiring.place === 'configField').map((r) => r.wiring.code);
-  const typeExts = recipes.map((r) => r.configTypeExt).filter((t): t is string => !!t);
+  // EVERY recipe's type extension, not just the picked ones — the config is written once and edited
+  // for years. `satisfies` is an upper bound over OPTIONAL fields, so naming one the config does not
+  // use costs nothing; leaving it out cost something measurable: `gnl add auth` prints an `auth,`
+  // line to paste into a config whose satisfies clause froze at init, and the paste lands as TS2353
+  // in the reader's editor while `tsx` runs it fine — an error that only appears where nobody is
+  // looking for it. A recipe added later widens this automatically.
+  const typeExts = [...new Set(Object.values(RECIPES).map((r) => r.configTypeExt).filter((t): t is string => !!t))];
 
   // Two agents from day one: the chat agent, and the proof agent whose tool wiring is the first
   // agent↔tool connection a reader sees — in the config, where every later one will also live.
@@ -279,7 +311,8 @@ export function generateConfig(recipes: Recipe[], answers: InitAnswers = DEFAULT
       ? [
         '  // Postgres, because you said the journal lives in one. `DATABASE_URL` is read at startup and',
         '  // is NOT defaulted — a journal that silently falls back to a local file is a journal you',
-        '  // discover is empty in production. `pnpm add pg` if it is not installed yet.',
+        '  // discover is empty in production. The `pg` driver comes with this answer: installed for you',
+        '  // in a new project, and named in the `pnpm add` line if this config landed in an existing one.',
         '  storage: new PostgresStorage({ connectionString: process.env.DATABASE_URL! }),',
       ]
       : ["  storage: new SqliteStorage('runs.db'),"]),
@@ -365,6 +398,13 @@ function scaffoldFeatures(dir: string, name: string, features: string[], forceE2
 
   // Write each recipe's src file + collect its dependency (the base tool first, same mechanism).
   const deps: Record<string, string> = {};
+
+  // `pg` when the journal lives in Postgres. It is an OPTIONAL peer of @gnldev/durable — correct for
+  // the engine, wrong for a project that has already answered the question: the generated config
+  // imports PostgresStorage on line one, so `pnpm dev` failed on a driver the reader was never asked
+  // to install. A question that has been answered should not leave homework. (The `^8.0.0` here is
+  // durable's own peer range, pinned to it by recipe-deps.test.ts.)
+  if (answers.store === 'pg') deps['pg'] = PG_RANGE;
   for (const r of [baseTool, ...recipes]) {
     const target = join(dir, r.file);
     mkdirSync(dirname(target), { recursive: true });
@@ -373,7 +413,7 @@ function scaffoldFeatures(dir: string, name: string, features: string[], forceE2
     writeFileSync(target, recipeContents(r, defaultVariants(r)));
     // The CLI's own version, not a literal — the literal version of this line has been wrong twice
     // ('^0.0.0', then '^0.1.0' about to be wrong at the first minor bump). See frameworkRange.
-    if (r.dep) deps[r.dep] = frameworkRange();
+    Object.assign(deps, recipeDeps(r));
   }
 
   // Merge new deps + any process scripts into package.json (deps already present are skipped).
