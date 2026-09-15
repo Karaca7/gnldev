@@ -4,7 +4,7 @@
 Built-ins inherit durability — input processors run before `persistInput` (masking is journaled → doesn't
 run again on resume).
 
-> Install: `pnpm add @gnldev/processors` — or use it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.
+> Install: `pnpm add @gnldev/processors` — or use it from a [repo clone](https://github.com/Karaca7/gnldev): `pnpm install && pnpm -r build`.
 
 ```bash
 npm i @gnldev/processors   # peer: @gnldev/durable

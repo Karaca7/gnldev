@@ -1,4 +1,4 @@
-# Contributing to gnl-framework
+# Contributing to gnl
 
 Thanks for considering a contribution.
 

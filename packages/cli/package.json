@@ -101,11 +101,11 @@
   "author": "Karaca Yılmaz (https://gnl.dev)",
   "homepage": "https://gnl.dev",
   "bugs": {
-    "url": "https://github.com/Karaca7/gnl-framework/issues"
+    "url": "https://github.com/Karaca7/gnldev/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Karaca7/gnl-framework.git",
+    "url": "git+https://github.com/Karaca7/gnldev.git",
     "directory": "packages/cli"
   },
   "publishConfig": {

@@ -30,7 +30,7 @@ even though the checkbox is ticked on every PR so that each change carries its o
 <!--
 Row format for the next entry:
 
-| [@handle](https://github.com/handle) | [#123](https://github.com/Karaca7/gnl-framework/pull/123) | v1.0 | 2026-08-11 |
+| [@handle](https://github.com/handle) | [#123](https://github.com/Karaca7/gnldev/pull/123) | v1.0 | 2026-08-11 |
 
 Add the row in the same commit that merges the PR, or immediately after. If a contributor asks to
 have their name removed, the row can go; the acceptance recorded in the pull request cannot, and is

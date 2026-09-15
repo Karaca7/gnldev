@@ -14,7 +14,7 @@
 > the paragraph above promises exactly that, and this is the correction. No acceptance was affected:
 > every commit in this repository to date is the Maintainer's own, so no one had accepted 1.0.
 
-This is the Contributor License Agreement for **gnl-framework** (source repository, npm scope
+This is the Contributor License Agreement for **gnl** (source repository, npm scope
 `@gnldev`). It applies to any Contribution (code, documentation, or other material) you submit to
 this project, whether by pull request or any other means.
 
@@ -25,7 +25,7 @@ By submitting a Contribution, you agree to the following terms.
 - **"Maintainer"** means Karaca Yılmaz (https://gnl.dev), the original author and current copyright holder of the
   Project, and any legal entity Karaca Yılmaz may transfer ownership of the Project to in the
   future (e.g., upon incorporation).
-- **"Project"** means the gnl-framework source code and documentation, in this repository and its
+- **"Project"** means the gnl source code and documentation, in this repository and its
   public snapshot.
 - **"Contribution"** means any original work of authorship, including modifications to existing
   work, intentionally submitted by you to the Maintainer for inclusion in the Project.

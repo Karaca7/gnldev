@@ -8,7 +8,7 @@ silent open door.
 
 ## Install
 
-> Install: `pnpm add @gnldev/auth` — or use it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.
+> Install: `pnpm add @gnldev/auth` — or use it from a [repo clone](https://github.com/Karaca7/gnldev): `pnpm install && pnpm -r build`.
 
 ```bash
 npm i @gnldev/auth

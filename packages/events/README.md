@@ -8,7 +8,7 @@ concurrent poll race) can cause redelivery → **write the handler as idempotent
 inside it (`runDurable`/`claim`). Fan-out: N consumers → each gets every event at least once, via its own
 marker stream.
 
-> Install: `pnpm add @gnldev/events` — or use it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.
+> Install: `pnpm add @gnldev/events` — or use it from a [repo clone](https://github.com/Karaca7/gnldev): `pnpm install && pnpm -r build`.
 
 ```bash
 npm i @gnldev/events   # peer: @gnldev/durable

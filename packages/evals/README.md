@@ -4,7 +4,7 @@
 replayable scores (memoized if the journal is writable → same score on resume). `evalDataset` runs a
 resumable suite (picks up where it left off if interrupted).
 
-> Install: `pnpm add @gnldev/evals` — or use it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.
+> Install: `pnpm add @gnldev/evals` — or use it from a [repo clone](https://github.com/Karaca7/gnldev): `pnpm install && pnpm -r build`.
 
 ```bash
 npm i @gnldev/evals   # peer: @gnldev/durable, ai

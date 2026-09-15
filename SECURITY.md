@@ -6,7 +6,7 @@ Please do **not** open a public issue for a security problem.
 
 Report it through GitHub's private vulnerability reporting instead:
 
-1. Go to the [Security tab](https://github.com/Karaca7/gnl-framework/security) of this repository
+1. Go to the [Security tab](https://github.com/Karaca7/gnldev/security) of this repository
 2. Click **Report a vulnerability**
 
 That opens a private thread visible only to you and the maintainer. It needs no email exchange and

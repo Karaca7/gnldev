@@ -2,7 +2,7 @@
 
 **Durable deterministic workflows** — every step's result is journaled, so a crash → resume picks up where it left off instead of re-running the finished steps ([at-most-once for side effects](../durable/README.md#what-never-charged-twice-actually-means)). Control flow: `then` / `parallel` / `branch` / `foreach` / `loop`. Suspendable: `runResumable` + `sleep` / `waitFor` (evented + scheduled).
 
-> Install: `pnpm add @gnldev/workflow` — or use it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.
+> Install: `pnpm add @gnldev/workflow` — or use it from a [repo clone](https://github.com/Karaca7/gnldev): `pnpm install && pnpm -r build`.
 
 ```bash
 npm i @gnldev/workflow   # journal: @gnldev/durable

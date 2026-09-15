@@ -4,7 +4,7 @@
 
 Hand-written JSON-RPC 2.0 — **`@modelcontextprotocol/sdk` is NOT USED** (zero new dependencies: only `node:readline`/`node:process`). Content is first tried via a live fetch of `/llms.txt` + `/llms-full.txt` through `GNL_DOCS_URL` (default `https://gnl.dev`); if the network is unavailable/unreachable, it falls back to the static content embedded in the package (`src/content.ts`) — this package works on its own even if the site is down.
 
-> Install: the `npx` line below resolves straight from npm — or point your MCP client at a [repo clone](https://github.com/Karaca7/gnl-framework) (`pnpm install && pnpm -r build`, then `node packages/docs-mcp/dist/cli.js`).
+> Install: the `npx` line below resolves straight from npm — or point your MCP client at a [repo clone](https://github.com/Karaca7/gnldev) (`pnpm install && pnpm -r build`, then `node packages/docs-mcp/dist/cli.js`).
 
 ```bash
 npm i -g @gnldev/docs-mcp   # or npx @gnldev/docs-mcp (no dependencies, runs the stdio server directly)

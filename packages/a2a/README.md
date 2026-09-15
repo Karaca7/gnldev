@@ -4,7 +4,7 @@
 
 > **A runId has two shapes, and this one is deliberate.** Most runIds are opaque `run1_…` digests the engine mints from a caller's `workKey`. Engine-issued runs keep **readable composite ids** on purpose (`sched:`, `job:`, `a2a:`, `eval:`, `wf:`, `batch:`): the engine writes them itself, they are already deterministic, and nothing is stored that a hash would protect. `a2a:` in particular *must* stay readable — hashing it would make the two deployments derive different ids for the same call, and cross-network dedup is precisely what that would break. `idempotencyKey` is what `durableTool` injects (parent-run-scoped, so it is globally unique); the bare `toolCallId` is only the fallback for a plain AI SDK loop, where two different parent runs can emit the same short id (`call_1`) and collide. When wrapped in durableTool inside a parent `runDurable`, the remote call is skipped on parent resume.
 
-> Install: `pnpm add @gnldev/a2a` on **both ends** of the call — or run both from a [repo clone](https://github.com/Karaca7/gnl-framework) (`pnpm install && pnpm -r build`).
+> Install: `pnpm add @gnldev/a2a` on **both ends** of the call — or run both from a [repo clone](https://github.com/Karaca7/gnldev) (`pnpm install && pnpm -r build`).
 
 ```bash
 npm i @gnldev/a2a   # peer: ai, zod

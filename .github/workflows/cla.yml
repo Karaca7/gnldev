@@ -75,7 +75,7 @@ jobs:
 
           To accept it: edit this pull request's description and tick
 
-              - [x] I have read and agree to the [CLA, v1.1](https://github.com/Karaca7/gnl-framework/blob/main/CLA.md).
+              - [x] I have read and agree to the [CLA, v1.1](https://github.com/Karaca7/gnldev/blob/main/CLA.md).
 
           Read it first — it grants the maintainer the right to relicense the contribution,
           including under terms that are not open source. It is a one-time step per account, but

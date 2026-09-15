@@ -5,7 +5,7 @@ Compatibility with the Vercel AI SDK's UI layer: run a durable agent on the serv
 
 ## Install
 
-> Install: `pnpm add @gnldev/chat-adapter` — or use it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.
+> Install: `pnpm add @gnldev/chat-adapter` — or use it from a [repo clone](https://github.com/Karaca7/gnldev): `pnpm install && pnpm -r build`.
 
 ```bash
 npm i @gnldev/chat-adapter

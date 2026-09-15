@@ -2,7 +2,7 @@
 
 **MCP client + server.** Client: adapts external MCP tools to AI SDK tools → inside `runDurable` they become **journaled and replayable**: a call already recorded as done is not made again on resume ([at-most-once for the effect](../durable/README.md#what-never-charged-twice-actually-means)). Server: exposes your own tools as MCP (`callTool` deduped against the journal by idempotencyKey).
 
-> Install: `pnpm add @gnldev/mcp` — or use it from a [repo clone](https://github.com/Karaca7/gnl-framework): `pnpm install && pnpm -r build`.
+> Install: `pnpm add @gnldev/mcp` — or use it from a [repo clone](https://github.com/Karaca7/gnldev): `pnpm install && pnpm -r build`.
 
 ```bash
 npm i @gnldev/mcp   # peer: @gnldev/durable, ai  ·  dep: @modelcontextprotocol/sdk (installed for you)
