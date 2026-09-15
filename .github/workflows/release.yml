@@ -145,8 +145,25 @@ jobs:
       # form therefore publishes 25 unattested tarballs while exiting 0, and npm refuses to
       # republish a version -- so 0.1.0 would stay permanently unattested with nothing in the log to
       # say so. NPM_CONFIG_PROVENANCE reaches npm through the environment, which pnpm does not
-      # filter. Verify with a workflow_dispatch dry run before a real tag: the npm output must
-      # mention an attestation/provenance step.
+      # filter.
+      #
+      # A DRY RUN CANNOT CONFIRM ANY OF THIS, and an earlier version of this comment said it could —
+      # "the npm output must mention an attestation/provenance step". It never does. Measured both
+      # locally and in the dispatch run for fecc116: with NPM_CONFIG_PROVENANCE=true, `npm publish
+      # --dry-run` prints exactly what it prints without it — no attestation line, and no complaint
+      # either, even outside CI where signing is impossible. Attestation is produced at the moment of
+      # a real publish, from the OIDC token, so a run that contacts no registry has nothing to show.
+      # A reader following the old instruction would have found no provenance line and concluded the
+      # config was broken, or shrugged and assumed it worked; the output supports neither reading.
+      #
+      # What the dry run DOES confirm is worth keeping: the package set (25, private ones absent),
+      # one version across all of them, and no `workspace:` range surviving into a manifest.
+      # Provenance itself is verifiable only afterwards, on the published artifact:
+      #
+      #     npm view @gnldev/durable   # a `provenance` field, and the badge on npmjs.com
+      #
+      # Check it immediately after the first release. If it is missing, the fix is a new patch
+      # version — npm will not accept a re-publish of one it already has.
       - name: Publish (dry run)
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
         run: pnpm -r publish --access public --no-git-checks --dry-run
