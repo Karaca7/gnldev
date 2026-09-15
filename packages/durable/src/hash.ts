@@ -163,6 +163,23 @@ function sortKeys(value: unknown, key = '', state: Descent = { open: new Set(), 
   // `JSON.stringify` THROW outright. Serialized as a decimal string, tagged so it can't be confused
   // with the plain string "123".
   if (typeof value === 'bigint') return tagged('BigInt', value.toString());
+  // TWO STRINGS UNICODE CALLS EQUAL. `José` written as one code point and `José` written as `e` plus
+  // a combining acute are CANONICALLY EQUIVALENT — the same text by Unicode's own definition, and
+  // indistinguishable on screen. They are different byte sequences, so they hashed differently, and
+  // `idempotency: 'args'` is a promise about the same WORK: measured with a real tool, the same
+  // customer arriving from a web form (NFC) and from an iOS client (NFD) was charged TWICE.
+  //
+  // NFC and not NFD because it is the shorter form and what the web platform already normalizes to
+  // (WHATWG requires it for form submission). This is deliberately NOT case folding or trimming —
+  // `José` and `JOSÉ` are different text and must stay different keys. Only forms Unicode itself
+  // declares to be the same character are collapsed.
+  if (typeof value === 'string') return value.normalize('NFC');
+  // NaN, Infinity and -Infinity all serialize to `null` in JSON — and so does `null`. Four distinct
+  // values, one journal key: a tool called with `{amount: Infinity}` would be answered from the
+  // journal entry written by `{amount: NaN}`, having never run. Neither is a valid charge, but the
+  // engine's contract is that different arguments are different work; silently merging them hides an
+  // upstream division by zero instead of letting it surface as its own failed call.
+  if (typeof value === 'number' && !Number.isFinite(value)) return tagged('Number', String(value));
   if (value && typeof value === 'object') {
     // The ONE place a cycle can close: every recursive branch below reaches its children through
     // `sortKeys`, so guarding the entrance covers objects, arrays, Map keys AND values, Set members
@@ -273,8 +290,17 @@ function normalizeObject(value: object, key: string, state: Descent): unknown {
   // Sorting on the ESCAPED key keeps ordering deterministic; for every key that does not start
   // with NUL the escape is the identity, so this stays byte-identical to the previous `.sort()`.
   // The ORIGINAL key is what gets handed to a nested `toJSON`, matching `JSON.stringify`.
+  //
+  // KEYS ARE NORMALIZED TOO, for the reason string VALUES are (see `sortKeys`): a key is a string a
+  // caller supplies, and in a `Record<string, unknown>` argument it is often the user's own data —
+  // `{ metadata: { 'müşteri-adı': … } }`. Two canonically equivalent keys are the same key, and
+  // hashing them apart would split one piece of work in two.
+  //
+  // Normalizing can make two DISTINCT keys collide, and the later one then wins — but only when
+  // Unicode already says they are the same text, which is the same judgement the values rely on.
+  // Applied before escaping so the NUL-prefix defence still sees the final byte sequence.
   return Object.keys(obj)
-    .map((k) => [escapeKey(k), k] as const)
+    .map((k) => [escapeKey(k.normalize('NFC')), k] as const)
     .sort((a, b) => compareTokens(a[0], b[0]))
     .reduce<Record<string, unknown>>((acc, [escaped, original]) => {
       acc[escaped] = descend(state, `.${original}`, obj[original], original);
