@@ -4,7 +4,7 @@
 // A thin shell (checkboxPrompt) does the impure parts: put stdin in raw mode, decode keypresses into
 // key events, render the list with the shared ANSI helpers, and loop until the reducer says done.
 
-import { bold, cyan, dim, green } from './ansi.js';
+import { bold, cyan, dim, green, displayWidth, truncateToWidth } from './ansi.js';
 
 export interface PromptItem {
   id: string;
@@ -106,10 +106,14 @@ const ESC = '\x1b';
 
 /**
  * Visible length: ANSI colour sequences cost bytes and no columns, and every line here is coloured.
+ *
+ * Delegates to `displayWidth`, which also knows that a CJK character costs TWO columns and a
+ * combining mark costs none. Counting UTF-16 units here meant a wide label measured as fitting and
+ * then wrapped on screen — putting the repaint back into exactly the state `clamp` exists to
+ * prevent, for anyone whose language is not Latin.
  */
 function visibleLength(s: string): number {
-  // eslint-disable-next-line no-control-regex
-  return s.replace(/\x1b\[[0-9;]*m/g, '').length;
+  return displayWidth(s);
 }
 
 /**
@@ -127,36 +131,95 @@ function visibleLength(s: string): number {
  * their first clause for exactly this reason.
  */
 function clamp(line: string, width: number): string {
-  const visible = visibleLength(line);
-  if (visible <= width) return line;
-  let out = '';
-  let seen = 0;
-  const budget = Math.max(1, width - 1); // room for the ellipsis
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i]!;
-    if (ch === '\x1b') {                    // copy the whole escape, it costs no columns
-      const end = line.indexOf('m', i);
-      if (end === -1) break;
-      out += line.slice(i, end + 1);
-      i = end;
-      continue;
-    }
-    if (seen >= budget) break;
-    out += ch;
-    seen++;
-  }
-  return `${out}…${ESC}[0m`;
+  if (visibleLength(line) <= width) return line;
+  // `truncateToWidth` walks code points, so a surrogate pair moves as one unit — the old loop
+  // indexed UTF-16 units and could stop between the halves of an emoji, emitting a lone `\ud83d`.
+  // The reset is appended here rather than there because this is the caller that guarantees every
+  // line is coloured, and an unterminated sequence bleeds into the row below.
+  return `${truncateToWidth(line, width)}${ESC}[0m`;
 }
 
-export function renderLines(state: SelectState, title: string, width = 80): string[] {
-  const lines = [
-    bold(title),
-    dim(state.single
-      ? '  ↑/↓ move · enter choose · q cancel'
-      : '  ↑/↓ move · space toggle · a all/none · enter confirm · q cancel'),
-    '',
-  ];
-  state.items.forEach((it, i) => {
+/**
+ * The width to render into, from a stream that may not know its own.
+ *
+ * `||` and not `??`: a terminal can report `isTTY: true` with `columns: 0`. Measured under
+ * `script(1)`, and the same shape appears in CI runners and container TTYs that allocate a terminal
+ * without ever sending a window size. `0 ?? 80` is 0, so the width arrived as -1, `clamp` fell to
+ * its one-column floor, and every row of the prompt rendered as one character and an ellipsis —
+ * `g…`, `❯…`. An unreadable prompt is an unanswerable one, and it was invisible to every test in
+ * this package because they all pass a width in explicitly.
+ *
+ * The floor covers the other end. Below about twenty columns there is nothing worth truncating to,
+ * and a wrapped line is a better failure than a line reduced to punctuation.
+ *
+ * A function, rather than the expression it replaced, for exactly one reason: the expression could
+ * not be tested and this can.
+ */
+export function drawWidth(columns: number | undefined): number {
+  // The ceiling is not decoration: `Infinity` and absurd values both reach here (a stream that
+  // reports no size, a mocked stdout, a terminal multiplexer mid-resize), and an infinite width
+  // makes `clamp` a no-op — which is how a line gets past the edge and starts the wrapping this
+  // whole mechanism exists to stop. Found by attacking this function rather than by using it.
+  const cols = Number.isFinite(columns) && (columns as number) > 0 ? (columns as number) : 80;
+  return Math.min(400, Math.max(20, cols - 1));
+}
+
+/** Title, help line, blank — the rows above the list, which are always drawn. */
+const CHROME_ROWS = 3;
+
+/**
+ * Which slice of the list fits on screen, and where the cursor sits inside it.
+ *
+ * THE VERTICAL HALF OF THE WRAPPING BUG. `clamp` fixed the horizontal one: a row wider than the
+ * terminal takes two screen rows, so `draw()`'s "move up by the number of lines I wrote" arithmetic
+ * comes up short and the header marches down the screen on every keypress. A list TALLER than the
+ * terminal does exactly the same thing by a different route — the terminal scrolls, the rows written
+ * are no longer the rows on screen, and the cursor-up count is wrong from the first repaint.
+ *
+ * Width was tested at four values. Height was never read at all: `output.rows` appears nowhere, so
+ * `gnl add processors` (six options plus chrome) in a split pane or a small terminal window was the
+ * same defect, unmeasured.
+ *
+ * So the list gets a viewport. The cursor is kept centred where it can be, pinned at the ends where
+ * it cannot, and a counter line says what is out of sight — a list that silently hides options is
+ * worse than one that scrolls, because the reader cannot tell the difference between "not there"
+ * and "not visible".
+ */
+export function visibleWindow(
+  count: number,
+  cursor: number,
+  rows: number | undefined,
+  chromeRows: number = CHROME_ROWS,
+): { start: number; end: number } {
+  // One row is left unwritten on purpose: writing the last line of a terminal scrolls it on many
+  // emulators, which is the thing being avoided.
+  const budget = rows && Number.isFinite(rows) ? rows - chromeRows - 1 : Infinity;
+  if (!Number.isFinite(budget) || count <= budget) return { start: 0, end: count };
+  // `Math.max(1, …)` is NOT a floor to fall back on — it was, and that is how a 4-row terminal got
+  // five lines: one forced option plus a counter on top of three chrome rows. When the budget
+  // cannot hold even one option and its counter, the honest answer is an empty window; the caller
+  // then shows the title and the counter alone, which still tells the reader where they are.
+  const capacity = budget - 1; // one row for the "… n above/below" counter
+  if (capacity < 1) return { start: 0, end: 0 };
+  const start = Math.max(0, Math.min(cursor - Math.floor(capacity / 2), count - capacity));
+  return { start, end: start + capacity };
+}
+
+export function renderLines(state: SelectState, title: string, width = 80, rows?: number): string[] {
+  // Below six rows the chrome itself does not fit beside a single option, so it gives way in the
+  // order it can be spared: the blank line first, then the help line. Found by attacking this
+  // function with every height from 1 to 30 — the first cut treated three chrome rows as fixed and
+  // still wrote five lines into a four-row terminal, which is the overflow it was written to stop.
+  // A title is the one row that cannot go: without it the reader does not know what is being asked.
+  const help = dim(state.single
+    ? '  ↑/↓ move · enter choose · q cancel'
+    : '  ↑/↓ move · space toggle · a all/none · enter confirm · q cancel');
+  const lines = !rows || rows >= 6 ? [bold(title), help, '']
+    : rows >= 4 ? [bold(title), help]
+    : [bold(title)];
+  const { start, end } = visibleWindow(state.items.length, state.cursor, rows, lines.length);
+  state.items.slice(start, end).forEach((it, offset) => {
+    const i = start + offset;
     const on = state.checked.has(it.id);
     const pointer = i === state.cursor ? cyan('❯') : ' ';
     const box = on ? green('◉') : '◯';
@@ -164,18 +227,94 @@ export function renderLines(state: SelectState, title: string, width = 80): stri
     const label = i === state.cursor ? bold(it.label) : it.label;
     lines.push(`${pointer} ${box} ${label}${hint}`);
   });
-  return lines.map((l) => clamp(l, width));
+  const hiddenAbove = start;
+  const hiddenBelow = state.items.length - end;
+  if (hiddenAbove || hiddenBelow) {
+    const parts = [hiddenAbove ? `${hiddenAbove} above` : '', hiddenBelow ? `${hiddenBelow} below` : ''].filter(Boolean);
+    lines.push(dim(`  … ${parts.join(', ')} — ↑/↓ to reach them`));
+  }
+  // THE LAST WORD ON HEIGHT, and deliberately a dumb one. Everything above computes a fitting
+  // window, and a computation that is wrong by one row puts the terminal back into scrolling — the
+  // exact failure this file keeps returning to. So the arithmetic is checked by a truncation that
+  // cannot be wrong: whatever was decided, the block never exceeds the rows it was given. If this
+  // ever actually cuts something, the window maths has a bug — but the reader still gets a prompt
+  // that repaints in place instead of a header walking down their screen.
+  const fitted = rows && Number.isFinite(rows) ? lines.slice(0, Math.max(1, rows)) : lines;
+  return fitted.map((l) => clamp(l, width));
 }
 
 /** Maps a raw stdin chunk to a Key (or undefined if it isn't a recognized control). */
+/**
+ * Every key in one read from the terminal — because a read is not a keystroke.
+ *
+ * The first version compared the whole chunk for equality, and four real inputs measured as broken:
+ *
+ *   `\x1b[B\x1b[B`  holding ↓ down. Node coalesces repeats into ONE chunk; equality matched none
+ *                   of them, so the cursor did not move at all while the key was held.
+ *   `\r\n`          Enter, on a pty that sends CRLF. Equality matched neither `\r` nor `\n`:
+ *                   Enter was simply dead there.
+ *   `\x1bOB`        ↓ in APPLICATION cursor mode — what tmux and PuTTY send. Unrecognised.
+ *   `\x1b` alone    the first byte of an arrow key, arriving in its own chunk on a slow or remote
+ *                   pty. This one was the dangerous one: it decoded as `cancel`, so pressing an
+ *                   arrow could abandon `gnl init`.
+ *
+ * So the chunk is SCANNED rather than compared, and a lone ESC no longer cancels. Cancelling has two
+ * documented keys — `q` and Ctrl-C, both named in the help line — and ESC is not one of them, so
+ * treating a stray escape byte as "the user wants out" was inventing an instruction nobody gave.
+ */
+export function decodeKeys(chunk: string): Key[] {
+  const keys: Key[] = [];
+  let i = 0;
+  while (i < chunk.length) {
+    // CSI (`\x1b[A`) and SS3 (`\x1bOA`) — the same arrow, two modes, both in the wild.
+    const seq = /^\x1b(?:\[|O)([A-D])/.exec(chunk.slice(i));
+    if (seq) {
+      if (seq[1] === 'A') keys.push('up');
+      else if (seq[1] === 'B') keys.push('down');
+      // C/D are left/right: nothing to do in a vertical list, and swallowing them beats
+      // letting the bare bytes fall through to the letter cases below (`D` is not `toggleAll`).
+      i += seq[0].length;
+      continue;
+    }
+    const ch = chunk[i]!;
+    i += 1;
+    if (ch === '\x03' || ch === 'q' || ch === 'Q') keys.push('cancel');
+    else if (ch === '\r' || ch === '\n') {
+      keys.push('enter');
+      if (ch === '\r' && chunk[i] === '\n') i += 1;  // CRLF is one Enter, not two
+    }
+    else if (ch === ' ') keys.push('space');
+    else if (ch === 'a' || ch === 'A') keys.push('toggleAll');
+    else if (ch === 'k') keys.push('up');
+    else if (ch === 'j') keys.push('down');
+    // Anything else — including a lone ESC and the tail of a sequence we do not handle — is dropped.
+  }
+  return keys;
+}
+
+/** The first key in a chunk. Kept for callers that read one keystroke at a time. */
 export function decodeKey(chunk: string): Key | undefined {
-  if (chunk === '\x03' || chunk === 'q' || chunk === '\x1b') return 'cancel'; // Ctrl-C / q / Esc
-  if (chunk === '\r' || chunk === '\n') return 'enter';
-  if (chunk === ' ') return 'space';
-  if (chunk === 'a' || chunk === 'A') return 'toggleAll';
-  if (chunk === `${ESC}[A` || chunk === 'k') return 'up';
-  if (chunk === `${ESC}[B` || chunk === 'j') return 'down';
-  return undefined;
+  return decodeKeys(chunk)[0];
+}
+
+/**
+ * A read that can end mid-sequence, and the piece to hand to the next one.
+ *
+ * `decodeKeys` is pure and complete over a whole chunk, which leaves one case it cannot answer: an
+ * escape sequence SPLIT across two reads. `\x1b` + `[B` is one arrow key arriving in two pieces —
+ * which happens over ssh, on a loaded machine, inside some multiplexers. Decoding each piece alone
+ * threw the key away, so the cursor simply did not move and nothing said why. (The version before
+ * that was worse: the lone `\x1b` decoded as `cancel`, so a split arrow key quit `gnl init`.)
+ *
+ * So the tail is carried instead of dropped. Only a genuine prefix is held — `\x1b`, `\x1b[`,
+ * `\x1bO` — and at most those two characters, so a stray escape byte cannot wedge the prompt: the
+ * next read either completes it or produces its own keys with the orphan quietly discarded.
+ */
+export function decodeStream(chunk: string, carry = ''): { keys: Key[]; carry: string } {
+  const all = carry + chunk;
+  const m = /(?:\x1b|\x1b\[|\x1bO)$/.exec(all);
+  const head = m ? all.slice(0, m.index) : all;
+  return { keys: decodeKeys(head), carry: m ? m[0] : '' };
 }
 
 /**
@@ -197,7 +336,7 @@ export async function checkboxPrompt(
     if (prevLineCount > 0) output.write(`${ESC}[${prevLineCount}A`); // cursor up to the block start
     // Read per draw, not once: a terminal can be resized while the prompt is open, and a stale width
     // puts the repaint arithmetic back in the state this clamp exists to prevent.
-    const lines = renderLines(state, title, (output.columns ?? 80) - 1);
+    const lines = renderLines(state, title, drawWidth(output.columns), output.rows || undefined);
     for (const line of lines) output.write(`${ESC}[2K${line}\n`); // clear line + write
     prevLineCount = lines.length;
   };
@@ -216,10 +355,20 @@ export async function checkboxPrompt(
       input.pause();
       output.write(`${ESC}[?25h`); // show cursor
     };
+    // EVERY key in the chunk, not the first: holding ↓ arrives as one read carrying several
+    // sequences, and taking only the first made a held key move the cursor by one row and then
+    // appear stuck. Redraw once per chunk rather than per key — the intermediate frames are never
+    // seen, and drawing them is how a repaint falls behind the input that caused it.
+    let carry = '';
     const onData = (chunk: string): void => {
-      const key = decodeKey(chunk);
-      if (!key) return;
-      state = reducer(state, key);
+      const decoded = decodeStream(chunk, carry);
+      carry = decoded.carry;                    // an escape split across two reads finishes in the next one
+      const keys = decoded.keys;
+      if (!keys.length) return;
+      for (const key of keys) {
+        state = reducer(state, key);
+        if (state.cancelled || state.done) break;  // a key after Enter belongs to whatever comes next
+      }
       draw();
       if (state.cancelled) {
         cleanup();
