@@ -129,7 +129,7 @@ pnpm 10 is what the repository is developed and tested against.
 ## Quickstart (DX)
 One path, three commands (mock model — no API key needed):
 ```bash
-npm create gnl@latest my-agent    # one gate, at most three questions — every one skippable with --yes
+npm create gnl@latest my-agent    # one gate, at most four questions — every one skippable with --yes
 cd my-agent && pnpm install
 pnpm dev                          # REST API + Studio Playground (single port). Open http://localhost:3000/studio
                                   # (the REST API is mounted at `/`, which has no index route — bare `/` answers 404)
@@ -150,11 +150,12 @@ for await (const ev of gnl.stream('assistant', { prompt: 'streaming' })) { /* te
 ```
 
 ## Packages
-`packages/` holds **24** manifests, and every one of them publishes to npm under Apache-2.0 — there
-is no private package in this repository and no build step that withholds one. The paid auth tier
-(`@gnldev/auth-ee`) is distributed separately under its own licence; it implements the same
-`AuthProvider` interface `@gnldev/auth` defines here, so nothing in this tree depends on having it.
-The table below covers the ones you interact with directly.
+`packages/` holds **25** manifests, and every one of them publishes to npm under Apache-2.0 — there
+is no private package in this repository and no build step that withholds one. Two packages that
+exist in development are distributed elsewhere: the paid auth tier (`@gnldev/auth-ee`), under its
+own licence, implementing the same `AuthProvider` interface `@gnldev/auth` defines here; and a
+bundler for a managed runtime, which has no registry to publish to. Nothing in this tree depends
+on either. The table below covers the ones you interact with directly.
 
 | Package | What |
 |---|---|
@@ -173,7 +174,7 @@ The table below covers the ones you interact with directly.
 | **`@gnldev/cache`** | cross-run cache |
 | **`@gnldev/studio`** | inspector **+ Playground**: pick agent → prompt → streaming response → approval · time-travel/fork + cost/trace/metrics/diff · admin/API separation + role-based auth |
 | **`@gnldev/client`** | type-safe REST/SSE client (framework-agnostic core) + React hooks (`@gnldev/client/react`: `useGnlAgent`/`useChat`) |
-| **`@gnldev/cli`** | project: `gnl init` (**interactive feature checkbox** — pick idempotency-tool/rag/mcp/memory/workflow/auth/e2e → a wired `gnl.config.ts` is generated; non-interactive via `--features a,b,c` / `--template minimal` / `--yes`, prompt never opens without a TTY) / `add <idempotency-tool\|rag\|mcp\|memory\|workflow\|auth>` / `add model <provider>` / `dev` / `studio` · inspect: `runs`/`run`/`inspect` (**time-travel in the terminal**) · operate: `fork`/`resume`/`sweep`/`rm`/`pricing` (all wired straight to `@gnldev/durable`'s own exports, nothing reimplemented) · **one runtime dep** (`tsx`, to load `gnl.config.ts`; hand-rolled ANSI/table + a from-scratch raw-mode checkbox, no chalk/ora/commander/inquirer) · `create-gnl` (`npm create gnl`) |
+| **`@gnldev/cli`** | project: `gnl init` (**one gate, then at most four questions** — what a repeat should do (`--preset`), who each run belongs to (`--identity`), where the record is kept (`--store`), how people reach it (`--serving`, plus `--host <framework>`) → a wired `gnl.config.ts` is generated and the protections matrix it just configured is printed; non-interactive via `--features a,b,c` / `--yes`, prompt never opens without a TTY. In an existing project it writes only *new* files) / `add <idempotency-tool\|chat\|schedule\|job\|processors\|cache\|otel\|rag\|mcp\|memory\|workflow\|auth>` (each writes its file, and the dependencies that file imports — three of them need none, being in the base template already) / `add model <provider>` / `add host <framework> [--mount]` / `dev` / `studio` · inspect: `runs`/`run`/`inspect` (**time-travel in the terminal**) · operate: `fork`/`resume`/`sweep`/`rm`/`pricing` (all wired straight to `@gnldev/durable`'s own exports, nothing reimplemented) · **one runtime dep** (`tsx`, to load `gnl.config.ts`; hand-rolled ANSI/table + a from-scratch raw-mode prompt, no chalk/ora/commander/inquirer) · `create-gnl` (`npm create gnl`) |
 
 ### Free and paid — where the line is
 
@@ -216,7 +217,7 @@ this repo today:
 ## Development
 ```bash
 pnpm install
-pnpm -r build && pnpm -r typecheck && pnpm test   # 3600+ passing across 430+ files (npx vitest run)
+pnpm -r build && pnpm -r typecheck && pnpm test   # 4900+ passing across 540+ files (npx vitest run)
 
 # real-backend integration test (optional):
 docker-compose up -d

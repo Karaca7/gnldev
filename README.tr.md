@@ -128,7 +128,7 @@ yönlendirin. Depo pnpm 10 ile geliştiriliyor ve test ediliyor.
 ## Hızlı başlangıç (DX)
 Tek yol, üç komut (mock model — API key gerekmez):
 ```bash
-npm create gnl@latest my-agent    # tek kapı, en fazla üç soru — hepsi --yes ile atlanabilir
+npm create gnl@latest my-agent    # tek kapı, en fazla dört soru — hepsi --yes ile atlanabilir
 cd my-agent && pnpm install
 pnpm dev                          # REST API + Studio Playground (tek port). Aç: http://localhost:3000/studio
                                   # (REST API `/` altına mount'lu ve index route'u yok — çıplak `/` 404 döner)
@@ -149,11 +149,12 @@ for await (const ev of gnl.stream('assistant', { prompt: 'akış' })) { /* text-
 ```
 
 ## Paketler
-`packages/` altında **24** manifest var ve hepsi Apache-2.0 ile npm'e çıkar — bu depoda
-`private` paket yok, bir paketi geride bırakan bir derleme adımı da yok. Paralı auth katmanı
-(`@gnldev/auth-ee`) kendi lisansıyla ayrı dağıtılır; burada `@gnldev/auth`'un tanımladığı
-aynı `AuthProvider` arayüzünü uygular, yani bu ağaçtaki hiçbir şey ona bağlı değildir.
-Aşağıdaki tablo doğrudan kullandığınız paketleri kapsar.
+`packages/` altında **25** manifest var ve hepsi Apache-2.0 ile npm'e çıkar — bu depoda
+`private` paket yok, bir paketi geride bırakan bir derleme adımı da yok. Geliştirmede var olan iki
+paket başka kanaldan dağıtılır: paralı auth katmanı (`@gnldev/auth-ee`), kendi lisansıyla, burada
+`@gnldev/auth`'un tanımladığı aynı `AuthProvider` arayüzünü uygular; bir de yönetilen bir çalışma
+zamanı için paketleyici, ki onun yayınlanacağı bir registry yok. Bu ağaçtaki hiçbir şey ikisine de
+bağlı değil. Aşağıdaki tablo doğrudan kullandığınız paketleri kapsar.
 
 | Paket | Ne |
 |---|---|
@@ -172,7 +173,7 @@ Aşağıdaki tablo doğrudan kullandığınız paketleri kapsar.
 | **`@gnldev/cache`** | cross-run cache |
 | **`@gnldev/studio`** | inspector **+ Playground**: agent seç→prompt→streaming yanıt→onay · time-travel/fork + cost/trace/metrics/diff · admin↔API ayrımı + rol auth |
 | **`@gnldev/client`** | type-safe REST/SSE client (framework-agnostik core) + React hook'ları (`@gnldev/client/react`: `useGnlAgent`/`useChat`) |
-| **`@gnldev/cli`** | proje: `gnl init [dir] [--features a,b,c] [--host hono\|node\|express\|fastify\|koa\|nest] [--template minimal] [--e2e] [--yes]` (**`--features idempotency-tool,e2e`, `idempotency: 'args'` tool'u + tekrarlanan-toolCallId desenini yeniden üreten e2e testi getirir**; emekli `--template full` adı aynı projeyi üretir) / `add <idempotency-tool\|rag\|mcp\|memory\|workflow\|auth>` / `add model <sağlayıcı>` / `dev` / `studio` · inceleme: `runs`/`run`/`inspect` (**terminalde zaman yolculuğu**) · operasyon: `fork`/`resume`/`sweep`/`rm`/`pricing` (hepsi doğrudan `@gnldev/durable`'ın kendi export'larına bağlı, hiçbiri yeniden implement edilmedi) · **bir runtime bağımlılığı** (`tsx`, `gnl.config.ts` yüklemek için; elle yazılmış ANSI/tablo, chalk/ora/commander yok) · `create-gnl` (`npm create gnl`) |
+| **`@gnldev/cli`** | proje: `gnl init` (**tek kapı, sonra en fazla dört soru** — tekrar gelen iş ne olsun (`--preset`), her koşum kime ait (`--identity`), kayıt nerede tutulsun (`--store`), insanlar buraya nasıl ulaşsın (`--serving`, ayrıca `--host <framework>`) → bağlanmış bir `gnl.config.ts` üretilir ve az önce kurulan koruma matrisi basılır; etkileşimsiz: `--features a,b,c` / `--yes`, TTY yoksa prompt hiç açılmaz. Mevcut bir projede yalnız *yeni* dosyaları yazar) / `add <idempotency-tool\|chat\|schedule\|job\|processors\|cache\|otel\|rag\|mcp\|memory\|workflow\|auth>` (her biri dosyasını, bir de o dosyanın import ettiği bağımlılıkları yazar — üçünün bağımlılığı yok, zaten temel şablonda) / `add model <sağlayıcı>` / `add host <framework> [--mount]` / `dev` / `studio` · inceleme: `runs`/`run`/`inspect` (**terminalde zaman yolculuğu**) · operasyon: `fork`/`resume`/`sweep`/`rm`/`pricing` (hepsi doğrudan `@gnldev/durable`'ın kendi export'larına bağlı, hiçbiri yeniden implement edilmedi) · **tek runtime bağımlılığı** (`gnl.config.ts` yüklemek için `tsx`; elle yazılmış ANSI/tablo, chalk/ora/commander yok) · `create-gnl` (`npm create gnl`) |
 
 ### Ücretsiz ve paralı — çizgi nerede
 
@@ -214,7 +215,7 @@ doğrulanabilir duruşu:
 ## Geliştirme
 ```bash
 pnpm install
-pnpm -r build && pnpm -r typecheck && pnpm test   # 3600+ geçen, 430+ dosya (npx vitest run)
+pnpm -r build && pnpm -r typecheck && pnpm test   # 4900+ geçen, 540+ dosya (npx vitest run)
 
 # gerçek backend entegrasyon testi (opsiyonel):
 docker-compose up -d

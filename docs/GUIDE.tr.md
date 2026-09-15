@@ -337,7 +337,7 @@ satır; aynı öbeğin tekrarı satırı zaten orada bulur ve durur.
 
 ---
 
-## 6. Paket haritası — 24 paket, 6 grup
+## 6. Paket haritası — 25 paket, 6 grup
 
 ```mermaid
 graph LR
@@ -378,9 +378,12 @@ graph LR
     Sunum --> durable
 ```
 
-Harita bu altı gruba giren 22 paketi gösteriyor. `packages/` altında grubu olmayan iki paket daha
-var: `@gnldev/chat-adapter` ve `@gnldev/docs-mcp`. Yani `packages/` altında 24 manifest var ve
-hepsi npm'e çıkıyor.
+Harita bu altı gruba giren 22 paketi gösteriyor. `packages/` altında grubu olmayan üç paket daha
+var: `@gnldev/chat-adapter`, `@gnldev/docs-mcp` ve `@gnldev/semantic-qualify` — bir yargıç
+closure'ının `@gnldev/durable` onu koşturmadan önce geçmesi gereken sınav (aynı fixture'larda aynı
+prompt ile bir model %43, başka bir model %100 paraphrase recall verdi; bu yüzden runtime
+sertifikasız yargıcı config anında reddediyor). Yani `packages/` altında 25 manifest var ve hepsi
+npm'e çıkıyor.
 
 Kilit nokta: **her paket `@gnldev/durable`ın üstüne kurulur** — RAG sorgusu da, kuyruk işi de, uzak
 ajan çağrısı da otomatik olarak deftere yazılır ve aynı
@@ -853,7 +856,7 @@ Evet; iddiaların çoğu **gerçek motorlarda canlı testlerle** kanıtlı — t
   `SIGKILL` ile öldürülüyor — exit handler yok, flush yok — ve ebeveyn koşuyu `completed` değil
   `running` okuyor; write-ahead tasarımının var oluş sebebi tam da bu. (Yukarıdaki failover testi
   ise Postgres'in kendisini SIGKILL'liyor — üçüncü bir durum.)
-- Toplam: **3.705 geçen test, 62 atlanan, 448 dosya** (29 Ağu 2026 ölçümü; elinizdeki commit'in
+- Toplam: **5.004 geçen test, 65 atlanan, 548 dosya (5 dosya bütünüyle atlanıyor)** (14 Eyl 2026 ölçümü; elinizdeki commit'in
   rakamı için `npx vitest run`), ayrıca `GNL_INTEGRATION=1` ve `GNL_FAILOVER=1` ile gerçek-altyapı
   paketleri.
 
@@ -1161,13 +1164,13 @@ Tek cümlelik özet: **resume = geçmişe sadakat (üretim güvenliği), replay/
 | Katman | Teknoloji | Bu projede ne işe yarar? |
 |---|---|---|
 | Dil / çalışma ortamı | TypeScript + Node.js | Tüm kod TypeScript (tip güvenliği: yanlış veri şekli derlemede yakalanır). Node 22'nin gömülü `node:sqlite`'ı sayesinde SQLite için ek paket bile gerekmez. |
-| Monorepo yönetimi | pnpm workspaces | 24 paketi tek depoda tutar (monorepo: çok paketli tek depo); hepsi npm'e çıkar. |
+| Monorepo yönetimi | pnpm workspaces | 25 paketi tek depoda tutar (monorepo: çok paketli tek depo); hepsi npm'e çıkar. |
 | LLM soyutlaması | **Vercel AI SDK** (`ai`) | En kritik bağımlılık: OpenAI/Anthropic/Google/Mistral'e TEK arayüz. `runDurable` aslında `generateText`'in dayanıklı sarmalayıcısıdır — sağlayıcı kilidi yok. |
 | Şema doğrulama | Zod | Araç girdi şemaları (LLM'in araca göndereceği parametrelerin biçim kontrolü). |
 | Web çatısı | **Hono** | Server/Studio/auth'un HTTP katmanı. Express yerine Hono: hem Node'da hem edge'de (Cloudflare Workers) aynen çalışır, çok küçüktür — "küçük edge bundle" iddiasının temeli. |
 | Depolama | SQLite / PostgreSQL / Redis | §5'teki adaptörler; hepsi OPSİYONEL bağımlılık (kullanmadığın sürücü yüklenmez — lazy import). |
 | Serileştirme | superjson | Kayıt→metin çevirimi; düz JSON'dan farkı `Date` gibi tipleri kaybetmemesi. |
-| Test | Vitest + pg-mem + Docker | 448 dosyada 3.705 geçen test (29 Ağu 2026); pg-mem = bellek-içi sahte Postgres (hızlı); Docker compose'ları = GERÇEK PG/Redis entegrasyonu + canlı failover senaryosu. |
+| Test | Vitest + pg-mem + Docker | 548 dosyada 5.004 geçen test (14 Eyl 2026); pg-mem = bellek-içi sahte Postgres (hızlı); Docker compose'ları = GERÇEK PG/Redis entegrasyonu + canlı failover senaryosu. |
 | Paketleme | — | Gerekmiyor: `createRestApi()` web standardı bir fetch handler döndürüyor, her platform onu zaten kendi yöntemiyle paketliyor. |
 | Studio arayüzü | React + TanStack Query + Recharts | Panel ön yüzü: arayüz + veri çekme/önbellek + grafikler. |
 | Gözlemlenebilirlik | OTLP/HTTP (elle, ~8KB) | İzleri dış araçlara gönderme; koca OTel SDK yerine elle yazılmış çevirici (ince-kal felsefesi). Canlı mod ayrıca OTel SDK'sını opsiyonel kullanır. |

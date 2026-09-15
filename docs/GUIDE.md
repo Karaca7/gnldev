@@ -344,7 +344,7 @@ same batch finds the row already there and stops.
 
 ---
 
-## 6. Package map — 24 packages, 6 groups
+## 6. Package map — 25 packages, 6 groups
 
 ```mermaid
 graph LR
@@ -385,9 +385,12 @@ graph LR
     Presentation --> durable
 ```
 
-The map shows the 22 packages that fall into these six groups. Two more live in `packages/` without
-one: `@gnldev/chat-adapter` and `@gnldev/docs-mcp`. That is 24 manifests in `packages/`, all of
-which publish to npm.
+The map shows the 22 packages that fall into these six groups. Three more live in `packages/`
+without one: `@gnldev/chat-adapter`, `@gnldev/docs-mcp`, and `@gnldev/semantic-qualify` — the
+bench a judge closure has to pass before `@gnldev/durable` will run it (on identical fixtures with
+the identical prompt, one model scored 43% paraphrase recall and another 100%, so the runtime
+refuses an uncertified judge at config time). That is 25 manifests in `packages/`, all of which
+publish to npm.
 
 Key point: **every package is built on top of `@gnldev/durable`** — a RAG query, a queue job, a
 remote agent call are all automatically written to the journal and INHERIT the same
@@ -800,7 +803,7 @@ themselves live under `packages/durable/test/`:
   no exit handler, no flush — and the parent then reads the run as `running`, never `completed`,
   which is what the write-ahead design exists to make possible. (The failover test above SIGKILLs
   Postgres itself, which is a third thing again.)
-- Total: **3,705 passing tests, 62 skipped, across 448 files** (measured 2026-08-29; run
+- Total: **5,004 passing tests, 65 skipped, across 548 files (5 more skipped entirely)** (measured 2026-09-14; run
   `npx vitest run` for the figure as of the commit you have), plus real-infrastructure suites gated
   behind `GNL_INTEGRATION=1` and `GNL_FAILOVER=1`.
 
@@ -1122,13 +1125,13 @@ former; it's tested with the latter.
 | Layer | Technology | What's it for in this project? |
 |---|---|---|
 | Language / runtime | TypeScript + Node.js | All code is TypeScript (type safety: wrong data shapes are caught at compile time). Thanks to Node 22's built-in `node:sqlite`, SQLite doesn't even need an extra package. |
-| Monorepo management | pnpm workspaces | Keeps 24 packages in one repo (monorepo: a single repo holding many packages); all of them publish to npm. |
+| Monorepo management | pnpm workspaces | Keeps 25 packages in one repo (monorepo: a single repo holding many packages); all of them publish to npm. |
 | LLM abstraction | **Vercel AI SDK** (`ai`) | The most critical dependency: a SINGLE interface to OpenAI/Anthropic/Google/Mistral. `runDurable` is essentially a durable wrapper around `generateText` — no provider lock-in. |
 | Schema validation | Zod | Tool input schemas (shape-checking the parameters the LLM will send to a tool). |
 | Web framework | **Hono** | The HTTP layer for Server/Studio/auth. Hono instead of Express: runs identically on Node and at the edge (Cloudflare Workers), and is very small — the foundation of the "small edge bundle" claim. |
 | Storage | SQLite / PostgreSQL / Redis | The adapters from §5; all OPTIONAL dependencies (a driver you don't use is never loaded — lazy import). |
 | Serialization | superjson | Record-to-text conversion; unlike plain JSON, it doesn't lose types like `Date`. |
-| Testing | Vitest + pg-mem + Docker | 3,705 passing tests across 448 files (2026-08-29); pg-mem = an in-memory fake Postgres (fast); Docker compose files = REAL PG/Redis integration + a live failover scenario. |
+| Testing | Vitest + pg-mem + Docker | 5,004 passing tests across 548 files (2026-09-14); pg-mem = an in-memory fake Postgres (fast); Docker compose files = REAL PG/Redis integration + a live failover scenario. |
 | Bundling | — | Not needed: `createRestApi()` returns a web-standard fetch handler, so each platform bundles it the way it already bundles anything else. |
 | Studio UI | React + TanStack Query + Recharts | The panel's front end: UI + data fetching/caching + charts. |
 | Observability | OTLP/HTTP (hand-rolled, ~8KB) | Sends traces to external tools; a hand-written translator instead of the massive OTel SDK (the stay-thin philosophy). Live mode also optionally uses the OTel SDK. |

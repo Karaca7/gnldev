@@ -131,16 +131,32 @@ failing.
 Errors thrown before the stream exists are typed, with the same codes `@gnldev/server` uses — a client
 matches on `code`, never on the sentence.
 
-| Code | Status | Means |
-| --- | --- | --- |
-| `run_busy` | 409 | The same run is executing right now; the duplicate was declined. Honour `Retry-After`. |
-| `run_thread_mismatch` | 409 | This id already belongs to a different conversation. |
-| `run_input_mismatch` | 409 | Same derived id, different content — inside `run1_` this is unconditional. |
-| `run_owner_mismatch` | 409 | The run belongs to a different subject. |
+**A conflict — 409, no `resumable`.** Something about the REQUEST has to change; no retry clears it.
+All eight are `CALLER_CONFLICT_CODES` in `@gnldev/durable`, and this route returns every one of them:
 
-None of the 409s carry `resumable`: no retry clears them, something about the request has to change.
-`run_busy` is the exception in spirit — the *same* request is right, just later. Full pages for each
-are in [`docs/errors`](../../docs/errors).
+| Code | Means |
+| --- | --- |
+| `run_thread_mismatch` | This id already belongs to a different conversation. |
+| `run_input_mismatch` | Same derived id, different content — inside `run1_` this is unconditional. |
+| `run_owner_mismatch` | The run belongs to a different subject. |
+| `run_actor_mismatch` | Started by one actor, re-used by another — the first is frozen into the input, first-wins. |
+| `thread_owner_mismatch` | The `resourceId` and the `threadId` belong to different people; nothing was appended. |
+| `not_an_agent_run` | That id belongs to a workflow, a network or a batch item — `detail.kind` says which. |
+| `run_swept` | Retention deleted the record; a `${runId}:swept` tombstone says it existed. |
+| `batch_plan_mismatch` | A `batchId` carries one plan, and these items are not it. |
+
+**Blocked — the request is right, the moment is not.** The three 409s carry `resumable: true`:
+
+| Code | Status | `resumable` | Means |
+| --- | --- | --- | --- |
+| `run_busy` | 409 | yes | The same run is executing right now. The **only** code that also sends `Retry-After: 5`. |
+| `side_effect_retry_blocked` | 409 | yes | A side effect's outcome is unknown; the engine refuses to guess. |
+| `step_retry_blocked` | 409 | yes | A workflow step's side-effect claim was refused for the same reason. |
+| `retry_limit_exceeded` | 422 | **no** | Retries are spent. 422 and no flag, because waiting is exactly what will not help. |
+
+`resumable` answers one question — can waiting help? — which is why the conflicts never carry it and
+why `retry_limit_exceeded` does not either, despite arriving through the same code path. Full pages
+for each are in [`docs/errors`](../../docs/errors).
 
 ## Mapping table (GNL SSE → AG-UI)
 | GNL event | AG-UI event(s) | Note |

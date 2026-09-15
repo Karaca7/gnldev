@@ -18,12 +18,14 @@ npm i -g @gnldev/cli   # or: npx @gnldev/cli <command>
 
 | Command | What |
 |---|---|
-| `gnl init [dir]` | Scaffold a new project (mock model, no API key required). In an interactive terminal it opens **one gate question** — Recommended · Let me choose · Same as last time — and, if you choose, **at most three more**: who sets the work going (`--preset`), whose runs these are (`--identity`), where the journal lives (`--store`). Ends by printing the protections matrix it just configured. |
-| `gnl init [dir] --features a,b,c` | Non-interactive compose (skips the checkbox). Same feature ids; an unknown id errors with the valid list (exit 1). |
-| `gnl init [dir] --template minimal [--e2e]` | The static starter (non-interactive). `--e2e` adds a durability test. The retired `--template full` is accepted and resolves to `--features idempotency-tool,e2e`. |
-| `gnl init [dir] --preset ... --identity ... --store ...` | A flag **answers** its question, so that question is not asked. Values: `assistant\|headless\|critical`, `internal\|end-users`, `sqlite\|pg`. A misspelled value exits 1 rather than scaffolding an unprotected project. |
+| `gnl init [dir]` | Scaffold a new project (mock model, no API key required). In an interactive terminal it opens **one gate question** — Recommended · Let me choose · Same as last time — and, if you choose, **at most four more**: what should happen when the same work arrives twice (`--preset`), whose runs these are (`--identity`), where the record of every run is kept (`--store`), and how people will reach it (`--serving`; choosing a server asks which framework, `--host`). Ends by printing the protections matrix it just configured. Run in an EXISTING project it writes only new files and prints the `pnpm add` line rather than editing your manifest. |
+| `gnl init [dir] --features a,b,c` | Names the feature files to write. It answers no QUESTION, so the gate still opens in a terminal — pair it with `--yes` for a silent run. An unknown id errors with the valid list (exit 1). |
+| `gnl init [dir] --template minimal [--e2e]` | The static starter. `--e2e` adds a durability test. The retired `--template full` is accepted and resolves to `--features idempotency-tool,e2e`. Same gate as above; `--yes` is what makes any of these silent. |
+| `gnl init [dir] --preset ... --identity ... --store ... --serving ...` | A flag **answers** its question, so that question is not asked. Values: `assistant\|headless\|critical`, `internal\|end-users`, `sqlite\|pg`, `dev\|own\|mount`. A misspelled value exits 1 rather than scaffolding an unprotected project. |
 | `gnl init [dir] --yes` | Every unanswered question takes its recommended default. The prompt also **never opens without a TTY** (`stdin` not a terminal → defaults), so CI and agents are safe. |
-| `gnl add <idempotency-tool\|rag\|mcp\|memory\|workflow\|auth>` | Add a feature recipe to an existing project: writes `src/<feature>.ts` (never overwrites) + prints the `gnl.config.ts` wiring (the config is decoupled — you edit the plain config object, no `defineConfig`). |
+| `gnl add <idempotency-tool\|chat\|schedule\|job\|processors\|cache\|otel\|rag\|mcp\|memory\|workflow\|auth>` | Add a feature recipe to an existing project: writes its file under `src/` (never overwrites), **adds the dependencies that file imports** to your package.json, writes any `.env.example` lines it reads, adds a script when the recipe is a process (worker, scheduler), and prints the `gnl.config.ts` wiring (the config is decoupled — you edit the plain config object, no `defineConfig`). `processors` asks which guards you want; `--only a,b` answers that without a prompt. |
+| `gnl add model <nvidia\|openai\|anthropic\|openai-compatible>` | Write a real provider next to the mock (never over it), add the AI SDK provider dependency and its `.env.example` keys, and print the one import line to change. |
+| `gnl add host <hono\|node\|express\|fastify\|koa\|nest> [--mount]` | Give the project its own server entry, or (with `--mount`) print the measured lines that plug it into the server you already run. |
 | `gnl dev [--config gnl.config.ts] [--host] [--allow-open-network]` | Hot-reload dev server: REST API + Studio Playground on one port. Restarts when `gnl.config.ts` or `src/` changes. |
 | `gnl studio [--config ...] [--port 4747] [--host] [--allow-open-network]` | Studio (inspector + Playground) standalone |
 | `gnl doctor [--share]` | What is protecting this project (the same matrix `gnl dev` prints, from `describeProtections`), plus two local stamps read out of the journal: the first run, the first time a duplicate guard actually refused something, and the gap between them. `--share` prints a copyable block with **no names in it** — no telemetry, no network call. |
@@ -117,8 +119,8 @@ Would delete 3 run(s):
   stderr with a non-zero exit code, never a silently-empty stdout.
 
 ## Config
-Every storage command accepts `--config` (default `gnl.config.ts`). See
-[templates/minimal/gnl.config.ts](templates/minimal/gnl.config.ts) for the shape (`defineConfig` /
+Every storage command accepts `--config` (default `gnl.config.ts`). The config is GENERATED from your
+answers rather than copied — see [`generateConfig`](src/scaffold.ts) for the shape (`defineConfig` /
 `GnlDevConfig`: a `CreateGnlConfig` — `journal` or `storage`, `agents` — plus dev server options like
 `port`/`studio`/`auth`).
 

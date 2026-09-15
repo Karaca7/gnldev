@@ -2,9 +2,10 @@
 // `npm create gnl [dir] [flags]` — the same door as `gnl init`, because it IS `gnl init`.
 //
 // This used to be a 30-line shim around scaffold(dir): no gate, no questions, and every flag —
-// `--features` included — silently ignored, while the polished init flow (one gate, at most three
-// questions) sat unreachable behind a different command. The two doors are now one code path, so
-// they cannot drift: what `gnl init` asks, `npm create gnl` asks.
+// `--features` included — silently ignored, while the polished init flow (one gate, then the
+// QUESTIONS behind it) sat unreachable behind a different command. The two doors are now one code
+// path, so they cannot drift: what `gnl init` asks, `npm create gnl` asks. The count is not written
+// down here either — the help text below reads `QUESTIONS.length`.
 import { commands, QUESTIONS } from '@gnldev/cli';
 
 const argv = process.argv.slice(2);
