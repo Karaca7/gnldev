@@ -27,6 +27,19 @@ afterEach(() => {
   for (const d of created.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
+/**
+ * The npm-page fields every published manifest must carry, filled in for fixtures that are not about
+ * them. Each `describe` below tests ONE rule, and a fixture that fails a different rule tests
+ * nothing — the lockstep cases would all have exited on missing metadata before reaching the
+ * comparison they exist to make. The metadata rule has its own describe at the bottom, where a
+ * fixture deliberately omits a field.
+ */
+const NPM_PAGE_FIELDS = {
+  repository: { type: 'git', url: 'git+https://example.invalid/x.git' },
+  homepage: 'https://example.invalid',
+  bugs: { url: 'https://example.invalid/issues' },
+};
+
 /** A throwaway workspace holding the real script, so it scans these manifests instead of the repo's. */
 function fixtureWorkspace(manifests: Record<string, unknown | string>): string {
   const dir = mkdtempSync(join(tmpdir(), 'gnl-check-versions-'));
@@ -35,10 +48,10 @@ function fixtureWorkspace(manifests: Record<string, unknown | string>): string {
   copyFileSync(realScript, join(dir, 'scripts', 'check-versions.mjs'));
   for (const [name, manifest] of Object.entries(manifests)) {
     mkdirSync(join(dir, 'packages', name), { recursive: true });
-    writeFileSync(
-      join(dir, 'packages', name, 'package.json'),
-      typeof manifest === 'string' ? manifest : JSON.stringify(manifest, null, 2),
-    );
+    const body = typeof manifest === 'string'
+      ? manifest
+      : JSON.stringify({ ...NPM_PAGE_FIELDS, ...(manifest as Record<string, unknown>) }, null, 2);
+    writeFileSync(join(dir, 'packages', name, 'package.json'), body);
   }
   return dir;
 }
@@ -265,5 +278,121 @@ describe('check-versions: scaffold templates', () => {
     expect(status).toBe(0);
     expect(out, 'the count included a directory that was never read').toContain('1 scaffold template ');
     expect(out).not.toContain('2 scaffold template');
+  });
+});
+
+// THE FIELDS AN npm PAGE IS BUILT FROM, checked at the one gate a TAG runs.
+//
+// 26 of the 27 manifests were written by copying a sibling, so they all carried `repository`,
+// `homepage` and `bugs` without anyone deciding to. The 27th — @gnldev/semantic-qualify — was
+// written later and from scratch, and reached the publish set with none of them. Nothing failed:
+// npm publishes a manifest with no repository perfectly happily, and the result is a package page
+// with nowhere to click, plus a `--provenance` claim in the README that wants the field.
+//
+// It lives in check-versions rather than in a test of its own because this script is the gate a tag
+// push runs, and a tag is the only event that publishes.
+describe('check-versions: the fields an npm page is built from', () => {
+  const ok = (name: string) => ({ name: `@gnldev/${name}`, version: '0.1.0', files: ['dist'] });
+
+  it('refuses a published package with no repository, and names the field', () => {
+    const dir = fixtureWorkspace({ durable: ok('durable') });
+    // Rewrite it WITHOUT the fields the helper fills in — that omission is this test's subject.
+    writeFileSync(
+      join(dir, 'packages', 'durable', 'package.json'),
+      JSON.stringify({ ...ok('durable'), homepage: 'https://x.invalid', bugs: { url: 'https://x.invalid/i' } }, null, 2),
+    );
+    const { status, out } = runGuard(dir);
+    expect(status).toBe(1);
+    expect(out).toContain('missing "repository"');
+    expect(out).toContain('@gnldev/durable');
+  });
+
+  it('reports every missing field across every package, not just the first', () => {
+    const dir = fixtureWorkspace({ durable: ok('durable'), server: ok('server') });
+    for (const p of ['durable', 'server']) {
+      writeFileSync(join(dir, 'packages', p, 'package.json'), JSON.stringify(ok(p), null, 2));
+    }
+    const { status, out } = runGuard(dir);
+    expect(status).toBe(1);
+    for (const field of ['repository', 'homepage', 'bugs']) expect(out).toContain(`missing "${field}"`);
+    expect(out).toContain('@gnldev/server');
+  });
+
+  it('holds a PRIVATE package to a different standard — it has no npm page to build', () => {
+    // auth-ee is distributed (packed and shipped out of band) and so is in the lockstep set, but it
+    // is never on npm. Demanding a registry page's fields from it would be a rule about nothing.
+    const dir = fixtureWorkspace({ durable: ok('durable') });
+    mkdirSync(join(dir, 'packages', 'auth-ee'), { recursive: true });
+    writeFileSync(
+      join(dir, 'packages', 'auth-ee', 'package.json'),
+      JSON.stringify({ name: '@gnldev/auth-ee', version: '0.1.0', private: true, files: ['dist'] }, null, 2),
+    );
+    expect(runGuard(dir).status).toBe(0);
+  });
+
+  it('an EMPTY repository object does not count as declared', () => {
+    // `"repository": {}` passes a truthy check and renders as nothing on the npm page. The guard's
+    // first cut used `!pkg[field]`, so the one shape a careless copy-paste actually produces would
+    // have walked straight through it.
+    const dir = fixtureWorkspace({ durable: ok('durable') });
+    writeFileSync(
+      join(dir, 'packages', 'durable', 'package.json'),
+      JSON.stringify({ ...ok('durable'), repository: {}, homepage: '  ', bugs: { url: 'https://x.invalid/i' } }, null, 2),
+    );
+    const { status, out } = runGuard(dir);
+    expect(status).toBe(1);
+    expect(out).toContain('missing "repository"');
+    expect(out, 'a whitespace-only homepage is not a homepage').toContain('missing "homepage"');
+  });
+
+  it('a PUBLISHED package may not runtime-depend on a private one', () => {
+    // The live case this gate was written for: @gnldev/cli listed @gnldev/deploy in `dependencies`
+    // while deploy is private. `pnpm publish` rewrites `workspace:^` to `^0.1.0`, so the tarball
+    // names a package npm has never seen and every install of the CLI ends in E404. It survived
+    // because releases come from a different tree where a script strips that line — a protection
+    // made of shell, holding only until someone tags the wrong repo.
+    const dir = fixtureWorkspace({
+      cli: { ...ok('cli'), dependencies: { '@gnldev/deploy': '^0.1.0' } },
+      deploy: { name: '@gnldev/deploy', version: '0.1.0', private: true, files: ['dist'] },
+    });
+    const { status, out } = runGuard(dir);
+    expect(status).toBe(1);
+    expect(out).toContain('depends on one that is never published');
+    expect(out).toContain('dependencies.@gnldev/deploy');
+    expect(out, 'the message has to say what to do instead').toContain('devDependencies');
+  });
+
+  it('...and peerDependencies count too, since npm resolves those for the installer', () => {
+    const dir = fixtureWorkspace({
+      cli: { ...ok('cli'), peerDependencies: { '@gnldev/auth-ee': '^0.1.0' } },
+      'auth-ee': { name: '@gnldev/auth-ee', version: '0.1.0', private: true, files: ['dist'] },
+    });
+    expect(runGuard(dir).status).toBe(1);
+  });
+
+  it('but devDependencies on a private package are fine — npm never installs them', () => {
+    const dir = fixtureWorkspace({
+      cli: { ...ok('cli'), devDependencies: { '@gnldev/deploy': 'workspace:^' } },
+      deploy: { name: '@gnldev/deploy', version: '0.1.0', private: true, files: ['dist'] },
+    });
+    expect(runGuard(dir).status).toBe(0);
+  });
+
+  it('a repository object with every field EXCEPT the url does not count', () => {
+    // The shape a careless copy-paste actually produces: type and directory kept, url forgotten.
+    // npm builds its link from `url` alone, and `--provenance` reads the same field.
+    const dir = fixtureWorkspace({ durable: ok('durable') });
+    writeFileSync(
+      join(dir, 'packages', 'durable', 'package.json'),
+      JSON.stringify({
+        ...ok('durable'),
+        repository: { type: 'git', directory: 'packages/durable' },
+        homepage: 'https://x.invalid',
+        bugs: { url: 'https://x.invalid/i' },
+      }, null, 2),
+    );
+    const { status, out } = runGuard(dir);
+    expect(status).toBe(1);
+    expect(out).toContain('missing "repository"');
   });
 });

@@ -44,11 +44,68 @@ for (const name of readdirSync(pkgDir)) {
     process.exit(1);
   }
   if (!isDistributed(pkg)) continue;
-  lockstep.push({ name: pkg.name, version: pkg.version, dir: name, private: Boolean(pkg.private) });
+  lockstep.push({ name: pkg.name, version: pkg.version, dir: name, private: Boolean(pkg.private), manifest: pkg });
 }
 
 if (lockstep.length === 0) {
   console.error('check-versions: found no distributed packages — that is almost certainly a bug in this script');
+  process.exit(1);
+}
+
+// THE FIELDS AN npm PAGE IS BUILT FROM. A package that omits them still publishes and still works —
+// which is why one of them shipped without any: @gnldev/semantic-qualify was the 27th manifest, added
+// after the 26 that were written from a template, and it reached the publish set with no repository,
+// no homepage and no issue link. On npm that is a page with nowhere to click, and `--provenance`
+// (promised in the README) wants the repository field too. Checked here rather than in a test because
+// this script is the one gate a TAG runs, and a tag is the only event that publishes.
+const META_FIELDS = ['repository', 'homepage', 'bugs'];
+/**
+ * Present AND carrying the part that does the work.
+ *
+ * `"repository": {}` satisfies a truthy check and npm renders nothing. So does
+ * `{ "type": "git", "directory": "packages/x" }` — every field except the one a link is built from.
+ * Objects are therefore required to carry a non-empty `url`, which is also what `--provenance` reads.
+ */
+const declared = (v) => {
+  if (typeof v === 'string') return v.trim().length > 0;
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+  return typeof v.url === 'string' && v.url.trim().length > 0;
+};
+const metaProblems = lockstep
+  .filter((p) => !p.private)
+  .flatMap((p) => META_FIELDS.filter((f) => !declared(p.manifest[f])).map((f) => `${p.name}: missing "${f}"`));
+if (metaProblems.length) {
+  console.error('check-versions: a published package is missing the fields its npm page is built from\n');
+  for (const line of metaProblems) console.error(`  ${line}`);
+  console.error('\nCopy them from any sibling manifest (repository.directory names this package).');
+  process.exit(1);
+}
+
+// A PUBLISHED PACKAGE CANNOT RUNTIME-DEPEND ON ONE THAT IS NEVER PUBLISHED. `pnpm publish` rewrites
+// `workspace:^` to `^<version>`, so the tarball ends up naming a package the registry has never heard
+// of and every `pnpm install` of it ends in E404 — the failure is the INSTALLER's, and it arrives
+// long after the release that caused it.
+//
+// This was live: `@gnldev/cli` had `@gnldev/deploy` in `dependencies` while deploy is `private`. It
+// survived because the release comes from a different tree, where a script strips that dependency —
+// a protection that lives in a shell script and holds only as long as nobody tags the wrong repo.
+// `devDependencies` is the right home for it: `gnl deploy` reaches it through the workspace link,
+// and npm never installs a devDependency for a consumer. Same shape as `@gnldev/auth-ee`, which was
+// already declared that way.
+//
+// Only `dependencies` and `peerDependencies` are checked — those are the two npm resolves for someone
+// installing the package.
+const privateNames = new Set(lockstep.filter((p) => p.private).map((p) => p.name));
+const reachProblems = lockstep
+  .filter((p) => !p.private)
+  .flatMap((p) => ['dependencies', 'peerDependencies']
+    .flatMap((field) => Object.keys(p.manifest[field] ?? {})
+      .filter((dep) => privateNames.has(dep))
+      .map((dep) => `${p.name}: ${field}.${dep} — ${dep} is private and will never be on npm`)));
+if (reachProblems.length) {
+  console.error('check-versions: a published package depends on one that is never published\n');
+  for (const line of reachProblems) console.error(`  ${line}`);
+  console.error('\nMove it to devDependencies (the workspace link still resolves), or unmark the dependency private.');
   process.exit(1);
 }
 
