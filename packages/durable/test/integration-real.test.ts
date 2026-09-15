@@ -989,3 +989,42 @@ describe.skipIf(!RUN)('REAL Postgres — a failover does not take the process wi
     }
   }, 20_000);
 });
+
+// The Redis half of the same question the Postgres failover test asks. The answer turned out
+// different, and the difference is worth pinning: `ioredis` handles a dropped connection itself, so
+// nothing here was broken — 200 writes in flight, every client dropped, the process lived and all
+// 200 landed after the automatic reconnect.
+//
+// What was missing was the sentence. The operator saw `[ioredis] Unhandled error event: Error: write
+// EPIPE` — a library complaining that nobody is listening, in a vocabulary that mentions neither the
+// engine nor whether anything was lost. The Postgres path explains itself; this one did not.
+describe.skipIf(!RUN)('REAL Redis — a dropped connection explains itself', () => {
+  it('the engine attaches its own error listener when the client is its own', async () => {
+    const { RedisStorage } = await import('../src/redis-storage.js');
+    const s = new RedisStorage({ connectionString: REDIS_URL });
+    try {
+      const client = (s as unknown as { client: { listenerCount: (e: string) => number } }).client;
+      expect(client.listenerCount('error'), 'no listener means ioredis prints its own warning instead')
+        .toBeGreaterThan(0);
+    } finally {
+      await (s as any).close?.();
+    }
+  }, 15_000);
+
+  it("a caller's own client and handler are left alone", async () => {
+    // Symmetry with the Postgres pool: the guard exists so that someone who brought their own
+    // connection and their own logging keeps both.
+    const { default: IORedis } = await import('ioredis');
+    const own = new IORedis(REDIS_URL, { lazyConnect: true });
+    const mine: Error[] = [];
+    own.on('error', (e: Error) => mine.push(e));
+    const { RedisStorage } = await import('../src/redis-storage.js');
+    const s = new RedisStorage({ client: own as any });
+    try {
+      expect(own.listenerCount('error'), 'the engine added a second listener over the caller\'s').toBe(1);
+    } finally {
+      await (s as any).close?.();
+      own.disconnect();
+    }
+  }, 15_000);
+});

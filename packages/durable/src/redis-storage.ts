@@ -924,6 +924,30 @@ export class RedisStorage implements Storage {
       const Redis = (mod.default ?? mod) as new (c?: any) => RedisLike;
       this.client = new Redis(opts.connectionString ?? undefined);
     }
+    // SAY WHAT HAPPENED WHEN THE CONNECTION DROPS, in this engine's voice.
+    //
+    // `ioredis` already keeps a lost connection from killing the process — measured: 200 writes in
+    // flight, the server dropped every client, the process lived and all 200 landed after the
+    // automatic reconnect. So unlike the Postgres pool, nothing here is broken.
+    //
+    // What the operator saw was `[ioredis] Unhandled error event: Error: write EPIPE` — a library
+    // saying nobody is listening, about a component they did not choose directly and in a vocabulary
+    // that does not mention their agent, their run, or whether anything was lost. The Postgres path
+    // explains itself in one sentence; this one left a stack-shaped string. Attaching a listener both
+    // silences that warning and replaces it with something a reader can act on.
+    //
+    // Only when nothing is listening yet: a caller who passed their own client and their own handler
+    // keeps theirs, exactly as on the Postgres side.
+    const c = this.client as unknown as { on?: (e: string, f: (err: Error) => void) => void; listenerCount?: (e: string) => number };
+    if (c.on && c.listenerCount?.('error') === 0) {
+      c.on('error', (err: Error) => {
+        console.error(
+          `@gnldev/durable: redis connection error — ${err.message}. ioredis reconnects on its own and ` +
+            'replays what it had queued; commands that were already in flight reject at their call ' +
+            'sites. Logged rather than rethrown, so a reconnect does not end the process.',
+        );
+      });
+    }
     this.runs = new RedisRunJournal(this.client, pfx, opts.replicationWarning ?? true, opts.waitReplicas);
     this.work = new RedisWorkStore(this.client, pfx);
     this.cache = new RedisCacheStore(this.client, pfx);

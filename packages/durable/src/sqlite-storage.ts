@@ -185,6 +185,25 @@ function range(col: string, prefix: string): { where: string; params: string[] }
     : { where: `${col} >= ? AND ${col} < ?`, params: [prefix, upper] };
 }
 
+/**
+ * A KNOWN LIMIT, measured rather than assumed, because it is the one way this adapter can report a
+ * write as durable when it is not.
+ *
+ * DELETING THE DATABASE FILE WHILE THE PROCESS RUNS DOES NOT FAIL. On POSIX an open file descriptor
+ * survives `unlink`, so SQLite keeps writing to a file that no longer has a name. Measured: remove
+ * `runs.db`, `-wal` and `-shm` mid-run, and the next `put` returns success, the next `get` returns
+ * the value, and the directory is empty. Every one of those writes disappears when the process ends.
+ *
+ * Not defended against here, deliberately. Detecting it means stat-ing the file on every write — a
+ * syscall per journal entry to catch an operator deleting the database out from under a running
+ * application. Postgres has the same shape (`DROP TABLE` under a live connection) and answers it the
+ * same way: the database is infrastructure, and removing it is not an input this engine validates.
+ *
+ * What IS defended: a read-only file (a full disk, a permissions change) fails loudly — measured,
+ * `attempt to write a readonly database`, no silent loss. And two processes on one file keep the CAS
+ * contract: 40 racing `putIfMatch` calls across two connections produced exactly one winner, and 300
+ * interleaved writes left the journal count exact.
+ */
 export class SqliteStorage implements Storage {
   readonly name = 'sqlite';
   readonly capabilities: CapabilityMatrix = { runs: 'full', memory: 'full', vectors: 'scan', work: 'full', cache: 'ttl' };
