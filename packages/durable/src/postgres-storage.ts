@@ -26,7 +26,20 @@ type Pool = {
   query: (sql: string, params?: unknown[]) => Promise<QueryResult>;
   connect?: () => Promise<PoolClient>;
   end?: () => Promise<void>;
-  /** EventEmitter surface — `pg` emits 'error' on idle clients; see the constructor. */
+  /**
+   * EventEmitter surface. TWO events, because `pg` reports a lost connection through two different
+   * objects depending on whether it was busy: an IDLE connection fails on the pool, a CHECKED-OUT
+   * one fails on the Client. Only the first was declared here, which is also the only one that was
+   * handled — see the constructor for what that cost.
+   */
+  on?: {
+    (event: 'error', listener: (err: Error) => void): unknown;
+    (event: 'connect', listener: (client: PoolClientEvents) => void): unknown;
+  };
+  listenerCount?: (event: string) => number;
+};
+/** The EventEmitter surface of a pooled client — the object `pg` hands to the 'connect' event. */
+type PoolClientEvents = {
   on?: (event: 'error', listener: (err: Error) => void) => unknown;
   listenerCount?: (event: string) => number;
 };
@@ -253,6 +266,42 @@ export class PostgresStorage implements Storage {
             'at their call sites. This is logged rather than thrown because an unhandled pool error ' +
             'would terminate the process.',
         );
+      });
+    }
+    // THE OTHER HALF, and the half that kills the process. The handler above covers a connection
+    // sitting IDLE in the pool. A connection that is CHECKED OUT — one with a query in flight —
+    // does not route its failure through the pool at all: `pg` emits 'error' on the Client itself,
+    // and an EventEmitter with no 'error' listener is a `throw` that no `try` around the query can
+    // catch, because it arrives on the socket's turn of the event loop rather than the caller's.
+    //
+    // Measured against a real Postgres: 120 concurrent writes in flight, backends terminated the way
+    // a managed failover terminates them (`pg_terminate_backend`), and the whole Node process died
+    // with `Unhandled 'error' event ... Emitted 'error' event on Client instance`. Not the query —
+    // the PROCESS, and with it whatever application had mounted this engine.
+    //
+    // A failover is not an exotic event; it is the normal operating behaviour of every managed
+    // Postgres. So each connection gets the same treatment the pool got: say what happened and let
+    // `pg` evict it. The in-flight query still rejects at its own call site, which is unchanged and
+    // is where a caller can actually do something about it.
+    if (this._pool.on) {
+      this._pool.on('connect', (client: PoolClientEvents) => {
+        // NO `listenerCount === 0` GUARD HERE, unlike the pool above, and the difference is the
+        // whole fix. `pg` attaches its own 'error' listener to every client before handing it to
+        // this event — so the guard that is correct for the pool (respect a caller's handler) read
+        // as "already handled" and attached nothing. Measured: listener count is 1 at 'connect', and
+        // the process still died. That internal listener serves `pg`'s own bookkeeping; it does not
+        // make the emit safe for anyone else. A second listener is harmless and is what keeps the
+        // emit from reaching Node's unhandled-'error' throw.
+        if (client.on) {
+          client.on('error', (err: Error) => {
+            console.error(
+              `@gnldev/durable: postgres connection lost mid-query — ${err.message}. ` +
+                'The query rejects at its call site and `pg` discards this connection; the next one ' +
+                'reconnects. Logged rather than rethrown: an unhandled Client error event would ' +
+                'terminate the process, which is not a failure mode a database failover should have.',
+            );
+          });
+        }
       });
     }
     /**

@@ -899,3 +899,93 @@ describe.skipIf(!RUN)('REAL Postgres — MemoryStore conformance', () => {
     return s as any;
   }, { serialisesAppends: true });
 });
+
+// A DATABASE FAILOVER MUST NOT KILL THE APPLICATION, and for one release it did.
+//
+// `pg` reports a lost connection through two different objects depending on what that connection was
+// doing. An IDLE one fails on the pool; a CHECKED-OUT one — with a query in flight — emits 'error'
+// on the Client itself. Only the pool had a listener, so a connection that died mid-query reached
+// Node's rule for an EventEmitter with no 'error' listener: throw, from the socket's turn of the
+// event loop, where no `try` around the query can catch it. The process ended. Not the query — the
+// process, and with it whatever application had mounted this engine.
+//
+// Measured against a real server before the fix: 120 concurrent writes, backends terminated the way
+// a managed failover terminates them, and Node exited with
+// `Unhandled 'error' event ... Emitted 'error' event on Client instance`.
+//
+// This cannot be written against pg-mem, which has no connections to lose. It also cannot be written
+// as a unit test: the failure arrives on a socket, not through a call.
+describe.skipIf(!RUN)('REAL Postgres — a failover does not take the process with it', () => {
+  /** Terminates every backend on this database except the one doing the terminating. */
+  const killBackends = async (via: PgPool): Promise<number> => {
+    const r = await via.query(
+      `SELECT count(pg_terminate_backend(pid))::int AS n FROM pg_stat_activity
+       WHERE datname = current_database() AND pid <> pg_backend_pid()`,
+    );
+    return r.rows[0]?.n ?? 0;
+  };
+
+  it('writes in flight when the backend dies: the process survives and the journal stays honest', async () => {
+    const s = new PostgresStorage({ connectionString: PG_URL });
+    const killer = new PgPool({ connectionString: PG_URL });
+    try {
+      const runId = `${SEED}-failover-${Date.now().toString(36)}`;
+      const N = 120;
+      const writes = Array.from({ length: N }, (_, i) =>
+        s.runs.put(`${runId}:tool:t${i}`, { status: 'succeeded', output: { i } })
+          .then(() => true).catch(() => false));
+      setTimeout(() => { void killBackends(killer); }, 40);
+      const results = await Promise.all(writes);
+
+      // Reaching this line at all is half the assertion: before the fix the process was gone.
+      const succeeded = results.filter(Boolean).length;
+      const stats = await s.runs.readRunStats(runId);
+
+      // THE HONESTY INVARIANT, and the reason a count is asserted rather than "some writes failed":
+      // every write that reported success is in the journal, and every write that reported failure
+      // is NOT. A mismatch either way is a silent lie — a lost write that was called durable, or a
+      // refused write that landed anyway.
+      expect(stats.entries, `${succeeded} writes reported success but the journal holds ${stats.entries}`)
+        .toBe(succeeded);
+      expect(succeeded, 'the kill landed after everything had already committed — the test proved nothing')
+        .toBeLessThan(N);
+
+      // And the pool recovers rather than staying poisoned.
+      await expect(s.runs.put(`${runId}:tool:after`, { status: 'succeeded', output: 'after' }))
+        .resolves.not.toThrow();
+    } finally {
+      await killer.end();
+      await (s as any).close?.();
+    }
+  }, 30_000);
+
+  it('every pooled connection gets an error listener — not just the pool', async () => {
+    // The behavioural test above passes for one WRONG reason too: if the kill happens to land only
+    // on idle connections, the pool handler covers it. This one pins the mechanism instead.
+    //
+    // It is specifically a guard against the fix being reverted to what looked reasonable: the pool
+    // handler is attached only when `listenerCount('error') === 0`, and copying that condition down
+    // to the client attaches NOTHING — `pg` adds its own listener before handing the client over, so
+    // the count is already 1. Measured: count 1 at 'connect', process still died.
+    const pool = new PgPool({ connectionString: PG_URL });
+    const counts: number[] = [];
+    pool.on('connect', (c: any) => { counts.push(c.listenerCount('error')); });
+    const s = new PostgresStorage({ pool: pool as any });
+    try {
+      await s.runs.put(`${SEED}-listener:tool:x`, { status: 'succeeded', output: 1 });
+      expect(counts.length, 'no connection was opened — nothing was measured').toBeGreaterThan(0);
+      // This assertion reads the count AFTER our handler had its chance, on a later connection.
+      const pool2 = new PgPool({ connectionString: PG_URL });
+      const s2 = new PostgresStorage({ pool: pool2 as any });
+      let observed = -1;
+      pool2.on('connect', (c: any) => { setTimeout(() => { observed = c.listenerCount('error'); }, 0); });
+      await s2.runs.put(`${SEED}-listener2:tool:x`, { status: 'succeeded', output: 1 });
+      await new Promise((r) => setTimeout(r, 20));
+      expect(observed, "pg's own listener is 1; ours makes 2 — a count of 1 means ours never attached")
+        .toBeGreaterThanOrEqual(2);
+      await (s2 as any).close?.();
+    } finally {
+      await (s as any).close?.();
+    }
+  }, 20_000);
+});
