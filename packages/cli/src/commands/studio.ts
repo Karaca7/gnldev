@@ -13,7 +13,16 @@ export const studioCommand: Command = {
   usage: 'gnl studio [--config gnl.config.ts] [--port 4747] [--host 127.0.0.1] [--allow-open-network]',
   async run(ctx) {
     const configPath = flag(ctx.argv, 'config') ?? 'gnl.config.ts';
-    const port = Number(flag(ctx.argv, 'port') ?? 4747);
+    // `Number('abc')` is NaN, and `serve({ port: NaN })` does not fail — it binds a random free port
+    // and prints it, so `gnl studio --port 4747x` came up somewhere the operator did not ask for and
+    // never mentioned that the flag had been ignored. `gnl dev` already refuses this (dev-server.ts);
+    // the asymmetry was the bug, not the check.
+    const portFlag = flag(ctx.argv, 'port');
+    const port = portFlag === undefined ? 4747 : Number(portFlag);
+    if (!Number.isInteger(port) || port < 0 || port > 65535) {
+      console.error(`gnl studio: --port must be an integer between 0 and 65535, got '${portFlag}'`);
+      process.exit(1);
+    }
     const { loadConfig } = await import('../config.js');
     const { devMemoryFactory, devStudioMemory } = await import('../memory.js');
     const { loadDurable, loadStudio, loadStudioAi, loadMemory, loadNodeServer, loadAuth, projectDirOf } = await import('../runtime.js');
