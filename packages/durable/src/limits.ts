@@ -177,6 +177,12 @@ export interface RunLimits {
    *    The UI can show the FIRST result next to the question (an uninformed approval is not an
    *    Approval). Requires threadId (loud warn + run-scope fallback without one).
    * `ttlMs` (optional) expires the marker: past it, an identical call is NOT treated as a duplicate.
+   * EXPIRY IS A READ-SIDE FILTER, NOT DELETION — and the difference matters if you reached for this
+   * field as a retention control. An expired record stops being CONSIDERED; it stays in the journal,
+   * including the semantic record's canonical sentence, which is built from your identity values.
+   * Measured: `ttlMs: 1` left both the dup marker and the semantic record in place. Erasure is
+   * `purgeThread` / `purgeResource` / `purgeOrganization`; `sweepThreads` reports what no age-based
+   * sweep can reach (`orphanThreadState`).
    *    DEFAULT IS NO TTL — deliberately (heyet İhtilaf F): a false positive costs one extra approval
    *    Question, a false negative fires the effect twice; the marker lives as long as the thread and
    *    Dies with it (`purgeThread` sweeps `xthr:<threadId>:`).

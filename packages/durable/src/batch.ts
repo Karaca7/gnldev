@@ -33,6 +33,7 @@ import type { Journal, DurableCtx } from './journal.js';
 import { durableTool } from './durable-tool.js';
 import { resolveApprovals, hasRunProbe } from './run.js';
 import { readXid, xidPlanOf, xidWhen, amountsDifferOf } from './xid.js';
+import { identityUnusableReason } from './semantic-dup.js';
 import { BatchPlanMismatchError } from './errors.js';
 import type { AnyTool } from './types.js';
 
@@ -65,6 +66,17 @@ export interface BatchPlan {
   amountMismatches: BatchPlanRow[];
   /** resourceId verilmedi → kanallar-arası sütunlar "kapsam dışı" (boş liste 'temiz' OKUNMASIN). */
   xidScopeDisabled?: boolean;
+  /**
+   * Beyan BU item'ı tanımlayamadı (nesne değerli anahtar, ya da argümanlarda hiç bulunmayan anahtar)
+   * → kanallar-arası kontrol o item için YAPILMADI.
+   *
+   * `xidScopeDisabled` ile aynı gerekçe, bir seviye aşağıda: orada tüm plan kapsam dışıdır, burada
+   * tek tek item'lar. İkisi de aynı yanlış okumayı kapatır — `xidHits: []` "temiz" değil, "bakılmadı"
+   * olabilir. Guard'ın kendisi doğru ve sessiz olması güvenli tarafta; ama operatörün `fresh: 3`
+   * görüp korumanın o koşumda hiç devrede olmadığını öğrenememesi, bu dosyanın `durable-tool.ts`'te
+   * yazdığı "OFF and said so beats wrong and silent" ilkesinin tam tersi olurdu.
+   */
+  xidIdentityUnusable?: BatchPlanRow[];
   /** Batch-içi kirli veri: aynı argümanlar birden çok itemKey'de. */
   intraBatchDuplicates: BatchPlanRow[];
 }
@@ -157,7 +169,18 @@ export function createBatch(journal: Journal, cfg: BatchConfig) {
       if (rec?.status === 'succeeded') { plan.exactRepeats.push({ itemKey: key, detail: 'already completed in a previous run of this batch' }); continue; }
       if (rec?.status === 'suspended') { plan.suspended.push({ itemKey: key, detail: 'awaiting a human decision (reminder due)' }); continue; }
       // okuma 2: kanallar-arası kimlik (yalnız beyan + resourceId varsa)
-      if (cfg.resourceId && cfg.tool.semanticIdentity) {
+      // The fourth XID call site, and the one a guard added in durable-tool.ts would NOT cover: the
+      // preflight reads the same key family with the same declaration, so a declaration that cannot
+      // identify the item (an object-valued key, or a key absent from the args) would report every
+      // item as "already completed in another channel". Same check, same direction — the item is
+      // simply not cross-checked, which is the behavior without the declaration at all.
+      const idUnusable = cfg.resourceId && cfg.tool.semanticIdentity
+        ? identityUnusableReason(cfg.tool.semanticIdentity, item)
+        : undefined;
+      // Atlandığını SÖYLEYEREK atla. Boş bırakmak, "bu item kanallar-arası temiz" ile "bu item'a
+      // hiç bakılmadı"yı aynı çıktıya indirirdi.
+      if (idUnusable) (plan.xidIdentityUnusable ??= []).push({ itemKey: key, detail: idUnusable });
+      if (cfg.resourceId && cfg.tool.semanticIdentity && !idUnusable) {
         const x = await readXid(journal, xidPlanOf(cfg.tool.semanticIdentity, cfg.toolName, item, cfg.resourceId, `batch:${batchId}`));
         // self-filter BATCH-SCOPED (hakem tuzak 3): aynı batch'in BAŞKA item'ının yazdığı XID
         // "başka kanal" diye çift raporlanmasın.

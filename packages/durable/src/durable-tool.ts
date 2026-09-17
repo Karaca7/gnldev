@@ -8,7 +8,7 @@ import { CompensatedRunError, runCompensated } from './compensation.js';
 import { recordIncident } from './incidents.js';
 import { markRunTainted, readRunTaint } from './taint.js';
 import { checkToolGate, recordToolOutcome } from './limits.js';
-import { validateSemanticConfig, assertSemanticIdentity, extractSemFields, canonicalTextOf, findSemanticCandidate, writeSemRecord, semTombKey } from './semantic-dup.js';
+import { validateSemanticConfig, assertSemanticIdentity, identityUnusableReason, extractSemFields, canonicalTextOf, findSemanticCandidate, writeSemRecord, semTombKey } from './semantic-dup.js';
 import { SEM_RULESET_VERSION } from './semantic-rules.js';
 import { judgeGrayPair } from './semantic-judge.js';
 import { xidPlanOf, writeXid, readXid, xidWhen, amountsDifferOf, type XidPlan } from './xid.js';
@@ -481,6 +481,31 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       const hash = mode === 'args' && typeof tool.idempotencyKey === 'function'
         ? argsHash(tool.idempotencyKey(input))
         : argsHash(input);
+      // THE IDENTITY DECLARATION, CHECKED ONCE FOR THIS CALL — see identityUnusableReason. Every
+      // layer that compares declared identity fields reads this one value: the XID plan (cross
+      // channel), the confirm question's two decorations, and the semantic gate. They are separate
+      // consumers of ONE broken input, so one broken declaration must produce ONE diagnosis.
+      //
+      // The incident is written LAZILY and AT MOST ONCE. Both parts matter: eagerly would fire on
+      // replays that never reach a consumer, and twice would collide — `recordIncident` keys on
+      // (runId, toolCallId, source, action), so a second 'semantic-guard'/'warn' write for the same
+      // call silently OVERWRITES the first (the H16 lesson that hid the scan counters).
+      const identityUnusable = tool.semanticIdentity ? identityUnusableReason(tool.semanticIdentity, input) : undefined;
+      let identityReported = false;
+      const reportUnusableIdentity = async (): Promise<void> => {
+        if (!identityUnusable || identityReported) return;
+        identityReported = true;
+        await recordIncident(ctx.journal, ctx.runId, {
+          at: Date.now(), source: 'semantic-guard', action: 'warn', toolName, toolCallId,
+          message:
+            `@gnldev/durable: semanticIdentity for '${toolName}' cannot identify this call (${identityUnusable}) — ` +
+            `every identity-based layer (cross-channel XID, the confirm decoration, the semantic gate) is OFF for this call; ` +
+            `it proceeds exactly as it would without them`,
+          // FIELD NAMES ONLY, never values — the same contract that keeps values out of the vector.
+          // `identityKeys` is what makes this actionable: it names the declaration to correct.
+          detail: { toolName, reason: 'identity-unusable', cause: identityUnusable, identityKeys: tool.semanticIdentity!.keys },
+        }).catch(() => { /* the degradation must not become the failure it exists to prevent */ });
+      };
       // In the 'cross-run' window the journal key drops the `${runId}:` prefix
       // (runKeys.toolCrossRun) — the SAME arguments from ANY run land on the SAME record. 'run' window
       // (default) is UNCHANGED (runKeys.toolByArgs, run-scoped).
@@ -755,7 +780,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
               // but under the DUPLICATE source — precision@suspend measures whether the SIMILARITY
               // chain was worth asking, and an exact-hash hit was never in doubt.
               repeatSignal = { source: 'duplicate-guard', origin: 'marker', ...(prior.firstToolCallId ? { firstToolCallId: prior.firstToolCallId } : {}) };
-            } else if (tool.semanticIdentity && ctx.resourceId && await (async () => {
+            } else if (tool.semanticIdentity && ctx.resourceId && !identityUnusable && await (async () => {
               // KANALLAR-ARASI bakış (XID) — semantikten ÖNCE: bu konuşmada iz yok ama aynı iş
               // kimliği başka kanaldan (batch/API/başka sohbet) tamamlanmış olabilir; soru
               // "5 dk önce, batch'ten" diyebilmeli. Deterministik ve O(1) — embedder'sız da çalışır.
@@ -785,7 +810,13 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
               // shared semPlan is constructed further down the chain, past this arm).
               const cfCfg = dupConfigOf(ctx.limits?.sideEffectDuplicates, tool.effectClass);
               const cfSem = cfCfg.semantic && typeof cfCfg.semantic.embed === 'function' ? cfCfg.semantic : undefined;
-              if (cfSem && tool.semanticIdentity && (tool.sideEffect ?? tool.idempotent !== true)) {
+              // `!identityUnusable` here for the same reason as the XID arm above, and with a sharper
+              // edge: this decoration is TEXT A HUMAN READS. A declaration that collapses every call
+              // to one identity makes it assert "the SAME business identity was already completed"
+              // about two unrelated jobs — measured against a record left by a pre-fix build, which
+              // is exactly what an upgraded deployment still has sitting in its journal.
+              if (identityUnusable) await reportUnusableIdentity();
+              else if (cfSem && tool.semanticIdentity && (tool.sideEffect ?? tool.idempotent !== true)) {
                 const cfFields = extractSemFields(tool.semanticIdentity, input);
                 const verdict = await findSemanticCandidate(ctx.journal, {
                   cfg: cfSem, id: tool.semanticIdentity, threadId: ctx.threadId, toolName,
@@ -866,7 +897,15 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       // katman; embedder'sız kurulumlar da kanallar-arası korumayı alır). resourceId yoksa bir kez warn.
       let xidPlan: XidPlan | undefined;
       if (tool.semanticIdentity && sideEffect) {
-        if (ctx.resourceId) xidPlan = xidPlanOf(tool.semanticIdentity, toolName, input, ctx.resourceId, ctx.channel);
+        // XID is the HARSHEST consumer of the declaration and the one that needs no semantic config
+        // at all, so a broken declaration reaches deployments that never enabled the embedder. Its
+        // record feeds a synthetic dup marker into the duplicate ladder, where the outcome is not a
+        // question but a DECISION: measured on two different users with a misspelled key, the second
+        // job was refused outright under `block` and silently not executed under `skip`. Its scope is
+        // the PERSON and (by design, see xid.ts) it outlives the thread — so one bad declaration
+        // locks that person across every channel until someone notices.
+        if (identityUnusable) await reportUnusableIdentity();
+        else if (ctx.resourceId) xidPlan = xidPlanOf(tool.semanticIdentity, toolName, input, ctx.resourceId, ctx.channel);
         else warnThreadScopeFallback('cross-channel identity (XID)', toolName, 'resourceId');
       }
 
@@ -1070,11 +1109,37 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
         if (!ctx.threadId) {
           warnThreadScopeFallback('semantic guard', toolName);
         } else {
-          const fields = extractSemFields(tool.semanticIdentity, input);
-          semPlan = {
-            cfg: semCfg, id: tool.semanticIdentity, threadId: ctx.threadId, toolName,
-            argsHash: hash, fields, canonical: canonicalTextOf(tool.semanticIdentity, toolName, input, fields),
-          };
+          // FAIL-OPEN AT THE CALLER'S CLOSURE TOO (the K22 lesson, one boundary further out):
+          // `describe()` is USER code running over MODEL-produced args, so an optional field the model
+          // omitted is enough to make it throw. Unguarded, that throw left the semantic layer turning a
+          // call that would have SUCCEEDED without it into a failure — the exact inverse of "an
+          // unreachable provider degrades to today's behavior". The layer stands down for this call
+          // instead. It is NOT retried through the default template: `describe` is the PII redaction
+          // point, and falling back to the built-in sentence would ship the raw identity values to the
+          // embedder the author wrote that closure to keep them from.
+          // The declaration also has to hold for THIS CALL'S ARGS, not just at build time — see
+          // identityUnusableReason. A key pointing at an object, or at nothing, makes every call
+          // compare equal to every other and turns the gate into a permanent question storm whose
+          // own telemetry reads zero. Standing down here is the same fail-open the embedder outage
+          // takes, and it is journalled for the same reason: OFF and said so beats wrong and silent.
+          if (identityUnusable) await reportUnusableIdentity();
+          else try {
+            const fields = extractSemFields(tool.semanticIdentity, input);
+            semPlan = {
+              cfg: semCfg, id: tool.semanticIdentity, threadId: ctx.threadId, toolName,
+              argsHash: hash, fields, canonical: canonicalTextOf(tool.semanticIdentity, toolName, input, fields),
+            };
+          } catch (err) {
+            semPlan = undefined;
+            const why = err instanceof Error ? err.message : String(err);
+            await recordIncident(ctx.journal, ctx.runId, {
+              at: Date.now(), source: 'semantic-guard', action: 'warn', toolName, toolCallId,
+              message:
+                `@gnldev/durable: semanticIdentity for '${toolName}' threw while building the canonical record (${why}) — ` +
+                `the semantic gate is OFF for this call and no record was written; the call proceeds exactly as it would without this layer`,
+              detail: { toolName, reason: 'identity-build-failed', error: why },
+            }).catch(() => { /* the degradation must not become the failure it exists to prevent */ });
+          }
         }
       }
       // `record === undefined` is LOAD-BEARING (K18, the FAZ-3 confirm lesson repeated by the
