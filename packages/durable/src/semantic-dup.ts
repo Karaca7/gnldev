@@ -197,6 +197,83 @@ export function validateSemanticConfig(raw: unknown): void {
   }
 }
 
+/**
+ * THE CALL-TIME HALF of the identity declaration's validation, and the mirror image of the throw
+ * below. `assertSemanticIdentity` catches a gate that is INSTALLED BUT INERT (`keys: []`); this
+ * catches one that is installed and FIRES AT EVERYTHING — the direction the design panel assumed
+ * could not happen. Its conscious-risk list predicted that a bad `keys` declaration would quietly
+ * DISABLE the layer and surface as a "no strong candidates" anomaly. Measured, it does the opposite:
+ *
+ *   keys:['payload'] where payload is an object → every call's identity is '[object object]'
+ *   keys:['userID']  where the arg is 'userId'  → every call's identity is ''
+ *   keys:['items']   with [1,2] vs ['1','2']    → both stringify to '1,2'
+ *
+ * In all three the canonical sentences come out byte-identical too, so cosine is 1.0 and the
+ * deterministic phase reports "identity equal": EVERY call after the first becomes an approval
+ * question, forever (a tombstone settles only the pair it was born for, and the next call brings a
+ * new hash). The predicted telemetry stays at zero because nothing is being DROPPED — everything is
+ * matching. So the operator gets a question storm with no counter that explains it, and a question
+ * storm is how an operator learns to approve without reading, which is how a REAL duplicate gets
+ * approved too.
+ *
+ * Runtime rather than config time on purpose: the keys are static but the VALUES arrive with the
+ * call, which puts this on the `warnThreadScopeFallback` side of the panel's own line — a call-time
+ * condition stands the layer down FOR THAT CALL (today's behavior, the safe direction) instead of
+ * throwing a running job.
+ *
+ * Checked regardless of `describe`: a custom canonical sentence fixes what the EMBEDDER sees, but
+ * the identity comparison still reads these same fields, and that comparison is the decision.
+ *
+ * @returns why the declaration cannot identify THIS call, or undefined when it can.
+ */
+export function identityUnusableReason(id: SemanticIdentity, args: unknown): string | undefined {
+  const a = (args ?? {}) as Record<string, unknown>;
+  // Both loops below read through this, not through `a[k]` — see the prototype note in the first one.
+  // Applying it in one place and not the other is how the first version of this fix still let
+  // `keys: ['constructor']` through: the type checks saw `undefined` and passed it on, then the
+  // all-empty test reached Object via the prototype, found a non-empty string, and called the
+  // declaration sound.
+  const own = (k: string): unknown => (Object.prototype.hasOwnProperty.call(a, k) ? a[k] : undefined);
+  for (const k of id.keys) {
+    // OWN property only. Read through the prototype and this check misses its own target: `keys:
+    // ['constructor']` resolves to Object and `['toString']` to a function — both are truthy
+    // non-primitives that sail past a bare `typeof` test, and both then normalize to ONE constant
+    // string for every call, which is exactly the "every call compares equal" failure named below.
+    // Measured before this line existed: both returned undefined, i.e. "declaration is fine".
+    const v = own(k);
+    if (typeof v === 'function') {
+      return `identity key '${k}' holds a function, which carries no identity (every call would compare equal) — declare the leaf field instead`;
+    }
+    // A DATE is deliberately not in this class: `String(d)` varies per call, so it identifies. Saying
+    // otherwise would stand the layer down on a declaration that works — a protection switched off by
+    // an upgrade, silently, which is worse than the imprecision it was meant to prevent.
+    if (v instanceof Date) continue;
+    // An ARRAY is a different failure from an object and says so. It is not that every call compares
+    // equal — `['a','b']` and `['c','d']` do differ. It is that the element TYPES flatten: `[1,2]` and
+    // `['1','2']` both land on '1,2', so two genuinely different jobs can be called the same one.
+    // Still unusable, but for this reason, and the message has to carry the real one: an operator who
+    // reads "every call would compare equal" and then watches calls NOT compare equal stops believing
+    // the next diagnostic too.
+    if (Array.isArray(v)) {
+      return `identity key '${k}' holds an array: element types flatten through String(), so [1,2] and ['1','2'] both become '1,2' and different work can compare equal — declare the leaf field instead`;
+    }
+    // A plain object carries no identity at all: every one of them is '[object Object]'. ONE such key
+    // poisons the whole comparison, so it is reported on its own rather than waiting for the
+    // all-empty test below.
+    if (v !== null && typeof v === 'object') {
+      return `identity key '${k}' holds an object, which carries no identity (every call would compare equal) — declare the leaf field instead`;
+    }
+  }
+  // EVERY key empty means the declaration matched nothing at all: a misspelled key, or a tool whose
+  // schema moved under it. Deliberately NOT "any key empty" — a declaration like ['sku','warehouse']
+  // with an optional warehouse absent on both sides is a legitimate, correctly-matching identity, and
+  // refusing it would take away a question this layer exists to ask. (Both shapes are pinned.)
+  if (id.keys.every((k) => normalizeId(own(k)) === '')) {
+    return `none of the declared identity keys (${id.keys.join(', ')}) is present in the arguments — every call would compare equal to every other`;
+  }
+  return undefined;
+}
+
 export function assertSemanticIdentity(toolName: string, id: SemanticIdentity): void {
   if (!Array.isArray(id.keys) || id.keys.length === 0) {
     throw new Error(
@@ -372,6 +449,22 @@ async function scanCandidates(journal: Journal, plan: SemPlan, ttlMs?: number): 
   for (const k of keys) {
     const rec = await journal.get<SemDupRecord>(k);
     if (!rec || rec.v !== 1) continue;
+    // The cross-tool AND cross-thread gates are DECISIONS, so they are enforced against the record's
+    // own ADDRESS — a raw prefix cannot carry either, on any backend (measured identically on
+    // InMemory, SQLite, Postgres and Redis). `xthr:<threadId>:sem-<toolName>-<argsHash>` is built
+    // from separators that both threadIds and tool names may themselves contain, so the single
+    // prefix `xthr:a:sem-order-` matches BOTH tool 'order-cancel' in thread 'a' AND tool 'order' in
+    // a thread literally named 'a:sem-order-x'. The first leak quotes another TOOL's work into the
+    // question (the cross-tool negation gate this layer exists to provide); the second quotes
+    // another THREAD's — its canonical sentence and its firstToolCallId — across the boundary that
+    // is also the tenancy and PII boundary.
+    // TWO checks, because neither implies the other. The first is the cross-TOOL gate, compared
+    // against the scan's tool. The second is the cross-THREAD gate: rebuilt from THIS scan's
+    // threadId plus the record's OWN fields, so it is self-consistent by construction for a record
+    // that really lives here and fails for one reached through an ambiguous prefix. (The foreign
+    // thread's record passes the first check — same tool name — and only the address catches it.)
+    if (rec.toolName !== plan.toolName) continue;
+    if (k !== semKey(plan.threadId, rec.toolName, rec.argsHash)) continue;
     if (ttlMs !== undefined && nowMs - rec.at > ttlMs) continue; // aged out of the window
     if (rec.embedModelId !== plan.cfg.embedModelId || rec.templateVersion !== SEM_TEMPLATE_VERSION || !rec.vecB64) {
       droppedStamp++; // never compared silently across models/templates — excluded and counted

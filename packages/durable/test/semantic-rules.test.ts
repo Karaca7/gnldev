@@ -43,6 +43,17 @@ describe('rule ladder — normalizers (the ONLY class that may conclude "same")'
     expect(one('fiyat 1.5 kg', 'fiyat 15 kg').kind).not.toBe('match');
     expect(one('1,5 lt', '15 lt').kind).not.toBe('match');
   });
+
+  it('DECIMAL GUARD covers digit-value too: 1.05 is not 1.5 (a leading zero AFTER the point is signal)', () => {
+    // The guard used to sit on squash and digit-concat only. Tokenizing eats the decimal point, so
+    // '1.05' becomes ['1','05'] and per-token zero-stripping made it equal to '1.5' — the rule that
+    // was supposed to ignore noise silently equated two different amounts, and a false 'match' is a
+    // false question put to a human.
+    expect(one('model 1.05', 'model 1.5').kind).not.toBe('match');
+    expect(one('doz 0.5 mg', 'doz 0.05 mg').kind).not.toBe('match');
+    // And the rule still does its job where there is no decimal point to misread.
+    expect(one('fatura 0142', 'fatura 142').kind).toBe('match');
+  });
 });
 
 describe('rule ladder — separators (they may only DROP)', () => {

@@ -41,3 +41,8 @@ __pycache__/
 .doccheck/
 # junit output — CI writes it so a red run names the test; nothing should commit it
 test-results.xml
+
+# Denetim çalışma kaydı (evidence-based-audit). Repoya girmez: yayındaki sürümün kusurlarını
+# reprodüksiyonlarıyla anlatıyor ve SECURITY.md düzeltme yayınlanmadan public açıklamayı istemiyor.
+# Yayına uygun bir özet çıkarılacaksa RISK-AUDIT.md emsaline göre (İngilizce, dışa dönük) yazılır.
+audit-log.md

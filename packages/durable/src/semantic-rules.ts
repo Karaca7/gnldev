@@ -254,7 +254,11 @@ function evaluateField(field: string, rawA: string, rawB: string, cfg: SemanticR
   }
 
   const ta = tokenize(rawA), tb = tokenize(rawB);
-  if (!off.has('digit-value') && digitValueEqual(ta, tb)) return { dir: 'match', traces: [t('digit-value', 'match')] };
+  // SAME DECIMAL GUARD as squash and digit-concat, and it belongs here for the same reason: tokenizing
+  // splits '1.05' into ['1','05'], and stripping the leading zero PER TOKEN turns it into ['1','5'] —
+  // so '1.05' and '1.5' compare equal and two different amounts become one job. Leading zeros are
+  // only meaningless to the LEFT of a decimal point; this rule cannot see the point, so it steps aside.
+  if (!off.has('digit-value') && decimalSafe && digitValueEqual(ta, tb)) return { dir: 'match', traces: [t('digit-value', 'match')] };
   if (!off.has('digit-concat') && digitConcatEqual(ta, tb, rawA, rawB)) return { dir: 'match', traces: [t('digit-concat', 'match')] };
 
   // SEPARATORS — may only drop. Evaluated on the residue so shared context ('/ Trabzon Depo')

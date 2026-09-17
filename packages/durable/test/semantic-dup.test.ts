@@ -192,6 +192,46 @@ describe('FAZ-6 decision gates (score alone never decides)', () => {
     expect(counter.n).toBe(2); // a deletion is NOT a duplicate candidate for a creation
   });
 
+  it("cross-tool negation holds when a tool name CONTAINS the key separator ('order' vs 'order-cancel')", async () => {
+    // The filter used to rest entirely on the key prefix `sem-<toolName>-`, and a '-' in a tool name
+    // makes that prefix ambiguous: scanning for 'order' also matched every 'order-cancel' key. The
+    // cancellation then passed the identity phase and suspended the creation with ANOTHER tool's work
+    // quoted back at the human — the exact cross-tool negation this gate exists to close.
+    const journal = new InMemoryJournal();
+    const counter = { n: 0 };
+    const limits = semLimits(fakeEmbed(), 'dash-model');
+    // A CONSTANT describe() on both tools, and the test is worthless without it. The default
+    // canonical sentence embeds the tool name ('order: abc' vs 'order-cancel: abc'), so the fake
+    // embedder hands back different vectors, cosine falls under minSimilarity, and the candidate
+    // never reaches the gate this test claims to be testing — it passed with the gate deleted.
+    // Measured: removing the toolName filter left this file green until this line existed.
+    // Forcing one sentence for both puts cosine at 1.0, which is the only way the deterministic
+    // toolName filter becomes the thing under test.
+    const same = () => 'the same sentence for both tools';
+    const tools = {
+      'order': { sideEffect: true, semanticIdentity: { keys: ['sku'], describe: same }, execute: async () => { counter.n++; return { ok: 'o' }; } },
+      'order-cancel': { sideEffect: true, semanticIdentity: { keys: ['sku'], describe: same }, execute: async () => { counter.n++; return { ok: 'x' }; } },
+    };
+    await runDurable(base(journal, 'd1', { model: model('order-cancel', 'c1', { sku: 'ABC' })(), tools, threadId: 'th-D', limits }) as any);
+    await runDurable(base(journal, 'd2', { model: model('order', 'c2', { sku: 'ABC' })(), tools, threadId: 'th-D', limits }) as any);
+    expect(counter.n).toBe(2);
+  });
+
+  it('thread isolation survives a threadId that CONTAINS the key pattern', async () => {
+    // Second door onto the same ambiguity, and this one crosses the tenancy boundary rather than the
+    // tool one: a thread literally named 'a:sem-order-x' writes to `xthr:a:sem-order-x:sem-order-<h>`,
+    // which is under thread 'a''s scan prefix `xthr:a:sem-order-`. The tool names MATCH, so the
+    // cross-tool check cannot see it — thread 'a' was suspended with the OTHER thread's canonical
+    // sentence and the OTHER thread's firstToolCallId quoted into the human's question.
+    const journal = new InMemoryJournal();
+    const counter = { n: 0 };
+    const limits = semLimits(fakeEmbed(), 'iso-model');
+    const tools = { order: { sideEffect: true, semanticIdentity: { keys: ['sku'] }, execute: async () => { counter.n++; return { ok: 1 }; } } };
+    await runDurable(base(journal, 'i1', { model: model('order', 'c1', { sku: 'ABC' })(), tools, threadId: 'a:sem-order-x', limits }) as any);
+    await runDurable(base(journal, 'i2', { model: model('order', 'c2', { sku: 'ABC' })(), tools, threadId: 'a', limits }) as any);
+    expect(counter.n).toBe(2); // another thread's work is never a candidate
+  });
+
   it('intra-tool negation: a differing discriminator drops the candidate; an equal one suspends', async () => {
     const journal = new InMemoryJournal();
     const counter = { n: 0 };
@@ -290,6 +330,124 @@ describe('FAZ-6 fail-open, stamps and lifecycle', () => {
     } finally {
       warn.mockRestore();
     }
+  });
+
+  it('an identity declaration that cannot identify the call stands the layer down — and says so', async () => {
+    // The panel's conscious-risk list predicted a bad `keys` declaration would quietly DISABLE the
+    // layer. Measured, it did the opposite: identity '[object object]' (an object-valued key) or ''
+    // (a misspelled key) compares equal to itself on every call, cosine is 1.0, and EVERY call after
+    // the first became an approval question — with the scan counters at zero, so nothing explained
+    // why. A question storm is how an operator learns to approve without reading.
+    const run = async (name: string, semanticIdentity: unknown, a1: unknown, a2: unknown) => {
+      const journal = new InMemoryJournal();
+      const counter = { n: 0 };
+      const limits = semLimits(fakeEmbed(), `${name}-model`);
+      const tools = { act: { sideEffect: true, semanticIdentity, execute: async () => { counter.n++; return { ok: 1 }; } } };
+      await runDurable(base(journal, `${name}1`, { model: model('act', 'c1', a1)(), tools, threadId: `th-${name}`, limits }) as any);
+      await runDurable(base(journal, `${name}2`, { model: model('act', 'c2', a2)(), tools, threadId: `th-${name}`, limits }) as any);
+      return { ran: counter.n, inc: await readIncidents(journal, `${name}2`) };
+    };
+    const unusable = (r: { inc: Awaited<ReturnType<typeof readIncidents>> }) =>
+      r.inc.some((i) => i.source === 'semantic-guard' && (i.detail as any)?.reason === 'identity-unusable');
+
+    // An object-valued key: every payload stringifies to the same thing.
+    const obj = await run('uo', { keys: ['payload'] }, { payload: { sku: 'A-1' } }, { payload: { sku: 'Z-9' } });
+    expect(obj.ran).toBe(2);
+    expect(unusable(obj)).toBe(true);
+
+    // A misspelled key ('userID' vs the actual 'userId'): every identity is ''.
+    const typo = await run('ut', { keys: ['userID'] }, { userId: 'u-7' }, { userId: 'u-99' });
+    expect(typo.ran).toBe(2);
+    expect(unusable(typo)).toBe(true);
+
+    // An array-valued key: [1,2] and ['1','2'] both stringify to '1,2'.
+    const arr = await run('ua', { keys: ['items'] }, { items: [1, 2] }, { items: ['1', '2'] });
+    expect(arr.ran).toBe(2);
+    expect(unusable(arr)).toBe(true);
+    // ...and it says WHY. An array is not the object case: `['a','b']` and `['c','d']` genuinely
+    // differ, so "every call would compare equal" is false here. An operator who reads that and then
+    // watches calls not compare equal stops believing the next diagnostic too.
+    expect(arr.inc.find((i) => i.source === 'semantic-guard')?.message ?? '')
+      .toMatch(/element types flatten/);
+
+    // THE LINE THIS MUST NOT CROSS — the rule is "EVERY key empty", not "any key empty". An optional
+    // field absent on both sides is a legitimate identity, and the question still gets asked.
+    const partial = await run('up', { keys: ['sku', 'warehouse'] }, { sku: 'ABC', note: 'ilk' }, { sku: 'ABC', note: 'ikinci' });
+    expect(partial.ran).toBe(1); // second call suspended, as it should be
+    expect(unusable(partial)).toBe(false);
+    expect(partial.inc.some((i) => i.source === 'semantic-guard' && i.action === 'suspend')).toBe(true);
+
+    // A sound declaration with genuinely different identities is untouched.
+    const sound = await run('us', { keys: ['sku'] }, { sku: 'ABC' }, { sku: 'XYZ' });
+    expect(sound.ran).toBe(2);
+    expect(unusable(sound)).toBe(false);
+  });
+
+  // Deliberately a UNIT test on the function, not another end-to-end run. The flow above reports one
+  // incident whichever branch fires, so it cannot tell WHICH guard caught a case — and a test that
+  // passes for the wrong reason is the failure mode this suite keeps finding. Each branch below was
+  // verified by removing exactly that branch and watching only its own assertion turn red.
+  it('identityUnusableReason: what identifies a call, and what only looks like it does', async () => {
+    const { identityUnusableReason } = await import('../src/semantic-dup.js');
+    const reason = (keys: string[], args: unknown) => identityUnusableReason({ keys } as never, args);
+
+    // A DATE identifies. `String(d)` varies per call, so calling it unusable would stand the layer
+    // down on a declaration that works — a protection switched off by an upgrade, silently.
+    expect(reason(['when'], { when: new Date('2026-01-01T00:00:00Z') })).toBeUndefined();
+    expect(reason(['sku'], { sku: 'A-1' })).toBeUndefined();
+
+    // A plain object does not. Every one of them is '[object Object]'.
+    expect(reason(['payload'], { payload: { sku: 'A' } })).toMatch(/carries no identity/);
+
+    // An array does not either, but for a DIFFERENT reason, and the message has to carry the real
+    // one: `['a','b']` and `['c','d']` do differ, so "every call would compare equal" is false here.
+    // What actually breaks is that element types flatten — [1,2] and ['1','2'] both become '1,2'.
+    expect(reason(['items'], { items: [1, 2] })).toMatch(/element types flatten/);
+
+    // THE GUARD'S OWN TARGET, which it used to miss. `constructor` resolves to Object and `toString`
+    // to a function through the PROTOTYPE: both are non-null, both sailed past a bare
+    // `typeof v === 'object'` test, and both normalize to one constant for every call — precisely the
+    // "every call compares equal" failure this function exists to name. Measured before the fix:
+    // `undefined`, i.e. "this declaration is fine".
+    for (const k of ['constructor', 'toString', 'valueOf']) {
+      expect(reason([k], { sku: 'A' }), `keys: ['${k}'] reaches the prototype and identifies nothing`)
+        .toBeDefined();
+    }
+
+    // The second half of the same lesson, and a separate branch: a key that exists ONLY on the
+    // prototype is not an argument the caller passed. Reading it through the chain reports a sound
+    // declaration for a field the tool never received.
+    const inherited = Object.create({ sku: 'inherited-value' });
+    expect(reason(['sku'], inherited), 'a prototype-only key is not an argument').toBeDefined();
+
+    // A function held as an OWN property is its own case, and the only one the `typeof` branch
+    // catches by itself — the prototype names above are already stopped one line earlier. Without it
+    // a function falls through every object test (`typeof fn` is 'function', not 'object') and then
+    // normalizes to its source text, which is non-empty, so the declaration reads as sound.
+    // Measured: removing that branch alone left this suite green until this assertion existed.
+    expect(reason(['sku'], { sku: () => 1 }), 'a function argument identifies nothing').toBeDefined();
+  });
+
+  it("a describe() that THROWS stands the layer down for that call — it does not take the tool call with it", async () => {
+    // `describe` is caller code running over MODEL-produced args, so an omitted optional field is
+    // enough to make it throw. Unguarded, that throw turned a call which succeeds WITHOUT the layer
+    // into a failure — the inverse of the fail-open promise. The layer is OFF for the call (and the
+    // default template is deliberately NOT used as a fallback: describe is the PII redaction point).
+    const journal = new InMemoryJournal();
+    const counter = { n: 0 };
+    const limits = semLimits(fakeEmbed(), 'thr-model');
+    const tools = {
+      createProduct: {
+        sideEffect: true,
+        semanticIdentity: { keys: ['sku'], describe: (a: any) => a.meta.label as string },
+        execute: async () => { counter.n++; return { ok: 1 }; },
+      },
+    };
+    await runDurable(base(journal, 'dt1', { model: model('createProduct', 'c1', { sku: 'Q' })(), tools, threadId: 'th-T', limits }) as any);
+    expect(counter.n).toBe(1);
+    expect(await journal.listKeys('xthr:th-T:sem-')).toEqual([]); // no record, no half-written vector
+    const inc = await readIncidents(journal, 'dt1');
+    expect(inc.some((i) => i.source === 'semantic-guard' && (i.detail as any)?.reason === 'identity-build-failed')).toBe(true);
   });
 });
 

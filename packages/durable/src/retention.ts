@@ -723,12 +723,43 @@ export interface ThreadSweepResult {
   purged: string[];
   /** Number of threads whose age couldn't be measured (and were thus preserved) because none of their messages had a recognized ts field. */
   keptNoTs: number;
+  /**
+   * Threads holding `xthr:` state (dedup markers, the thread idempotency window, semantic records
+   * and their vectors, tombstones, judge verdicts) with NO `mem:` sibling — so this sweep never
+   * discovered them and nothing here touched them. REPORTED, NOT DELETED: see the note on
+   * sweepThreads for why the sweep does not act on them by itself.
+   *
+   * A non-empty list is not an error. It means thread state in this journal is outliving the only
+   * AGE-BASED sweep there is, and the caller has to decide what closes it — `purgeThread` per id,
+   * or a deployment that keeps chat history in BasicMemory so these ids are discoverable.
+   */
+  orphanThreadState: string[];
 }
 
 // BasicMemory's known key suffixes (memory.ts schema): `mem:<threadId>:messages|:working`.
 // threadId itself may contain ':' → the extraction is done via known-suffix matching, NOT split.
 const MEM_PREFIX = 'mem:';
 const MEM_SUFFIXES = [':messages', ':working'] as const;
+
+// The `xthr:<threadId>:<family>-…` families, listed so a threadId can be recovered from a key the
+// same way MEM_SUFFIXES recovers one from `mem:` — by matching a KNOWN boundary rather than
+// splitting on ':', because a threadId may contain ':' itself (memory.ts says so explicitly).
+// Ordered longest-first so ':semtomb-' is never mistaken for ':sem-' + 'tomb-'.
+const XTHR_PREFIX = 'xthr:';
+const XTHR_FAMILIES = [':semjudge-', ':semtomb-', ':sem-', ':dup-', ':args-'] as const;
+
+/** threadId out of `xthr:<threadId>:<family>-…`, or undefined when no known family boundary is found. */
+function threadIdOfXthrKey(key: string): string | undefined {
+  const rest = key.slice(XTHR_PREFIX.length);
+  // LAST boundary wins: a threadId that itself contains ':dup-…' keeps its own text, and the family
+  // written by this runtime is always the final segment.
+  let cut = -1;
+  for (const fam of XTHR_FAMILIES) {
+    const i = rest.lastIndexOf(fam);
+    if (i > cut) cut = i;
+  }
+  return cut > 0 ? rest.slice(0, cut) : undefined;
+}
 
 /** Reads a timestamp from a message. HONEST NOTE: BasicMemory doesn't timestamp messages itself
  *  (AI SDK's ModelMessage has no ts field) — only common fields added by the caller are recognized
@@ -752,6 +783,33 @@ function readMessageTs(msg: any): number | undefined {
  * permanently deleted via purgeThread (`mem:<threadId>:` prefix — messages + working together).
  * Safe side: threads whose ts can't be read (untimestamped messages or no messages at all) are NOT deleted.
  * Requires listKeys + deletePrefix (requireDelete pattern).
+ *
+ * THE DISCOVERY GAP, reported rather than silently closed (`orphanThreadState`).
+ *
+ * This is the only AGE-BASED sweep for thread state, and it finds threads by listing `mem:`. A
+ * deployment that keeps chat history elsewhere — its own database, `@gnldev/memory`'s observational
+ * store, or nothing at all because it uses `threadId` purely for idempotency — writes no `mem:` keys,
+ * so its threads are not in that list. Measured: a run with a threadId and no BasicMemory left two
+ * `xthr:` records (a dup marker and a semantic record carrying its canonical sentence) and this
+ * function returned `{scanned: 0, purged: [], keptNoTs: 0}` — "nothing to do", not "I could not see
+ * it". Unmeasured and clean produced the same numbers, which is the shape this field removes.
+ *
+ * It does NOT delete them, and that is a decision rather than an omission:
+ *  - `purgeThread` takes `mem:` WITH `xthr:`, so sweeping a discovered-by-xthr thread on ITS age
+ *    could delete chat history that is younger than the dedup state beside it.
+ *  - Deleting more data than a previous version did is the one change a minor upgrade must not make
+ *    on its own. The equivalent surprise on the question side is why the rule ladder is opt-in.
+ *  - Ages here are not comparable: a `mem:` thread ages by its last MESSAGE, `xthr:` records age by
+ *    their own `at` stamps, and picking one for the other is a policy the caller owns.
+ *
+ * TWO THINGS THIS LIST IS ALSO THE SIGNAL FOR, both measured:
+ *  - `ttlMs` on `sideEffectDuplicates` is a READ-SIDE filter (an expired record stops being a
+ *    candidate); it deletes nothing. A short ttl is not a retention policy.
+ *  - `purgeResource` (the person-erasure surface) finds threads through the person's RUNS. Once
+ *    those runs have been swept by `sweepRuns`, the threadId is no longer reachable and the
+ *    erasure silently leaves this state behind. Measured: sweepRuns then purgeResource deleted 1 key
+ *    and left the thread's canonical sentence in place; purgeResource alone cleared it.
+ *    So erase people BEFORE their runs age out, or carry the thread ids yourself.
  */
 export async function sweepThreads(journal: Journal, opts: ThreadSweepOptions): Promise<ThreadSweepResult> {
   requireDelete(journal);
@@ -772,7 +830,7 @@ export async function sweepThreads(journal: Journal, opts: ThreadSweepOptions): 
     }
   }
 
-  const result: ThreadSweepResult = { scanned: 0, purged: [], keptNoTs: 0 };
+  const result: ThreadSweepResult = { scanned: 0, purged: [], keptNoTs: 0, orphanThreadState: [] };
   for (const threadId of threadIds) {
     result.scanned++;
     const messages = (await journal.get<any[]>(`${MEM_PREFIX}${threadId}:messages`)) ?? [];
@@ -787,6 +845,15 @@ export async function sweepThreads(journal: Journal, opts: ThreadSweepOptions): 
       result.purged.push(threadId);
     }
   }
+
+  // AFTER the sweep, so a thread this round just purged is not reported as orphaned. What is left
+  // under `xthr:` with no `mem:` sibling is state no age-based sweep can reach.
+  const orphans = new Set<string>();
+  for (const key of await list(XTHR_PREFIX).catch(() => [] as string[])) {
+    const threadId = threadIdOfXthrKey(key);
+    if (threadId !== undefined && !threadIds.has(threadId)) orphans.add(threadId);
+  }
+  result.orphanThreadState = [...orphans];
   return result;
 }
 
