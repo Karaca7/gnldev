@@ -105,8 +105,30 @@ export const semTombKey = (threadId: string, toolName: string, priorHash: string
   `xthr:${threadId}:semtomb-${toolName}-${priorHash}-${newHash}`;
 
 /** Normalized equality for identity values: trim + NFKC + case-fold — 'ABC-1' vs 'abc-1' class
- *  Differences close deterministically instead of leaning on the probabilistic side. */
-export const normalizeId = (v: unknown): string => String(v ?? '').trim().normalize('NFKC').toLowerCase();
+ *  Differences close deterministically instead of leaning on the probabilistic side.
+ *
+ *  A Date is converted BEFORE String(), because `String(date)` renders in the host's local zone and
+ *  an identity that depends on where the worker runs is not an identity. Measured on the same
+ *  instant with the same code:
+ *
+ *    TZ=Europe/Istanbul  →  'thu jan 01 2026 03:00:00 gmt+0300 (gmt+03:00)'
+ *    TZ=UTC              →  'thu jan 01 2026 00:00:00 gmt+0000 (coordinated universal time)'
+ *
+ *  Two workers in two zones therefore read the same job as two different jobs and the protection
+ *  disappears silently. A model-generated argument cannot reach here as a Date — JSON turns it into
+ *  an ISO string on the way in — so the exposure is programmatic callers, which is exactly the shape
+ *  of a database row whose timestamp column arrives as a Date object.
+ *
+ *  An Invalid Date normalizes to '' (carries no identity) rather than to the text 'invalid date',
+ *  which would have made every unparseable date collide as though they were one job.
+ *
+ *  KEYS CHANGE FOR DATES ONLY. The identity is hashed into the journal key itself, so there is no
+ *  record to upgrade in place — records written before this are reached by their old key and no
+ *  longer matched. Strings and numbers hash exactly as before; the only keys that move are the ones
+ *  that were already zone-dependent, i.e. the ones that were already wrong. */
+export const normalizeId = (v: unknown): string =>
+  String((v instanceof Date ? (Number.isNaN(v.getTime()) ? '' : v.toISOString()) : v) ?? '')
+    .trim().normalize('NFKC').toLowerCase();
 
 export interface SemFields {
   identity: Record<string, string>;
