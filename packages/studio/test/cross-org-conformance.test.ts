@@ -61,6 +61,12 @@ const VERDICTS: Record<string, { verdict: Verdict; why: string }> = {
   'DELETE /organizations/:id': { verdict: 'platform-admin', why: 'organization management' },
   'PUT /organizations/:id/budget': { verdict: 'platform-admin', why: 'a tenant must not set its own ceiling' },
   'POST /retention/sweep': { verdict: 'platform-admin', why: 'destructive, deployment-wide' },
+  // READ ONLY, and that is what separates it from the sweep above. It lists thread state no erasure
+  // request can reach, through `rw` — which withOrg has already prefixed (organization.ts bridges
+  // listKeys with the org prefix and strips it back off), so a bound identity enumerates its own
+  // scope and nothing else. No platform-admin gate, because nothing crosses a tenant boundary and
+  // nothing is deleted.
+  'GET /retention/orphans': { verdict: 'org-scoped', why: 'read-only listing through the org-prefixed journal' },
   'PUT /policy': { verdict: 'platform-admin', why: 'one policy governs every organization' },
   'PUT /pricing': { verdict: 'platform-admin', why: 'one price table governs every organization' },
   'DELETE /runs/:id': { verdict: 'platform-admin', why: 'irreversible purge' },
@@ -204,6 +210,11 @@ async function seedOrg(j: InMemoryJournal, org: string, run: string, text: strin
   const p = `org:${org}:${run}`;
   const usage = { inputTokens: { total: 5 }, outputTokens: { total: 7 } };
   await j.put(`${p}:input`, { prompt: text, at: 1, agent: text });
+  // Thread state with no `mem:` owner — what a run with no resourceId leaves behind, and the only
+  // thing `GET /retention/orphans` has to answer with. Seeded per-org and with the org's own text so
+  // the ownership control has two DIFFERENT answers to compare; without it both callers would read
+  // an empty list and "no leak" would be satisfied by a route that tells nobody anything.
+  await j.put(`org:${org}:xthr:thread-${text}:sem-pay-h1`, { v: 1, canonical: `pay: ${text}`, at: 1 });
   await j.put(`${p}:model:0`, { content: [{ type: 'text', text }], finishReason: 'stop', usage, modelId: 'm', at: 2 });
   await j.put(`${p}:outcome`, { status: 'completed', at: 3 });
   await j.put(`org:${org}:__metrics__run:${run}`, { runId: run, agentName: text, status: 'completed', costUsd: cost, totalTokens: 9, startTs: 1, durationMs: 5 });
@@ -628,7 +639,7 @@ describe('the ownership control — acme must SEE what globex must not', () => {
     'POST /cache/invalidate', 'GET /cache/stats',
     'GET /jobs', 'POST /jobs/:id/retry', 'POST /knowledge/search', 'GET /managed-agents',
     'GET /dead-events', 'GET /dead-events/topics',
-    'GET /metrics', 'GET /metrics/runs', 'GET /organizations',
+    'GET /metrics', 'GET /metrics/runs', 'GET /organizations', 'GET /retention/orphans',
     'GET /runs', 'GET /runs/:id', 'POST /runs/:id/cancel', 'POST /runs/:id/compensate',
     'GET /runs/:id/cost', 'GET /runs/:id/diff',
     'GET /runs/:id/incidents', 'GET /runs/:id/network', 'GET /runs/:id/processors',

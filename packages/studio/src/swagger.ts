@@ -71,6 +71,7 @@ export function openapiSpec(apiBase = '') {
       '/approvals': P('get', 'Pending tool approvals across all suspended runs (inbox)'),
       '/audit': P('get', 'Audit trail (governance log), newest first', [q('limit', 'integer'), q('action'), q('q'), q('org')]),
       '/retention/sweep': P('post', 'Retention sweep — permanently purge old runs per policy', [], true),
+      '/retention/orphans': P('get', 'Thread state no erasure request can reach (read-only count; sweepThreads reports the same list but purges)', []),
       '/organizations': { ...P('get', 'Organization list (usage/cost + budget status)'), ...P('post', 'Register a new organization', [], true) },
       '/organizations/{id}': P('delete', 'GDPR/cleanup — permanently delete an organization', idParam),
       '/organizations/{id}/budget': P('put', "Set/clear an organization's budget ('default' = fallback for all orgs)", idParam, true),

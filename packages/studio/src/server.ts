@@ -4,7 +4,7 @@ import { toFetchHandler, type FetchHandler } from './handler.js';
 import { Hono, type Context } from 'hono';
 import { sseResponse } from './sse.js';
 
-import { ORG_RECORD_PRE, asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, countLog, purgeRun, purgeOrganization, orgPurgedKey, sweepRuns, sweepLog, POLICY_KEY, PRICING_KEY, effectivePricingTable, DEFAULT_PRICING, readPricing, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, knownModelProviders, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent, callerConflictCode, surfacedInterrupts, resolveApprovals as dResolveApprovals, hasRunProbe } from '@gnldev/durable';
+import { ORG_RECORD_PRE, asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, countLog, purgeRun, purgeOrganization, orgPurgedKey, sweepRuns, sweepLog, listOrphanThreadState, POLICY_KEY, PRICING_KEY, effectivePricingTable, DEFAULT_PRICING, readPricing, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, knownModelProviders, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent, callerConflictCode, surfacedInterrupts, resolveApprovals as dResolveApprovals, hasRunProbe } from '@gnldev/durable';
 import type { PolicyDoc, PolicyRule, BudgetLimit, PricingDoc } from '@gnldev/durable';
 import type { JournalReader, Journal, WorkflowLike, MetricsRunRow } from '@gnldev/durable';
 import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, principalScope, assertAssignablePrivileges, CLIENT_ROLE, type AuthProvider, type Principal } from '@gnldev/auth';
@@ -2176,7 +2176,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
           // is a different — and much more alarming — claim than "we did not record it back then".
           const rawKeys = d.identityKeys;
           const keys = Array.isArray(rawKeys) && rawKeys.every((k) => typeof k === 'string') ? (rawKeys as string[]) : undefined;
-          const declKey = keys ? `${i.toolName} ${keys.join(',')}` : undefined;
+          const declKey = keys ? `${i.toolName}\u0000${keys.join(',')}` : undefined;
           if (declKey && keys) {
             const row = byDeclaration.get(declKey) ?? { toolName: i.toolName, keys, suspend: 0, approved: 0, denied: 0 };
             row.suspend++;
@@ -2211,7 +2211,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     // karşı pair-dedup korunur.
     const seenPair = new Set<string>();
     for (const s of semSuspends) {
-      const pk = `${s.runId} ${s.toolCallId}`;
+      const pk = `${s.runId}\u0000${s.toolCallId}`;
       if (seenPair.has(pk)) continue;
       seenPair.add(pk);
       const entries = await reader.readRun(s.runId).catch(() => [] as Awaited<ReturnType<typeof reader.readRun>>);
@@ -3423,6 +3423,42 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       ...(auditSwept ? { auditOlderThanMs, auditDeleted: auditSwept.deleted, auditScanned: auditSwept.scanned } : {}),
     });
     return c.json({ ok: true, ...result, purged: result.purged.slice(0, 100), ...(auditSwept ? { audit: auditSwept } : {}) });
+  });
+
+  // Thread state that belongs to no thread the memory port knows — and therefore to no erasure
+  // request either, because `purgeResource` reaches threads through their owner and these have none.
+  // A run with no `resourceId` leaves exactly this.
+  //
+  // READ ONLY, and that is the whole reason this endpoint exists. `sweepThreads` reports the same
+  // list but PURGES as it goes, so a panel that wanted to show the number could only get it by
+  // deleting data. A count nobody can read without a delete is not visible in any useful sense.
+  //
+  // No `requirePlatformAdmin` here, unlike the sweep above: that one scans runs across every org and
+  // DELETES, so a bound identity could reach another tenant's data. This one only reads, and it reads
+  // through `rw` — which `withOrg` has already prefixed, so an org-bound caller sees its own scope and
+  // nothing else (organization.ts bridges listKeys with the prefix, then strips it back off).
+  app.get('/retention/orphans', async (c) => {
+    if (!(await allowP(c.req.raw, 'runs:read'))) return deny(c.req.raw, 'read');
+    if (typeof rw.listKeys !== 'function') {
+      return c.json({ error: 'listing orphaned thread state requires journal listKeys support' }, 501);
+    }
+    // A failed scan must not read as `count: 0`. This endpoint exists to say "nothing can reach this
+    // data" — and "the read failed" answering with the same number as "there is none" is the exact
+    // ambiguity the field was added to remove.
+    let report: Awaited<ReturnType<typeof listOrphanThreadState>>;
+    try {
+      report = await listOrphanThreadState(rw as never);
+    } catch (err) {
+      return c.json({ error: `could not scan thread state: ${(err as Error)?.message ?? 'unknown'}` }, 500);
+    }
+    return c.json({
+      count: report.threadIds.length,
+      threadIds: report.threadIds.slice(0, 200),
+      // Reported separately, never summed into `count`: one is state whose owner is gone, the other
+      // is state this build cannot even parse. A single number covering both is actionable for
+      // neither.
+      unrecognisedKeys: report.unrecognisedKeys.slice(0, 200),
+    });
   });
 
   // ── Guard/policy editor: rules live in the journal (__policy__), policyGuard reads them live ──────────
