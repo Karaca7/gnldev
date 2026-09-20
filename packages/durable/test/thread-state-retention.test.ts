@@ -20,6 +20,7 @@ import { InMemoryStorage, toJournal } from '../src/index.js';
 import { InMemoryJournal } from '../src/journal.js';
 import { runDurable } from '../src/run.js';
 import { sweepThreads, sweepRuns, purgeResource, purgeThread, listOrphanThreadState } from '../src/retention.js';
+import { MEM_LEAVES } from '../src/memory.js';
 import { createMockModel, countToolResults, toolCallResult, finalTextResult } from './mock.js';
 
 const fakeEmbed = async (texts: string[]): Promise<number[][]> =>
@@ -166,6 +167,39 @@ describe('person erasure after run retention', () => {
     // …and it agrees with the sweep, which is what makes it safe to read instead.
     expect((await sweepThreads(journal, { olderThanMs: 0, now: FAR_FUTURE() })).orphanThreadState)
       .toEqual(orphans.threadIds);
+  });
+
+  it('a `mem:` leaf this build cannot read is NAMED, not silently counted as a missing thread', async () => {
+    // The drift this closes: retention recovers a threadId out of `mem:<threadId>:<leaf>` by matching
+    // a known leaf, because a threadId may contain ':' itself. An unmatched leaf therefore does not
+    // fail — the thread just stops existing as far as the scan is concerned, and a thread that does
+    // not exist is reported ORPHANED with its memory sitting right beside its dedup state.
+    //
+    // Measured before the leaf list was shared with memory.ts: `mem:th-new:summary` +
+    // `xthr:th-new:sem-…` reported `threadIds: ['th-new']`, `unrecognisedKeys: []` — a wrong answer
+    // with nothing on the report to suggest a key had been skipped.
+    //
+    // The structural half (one shared MEM_LEAVES) stops a NEW leaf from drifting. This half catches
+    // the other road in: a key built by hand instead of through memKey — which rag's semantic-memory
+    // does today.
+    const journal: any = toJournal(new InMemoryStorage().runs);
+    await journal.put('mem:th-new:summary', { v: 1 });
+    await journal.put('xthr:th-new:sem-pay-abc', { v: 1 });
+
+    const orphans = await listOrphanThreadState(journal);
+    expect(orphans.unrecognisedKeys, 'the skipped key must be named').toContain('mem:th-new:summary');
+
+    // CONTROL: every leaf the memory port can actually write must be recognised, or this gate would
+    // report healthy threads forever. This is the binding — add a leaf to MEM_LEAVES without
+    // teaching retention, and it turns red here rather than in someone's orphan report.
+    for (const leaf of MEM_LEAVES) {
+      const j2: any = toJournal(new InMemoryStorage().runs);
+      await j2.put(`mem:th-ok:${leaf}`, { v: 1 });
+      await j2.put('xthr:th-ok:sem-pay-abc', { v: 1 });
+      const r = await listOrphanThreadState(j2);
+      expect(r.unrecognisedKeys, `leaf '${leaf}' is written by memKey and must be readable here`).toEqual([]);
+      expect(r.threadIds, `leaf '${leaf}' identifies a LIVE thread, not an orphan`).toEqual([]);
+    }
   });
 
   it('a purged thread takes its ownership traces with it — a trace outlives the run, not the thread', async () => {

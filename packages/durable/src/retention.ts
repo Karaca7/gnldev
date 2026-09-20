@@ -5,6 +5,7 @@
 import { runKeys, summarizeRun, nestedAgentRunId, runIdOfKey } from './journal.js';
 import { identityOnlyInput } from './run.js';
 import { workKeyHash } from './hash.js';
+import { MEM_LEAVES } from './memory.js';
 import type { WorkScopeKind } from './hash.js';
 import type { Journal, JournalReader } from './journal.js';
 
@@ -822,8 +823,12 @@ export interface ThreadSweepResult {
 
 // BasicMemory's known key suffixes (memory.ts schema): `mem:<threadId>:messages|:working`.
 // threadId itself may contain ':' → the extraction is done via known-suffix matching, NOT split.
+//
+// DERIVED, not retyped. A second copy of this list drifts silently in the direction that is hardest
+// to notice: an unlisted leaf makes its thread invisible to `threadIdsFromMemory`, and a thread that
+// is not known is reported ORPHANED even though its memory is sitting right beside its dedup state.
 const MEM_PREFIX = 'mem:';
-const MEM_SUFFIXES = [':messages', ':working'] as const;
+const MEM_SUFFIXES = MEM_LEAVES.map((leaf) => `:${leaf}`);
 
 // The `xthr:<threadId>:<family>-…` families, listed so a threadId can be recovered from a key the
 // same way MEM_SUFFIXES recovers one from `mem:` — by matching a KNOWN boundary rather than
@@ -864,16 +869,28 @@ function readMessageTs(msg: any): number | undefined {
 
 /** Thread ids the memory port knows about, off `mem:` keys. Shared so the read-only orphan listing
  *  and the sweep cannot drift into two different answers to "which threads exist". */
-async function threadIdsFromMemory(list: NonNullable<Journal['listKeys']>): Promise<Set<string>> {
+async function threadIdsFromMemory(
+  list: NonNullable<Journal['listKeys']>,
+  unrecognised?: string[],
+): Promise<Set<string>> {
   const threadIds = new Set<string>();
   for (const key of await list(MEM_PREFIX)) {
     const rest = key.slice(MEM_PREFIX.length);
+    let matched = false;
     for (const suffix of MEM_SUFFIXES) {
       if (rest.endsWith(suffix) && rest.length > suffix.length) {
         threadIds.add(rest.slice(0, -suffix.length));
+        matched = true;
         break;
       }
     }
+    // A `mem:` key this build cannot read is REPORTED, the same way an unknown `xthr:` family is.
+    // The structural fix above (one shared leaf list) stops the drift at its source; this is what
+    // catches a writer that built the key by hand instead of going through memKey — and rag's
+    // semantic-memory does exactly that. Silence here is the expensive kind: the thread drops out of
+    // the known set and its live state gets reported as an orphan, with nothing on the report saying
+    // a key was skipped.
+    if (!matched) unrecognised?.push(key);
   }
   return threadIds;
 }
@@ -906,9 +923,9 @@ export interface OrphanThreadState {
 
 export async function listOrphanThreadState(journal: Journal): Promise<OrphanThreadState> {
   const list = requireListKeys(journal);
-  const threadIds = await threadIdsFromMemory(list);
-  const orphans = new Set<string>();
   const unrecognised: string[] = [];
+  const threadIds = await threadIdsFromMemory(list, unrecognised);
+  const orphans = new Set<string>();
   for (const key of await list(XTHR_PREFIX)) {
     const threadId = threadIdOfXthrKey(key);
     if (threadId === undefined) { unrecognised.push(key); continue; }
