@@ -30,7 +30,7 @@ import type { GnlDevConfig } from '../config.js';
 import { getJournal } from '../journal-util.js';
 import { loadDurable, projectDirOf } from '../runtime.js';
 import { identityRow } from '../protections-view.js';
-import { bold, dim } from '../ansi.js';
+import { bold, dim, yellow } from '../ansi.js';
 
 /**
  * How far back the incident search is willing to walk.
@@ -189,6 +189,26 @@ export const doctorCommand: Command = {
       console.log(`  first guard firing  ${dim('never — no duplicate has been caught yet')}`);
       console.log(dim(`  Across ${stamps.runsScanned} run(s). A profile that has never declined anything looks, from here,`));
       console.log(dim('  exactly like one wired to nothing. Ask for the same side effect twice to see which you have.'));
+    }
+    // Thread state no erasure request can reach. Read-only on purpose: `sweepThreads` reports the
+    // same list but DELETES as it goes, so it can never be the thing a diagnostic command calls.
+    // Counted rather than listed by default — a thread id is a name, and this is a report someone
+    // may well paste into an issue.
+    const orphans = await d.listOrphanThreadState(journal).catch(() => undefined);
+    if (orphans && orphans.threadIds.length > 0) {
+      console.log('');
+      console.log(`  ${yellow('orphaned thread state')}  ${orphans.threadIds.length} thread(s)`);
+      console.log(dim('  Runs with no resourceId left state behind: no person owns it, so no erasure'));
+      console.log(dim('  request can reach it. `sweepThreads()` deletes by age; this is only the count.'));
+    }
+    // A key this build cannot classify is the one case the count above cannot include — and the
+    // reason it is printed separately rather than folded in: nobody can act on a number that mixes
+    // "state with no owner" with "state I could not read the shape of".
+    if (orphans && orphans.unrecognisedKeys.length > 0) {
+      console.log('');
+      console.log(`  ${yellow('unrecognised thread keys')}  ${orphans.unrecognisedKeys.length}`);
+      console.log(dim('  Written under an `xthr:` family this version does not know — likely a newer'));
+      console.log(dim('  @gnldev/durable wrote them. No sweep here can reclaim what it cannot parse.'));
     }
     console.log('');
     console.log(dim('  `gnl doctor --share` prints a copyable version with no names in it.'));
