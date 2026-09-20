@@ -44,7 +44,9 @@ test-results.xml
 
 # Denetim çalışma kaydı (evidence-based-audit). Repoya girmez: yayındaki sürümün kusurlarını
 # reprodüksiyonlarıyla anlatıyor ve SECURITY.md düzeltme yayınlanmadan public açıklamayı istemiyor.
-# Yayına uygun bir özet çıkarılacaksa RISK-AUDIT.md emsaline göre (İngilizce, dışa dönük) yazılır.
+# Yayına uygun bir özet çıkarılacaksa ayrı bir belge olarak, İngilizce ve dışa dönük yazılır.
+# (Burada bir dosya adı ANILMAZ: bu satır public depoya gidiyor ve oradaki okuyucu, yayın kapsamı
+#  dışında kalan bir belgenin adını görüp açamaz. make-public-history.sh bunu bir kapı olarak tutar.)
 audit-log.md
 
 # The qualification bench writes its certificate to the working directory by default
