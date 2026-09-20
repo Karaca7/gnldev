@@ -352,6 +352,15 @@ Bir açık için lütfen herkese açık issue açmayın. **[SECURITY.md](./SECUR
 üzerinden özel olarak nasıl bildireceğinizi ve kapsamı anlatıyor — dayanıklılık, organizasyonlar
 arası izolasyon ve onay kapıları önce saldırılmaya değer garantiler.
 
+## İletişim
+
+<karaca.gnldev@gmail.com> — bir issue'ya sığmayan her şey için: lisans soruları, ticari kullanım ya
+da doğrudan geliştiriciye ulaşmak.
+
+Açık bildirimi ve hata raporu için değil. Bir güvenlik açığı [SECURITY.md](./SECURITY.md)'deki özel
+kanaldan gidiyor; o kanal geliştiriciye bir e-posta zinciri bırakmadan ulaşıyor. Bir hata ise herkese
+açık issue'ya ait — aynı hataya çarpacak bir sonraki kişi onu orada bulabilsin.
+
 ## Lisans
 
 [Apache-2.0](./LICENSE) — © 2026 Karaca Yılmaz.
