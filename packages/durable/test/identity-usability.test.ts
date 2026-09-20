@@ -192,4 +192,40 @@ describe('a broken identity declaration must not poison a batch preflight', () =
     // that is always set carries no information, and would make the report above unreadable.
     expect(p.xidIdentityUnusable).toBeUndefined();
   });
+
+  it('a Date identity does not change meaning when the worker moves zone', async () => {
+    // The last branch of the same root cause, and the one `String(v)` hides best: an object renders
+    // as '[object Object]' and is obviously broken, while a Date renders as a plausible, readable
+    // timestamp — in the HOST'S LOCAL ZONE. Two workers in two zones then read one job as two.
+    //
+    // It survives the guards above because a Date is not "unusable": it carries a real instant. It
+    // is the RENDERING that loses the identity, not the value.
+    //
+    // A model-generated argument cannot arrive here as a Date (JSON makes it an ISO string on the
+    // way in), so the exposure is programmatic callers — which is the shape of a database row whose
+    // timestamp column comes back as a Date object.
+    const { normalizeId } = await import('../src/semantic-dup.js');
+    const instant = new Date('2026-01-01T00:00:00.000Z');
+    const original = process.env.TZ;
+    try {
+      process.env.TZ = 'Europe/Istanbul';
+      const istanbul = normalizeId(instant);
+      process.env.TZ = 'UTC';
+      const utc = normalizeId(instant);
+      expect(istanbul, 'the same instant must identify the same job in every zone').toBe(utc);
+      expect(utc).toBe('2026-01-01t00:00:00.000z');
+
+      // And the two doors into the layer must agree: a caller passing the Date straight through and
+      // a model whose argument was serialised must land on ONE identity, or the protection splits in
+      // half along the road the call happened to take.
+      const viaJson = normalizeId(JSON.parse(JSON.stringify({ at: instant })).at);
+      expect(viaJson).toBe(utc);
+
+      // An Invalid Date carries no instant at all. It must not normalize to the TEXT 'invalid date',
+      // which would make every unparseable date collide as though they were one job.
+      expect(normalizeId(new Date('not a date'))).toBe('');
+    } finally {
+      if (original === undefined) delete process.env.TZ; else process.env.TZ = original;
+    }
+  });
 });
