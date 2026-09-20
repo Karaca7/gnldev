@@ -136,7 +136,7 @@ export { runNetwork, getNetworkTrace, netKeys } from './network.js';
 export type { NetworkResult, NetworkStep, NetworkTarget, RouteDecision, RunNetworkOptions } from './network.js';
 export { withOrg, orgScopeOf, orgPrefix, isPlatformKey, assertOrgRegistered, assertNoRunsInFlight, ORG_RECORD_PRE, ADOPTABLE_RESERVED_PREFIXES, ENGINE_META_KEYS } from './organization.js';
 export { withOrgStorage, orgStorageScopeOf } from './org-storage.js';
-export { orgPurgedKey, purgeRun, purgeThread, purgeResource, purgeBatch, purgeOrganization, purgeOrganizationWork, sweepRuns, sweepLog, sweepThreads, createRetentionSweeper } from './retention.js';
+export { orgPurgedKey, purgeRun, purgeThread, purgeResource, purgeBatch, purgeOrganization, purgeOrganizationWork, sweepRuns, sweepLog, sweepThreads, listOrphanThreadState, createRetentionSweeper } from './retention.js';
 export type { LogSweepTarget, RetentionSweeperOptions, RetentionSweepSummary, RetentionSweeper } from './retention.js';
 export { recordIdemConflict, readIdemLedger } from './idem-ledger.js';
 export { semKey, semTombKey, SEM_TEMPLATE_VERSION } from './semantic-dup.js';
