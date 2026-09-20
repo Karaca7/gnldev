@@ -66,6 +66,12 @@ jobs:
       # knows why it exists; the page has to be written in that same moment, because nobody
       # afterwards has the context. This gate is what makes that moment happen.
       - run: pnpm check:errors
+      # Two defects that were found BY HAND during an audit, both invisible to every other gate
+      # because neither breaks behaviour: a literal control byte makes `grep` skip a file in silence
+      # (a search for a route that exists returned nothing, and the wrong conclusion was drawn), and
+      # a package with no `test` script is skipped by `pnpm -r test` with no warning — @gnldev/studio
+      # sat that way holding 718 passing tests, the cross-org isolation suite among them.
+      - run: pnpm check:hygiene
 
 
   integration:

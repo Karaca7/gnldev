@@ -46,3 +46,9 @@ test-results.xml
 # reprodüksiyonlarıyla anlatıyor ve SECURITY.md düzeltme yayınlanmadan public açıklamayı istemiyor.
 # Yayına uygun bir özet çıkarılacaksa RISK-AUDIT.md emsaline göre (İngilizce, dışa dönük) yazılır.
 audit-log.md
+
+# The qualification bench writes its certificate to the working directory by default
+# (`--out` defaults to this name), so running the exam from the repo root leaves it behind. The
+# certificate is meant to be PASTED into config as `semantic.judge.qualification`, not committed as
+# a file — and a dirty tree after a CI-gate run is exactly what that gate should not produce.
+gnl-judge-cert.json

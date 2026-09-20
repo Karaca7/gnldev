@@ -154,3 +154,37 @@ describe('--share', () => {
     expect(lines[lines.length - 1]).toBe('```');
   });
 });
+
+// The orphan count `gnl doctor` prints. Driven through the exported function rather than the command
+// body for the same reason `doctorStamps` is: the command loads a config, a project's own durable and
+// a journal, and none of that is what this line is about. What IS pinned is the property that makes
+// it safe to call from a diagnostic at all — it reports without deleting. `sweepThreads` answers the
+// same question and purges on the way, so a doctor that called IT would erase data to print a number.
+describe('listOrphanThreadState — the read-only half of the orphan report', () => {
+  it('reports thread state no erasure request can reach, and leaves the journal untouched', async () => {
+    const d = await import('@gnldev/durable');
+    const journal = freshJournal();
+    // Thread state with no `mem:` owner — what a run with no resourceId leaves behind.
+    await journal.put('xthr:th-orphan:sem-pay-h1', { v: 1, canonical: 'pay: iban-tr55' });
+    // …and a thread the memory port DOES know, which must not be reported.
+    await journal.put('mem:th-known:messages', [{ role: 'user', content: 'x', ts: 1 }]);
+    await journal.put('xthr:th-known:sem-pay-h2', { v: 1, canonical: 'pay: other' });
+
+    const before = await journal.listKeys!('');
+    const orphans = await d.listOrphanThreadState(journal);
+    const after = await journal.listKeys!('');
+
+    expect(orphans.threadIds).toEqual(['th-orphan']);
+    expect(after, 'a diagnostic read deleted keys').toEqual(before);
+  });
+
+  it('says nothing when every thread has an owner', async () => {
+    const d = await import('@gnldev/durable');
+    const journal = freshJournal();
+    await journal.put('mem:th-known:messages', [{ role: 'user', content: 'x', ts: 1 }]);
+    await journal.put('xthr:th-known:sem-pay-h1', { v: 1, canonical: 'pay: x' });
+    // A count that is always non-zero is a banner, not a signal — doctor prints the block only when
+    // this is non-empty, so the empty case is the one that keeps the report readable.
+    expect((await d.listOrphanThreadState(journal)).threadIds).toEqual([]);
+  });
+});
