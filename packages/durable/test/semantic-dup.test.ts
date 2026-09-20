@@ -394,6 +394,15 @@ describe('FAZ-6 fail-open, stamps and lifecycle', () => {
     // A DATE identifies. `String(d)` varies per call, so calling it unusable would stand the layer
     // down on a declaration that works — a protection switched off by an upgrade, silently.
     expect(reason(['when'], { when: new Date('2026-01-01T00:00:00Z') })).toBeUndefined();
+
+    // …but an INVALID one is the exception, and it is exactly the failure this function exists to
+    // name: every unparseable date stringifies to the same 'Invalid Date', so two completely
+    // different bad inputs compare EQUAL. Measured before this branch: `new Date('not-a-date')` and
+    // `new Date('also-garbage')` both normalized to 'invalid date' and the guard said the
+    // declaration was fine. `z.coerce.date()` on a malformed string produces precisely this.
+    for (const bad of [new Date('not-a-date'), new Date(NaN)]) {
+      expect(reason(['when'], { when: bad }), 'an Invalid Date identifies nothing').toMatch(/Invalid Date/);
+    }
     expect(reason(['sku'], { sku: 'A-1' })).toBeUndefined();
 
     // A plain object does not. Every one of them is '[object Object]'.

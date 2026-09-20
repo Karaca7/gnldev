@@ -21,6 +21,8 @@ import { stepCountIs } from 'ai';
 import { PostgresStorage } from '../src/postgres-storage.js';
 import { RedisStorage } from '../src/redis-storage.js';
 import { acquireRunLock } from '../src/run-lock.js';
+import { purgeResource, sweepRuns } from '../src/retention.js';
+import { toJournal } from '../src/index.js';
 import { runDurable } from '../src/run.js';
 import { RunBusyError } from '../src/errors.js';
 import { createMockModel, countToolResults, toolCallResult, finalTextResult } from './mock.js';
@@ -883,6 +885,51 @@ describe.skipIf(!RUN)('REAL Postgres — concurrent appends to one thread', () =
 // default suite with it. `recall`, `messageRange`, the filter operators and `deleteMessagesAfter` are
 // Postgres-specific SQL; a capability declaration removing their coverage would be exactly the false
 // comfort that declaration exists to remove. Here they run where the guarantee is actually real.
+// Erasure is the one operation with a legal deadline behind it, and the one whose failure is
+// invisible: nothing throws, the person is told "deleted", and a record built from their own
+// arguments stays on disk. The ordering gap (retention deletes the run that names the person, THEN
+// the erasure request arrives) is pinned end to end on the in-memory journal, where a run can
+// actually be created through `runDurable`.
+//
+// What is pinned HERE is the half that is adapter behaviour and cannot be argued from a simulation:
+// `purgeResource` finds the leftover thread through a `resthr:<person>:` PREFIX SCAN and then
+// deletes that family by PREFIX. Both are real SQL — a broken range or an unescaped pattern would
+// agree with the in-memory journal right up until production.
+describe.skipIf(!RUN)('REAL Postgres — erasure reaches a thread through the ownership trace', () => {
+  it('a trace written by the sweep is read, followed, and then erased itself', async () => {
+    const s = new PostgresStorage({ connectionString: PG_URL });
+    const journal = toJournal(s.runs) as never as {
+      listKeys(p: string): Promise<string[]>; put(k: string, v: unknown): Promise<void>;
+    };
+    const uniq = Date.now().toString(36);
+    // A threadId containing ':' on purpose — the trace key is `resthr:<person>:<thread>` and the
+    // remainder after the person's boundary is the WHOLE threadId, colons and all.
+    const person = `${SEED}-p-${uniq}`;
+    const thread = `${SEED}:th:${uniq}`;
+    // A NEIGHBOUR person whose id extends ours by one character: `resthr:<p>:` must not reach them.
+    const neighbour = `${person}X`;
+    try {
+      await journal.put(`resthr:${person}:${thread}`, { at: Date.now() });
+      await journal.put(`xthr:${thread}:sem-pay-h1`, { v: 1, canonical: 'pay: iban-tr55', at: Date.now() });
+      await journal.put(`resthr:${neighbour}:other`, { at: Date.now() });
+      await journal.put(`xthr:other:sem-pay-h2`, { v: 1, canonical: 'pay: someone-else', at: Date.now() });
+
+      await purgeResource(journal as never, person);
+
+      expect(await journal.listKeys(`xthr:${thread}:`),
+        "the person's own argument survived their erasure request").toEqual([]);
+      expect(await journal.listKeys(`resthr:${person}:`),
+        'the trace names a person and must not outlive them').toEqual([]);
+      // The boundary: erasing one person does not erase the next one along.
+      expect((await journal.listKeys(`resthr:${neighbour}:`)).length,
+        'a person whose id merely EXTENDS the purged one was swept too').toBe(1);
+      expect((await journal.listKeys('xthr:other:')).length).toBe(1);
+    } finally {
+      await (s as any).close?.();
+    }
+  }, 30_000);
+});
+
 describe.skipIf(!RUN)('REAL Postgres — MemoryStore conformance', () => {
   const made: PostgresStorage[] = [];
   afterAll(async () => { for (const s of made) await (s as any).close?.(); });

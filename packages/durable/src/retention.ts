@@ -211,14 +211,43 @@ async function uncountUsage(journal: Journal & Partial<JournalReader>, runId: st
  * one without, the `${runId}:` prefix delete still takes it, which is the bound stated rather than
  * assumed away. Every adapter shipped here has listKeys.
  */
+/** `resthr:<resourceId>:<threadId>` — who a thread belonged to, kept AFTER the run that said so. */
+export const ownershipTraceKey = (resourceId: string, threadId: string): string =>
+  `resthr:${resourceId}:${threadId}`;
+
 export async function purgeRun(
   journal: Journal & Partial<JournalReader>,
   runId: string,
   seen: Set<string> = new Set(),
+  opts: {
+    /**
+     * Write `resthr:<resourceId>:<threadId>` before deleting the run.
+     *
+     * `purgeResource` finds a person's threads THROUGH their runs. Retention deletes runs by age, so
+     * a sweep that runs first takes the only link with it: the erasure request then walks an empty
+     * list while `xthr:<threadId>:` still holds semantic records built from that person's arguments.
+     * Measured, and until now merely documented: after `sweepRuns` + `purgeResource`, thread state
+     * survived carrying `'createRecord: iban-tr55'`.
+     *
+     * Off by default, and `purgeResource` deliberately leaves it off — writing an ownership record
+     * while erasing that same person would be the opposite of the point. Retention turns it on: the
+     * cost is one write per DELETED run, and nothing at all on the normal path.
+     */
+    ownershipTrace?: boolean;
+  } = {},
 ): Promise<number> {
   const del = requireDelete(journal);
   if (seen.has(runId)) return 0; // cycle/repeat safety
   seen.add(runId);
+  if (opts.ownershipTrace) {
+    // BEFORE the delete: `<runId>:input` is one of the keys this function is about to remove.
+    const input = await journal.get<{ resourceId?: string; threadId?: string }>(runKeys.input(runId))
+      .catch(() => undefined);
+    if (input?.resourceId && input.threadId) {
+      await journal.put(ownershipTraceKey(input.resourceId, input.threadId), { at: Date.now() })
+        .catch(() => {});  // best-effort: a trace that cannot be written must not block the sweep
+    }
+  }
   await uncountUsage(journal, runId); // BEFORE deletion (so getRunCost can still read it)
   let total = 0;
 
@@ -351,8 +380,31 @@ export async function purgeResource(journal: Journal, resourceId: string): Promi
     }
     cursor = page.nextCursor;
   } while (cursor);
+  // THE THREADS WHOSE RUNS ARE ALREADY GONE. Everything above reaches a thread through a run, so a
+  // retention sweep that ran first has already taken the only link — and the erasure request would
+  // walk an empty list past `xthr:<threadId>:` records built from this person's own arguments.
+  // `purgeRun` leaves `resthr:<resourceId>:<threadId>` behind precisely for this moment.
+  const lk = journal.listKeys;
+  if (typeof lk === 'function') {
+    const tracePrefix = `${ownershipTraceKey(resourceId, '')}`;
+    // NO `.catch(() => [])` HERE, deliberately. An empty list and a failed read produce the same
+    // value, and this is an ERASURE path: swallowing the error means purgeResource returns a count,
+    // the caller tells the person their data is gone, and a record carrying their own arguments is
+    // still on disk. Measured: with listKeys throwing, the thread kept `pay: iban-tr55` and the
+    // function reported success. A throw is the only honest outcome — the request must be retried,
+    // not quietly half-finished. (`typeof lk === 'function'` above still covers the journal that
+    // never had listKeys: a missing capability is a known limit, a failing call is not.)
+    for (const k of await lk.call(journal, tracePrefix)) {
+      const t = k.slice(tracePrefix.length);
+      // A threadId may itself contain ':' ('tenant:7:chat'), so this takes the WHOLE remainder
+      // rather than splitting — the prefix already ends at the resourceId boundary.
+      if (t) threads.add(t);
+    }
+  }
   // Thread-scoped state the runs pointed at (memory, thread dedup window, semantic tombstones).
   for (const t of threads) total += await purgeThread(journal, t);
+  // The trace names a person and must not outlive them. Last, so a failure above cannot strand it.
+  total += await del(`${ownershipTraceKey(resourceId, '')}`);
   return total;
 }
 
@@ -361,7 +413,37 @@ export async function purgeThread(journal: Journal, threadId: string): Promise<n
   // FAZ-3: the thread owns its dedup state too — `idempotencyWindow: 'thread'` records and
   // thread-scoped duplicate markers both live under `xthr:<threadId>:` PRECISELY so this one sweep
   // reclaims them with the thread (the cross-run family's immortal-key problem does not recur here).
-  return (await del(`mem:${threadId}:`)) + (await del(`xthr:${threadId}:`));
+  let total = (await del(`mem:${threadId}:`)) + (await del(`xthr:${threadId}:`));
+
+  // The ownership traces pointing HERE. Once this thread's state is gone they identify nothing —
+  // and they are not inert: `resthr:<resourceId>:<threadId>` names a person, so a dead pointer is a
+  // personal-data record kept for no reason, which is the shape retention exists to remove.
+  //
+  // Measured before this existed: after `purgeThread('th-1')` the thread held zero keys and its
+  // trace was still there. `sweepThreads` deletes through this function, so that made every
+  // age-swept thread leave one behind, accumulating with nothing to clear them — `purgeResource`
+  // was the only reader and it only fires when a person actually asks.
+  //
+  // Parsed rather than matched by suffix: a threadId can contain ':' ('tenant:7:chat'), so
+  // `endsWith(':th-1')` would also hit `resthr:p:other:th-1`, whose thread is `other:th-1` — a
+  // DIFFERENT thread, and deleting its trace would quietly re-open the gap for that person. The
+  // resourceId ends at the first ':' (the same boundary `purgeResource`'s prefix already assumes)
+  // and everything after it is the threadId, colons and all.
+  const lk = journal.listKeys;
+  if (typeof lk === 'function') {
+    const pre = ownershipTraceKey('', '').slice(0, -1); // 'resthr:'
+    // Same reasoning as the erasure path above: this function is called BY it, so a swallowed error
+    // here would resurface there as the same silent half-deletion.
+    for (const key of await lk.call(journal, pre)) {
+      const rest = key.slice(pre.length);
+      const cut = rest.indexOf(':');
+      if (cut < 0 || rest.slice(cut + 1) !== threadId) continue;
+      // deleteExactKey, not del: a key is a prefix too, and `resthr:p:th-1` would take
+      // `resthr:p:th-10` with it — another person's thread, erased by a name collision.
+      total += await deleteExactKey(journal, key);
+    }
+  }
+  return total;
 }
 
 /**
@@ -548,7 +630,7 @@ export async function sweepRuns(journal: Journal & Partial<JournalReader>, opts:
     for (const runId of stale) {
       // BEFORE the purge — `tombstoneFor` reads the run's own `:input`, which the next line deletes.
       const tomb = opts.tombstones ? await tombstoneFor(journal, runId, now) : undefined;
-      fast.deletedEntries += await purgeRun(journal, runId);
+      fast.deletedEntries += await purgeRun(journal, runId, new Set(), { ownershipTrace: true });
       if (tomb) await journal.put(`${runId}:swept`, tomb);
       fast.purged.push(runId);
     }
@@ -613,7 +695,7 @@ export async function sweepRuns(journal: Journal & Partial<JournalReader>, opts:
     }
     if (now - lastActivity > opts.olderThanMs || (summary.status === 'suspended' && opts.suspendedTtlMs !== undefined && now - lastActivity > opts.suspendedTtlMs)) {
       const tomb = opts.tombstones ? await tombstoneFor(journal, r.runId, now) : undefined; // BEFORE the purge
-      result.deletedEntries += await purgeRun(journal, r.runId);
+      result.deletedEntries += await purgeRun(journal, r.runId, new Set(), { ownershipTrace: true });
       if (tomb) await journal.put(`${r.runId}:swept`, tomb);
       result.purged.push(r.runId);
     }
@@ -734,6 +816,8 @@ export interface ThreadSweepResult {
    * or a deployment that keeps chat history in BasicMemory so these ids are discoverable.
    */
   orphanThreadState: string[];
+  /** `xthr:` keys whose family this build does not know — see OrphanThreadState.unrecognisedKeys. */
+  unrecognisedXthrKeys?: string[];
 }
 
 // BasicMemory's known key suffixes (memory.ts schema): `mem:<threadId>:messages|:working`.
@@ -778,6 +862,61 @@ function readMessageTs(msg: any): number | undefined {
   return undefined;
 }
 
+/** Thread ids the memory port knows about, off `mem:` keys. Shared so the read-only orphan listing
+ *  and the sweep cannot drift into two different answers to "which threads exist". */
+async function threadIdsFromMemory(list: NonNullable<Journal['listKeys']>): Promise<Set<string>> {
+  const threadIds = new Set<string>();
+  for (const key of await list(MEM_PREFIX)) {
+    const rest = key.slice(MEM_PREFIX.length);
+    for (const suffix of MEM_SUFFIXES) {
+      if (rest.endsWith(suffix) && rest.length > suffix.length) {
+        threadIds.add(rest.slice(0, -suffix.length));
+        break;
+      }
+    }
+  }
+  return threadIds;
+}
+
+/**
+ * Thread-scoped state (`xthr:`) belonging to no thread the memory port knows — and therefore to no
+ * erasure request either, because `purgeResource` reaches threads through their owner and these
+ * have none. A run with no `resourceId` leaves exactly this.
+ *
+ * READ ONLY. `sweepThreads` reports the same list but DELETES as it goes, so it cannot be called
+ * just to look; this exists so `gnl doctor`, Studio, or an operator's own check can see the number
+ * without touching anything. Naming what no sweep can reach is the whole point of the field — a
+ * number nobody can read without risking a delete is not visible in any useful sense.
+ */
+export interface OrphanThreadState {
+  /** Thread ids holding `xthr:` state no `mem:` record claims. */
+  threadIds: string[];
+  /**
+   * `xthr:` keys whose FAMILY this build does not recognise, reported raw.
+   *
+   * `XTHR_FAMILIES` is a fixed list, so a family added later is invisible to the recovery above —
+   * and invisible is the one thing this report exists not to be. Measured before this field: with a
+   * known-family orphan and an unknown-family one both on disk, the report named one and the other
+   * simply was not there. Raw keys rather than a guessed threadId: the family boundary is exactly
+   * what is unknown here, and a threadId may contain ':' itself, so any split would be a guess
+   * presented as a fact.
+   */
+  unrecognisedKeys: string[];
+}
+
+export async function listOrphanThreadState(journal: Journal): Promise<OrphanThreadState> {
+  const list = requireListKeys(journal);
+  const threadIds = await threadIdsFromMemory(list);
+  const orphans = new Set<string>();
+  const unrecognised: string[] = [];
+  for (const key of await list(XTHR_PREFIX)) {
+    const threadId = threadIdOfXthrKey(key);
+    if (threadId === undefined) { unrecognised.push(key); continue; }
+    if (!threadIds.has(threadId)) orphans.add(threadId);
+  }
+  return { threadIds: [...orphans], unrecognisedKeys: unrecognised };
+}
+
 /**
  * Sweeps BasicMemory threads: threads whose last message ts is older than the threshold are
  * permanently deleted via purgeThread (`mem:<threadId>:` prefix — messages + working together).
@@ -819,16 +958,7 @@ export async function sweepThreads(journal: Journal, opts: ThreadSweepOptions): 
   // Extract the thread set from keys under `mem:`. Keys with unrecognized suffixes don't contribute
   // a threadId to the set (safe: only the recognized schema is swept), but if they belong to a
   // recognized thread they still go with it via purgeThread's prefix delete.
-  const threadIds = new Set<string>();
-  for (const key of await list(MEM_PREFIX)) {
-    const rest = key.slice(MEM_PREFIX.length);
-    for (const suffix of MEM_SUFFIXES) {
-      if (rest.endsWith(suffix) && rest.length > suffix.length) {
-        threadIds.add(rest.slice(0, -suffix.length));
-        break;
-      }
-    }
-  }
+  const threadIds = await threadIdsFromMemory(list);
 
   const result: ThreadSweepResult = { scanned: 0, purged: [], keptNoTs: 0, orphanThreadState: [] };
   for (const threadId of threadIds) {
@@ -849,11 +979,14 @@ export async function sweepThreads(journal: Journal, opts: ThreadSweepOptions): 
   // AFTER the sweep, so a thread this round just purged is not reported as orphaned. What is left
   // under `xthr:` with no `mem:` sibling is state no age-based sweep can reach.
   const orphans = new Set<string>();
-  for (const key of await list(XTHR_PREFIX).catch(() => [] as string[])) {
+  const unrecognisedXthr: string[] = [];
+  for (const key of await list(XTHR_PREFIX)) {
     const threadId = threadIdOfXthrKey(key);
-    if (threadId !== undefined && !threadIds.has(threadId)) orphans.add(threadId);
+    if (threadId === undefined) { unrecognisedXthr.push(key); continue; }
+    if (!threadIds.has(threadId)) orphans.add(threadId);
   }
   result.orphanThreadState = [...orphans];
+  if (unrecognisedXthr.length) result.unrecognisedXthrKeys = unrecognisedXthr;
   return result;
 }
 

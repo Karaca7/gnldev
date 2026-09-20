@@ -499,6 +499,28 @@ It does not replace layers 1-4 (hash/claim/confirm/critical); it runs beneath th
 refuses to start where no approvals channel exists. The quality of your `semanticIdentity.keys`
 declaration IS the quality of the protection.
 
+**A declaration that cannot identify the call stands its layers down — for that call, and it says
+so.** Checked per call, because the keys are static but the VALUES arrive with the arguments:
+
+| `keys` points at | Verdict | Why |
+|---|---|---|
+| a string, number, boolean | usable | identifies |
+| a `Date` | usable | `String(d)` varies per call |
+| a plain object | **unusable** | every one of them is `'[object Object]'` |
+| an array | **unusable** | element types flatten: `[1,2]` and `['1','2']` both become `'1,2'`, so different work compares equal |
+| a field absent from the args (a typo) | **unusable** | every call compares equal to every other |
+| a prototype name (`'constructor'`, `'toString'`) | **unusable** | not an argument you passed; resolves to one constant |
+
+"Unusable" is measured on EVERY key: a declaration like `['sku','warehouse']` where only the
+optional `warehouse` is missing stays usable, and the question still gets asked.
+
+When it fires, every identity-based layer is off **for that call** — cross-channel XID, the confirm
+decoration, the semantic gate, and `createBatch`'s preflight — and the call proceeds exactly as it
+would without them. One incident is written (`readIncidents`, source `semantic-guard`, action
+`warn`) naming the FIELD names, never their values; `BatchPlan.xidIdentityUnusable` names the
+skipped items on the batch path. Nothing is blocked that would otherwise run: the failure direction
+is a protection withdrawn and announced, never a job refused on a bad comparison.
+
 ```ts
 // Double opt-in: the run-level block AND the tool-level declaration — either absent, layer inert.
 const limits = {
@@ -803,6 +825,71 @@ single-home routing contract above). Practical bounds, stated honestly:
 - Embedding latency is the caller's own closure (one call per gated side effect, content-keyed
   cache in front): a remote API adds its round trip; the documented local-model recipe keeps it
   on-machine.
+
+## Retention and erasure
+
+The journal is append-only by design, and these are the deliberate exception: permanent deletion,
+for a legal erasure request or an age-based retention policy. They all need the `deletePrefix` port
+(the InMemory/SQLite/Postgres/Redis adapters provide it) and throw a clear error where it is absent —
+a deletion that silently did nothing would be the worst possible failure here.
+
+| Call | Deletes | Reach for it when |
+|---|---|---|
+| `purgeRun(journal, runId)` | one run and its nested sub-agent/workflow children | a single run must go |
+| `purgeThread(journal, threadId)` | `mem:` + the whole `xthr:` family (dedup window, semantic records, tombstones, judge verdicts) | a conversation must go |
+| `purgeResource(journal, resourceId)` | a PERSON: their runs, their threads, cross-channel ids, lesson counters | an erasure request arrives |
+| `purgeBatch(journal, batchId)` | one batch's bookkeeping | a batch must be re-run from scratch |
+| `purgeOrganization(journal, orgId)` | everything under `org:<id>:` | a tenant leaves |
+| `sweepRuns(journal, { olderThanMs })` | runs whose LAST activity is older than the threshold | scheduled retention |
+| `sweepThreads(journal, { olderThanMs })` | threads the memory port knows, by age | scheduled retention |
+| `sweepLog(journal, ns, opts)` | durable-log entries in one namespace | a log namespace grows without bound |
+
+Two things the sweeps deliberately do NOT do:
+
+- **Suspended runs are kept** (`keepSuspended`, default true). Work waiting on a human is not
+  silently deleted by a clock. Pass `suspendedTtlMs` to put a ceiling on that.
+- **A run whose age cannot be measured is kept** (`keptNoTs` in the result). "I could not tell how
+  old this is" and "this is new" are different answers, and only one of them justifies keeping it —
+  but deleting on an unmeasurable age is the one that cannot be undone.
+
+```ts
+import { createRetentionSweeper } from '@gnldev/durable';
+
+// Scheduled sweeps on an interval. `sweepThreads` is NOT part of this loop — thread state is
+// conversation data, and deleting it on a timer is a policy decision, not a default.
+const sweeper = createRetentionSweeper(journal, {
+  intervalMs: 60 * 60_000,                       // default: hourly
+  sweep: { olderThanMs: 90 * 24 * 60 * 60_000 }, // runs older than 90 days
+  onError: (err) => console.error('retention sweep failed', err),
+});
+sweeper.start();
+// …
+await sweeper.stop();
+```
+
+### Erasure and retention run in any order
+
+`purgeResource(rid)` finds a person's threads through their RUNS, and retention deletes runs by age.
+Run the sweep first and the link is gone — the erasure request would walk an empty list while
+thread-scoped state built from that person's own arguments stayed on disk. Measured before this was
+closed: after `sweepRuns` + `purgeResource`, a record carrying `'createRecord: iban-tr55'` survived.
+
+So `sweepRuns` now leaves `resthr:<resourceId>:<threadId>` behind when it deletes a run that named
+both, and `purgeResource` follows those traces, purges the threads, and then deletes the traces
+themselves — a trace names a person and must not outlive them. Cost: one write per DELETED run, and
+nothing at all on the normal path. **You do not have to order the two operations.**
+
+One case stays open by construction: a run with **no `resourceId`** cannot leave a trace, so its
+thread state has no owner and no erasure request can reach it. `listOrphanThreadState(journal)`
+counts these **without deleting anything** (`gnl doctor` prints the number); `sweepThreads()` reports
+the same list in `orphanThreadState` and purges by age as it goes.
+
+**This library will not delete that data for you, and that is a decision rather than a gap.** A
+retention period is a property of YOUR obligations — a bank's and a game studio's are not the same
+number, and a framework that picked one would be picking it for both. What a framework can do is
+make the pile impossible to miss, which is what the count is for: `gnl doctor` prints it, the Studio
+retention panel shows it, and neither requires you to delete anything to find out. Deleting on a
+timer is one line away (`sweepThreads({ olderThanMs })`) the day you decide what the timer should be.
 
 ## Production deployment notes (exactly-once preconditions)
 

@@ -57,6 +57,31 @@ try {
   // rather than silently reducing the matrix.
 }
 
+// THE ROWS THAT CAN ACTUALLY SETTLE THE CLAIM. Everything above runs against pg-mem and a fake
+// Redis, and the claim under test is about what a REAL server does with '_' , '%' and '[' — which is
+// precisely what a simulation cannot answer: the fake Redis has no character classes at all, so it
+// returns the right answer for the wrong reason, and pg-mem implements its own SQL. If the adapters
+// ever moved from a range scan to `LIKE prefix || '%'`, only these two rows would notice.
+//
+// Gated on GNL_INTEGRATION=1 like the rest of the real-backend suite, so a plain `pnpm test` still
+// runs the matrix above and nothing here is silently skipped without the gate being visible.
+if (process.env.GNL_INTEGRATION === '1') {
+  const PG_URL = process.env.GNL_PG_URL ?? 'postgres://postgres:gnl@localhost:55432/gnl';
+  const REDIS_URL = process.env.GNL_REDIS_URL ?? 'redis://localhost:6380';
+  // A schema of its own per run: these tests write threadIds containing '%' and '[', and a leftover
+  // from a previous run would make the prefix assertions read another run's keys.
+  const tag = `p${Date.now().toString(36)}`;
+  backends.push(['REAL Postgres', async () => {
+    const s = new PostgresStorage({ connectionString: PG_URL });
+    await (s as any).init?.();
+    return toJournal(s.runs);
+  }]);
+  backends.push(['REAL Redis', async () => {
+    const { default: Redis } = await import('ioredis');
+    return toJournal(new RedisStorage({ client: new Redis(REDIS_URL), keyPrefix: `${tag}:` } as never).runs);
+  }]);
+}
+
 for (const [name, make] of backends) {
   describe(`semantic key prefixes — ${name}`, () => {
     it('the prefix is AMBIGUOUS: asking for tool "order" also returns tool "order-cancel"', async () => {

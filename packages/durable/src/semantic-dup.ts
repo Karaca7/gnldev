@@ -247,7 +247,18 @@ export function identityUnusableReason(id: SemanticIdentity, args: unknown): str
     // A DATE is deliberately not in this class: `String(d)` varies per call, so it identifies. Saying
     // otherwise would stand the layer down on a declaration that works — a protection switched off by
     // an upgrade, silently, which is worse than the imprecision it was meant to prevent.
-    if (v instanceof Date) continue;
+    //
+    // An INVALID one is the exception, and it is the exception this guard exists for: every
+    // unparseable date stringifies to the SAME 'Invalid Date', so `new Date('garbage')` and
+    // `new Date('other-garbage')` compare equal — the literal "every call compares equal" failure,
+    // arriving through the one type that was waved through. `z.coerce.date()` on a malformed string
+    // produces exactly this, silently, which is how it would reach here in practice.
+    if (v instanceof Date) {
+      if (Number.isNaN(v.getTime())) {
+        return `identity key '${k}' holds an Invalid Date — every unparseable date normalizes to the same text, so every call would compare equal; validate the field or declare the raw value instead`;
+      }
+      continue;
+    }
     // An ARRAY is a different failure from an object and says so. It is not that every call compares
     // equal — `['a','b']` and `['c','d']` do differ. It is that the element TYPES flatten: `[1,2]` and
     // `['1','2']` both land on '1,2', so two genuinely different jobs can be called the same one.
