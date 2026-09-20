@@ -163,7 +163,22 @@ export interface Memory {
  * Chat surfaces, so this is enforced here, at the single place the key is built — the same boundary
  * discipline orgId (organization.ts) and toolName (journal.ts) already get.
  */
-function memKey(threadId: string, leaf: 'messages' | 'working'): string {
+/**
+ * The leaves a `mem:` key can end in — the ONE list, exported so retention reads the same answer
+ * instead of keeping its own copy.
+ *
+ * Retention recovers a threadId out of `mem:<threadId>:<leaf>` by matching a known leaf, because a
+ * threadId may itself contain ':'. With a second hand-written copy of this list, adding a leaf here
+ * and forgetting there does not fail loudly: the thread simply stops being recognised as existing,
+ * and the orphan report then names a LIVE thread — with its memory sitting right there — as state
+ * whose run is gone. Measured before this was shared: a thread holding `mem:th:summary` beside its
+ * dedup state was reported orphaned, with `unrecognisedKeys` empty, so nothing on the report hinted
+ * that a key had been skipped.
+ */
+export const MEM_LEAVES = ['messages', 'working'] as const;
+export type MemLeaf = (typeof MEM_LEAVES)[number];
+
+function memKey(threadId: string, leaf: MemLeaf): string {
   // Colons themselves are allowed — sweepThreads' suffix inference has always supported them, and a
   // test pins that. What cannot appear is a SEGMENT named 'model' or 'tool': `mem:a:model:b:messages`
   // parses as run 'mem:a' with a model step, exactly like the bare `mem:model:messages` case.
