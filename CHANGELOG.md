@@ -7,12 +7,86 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
+## [0.2.0] — 2026-09-21
 
-**Nothing has been published yet.** This will become `0.1.0`, the first release. There is no earlier
-version to diff against, so the entries below are the changes worth knowing about from the point this
-file was introduced — reconstructing a plausible-looking history for a project that has never shipped
-would be worse than saying that.
+A minor bump, which in 0.x is where a break goes ([VERSIONING.md](./VERSIONING.md)). One entry below
+changes a persisted key schema; read **Changed** before upgrading.
+
+### Changed
+
+- **A `Date` used as a `semanticIdentity` key is now normalized to its ISO form, not to local time.**
+  Identity values went through `String(v)`, which renders a `Date` in the host's zone, so the same
+  instant produced two different identity values on two workers:
+
+  ```
+  TZ=Europe/Istanbul  'thu jan 01 2026 03:00:00 gmt+0300 (gmt+03:00)'
+  TZ=UTC              'thu jan 01 2026 00:00:00 gmt+0000 (coordinated universal time)'
+  ```
+
+  Two workers in two zones therefore read one job as two, and the duplicate protection disappeared
+  without saying so. An `Invalid Date` now normalizes to `''` — carrying no identity — rather than to
+  the text `invalid date`, which made every unparseable date collide as though they were one job.
+
+  A model-generated tool argument could never hit this: JSON turns a `Date` into an ISO string on the
+  way in. The exposure was programmatic callers — which is the shape of a database row whose timestamp
+  column comes back as a `Date` object. Those two doors now agree on one identity, where before they
+  split the protection along whichever road the call took.
+
+  **Migration.** The identity is hashed into the journal key itself, so there is nothing to upgrade in
+  place and `registerFormatUpgrade` cannot reach it: records written before 0.2.0 are looked up under
+  their old key and no longer match. **Only `Date`-valued identity keys move** — strings and numbers
+  hash exactly as they did. If you have any, expect one retention window in which a pre-upgrade
+  duplicate is not recognised, and plan the upgrade where that window is acceptable. The keys that
+  move are the ones that were zone-dependent, which is to say the ones that were already wrong.
+
+### Added
+
+- **`GET /retention/orphans`** in `@gnldev/studio` lists thread state whose run is gone, without
+  deleting any of it. Whether that state should go is the application owner's decision, not the
+  framework's. It reads through the org-prefixed store and asks only for `runs:read`. A store with no
+  `listKeys` answers `501` and a failed scan answers `500`, because a scan that could not run must
+  never render as `count: 0`.
+- **Studio's retention panel** shows two counts, kept separate: state whose run is gone, and keys the
+  sweeper could not classify at all. The second is the one that means the key format drifted, and
+  merging them would hide it behind the first.
+
+### Fixed
+
+- **A `mem:` leaf retention could not read made a live thread look orphaned.** Retention recovers a
+  thread id out of `mem:<threadId>:<leaf>` by matching a known leaf, because a thread id may contain
+  `:` itself, and it kept its own hand-written copy of that list. An unlisted leaf did not fail — the
+  thread simply stopped existing as far as the scan was concerned, and a thread that does not exist is
+  reported orphaned with its memory sitting right beside its dedup state. The leaf list is now
+  published from one place, and a `mem:` key this build cannot read is named in `unrecognisedKeys`
+  instead of being skipped in silence.
+- **`@gnldev/semantic-qualify`: a false-alarm bar answered by silence is no longer a pass.** The bar
+  divided by the pairs *put* to the judge. A pair that errored produced no question, and a pair that
+  produced no question cannot produce a false alarm — so it settled into the denominator as clean.
+  Measured on the published fixtures: a judge that threw on 149 of the 150 near-miss pairs scored that
+  label at accuracy 0.000, reported a false alarm rate of 0.007, passed, and had its certificate
+  accepted at runtime. The rate keeps its full denominator on purpose — it predicts what operators
+  will see, and silence really does produce no prompt — but the coverage gate now counts answers.
+- **`@gnldev/semantic-qualify`: a run that never reached the provider is diagnosed as transport.**
+  `errors` and `unparsed` are separate counters and a call that throws never returns a string to fail
+  parsing, so a run where every call died slipped past the format diagnosis and was reported as
+  "recall below the bar" — which tells you to change a model that was never asked. Measured: a model
+  that scored 20/20 on a sample returned 564 errors over the full 600, every one a rate limit, under
+  the headline `paraphrase recall 0.047 < required 0.7`.
+- **A semantic identity key that cannot identify anything stands its layers down** instead of asking
+  the judge about records whose keys hold a function, an object, an array or an `Invalid Date` — all
+  of which normalize to the same text, making unrelated calls look like one job.
+- **Erasure leaves a trace it can prove.** `purgeRun` records `resthr:<resource>:<thread>` before
+  deleting, so a later erasure request can still establish which thread a resource owned. The trace is
+  parsed rather than suffix-matched: a thread id may contain `:`, and a prefix delete for `th-1` would
+  have taken `th-10` with it. The erasure scans no longer swallow a failed read as a clean result.
+
+---
+
+## [0.1.0] — 2026-09-16
+
+The first release. There is no earlier version to diff against, so the entries below are the changes
+worth knowing about from the point this file was introduced — reconstructing a plausible-looking
+history for a project that had never shipped would be worse than saying that.
 
 ### Security
 
