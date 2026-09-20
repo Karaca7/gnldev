@@ -156,6 +156,40 @@ describe('studio-ui components', () => {
     expect(JSON.parse((post![1] as any).body).olderThanMs).toBe(30 * 86_400_000);
   });
 
+  it('Organizations retention panel: orphaned thread state is shown, and the two counts stay apart', async () => {
+    // Standing state, not a sweep result: thread state whose owner is gone, so no erasure request
+    // can reach it. It has its own endpoint because `sweepThreads` answers the same question by
+    // DELETING — a panel could otherwise only show this number by destroying the data it counts.
+    //
+    // The two counts are asserted separately on purpose. One is unowned state, the other is state
+    // written under an `xthr:` family this build cannot parse; a single total would be actionable
+    // for neither. This test exists because reverting the whole feature left the suite GREEN —
+    // measured — which meant the badges were shipped without anything holding them.
+    stubFetch({
+      '/retention/orphans': { count: 3, threadIds: ['th-a', 'th-b', 'th-c'], unrecognisedKeys: ['xthr:th-x:newfam-1'] },
+      '/capabilities': { ...CAPS, organizations: true, retention: true },
+      '/organizations': { organizations: [] },
+    });
+    wrap(<Organizations />);
+    await waitFor(() => expect(screen.getByText('3 orphaned thread')).toBeTruthy());
+    expect(screen.getByText('1 unrecognised key')).toBeTruthy();
+  });
+
+  it('Organizations retention panel: a zero orphan count renders NOTHING', async () => {
+    // A counter that is always on screen is furniture. This one is meant to be noticed, so the
+    // empty case has to be silent — and an assertion that only ever checks the populated case
+    // cannot tell the difference.
+    stubFetch({
+      '/retention/orphans': { count: 0, threadIds: [], unrecognisedKeys: [] },
+      '/capabilities': { ...CAPS, organizations: true, retention: true },
+      '/organizations': { organizations: [] },
+    });
+    wrap(<Organizations />);
+    await waitFor(() => expect(screen.getByText('Retention sweep')).toBeTruthy());
+    expect(screen.queryByText(/orphaned thread/)).toBeNull();
+    expect(screen.queryByText(/unrecognised key/)).toBeNull();
+  });
+
   it('Inspector pagination: with a nextCursor, "load more" appends the next page', async () => {
     stubFetch({
       // endsWith match: the cursor'd URL only hits the cursor'd key, no collision.

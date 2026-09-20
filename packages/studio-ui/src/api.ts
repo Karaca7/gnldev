@@ -631,6 +631,16 @@ export const api = {
   /** TTL sweep: purges runs older than olderThanMs (suspended ones are kept by default). */
   retentionSweep: (body: { olderThanMs: number; keepSuspended?: boolean }) =>
     post<SweepResult>('/retention/sweep', body),
+  /**
+   * Thread state no erasure request can reach — READ ONLY, unlike the sweep above.
+   *
+   * `sweepThreads` reports the same list but purges as it goes, so a panel that wanted to show the
+   * number could only get it by deleting data. `count` and `unrecognisedKeys` are deliberately two
+   * numbers: one is state whose owner is gone, the other is state written under an `xthr:` family
+   * this build cannot parse. Summing them would make neither actionable.
+   */
+  retentionOrphans: () =>
+    get<{ count: number; threadIds: string[]; unrecognisedKeys: string[] }>('/retention/orphans'),
   run: (id: string) => get<JournalEntry[]>(`/runs/${encodeURIComponent(id)}`),
   state: (id: string, step?: number) => get<RunState>(`/runs/${encodeURIComponent(id)}/state${step != null ? `?step=${step}` : ''}`),
   diff: (id: string, step: number) => get<DiffResult>(`/runs/${encodeURIComponent(id)}/diff?step=${step}`),
