@@ -361,6 +361,15 @@ Please do not open a public issue for a vulnerability. **[SECURITY.md](./SECURIT
 to report one privately through GitHub, and what is in scope — durability, cross-organization
 isolation, and the approval gates are the guarantees worth attacking first.
 
+## Contact
+
+<karaca.gnldev@gmail.com> — for anything that does not belong in an issue: licensing questions,
+commercial use, or reaching the maintainer directly.
+
+Not for vulnerabilities and not for bug reports. A vulnerability goes through the private channel in
+[SECURITY.md](./SECURITY.md), which reaches the maintainer without an email thread; a bug belongs in
+a public issue, where the next person to hit it can find it.
+
 ## License
 
 [Apache-2.0](./LICENSE) — © 2026 Karaca Yılmaz.
