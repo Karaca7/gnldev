@@ -57,5 +57,9 @@
   "confirmSweepTitle": "Sweep runs older than {{days}} days?",
   "confirmSweepDescKeep": " (suspended runs are kept)",
   "confirmSweepDescAll": " — INCLUDING SUSPENDED",
-  "confirmSweepDesc": "In ALL organizations, the journal records of runs older than {{days}} days will be permanently deleted{{suffix}}. This cannot be undone."
+  "confirmSweepDesc": "In ALL organizations, the journal records of runs older than {{days}} days will be permanently deleted{{suffix}}. This cannot be undone.",
+  "orphanBadge": "{{count}} orphaned thread",
+  "orphanHint": "Thread state with no owner: runs without a resourceId left data behind, and no erasure request can reach it. sweepThreads() deletes by age; this is only the count.",
+  "unrecognisedBadge": "{{count}} unrecognised key",
+  "unrecognisedHint": "Written under an xthr: family this version does not know — likely a newer @gnldev/durable. No sweep here can reclaim what it cannot parse."
 }

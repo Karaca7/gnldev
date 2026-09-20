@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion, useReducedMotion } from 'framer-motion';
 import { Pencil, Save, X, Plus, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -422,6 +422,13 @@ function RetentionPanel() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<SweepResult | null>(null);
+  // Read-only, and that is the point: `sweepThreads` answers the same question by DELETING, so a
+  // panel could otherwise only show this number by destroying the data it counts.
+  const orphans = useQuery({
+    queryKey: ['retention-orphans'],
+    queryFn: () => api.retentionOrphans(),
+    retry: false,
+  });
 
   const doSweep = async () => {
     setBusy(true);
@@ -431,6 +438,9 @@ function RetentionPanel() {
       toast.success(t('sweepSuccess', { count: r.purged.length, entries: r.deletedEntries }));
       qc.invalidateQueries({ queryKey: ['runs'] });
       qc.invalidateQueries({ queryKey: ['organizations'] });
+      // A sweep can CREATE orphans: it deletes the runs that named a thread's owner while the
+      // thread's own state stays. So the count beside this button is stale the moment it finishes.
+      qc.invalidateQueries({ queryKey: ['retention-orphans'] });
     } catch (e) {
       toast.error(t('sweepError', { error: errMessage(e) }));
     } finally {
@@ -466,6 +476,24 @@ function RetentionPanel() {
             <Badge tone="destructive">{t('deletedBadge', { count: result.purged.length })}</Badge>
             {result.keptSuspended > 0 && <Badge tone="warning">{t('keptSuspendedBadge', { count: result.keptSuspended })}</Badge>}
             {result.keptNoTs > 0 && <Badge tone="muted">{t('keptNoTsBadge', { count: result.keptNoTs })}</Badge>}
+          </span>
+        )}
+        {/* Standing state, not a result of the button: thread state whose owner is gone, so no
+            erasure request can reach it. Shown only when non-zero — a counter that is always on
+            screen is furniture, and this one is meant to be noticed. The two numbers stay apart on
+            purpose: one is unowned state, the other is state this build cannot even parse. */}
+        {!!orphans.data?.count && (
+          <span title={t('orphanHint')}>
+            <Badge tone="warning">{t('orphanBadge', { count: orphans.data.count })}</Badge>
+          </span>
+        )}
+        {/* Optional chain all the way down, not just on `data`: an OLDER studio server answers this
+            endpoint without `unrecognisedKeys`, and `data?.unrecognisedKeys.length` throws on the
+            second hop — a version skew that takes the whole panel out. Caught by a test whose mock
+            predates the field, which is exactly the shape of the real case. */}
+        {!!orphans.data?.unrecognisedKeys?.length && (
+          <span title={t('unrecognisedHint')}>
+            <Badge tone="muted">{t('unrecognisedBadge', { count: orphans.data.unrecognisedKeys?.length ?? 0 })}</Badge>
           </span>
         )}
       </div>

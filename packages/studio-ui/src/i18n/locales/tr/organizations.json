@@ -57,5 +57,9 @@
   "confirmSweepTitle": "{{days}} günden eski run'lar süpürülsün mü?",
   "confirmSweepDescKeep": " (askıdakiler korunur)",
   "confirmSweepDescAll": " — ASKIDAKİLER DAHİL",
-  "confirmSweepDesc": "TÜM organizasyonlarda {{days}} günden eski run'ların journal kayıtları kalıcı silinir{{suffix}}. Geri alınamaz."
+  "confirmSweepDesc": "TÜM organizasyonlarda {{days}} günden eski run'ların journal kayıtları kalıcı silinir{{suffix}}. Geri alınamaz.",
+  "orphanBadge": "{{count}} sahipsiz thread",
+  "orphanHint": "Bu thread durumunun sahibi yok: resourceId olmadan koşan işler geride veri bıraktı ve hiçbir silme talebi oraya ulaşamaz. sweepThreads() yaşa göre siler; buradaki yalnız sayımdır.",
+  "unrecognisedBadge": "{{count}} tanınmayan anahtar",
+  "unrecognisedHint": "Bu sürümün bilmediği bir xthr: ailesi altında yazılmış — muhtemelen daha yeni bir @gnldev/durable. Buradaki hiçbir süpürge, ayrıştıramadığı veriyi geri kazanamaz."
 }
