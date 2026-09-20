@@ -21,7 +21,7 @@ async function main(): Promise<number> {
   const judgePath = arg('judge');
   const judgeModelId = arg('model');
   if (!judgePath || !judgeModelId) {
-    console.error('usage: gnl-semantic-qualify --judge ./judge.mjs --model <judgeModelId> [--fixtures a.json,b.json] [--out gnl-judge-cert.json] [--concurrency 4]');
+    console.error('usage: gnl-semantic-qualify --judge ./judge.mjs --model <judgeModelId> [--fixtures a.json,b.json] [--out gnl-judge-cert.json] [--concurrency 4] [--limit N>=20]');
     console.error('  the judge module exports a closure: async ({ system, user }) => string');
     return 2;
   }
@@ -36,9 +36,15 @@ async function main(): Promise<number> {
 
   const fixtures = arg('fixtures')?.split(',').map((f) => resolve(f.trim())) ?? defaultFixturePaths();
   const concurrency = Number(arg('concurrency') ?? 4);
+  const limitRaw = arg('limit');
+  const limit = limitRaw === undefined ? undefined : Number(limitRaw);
+  if (limit !== undefined && (!Number.isFinite(limit) || limit <= 0)) {
+    console.error(`@gnldev/semantic-qualify: --limit must be a positive number, got '${limitRaw}'`);
+    return 2;
+  }
   process.stderr.write(`examining ${judgeModelId} on ${fixtures.length} fixture file(s)...\n`);
   const report = await qualifyJudge({
-    complete, judgeModelId, fixtures, concurrency,
+    complete, judgeModelId, fixtures, concurrency, ...(limit === undefined ? {} : { limit }),
     onProgress: (done, total) => { if (done % 25 === 0 || done === total) process.stderr.write(`\r  ${done}/${total}`); },
   });
   process.stderr.write('\n\n');

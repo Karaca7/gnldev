@@ -25,6 +25,37 @@ belongs to the framework:
 export default async ({ system, user }) => (await callYourModel(system, user)).text;
 ```
 
+**Give that call a timeout.** Without one a hung request never returns and the bench cannot tell you
+so: it sits there, the progress counter does not move, and "the model is slow" looks exactly like
+"the model is gone". Measured while writing this page — a judge with no timeout ran 14 minutes and
+completed zero pairs; the same judge with one finished 20 pairs in 20 seconds. On a CI gate, which
+is what the paragraph above recommends, the difference is a job that fails in minutes versus one
+that burns its whole budget.
+
+```js
+// my-judge.mjs — the same closure, with the one line that makes a stall visible
+export default async ({ system, user }) => {
+  const res = await fetch(MY_ENDPOINT, {
+    signal: AbortSignal.timeout(90_000),   // ← a stalled request aborts instead of waiting forever
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${MY_KEY}` },
+    body: JSON.stringify({ model: MY_MODEL, temperature: 0, max_tokens: 200,
+      messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }),
+  });
+  if (!res.ok) throw new Error(`judge HTTP ${res.status}`);
+  return (await res.json()).choices?.[0]?.message?.content ?? '';
+};
+```
+
+The bench counts a throw as an `error` and keeps going, so one dead request costs one pair rather
+than the whole run.
+
+**One more thing the transport decides: WHERE the model puts its answer.** A reasoning model that
+writes its thinking into `content` produces text the parser cannot read, and every pair lands in
+`unparsed` — the report says so in its first line, because that is a format failure, not a
+judgement one. Models that keep reasoning in a separate field (`reasoning_content`) parse cleanly.
+Check one raw reply before concluding a model is bad at the task.
+
 Output is a table plus `gnl-judge-cert.json`, which you paste into config as
 `semantic.judge.qualification`. The exit code is the verdict (`0` pass, `1` fail, `2` usage error),
 so the exam works as a CI gate: a model swap that quietly degrades the judge fails the build instead
