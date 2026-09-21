@@ -199,6 +199,9 @@ describe('createRetentionSweeper (Phase 8.3 — opt-in automatic retention)', ()
     vi.useFakeTimers();
     try {
       const journal = new InMemoryJournal();
+      // `:input` because a run has one (run.ts writes it unconditionally before the first model
+      // call). sweepRuns asks for it now before spending a prefix delete — see isRealRun.
+      await journal.put('old-run:input', { _v: 2, prompt: 'x' });
       await journal.put(runKeys.model('old-run', 0), { content: [] });
       await appendLog(journal, 'auditlog', { msg: 'stale audit record' }); // 'at' = the Date.now() at write time
       await vi.advanceTimersByTimeAsync(20); // real time gap — the above can now be considered 'stale'
@@ -247,6 +250,9 @@ describe('createRetentionSweeper (Phase 8.3 — opt-in automatic retention)', ()
     vi.useFakeTimers();
     try {
       const journal = new InMemoryJournal();
+      // `:input` because a run has one (run.ts writes it unconditionally before the first model
+      // call). sweepRuns asks for it now before spending a prefix delete — see isRealRun.
+      await journal.put('old-run:input', { _v: 2, prompt: 'x' });
       await journal.put(runKeys.model('old-run', 0), { content: [] });
       await vi.advanceTimersByTimeAsync(20);
 

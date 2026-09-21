@@ -603,6 +603,42 @@ export interface SweepResult {
   /** Number of runs whose age couldn't be measured (and were thus preserved) due to missing timestamps. */
   keptNoTs: number;
   deletedEntries: number;
+  /**
+   * Indexed "runs" this sweep REFUSED to purge because no run ever wrote them — see `isRealRun`.
+   *
+   * Named rather than counted, because the name IS the namespace that was about to be deleted, and
+   * an operator who sees `mem` here learns something a number cannot tell them. Absent when empty:
+   * a field that is always present reads as a normal part of the report, and this one is not normal.
+   */
+  skippedGhosts?: string[];
+}
+
+/**
+ * Does a run row correspond to a run that actually ran?
+ *
+ * `parseJournalKey` claims any key with a `:model:`/`:tool:` SEGMENT as a run record, whatever
+ * namespace it started in, so a thread, organization or resource named `model` mints a run row named
+ * after its own keyspace — `mem`, `xthr`, `org`. The row is real; the run never was. Measured on
+ * real Postgres and real Redis: one such id, one sweep, and two unrelated users' threads were gone.
+ *
+ * THE CHECK LIVES WHERE THE DELETE IS SPENT, not where the index is written. Indexing an unstamped
+ * record is a documented adapter behaviour — `storage-backend.test.ts` pins it twenty times over,
+ * and a hand-written journal still lists and replays. Tightening THAT would change what an adapter
+ * is, to fix something only the purge does. So ownership is asymmetric on purpose: loose where it
+ * lists, strict where it deletes by prefix.
+ *
+ * `:input` is the rule because run.ts writes it unconditionally, before the first model call, for
+ * every run — the same property `runIdOfKey` leans on. A run that died at step 0 therefore still has
+ * one and is still swept; only a row no run ever wrote is refused.
+ */
+async function isRealRun(journal: Journal, runId: string): Promise<boolean> {
+  // A failed read is not an absent key. Treating "I could not look" as "this is a ghost" would make
+  // an unreachable backend look like a clean journal and quietly stop retention altogether.
+  try {
+    return (await journal.get(`${runId}:input`)) !== undefined;
+  } catch {
+    return true;
+  }
 }
 
 /**
@@ -629,6 +665,8 @@ export async function sweepRuns(journal: Journal & Partial<JournalReader>, opts:
     const stale = await (journal as Journal).listStaleRuns!(cutoff, { includeSuspended: !keepSuspended });
     const fast: SweepResult = { scanned: stale.length, purged: [], keptSuspended: 0, keptNoTs: 0, deletedEntries: 0 };
     for (const runId of stale) {
+      // A row no run ever wrote is refused here rather than purged by prefix — see isRealRun.
+      if (!(await isRealRun(journal, runId))) { (fast.skippedGhosts ??= []).push(runId); continue; }
       // BEFORE the purge — `tombstoneFor` reads the run's own `:input`, which the next line deletes.
       const tomb = opts.tombstones ? await tombstoneFor(journal, runId, now) : undefined;
       fast.deletedEntries += await purgeRun(journal, runId, new Set(), { ownershipTrace: true });
@@ -695,6 +733,7 @@ export async function sweepRuns(journal: Journal & Partial<JournalReader>, opts:
       continue;
     }
     if (now - lastActivity > opts.olderThanMs || (summary.status === 'suspended' && opts.suspendedTtlMs !== undefined && now - lastActivity > opts.suspendedTtlMs)) {
+      if (!(await isRealRun(journal, r.runId))) { (result.skippedGhosts ??= []).push(r.runId); continue; }
       const tomb = opts.tombstones ? await tombstoneFor(journal, r.runId, now) : undefined; // BEFORE the purge
       result.deletedEntries += await purgeRun(journal, r.runId, new Set(), { ownershipTrace: true });
       if (tomb) await journal.put(`${r.runId}:swept`, tomb);

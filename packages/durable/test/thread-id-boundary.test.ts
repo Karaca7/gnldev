@@ -74,21 +74,43 @@ describe('a thread id cannot rename its own keyspace', () => {
     }
   });
 
-  it('WHY it is refused: the poisoned key reads as a run, and a sweep takes the whole keyspace', async () => {
-    // This is the damage the guard prevents, demonstrated on the raw journal rather than through a
-    // builder — otherwise the test would only prove the builder throws, not why it should.
+  it('WHY it is refused — and the second line of defence, for the poison already written', async () => {
+    // Two halves, and they close different windows. The guard above stops NEW keys of this shape.
+    // This one is about the ones already in somebody's database: the index row froze at write time,
+    // so no upgrade reaches it. Measured on real Postgres and real Redis, before the sweep learned
+    // to ask: `purged: ['mem']`, two unrelated users' threads gone, in one sweep.
     const j = new InMemoryJournal();
     await j.put('mem:alice:messages', [{ role: 'user', content: 'hi', ts: Date.now() }]);
     await j.put('mem:bob:messages', [{ role: 'user', content: 'hi', ts: Date.now() }]);
     await j.put('mem:model:working', 'the poison'); // what a hand-built key used to produce
 
+    // The key still READS as a run, and that stays true on purpose: parseJournalKey answers a shape
+    // question that replay depends on, and tightening it drops real records (a batch item's
+    // toolCallId contains ':' — measured, 54 adapter-conformance tests red).
     expect(parseJournalKey('mem:alice:messages')).toBeNull();
     expect(parseJournalKey('mem:model:working')).toEqual({ runId: 'mem', kind: 'model' });
 
+    // What changed is where the strictness sits: at the point the delete is SPENT.
     const r = await sweepRuns(j, { olderThanMs: 0, now: Date.now() + 10 ** 12 });
-    expect(r.purged).toEqual(['mem']); // one "run" — which is the entire mem: keyspace
+    expect(r.purged, 'a row no run ever wrote must not be purged by prefix').toEqual([]);
+    expect(r.skippedGhosts, 'and the refusal is NAMED, not silent').toEqual(['mem']);
 
     const after = await j.listKeys('');
-    expect(after, "two unrelated users' threads went with it").toEqual([]);
+    expect(after.sort(), "the two users' threads are still there").toEqual([
+      'mem:alice:messages', 'mem:bob:messages', 'mem:model:working',
+    ]);
+  });
+
+  it('CONTROL: a real run is still swept — the guard must not stop retention', async () => {
+    // A guard that refuses everything is a leak, not a fix: unswept runs grow forever. `:input` is
+    // the rule precisely because every real run has one, including a run that died at step 0.
+    const j = new InMemoryJournal();
+    await j.put('r-real:input', { _v: 2, prompt: 'x' });
+    await j.put('r-real:model:0', { content: [] });
+    await j.put('r-early:input', { _v: 2, prompt: 'died before step 1' });
+
+    const r = await sweepRuns(j, { olderThanMs: 0, now: Date.now() + 10 ** 12 });
+    expect(r.purged.sort()).toEqual(['r-early', 'r-real']);
+    expect(r.skippedGhosts).toBeUndefined();
   });
 });

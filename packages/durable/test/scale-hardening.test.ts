@@ -45,6 +45,10 @@ describe('H8b — sweepRuns indexed fast path', () => {
     const j = st.runs as any;
     const now = 1_000_000;
     // 3 runs: old-completed, old-SUSPENDED, new-completed. Write directly to control created_at.
+    // Each gets its `:input`, because a run has one — run.ts writes it unconditionally before the
+    // first model call. sweepRuns now asks (isRealRun) before spending a prefix delete, so a fixture
+    // without it describes a row no run ever wrote, which is the shape that must survive a sweep.
+    for (const r of ['old-run', 'suspended-run', 'new-run']) await j.put(`${r}:input`, { _v: 2, prompt: 'x' });
     await j.put('old-run:model:0', { x: 1 });
     await j.put('suspended-run:tool:t1', { status: 'suspended', output: {} });
     await j.put('new-run:model:0', { x: 1 });
