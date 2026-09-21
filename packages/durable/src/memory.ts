@@ -1,4 +1,5 @@
 import type { Journal } from './journal.js';
+import { assertThreadId } from './journal.js';
 
 // Conversation (thread) + working memory. Journal-backed → durable & replayable by construction.
 // (Rich memory like semantic recall / observational memory lives in a separate @gnldev/memory package in the future.)
@@ -178,16 +179,16 @@ export interface Memory {
 export const MEM_LEAVES = ['messages', 'working'] as const;
 export type MemLeaf = (typeof MEM_LEAVES)[number];
 
-function memKey(threadId: string, leaf: MemLeaf): string {
-  // Colons themselves are allowed — sweepThreads' suffix inference has always supported them, and a
-  // test pins that. What cannot appear is a SEGMENT named 'model' or 'tool': `mem:a:model:b:messages`
-  // parses as run 'mem:a' with a model step, exactly like the bare `mem:model:messages` case.
-  if (/(^|:)(model|tool)(:|$)/.test(threadId)) {
-    throw new Error(
-      `@gnldev/durable: thread id '${threadId}' would collide with the journal's key schema — ` +
-      `a ':'-delimited segment named 'model' or 'tool' reads as a run record (see parseJournalKey in journal.ts)`,
-    );
-  }
+export function memKey(threadId: string, leaf: MemLeaf): string {
+  // The rule itself lives beside parseJournalKey, which is what makes it a rule — and it is shared,
+  // because this was NOT the only door. `mem:` was guarded here while `xthr:` was not, so a
+  // deployment using threadId purely for idempotency (no BasicMemory, so this function never runs)
+  // reached the same collision through the dedup keyspace. Measured: one poisoned id wiped every
+  // thread's dedup state exactly as it wipes every thread's memory.
+  //
+  // Exported so a store that builds this key itself can build the SAME key — @gnldev/rag's
+  // SemanticMemory wrote `mem:${threadId}:working` by hand, which is how it bypassed the check.
+  assertThreadId(threadId);
   return `mem:${threadId}:${leaf}`;
 }
 

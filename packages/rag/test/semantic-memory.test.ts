@@ -94,3 +94,33 @@ describe('@gnldev/rag SemanticMemory', () => {
     expect(await mem.getWorkingMemory('t2')).toBe('VIP customer');
   });
 });
+
+describe('a thread id that would rename the keyspace is refused here too', () => {
+  // This store builds its keys itself — `sem:<threadId>:log` for the recall log, and it used to
+  // spell out `mem:<threadId>:working` for working memory. Writing the same string durable writes
+  // looked harmless; the function it skipped is where the thread id is CHECKED.
+  //
+  // Measured before the fix: setWorkingMemory('model', …) wrote `mem:model:working`, parseJournalKey
+  // read that as a run called 'mem', and one sweepRuns purged the prefix — two unrelated users'
+  // threads went from present to gone. BasicMemory refused the same id in the same journal.
+  const mem = () => new SemanticMemory({ journal: new InMemoryJournal(), embed });
+
+  it('both doors refuse it — the working-memory key AND this package\'s own log key', async () => {
+    await expect(mem().setWorkingMemory('model', 'x')).rejects.toThrow(/collide with the journal's key schema/);
+    await expect(mem().getWorkingMemory('model')).rejects.toThrow(/collide with the journal's key schema/);
+    await expect(mem().append('model', [{ role: 'user', content: 'x' }])).rejects.toThrow(/collide with the journal's key schema/);
+    await expect(mem().getMessages('model')).rejects.toThrow(/collide with the journal's key schema/);
+  });
+
+  it('CONTROL: a sound id still writes, and nothing is left behind by the refusal', async () => {
+    // A guard that refuses everything protects nothing. Colons stay legal — only a whole SEGMENT
+    // named 'model' or 'tool' is the hazard.
+    const j = new InMemoryJournal();
+    const m = new SemanticMemory({ journal: j, embed });
+    await m.setWorkingMemory('acme:alice', 'kept');
+    expect(await m.getWorkingMemory('acme:alice')).toBe('kept');
+
+    await expect(m.setWorkingMemory('tool', 'x')).rejects.toThrow();
+    expect(await j.listKeys(''), 'a refused write must not half-land').toEqual(['mem:acme:alice:working']);
+  });
+});

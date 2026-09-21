@@ -1,4 +1,5 @@
 import { argsHash } from './hash.js';
+import { assertThreadId } from './journal.js';
 import { withTimeout } from './timeout.js';
 import { stampFormat, upgradeFormat } from './format.js';
 import { DivergenceError, RetryLimitExceededError, RunBusyError, SideEffectRetryBlockedError } from './errors.js';
@@ -115,7 +116,7 @@ const dupMarkerKey = (runId: string, toolName: string, hash: string): string =>
 // runKeys.toolThread (not the plan's cosmetic `thread:` prefix) so ONE purgeThread sweep reclaims
 // the thread's whole dedup state: args-window records AND these markers.
 const threadDupMarkerKey = (threadId: string, toolName: string, hash: string): string =>
-  `xthr:${threadId}:dup-${toolName}-${hash}`;
+  (assertThreadId(threadId), `xthr:${threadId}:dup-${toolName}-${hash}`);
 
 /** FAZ-3 — 'thread' scoping asked for without a threadId: fall back LOUDLY (once per tool+feature),
  *  Never silently — a silent fallback reports dedup the caller isn't getting. */

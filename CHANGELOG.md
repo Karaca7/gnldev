@@ -7,6 +7,55 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.3.0] — 2026-09-21
+
+A thread id could rename its own keyspace, and one sweep then deleted every thread. The fix refuses
+two words that used to be accepted, which is why this is a minor and not a patch — see the note at
+the end of **Fixed**.
+
+### Fixed
+
+- **A thread id containing a `model` or `tool` SEGMENT no longer poisons the keyspace it is written
+  into.** `parseJournalKey` claims any key with a `:model:`/`:tool:` segment as a run record, whatever
+  namespace it started in. So a thread called `model` did not merely look odd:
+
+  ```
+  mem:model:working      → { runId: 'mem',  kind: 'model' }   — a run called 'mem'
+  xthr:model:sem-pay-x   → { runId: 'xthr', kind: 'model' }   — a run called 'xthr'
+  ```
+
+  and the next `sweepRuns` purged that "run" by prefix. Measured on both, with two unrelated users
+  present: one poisoned id, one sweep, `listKeys('')` came back empty — `purged: ['mem']` and
+  `purged: ['xthr']`, three entries deleted each time.
+
+  The check existed in exactly one place, `memKey`, and nothing held it — so `mem:` was guarded while
+  five other builders were not. **A deployment that uses `threadId` purely for idempotency never calls
+  `memKey` at all**, and reached the same collision through the dedup keyspace with no memory
+  configured. `@gnldev/rag`'s `SemanticMemory` reached it the other way, by spelling out
+  `mem:<threadId>:working` itself instead of calling the function that checks.
+
+  The rule now lives beside the regex that creates it (`assertThreadId`, exported) and every builder
+  that takes a thread id calls it: `memKey`, `runKeys.toolThread`, `semKey`, `semTombKey`,
+  `semJudgeKey`, the thread dup marker, and both of rag's.
+
+  **Why minor and not patch.** VERSIONING.md counts "tightening validation so an input that used to be
+  accepted is now rejected" as breaking, and by the letter this is that. It is worth being explicit
+  that the rule is being followed rather than reasoned around: the rejected input was not a working
+  configuration — it destroyed every thread's data on the first sweep — so no correct deployment is
+  losing anything. The letter still wins, because a version number that bends to intent is a version
+  number nobody can rely on.
+
+  Ids containing colons stay legal, and so do `models`, `toolbox`, `remodel` — only a whole segment
+  equal to `model` or `tool` is refused.
+
+### Added
+
+- **`assertThreadId`, `memKey`, `MEM_LEAVES`** are exported from `@gnldev/durable`, so a store that
+  builds a `mem:` key itself builds the same key, through the same check. That is how rag's bypass
+  became possible: the string was right, the function was skipped.
+
+---
+
 ## [0.2.0] — 2026-09-21
 
 A minor bump, which in 0.x is where a break goes ([VERSIONING.md](./VERSIONING.md)). One entry below

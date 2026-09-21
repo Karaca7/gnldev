@@ -3,7 +3,7 @@
 // vector search. Durable/replayable: the recall result falls into runDurable's input journaling
 // (frozen on resume); embeddings persist in the journal. (Most semantic-recall implementations don't come with these guarantees.)
 import { cosineSimilarity } from 'ai';
-import { matchFilter } from '@gnldev/durable';
+import { matchFilter, memKey, assertThreadId } from '@gnldev/durable';
 import type { Memory, Journal } from '@gnldev/durable';
 import type { Embed } from './vector-store.js';
 
@@ -69,6 +69,10 @@ export class SemanticMemory implements Memory {
   }
 
   private key(threadId: string) {
+    // Same hazard, this package's own namespace: `sem:model:log` parses as a run called 'sem', and a
+    // sweep then purges every thread's recall log. The prefix differs; the rule does not, because the
+    // rule belongs to the ':model:'/':tool:' shape rather than to any one keyspace.
+    assertThreadId(threadId);
     return `sem:${threadId}:log`;
   }
   private async load(threadId: string): Promise<LogEntry[]> {
@@ -120,10 +124,16 @@ export class SemanticMemory implements Memory {
     await this.journal.put(this.key(threadId), log);
   }
 
+  // Built by @gnldev/durable's own memKey rather than by hand. Writing the same string here looked
+  // harmless — it IS the same string — but the function is also where the thread id is checked, and
+  // spelling the key out skipped the check. Measured: setWorkingMemory('model', …) wrote
+  // `mem:model:working`, which parseJournalKey reads as a run called 'mem', and the next sweepRuns
+  // purged that "run" by prefix — two unrelated users' threads went from present to gone in one
+  // call. BasicMemory refused the same id.
   async getWorkingMemory(threadId: string): Promise<string | undefined> {
-    return this.journal.get<string>(`mem:${threadId}:working`);
+    return this.journal.get<string>(memKey(threadId, 'working'));
   }
   async setWorkingMemory(threadId: string, value: string): Promise<void> {
-    await this.journal.put(`mem:${threadId}:working`, value);
+    await this.journal.put(memKey(threadId, 'working'), value);
   }
 }

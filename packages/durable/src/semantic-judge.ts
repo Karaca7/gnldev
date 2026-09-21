@@ -28,6 +28,7 @@
 // Every exit that is not a question writes an incident (the caller does the writing) — 'different',
 // 'unsure', timeout, budget, parse failure and outage all leave a trace. Nothing here is silent.
 import { claim, runKeys } from './journal.js';
+import { assertThreadId } from './journal.js';
 import type { Journal } from './journal.js';
 import type { SemDupRecord, SemPlan } from './semantic-dup.js';
 import { SEM_RULESET_VERSION } from './semantic-rules.js';
@@ -121,6 +122,7 @@ export interface SemJudgeRecord {
  * and conflating the two would let one ruling silence a question it never saw.
  */
 export const semJudgeKey = (threadId: string, toolName: string, h1: string, h2: string): string => {
+  assertThreadId(threadId);
   const [lo, hi] = h1 <= h2 ? [h1, h2] : [h2, h1];
   return `xthr:${threadId}:semjudge-${toolName}-${lo}-${hi}`;
 };

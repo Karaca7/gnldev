@@ -21,6 +21,7 @@
 // Best-effort and fail-open end to end: an unreachable embedder degrades to today's behavior — it
 // never blocks a tool result and never takes the layers below with it.
 import type { Journal } from './journal.js';
+import { assertThreadId } from './journal.js';
 import { runRuleLadder, rulesConfigOf } from './semantic-rules.js';
 import type { RuleTrace } from './semantic-rules.js';
 import { validateJudgeConfig } from './semantic-judge.js';
@@ -98,11 +99,11 @@ export interface SemDupRecord {
 export const SEM_TEMPLATE_VERSION = '1';
 
 export const semKey = (threadId: string, toolName: string, argsHash: string): string =>
-  `xthr:${threadId}:sem-${toolName}-${argsHash}`;
+  (assertThreadId(threadId), `xthr:${threadId}:sem-${toolName}-${argsHash}`);
 /** "These two are DIFFERENT jobs" — born when a human approves a semantic suspend; that pair is
  *  Never asked about again. Same xthr family: dies with the thread. */
 export const semTombKey = (threadId: string, toolName: string, priorHash: string, newHash: string): string =>
-  `xthr:${threadId}:semtomb-${toolName}-${priorHash}-${newHash}`;
+  (assertThreadId(threadId), `xthr:${threadId}:semtomb-${toolName}-${priorHash}-${newHash}`);
 
 /** Normalized equality for identity values: trim + NFKC + case-fold — 'ABC-1' vs 'abc-1' class
  *  Differences close deterministically instead of leaning on the probabilistic side.
