@@ -46,6 +46,11 @@ describe('sweepRuns (retention TTL)', () => {
   function stubJournal(runs: Record<string, { ts: number | undefined; suspended?: boolean }[]>) {
     const store = new Map<string, unknown>();
     for (const [rid, entries] of Object.entries(runs)) {
+      // `:input` because a run HAS one — run.ts writes it unconditionally, before the first model
+      // call, for every run. The stub used to fabricate runs without it, which no engine does, and
+      // the sweep never noticed because it did not ask. It asks now (isRealRun), so a fixture that
+      // omits it is describing a row no run ever wrote — which is exactly what must not be purged.
+      store.set(`${rid}:input`, { _v: 2, prompt: 'x' });
       entries.forEach((e, i) => store.set(`${rid}:${e.suspended ? 'tool' : 'model'}:${i}`, e.suspended ? { status: 'suspended', output: {} } : { content: [] }));
     }
     const meta = runs;
