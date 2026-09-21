@@ -268,6 +268,7 @@ export const runKeys = {
    * one purgeThread sweep, one lifecycle — the thread's dedup state dies with the thread.
    */
   toolThread: (threadId: string, toolName: string, hash: string) => {
+    assertThreadId(threadId);
     assertNoColonInToolName(toolName);
     return `xthr:${threadId}:args-${toolName}-${hash}`;
   },
@@ -813,6 +814,34 @@ export function asReaderJournal<T extends object>(journal: T): T {
 export function parseJournalKey(key: string): { runId: string; kind: JournalEntryKind } | null {
   const m = /^(.*):(model|tool):.+$/.exec(key);
   return m ? { runId: m[1]!, kind: m[2] as JournalEntryKind } : null;
+}
+
+/**
+ * A caller-supplied id is about to become a key SEGMENT — refuse the two words that would turn the
+ * whole key into a run record.
+ *
+ * The rule lives here because `parseJournalKey` above is what makes it a rule: its regex claims any
+ * key with a `:model:` or `:tool:` segment, whatever namespace it started in. So an id named 'model'
+ * does not merely look odd, it renames its own keyspace:
+ *
+ *   mem:model:working      → { runId: 'mem',  kind: 'model' }   — a run called 'mem'
+ *   xthr:model:sem-pay-x   → { runId: 'xthr', kind: 'model' }   — a run called 'xthr'
+ *
+ * and the next sweep purges that "run" by prefix, which is EVERY thread's memory, or EVERY thread's
+ * dedup state. Measured on both: two unrelated threads plus one poisoned id, one `sweepRuns`, and
+ * `listKeys('')` came back empty — `purged: ['mem']`, `purged: ['xthr']`, three entries deleted each
+ * time.
+ *
+ * Colons in the id itself are fine and stay supported; only a SEGMENT equal to 'model' or 'tool' is
+ * refused, since that is the only shape the regex above can claim.
+ */
+export function assertThreadId(threadId: string, what = 'thread id'): void {
+  if (/(^|:)(model|tool)(:|$)/.test(threadId)) {
+    throw new Error(
+      `@gnldev/durable: ${what} '${threadId}' would collide with the journal's key schema — ` +
+      `a ':'-delimited segment named 'model' or 'tool' reads as a run record (see parseJournalKey in journal.ts)`,
+    );
+  }
 }
 
 /**
