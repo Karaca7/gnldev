@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import { InMemoryStorage, toJournal, recordIncident } from '@gnldev/durable';
 import type * as Durable from '@gnldev/durable';
-import { doctorStamps, humanDuration, shareBlock } from '../src/commands/doctor.js';
+import { doctorStamps, doctorGhostRuns, humanDuration, shareBlock } from '../src/commands/doctor.js';
 
 function freshJournal(): Durable.Journal & Durable.JournalReader {
   return toJournal(new InMemoryStorage().runs) as Durable.Journal & Durable.JournalReader;
@@ -186,5 +186,64 @@ describe('listOrphanThreadState — the read-only half of the orphan report', ()
     // A count that is always non-zero is a banner, not a signal — doctor prints the block only when
     // this is non-empty, so the empty case is the one that keeps the report readable.
     expect((await d.listOrphanThreadState(journal)).threadIds).toEqual([]);
+  });
+});
+
+describe('doctorGhostRuns', () => {
+  // A run row that no run ever wrote. `parseJournalKey` claims any key with a `:model:`/`:tool:`
+  // SEGMENT, whatever namespace it started in, and every adapter derives its run index from that on
+  // WRITE — so a thread named 'model' mints a row called 'mem', and the next sweep purges that
+  // "run" by prefix. Measured elsewhere in this repo: two unrelated users, one sweep, nothing left.
+  //
+  // The poison is already in the index by the time anyone looks, which is why this reports instead
+  // of repairing: the operator has to see whose data sits under the prefix first.
+  const j = () => toJournal(new InMemoryStorage().runs) as any;
+
+  it('names the phantom, and shows what a sweep would take with it', async () => {
+    const journal = j();
+    await journal.put('mem:alice:messages', [{ role: 'user', content: 'hi' }]);
+    await journal.put('mem:bob:messages', [{ role: 'user', content: 'hi' }]);
+    await journal.put('mem:model:working', 'the poison');
+
+    const r = await doctorGhostRuns(journal);
+    expect(r.ghosts.map((g) => g.runId)).toEqual(['mem']);
+    // The list is the point: "mem is a ghost" tells an operator nothing they can act on, while
+    // "these two users' threads are what disappears" does.
+    expect(r.ghosts[0]!.wouldDelete).toContain('mem:alice:messages');
+    expect(r.ghosts[0]!.wouldDelete).toContain('mem:bob:messages');
+  });
+
+  it('a run that died before its first model step is NOT a ghost', async () => {
+    // THE FALSE POSITIVE THIS EXISTS TO AVOID. An upstream 401, a guard rejection, a limit tripped
+    // at step 0 — the run wrote `:input` and nothing else, and it is a real run whose prompt is real
+    // data. Reporting it would invite an operator to delete one.
+    //
+    // `:input` is the rule rather than a heuristic because run.ts writes it unconditionally before
+    // the first model call, which is the same property runIdOfKey leans on.
+    const journal = j();
+    await journal.put('r-early:input', { _v: 2, prompt: 'never got a reply' });
+
+    const r = await doctorGhostRuns(journal);
+    expect(r.ghosts, 'an early-death run is a run').toEqual([]);
+    expect(r.runsScanned).toBe(1);
+  });
+
+  it('CONTROL: a healthy journal reports nothing at all', async () => {
+    // A detector that always finds something is a detector nobody reads.
+    const journal = j();
+    await journal.put('r1:input', { _v: 2, prompt: 'x' });
+    await journal.put('r1:model:0', { _v: 2, text: 'hi' });
+
+    const r = await doctorGhostRuns(journal);
+    expect(r.ghosts).toEqual([]);
+    expect(r.truncated).toBe(false);
+  });
+
+  it('stops at the cap and SAYS so — "we did not look further" is not "there is nothing"', async () => {
+    const journal = j();
+    for (let i = 0; i < 4; i++) await journal.put(`ns${i}:model:x`, { v: 1 });
+    const r = await doctorGhostRuns(journal, 2);
+    expect(r.runsScanned).toBe(2);
+    expect(r.truncated).toBe(true);
   });
 });
