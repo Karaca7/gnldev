@@ -95,6 +95,61 @@ export async function doctorStamps(journal: Durable.Journal & Durable.JournalRea
   return out;
 }
 
+/** A run row that no run ever wrote — see `doctorGhostRuns`. */
+export interface GhostRun {
+  runId: string;
+  /** What a sweep would delete under `${runId}:`, capped — enough to recognise whose data it is. */
+  wouldDelete: string[];
+  /** True when the listing was capped, so the operator reads "at least these" rather than "these". */
+  more: boolean;
+}
+
+/**
+ * Run rows that were never runs — the read-only half of the key-schema collision.
+ *
+ * `parseJournalKey` claims any key with a `:model:`/`:tool:` SEGMENT as a run record, whatever
+ * namespace it started in, and every adapter derives its run index from that on write. So a thread,
+ * organization or resource named `model` mints a run row named after its own keyspace — `mem`,
+ * `xthr`, `org` — and `sweepRuns` then purges that "run" by PREFIX. Measured: two unrelated users'
+ * threads, one sweep, `listKeys('')` empty.
+ *
+ * THE POISON IS ALREADY WRITTEN. It froze into `gnl_runs` / `gnl_run_journal.run_id` at write time,
+ * so no later code change reaches it — which is why this reports before anything repairs.
+ *
+ * THE RULE IS `:input`, and it is not a heuristic: `run.ts` writes that key unconditionally, before
+ * the first model call, for every run — which is exactly why `runIdOfKey` leans on it. A run that
+ * died at step 0 (an upstream 401, a guard rejection, a limit tripped early) therefore still has
+ * one, and must not be reported. Naming that class wrongly would be worse than silence: an operator
+ * who repairs a real run deletes a real run.
+ *
+ * READ-ONLY BY CONSTRUCTION. It lists and it gets. Nothing here writes, and nothing here deletes —
+ * the report is for a person to read before deciding, not a repair that runs itself.
+ */
+export async function doctorGhostRuns(
+  journal: Durable.Journal & Durable.JournalReader,
+  max = MAX_RUNS_SCANNED,
+): Promise<{ ghosts: GhostRun[]; runsScanned: number; truncated: boolean; keysUnavailable: boolean }> {
+  const out = { ghosts: [] as GhostRun[], runsScanned: 0, truncated: false, keysUnavailable: false };
+  const runs = await journal.listRuns();
+  const canList = typeof journal.listKeys === 'function';
+  out.keysUnavailable = !canList && runs.length > 0;
+
+  for (const summary of runs) {
+    if (out.runsScanned >= max) { out.truncated = true; break; }
+    out.runsScanned++;
+    // A failed read is not an absent key. Treating "I could not look" as "it is not there" is how a
+    // detector reports a healthy run as a ghost, so an unreadable input is left alone.
+    let input: unknown;
+    try { input = await journal.get(`${summary.runId}:input`); } catch { continue; }
+    if (input !== undefined) continue;
+
+    const CAP = 5;
+    const keys = canList ? await journal.listKeys!(`${summary.runId}:`).catch(() => [] as string[]) : [];
+    out.ghosts.push({ runId: summary.runId, wouldDelete: keys.slice(0, CAP), more: keys.length > CAP });
+  }
+  return out;
+}
+
 /** `3d 4h` / `12m` / `8s` — a duration a person reads, not a number of milliseconds. */
 export function humanDuration(ms: number): string {
   if (ms < 1000) return `${Math.max(0, Math.round(ms))}ms`;
@@ -173,6 +228,24 @@ export const doctorCommand: Command = {
       console.log('  no runs yet — nothing has been protected because nothing has run.');
       console.log(dim('  `gnl dev`, then ask the same thing twice in the Playground.'));
       return;
+    }
+
+    // Before the protection story, the thing that would DELETE it. A ghost run is not a warning
+    // about the future — the row is already in the index, and the next sweep is what spends it.
+    const ghostly = await doctorGhostRuns(journal).catch(() => null);
+    if (ghostly?.ghosts.length) {
+      console.log(`  ${bold('run rows that were never runs')}  ${ghostly.ghosts.length}`);
+      for (const g of ghostly.ghosts) {
+        console.log(`    ${g.runId}${dim(' — a sweep would delete everything under this prefix:')}`);
+        for (const k of g.wouldDelete) console.log(`      ${k}`);
+        if (g.more) console.log(dim('      …and more'));
+      }
+      console.log(dim('  These came from an id containing a `model` or `tool` segment (a thread, organization'));
+      console.log(dim('  or resource name). The rows are already written; upgrading alone does not remove them.'));
+      console.log(dim('  Do not delete anything by hand from this list — the prefixes hold real data.'));
+      console.log('');
+    } else if (ghostly?.keysUnavailable) {
+      console.log(dim('  ghost-run scan: this adapter cannot list keys, so the scan did not run'));
     }
 
     console.log(`  first run           ${stamps.timesUnavailable ? dim('unknown — this adapter records no write times') : iso(stamps.firstRunAt)}`);
