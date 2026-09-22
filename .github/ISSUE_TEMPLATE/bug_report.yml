@@ -1,0 +1,88 @@
+name: Bug report
+description: Something behaves differently than documented
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Most reports here are about a side effect that ran a different number of times than expected.
+        If that is yours, the fields below are the ones that decide the answer — the storage, the
+        idempotency mode and whether the run was resumed — so please fill them in even when they feel
+        unrelated.
+
+        **Security problems do not belong here.** Use [private vulnerability reporting](https://github.com/Karaca7/gnldev/security).
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you observed, and what you expected instead.
+      placeholder: |
+        The tool ran twice after a crash-resume. I expected it to run once.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: |
+        The smallest thing that shows it — a failing test, a config plus a run, or a script.
+        A deterministic mock model is enough; no API key is needed (see `examples/incident-proofs`).
+      render: ts
+    validations:
+      required: true
+
+  - type: input
+    id: versions
+    attributes:
+      label: Package and version
+      description: Which `@gnldev/*` packages, and at what version (`npm ls @gnldev/durable`).
+      placeholder: '@gnldev/durable 0.4.1, @gnldev/server 0.4.1'
+    validations:
+      required: true
+
+  - type: input
+    id: node
+    attributes:
+      label: Node version
+      placeholder: 'v22.14.0'
+    validations:
+      required: true
+
+  - type: dropdown
+    id: storage
+    attributes:
+      label: Journal storage
+      description: Where the journal lives. Behaviour under concurrency differs between them.
+      options:
+        - InMemoryJournal
+        - SqliteStorage
+        - PostgresStorage
+        - Redis
+        - Custom / other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: idempotency
+    attributes:
+      label: Idempotency mode of the tool involved
+      description: |
+        `'call'` is the default (keyed by toolCallId). `'args'` is opt-in (keyed by the arguments).
+        If the report is about a duplicate that was not caught, this field usually is the answer.
+      options:
+        - "'call' (default)"
+        - "'args'"
+        - 'cross-run'
+        - "Not a tool call / doesn't apply"
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else
+      description: |
+        Logs, the journal keys involved, whether the run was resumed with the same `runId`, whether an
+        approval gate was in play. Paste freely — over-sharing is cheaper than a round trip.

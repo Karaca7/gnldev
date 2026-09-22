@@ -1,0 +1,44 @@
+name: Feature request
+description: Something the library should do and does not
+labels: ['enhancement']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The most useful requests describe a run that went wrong, not an API. What the API should look
+        like is the easy part to change later; what broke is the part that has to be right.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: The situation, not the proposed solution.
+      placeholder: |
+        A tool posts to a partner API that has no idempotency key of its own. After a crash I cannot
+        tell whether it went through.
+    validations:
+      required: true
+
+  - type: textarea
+    id: today
+    attributes:
+      label: How you handle it today
+      description: |
+        What you do now, and why it is not enough. If you worked around it, the workaround is useful
+        information — it shows where the seam is.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you have in mind
+      description: Optional. A rough shape is fine; so is "no idea, but this is the gap".
+
+  - type: checkboxes
+    id: checked
+    attributes:
+      label: Before submitting
+      options:
+        - label: I checked the [docs](https://gnl.dev/docs) — several of these exist as opt-in options rather than defaults
+          required: true
