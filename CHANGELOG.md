@@ -7,6 +7,81 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.0] — 2026-09-22
+
+**Two ways a delete could take somebody else's data.** If you run any version before this one, and
+especially if your thread, organization or resource ids contain `:`, upgrade deliberately — a `^0.3.0`
+range does NOT pick this up on its own, and the fixes are about data that disappears without an error.
+
+A minor bump, which in 0.x is where a break goes ([VERSIONING.md](./VERSIONING.md)); three of its
+listed triggers apply. The urgency is in this paragraph, not in the number — a version number that
+bends to intent is one nobody can rely on.
+
+### Fixed
+
+- **Purging one thread deleted the threads whose ids EXTEND it.** `purgeThread` deleted by raw
+  prefix, and a thread id may contain ':' — that is deliberate and a test pins it. So `tenant:7` and
+  `tenant:7:chat` are two legitimate conversations whose keys nest, and removing the first removed
+  both:
+
+  ```
+  purgeThread('tenant:7')  →  6 keys deleted, the neighbour's three among them
+  the sweep reported       →  purged: ['tenant:7']
+  ```
+
+  Measured on InMemory, real Postgres 15, real Redis 7 and SQLite. No poisoned id, no reserved word,
+  and the victim's data was fresh. **`purgeResource` calls this function**, so the collision sat on
+  the erasure path: one person's deletion request destroying another person's conversation, silently.
+
+  The fix reuses what `purgeOwnNamespace` already does for runs — list, recover each key's owner by
+  KNOWN family/leaf rather than by splitting on ':', and fall back to the single prefix delete when
+  no descendant exists. With no descendant, that is still ONE `deletePrefix` per namespace, so the
+  nightly sweep does not get slower; the per-key path runs only when a descendant is really there.
+
+- **A sweep purged run rows that no run ever wrote.** `parseJournalKey` claims any key with a
+  `:model:`/`:tool:` SEGMENT, whatever namespace it started in, and every adapter derives its run
+  index from that ON WRITE. So a thread named `model` gives `mem:model:working`, which indexes a run
+  called `mem` — and the sweep spent a prefix delete on it:
+
+  ```
+  sweepRuns  →  purged ['mem'], two unrelated users' threads gone
+  ```
+
+  Measured on real Postgres and real Redis, not only in memory. `sweepRuns` now corroborates the row
+  against `<runId>:input` — the record run.ts writes before the first model call — and NAMES what it
+  refused in `skippedGhosts` instead of skipping in silence.
+
+  Two other placements were measured and rejected first: tightening `parseJournalKey`'s shape drops
+  a batch item's tool record (its `toolCallId` contains ':'), and corroborating at index-write time
+  turns 54 adapter-conformance tests red. Ownership is asymmetric on purpose — loose where it lists
+  and replays, strict where it deletes by prefix.
+
+- **The operator delete surfaces refused nothing.** A ghost row LISTS as an ordinary run, so it was
+  one click from a purge in Studio and one command in `gnl rm`, whose only gate (`readRun(id).length
+  === 0`) the ghost walked straight through. Both now refuse it — 409 `run_not_a_run` on the route,
+  an error on the command — and both call the same exported `isRealRun` rather than spelling the rule
+  twice.
+
+- **An unstamped `:input` opened that gate.** The check asked whether the key exists; `runIdOfKey`
+  asks whether it exists AND carries `stampFormat`'s `_v`. `appendLog(journal, ns, payload, 'input')`
+  writes an unstamped one through the public API, and that was enough to bring the loss back with
+  `skippedGhosts` absent from the report.
+
+### Added
+
+- **`gnl doctor` lists run rows that no run ever wrote**, with the keys that sit under each prefix,
+  so an operator can see WHOSE data a purge would have taken. Read-only: it lists, it gets, it never
+  deletes. A run that died before its first model step still has its `:input` and is deliberately
+  NOT reported — naming that class wrongly would invite deleting a real run.
+- **`SweepResult.skippedGhosts`** — present only when a sweep refused something, because a field that
+  is always there reads as a normal part of the report and this one is not normal.
+- **`isRealRun`** is exported, so a host that deletes by run id can ask the same question the sweep
+  asks.
+- **`run_not_a_run`** (409, operator console) joins `STUDIO_ERROR_CODES`, with a page under
+  `docs/errors/`.
+
+---
+
 ## [0.3.0] — 2026-09-21
 
 A thread id could rename its own keyspace, and one sweep then deleted every thread. The fix refuses
