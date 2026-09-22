@@ -685,7 +685,7 @@ export interface SweepResult {
  * every run — the same property `runIdOfKey` leans on. A run that died at step 0 therefore still has
  * one and is still swept; only a row no run ever wrote is refused.
  */
-async function isRealRun(journal: Journal, runId: string): Promise<boolean> {
+export async function isRealRun(journal: Journal, runId: string): Promise<boolean> {
   // A failed read is not an absent key. Treating "I could not look" as "this is a ghost" would make
   // an unreachable backend look like a clean journal and quietly stop retention altogether.
   try {

@@ -15,6 +15,21 @@ export async function purgeRunCore(config: GnlDevConfig, d: typeof Durable, runI
   const journal = getJournal(config, d);
   const entries = await journal.readRun(runId);
   if (entries.length === 0) throw new Error(`run not found: '${runId}'`);
+  // A row in the index is not proof a run wrote it. `parseJournalKey` claims any key with a
+  // `:model:`/`:tool:` SEGMENT, so a thread or organization named `model` mints a run row named
+  // after its own keyspace — and this command deletes by PREFIX, which is that whole keyspace.
+  // Measured: `mem` listed as `completed, 1 model step`, readRun returned a record (so the check
+  // above passes it), and the purge took two unrelated users' threads.
+  //
+  // Refused rather than confirmed-with-a-warning: the prompt would ask an operator to approve a
+  // deletion whose scope the screen cannot show them.
+  if (typeof d.isRealRun === 'function' && !(await d.isRealRun(journal, runId))) {
+    throw new Error(
+      `'${runId}' is a row in the run index that no run ever wrote — it has no '${runId}:input', ` +
+      `and deleting it would delete everything under '${runId}:', which is not a run's keyspace. ` +
+      `Run \`gnl doctor\` to see what sits there.`,
+    );
+  }
   return d.purgeRun(journal, runId);
 }
 

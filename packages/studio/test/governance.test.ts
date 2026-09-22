@@ -111,6 +111,42 @@ describe('governance: DELETE /runs/:id (GDPR purge)', () => {
   });
 });
 
+describe('governance: DELETE /runs/:id refuses a row that no run wrote', () => {
+  it('409, and the threads it would have taken are still there', async () => {
+    // The index can hold a row for something that never ran: `parseJournalKey` claims any key with
+    // a `:model:`/`:tool:` SEGMENT, so a thread named `model` gives `mem:model:working`, read as a
+    // run called `mem`. It appears in GET /runs as an ordinary completed run — one click from a
+    // purge that deletes by PREFIX, which here is every thread in the journal.
+    //
+    // 409 rather than 404 on purpose: the row really is there and the operator can see it listed.
+    // Answering "not found" about something on their screen is its own kind of lie.
+    const journal = new InMemoryJournal();
+    await journal.put('mem:alice:messages', [{ role: 'user', content: 'ALICE' }]);
+    await journal.put('mem:bob:messages', [{ role: 'user', content: 'BOB' }]);
+    await journal.put('mem:model:working', 'the poison');
+    const app = createStudioApi({ reader: journal });
+
+    // It really does list as a run — that is what makes the button reachable.
+    const listed = await (await call(app, '/runs')).json();
+    expect(listed.map((r: any) => r.runId)).toContain('mem');
+
+    const res = await call(app, '/runs/mem', { method: 'DELETE', headers: { 'x-gnl-actor': 'dpo@acme.co' } });
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe('run_not_a_run');
+
+    expect(await journal.get('mem:alice:messages')).toEqual([{ role: 'user', content: 'ALICE' }]);
+    expect(await journal.get('mem:bob:messages')).toEqual([{ role: 'user', content: 'BOB' }]);
+  });
+
+  it('CONTROL: a real run still purges — the guard must not lock the operator out', async () => {
+    const journal = new InMemoryJournal();
+    await seedSuspended(journal, 'real-1');
+    const app = createStudioApi({ reader: journal });
+    const res = await call(app, '/runs/real-1', { method: 'DELETE', headers: { 'x-gnl-actor': 'dpo@acme.co' } });
+    expect(res.status).toBe(200);
+  });
+});
+
 describe('governance: /runs/:id/scores', () => {
   it('returns the memoized runtime scores (registry/scoreRun key scheme)', async () => {
     const journal = new InMemoryJournal();
