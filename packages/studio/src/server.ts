@@ -4,7 +4,8 @@ import { toFetchHandler, type FetchHandler } from './handler.js';
 import { Hono, type Context } from 'hono';
 import { sseResponse } from './sse.js';
 
-import { ORG_RECORD_PRE, asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, countLog, purgeRun, purgeOrganization, orgPurgedKey, sweepRuns, sweepLog, listOrphanThreadState, POLICY_KEY, PRICING_KEY, effectivePricingTable, DEFAULT_PRICING, readPricing, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, knownModelProviders, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent, callerConflictCode, surfacedInterrupts, resolveApprovals as dResolveApprovals, hasRunProbe } from '@gnldev/durable';
+import { STUDIO_ERROR_CODES } from './error-codes.js';
+import { ORG_RECORD_PRE, asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, countLog, purgeRun, isRealRun, purgeOrganization, orgPurgedKey, sweepRuns, sweepLog, listOrphanThreadState, POLICY_KEY, PRICING_KEY, effectivePricingTable, DEFAULT_PRICING, readPricing, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, knownModelProviders, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent, callerConflictCode, surfacedInterrupts, resolveApprovals as dResolveApprovals, hasRunProbe } from '@gnldev/durable';
 import type { PolicyDoc, PolicyRule, BudgetLimit, PricingDoc } from '@gnldev/durable';
 import type { JournalReader, Journal, WorkflowLike, MetricsRunRow } from '@gnldev/durable';
 import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, principalScope, assertAssignablePrivileges, CLIENT_ROLE, type AuthProvider, type Principal } from '@gnldev/auth';
@@ -3323,6 +3324,18 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       return c.json({ error: 'purge requires journal deletePrefix support (Sqlite/Postgres/InMemory provide it)' }, 501);
     }
     const id = decodeURIComponent(c.req.param('id'));
+    // A row in the index is not proof a run wrote it: `parseJournalKey` claims any key with a
+    // `:model:`/`:tool:` SEGMENT, so a thread named `model` mints a run row called `mem` — and it
+    // lists here as an ordinary completed run, one click from a purge that deletes by PREFIX.
+    // Measured: two unrelated users' threads, one click. 409 rather than 404: the row is really
+    // there, it just is not a run, and telling the operator "not found" about something they can
+    // see on screen is its own kind of lie.
+    if (typeof isRealRun === 'function' && !(await isRealRun(rw as unknown as Journal, id))) {
+      return c.json({
+        error: `'${id}' is a run row that no run ever wrote — it has no '${id}:input'. Purging it would delete every key under '${id}:', which is not a run's keyspace. See \`gnl doctor\`.`,
+        code: STUDIO_ERROR_CODES.runNotARun,
+      }, 409);
+    }
     const deleted = await purgeRun(rw as unknown as Journal, id);
     await audit(c, 'run.purge', id, { deleted });
     return c.json({ ok: true, deleted });

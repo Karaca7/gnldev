@@ -25,6 +25,12 @@ export const STUDIO_ERROR_CODES = {
    * drift this map exists to end.
    */
   deadScanTimeout: 'dead_scan_timeout',
+  /**
+   * 409 — the id addresses a row in the run index that no run ever wrote, and purging it would
+   * delete a whole keyspace that is not a run's. Not 404: the row really is listed, and telling an
+   * operator "not found" about something on their screen is its own kind of lie.
+   */
+  runNotARun: 'run_not_a_run',
 } as const;
 
 export type StudioErrorCode = (typeof STUDIO_ERROR_CODES)[keyof typeof STUDIO_ERROR_CODES];
@@ -40,4 +46,5 @@ export const STUDIO_ERROR_STATUS: Record<string, number> = {
   dead_scan_busy: 429,
   dead_scan_store_wedged: 503,
   dead_scan_timeout: 504,
+  run_not_a_run: 409,
 };

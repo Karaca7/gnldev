@@ -415,6 +415,10 @@ describe('@gnldev/studio auth↔org', () => {
 
   it('0.1: an org-bound identity cannot use root-level management endpoints (policy/retention/purge) — an operator is required', async () => {
     const journal = new InMemoryJournal();
+    // `:input` because a run has one — run.ts writes it before the first model call, for every run.
+    // The purge route now asks for it before deleting a whole prefix (a run row can be minted by a
+    // key whose middle segment is `model`/`tool`, and purging THAT deletes somebody's keyspace).
+    await journal.put('r-1:input', { _v: 2, prompt: 'a' });
     await journal.put('r-1:model:0', { content: [{ type: 'text', text: 'a' }], finishReason: 'stop' });
     const boundAdmin = roleAuth({ admin: { token: 'acme-adm', orgId: 'acme' } });
     const opAdmin = roleAuth({ admin: { token: 'op' } }); // unbound operator
