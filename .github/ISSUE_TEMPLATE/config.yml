@@ -1,0 +1,13 @@
+# Blank issues stay ON. A report that does not fit either form is still worth having, and a form that
+# refuses the report it does not anticipate is how a tracker goes quiet.
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://gnl.dev/docs
+    about: Every feature page names the API and says what it does not cover.
+  - name: Tutorial — build a durable agent step by step
+    url: https://gnl.dev/tutorial
+    about: Nine steps, no API key required.
+  - name: Report a security vulnerability
+    url: https://github.com/Karaca7/gnldev/security
+    about: Private reporting. Please do not open a public issue for a security problem.
