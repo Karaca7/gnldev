@@ -21,6 +21,14 @@ describe('incident proofs — documented double-side-effect cases', () => {
     // The unprotected side must actually reproduce the incident, or the comparison proves nothing.
     expect(r.unprotectedCalls, 'the unprotected path no longer reproduces the incident').toBeGreaterThan(1);
     expect(r.protectedCalls, 'GNL let the side effect run more than once').toBe(1);
+    // This case's baseline is runDurable on its defaults, so the row must not be called "no GNL".
+    // The counts are the same either way — a call-scoped guard cannot see this pattern — but the
+    // label is what the reader takes away, and "no GNL" reads as "installing the library fixes it"
+    // when what fixes it is one option. It also puts @gnldev/durable log lines under a row that
+    // says GNL is absent, which is the fastest way to make somebody distrust the numbers.
+    expect(r.baselineLabel, 'the baseline here IS GNL, on its defaults').not.toContain('no GNL');
+    expect(r.baselineLabel).toContain("idempotency: 'call'");
+    expect(r.protectedLabel, 'name the option, not the library').toContain("idempotency: 'args'");
   }, 30_000);
 
   it('a tool call silently resent from a checkpoint after a crash charges once', async () => {

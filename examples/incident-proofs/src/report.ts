@@ -12,6 +12,16 @@ export interface CaseResult {
   title: string;
   unprotectedCalls: number;
   protectedCalls: number;
+  /**
+   * What the two rows actually ran. Not cosmetic: the table used to print a fixed
+   * "unprotected (no GNL)" for every case, and in duplicate-toolcall-ids that row is produced BY
+   * runDurable — GNL on its defaults. The count was right either way (a call-scoped guard does not
+   * see that pattern), but the label turned "set idempotency: 'args'" into "install GNL", and it
+   * printed @gnldev/durable log lines underneath a row claiming GNL was absent. A reader who spots
+   * that stops trusting the numbers beside it, which is the whole point of the table.
+   */
+  baselineLabel?: string;
+  protectedLabel?: string;
 }
 
 /** Identity, but it names the shape at each call site and keeps the cases free of `printCase`. */
@@ -34,15 +44,17 @@ export function printCase(r: CaseResult): boolean {
   console.log(`=== ${r.id} — ${r.title} ===`);
   const col1 = 'scenario';
   const col2 = 'side-effect count';
-  const w1 = Math.max(col1.length, 'unprotected (no GNL)'.length);
+  const baseline = r.baselineLabel ?? 'unprotected (no GNL)';
+  const protectedRow = r.protectedLabel ?? 'with GNL';
+  const w1 = Math.max(col1.length, baseline.length, protectedRow.length);
   const w2 = Math.max(col2.length, 'N times'.length);
   const line = (a: string, b: string) => `| ${pad(a, w1)} | ${pad(b, w2)} |`;
   const sep = `+-${'-'.repeat(w1)}-+-${'-'.repeat(w2)}-+`;
   console.log(sep);
   console.log(line(col1, col2));
   console.log(sep);
-  console.log(line('unprotected (no GNL)', `${r.unprotectedCalls} times`));
-  console.log(line('with GNL', `${r.protectedCalls} times`));
+  console.log(line(baseline, `${r.unprotectedCalls} times`));
+  console.log(line(protectedRow, `${r.protectedCalls} times`));
   console.log(sep);
   console.log(ok ? '✅ GNL blocked it — side effect ran 1 time' : '❌ UNEXPECTED RESULT');
   return ok;

@@ -64,5 +64,10 @@ export async function runDuplicateToolCallIds() {
     title: 'model calls the same tool + same arguments 5 DIFFERENT toolCallIds in one turn',
     unprotectedCalls,
     protectedCalls,
+    // The baseline here is GNL on its defaults, not a GNL-free path — the two are indistinguishable
+    // for this pattern, because a call-scoped guard cannot see it. Saying "no GNL" would claim the
+    // fix is installing the library; it is setting one option.
+    baselineLabel: "GNL defaults (idempotency: 'call')",
+    protectedLabel: "GNL + idempotency: 'args'",
   });
 }
