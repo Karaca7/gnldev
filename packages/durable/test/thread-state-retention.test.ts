@@ -332,9 +332,13 @@ describe('a thread id is not a prefix — purging one must not take its descenda
   });
 
   it('the DESCENDANT can still be purged on its own, and the parent survives that', async () => {
-    // The mirror case. A boundary that only holds in one direction is not a boundary — and this is
-    // the direction where the shorter id is a prefix of nothing, so a naive fix passes the test
-    // above and fails here.
+    // A CONTROL, and it is worth saying which kind. Measured with purgeThread reverted to the raw
+    // prefix delete: this test stays GREEN. The hazard is asymmetric — the shorter id is a prefix of
+    // the longer one, never the other way round — so `deletePrefix('mem:tenant:7:chat:')` never
+    // reached `mem:tenant:7:messages` even before the fix.
+    //
+    // So it proves nothing about the boundary; it guards the OTHER direction, that the fix did not
+    // make the descendant unpurgeable. That is a real thing to hold, and it is all this holds.
     const journal: any = toJournal(new InMemoryStorage().runs);
     await seed(journal);
 
