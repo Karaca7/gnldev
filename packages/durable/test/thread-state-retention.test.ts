@@ -295,3 +295,106 @@ describe('person erasure after run retention', () => {
     expect((await listOrphanThreadState(clean)).unrecognisedKeys).toEqual([]);
   });
 });
+
+describe('a thread id is not a prefix — purging one must not take its descendants', () => {
+  // ':' is legal in a thread id on purpose (memory.ts says so, and thread-id-boundary.test.ts pins
+  // it), so 'tenant:7' and 'tenant:7:chat' are two legitimate conversations whose keys nest. The
+  // delete used `deletePrefix('mem:tenant:7:')`, which is not a boundary between them.
+  //
+  // Measured before the fix: purging 'tenant:7' removed six keys — the neighbour's three among them
+  // — and the sweep reported only 'tenant:7'. No poisoned id, no reserved word, and the victim's
+  // data was fresh. purgeResource calls this function, so the same collision sat on the erasure
+  // path: one person's deletion request destroying another person's conversation.
+  const seed = async (j: any) => {
+    await j.put('mem:tenant:7:messages', [{ role: 'user', content: 'PARENT' }]);
+    await j.put('mem:tenant:7:working', 'parent wm');
+    await j.put('xthr:tenant:7:sem-pay-a', { v: 1 });
+    await j.put('mem:tenant:7:chat:messages', [{ role: 'user', content: 'CHILD' }]);
+    await j.put('mem:tenant:7:chat:working', 'child wm');
+    await j.put('xthr:tenant:7:chat:sem-pay-b', { v: 1 });
+  };
+
+  it('purgeThread takes its own keys in both namespaces and leaves the descendant whole', async () => {
+    const journal: any = toJournal(new InMemoryStorage().runs);
+    await seed(journal);
+
+    const deleted = await purgeThread(journal, 'tenant:7');
+    expect(deleted, 'exactly its own three keys').toBe(3);
+
+    const left = (await journal.listKeys('')).sort();
+    expect(left).toEqual([
+      'mem:tenant:7:chat:messages',
+      'mem:tenant:7:chat:working',
+      'xthr:tenant:7:chat:sem-pay-b',
+    ]);
+    // The data itself, not just the key: a surviving key with a lost value is the same loss.
+    expect(await journal.get('mem:tenant:7:chat:messages')).toEqual([{ role: 'user', content: 'CHILD' }]);
+  });
+
+  it('the DESCENDANT can still be purged on its own, and the parent survives that', async () => {
+    // The mirror case. A boundary that only holds in one direction is not a boundary — and this is
+    // the direction where the shorter id is a prefix of nothing, so a naive fix passes the test
+    // above and fails here.
+    const journal: any = toJournal(new InMemoryStorage().runs);
+    await seed(journal);
+
+    const deleted = await purgeThread(journal, 'tenant:7:chat');
+    expect(deleted).toBe(3);
+    expect((await journal.listKeys('')).sort()).toEqual([
+      'mem:tenant:7:messages', 'mem:tenant:7:working', 'xthr:tenant:7:sem-pay-a',
+    ]);
+  });
+
+  it("an unreadable leaf under a DESCENDANT is left alone; one under our own id is taken", async () => {
+    // The ambiguous case, and the reason it resolves the way it does. A leaf this build cannot name
+    // ('summary') gives no owner, so the key text is all there is:
+    //   mem:tenant:7:summary        → one segment left → can only be OUR unknown leaf → take it
+    //   mem:tenant:7:chat:summary   → still contains ':' → indistinguishable from a descendant's
+    //                                 key, and guessing there is how a live thread dies → leave it
+    // Erring the other way costs data; erring this way costs a key that `listOrphanThreadState`
+    // already reports by name.
+    const journal: any = toJournal(new InMemoryStorage().runs);
+    await journal.put('mem:tenant:7:messages', [{ role: 'user', content: 'PARENT' }]);
+    await journal.put('mem:tenant:7:summary', 'our own unreadable leaf');
+    await journal.put('mem:tenant:7:chat:summary', "the descendant's unreadable leaf");
+
+    await purgeThread(journal, 'tenant:7');
+    expect((await journal.listKeys('')).sort()).toEqual(['mem:tenant:7:chat:summary']);
+  });
+
+  it('with no descendant it is still ONE deletePrefix per namespace, not a key at a time', async () => {
+    // The fast path is a claim in the comment, so it is pinned here. Without it the common case —
+    // every thread that has no descendant — pays a listing plus a round-trip per key on a nightly
+    // job, and nobody would notice because the RESULT is identical.
+    const inner: any = toJournal(new InMemoryStorage().runs);
+    let prefixDeletes = 0;
+    const counting: any = new Proxy(inner, {
+      get(t, p) {
+        if (p === 'deletePrefix') return (...a: unknown[]) => { prefixDeletes++; return (t as any).deletePrefix(...a); };
+        const v = (t as any)[p];
+        return typeof v === 'function' ? v.bind(t) : v;
+      },
+    });
+    // TWO keys in one namespace on purpose: with one, the per-key path also makes one call and the
+    // counter cannot tell the two paths apart. (It could not, first time round — the mutation that
+    // removes the fast path stayed green until this line had a second key.)
+    await counting.put('mem:solo:messages', [{ role: 'user', content: 'x' }]);
+    await counting.put('mem:solo:working', 'wm');
+    await counting.put('xthr:solo:sem-pay-a', { v: 1 });
+
+    await purgeThread(counting, 'solo');
+    expect(prefixDeletes, 'one per namespace — mem: and xthr: — not one per key').toBe(2);
+  });
+
+  it('CONTROL: with no descendant, nothing changes — including the single-call fast path', async () => {
+    // A guard that makes the common case slower or different is a cost with no buyer. With no
+    // neighbour under the prefix this must stay exactly what it was: one deletePrefix per namespace.
+    const journal: any = toJournal(new InMemoryStorage().runs);
+    await journal.put('mem:solo:messages', [{ role: 'user', content: 'x' }]);
+    await journal.put('mem:solo:working', 'wm');
+    await journal.put('xthr:solo:sem-pay-a', { v: 1 });
+
+    expect(await purgeThread(journal, 'solo')).toBe(3);
+    expect(await journal.listKeys('')).toEqual([]);
+  });
+});

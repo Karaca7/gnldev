@@ -409,12 +409,66 @@ export async function purgeResource(journal: Journal, resourceId: string): Promi
   return total;
 }
 
+/**
+ * Everything under `<prefix><threadId>:` that belongs to THIS thread — and nothing belonging to a
+ * thread whose id merely EXTENDS it.
+ *
+ * `mem:tenant:7:` is not a boundary. 'tenant:7' and 'tenant:7:chat' are two legitimate threads —
+ * memory.ts keeps ':' legal on purpose and a test pins it — and every key of the second sits under
+ * the prefix of the first. Measured before this existed: purging 'tenant:7' took all six keys, the
+ * neighbour's three among them, and the report named only 'tenant:7'.
+ *
+ * The same shape `purgeOwnNamespace` uses for runs, with the owner rule passed in, because the
+ * recovery differs per namespace: a `mem:` key ends in a known LEAF, an `xthr:` key carries a known
+ * FAMILY. Both are known-boundary matches rather than a split on ':' — the rule this file's own
+ * `resthr:` block already states two blocks below, and the one the raw prefix delete above it
+ * skipped.
+ *
+ * TWO bounds, the same two purgeOwnNamespace states:
+ *  • No `listKeys` → nothing to filter on, so the single prefix delete stands. Stated, not hidden.
+ *  • No neighbour found (the overwhelmingly common case) → one `deletePrefix`, today's cost, plus
+ *    one listing. The per-key path runs only when a descendant thread actually exists.
+ */
+async function purgeThreadNamespace(
+  journal: Journal,
+  prefix: string,
+  threadId: string,
+  ownerOf: (key: string) => string | undefined,
+): Promise<number> {
+  const del = requireDelete(journal);
+  const scope = `${prefix}${threadId}:`;
+  const lk = journal.listKeys;
+  if (typeof lk !== 'function') return del(scope);
+
+  const keys = await lk.call(journal, scope);
+  const mine: string[] = [];
+  let foreign = false;
+  for (const k of keys) {
+    const owner = ownerOf(k);
+    if (owner === threadId) { mine.push(k); continue; }
+    if (owner !== undefined) { foreign = true; continue; } // a descendant thread's key
+    // Owner unknown — a leaf or family this build cannot name. ONE remaining segment can only be
+    // our own unrecognised leaf (`mem:tenant:7:summary`); one that still contains ':' is
+    // indistinguishable from a descendant's key, and guessing there is how a live thread dies.
+    if (k.slice(scope.length).includes(':')) foreign = true; else mine.push(k);
+  }
+  if (!foreign) return del(scope);
+
+  let total = 0;
+  // deleteExactKey rather than del(k): a key is a prefix too — `mem:t:messages` is a proper prefix
+  // of `mem:t:messagesX:working`, which belongs to thread 't:messagesX'. The same boundary, one
+  // level down; purgeOwnNamespace makes the identical call for the identical reason.
+  for (const k of mine) total += await deleteExactKey(journal, k);
+  return total;
+}
+
 export async function purgeThread(journal: Journal, threadId: string): Promise<number> {
   const del = requireDelete(journal);
   // FAZ-3: the thread owns its dedup state too — `idempotencyWindow: 'thread'` records and
   // thread-scoped duplicate markers both live under `xthr:<threadId>:` PRECISELY so this one sweep
   // reclaims them with the thread (the cross-run family's immortal-key problem does not recur here).
-  let total = (await del(`mem:${threadId}:`)) + (await del(`xthr:${threadId}:`));
+  let total = (await purgeThreadNamespace(journal, MEM_PREFIX, threadId, threadIdOfMemKey))
+    + (await purgeThreadNamespace(journal, XTHR_PREFIX, threadId, threadIdOfXthrKey));
 
   // The ownership traces pointing HERE. Once this thread's state is gone they identify nothing —
   // and they are not inert: `resthr:<resourceId>:<threadId>` names a person, so a dead pointer is a
@@ -908,21 +962,25 @@ function readMessageTs(msg: any): number | undefined {
 
 /** Thread ids the memory port knows about, off `mem:` keys. Shared so the read-only orphan listing
  *  and the sweep cannot drift into two different answers to "which threads exist". */
+/** threadId out of `mem:<threadId>:<leaf>` — the known-LEAF counterpart of threadIdOfXthrKey, and
+ *  the answer purgeThreadNamespace needs to tell its own keys from a descendant thread's. */
+function threadIdOfMemKey(key: string): string | undefined {
+  const rest = key.slice(MEM_PREFIX.length);
+  for (const suffix of MEM_SUFFIXES) {
+    if (rest.endsWith(suffix) && rest.length > suffix.length) return rest.slice(0, -suffix.length);
+  }
+  return undefined;
+}
+
 async function threadIdsFromMemory(
   list: NonNullable<Journal['listKeys']>,
   unrecognised?: string[],
 ): Promise<Set<string>> {
   const threadIds = new Set<string>();
   for (const key of await list(MEM_PREFIX)) {
-    const rest = key.slice(MEM_PREFIX.length);
-    let matched = false;
-    for (const suffix of MEM_SUFFIXES) {
-      if (rest.endsWith(suffix) && rest.length > suffix.length) {
-        threadIds.add(rest.slice(0, -suffix.length));
-        matched = true;
-        break;
-      }
-    }
+    const owner = threadIdOfMemKey(key);
+    const matched = owner !== undefined;
+    if (owner !== undefined) threadIds.add(owner);
     // A `mem:` key this build cannot read is REPORTED, the same way an unknown `xthr:` family is.
     // The structural fix above (one shared leaf list) stops the drift at its source; this is what
     // catches a writer that built the key by hand instead of going through memKey — and rag's
