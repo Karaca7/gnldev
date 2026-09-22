@@ -9,7 +9,11 @@ async function seedSuspended(journal: InMemoryJournal, runId = 'sus-1') {
   // `:input` is what persistInput writes on every run()/stream(), and what the per-run endpoints now
   // use to decide whether the caller can see this run at all. A suspended run always has it; leaving it
   // out described a run that cannot exist.
-  await journal.put(`${runId}:input`, { prompt: 'charge the card' });
+  // `_v` because stampFormat puts it there: `:input` is a VERSIONED record, written by the journal
+  // rather than by a caller's payload, and that stamp is how runIdOfKey tells the two apart. The
+  // purge route asks the same question now, so a fixture without it describes a run the engine does
+  // not produce.
+  await journal.put(`${runId}:input`, { _v: 2, prompt: 'charge the card' });
   await journal.put(`${runId}:model:0`, {
     content: [{ type: 'tool-call', toolCallId: 'call-1', toolName: 'chargeCard', input: '{"amount":99}' }],
     finishReason: 'tool-calls',
