@@ -7,6 +7,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.1] — 2026-09-22
+
+**A guard that overstated what it did.** No behaviour changed — the message did. Patch, because
+warning prose is explicitly not the contract ([VERSIONING.md](./VERSIONING.md)); the error
+`code`/`name`/class is.
+
+### Fixed
+
+- `sideEffectDuplicates` — the permissive path no longer claims the blocking path's outcome. The
+  action defaults to `'warn'`, which is documented as permissive: a concurrent duplicate is reported
+  and **executed anyway**. The message was built before the branch and used on both paths, so the
+  warn path printed *"this concurrent duplicate was NOT EXECUTED"* and then called the tool.
+
+  Measured in the repository's own incident proofs: the unprotected baseline printed that line four
+  times while the case's counter — incremented inside `execute` — reported five calls. The counter
+  was right. A guard that overstates what it did is worse than one that says nothing, because the
+  first thing anyone does with a contradiction like that is stop believing the number beside it.
+
+  The warn path now says the call is **RUNNING ANYWAY** and names the setting that stops it
+  (`'block'` or `'suspend'`). The blocking path keeps its wording — that sentence is what an
+  operator greps for to show a duplicate was stopped. If you match on log text, match on
+  `'already executing with identical arguments'`, which both paths still carry.
+
+---
+
 ## [0.4.0] — 2026-09-22
 
 **Two ways a delete could take somebody else's data.** If you run any version before this one, and
