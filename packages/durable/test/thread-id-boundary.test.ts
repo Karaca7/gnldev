@@ -18,6 +18,7 @@ import { InMemoryJournal, parseJournalKey, assertThreadId, memKey, runKeys } fro
 import { semKey, semTombKey } from '../src/semantic-dup.js';
 import { semJudgeKey } from '../src/semantic-judge.js';
 import { sweepRuns, listOrphanThreadState } from '../src/retention.js';
+import { appendLog } from '../src/durable-log.js';
 
 const POISON = ['model', 'tool', 'a:model', 'model:b', 'x:tool:y'];
 
@@ -99,6 +100,44 @@ describe('a thread id cannot rename its own keyspace', () => {
     expect(after.sort(), "the two users' threads are still there").toEqual([
       'mem:alice:messages', 'mem:bob:messages', 'mem:model:working',
     ]);
+  });
+
+  it('an UNSTAMPED `:input` does not open the gate — existence was a bypass, and a reachable one', async () => {
+    // The guard asks the journal's own question (runIdOfKey), which requires stampFormat's `_v` —
+    // i.e. a record the JOURNAL wrote, not a caller's payload that happens to sit at that key.
+    //
+    // Checking existence alone was enough to reopen the original loss, and no hand-written key was
+    // needed to do it: `appendLog(journal, ns, payload, 'input')` writes `${ns}:input` unstamped
+    // through the public API. Measured before this: purged ['mem'], two users' threads gone, and
+    // `skippedGhosts` absent from the report — silent.
+    for (const seed of [
+      async (j: InMemoryJournal) => { await j.put('mem:input', { hello: 1 }); },
+      async (j: InMemoryJournal) => { await appendLog(j, 'mem', { msg: 'an audit entry' }, 'input'); },
+    ]) {
+      const j = new InMemoryJournal();
+      await j.put('mem:alice:messages', [{ role: 'user', content: 'ALICE' }]);
+      await j.put('mem:model:working', 'the poison');
+      await seed(j);
+
+      const r = await sweepRuns(j, { olderThanMs: 0, now: Date.now() + 10 ** 12 });
+      expect(r.purged).toEqual([]);
+      expect(r.skippedGhosts).toEqual(['mem']);
+      expect(await j.get('mem:alice:messages')).toEqual([{ role: 'user', content: 'ALICE' }]);
+    }
+  });
+
+  it('CONTROL: a STAMPED `:input` is a run by every rule the journal has, and is swept', async () => {
+    // The other side of the same line. If a properly stamped record sits at `<id>:input`, then by
+    // runIdOfKey — the rule the adapters index on — that id owns a run. Refusing it here would put
+    // this gate at odds with the index it is guarding, and leave the run unsweepable forever.
+    const j = new InMemoryJournal();
+    await j.put('mem:alice:messages', [{ role: 'user', content: 'ALICE' }]);
+    await j.put('mem:model:working', 'x');
+    await j.put('mem:input', { _v: 2, prompt: 'a real run, whatever the name looks like' });
+
+    const r = await sweepRuns(j, { olderThanMs: 0, now: Date.now() + 10 ** 12 });
+    expect(r.purged).toEqual(['mem']);
+    expect(r.skippedGhosts).toBeUndefined();
   });
 
   it('CONTROL: a real run is still swept — the guard must not stop retention', async () => {

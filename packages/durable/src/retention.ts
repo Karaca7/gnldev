@@ -688,9 +688,18 @@ export interface SweepResult {
 export async function isRealRun(journal: Journal, runId: string): Promise<boolean> {
   // A failed read is not an absent key. Treating "I could not look" as "this is a ghost" would make
   // an unreachable backend look like a clean journal and quietly stop retention altogether.
+  const key = `${runId}:input`;
   try {
-    return (await journal.get(`${runId}:input`)) !== undefined;
+    // runIdOfKey, not a second spelling of the rule: it requires the record to carry stampFormat's
+    // `_v`, i.e. to have been written BY the journal rather than by a caller's payload. Existence
+    // alone was a bypass, and a reachable one — `appendLog(journal, 'mem', payload, 'input')` writes
+    // an unstamped `mem:input` through the public API, and that was enough to open this gate and
+    // let the prefix purge take two unrelated users' threads. Measured, all three ways: by hand,
+    // through appendLog, and with a real stamped input as the control.
+    return runIdOfKey(key, await journal.get(key)) === runId;
   } catch {
+    // A failed read is not an absent key. Treating "I could not look" as "this is a ghost" would
+    // make an unreachable backend look like a clean journal and quietly stop retention altogether.
     return true;
   }
 }
