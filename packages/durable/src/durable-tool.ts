@@ -1722,15 +1722,29 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
         if (!claimedDup) {
           // A twin got here first. 'warn' is documented as permissive and stays that way; every
           // stricter policy means this call must not run.
-          const message =
-            `@gnldev/durable: side-effect tool '${toolName}' is already executing with identical ` +
-            `arguments in ${dupWhere} — this concurrent duplicate was NOT EXECUTED`;
+          //
+          // TWO SENTENCES, because the two paths do different things and one of them used to claim
+          // the other's outcome. A single message read "this concurrent duplicate was NOT EXECUTED"
+          // and was printed on BOTH — including the `warn` path, which prints and then runs the call.
+          // Measured in examples/incident-proofs: the unprotected baseline printed that line four
+          // times while the case's own counter — incremented INSIDE execute — reported five calls.
+          // The counter was right. A guard that overstates what it did is worse than one that says
+          // nothing: the first thing anyone does with a contradiction like that is stop believing
+          // the number next to it.
           const detail = { toolName, argsHash: hash, toolCallId };
           if (dupAction !== 'warn') {
+            const message =
+              `@gnldev/durable: side-effect tool '${toolName}' is already executing with identical ` +
+              `arguments in ${dupWhere} — this concurrent duplicate was NOT EXECUTED`;
             await recordIncident(ctx.journal, ctx.runId, { at: Date.now(), source: 'duplicate-guard', action: 'block', toolName, toolCallId, message, detail });
             return { __gnl_limit_exceeded: { toolCallId, toolName, kind: 'duplicateSideEffect', message, detail } };
           }
-          console.warn(message);
+          console.warn(
+            `@gnldev/durable: side-effect tool '${toolName}' is already executing with identical ` +
+            `arguments in ${dupWhere} — this call is RUNNING ANYWAY because ` +
+            `sideEffectDuplicates.action is 'warn' (the default). Set it to 'block' or 'suspend' ` +
+            `to stop the duplicate.`,
+          );
         }
       }
       // approvalScope: 'attempt' — spend the approval BEFORE the effect runs, not in the catch. The

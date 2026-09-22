@@ -84,6 +84,54 @@ describe('two identical side-effect calls in the same model step', () => {
     expect(charges()).toBe(1);
   });
 
+  it("'warn' says the call is RUNNING, because under 'warn' it runs", async () => {
+    // The default action is permissive, and the warning used to borrow the blocking path's sentence:
+    // "this concurrent duplicate was NOT EXECUTED". One message, two paths, and on this one the call
+    // proceeds immediately afterwards.
+    //
+    // Measured in examples/incident-proofs before the split: the unprotected baseline printed that
+    // line FOUR times while the case's own counter — incremented inside execute — reported FIVE
+    // calls. The counter was right. That output is the evidence for this project's headline claim,
+    // and a guard that overstates what it did invites the reader to disbelieve the number beside it.
+    const warnings: string[] = [];
+    const spy = vi.spyOn(console, 'warn').mockImplementation((...a: unknown[]) => { warnings.push(String(a[0])); });
+    try {
+      const { chargeCard, charges } = chargeTool();
+      await run('same-warn', { chargeCard }, { sideEffectDuplicates: 'warn' });
+      // 'warn' is documented as permissive: BOTH calls run. That is the behaviour, not the bug.
+      expect(charges(), "'warn' does not stop anything").toBe(2);
+      const dup = warnings.filter((w) => w.includes('already executing'));
+      expect(dup.length).toBeGreaterThan(0);
+      for (const w of dup) {
+        expect(w, 'the warn path must not claim the blocking path\'s outcome').not.toContain('NOT EXECUTED');
+        expect(w).toContain('RUNNING ANYWAY');
+        // …and it has to say what to change, or the reader learns only that something is wrong.
+        expect(w).toContain("'block'");
+      }
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("CONTROL: 'block' still says NOT EXECUTED, because there it is true", async () => {
+    // The other half. Splitting the message must not cost the blocking path its own, correct claim —
+    // that sentence is what an operator greps for when they need to prove a duplicate was stopped.
+    const { chargeCard, charges } = chargeTool();
+    const journal = new InMemoryStorage().runs;
+    await runDurable({
+      runId: 'same-block-msg',
+      journal,
+      model: twoIdenticalCallsInOneStep(),
+      tools: { chargeCard },
+      limits: { sideEffectDuplicates: 'block' },
+      prompt: 'charge it',
+    }).catch((e) => e);
+    expect(charges()).toBe(1);
+    const texts: string[] = [];
+    for (const k of await journal.listKeys('')) texts.push(JSON.stringify(await journal.get(k)));
+    expect(texts.join(' ')).toContain('NOT EXECUTED');
+  });
+
   it("idempotency: 'args' collapses them onto one journal record", async () => {
     const { chargeCard, charges } = chargeTool({ idempotency: 'args' });
     await run('same-args', { chargeCard });
