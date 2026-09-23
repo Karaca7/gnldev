@@ -1,6 +1,6 @@
 // Converts a createGnl instance into the Playground/Tools runner (StudioAgentRunner). Pure adapter — does not import `ai`.
 // @gnldev/cli and the studio CLI `--config` share this → single source of truth.
-import type { AgentMeta, StudioAgentRunner, ToolMeta, ToolListItem } from './server.js';
+import type { AgentMeta, StudioAgentRunner, StudioCallbackCtx, ToolMeta, ToolListItem } from './server.js';
 import { durableTool, toolDescriptionText } from '@gnldev/durable';
 import type { Guard, Journal, WorkflowMeta, WorkflowRunResult } from '@gnldev/durable';
 
@@ -31,11 +31,17 @@ export interface RunnerConfigLike {
   workflows?: Record<string, unknown>;
 }
 export interface GnlLike {
-  run(name: string, opts: any): Promise<{ text?: string; interrupts?: unknown[]; finishReason?: string }>;
-  stream?(name: string, opts: any): Promise<any>;
+  // `ctx` is the per-REQUEST identity the host computed (orgId + actor). It is optional on the
+  // callee side — createGnl ignores it today — but it must not stop at this adapter: the server
+  // computes it for every call (server.ts:3823, 3867, 3892, 4938) and this runner used to take one parameter too few,
+  // so it was dropped on the floor. An adapter that silently discards what its caller worked out is
+  // the shape of a hole nobody can see, and this one sits under `@gnldev/cli` AND the studio
+  // `--config` path — the file header calls itself the single source of truth.
+  run(name: string, opts: any, ctx?: StudioCallbackCtx): Promise<{ text?: string; interrupts?: unknown[]; finishReason?: string }>;
+  stream?(name: string, opts: any, ctx?: StudioCallbackCtx): Promise<any>;
   /** createGnl provides these (Workflows view). */
   listWorkflows?(): WorkflowMeta[];
-  runWorkflow?(name: string, input: unknown, opts?: { runId?: string; maxSteps?: number }): Promise<WorkflowRunResult>;
+  runWorkflow?(name: string, input: unknown, opts?: { runId?: string; maxSteps?: number }, ctx?: StudioCallbackCtx): Promise<WorkflowRunResult>;
 }
 
 /** Playground/Tools runner options. */
@@ -145,8 +151,8 @@ export function createStudioRunner(
 
   const runner: StudioAgentRunner = {
     listAgents: () => meta,
-    run: (name, runOpts) => gnl.run(name, runOpts).then((r) => ({ text: r.text, interrupts: r.interrupts ?? [] })),
-    ...(gnl.stream ? { stream: (name: string, runOpts: any) => gnl.stream!(name, runOpts) } : {}),
+    run: (name, runOpts, ctx) => gnl.run(name, runOpts, ctx).then((r) => ({ text: r.text, interrupts: r.interrupts ?? [] })),
+    ...(gnl.stream ? { stream: (name: string, runOpts: any, ctx?: StudioCallbackCtx) => gnl.stream!(name, runOpts, ctx) } : {}),
   };
 
   if (hasAnyTool) runner.listTools = listTools;
@@ -154,13 +160,19 @@ export function createStudioRunner(
   // Workflows: createGnl provides listWorkflows/runWorkflow; only surfaced if any workflow is registered.
   const hasWorkflows = !!config.workflows && Object.keys(config.workflows).length > 0;
   if (hasWorkflows && gnl.listWorkflows) runner.listWorkflows = () => gnl.listWorkflows!();
-  if (hasWorkflows && gnl.runWorkflow) runner.runWorkflow = (name, input, opts) => gnl.runWorkflow!(name, input, opts);
+  if (hasWorkflows && gnl.runWorkflow) runner.runWorkflow = (name, input, opts, ctx) => gnl.runWorkflow!(name, input, opts, ctx);
 
   // TEST execution (opt-in + requires a tool): GUARD IS APPLIED. opts.durable + journal → writes to the
   // journal (exactly-once, visible in the Inspector); otherwise a fast NON-DURABLE sandbox.
   if (hasAnyTool && toolExec) {
     runner.toolExecDurable = !!config.journal; // durable test-run is possible if a journal exists
-    runner.runTool = async (name, input, runOpts) => {
+    // `_ctx` is ACCEPTED and not yet used, and the underscore is the honest spelling. The other three
+    // entry points forward it to `gnl`, which can act on it; `durableTool` has no ctx parameter, so
+    // there is nowhere to forward it to. Taking it anyway matters: the interface promises four
+    // arguments, and a signature that quietly takes three is how the host learns the wrong lesson
+    // from the reference implementation. When the durable side grows an identity parameter, the
+    // value is already here instead of having to be re-plumbed from the server.
+    runner.runTool = async (name, input, runOpts, _ctx) => {
       const t = resolveTool(name);
       if (!t || typeof t.execute !== 'function') return { error: `tool not found or not executable: ${name}` };
       const guard = resolveGuard(name);
