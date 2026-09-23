@@ -2853,12 +2853,30 @@ export function assertRunIdSafe(runId: unknown): asserts runId is string {
   // caller who names a conversation `x:tool` picks the separator itself. The rule stays as narrow as
   // the damage: a bare colon is still legal (that derivation depends on it) — only the two segments
   // the journal reads as "a record of this kind starts here" are refused.
-  if (/:(?:model|tool):/.test(runId)) {
-    const which = /:model:/.test(runId) ? ':model:' : ':tool:';
+  //
+  // The TRAILING form belongs to the same rule and was missing. A run called `pipeline:model` writes
+  // `pipeline:model:input`, which `parseJournalKey` reads as run `pipeline`, kind `model` — so the
+  // run index grows a row named `pipeline` that no run ever wrote. Measured: the sweep and the
+  // operator surfaces refuse to delete it (isRealRun holds, `gnl doctor` names it), so nothing is
+  // lost — but `listRuns` reports a run that does not exist, and the cheapest place to stop that is
+  // where the id is accepted.
+  //
+  // The run gate stays NARROWER than `assertThreadId`, on purpose, and the difference is not an
+  // oversight to be tidied away later. `assertThreadId` is `/(^|:)(model|tool)(:|$)/` — anchored at
+  // the start too, because a threadId lands in the MIDDLE of a key (`mem:<id>:…`), so a leading
+  // segment of it can start somebody else's record. A runId is always a key PREFIX, so only its
+  // TAIL can. Measured: `model:pipeline:input` parses to null and `model:pipeline:model:0` parses
+  // back to `model:pipeline` — itself, correctly. Refusing the leading form here would reject ids
+  // that work, for a harm that does not exist on this side.
+  if (/:(?:model|tool)(?::|$)/.test(runId)) {
+    const which = /:model(?::|$)/.test(runId) ? ':model' : ':tool';
     throw new Error(
       `@gnldev/durable: runId '${runId.slice(0, 60)}' contains the journal's record separator '${which}' — ` +
       'that is how a key says "a model/tool record starts here", so this run\'s keys would be read back ' +
-      'as records of a DIFFERENT run. Colons are fine; these two segments are not.',
+      'as records of a DIFFERENT run. Colons are fine; these two segments are not. ' +
+      'If a run with this id is ALREADY in your journal (it was accepted before this version), it can ' +
+      'no longer be resumed or re-run, but `purgeRun(journal, id)` still deletes it — that call is not ' +
+      'gated by this check. Give the work a new id.',
     );
   }
 }
