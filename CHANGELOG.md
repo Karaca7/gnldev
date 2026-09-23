@@ -7,11 +7,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
+## [0.5.0] — 2026-09-24
 
-**Version not chosen yet.** Three of the entries below tighten validation and one widens an
-interface implementers must satisfy, which [VERSIONING.md](./VERSIONING.md) lists as minor triggers
-in 0.x. Whether this ships as `0.5.0` or is re-scoped is a decision, not an oversight.
+**A minor, and the reason is in VERSIONING.md's own list.** Three entries tighten validation so an
+input that used to be accepted is now rejected (the runId record separator, JWT `nbf`, the tool test
+form), and one widens an interface that implementers satisfy (`StudioAgentRunner` gains a fourth
+parameter). Any one of those makes this a minor in 0.x; four of them leave no argument.
+
+**Read the runId entry before upgrading** if your run ids come from anywhere a caller can name — a
+run already in a journal whose id ends in `:model` or `:tool` can no longer be resumed, streamed or
+re-run. `purgeRun` still deletes it.
+
+**The theme, since it explains most of the list.** Nine of these defects had one shape: a rule that
+several paths need was written into one of them, and the copy that was not updated kept the old
+behaviour. Where a fix could move the rule to whatever owns it, it did — one storage wrapper for the
+browser store, one entry-point normaliser, one stream schema, one exhaustive resume policy — rather
+than patching the door where the bug happened to surface.
 
 ### Fixed
 
@@ -58,6 +69,35 @@ in 0.x. Whether this ships as `0.5.0` or is re-scoped is a decision, not an over
   declares, so the per-request identity the server computes (`orgId`, `actor`) was discarded by
   arity. It is now accepted on all four entry points and forwarded on the three that have somewhere
   to forward it.
+
+- **`@gnldev/durable` — `streamDurable` could not take a string model id.** `ModelInput` is
+  `LanguageModelV4 | string`, and the string half was resolved inside the generate path only, so
+  `runDurable({ model: 'nvidia/…' })` worked while the same published type died in `streamDurable`
+  with "Cannot create proxy with a non-object as target". Both entry points now normalise their
+  arguments through one function.
+
+- **`@gnldev/durable` — `forkRun` accepted a destination id `runDurable` refuses.** The record-separator
+  check landed on runDurable/resumeRun/streamDurable and `forkRun` is the fourth door, reachable from
+  Studio's `POST /runs/:id/fork` and `gnl fork --to`. Measured before this: a fork named
+  `pipeline:model` was accepted and `listRuns` then reported a `pipeline` row no run ever wrote.
+
+- **`@gnldev/durable` — `resumeRun` silently dropped run options.** It forwarded a hand-written list
+  that had already lost `lock`, then the whole protection set, then `agentName` — a resumed run never
+  reached per-agent metrics even when the caller passed the name. The list is now exhaustive by type:
+  adding an option to `RunDurableArgs` does not compile until someone decides whether a resume
+  carries it.
+
+- **`@gnldev/studio` — a managed workflow's agent step called the runner with no request context.**
+  `POST /agents/:name/run` passed the caller's `{ orgId }`; the same agent invoked as a managed
+  workflow step did not, so a runner that scopes by `ctx.orgId` saw it as a call from nobody. Both
+  managed routes thread it through now.
+
+- **`@gnldev/studio` — the playground stream leaked internal sentinels to the browser.** The REST and
+  playground streams were two copies of one mapping kept "in sync" by comment, and they had drifted:
+  the REST stream withheld `__gnl_limit_exceeded` / `__gnl_blocked` and ended a limit breach with a
+  typed `error`, while the playground sent the sentinel as an ordinary `tool-result` and ended with
+  `done`. Both now write @gnldev/durable's `agentStreamEvents`, which owns the schema; the wire codes
+  stay with each surface.
 
 ### Changed
 
@@ -1174,4 +1214,4 @@ whether or not anyone is on the other side of them yet.
   `Infinity`.
 
 <!-- Once v0.1.0 is tagged, this becomes .../compare/v0.1.0...HEAD -->
-[Unreleased]: https://github.com/Karaca7/gnldev/commits/main
+[0.5.0]: https://github.com/Karaca7/gnldev/commits/main
