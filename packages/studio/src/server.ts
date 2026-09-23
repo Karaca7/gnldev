@@ -1413,7 +1413,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
    * P0.4 `resume` forwards typed HITL payloads to wf.runResumable (only meaningful
    *  when the compiled workflow supports it); a `{status:'canceled'}` result maps into `canceled` the
    * SAME way `suspended`/`paused` already do (mirrors registry.ts's runWorkflow mapping). */
-  async function runManaged (store: StudioWorkflowStore, name: string, input: unknown, runId: string, maxSteps?: number, dryRun?: boolean, overridesFor?: (name: string) => Promise<{ model?: string; system?: string } | undefined>, resume?: Record<string, unknown>): Promise<{ runId: string; output?: unknown; suspended: boolean; paused?: boolean; canceled?: boolean; dryRun?: boolean; stepId?: string; reason?: unknown; steps: { id: string; kind: string; output: unknown }[] }> {
+  async function runManaged (store: StudioWorkflowStore, name: string, input: unknown, runId: string, maxSteps?: number, dryRun?: boolean, overridesFor?: (name: string) => Promise<{ model?: string; system?: string } | undefined>, resume?: Record<string, unknown>, callCtx?: StudioCallbackCtx): Promise<{ runId: string; output?: unknown; suspended: boolean; paused?: boolean; canceled?: boolean; dryRun?: boolean; stepId?: string; reason?: unknown; steps: { id: string; kind: string; output: unknown }[] }> {
     const def = await store.get(name);
     if (!def) throw new Error(`workflow '${name}' not found`);
     // Dry-run: the real agent is NEVER CALLED (deterministic stub response) + the journal is TEMPORARY
@@ -1422,7 +1422,10 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       ? async (agentName: string, o: { prompt?: string }) => ({ text: `[dry-run] ${agentName}: ${String(o.prompt ?? '').slice(0, 120)}` })
       : async (n2: string, o: { runId: string; prompt?: string }) => {
           const mo = overridesFor ? await overridesFor(n2) : undefined; // workflow steps also use the promoted version (based on the caller's org)
-          return gnl!.run!(n2, { ...o, ...(mo?.model ? { model: mo.model } : {}), ...(mo?.system != null ? { system: mo.system } : {}) });
+          // `callCtx` is the same per-request identity `/agents/:name/run` and the code-workflow route
+          // hand the runner. A managed step used to call `run` with two arguments, so a runner that
+          // scopes by `ctx.orgId` saw an agent step of a managed workflow as a call from nobody.
+          return gnl!.run!(n2, { ...o, ...(mo?.model ? { model: mo.model } : {}), ...(mo?.system != null ? { system: mo.system } : {}) }, callCtx);
         };
     const wf = compileWorkflow!(def, runAgent as any, input);
     const mem = dryRun ? new Map<string, unknown>() : null;
@@ -4952,7 +4955,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     if (canRunManaged && wf && (await wf.get(name))) {
       try {
         const runId = body.runId ?? `${body.dryRun ? 'dry-' : ''}wf-${name}-${Date.now()}`;
-        return c.json({ ok: true, ...(await runManaged(wf!, name, body.input, runId, body.maxSteps, body.dryRun, (n) => managedOverrides(n, c), body.resume)) });
+        return c.json({ ok: true, ...(await runManaged(wf!, name, body.input, runId, body.maxSteps, body.dryRun, (n) => managedOverrides(n, c), body.resume, { orgId: callerOrg(c) })) });
       } catch (e: any) {
         return c.json({ error: String(e?.message ?? e) }, 400);
       }
@@ -5027,7 +5030,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       const runWf = gnl.runWorkflow.bind(gnl); // unbound method → loses this; bind it.
       begin = () => runWf(name, body.input, { runId });
     } else if (!isCode && canRunManaged && wf && (await wf.get(name))) {
-      begin = () => runManaged(wf!, name, body.input, runId, undefined, undefined, (n) => managedOverrides(n, c));
+      begin = () => runManaged(wf!, name, body.input, runId, undefined, undefined, (n) => managedOverrides(n, c), undefined, { orgId: callerOrg(c) });
     }
     if (!begin) {
       if (wf && !compileWorkflow && (await wf.get(name)))

@@ -11,7 +11,11 @@
 // dropping it on the floor in the body, which is verbatim the defect above, kept every arity test
 // green. Parameter counts are satisfied by an unused parameter and by nothing else.
 import { describe, it, expect } from 'vitest';
+import { InMemoryJournal } from '@gnldev/durable';
 import { createStudioRunner } from '../src/runner.js';
+import { createStudioApi, type WorkflowDef } from '../src/server.js';
+import { compileManagedWorkflow } from '../src/managed-workflow.js';
+import { call } from './call.js';
 
 const cfg = { agents: { a: { model: 'm', tools: { t: { description: 'd', execute: async () => 1 } } } } } as any;
 const CTX = { orgId: 'acme', actor: 'ayse' };
@@ -65,5 +69,52 @@ describe('#27 the ctx the server computes must reach the engine', () => {
     // is to check here — and it is stated as such rather than dressed up as a behaviour test.
     const r: any = createStudioRunner(spyGnl().gnl, cfg, { toJsonSchema: (s: any) => s, toolExec: true });
     expect(r.runTool.length).toBeGreaterThanOrEqual(4);
+  });
+});
+
+// The runner above forwards ctx; this is the other end of the same wire. An agent step inside a
+// MANAGED workflow reached the runner through runManaged, which called `run` with two arguments —
+// so the fix to the runner could not help it. Asserted as parity with `/agents/:name/run`: whatever
+// identity the server hands the runner for a direct agent call, a managed step must hand the same.
+describe('#27 (server side) a managed workflow step hands the runner the same ctx as a direct call', () => {
+  function appWithSpy(calls: unknown[][]) {
+    const defs = new Map<string, WorkflowDef>([['m1', { name: 'm1', steps: [{ id: 's1', agentName: 'writer', prompt: 'Topic: {{input}}' }] }]]);
+    return createStudioApi({
+      reader: new InMemoryJournal(),
+      gnl: {
+        listAgents: () => [{ name: 'writer' }],
+        run: async (...args: unknown[]) => { calls.push(args); return { text: 'ok' }; },
+      } as any,
+      compileWorkflow: compileManagedWorkflow,
+      workflowStore: { list: () => [...defs.values()], get: (n: string) => defs.get(n), set: () => {}, delete: () => {} } as any,
+    });
+  }
+  const post = (app: any, path: string, body: unknown) =>
+    call(app, path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+
+  async function directCtx() {
+    const calls: unknown[][] = [];
+    await post(appWithSpy(calls), '/agents/writer/run', { runId: 'd1', prompt: 'x' });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].length, 'the direct route is the reference: it must pass a ctx').toBe(3);
+    return calls[0][2];
+  }
+
+  it('POST /workflows/:name/run', async () => {
+    const calls: unknown[][] = [];
+    const res = await post(appWithSpy(calls), '/workflows/m1/run', { input: 'cats' });
+    expect(res.status).toBe(200);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].length, 'the managed step called run without a ctx').toBe(3);
+    expect(calls[0][2]).toEqual(await directCtx());
+  });
+
+  it('POST /workflows/:name/run-stream', async () => {
+    const calls: unknown[][] = [];
+    const res = await post(appWithSpy(calls), '/workflows/m1/run-stream', { input: 'cats' });
+    await res.text(); // the managed run executes inside the SSE body
+    expect(calls).toHaveLength(1);
+    expect(calls[0].length, 'the streamed managed step called run without a ctx').toBe(3);
+    expect(calls[0][2]).toEqual(await directCtx());
   });
 });
