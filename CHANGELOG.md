@@ -7,6 +7,74 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased]
+
+**Version not chosen yet.** Three of the entries below tighten validation and one widens an
+interface implementers must satisfy, which [VERSIONING.md](./VERSIONING.md) lists as minor triggers
+in 0.x. Whether this ships as `0.5.0` or is re-scoped is a decision, not an oversight.
+
+### Fixed
+
+- **`@gnldev/studio-ui` — the Studio did not open at all when a browser blocks site data.** Reading
+  the theme preference touched `localStorage` unguarded, at the top of the shell, so Safari private
+  browsing (and any "block site data" setting) rendered the error card instead of the app. Every
+  storage access in the package now goes through one guarded module: a failed read is "nothing
+  stored", a failed write is dropped. The same root cause silently disabled the workflow Run button,
+  which saved a preset before starting the run.
+
+- **`@gnldev/client` — a failed tool call left no trace in the React surface.** The server emits
+  `tool-error` and the accumulator dropped it, so "I cancelled your order" could sit above a
+  `cancelOrder` that answered 503. `useGnlAgent()`/`useChat()` now expose `toolErrors` for the
+  current turn, cleared when the next turn starts. @gnldev/studio-ui and @gnldev/agui already
+  handled this event; the published SDK was the one surface still losing it.
+
+- **`@gnldev/studio-ui` — the audit CSV export did not neutralise spreadsheet formulas.** A cell
+  beginning `=`, `+`, `-` or `@` is executed by Excel/LibreOffice/Sheets, and RFC 4180 quoting does
+  not prevent it (the reader strips the quotes, then evaluates). The `actor` column is reachable
+  from the caller-supplied `x-gnl-actor` header. Such cells are now prefixed with `'`. Note this
+  applies to every column: a negative number exports as `'-5`.
+
+- **`@gnldev/studio-ui` — an attachment-only message vanished from the Playground on reload**, and
+  its answer was left with no visible question. Attachments are now rebuilt from history (the
+  filename is not persisted and is shown as a placeholder). This also repaired edit/regenerate,
+  which counted such turns on one side of the ledger and not the other.
+
+- **`@gnldev/studio-ui` — the Inspector drew a lineage that never happened.** A legal run id
+  containing `:fork:` was read as a child of the text before it. Only the engine's own shape
+  (`<parent>:fork:<timestamp>`) is treated as a fork now.
+
+- **`@gnldev/studio-ui`** — `fmtDur` printed impossible durations (`"1m 60s"`, and `"1000ms"` for a
+  value its twin printed as `"1.00s"` in the next column); `fmtTok` printed `"1000.0k"` where it
+  meant `"1.0M"`.
+
+- **`@gnldev/studio-ui`** — the tool test form accepted `3.7` in an `integer` field and `Infinity`
+  anywhere, the latter reaching the tool as `null` after JSON serialisation.
+
+- **`@gnldev/durable` — the README told npm readers to run a file the package did not contain.**
+  `examples/` now ships, and the example measures its own comparison instead of asserting it: it
+  runs the unprotected baseline and exits non-zero if the claim does not hold.
+
+- **`@gnldev/studio`** — `createStudioRunner` took one parameter fewer than `StudioAgentRunner`
+  declares, so the per-request identity the server computes (`orgId`, `actor`) was discarded by
+  arity. It is now accepted on all four entry points and forwarded on the three that have somewhere
+  to forward it.
+
+### Changed
+
+- **`@gnldev/auth-ee` — `nbf` (not-before) is now enforced** on both SSO paths (RFC 7519 §4.1.5). It
+  was not checked at all, so a token minted to become valid later worked immediately. The claim is
+  optional: a token without `nbf` verifies exactly as before. No clock-skew leeway is taken, matching
+  the `exp` check beside it.
+
+- **`@gnldev/durable` — a runId may no longer END with `:model` or `:tool`.** The colon-on-both-sides
+  form was already refused; the trailing form was not, and it is the one that makes a run's own keys
+  parse back as a DIFFERENT run. **If you already have such a run**, it can no longer be resumed,
+  streamed or re-run — `purgeRun(journal, id)` still deletes it (that call is not gated), and the
+  work needs a new id. No engine-minted id has ever had this shape; the reachable source is a
+  caller-supplied id, notably @gnldev/chat-adapter's conversation-derived runId.
+
+---
+
 ## [0.4.1] — 2026-09-22
 
 **A guard that overstated what it did.** No behaviour changed — the message did. Patch, because
