@@ -4,6 +4,7 @@
 import { runKeys } from './journal.js';
 import { argsHash, derivedRunIdBase, forkRunId } from './hash.js';
 import { assertNotCompensated } from './compensation.js';
+import { assertRunIdSafe } from './run.js';
 import type { Journal, JournalReader, JournalEntry } from './journal.js';
 
 export interface ReconstructedState {
@@ -296,6 +297,7 @@ export async function forkRun(
   // A fork of a COMPENSATED run is the same hazard class as resuming it — the copy
   // would replay memoized successes of side effects that were UNWOUND (the tombstone is a proc key,
   // invisible to readRun, so the copy itself would silently drop it) → refuse at the source.
+  if (newRunId !== undefined) assertRunIdSafe(newRunId);
   await assertNotCompensated(journal, srcRunId);
   const dst = newRunId ?? (await pickForkRunId(journal, srcRunId));
   const entries = await journal.readRun(srcRunId);
