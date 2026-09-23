@@ -1,13 +1,20 @@
 // @gnldev/client/react — useGnlAgent / useChat. NO JSX (pure logic hooks) → compiled with tsc.
 import { useCallback, useRef, useState } from 'react';
 import type { GnlClient } from '../index.js';
-import { appendUserMessage, applyRunResult, applyStreamEvent, initialChatState } from '../accumulator.js';
+import { appendUserMessage,
+  startTurn, applyRunResult, applyStreamEvent, initialChatState } from '../accumulator.js';
 import type { ChatMessage, ChatState } from '../accumulator.js';
 import type { Interrupt, RunInput, RunResult } from '../types.js';
 
 export interface UseGnlAgent {
   messages: ChatMessage[];
   interrupts: Interrupt[];
+  /**
+   * Tools that failed during the CURRENT turn (`tool-error` from the stream). Non-terminal: the run
+   * continues and usually still produces text, so an empty `error` does NOT mean everything worked.
+   * Cleared when the next user turn starts.
+   */
+  toolErrors: { toolCallId: string; toolName?: string; error: string }[];
   loading: boolean;
   error: Error | null;
   runId: string | undefined;
@@ -36,7 +43,7 @@ export function useGnlAgent(client: GnlClient, name: string): UseGnlAgent {
     async (input: RunInput) => {
       setLoading(true);
       setError(null);
-      if (input.prompt) setState((s) => appendUserMessage(s, input.prompt!));
+      setState((s) => (input.prompt ? appendUserMessage(s, input.prompt) : startTurn(s)));
       lastInput.current = input;
       lastEntry.current = 'run';
       try {
@@ -58,7 +65,7 @@ export function useGnlAgent(client: GnlClient, name: string): UseGnlAgent {
     async (input: RunInput) => {
       setLoading(true);
       setError(null);
-      if (input.prompt) setState((s) => appendUserMessage(s, input.prompt!));
+      setState((s) => (input.prompt ? appendUserMessage(s, input.prompt) : startTurn(s)));
       lastInput.current = input;
       lastEntry.current = 'stream';
       try {
@@ -113,7 +120,7 @@ export function useGnlAgent(client: GnlClient, name: string): UseGnlAgent {
     setError(null);
   }, []);
 
-  return { messages: state.messages, interrupts: state.interrupts, loading, error, runId: state.runId, run, stream, resume, reset };
+  return { messages: state.messages, interrupts: state.interrupts, toolErrors: state.toolErrors ?? [], loading, error, runId: state.runId, run, stream, resume, reset };
 }
 
 export interface UseChat {
@@ -124,6 +131,12 @@ export interface UseChat {
   loading: boolean;
   error: Error | null;
   interrupts: Interrupt[];
+  /**
+   * Tools that failed during the CURRENT turn (`tool-error` from the stream). Non-terminal: the run
+   * continues and usually still produces text, so an empty `error` does NOT mean everything worked.
+   * Cleared when the next user turn starts.
+   */
+  toolErrors: { toolCallId: string; toolName?: string; error: string }[];
   approve(toolCallId: string, ok: boolean): Promise<void>;
   reset(): void;
 }
@@ -167,6 +180,7 @@ export function useChat(client: GnlClient, name: string, opts: UseChatOptions = 
     loading: agent.loading,
     error: agent.error,
     interrupts: agent.interrupts,
+    toolErrors: agent.toolErrors,
     approve,
     reset: agent.reset,
   };
