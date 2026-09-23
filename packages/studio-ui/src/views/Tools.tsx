@@ -75,8 +75,22 @@ export function coerceToolField(f: { type: string }, v: string | undefined): unk
   return v;
 }
 
+/**
+ * Is the coerced number acceptable for this field?
+ *
+ * `NaN` was the only rejection before, and it let two things through. `Infinity` is not `NaN`, so
+ * "Infinity" (and anything that overflows, like `1e400`) passed validation — and then
+ * `JSON.stringify` turned it into `null` on the wire, so a REQUIRED field arrived at the tool as
+ * null. And an `integer` field accepted `3.7`, because integer and number shared one branch.
+ */
+function numberOk(type: string, n: number): boolean {
+  if (!Number.isFinite(n)) return false;
+  return type === 'integer' ? Number.isInteger(n) : true;
+}
+
 // PURE function (testable, DOM-free): coerces and validates all fields — blocks submit if a
-// number field has NaN or a required field is empty (invalid: which fields to highlight).
+// number field is not a usable number (NaN, non-finite, or a decimal in an `integer` field) or a
+// required field is empty (invalid: which fields to highlight).
 export function validateToolInput(
   fields: { key: string; type: string; required: boolean }[],
   vals: Record<string, unknown>,
@@ -85,8 +99,8 @@ export function validateToolInput(
   const input: Record<string, unknown> = {};
   for (const f of fields) {
     const v = coerceToolField(f, vals[f.key] as string | undefined);
-    const isNaNNumber = typeof v === 'number' && Number.isNaN(v);
-    if (isNaNNumber || (f.required && v === undefined)) { invalid.push(f.key); continue; }
+    const badNumber = typeof v === 'number' && !numberOk(f.type, v);
+    if (badNumber || (f.required && v === undefined)) { invalid.push(f.key); continue; }
     if (v !== undefined) input[f.key] = v;
   }
   return invalid.length ? { ok: false, invalid } : { ok: true, input };

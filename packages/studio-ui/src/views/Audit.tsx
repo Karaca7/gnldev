@@ -22,8 +22,31 @@ const AUDIT_MAX = 1000;
 
 // RFC4180-like CSV field escaping: fields containing comma/quote/newline are wrapped in double
 // quotes (inner quotes are doubled) — pure function, edge cases covered in test/observability-audit.test.ts.
+// Leading characters a spreadsheet reads as "this cell is a formula". Neutralised with a single
+// quote, which Excel/LibreOffice/Sheets consume as "the rest is literal text".
+//
+// This is NOT the same job as the quoting below, and conflating them is how the gap survived: RFC
+// 4180 quoting is a TRANSPORT escape — the reader strips the quotes and THEN evaluates the cell, so
+// `"=HYPERLINK(…)"` still runs. What was measured is the EXPORT, not a spreadsheet: five payloads
+// starting with `=`, `@`, `+` and `-` all reached the cell unaltered. No test here opens Excel, and
+// saying so is the difference between a measurement and a description of one.
+//
+// It applies to every column, not just `actor`, and that is a deliberate trade: `at` is a number and
+// `detail` is JSON, so a negative value now exports as `'-5` — text in a numeric column. Narrowing
+// the rule to one column would mean deciding which fields an attacker is allowed to reach, which is
+// the kind of allowlist that is wrong the first time somebody adds a field.
+//
+// The exposure is concrete rather than theoretical. The `actor` column comes from `actorOf`
+// (studio/src/server.ts), which falls back to the caller-supplied `x-gnl-actor` header. That header
+// is documented as harmless — "spoofing is pointless, token holders can already impersonate each
+// other" — and for ATTRIBUTION that is true. This is a third axis the split between `actorOf` and
+// `verifiedActorOf` never covered: not who the row claims to be, but what it DOES in the reader's
+// spreadsheet. An audit export is precisely the file somebody opens in Excel.
+export const FORMULA_LEAD = /^[=+\-@\t\r]/;
+
 function csvField(v: string | number): string {
-  const s = String(v);
+  const raw = String(v);
+  const s = FORMULA_LEAD.test(raw) ? `'${raw}` : raw;
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 

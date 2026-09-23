@@ -10,6 +10,7 @@ import { Markdown } from '../markdown';
 import { Stagger, StaggerItem, Reveal } from '../motion';
 import { toast, ConfirmDialog } from '../ui';
 import { currentLocale } from '../i18n/locale';
+import { readLocalJson, writeLocal } from '../storage';
 
 type Attachment = { name: string; type: string; dataUrl: string };
 export type Msg =
@@ -147,13 +148,42 @@ const OV_KEY = 'gnl-pg-overrides';
 const savedOverrides: {
   modelOv?: string; systemOv?: string; tempOn?: boolean; tempOv?: number; topPOn?: boolean; topPOv?: number;
 } = (() => {
-  try { return JSON.parse(localStorage.getItem(OV_KEY) ?? '{}'); } catch { return {}; }
+  return readLocalJson(OV_KEY, {});
 })();
 
 // Shared by mapMessages and userMessageServerIndex (FLOW-10): extracts a user message's text the
 // SAME way in both places, so the server-index lookup lines up with what mapMessages would have
 // rendered as a user bubble (a user entry with no text is skipped by mapMessages, and must be
 // skipped here too, or the ordinal count would drift).
+/**
+ * Attachments carried by a SERVER user entry, back into the local `Attachment` shape.
+ *
+ * `mapMessages` only ever read text parts, so a turn's files vanished on reload — and a turn that
+ * was ONLY files (legal: `send()` proceeds when the prompt is empty but attachments exist) produced
+ * no local message at all. Measured: an invoice image and its answer became a lone assistant bubble
+ * saying "The invoice total is 4,812." with no visible question above it.
+ *
+ * The server writes these as AI SDK parts (see the `msgBody` builder): `{type:'image', image}` for
+ * images, `{type:'file', data, mediaType}` for the rest — both hold a data URL. The file NAME is not
+ * persisted, so it cannot be recovered; the media type can, and a placeholder name is honest about
+ * what is known rather than inventing one.
+ */
+function extractUserFiles(m: any): { name: string; type: string; dataUrl: string }[] {
+  if (!Array.isArray(m?.content)) return [];
+  const out: { name: string; type: string; dataUrl: string }[] = [];
+  for (const p of m.content) {
+    if (p?.type === 'image' && typeof p.image === 'string') out.push({ name: 'image', type: 'image/*', dataUrl: p.image });
+    else if (p?.type === 'file' && typeof p.data === 'string') out.push({ name: 'file', type: String(p.mediaType ?? 'application/octet-stream'), dataUrl: p.data });
+  }
+  return out;
+}
+
+/** A user turn CARRIES something — text, or attachments. The two sides of the FLOW-10 ordinal must
+ *  agree on this predicate or they count different turns. */
+function userTurnHasContent(m: any): boolean {
+  return !!extractUserText(m) || extractUserFiles(m).length > 0;
+}
+
 function extractUserText(m: any): string {
   return typeof m.content === 'string' ? m.content
     : Array.isArray(m.content) ? m.content.filter((p: any) => p?.type === 'text' && p.text).map((p: any) => p.text).join(' ')
@@ -173,7 +203,8 @@ export function mapMessages(data: any[]): Msg[] {
     const role = m.role ?? m.__source;
     if (role === 'user') {
       const text = extractUserText(m);
-      if (text) out.push({ role: 'user', text });
+      const files = extractUserFiles(m);
+      if (text || files.length) out.push({ role: 'user', text, ...(files.length ? { files } : {}) });
       continue;
     }
     if (role === 'assistant') {
@@ -244,7 +275,13 @@ export function userMessageServerIndex(data: any[], ordinal: number): number {
     const m = data[idx];
     const role = m.role ?? m.__source;
     if (role !== 'user') continue;
-    if (!extractUserText(m)) continue;
+    // Same predicate `mapMessages` uses — an attachment-only turn is a turn on BOTH sides. When this
+    // said "has text" while mapMessages pushed on "has text or files", an earlier attachment-only
+    // turn shifted every later ordinal and this returned -1: the caller warned and refused to
+    // truncate (honest, and it stayed honest), but edit/regenerate quietly stopped working for the
+    // rest of the session. The FLOW-10 comment justified the alignment with "0 only when its text is
+    // empty — which can't happen here"; it can, which is why the predicate is now shared.
+    if (!userTurnHasContent(m)) continue;
     n++;
     if (n === ordinal) return idx;
   }
@@ -321,7 +358,7 @@ export function Playground() {
   // set are excluded → an allow-list of the remaining tools is passed to the run as a `tools` override.
   const [toolsOff, setToolsOff] = useState<Set<string>>(new Set());
   useEffect(() => {
-    localStorage.setItem(OV_KEY, JSON.stringify({ modelOv, systemOv, tempOn, tempOv, topPOn, topPOv }));
+    writeLocal(OV_KEY, JSON.stringify({ modelOv, systemOv, tempOn, tempOv, topPOn, topPOv }));
   }, [modelOv, systemOv, tempOn, tempOv, topPOn, topPOv]);
   const runIdRef = useRef<string>('');
   const abortRef = useRef<AbortController | null>(null);
