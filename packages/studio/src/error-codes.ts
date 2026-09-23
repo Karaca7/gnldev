@@ -11,6 +11,10 @@
 // stayed invisible to a whole audit sweep for exactly that reason. A tiny import-nothing module is
 // readable by everything, including the docs check, which imports the BUILT value.
 export const STUDIO_ERROR_CODES = {
+  /** SSE terminal error — the run hit a limit (same wire value as @gnldev/server). */
+  runLimitExceeded: 'run_limit_exceeded',
+  /** SSE terminal error — the loop detector stopped the run (same wire value as @gnldev/server). */
+  toolLoopDetected: 'tool_loop_detected',
   /** 403 — the request's org scope does not cover the object it addresses (multi-org isolation). */
   orgScopeRefused: 'org_scope_refused',
   /** 409 — a concurrent editor saved first; re-read and reapply (policy/pricing editors). */

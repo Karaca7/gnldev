@@ -225,3 +225,4 @@ export type {
 // P2-migrate schema introspection/migration façade — see migrate.ts.
 export { runMigrationCheck, tablesFromDDL } from './migrate.js';
 export type { SchemaCheckResult, SchemaMigrationResult, MissingColumn, MigratableStorage, MigrationCheckResult } from './migrate.js';
+export { agentStreamEvents, interruptsFromSteps, type AgentStreamEvent, type AgentStreamCodes } from './agent-stream.js';
