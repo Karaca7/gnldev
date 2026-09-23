@@ -2881,6 +2881,20 @@ export function assertRunIdSafe(runId: unknown): asserts runId is string {
   }
 }
 
+/**
+ * What every agent entry point does to its arguments before the run starts. One function, so a rule
+ * added here reaches runDurable AND streamDurable — the two used to carry their own copy, and a fix
+ * to one never reached the other.
+ *
+ * The rule it holds today: `ModelInput` is `LanguageModelV4 | string`. Passing 'nvidia/…' straight
+ * to runDurable used to type-check and then die inside the AI SDK with "model.doGenerate is not a
+ * function"; 1562c8c6 resolved the string in runDurableInner only, so streamDurable kept dying
+ * ("Cannot create proxy with a non-object as target") on the same published type.
+ */
+async function normalizeEntryArgs<T extends { model?: unknown }>(args: T): Promise<T> {
+  return typeof args.model === 'string' ? { ...args, model: await resolveModel(args.model) } : args;
+}
+
 export async function runDurable(args: RunDurableArgs): Promise<DurableResult> {
   // The failure half of the run's outcome record. The success half is written at the completion choke
   // point inside runDurableInner, where "did it actually finish" is already established (a suspended
@@ -2889,7 +2903,7 @@ export async function runDurable(args: RunDurableArgs): Promise<DurableResult> {
   // `runFailed(journal, args.runId, ...)` would itself write under the very prefix being refused.
   assertRunIdSafe(args.runId);
   try {
-    return await runDurableGuarded(args);
+    return await runDurableGuarded(await normalizeEntryArgs(args));
   } catch (err) {
     const kind = classifyRunError(err);
     if (kind === 'failure') await runFailed(args.journal, args.runId, err, Date.now());
@@ -2940,13 +2954,9 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   // `workKey`/`workScope` are pulled OUT of `rest` deliberately: `rest` is both the frozen input and
   // the option bag handed to `generateText`, so a declared name left in it would travel to the
   // provider as an unknown request field and land in `:input` twice under two different meanings.
-  const { journal, runId, guard, approvals, memory, threadId, resourceId, channel, agentName, workKey, workScope, replay, lock: _lock, processors, schemaCompat, limits, exclusiveModelStep, replayCacheMaxBytes, toolPolicy, timeouts, strictInput, conflictLedger, tombstonePolicy, actor, auditOnReject, replayDisclosure, model: modelInput, tools, stopWhen, ...rest } =
+  const { journal, runId, guard, approvals, memory, threadId, resourceId, channel, agentName, workKey, workScope, replay, lock: _lock, processors, schemaCompat, limits, exclusiveModelStep, replayCacheMaxBytes, toolPolicy, timeouts, strictInput, conflictLedger, tombstonePolicy, actor, auditOnReject, replayDisclosure, model, tools, stopWhen, ...rest } =
     args as RunDurableArgs & Record<string, any>;
-  // `ModelInput` is `LanguageModelV4 | string`, and until now only createGnl honoured the string
-  // half: passing 'nvidia/…' straight to runDurable type-checked and then died inside the AI SDK
-  // with "model.doGenerate is not a function", which tells a newcomer nothing about what they did
-  // wrong. Resolve it here so the published type is true wherever it appears.
-  const model = typeof modelInput === 'string' ? await resolveModel(modelInput) : modelInput;
+  // `model` is already a model object here — string ids are resolved in normalizeEntryArgs.
   // ONE read of `:input`, shared by the ownership check, the adoption and persistInput below (see
   // applyInputProcessors). Read + asserted BEFORE runStarted/resolveApprovals — see
   // assertThreadOwnership's own doc for why the order matters (K2/K3 hardening).
@@ -3248,13 +3258,30 @@ export interface ResumeAgentConfig {
  * Self-contained resume: reads the input (prompt/messages/system) from the journal, calls `runDurable`.
  * No need to pass the prompt again — only `runId` + agent config + approvals.
  */
+/**
+ * How resumeRun treats each of gnl's own run options. `satisfies Record<DurableOwnKey, …>` makes this
+ * TOTAL: a new option added to RunDurableArgs does not compile until someone decides here whether a
+ * resume carries it. The hand-written forward list this replaces dropped options silently three times
+ * (lock, the protection set, agentName).
+ */
+type DurableOwnKey = Exclude<keyof RunDurableArgs, keyof GenerateTextOptions>;
+const RESUME_POLICY = {
+  journal: 'set', runId: 'set', approvals: 'set', limits: 'set',
+  threadId: 'from-input', resourceId: 'from-input', agentName: 'from-input',
+  workKey: 'from-input', workScope: 'from-input', // frozen in `:input`; the gates read them from there
+  guard: 'forward', memory: 'forward', channel: 'forward', replay: 'forward', lock: 'forward',
+  processors: 'forward', schemaCompat: 'forward', exclusiveModelStep: 'forward', toolPolicy: 'forward',
+  timeouts: 'forward', strictInput: 'forward', conflictLedger: 'forward', tombstonePolicy: 'forward',
+  actor: 'forward', auditOnReject: 'forward', replayDisclosure: 'forward', replayCacheMaxBytes: 'forward',
+} as const satisfies Record<DurableOwnKey, 'set' | 'forward' | 'from-input'>;
+
 export async function resumeRun(
   runId: string,
   opts: ResumeAgentConfig & { journal: Journal; approvals?: Record<string, boolean> },
 ): Promise<DurableResult> {
   assertRunIdSafe(runId); // journal I/O'dan ÖNCE: rezerve bir aile adıyla okuma bile yapılmasın
   const input = upgradeFormat(
-    await opts.journal.get<{ prompt?: unknown; messages?: unknown; system?: unknown; threadId?: string; resourceId?: string }>(runKeys.input(runId)),
+    await opts.journal.get<{ prompt?: unknown; messages?: unknown; system?: unknown; threadId?: string; resourceId?: string; agent?: string }>(runKeys.input(runId)),
     runKeys.input(runId),
   ); // H13: legacy-format input is upgraded to the current shape on resume
   if (!input) {
@@ -3271,51 +3298,26 @@ export async function resumeRun(
   // limits frozen at run start from the journal so the resumed run keeps its cost cap / loop /
   // duplicate / taint gates instead of silently reverting to no-limits.
   const limits = opts.limits ?? (await opts.journal.get<RunLimits>(runKeys.cfgLimits(runId)));
+  const given = opts as unknown as Record<string, unknown>;
+  const forwarded: Record<string, unknown> = {};
+  for (const [k, how] of Object.entries(RESUME_POLICY)) {
+    if (how === 'forward' && given[k] !== undefined) forwarded[k] = given[k];
+  }
   return runDurable({
+    ...forwarded,
     runId,
     journal: opts.journal,
     model: opts.model,
     tools: opts.tools,
-    guard: opts.guard,
     approvals: opts.approvals,
     stopWhen: opts.stopWhen,
-    replay: opts.replay,
     limits,
-    // Forward the FULL protection set (not just limits) — processors especially, so
-    // tool-result redaction runs on the approved call during resume.
-    ...(opts.processors ? { processors: opts.processors } : {}),
-    ...(opts.memory ? { memory: opts.memory } : {}),
-    ...(opts.resourceId ? { resourceId: opts.resourceId } : {}),
-    ...(opts.lock ? { lock: opts.lock } : {}),
-    ...(opts.timeouts ? { timeouts: opts.timeouts } : {}),
-    ...(opts.exclusiveModelStep ? { exclusiveModelStep: opts.exclusiveModelStep } : {}),
-    ...(opts.schemaCompat !== undefined ? { schemaCompat: opts.schemaCompat } : {}),
-    ...(opts.toolPolicy ? { toolPolicy: opts.toolPolicy } : {}),
-    ...(opts.replayDisclosure ? { replayDisclosure: opts.replayDisclosure } : {}),
-    ...(opts.channel ? { channel: opts.channel } : {}),
-    // FAZ-4 K5: fields added to ResumeAgentConfig MUST land in this selective forward list too — an
-    // interface field missing here is born dead and silently drops the protection the caller asked for.
-    ...(opts.strictInput !== undefined ? { strictInput: opts.strictInput } : {}),
-    ...(opts.conflictLedger !== undefined ? { conflictLedger: opts.conflictLedger } : {}),
-    ...(opts.auditOnReject ? { auditOnReject: opts.auditOnReject } : {}),
-    ...(opts.tombstonePolicy ? { tombstonePolicy: opts.tombstonePolicy } : {}),
-    ...(opts.actor ? { actor: opts.actor } : {}),
     ...(input.messages ? { messages: input.messages } : {}),
     ...(input.prompt ? { prompt: input.prompt } : {}),
     ...(input.system ? { system: input.system } : {}),
-    // Recover the threadId frozen into `:input` — a resumed run under `taintScope: 'thread'`
-    // must keep the thread carry (inherit at start + write the thread key on a NEW post-resume
-    // untrusted call). It is ALSO the half that makes an attached `memory` work: the append is
-    // conditioned on `memory && threadId`, so recovering the id here and forwarding memory above are
-    // one fix, not two. (This comment used to say no memory is attached "so this changes nothing
-    // else" — true, and the reason the resumed turn never reached the thread.)
     ...(input.threadId ? { threadId: input.threadId } : {}),
-    // Donmuş `resourceId` de kurtarılır — threadId ile AYNI gerekçe, ve atlanması ölçülebilir bir
-    // boşluk bırakıyordu: `ctx.resourceId` olmayınca kanallar-arası kimlik planı (XID) hiç
-    // kurulmuyor, `writeXid` çağrılmıyor. Yani bir insanın BİLEREK onayladığı — dolayısıyla en
-    // riskli — çağrı, kanallar-arası dedup indeksine hiç yazmıyordu: aynı ödeme başka bir kanaldan
-    // tekrar geldiğinde kapı kör kalıyordu. `opts.resourceId` önde kalır (açık geçersiz kılma).
-    ...(opts.resourceId ?? input.resourceId ? { resourceId: opts.resourceId ?? input.resourceId } : {}),
+    ...(input.agent ? { agentName: input.agent } : {}),
+    ...((opts as { resourceId?: string }).resourceId ?? input.resourceId ? { resourceId: (opts as { resourceId?: string }).resourceId ?? input.resourceId } : {}),
   } as any);
 }
 
@@ -3393,6 +3395,7 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   // Doğrulamayı yalnız runDurable/resumeRun'a koymak, yorumun kendi vaadini ("unutulan hep
   // yüzeyler") tam da unutulan yüzeyde tutmamak demekti.
   assertRunIdSafe(args.runId);
+  args = await normalizeEntryArgs(args);
   // Same refusal as runDurable — a compensated run never streams either.
   await assertNotCompensated(args.journal, args.runId);
   // P2-cancel: same terminal-refusal contract as compensation — a durably-canceled run never
