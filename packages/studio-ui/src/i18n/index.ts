@@ -60,16 +60,17 @@ import trOrganizations from './locales/tr/organizations.json';
 import trUsers from './locales/tr/users.json';
 import trPolicy from './locales/tr/policy.json';
 import trPromptEditor from './locales/tr/promptEditor.json';
+import { readLocal } from '../storage';
 
 export const LANG_STORAGE_KEY = 'gnl-lang';
 export const SUPPORTED_LANGS = ['en', 'tr'] as const;
 export type SupportedLang = (typeof SUPPORTED_LANGS)[number];
 
 export function getStoredLang(): SupportedLang {
-  // localStorage doesn't exist in a jsdom-less (node) test environment — read defensively
-  // so views imported at init time (e.g. Audit) don't crash when they pull in this file.
-  if (typeof localStorage === 'undefined') return 'en';
-  const stored = localStorage.getItem(LANG_STORAGE_KEY);
+  // Defensive for TWO reasons, and the second one was the gap: `localStorage` is absent in the
+  // jsdom-less (node) test environment (views imported at init time, e.g. Audit, pull this file in),
+  // AND access to it THROWS when a browser blocks site data. The old guard only covered absence.
+  const stored = readLocal(LANG_STORAGE_KEY);
   return stored === 'tr' ? 'tr' : 'en';
 }
 

@@ -12,6 +12,7 @@ import { Btn, Spinner, Badge, StatusBadge, EmptyState, ErrorBox, JsonBlock, cn, 
 import { ConfirmDialog, toast } from '../ui';
 import { currentLocale } from '../i18n/locale';
 import { diffWorkflowSteps } from './workflow-diff';
+import { readLocalJson, writeLocal } from '../storage';
 
 type Status = 'idle' | 'running' | 'done' | 'suspended' | 'failed' | 'cancelled';
 interface StepState { status: Status; output?: unknown; ts?: number; ms?: number; error?: string }
@@ -386,11 +387,11 @@ function InputForm({ params, input, onChange }: {
 // Input presets: the last 5 successful inputs are kept per workflow in localStorage (for playground iteration).
 const PRESET_KEY = (wf: string) => `gnl-wf-presets:${wf}`;
 function loadPresets(wf: string): string[] {
-  try { return JSON.parse(localStorage.getItem(PRESET_KEY(wf)) ?? '[]'); } catch { return []; }
+  return readLocalJson<string[]>(PRESET_KEY(wf), []);
 }
 function savePreset(wf: string, input: string): string[] {
   const next = [input, ...loadPresets(wf).filter((p) => p !== input)].slice(0, 5);
-  localStorage.setItem(PRESET_KEY(wf), JSON.stringify(next));
+  writeLocal(PRESET_KEY(wf), JSON.stringify(next));
   return next;
 }
 

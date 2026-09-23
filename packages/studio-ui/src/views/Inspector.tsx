@@ -19,6 +19,7 @@ import { MediaParts } from '../media';
 import { Stagger, StaggerItem, Reveal } from '../motion';
 import { ThreadDetail } from './inspector-thread';
 import { currentLocale } from '../i18n/locale';
+import { readLocal, writeLocal, removeLocal } from '../storage';
 
 type TabId = 'conversation' | 'trace' | 'network' | 'forks' | 'regression' | 'processors' | 'cost' | 'incidents';
 const ALL_TAB_IDS: readonly TabId[] = ['conversation', 'trace', 'network', 'forks', 'regression', 'processors', 'cost', 'incidents'];
@@ -42,8 +43,16 @@ const DERIVED_FORK_RE = /^(run1_[0-9a-f]{32})#fork-[1-9]\d*$/;
 export function forkParent(id: string): string | null {
   const derived = DERIVED_FORK_RE.exec(id);
   if (derived) return derived[1]!;
+  // RAW convention: `time-travel.ts:264` mints `${srcRunId}:fork:${Date.now()}` — the suffix is a
+  // timestamp, always digits. Matching on the SEPARATOR alone read any id that happened to contain
+  // ':fork:' as a child, and the engine does not reserve that substring (`assertRunIdSafe` accepts
+  // `orders:fork:daily`). Measured: the lineage tree then drew `orders` as the parent of a run that
+  // never came from it — a causal claim, invented, in the tool an operator uses to find out where
+  // work came from. The suffix test costs nothing and makes the two conventions say the same thing:
+  // a fork is what the ENGINE minted, not what the string resembles.
   const i = id.lastIndexOf(':fork:');
-  return i > 0 ? id.slice(0, i) : null;
+  if (i <= 0) return null;
+  return /^\d+$/.test(id.slice(i + ':fork:'.length)) ? id.slice(0, i) : null;
 }
 /**
  * What a NON-ROOT node in the lineage tree is called: the part that distinguishes it from its parent.
@@ -160,13 +169,13 @@ export function Inspector() {
   // Playground "Inspect" link (`/inspector?run=<id>`) still works unchanged: its `run` value becomes
   // the initial `sel` below, same as before.
   const [params, setParams] = useSearchParams();
-  const [sel, setSel] = useState<string | null>(() => params.get('run') || localStorage.getItem('gnl-insp-run'));
+  const [sel, setSel] = useState<string | null>(() => params.get('run') || readLocal('gnl-insp-run'));
   const [tab, setTab] = useState<TabId>(() => (params.get('tab') as TabId | null) || 'conversation');
   // Thread-level selection (ThreadDetail — see inspector-thread.tsx). A RUN selection wins the right
   // pane; selThread stays set underneath it so RunDetail's back returns to the thread ledger.
   const [selThread, setSelThread] = useState<string | null>(() => params.get('thread'));
   // F5-resilient selection; when sel drops to null via purge/onPurged, clear the key too (so a stale runId doesn't come back on F5).
-  useEffect(() => { if (sel) localStorage.setItem('gnl-insp-run', sel); else localStorage.removeItem('gnl-insp-run'); }, [sel]);
+  useEffect(() => { if (sel) writeLocal('gnl-insp-run', sel); else removeLocal('gnl-insp-run'); }, [sel]);
   // Pull sel/tab FROM the URL when it changes from outside our own writes below — a new `?run=` link
   // clicked while Inspector is already mounted (no remount, so the initial useState above doesn't
   // re-run), or a browser Back/Forward navigation.
@@ -384,17 +393,40 @@ function relTime(ts: number): string {
   if (h < 24) return `${h}h ago`;
   return `${Math.round(h / 24)}d ago`;
 }
-/** Duration ms → "1m 48s" / "0.9s" / "340ms". */
-function fmtDur(ms: number): string {
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  const s = ms / 1000;
-  if (s < 60) return `${s.toFixed(1)}s`;
-  const m = Math.floor(s / 60);
-  return `${m}m ${Math.round(s - m * 60)}s`;
+/**
+ * Duration ms → "1m 48s" / "0.9s" / "340ms".
+ *
+ * ROUND FIRST, then split. The old version took the floor of the minutes and rounded the remainder
+ * independently, so the two halves could disagree: 119 600 ms printed "1m 60s" and 59 960 ms printed
+ * "60.0s". Neither is wrong by much and both are wrong in the way that costs most — a panel that
+ * prints an impossible number invites the reader to discount the numbers beside it. `fmtElapsed` in
+ * Playground already does it this way (floor on both halves of one rounded value); this is the same
+ * discipline, and exported for the same reason `forkParent` above is: testable without mounting.
+ */
+export function fmtDur(ms: number): string {
+  // `Math.round(ms) < 1000`, not `ms < 1000`: the sub-second guard has to agree with the value that
+  // gets printed, or the same span reads "1000ms" here and "1.00s" in `fmtSpanMs` — which is not
+  // hypothetical, TraceView formats one `s.durationMs` through both (lines 1323 and 1387).
+  if (Math.round(ms) < 1000) return `${Math.round(ms)}ms`;
+  const tenths = Math.round(ms / 100);                       // whole tenths of a second
+  if (tenths < 600) return `${(tenths / 10).toFixed(1)}s`;    // still under a minute AFTER rounding
+  const total = Math.round(tenths / 10);                      // whole seconds
+  return `${Math.floor(total / 60)}m ${total % 60}s`;
 }
-/** Token count → "18.4k" / "1.2M" / "312". */
-function fmtTok(n: number): string {
-  return n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n);
+/**
+ * Token count → "18.4k" / "1.2M" / "312".
+ *
+ * Same shape of defect: the unit was chosen from the raw value, so 999 999 picked "k" and then
+ * rounded to "1000.0k" instead of "1.0M". The unit is now chosen from the ROUNDED value.
+ */
+export function fmtTok(n: number): string {
+  // NaN first: it fails every comparison below, so it would fall through to the 'M' branch and print
+  // "NaNM". The old single-expression form happened to return "NaN"; keeping that is the smaller
+  // surprise for a caller that did not guard its own arithmetic.
+  if (!Number.isFinite(n)) return String(n);
+  if (n < 1e3) return String(n);
+  const k = Math.round(n / 100) / 10;
+  return k < 1000 ? `${k.toFixed(1)}k` : `${(Math.round(n / 1e5) / 10).toFixed(1)}M`;
 }
 
 function RunRow({ run, metricsById, active, onClick }: { run: RunSummary; metricsById: Map<string, MetricsRun>; active: boolean; onClick: () => void }) {
@@ -1219,8 +1251,10 @@ function ChatReplay({ runId, steps, canFork, onFork }: { runId: string; steps: n
   );
 }
 
-function fmtSpanMs(ms: number): string {
-  return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(2)}s`;
+/** The unit is picked from the ROUNDED value, so 999.6 is "1.00s", not "1000ms" — `fmtDur` above
+ *  uses the same guard, because TraceView formats one span's duration through both. */
+export function fmtSpanMs(ms: number): string {
+  return Math.round(ms) < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(2)}s`;
 }
 
 /**

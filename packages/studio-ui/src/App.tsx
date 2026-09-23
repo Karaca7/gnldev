@@ -13,6 +13,7 @@ import { CommandPalette, type CommandItem } from './ui';
 import { getToken, setToken, clearToken } from './auth';
 import { PageTransition } from './motion';
 import i18n, { getStoredLang, LANG_STORAGE_KEY, type SupportedLang } from './i18n';
+import { readLocal, writeLocal } from './storage';
 
 /** Brand: the whole "›GNL" mark inside ONE Ink card — a lime "›" caret + the Paper "GNL" wordmark,
     bordered + rounded, no gap or separate emblem that could drift apart. Fixed and identical
@@ -141,10 +142,10 @@ const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(n
 const KBD_HINT = IS_MAC ? 'Cmd K' : 'Ctrl K';
 
 function useTheme() {
-  const [dark, setDark] = useState(() => localStorage.getItem('gnl-theme') !== 'light');
+  const [dark, setDark] = useState(() => readLocal('gnl-theme') !== 'light');
   useEffect(() => {
     document.body.dataset.theme = dark ? 'dark' : 'light';
-    localStorage.setItem('gnl-theme', dark ? 'dark' : 'light');
+    writeLocal('gnl-theme', dark ? 'dark' : 'light');
   }, [dark]);
   return { dark, toggle: () => setDark((d) => !d) };
 }
@@ -157,7 +158,7 @@ function useLanguage() {
   const [lang, setLang] = useState<SupportedLang>(() => getStoredLang());
   useEffect(() => {
     document.documentElement.lang = lang;
-    localStorage.setItem(LANG_STORAGE_KEY, lang);
+    writeLocal(LANG_STORAGE_KEY, lang);
     if (i18n.language !== lang) void i18n.changeLanguage(lang);
   }, [lang, i18n]);
   return { lang, toggle: () => setLang((l) => (l === 'en' ? 'tr' : 'en')) };
