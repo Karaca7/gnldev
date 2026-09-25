@@ -57,9 +57,17 @@ describe('a multi-tenant MCP server over real HTTP', () => {
 
   it('five simultaneous refunds of one invoice produce ONE side effect', async () => {
     const r = await concurrentRefundChargesOnce(await boot());
+    // THE INVARIANT, not the split. An earlier version asserted `succeeded === 1` and
+    // `retryable === 4`, and that is a claim about TIMING: under a loaded machine the 25 ms tool can
+    // finish before some of the five requests reach the server, and those read the completed record
+    // instead of losing a race — dedup working, reported as four successes. It went red in a full-suite
+    // run at exactly that, which is the false-red the repository's vitest timeout note is about.
+    //
+    // What must hold on any machine: one side effect, somebody got the result, everyone got one answer
+    // or the other, and nothing escaped as an exception.
     expect(r.effects, 'at-most-once under concurrency').toBe(1);
-    expect(r.succeeded, 'exactly one caller gets the result').toBe(1);
-    expect(r.retryable, 'the other four are told to retry, by code').toBe(4);
+    expect(r.succeeded, 'somebody must receive the result').toBeGreaterThanOrEqual(1);
+    expect(r.succeeded + r.retryable, 'and every caller gets one answer or the other').toBe(5);
     expect(r.thrown, 'nothing may escape as a transport-level exception').toBe(0);
   }, 60_000);
 

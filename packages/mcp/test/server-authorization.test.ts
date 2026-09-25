@@ -506,9 +506,15 @@ describe('concurrent calls under one key', () => {
     const threw = results.filter((r: any) => r.threw);
     const structured = results.filter((r: any) => r.isError === true);
     const succeeded = results.filter((r: any) => r.charged === 500);
+    // The invariant, not the split: how many lose the race is a fact about TIMING (a loaded machine
+    // lets the tool finish before some calls arrive, and those read the completed record — dedup
+    // working, counted as a success). The example's copy of this assertion went red in a full-suite run
+    // at exactly that. What must hold anywhere: nothing thrown, somebody got the result, and every
+    // caller got one answer or the other.
     expect(threw, 'nothing may escape as a transport-level exception').toEqual([]);
-    expect(succeeded).toHaveLength(1);
-    expect(structured).toHaveLength(9);
+    expect(succeeded.length, 'somebody must receive the result').toBeGreaterThanOrEqual(1);
+    expect(succeeded.length + structured.length, 'and every caller gets one answer or the other').toBe(10);
+    expect(structured.length, 'at least one caller must have taken the retryable path').toBeGreaterThanOrEqual(1);
     const text = (structured[0] as any).content[0].text;
     expect(text, 'the code the rest of the suite already uses').toContain('[run_busy]');
     expect(text, 'and it must say retrying is how you collect the result').toContain('SAME idempotencyKey');
