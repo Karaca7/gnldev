@@ -54,3 +54,8 @@ audit-log.md
 # certificate is meant to be PASTED into config as `semantic.judge.qualification`, not committed as
 # a file — and a dirty tree after a CI-gate run is exactly what that gate should not produce.
 gnl-judge-cert.json
+
+# `project-comprehension`'s notes: the user's own sentences about this project, kept across sessions.
+# Local by design — they are working notes for one reader, not documentation for the repository, and the
+# public sync refuses to run while they sit untracked.
+.comprehension/
