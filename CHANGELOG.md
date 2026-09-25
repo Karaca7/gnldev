@@ -7,7 +7,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
+## [0.6.0] — 2026-09-25
+
+**A minor, and VERSIONING.md's own list decides it twice over.** `McpServer.listTools` is now async and
+takes the caller — an API that behaves differently in a way that requires you to edit code. And
+`gnl-studio --host <non-loopback>` no longer starts when the only configured credential is `admin-dev` or
+`viewer-dev` — a default changed in a way that alters what a running deployment does. Either one makes
+this a minor in 0.x.
+
+**Two migration notes, both short.**
+
+If you call `createMcpServer(...).listTools()` directly, `await` it. `serveMcp` does that for you, so a
+server that only wires the bridge needs no change.
+
+If you adopt `identity` on an MCP server, **its run ids change** — they are derived from
+`(tool, subject, workKey)` instead of taken from the request — so records already in a journal will not be
+found under the new ids. Drain in-flight work before switching, or keep the old server running until it is
+idle. Leaving `identity` out keeps the previous behaviour exactly.
+
+And if a project still carries the scaffolded `admin-dev`/`viewer-dev` token and serves off loopback:
+replace it (new scaffolds generate a random one per project) or pass `--allow-open-network`. The value was
+published in this project's own npm tarballs and is readable by anyone in the registry, which is why it no
+longer counts as auth.
 
 **One rule, written into one of the paths that needed it — twice over.** Both entries below are the
 same shape: a decision several surfaces depend on had been made inside one of them. The fix is the
