@@ -7,6 +7,236 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased]
+
+**One rule, written into one of the paths that needed it — twice over.** Both entries below are the
+same shape: a decision several surfaces depend on had been made inside one of them. The fix is the
+same shape too — move the rule to its owner, not patch the door.
+
+### Security
+
+- **`@gnldev/auth`, `@gnldev/studio`, `@gnldev/cli` — who may reach a surface that listens on a socket
+  is now ONE decision.** It was two: `studio/src/expose.ts` and `cli/src/bind.ts`, each the only caller
+  of its own copy, agreeing on the sentence that matters and disagreeing on four inputs. Run against
+  the same hosts, neither copy was simply the stricter one — **each left open a hole the other had
+  already closed**:
+
+  | host / credential | studio's copy | cli's copy |
+  |---|---|---|
+  | `LOCALHOST` | not loopback (refused) | loopback |
+  | `127.5.5.5` | loopback | not loopback (refused — but 127/8 *is* loopback) |
+  | `127.0.0.1.evil.com` | **loopback** | not loopback |
+  | `auth: { admin: { token: 'admin-dev' } }` on `--host 0.0.0.0` | **serves, prints "(auth: protected)"** | refuses |
+
+  The rule now lives in `@gnldev/auth`'s `decideExposure`. Two behaviour changes, both in the
+  direction of the measurement:
+
+  - **`gnl-studio --host <non-loopback>` no longer starts when the only configured credential is
+    `admin-dev` or `viewer-dev`** — values this project published in its own npm tarballs, readable
+    by anyone in the registry. It previously started and reported the surface as protected. Replace
+    the token (new scaffolds generate a random one per project) or pass `--allow-open-network`.
+  - **`gnl dev --host 127.x.y.z` now works.** The whole of 127.0.0.0/8 is loopback; the old fixed
+    list refused every address in it but `127.0.0.1`.
+
+  A hostname that merely *starts with* `127.` — `127.0.0.1.evil.com` resolves wherever its owner
+  points it — is no longer treated as local by either surface.
+
+  `@gnldev/cli` keeps a second implementation, because it ships with no hard runtime dependencies and
+  is built with plain `tsc`; resolving the rule from the project would make a security decision absent
+  whenever the package is not installed. The duplication is held shut by
+  `packages/cli/test/exposure-parity.test.ts`: one table of hosts and credentials, run through both,
+  failing on any divergence. One owner of the behaviour, two implementations of the code, stated
+  rather than buried.
+
+- **`@gnldev/mcp` — the server no longer lets the caller choose its own dedup key.** `callTool` used
+  `_meta.idempotencyKey` — a string chosen by the client — as the journal's run id. Measured on a
+  server built exactly as the README described, over the real SDK:
+
+  - A second caller sending the **same key with different arguments** received the first caller's
+    result (`{customer:'acme-ltd', iban:'TR44 **** 9021'}`); the tool ran **once**. Cross-tenant
+    disclosure, needing nothing more than a reused string.
+  - A caller who claimed `order-2026-0042` with `amount: 1` **suppressed the real work** sent under
+    it: the `18500` charge returned `{"charged":1}` and never ran, and its caller was told it had
+    succeeded.
+  - `purgeResource('user-ayse')` deleted **0 rows and left 2 behind** — nothing recorded whose call
+    it was, so a deletion request could not find it.
+
+  `createMcpServer` now takes **`identity(caller)`**, resolved from what the transport authenticated
+  (`caller.authInfo`, `caller.sessionId` — both forwarded by `serveMcp`, whose handler took one
+  parameter where the SDK passes two, so neither had ever arrived). The run id is **derived** from
+  `(tool, subject, workKey)` through the same `resolveWorkIdentity` the HTTP surfaces use, and the
+  run's owner is recorded with `claimIdentityInput`. This is `@gnldev/durable`'s own rule, which it
+  states on `workScope`: a per-call override "would put the dangerous half within reach of a request
+  body". This door had handed the request body the whole identity.
+
+  **Not a breaking change.** Leaving `identity` out keeps the previous behaviour exactly, and warns
+  once when a journal-backed call arrives without it. On a stdio transport the previous behaviour is
+  the correct one — the client spawned the process — and the warning says so.
+
+  **If you adopt `identity`, run ids change.** They are derived rather than taken from the request, so
+  records already in a journal will not be found under the new ids. Same class as 0.5.0's runId entry:
+  drain in-flight work before switching, or keep the old server running until it is idle.
+
+- **`@gnldev/mcp` — `workKey(req)`, for clients that send no key.** A third-party MCP client does not
+  send `_meta.idempotencyKey`; this package's own client does. Measured: three identical `tools/call`
+  requests with no `_meta` ran the tool **three times**, and `idempotency: 'args'` on the tool did not
+  help — with no key there is no journal record for the declaration to apply to. Nothing is invented
+  for those calls, because collapsing identical arguments also collapses a legitimate second purchase
+  of the same amount; `workKey` is where a deployment decides, e.g.
+  `workKey: (req) => argsHash({ name: req.name, args: req.arguments })`.
+
+  An earlier version of this change *refused* a call that named no work. Measured against a real SDK
+  `Client`, that rejected three ordinary requests and ran the tool 0 times — a server that refuses the
+  clients it exists to serve. It now runs them, undeduped, and says so once.
+
+- **`@gnldev/mcp` — `allowTool`, on both doors.** Identity says who is calling; it says nothing about
+  what they may call. A reporting integration that only needs to read could invoke a delete, and was
+  handed the name and argument schema of every exposed tool either way. `allowTool({ name, caller,
+  identity })` is consulted for `tools/list` **and** `tools/call`, from one function, because a rule
+  written for one door is how this package has been wrong twice: a tool a caller may not run is a tool
+  it does not see. `serveMcp`'s list handler now receives the SDK's `extra` too — it took none, which is
+  why a filtered list was not possible before.
+
+  Left out → every exposed tool stays reachable by every caller, and a warning says so once.
+
+- **`@gnldev/mcp` — a refused tool call is indistinguishable from a tool that does not exist.** Found by
+  a sibling scenario, then reproduced: with `allowTool: () => false`, `tools/list` returned `[]` while the
+  call door answered `{isError, "Not permitted: 'delete_account'"}` for a real tool and **threw** `no such
+  tool` for an invented one. Two axes leaked — the message text, and structured error versus exception —
+  so a caller shown nothing could still enumerate the entire namespace by trying names. Filtering the list
+  is a claim that the caller does not see these tools; a call door that confirms them makes the claim
+  false. Both cases now throw the same `no such tool`. The trade is a misleading message while debugging:
+  the place to answer that is your own `allowTool`, which already knows the reason and can log it without
+  sending it to the caller being refused.
+
+  Permission is also checked **before** argument validation, so a refused caller cannot map a tool's
+  schema by reading which field the server complained about.
+
+- **`@gnldev/mcp` — a blocked run is reported the way the REST host already reports it.** Concurrent calls
+  under one key are the NORMAL case on this door (a double-click, a client retrying on timeout, two
+  workers draining one queue), unlike inside `runDurable` where a run is sequential. The guarantee handled
+  them correctly all along — measured, 10 parallel calls to a 20 ms tool under one key ran the side effect
+  **exactly once** — but nine of the ten callers received a raw `RunBusyError` thrown through the protocol,
+  which reads as "your call failed" for work that had in fact succeeded. That is the ambiguity this package
+  exists to remove, reintroduced one layer up.
+
+  `blockedErrorCode` is (its own words) the ONE source of truth for these names, and `@gnldev/server` maps
+  `run_busy` to 409 with `resumable: true`. This door was the surface not using it. Those nine now receive a
+  structured `[run_busy] … — retry the SAME call with the SAME idempotencyKey … It has NOT been run twice`,
+  and a test asserts that the advice works: the retry returns the first call's result without charging again.
+  `retry_limit_exceeded` is excluded from the retry advice, exactly as the REST host excludes it from
+  `resumable`.
+
+- **`@gnldev/mcp` — the rate limiter's window table is swept.** It only ever REPLACED a row, and only
+  when the same subject came back, so a subject that never returned kept its row forever. Measured with
+  the journal excluded: 20,000 distinct subjects cost 2.09 MB (~104 bytes each) and letting every window
+  expire freed none of it — extrapolated, a million distinct subjects is ~104 MB never released. Per-tenant
+  subjects are a few thousand rows; per-PERSON subjects, which is what `scopeKind: 'resource'` means in
+  most deployments, are as many rows as there are people. Only EXPIRED rows are dropped, and the sweep is
+  amortised (it runs on the call that crosses 1024 entries). Evicting a live window would hand the caller
+  a fresh allowance, so that is the half with a test and a mutation behind it.
+
+  **What is NOT tested, stated rather than implied:** that the sweep reclaims memory. A heap assertion was
+  written and reverted — it passed with the sweep deleted, and failed on the way back — and a ten-batch
+  soak protocol was then tried and could not distinguish the two either: 5,000 rows at ~104 bytes is half a
+  megabyte inside a batch that allocates four times that just making the calls. The leak is a recorded
+  one-off measurement, not a regression test. The sweep is safe regardless, because deleting an expired row
+  changes no behaviour.
+
+  **A hypothesis that was measured and turned out WRONG, recorded because it was load-bearing:** the
+  limiter was expected to race under concurrency, since `withinRate` sits behind two `await`s. It does
+  not — 30 parallel calls against `maxCalls: 5` ran exactly 5. The counter's read-modify-write is
+  synchronous in one tick, so there is nothing to interleave.
+
+  **The multi-process limitation now has an exercised way out rather than a note.** `rateLimit` always
+  accepted a function, and "pass a function" was the whole of the guidance — an escape hatch nobody had
+  used is a claim. `test/shared-rate-limit.test.ts` runs the recipe across two servers on one journal,
+  against a baseline that reproduces the defect: the built-in counter let **each** instance allow its own
+  quota (6 calls for a limit of 3), and the shared counter allowed 3 in total — the first 3, with each
+  subject keeping its own bucket. It uses `journal.incrBy`, atomic on every shipped storage and already
+  the primitive `@gnldev/durable`'s budget accounting relies on, so nothing was added to this package for
+  it. The README carries the recipe.
+
+- **`@gnldev/mcp` — the gates do not damage each other**, pinned by tests after a standalone smoke test
+  against the built `dist` pointed at the interaction. A rate-limited call journals **nothing**, so the
+  retry after the window is not told the work was already done (the poisoned-claim version of this would
+  lose a side effect silently). A permission refusal does **not** spend the caller's rate budget, so
+  probing for tools it may not call cannot exhaust the allowance it needs for its own work.
+
+- **`@gnldev/mcp` — measured over a real HTTP transport, not only in memory.** Every previous test in this
+  package used `InMemoryTransport`, which authenticates nobody: `extra.authInfo` arrives empty there, so
+  those tests proved the wiring and nothing about the deployment where a second caller exists.
+  `test/http-transport.test.ts` runs a real `node:http` server, sets `req.auth` in middleware the way the
+  SDK expects, and connects a real `Client` over `StreamableHTTPClientTransport` with a Bearer token.
+  Verified end to end: the validated `clientId` reaches `identity`; `tools/list` is filtered by the
+  token's scopes; a tool the token does not name is refused indistinguishably; the tool refuses another
+  tenant's object; the same key from two different tokens does not share a record; the same token twice
+  under one key runs once; and `purgeResource` finds the run. Removing the middleware's `req.auth` turns
+  6 of those 8 red, and so does making `serveMcp` drop the SDK's `extra` — the test measures the HTTP
+  path, not a fallback.
+
+  **Cost, measured** (10 runs, median of 20 calls): this package's own overhead is **0.08 ms per call**.
+  `identity` resolves **once per request, including `tools/list`** — with a 2 ms lookup that is 2.89 ms
+  per call. A tenant claim inside the token keeps `identity` a pure read.
+
+- **`@gnldev/mcp` — `tools` may be a function of the sealed caller context.** This is the one that
+  matters most, and the one identity alone could not fix. Measured on 0.5.0: `execute` received
+  `{toolCallId, idempotencyKey, parentRunId, gnlApprovals}` and **no caller at all**, so
+  `refund({ orderId })` had nothing to compare the order against — the resolved identity stopped at the
+  dedup key and never reached the business logic. `tools: (ctx) => ({...})` is the SAME mechanism
+  `@gnldev/durable` already gives agents (`DynamicArg<ToolSet>`), sealed by the same
+  `sealRequestContext`: the reserved keys are stripped from anything the caller supplied and rewritten
+  from what `identity` resolved, so a request body cannot name its own subject (measured — arguments
+  spelling `__gnl_resourceId`, `resourceId` and `org` all failed to move it).
+
+  Only the tool can answer "is this object theirs", and this is what makes that answer possible. The
+  key stays writable, deliberately — `sealRequestContext`'s own note requires that nothing downstream
+  can tell the difference — so the seal defends against the request, not against the tool's own code.
+
+- **`@gnldev/mcp` — `rateLimit`.** Identity and permission both pass for a caller that simply calls too
+  much: measured, 10,000 `charge` calls under 10,000 different work keys all ran, every one legitimate
+  by identity and permission, and nothing counted. `{ maxCalls, windowMs }` counts per caller **in one
+  process** — stated rather than hidden: two instances behind a load balancer each allow `maxCalls`. A
+  deployment that needs a shared count passes a function. Listing is not counted; only running is.
+
+### Changed
+
+- **BREAKING (`@gnldev/mcp`): `McpServer.listTools` is async and takes the caller** —
+  `listTools(req?: { caller? }): Promise<{ tools }>`. Both follow from the two entries above: a list
+  filtered per caller cannot be computed without knowing who asks, and neither hook can be synchronous
+  if the answer comes from a store. `await` it. A server with a static tool set and no hooks returns the
+  same list it always did. The only caller inside this repo was one test line.
+
+### Added
+
+- **`examples/mcp-server` — a multi-tenant MCP server over real HTTP, runnable and asserted.** The five
+  questions a tool call has to answer, each shown at the layer that owns it: ① your middleware validates
+  the token, ② `identity` resolves the caller from it, ③ `allowTool` filters `tools/list` and `tools/call`,
+  ④ the tool closes over the sealed caller and refuses another tenant's invoice, ⑤ `rateLimit` bounds one
+  caller's share. `pnpm demo` prints what each caller actually got; `test/mcp-server.test.ts` asserts the
+  SAME functions, so the table and the suite cannot drift apart (the `examples/incident-proofs`
+  arrangement, for the same reason).
+
+  It also carries the session-lifecycle finding that produced it: `client.close()` does **not** end a
+  server-side MCP session (measured, 1 → 1); only `terminateSession()` does (2 → 1). A close hook is
+  therefore necessary and not sufficient, because a client that crashes sends neither — so the example
+  sweeps idle sessions as well. A `transport.onclose` handler was written, mutation-tested, and
+  **removed**: deleting it broke no test, deleting `onsessionclosed` instead broke none either, and only
+  removing both broke one. Every line left in the example fails a test when deleted.
+
+- **`@gnldev/durable` exports `claimIdentityInput`.** Its own note names three doors that skip
+  `persistInput` and predicts a fourth being added by copying the `claim(...)` unstamped. `@gnldev/mcp`
+  is that fourth door, and it is in a different package, so the helper had to be reachable.
+
+### Changed
+
+- `gnl studio`'s and `gnl dev`'s boot banners read one answer. `gnl dev` printed
+  `(auth: shipped dev token — treat as OPEN)` and, two lines below,
+  `reachable from the network … (auth: protected)` for the same process; `gnl studio` printed
+  `(auth: protected)` for a shipped token outright. Both now read the effective decision.
+
+---
+
 ## [0.5.0] — 2026-09-24
 
 **A minor, and the reason is in VERSIONING.md's own list.** Three entries tighten validation so an

@@ -164,7 +164,7 @@ bağlı değil. Aşağıdaki tablo doğrudan kullandığınız paketleri kapsar.
 | **`@gnldev/workflow`** | then/parallel/branch · foreach/loop · **`retry` (bildirimsel retry-policy, sayaç journal'da)** · `wf.runResumable()` (top-level export değil, `Workflow` **metodu**) + `sleep`/`waitFor` (evented/scheduled) |
 | **`@gnldev/processors`** | piiRedactor · moderationProcessor · toolFilter · **`toolSearch` (semantik tool seçimi, journal'lı)** · tokenLimit · promptInjectionDetector · outputLimit |
 | **`@gnldev/evals`** | **16 hazır scorer** — 8 LLM-hakem (faithfulness/hallucination/…), 4 modelsiz metin scorer'ı, 3 kural-tabanlı scorer (exactMatch/contains/regexScore) + embeddingSimilarity (embedding fonksiyonunu siz verirsiniz) · llmJudge · `scoreRun` · `evalDataset` (resumable) · **`createDatasetsManager`** (versiyon geçmişi + deney `compare`) |
-| **`@gnldev/mcp`** | MCP client (`mcpTools`) **+ server** (`createMcpServer`, sunucu tarafında journal dedup) |
+| **`@gnldev/mcp`** | MCP client (`mcpTools`) **+ server** (`createMcpServer`, taşımanın doğruladığı çağırana göre anahtarlanan sunucu-tarafı journal dedup) |
 | **`@gnldev/server`** | `createRestApi` + OpenAPI · **fail-closed auth** (production'da provider yoksa kurulum hata verir; bilinçli açık erişim `allowOpenAccess: true`) · **409/422 resumable sözleşmesi** (blok/limit hataları `BLOCKED_ERROR_CODES` tek kaynağından `resumable`/`retry` ayrımıyla döner) |
 | **`@gnldev/otel`** | `exportRunToOtlp` + **`otlpPresets`** (Langfuse/Braintrust/Honeycomb/Datadog/Collector + jenerik API-key OTLP) · **canlı mod** (`@gnldev/otel/live`) |
 | **`@gnldev/queue`** | durable job queue + worker · **heartbeat'li lock renew** (uzun handler'larda takeover'ı önler) + opt-in boş-poll backoff |
@@ -203,6 +203,7 @@ satın aldığınız fark bu.
 - **`showcase`** — paketleri kendi kendini doğrulayan tek dosya: `pnpm --filter @gnldev/showcase demo` → 22 bölüm 22/22 ✓ (mock model, API key gerekmez) · `bench` (overhead ölçer)
 - **`app`** — **Durable AI Support Desk** (web UI + API): `pnpm --filter @gnldev/app start` → :3100 (UI) + :3100/studio (ops). Ticket→mesaj→onay→at-most-once iade + queue/events/otel.
 - **`react-client`** — `@gnldev/client/react` demosu (`useChat` + streaming + onay), API key'siz echo backend. `pnpm --filter @gnldev/react-client-example server` + `… dev`.
+- **`mcp-server`** — gerçek HTTP üzerinden çok-müşterili MCP sunucusu: kim çağırıyor, neyi çağırabilir, nesne kimin, ne sıklıkta — her biri kendi katmanında ve anlatılmak yerine test edilmiş. `pnpm --filter @gnldev/mcp-server-example demo`.
 
 ## Tedarik zinciri hijyeni
 Kurduğun bir bağımlılık, makinende ve derlemende kod çalıştırır. GNL'in bu repoda bugün
@@ -334,6 +335,8 @@ fonksiyon aldığı için, fan-out içindeki ajan aynı yardımcıyı yeniden ku
   yeniden üretimi ve bu çerçevenin her birinde ne yaptığı.
 - **[examples/stripe-idempotency](./examples/stripe-idempotency)** — sahte Stripe'a karşı
   sağlayıcı-taraflı idempotency: journal'dan sağlayıcıya taşınan aynı anahtar.
+- **[examples/mcp-server](./examples/mcp-server)** — gerçek HTTP üzerinden çok-müşterili MCP sunucusu:
+  beş sorunun her biri onu sahiplenen katmanda, ve her biri iddia değil ölçüm.
 - **[examples/showcase](./examples/showcase)** — API anahtarı gerektirmeden paketleri uçtan uca
   koşturan, kendini doğrulayan tek dosya: `pnpm --filter @gnldev/showcase demo`.
 - **[CHANGELOG.md](./CHANGELOG.md)** — ne değişti; uyumu bozan her şey için geçiş notlarıyla birlikte.

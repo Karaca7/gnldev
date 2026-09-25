@@ -165,7 +165,7 @@ on either. The table below covers the ones you interact with directly.
 | **`@gnldev/workflow`** | then/parallel/branch · foreach/loop · **`retry` (declarative retry policy, counter kept in the journal)** · `wf.runResumable()` (a `Workflow` **method**, not a top-level export) + `sleep`/`waitFor` (evented/scheduled) |
 | **`@gnldev/processors`** | piiRedactor · moderationProcessor · toolFilter · **`toolSearch` (semantic tool selection, journaled)** · tokenLimit · promptInjectionDetector · outputLimit |
 | **`@gnldev/evals`** | **16 built-in scorers** — 8 LLM-judge (faithfulness/hallucination/…), 4 model-free text, 3 rule-based (exactMatch/contains/regexScore) + embeddingSimilarity, which takes an embedding function you supply · llmJudge · `scoreRun` · `evalDataset` (resumable) · **`createDatasetsManager`** (version history + experiment `compare`) |
-| **`@gnldev/mcp`** | MCP client (`mcpTools`) **+ server** (`createMcpServer`, server-side journal dedup) |
+| **`@gnldev/mcp`** | MCP client (`mcpTools`) **+ server** (`createMcpServer`, server-side journal dedup keyed by the caller the transport authenticated) |
 | **`@gnldev/server`** | `createRestApi` + OpenAPI · **fail-closed auth** (setup errors out in production if no provider is configured; opt in explicitly with `allowOpenAccess: true`) · **409/422 resumable contract** (blocked/limit errors return `resumable`/`retry` from a single `BLOCKED_ERROR_CODES` source of truth) |
 | **`@gnldev/otel`** | `exportRunToOtlp` + **`otlpPresets`** (Langfuse/Braintrust/Honeycomb/Datadog/Collector + generic API-key OTLP) · **live mode** (`@gnldev/otel/live`) |
 | **`@gnldev/queue`** | durable job queue + worker · **lock renewal via heartbeat** (prevents takeover during long-running handlers) + opt-in empty-poll backoff |
@@ -343,6 +343,9 @@ than a `Step`, so an agent inside a fan-out is invoked inline instead of reusing
   incidents, and what this framework does differently in each.
 - **[examples/stripe-idempotency](./examples/stripe-idempotency)** — provider-side idempotency against
   a mock Stripe: the same key carried from the journal to the provider.
+- **[examples/mcp-server](./examples/mcp-server)** — a multi-tenant MCP server over real HTTP: who is
+  calling, what they may call, whose object it is, and how often — each at the layer that owns it, and
+  each asserted rather than described.
 - **[examples/showcase](./examples/showcase)** — one self-verifying file that exercises the packages
   end to end with no API key: `pnpm --filter @gnldev/showcase demo`.
 - **[CHANGELOG.md](./CHANGELOG.md)** — what changed, with the migration notes for anything that breaks.
