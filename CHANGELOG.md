@@ -157,12 +157,16 @@ same shape too — move the rule to its owner, not patch the door.
   amortised (it runs on the call that crosses 1024 entries). Evicting a live window would hand the caller
   a fresh allowance, so that is the half with a test and a mutation behind it.
 
-  **What is NOT tested, stated rather than implied:** that the sweep reclaims memory. A heap assertion was
-  written and reverted — it passed with the sweep deleted, and failed on the way back — and a ten-batch
-  soak protocol was then tried and could not distinguish the two either: 5,000 rows at ~104 bytes is half a
-  megabyte inside a batch that allocates four times that just making the calls. The leak is a recorded
-  one-off measurement, not a regression test. The sweep is safe regardless, because deleting an expired row
-  changes no behaviour.
+  **Both halves are now tested, and the second one needed the code moved.** That the sweep keeps the table
+  bounded has no observable behaviour behind it — an expired row and an absent row are indistinguishable,
+  which is why dropping expired rows is safe in the first place. Two attempts to measure it from outside
+  failed: a heap assertion PASSED with the sweep deleted (so it caught nothing) and then failed on the way
+  back, and a ten-batch soak protocol could not tell the two series apart either — 5,000 rows at ~104 bytes
+  is half a megabyte inside a batch that allocates four times that just making the calls. Both measured
+  heap when the question is how many rows the table holds. So the table became its own module,
+  `src/rate-window.ts` (internal, not exported from the package index), and `test/rate-window.test.ts`
+  asserts `size()` directly: 30,000 one-shot subjects leave under 1,025 rows. Five mutations were checked
+  and each turns tests red, including the one nothing could reach before — deleting the sweep call.
 
   **A hypothesis that was measured and turned out WRONG, recorded because it was load-bearing:** the
   limiter was expected to race under concurrency, since `withinRate` sits behind two `await`s. It does

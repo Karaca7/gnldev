@@ -26,6 +26,7 @@
 import { durableTool, resolveWorkIdentity, claimIdentityInput, sealRequestContext, blockedErrorCode } from '@gnldev/durable';
 import type { Journal, WorkScope, RequestContext } from '@gnldev/durable';
 import type { McpToolDef } from './index.js';
+import { createRateWindow, type RateWindow } from './rate-window.js';
 
 export interface McpServerToolDef {
   description?: string;
@@ -369,40 +370,19 @@ export function createMcpServer(opts: McpServerOptions): McpServer {
   // stated rather than papered over. Keyed by the resolved subject when there is one; a server with no
   // `identity` has one bucket for everybody, which is the honest reading of "we cannot tell callers
   // apart".
-  const windows = new Map<string, { count: number; resetAt: number }>();
-  /**
-   * Expired entries are dropped when the map gets large, because otherwise it never shrinks.
-   *
-   * An entry was only ever REPLACED, and only when the same subject called again — so a subject that
-   * never returns kept its row forever. Measured, journal excluded: 20,000 distinct subjects added
-   * 2.09 MB (~104 bytes each) and letting every window expire freed none of it; extrapolated, a million
-   * distinct subjects is ~104 MB that is never released. Whether that matters is a question of
-   * cardinality, and the dangerous case is the ordinary one: `resourceId` per PERSON rather than per
-   * tenant, which is what @gnldev/durable's default `scopeKind: 'resource'` means in most deployments.
-   *
-   * Only EXPIRED rows are removed. Evicting a live window would be worse than the leak: it hands the
-   * caller a fresh allowance, which is the limit not holding. The threshold keeps the sweep amortised —
-   * it runs on the call that crosses it, not on every call.
-   */
-  const RATE_SWEEP_AT = 1024;
-  function sweepWindows(now: number): void {
-    for (const [k, w] of windows) if (now >= w.resetAt) windows.delete(k);
-  }
+  // The window table is its own module so that `size()` can be asserted — the half of the sweep that
+  // no behaviour distinguishes. See rate-window.ts for the two measurement attempts that failed first.
+  // Built lazily and only for the object form: a `rateLimit` function keeps its own count.
+  let windows: RateWindow | undefined;
   async function withinRate(info: McpToolRequestInfo): Promise<boolean> {
     const rl = opts.rateLimit;
     if (!rl) return true;
     if (typeof rl === 'function') return (await rl(info)) === true;
-    const key = info.identity.resourceId ?? info.identity.orgId ?? '__anonymous';
-    const now = Date.now();
-    if (windows.size >= RATE_SWEEP_AT) sweepWindows(now);
-    const w = windows.get(key);
-    if (!w || now >= w.resetAt) {
-      windows.set(key, { count: 1, resetAt: now + rl.windowMs });
-      return true;
-    }
-    if (w.count >= rl.maxCalls) return false;
-    w.count += 1;
-    return true;
+    windows ??= createRateWindow(rl);
+    // The subject, not the connection: a rate limit without one punishes whichever caller happens to
+    // arrive after a noisy neighbour. A server with no `identity` has one bucket for everybody, which is
+    // the honest reading of "we cannot tell callers apart".
+    return windows.bump(info.identity.resourceId ?? info.identity.orgId ?? '__anonymous');
   }
 
   return {

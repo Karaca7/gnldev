@@ -446,28 +446,18 @@ describe('the rate limiter does not grow without bound', () => {
     }
   });
 
-  // NOT TESTED, and not pretended otherwise: that the sweep actually reclaims memory.
+  // THE OTHER HALF IS TESTED AT ITS OWNER, and getting there took moving the code.
   //
-  // A heap assertion was written here and removed for failing both directions of the mutation check.
-  // With the sweep deleted it still PASSED (so it caught nothing), and on the way back it FAILED at
-  // 16.3 MB for 30,000 one-shot subjects — the reading is dominated by the calls themselves and by GC
-  // timing, not by a table worth ~104 bytes a row. A test that cannot tell the fix from its absence is
-  // worse than no test, because it reads like coverage.
+  // That the sweep keeps the table BOUNDED has no observable behaviour behind it — an expired row and an
+  // absent row are indistinguishable, which is exactly why dropping expired rows is safe. Two attempts to
+  // measure it from outside failed and are recorded in rate-window.ts: a heap assertion that PASSED with
+  // the sweep deleted, and a ten-batch soak protocol whose two series could not be told apart. Both were
+  // measuring heap when the question is how many rows the table holds.
   //
-  // A SOAK PROTOCOL WAS TRIED TOO, and it failed the same way — recorded so nobody repeats it. Ten equal
-  // batches of 5,000 one-shot subjects on a 1 ms window, heap sampled after each, growth compared between
-  // the first three batches and the last three, run twice: once with the sweep and once with it mutated
-  // out. The two series are indistinguishable (~2-3 MB per batch either way, with GC dropping 13 MB at
-  // arbitrary points), because 5,000 rows at ~104 bytes is half a megabyte inside a batch that allocates
-  // four times that just making the calls.
-  //
-  // So the leak IS measured, once, in isolation (journal excluded, one before/after pair): 20,000 distinct
-  // subjects cost 2.09 MB and expiring every window freed none of it. That number is in `sweepWindows`'s
-  // note. It is not a regression test, and pretending otherwise with a heap threshold was tried and
-  // reverted. The half that could go WRONG — evicting a live window — is tested above, and a mutation
-  // confirms it; the sweep is safe whether or not the saving is large, because deleting an expired row
-  // changes no behaviour.
-
+  // So the table became its own module (`src/rate-window.ts`, not exported from the package index) and
+  // `test/rate-window.test.ts` asserts `size()` directly. Removing the sweep now turns a test red, which
+  // is what nothing here could do. The half covered ABOVE, through the server, is the one that can go
+  // wrong: a live window evicted hands the caller a fresh allowance.
 });
 
 // ── concurrency: the guarantee holds, and the caller is told the truth about it ────────────────────
