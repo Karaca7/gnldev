@@ -316,24 +316,6 @@ function embeddedExamples() {
   return out;
 }
 
-const cases = [];
-for (const file of docFiles()) {
-  const rel = relative(ROOT, file);
-  blocks(readFileSync(file, 'utf8')).forEach((b, n) => {
-    const name = `${rel.replace(/[^a-z0-9]/gi, '_')}__${n}.${b.lang === 'tsx' ? 'tsx' : 'ts'}`;
-    // `export {}` keeps each block a module, so `const` in two blocks cannot collide.
-    //
-    // `prompt` is declared HERE rather than in _globals.d.ts because lib.dom also declares it — as a
-    // function — and a global ambient cannot outrank another global. A module-scope declaration can.
-    // This went unnoticed while the framework entry points were `any`: nothing looked closely enough
-    // at what was passed to them to care that `prompt` was a function.
-    const prefix = 'export {};\ndeclare const prompt: string;\n';
-    writeFileSync(join(OUT, name), `${prefix}${b.code}\n`);
-    // Counted, not derived: a wrong offset points the reader at the wrong line, which is worse than
-    // pointing at none.
-    cases.push({ name, rel, line: b.line, prefixLines: prefix.split('\n').length - 1 });
-  });
-}
 /**
  * Package names this repository actually contains. A sample importing something that is not here
  * cannot be typechecked here, and that is a fact about the checkout rather than a defect in the sample.
@@ -371,6 +353,33 @@ function missingOwnImport(code) {
   return undefined;
 }
 
+const cases = [];
+for (const file of docFiles()) {
+  const rel = relative(ROOT, file);
+  blocks(readFileSync(file, 'utf8')).forEach((b, n) => {
+    // The absent-package rule applies HERE TOO, and for a while it did not.
+    //
+    // It was written for the docs-mcp examples above and called from that loop only, so a MARKDOWN block
+    // importing an absent first-party package still failed. @gnldev/mcp's README gained a sample using
+    // `@gnldev/auth-ee`'s FGA — correct in the private monorepo, TS2307 in the public snapshot — and
+    // check:docs went red on the public tree with the v0.6.0 tag already pushed, which is the exact
+    // failure this rule's own note describes for v0.1.0. One rule, two loops, called from one.
+    const absent = missingOwnImport(b.code);
+    if (absent) { skippedForAbsentPackage.push(`${rel}:${b.line} — imports ${absent}`); return; }
+    const name = `${rel.replace(/[^a-z0-9]/gi, '_')}__${n}.${b.lang === 'tsx' ? 'tsx' : 'ts'}`;
+    // `export {}` keeps each block a module, so `const` in two blocks cannot collide.
+    //
+    // `prompt` is declared HERE rather than in _globals.d.ts because lib.dom also declares it — as a
+    // function — and a global ambient cannot outrank another global. A module-scope declaration can.
+    // This went unnoticed while the framework entry points were `any`: nothing looked closely enough
+    // at what was passed to them to care that `prompt` was a function.
+    const prefix = 'export {};\ndeclare const prompt: string;\n';
+    writeFileSync(join(OUT, name), `${prefix}${b.code}\n`);
+    // Counted, not derived: a wrong offset points the reader at the wrong line, which is worse than
+    // pointing at none.
+    cases.push({ name, rel, line: b.line, prefixLines: prefix.split('\n').length - 1 });
+  });
+}
 for (const ex of embeddedExamples()) {
   const absent = missingOwnImport(ex.code);
   if (absent) { skippedForAbsentPackage.push(`packages/docs-mcp/src/content.ts (${ex.slug}) — imports ${absent}`); continue; }
