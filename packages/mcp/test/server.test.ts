@@ -10,7 +10,7 @@ describe('@gnldev/mcp createMcpServer', () => {
         echo: { description: 'echo', inputSchema: { type: 'object', properties: { msg: { type: 'string' } } }, execute: async ({ msg }: any) => `echo:${msg}` },
       },
     });
-    expect(server.listTools().tools[0]).toMatchObject({ name: 'echo', description: 'echo' });
+    expect((await server.listTools()).tools[0]).toMatchObject({ name: 'echo', description: 'echo' });
     expect(await server.callTool({ name: 'echo', arguments: { msg: 'hi' } })).toBe('echo:hi');
   });
 
