@@ -150,7 +150,26 @@ export {};`;
  *  NodeNext, which is why an earlier version of this script reported every external import missing. */
 function externalPaths() {
   const wanted = ['ai', 'zod', 'hono', '@hono/node-server', '@ai-sdk/openai', '@ai-sdk/anthropic', '@ai-sdk/provider'];
+  /** Modules a doc block imports by SUBPATH, which the type-entry mapping above cannot express. The MCP
+   *  SDK is the case: `@modelcontextprotocol/sdk/server/streamableHttp.js` is what a reader writes, and
+   *  a `paths` entry for the bare name does not cover it. Mapped as a wildcard onto the built .d.ts
+   *  layout instead. Without this the HTTP sample in @gnldev/mcp's README could only be excluded, and an
+   *  excluded sample is the one that drifts. */
+  const wantedSubpaths = ['@modelcontextprotocol/sdk'];
   const out = [];
+  for (const m of wantedSubpaths) {
+    for (const p of readdirSync(join(ROOT, 'packages'))) {
+      const dir = join(ROOT, 'packages', p, 'node_modules', m);
+      if (!existsSync(join(dir, 'package.json'))) continue;
+      // The tarball ships dist/esm and dist/cjs; the .d.ts files live beside the .js in both.
+      const esm = join(dir, 'dist', 'esm');
+      const base = existsSync(esm) ? esm : join(dir, 'dist', 'cjs');
+      const rel = relative(OUT, base).replace(/\\/g, '/');
+      out.push([`${m}/*.js`, [`${rel}/*.d.ts`]]);
+      out.push([`${m}/*`, [`${rel}/*`]]);
+      break;
+    }
+  }
   for (const m of wanted) {
     for (const p of readdirSync(join(ROOT, 'packages'))) {
       const dir = join(ROOT, 'packages', p, 'node_modules', m);

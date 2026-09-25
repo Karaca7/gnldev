@@ -1,0 +1,20 @@
+{
+  "name": "@gnldev/mcp-server-example",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "description": "A multi-tenant MCP server over real HTTP: who is calling, what they may call, whose object it is, and how often — each measured rather than described.",
+  "scripts": {
+    "demo": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@gnldev/durable": "workspace:*",
+    "@gnldev/mcp": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.29.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0"
+  }
+}
