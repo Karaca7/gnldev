@@ -11,11 +11,11 @@
 //     assigned `loopback`, so off-loopback it merely passed `false` to a gate that throws only under
 //     NODE_ENV=production.
 import { describe, it, expect } from 'vitest';
-import { decideExposure, isLoopbackHost, resolveConfigAuth } from '../src/expose.js';
+import { decideStudioExposure, isLoopbackHost, resolveConfigAuth, configCredentialTokens } from '../src/expose.js';
 import { roleAuth } from '@gnldev/auth';
 
 const on = (host: string, authed: boolean, allowOpenNetwork = false) =>
-  decideExposure({ host, authed, allowOpenNetwork });
+  decideStudioExposure({ host, authed, allowOpenNetwork });
 
 describe('studio exposure decision', () => {
   it('refuses a network host with no auth — the combination that is unsafe by construction', () => {
@@ -113,7 +113,54 @@ describe('resolveConfigAuth', () => {
     for (const empty of [undefined, null, {}, { admin: undefined, viewer: undefined }, 'nonsense', 42]) {
       expect(resolveConfigAuth(empty as never), JSON.stringify(empty)).toBeUndefined();
     }
-    expect(decideExposure({ host: '0.0.0.0', authed: Boolean(resolveConfigAuth({})), allowOpenNetwork: false }).refusal)
+    expect(decideStudioExposure({ host: '0.0.0.0', authed: Boolean(resolveConfigAuth({})), allowOpenNetwork: false }).refusal)
       .toBeDefined();
+  });
+});
+
+// ── the hole this file used to own ───────────────────────────────────────────────────────────────
+// The decision now lives in @gnldev/auth (see exposure.ts), and the reason it moved is here: this
+// copy did not know that `admin-dev` was published in this project's own npm tarball, so
+// `gnl-studio --config gnl.config.ts --host 0.0.0.0` on a freshly scaffolded project served an
+// unauthenticated ADMIN panel to the network and printed "(auth: protected)" above it.
+describe('a published dev credential is not auth at the Studio surface either', () => {
+  it('refuses a network host whose only credential is one this project shipped', () => {
+    const cfgAuth = { admin: { token: 'admin-dev' } };
+    const d = decideStudioExposure({
+      host: '0.0.0.0',
+      authed: Boolean(resolveConfigAuth(cfgAuth)),
+      allowOpenNetwork: false,
+      credentialTokens: configCredentialTokens(cfgAuth),
+    });
+    expect(d.refusal, 'admin-dev is readable in the registry — it protects nothing').toBeDefined();
+    expect(d.refusal).toContain('npm tarball');
+    expect(d.authModeLabel).toBe('shipped dev token — treat as OPEN');
+  });
+
+  it('a generated token on the same config is auth', () => {
+    const cfgAuth = { admin: { token: 'gnl-9f2c41ab' } };
+    const d = decideStudioExposure({
+      host: '0.0.0.0',
+      authed: Boolean(resolveConfigAuth(cfgAuth)),
+      allowOpenNetwork: false,
+      credentialTokens: configCredentialTokens(cfgAuth),
+    });
+    expect(d.refusal).toBeUndefined();
+    expect(d.authModeLabel).toBe('protected');
+  });
+
+  it('a real AuthProvider keeps its secrets, and that reads as auth rather than as shipped', () => {
+    // configCredentialTokens returns nothing for a provider, which must not be mistaken for "no
+    // credentials" — isPublishedDevCredential([]) is false, so a provider still counts as auth.
+    const real = roleAuth({ admin: { token: 'adm' } })!;
+    expect(configCredentialTokens(real)).toEqual([]);
+    const d = decideStudioExposure({
+      host: '0.0.0.0',
+      authed: true,
+      allowOpenNetwork: false,
+      credentialTokens: configCredentialTokens(real),
+    });
+    expect(d.refusal).toBeUndefined();
+    expect(d.authModeLabel).toBe('protected');
   });
 });

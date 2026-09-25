@@ -1,80 +1,47 @@
-// Who can reach the Studio, decided in one place that can be tested.
+// How the Studio CLI reads its own flags and gnl.config — the DECISION itself lives in
+// `@gnldev/auth`'s exposure.ts.
 //
-// This lived inline at the top of cli.ts, which meant it ran on import and could not be asserted on.
-// Two defects hid there. `auth` from gnl.config was never read, so a user who configured an admin
-// token got an open panel AND a warning telling them to configure the token they had just
-// configured. And `allowOpenAccess = loopback` meant a non-loopback host merely passed `false` into
-// the gate, which throws only under NODE_ENV=production — so `gnl-studio --host 0.0.0.0` outside
-// production served an unauthenticated ADMIN surface to every interface and printed nothing.
+// This file used to own that decision, and `packages/cli/src/bind.ts` owned a second copy of it. Run
+// against the same hosts the two disagreed four ways, and this copy was the one that treated
+// `127.0.0.1.evil.com` as loopback and answered "auth: protected" for `admin-dev` — a token published
+// in this project's own npm tarball. Both holes are closed by deferring to the one decision; read
+// exposure.ts's header for the measurements and for why @gnldev/cli still carries a pinned copy.
 //
-// Extracted rather than fixed in place: a security decision that cannot be unit-tested is a decision
-// nobody can check.
+// What stays here is what is genuinely Studio's: how gnl.config's `auth` field becomes a provider, and
+// the remedy sentence naming Studio's own flags.
 
-import { roleAuth, type AuthProvider, type Cred } from '@gnldev/auth';
+import { roleAuth, decideExposure, isLoopbackHost, type AuthProvider, type Cred, type ExposureDecision } from '@gnldev/auth';
 
-export interface ExposureInput {
+export { isLoopbackHost };
+export type { ExposureDecision };
+
+/** The remedy sentence for this surface: Studio reads auth from gnl.config, which needs --config. */
+const STUDIO_AUTH_REMEDY =
+  'Configure auth in gnl.config (`auth: { admin: { token: ... } }`) and pass --config.';
+
+export interface StudioExposureInput {
   /** The `--host` value as given, before normalisation. */
   host: string;
-  /** Did an auth provider actually RESOLVE — not "was one configured". A misconfigured provider that
-   *  reduces to undefined is the case most likely to be believed and least likely to be checked. */
+  /** Did an auth provider actually RESOLVE — not "was one configured". */
   authed: boolean;
-  /** `--allow-open-network` was passed. Deliberate, and recorded in the command that ran. */
+  /** `--allow-open-network` was passed. */
   allowOpenNetwork: boolean;
+  /**
+   * The literal token values gnl.config's `auth` was built from, when there are any. Forwarded so the
+   * shared decision can apply the published-credential rule — the rule this file used to lack.
+   */
+  credentialTokens?: Iterable<string | undefined>;
 }
 
-export interface ExposureDecision {
-  /** When set, refuse to start and print this. */
-  refusal?: string;
-  /** What to hand `createStudioApp` as `allowOpenAccess`. */
-  allowOpenAccess: boolean;
-  /** Warnings to print, in order. Empty when there is nothing worth saying. */
-  warnings: string[];
-  loopback: boolean;
-}
-
-export function isLoopbackHost(host: string): boolean {
-  const h = host.trim();
-  return h === '127.0.0.1' || h === '::1' || h === 'localhost' || h === '[::1]' || h.startsWith('127.');
-}
-
-export function decideExposure({ host, authed, allowOpenNetwork }: ExposureInput): ExposureDecision {
-  const loopback = isLoopbackHost(host);
-  const warnings: string[] = [];
-
-  // The one combination that is unsafe by construction: reachable from the network AND
-  // unauthenticated. Refused, not warned about.
-  if (!loopback && !authed && !allowOpenNetwork) {
-    return {
-      loopback,
-      allowOpenAccess: false,
-      warnings,
-      refusal:
-        `gnl studio: refusing to serve on ${host} without auth.\n` +
-        '  This is an ADMIN surface: policy/budget writes, retention purge, cache invalidation, and a\n' +
-        '  Playground that spends your API keys — exposed to every host that can reach the port.\n' +
-        '  Configure auth in gnl.config (`auth: { admin: { token: ... } }`) and pass --config, or, if\n' +
-        '  the network is genuinely trusted, pass --allow-open-network.',
-    };
-  }
-
-  if (!authed && loopback) {
-    warnings.push(
-      'gnl studio: loopback host (127.0.0.1/::1/localhost) → panel open without auth. On a shared ' +
-      'machine, other local users can also reach it; add `auth: { admin: { token: ... } }` to ' +
-      'gnl.config and pass --config, or restrict access.',
-    );
-  }
-  if (!loopback) {
-    warnings.push(
-      authed
-        ? `gnl studio: reachable from the network on ${host} (auth: protected)`
-        : `gnl studio: ⚠  reachable from the network on ${host} with NO AUTH (--allow-open-network)`,
-    );
-  }
-
-  // Only assert open access where it has actually been accepted. Asserting it while auth IS
-  // configured would be a contradiction the gate has no way to resolve.
-  return { loopback, allowOpenAccess: !authed && (loopback || allowOpenNetwork), warnings };
+export function decideStudioExposure(input: StudioExposureInput): ExposureDecision {
+  return decideExposure({
+    host: input.host,
+    authed: input.authed,
+    allowOpenNetwork: input.allowOpenNetwork,
+    credentialTokens: input.credentialTokens,
+    surface: 'gnl studio',
+    authRemedy: STUDIO_AUTH_REMEDY,
+  });
 }
 
 /**
@@ -98,4 +65,18 @@ export function resolveConfigAuth(auth: unknown): AuthProvider | undefined {
   const creds = auth as { admin?: Cred; viewer?: Cred };
   if (!creds.admin && !creds.viewer) return undefined;
   return roleAuth({ admin: creds.admin, viewer: creds.viewer });
+}
+
+/**
+ * The literal token values in gnl.config's `auth`, for the published-credential rule.
+ *
+ * Only the credential-MAP shape can be read this way; a real AuthProvider keeps its secrets to itself,
+ * and returning nothing for one is correct — a provider that authenticates for real is not the case
+ * this rule is about.
+ */
+export function configCredentialTokens(auth: unknown): (string | undefined)[] {
+  if (!auth || typeof auth !== 'object') return [];
+  if (typeof (auth as AuthProvider).authorize === 'function') return [];
+  const creds = auth as { admin?: { token?: string }; viewer?: { token?: string } };
+  return [creds.admin?.token, creds.viewer?.token];
 }

@@ -16,35 +16,27 @@
 // KNOWN BREAK, stated rather than buried: a containerised `gnl dev` must now pass `--host 0.0.0.0`, or
 // it will not be reachable from the host. That is the point — the previous default was reachable from
 // considerably more than the host.
+//
+// ── THIS IS A SECOND IMPLEMENTATION, AND IT IS PINNED ──────────────────────────────────────────────
+// The rule itself belongs to `@gnldev/auth`'s exposure.ts, which `packages/studio` imports directly.
+// This package cannot: it ships with no hard runtime dependencies on purpose (see runtime.ts — `npx
+// @gnldev/cli init` must not pull the runtime in, and commands run against the PROJECT's installed
+// versions), and it is built with plain `tsc`, so a value import would emit a real `require`.
+// Resolving the rule from the project instead would make a security decision ABSENT whenever the
+// package is not installed — worse than duplication.
+//
+// So the behaviour has one owner and the code has two, and the duplication is held shut by
+// `test/exposure-parity.test.ts`: one table of hosts and credentials, run through BOTH
+// implementations, failing on any divergence. That table is there because these two copies HAD
+// drifted — four ways, each copy leaving open a hole the other had closed (see exposure.ts's header).
+// If this package ever gains a bundler or a hard dependency on @gnldev/auth, delete this copy.
 
-/** Addresses that are only reachable from this machine. */
-const LOOPBACK = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
-
-export function isLoopbackHost(host: string): boolean {
-  return LOOPBACK.has(host.trim().toLowerCase());
-}
-
-export interface BindChoice {
-  /** Passed to serve() as `hostname` — never left undefined, so the bind is never implicit. */
-  hostname: string;
-  /** What to print, reflecting the address actually bound. */
-  displayHost: string;
-  exposed: boolean;
-}
-
-/**
- * Decide the bind address, refusing the one combination that is unsafe by construction: reachable from
- * the network AND unauthenticated. `authed` is whether an auth provider actually resolved — not whether
- * one was configured, because a misconfigured provider that resolves to undefined is the case most
- * likely to be believed and least likely to be checked.
- */
-/**
- * Credentials that were once written literally into a scaffolded project by this package, and so were
- * published in its npm tarball. A project still carrying one is not authenticated in any sense that
- * matters — anybody can read the value out of the registry — so it must not satisfy the network
- * refusal below. New scaffolds generate a random token per project (see recipes.ts), which is why
- * this is a fixed, closed list rather than a heuristic: it can only ever shrink.
- */
+/** Credentials that were once written literally into a scaffolded project by this package, and so were
+ *  published in its npm tarball. A project still carrying one is not authenticated in any sense that
+ *  matters — anybody can read the value out of the registry — so it must not satisfy the network
+ *  refusal below. New scaffolds generate a random token per project (see recipes.ts), which is why
+ *  this is a fixed, closed list rather than a heuristic: it can only ever shrink.
+ *  MIRROR OF @gnldev/auth's PUBLISHED_DEV_TOKENS. */
 const PUBLISHED_DEV_TOKENS = new Set(['admin-dev', 'viewer-dev']);
 
 /** Does this credential set consist only of values this package once published? */
@@ -53,18 +45,73 @@ export function isPublishedDevCredential(tokens: Iterable<string | undefined>): 
   return present.length > 0 && present.every((t) => PUBLISHED_DEV_TOKENS.has(t));
 }
 
+/**
+ * Addresses that are only reachable from this machine.
+ *
+ * The whole of 127.0.0.0/8 is loopback, not just 127.0.0.1 — which is why this parses octets instead
+ * of matching against a fixed list or a prefix. The fixed list refused `gnl dev --host 127.5.5.5`,
+ * which is a local address; the prefix version (`startsWith('127.')`, which studio's copy used)
+ * accepts `127.0.0.1.evil.com` — a hostname that resolves wherever its owner points it, treated as
+ * local. MIRROR OF @gnldev/auth's isLoopbackHost.
+ */
+export function isLoopbackHost(host: string): boolean {
+  const h = host.trim().toLowerCase().replace(/^\[/, '').replace(/\]$/, '');
+  if (h === 'localhost' || h === '::1') return true;
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  if (!m) return false;
+  const octets = m.slice(1, 5).map(Number);
+  if (octets.some((n) => n > 255)) return false;
+  return octets[0] === 127;
+}
+
+export interface BindChoice {
+  /** Passed to serve() as `hostname` — never left undefined, so the bind is never implicit. */
+  hostname: string;
+  /** What to print, reflecting the address actually bound. */
+  displayHost: string;
+  exposed: boolean;
+  /** Auth AFTER the published-credential rule. This, not the caller's input, is what decided. */
+  authed: boolean;
+  shippedCredential: boolean;
+  /** What to print for "auth: …" — the honest reading, not the presence of a provider. */
+  authModeLabel: 'open' | 'shipped dev token — treat as OPEN' | 'protected';
+}
+
+/**
+ * Decide the bind address, refusing the one combination that is unsafe by construction: reachable from
+ * the network AND unauthenticated. `authed` is whether an auth provider actually resolved — not whether
+ * one was configured, because a misconfigured provider that resolves to undefined is the case most
+ * likely to be believed and least likely to be checked.
+ *
+ * `credentialTokens` is taken rather than a pre-computed flag so that forgetting the
+ * published-credential rule is not possible at a call site. It was forgotten at one: the boot notice
+ * was passed the RAW provider check, so a project carrying only `admin-dev` printed
+ * "(auth: protected)" one line under a mode banner that correctly said "treat as OPEN".
+ */
 export function resolveBind(opts: {
   host?: string;
   authed: boolean;
+  credentialTokens?: Iterable<string | undefined>;
   allowOpenNetwork: boolean;
   command: string;
 }): BindChoice {
   const host = (opts.host ?? '127.0.0.1').trim();
-  if (isLoopbackHost(host)) return { hostname: host === 'localhost' ? '127.0.0.1' : host, displayHost: 'localhost', exposed: false };
+  const shippedCredential = opts.credentialTokens ? isPublishedDevCredential(opts.credentialTokens) : false;
+  const authed = opts.authed && !shippedCredential;
+  const authModeLabel = !opts.authed ? 'open' : shippedCredential ? 'shipped dev token — treat as OPEN' : 'protected';
+  const common = { authed, shippedCredential, authModeLabel } as const;
 
-  if (!opts.authed && !opts.allowOpenNetwork) {
+  if (isLoopbackHost(host)) {
+    return { hostname: host.toLowerCase() === 'localhost' ? '127.0.0.1' : host, displayHost: 'localhost', exposed: false, ...common };
+  }
+
+  if (!authed && !opts.allowOpenNetwork) {
     throw new Error(
       `gnl: refusing to serve '${opts.command}' on ${host} without auth.\n` +
+        (shippedCredential
+          ? '  The only credential configured is one this package PUBLISHED in its own npm tarball —\n' +
+            '  anybody can read the value out of the registry, so it protects nothing.\n'
+          : '') +
         `  This binds an ADMIN surface — run purge, managed-agent promote, cache invalidation, and a\n` +
         `  Playground that spends your API keys — to every host that can reach the port.\n` +
         `  Configure auth (gnl.config \`auth: { admin: { token: ... } }\`, or GNL_ADMIN_TOKEN in the\n` +
@@ -73,13 +120,14 @@ export function resolveBind(opts: {
   }
   // 0.0.0.0/:: are wildcards, not addresses you can visit — show something dialable instead.
   const display = host === '0.0.0.0' || host === '::' ? 'localhost' : host;
-  return { hostname: host, displayHost: display, exposed: true };
+  return { hostname: host, displayHost: display, exposed: true, ...common };
 }
 
-/** One line, at boot, saying exactly what is exposed to whom. Empty when nothing is. */
-export function exposureNotice(bind: BindChoice, authed: boolean): string {
+/** One line, at boot, saying exactly what is exposed to whom. Empty when nothing is.
+ *  Reads the EFFECTIVE `authed` off the decision, so it cannot contradict the mode banner beside it. */
+export function exposureNotice(bind: BindChoice): string {
   if (!bind.exposed) return '';
-  return authed
+  return bind.authed
     ? `          reachable from the network on ${bind.hostname} (auth: protected)`
     : `          ⚠  reachable from the network on ${bind.hostname} with NO AUTH (--allow-open-network)`;
 }

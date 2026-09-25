@@ -8,7 +8,7 @@ import type * as Durable from '@gnldev/durable';
 import type * as Studio from '@gnldev/studio';
 import type * as StudioAi from '@gnldev/studio/ai';
 import type * as Memory from '@gnldev/memory';
-import { resolveBind, exposureNotice, isPublishedDevCredential } from './bind.js';
+import { resolveBind, exposureNotice } from './bind.js';
 import type { AuthProvider, Cred } from '@gnldev/auth';
 import type * as Auth from '@gnldev/auth';
 import { devMemoryFactory, devStudioMemory } from './memory.js';
@@ -155,20 +155,18 @@ export async function serveDev(
   // while these very lines printed 'localhost'. See bind.ts.
   // A provider whose only credential is one this package used to SHIP is not auth: the value is
   // readable in the registry. Without this, `--host 0.0.0.0` printed "(auth: protected)" while
-  // accepting `Bearer admin-dev`. See isPublishedDevCredential.
-  const shippedCreds = isPublishedDevCredential([
-    (config as { auth?: { admin?: { token?: string }; viewer?: { token?: string } } }).auth?.admin?.token,
-    (config as { auth?: { admin?: { token?: string }; viewer?: { token?: string } } }).auth?.viewer?.token,
-  ]);
-  // The banner said 'protected' whenever a provider existed, so a project still carrying the shipped
-  // token was told it was protected by a credential published in the registry. Say what is true.
-  const mode = !provider ? 'open' : shippedCreds ? 'shipped dev token — treat as OPEN' : 'protected';
+  // accepting `Bearer admin-dev`. The tokens are handed to resolveBind rather than checked here, so
+  // the mode banner and the exposure notice below read the SAME answer — they did not, and printed
+  // "treat as OPEN" and "(auth: protected)" two lines apart.
+  const cfgAuth = (config as { auth?: { admin?: { token?: string }; viewer?: { token?: string } } }).auth;
   const bind = resolveBind({
     host: bindOpts?.host,
-    authed: !!provider && !shippedCreds,
+    authed: !!provider,
+    credentialTokens: [cfgAuth?.admin?.token, cfgAuth?.viewer?.token],
     allowOpenNetwork: !!bindOpts?.allowOpenNetwork,
     command: 'gnl dev',
   });
+  const mode = bind.authModeLabel;
   process.on('uncaughtException', (err: NodeJS.ErrnoException) => {
     // EADDRINUSE arrives asynchronously from the listen call, so it surfaced as an unhandled Node
     // internals stack trace inside a hung `tsx watch` — no mention of the port, and nothing to act on.
@@ -183,7 +181,7 @@ export async function serveDev(
     console.log(`gnl dev → REST   http://${bind.displayHost}:${info.port}   (auth: ${mode})`);
     console.log(`          OpenAPI http://${bind.displayHost}:${info.port}/openapi.json`);
     if (config.studio !== false) console.log(`          Studio http://${bind.displayHost}:${info.port}/studio   (Playground)`);
-    const notice = exposureNotice(bind, !!provider);
+    const notice = exposureNotice(bind);
     if (notice) console.log(notice);
     // WHAT IS PROTECTING THIS, under the three lines that say where it is listening.
     //
@@ -210,7 +208,7 @@ export async function serveDev(
           ...(devOnlyMemory(config) ? { devOnly: { memory: true } } : {}),
           // ONE derivation, shared with `gnl doctor` — see protections-view.ts for why a second copy
           // of this row would be the same bug the matrix exists to fix.
-          identity: identityRow(config, !!provider && !shippedCreds),
+          identity: identityRow(config, bind.authed),
         }),
         { title: '          protections' },
       ).join('\n'),

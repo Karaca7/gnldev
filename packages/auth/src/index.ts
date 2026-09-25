@@ -10,3 +10,6 @@ export { fromReadWrite, normalizeAuth, bindsIdentity, type ReadWriteAuth } from 
 export { safeEqual } from './safe-equal.js';
 export { isCrossSiteStateChange } from './same-site.js';
 export { PLATFORM_ADMIN_ROLE, isPlatformAdmin, principalScope, assertAssignablePrivileges, type PrincipalScope, type AssignabilityResult } from './scope.js';
+// Who may reach a surface that listens on a socket. One decision for every GNL surface that binds
+// one; see exposure.ts's header for why @gnldev/cli keeps a pinned second implementation.
+export { decideExposure, isLoopbackHost, isPublishedDevCredential, PUBLISHED_DEV_TOKENS, type ExposureInput, type ExposureDecision } from './exposure.js';

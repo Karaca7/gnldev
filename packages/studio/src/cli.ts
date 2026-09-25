@@ -4,7 +4,7 @@ import { toJournal } from '@gnldev/durable';
 import { SqliteStorage } from '@gnldev/durable/sqlite';
 import { createStudioApp, type StudioAppOptions } from './server.js';
 import { createStudioRunner } from './runner.js';
-import { decideExposure, isLoopbackHost, resolveConfigAuth } from './expose.js';
+import { decideStudioExposure, isLoopbackHost, resolveConfigAuth, configCredentialTokens } from './expose.js';
 // `ai-schema.js` is NOT imported here. It is the one module that imports `ai` (see its header), and
 // `ai` is an OPTIONAL peer — the package promises the core stays `ai`-free and ships the bridge as a
 // separate `./ai` subpath. A static import at the top of this file broke that promise for the whole
@@ -31,6 +31,9 @@ const allowOpenNetwork = process.argv.includes('--allow-open-network');
 
 async function main(): Promise<void> {
   let opts: StudioAppOptions;
+  // The literal tokens gnl.config was built from, for the published-credential rule. Collected here
+  // because the exposure decision is made after the branch, where `cfg` is out of scope.
+  let credentialTokens: (string | undefined)[] = [];
   if (configPath) {
     // -config: load gnl.config → createGnl + Playground (run agents in the browser / streaming).
     const { pathToFileURL } = await import('node:url');
@@ -96,6 +99,7 @@ async function main(): Promise<void> {
       // {"allow":true}. That is strictly worse than dropping it, which at least failed closed.
       ...(resolveConfigAuth(cfg.auth) ? { auth: resolveConfigAuth(cfg.auth) } : {}),
     };
+    credentialTokens = configCredentialTokens(cfg.auth);
   } else {
     if (!db || db.startsWith('--')) {
       console.error('Usage: gnl-studio --db <runs.db> [--port 4747] [--host 127.0.0.1]   (inspector)');
@@ -107,7 +111,7 @@ async function main(): Promise<void> {
     opts = { reader: toJournal(new SqliteStorage(db).runs) };
   }
   // One decision, made in expose.ts so it can be tested; this is the part that acts on it.
-  const exposure = decideExposure({ host, authed: Boolean(opts.auth), allowOpenNetwork });
+  const exposure = decideStudioExposure({ host, authed: Boolean(opts.auth), allowOpenNetwork, credentialTokens });
   if (exposure.refusal) {
     console.error(exposure.refusal);
     process.exit(1);

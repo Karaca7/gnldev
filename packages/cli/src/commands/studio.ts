@@ -4,7 +4,7 @@
 // from the PROJECT (see runtime.ts), not bundled with @gnldev/cli.
 import type { Command } from './types.js';
 import { flag, flagBool } from '../args.js';
-import { resolveBind, exposureNotice, isPublishedDevCredential } from '../bind.js';
+import { resolveBind, exposureNotice } from '../bind.js';
 
 export const studioCommand: Command = {
   name: 'studio',
@@ -38,15 +38,15 @@ export const studioCommand: Command = {
     // so its admin surface was open regardless of what the operator had configured.
     const provider = await resolveAuthProvider(config, await loadAuth(dir), dir);
     // A provider whose only credential is one this package used to SHIP is not auth: the value is
-    // readable in the registry. Without this, `--host 0.0.0.0` printed "(auth: protected)" while
-    // accepting `Bearer admin-dev`. See isPublishedDevCredential.
-    const shippedCreds = isPublishedDevCredential([
-      (config as { auth?: { admin?: { token?: string }; viewer?: { token?: string } } }).auth?.admin?.token,
-      (config as { auth?: { admin?: { token?: string }; viewer?: { token?: string } } }).auth?.viewer?.token,
-    ]);
+    // readable in the registry. The tokens go to resolveBind rather than being checked here, because
+    // checking them here left the BANNER below reading `provider ? 'protected' : 'open'` — so a
+    // project carrying only `admin-dev` was refused the bind and, on the loopback path where it is
+    // allowed, told it was protected by a credential published in the registry.
+    const cfgAuth = (config as { auth?: { admin?: { token?: string }; viewer?: { token?: string } } }).auth;
     const bind = resolveBind({
       host: flag(ctx.argv, 'host'),
-      authed: !!provider && !shippedCreds,
+      authed: !!provider,
+      credentialTokens: [cfgAuth?.admin?.token, cfgAuth?.viewer?.token],
       allowOpenNetwork: flagBool(ctx.argv, 'allow-open-network'),
       command: 'gnl studio',
     });
@@ -57,8 +57,8 @@ export const studioCommand: Command = {
       auth: provider,
     });
     serve({ fetch: app.fetch, port, hostname: bind.hostname }, (info: { port: number }) => {
-      console.log(`gnl studio → http://${bind.displayHost}:${info.port}   (Playground, auth: ${provider ? 'protected' : 'open'})`);
-      const notice = exposureNotice(bind, !!provider);
+      console.log(`gnl studio → http://${bind.displayHost}:${info.port}   (Playground, auth: ${bind.authModeLabel})`);
+      const notice = exposureNotice(bind);
       if (notice) console.log(notice);
     });
   },
