@@ -1,7 +1,7 @@
 // Converts a createGnl instance into the Playground/Tools runner (StudioAgentRunner). Pure adapter — does not import `ai`.
 // @gnldev/cli and the studio CLI `--config` share this → single source of truth.
 import type { AgentMeta, StudioAgentRunner, StudioCallbackCtx, ToolMeta, ToolListItem } from './server.js';
-import { durableTool, toolDescriptionText } from '@gnldev/durable';
+import { durableTool, toolDescriptionText, sealRequestContext } from '@gnldev/durable';
 import type { Guard, Journal, WorkflowMeta, WorkflowRunResult } from '@gnldev/durable';
 
 export interface RunnerToolLike {
@@ -42,6 +42,34 @@ export interface GnlLike {
   /** createGnl provides these (Workflows view). */
   listWorkflows?(): WorkflowMeta[];
   runWorkflow?(name: string, input: unknown, opts?: { runId?: string; maxSteps?: number }, ctx?: StudioCallbackCtx): Promise<WorkflowRunResult>;
+}
+
+/**
+ * The calling organization, put where the ENGINE reads it.
+ *
+ * `StudioCallbackCtx` was forwarded as an extra positional argument to `gnl.run`/`stream`/`runWorkflow`,
+ * and those take 2, 2 and 3 parameters — measured with `fn.length`. So it arrived as `arguments[n]` and
+ * nothing ever named it. createGnl reads identity from `opts.context` via `serverIdentityOf`, and
+ * nothing in this package wrote that field. Measured before this: a dynamic `system(ctx)` on an agent
+ * run through here saw `{keys: [], id: {}}` — the organization the server had just worked out, gone.
+ *
+ * What it cost, in a lab: an agent declaring `workScope: 'org'`, two organizations, the same workKey —
+ * ONE runId was derived, the model ran ONCE, and the second organization was served the first's answer.
+ * That path is NOT reachable through Studio today: no route forwards a `workKey` and the agent route
+ * requires a raw `runId`, so it is latent rather than live. What IS live is quieter — a deployment whose
+ * `system`/`model`/`tools` vary by organization silently gets the default for everyone.
+ *
+ * Sealed rather than assigned: `sealRequestContext` strips the reserved keys from whatever was there
+ * before writing the server's, which is what stops a caller naming its own organization. Left untouched
+ * when there is no org to seal, because calling it with `undefined` STRIPS an orgId a host set for
+ * itself, and this adapter has no business deleting that.
+ *
+ * ONE helper for three call sites on purpose. Three copies is the shape the defect had.
+ */
+function withCallerOrg<T>(runOpts: T, ctx?: StudioCallbackCtx): T {
+  if (ctx?.orgId === undefined) return runOpts;
+  const o = (runOpts ?? {}) as { context?: Record<string, unknown> };
+  return { ...o, context: sealRequestContext(o.context ?? {}, { orgId: ctx.orgId }) } as T;
 }
 
 /** Playground/Tools runner options. */
@@ -151,8 +179,8 @@ export function createStudioRunner(
 
   const runner: StudioAgentRunner = {
     listAgents: () => meta,
-    run: (name, runOpts, ctx) => gnl.run(name, runOpts, ctx).then((r) => ({ text: r.text, interrupts: r.interrupts ?? [] })),
-    ...(gnl.stream ? { stream: (name: string, runOpts: any, ctx?: StudioCallbackCtx) => gnl.stream!(name, runOpts, ctx) } : {}),
+    run: (name, runOpts, ctx) => gnl.run(name, withCallerOrg(runOpts, ctx), ctx).then((r) => ({ text: r.text, interrupts: r.interrupts ?? [] })),
+    ...(gnl.stream ? { stream: (name: string, runOpts: any, ctx?: StudioCallbackCtx) => gnl.stream!(name, withCallerOrg(runOpts, ctx), ctx) } : {}),
   };
 
   if (hasAnyTool) runner.listTools = listTools;
@@ -160,14 +188,16 @@ export function createStudioRunner(
   // Workflows: createGnl provides listWorkflows/runWorkflow; only surfaced if any workflow is registered.
   const hasWorkflows = !!config.workflows && Object.keys(config.workflows).length > 0;
   if (hasWorkflows && gnl.listWorkflows) runner.listWorkflows = () => gnl.listWorkflows!();
-  if (hasWorkflows && gnl.runWorkflow) runner.runWorkflow = (name, input, opts, ctx) => gnl.runWorkflow!(name, input, opts, ctx);
+  if (hasWorkflows && gnl.runWorkflow) runner.runWorkflow = (name, input, opts, ctx) => gnl.runWorkflow!(name, input, withCallerOrg(opts, ctx), ctx);
 
   // TEST execution (opt-in + requires a tool): GUARD IS APPLIED. opts.durable + journal → writes to the
   // journal (exactly-once, visible in the Inspector); otherwise a fast NON-DURABLE sandbox.
   if (hasAnyTool && toolExec) {
     runner.toolExecDurable = !!config.journal; // durable test-run is possible if a journal exists
     // `_ctx` is ACCEPTED and not yet used, and the underscore is the honest spelling. The other three
-    // entry points forward it to `gnl`, which can act on it; `durableTool` has no ctx parameter, so
+    // entry points now SEAL the caller's organization into `opts.context`, which is where createGnl
+    // reads identity from — forwarding ctx positionally reached nothing (see withCallerOrg).
+    // `durableTool` has no ctx parameter and no RequestContext, so
     // there is nowhere to forward it to. Taking it anyway matters: the interface promises four
     // arguments, and a signature that quietly takes three is how the host learns the wrong lesson
     // from the reference implementation. When the durable side grows an identity parameter, the
