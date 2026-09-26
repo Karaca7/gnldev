@@ -248,6 +248,30 @@ function toolError(text: string): { isError: true; content: { type: 'text'; text
 }
 
 /**
+ * A configured hook threw, told to the caller without telling it the deployment's business.
+ *
+ * `identity`, `allowTool`, `workKey` and `rateLimit` are the deployment's own functions, and the useful
+ * ones reach a store: an OAuth introspection, an FGA rule set, a Redis counter. Those fail, and when
+ * they did the exception travelled straight through the protocol. Measured over a real SDK Client:
+ *
+ *   MCP error -32603: pg: connection to 10.0.3.14:5432 refused (user=svc_gnl)
+ *
+ * An internal address, a port and a service account name, handed to whoever called. Every hook already
+ * failed CLOSED \u2014 measured, the tool ran zero times in all four cases \u2014 so this is disclosure,
+ * not a bypass.
+ *
+ * Same rule as the two other refusals on this door, and it was applied to those and not to this one:
+ * the caller gets an answer it can act on, the deployment keeps its details. The real error goes to the
+ * server log where the operator is, and the hook can log more since it is their code. WHICH hook failed
+ * is included \u2014 that is not a secret, and it is the difference between a useful report and
+ * "something went wrong".
+ */
+function hookFailure(hook: string, err: unknown): Error {
+  console.error(`@gnldev/mcp: the '${hook}' hook threw:`, err);
+  return new Error(`MCP server: the '${hook}' hook failed (see the server log)`);
+}
+
+/**
  * A run blocked by GNL's own protection, told to the caller the way the REST host already tells it.
  *
  * Concurrent calls under the SAME key are the NORMAL case on this door — a double-click, a client
@@ -338,22 +362,37 @@ export function createMcpServer(opts: McpServerOptions): McpServer {
     tools: Record<string, McpServerToolDef>;
   }> {
     const c = caller ?? {};
-    const identity = opts.identity ? ((await opts.identity(c)) ?? {}) : {};
-    const tools =
-      typeof opts.tools === 'function'
-        ? // Sealed BEFORE the user's function sees it: the reserved keys are stripped from whatever was
-          // supplied and rewritten non-writably, so the tool set cannot be built from a subject the
-          // caller named. Same function @gnldev/durable seals agent contexts with.
-          await opts.tools(
-            sealRequestContext(
-              {},
-              {
-                ...(identity.resourceId !== undefined ? { resourceId: identity.resourceId } : {}),
-                ...(identity.orgId !== undefined ? { orgId: identity.orgId } : {}),
-              },
-            ),
-          )
-        : opts.tools;
+    let identity: McpCallerIdentity;
+    try {
+      identity = opts.identity ? ((await opts.identity(c)) ?? {}) : {};
+    } catch (err) {
+      throw hookFailure('identity', err);
+    }
+    let tools: Record<string, McpServerToolDef>;
+    if (typeof opts.tools === 'function') {
+      // Sealed BEFORE the user's function sees it: the reserved keys are stripped from whatever was
+      // supplied and rewritten from what `identity` resolved, so the tool set cannot be built from a
+      // subject the caller named. Same function @gnldev/durable seals agent contexts with.
+      //
+      // Wrapped like the other four: this IS a hook — the deployment's own function, and the one most
+      // likely to reach a database, since a per-caller tool set is usually built from one. It was the
+      // hook left unwrapped when the other four were done, and the test above caught it.
+      try {
+        tools = await opts.tools(
+          sealRequestContext(
+            {},
+            {
+              ...(identity.resourceId !== undefined ? { resourceId: identity.resourceId } : {}),
+              ...(identity.orgId !== undefined ? { orgId: identity.orgId } : {}),
+            },
+          ),
+        );
+      } catch (err) {
+        throw hookFailure('tools', err);
+      }
+    } else {
+      tools = opts.tools;
+    }
     return { caller: c, identity, tools };
   }
 
@@ -363,7 +402,11 @@ export function createMcpServer(opts: McpServerOptions): McpServer {
       warnMissingAllowTool();
       return true;
     }
-    return (await opts.allowTool({ name, caller, identity })) === true;
+    try {
+      return (await opts.allowTool({ name, caller, identity })) === true;
+    } catch (err) {
+      throw hookFailure('allowTool', err);
+    }
   }
 
   // Fixed-window counter, per subject, in THIS process — see `rateLimit`'s note for why that limit is
@@ -377,7 +420,13 @@ export function createMcpServer(opts: McpServerOptions): McpServer {
   async function withinRate(info: McpToolRequestInfo): Promise<boolean> {
     const rl = opts.rateLimit;
     if (!rl) return true;
-    if (typeof rl === 'function') return (await rl(info)) === true;
+    if (typeof rl === 'function') {
+      try {
+        return (await rl(info)) === true;
+      } catch (err) {
+        throw hookFailure('rateLimit', err);
+      }
+    }
     windows ??= createRateWindow(rl);
     // The subject, not the connection: a rate limit without one punishes whichever caller happens to
     // arrive after a noisy neighbour. A server with no `identity` has one bucket for everybody, which is
@@ -438,7 +487,12 @@ export function createMcpServer(opts: McpServerOptions): McpServer {
       // The client's key is a LABEL for the work, unique only within one caller — never the id itself.
       // A deployment may name the work some other way; see the `workKey` option for why that is its
       // decision rather than a default here.
-      const workKey = opts.workKey ? opts.workKey(req) : req.idempotencyKey;
+      let workKey: string | undefined;
+      try {
+        workKey = opts.workKey ? opts.workKey(req) : req.idempotencyKey;
+      } catch (err) {
+        throw hookFailure('workKey', err);
+      }
 
       // ── identity resolved server-side → derive the id, and record whose it is ──────────────────
       if (opts.identity) {

@@ -133,6 +133,25 @@ same shape too — move the rule to its owner, not patch the door.
   Permission is also checked **before** argument validation, so a refused caller cannot map a tool's
   schema by reading which field the server complained about.
 
+- **`@gnldev/mcp` — a hook that throws no longer hands the caller the deployment's error text.**
+  `identity`, `allowTool`, `tools` (function form), `workKey` and `rateLimit` are the deployment's own
+  functions, and the useful ones reach a store. When one failed the exception travelled straight through
+  the protocol — measured over a real SDK Client:
+
+      MCP error -32603: pg: connection to 10.0.3.14:5432 refused (user=svc_gnl)
+
+  An internal address, a port and a service account name, verbatim to whoever called. All five already
+  failed CLOSED (measured: the tool ran zero times in every case), so this was disclosure and not a
+  bypass. The caller now gets `the 'identity' hook failed (see the server log)` — WHICH hook is not a
+  secret and is the difference between a useful report and "something went wrong" — while the real error
+  goes to `console.error`, where the operator is.
+
+  Third instance this round of one rule reaching two of three places: a blocked run was already
+  translated and a forbidden tool already made indistinguishable from a missing one; the hook path was
+  not. Found by asking what happens when the new hooks fail, which nothing had asked. Seven mutations
+  behind it, including one for each hook and one for the server-side log — and the test caught a fifth
+  hook left unwrapped while the other four were done.
+
 - **`@gnldev/mcp` — a blocked run is reported the way the REST host already reports it.** Concurrent calls
   under one key are the NORMAL case on this door (a double-click, a client retrying on timeout, two
   workers draining one queue), unlike inside `runDurable` where a run is sequential. The guarantee handled
