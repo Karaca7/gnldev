@@ -29,6 +29,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Breaking
 
+- **`gnl init` scaffolds chat as a surface of the REST API.** `src/routes/chat.ts` is `chatSurface()`
+  and `src/app.ts` passes it in `surfaces`; the host templates no longer mount a separate chat route,
+  so `useChat` points at `<where the API is mounted>/agents/:name/chat` instead of `/api/...`.
+  `--identity end-users` writes `src/identity.ts` as your app's token route (`subjectTokenEndpoint`)
+  instead of an `identity` hook.
 - **The standalone chat and AG-UI routes refuse to start in production without `identity`.** They
   warned and served before: any caller ran the model and left an ownerless run. Mount them on the REST
   API instead (`surfaces`, below), or pass `identity`; `identity: () => undefined` opts out explicitly.
@@ -98,6 +103,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **`gnl dev` and `gnl.config` carry every `roleAuth` class.** `auth.client`, `auth.superAdmin` and
+  `auth.endUsers` were dropped (a correctly signed end-user token got 403), and `endUsers` did not
+  type-check in `gnl.config.ts`. Env fallbacks: `GNL_CLIENT_TOKEN`, `GNL_SUPERADMIN_TOKEN`,
+  `GNL_END_USER_SECRET`.
+- **The identity row of the protections matrix is read from the config,** so `gnl dev` and
+  `gnl doctor` agree. `gnl dev` printed `✓ identity bound` for a project whose only credentials were
+  staff tokens.
 - **End-user reads go through one view.** `withSubjectJournal` / `withSubjectMemory` (@gnldev/durable)
   wrap the reader an end user's request holds, so a route that forgets its gate still cannot return
   another user's run or thread. A walk over every REST route as five kinds of attacker found 45 leaks

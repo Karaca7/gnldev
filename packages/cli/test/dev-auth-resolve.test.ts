@@ -14,7 +14,7 @@ import type { GnlDevConfig } from '../src/config.js';
 const created: string[] = [];
 // GNL_EE_PUBLIC_KEY belongs here too: without it a machine that has one configured takes the PAID
 // path in a suite whose first describe is titled "no license (free path)".
-const envKeys = ['GNL_LICENSE_KEY', 'GNL_EE_PUBLIC_KEY', 'GNL_ADMIN_TOKEN', 'GNL_VIEWER_TOKEN', 'GNL_ADMIN_USER', 'GNL_ADMIN_PASS'];
+const envKeys = ['GNL_LICENSE_KEY', 'GNL_EE_PUBLIC_KEY', 'GNL_ADMIN_TOKEN', 'GNL_VIEWER_TOKEN', 'GNL_ADMIN_USER', 'GNL_ADMIN_PASS', 'GNL_CLIENT_TOKEN', 'GNL_SUPERADMIN_TOKEN', 'GNL_END_USER_SECRET'];
 
 /**
  * Cleared BEFORE each test as well as after.
@@ -167,5 +167,31 @@ describe('resolveAuthProvider — license present', () => {
     installFakeEE(dir);
     const p: any = await resolveAuthProvider(cfg({ license: 'ee_key' }) as any, Auth, dir);
     expect(p.__ee).toBe(true);
+  });
+});
+
+describe('resolveAuthProvider — every roleAuth class reaches the provider', () => {
+  const SECRET = 'app-signing-secret-at-least-32-bytes!!';
+  const bearer = (t: string) => new Request('http://x/', { headers: { authorization: `Bearer ${t}` } });
+
+  it('`auth.endUsers` in gnl.config: a signed end-user token authenticates as that user', async () => {
+    // It was dropped: only admin and viewer were passed on, and a correctly signed token got 403.
+    const p = await resolveAuthProvider(cfg({ auth: { endUsers: { secret: SECRET, orgId: 'acme' } } }) as any, Auth, tmpProject());
+    const who = await p!.authenticate(bearer(Auth.signSubjectToken({ sub: 'u-ayse' }, SECRET)));
+    expect(who).toMatchObject({ kind: 'subject', id: 'u-ayse', orgId: 'acme' });
+  });
+
+  it('`auth.client` and `auth.superAdmin` reach it too', async () => {
+    const p = await resolveAuthProvider(cfg({ auth: { client: { token: 'app' }, superAdmin: { token: 'root' } } }) as any, Auth, tmpProject());
+    expect(await p!.authenticate(bearer('app'))).toMatchObject({ kind: 'application' });
+    expect(await p!.authenticate(bearer('root'))).toMatchObject({ kind: 'operator', roles: expect.arrayContaining(['platform-admin']) });
+  });
+
+  it('env: GNL_END_USER_SECRET and GNL_CLIENT_TOKEN', async () => {
+    process.env.GNL_END_USER_SECRET = SECRET;
+    process.env.GNL_CLIENT_TOKEN = 'app-env';
+    const p = await resolveAuthProvider(cfg() as any, Auth, tmpProject());
+    expect(await p!.authenticate(bearer(Auth.signSubjectToken({ sub: 'u' }, SECRET)))).toMatchObject({ kind: 'subject', id: 'u' });
+    expect(await p!.authenticate(bearer('app-env'))).toMatchObject({ kind: 'application' });
   });
 });

@@ -52,6 +52,7 @@ import type { CreateGnlConfig } from '@gnldev/durable';
 import { createRestApi } from '@gnldev/server';
 import { createStudioApp, createStudioRunner } from '@gnldev/studio';
 import { aiToolSchema } from '@gnldev/studio/ai';
+import { chat } from './routes/chat.js';
 import raw from '../gnl.config.js';
 
 // Widened to the declared type on purpose. gnl.config.ts is written with \`satisfies\`, so its inferred
@@ -71,31 +72,37 @@ const reader = config.storage
   ? toJournal(config.storage.runs)
   : (config.journal as unknown as Parameters<typeof createStudioApp>[0] extends { reader: infer R } ? R : never);
 
-/** Role auth from gnl.config's \`auth\` (or GNL_ADMIN_TOKEN / GNL_VIEWER_TOKEN in the environment) —
- * the same resolution \`gnl dev\` applies. Without this the scaffold mounted Studio and the REST API
- * with NO auth at all, so \`gnl add host\` copied an unauthenticated admin surface into every
- * generated project; only NODE_ENV=production's fail-closed gate stood in the way. */
+/** Auth from gnl.config's \`auth\`, each class falling back to the environment — the same resolution
+ * \`gnl dev\` applies: GNL_ADMIN_TOKEN, GNL_VIEWER_TOKEN, GNL_CLIENT_TOKEN, and GNL_END_USER_SECRET for
+ * end users holding a token of their own (see src/identity.ts when you have end users). With none of
+ * them set the API is open, which NODE_ENV=production refuses. */
+type Classes = { admin?: object; viewer?: object; client?: object; endUsers?: object };
+const declared = ((raw as { auth?: Classes }).auth ?? {}) as Classes;
 const cred = (v?: string) => (v ? { token: v } : undefined);
-const roles = {
-  admin: (raw as { auth?: { admin?: object } }).auth?.admin ?? cred(process.env.GNL_ADMIN_TOKEN),
-  viewer: (raw as { auth?: { viewer?: object } }).auth?.viewer ?? cred(process.env.GNL_VIEWER_TOKEN),
+const classes: Classes = {
+  admin: declared.admin ?? cred(process.env.GNL_ADMIN_TOKEN),
+  viewer: declared.viewer ?? cred(process.env.GNL_VIEWER_TOKEN),
+  client: declared.client ?? cred(process.env.GNL_CLIENT_TOKEN),
+  endUsers: declared.endUsers ?? (process.env.GNL_END_USER_SECRET ? { secret: process.env.GNL_END_USER_SECRET } : undefined),
 };
-const auth = roles.admin || roles.viewer ? roleAuth(roles as never) : undefined;
+const auth = roleAuth(Object.fromEntries(Object.entries(classes).filter(([, v]) => v)) as never);
 
-/** The REST API — agents, runs, workflows. A fetch handler: callable, and carrying \`.fetch\`. */
-export const app = createRestApi(config, { title: 'app', auth });
-
-// WHO IS EACH RUN FOR? This host answers it from the AUTHENTICATED principal: with \`auth\` above, the
-// caller's identity becomes the run's \`resourceId\` — the key memory scopes on and the value every
-// ownership gate compares against. Without \`auth\`, there is no principal, the subject can only come
-// from \`body.resourceId\`, and a gate with no verified owner refuses nobody. The startup banner this
-// file prints says which of the two you are in.
-//
-// The chat surface (@gnldev/chat-adapter) and AG-UI (@gnldev/agui) have no auth of their own and name
-// the subject through an \`identity\` hook instead. That hook used to live here as a commented-out
-// block — the most security-relevant function a host writes, in the one form that never compiles and
-// never gets tested. It is a real file now: \`src/routes/chat.ts\`, written whenever this project has
-// a server (\`gnl add chat\` otherwise).
+/**
+ * The REST API — agents, runs, workflows — and the chat format on the same door.
+ *
+ * WHO IS EACH RUN FOR? The \`auth\` above decides it, for REST and for chat alike: an end user's own
+ * token binds the run to that user; staff and the application name the user in the request. The chat
+ * surface (src/routes/chat.ts) only translates useChat's format, so there is no second identity hook
+ * to wire: useChat({ api: '<where you mount this>/agents/assistant/chat' }).
+ *
+ * APP_ORIGIN lets a browser on that origin call this API directly (CORS); unset, none can.
+ */
+export const app = createRestApi(config, {
+  title: 'app',
+  auth,
+  surfaces: [chat],
+  ...(process.env.APP_ORIGIN ? { cors: { origins: [process.env.APP_ORIGIN] } } : {}),
+});
 
 /** The Studio inspector + playground. Mount it in development; gate it or drop it in production. */
 export const studio = createStudioApp({
@@ -122,13 +129,10 @@ export const HOSTS: HostRecipe[] = [
     label: 'Hono',
     hint: 'no bridge, fewest moving parts',
     mount: `import { app as gnlApi, studio } from './app.js';
-import { chat } from './routes/chat.js';
 
 // \`mount()\` registers ONE blanket wildcard per call, so the specific path goes first — a '/' mount
 // registered before '/studio' swallows it.
 yourApp.mount('/studio', studio);
-yourApp.route('/api', chat);     // a Hono app, so route() — mount() is for fetch handlers
-// useChat({ api: '/api/agents/assistant/chat' })
 yourApp.mount('/gnl', gnlApi);
 `,
     server: `// Hono — the one host that needs no bridge at all: the factories hand out a fetch handler and
@@ -139,12 +143,9 @@ yourApp.mount('/gnl', gnlApi);
 import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
 import { app as api, studio } from './app.js';
-import { chat } from './routes/chat.js';
 
 const server = new Hono();
 server.mount('/studio', studio);
-server.route('/api', chat);   // a Hono app, so route() — mount() is for fetch handlers
-// useChat({ api: '/api/agents/assistant/chat' })
 server.mount('/', api);
 
 // Loopback by default — set HOST=0.0.0.0 to reach it from outside (containers). A bare listen
@@ -159,7 +160,6 @@ console.log('→ http://localhost:' + (process.env.PORT ?? 3000) + '/studio');
     hint: 'no framework, no dependency',
     mount: `import { toNodeHandler } from '@gnldev/server/node';
 import { app as gnlApi, studio } from './app.js';
-import { chat } from './routes/chat.js';
 
 const studioNode = toNodeHandler(studio as never);
 const apiNode = toNodeHandler(gnlApi);
@@ -170,10 +170,6 @@ if (req.url?.startsWith('/studio')) {
   req.url = req.url.slice('/studio'.length) || '/';
   return studioNode(req, res);
 }
-if (req.url?.startsWith('/api')) {              // useChat({ api: '/api/agents/assistant/chat' })
-  req.url = req.url.slice('/api'.length) || '/';
-  return toNodeHandler(chat as never)(req, res);
-}
 if (req.url?.startsWith('/gnl')) {
   req.url = req.url.slice('/gnl'.length) || '/';
   return apiNode(req, res);
@@ -183,14 +179,8 @@ if (req.url?.startsWith('/gnl')) {
 import { createServer } from 'node:http';
 import { toNodeHandler } from '@gnldev/server/node';
 import { app as api, studio } from './app.js';
-import { chat } from './routes/chat.js';
 
 const studioNode = toNodeHandler(studio as never);
-// The OBJECT, not its \`.fetch\` — \`toNodeHandler\` reads \`.fetch\` off what it is given, so passing
-// the function produced a handler that looked for \`fetch.fetch\` and answered 500 to every chat
-// request. Measured against a real Express app; the API and Studio lines above are the same shape.
-// \`as never\` because Hono types \`fetch\` with optional Workers parameters this bridge does not name.
-const chatNode = toNodeHandler(chat as never);
 const apiNode = toNodeHandler(api);
 
 const port = Number(process.env.PORT ?? 3000);
@@ -198,10 +188,6 @@ createServer((req, res) => {
   if (req.url?.startsWith('/studio')) {
     req.url = req.url.slice('/studio'.length) || '/';
     return studioNode(req, res);
-  }
-  if (req.url?.startsWith('/api')) {           // useChat({ api: '/api/agents/assistant/chat' })
-    req.url = req.url.slice('/api'.length) || '/';
-    return chatNode(req, res);
   }
   return apiNode(req, res);
 }).listen(port, process.env.HOST ?? '127.0.0.1'); // loopback by default — HOST=0.0.0.0 for containers
@@ -216,12 +202,10 @@ console.log('→ http://localhost:' + port + '/studio');
     devDeps: { '@types/express': '^5.0.0' },
     mount: `import { toNodeHandler } from '@gnldev/server/node';
 import { app as gnlApi, studio } from './app.js';
-import { chat } from './routes/chat.js';
 
 // BEFORE any global \`express.json()\`. A body parser mounted ahead of these drains the request
 // stream, and GNL then answers "runId is required" to a request that carried one.
 yourApp.use('/studio', toNodeHandler(studio as never));
-yourApp.use('/api', toNodeHandler(chat as never));     // useChat({ api: '/api/agents/assistant/chat' })
 yourApp.use('/gnl', toNodeHandler(gnlApi));
 // Express strips the mount prefix from req.url before the handler runs — do not add it back.
 `,
@@ -231,7 +215,6 @@ yourApp.use('/gnl', toNodeHandler(gnlApi));
 import express from 'express';
 import { toNodeHandler } from '@gnldev/server/node';
 import { app as api, studio } from './app.js';
-import { chat } from './routes/chat.js';
 
 const server = express();
 
@@ -240,7 +223,6 @@ const server = express();
 // server.use('/app', express.json(), yourRouter);
 
 server.use('/studio', toNodeHandler(studio as never));
-server.use('/api', toNodeHandler(chat as never));   // useChat({ api: '/api/agents/assistant/chat' })
 server.use('/', toNodeHandler(api));
 
 const port = Number(process.env.PORT ?? 3000);
@@ -256,13 +238,11 @@ console.log('→ http://localhost:' + port + '/studio');
     mount: `import middie from '@fastify/middie';
 import { toNodeHandler } from '@gnldev/server/node';
 import { app as gnlApi, studio } from './app.js';
-import { chat } from './routes/chat.js';
 
 // \`register(middie)\` is what makes this Express's recipe line for line. Binding as a Fastify ROUTE
 // instead runs after its JSON parser has drained the stream: every GET passes, every POST 400s.
 await yourApp.register(middie);
 yourApp.use('/studio', toNodeHandler(studio as never));
-yourApp.use('/api', toNodeHandler(chat as never));     // useChat({ api: '/api/agents/assistant/chat' })
 yourApp.use('/gnl', toNodeHandler(gnlApi));
 `,
     server: `${RULE}//
@@ -274,12 +254,9 @@ import Fastify from 'fastify';
 import middie from '@fastify/middie';
 import { toNodeHandler } from '@gnldev/server/node';
 import { app as api, studio } from './app.js';
-import { chat } from './routes/chat.js';
 
 const server = Fastify();
 await server.register(middie);
-
-server.use('/api', toNodeHandler(chat as never));   // useChat({ api: '/api/agents/assistant/chat' })
 
 // Your own routes are Fastify routes — they keep its parser, its validation, its 404.
 // server.get('/app/health', async () => ({ ok: true }));
@@ -304,7 +281,6 @@ console.log('→ http://localhost:' + port + '/studio');
     mount: `import c2k from 'koa-connect';
 import { toNodeHandler } from '@gnldev/server/node';
 import { app as gnlApi, studio } from './app.js';
-import { chat } from './routes/chat.js';
 
 const studioNode = toNodeHandler(studio as never);
 const apiNode = toNodeHandler(gnlApi);
@@ -317,10 +293,6 @@ yourApp.use(c2k((req: { url?: string }, res: unknown, _next: () => void) => {
   if (url.startsWith('/studio')) {
     (req as { url: string }).url = url.slice('/studio'.length) || '/';
     return studioNode(req as never, res as never);
-  }
-  if (url.startsWith('/api')) {                 // useChat({ api: '/api/agents/assistant/chat' })
-    (req as { url: string }).url = url.slice('/api'.length) || '/';
-    return toNodeHandler(chat as never)(req as never, res as never);
   }
   if (url.startsWith('/gnl')) {
     (req as { url: string }).url = url.slice('/gnl'.length) || '/';
@@ -342,14 +314,8 @@ import Koa from 'koa';
 import c2k from 'koa-connect';
 import { toNodeHandler } from '@gnldev/server/node';
 import { app as api, studio } from './app.js';
-import { chat } from './routes/chat.js';
 
 const studioNode = toNodeHandler(studio as never);
-// The OBJECT, not its \`.fetch\` — \`toNodeHandler\` reads \`.fetch\` off what it is given, so passing
-// the function produced a handler that looked for \`fetch.fetch\` and answered 500 to every chat
-// request. Measured against a real Express app; the API and Studio lines above are the same shape.
-// \`as never\` because Hono types \`fetch\` with optional Workers parameters this bridge does not name.
-const chatNode = toNodeHandler(chat as never);
 const apiNode = toNodeHandler(api);
 const server = new Koa();
 
@@ -359,10 +325,6 @@ server.use(c2k((req: { url?: string }, res: unknown, _next: () => void) => {
     // Koa does not strip the mount prefix — unlike Express, which does.
     (req as { url: string }).url = url.slice('/studio'.length) || '/';
     return studioNode(req as never, res as never);
-  }
-  if (url.startsWith('/api')) {                // useChat({ api: '/api/agents/assistant/chat' })
-    (req as { url: string }).url = url.slice('/api'.length) || '/';
-    return chatNode(req as never, res as never);
   }
   return apiNode(req as never, res as never);
 }));
@@ -382,7 +344,6 @@ console.log('→ http://localhost:' + port + '/studio');
     deps: { '@nestjs/common': '^11.0.0', '@nestjs/core': '^11.0.0', '@nestjs/platform-express': '^11.0.0', 'reflect-metadata': '^0.2.2', rxjs: '^7.8.1' },
     mount: `import { toNodeHandler } from '@gnldev/server/node';
 import { app as gnlApi, studio } from './app.js';
-import { chat } from './routes/chat.js';
 
 // Nothing Nest-specific is needed on either platform: \`app.use()\` reaches the middleware chain
 // underneath. Measured on both @nestjs/platform-express and @nestjs/platform-fastify.
@@ -398,7 +359,6 @@ import { NestFactory } from '@nestjs/core';
 import { Module } from '@nestjs/common';
 import { toNodeHandler } from '@gnldev/server/node';
 import { app as api, studio } from './app.js';
-import { chat } from './routes/chat.js';
 
 @Module({ controllers: [], providers: [] })
 class AppModule {}
@@ -406,7 +366,6 @@ class AppModule {}
 const server = await NestFactory.create(AppModule);
 const apiNode = toNodeHandler(api);
 server.use('/studio', toNodeHandler(studio as never));
-server.use('/api', toNodeHandler(chat as never));   // useChat({ api: '/api/agents/assistant/chat' })
 // Let your own controllers' paths fall through; everything else is the API's.
 server.use((req: { url?: string }, res: unknown, next: () => void) =>
   (String(req.url).startsWith('/app/') ? next() : apiNode(req as never, res as never)));

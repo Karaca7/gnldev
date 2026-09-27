@@ -43,7 +43,7 @@ export async function loadDevRuntime(projectDir: string, config: GnlDevConfig): 
 }
 
 /** Credentials for a single role from env: GNL_<ROLE>_TOKEN or GNL_<ROLE>_USER+PASS. */
-function credFromEnv(role: 'ADMIN' | 'VIEWER'): Cred | undefined {
+function credFromEnv(role: 'SUPERADMIN' | 'ADMIN' | 'CLIENT' | 'VIEWER'): Cred | undefined {
   const token = process.env[`GNL_${role}_TOKEN`];
   const user = process.env[`GNL_${role}_USER`];
   const pass = process.env[`GNL_${role}_PASS`];
@@ -52,9 +52,16 @@ function credFromEnv(role: 'ADMIN' | 'VIEWER'): Cred | undefined {
 
 /** Free role-based provider (sync): config.auth → env fallback. undefined if no role is set (opt-in). */
 function freeAuth(config: GnlDevConfig, auth: typeof Auth): AuthProvider | undefined {
+  // Every class `roleAuth` has. This passed admin and viewer only, so `client` and `endUsers` in a
+  // gnl.config were dropped without a word — measured: a correctly signed end-user token got 403.
+  const endUserSecret = process.env.GNL_END_USER_SECRET;
+  const endUsers = config.auth?.endUsers ?? (endUserSecret ? { secret: endUserSecret } : undefined);
   return auth.roleAuth({
+    superAdmin: config.auth?.superAdmin ?? credFromEnv('SUPERADMIN'),
     admin: config.auth?.admin ?? credFromEnv('ADMIN'),
+    client: config.auth?.client ?? credFromEnv('CLIENT'),
     viewer: config.auth?.viewer ?? credFromEnv('VIEWER'),
+    ...(endUsers ? { endUsers } : {}),
   });
 }
 

@@ -27,6 +27,21 @@ export type GnlCred = {
   platformAdmin?: boolean;
 };
 
+/**
+ * End users holding a token your application signed — structurally `EndUserTokens` from
+ * `@gnldev/auth` (`roleAuth({ endUsers })`), declared here for the same reason as `GnlCred`, and
+ * pinned by `assertCredCompatible` the same way.
+ */
+export type GnlEndUsers = {
+  secret?: string;
+  publicKey?: string;
+  issuer?: string;
+  audience?: string;
+  orgId?: string;
+  maxTtlSec?: number;
+  isRevoked?: (claims: { sub: string; iat?: number; jti?: string }) => boolean | Promise<boolean>;
+};
+
 /** `true` only when both sides have exactly the same key set — see `assertCredCompatible`. */
 type SameKeys<A, B> = [keyof A] extends [keyof B] ? ([keyof B] extends [keyof A] ? true : false) : false;
 
@@ -60,6 +75,13 @@ async function assertCredCompatible(): Promise<void> {
   void _toAuth;
   void _fromAuth;
   void _sameKeys;
+  type EndUserTokens = import('@gnldev/auth').EndUserTokens;
+  const _euTo: EndUserTokens = {} as GnlEndUsers;
+  const _euFrom: GnlEndUsers = {} as EndUserTokens;
+  const _euKeys: SameKeys<GnlEndUsers, EndUserTokens> = true;
+  void _euTo;
+  void _euFrom;
+  void _euKeys;
 }
 void assertCredCompatible;
 
@@ -87,10 +109,11 @@ export interface GnlDevConfig extends CreateGnlConfig {
    */
   subjects?: 'internal' | 'end-users';
   /**
-   * Optional role-based auth (opt-in). If not given, REST + Studio stay OPEN. Can also be supplied via env:
-   * GNL_ADMIN_TOKEN / GNL_VIEWER_TOKEN, GNL_ADMIN_USER+GNL_ADMIN_PASS / GNL_VIEWER_USER+GNL_VIEWER_PASS.
+   * Optional auth (opt-in), the classes of `@gnldev/auth`'s `roleAuth`. If none is given, REST + Studio
+   * stay OPEN. Each can also come from env: GNL_<SUPERADMIN|ADMIN|CLIENT|VIEWER>_TOKEN, or _USER + _PASS;
+   * and GNL_END_USER_SECRET for `endUsers.secret`. `endUsers` is how end users hold a token of their own.
    */
-  auth?: { admin?: GnlCred; viewer?: GnlCred };
+  auth?: { superAdmin?: GnlCred; admin?: GnlCred; client?: GnlCred; viewer?: GnlCred; endUsers?: GnlEndUsers };
   /** Paid @gnldev/auth-ee license key (or GNL_LICENSE_KEY env). If installed, the premium provider takes over. */
   license?: string;
   /** License signature public key (base64url DER spki; or GNL_EE_PUBLIC_KEY env). */

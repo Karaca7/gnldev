@@ -12,61 +12,48 @@
 
 /** The skeleton itself. Exported as a string for the same reason the recipes are: it is generated
  *  code, it is never compiled here, and the tests read the text a user actually receives. */
-export const IDENTITY_FILE = `// WHO IS EACH RUN FOR?
+export const IDENTITY_FILE = `// WHO IS EACH RUN FOR? Your users — each holding a short-lived token of their own.
 //
-// One function, called by whichever surface is in front of the engine, answering one question: which
-// of your users is this request acting for. Its answer becomes the run's \`resourceId\` — the key
-// conversation memory scopes on, the value every ownership gate compares against, and the id
-// \`purgeResource\` erases by.
+// GNL keeps no session. Your app already knows who is logged in; this file turns that into a token
+// GNL verifies. The REST API (and the chat surface on it) reads ONLY the token's \`sub\`: the run
+// belongs to that user, a request body cannot rename it, and another user reading it gets 404.
+//
+// SETUP
+//   GNL_END_USER_SECRET   at least 32 random bytes, the same value for your app and for GNL
+//                         (src/app.ts and \`gnl dev\` read it as \`auth.endUsers\`).
+//   Mount \`gnlToken\` below as POST /gnl-token on YOUR app's own origin.
+//   In the browser: new GnlClient({ baseUrl, getToken: tokenFrom('/gnl-token') }) (@gnldev/client),
+//   which refreshes before the token expires. APP_ORIGIN (src/app.ts) lets that browser call GNL.
 //
 // THE ONE WRONG ANSWER, said out loud because it is the one people reach for first:
 //
 //     // NEVER:
-//     const resourceId = (await req.json()).resourceId;
+//     const userId = (await req.json()).userId;
 //
-// A subject read out of the request body is the caller naming whoever they like. That is not a
-// smaller version of authentication, it is the absence of it — and it is precisely the hole the
-// engine's context seal exists to close. Read it from something the SERVER established: a session
-// cookie you verified, a JWT you checked the signature of, \`principalOf(req)?.id\` when @gnldev/auth is
-// in front.
-//
-// (The REST host is the documented exception, and only for an APPLICATION credential: a bearer token
-// carries no per-caller identity, so a customer's backend naming its own end user in the body IS the
-// channel. See docs/errors/run_actor_mismatch.md.)
+// A user read out of the request body is the caller naming whoever they like. Read it from something
+// the SERVER established: a session cookie you verified.
+import { subjectTokenEndpoint } from '@gnldev/auth';
 
-/** Your own session lookup. Replace this — it is the only part of this file that is a placeholder. */
-async function sessionOf(_req: Request): Promise<{ userId: string; conversationId?: string } | undefined> {
+/** Your own session lookup. Replace this — it is the only part of this file that is a placeholder.
+ *  \`sid\` becomes the token's \`jti\`, so logging a session out can revoke its tokens (below). */
+async function sessionOf(_req: Request): Promise<{ sub: string; sid?: string } | null> {
   // e.g. const sid = parseCookie(req.headers.get('cookie'))?.sid;
-  //      return sid ? await sessions.get(sid) : undefined;
-  return undefined;
+  //      const s = sid ? await sessions.get(sid) : undefined;
+  //      return s ? { sub: s.userId, sid } : null;
+  return null;
 }
 
-/**
- * Hand this to @gnldev/chat-adapter's \`createChatRoute\` or @gnldev/agui's route — both take the same
- * hook, and neither has any auth of its own, which is exactly why naming the subject is yours to do.
- *
- * Returning \`undefined\` is honest and safe: the run is born with no owner rather than a forged one,
- * and the ownership gates stay fail-open for it. It is not a way to skip the question — a run with no
- * owner is a run nobody can be told apart from anybody else.
- */
-export async function identity(req: Request): Promise<{ resourceId: string; threadId?: string } | undefined> {
-  const session = await sessionOf(req);
-  if (!session) return undefined;
-  return {
-    resourceId: session.userId,
-    ...(session.conversationId ? { threadId: session.conversationId } : {}),
-  };
+/** POST /gnl-token on your app: a fresh 5-minute token while the session lasts, 401 once it does not. */
+export async function gnlToken(req: Request): Promise<Response> {
+  const secret = process.env.GNL_END_USER_SECRET;
+  if (!secret) return new Response('GNL_END_USER_SECRET is not set', { status: 500 });
+  return subjectTokenEndpoint(sessionOf, secret, { ttlSec: 300 })(req);
 }
 
-// WIRING IT UP — in src/app.ts, next to the REST surface:
+// LOGGING OUT. Without more, a token lives until it expires (5 minutes above). To cut it at logout,
+// give GNL a revocation check — in gnl.config.ts:
 //
-//   import { createChatRoute } from '@gnldev/chat-adapter';
-//   import { identity } from './identity.js';
-//
-//   export const chat = createChatRoute(config, { identity });
-//
-// On the REST host (@gnldev/server) there is nothing to wire: with \`auth\` configured, the
-// authenticated principal IS the subject, and a body field cannot override it.
+//   auth: { endUsers: { secret: process.env.GNL_END_USER_SECRET, isRevoked: ({ jti }) => loggedOut.has(jti) } }
 //
 // ERASING ONE PERSON — the request you answer in days, not by waiting for a sweep. Retention
 // (\`gnl sweep --older-than 30d\`) deletes by AGE and knows nothing about people:

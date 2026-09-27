@@ -106,15 +106,19 @@ gnl init my-agent --identity end-users     # for a new project: writes src/ident
 
 This is the only row that is genuinely expensive to change later: a journal full of runs that were
 born ownerless cannot be retro-fitted with an owner, because nothing recorded who they were for.
-For an existing project, write `src/identity.ts` yourself — the resolver is about fifteen lines, and
-the one wrong answer is worth stating out loud:
+
+The row turns `✓` when your users hold a token of their own: set `GNL_END_USER_SECRET` (32 bytes or
+more), and let your app hand each logged-in user a short-lived token. `src/identity.ts` is that
+route (`subjectTokenEndpoint`); the browser client refreshes through it. For an existing project,
+see `@gnldev/auth`'s README, "An end user can carry its own token". The one wrong answer is worth
+stating out loud:
 
 ```
-// NEVER: const resourceId = (await req.json()).resourceId;
+// NEVER: const userId = (await req.json()).userId;
 ```
 
-A subject read out of the request body is the caller naming whoever they like. Read it from something
-the server established: a verified session, a checked JWT, `principalOf(req)?.id`.
+A user read out of the request body is the caller naming whoever they like. Read it from your own
+verified session.
 
 ## 5. Before you deploy: the `─` row
 

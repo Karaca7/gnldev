@@ -102,15 +102,18 @@ gnl init my-agent --identity end-users     # yeni proje için: src/identity.ts y
 
 Sonradan değiştirmesi gerçekten pahalı olan tek satır bu: sahipsiz doğmuş koşumlarla dolu bir
 journal'a sahiplik sonradan eklenemez, çünkü kimin için olduklarını hiçbir şey kaydetmemiştir.
-Var olan bir proje için `src/identity.ts`'i kendiniz yazın — çözümleyici on beş satır kadar ve tek
-yanlış cevap yüksek sesle söylenmeyi hak ediyor:
+Kullanıcılarınız kendi token'larını taşıdığında satır `✓` olur: `GNL_END_USER_SECRET`'ı (en az 32
+bayt) ayarlayın ve uygulamanız giriş yapmış her kullanıcıya kısa ömürlü bir token versin.
+`src/identity.ts` o rotadır (`subjectTokenEndpoint`); tarayıcı istemcisi token'ı onun üzerinden
+yeniler. Var olan bir proje için `@gnldev/auth` README'sindeki "An end user can carry its own token"
+bölümüne bakın. Tek yanlış cevap yüksek sesle söylenmeyi hak ediyor:
 
 ```
-// ASLA: const resourceId = (await req.json()).resourceId;
+// ASLA: const userId = (await req.json()).userId;
 ```
 
-İstek gövdesinden okunan bir özne, çağıranın canı kimi isterse onu söylemesidir. Sunucunun kurduğu
-bir şeyden okuyun: doğrulanmış bir oturum, imzası kontrol edilmiş bir JWT, `principalOf(req)?.id`.
+İstek gövdesinden okunan bir kullanıcı, çağıranın canı kimi isterse onu söylemesidir. Kendi
+doğrulanmış oturumunuzdan okuyun.
 
 ## 5. Dağıtmadan önce: `─` satırı
 

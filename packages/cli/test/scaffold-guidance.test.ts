@@ -93,57 +93,31 @@ describe('`gnl init --features` writes the same guidance', () => {
 });
 
 describe('src/app.ts — the deployed half', () => {
-  it('says who a run belongs to under auth, and under none', () => {
+  it('says who a run belongs to, and that the auth decides it for REST and chat alike', () => {
     expect(APP_FILE).toContain('WHO IS EACH RUN FOR?');
-    expect(APP_FILE).toMatch(/AUTHENTICATED principal/);
-    expect(APP_FILE).toMatch(/body\.resourceId/);
+    expect(APP_FILE).toMatch(/auth.*decides it, for REST and for chat alike/s);
+    expect(APP_FILE).toContain('GNL_END_USER_SECRET');
   });
 
-  it('points at the file that names the subject, instead of carrying it as a comment', () => {
-    // app.ts used to hold the whole chat-route example commented out, identity resolver included.
-    // A commented resolver compiles never and is tested never — and this is the one function where a
-    // mistake means "runs are born owned by whoever asked". It is `src/routes/chat.ts` now, so what
-    // app.ts must do is say so.
-    expect(APP_FILE).toContain('src/routes/chat.ts');
+  it('mounts chat as a surface of the API, not as a second route with its own identity hook', () => {
+    expect(APP_FILE).toContain("import { chat } from './routes/chat.js';");
+    expect(APP_FILE).toContain('surfaces: [chat]');
     expect(APP_FILE, 'the example came back as a comment').not.toContain('identity: (req) =>');
   });
 });
 
-describe('src/routes/chat.ts — the subject, in code rather than in a comment', () => {
+describe('src/routes/chat.ts — a surface, with no identity of its own', () => {
   const chat = recipeContents(RECIPES['chat']!);
 
-  it('is real code: the identity hook is not commented out', () => {
-    const line = chat.split('\n').find((l) => l.includes('identity:'))!;
-    expect(line, 'the identity hook is missing entirely').toBeTruthy();
-    expect(line.trimStart().startsWith('//'), 'the hook is a comment again').toBe(false);
+  it('is a chatSurface, not a standalone route', () => {
+    // The standalone route had no auth: with roleAuth configured it answered 200 to a request with no
+    // token and filed an ownerless run in the root (measured). As a surface, the API's auth decides.
+    expect(chat).toContain('chatSurface()');
+    expect(chat).not.toContain('createChatRoute');
   });
 
-  it('rules out the one wrong answer, out loud', () => {
-    // Reading the subject from the request body is the caller naming whoever they like — the exact
-    // hole the engine's context seal exists to close, so the file has to refuse it by name.
-    expect(chat).toMatch(/NEVER: const resourceId = \(await req\.json\(\)\)\.resourceId;/);
-    expect(chat).toMatch(/session cookie|JWT/);
-  });
-
-  it('defaults to no owner rather than to a guess, and says what that costs', () => {
-    expect(chat).toMatch(/undefined/);
-    expect(chat).toMatch(/born with no owner|○ identity/);
-  });
-
-  it('names the already-written resolver for projects that have one', () => {
-    // `gnl init --identity end-users` writes src/identity.ts; a reader who has it should be told to
-    // use it rather than filling in a second copy here. This file renders the DEFAULT answer, where
-    // that file does not exist — so what it owes the reader is the route to it, not an import of
-    // something absent.
-    expect(chat).toContain('--identity end-users');
-  });
-
-  it('…and a project that ANSWERED end-users gets the import, not the advice', () => {
-    // The advice above used to be all there was: the resolver was written and the route still shipped
-    // `identity: (_req) => undefined` with a comment saying where the answer lived. Measured: the two
-    // projects' chat routes were byte-identical. The answer reaches the generator now.
-    const wired = recipeContents(RECIPES['chat']!, undefined, { identity: 'end-users' });
-    expect(wired).toMatch(/^import \{ identity \} from '\.\.\/identity\.js';$/m);
-    expect(wired, 'the placeholder survived alongside the real one').not.toContain('identity: (_req) => undefined');
+  it('has no identity hook to leave unwired or to fill in from the body', () => {
+    expect(chat.split('\n').filter((l) => /identity\s*:/.test(l))).toEqual([]);
+    expect(chat).toMatch(/no identity hook here to forget/);
   });
 });

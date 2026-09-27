@@ -36,7 +36,11 @@ describe('the generated app resolves auth rather than mounting an open admin sur
     expect(APP_FILE, 'without a provider the generated project serves everyone').toContain('roleAuth(');
     expect(APP_FILE).toContain('GNL_ADMIN_TOKEN');
     // Passing it to the REST API but not to Studio, or the reverse, leaves half the surface open.
-    expect(APP_FILE).toContain("createRestApi(config, { title: 'app', auth })");
+    expect(APP_FILE).toMatch(/createRestApi\(config, \{\s*title: 'app',\s*auth,/);
+    // Every class gnl dev accepts, including end users' own tokens (they were dropped: admin/viewer only).
+    // Read in CODE, not merely named in a comment (a mention in the docblock passed this once).
+    expect(APP_FILE).toMatch(/client: declared\.client \?\? cred\(process\.env\.GNL_CLIENT_TOKEN\)/);
+    expect(APP_FILE).toMatch(/endUsers: declared\.endUsers \?\? \(process\.env\.GNL_END_USER_SECRET \?/);
     const studioBlock = APP_FILE.slice(APP_FILE.indexOf('createStudioApp({'));
     expect(studioBlock.slice(0, 200), 'the inspector is an admin surface too').toContain('auth,');
   });

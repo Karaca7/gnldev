@@ -13,7 +13,7 @@ import type { GnlDevConfig } from './config.js';
 
 /** Shaped like `ProtectionContext['identity']`, without importing the type from an optional peer. */
 export interface IdentityRow {
-  bound: boolean;
+  bound: boolean | 'unknown';
   via?: string;
   from?: 'preset' | 'explicit' | 'default' | 'unknown';
   note?: string;
@@ -32,7 +32,28 @@ export interface IdentityRow {
  *                  credentials that are not the shipped defaults, a route with an `identity` hook).
  */
 export function identityRow(config: GnlDevConfig, authBound: boolean): IdentityRow {
-  if (authBound) return { bound: true, via: 'the authenticated principal', from: 'explicit' };
+  // Read from the CONFIG, so `gnl dev` and `gnl doctor` — which read the same file — say the same
+  // thing. `authBound` alone said ✓ whenever a provider existed, while the provider's credentials
+  // (admin/viewer tokens) were staff, whose runs have no owner: measured, `gnl dev` printed ✓ and
+  // `gnl doctor` ○ for one project.
+  if (config.auth?.endUsers || process.env.GNL_END_USER_SECRET) {
+    return { bound: true, via: 'end-user tokens (`auth.endUsers`): each user is bound to itself', from: 'explicit' };
+  }
+  if (config.license || process.env.GNL_LICENSE_KEY) {
+    return {
+      bound: 'unknown',
+      from: 'explicit',
+      note: 'the paid provider binds users its user store or SSO minted as subjects; staff it minted are not bound',
+    };
+  }
+  if (authBound && (config.auth?.client || process.env.GNL_CLIENT_TOKEN)) {
+    return {
+      bound: 'unknown',
+      via: 'the application credential, which names the user it acts for',
+      from: 'explicit',
+      note: 'the `client` credential is trusted to name its user; give end users their own token with `auth.endUsers`',
+    };
+  }
 
   if (config.subjects === 'end-users') {
     return {
@@ -41,7 +62,7 @@ export function identityRow(config: GnlDevConfig, authBound: boolean): IdentityR
       // Said as a gap rather than as a failure: the project declared end users and this SURFACE is not
       // the one binding them. That is normal — the resolver is wired into the chat/AG-UI route, which
       // `gnl dev`'s REST mount is not. It stops being normal in production, which is why it is a row.
-      note: "declared `subjects: 'end-users'` — but nothing in front of THIS surface resolves one; wire src/identity.ts into your route",
+      note: "declared `subjects: 'end-users'` — but no end-user credential is configured; add `auth.endUsers` (see src/auth.ts)",
     };
   }
   if (config.subjects === 'internal') {
@@ -49,6 +70,13 @@ export function identityRow(config: GnlDevConfig, authBound: boolean): IdentityR
       bound: false,
       from: 'explicit',
       note: "declared `subjects: 'internal'` — no owner by design, so ownership gates refuse nobody (that is the trade, not a bug)",
+    };
+  }
+  if (authBound) {
+    return {
+      bound: false,
+      from: 'explicit',
+      note: 'staff credentials only: a run belongs to the user a request names, or to nobody — add `auth.endUsers` for users with their own token',
     };
   }
   return {
