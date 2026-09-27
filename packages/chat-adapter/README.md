@@ -107,6 +107,27 @@ lands on** (raw key on the old pods, `run1_` on the new). During that window a r
 once more. Close the window by draining in-flight requests over the deploy rather than rolling
 through it.
 
+**Turns stored before 0.7.** A turn whose `identity` names an organization is stored in that
+organization's partition (`org:<id>:`), the same place the REST API and Studio read. Earlier versions
+stored every turn in the shared root, so those older turns are not in any organization's history.
+
+- **One organization:** move the root into it once, with the deployment stopped. Check the counts
+  first with `dryRun`:
+
+  ```ts
+  import type { Storage } from '@gnldev/durable';
+
+  export async function moveOldTurns(storage: Storage) {
+    const preview = await storage.adoptIntoOrg?.('acme', { dryRun: true });
+    console.log(preview);
+    return storage.adoptIntoOrg?.('acme');
+  }
+  ```
+
+- **Several organizations:** the old rows do not record which organization they came from, so they
+  cannot be split automatically. They stay readable to platform staff in the root scope. Move them
+  only if you can tell them apart yourself.
+
 - **`X-Gnl-Run-Id` on every response** (success and error): the opaque id of the run this call
   landed on — a **correlation handle** for logs, traces and Studio. It is **not your retry key**: to
   retry, send the same turn again (the same conversation id and the same last-message id). Explicit

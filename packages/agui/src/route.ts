@@ -14,7 +14,7 @@ import { toFetchHandler, type FetchHandler } from './handler.js';
 import { Hono } from 'hono';
 import { limitBreachFromSteps, blockedFromSteps, BLOCKED_ERROR_CODES, blockedErrorCode, callerConflictCode, publicConflictDetail, sealRequestContext, resolveWorkIdentity } from '@gnldev/durable';
 import type { CreateGnlConfig, GnlIdentity, ResolvedWorkIdentity } from '@gnldev/durable';
-import { createGnl } from '@gnldev/durable';
+import { createGnl, scopeConfigToOrg } from '@gnldev/durable';
 import { streamSSE } from 'hono/streaming';
 // The two limit codes are READ from @gnldev/server rather than spelled again here. The event/data
 // SHAPE is deliberately a copy (see the note above), but a code is not a shape: it is the string a
@@ -212,7 +212,17 @@ export interface CreateAguiRouteOptions {
  * and pass its stream result to pipeAguiStream — see README).
  */
 function aguiRouteApp(config: CreateGnlConfig, opts: CreateAguiRouteOptions = {}): Hono {
-  const gnl = createGnl(config);
+  const rootGnl = createGnl(config);
+  // One instance per organization, over its own partition — the same construction as the REST API
+  // and the chat route (@gnldev/durable `scopeConfigToOrg`), so an org's AG-UI runs are where its
+  // staff and its REST reads look for them.
+  const orgGnls = new Map<string, ReturnType<typeof createGnl>>();
+  const gnlFor = (org: string | undefined): ReturnType<typeof createGnl> => {
+    if (!org) return rootGnl;
+    let g = orgGnls.get(org);
+    if (!g) orgGnls.set(org, (g = createGnl(scopeConfigToOrg(config, org).config)));
+    return g;
+  };
   // Same warning, same wording and same posture as @gnldev/chat-adapter's route: in production, a route
   // that can name nobody starts runs that are born ownerless, and an ownership gate with no owner to
   // compare against passes. Warn once at construction — never throw, because a deployment that puts
@@ -246,6 +256,7 @@ function aguiRouteApp(config: CreateGnlConfig, opts: CreateAguiRouteOptions = {}
     // the sibling route: an org is an isolation boundary, so it comes from the hook that already
     // reads a verified session, and `sealRequestContext` strips any the caller tried to assert.
     const org = ident?.orgId;
+    const gnl = gnlFor(org);
     // WHICH RUN (package #5, §7). Two names can arrive, and they follow different rules:
     //
     //   `body.workKey` — DECLARED. Always a workKey, always fail-closed: without an address the

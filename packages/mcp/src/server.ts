@@ -23,7 +23,7 @@
 // identity. So `identity` below is resolved SERVER-SIDE from what the transport authenticated, and the
 // runId is derived from it through the same `resolveWorkIdentity` the HTTP surfaces use. The client's
 // key is demoted to what it honestly is: a label for the work, unique only within one caller.
-import { durableTool, resolveWorkIdentity, claimIdentityInput, sealRequestContext, blockedErrorCode } from '@gnldev/durable';
+import { durableTool, resolveWorkIdentity, claimIdentityInput, sealRequestContext, blockedErrorCode, withOrg } from '@gnldev/durable';
 import type { Journal, WorkScope, RequestContext } from '@gnldev/durable';
 import type { McpToolDef } from './index.js';
 import { createRateWindow, type RateWindow } from './rate-window.js';
@@ -525,13 +525,19 @@ export function createMcpServer(opts: McpServerOptions): McpServer {
           );
         }
         const runId = resolved.runId!;
+        // WHICH ORGANIZATION'S JOURNAL. The derived id names the work within a subject, and two
+        // organizations can each have a user `u1` with an invoice `inv-7`. Measured with one shared
+        // journal: globex's charge of 1 returned acme's `{charged: 900}` and never ran. @gnldev/server
+        // scopes each organization's journal with `withOrg`; this door now does the same, so the record
+        // also lands where that organization's own readers (listRuns, purgeResource) look for it.
+        const journal = identity.orgId ? withOrg(opts.journal, identity.orgId) : opts.journal;
         // WHOSE RUN THIS IS. Without this the journal holds the side effect and nothing can attribute
         // it: measured on this exact path, purgeResource deleted 0 rows and left 2 behind. `run()` is
         // never called on this door, so `persistInput` never writes the owner index — this helper is
         // what the three other doors that skip `run()` use, and it stamps the record so the paged
         // readers (listRunsPaged, purgeResource) can see it. An unstamped copy satisfies key-based
         // readers only, which is the failure its own note predicts for a fourth door.
-        await claimIdentityInput(opts.journal, runId, {
+        await claimIdentityInput(journal, runId, {
           at: Date.now(),
           ...(identity.resourceId ? { resourceId: identity.resourceId } : {}),
           ...(identity.actor ? { actor: identity.actor } : {}),
@@ -540,7 +546,7 @@ export function createMcpServer(opts: McpServerOptions): McpServer {
         // No `as any` here: DurableCtx declares `resourceId?`, so the object type-checks as written.
         // The cast that was here disabled checking on the whole ctx, which would have accepted a
         // misspelled field silently — the field would then simply not reach the tool.
-        const dt = durableTool(t, { journal: opts.journal, runId, resourceId: identity.resourceId }, req.name);
+        const dt = durableTool(t, { journal, runId, resourceId: identity.resourceId }, req.name);
         try {
           return await dt.execute!(checked.value, { toolCallId: 'mcp' });
         } catch (err) {

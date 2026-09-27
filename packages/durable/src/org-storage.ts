@@ -23,6 +23,7 @@
  */
 import { ORG_SCOPE, orgPrefix, orgScopeOf, withOrg } from './organization.js';
 import { toJournal } from './storage.js';
+import { asReaderJournal, type Journal, type JournalReader } from './journal.js';
 import type {
   CacheStore, CapabilityMatrix, ListQuery, LogRecord, MemoryStore, MessageRecord, MessageAppend, MetaStore,
   Page, RunJournal, Storage, ThreadRecord,
@@ -320,3 +321,23 @@ export function withOrgStorage(storage: Storage, orgId: string): Storage {
 
 /** Re-exported so a caller can ask the same question of either wrapper. */
 export { ORG_SCOPE, orgScopeOf };
+
+/**
+ * A `createGnl` config confined to one organization, plus the reader over that organization's runs.
+ *
+ * The ONE way a door turns "this request belongs to org X" into storage: the REST API's per-org
+ * registry and the chat/AG-UI routes all build their org instance here, so an org-bound turn lands
+ * under the same `org:<id>:` keys whichever door it came through. A door that built its own — or none
+ * — is how a chat user's history ended up in the root, invisible to REST and to their org's staff.
+ */
+export function scopeConfigToOrg<C extends { storage?: Storage; journal?: unknown }>(
+  config: C,
+  orgId: string,
+): { config: C; journal: Journal & JournalReader } {
+  if (config.storage) {
+    const storage = withOrgStorage(config.storage, orgId);
+    return { config: { ...config, storage, journal: undefined }, journal: toJournal(storage.runs) as Journal & JournalReader };
+  }
+  const journal = withOrg(asReaderJournal(config.journal as object) as Journal, orgId) as Journal & JournalReader;
+  return { config: { ...config, storage: undefined, journal }, journal };
+}

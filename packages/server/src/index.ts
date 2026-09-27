@@ -3,7 +3,7 @@
 import { Hono, type Context } from 'hono';
 import { toFetchHandler, type FetchHandler } from './handler.js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { createGnl, agentVisibleToOrg, withOrg, withOrgStorage, ORG_RECORD_PRE, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, asReaderJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, sealRequestContext, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry, callerConflictCode, publicConflictDetail, describeProtections, formatProtections, teachingError, resolveWorkIdentity } from '@gnldev/durable';
+import { createGnl, agentVisibleToOrg, withOrg, withOrgStorage, scopeConfigToOrg, ORG_RECORD_PRE, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, asReaderJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, sealRequestContext, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry, callerConflictCode, publicConflictDetail, describeProtections, formatProtections, teachingError, resolveWorkIdentity } from '@gnldev/durable';
 import type { CreateGnlConfig, Journal, JournalReader, BudgetLimit, UsageCostCache, RunLimits, ResolvedWorkIdentity, WorkScopeKind } from '@gnldev/durable';
 import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, callerKind, type AuthProvider, type ReadWriteAuth, type Principal, type PrincipalKind } from '@gnldev/auth';
 // P0.4 @gnldev/workflow is zero-dependency (see its package.json) — depending on it
@@ -775,29 +775,12 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
       // organization the way this one did. `memoryFactory` receives the scoped source, so each
       // organization gets its own store over its own keys.
       const { memory: _sharedMemory, ...perOrg } = config;
-      if (config.storage) {
-        // A `Storage` has SIX ports and this used to keep exactly one of them. The line was
-        // `storage: undefined, journal: withOrg(baseJournal, id)`: the run journal was scoped and
-        // `memory`, `vectors`, `work`, `cache` and `meta` were thrown away, so an organization's
-        // registry fell back to whatever `createGnl` derived from the journal alone — and every
-        // organization's threads, corpus, queue, cache and metadata lived in one shared set of keys.
-        // The leaks found one at a time through studio (knowledge search, the jobs list, cache
-        // invalidate) were this, seen through different routes.
-        //
-        // `withOrgStorage` scopes all six. No `journal` is passed alongside it on purpose: `createGnl`
-        // resolves `config.storage ? config.storage.runs : config.journal`, so the storage's own
-        // already-scoped `runs` is the journal — passing a separately-scoped one would be a second
-        // wrapper around the same data and the two would disagree about which is authoritative.
-        const scopedStorage = withOrgStorage(config.storage, id);
-        const scoped = toJournal(scopedStorage.runs) as Journal & JournalReader;
-        inst = { gnl: createGnl({ ...perOrg, storage: scopedStorage, journal: undefined }), journal: scoped, orgId: id };
-      } else {
-        // Journal-only deployment: there is no `Storage` to scope, so this stays exactly as it was.
-        // The other five ports do not exist here — `createGnl` derives what it needs from the journal —
-        // so there is nothing this path is missing.
-        const scoped = withOrg(baseJournal, id) as Journal & JournalReader;
-        inst = { gnl: createGnl({ ...perOrg, storage: undefined, journal: scoped }), journal: scoped, orgId: id };
-      }
+      // Storage: all six ports via `withOrgStorage` (a `Storage` has six, and an earlier version kept
+      // one — every organization's threads, corpus, queue, cache and metadata then shared keys);
+      // journal-only: `withOrg`. Built in @gnldev/durable (`scopeConfigToOrg`) so the chat and AG-UI
+      // routes and @gnldev/mcp scope an organization's work the same way.
+      const scopedOrg = scopeConfigToOrg(perOrg, id);
+      inst = { gnl: createGnl(scopedOrg.config), journal: scopedOrg.journal, orgId: id };
     }
     orgs.set(id, inst);
     while (orgs.size > maxOrgInstances) {

@@ -87,6 +87,10 @@ and now throws at construction. For the thread: `resolveThreadId`, then `identit
 fail-open — and in `NODE_ENV=production` the route says so once with a `console.warn`. It never
 throws.
 
+A run whose `identity` names an organization is stored in that organization's partition, where the
+REST API and Studio read it. Runs stored before 0.7 are in the shared root; `@gnldev/chat-adapter`'s
+README says how to move them.
+
 `@gnldev/chat-adapter`'s README carries the long version of the same section, including the attack it was
 measured against.
 

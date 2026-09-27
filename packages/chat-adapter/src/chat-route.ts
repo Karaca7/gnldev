@@ -9,7 +9,7 @@ import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { convertToModelMessages } from 'ai';
 import type { UIMessage } from 'ai';
-import { createGnl, RunThreadMismatchError, blockedErrorCode, callerConflictCode, publicConflictDetail, upstreamFailure, sealRequestContext, resolveWorkIdentity } from '@gnldev/durable';
+import { createGnl, scopeConfigToOrg, RunThreadMismatchError, blockedErrorCode, callerConflictCode, publicConflictDetail, upstreamFailure, sealRequestContext, resolveWorkIdentity } from '@gnldev/durable';
 import type { CreateGnlConfig, GnlIdentity } from '@gnldev/durable';
 import { toUIMessageStreamResponse } from './ui-stream.js';
 
@@ -167,7 +167,16 @@ export function createChatRoute(
   config: CreateGnlConfig | { gnl: ReturnType<typeof createGnl> },
   opts: CreateChatRouteOptions = {},
 ): Hono {
-  const gnl = 'gnl' in config ? config.gnl : createGnl(config);
+  const rootGnl = 'gnl' in config ? config.gnl : createGnl(config);
+  // One instance per organization, over that organization's partition (see @gnldev/durable
+  // `scopeConfigToOrg`). A prebuilt `{ gnl }` carries no config to scope, so it stays as handed in.
+  const orgGnls = new Map<string, ReturnType<typeof createGnl>>();
+  const gnlFor = (org: string | undefined): ReturnType<typeof createGnl> => {
+    if (!org || 'gnl' in config) return rootGnl; // `{ gnl }` + an org is refused before this is asked
+    let g = orgGnls.get(org);
+    if (!g) orgGnls.set(org, (g = createGnl(scopeConfigToOrg(config, org).config)));
+    return g;
+  };
   // A route that cannot name anyone, in production, said nothing about it. Every run it starts is
   // born ownerless — and an ownership gate with no owner to compare against passes (registry.ts's
   // ownershipDenied takes the `!owner` branch), so the protection reads as present and is not.
@@ -214,6 +223,17 @@ export function createChatRoute(
     // isolation boundary, and a caller who picks their own has none (sealRequestContext strips the
     // reserved key for exactly this reason).
     const org = ident?.orgId;
+    // A prebuilt `{ gnl }` is ONE instance over one storage, so it cannot be split by organization.
+    // Serving an org-bound turn from it put two organizations' identical turns on one run id —
+    // measured: globex was replayed acme's answer. Refused, loudly, rather than served across the line.
+    if (org && 'gnl' in config) {
+      return c.json({
+        error: 'this chat route was built from a prebuilt `{ gnl }` instance, which cannot keep organizations apart, '
+          + `and \`identity\` named organization '${org}'. Pass the config (createChatRoute(config, ...)) so each `
+          + 'organization gets its own partition.',
+      }, 500);
+    }
+    const gnl = gnlFor(org);
     // A RAW id, when the caller is holding one. `body.runId` and `resolveRunId` both name an ID (the
     // second one says so in its name), so neither is promoted — a host that hands us an id has
     // already decided the addressing.

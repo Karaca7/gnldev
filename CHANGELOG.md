@@ -18,6 +18,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Breaking
 
+- **Chat and AG-UI turns that carry an organization are stored in that organization's partition**
+  (`org:<id>:`), not in the shared root. They now show up in that organization's REST history and
+  Studio. Turns stored before this stay in the root; to move them, see the chat-adapter README.
+  `createChatRoute({ gnl })` with an `identity` that names an organization answers 500: a prebuilt
+  instance cannot keep organizations apart. Pass the config instead.
 - **`verifyJwt`, `jwtFromRequest` and `b64uDecode` moved from `@gnldev/auth-ee` to `@gnldev/auth`.**
   There is one JWT verifier now, shared by the free `endUsers` class and every auth-ee SSO provider.
   Import them from `@gnldev/auth`.
@@ -53,6 +58,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **An organization is a boundary on MCP, chat and AG-UI too.** These surfaces derived a run id from
+  `(tool or agent, subject, work key)` and wrote every organization's work to one shared journal. Two
+  organizations can each have a user `u1`, so the same work key collided. Measured: on MCP, globex's
+  charge returned acme's result and never ran; on the chat route, globex was replayed acme's answer.
+  They now write to the organization's own partition, built the same way the REST API builds it
+  (`scopeConfigToOrg` in @gnldev/durable).
 - A refused request no longer marks someone else's finished run `failed`.
 - A refusal no longer puts the owner's id in `detail` (server, chat-adapter, agui).
 - `GET /runs` with no query returns the same shape for every caller.

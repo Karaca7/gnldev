@@ -132,7 +132,7 @@ describe('agui route — the org in the seal reaches the derivation (REST parity
     expect(res.status).toBe(200);
     await res.text();
     const rest = derivedRunId('agent:mutabakat', 'org', 'org-akme', 'gece-mutabakati');
-    expect(await journal.get<{ workScope?: unknown }>(`${rest}:input`))
+    expect(await journal.get<{ workScope?: unknown }>(`org:org-akme:${rest}:input` /* the org partition, as REST writes it */))
       .toMatchObject({ workKey: 'gece-mutabakati', workScope: { kind: 'org', value: 'org-akme' } });
   });
 
@@ -145,12 +145,12 @@ describe('agui route — the org in the seal reaches the derivation (REST parity
     expect(res.status).toBe(200);
     await res.text();
     const id = derivedRunId('agent:mutabakat', 'org', 'org-akme', 'gece-mutabakati');
-    expect(await journal.get(`${id}:input`)).toBeDefined();
+    expect(await journal.get(`org:org-akme:${id}:input`)).toBeDefined();
   });
 
   it('a RESOURCE-scoped agent ignores the org — the scope decides the address, not the request', async () => {
     const { journal, post } = mkRoute({ identity: () => ({ resourceId: 'u-ayse', orgId: 'org-akme' }) });
     await (await post({ workKey: 'invoice-4471', prompt: 'hi' })).text();
-    expect(await journal.get(`${derivedRunId('agent:pay', 'resource', 'u-ayse', 'invoice-4471')}:input`)).toBeDefined();
+    expect(await journal.get(`org:org-akme:${derivedRunId('agent:pay', 'resource', 'u-ayse', 'invoice-4471')}:input`)).toBeDefined();
   });
 });

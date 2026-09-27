@@ -210,7 +210,7 @@ describe('chat route — the org in the seal reaches the derivation (REST parity
     const rest = derivedRunId('agent:mutabakat', 'org', 'org-akme', 'c1:m1');
     expect(res.headers.get('X-Gnl-Run-Id')).toBe(rest);
     await res.text();
-    expect(await journal.get<{ workScope?: unknown }>(`${rest}:input`))
+    expect(await journal.get<{ workScope?: unknown }>(`org:org-akme:${rest}:input` /* the org partition, as REST writes it */))
       .toMatchObject({ workKey: 'c1:m1', workScope: { kind: 'org', value: 'org-akme' } });
   });
 
