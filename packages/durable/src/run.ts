@@ -915,7 +915,9 @@ async function assertRunAdmissible(
   if (frozen?.actor && opts.actor && frozen.actor !== opts.actor) {
     await refuse(
       new RunActorMismatchError(
-        `@gnldev/durable: run '${runId}' belongs to actor '${frozen.actor}' — '${opts.actor}' may not re-drive it.`,
+        // The owner is in `detail`, never the sentence: engine messages reach end users whole on the chat,
+        // AG-UI and MCP surfaces, and a refusal that names the owner answers "whose id is this?".
+        `@gnldev/durable: run '${runId}' belongs to a different actor — '${opts.actor}' may not re-drive it.`,
         { runId, ownerActor: frozen.actor, requestedActor: opts.actor },
       ),
       'run_actor_mismatch',

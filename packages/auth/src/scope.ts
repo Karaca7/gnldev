@@ -1,6 +1,8 @@
 // Authorization AXES (kept deliberately SEPARATE):
 //   • SCOPE — WHERE an identity can act: a single organization (`org:<id>`) OR the whole `platform`.
 //   • ROLE  — WHAT it can do: viewer(read) / member(run) / admin(manage) — the existing `roles[]`.
+//   • KIND  — WHOSE data it acts on: its own (subject), a user it names (application), or anyone's in
+//             its scope (operator). `Principal.kind`, read through `callerKind`.
 //
 // The platform scope is an EXPLICIT grant, expressed with the reserved `platform-admin` role. It is
 // NEVER derived from "the identity happens to have no orgId" — that inference is the classic
@@ -9,7 +11,7 @@
 //
 // This module is pure (no host/Hono coupling) → unit-testable in isolation and reusable by
 // @gnldev/server, @gnldev/studio and @gnldev/auth-ee.
-import type { Principal } from './types.js';
+import { PRINCIPAL_KINDS, type Principal, type PrincipalKind } from './types.js';
 
 /** The reserved role that grants PLATFORM scope (sees/manages every organization). */
 export const PLATFORM_ADMIN_ROLE = 'platform-admin';
@@ -44,6 +46,27 @@ export function principalScope(principal: Principal | null | undefined): Princip
   return { kind: 'none' };
 }
 
+/**
+ * WHAT this caller is — the one reading every host's ownership decision goes through.
+ *
+ * `unnamed` is not a kind a principal can carry; it is the answer for a caller that cannot be held to
+ * anything: no principal at all, or a subject with no name to bind its data to.
+ *
+ * An UNSTAMPED principal — a provider written in JavaScript, or a cast — reads fail-closed: a user if
+ * it has a name, unnamed if not. It never reads as an operator: staff is declared where the principal
+ * is minted, and a missing declaration is the absence of that grant.
+ */
+export function callerKind(principal: Principal | null | undefined): PrincipalKind | 'unnamed' {
+  if (!principal) return 'unnamed';
+  if (principal.kind === 'operator' || principal.kind === 'application') return principal.kind;
+  return typeof principal.id === 'string' && principal.id !== '' ? 'subject' : 'unnamed';
+}
+
+/** True for exactly the three kinds. For a value that crossed a trust boundary: a body, a row, a callback. */
+export function isPrincipalKind(x: unknown): x is PrincipalKind {
+  return (PRINCIPAL_KINDS as readonly unknown[]).includes(x);
+}
+
 /** Outcome of a privilege-ceiling check (see {@link assertAssignablePrivileges}). */
 export type AssignabilityResult = { ok: true } | { ok: false; reason: string };
 
@@ -61,8 +84,13 @@ export type AssignabilityResult = { ok: true } | { ok: false; reason: string };
  */
 export function assertAssignablePrivileges(
   assigner: Principal | null | undefined,
-  requested: { roles?: string[] | undefined; permissions?: string[] | undefined },
+  requested: { roles?: string[] | undefined; permissions?: string[] | undefined; kind?: PrincipalKind | undefined },
 ): AssignabilityResult {
+  // KIND first, and for everyone: a platform-admin ROLE on a principal that is not staff is still not
+  // staff. Only an operator can create a caller that acts on other people's data.
+  if (requested.kind && requested.kind !== 'subject' && callerKind(assigner) !== 'operator') {
+    return { ok: false, reason: `only an operator can create a caller of kind '${requested.kind}'` };
+  }
   // A platform-admin is already cross-org: it can assign any role/permission.
   if (isPlatformAdmin(assigner)) return { ok: true };
   // The reserved cross-org grant — never mintable by a non-platform-admin.

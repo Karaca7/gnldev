@@ -80,7 +80,7 @@ describe('GET /scheduler/triggers', () => {
       auth: {
         authenticate: (req: Request) => {
           const tok = req.headers.get('authorization')?.replace('Bearer ', '') ?? '';
-          return PEOPLE[tok] ? { id: tok, roles: ['viewer'], permissions: PEOPLE[tok] } : null;
+          return PEOPLE[tok] ? { kind: 'operator', id: tok, roles: ['viewer'], permissions: PEOPLE[tok] } : null;
         },
         authorize: (p: { permissions?: string[] } | null, _r: Request, ctx: { permission?: string }) => {
           const need = ctx.permission ?? 'unknown:read';

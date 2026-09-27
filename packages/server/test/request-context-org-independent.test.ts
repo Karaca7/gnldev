@@ -16,6 +16,7 @@ import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
 import { roleAuth } from '@gnldev/auth';
 import { createRestApi } from '../src/index.js';
+import { asEndUsers } from './end-users.js';
 import { call } from './call.js';
 
 function mkModel(text: string): any {
@@ -112,7 +113,8 @@ describe('a request body that names its own organization', () => {
 });
 
 describe('/agents/:name/resume', () => {
-  const authed = () => roleAuth({ admin: { token: 'adm', user: 'alice', orgId: 'acme' } });
+  // alice is an END USER: the identity the fresh run seals, and the one resume must reproduce.
+  const authed = () => asEndUsers(roleAuth({ admin: { token: 'adm', user: 'alice', orgId: 'acme' } }), ['alice']);
 
   /**
    * A run whose journaled input exists, which is all `resume` needs to start work. The key carries

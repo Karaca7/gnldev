@@ -116,7 +116,7 @@ describe('GET /jobs', () => {
         }] as never,
       },
       auth: {
-        authenticate: () => ({ id: 'support', roles: ['viewer'], permissions: ['catalog:read'] }),
+        authenticate: () => ({ kind: 'operator', id: 'support', roles: ['viewer'], permissions: ['catalog:read'] }),
         authorize: (p: { permissions?: string[] } | null, _r: Request, ctx: { permission?: string }) =>
           ((p?.permissions ?? []).includes(ctx.permission ?? '')
             ? { allow: true } : { allow: false as const, status: 403 as const, reason: 'no' }),

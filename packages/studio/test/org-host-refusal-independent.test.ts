@@ -363,7 +363,7 @@ describe('the boot warning', () => {
     createStudioApi({
       reader: new InMemoryJournal(),
       auth: {
-        authenticate: () => ({ roles: ['admin'] }),
+        authenticate: () => ({ kind: 'operator', roles: ['admin'] }),
         authorize: () => ({ allow: true }),
         capabilities: () => ({ sso: true, rbac: true, audit: true, multiOrganization: true, users: true }),
       },

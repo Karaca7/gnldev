@@ -188,7 +188,7 @@ describe('ALL entries are middleware, not routes', () => {
   it('appear in this package only once `org` or `auth` is configured', () => {
     const allOf = (h: Handler) => h.routeTable.filter((r) => r.method === 'ALL').map((r) => r.path);
     const authProvider = {
-      authenticate: () => ({ roles: ['admin'] }),
+      authenticate: () => ({ kind: 'operator', roles: ['admin'] }),
       authorize: () => ({ allow: true }),
       capabilities: () => ({ sso: false, rbac: false, audit: false, multiOrganization: false, users: false }),
     };

@@ -19,10 +19,10 @@ import { createStudioApi } from '../src/server.js';
 const authProvider = {
   authenticate: (req: Request) => {
     const t = req.headers.get('authorization')?.replace('Bearer ', '');
-    if (t === 'acme') return { roles: ['admin'], id: 'u-acme', orgId: 'acme' };
+    if (t === 'acme') return { kind: 'operator', roles: ['admin'], id: 'u-acme', orgId: 'acme' };
     // The unscoped operator, now SAYING so: the platform scope is an explicit grant, never inferred
     // from a missing orgId (scope.ts — inferring it turns a forgotten orgId into a super-admin).
-    if (t === 'ops') return { roles: ['admin', PLATFORM_ADMIN_ROLE], id: 'u-ops' };
+    if (t === 'ops') return { kind: 'operator', roles: ['admin', PLATFORM_ADMIN_ROLE], id: 'u-ops' };
     return null;
   },
   authorize: () => ({ allow: true }),

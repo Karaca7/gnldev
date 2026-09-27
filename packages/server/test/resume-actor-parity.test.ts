@@ -29,6 +29,7 @@ import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
 import { roleAuth } from '@gnldev/auth';
 import { createRestApi } from '../src/index.js';
+import { asEndUsers } from './end-users.js';
 import { call } from './call.js';
 
 function mkModel(text: string): any {
@@ -53,11 +54,11 @@ function makeApi() {
   const api = createRestApi(
     { journal, agents: { a: { model: mkModel(SECRET) } } } as never,
     {
-      auth: roleAuth({
+      auth: asEndUsers(roleAuth({
         client: { token: 'C' },
-        superAdmin: { token: 'A' }, // operatör: cred'de `user` yok → principal.id YOK → muaf
-        admin: { user: 'mallory', pass: 'p' },
-      }),
+        superAdmin: { token: 'A' }, // staff: names nobody, exempt
+        admin: { user: 'mallory', pass: 'p' }, // an END USER, see asEndUsers
+      }), ['mallory']),
     } as never,
   );
   return { api: api as never, journal };
@@ -80,26 +81,14 @@ async function seeded() {
 }
 
 describe('POST /agents/:name/resume — damga eşitliği (/run neyi reddediyorsa o da reddeder)', () => {
-  it('ÖLÇÜM ÇAPASI: aynı çağıran /run üzerinde motorun actor kilidine takılıyor (409)', async () => {
+  it('ANCHOR: the same caller on /run is refused at the edge (403) and learns no owner', async () => {
     const { api } = await seeded();
     const res = await post(api, '/agents/a/run', MALLORY, { runId: 'raw-ayse', prompt: 'zzz' });
-    expect(res.status).toBe(409);
-    const body = await res.json();
-    // The anchor is the CODE: it proves the engine's actor lock is what answers here, which is what
-    // makes the parity claim below meaningful. `detail.ownerActor` used to be asserted too, and that
-    // assertion pinned a disclosure: mallory learned the run belongs to 'u-ayse' by being refused —
-    // the id-guessing oracle `ownershipDenied`'s own comment exists to close. It is redacted now
-    // (see `FOREIGN_PARTY_DETAIL_FIELDS` in @gnldev/durable), so the refusal names only what THIS
-    // caller sent. The assertion that it is absent lives in `refusal-names-nobody.test.ts`.
-    expect(body).toMatchObject({ code: 'run_actor_mismatch', detail: { requestedActor: 'mallory' } });
-    expect(body.detail, 'the STRUCTURED refusal still named the owner').not.toHaveProperty('ownerActor');
-    // STILL OPEN, and measured rather than assumed: the redaction covers `detail`, not the sentence.
-    // `body.error` here is still "run 'raw-ayse' belongs to actor 'u-ayse' — 'mallory' may not
-    // re-drive it." Seven message sites in @gnldev/durable name the owner this way and two test files
-    // assert them. Closing it is a separate decision, not a wider version of this one: the sentence
-    // is what an operator reads in a log, and a code-only refusal moves that explanation into
-    // docs/errors/<code>.md. Trigger: the first report of an id-guessing probe against a deployment
-    // that hands end users their own credentials.
+    // An end user is bound to itself by default now, so `ownershipDenied` answers before the engine's
+    // actor lock can. That lock's 409 said "run 'raw-ayse' belongs to actor 'u-ayse'" — the sentence
+    // `FOREIGN_PARTY_DETAIL_FIELDS` could not redact. An end user no longer reaches it on this path.
+    expect(res.status).toBe(403);
+    expect(await res.text(), 'the refusal named the owner').not.toContain('u-ayse');
   });
 
   it('KIRMIZI: beyan etmeyen yabancı kimlik, başkasının koşumunu resume edemez', async () => {
@@ -141,15 +130,27 @@ describe('POST /agents/:name/resume — damga eşitliği (/run neyi reddediyorsa
     expect((await post(api, '/agents/a/resume', 'Bearer C', { runId: 'raw-ayse', resourceId: 'u-ayse' })).status).toBe(200);
   });
 
-  it('damgasız (eski) koşum: /run reddetmiyorsa /resume de reddetmez', async () => {
+  it('a run stamped with an actor but no recorded subject: only the actor says whose it is', async () => {
+    // A host that writes its own route passes `actor` without sealing a subject, so the record carries
+    // an actor and no `resourceId`. The subject gate has nothing to compare; the actor is the only
+    // owner on file, and an end user is still held to it.
     const { api, journal } = await seeded();
-    // 71ae8269 öncesi doğmuş bir kayıt: sahip var, damga yok.
+    const input = await journal.get<Record<string, unknown>>('raw-ayse:input');
+    const { resourceId: _drop, ...actorOnly } = input as { resourceId?: string };
+    await journal.put('raw-ayse:input', actorOnly);
+    const res = await post(api, '/agents/a/resume', MALLORY, { runId: 'raw-ayse' });
+    expect(res.status).toBe(403);
+    expect(await res.text()).not.toContain(SECRET);
+  });
+
+  it('an unstamped (older) run: /run and /resume still answer the same — both refuse', async () => {
+    const { api, journal } = await seeded();
+    // A record born before 71ae8269: an owner, no actor stamp. The engine's lock is silent on it, but
+    // the owner is recorded, and an end user is held to its own.
     const input = await journal.get<Record<string, unknown>>('raw-ayse:input');
     const { actor: _drop, ...withoutActor } = input as { actor?: string };
     await journal.put('raw-ayse:input', withoutActor);
-    // /run: motor sessiz (damga yok) — kenar da beyan olmadığı için sessiz.
-    expect((await post(api, '/agents/a/run', MALLORY, { runId: 'raw-ayse', prompt: 'hi' })).status).toBe(200);
-    // /resume aynı yerde durur: bu yama parite kuruyor, yeni bir yasak koymuyor.
-    expect((await post(api, '/agents/a/resume', MALLORY, { runId: 'raw-ayse' })).status).toBe(200);
+    expect((await post(api, '/agents/a/run', MALLORY, { runId: 'raw-ayse', prompt: 'hi' })).status).toBe(403);
+    expect((await post(api, '/agents/a/resume', MALLORY, { runId: 'raw-ayse' })).status).toBe(403);
   });
 });

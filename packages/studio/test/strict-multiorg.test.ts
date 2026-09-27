@@ -34,10 +34,10 @@ function licensedAuth(map: Record<string, Principal>): AuthProvider {
 }
 
 const PRINCIPALS: Record<string, Principal> = {
-  'a-adm': { id: 'a-adm', roles: ['admin'], orgId: 'acme' },       // org-bound admin (acme)
-  'plat': { id: 'plat', roles: ['admin', 'platform-admin'] },      // EXPLICIT platform admin
-  'lost': { id: 'lost', roles: ['admin'] },                        // org-less, NO grant → fail-closed
-  'b-viw': { id: 'b-viw', roles: ['viewer'], orgId: 'globex' },    // org-bound viewer (globex)
+  'a-adm': { kind: 'operator', id: 'a-adm', roles: ['admin'], orgId: 'acme' },       // org-bound admin (acme)
+  'plat': { kind: 'operator', id: 'plat', roles: ['admin', 'platform-admin'] },      // EXPLICIT platform admin
+  'lost': { kind: 'operator', id: 'lost', roles: ['admin'] },                        // org-less, NO grant → fail-closed
+  'b-viw': { kind: 'operator', id: 'b-viw', roles: ['viewer'], orgId: 'globex' },    // org-bound viewer (globex)
 };
 
 async function seed(journal: InMemoryJournal) {

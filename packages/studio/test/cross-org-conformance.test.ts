@@ -151,9 +151,9 @@ const VERDICTS: Record<string, { verdict: Verdict; why: string }> = {
 const authProvider = {
   authenticate: (req: Request) => {
     const t = req.headers.get('authorization')?.replace('Bearer ', '');
-    if (t === 'acme') return { roles: ['admin'], id: 'u-acme', orgId: 'acme' };
-    if (t === 'globex') return { roles: ['admin'], id: 'u-globex', orgId: 'globex' };
-    if (t === 'root') return { roles: ['admin', 'platform-admin'], id: 'u-root' };
+    if (t === 'acme') return { kind: 'operator', roles: ['admin'], id: 'u-acme', orgId: 'acme' };
+    if (t === 'globex') return { kind: 'operator', roles: ['admin'], id: 'u-globex', orgId: 'globex' };
+    if (t === 'root') return { kind: 'operator', roles: ['admin', 'platform-admin'], id: 'u-root' };
     return null;
   },
   authorize: () => ({ allow: true }),

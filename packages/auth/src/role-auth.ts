@@ -170,6 +170,10 @@ export function roleAuth(cfg: {
     const roles = role === 'admin' && platform ? ['admin', PLATFORM_ADMIN_ROLE] : [role];
     const credentialId = cred?.token ? tokenId(cred.token) : undefined;
     return {
+      // A credential written into the deployment's own config is staff by construction: whoever can
+      // edit that file already runs the deployment. `client` is the one class that speaks for
+      // somebody else — the application.
+      kind: role === CLIENT_ROLE ? 'application' : 'operator',
       roles: cred?.platformAdmin && !roles.includes(PLATFORM_ADMIN_ROLE) ? [...roles, PLATFORM_ADMIN_ROLE] : roles,
       ...(cred?.user ? { id: cred.user } : {}),
       ...(credentialId ? { credentialId } : {}),

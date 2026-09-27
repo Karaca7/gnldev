@@ -81,7 +81,7 @@ describe('@gnldev/studio agent approval registry — strict multi-org platform-a
       authenticate: (req: any) => {
         const h = req.headers.get('authorization');
         const tok = h?.startsWith('Bearer ') ? h.slice(7) : undefined;
-        return tok === 'acme-adm' ? { id: 'acme-adm', roles: ['admin'], orgId: 'acme' } : null;
+        return tok === 'acme-adm' ? { kind: 'operator', id: 'acme-adm', roles: ['admin'], orgId: 'acme' } : null;
       },
       authorize: (p: any, _req: any, ctx: any) => {
         if (!p) return { allow: false, status: 401 };

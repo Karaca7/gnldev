@@ -80,7 +80,7 @@ describe('resume: sahiplik kilidinin Studio tarafı', () => {
       reader: journal,
       resume: async () => {
         throw new RunActorMismatchError(
-          "@gnldev/durable: run 'r-2' belongs to actor 'ayse' — 'operator-7' may not re-drive it.",
+          "@gnldev/durable: run 'r-2' belongs to a different actor — 'operator-7' may not re-drive it.",
           { runId: 'r-2', ownerActor: 'ayse', requestedActor: 'operator-7' },
         );
       },
@@ -92,8 +92,8 @@ describe('resume: sahiplik kilidinin Studio tarafı', () => {
     expect(res.status).toBe(409); // @gnldev/server'ın çağıran-çatışması taksonomisiyle AYNI — tek sözlük
     const body = await res.json() as { error: string; code: string; detail?: { ownerActor?: string } };
     expect(body.code).toBe('run_actor_mismatch');
-    expect(body.error).toContain('belongs to actor');
-    expect(body.detail?.ownerActor).toBe('ayse'); // sahibi KİM — ret okunabilir olsun diye
+    expect(body.error).toContain('belongs to a different actor');
+    expect(body.detail?.ownerActor).toBe('ayse'); // staff console: the owner is shown to staff, in `detail`
   });
 
   it('audit GERÇEK kararı yazar, istenen kararı değil', async () => {

@@ -90,7 +90,7 @@ const identityAuth = () => ({
   authenticate: (req: Request) => {
     const tok = req.headers.get('authorization')?.replace('Bearer ', '') ?? '';
     if (!tok) return null;
-    const base = { roles: ['admin'], permissions: ['*:read', '*:write'] };
+    const base = { kind: 'operator', roles: ['admin'], permissions: ['*:read', '*:write'] };
     if (tok.startsWith('?')) return { ...base, orgId: tok.slice(1) };
     const [a, b] = tok.split('/');
     return b ? { ...base, id: b, orgId: a } : { ...base, id: a };
@@ -233,7 +233,7 @@ describe('the event body', () => {
     auth: {
       authenticate: (req: Request) => {
         const tok = req.headers.get('authorization')?.replace('Bearer ', '') ?? '';
-        return PEOPLE[tok] ? { id: tok, roles: ['viewer'], permissions: PEOPLE[tok] } : null;
+        return PEOPLE[tok] ? { kind: 'operator', id: tok, roles: ['viewer'], permissions: PEOPLE[tok] } : null;
       },
       authorize: (p: { permissions?: string[] } | null, _r: Request, ctx: { permission?: string; action: string; path?: string }) => {
         const need = ctx.permission ?? `${ctx.path?.split('/').filter(Boolean)[0] ?? 'unknown'}:${ctx.action}`;
@@ -416,7 +416,7 @@ describe('the scan limit', () => {
       auth: {
         authenticate: (req: Request) => {
           const tok = req.headers.get('authorization')?.replace('Bearer ', '') ?? '';
-          return { id: tok, roles: ['viewer'], permissions: tok === 'wide' ? ['*:read'] : ['catalog:read'] };
+          return { kind: 'operator', id: tok, roles: ['viewer'], permissions: tok === 'wide' ? ['*:read'] : ['catalog:read'] };
         },
         authorize: (p: { permissions?: string[] } | null, _r: Request, ctx: { permission?: string }) => {
           const need = ctx.permission ?? 'unknown:read';
@@ -1065,7 +1065,7 @@ describe('the scan deadline', () => {
  */
 describe('host records are projected, not forwarded', () => {
   const catalogOnly = () => ({
-    authenticate: () => ({ id: 'support', roles: ['viewer'], permissions: ['catalog:read'] }),
+    authenticate: () => ({ kind: 'operator', id: 'support', roles: ['viewer'], permissions: ['catalog:read'] }),
     authorize: (p: { permissions?: string[] } | null, _r: Request, ctx: { permission?: string }) =>
       ((p?.permissions ?? []).includes(ctx.permission ?? '') ? { allow: true } : { allow: false as const, status: 403 as const, reason: 'no' }),
     capabilities: () => ({ rbac: true }),
@@ -1340,7 +1340,7 @@ describe('the scan queue reserves capacity for callers it can name', () => {
       auth: {
         authenticate: (req: Request) => {
           const tok = req.headers.get('authorization')?.replace('Bearer ', '');
-          const base = { roles: ['admin'], permissions: ['*:read', '*:write'] };
+          const base = { kind: 'operator', roles: ['admin'], permissions: ['*:read', '*:write'] };
           return tok ? { ...base, id: tok } : base;
         },
         authorize: () => ({ allow: true }),

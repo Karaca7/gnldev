@@ -39,7 +39,7 @@ function rbacApi() {
   const auth = {
     authenticate: (req: Request) => {
       const t = req.headers.get('authorization')?.replace('Bearer ', '') ?? '';
-      return PEOPLE[t] ? { id: t, orgId: 'acme', roles: ['viewer'], permissions: PEOPLE[t] } : null;
+      return PEOPLE[t] ? { kind: 'operator', id: t, orgId: 'acme', roles: ['viewer'], permissions: PEOPLE[t] } : null;
     },
     authorize: (p: { permissions?: string[] } | null, _r: Request, ctx: { permission?: string; action: string; path?: string }) => {
       // MIRRORS @gnldev/auth-ee rbac.ts `requiredPermission`: the gate's exact permission when it names
@@ -203,7 +203,7 @@ describe('Studio refuses an application credential', () => {
     // The message has to be actionable: someone hits this because they wired the REST credential into
     // both hosts, and a bare 403 sends them looking for a permissions bug that is not there.
     const body = await (await call(a, '/runs', { headers: { authorization: 'Bearer C' } })).json();
-    expect(JSON.stringify(body)).toContain('operator console');
+    expect(JSON.stringify(body)).toContain('staff console');
   });
 
   it('operators are untouched — refusing everything would satisfy the test above', async () => {
@@ -246,7 +246,7 @@ describe('knowledge search is gated on the data permission, not the configuratio
     const auth = {
       authenticate: (req: Request) => {
         const t = req.headers.get('authorization')?.replace('Bearer ', '') ?? '';
-        return PEOPLE[t] ? { id: t, orgId: 'acme', roles: ['viewer'], permissions: PEOPLE[t] } : null;
+        return PEOPLE[t] ? { kind: 'operator', id: t, orgId: 'acme', roles: ['viewer'], permissions: PEOPLE[t] } : null;
       },
       // Mirrors rbacApi above EXACTLY, including the explicit 403: `{allow:false}` alone defaults to
       // 401, which would make the refusal below say "not authenticated" instead of "not permitted".

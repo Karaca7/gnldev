@@ -1,8 +1,8 @@
 // The SHAPE of a response is a fact about the request, not about who is asking.
 //
 // `GET /runs` with no parameters answers a bare array — the legacy shape, kept on purpose. The branch
-// that decides it reads the RESOLVED subject, and under `subjectBinding: 'strict'` that subject comes
-// from the caller's identity rather than the query string. So the same parameterless URL answered an
+// that decides it reads the RESOLVED subject, and for an end user that subject comes from the
+// caller's identity rather than the query string. So the same parameterless URL answered an
 // array to an operator and `{items:[…]}` to a bound end user.
 //
 // Measured on the published client (@gnldev/client@0.6.0, `listRuns()` casts the body to
@@ -12,12 +12,13 @@
 //
 // The fix keeps BOTH promises: the shortcut now keys on what the REQUEST said (`?resourceId=`), so
 // the shape is stable, and the bound subject is applied as a filter inside it, so the scoping the
-// switch exists for is unchanged. The second test is the one that matters: a stable shape is worth
+// scoping is unchanged. The second test is the one that matters: a stable shape is worth
 // nothing if it is stable because it stopped filtering.
 import { describe, it, expect } from 'vitest';
 import { InMemoryStorage } from '@gnldev/durable';
 import { roleAuth } from '@gnldev/auth';
 import { createRestApi } from '../src/index.js';
+import { asEndUsers } from './end-users.js';
 
 const mkModel = () => ({
   specificationVersion: 'v4' as const, provider: 'm', modelId: 'm', supportedUrls: {},
@@ -32,7 +33,7 @@ const mkModel = () => ({
 async function seeded() {
   const app = createRestApi(
     { storage: new InMemoryStorage(), memory: false, agents: { a: { model: mkModel() as never } } } as never,
-    { auth: roleAuth({ client: { token: 'C' }, viewer: { user: 'u-ayse', pass: 'p' } }), subjectBinding: 'strict' },
+    { auth: asEndUsers(roleAuth({ client: { token: 'C' }, viewer: { user: 'u-ayse', pass: 'p' } }), ['u-ayse']) },
   );
   const seed = (runId: string, resourceId: string) => app(new Request('http://x/agents/a/run', {
     method: 'POST',

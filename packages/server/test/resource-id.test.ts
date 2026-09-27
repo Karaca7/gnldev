@@ -19,6 +19,7 @@ import { describe, it, expect } from 'vitest';
 import { InMemoryStorage } from '@gnldev/durable';
 import { roleAuth } from '@gnldev/auth';
 import { createRestApi } from '../src/index.js';
+import { asEndUsers } from './end-users.js';
 
 const mkModel = () => ({
   specificationVersion: 'v4' as const, provider: 'm', modelId: 'm', supportedUrls: {},
@@ -190,7 +191,8 @@ describe('resourceId: whose run/thread this is', () => {
         memoryFactory: mem.factory as never,
         agents: { a: { model: mkModel() as never } },
       } as never,
-      { auth: roleAuth({ client: { user: 'ayse', pass: 'p', orgId: 'acme' } }) },
+      // An END USER (`kind: 'subject'`): the kind that speaks for itself. A `client` names its subject.
+      { auth: asEndUsers(roleAuth({ client: { user: 'ayse', pass: 'p', orgId: 'acme' } }), ['ayse']) },
     );
     const res = await app(new Request('http://x/agents/a/run', {
       method: 'POST',

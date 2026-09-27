@@ -12,6 +12,7 @@ import { describe, it, expect } from 'vitest';
 import { InMemoryStorage } from '@gnldev/durable';
 import { roleAuth } from '@gnldev/auth';
 import { createRestApi } from '../src/index.js';
+import { asEndUsers } from './end-users.js';
 
 const model = {
   specificationVersion: 'v4' as const, provider: 'm', modelId: 'm', supportedUrls: {},
@@ -36,12 +37,11 @@ function makeApi() {
   return createRestApi(
     { storage: new InMemoryStorage(), memoryFactory: () => memory, agents: { a: { model } } } as never,
     {
-      subjectBinding: 'strict',
-      auth: roleAuth({
+      auth: asEndUsers(roleAuth({
         client: { token: 'C', orgId: 'acme' },
-        // BU SINIF EKSİKTİ: kendi adını taşıyan kimlik (basic auth → principal.id = 'mallory').
+        // THE MISSING COLUMN: an end user who carries its own name (`kind: 'subject'`, id 'mallory').
         viewer: { user: 'mallory', pass: 'p', orgId: 'acme' },
-      }),
+      }), ['mallory']),
     } as never,
   );
 }

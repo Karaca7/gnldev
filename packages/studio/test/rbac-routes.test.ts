@@ -22,7 +22,8 @@ const match = (g: string, req: string): boolean => {
 };
 
 // A user store that ALSO serves as the auth source (token → principal), so PATCH updates are reflected on
-// the next authenticate — mirroring @gnldev/auth-ee createJournalUserStore + createEnterpriseAuth.
+// the next authenticate — mirroring @gnldev/auth-ee createJournalUserStore + createEnterpriseAuth,
+// including its `kind` contract: a user is a subject unless created or patched otherwise.
 function makeStore() {
   const byId = new Map<string, StudioUser>();
   const byToken = new Map<string, string>();
@@ -30,7 +31,7 @@ function makeStore() {
     list: () => [...byId.values()],
     create: async (input) => {
       const id = input.email!;
-      const u: StudioUser = { id, roles: input.roles?.length ? input.roles : ['viewer'], ...(input.permissions?.length ? { permissions: input.permissions } : {}), ...(input.orgId ? { orgId: input.orgId } : {}) };
+      const u: StudioUser = { id, kind: input.kind ?? 'subject', roles: input.roles?.length ? input.roles : ['viewer'], ...(input.permissions?.length ? { permissions: input.permissions } : {}), ...(input.orgId ? { orgId: input.orgId } : {}) };
       byId.set(id, u);
       const token = 'tok_' + id;
       byToken.set(token, id);
@@ -42,6 +43,7 @@ function makeStore() {
       if (!u) throw new Error(`user '${id}' not found`);
       const n: StudioUser = { ...u };
       if (patch.roles?.length) n.roles = patch.roles;
+      if (patch.kind) n.kind = patch.kind;
       if (patch.permissions !== undefined) { if (patch.permissions.length) n.permissions = patch.permissions; else delete n.permissions; }
       byId.set(id, n);
       return n;
@@ -50,7 +52,7 @@ function makeStore() {
       const id = byToken.get(t);
       if (!id) return null;
       const u = byId.get(id);
-      return u ? { id: u.id, roles: u.roles, ...(u.permissions ? { permissions: u.permissions } : {}), ...(u.orgId ? { orgId: u.orgId } : {}) } : null;
+      return u ? { kind: u.kind ?? 'subject', id: u.id, roles: u.roles, ...(u.permissions ? { permissions: u.permissions } : {}), ...(u.orgId ? { orgId: u.orgId } : {}) } : null;
     },
   };
   return store;
@@ -76,9 +78,9 @@ function rbacAuth(store: ReturnType<typeof makeStore>): AuthProvider {
 async function setup() {
   const journal = new InMemoryJournal();
   const store = makeStore();
-  const viewer = (await store.create({ email: 'v@a.co', roles: ['viewer'] })).token;
-  const member = (await store.create({ email: 'm@a.co', roles: ['member'] })).token;
-  const admin = (await store.create({ email: 'ad@a.co', roles: ['admin'] })).token;
+  const viewer = (await store.create({ email: 'v@a.co', kind: 'operator', roles: ['viewer'] })).token;
+  const member = (await store.create({ email: 'm@a.co', kind: 'operator', roles: ['member'] })).token;
+  const admin = (await store.create({ email: 'ad@a.co', kind: 'operator', roles: ['admin'] })).token;
   const app = createStudioApi({
     reader: journal,
     auth: rbacAuth(store),
@@ -115,8 +117,8 @@ describe('@gnldev/studio fine-grained routes (RBAC)', () => {
 
   it('explicit permissions override the role (member-like perms cannot manage budget; [*] can)', async () => {
     const { app, store } = await setup();
-    const like = (await store.create({ email: 'p1@a.co', roles: ['viewer'], permissions: ['*:read', 'agents:run'] })).token;
-    const full = (await store.create({ email: 'p2@a.co', roles: ['viewer'], permissions: ['*'] })).token;
+    const like = (await store.create({ email: 'p1@a.co', kind: 'operator', roles: ['viewer'], permissions: ['*:read', 'agents:run'] })).token;
+    const full = (await store.create({ email: 'p2@a.co', kind: 'operator', roles: ['viewer'], permissions: ['*'] })).token;
     expect((await runReq(app, like)).status).toBe(200);
     expect((await call(app, '/organizations/acme/budget', { method: 'PUT', headers: JH(like), body: JSON.stringify({ tokenLimit: 5 }) })).status).toBe(403);
     expect((await call(app, '/organizations/acme/budget', { method: 'PUT', headers: JH(full), body: JSON.stringify({ tokenLimit: 5 }) })).status).toBe(200);
@@ -124,7 +126,7 @@ describe('@gnldev/studio fine-grained routes (RBAC)', () => {
 
   it('PATCH /users/:id viewer→member: the SAME token can now run agents', async () => {
     const { app, admin, store } = await setup();
-    const { user, token } = await store.create({ email: 'up@a.co', roles: ['viewer'] });
+    const { user, token } = await store.create({ email: 'up@a.co', kind: 'operator', roles: ['viewer'] });
     expect((await runReq(app, token)).status).toBe(403); // viewer cannot run
     const patch = await call(app, `/users/${user.id}`, { method: 'PATCH', headers: JH(admin), body: JSON.stringify({ roles: ['member'] }) });
     expect(patch.status).toBe(200);
@@ -133,7 +135,7 @@ describe('@gnldev/studio fine-grained routes (RBAC)', () => {
 
   it('PATCH assigns explicit permissions; a member cannot PATCH users (403)', async () => {
     const { app, admin, member, store } = await setup();
-    const { user } = await store.create({ email: 'pe@a.co', roles: ['viewer'] });
+    const { user } = await store.create({ email: 'pe@a.co', kind: 'operator', roles: ['viewer'] });
     // member lacks users:write → PATCH forbidden
     expect((await call(app, `/users/${user.id}`, { method: 'PATCH', headers: JH(member), body: JSON.stringify({ permissions: ['*'] }) })).status).toBe(403);
     // admin can assign explicit permissions

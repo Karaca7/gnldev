@@ -5,7 +5,7 @@ import { toFetchHandler, type FetchHandler } from './handler.js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { createGnl, agentVisibleToOrg, withOrg, withOrgStorage, ORG_RECORD_PRE, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, asReaderJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, sealRequestContext, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry, callerConflictCode, publicConflictDetail, describeProtections, formatProtections, teachingError, resolveWorkIdentity } from '@gnldev/durable';
 import type { CreateGnlConfig, Journal, JournalReader, BudgetLimit, UsageCostCache, RunLimits, ResolvedWorkIdentity, WorkScopeKind } from '@gnldev/durable';
-import { makeGate, normalizeAuth, principalOf, isPlatformAdmin, CLIENT_ROLE, type AuthProvider, type ReadWriteAuth, type Principal } from '@gnldev/auth';
+import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, callerKind, type AuthProvider, type ReadWriteAuth, type Principal, type PrincipalKind } from '@gnldev/auth';
 // P0.4 @gnldev/workflow is zero-dependency (see its package.json) — depending on it
 // from @gnldev/server is a clean one-way edge (server→workflow), NOT circular: @gnldev/durable's registry.ts
 // deliberately stays workflow-agnostic (WorkflowLike is a structural type, no import) to avoid a
@@ -168,8 +168,8 @@ export interface ResourceAuthResource {
  * host may dispatch its own verbs — but nothing in this package ever calls the gate with it, so a
  * host that writes an `action === 'read'` branch gets a rule that never runs. That was measured as a
  * real hazard rather than a cosmetic one: a signature that names a verb reads as a promise that the
- * verb is checked, and the read paths are exactly where subject binding was missing
- * (`subjectBinding`). Read authorisation lives there, not here.
+ * verb is checked, and the read paths are exactly where subject binding was missing. Read
+ * authorisation is decided by the caller's KIND (@gnldev/auth `callerKind`), not here.
  *
  * `'resume'` IS dispatched — but as `'run'`: resuming executes the agent and carries `approvals`,
  * so denying `run` while allowing `resume` would be the wrong way round (see the resume endpoint's
@@ -236,28 +236,6 @@ export interface RestApiOptions {
    * GET → read, POST → write.
    */
   auth?: AuthProvider | ReadWriteAuth;
-  /**
-   * Who a request is allowed to speak FOR, on the read paths.
-   *
-   * `'declared'` (default, today's behaviour): the expectation comes only from what the CALLER
-   * states (`?resourceId=` or the body). State nobody and nothing is checked — the rule was written
-   * for operators, who work across an organization by design and name nobody.
-   *
-   * `'strict'`: an authenticated NON-OPERATOR identity speaks for ITSELF. `principal.id` becomes the
-   * expectation and a caller-supplied name cannot replace it.
-   *
-   * WHY THE OPTION EXISTS RATHER THAN A STRAIGHT FIX. Measured on a deployment that hands user-store
-   * tokens to end users: `mallory` read `GET /threads` (the whole subject inventory), then
-   * `/threads/t-ayse/messages` (`AYSE-SECRET`), then `/runs/r-ayse` (the full journal) — all 200,
-   * and naming someone else explicitly was 200 as well. The same identity is a SUBJECT when it
-   * writes (`resolveResourceId`) and an OPERATOR when it reads; that asymmetry is the hole.
-   *
-   * It is not flipped by default because doing so turns today's 200s into 403s for every deployment
-   * whose operators read across their organization — which is the documented, intended use. The flag
-   * lets a deployment that gives end users tokens close the hole now; the default follows once the
-   * operator/end-user split has a first-class shape.
-   */
-  subjectBinding?: 'declared' | 'strict';
   /**
    * DELIBERATE permission for a provider-less API in production. Auth remains opt-in; but in
    * NODE_ENV=production, calling createRestApi without `auth` throws a setup ERROR — silent fail-open is
@@ -406,11 +384,13 @@ const CLIENT_SUBJECT_REQUIRED = teachingError({
  * caller thought it had asked for separation.
  */
 function resolveResourceId(
+  kind: PrincipalKind | 'unnamed',
   principalId: string | undefined,
   raw: unknown,
-  isClient = false,
 ): { resourceId?: string } | { error: string } {
-  if (principalId) return { resourceId: principalId };
+  // A USER speaks for itself: its own name wins over anything the body says. Keyed on the kind, not on
+  // whether a name is present — a named member of staff filing work for Ayşe files it under Ayşe.
+  if (kind === 'subject' && principalId) return { resourceId: principalId };
   // An APPLICATION credential acts FOR an end user — that is what distinguishes it from an operator
   // credential, and it is the only reason it is trusted to assert a subject at all. So it must name
   // one. Silence used to mean "unchecked", which put an application's own users in the position the
@@ -421,7 +401,7 @@ function resolveResourceId(
   // wrong, which is exactly the mistake the first version made by treating "absent" the same way for
   // everyone.
   if (raw === undefined || raw === null) {
-    return isClient
+    return kind === 'application'
       ? { error: CLIENT_SUBJECT_REQUIRED }
       : {};
   }
@@ -851,8 +831,18 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
    * Silent on: no expectation stated, no owner recorded, or a journal that cannot answer. See the
    * route JSDoc for why neither absence is treated as a denial.
    */
-  /** Whether THIS caller is an application credential (see @gnldev/auth CLIENT_ROLE). */
-  const isClient = (c: Context): boolean => principalOf(c.req.raw)?.roles?.includes(CLIENT_ROLE) === true;
+  /**
+   * WHAT this caller is: operator, application, subject, or unnamed. Every ownership decision below
+   * asks this and nothing else — see @gnldev/auth `callerKind`, and `Principal.kind` for why it is
+   * stamped where the principal is minted instead of inferred here from whether it carries a name.
+   *
+   * No provider, or one with no principal model (`bindsIdentity: false`, the {read,write} pair), is
+   * the deliberate single-operator mode: whoever got past it is staff, because nothing else exists.
+   */
+  const kindOf = (c: Context): PrincipalKind | 'unnamed' =>
+    !authProvider || !bindsIdentity(authProvider) ? 'operator' : callerKind(principalOf(c.req.raw));
+  /** Whether THIS caller is an application credential — one that speaks for a user it names. */
+  const isClient = (c: Context): boolean => kindOf(c) === 'application';
 
   /**
    * Refuses a client-credential request that names no end user.
@@ -917,31 +907,20 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   }
 
   /**
-   * The subject an authenticated identity is BOUND to, under `subjectBinding: 'strict'`.
-   *
-   * `undefined` means "not bound" and the caller's own claim is used, exactly as before: no principal
-   * (open deployments), an operator, or a principal the provider gave no id — `roleAuth`'s bearer
-   * tokens deliberately carry no `id` (role-auth.ts), so a token-only setup keeps today's behaviour
-   * even with the flag on. Binding only bites where there IS a per-user identity to bind to.
+   * The subject a caller is BOUND to: its own name, when it is a user. `undefined` for staff and for
+   * an application, which name the subject in the request instead. An unnamed caller never gets here:
+   * `scope` refuses it first.
    */
   function boundSubjectOf(c: Context): string | undefined {
-    // Bayrak KONTROLÜ BURADA: üç okuma yolu da aynı kuralı tek yerden okusun. İlk yazışta kontrol
-    // yalnız `ownershipDenied`'daydı ve thread yolları bayraksız da bağlanıyordu — yani varsayılanı
-    // sessizce çevirmiş oluyordum. Testte yakalandı (varsayılan 403 döndü, 200 beklenirken).
-    if (opts.subjectBinding !== 'strict') return undefined;
-    const p = principalOf(c.req.raw);
-    if (!p?.id || isClient(c) || isPlatformAdmin(p)) return undefined;
-    return p.id;
+    return kindOf(c) === 'subject' ? principalOf(c.req.raw)?.id : undefined;
   }
 
   async function ownershipDenied(c: Context, s: Instance, runId: string, fromBody?: unknown): Promise<Response | undefined> {
     // The query string is the uniform source, so a GET and a POST state the expectation the same way.
     // `fromBody` exists for the POST paths whose caller naturally puts it in the JSON it is already
     // sending; the query still wins, so one route cannot be checked against two different claims.
-    // STRICT binding: an authenticated non-operator speaks for itself, and its own name OUTRANKS
-    // anything the request states — otherwise the caller could simply name the victim and match.
-    // Operators are exempt on purpose: `isPlatformAdmin` and the org-scoped roles work across an
-    // organization and name nobody, which is the documented asymmetry this whole rule rests on.
+    // A user speaks for itself, and its own name OUTRANKS anything the request states — otherwise the
+    // caller could simply name the victim and match. Staff and applications state it in the request.
     const expected = boundSubjectOf(c) ?? c.req.query('resourceId') ?? (typeof fromBody === 'string' ? fromBody : undefined);
     if (!expected) return undefined;
     let owner: string | undefined;
@@ -963,8 +942,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
    * `actor` is stamped at birth from the sealed identity, and the second caller arrives with their
    * own. Measured on `POST /agents/:name/run` with a run belonging to 'u-ayse' — a caller whose
    * credential carries the name 'mallory' gets 409 `run_actor_mismatch`, whether they declare nothing
-   * or declare the victim's name to satisfy `ownershipDenied`. That lock is unconditional; it has no
-   * `subjectBinding` flag in front of it.
+   * or declare the victim's name to satisfy `ownershipDenied`. That lock is unconditional.
    *
    * `/resume` was the hole, and for a structural reason rather than a missing line. A resume is
    * self-contained: it reads the subject back out of the FROZEN `:input` and seals THAT (see the
@@ -976,9 +954,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
    *
    * So the comparison is made against the caller's OWN name and nothing they said: a claim in the
    * query or the body is the attacker's to write, and naming the victim is how the edge gate gets
-   * satisfied. Deliberately NOT `boundSubjectOf` — that one is behind `subjectBinding: 'strict'`,
-   * and the property being restored here is not the binding option, it is parity with a lock the
-   * engine already applies unconditionally on every other route.
+   * satisfied.
    *
    * SAME EXEMPTIONS AS THE ENGINE, on purpose, so the parity claim stays true in both directions: a
    * credential with no name of its own (the operator bearer, whose `id` is absent by design, and the
@@ -994,15 +970,16 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
    */
   async function actorParityDenied(c: Context, s: Instance, runId: unknown): Promise<Response | undefined> {
     if (typeof runId !== 'string' || !runId) return undefined;
-    const p = principalOf(c.req.raw);
-    if (!p?.id || isClient(c) || isPlatformAdmin(p)) return undefined;
+    // Only a USER is held to its own runs; staff resume strangers' runs by design (Studio's approve flow).
+    const own = boundSubjectOf(c);
+    if (!own) return undefined;
     let stamped: string | undefined;
     try {
       stamped = (await s.journal.get<{ actor?: string }>(`${runId}:input`))?.actor;
     } catch {
       return undefined; // a reader that cannot serve the entry is not evidence of a mismatch
     }
-    if (!stamped || stamped === p.id) return undefined;
+    if (!stamped || stamped === own) return undefined;
     // Word for word what `ownershipDenied` answers on this same route: the refusal names neither the
     // real owner nor whether the run exists, and one route should not have two vocabularies for one
     // refusal. The engine's 409 carries both names and stays where it is — it is reached by callers
@@ -1011,6 +988,12 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   }
 
   async function scope(c: Context): Promise<Instance | { error: string; status: 400 | 403 }> {
+    // A caller that names nobody and is not staff can be held to nothing, so it reaches nothing. This
+    // is the case the old `!p?.id ⇒ operator` inference turned into staff: a subject whose provider
+    // gave it no name (a numeric JWT `sub`, a missing claim) read every user's data.
+    if (kindOf(c) === 'unnamed') {
+      return { error: 'access denied: this caller is not staff and names no user, so there is nothing it may reach', status: 403 };
+    }
     const principal = principalOf(c.req.raw);
     const bound = principal?.orgId;
     // B2 — organization isolation must NOT depend on the paid license capability: when the host configured
@@ -1135,6 +1118,8 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
    * multi-org model an unbound identity additionally needs the EXPLICIT platform-admin grant.
    */
   function requirePlatformAdmin(c: Context, orgBoundMsg: string): Response | undefined {
+    // A role is not the grant: a user holding `platform-admin` is still a user.
+    if (kindOf(c) !== 'operator') return c.json({ error: 'staff only: this is an operator surface' }, 403);
     const p = principalOf(c.req.raw);
     if (p?.orgId) return c.json({ error: orgBoundMsg }, 403);
     if (orgIsolationActive && !isPlatformAdmin(p)) {
@@ -1292,7 +1277,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     const resourceDenied = await resourceGate(c, principal, { type: 'agent', id: name }, 'run');
     if (resourceDenied) return resourceDenied;
     // WHOSE run this is — see resolveResourceId. A per-caller identity wins; otherwise the request says.
-    const subject = resolveResourceId(principal?.id, body.resourceId, isClient(c));
+    const subject = resolveResourceId(kindOf(c), principal?.id, body.resourceId);
     if ('error' in subject) return c.json({ error: subject.error }, 400);
     // WHICH RUN — see identityOrError. From here on `runId` is the run's id (raw or derived) and
     // `declared` is the caller's name for the work: the door is handed the NAME, the gates below use
@@ -1629,7 +1614,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     const resourceDenied = await resourceGate(c, principal, { type: 'agent', id: name }, 'run');
     if (resourceDenied) return resourceDenied;
     // WHOSE run this is — see resolveResourceId. A per-caller identity wins; otherwise the request says.
-    const subject = resolveResourceId(principal?.id, body.resourceId, isClient(c));
+    const subject = resolveResourceId(kindOf(c), principal?.id, body.resourceId);
     if ('error' in subject) return c.json({ error: subject.error }, 400);
     // WHICH RUN — the same resolution `/agents/:name/run` makes, and deliberately not a variation of
     // it: a rule that held on one of these two doors is a rule missing from the other.
@@ -1746,15 +1731,10 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     // kaydı geldi (registry.ts runWorkflowInner) — kapılar da gelmeli, yoksa yazılan sahibi kimse
     // sormuyor demektir.
     //
-    // (a) BAĞLI ÖZNE BEYANI EZER — ajan /run'daki `resolveResourceId(principal?.id, …)` kuralının
-    // bu rotadaki karşılığı. Ezmeseydi mallory kurbanın adını gövdeye yazar, sahip kaydı kurbanı
-    // gösterirdi: sahiplik kaydı bir korumadan bir kimliğe bürünme aracına dönerdi.
-    //
-    // `boundSubjectOf` kullanılıyor, `resolveResourceId` değil — ikisi aynı şey değil ve fark
-    // BURADA önemli: `resolveResourceId` her `principal.id`'yi özne sayar, yani basic-auth ile
-    // çalışan bir OPERATÖRÜN org düzeyi iş akışına birdenbire kendi adını sahip yazardı. Bu rotanın
-    // belgeli muafiyeti ("org düzeyi iş, öznesi yok") tam olarak o durumu koruyor. `boundSubjectOf`
-    // operatörü ve uygulama kimliğini muaf tutar, ve yalnız `subjectBinding: 'strict'` altında ısırır.
+    // (a) A USER'S OWN NAME OVERRIDES THE BODY — otherwise Mallory writes the victim's name into the
+    // body and the owner record becomes a tool for impersonation instead of a protection. Staff and
+    // applications name the subject in the body; staff may name none, because an org-level workflow
+    // ("nightly reconciliation") has no subject and this route's documented exemption keeps it so.
     const subject = boundSubjectOf(c) ?? (body.resourceId ? String(body.resourceId) : undefined);
     // WHICH RUN. The workflow door takes its scope PER CALL — unlike the agent doors, where it is the
     // agent's declaration — and this route passes the body's through, because a workflow has no
@@ -2074,7 +2054,9 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     // name, so the rule that every client request names a subject cannot be satisfied here. That is
     // the answer, not an exception to work around: an application serving end users has no business
     // reading its customer's billing, and this route was the one place the client class could.
+    // The same holds for an end user, which reads its own work and not its organization's bill.
     if (isClient(c)) return c.json({ error: 'usage is organization-level: not available to a client credential' }, 403);
+    if (kindOf(c) !== 'operator') return c.json({ error: 'usage is organization-level: staff only' }, 403);
     const s = await scope(c);
     if ('error' in s) return c.json({ error: s.error }, s.status);
     // In root scope (org on), the per-org limit doesn't apply → only usage is reported, limit is null.

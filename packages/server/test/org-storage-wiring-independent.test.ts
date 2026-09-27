@@ -23,8 +23,8 @@ const model: any = {
 const authProvider = {
   authenticate: (req: Request) => {
     const t = req.headers.get('authorization')?.replace('Bearer ', '');
-    if (t === 'acme') return { roles: ['admin'], id: 'u-acme', orgId: 'acme' };
-    if (t === 'globex') return { roles: ['admin'], id: 'u-globex', orgId: 'globex' };
+    if (t === 'acme') return { kind: 'operator', roles: ['admin'], id: 'u-acme', orgId: 'acme' };
+    if (t === 'globex') return { kind: 'operator', roles: ['admin'], id: 'u-globex', orgId: 'globex' };
     return null;
   },
   authorize: () => ({ allow: true }),

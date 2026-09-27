@@ -33,9 +33,9 @@ function licensedAuth(map: Record<string, Principal>): AuthProvider {
 }
 
 const PRINCIPALS: Record<string, Principal> = {
-  'a-adm': { id: 'a-adm', roles: ['admin'], orgId: 'acme' },
-  'plat': { id: 'plat', roles: ['admin', 'platform-admin'] },
-  'lost': { id: 'lost', roles: ['admin'] },
+  'a-adm': { kind: 'operator', id: 'a-adm', roles: ['admin'], orgId: 'acme' },
+  'plat': { kind: 'operator', id: 'plat', roles: ['admin', 'platform-admin'] },
+  'lost': { kind: 'operator', id: 'lost', roles: ['admin'] },
 };
 
 function mkApi(journal: InMemoryJournal, withOrgOpt = true) {

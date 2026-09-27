@@ -7,6 +7,44 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased]
+
+### Breaking
+
+- **`Principal.kind` is required** (`'operator' | 'application' | 'subject'`, `@gnldev/auth`). It says
+  whose data a caller acts on, and the one who mints the principal decides it. Before this, hosts
+  guessed it from a missing `id`: a named org admin was treated as a user, and a nameless end user as
+  staff. `roleAuth` stamps it (`client` → `application`, every other class → `operator`). **A custom
+  `AuthProvider` must add it**, or it will not compile. Read it with the new `callerKind()`. It treats
+  an unstamped principal as a user, never as staff.
+- **auth-ee mints users by default.** `createJwtSso`, `createAuth0Sso`, `createWorkOsSso` and both user
+  stores now give `kind: 'subject'` unless told otherwise. That includes users stored before this
+  release. To keep someone as staff, pass `kindOf` to the SSO provider, or set `kind: 'operator'` on the
+  user (Studio `PATCH /users/:id`, as an operator). `createPostgresUserStore` adds a nullable `kind`
+  column on startup. `NULL` reads as `subject`.
+- **End users are bound to themselves by default; `subjectBinding` is removed.** In `@gnldev/server`, a
+  `subject` reads only its own runs and threads, its own name wins over any `resourceId` it sends, and
+  `/usage` is staff only. A named staff member files work under the user it names, not under itself.
+  A caller that is not staff and has no name gets `403`. The option is gone; delete it from your config.
+- **Studio admits staff only.** It refused the `client` role before; now anything that is not
+  `kind: 'operator'` gets `403`. That includes auth-ee users, who are `subject` by default. Set
+  `kind: 'operator'` on the people who use Studio.
+- **The actor-lock message no longer names the owner.** `RunActorMismatchError` now says "belongs to a
+  different actor". The owner is still in `detail.ownerActor`.
+- **Only an operator can grant `operator` or `application`.** `assertAssignablePrivileges` checks
+  `kind`, and a role does not stand in for it: a `subject` holding `admin` is refused.
+
+### Fixed
+
+- A refused request no longer marks someone else's finished run `failed`.
+- A refusal no longer puts the owner's id in `detail` (server, chat-adapter, agui).
+- `GET /runs` with no query returns the same shape for every caller.
+- The protections banner prints `? identity` instead of a `✓` it could not prove.
+- `gnl init --identity end-users` wires the resolver it writes into the chat route.
+- Studio passes the caller's organization to the host when it runs a code workflow.
+
+---
+
 ## [0.6.0] — 2026-09-25
 
 **A minor, and VERSIONING.md's own list decides it twice over.** `McpServer.listTools` is now async and

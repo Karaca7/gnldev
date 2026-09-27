@@ -5,6 +5,7 @@ import { describe, it, expect } from 'vitest';
 import { InMemoryJournal, GNL_ORG_ID_KEY, GNL_RESOURCE_ID_KEY } from '@gnldev/durable';
 import { roleAuth } from '@gnldev/auth';
 import { createRestApi } from '../src/index.js';
+import { asEndUsers } from './end-users.js';
 import { call } from './call.js';
 
 const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
@@ -57,7 +58,8 @@ function mkApi(journal: InMemoryJournal) {
         },
       },
     },
-    { auth: roleAuth({ admin: { user: 'alice', pass: 'pw', orgId: 'acme' } }) },
+    // alice is an END USER, so the server seals HER as the subject — the value a spoof must not beat.
+    { auth: asEndUsers(roleAuth({ admin: { user: 'alice', pass: 'pw', orgId: 'acme' } }), ['alice']) },
   );
 }
 

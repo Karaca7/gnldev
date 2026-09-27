@@ -2,10 +2,10 @@
 //
 // `check-doc-samples.mjs` typechecks the code blocks that ARE written — its header records the three
 // defects it was built for, and all three are "documented but wrong". The other direction had no gate,
-// and the cost was measured: `subjectBinding` is the switch that closes a cross-subject read
-// (@gnldev/server index.ts:236-264 records the measurement), and the string appeared in ZERO .md
-// files. No README, no CHANGELOG, no docs/. A deployment could not learn the switch existed without
-// reading the type definition — and the protections matrix printed `✓ identity bound` meanwhile.
+// and the cost was measured: `subjectBinding` was the switch that closed a cross-subject read, and
+// the string appeared in ZERO .md files. No README, no CHANGELOG, no docs/. A deployment could not
+// learn the switch existed without reading the type definition — and the protections matrix printed
+// `✓ identity bound` meanwhile. (The switch is gone since: end users are bound by default.)
 //
 // BASELINE, not zero. Repo-wide there are 386 exported `*Options` fields and 54 were unnamed when this
 // was written; failing on all of them would have meant the gate could not land, which is how a gate
@@ -86,7 +86,7 @@ const stale = [...BASELINE].filter((id) => {
 if (unnamed.length) {
   console.error(`\ncheck-option-docs: ${unnamed.length} option(s) a deployment can set are named in no .md file.\n`);
   for (const id of unnamed) console.error(`  ${id}`);
-  console.error('\nName each one in a README, a guide, or docs/. An option nobody can discover is an option\nnobody turns on — and the one that cost us this gate closes a cross-subject read.\n');
+  console.error('\nName each one in a README, a guide, or docs/. An option nobody can discover is an option\nnobody turns on — and the one that cost us this gate closed a cross-subject read.\n');
   process.exit(1);
 }
 if (stale.length) {

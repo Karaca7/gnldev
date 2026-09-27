@@ -96,6 +96,29 @@ An identity belonging to no organization is **not** treated as an operator by ac
 configured, an unbound identity is refused unless it is declared `superAdmin`; otherwise a forgotten
 `orgId` would quietly mint a cross-organization super-admin.
 
+## What a caller is: `kind`
+
+Every `Principal` says **whose data it acts on**. The one who mints the principal decides it; the request
+never does.
+
+| `kind` | Who | Acts on |
+|---|---|---|
+| `operator` | staff: `superAdmin`, `admin`, `viewer` | anyone's data inside its scope |
+| `application` | your backend: `client` | the end user it names on each request |
+| `subject` | an end user | its own data, and only its own |
+
+`roleAuth` stamps it for you. A credential in your config is staff, because whoever can edit that file
+already runs the deployment. A provider you write has to stamp it too; `kind` is required on the type.
+
+Read it with `callerKind(principal)`, not `principal.kind`. It adds one more answer: `unnamed`, for no
+principal, or a subject with no `id`. It also reads an unstamped principal, from a JavaScript provider or
+a cast, **fail-closed**: a user if it has an `id`, `unnamed` if not. Never an operator. Staff is a grant,
+and a missing grant stays missing.
+
+Roles do not change the kind. A `subject` that holds the `admin` role is still a user. Only an operator
+may create an operator or an application: `assertAssignablePrivileges(assigner, { kind })` refuses
+everyone else.
+
 ## The contract
 
 | Export | What it is |
@@ -104,6 +127,8 @@ configured, an unbound identity is refused unless it is declared `superAdmin`; o
 | `roleAuth` | The bundled provider above |
 | `CLIENT_WRITES` | The exact set of writes a `client` may perform — read it rather than guessing |
 | `PLATFORM_ADMIN_ROLE` / `isPlatformAdmin` | The reserved cross-organization grant `superAdmin` carries |
+| `callerKind` / `isPrincipalKind` / `PRINCIPAL_KINDS` | What a caller is (see above), read fail-closed |
+| `assertAssignablePrivileges` | The ceiling for user management: no one hands out a grant they do not hold |
 | `makeGate` | Turns a provider into a gate a host can apply to routes |
 | `principalOf` | Reads the principal a gate resolved for a request |
 | `normalizeAuth` / `fromReadWrite` | Accepts the older `{ read, write }` predicate pair and adapts it to the provider interface |

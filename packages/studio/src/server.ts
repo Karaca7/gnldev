@@ -8,7 +8,7 @@ import { STUDIO_ERROR_CODES } from './error-codes.js';
 import { ORG_RECORD_PRE, asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, countLog, purgeRun, isRealRun, purgeOrganization, orgPurgedKey, sweepRuns, sweepLog, listOrphanThreadState, POLICY_KEY, PRICING_KEY, effectivePricingTable, DEFAULT_PRICING, readPricing, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, knownModelProviders, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent, callerConflictCode, surfacedInterrupts, resolveApprovals as dResolveApprovals, hasRunProbe } from '@gnldev/durable';
 import type { PolicyDoc, PolicyRule, BudgetLimit, PricingDoc } from '@gnldev/durable';
 import type { JournalReader, Journal, WorkflowLike, MetricsRunRow } from '@gnldev/durable';
-import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, principalScope, assertAssignablePrivileges, CLIENT_ROLE, type AuthProvider, type Principal } from '@gnldev/auth';
+import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, principalScope, assertAssignablePrivileges, isPrincipalKind, callerKind, type AuthProvider, type Principal, type PrincipalKind } from '@gnldev/auth';
 import { listTriggers } from '@gnldev/scheduler';
 import { mountSpa, notBuiltHtml } from './spa.js';
 import { openapiSpec, swaggerHtml } from './swagger.js';
@@ -525,6 +525,8 @@ export interface StudioUser {
   email?: string;
   name?: string;
   roles: string[];
+  /** WHAT the user is (@gnldev/auth `Principal.kind`). A store that does not report it is showing a user. */
+  kind?: PrincipalKind;
   /** EXPLICIT fine-grained permissions (overrides role grants). Undefined → permission comes from roles. */
   permissions?: string[];
   orgId?: string;
@@ -539,15 +541,15 @@ export interface StudioUser {
 /** User management contract (paid; implemented by @gnldev/auth-ee createJournalUserStore). */
 export interface StudioUserStore {
   list(): Promise<StudioUser[]> | StudioUser[];
-  create(input: { email?: string; name?: string; roles?: string[]; permissions?: string[]; orgId?: string; ttlMs?: number; expiresAt?: number }): Promise<{ user: StudioUser; token: string }>;
+  create(input: { email?: string; name?: string; roles?: string[]; permissions?: string[]; orgId?: string; kind?: PrincipalKind; ttlMs?: number; expiresAt?: number }): Promise<{ user: StudioUser; token: string }>;
   remove(id: string): Promise<void>;
   /** Revokes the user's token WITHOUT deleting the user (optional — backward compat). */
   revoke?: (id: string) => Promise<void>;
   /**
-   * Updates a user's roles and/or explicit permissions in place (token unchanged). Optional — a host
+   * Updates a user's roles, explicit permissions and/or kind in place (token unchanged). Optional — a host
    * without it returns 501 from PATCH /users/:id. An empty `permissions` array clears the explicit override.
    */
-  update?: (id: string, patch: { roles?: string[]; permissions?: string[] }) => Promise<StudioUser>;
+  update?: (id: string, patch: { roles?: string[]; permissions?: string[]; kind?: PrincipalKind }) => Promise<StudioUser>;
 }
 
 /** A single fine-grained permission the customer admin can assign to a user (checkbox in the UI). */
@@ -1196,34 +1198,34 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   } as JournalReader;
 
   /**
-   * Studio refuses APPLICATION credentials outright.
+   * Studio admits STAFF only: `kind: 'operator'` (@gnldev/auth `callerKind`).
    *
-   * This is an operator console — @gnldev/auth's README calls `admin` "the credential a PERSON
-   * carries" and `client` "a customer's backend server". The two hosts share one `AuthProvider`, and
-   * the scaffold the CLI writes passes the SAME provider to `createStudioApp` and `createRestApi`, so
-   * a `client` entry added for the REST side lands here too — measured, before this existed: a client
-   * token read `/runs` (every end user's, with their `resourceId` attached), `/runs/:id` with full
-   * journal entries, `/metrics`, `/audit` and `/users`, none of which asked it to name a subject.
-   * @gnldev/server requires one on every route that touches end-user data; this host had never heard
-   * of the class.
+   * Everything Studio shows is anyone's data in the organization — runs with their `resourceId`,
+   * full journals, `/metrics`, `/audit`, `/users` — and reading anyone's data is exactly what the
+   * operator kind grants and no other kind does. So the boundary is the kind, stated once, rather than
+   * deciding route by route which of ~46 reads some other caller may see.
    *
-   * REFUSING is the fix rather than porting the subject rules across, and the asymmetry is the reason:
-   * an operator legitimately works across the whole organization and names nobody, which is most of
-   * what Studio does. Teaching this surface to serve a per-end-user credential would mean deciding,
-   * route by route, which of ~46 reads an application may see — the same route-by-route reasoning that
-   * left the write paths open on the other host. One boundary, stated once.
+   * It used to refuse one ROLE, `client`. Everyone else walked in, including an end user from
+   * @gnldev/auth-ee's user store (default role `viewer`), which then read every other end user's runs.
+   * A role says what a caller may DO; it never said whose data it may see.
    *
-   * Runs BEFORE the org middleware and independently of it: the exposure did not need `org` configured.
+   * Not here: a request with no principal. The per-endpoint gate answers that with 401. And a provider
+   * with no principal model (`bindsIdentity: false`) is the single-operator mode: whoever passed it is
+   * staff. Runs BEFORE the org middleware and independently of it.
    */
-  if (authProvider) {
+  if (authProvider && bindsIdentity(authProvider)) {
     app.use('*', async (c, next) => {
       const principal = await authProvider!.authenticate(c.req.raw);
-      if (principal?.roles?.includes(CLIENT_ROLE)) {
-        return c.json({
-          error: 'access denied: Studio is an operator console and does not accept an application '
-            + '(client) credential. Use an admin or viewer credential here; a client credential belongs '
-            + 'to your backend, against @gnldev/server.',
-        }, 403);
+      if (principal) {
+        const kind = callerKind(principal);
+        if (kind !== 'operator') {
+          return c.json({
+            error: `access denied: Studio is a staff console and this caller is ${kind === 'application' ? 'an application' : kind === 'subject' ? 'an end user' : 'unnamed'}. `
+              + (kind === 'application'
+                ? 'An application credential belongs to your backend, against @gnldev/server.'
+                : 'Only a principal minted as `kind: \'operator\'` may use it.'),
+          }, 403);
+        }
       }
       await next();
     });
@@ -2650,7 +2652,10 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     if (!(await allowP(c.req.raw, 'users:write'))) return deny(c.req.raw, 'write');
     if (!opts.users) return c.json({ error: 'user management is not enabled (the host must provide a userStore)' }, 501);
     const own = principalOf(c.req.raw)?.orgId;
-    const body = (await c.req.json().catch(() => ({}))) as { email?: string; name?: string; roles?: string[]; permissions?: string[]; orgId?: string; ttlMs?: number; expiresAt?: number };
+    const body = (await c.req.json().catch(() => ({}))) as { email?: string; name?: string; roles?: string[]; permissions?: string[]; orgId?: string; kind?: unknown; ttlMs?: number; expiresAt?: number };
+    if (body.kind !== undefined && !isPrincipalKind(body.kind)) {
+      return c.json({ error: 'kind must be one of operator, application, subject' }, 400);
+    }
     if (body.roles && (!Array.isArray(body.roles) || body.roles.some((r) => typeof r !== 'string'))) {
       return c.json({ error: 'roles must be a string array' }, 400);
     }
@@ -2667,7 +2672,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     // MINT the reserved `platform-admin` role (or the `'*'` super-grant) — that would create a cross-org
     // super-admin out of an org-bound admin. Same-org checks below guard the target's org, not its privileges.
     {
-      const ceiling = assertAssignablePrivileges(principalOf(c.req.raw), { roles: body.roles, permissions: body.permissions });
+      const ceiling = assertAssignablePrivileges(principalOf(c.req.raw), { roles: body.roles, permissions: body.permissions, kind: body.kind });
       if (!ceiling.ok) return c.json({ error: ceiling.reason }, 403);
     }
     let targetOrg = body.orgId?.trim() || undefined;
@@ -2689,10 +2694,11 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
         email: body.email, name: body.name, roles: body.roles,
         ...(body.permissions?.length ? { permissions: body.permissions } : {}),
         orgId: targetOrg,
+        ...(body.kind ? { kind: body.kind } : {}),
         ...(body.ttlMs != null ? { ttlMs: body.ttlMs } : {}),
         ...(body.expiresAt != null ? { expiresAt: body.expiresAt } : {}),
       });
-      await audit(c, 'user.create', created.user.id, { roles: created.user.roles, ...(created.user.permissions ? { permissions: created.user.permissions } : {}), orgId: created.user.orgId });
+      await audit(c, 'user.create', created.user.id, { roles: created.user.roles, ...(created.user.permissions ? { permissions: created.user.permissions } : {}), orgId: created.user.orgId, kind: created.user.kind ?? 'subject' });
       return c.json({ ok: true, ...created }); // { user, token } — token only here
     } catch (e: any) {
       return c.json({ error: String(e?.message ?? e) }, 400);
@@ -2767,28 +2773,32 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
         return c.json({ error: `you can only update members of your own org ('${own}')` }, 403);
       }
     }
-    const body = (await c.req.json().catch(() => ({}))) as { roles?: string[]; permissions?: string[] };
+    const body = (await c.req.json().catch(() => ({}))) as { roles?: string[]; permissions?: string[]; kind?: unknown };
+    if (body.kind !== undefined && !isPrincipalKind(body.kind)) {
+      return c.json({ error: 'kind must be one of operator, application, subject' }, 400);
+    }
     if (body.roles !== undefined && (!Array.isArray(body.roles) || body.roles.some((r) => typeof r !== 'string'))) {
       return c.json({ error: 'roles must be a string array' }, 400);
     }
     if (body.permissions !== undefined && (!Array.isArray(body.permissions) || body.permissions.some((p) => typeof p !== 'string'))) {
       return c.json({ error: 'permissions must be a string array' }, 400);
     }
-    if (body.roles === undefined && body.permissions === undefined) {
-      return c.json({ error: 'nothing to update (provide roles and/or permissions)' }, 400);
+    if (body.roles === undefined && body.permissions === undefined && body.kind === undefined) {
+      return c.json({ error: 'nothing to update (provide roles, permissions and/or kind)' }, 400);
     }
     // PRIVILEGE CEILING (see POST /users): an admin cannot ELEVATE a user (or itself) to `platform-admin`
     // / `'*'` via PATCH either — this is the self-grant path (PATCH /users/<own-id> {roles:[...]}).
     {
-      const ceiling = assertAssignablePrivileges(principalOf(c.req.raw), { roles: body.roles, permissions: body.permissions });
+      const ceiling = assertAssignablePrivileges(principalOf(c.req.raw), { roles: body.roles, permissions: body.permissions, kind: body.kind });
       if (!ceiling.ok) return c.json({ error: ceiling.reason }, 403);
     }
     try {
       const user = await opts.users.update(id, {
         ...(body.roles !== undefined ? { roles: body.roles } : {}),
         ...(body.permissions !== undefined ? { permissions: body.permissions } : {}),
+        ...(body.kind !== undefined ? { kind: body.kind } : {}),
       });
-      await audit(c, 'user.update', id, { roles: user.roles, ...(user.permissions ? { permissions: user.permissions } : {}) });
+      await audit(c, 'user.update', id, { roles: user.roles, ...(user.permissions ? { permissions: user.permissions } : {}), ...(body.kind !== undefined ? { kind: body.kind } : {}) });
       return c.json({ ok: true, user });
     } catch (e: any) {
       return c.json({ error: String(e?.message ?? e) }, 400);

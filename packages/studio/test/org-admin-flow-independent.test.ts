@@ -39,9 +39,9 @@ type User = { id: string; email?: string; roles: string[]; permissions?: string[
 const auth = {
   authenticate: (req: Request) => {
     const t = req.headers.get('authorization')?.replace('Bearer ', '');
-    if (t === 'root') return { roles: ['admin', 'platform-admin'], id: 'u-root' }; // org-less operator
-    if (t === 'acme-adm') return { roles: ['admin'], id: 'u-acme-adm', orgId: 'acme' };
-    if (t === 'globex-adm') return { roles: ['admin'], id: 'u-globex-adm', orgId: 'globex' };
+    if (t === 'root') return { kind: 'operator', roles: ['admin', 'platform-admin'], id: 'u-root' }; // org-less operator
+    if (t === 'acme-adm') return { kind: 'operator', roles: ['admin'], id: 'u-acme-adm', orgId: 'acme' };
+    if (t === 'globex-adm') return { kind: 'operator', roles: ['admin'], id: 'u-globex-adm', orgId: 'globex' };
     return null;
   },
   authorize: () => ({ allow: true }),

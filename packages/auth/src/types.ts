@@ -6,6 +6,19 @@
  * ALREADY reserved for EE (fine-grained RBAC + multi-organization) → the schema won't break later.
  */
 export interface Principal {
+  /**
+   * WHAT this caller is. Stamped by whoever MINTED the principal — a credential in the deployment's
+   * config, a user record, a verifier the deployment configured — and never read from the request.
+   *
+   *   operator     staff: works across its scope (an organization, or the platform) and names nobody
+   *   application  a server that speaks FOR a user it names on each request (roleAuth's `client`)
+   *   subject      a user: speaks for itself, and only itself
+   *
+   * Required, because the alternative was measured: hosts inferred "operator" from the ABSENCE of
+   * `id`, so a named org admin was treated as a user and a nameless end user as staff. Read it through
+   * `callerKind` (scope.ts), which reads an unstamped principal fail-closed.
+   */
+  kind: PrincipalKind;
   id?: string;
   /**
    * WHICH CREDENTIAL spoke, never WHO — the two are different questions and this field exists because
@@ -33,6 +46,10 @@ export interface Principal {
   permissions?: string[];
   [k: string]: unknown;
 }
+
+/** See `Principal.kind`. Granting anything but `subject` is an operator's decision (`assertAssignablePrivileges`). */
+export const PRINCIPAL_KINDS = ['operator', 'application', 'subject'] as const;
+export type PrincipalKind = (typeof PRINCIPAL_KINDS)[number];
 
 /** Description of what's being accessed — the provider can decide based on path/method/action/resource. */
 export interface AuthContext {

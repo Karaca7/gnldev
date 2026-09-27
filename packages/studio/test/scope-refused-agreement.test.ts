@@ -20,8 +20,8 @@ import { createStudioApi } from '../src/server.js';
 const authProvider = {
   authenticate: (req: Request) => {
     const t = req.headers.get('authorization')?.replace('Bearer ', '');
-    if (t === 'acme') return { roles: ['admin'], id: 'u-acme', orgId: 'acme' };
-    if (t === 'ops') return { roles: ['admin'], id: 'u-ops' }; // unscoped operator
+    if (t === 'acme') return { kind: 'operator', roles: ['admin'], id: 'u-acme', orgId: 'acme' };
+    if (t === 'ops') return { kind: 'operator', roles: ['admin'], id: 'u-ops' }; // unscoped operator
     return null;
   },
   authorize: () => ({ allow: true }),
