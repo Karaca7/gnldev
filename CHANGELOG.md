@@ -11,6 +11,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Token refresh, owned by the application.** `subjectTokenEndpoint` (@gnldev/auth) turns your
+  session into a fresh short-lived token; `GnlClient`'s `getToken` / `tokenFrom` (@gnldev/client)
+  refresh before expiry and after a `401`, one refresh for concurrent requests. `endUsers.isRevoked`
+  takes a token back at logout.
 - **End users can hold their own token, in the free tier.** `roleAuth({ endUsers: { secret, orgId } })`
   verifies a short-lived token your backend signs with `signSubjectToken({ sub })`. The holder is that
   one user (`kind: 'subject'`). Only `sub` is read; the organization comes from config. A browser can
@@ -18,6 +22,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Breaking
 
+- **End-user tokens are hardened.** `endUsers.secret` (and `signSubjectToken`'s) must be at least 32
+  bytes; a shorter one throws at startup. A token may live at most 1 hour unless `isRevoked` is set
+  (then up to 30 days via `maxTtlSec`). A `sub` must be a valid `resourceId` and may not start with
+  `operator:`, `application:`, `role:` or `token:`; neither may a `resourceId` a request names.
+- **A request with no valid credential is 401 on writes too** (it was 403 with `roleAuth`), so a client
+  can tell that refreshing its token would help.
+- **Staff are named `operator:<id>` where names are compared.** Studio passes the engine a
+  kind-qualified actor, so staff `ayse` cannot answer a refusal meant for the end user `ayse`. A staff
+  member resuming a run stamped with their bare login before this gets `409`.
+- **The `platform-admin` role only works for staff.** A user holding it picked any organization by
+  header; `isPlatformAdmin` now also requires `kind: 'operator'`.
+- **@gnldev/auth-ee accepts a token in `?token=` on GET only** (EventSource). On POST it created users.
+- `roleAuth(...).authenticate` may return a Promise (it awaits `isRevoked`).
 - **Records nobody owns are staff's.** An end user, or an application speaking for one, can no longer
   read, resume, approve, cancel or append to a run or thread that has no owner. That used to be allowed
   for everyone: measured, an end user approved a staff member's pending tool call. Staff are unchanged.

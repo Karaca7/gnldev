@@ -177,7 +177,7 @@ describe('@gnldev/server POST /runs/:id/cancel (P0.3)', () => {
       { auth: roleAuth({ admin: { token: 'adm' }, viewer: { token: 'viw' } }) },
     );
     const noAuth = await call(api, '/runs/r1/cancel', { method: 'POST' });
-    expect(noAuth.status).toBe(403);
+    expect(noAuth.status).toBe(401);
     const viewer = await call(api, '/runs/r1/cancel', { method: 'POST', headers: { authorization: 'Bearer viw' } });
     expect(viewer.status).toBe(403);
   });

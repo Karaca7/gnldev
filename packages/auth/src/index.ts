@@ -10,9 +10,10 @@ export { makeGate, principalOf, type Gate, type GateOptions } from './gate.js';
 export { fromReadWrite, normalizeAuth, bindsIdentity, type ReadWriteAuth } from './adapter.js';
 export { safeEqual } from './safe-equal.js';
 // One JWT verifier for the free `endUsers` class and every @gnldev/auth-ee SSO provider.
-export { verifyJwt, jwtFromRequest, b64uDecode, declaredKind, signSubjectToken, type JwtVerifyOptions } from './jwt.js';
+export { verifyJwt, jwtFromRequest, b64uDecode, declaredKind, signSubjectToken, MIN_SUBJECT_SECRET_BYTES, MAX_SUBJECT_TTL_SEC, MAX_REVOCABLE_SUBJECT_TTL_SEC, type JwtVerifyOptions } from './jwt.js';
 export { isCrossSiteStateChange } from './same-site.js';
-export { PLATFORM_ADMIN_ROLE, isPlatformAdmin, principalScope, callerKind, isPrincipalKind, assertAssignablePrivileges, type PrincipalScope, type AssignabilityResult } from './scope.js';
+export { subjectTokenEndpoint, type SubjectSession } from './token-endpoint.js';
+export { PLATFORM_ADMIN_ROLE, isPlatformAdmin, principalScope, callerKind, isPrincipalKind, assertAssignablePrivileges, actorIdOf, isReservedSubjectId, RESERVED_SUBJECT_PREFIXES, type PrincipalScope, type AssignabilityResult } from './scope.js';
 // Who may reach a surface that listens on a socket. One decision for every GNL surface that binds
 // one; see exposure.ts's header for why @gnldev/cli keeps a pinned second implementation.
 export { decideExposure, isLoopbackHost, isPublishedDevCredential, PUBLISHED_DEV_TOKENS, type ExposureInput, type ExposureDecision } from './exposure.js';

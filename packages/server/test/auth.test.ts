@@ -40,7 +40,7 @@ describe('@gnldev/server opt-in auth', () => {
       headers: { 'content-type': 'application/json', ...(auth ? { authorization: auth } : {}) },
       body: JSON.stringify({ runId: 'r1', prompt: 'hi' }),
     });
-    expect((await post()).status).toBe(403); // no header, write → 403
+    expect((await post()).status).toBe(401); // no header, write → 401 (unauthenticated)
     expect((await post('Bearer viw')).status).toBe(403); // viewer can't write
     // admin → auth PASSES (result may be 200/400 but NOT 401/403)
     expect([401, 403]).not.toContain((await post('Bearer adm')).status);

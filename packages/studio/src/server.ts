@@ -8,7 +8,7 @@ import { STUDIO_ERROR_CODES } from './error-codes.js';
 import { ORG_RECORD_PRE, asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, countLog, purgeRun, isRealRun, purgeOrganization, orgPurgedKey, sweepRuns, sweepLog, listOrphanThreadState, POLICY_KEY, PRICING_KEY, effectivePricingTable, DEFAULT_PRICING, readPricing, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, knownModelProviders, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent, callerConflictCode, surfacedInterrupts, resolveApprovals as dResolveApprovals, hasRunProbe } from '@gnldev/durable';
 import type { PolicyDoc, PolicyRule, BudgetLimit, PricingDoc } from '@gnldev/durable';
 import type { JournalReader, Journal, WorkflowLike, MetricsRunRow } from '@gnldev/durable';
-import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, principalScope, assertAssignablePrivileges, isPrincipalKind, callerKind, type AuthProvider, type Principal, type PrincipalKind } from '@gnldev/auth';
+import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, principalScope, assertAssignablePrivileges, isPrincipalKind, callerKind, actorIdOf, type AuthProvider, type Principal, type PrincipalKind } from '@gnldev/auth';
 import { listTriggers } from '@gnldev/scheduler';
 import { mountSpa, notBuiltHtml } from './spa.js';
 import { openapiSpec, swaggerHtml } from './swagger.js';
@@ -1498,7 +1498,9 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
    */
   function verifiedActorOf (c: Context): string {
     const p = principalOf(c.req.raw);
-    return p?.id ?? (p?.roles[0] ? `role:${p.roles[0]}` : 'anon');
+    // Kind-qualified (`operator:ops`): staff and end users share one id string space, and this value
+    // is compared against run stamps a USER's id also lands in. See @gnldev/auth `actorIdOf`.
+    return actorIdOf(p) ?? (p?.roles[0] ? `role:${p.roles[0]}` : 'anon');
   }
   async function audit (c: Context, action: AuditAction, target: string, detail?: unknown): Promise<void> {
     if (!writable) return;

@@ -22,8 +22,8 @@
 import { createHash } from 'node:crypto';
 import type { AuthProvider, Principal, Decision, AuthContext, Cred } from './types.js';
 import { safeEqual } from './safe-equal.js';
-import { PLATFORM_ADMIN_ROLE } from './scope.js';
-import { verifyJwt } from './jwt.js';
+import { PLATFORM_ADMIN_ROLE, isReservedSubjectId } from './scope.js';
+import { verifyJwt, MIN_SUBJECT_SECRET_BYTES, MAX_SUBJECT_TTL_SEC, MAX_REVOCABLE_SUBJECT_TTL_SEC } from './jwt.js';
 
 /** The reserved role naming the application credential class (see `CLIENT_WRITES`). */
 export const CLIENT_ROLE = 'client';
@@ -65,6 +65,31 @@ export interface EndUserTokens {
   audience?: string;
   /** The organization every token holder belongs to. Bound here, because a token claim would let the signer pick. */
   orgId?: string;
+  /**
+   * Longest remaining lifetime a token may claim, in seconds. Default 1 hour (`MAX_SUBJECT_TTL_SEC`),
+   * which is also the ceiling unless `isRevoked` is set: a token nothing can take back must die on
+   * its own. With `isRevoked`, up to 30 days (`MAX_REVOCABLE_SUBJECT_TTL_SEC`) — for a credential
+   * pasted into an MCP client's config, or a link in an email. A token whose `exp` is further out than
+   * this is refused.
+   */
+  maxTtlSec?: number;
+  /**
+   * Revocation hook, asked on every request AFTER the signature verified. `true` refuses the token.
+   * Typical bodies: a `jti` deny-list written at logout, or `iat < loggedOutAt(sub)` (one number per
+   * user). A throw refuses (fail-closed). Without it, a token lives until `exp` — at most `maxTtlSec`.
+   */
+  isRevoked?: (claims: { sub: string; iat?: number; jti?: string }) => boolean | Promise<boolean>;
+}
+
+/** Longest `sub` accepted; matches @gnldev/server's resourceId bound. */
+const MAX_SUBJECT_ID = 200;
+/** Why a `sub` cannot be a subject id, or null. Same rules a `client` meets for `resourceId`, plus the reserved namespaces. */
+function badSubject(sub: string): string | null {
+  if (sub.length === 0 || sub.length > MAX_SUBJECT_ID) return 'length';
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f]/.test(sub)) return 'control characters';
+  if (isReservedSubjectId(sub)) return 'reserved prefix';
+  return null;
 }
 
 /** Basic auth header value (same base64 logic as studio basicAuth). */
@@ -155,18 +180,45 @@ export function roleAuth(cfg: {
   if (endUsers && endUsers.secret == null && endUsers.publicKey == null) {
     throw new Error('@gnldev/auth: `endUsers` needs `secret` or `publicKey` — without one, no token can be verified.');
   }
+  if (endUsers?.secret != null && Buffer.byteLength(endUsers.secret, 'utf8') < MIN_SUBJECT_SECRET_BYTES) {
+    throw new Error(`@gnldev/auth: \`endUsers.secret\` must be at least ${MIN_SUBJECT_SECRET_BYTES} bytes — a short HMAC key lets whoever guesses it sign any user.`);
+  }
+  const CEILING_LEEWAY_SEC = 60;
+  const maxTtlSec = endUsers?.maxTtlSec ?? MAX_SUBJECT_TTL_SEC;
+  const ceiling = endUsers?.isRevoked ? MAX_REVOCABLE_SUBJECT_TTL_SEC : MAX_SUBJECT_TTL_SEC;
+  if (endUsers && (!(maxTtlSec > 0) || maxTtlSec > ceiling)) {
+    throw new Error(endUsers.isRevoked
+      ? `@gnldev/auth: \`endUsers.maxTtlSec\` must be in (0, ${ceiling}] (30 days).`
+      : `@gnldev/auth: \`endUsers.maxTtlSec\` above ${MAX_SUBJECT_TTL_SEC}s needs \`isRevoked\` — a long-lived token nothing can take back is a leaked credential that stays leaked.`);
+  }
   if (superAdmin.headers.size === 0 && admin.headers.size === 0 && client.headers.size === 0 && viewer.headers.size === 0 && !endUsers) {
     return undefined;
   }
 
   /** The one user a verified token names, or null. Nothing but `sub` is taken from it. */
-  const endUserOf = (req: Request): Principal | null => {
+  const endUserOf = async (req: Request): Promise<Principal | null> => {
     if (!endUsers) return null;
     const h = req.headers.get('authorization');
     const token = h?.startsWith('Bearer ') ? h.slice(7) : undefined;
     if (!token || token.split('.').length !== 3) return null;
-    const verified = verifyJwt(token, endUsers, Date.now());
-    if (!verified?.id) return null;
+    const now = Date.now();
+    let claims: Record<string, unknown> | undefined;
+    const verified = verifyJwt(token, { ...endUsers, onClaims: (c) => { claims = c; } }, now);
+    if (!verified?.id || !claims) return null;
+    if (badSubject(verified.id)) return null;
+    // A token that outlives the bound is refused outright, not clamped: its signer is misconfigured.
+    // The ceiling catches a misconfigured signer (a year-long token), not clock drift: 60s of leeway so
+    // a token minted at exactly the ceiling by a server whose clock runs ahead is not refused.
+    if ((claims.exp as number) * 1000 - now > (maxTtlSec + CEILING_LEEWAY_SEC) * 1000) return null;
+    if (endUsers.isRevoked) {
+      const iat = typeof claims.iat === 'number' ? claims.iat : undefined;
+      const jti = typeof claims.jti === 'string' ? claims.jti : undefined;
+      try {
+        if (await endUsers.isRevoked({ sub: verified.id, ...(iat !== undefined ? { iat } : {}), ...(jti !== undefined ? { jti } : {}) })) return null;
+      } catch {
+        return null;
+      }
+    }
     return { kind: 'subject', id: verified.id, roles: [END_USER_ROLE], ...(endUsers.orgId ? { orgId: endUsers.orgId } : {}) };
   };
 
@@ -226,7 +278,7 @@ export function roleAuth(cfg: {
   };
 
   return {
-    authenticate(req: Request): Principal | null {
+    authenticate(req: Request): Principal | null | Promise<Principal | null> {
       // Most-privileged first: a token configured for two classes resolves to the stronger one, which
       // is the safe direction for `authenticate` (the weaker class would silently under-authorize a
       // credential the host declared as an operator).
@@ -238,6 +290,10 @@ export function roleAuth(cfg: {
     },
     authorize(principal: Principal | null, _req: Request, ctx: AuthContext): Decision {
       const roles = principal?.roles ?? [];
+      // No credential (or one that no longer verifies: expired, revoked) is 401 on EVERY route. It was
+      // 403 on writes, which told a client holding an expired token "you may not" instead of "who are
+      // you" — so a refreshing client could not tell a refresh would help.
+      if (!principal) return { allow: false, status: 401, reason: 'unauthorized' };
       if (ctx.action === 'write') {
         if (roles.includes('admin')) return { allow: true };
         // An application credential may only perform writes this file NAMES. `ctx.permission` is

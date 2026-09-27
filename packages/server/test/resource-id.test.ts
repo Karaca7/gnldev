@@ -173,6 +173,16 @@ describe('resourceId: whose run/thread this is', () => {
     expect((await asStaff('GET', '/runs/r-anon')).status).toBe(200);
   });
 
+  it('a resourceId in a staff namespace is a 400 — nobody files work as `operator:ops`', async () => {
+    // Staff ids are compared kind-qualified (`operator:ops`, see @gnldev/auth `actorIdOf`), in the same
+    // string space as users' ids. A user id in that space would let an application's user be mistaken
+    // for a member of staff by anything that compares names.
+    const { run } = api();
+    for (const value of ['operator:ops', 'application:x', 'role:admin', 'token:abc']) {
+      expect((await run('ns', { resourceId: value })).status, value).toBe(400);
+    }
+  });
+
   it('an INVALID resourceId is a 400, never a silent drop', async () => {
     // A caller that sent one believes its data is scoped. Dropping it quietly hands back exactly the
     // one-shared-bucket behaviour this feature exists to end, while the caller thinks it asked for

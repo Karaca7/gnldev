@@ -116,6 +116,55 @@ A token signed with a different key, an expired one, or one without `sub` is nob
 last 15 minutes by default. Use `publicKey` instead of `secret` if you sign with RS256 or Ed25519, and
 `issuer`/`audience` to pin those claims.
 
+**Rules a token must meet.** The `secret` is at least 32 bytes; a shorter one is a startup error. The
+`sub` follows the same rules as a `resourceId` (1–200 characters, no control characters) and may not
+start with `operator:`, `application:`, `role:` or `token:`, which name staff and synthetic ids.
+
+**How long a token may live.** At most 1 hour (`maxTtlSec`, default 3600). A token claiming a later
+`exp` is refused. If you can take tokens back, pass `isRevoked` and you may allow up to 30 days: for a
+credential pasted into an MCP client's config, or a link in an email.
+
+```ts
+import { roleAuth } from '@gnldev/auth';
+
+const loggedOut = new Set<string>(); // your store: a jti deny-list, or a per-user logout time
+
+export const auth = roleAuth({
+  endUsers: {
+    secret: process.env.GNL_END_USER_SECRET!,
+    orgId: 'acme',
+    maxTtlSec: 7 * 24 * 3600,
+    // Asked on every request after the signature checks. `true` refuses; a throw refuses too.
+    isRevoked: ({ jti }) => (jti ? loggedOut.has(jti) : false),
+  },
+});
+```
+
+Without `isRevoked`, a token lives until its `exp` even after logout; that is what the 1-hour bound is
+for.
+
+### Refreshing an end user's token
+
+GNL keeps no session, so refresh belongs to your app, whose session already knows whether the user is
+still logged in. Add one route that mints a fresh token from that session, and let the browser client
+call it:
+
+```ts
+import { subjectTokenEndpoint } from '@gnldev/auth';
+
+// Your session lookup; `null` = logged out → 401. `sid` becomes the token's `jti`, so
+// `isRevoked` can refuse every token of a session at logout.
+declare function sessionOf(req: Request): Promise<{ sub: string; sid?: string } | null>;
+
+export const gnlToken = subjectTokenEndpoint(sessionOf, process.env.GNL_END_USER_SECRET!, { ttlSec: 300 });
+// Mount it as POST /gnl-token on your app's own origin.
+```
+
+The endpoint answers POST only, refuses cross-site requests, and marks the answer `no-store`. Do not
+add CORS headers to it. On the browser side, `@gnldev/client`'s `getToken` option refreshes before
+the token expires and after a `401`, one refresh for all concurrent requests. A stream is authorized
+when it starts and is not cut off when its token expires.
+
 GNL can check that your backend signed the token. It cannot check that your backend signed it for the
 right person; that part is your login.
 
@@ -155,7 +204,9 @@ everyone else.
 | `AuthProvider` | `authenticate(request)` → a `Principal` or `null`, then `authorize(principal, request, ctx)` → `{ allow }` |
 | `roleAuth` | The bundled provider above |
 | `CLIENT_WRITES` | The exact set of writes a `client` (and an end user) may perform — read it rather than guessing |
-| `signSubjectToken` / `verifyJwt` | Sign an end user's token in your backend; the verifier every GNL token goes through |
+| `signSubjectToken` / `verifyJwt` | Sign an end user's token in your backend; the verifier every GNL token goes through. `verifyJwt`'s `onClaims` receives the claims once signature and time checks pass, for a caller that needs more than the `Principal` (e.g. `iat`/`jti` for revocation) |
+| `subjectTokenEndpoint` | Your app's refresh route: session → fresh short-lived token |
+| `actorIdOf` | The name identity comparisons use: a user's own id, `operator:<id>` for staff |
 | `PLATFORM_ADMIN_ROLE` / `isPlatformAdmin` | The reserved cross-organization grant `superAdmin` carries |
 | `callerKind` / `isPrincipalKind` / `PRINCIPAL_KINDS` | What a caller is (see above), read fail-closed |
 | `assertAssignablePrivileges` | The ceiling for user management: no one hands out a grant they do not hold |

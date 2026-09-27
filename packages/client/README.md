@@ -28,6 +28,26 @@ The engine mints the id and hands it back as `result.runId`. Or pass a raw **`ru
 hold. Send neither and the client generates a runId for you; send both and the server refuses, so it
 never invents one beside your `workKey`.
 
+## An end user's own token
+
+When the browser holds a short-lived end-user token (`@gnldev/auth` `roleAuth({ endUsers })`), give
+the client a way to get a fresh one. It asks before the token expires, and once after a `401` (then
+retries the request once). Concurrent requests share one refresh.
+
+```ts
+import { GnlClient, tokenFrom } from '@gnldev/client';
+
+const gnl = new GnlClient({
+  baseUrl: 'https://gnl.example.com',
+  // Your app's own route (see @gnldev/auth `subjectTokenEndpoint`), called with your session cookie.
+  getToken: tokenFrom('/gnl-token'),
+  refreshSkewSec: 30, // refresh this long before `exp` (default 30)
+});
+```
+
+`getToken` can be any function returning a token, or `null` when there is no session. The token is
+kept in memory, never in `localStorage`. A read that fails (`401`, `404`, …) throws `GnlHttpError`.
+
 ## Streaming
 
 ```ts

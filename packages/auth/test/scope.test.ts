@@ -10,17 +10,20 @@ describe('@gnldev/auth scope helpers', () => {
     expect(isPlatformAdmin(undefined)).toBe(false);
     expect(isPlatformAdmin({ roles: ['admin'] })).toBe(false);            // org-less admin ≠ platform admin
     expect(isPlatformAdmin({ roles: ['admin'], orgId: 'acme' })).toBe(false);
-    expect(isPlatformAdmin({ roles: [PLATFORM_ADMIN_ROLE] })).toBe(true);
-    expect(isPlatformAdmin({ roles: ['admin', 'platform-admin'] })).toBe(true);
+    expect(isPlatformAdmin({ kind: 'operator', roles: [PLATFORM_ADMIN_ROLE] })).toBe(true);
+    expect(isPlatformAdmin({ kind: 'operator', roles: ['admin', 'platform-admin'] })).toBe(true);
+    // The role is a grant of scope, not of staff: a user holding it is still a user.
+    expect(isPlatformAdmin({ kind: 'subject', id: 'u-ayse', roles: [PLATFORM_ADMIN_ROLE] })).toBe(false);
   });
 
   it('principalScope: platform grant wins > org binding > none', () => {
     expect(principalScope(null)).toEqual({ kind: 'none' });
     expect(principalScope({ roles: ['admin'] })).toEqual({ kind: 'none' });          // fail-closed under strict
     expect(principalScope({ roles: ['viewer'], orgId: 'acme' })).toEqual({ kind: 'org', orgId: 'acme' });
-    expect(principalScope({ roles: ['platform-admin'] })).toEqual({ kind: 'platform' });
+    expect(principalScope({ kind: 'operator', roles: ['platform-admin'] })).toEqual({ kind: 'platform' });
+    expect(principalScope({ kind: 'subject', id: 'u', roles: ['platform-admin'] })).toEqual({ kind: 'none' });
     // explicit platform grant intentionally overrides an org binding (cross-org actor)
-    expect(principalScope({ roles: ['platform-admin'], orgId: 'acme' })).toEqual({ kind: 'platform' });
+    expect(principalScope({ kind: 'operator', roles: ['platform-admin'], orgId: 'acme' })).toEqual({ kind: 'platform' });
   });
 
   it('roleAuth injects the platform-admin role ONLY when Cred.platformAdmin is set (back-compat otherwise)', () => {
@@ -47,7 +50,7 @@ describe('@gnldev/auth scope helpers', () => {
   });
 
   it('assertAssignablePrivileges: a platform-admin may assign anything (incl. platform-admin and "*")', () => {
-    const platAdmin: Principal = { roles: ['platform-admin'] };
+    const platAdmin: Principal = { kind: 'operator', roles: ['platform-admin'] };
     expect(assertAssignablePrivileges(platAdmin, { roles: ['platform-admin'] }).ok).toBe(true);
     expect(assertAssignablePrivileges(platAdmin, { permissions: ['*'] }).ok).toBe(true);
     // a null/unauthenticated assigner is NOT platform-admin → held to the ceiling

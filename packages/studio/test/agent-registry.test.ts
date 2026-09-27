@@ -58,7 +58,7 @@ describe('@gnldev/studio agent approval registry', () => {
     const app = createStudioApi({ reader: journal, auth: roleAuth({ admin: { token: 'adm' }, viewer: { token: 'viw' } }) });
 
     const noAuth = await call(app, '/agents/registry/a/approve', { method: 'POST' });
-    expect(noAuth.status).toBe(403);
+    expect(noAuth.status).toBe(401);
     const viewer = await call(app, '/agents/registry/a/approve', { method: 'POST', headers: JH('viw') });
     expect(viewer.status).toBe(403);
     const admin = await call(app, '/agents/registry/a/approve', { method: 'POST', headers: JH('adm') });

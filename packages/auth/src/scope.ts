@@ -22,7 +22,10 @@ export const PLATFORM_ADMIN_ROLE = 'platform-admin';
  * the strict model closes.
  */
 export function isPlatformAdmin(principal: Principal | null | undefined): boolean {
-  return !!principal?.roles?.includes(PLATFORM_ADMIN_ROLE);
+  // Staff only. The role is a grant of SCOPE, and a user holding it (only a platform admin can hand
+  // it out, but nothing stopped handing it to a subject) could pick any organization by header —
+  // measured. A role never makes a caller staff; `kind` does.
+  return !!principal?.roles?.includes(PLATFORM_ADMIN_ROLE) && callerKind(principal) === 'operator';
 }
 
 /** The resolved SCOPE of an identity (the "where", independent of the role/"what"). */
@@ -60,6 +63,28 @@ export function callerKind(principal: Principal | null | undefined): PrincipalKi
   if (!principal) return 'unnamed';
   if (principal.kind === 'operator' || principal.kind === 'application') return principal.kind;
   return typeof principal.id === 'string' && principal.id !== '' ? 'subject' : 'unnamed';
+}
+
+/**
+ * Staff and end users share ONE string space for `id` (a basic-auth login, a token's `sub`). Anything
+ * that COMPARES an identity across kinds — the engine's actor lock, an ownership stamp — must not let
+ * `sub: 'ops'` equal the operator whose login is `ops`. So a non-subject's name is kind-qualified
+ * (`operator:ops`, `application:ops`), a subject's name stays exactly the application's user id (it
+ * is also the `resourceId`, which applications already store), and these prefixes are RESERVED: a
+ * subject id may not start with one (`isReservedSubjectId`), so no user can be minted into them.
+ */
+export const RESERVED_SUBJECT_PREFIXES: readonly string[] = ['operator:', 'application:', 'role:', 'token:'];
+
+/** True when a would-be subject id sits in a namespace reserved for staff/synthetic ids. */
+export function isReservedSubjectId(id: string): boolean {
+  return RESERVED_SUBJECT_PREFIXES.some((p) => id.startsWith(p));
+}
+
+/** The name an identity comparison uses: a subject's own id, a kind-qualified id for staff, else undefined. */
+export function actorIdOf(principal: Principal | null | undefined): string | undefined {
+  if (!principal || typeof principal.id !== 'string' || principal.id === '') return undefined;
+  const kind = callerKind(principal);
+  return kind === 'subject' ? principal.id : `${kind}:${principal.id}`;
 }
 
 /** True for exactly the three kinds. For a value that crossed a trust boundary: a body, a row, a callback. */

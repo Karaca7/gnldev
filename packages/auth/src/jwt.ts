@@ -39,7 +39,19 @@ export interface JwtVerifyOptions {
    * kind reads as `subject`. See @gnldev/auth `Principal.kind`.
    */
   kindOf?: (claims: Record<string, unknown>) => PrincipalKind;
+  /** Receives the verified claims (after signature/exp/nbf/iss/aud pass), for a caller that checks more than a Principal carries. */
+  onClaims?: (claims: Record<string, unknown>) => void;
 }
+
+/** Shortest HS256 secret `endUsers`/`signSubjectToken` accept (RFC 7518 §3.2: key >= hash output). */
+export const MIN_SUBJECT_SECRET_BYTES = 32;
+/** Default ceiling on an end-user token's remaining lifetime, in seconds — and the hard one without `isRevoked`. */
+export const MAX_SUBJECT_TTL_SEC = 3600;
+/**
+ * Ceiling when the deployment can revoke (`endUsers.isRevoked`). A token that can be taken back may
+ * live longer: a credential pasted into an MCP client's config, a link in an email. 30 days.
+ */
+export const MAX_REVOCABLE_SUBJECT_TTL_SEC = 30 * 24 * 3600;
 
 /**
  * Decodes a base64url segment into a Buffer. @gnldev/auth-ee's Auth0 provider reads the id_token
@@ -146,6 +158,7 @@ export function verifyJwt(token: string, opts: JwtVerifyOptions, now: number): P
     const roles = Array.isArray(rolesVal) ? rolesVal.map(String) : typeof rolesVal === 'string' ? [rolesVal] : [];
     const orgVal = claims[map.orgId];
 
+    opts.onClaims?.(claims);
     const principal: Principal = { kind: declaredKind(opts.kindOf, claims), roles };
     if (typeof idVal === 'string') principal.id = idVal;
     if (typeof orgVal === 'string') principal.orgId = orgVal;
@@ -179,6 +192,9 @@ export function signSubjectToken(
   secret: string,
   opts: { ttlSec?: number; now?: number } = {},
 ): string {
+  if (Buffer.byteLength(secret, 'utf8') < MIN_SUBJECT_SECRET_BYTES) {
+    throw new Error(`@gnldev/auth: signSubjectToken needs a secret of at least ${MIN_SUBJECT_SECRET_BYTES} bytes`);
+  }
   const now = Math.floor((opts.now ?? Date.now()) / 1000);
   const enc = (o: unknown) => Buffer.from(JSON.stringify(o), 'utf8').toString('base64url');
   const input = `${enc({ alg: 'HS256', typ: 'JWT' })}.${enc({ iat: now, ...claims, exp: now + (opts.ttlSec ?? 900) })}`;

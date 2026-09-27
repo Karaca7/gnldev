@@ -178,7 +178,7 @@ describe('@gnldev/server agent approval registry', () => {
       { auth: roleAuth({ admin: { token: 'adm' }, viewer: { token: 'viw' } }), requireAgentApproval: true },
     );
     const noAuth = await call(api, '/agents/registry/a/approve', { method: 'POST' });
-    expect(noAuth.status).toBe(403);
+    expect(noAuth.status).toBe(401);
     const viewer = await call(api, '/agents/registry/a/approve', {
       method: 'POST',
       headers: { authorization: 'Bearer viw' },

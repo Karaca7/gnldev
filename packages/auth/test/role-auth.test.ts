@@ -19,9 +19,9 @@ describe('roleAuth (free default)', () => {
   it('admin writes via bearer & basic; viewer only reads', async () => {
     const app = appWith({ admin: { token: 'adm', user: 'au', pass: 'ap' }, viewer: { token: 'viw' } });
 
-    // no header → read 401, write 403
+    // no header → read 401, write 401
     expect((await app.request('/read')).status).toBe(401);
-    expect((await app.request('/write', { method: 'POST' })).status).toBe(403);
+    expect((await app.request('/write', { method: 'POST' })).status).toBe(401);
 
     // viewer → reads but can't write
     expect((await app.request('/read', { headers: { authorization: 'Bearer viw' } })).status).toBe(200);

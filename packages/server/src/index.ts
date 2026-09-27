@@ -5,7 +5,7 @@ import { toFetchHandler, type FetchHandler } from './handler.js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { createGnl, agentVisibleToOrg, withOrg, withOrgStorage, scopeConfigToOrg, withSubjectJournal, withSubjectMemory, threadOwnerFromRuns, ORG_RECORD_PRE, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, asReaderJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, sealRequestContext, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry, callerConflictCode, publicConflictDetail, describeProtections, formatProtections, teachingError, resolveWorkIdentity } from '@gnldev/durable';
 import type { CreateGnlConfig, Journal, JournalReader, BudgetLimit, UsageCostCache, RunLimits, ResolvedWorkIdentity, WorkScopeKind } from '@gnldev/durable';
-import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, callerKind, type AuthProvider, type ReadWriteAuth, type Principal, type PrincipalKind } from '@gnldev/auth';
+import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, callerKind, isReservedSubjectId, type AuthProvider, type ReadWriteAuth, type Principal, type PrincipalKind } from '@gnldev/auth';
 // P0.4 @gnldev/workflow is zero-dependency (see its package.json) — depending on it
 // from @gnldev/server is a clean one-way edge (server→workflow), NOT circular: @gnldev/durable's registry.ts
 // deliberately stays workflow-agnostic (WorkflowLike is a structural type, no import) to avoid a
@@ -414,6 +414,8 @@ function resolveResourceId(
   // are not ours to shape.
   // eslint-disable-next-line no-control-regex
   if (/[\u0000-\u001f\u007f]/.test(raw)) return { error: 'resourceId must not contain control characters' };
+  // Staff ids are compared in the same space, kind-qualified (`operator:ops`); nobody may file work there.
+  if (isReservedSubjectId(raw)) return { error: 'resourceId must not start with a reserved prefix (operator:, application:, role:, token:)' };
   return { resourceId: raw };
 }
 
