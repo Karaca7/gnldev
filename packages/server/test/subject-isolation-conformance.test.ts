@@ -14,11 +14,10 @@
 // And one control, so the negatives are not vacuous: the owner, an application naming the owner, and
 // an operator DO see the marker on every owned read route.
 //
-// KNOWN_LEAKS is today's measured debt, the same device as scripts/check-option-docs.mjs's baseline:
-// it may only SHRINK. A leak not in it fails; an entry that no longer leaks fails too, so a fix has to
-// delete its line. Every entry below is one root cause — an ownership gate that passes when the record
-// has no owner (`ownershipDenied`'s `!owner` branch), or a Memory with no `getThreadResource` — and the
-// subject view planned next removes all of them.
+// KNOWN_LEAKS was the measured debt when this walk landed (45 leaks on 6 routes, d611c559), the same
+// device as scripts/check-option-docs.mjs's baseline: it may only SHRINK. It is empty since the subject
+// view (@gnldev/durable `withSubjectJournal`/`withSubjectMemory`) and the ownerless-record refusal in
+// the write gates. A leak fails; so would an entry that stopped leaking.
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
 import { InMemoryJournal } from '@gnldev/durable';
@@ -52,54 +51,8 @@ export const VERDICTS: Record<string, { verdict: Verdict; why: string }> = {
   'POST /workflows/runs/:id/cancel': { verdict: 'owned-write', why: 'terminally stops a workflow run' },
 };
 
-/** `<getThreadResource?> | <route> | <caller> | <what>` — measured on c72a91a5. Shrinks only. */
-export const KNOWN_LEAKS: readonly string[] = [
-  'false | GET /runs/:id | app-for-mallory | body contains OPS-SECRET',
-  'false | GET /runs/:id | mallory | body contains OPS-SECRET',
-  'false | GET /runs/:id | mallory+names-ayse | body contains OPS-SECRET',
-  'false | GET /threads/:id/messages | app-for-mallory | body contains AYSE-SECRET',
-  'false | GET /threads/:id/messages | app-for-mallory | body contains OPS-SECRET',
-  'false | GET /threads/:id/messages | mallory | body contains AYSE-SECRET',
-  'false | GET /threads/:id/messages | mallory | body contains OPS-SECRET',
-  'false | GET /threads/:id/messages | mallory+names-ayse | body contains AYSE-SECRET',
-  'false | GET /threads/:id/messages | mallory+names-ayse | body contains OPS-SECRET',
-  'false | POST /agents/:name/resume | app-for-mallory | changes foreign state',
-  'false | POST /agents/:name/resume | mallory | changes foreign state',
-  'false | POST /agents/:name/resume | mallory+names-ayse | changes foreign state',
-  'false | POST /agents/:name/run | app-for-mallory | body contains OPS-SECRET',
-  'false | POST /agents/:name/run | app-for-mallory | changes foreign state',
-  'false | POST /agents/:name/run | mallory | body contains OPS-SECRET',
-  'false | POST /agents/:name/run | mallory | changes foreign state',
-  'false | POST /agents/:name/run | mallory+names-ayse | body contains OPS-SECRET',
-  'false | POST /agents/:name/run | mallory+names-ayse | changes foreign state',
-  'false | POST /agents/:name/stream | app-for-mallory | changes foreign state',
-  'false | POST /agents/:name/stream | mallory | changes foreign state',
-  'false | POST /agents/:name/stream | mallory+names-ayse | changes foreign state',
-  'false | POST /runs/:id/cancel | app-for-mallory | changes foreign state',
-  'false | POST /runs/:id/cancel | mallory | changes foreign state',
-  'false | POST /runs/:id/cancel | mallory+names-ayse | changes foreign state',
-  'true | GET /runs/:id | app-for-mallory | body contains OPS-SECRET',
-  'true | GET /runs/:id | mallory | body contains OPS-SECRET',
-  'true | GET /runs/:id | mallory+names-ayse | body contains OPS-SECRET',
-  'true | GET /threads/:id/messages | app-for-mallory | body contains OPS-SECRET',
-  'true | GET /threads/:id/messages | mallory | body contains OPS-SECRET',
-  'true | GET /threads/:id/messages | mallory+names-ayse | body contains OPS-SECRET',
-  'true | POST /agents/:name/resume | app-for-mallory | changes foreign state',
-  'true | POST /agents/:name/resume | mallory | changes foreign state',
-  'true | POST /agents/:name/resume | mallory+names-ayse | changes foreign state',
-  'true | POST /agents/:name/run | app-for-mallory | body contains OPS-SECRET',
-  'true | POST /agents/:name/run | app-for-mallory | changes foreign state',
-  'true | POST /agents/:name/run | mallory | body contains OPS-SECRET',
-  'true | POST /agents/:name/run | mallory | changes foreign state',
-  'true | POST /agents/:name/run | mallory+names-ayse | body contains OPS-SECRET',
-  'true | POST /agents/:name/run | mallory+names-ayse | changes foreign state',
-  'true | POST /agents/:name/stream | app-for-mallory | changes foreign state',
-  'true | POST /agents/:name/stream | mallory | changes foreign state',
-  'true | POST /agents/:name/stream | mallory+names-ayse | changes foreign state',
-  'true | POST /runs/:id/cancel | app-for-mallory | changes foreign state',
-  'true | POST /runs/:id/cancel | mallory | changes foreign state',
-  'true | POST /runs/:id/cancel | mallory+names-ayse | changes foreign state',
-];
+/** `<getThreadResource?> | <route> | <caller> | <what>`. Shrinks only — and is empty: keep it so. */
+export const KNOWN_LEAKS: readonly string[] = [];
 
 // ── callers: one row per KIND, plus the application in both directions ─────────────────────────
 const PRINCIPALS: Record<string, unknown> = {
@@ -231,7 +184,9 @@ function probesFor(method: string, path: string, ids: Record<string, string>): P
   if (path === '/agents/:name/run' || path === '/agents/:name/stream') {
     const p = path.replace(':name', 'a');
     add(p, { runId: ids.run, prompt: 'x' }); add(p, { runId: ids.opsRun, prompt: 'x' });
-    add(p, { prompt: 'x', threadId: ids.thread }); add(p, { prompt: 'x', threadId: ids.opsThread });
+    // A FRESH run id: without one the route answers 400 before any thread gate is asked, and this
+    // probe measured nothing (found by mutation — removing the ownerless-thread gate stayed green).
+    add(p, { runId: 'r-probe-new', prompt: 'x', threadId: ids.thread }); add(p, { runId: 'r-probe-new-2', prompt: 'x', threadId: ids.opsThread });
     return out;
   }
   if (path === '/workflows/:name/run') { add('/workflows/w/run', { runId: ids.wf, input: {} }); return out; }

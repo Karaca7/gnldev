@@ -121,7 +121,8 @@ describe('/agents/:name/resume', () => {
    * the organization prefix because the resume route reads through the org-scoped journal.
    */
   async function seedInput(journal: InMemoryJournal, runId: string): Promise<void> {
-    await journal.put(`org:acme:${runId}:input`, { prompt: 'hi' });
+    // Alice's run: the resume below is Alice resuming her own work (an ownerless one is staff's).
+    await journal.put(`org:acme:${runId}:input`, { prompt: 'hi', resourceId: 'alice' });
   }
 
   // Pre-change this path built `s.orgId ? { org: s.orgId } : undefined` by hand, so a dynamic

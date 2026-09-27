@@ -20,11 +20,11 @@ type AuditRecord = { actor?: string; action?: string; target?: string; org?: str
 const authProvider = {
   authenticate: (req: Request) => {
     const t = req.headers.get('authorization')?.replace('Bearer ', '');
-    if (t === 'acme-adm') return { roles: ['admin'], id: 'u-acme', orgId: 'acme' };
-    if (t === 'globex-adm') return { roles: ['admin'], id: 'u-globex', orgId: 'globex' };
+    if (t === 'acme-adm') return { kind: 'operator', roles: ['admin'], id: 'u-acme', orgId: 'acme' };
+    if (t === 'globex-adm') return { kind: 'operator', roles: ['admin'], id: 'u-globex', orgId: 'globex' };
     // The unbound platform operator, now SAYING so — see scope.ts: the platform scope is an explicit
     // grant, never inferred from a missing orgId.
-    if (t === 'ops') return { roles: ['admin', PLATFORM_ADMIN_ROLE], id: 'u-ops' };
+    if (t === 'ops') return { kind: 'operator', roles: ['admin', PLATFORM_ADMIN_ROLE], id: 'u-ops' };
     return null;
   },
   authorize: () => ({ allow: true }),

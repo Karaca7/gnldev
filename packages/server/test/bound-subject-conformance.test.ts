@@ -70,13 +70,14 @@ const CROSS_SUBJECT_READS = [
 const INVENTORY_READS = ['/threads', '/runs', '/runs?resourceId=u-ayse', '/runs?limit=50'];
 
 describe('bağlı kimlik (principal.id) başkasının verisine ulaşamaz', () => {
-  it('adresli okumaların hepsi 403', async () => {
+  // A foreign run or thread answers 404, the same as one that does not exist (no id oracle).
+  it('addressed reads of another subject all answer 404', async () => {
     const api = await seeded();
     const auth = 'Basic ' + Buffer.from('mallory:p').toString('base64');
     const leaked: string[] = [];
     for (const path of CROSS_SUBJECT_READS) {
       const res: Response = await api(new Request(`http://x${path}`, { headers: { authorization: auth } }));
-      if (res.status !== 403) leaked.push(`${path} → ${res.status}`);
+      if (res.status !== 404) leaked.push(`${path} → ${res.status}`);
     }
     expect(leaked, 'bağlı bir kimlik başka bir öznenin verisini okudu').toEqual([]);
   });

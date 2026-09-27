@@ -3,7 +3,7 @@
 import { Hono, type Context } from 'hono';
 import { toFetchHandler, type FetchHandler } from './handler.js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { createGnl, agentVisibleToOrg, withOrg, withOrgStorage, scopeConfigToOrg, ORG_RECORD_PRE, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, asReaderJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, sealRequestContext, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry, callerConflictCode, publicConflictDetail, describeProtections, formatProtections, teachingError, resolveWorkIdentity } from '@gnldev/durable';
+import { createGnl, agentVisibleToOrg, withOrg, withOrgStorage, scopeConfigToOrg, withSubjectJournal, withSubjectMemory, threadOwnerFromRuns, ORG_RECORD_PRE, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, asReaderJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, sealRequestContext, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry, callerConflictCode, publicConflictDetail, describeProtections, formatProtections, teachingError, resolveWorkIdentity } from '@gnldev/durable';
 import type { CreateGnlConfig, Journal, JournalReader, BudgetLimit, UsageCostCache, RunLimits, ResolvedWorkIdentity, WorkScopeKind } from '@gnldev/durable';
 import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, callerKind, type AuthProvider, type ReadWriteAuth, type Principal, type PrincipalKind } from '@gnldev/auth';
 // P0.4 @gnldev/workflow is zero-dependency (see its package.json) — depending on it
@@ -877,16 +877,35 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     subject: string | undefined,
   ): Promise<Response | undefined> {
     if (typeof threadId !== 'string' || !threadId || !subject) return undefined;
-    const getOwner = s.gnl.memory?.getThreadResource;
-    if (!getOwner) return undefined;
+    const raw = rawOf(s);
+    const memory = raw.gnl.memory;
+    if (!memory) return undefined;
     let owner: string | undefined;
     try {
-      owner = await getOwner.call(s.gnl.memory, threadId);
+      // A store that cannot name an owner is asked through the run journal instead: every run on a
+      // thread records `threadId` and `resourceId`. See @gnldev/durable `threadOwnerFromRuns`.
+      owner = memory.getThreadResource
+        ? await memory.getThreadResource.call(memory, threadId)
+        : await threadOwnerFromRuns(raw.journal)(threadId);
     } catch {
       return undefined; // a store that cannot answer is not evidence of a mismatch
     }
-    if (!owner || owner === subject) return undefined;
-    return c.json({ error: 'access denied: this thread belongs to a different resourceId' }, 403);
+    if (owner === subject) return undefined;
+    if (owner) return c.json({ error: 'access denied: this thread belongs to a different resourceId' }, 403);
+    // NO OWNER. A thread that does not exist yet is this caller's to start — the first turn creates
+    // it. One that EXISTS with no owner is staff's work (or pre-dates ownership), and only staff may
+    // write into it: measured, an end user appended to a staff member's thread and read its history.
+    // Existence is asked of the RUN JOURNAL, which records every run's `threadId`: a Memory's answer to
+    // "messages of an unknown thread" is not part of its contract, and a test double answering with
+    // messages for any id refused every first turn. A full listing, as `threadOwnerFromRuns` does.
+    if (kindOf(c) === 'operator') return undefined;
+    let runsOnThread = 0;
+    try {
+      runsOnThread = ((await raw.journal.listRuns?.()) ?? []).filter((r) => r.threadId === threadId).length;
+    } catch {
+      return undefined;
+    }
+    return runsOnThread ? c.json({ error: 'access denied: this thread belongs to a different resourceId' }, 403) : undefined;
   }
 
   /**
@@ -906,13 +925,20 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     // caller could simply name the victim and match. Staff and applications state it in the request.
     const expected = boundSubjectOf(c) ?? c.req.query('resourceId') ?? (typeof fromBody === 'string' ? fromBody : undefined);
     if (!expected) return undefined;
-    let owner: string | undefined;
+    let input: { resourceId?: string } | undefined;
     try {
-      owner = (await s.journal.get<{ resourceId?: string }>(`${runId}:input`))?.resourceId;
+      input = await rawOf(s).journal.get<{ resourceId?: string }>(`${runId}:input`);
     } catch {
       return undefined; // a reader that cannot serve the entry is not evidence of a mismatch
     }
-    if (!owner || owner === expected) return undefined;
+    // No record: the run does not exist yet, and starting it is what this caller is here to do.
+    if (!input) return undefined;
+    const owner = input.resourceId;
+    if (owner === expected) return undefined;
+    // A record with NO owner is staff's work, or older than ownership. It used to pass here, for
+    // everyone — measured: an end user approved a staff member's pending tool call, cancelled the run
+    // and replayed its output. Staff keep acting on it; nobody who speaks for a user may.
+    if (!owner && kindOf(c) === 'operator') return undefined;
     // The message names neither the real owner nor whether the run exists — a caller guessing ids
     // would otherwise learn both from the refusal.
     return c.json({ error: 'access denied: this run belongs to a different resourceId' }, 403);
@@ -970,7 +996,41 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     return c.json({ error: 'access denied: this run belongs to a different resourceId' }, 403);
   }
 
+  /** The instance a view was built over. Gates ask it whether a record EXISTS, which a view hides. */
+  const rawInstances = new WeakMap<object, Instance>();
+  const rawOf = (s: Instance): Instance => rawInstances.get(s) ?? s;
+
+  /** Whose data this caller reads: its own name if it is a user; the user it names if it is an application. */
+  function viewSubjectOf(c: Context): string | undefined {
+    const kind = kindOf(c);
+    if (kind === 'subject') return boundSubjectOf(c);
+    if (kind === 'application') return c.req.query('resourceId') || undefined;
+    return undefined;
+  }
+
+  /**
+   * The ONE place a caller who speaks for a user is narrowed to that user. Every route takes its
+   * journal and memory from here, so a route that forgets a gate still holds a reader that cannot
+   * produce another user's run or thread — see @gnldev/durable `withSubjectJournal`/`withSubjectMemory`
+   * for the ownerless (fail-closed) and root rules. Staff get the organization's instance unchanged.
+   * The per-route gates stay: they refuse WRITES, which no reader can.
+   */
   async function scope(c: Context): Promise<Instance | { error: string; status: 400 | 403 }> {
+    const s = await scopeOrg(c);
+    if ('error' in s) return s;
+    const subject = viewSubjectOf(c);
+    if (!subject) return s;
+    const root = s.orgId === undefined;
+    const memory = s.gnl.memory
+      ? withSubjectMemory(s.gnl.memory, subject, { root, threadOwner: threadOwnerFromRuns(s.journal) })
+      : undefined;
+    const gnl = new Proxy(s.gnl, { get: (t, k) => (k === 'memory' ? memory : Reflect.get(t, k, t)) });
+    const view = { ...s, journal: withSubjectJournal(s.journal, subject, { root }), gnl } as Instance;
+    rawInstances.set(view, s);
+    return view;
+  }
+
+  async function scopeOrg(c: Context): Promise<Instance | { error: string; status: 400 | 403 }> {
     // A caller that names nobody and is not staff can be held to nothing, so it reaches nothing. This
     // is the case the old `!p?.id ⇒ operator` inference turned into staff: a subject whose provider
     // gave it no name (a numeric JWT `sub`, a missing claim) read every user's data.
@@ -2126,9 +2186,24 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
       const owner = await memory.getThreadResource(threadId);
       // Names neither the real owner nor whether the thread exists — a caller guessing ids would
       // otherwise learn both from the refusal (same wording as the run-ownership check).
-      if (owner && owner !== expected) {
-        return c.json({ error: 'access denied: this thread belongs to a different resourceId' }, 403);
+      if (owner && owner !== expected) return c.json({ error: 'thread not found' }, 404);
+    }
+    // A caller who speaks for a user reads only that user's thread. Asked of OWNERSHIP, not of the
+    // messages: a user's own empty thread is still theirs ([]), and a thread that is not theirs — or
+    // has no owner, or a store that cannot say — is the same 404 as one that does not exist.
+    const subject = viewSubjectOf(c);
+    if (subject) {
+      const raw = rawOf(s);
+      const rawMemory = raw.gnl.memory!;
+      let owner: string | undefined;
+      try {
+        owner = rawMemory.getThreadResource
+          ? await rawMemory.getThreadResource.call(rawMemory, threadId)
+          : await threadOwnerFromRuns(raw.journal)(threadId);
+      } catch {
+        owner = undefined;
       }
+      if (owner !== subject) return c.json({ error: 'thread not found' }, 404);
     }
     return c.json(await memory.getMessages(threadId));
   });
@@ -2138,9 +2213,15 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     if ('error' in s) return c.json({ error: s.error }, s.status);
     const runId = decodeURIComponent(c.req.param('id'));
     { const d = clientSubjectDenied(c); if (d) return d; }
-    const denied = await ownershipDenied(c, s, runId);
-    if (denied) return denied;
-    return c.json(await s.journal.readRun(runId));
+    // A run this caller may not read and a run that does not exist answer the SAME 404: a refusal
+    // that differs from "not found" tells an id-guesser which ids are real.
+    const notFound = () => c.json({ error: 'run not found' }, 404);
+    // A caller who speaks for a user holds the subject view (see `scope`): its reader returns nothing
+    // for a run that is not that user's, so the view alone decides. The gate stays for staff who
+    // state an expectation (`?resourceId=`), which no view expresses.
+    if (!viewSubjectOf(c) && (await ownershipDenied(c, s, runId))) return notFound();
+    const entries = await s.journal.readRun(runId);
+    return entries.length ? c.json(entries) : notFound();
   });
   /**
    * Agent names FILTERED by the caller's org, exactly as `/agents` and `agentGate` filter them.

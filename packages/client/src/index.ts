@@ -239,6 +239,9 @@ export class GnlClient {
   /** A run's journal timeline (GET /runs/:id). */
   async getRun(id: string): Promise<JournalEntry[]> {
     const res = await this._fetch(this.url(`/runs/${encodeURIComponent(id)}`), { headers: this.headers });
+    // A 404 (no such run, or not yours — the server does not say which) and a refusal used to be
+    // returned as if the error body were the journal.
+    if (!res.ok) throw await GnlHttpError.from(res);
     return (await res.json()) as JournalEntry[];
   }
 }

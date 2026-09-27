@@ -826,6 +826,29 @@ single-home routing contract above). Practical bounds, stated honestly:
   cache in front): a remote API adds its round trip; the documented local-model recipe keeps it
   on-machine.
 
+## One user's view (`withSubjectJournal`, `withSubjectMemory`)
+
+A host that serves end users hands each request a reader narrowed to that user, instead of checking
+ownership route by route. `@gnldev/server` does this for every caller that speaks for a user.
+
+```ts
+import { withSubjectJournal, withSubjectMemory, threadOwnerFromRuns, type Journal, type JournalReader, type Memory } from '@gnldev/durable';
+
+export function readerFor(journal: Journal & JournalReader, memory: Memory, userId: string) {
+  return {
+    journal: withSubjectJournal(journal, userId),
+    memory: withSubjectMemory(memory, userId, { threadOwner: threadOwnerFromRuns(journal) }),
+  };
+}
+```
+
+- A run or thread whose recorded owner is not this user reads as nothing. So does one with **no**
+  owner: nothing proves it is this user's.
+- `threadOwner` answers "whose thread is this?" when the memory cannot (`getThreadResource` absent).
+  `threadOwnerFromRuns` answers from the run journal, which records `threadId` and `resourceId` on
+  every run. It lists every run per call, so a store with `getThreadResource` is faster.
+- `root: true` hides every organization's rows, for a reader over the unscoped store.
+
 ## Retention and erasure
 
 The journal is append-only by design, and these are the deliberate exception: permanent deletion,

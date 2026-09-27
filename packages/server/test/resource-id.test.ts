@@ -109,6 +109,7 @@ function api() {
     /** A run with NO owner — only an operator can start one, since a client must always name a subject. */
     runUnowned: (id: string) => asOperator('POST', '/agents/a/run', { runId: id, prompt: 'hello', threadId: `t-${id}` }),
     get: (p: string) => asClient('GET', p),
+    asStaff: asOperator,
     post: (p: string, body?: unknown) => asClient('POST', p, body),
     /** The operator view: permitted to leave the subject unstated. */
     getOp: (p: string) => asOperator('GET', p),
@@ -151,7 +152,7 @@ describe('resourceId: whose run/thread this is', () => {
     expect((await getOp('/runs/r-ayse')).status).toBe(200);                      // operator: may state nothing
     expect((await get('/runs/r-ayse')).status).toBe(400);                        // client: must name a subject
     expect((await get('/runs/r-ayse?resourceId=u-ayse')).status).toBe(200);      // stated, and correct
-    expect((await get('/runs/r-ayse?resourceId=u-mehmet')).status).toBe(403);    // stated, and wrong
+    expect((await get('/runs/r-ayse?resourceId=u-mehmet')).status).toBe(404);    // stated, and wrong: not found
   });
 
   it('the refusal names neither the real owner nor whether the run exists', async () => {
@@ -161,12 +162,15 @@ describe('resourceId: whose run/thread this is', () => {
     expect(JSON.stringify(body)).not.toContain('u-ayse');
   });
 
-  it('a run with NO owner is readable under any expectation — absence is not a denial', async () => {
-    // Runs predating this field, and single-operator deployments that never set one, have no subject
-    // to compare against. Refusing them would break existing callers to protect data with no owner.
-    const { runUnowned, get } = api();
+  it('a run with NO owner is staff\'s: staff read it, a caller speaking for a user does not', async () => {
+    // This used to read "absence is not a denial" and let anyone who named any user read the run.
+    // Measured: an end user read, approved and cancelled a staff member's ownerless run that way. A
+    // single-operator deployment is unaffected — with no provider (or a {read,write} pair) every
+    // caller IS staff.
+    const { runUnowned, get, asStaff } = api();
     await runUnowned('r-anon');
-    expect((await get('/runs/r-anon?resourceId=whoever')).status).toBe(200);
+    expect((await get('/runs/r-anon?resourceId=whoever')).status).toBe(404);
+    expect((await asStaff('GET', '/runs/r-anon')).status).toBe(200);
   });
 
   it('an INVALID resourceId is a 400, never a silent drop', async () => {
@@ -260,7 +264,7 @@ describe('thread reads on the REST surface', () => {
     await run('ayse');
     expect((await getOp('/threads/t-ayse/messages')).status).toBe(200);                   // operator, unstated
     expect((await get('/threads/t-ayse/messages?resourceId=u-ayse')).status).toBe(200);   // correct
-    expect((await get('/threads/t-ayse/messages?resourceId=u-mehmet')).status).toBe(403); // wrong
+    expect((await get('/threads/t-ayse/messages?resourceId=u-mehmet')).status).toBe(404); // wrong: not found
   });
 
   it('a deployment with no conversation store answers empty, not an error', async () => {

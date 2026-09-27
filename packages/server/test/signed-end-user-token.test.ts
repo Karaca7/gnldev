@@ -61,8 +61,8 @@ describe('roleAuth({ endUsers }) — a token the application signed for one user
     const { call } = makeApi();
     await call(tokenFor('u-ayse'), '/agents/a/run', { runId: 'r-ayse', prompt: 'hi' });
     const mallory = tokenFor('u-mallory');
-    expect((await call(mallory, '/runs/r-ayse')).status).toBe(403);
-    expect((await call(mallory, '/runs/r-ayse?resourceId=u-ayse')).status).toBe(403);
+    expect((await call(mallory, '/runs/r-ayse')).status).toBe(404);
+    expect((await call(mallory, '/runs/r-ayse?resourceId=u-ayse')).status).toBe(404);
     expect(await runIds(await call(mallory, '/runs'))).toEqual([]);
   });
 
@@ -80,7 +80,7 @@ describe('roleAuth({ endUsers }) — a token the application signed for one user
     const { call } = makeApi();
     await call(tokenFor('u-ayse'), '/agents/a/run', { runId: 'r-ayse', prompt: 'hi' });
     const forged = tokenFor('u-mallory', { kind: 'operator', roles: ['admin', 'platform-admin'], orgId: 'globex' });
-    expect((await call(forged, '/runs/r-ayse')).status).toBe(403);
+    expect((await call(forged, '/runs/r-ayse')).status).toBe(404);
     expect((await call(forged, '/usage')).status).toBe(403);
     // Still acme's user: the run it starts lands in acme, where acme's own user can be refused it.
     expect((await call(forged, '/agents/a/run', { runId: 'r-m', prompt: 'hi' })).status).toBe(200);

@@ -18,6 +18,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Breaking
 
+- **Records nobody owns are staff's.** An end user, or an application speaking for one, can no longer
+  read, resume, approve, cancel or append to a run or thread that has no owner. That used to be allowed
+  for everyone: measured, an end user approved a staff member's pending tool call. Staff are unchanged.
+  A single-operator deployment (no provider, or a `{read,write}` pair) is unaffected: every caller is
+  staff there. Work an always-on agent or a worker does for a user must be stamped with that user
+  (`resourceId`) for the user to see it.
+- **A run or thread you may not read is 404, the same as one that does not exist.** `GET /runs/:id`
+  and `GET /threads/:id/messages` answered 403 for someone else's record and `200 []` for a missing
+  run; a refusal that differs from "not found" tells an id-guesser which ids exist. Writes still
+  answer 403. `@gnldev/client`'s `getRun` now throws `GnlHttpError` on a non-2xx answer instead of
+  returning the error body as if it were the journal.
 - **Chat and AG-UI turns that carry an organization are stored in that organization's partition**
   (`org:<id>:`), not in the shared root. They now show up in that organization's REST history and
   Studio. Turns stored before this stay in the root; to move them, see the chat-adapter README.
@@ -58,6 +69,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **End-user reads go through one view.** `withSubjectJournal` / `withSubjectMemory` (@gnldev/durable)
+  wrap the reader an end user's request holds, so a route that forgets its gate still cannot return
+  another user's run or thread. A walk over every REST route as five kinds of attacker found 45 leaks
+  on 6 routes before this and finds none after (`subject-isolation-conformance.test.ts`).
 - **An organization is a boundary on MCP, chat and AG-UI too.** These surfaces derived a run id from
   `(tool or agent, subject, work key)` and wrote every organization's work to one shared journal. Two
   organizations can each have a user `u1`, so the same work key collided. Measured: on MCP, globex's

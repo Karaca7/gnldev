@@ -71,15 +71,17 @@ const runIds = async (res: Response) => {
   return (Array.isArray(body) ? body : body.items).map((r) => r.runId);
 };
 
+// A run or conversation that is not yours answers 404 — the same as one that does not exist — so a
+// refusal does not tell an id-guesser which ids are real. Writes still answer 403.
 describe('an end user, with no option set', () => {
   it('cannot read another end user\'s run', async () => {
     const { call } = await withAyseRun();
-    expect((await call('mallory', '/runs/r-ayse')).status).toBe(403);
+    expect((await call('mallory', '/runs/r-ayse')).status).toBe(404);
   });
 
   it('cannot read it by NAMING the owner either', async () => {
     const { call } = await withAyseRun();
-    expect((await call('mallory', '/runs/r-ayse?resourceId=u-ayse')).status).toBe(403);
+    expect((await call('mallory', '/runs/r-ayse?resourceId=u-ayse')).status).toBe(404);
     expect(await runIds(await call('mallory', '/runs?resourceId=u-ayse'))).toEqual([]);
   });
 
@@ -92,7 +94,7 @@ describe('an end user, with no option set', () => {
   it('cannot read another end user\'s conversation', async () => {
     const { call } = await withAyseRun();
     const r = await call('mallory', '/threads/t-ayse/messages');
-    expect(r.status).toBe(403);
+    expect(r.status).toBe(404);
     expect(await r.text()).not.toContain('SECRET');
     const listed = await (await call('mallory', '/threads')).json() as { threads?: { id: string }[] } | { id: string }[];
     expect(JSON.stringify(listed)).not.toContain('t-ayse');
@@ -117,6 +119,29 @@ describe('staff surfaces', () => {
     expect((await call('crowned', '/agents/registry')).status).toBe(403);
     expect((await call('crowned', '/agents/registry/a/approve', {})).status).toBe(403);
     expect((await call('root', '/agents/registry')).status).not.toBe(403);
+  });
+});
+
+describe('records nobody owns, and records that do not exist', () => {
+  it('a run that does not exist is 404 — for a user and for staff alike', async () => {
+    const { call } = makeApi();
+    expect((await call('mallory', '/runs/r-nope')).status).toBe(404);
+    expect((await call('ops', '/runs/r-nope')).status).toBe(404);
+  });
+
+  it('staff\'s ownerless run and thread are 404 to a user, readable by staff', async () => {
+    const { call } = makeApi();
+    expect((await call('ops', '/agents/a/run', { runId: 'r-ops', prompt: 'hi', threadId: 't-ops' })).status).toBe(200);
+    expect((await call('mallory', '/runs/r-ops')).status).toBe(404);
+    expect((await call('mallory', '/threads/t-ops/messages')).status).toBe(404);
+    expect((await call('ops', '/runs/r-ops')).status).toBe(200);
+    expect((await call('ops', '/threads/t-ops/messages')).status).toBe(200);
+  });
+
+  it('a user cannot write into staff\'s ownerless thread', async () => {
+    const { call } = makeApi();
+    await call('ops', '/agents/a/run', { runId: 'r-ops', prompt: 'hi', threadId: 't-ops' });
+    expect((await call('mallory', '/agents/a/run', { runId: 'r-m', prompt: 'x', threadId: 't-ops' })).status).toBe(403);
   });
 });
 
