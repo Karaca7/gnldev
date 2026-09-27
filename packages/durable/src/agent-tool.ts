@@ -98,6 +98,7 @@ export async function runSubAgent(
     limits: config.limits,
     // The child's principal IS the parent's (one value, typed, required by this signature).
     principal: childIdentity(parent, nestedRunId),
+    ...(parent.threadId ? { threadId: parent.threadId } : {}),
     ...(config.actor ? { actor: config.actor } : {}),
     ...(config.channel ? { channel: config.channel } : {}),
     ...(config.toolPolicy ? { toolPolicy: config.toolPolicy } : {}),
@@ -164,6 +165,7 @@ export function createAgentTool(
         // The PARENT's identity, as durable-tool hands it over (`options.gnl`). Called by hand without
         // it, the child is `unknown` — closed, never open.
         principal: childIdentity(gnlOf(options), nestedRunId),
+        ...(gnlOf(options).threadId ? { threadId: gnlOf(options).threadId } : {}),
         ...(config.actor ? { actor: config.actor } : {}),
         ...(config.channel ? { channel: config.channel } : {}),
         ...(config.toolPolicy ? { toolPolicy: config.toolPolicy } : {}),

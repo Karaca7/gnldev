@@ -99,11 +99,13 @@ export type RunOwner =
  * A raw (unscoped) journal. The subject view carries the `SUBJECT_VIEW` brand, so a value typed as a
  * view cannot be passed where a decision reads the truth.
  */
-export const SUBJECT_VIEW: unique symbol = Symbol.for('@gnldev/durable.subjectView');
-export type RawJournal = Journal & { readonly [SUBJECT_VIEW]?: never };
+export const SUBJECT_VIEW = '__gnlSubjectView' as const;
+/** The brand a subject view carries (a string key, so packages without a durable dependency can refuse it too). */
+export type SubjectViewBrand = { readonly __gnlSubjectView: true };
+export type RawJournal = Journal & { readonly __gnlSubjectView?: never };
 
-function assertRaw(journal: Journal, fn: string): void {
-  if ((journal as { [SUBJECT_VIEW]?: unknown })[SUBJECT_VIEW] === true) {
+export function assertRaw(journal: object, fn: string): void {
+  if ((journal as { __gnlSubjectView?: unknown }).__gnlSubjectView === true) {
     throw new TypeError(`@gnldev/durable: ${fn} was handed an end user's VIEW — decisions read the raw journal`);
   }
 }

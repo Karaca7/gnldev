@@ -217,11 +217,12 @@ describe('workKey — the gate (package #3)', () => {
     await expect(
       runDurable({ journal, runId: id, model: text(), prompt: 'iş', resourceId: 'u-b' } as never),
     ).rejects.toThrow(RunOwnerMismatchError);
-    // …and a RAW id keeps today's behaviour: the caller named it, and hosts legitimately hand a run
-    // between subjects under their own rules. No new refusal outside `run1_`.
+    // Candidate B (R5): a RAW id is refused too — a run acts for the owner recorded at its start, and
+    // another user naming it is never run as the caller.
     await runDurable({ journal, runId: 'order-9', model: text('cevap'), prompt: 'iş', resourceId: 'u-a' } as never);
-    const other = await runDurable({ journal, runId: 'order-9', model: text(), prompt: 'iş', resourceId: 'u-b' } as never);
-    expect(other.text).toBe('cevap');
+    await expect(
+      runDurable({ journal, runId: 'order-9', model: text(), prompt: 'iş', resourceId: 'u-b' } as never),
+    ).rejects.toThrow(RunOwnerMismatchError);
   });
 
   it("'resource' scope with no resourceId is refused — sealed or not (fail-closed, §6)", async () => {

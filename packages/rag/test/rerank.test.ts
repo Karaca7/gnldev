@@ -1,5 +1,6 @@
 // Sub-batch B — RAG reranking: llmReranker applies the index order; createRagTool rerank + rerankTopK.
 import { describe, it, expect } from 'vitest';
+import { STAFF, runIdentity, toolContextFor } from '@gnldev/durable';
 import { llmReranker, createRagTool, InMemoryVectorStore, indexDocuments } from '../src/index.js';
 
 function rerankModel(order: string): any {
@@ -30,7 +31,7 @@ describe('@gnldev/rag reranking', () => {
     const embed = async (t: string) => [t.includes('cat') ? 1 : 0, t.includes('dog') ? 1 : 0];
     await indexDocuments(store, embed, [{ id: '1', text: 'about cats' }, { id: '2', text: 'about dogs' }, { id: '3', text: 'cats and dogs' }]);
     const ragTool = createRagTool({ store, embed, topK: 3, rerank: llmReranker({ model: rerankModel('2,1,0') }), rerankTopK: 2 });
-    const res = await ragTool.execute!({ query: 'cat' }, { toolCallId: 'x' } as any);
+    const res = await ragTool.execute!({ query: 'cat' }, { toolCallId: 'x', gnl: toolContextFor(runIdentity(STAFF, 'test')) } as any);
     expect(res).toHaveLength(2); // rerankTopK applied
   });
 });

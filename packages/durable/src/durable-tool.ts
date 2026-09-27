@@ -453,6 +453,8 @@ function nestedApprovalsFor(
  */
 export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolName = 'tool'): T {
   if (typeof tool.execute !== 'function') return tool;
+  // `identity` is required by the type; an untyped (JS) caller that omits it gets `unknown` — closed.
+  if (!ctx.identity) ctx.identity = { kind: 'unknown', runId: ctx.runId };
   const original = tool.execute;
   // TASK (args idempotency): the mode is resolved once FROM THE TOOL DEFINITION (see types.ts
   // AnyTool.idempotency/idempotencyKey). Providing `idempotencyKey` IMPLIES 'args' mode — no need to
@@ -570,7 +572,9 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
         // The owner record and the caller are read from the SAME value (ctx.identity): an unknown
         // caller reuses only a record an unknown caller made, a user only their own.
         const rec = await ctx.journal.get<{ resourceId?: string; principal?: string }>(ownerKey);
-        if (ctx.identity.kind === 'user' ? rec?.resourceId === ctx.identity.resourceId : rec?.principal === 'unknown') return;
+        // `unknown` may reuse a record that is nobody's in particular (made by an unknown caller, or
+        // before owners were recorded) — never a user's or staff's.
+        if (ctx.identity.kind === 'user' ? rec?.resourceId === ctx.identity.resourceId : (rec?.resourceId === undefined && rec?.principal !== 'staff')) return;
         throw new IdempotencyOwnerMismatchError(
           `@gnldev/durable: '${toolName}' was already run for these arguments by someone else — this call is refused ` +
             `rather than returning their result or running it a second time. A key that identifies one person's work ` +

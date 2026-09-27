@@ -17,6 +17,7 @@
 // declares the parameter correctly and then forgets to use it — the arity probe cannot see that, and a
 // happy-path test never asks.
 import { describe, it, expect } from 'vitest';
+import { STAFF, runIdentity, toolContextFor } from '@gnldev/durable';
 import { InMemoryVectorStore, GraphRag, createRagTool } from '../src/index.js';
 import type { VectorStore } from '../src/index.js';
 
@@ -105,7 +106,7 @@ describe('createRagTool', () => {
     await seedTwoTenants(store);
 
     const scoped = createRagTool({ store, embed, topK: 5, namespace: 'org:acme' });
-    const hits = await scoped.execute!({ query: SECRET }, { toolCallId: 'c1', messages: [] });
+    const hits = await scoped.execute!({ query: SECRET }, { toolCallId: 'c1', messages: [], gnl: toolContextFor(runIdentity(STAFF, 'test')) } as any);
 
     expect(hits.map((h) => h.text), 'the tool retrieved another tenant\'s document')
       .toEqual([`ACME ${SECRET}`]);
@@ -117,7 +118,7 @@ describe('createRagTool', () => {
     await seedTwoTenants(store);
 
     const all = createRagTool({ store, embed, topK: 5 });
-    const hits = await all.execute!({ query: SECRET }, { toolCallId: 'c1', messages: [] });
+    const hits = await all.execute!({ query: SECRET }, { toolCallId: 'c1', messages: [], gnl: toolContextFor(runIdentity(STAFF, 'test')) } as any);
     expect(hits).toHaveLength(2);
   });
 });

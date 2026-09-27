@@ -2,12 +2,14 @@
 // that user's own. Never a third person's, and never a document nobody labelled — an unlabelled
 // document is a forgotten label, and a forgotten label must read as "not found", not as "everyone's".
 //
-// Staff and the system (no resourceId on the run) keep the unrestricted view they always had.
+// Staff (said out loud: `principal: STAFF`) keep the unrestricted view. A run that names nobody is
+// `unknown` (candidate B) and reads the general shelf only — closed, not open.
 import { describe, it, expect } from 'vitest';
 import { stepCountIs } from 'ai';
 import { InMemoryVectorStore, indexDocuments, createRagTool } from '../../rag/src/index.js';
 import { InMemoryJournal } from '../src/journal.js';
 import { runDurable } from '../src/run.js';
+import { STAFF } from '../src/run-identity.js';
 import { createMockModel, countToolResults, toolCallResult, finalTextResult } from './mock.js';
 
 const embed = async () => [1, 0, 0];
@@ -23,7 +25,7 @@ async function kb() {
   return store;
 }
 
-async function search(resourceId: string | undefined): Promise<string> {
+async function search(resourceId: string | undefined, staff = false): Promise<string> {
   const journal = new InMemoryJournal();
   const tool = createRagTool({ store: await kb(), embed, topK: 10 });
   let seen = '';
@@ -34,7 +36,7 @@ async function search(resourceId: string | undefined): Promise<string> {
   });
   await runDurable({
     runId: `r-${resourceId ?? 'staff'}`, journal, model, tools: { searchKnowledge: tool },
-    prompt: 'find my invoices', stopWhen: stepCountIs(4), ...(resourceId ? { resourceId } : {}),
+    prompt: 'find my invoices', stopWhen: stepCountIs(4), ...(resourceId ? { resourceId } : {}), ...(staff ? { principal: STAFF } : {}),
   });
   return seen;
 }
@@ -54,8 +56,14 @@ describe('a knowledge base searched on behalf of an end user', () => {
     expect(seen).not.toContain('MEHMET invoice');
   });
 
-  it('a run with no end user keeps the whole shelf', async () => {
+  it('a run that names nobody (unknown) reads the general shelf only', async () => {
     const seen = await search(undefined);
+    expect(seen).toContain('GENERAL handbook');
+    for (const t of ['AYSE invoice', 'MEHMET invoice', 'UNTAGGED note']) expect(seen).not.toContain(t);
+  });
+
+  it('a staff run keeps the whole shelf', async () => {
+    const seen = await search(undefined, true);
     for (const t of ['GENERAL handbook', 'AYSE invoice', 'MEHMET invoice', 'UNTAGGED note']) expect(seen).toContain(t);
   });
 });

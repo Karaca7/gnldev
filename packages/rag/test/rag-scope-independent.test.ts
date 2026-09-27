@@ -8,6 +8,7 @@
 //   - an implementation that builds edges across namespaces (a permanent structure, not a query-time one),
 //   - a tool that "supports" namespace by always inventing one.
 import { describe, it, expect } from 'vitest';
+import { STAFF, runIdentity, toolContextFor } from '@gnldev/durable';
 import { GraphRag, InMemoryVectorStore, createRagTool } from '../src/index.js';
 // matchesFilter is NOT re-exported from src/index.ts (checked) — the real entry point is the module.
 import { matchesFilter } from '../src/vector-store.js';
@@ -271,7 +272,7 @@ class RecordingStore implements VectorStore {
 }
 
 const runTool = (t: ReturnType<typeof createRagTool>, query: string) =>
-  t.execute!({ query }, { toolCallId: 'tc', messages: [] } as any);
+  t.execute!({ query }, { toolCallId: 'tc', messages: [], gnl: toolContextFor(runIdentity(STAFF, 'test')) } as any);
 
 describe('createRagTool — forwarding of namespace/filter to store.query', () => {
   const embed = async (_t: string) => QUERY;

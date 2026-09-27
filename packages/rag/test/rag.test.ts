@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { STAFF, runIdentity, toolContextFor } from '@gnldev/durable';
 import { InMemoryVectorStore, indexDocuments, createRagTool } from '../src/index.js';
 
 // Deterministic fake embedder (no API key): vector based on word presence.
@@ -18,7 +19,7 @@ describe('@gnldev/rag', () => {
     ]);
 
     const t = createRagTool({ store, embed, topK: 1 });
-    const res: any = await t.execute!({ query: 'information about cat' }, { toolCallId: 'x', messages: [] } as any);
+    const res: any = await t.execute!({ query: 'information about cat' }, { toolCallId: 'x', messages: [], gnl: toolContextFor(runIdentity(STAFF, 'test')) } as any);
 
     expect(res).toHaveLength(1);
     expect(res[0].text).toContain('cat');

@@ -98,9 +98,9 @@ describe('runWorkflow — türetilmiş id, profilden bağımsız kapı', () => {
     await journal.put('ham-1:swept', { at: Date.now() });
     // Mezar taşı: ham id'de `tombstonePolicy` yok, koşum geçer.
     await gnl.runWorkflow('w', { a: 1 }, { runId: 'ham-1' } as never);
-    // Sahiplik: ilk çağrı Ayşe'nin, ikincisi Mehmet'in — ham id'de devir hâlâ yasal.
+    // Candidate B (R5): ownership is not handed over on a raw id either — Mehmet is refused.
     await gnl.runWorkflow('w', { a: 1 }, { runId: 'ham-2', resourceId: 'u-ayse' } as never);
-    await gnl.runWorkflow('w', { a: 1 }, { runId: 'ham-2', resourceId: 'u-mehmet' } as never);
+    await expect(gnl.runWorkflow('w', { a: 1 }, { runId: 'ham-2', resourceId: 'u-mehmet' } as never)).rejects.toThrow(/different subject/);
     // Girdi: ham id'de parmak izi opt-in, farklı girdi geçer.
     await gnl.runWorkflow('w', { a: 2 }, { runId: 'ham-2' } as never);
     expect(runs.n, 'ham-1 bir kez; ham-2 journal replay ettiği için bir kez').toBe(2);

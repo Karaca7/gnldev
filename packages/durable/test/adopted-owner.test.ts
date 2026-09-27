@@ -11,6 +11,7 @@
 // Kural: belleğin OKUDUĞU sahip ile journal'ın YAZDIĞI sahip aynı olmalı. İki gerçeklik olursa
 // kapı yanlış olanı okur.
 import { describe, it, expect } from 'vitest';
+import { STAFF } from '../src/run-identity.js';
 import { InMemoryJournal } from '../src/journal.js';
 import { runDurable } from '../src/run.js';
 import { createMockModel, finalTextResult } from './mock.js';
@@ -27,10 +28,13 @@ const go = (journal: InMemoryJournal, o: Record<string, unknown>) =>
   runDurable({ journal, model: createMockModel(async () => finalTextResult('ok')), prompt: 'x', ...o } as any);
 
 describe('benimsenen sahip', () => {
-  it('özne beyan edilmezse THREADİN sahibi journala yazılır', async () => {
+  // Candidate B: adoption is a STAFF decision (said out loud) and reads the thread RECORD; a run that
+  // names nobody is `unknown` and is refused on an owned thread (closed).
+  it('a staff run on a user thread adopts the thread owner; an unknown run is refused', async () => {
     const journal = new InMemoryJournal();
-    await go(journal, { runId: 'ad-1', threadId: 't-ayse', memory: memoryWithOwner('u-ayse') });
+    await go(journal, { runId: 'ad-1', threadId: 't-ayse', principal: STAFF, memory: memoryWithOwner('u-ayse') });
     expect((await journal.get<{ resourceId?: string }>('ad-1:input'))?.resourceId).toBe('u-ayse');
+    await expect(go(journal, { runId: 'ad-1u', threadId: 't-ayse', memory: memoryWithOwner('u-ayse') })).rejects.toMatchObject({ name: 'ThreadOwnerMismatchError' });
   });
 
   it('BAŞKASININ thread\'ine beyan edilen özne REDDEDİLİR', async () => {

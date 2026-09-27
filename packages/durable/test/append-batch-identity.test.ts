@@ -95,13 +95,13 @@ async function turnThenStaleRetry(withIdentity: boolean): Promise<{ first: numbe
   if (!withIdentity) delete (Object.getPrototypeOf(mem) as { appendOnce?: unknown }).appendOnce;
   await st.memory.upsertThread({ id: 'th', resourceId: 'u', createdAt: 1, updatedAt: 1 });
 
-  await runDurable({ runId: 'r1', journal: st.runs, memory: mem as never, threadId: 'th', model: replyModel, prompt: 'hello' });
+  await runDurable({ runId: 'r1', journal: st.runs, memory: mem as never, threadId: 'th', resourceId: 'u', model: replyModel, prompt: 'hello' });
   const first = (await st.memory.getMessages('th', { limit: 999 })).items.length;
 
   for (const k of [runKeys.memUserAppended('r1'), runKeys.memAppended('r1')]) {
     await st.runs.put(k, { status: 'pending', startedAt: Date.now() - 61_000 });
   }
-  await runDurable({ runId: 'r1', journal: st.runs, memory: mem as never, threadId: 'th', model: replyModel, prompt: 'hello' });
+  await runDurable({ runId: 'r1', journal: st.runs, memory: mem as never, threadId: 'th', resourceId: 'u', model: replyModel, prompt: 'hello' });
   return { first, second: (await st.memory.getMessages('th', { limit: 999 })).items.length };
 }
 

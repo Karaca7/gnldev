@@ -57,11 +57,15 @@ describe('ağ kimliği', () => {
     expect((await journal.get<{ resourceId?: string }>('net-2:input'))?.resourceId).toBe('u-dogrulanmis');
   });
 
-  it('özne beyan edilmezse HİÇBİR ŞEY yazılmaz — muafiyet korunuyor', async () => {
+  // Candidate B (R7): every run kind writes its owner record at start, ownerless too — a missing
+  // record read as "not started" and let an end user adopt the run.
+  it('an ownerless network run still writes an ownerless owner record', async () => {
     const journal = new InMemoryJournal();
     const gnl = netGnl(journal);
     await gnl.runNetwork!('n', { runId: 'net-3', task: 'iş' } as never);
-    expect(await journal.get('net-3:input')).toBeUndefined();
+    const rec = await journal.get<{ resourceId?: string; network?: string }>('net-3:input');
+    expect(rec?.network).toBe('n');
+    expect(rec?.resourceId).toBeUndefined();
   });
 
   it('purgeResource ağ koşumunu BULUR — sahip kaydının asıl işi bu', async () => {

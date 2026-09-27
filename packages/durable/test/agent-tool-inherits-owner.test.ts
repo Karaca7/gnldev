@@ -49,8 +49,10 @@ describe('createAgentTool: the child runs as the parent\'s user', () => {
     expect(childOwner).toBe('mehmet');
   });
 
-  it('a parent with no user leaves the config\'s, as before', async () => {
-    expect((await delegate(undefined, 'svc')).childOwner).toBe('svc');
+  // Candidate B: a delegation has no configured owner any more — the child IS its parent's principal.
+  // A parent that names nobody is `unknown`, and so is its child: born ownerless, never 'svc'.
+  it('a parent with no user makes an ownerless (unknown) child — a config cannot name one', async () => {
+    expect((await delegate(undefined, 'svc')).childOwner).toBeUndefined();
     expect((await delegate(undefined)).childOwner).toBeUndefined();
   });
 });

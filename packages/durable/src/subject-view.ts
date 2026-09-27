@@ -27,6 +27,7 @@
  */
 import type { Journal, JournalReader, RunSummary } from './journal.js';
 import type { Memory } from './memory.js';
+import type { SubjectViewBrand } from './run-identity.js';
 
 const ORG_PREFIX = 'org:';
 /** @gnldev/workflow's run registry: one `wfrun:<runId>` row per workflow run. */
@@ -68,11 +69,23 @@ function view<T extends object>(target: T, overrides: Record<PropertyKey, unknow
   });
 }
 
-export function withSubjectJournal<J extends Journal & Partial<JournalReader>>(journal: J, subject: string, opts: SubjectViewOptions = {}): J {
+export function withSubjectJournal<J extends Journal & Partial<JournalReader>>(journal: J, subject: string, opts: SubjectViewOptions = {}): J & SubjectViewBrand {
   if (!subject) throw new Error('@gnldev/durable: withSubjectJournal needs a non-empty subject');
   const foreignKey = (key: string) => opts.root === true && key.startsWith(ORG_PREFIX);
+  // ONE owner lookup per run for the view's lifetime (a view is built per request): the key rule
+  // below asks about every ':'-prefix of every key, and a 400-key listing used to cost 400×N reads.
+  const owners = new Map<string, Promise<{ resourceId?: string } | undefined | 'error'>>();
+  const inputOf = (runId: string) => {
+    let p = owners.get(runId);
+    if (!p) {
+      p = journal.get<{ resourceId?: string }>(`${runId}:input`).then((v) => v, () => 'error' as const);
+      owners.set(runId, p);
+    }
+    return p;
+  };
   const ownerOf = async (runId: string): Promise<string | undefined> => {
-    try { return (await journal.get<{ resourceId?: string }>(`${runId}:input`))?.resourceId; } catch { return undefined; }
+    const v = await inputOf(runId);
+    return v === 'error' ? undefined : v?.resourceId;
   };
   const mine = async (runId: string) => !foreignKey(runId) && (await ownerOf(runId)) === subject;
   // Every run `key` could belong to: each ':'-bounded prefix that has a frozen input. A registry row
@@ -83,8 +96,8 @@ export function withSubjectJournal<J extends Journal & Partial<JournalReader>>(j
     let claimed = false;
     for (let i = base.indexOf(':'); i > 0; i = base.indexOf(':', i + 1)) {
       const runId = base.slice(0, i);
-      let input: { resourceId?: string } | undefined;
-      try { input = await journal.get<{ resourceId?: string }>(`${runId}:input`); } catch { return false; }
+      const input = await inputOf(runId);
+      if (input === 'error') return false;
       if (input === undefined) continue;
       if (input?.resourceId !== subject) return false;
       claimed = true;
@@ -93,6 +106,8 @@ export function withSubjectJournal<J extends Journal & Partial<JournalReader>>(j
   };
   const visible = (r: RunSummary) => r.resourceId === subject && !foreignKey(r.runId);
   return view(journal, {
+    // The brand: decisions (run-identity.ts, cancelWorkflowRun) refuse a view at runtime too.
+    __gnlSubjectView: true,
     get: async (key: string) => ((await keyIsMine(key)) ? journal.get(key) : undefined),
     listKeys: journal.listKeys
       ? async (prefix: string) => {
@@ -114,7 +129,7 @@ export function withSubjectJournal<J extends Journal & Partial<JournalReader>>(j
       : undefined,
     // A count across every owner is exactly what this view withholds.
     countRunsByStatus: undefined,
-  });
+  }) as J & SubjectViewBrand;
 }
 
 export function withSubjectMemory<M extends Memory>(memory: M, subject: string, opts: SubjectViewOptions = {}): M {

@@ -2981,15 +2981,21 @@ function parentOf(args: { runId: string; principal?: Principal | RunIdentity }):
   if (!id?.runId) return undefined;
   return id.runId === args.runId ? id.parentRunId : id.runId;
 }
-/** A re-entry runs as the RECORDED owner; a caller naming a different user is refused (R5). */
-function entryPrincipal(runId: string, frozen: unknown, declared: Principal): Principal {
+/**
+ * A re-entry runs as the RECORDED owner; a caller naming a different user is refused (R5). The
+ * refusal is returned, not thrown, so the older, more specific gates (thread, actor) speak first.
+ */
+function entryPrincipal(runId: string, frozen: unknown, declared: Principal): { principal: Principal; refusal?: RunOwnerMismatchError } {
   const eff = effectivePrincipal(recordedPrincipal(frozen), declared);
-  if (eff.ok) return eff.principal;
+  if (eff.ok) return { principal: eff.principal };
   const owner = userIdOf(eff.owner) ?? '(staff)';
-  throw new RunOwnerMismatchError(
-    `@gnldev/durable: run '${runId}' belongs to a different subject — this call names '${userIdOf(declared)}'. A run acts for the owner recorded at its start.`,
-    { runId, owner, requested: userIdOf(declared) ?? '' },
-  );
+  return {
+    principal: declared,
+    refusal: new RunOwnerMismatchError(
+      `@gnldev/durable: run '${runId}' belongs to a different subject — this call names '${userIdOf(declared)}'. A run acts for the owner recorded at its start.`,
+      { runId, owner, requested: userIdOf(declared) ?? '' },
+    ),
+  };
 }
 
 async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
@@ -3031,7 +3037,8 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   // One gate for every memory, asked of the thread's owner RECORD (thread-owner.ts). It used to fire
   // only for a memory that could name an owner, so with BasicMemory it never fired at all.
   // WHO THIS RUN ACTS FOR — decided once, here, from the record and the caller (run-identity.ts).
-  let principal = entryPrincipal(runId, frozenInput, declaredPrincipal(args));
+  const entry = entryPrincipal(runId, frozenInput, declaredPrincipal(args));
+  let principal = entry.principal;
   if (threadId) {
     const th = await admitThreadRun(journal, memory || undefined, threadId, principal);
     // Staff starting a NEW run on a user's thread acts for that user (the thread RECORD's owner).
@@ -3043,6 +3050,7 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   // content grows with the thread — hashing it would 409 every legitimate resume).
   const rawInputHash = rawInputFingerprint(rest);
   await assertRunAdmissible(journal, runId, frozenInput, rawInputHash, { strictInput, conflictLedger, auditOnReject, tombstonePolicy, actor, resourceId, approvals });
+  if (entry.refusal) throw entry.refusal;
   // RESUME-GATE probe, BEFORE runStarted buries the verdict under 'running': a re-entry of a run
   // that already ENDED replays from the journal and must not be judged by the input gates — a throw
   // there overwrites the ending with 'failed' (see runResumeGates). 'failed' is NOT an ending here:
@@ -3532,7 +3540,8 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   // One gate for every memory, asked of the thread's owner RECORD (thread-owner.ts). It used to fire
   // only for a memory that could name an owner, so with BasicMemory it never fired at all.
   // WHO THIS RUN ACTS FOR — decided once, here, from the record and the caller (run-identity.ts).
-  let principal = entryPrincipal(runId, frozenInput, declaredPrincipal(args));
+  const entry = entryPrincipal(runId, frozenInput, declaredPrincipal(args));
+  let principal = entry.principal;
   if (threadId) {
     const th = await admitThreadRun(journal, memory || undefined, threadId, principal);
     // Staff starting a NEW run on a user's thread acts for that user (the thread RECORD's owner).
@@ -3544,6 +3553,7 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   // content grows with the thread — hashing it would 409 every legitimate resume).
   const rawInputHash = rawInputFingerprint(rest);
   await assertRunAdmissible(journal, runId, frozenInput, rawInputHash, { strictInput, conflictLedger, auditOnReject, tombstonePolicy, actor, resourceId, approvals });
+  if (entry.refusal) throw entry.refusal;
   // RESUME-GATE probe — the stream twin of runDurableInner's, and it matters MORE here: this is the
   // path chat/agui use, so an at-least-once redelivery of a finished turn arrives on this line.
   // Read BEFORE runStarted buries the verdict (see runResumeGates' "NOT on a run that already ENDED").
