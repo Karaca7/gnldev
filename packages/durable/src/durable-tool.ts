@@ -1695,7 +1695,9 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       //
       // …ama "taşıyabiliyor" HARİTANIN TAMAMI demek değil, ve öyle indirildiğinde ikinci bir kapı
       // açılıyordu (bkz. nestedApprovalsFor): iki koşumun id uzayı aynıdır.
-      const execOpts: any = { ...(options ?? {}), idempotencyKey, parentRunId: ctx.runId, gnlApprovals: nestedApprovalsFor(record, ctx.approvals) };
+      // `resourceId` — whose run this is — so a tool that serves end users can narrow to theirs
+      // (`createRagTool` does) without its author threading it through by hand.
+      const execOpts: any = { ...(options ?? {}), idempotencyKey, parentRunId: ctx.runId, gnlApprovals: nestedApprovalsFor(record, ctx.approvals), ...(ctx.resourceId !== undefined ? { resourceId: ctx.resourceId } : {}) };
       if (timeoutMs) {
         const tSignal = AbortSignal.timeout(timeoutMs);
         execOpts.abortSignal = execOpts.abortSignal ? AbortSignal.any([execOpts.abortSignal, tSignal]) : tSignal;

@@ -545,7 +545,8 @@ rather than guessing what to strip.
 import { chunkDocuments, indexDocuments, PostgresVectorStore, createRagTool, GraphRag } from '@gnldev/rag';
 
 // 1) Split documents into chunks (chunk: breaking long text into small, searchable pieces):
-const chunks = chunkDocuments([{ id: 'handbook', text: longText }], { strategy: 'markdown' });
+// `shared: true` — every end user may read it; a user's own document gets `owner: '<user id>'` instead.
+const chunks = chunkDocuments([{ id: 'handbook', text: longText, shared: true }], { strategy: 'markdown' });
 // 2) Write to a persistent vector store (pgvector: Postgres's embedding search extension):
 const store = new PostgresVectorStore({ connectionString: PG_URL });
 await indexDocuments(store, embed, chunks);

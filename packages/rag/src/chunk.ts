@@ -128,7 +128,8 @@ export function chunkText(text: string, opts?: ChunkOptions): Chunk[] {
 /**
  * Split documents → VectorDoc list ready for `indexDocuments`. Chunk id is `<docId>#<i>`
  * (deterministic → re-indexing upserts to the same ids, no duplicate records); metadata
- * is inherited + a `{ source, chunk }` trail is added (and a `heading` breadcrumb in markdown).
+ * is inherited + a `{ source, chunk }` trail is added (and a `heading` breadcrumb in markdown);
+ * `namespace`, `owner` and `shared` are inherited as they are.
  */
 export function chunkDocuments(docs: VectorDoc[], opts?: ChunkOptions): VectorDoc[] {
   const out: VectorDoc[] = [];
@@ -143,6 +144,12 @@ export function chunkDocuments(docs: VectorDoc[], opts?: ChunkOptions): VectorDo
         id: `${doc.id}#${i}`,
         text: c.text,
         metadata: { ...doc.metadata, source: doc.id, chunk: i, ...(c.heading ? { heading: c.heading } : {}) },
+        // Who may read a chunk is who may read its document. Dropping these put every chunk of an
+        // organization's document in the un-namespaced partition, and every chunk of a user's own
+        // document out of that user's reach.
+        ...(doc.namespace !== undefined ? { namespace: doc.namespace } : {}),
+        ...(doc.owner !== undefined ? { owner: doc.owner } : {}),
+        ...(doc.shared ? { shared: true } : {}),
       });
     });
   }

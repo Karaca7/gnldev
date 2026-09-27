@@ -601,7 +601,8 @@ reddeder.
 import { chunkDocuments, indexDocuments, PostgresVectorStore, createRagTool, GraphRag } from '@gnldev/rag';
 
 // 1) Dokümanları parçala (chunk: uzun metni aranabilir küçük parçalara bölme):
-const parcalar = chunkDocuments([{ id: 'el-kitabi', text: uzunMetin }], { strategy: 'markdown' });
+// `shared: true` — her son kullanıcı okuyabilir; bir kullanıcının kendi belgesine bunun yerine `owner: '<kullanıcı id>'` verilir.
+const parcalar = chunkDocuments([{ id: 'el-kitabi', text: uzunMetin, shared: true }], { strategy: 'markdown' });
 // 2) Kalıcı vektör arşivine yaz (pgvector: Postgres'in embedding arama eklentisi):
 const store = new PostgresVectorStore({ connectionString: PG_URL });
 await indexDocuments(store, embed, parcalar);

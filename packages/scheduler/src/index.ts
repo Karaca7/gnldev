@@ -2,7 +2,7 @@
 // Keeps triggers in the journal (definition immutable, state mutable). The poll loop (now=Date.now())
 // fires due triggers exactly-once (acquireRunLock + per-fireCount runId). The workflow run carries its
 // own durable guarantee. Time = DATA (nextRunAt in the journal) → resolve-then-freeze, replay-safe.
-import { acquireRunLock, createPollLoop } from '@gnldev/durable';
+import { acquireRunLock, createPollLoop, orgPrefix } from '@gnldev/durable';
 import type { Journal } from '@gnldev/durable';
 import { nextCronTime } from './cron.js';
 
@@ -15,9 +15,15 @@ export interface WorkflowRunner {
   runWorkflow(
     name: string,
     input: unknown,
-    opts?: { runId?: string },
+    opts?: { runId?: string; resourceId?: string },
   ): Promise<{ runId: string; suspended?: boolean; output?: unknown }>;
 }
+
+/**
+ * Reaches an organization's runner — typically `(orgId) => createGnl(scopeConfigToOrg(config, orgId))`,
+ * cached. Needed only for triggers set with an `orgId`.
+ */
+export type RunnerForOrg = (orgId: string) => WorkflowRunner;
 
 export interface ScheduleSpec {
   /** Trigger id (idempotent record; `name` is used if not given). */
@@ -33,6 +39,16 @@ export interface ScheduleSpec {
   cron?: string;
   /** Max attempts on failure (default 5). */
   maxAttempts?: number;
+  /**
+   * The end user this trigger works for. Each fire's run gets it as `resourceId`, so the run is theirs:
+   * they can see it and approve it. Left out, the trigger is the system's and only staff can.
+   */
+  resourceId?: string;
+  /**
+   * The organization this trigger works in. Each fire runs on `runnerForOrg(orgId)`; without one the
+   * fire fails rather than run on the organization-less runner, where the organization cannot see it.
+   */
+  orgId?: string;
   /**
    * Policy for missed (misfire) fires — only meaningful for every/cron:
    * 'skip'    (default) — skip missed fires, jump to the next slot aligned to the planned grid (no drift accumulates).
@@ -50,6 +66,8 @@ interface TriggerDef {
   value: number | string;
   maxAttempts: number;
   misfire: MisfirePolicy;
+  resourceId?: string;
+  orgId?: string;
 }
 interface TriggerState {
   nextRunAt: number;
@@ -202,6 +220,12 @@ async function fireCountAfterLoss(journal: Journal, id: string): Promise<number>
 
 /** Schedules a workflow (at | every | cron). Idempotent: repeating with the same id = no-op. Returns the id. */
 export async function scheduleWorkflow(journal: Journal, spec: ScheduleSpec, now: number = Date.now()): Promise<string> {
+  // Checked when the trigger is set: found at fire time, a bad id is maxAttempts failures and a dead
+  // trigger instead of one error to the caller.
+  if (spec.orgId !== undefined) orgPrefix(spec.orgId);
+  if (spec.resourceId !== undefined && (typeof spec.resourceId !== 'string' || spec.resourceId === '')) {
+    throw new Error(`@gnldev/scheduler: invalid resourceId '${String(spec.resourceId)}' — must be a non-empty string, or omitted for a system trigger`);
+  }
   const id = spec.id ?? spec.name;
   if ((await journal.get(DEF(id))) !== undefined) {
     /**
@@ -251,6 +275,8 @@ export async function scheduleWorkflow(journal: Journal, spec: ScheduleSpec, now
     value,
     maxAttempts: spec.maxAttempts ?? 5,
     misfire: spec.misfire ?? 'skip',
+    ...(spec.resourceId !== undefined ? { resourceId: spec.resourceId } : {}),
+    ...(spec.orgId !== undefined ? { orgId: spec.orgId } : {}),
   };
   await journal.put(DEF(id), def);
   const state: TriggerState = { nextRunAt: firstRunAt(spec, now), attempts: 0, fireCount: 0, status: 'pending' };
@@ -286,7 +312,7 @@ export async function pollScheduler(
   journal: Journal,
   runner: WorkflowRunner,
   now: number = Date.now(),
-  opts: { owner?: string; retryMs?: number; budgetGuard?: BudgetGuard; lockTtlMs?: number } = {},
+  opts: { owner?: string; retryMs?: number; budgetGuard?: BudgetGuard; lockTtlMs?: number; runnerForOrg?: RunnerForOrg } = {},
 ): Promise<PollResult> {
   if (!journal.listKeys) throw new Error('@gnldev/scheduler: journal.listKeys is required (trigger enumeration)');
   const owner = opts.owner ?? `sched-${Math.random().toString(36).slice(2, 8)}`;
@@ -376,7 +402,16 @@ export async function pollScheduler(
       }
       let result: { suspended?: boolean; output?: unknown };
       try {
-        result = await runner.runWorkflow(def.name, def.input, { runId });
+        // Inside this try on purpose: a trigger whose organization cannot be reached fails like any other
+        // fire — counted, retried, and written to `sched:fail:` — instead of running where it does not belong.
+        const target = def.orgId === undefined ? runner : opts.runnerForOrg?.(def.orgId);
+        if (!target) {
+          throw new Error(
+            `@gnldev/scheduler: trigger '${id}' belongs to organization '${def.orgId}', and this scheduler has no runnerForOrg — ` +
+            `it was NOT run on the organization-less runner, where that organization could not see it. Pass runnerForOrg to createScheduler/pollScheduler.`,
+          );
+        }
+        result = await target.runWorkflow(def.name, def.input, { runId, ...(def.resourceId !== undefined ? { resourceId: def.resourceId } : {}) });
       } catch (e) {
         // DEFERRAL, not attempt: the run is already in flight elsewhere (see isRunBusyAtAcquisition).
         // `attempts` is untouched, `status` stays 'pending', and — this is the half that cost the live
@@ -457,6 +492,10 @@ export interface TriggerInfo {
   fireCount: number;
   status: 'pending' | 'done' | 'failed';
   misfire: MisfirePolicy;
+  /** The end user this trigger works for (absent: the system's). */
+  resourceId?: string;
+  /** The organization this trigger works in. */
+  orgId?: string;
   /** Last error if status='failed' (if any, from `sched:fail:<id>`). */
   lastError?: string;
   lastErrorAt?: number;
@@ -501,6 +540,8 @@ export async function listTriggers(journal: Journal): Promise<TriggerInfo[]> {
       fireCount: state.fireCount,
       status: state.status,
       misfire: def.misfire,
+      ...(def.resourceId !== undefined ? { resourceId: def.resourceId } : {}),
+      ...(def.orgId !== undefined ? { orgId: def.orgId } : {}),
     };
     if (state.status === 'failed') {
       const fail = await journal.get<{ error: string; at: number }>(FAIL(id));
@@ -540,13 +581,13 @@ export interface Scheduler {
 export function createScheduler(
   journal: Journal,
   runner: WorkflowRunner,
-  opts: { pollMs?: number; owner?: string; retryMs?: number; backoff?: boolean; maxPollMs?: number; budgetGuard?: BudgetGuard; lockTtlMs?: number } = {},
+  opts: { pollMs?: number; owner?: string; retryMs?: number; backoff?: boolean; maxPollMs?: number; budgetGuard?: BudgetGuard; lockTtlMs?: number; runnerForOrg?: RunnerForOrg } = {},
 ): Scheduler {
   const pollMs = opts.pollMs ?? 1000;
   const backoffOn = opts.backoff ?? false;
   const maxPollMs = opts.maxPollMs ?? pollMs * 32;
   const poll = (now: number = Date.now()) =>
-    pollScheduler(journal, runner, now, { owner: opts.owner, retryMs: opts.retryMs, budgetGuard: opts.budgetGuard, lockTtlMs: opts.lockTtlMs });
+    pollScheduler(journal, runner, now, { owner: opts.owner, retryMs: opts.retryMs, budgetGuard: opts.budgetGuard, lockTtlMs: opts.lockTtlMs, runnerForOrg: opts.runnerForOrg });
 
   // Phase 8.1: the tick/backoff/"polling" flag loop now lives in @gnldev/durable's shared createPollLoop
   // (it used to be triplicated across queue/events/scheduler) — behavior is identical: pollScheduler only

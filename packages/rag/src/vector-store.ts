@@ -1,4 +1,5 @@
 import { cosineSimilarity } from 'ai';
+import { visibleToSubject } from '@gnldev/durable';
 
 export interface VectorDoc {
   id: string;
@@ -6,6 +7,10 @@ export interface VectorDoc {
   metadata?: Record<string, unknown>;
   /** 7.2: optional collection/namespace split — isolated data sets within the same store. */
   namespace?: string;
+  /** The end user this document belongs to. See `QueryOptions.visibleTo`. */
+  owner?: string;
+  /** Visible to every end user of the namespace: the organization's general documents. */
+  shared?: boolean;
 }
 export interface VectorItem extends VectorDoc {
   embedding: number[];
@@ -18,6 +23,12 @@ export interface VectorMatch extends VectorDoc {
 export interface QueryOptions {
   /** Only items in this namespace (matches item.namespace from upsert). All items if not given. */
   namespace?: string;
+  /**
+   * Answer on behalf of this end user: only their own documents (`owner`) and everyone's (`shared`).
+   * An unlabelled document is neither, so a label forgotten at upload reads as "not found" rather
+   * than as "everyone's". `createRagTool` fills it in from the run; omitted means no narrowing.
+   */
+  visibleTo?: string;
   /** Metadata SHALLOW equality filter: EVERY given key must match item.metadata with the SAME value. */
   filter?: Record<string, unknown>;
   /** Score threshold: matches whose final score falls BELOW this value are FILTERED OUT (cosine ~0..1). */
@@ -109,11 +120,12 @@ export class InMemoryVectorStore implements VectorStore {
       // 7.2: namespace + metadata narrowing (BEFORE score computation — no wasted work).
       if (opts?.namespace !== undefined && it.namespace !== opts.namespace) continue;
       if (!matchesFilter(it.metadata, opts?.filter)) continue;
+      if (!visibleToSubject(it, opts?.visibleTo)) continue;
       const vec = cosineSimilarity(embedding, it.embedding);
       // 7.2: hybrid → (1-w)·vector + w·keyword; otherwise pure vector (old behavior).
       const score = hybrid ? (1 - w) * vec + w * keywordScore(opts!.text!, it.text) : vec;
       if (opts?.minScore !== undefined && score < opts.minScore) continue;
-      out.push({ id: it.id, text: it.text, metadata: it.metadata, namespace: it.namespace, score });
+      out.push({ id: it.id, text: it.text, metadata: it.metadata, namespace: it.namespace, ...(it.owner !== undefined ? { owner: it.owner } : {}), ...(it.shared ? { shared: true } : {}), score });
     }
     return out.sort((a, b) => b.score - a.score).slice(0, topK);
   }

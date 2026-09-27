@@ -79,7 +79,7 @@ await section('@gnldev/memory — schema working memory + tool', async () => {
 await section('@gnldev/rag — retrieval + LLM reranker', async () => {
   const store = new InMemoryVectorStore();
   await indexDocuments(store, embed, [
-    { id: '1', text: 'refund policy: 14 days' }, { id: '2', text: 'shipping time: 3 days' }, { id: '3', text: 'refund and shipping' },
+    { id: '1', text: 'refund policy: 14 days', shared: true }, { id: '2', text: 'shipping time: 3 days', shared: true }, { id: '3', text: 'refund and shipping', shared: true },
   ]);
   const tool = createRagTool({ store, embed, topK: 3, rerank: llmReranker({ model: mkModel(async () => finalText('0,2,1')) }), rerankTopK: 2 });
   const res: any = await tool.execute!({ query: 'refund' }, { toolCallId: 'r', messages: [], context: undefined });
@@ -263,7 +263,7 @@ await section('@gnldev/workflow — retry(attempts) (fails twice → succeeds on
 
 await section('@gnldev/rag — chunkDocuments (markdown) → GraphRag indirect-relevance contrast', async () => {
   const md = ['# Refunds', 'refund policy 14 days', '## Shipping', 'refund shipping form', '# Security', 'password reset', '## Compensation', 'shipping delay compensation'].join('\n');
-  const chunks = chunkDocuments([{ id: 'kb', text: md }], { strategy: 'markdown' });
+  const chunks = chunkDocuments([{ id: 'kb', text: md, shared: true }], { strategy: 'markdown' });
   assert(chunks.some((c) => c.metadata?.heading === 'Refunds > Shipping'), 'no markdown breadcrumb metadata');
   // Index the same chunks into both the flat store and GraphRag.
   const flat = new InMemoryVectorStore();

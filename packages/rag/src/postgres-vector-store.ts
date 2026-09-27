@@ -62,11 +62,16 @@ export class PostgresVectorStore implements VectorStore {
              embedding vector(${dimension}) NOT NULL,
              metadata JSONB,
              namespace TEXT,
+             owner TEXT,
+             shared BOOLEAN,
              created_at BIGINT NOT NULL
            )`,
         );
         // 7.2: add the column in a backward-compatible way on old (namespace-less) tables.
         await this.pool.query(`ALTER TABLE ${this.table} ADD COLUMN IF NOT EXISTS namespace TEXT`);
+        // Same for the end-user label. Existing rows stay NULL: unlabelled, so visible to no end user.
+        await this.pool.query(`ALTER TABLE ${this.table} ADD COLUMN IF NOT EXISTS owner TEXT`);
+        await this.pool.query(`ALTER TABLE ${this.table} ADD COLUMN IF NOT EXISTS shared BOOLEAN`);
         if (this.index === 'hnsw') {
           await this.pool.query(
             `CREATE INDEX IF NOT EXISTS ${this.table}_embedding_idx
@@ -97,14 +102,16 @@ export class PostgresVectorStore implements VectorStore {
     await this.ensureReady(items[0]!.embedding.length);
     for (const it of items) {
       await this.pool.query(
-        `INSERT INTO ${this.table} (id, text, embedding, metadata, namespace, created_at)
-           VALUES ($1, $2, $3::vector, $4, $5, $6)
+        `INSERT INTO ${this.table} (id, text, embedding, metadata, namespace, owner, shared, created_at)
+           VALUES ($1, $2, $3::vector, $4, $5, $6, $7, $8)
            ON CONFLICT (id) DO UPDATE SET
              text = EXCLUDED.text,
              embedding = EXCLUDED.embedding,
              metadata = EXCLUDED.metadata,
-             namespace = EXCLUDED.namespace`,
-        [it.id, it.text, toVectorLiteral(it.embedding), it.metadata ? JSON.stringify(it.metadata) : null, it.namespace ?? null, Date.now()],
+             namespace = EXCLUDED.namespace,
+             owner = EXCLUDED.owner,
+             shared = EXCLUDED.shared`,
+        [it.id, it.text, toVectorLiteral(it.embedding), it.metadata ? JSON.stringify(it.metadata) : null, it.namespace ?? null, it.owner ?? null, it.shared ? true : null, Date.now()],
       );
     }
   }
@@ -127,6 +134,10 @@ export class PostgresVectorStore implements VectorStore {
       params.push(JSON.stringify(opts.filter));
       where.push(`metadata @> $${params.length}::jsonb`);
     }
+    if (opts?.visibleTo !== undefined) {
+      params.push(opts.visibleTo);
+      where.push(`(shared IS TRUE OR owner = $${params.length})`);
+    }
     if (opts?.minScore !== undefined) {
       params.push(opts.minScore);
       where.push(`1 - (embedding <=> $1::vector) >= $${params.length}`);
@@ -135,7 +146,7 @@ export class PostgresVectorStore implements VectorStore {
     const limitParam = `$${params.length}`;
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const res = await this.pool.query(
-      `SELECT id, text, metadata, namespace, 1 - (embedding <=> $1::vector) AS score
+      `SELECT id, text, metadata, namespace, owner, shared, 1 - (embedding <=> $1::vector) AS score
          FROM ${this.table}
          ${whereSql}
          ORDER BY embedding <=> $1::vector
@@ -147,6 +158,8 @@ export class PostgresVectorStore implements VectorStore {
       text: r.text,
       metadata: parseMetadata(r.metadata),
       namespace: r.namespace ?? undefined,
+      ...(r.owner != null ? { owner: r.owner as string } : {}),
+      ...(r.shared ? { shared: true } : {}),
       score: typeof r.score === 'number' ? r.score : Number(r.score),
     }));
   }

@@ -55,7 +55,7 @@ export async function buildRunbooks(cacheStore: any) {
   const store = new InMemoryVectorStore();
   const cache = createCache(cacheStore, 'embed');
   const embed = async (t: string) => cache.getOrCompute(t, async () => rawEmbed(t));
-  await indexDocuments(store, embed, RUNBOOKS);
+  await indexDocuments(store, embed, RUNBOOKS.map((r) => ({ ...r, shared: true })));
   const searchRunbook = createRagTool({
     store,
     embed,

@@ -34,7 +34,8 @@ export function createRagTool(opts: {
    * documented RAG path. Every agent built from this tool searched the whole index, and every shipped
    * example (README, both GUIDEs, the scaffold recipe, the docs-mcp entry) does exactly that.
    *
-   * Build one tool per organization with their namespace, or pass a function to resolve it per call.
+   * Build one tool per organization with their namespace, or hand it a store from `withOrgStorage`,
+   * which pins the namespace itself. Per end user, nothing is needed here: see `QueryOptions.visibleTo`.
    */
   namespace?: string;
   /** Metadata narrowing, applied by the store alongside `namespace`. */
@@ -47,11 +48,14 @@ export function createRagTool(opts: {
   return Object.assign(tool({
     description: opts.description ?? 'Retrieves documents relevant to the query from the knowledge base',
     inputSchema: z.object({ query: z.string().describe('search query') }),
-    execute: async ({ query }) => {
+    execute: async ({ query }, options: { resourceId?: string } = {}) => {
       const embedding = await opts.embed(query);
       let matches = await opts.store.query(embedding, opts.topK ?? 4, {
         ...(opts.namespace !== undefined ? { namespace: opts.namespace } : {}),
         ...(opts.filter !== undefined ? { filter: opts.filter } : {}),
+        // A run on behalf of an end user answers from the general shelf and theirs — not by the
+        // author remembering to ask, but because the run says whose it is (see durableTool).
+        ...(options.resourceId !== undefined ? { visibleTo: options.resourceId } : {}),
       });
       if (opts.rerank) matches = await opts.rerank.rerank(query, matches, opts.rerankTopK);
       return matches.map((m): RagHit => ({

@@ -255,10 +255,14 @@ export class SqliteStorage implements Storage {
     // No backfill, and NULL is the right value for the rows already there: they were written before
     // namespaces existed, so they belong to the un-namespaced partition. A query for namespace 'x'
     // must not be answered from them, and `WHERE namespace IS ?` gives exactly that.
+    //
+    // `owner`/`shared` follow the same shape, and NULL is right for them too: a row written before end
+    // users had documents of their own is unlabelled, and an unlabelled row is visible to no end user.
     const vcols = this.db.prepare(`PRAGMA table_info(gnl_vectors)`).all() as { name: string }[];
-    if (!vcols.some((c) => c.name === 'namespace')) {
+    for (const [col, type] of [['namespace', 'TEXT'], ['owner', 'TEXT'], ['shared', 'INTEGER']] as const) {
+      if (vcols.some((c) => c.name === col)) continue;
       try {
-        this.db.exec(`ALTER TABLE gnl_vectors ADD COLUMN namespace TEXT`);
+        this.db.exec(`ALTER TABLE gnl_vectors ADD COLUMN ${col} ${type}`);
       } catch (e) {
         if (!String((e as Error)?.message ?? e).includes('duplicate column')) throw e;
       }
@@ -531,7 +535,7 @@ CREATE TABLE IF NOT EXISTS gnl_messages (
 CREATE TABLE IF NOT EXISTS gnl_working_memory (scope_id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS gnl_observations (thread_id TEXT PRIMARY KEY, obs TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS gnl_message_batches (thread_id TEXT NOT NULL, batch_key TEXT NOT NULL, seq_from INTEGER NOT NULL, seq_to INTEGER NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY (thread_id, batch_key));
-CREATE TABLE IF NOT EXISTS gnl_vectors (id TEXT PRIMARY KEY, text TEXT NOT NULL, embedding TEXT NOT NULL, metadata TEXT, namespace TEXT, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS gnl_vectors (id TEXT PRIMARY KEY, text TEXT NOT NULL, embedding TEXT NOT NULL, metadata TEXT, namespace TEXT, owner TEXT, shared INTEGER, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS gnl_work_log (ns TEXT NOT NULL, id TEXT NOT NULL, payload TEXT NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY (ns, id));
 CREATE INDEX IF NOT EXISTS gnl_work_log_ns ON gnl_work_log (ns, ts);
 CREATE TABLE IF NOT EXISTS gnl_work_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -1171,10 +1175,10 @@ class SqliteVectorStore implements VectorStore {
   constructor(private db: any) {}
   async upsert(items: VectorItem[]): Promise<void> {
     const stmt = this.db.prepare(
-      `INSERT INTO gnl_vectors (id, text, embedding, metadata, namespace, created_at) VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET text=excluded.text, embedding=excluded.embedding, metadata=excluded.metadata, namespace=excluded.namespace`,
+      `INSERT INTO gnl_vectors (id, text, embedding, metadata, namespace, owner, shared, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET text=excluded.text, embedding=excluded.embedding, metadata=excluded.metadata, namespace=excluded.namespace, owner=excluded.owner, shared=excluded.shared`,
     );
-    for (const it of items) stmt.run(it.id, it.text, JSON.stringify(it.embedding), it.metadata ? serialize(it.metadata) : null, it.namespace ?? null, Date.now());
+    for (const it of items) stmt.run(it.id, it.text, JSON.stringify(it.embedding), it.metadata ? serialize(it.metadata) : null, it.namespace ?? null, it.owner ?? null, it.shared ? 1 : null, Date.now());
   }
   async query(embedding: number[], topK: number, opts?: VectorQueryOptions): Promise<VectorMatch[]> {
     // Filtered in SQL, so the rows that reach the ranking are already the eligible ones. Ranking the
@@ -1184,11 +1188,15 @@ class SqliteVectorStore implements VectorStore {
     //
     // `IS` rather than `=`: SQLite's `=` is never true against NULL, so a query for the un-namespaced
     // partition would silently match nothing at all.
-    const rows = (opts?.namespace === undefined
-      ? this.db.prepare('SELECT id, text, embedding, metadata, namespace FROM gnl_vectors').all()
-      : this.db.prepare('SELECT id, text, embedding, metadata, namespace FROM gnl_vectors WHERE namespace IS ?').all(opts.namespace)) as any[];
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (opts?.namespace !== undefined) { where.push('namespace IS ?'); params.push(opts.namespace); }
+    if (opts?.visibleTo !== undefined) { where.push('(shared = 1 OR owner = ?)'); params.push(opts.visibleTo); }
+    const rows = this.db
+      .prepare(`SELECT id, text, embedding, metadata, namespace, owner, shared FROM gnl_vectors${where.length ? ` WHERE ${where.join(' AND ')}` : ''}`)
+      .all(...params) as any[];
     return rows
-      .map((r) => ({ id: r.id, text: r.text, metadata: r.metadata ? deserialize<Record<string, unknown>>(r.metadata) : undefined, ...(r.namespace != null ? { namespace: r.namespace as string } : {}), score: cosineSimilarity(embedding, JSON.parse(r.embedding)) }))
+      .map((r) => ({ id: r.id, text: r.text, metadata: r.metadata ? deserialize<Record<string, unknown>>(r.metadata) : undefined, ...(r.namespace != null ? { namespace: r.namespace as string } : {}), ...(r.owner != null ? { owner: r.owner as string } : {}), ...(r.shared ? { shared: true } : {}), score: cosineSimilarity(embedding, JSON.parse(r.embedding)) }))
       .sort((a, b) => b.score - a.score)
       .slice(0, topK);
   }

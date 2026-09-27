@@ -28,6 +28,31 @@ await scheduleWorkflow(journal, {
 setInterval(() => pollScheduler(journal, gnl), 30_000);
 ```
 
+## Triggers for an end user
+
+A trigger can work for one user in one organization. Each fire's run belongs to that user: they can see
+it and approve it.
+
+```ts
+import { scheduleWorkflow, createScheduler } from '@gnldev/scheduler';
+import { createGnl, scopeConfigToOrg } from '@gnldev/durable';
+
+await scheduleWorkflow(journal, {
+  id: 'ayse-weekly', every: 7 * 24 * 3600_000, name: 'weekly-summary',
+  resourceId: 'ayse', orgId: 'acme',
+});
+
+// Each organization's runner. Cache it; building it per fire is wasteful.
+const gnlFor = (orgId: string) => createGnl(scopeConfigToOrg(config, orgId).config);
+createScheduler(journal, gnl, { runnerForOrg: gnlFor }).start();
+```
+
+- Leave both out and the trigger is the system's, as before.
+- A trigger with an `orgId` never runs on the organization-less runner. Without `runnerForOrg` it fails
+  with a clear error (`listTriggers` → `lastError`), because a run written there is invisible to the
+  organization.
+- A bad `orgId` or an empty `resourceId` is refused by `scheduleWorkflow` itself.
+
 ## Lock TTL and what "once" covers
 
 Two workers polling at the same moment do not both fire the trigger: `acquireRunLock` picks one

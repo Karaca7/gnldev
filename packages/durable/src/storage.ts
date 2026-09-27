@@ -307,6 +307,14 @@ export interface VectorDoc {
    * asks for namespace `x` must never be answered from it. See `VectorQueryOptions.namespace`.
    */
   namespace?: string;
+  /**
+   * The end user this document belongs to, inside its namespace. A document is either someone's
+   * (`owner`), everyone's (`shared: true`), or unlabelled — and an unlabelled one is visible to no end
+   * user. See `VectorQueryOptions.visibleTo`.
+   */
+  owner?: string;
+  /** Visible to every end user of the namespace: the organization's general documents. */
+  shared?: boolean;
 }
 export interface VectorItem extends VectorDoc {
   embedding: number[];
@@ -326,6 +334,17 @@ export interface VectorQueryOptions {
    * always passes it — rather than in this default.
    */
   namespace?: string;
+  /**
+   * Answer on behalf of this end user: only documents that are theirs (`owner`) or everyone's
+   * (`shared`). An unlabelled document is neither — a label forgotten at upload reads as "not found",
+   * never as "everyone's". Omitted means no end user, and nothing is narrowed.
+   */
+  visibleTo?: string;
+}
+
+/** The one reading of `VectorQueryOptions.visibleTo`, shared by every implementation that filters in code. */
+export function visibleToSubject(doc: { owner?: string; shared?: boolean }, visibleTo: string | undefined): boolean {
+  return visibleTo === undefined || doc.shared === true || (doc.owner !== undefined && doc.owner === visibleTo);
 }
 
 export interface VectorStore {

@@ -7,7 +7,7 @@ import { InMemoryJournal } from './journal.js';
 import { stableStringify } from './hash.js';
 import { ENGINE_META_KEYS, assertNoRunsInFlight, assertOrgRegistered, isPlatformKey, orgPrefix } from './organization.js';
 import type { JournalEntry, RunSummary } from './journal.js';
-import { matchFilter } from './storage.js';
+import { matchFilter, visibleToSubject } from './storage.js';
 import type {
   Storage, CapabilityMatrix, Page, ListQuery,
   RunJournal, MemoryStore, VectorStore, WorkStore, CacheStore, MetaStore,
@@ -249,8 +249,8 @@ class InMemoryVectorStore implements VectorStore {
     // ask for 4, get however many of the global top 4 were yours. No error, no leak, just recall that
     // quietly degrades as other organizations upload — invisible unless a test has two of them in it.
     return this.items
-      .filter((it) => opts?.namespace === undefined || it.namespace === opts.namespace)
-      .map((it) => ({ id: it.id, text: it.text, metadata: it.metadata, ...(it.namespace !== undefined ? { namespace: it.namespace } : {}), score: cosineSimilarity(embedding, it.embedding) }))
+      .filter((it) => (opts?.namespace === undefined || it.namespace === opts.namespace) && visibleToSubject(it, opts?.visibleTo))
+      .map((it) => ({ id: it.id, text: it.text, metadata: it.metadata, ...(it.namespace !== undefined ? { namespace: it.namespace } : {}), ...(it.owner !== undefined ? { owner: it.owner } : {}), ...(it.shared ? { shared: true } : {}), score: cosineSimilarity(embedding, it.embedding) }))
       .sort((a, b) => b.score - a.score)
       .slice(0, topK);
   }

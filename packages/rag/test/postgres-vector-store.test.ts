@@ -157,3 +157,45 @@ describe('setup interrupted by a dropped connection', () => {
     await store.close();
   });
 });
+
+// The fake pool above does not evaluate WHERE, so this layer can only pin the SQL the store sends: the
+// end-user clause, its parameter, and the label reaching the INSERT in the right columns. Whether
+// Postgres then honours it is the env-gated real-database layer's job.
+describe('PostgresVectorStore: end-user narrowing reaches the SQL', () => {
+  function recordingPool() {
+    const calls: Array<{ sql: string; params: unknown[] }> = [];
+    const pool: PoolLike = { async query(sql: string, params: unknown[] = []) { calls.push({ sql, params }); return { rows: [] }; } };
+    return { pool, calls };
+  }
+
+  it('visibleTo becomes "shared or theirs", bound as a parameter', async () => {
+    const { pool, calls } = recordingPool();
+    const store = new PostgresVectorStore({ pool });
+    await store.query([1, 0, 0], 3, { visibleTo: 'mehmet' });
+    const q = calls.find((c) => /ORDER\s+BY\s+embedding/i.test(c.sql))!;
+    const m = /\(shared IS TRUE OR owner = \$(\d+)\)/.exec(q.sql);
+    expect(m, 'the end-user clause is in the WHERE').not.toBeNull();
+    expect(q.params[Number(m![1]) - 1]).toBe('mehmet');
+    expect(q.sql).not.toContain('mehmet');
+  });
+
+  it('no end user, no clause', async () => {
+    const { pool, calls } = recordingPool();
+    await new PostgresVectorStore({ pool }).query([1, 0, 0], 3);
+    expect(calls.find((c) => /ORDER\s+BY\s+embedding/i.test(c.sql))!.sql).not.toMatch(/owner =/);
+  });
+
+  it('the label is written, and an existing table gains the columns', async () => {
+    const { pool, calls } = recordingPool();
+    await new PostgresVectorStore({ pool }).upsert([
+      { id: 'a', text: 'x', embedding: [1, 0], owner: 'ayse' },
+      { id: 'g', text: 'y', embedding: [1, 0], shared: true },
+    ]);
+    const ins = calls.filter((c) => /^\s*INSERT/i.test(c.sql));
+    expect(ins[0]!.sql).toMatch(/\(id, text, embedding, metadata, namespace, owner, shared, created_at\)/);
+    expect(ins[0]!.params.slice(5, 7)).toEqual(['ayse', null]);
+    expect(ins[1]!.params.slice(5, 7)).toEqual([null, true]);
+    expect(calls.some((c) => /ADD COLUMN IF NOT EXISTS owner TEXT/.test(c.sql))).toBe(true);
+    expect(calls.some((c) => /ADD COLUMN IF NOT EXISTS shared BOOLEAN/.test(c.sql))).toBe(true);
+  });
+});

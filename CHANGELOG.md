@@ -19,7 +19,8 @@ Many entries below are breaking. If you are upgrading, check these first:
    `kind: 'operator'` on them (Studio `PATCH /users/:id`), or pass `kindOf` to the SSO provider.
    Otherwise they get 403 in Studio.
 3. **Work an agent, a worker or a schedule does for a user** must carry that user's `resourceId`.
-   Records with no owner are staff's now.
+   Records with no owner are staff's now. Queue and scheduler take it at the source:
+   `enqueue(…, { resourceId, orgId })`, `scheduleWorkflow({ …, resourceId, orgId })`.
 4. **`subjectBinding`, `resolveResourceId` (chat/agui) and `createEnterpriseAuth({ users })` are
    gone.** Delete them from your config. The last two throw if passed.
 5. **Chat and AG-UI:** mount them on `createRestApi` with `surfaces`, or give the standalone route
@@ -27,8 +28,24 @@ Many entries below are breaking. If you are upgrading, check these first:
 6. **End-user tokens:** 32-byte secret or longer; at most 1 hour unless you pass `isRevoked`.
 7. **Clients:** a foreign or missing run is `404` (was `403` / `200 []`); an unauthenticated write
    is `401` (was `403`).
+8. **Knowledge bases:** label documents `shared: true` (everyone's) or `owner: '<user id>'`. An end
+   user's search no longer finds unlabelled documents.
 
 ### Added
+
+- **A knowledge base holds general documents and each user's own.** `VectorDoc` takes `owner` and
+  `shared`; `VectorQueryOptions.visibleTo` (and `QueryOptions.visibleTo` in @gnldev/rag) answers from
+  `shared` documents plus that user's, filtered before ranking. `createRagTool` sets it from the run's
+  `resourceId` by itself: tools now receive `resourceId` in their execute options. Every store in the
+  repository implements it: in-memory, SQLite and Postgres storage, `InMemoryVectorStore`,
+  `PostgresVectorStore`, `GraphRag`. The SQLite and Postgres tables gain `owner` and `shared` columns
+  on startup.
+- **Queue jobs and scheduled triggers can belong to an end user.** `enqueue(…, { resourceId, orgId })`
+  hands the handler `ctx.resourceId`, `ctx.orgId`, and `ctx.journal`/`ctx.storage` scoped to that
+  organization; `retryJob` keeps them. `scheduleWorkflow({ …, resourceId, orgId })` passes the user to
+  `runWorkflow` and runs on `runnerForOrg(orgId)`. A trigger with an organization and no
+  `runnerForOrg` fails with a clear error; it is never run where its organization cannot see it.
+  `listJobs` and `listTriggers` show both fields.
 
 - **`surfaces` on `createRestApi`: chat and AG-UI on the REST door.** `chatSurface()` (@gnldev/chat-adapter)
   and `aguiSurface()` (@gnldev/agui) translate the wire format only; identity, organization, ownership,
@@ -47,6 +64,10 @@ Many entries below are breaking. If you are upgrading, check these first:
   now call GNL directly without the `client` token, which must stay on your server.
 
 ### Breaking
+
+- **An end user's knowledge-base search skips unlabelled documents.** Existing rows, and documents
+  indexed without `owner`/`shared`, are visible to staff and system runs only. Re-index general
+  content with `shared: true`. A forgotten label now reads as "not found" instead of "everyone's".
 
 - **`gnl init` scaffolds chat as a surface of the REST API.** `src/routes/chat.ts` is `chatSurface()`
   and `src/app.ts` passes it in `surfaces`; the host templates no longer mount a separate chat route,
@@ -121,6 +142,10 @@ Many entries below are breaking. If you are upgrading, check these first:
   `kind`, and a role does not stand in for it: a `subject` holding `admin` is refused.
 
 ### Fixed
+
+- **`chunkDocuments` keeps a document's `namespace`.** Split chunks dropped it and landed in the
+  un-namespaced partition, out of reach of the organization that indexed them. They also keep
+  `owner` and `shared`.
 
 - **`gnl dev` and `gnl.config` carry every `roleAuth` class.** `auth.client`, `auth.superAdmin` and
   `auth.endUsers` were dropped (a correctly signed end-user token got 403), and `endUsers` did not

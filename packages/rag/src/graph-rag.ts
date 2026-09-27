@@ -8,6 +8,7 @@
 // GraphRAG as a query-time layer is the user's pattern. Since it runs durable inside `createRagTool`,
 // the query RESULT is journaled → the graph isn't retraversed on resume/replay (exactly-once RAG preserved).
 import { cosineSimilarity } from 'ai';
+import { visibleToSubject } from '@gnldev/durable';
 import { matchesFilter } from './vector-store.js';
 import type { VectorStore, VectorItem, VectorMatch, QueryOptions } from './vector-store.js';
 
@@ -111,7 +112,8 @@ export class GraphRag implements VectorStore {
     // still let it seed the graph walk below and lend its score to a neighbour.
     const visible = this.items.filter((it) =>
       (opts?.namespace === undefined || it.namespace === opts.namespace)
-      && matchesFilter(it.metadata, opts?.filter));
+      && matchesFilter(it.metadata, opts?.filter)
+      && visibleToSubject(it, opts?.visibleTo));
     if (visible.length === 0) return [];
     const allowed = new Set(visible.map((it) => it.id));
 
@@ -148,7 +150,7 @@ export class GraphRag implements VectorStore {
       .slice(0, topK)
       .map(([id, score]) => {
         const it = this.items[this.byId.get(id)!]!;
-        return { id, text: it.text, metadata: it.metadata, score };
+        return { id, text: it.text, metadata: it.metadata, ...(it.owner !== undefined ? { owner: it.owner } : {}), ...(it.shared ? { shared: true } : {}), score };
       });
   }
 

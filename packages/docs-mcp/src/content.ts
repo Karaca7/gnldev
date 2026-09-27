@@ -606,9 +606,10 @@ const r = await gnl.runNetwork('desk', { runId: 'n1', task: 'research and draft 
       `chunkText / chunkDocuments — recursive/markdown/character strategies, size/overlap, deterministic <docId>#<i> ids`,
       `PostgresVectorStore — a persistent pgvector store (pool or connectionString, dimension?, index: hnsw|ivfflat|none)`,
       `GraphRag — a similarity-graph VectorStore (threshold/hops/decay/seeds), a drop-in for createRagTool`,
-      `createRagTool({ store, embed, topK?, rerank? }) — journaled inside durable, so retrieval is exactly-once`,
+      `createRagTool({ store, embed, topK?, rerank? }) — journaled inside durable, so retrieval is exactly-once; a run with a resourceId is answered from shared docs + that user's own`,
     ],
-    example: `const chunks = chunkDocuments(docs, { strategy: 'markdown', size: 1200, overlap: 120 });
+    example: `// label each doc: shared: true (everyone's) or owner: '<user id>' (one end user's); unlabelled = no end user sees it
+const chunks = chunkDocuments(docs, { strategy: 'markdown', size: 1200, overlap: 120 });
 const store = new PostgresVectorStore({ connectionString: process.env.DATABASE_URL, index: 'hnsw' });
 await indexDocuments(store, embed, chunks);
 const gnl = createGnl({ storage, agents: { asst: { model, tools: { search: createRagTool({ store, embed, topK: 5 }) } } } });`,

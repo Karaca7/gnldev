@@ -4,15 +4,36 @@
 // resumes from the RunJournal → SIDE EFFECT HAPPENS ONCE. acquireRunLock (M4) prevents two workers
 // from running the same job concurrently.
 // Job log + markers live in WorkStore (own namespace); the lock + handler's durability live in RunJournal.
-import { acquireRunLock, requireCapability, createPollLoop } from '@gnldev/durable';
+import { acquireRunLock, requireCapability, createPollLoop, orgPrefix, withOrgStorage } from '@gnldev/durable';
 import type { Storage, WorkStore, RunJournal, LogRecord } from '@gnldev/durable';
 
 export interface JobCtx {
-  /** RunJournal for the job's own durable runId ('job:<id>') (passed to the handler as the journal for runDurable). */
+  /**
+   * RunJournal for the job's own durable runId ('job:<id>') (passed to the handler as the journal for
+   * runDurable). Scoped to `orgId` when the job has one, so the run lands in that organization.
+   */
   journal: RunJournal;
   jobId: string;
   runId: string;
+  /**
+   * The end user this job was enqueued for. Pass it on as the run's `resourceId` and the run is theirs:
+   * they can see it and approve it. Left out, the run has no owner and only staff can.
+   */
+  resourceId?: string;
+  /** The organization this job was enqueued for. */
+  orgId?: string;
+  /** The worker's storage, scoped to `orgId` when the job has one — build the organization's instance from it. */
+  storage: Storage;
 }
+
+/** Whose a job is. Kept beside the payload, never inside it: a payload is the handler's, this is the queue's. */
+export interface JobOwner {
+  resourceId?: string;
+  orgId?: string;
+}
+
+/** A `qjob` log entry. */
+type JobRecord = { type: string; payload: unknown } & JobOwner;
 
 export type JobHandler = (payload: any, ctx: JobCtx) => Promise<any>;
 
@@ -52,7 +73,7 @@ export interface QueueWorkerOptions {
   onError?: (err: unknown, jobId: string) => void;
 }
 
-export interface JobStatus {
+export interface JobStatus extends JobOwner {
   id: string;
   type: string;
   status: 'pending' | 'done' | 'failed';
@@ -92,13 +113,23 @@ async function countUpTo(work: WorkStore, ns: string, limit: number): Promise<nu
   }
 }
 
-/** Adds a job to the queue (idempotent: repeating with the same id = a single job). */
+/**
+ * Adds a job to the queue (idempotent: repeating with the same id = a single job).
+ *
+ * `resourceId`/`orgId` say whose the job is. The worker hands them to the handler (see `JobCtx`); a job
+ * without them is the system's. Both are checked here, at the door — a bad organization id found by the
+ * worker would be five failed attempts and a dead letter instead of one error to the caller.
+ */
 export async function enqueue(
   work: WorkStore,
   type: string,
   payload: unknown,
-  opts: { id?: string; maxDepth?: number } = {},
+  opts: { id?: string; maxDepth?: number } & JobOwner = {},
 ): Promise<string> {
+  if (opts.orgId !== undefined) orgPrefix(opts.orgId);
+  if (opts.resourceId !== undefined && (typeof opts.resourceId !== 'string' || opts.resourceId === '')) {
+    throw new Error(`@gnldev/queue: invalid resourceId '${String(opts.resourceId)}' — must be a non-empty string, or omitted for a system job`);
+  }
   if (opts.maxDepth != null) {
     const depth = await countUpTo(work, 'qjob', opts.maxDepth);
     if (depth >= opts.maxDepth) {
@@ -108,7 +139,13 @@ export async function enqueue(
       );
     }
   }
-  return work.append('qjob', { type, payload }, opts.id);
+  const rec: JobRecord = {
+    type,
+    payload,
+    ...(opts.resourceId !== undefined ? { resourceId: opts.resourceId } : {}),
+    ...(opts.orgId !== undefined ? { orgId: opts.orgId } : {}),
+  };
+  return work.append('qjob', rec, opts.id);
 }
 
 /**
@@ -129,13 +166,20 @@ async function listAll<T>(work: WorkStore, ns: string): Promise<LogRecord<T>[]> 
 
 /** Summary of all jobs (pending/done/failed + attempt count). */
 export async function listJobs(work: WorkStore): Promise<JobStatus[]> {
-  const jobs = await listAll<{ type: string; payload: unknown }>(work, 'qjob');
+  const jobs = await listAll<JobRecord>(work, 'qjob');
   const out: JobStatus[] = [];
   for (const j of jobs) {
     const done = await work.get(`qdone:${j.id}`);
     const fail = await work.get(`qfail:${j.id}`);
     const attempts = (await work.get<number>(`qatt:${j.id}`)) ?? 0;
-    out.push({ id: j.id, type: j.payload.type, status: done ? 'done' : fail ? 'failed' : 'pending', attempts });
+    out.push({
+      id: j.id,
+      type: j.payload.type,
+      status: done ? 'done' : fail ? 'failed' : 'pending',
+      attempts,
+      ...(j.payload.resourceId !== undefined ? { resourceId: j.payload.resourceId } : {}),
+      ...(j.payload.orgId !== undefined ? { orgId: j.payload.orgId } : {}),
+    });
   }
   return out;
 }
@@ -147,10 +191,10 @@ export async function listJobs(work: WorkStore): Promise<JobStatus[]> {
 async function findJob(
   work: WorkStore,
   id: string,
-): Promise<LogRecord<{ type: string; payload: unknown }> | undefined> {
+): Promise<LogRecord<JobRecord> | undefined> {
   let cursor: string | undefined;
   for (;;) {
-    const page = await work.list<{ type: string; payload: unknown }>('qjob', { cursor });
+    const page = await work.list<JobRecord>('qjob', { cursor });
     const hit = page.items.find((j) => j.id === id);
     if (hit) return hit;
     if (!page.nextCursor) return undefined;
@@ -177,7 +221,8 @@ export async function retryJob(work: WorkStore, id: string, opts: { maxDepth?: n
   if (!rec) return null;
   const fail = await work.get(`qfail:${id}`);
   if (!fail) return null; // only dead-letter jobs are retried — pending/done is a no-op
-  return enqueue(work, rec.payload.type, rec.payload.payload, opts);
+  // The copy is the same user's, in the same organization: a retry must not turn their job into the system's.
+  return enqueue(work, rec.payload.type, rec.payload.payload, { ...opts, resourceId: rec.payload.resourceId, orgId: rec.payload.orgId });
 }
 
 export interface Worker {
@@ -214,7 +259,7 @@ export function createWorker(
   async function runOnce(): Promise<boolean> {
     let cursor = await work.get<string>(QCURSOR);
     for (;;) {
-      const page = await work.list<{ type: string; payload: unknown }>('qjob', { cursor });
+      const page = await work.list<JobRecord>('qjob', { cursor });
       let allTerminal = true;
       for (const job of page.items) {
         if (await work.get(`qdone:${job.id}`)) continue; // done
@@ -319,7 +364,13 @@ export function createWorker(
             if (await stillOwns()) await work.put(`qfail:${job.id}`, { error: `no handler: ${job.payload.type}` });
             return true;
           }
-          await handler(job.payload.payload, { journal: runs, jobId: job.id, runId });
+          const { resourceId, orgId } = job.payload;
+          const scoped = orgId !== undefined ? withOrgStorage(storage, orgId) : storage;
+          await handler(job.payload.payload, {
+            journal: scoped.runs, jobId: job.id, runId, storage: scoped,
+            ...(resourceId !== undefined ? { resourceId } : {}),
+            ...(orgId !== undefined ? { orgId } : {}),
+          });
           if (await stillOwns()) await work.put(`qdone:${job.id}`, { at: Date.now(), ok: true });
         } catch (err) {
           if (await stillOwns()) {

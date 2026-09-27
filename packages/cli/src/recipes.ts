@@ -211,7 +211,8 @@ export const store = new InMemoryVectorStore();
 
 // Seed the store at import time (top-level await) so \`searchDocs\` has something to find.
 await indexDocuments(store, embed, [
-  { id: 'doc-1', text: 'GNL charges every order exactly once, even under duplicate tool-calls.' },
+  // shared: every end user may read it. Give a user's own document \`owner: '<user id>'\` instead.
+  { id: 'doc-1', text: 'GNL charges every order exactly once, even under duplicate tool-calls.', shared: true },
 ]);
 
 export const searchDocs = createRagTool({ store, embed, topK: 3 });

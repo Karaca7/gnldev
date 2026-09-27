@@ -130,6 +130,10 @@ const DDL = [
   // written before namespaces existed belong to the un-namespaced partition, and a query for a real
   // namespace must not be answered from them.
   `ALTER TABLE gnl_vectors ADD COLUMN IF NOT EXISTS namespace TEXT`,
+  // Same shape, same reason. NULL is right here too: a row written before end users had documents of
+  // their own is unlabelled, and an unlabelled row is visible to no end user.
+  `ALTER TABLE gnl_vectors ADD COLUMN IF NOT EXISTS owner TEXT`,
+  `ALTER TABLE gnl_vectors ADD COLUMN IF NOT EXISTS shared BOOLEAN`,
   `CREATE TABLE IF NOT EXISTS gnl_work_log (ns TEXT NOT NULL, id TEXT NOT NULL, payload TEXT NOT NULL, ts BIGINT NOT NULL, PRIMARY KEY (ns, id))`,
   `CREATE INDEX IF NOT EXISTS gnl_work_log_ns ON gnl_work_log (ns, ts)`,
   `CREATE TABLE IF NOT EXISTS gnl_work_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
@@ -1417,8 +1421,8 @@ class PgVectorStore implements VectorStore {
   constructor(private q: Q) {}
   async upsert(items: VectorItem[]): Promise<void> {
     for (const it of items) await this.q(
-      `INSERT INTO gnl_vectors (id, text, embedding, metadata, namespace, created_at) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (id) DO UPDATE SET text=EXCLUDED.text, embedding=EXCLUDED.embedding, metadata=EXCLUDED.metadata, namespace=EXCLUDED.namespace`,
-      [it.id, it.text, JSON.stringify(it.embedding), it.metadata ? serialize(it.metadata) : null, it.namespace ?? null, Date.now()],
+      `INSERT INTO gnl_vectors (id, text, embedding, metadata, namespace, owner, shared, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO UPDATE SET text=EXCLUDED.text, embedding=EXCLUDED.embedding, metadata=EXCLUDED.metadata, namespace=EXCLUDED.namespace, owner=EXCLUDED.owner, shared=EXCLUDED.shared`,
+      [it.id, it.text, JSON.stringify(it.embedding), it.metadata ? serialize(it.metadata) : null, it.namespace ?? null, it.owner ?? null, it.shared ? true : null, Date.now()],
     );
   }
   async query(embedding: number[], topK: number, opts?: VectorQueryOptions): Promise<VectorMatch[]> {
@@ -1429,11 +1433,13 @@ class PgVectorStore implements VectorStore {
     //
     // `IS NOT DISTINCT FROM` rather than `=`: `= NULL` is never true in SQL, so a query for the
     // un-namespaced partition would match nothing at all.
-    const r = opts?.namespace === undefined
-      ? await this.q('SELECT id, text, embedding, metadata, namespace FROM gnl_vectors')
-      : await this.q('SELECT id, text, embedding, metadata, namespace FROM gnl_vectors WHERE namespace IS NOT DISTINCT FROM $1', [opts.namespace]);
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (opts?.namespace !== undefined) { params.push(opts.namespace); where.push(`namespace IS NOT DISTINCT FROM $${params.length}`); }
+    if (opts?.visibleTo !== undefined) { params.push(opts.visibleTo); where.push(`(shared IS TRUE OR owner = $${params.length})`); }
+    const r = await this.q(`SELECT id, text, embedding, metadata, namespace, owner, shared FROM gnl_vectors${where.length ? ` WHERE ${where.join(' AND ')}` : ''}`, params);
     return r.rows
-      .map((x) => ({ id: x.id, text: x.text, metadata: x.metadata ? deserialize<Record<string, unknown>>(x.metadata) : undefined, ...(x.namespace != null ? { namespace: x.namespace as string } : {}), score: cosineSimilarity(embedding, JSON.parse(x.embedding)) }))
+      .map((x) => ({ id: x.id, text: x.text, metadata: x.metadata ? deserialize<Record<string, unknown>>(x.metadata) : undefined, ...(x.namespace != null ? { namespace: x.namespace as string } : {}), ...(x.owner != null ? { owner: x.owner as string } : {}), ...(x.shared ? { shared: true } : {}), score: cosineSimilarity(embedding, JSON.parse(x.embedding)) }))
       .sort((a, b) => b.score - a.score).slice(0, topK);
   }
 }

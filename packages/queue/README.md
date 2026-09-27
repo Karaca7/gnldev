@@ -24,15 +24,39 @@ const worker = createWorker(storage, {
   // job is acked reclaims the lock and calls the handler again. Route through runDurable with a
   // stable runId, and the send happens once.
   'send-email': async (payload, ctx) =>
-    runDurable({ runId: ctx.runId, journal: storage.runs, model, tools, prompt: '...' }),
+    runDurable({ runId: ctx.runId, journal: ctx.journal, model, tools, prompt: '...' }),
 });
 await worker.runOnce();   // or worker.start() (poll loop)
 ```
 
+## Jobs for an end user
+
+A job can say whose it is. The worker passes this on, and the run the job starts belongs to that user
+in that organization. The user can see it and approve it; other users cannot.
+
+```ts
+import { enqueue, createWorker } from '@gnldev/queue';
+
+await enqueue(storage.work, 'weekly-summary', { week: 39 }, { resourceId: 'ayse', orgId: 'acme' });
+
+createWorker(storage, {
+  'weekly-summary': async (payload, ctx) =>
+    // ctx.journal is already acme's. Pass ctx.resourceId on and the run is Ayşe's.
+    runDurable({ runId: ctx.runId, journal: ctx.journal, resourceId: ctx.resourceId, model, prompt: '...' }),
+});
+```
+
+- Leave both out and the job is the system's (maintenance, cleanups). Only staff can see its run.
+- `ctx.storage` is the worker's storage scoped to `orgId`. Build the organization's `createGnl` from it.
+- If a handler forgets `resourceId`, the run has no owner. Only staff can see it; it never leaks to
+  another user.
+- `retryJob` keeps the owner and the organization.
+
 ## API
-- `enqueue(work, type, payload, { id? }) → jobId` — `work` is `storage.work`
+- `enqueue(work, type, payload, { id?, maxDepth?, resourceId?, orgId? }) → jobId` — `work` is `storage.work`
 - `createWorker(storage, handlers, opts?) → { runOnce, start, stop }` — `opts`: `owner`, `ttlMs` (stale lock reclaim), `pollMs`, `maxAttempts`, `onError`, `backoff`, `maxPollMs`, `heartbeat`
-- `JobCtx` gives the handler `{ journal, jobId, runId }` — the handler typically calls `runDurable({ runId, ... })` to keep the side effect at-most-once.
+- `JobCtx` gives the handler `{ journal, jobId, runId, storage, resourceId?, orgId? }` — the handler typically calls `runDurable({ runId, ... })` to keep the side effect at-most-once.
+- `listJobs(work)` shows each job's `resourceId`/`orgId` next to its status.
 
 ## How it works
 Jobs are written to an append-only log; the worker locks a job and runs it. Crash → lock goes stale → reclaim → handler runs again → `runDurable` resumes from the journal → **a side effect already recorded as done is not repeated**; one caught in the crash window blocks and asks rather than re-firing ([at-most-once](../durable/README.md#what-never-charged-twice-actually-means)).

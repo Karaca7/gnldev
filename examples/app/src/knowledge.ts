@@ -10,10 +10,10 @@ const rawEmbed = (t: string): number[] => {
 };
 
 const DOCS = [
-  { id: 'p1', text: 'return policy: products can be returned within 14 days of delivery, the amount is refunded to your card within 3 business days' },
-  { id: 'p2', text: 'shipping: standard shipping takes 3 business days, express shipping 1 day; the shipping tracking number is sent via SMS' },
-  { id: 'p3', text: 'warranty: all devices carry a 2-year warranty, contact service with your invoice' },
-  { id: 'p4', text: 'account: password reset is done via email, 2FA is recommended for account security' },
+  { id: 'p1', text: 'return policy: products can be returned within 14 days of delivery, the amount is refunded to your card within 3 business days', shared: true },
+  { id: 'p2', text: 'shipping: standard shipping takes 3 business days, express shipping 1 day; the shipping tracking number is sent via SMS', shared: true },
+  { id: 'p3', text: 'warranty: all devices carry a 2-year warranty, contact service with your invoice', shared: true },
+  { id: 'p4', text: 'account: password reset is done via email, 2FA is recommended for account security', shared: true },
 ];
 
 export interface OrderRow { total: number; status: string; customer: string }
