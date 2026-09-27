@@ -360,9 +360,11 @@ try {
 ## Composable (any agent framework / your own loop)
 
 ```ts
-import { withDurableModel, durableTools } from '@gnldev/durable';
-const model = withDurableModel(anthropic('claude-opus-4-8'), { journal, runId });
-const tools = durableTools(myTools, { journal, runId });
+import { withDurableModel, durableTools, runIdentity, user } from '@gnldev/durable';
+// Who this loop acts for — explicit and typed; tools receive it as `options.gnl`.
+const identity = runIdentity(user('ayse'), runId);
+const model = withDurableModel(anthropic('claude-opus-4-8'), { journal, runId, identity });
+const tools = durableTools(myTools, { journal, runId, identity });
 // use these with your own generateText OR with another framework's agent
 ```
 
