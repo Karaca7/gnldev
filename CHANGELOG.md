@@ -9,6 +9,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+**A minor (0.7.0): end users are isolated by default, at one point, for free.** The decision and the
+alternatives it rejected are in [docs/adr/0001-end-user-isolation.md](./docs/adr/0001-end-user-isolation.md).
+Many entries below are breaking. If you are upgrading, check these first:
+
+1. **A custom `AuthProvider`** must stamp `kind` on every principal it returns (`operator`,
+   `application` or `subject`). `roleAuth` and auth-ee do it for you.
+2. **Staff users in an auth-ee user store or behind SSO** are `subject` unless you say otherwise. Set
+   `kind: 'operator'` on them (Studio `PATCH /users/:id`), or pass `kindOf` to the SSO provider.
+   Otherwise they get 403 in Studio.
+3. **Work an agent, a worker or a schedule does for a user** must carry that user's `resourceId`.
+   Records with no owner are staff's now.
+4. **`subjectBinding`, `resolveResourceId` (chat/agui) and `createEnterpriseAuth({ users })` are
+   gone.** Delete them from your config. The last two throw if passed.
+5. **Chat and AG-UI:** mount them on `createRestApi` with `surfaces`, or give the standalone route
+   an `identity`. In production it refuses to start without one.
+6. **End-user tokens:** 32-byte secret or longer; at most 1 hour unless you pass `isRevoked`.
+7. **Clients:** a foreign or missing run is `404` (was `403` / `200 []`); an unauthenticated write
+   is `401` (was `403`).
+
 ### Added
 
 - **`surfaces` on `createRestApi`: chat and AG-UI on the REST door.** `chatSurface()` (@gnldev/chat-adapter)

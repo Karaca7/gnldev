@@ -98,3 +98,27 @@ describe('roleAuth({ endUsers }) — a token the application signed for one user
     expect((await call(tokenFor('u-ayse'), '/agents/registry/a/approve', {})).status).toBe(403);
   });
 });
+
+describe('an end user with no organization, beside staff bound to one', () => {
+  // S9, measured on 13f0fde2: `endUsers` configured without `orgId` while admin/client are bound to
+  // acme. The org-less user lands in the ROOT scope, which physically holds every organization's
+  // `org:<id>:` rows — and read acme's `u-ayse` run by listing it, or by its prefixed id.
+  it('reaches no organization\'s rows, by listing or by prefixed id', async () => {
+    const api = createRestApi(
+      { storage: new InMemoryStorage(), memory: false, agents: { a: { model } } } as never,
+      { auth: roleAuth({ client: { token: 'C', orgId: 'acme' }, endUsers: { secret: SECRET } }), protectionsBanner: false } as never,
+    );
+    const call = (token: string, path: string, body?: unknown) => api(new Request(`http://x${path}`, {
+      method: body === undefined ? 'GET' : 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    }));
+    expect((await call('C', '/agents/a/run', { runId: 'r-acme', prompt: 'ACME-SECRET', resourceId: 'u-ayse' })).status).toBe(200);
+    const orgless = tokenFor('u-ayse'); // same user id, no organization
+    const listed = await (await call(orgless, '/runs')).text();
+    expect(listed).not.toContain('r-acme');
+    const direct = await call(orgless, `/runs/${encodeURIComponent('org:acme:r-acme')}`);
+    expect(direct.status).toBe(404);
+    expect(await direct.text()).not.toContain('ACME-SECRET');
+  });
+});
