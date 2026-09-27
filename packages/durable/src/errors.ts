@@ -207,6 +207,22 @@ export class ThreadOwnerMismatchError extends Error {
   }
 }
 
+/**
+ * A `cross-run` dedup record — keyed by a business key such as an order id — was reached by a user it
+ * does not belong to. It is refused: neither the recorded output (it is someone else's result) nor a
+ * second execution (the key promises one). The detail names the tool, never the owner.
+ */
+export class IdempotencyOwnerMismatchError extends Error {
+  readonly code = 'idempotency_owner_mismatch';
+  constructor(
+    message: string,
+    public readonly detail: { toolName: string },
+  ) {
+    super(message);
+    this.name = 'IdempotencyOwnerMismatchError';
+  }
+}
+
 export class RunActorMismatchError extends Error {
   constructor(
     message: string,

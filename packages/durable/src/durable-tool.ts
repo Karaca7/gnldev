@@ -2,7 +2,7 @@ import { argsHash } from './hash.js';
 import { assertThreadId } from './journal.js';
 import { withTimeout } from './timeout.js';
 import { stampFormat, upgradeFormat } from './format.js';
-import { DivergenceError, RetryLimitExceededError, RunBusyError, SideEffectRetryBlockedError } from './errors.js';
+import { DivergenceError, RetryLimitExceededError, RunBusyError, SideEffectRetryBlockedError, IdempotencyOwnerMismatchError } from './errors.js';
 import { claim, ctxGet, runKeys } from './journal.js';
 import { orgScopeOf } from './organization.js';
 import { CompensatedRunError, runCompensated } from './compensation.js';
@@ -558,7 +558,25 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       // journal (replay) — a 'reflected' nudge replays IDENTICALLY too (the same toolCallId must see the
       // same tool result on resume; the gate is NOT re-evaluated against a since-mutated chain).
       // ctxGet: if a replay snapshot (C2) exists it serves consume-once from there, otherwise the live journal.
+      // WHOSE RECORD. A cross-run record is keyed by the arguments (an order id), so any run can reach
+      // it — and any user could, until the record said whose it is: Mallory naming Ayşe's order got her
+      // address back as his own result. A user may use only a record they made; one made by someone
+      // else, by staff, or before owners were recorded is refused — no output, and no second execution.
+      // Staff and system runs (no resourceId) reach any record, as before.
+      const ownerKey = effWindow === 'cross-run' && mode === 'args' ? runKeys.toolCrossRunOwner(toolName, hash) : undefined;
+      const assertCrossRunOwner = async (): Promise<void> => {
+        if (!ownerKey || ctx.resourceId === undefined) return;
+        const owner = (await ctx.journal.get<{ resourceId?: string }>(ownerKey))?.resourceId;
+        if (owner === ctx.resourceId) return;
+        throw new IdempotencyOwnerMismatchError(
+          `@gnldev/durable: '${toolName}' was already run for these arguments by someone else — this call is refused ` +
+            `rather than returning their result or running it a second time. A key that identifies one person's work ` +
+            `belongs to that person; use a different key, or run it as staff.`,
+          { toolName },
+        );
+      };
       let record = await ctxGet<ToolJournalRecord>(ctx, key);
+      if (record) await assertCrossRunOwner();
       if (record && (record.status === 'succeeded' || record.status === 'denied' || record.status === 'reflected')) {
         // M2 drift detector: if the argsHash of the succeeded record doesn't match the hash of the new
         // input the model produced on replay → non-determinism. Since the model middleware replays the
@@ -1428,8 +1446,12 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           // `attempts: 1` from the very first claim: the crash ladder below counts takeovers, and a
           // counter that only starts existing at the first takeover is one attempt short of the truth.
           const won = await claim(ctx.journal, key, stampFormat({ status: 'running', startedAt: nowTs, attempts: 1 }));
-          if (won) break claimLoop; // won → execute below
+          if (won) {
+            if (ownerKey) await claim(ctx.journal, ownerKey, ctx.resourceId !== undefined ? { resourceId: ctx.resourceId } : {});
+            break claimLoop; // won → execute below
+          }
           record = upgradeFormat(await ctx.journal.get<ToolJournalRecord>(key), key); // H13
+          if (record) await assertCrossRunOwner();
           if (record && (record.status === 'succeeded' || record.status === 'denied' || record.status === 'reflected' || record.status === 'suspended')) {
             return await consumeExistingRecord(ctx, key, record, toolCallId);
           }

@@ -98,11 +98,15 @@ describe('POST /workflows/:name/run — an end user is bound to itself', () => {
     expect(again.status).toBe(200);
   });
 
-  it('ÖZNESİZ org işi eskisi gibi — muafiyet duruyor, uydurulmuş sahip yok', async () => {
+  it('subject-less org work still runs, and its record names no owner — none invented, none missing', async () => {
     const { api, journal } = makeApi();
     const res = await post(api, '/workflows/w/run', 'Bearer A', { runId: 'wf-org', input: 'hi' });
     expect(res.status).toBe(200);
-    expect(await journal.get('wf-org:input'), 'öznesiz iş sahip kaydı yaratmamalı').toBeUndefined();
+    // The record exists (a missing one read as "not started" and let an end user take the run over),
+    // and it names nobody.
+    const input = await journal.get<{ resourceId?: string }>('wf-org:input');
+    expect(input).toBeDefined();
+    expect(input?.resourceId, 'no invented owner').toBeUndefined();
   });
 });
 

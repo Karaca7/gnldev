@@ -109,8 +109,10 @@ describe('releasing a failed cross-run claim', () => {
     await releaseFailedClaim(journal, { toolName: 'charge', args: { orderId: 'o-5' } });
     // Two records remain, not one: a release is now a compare-and-set to a 'released' tombstone rather
     // than a deletion (see releaseFailedClaim). o-5's record still exists, it just no longer refuses.
-    const remaining = (await journal.listKeys('xrun:'));
+    // The claims themselves; each also has an `xrun:owner-` companion saying whose it is, untouched.
+    const remaining = (await journal.listKeys('xrun:args-'));
     expect(remaining.length, `the release touched more than its own record: ${remaining.join(', ')}`).toBe(2);
+    expect((await journal.listKeys('xrun:owner-')).length, 'owner records are left alone').toBe(2);
     const released = await journal.get(remaining.find((k) => k.includes('charge'))!) as { status?: string };
     expect(released?.status).toBeDefined();
     // ...and the survivor is still refusing, i.e. o-6 was not quietly released too.

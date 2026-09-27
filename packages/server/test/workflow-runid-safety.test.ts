@@ -33,7 +33,7 @@ describe('/workflows/:name/run — kimlik kapıları HTTP tarafında', () => {
     expect(await journal.get('mem:input')).toBeUndefined();
   });
 
-  it("başkasının thread'i 409 + thread_owner_mismatch döner", async () => {
+  it("another user's thread is refused with thread_owner_mismatch, before anything is written", async () => {
     const journal = new InMemoryJournal();
     const api = createRestApi({
       journal,
@@ -41,7 +41,8 @@ describe('/workflows/:name/run — kimlik kapıları HTTP tarafında', () => {
       workflows: { w: wf },
     } as never);
     const res = await post(api, { runId: 'hj-1', resourceId: 'mallory', threadId: 't-ayse', input: {} });
-    expect(res.status).toBe(409);
+    // The server's thread gate answers first now (403), as on the agent doors; same code as the engine's 409.
+    expect(res.status).toBe(403);
     const body = await res.json() as any;
     expect(body.code).toBe('thread_owner_mismatch');
     expect(body.resumable).toBeUndefined(); // yeniden deneme bunu temizlemez

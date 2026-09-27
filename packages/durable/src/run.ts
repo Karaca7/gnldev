@@ -5,6 +5,7 @@ import { withDurableModel } from './durable-model.js';
 import { durableTools, CLAIM_TTL_MS } from './durable-tool.js';
 import { acquireRunLock } from './run-lock.js';
 import { RunBusyError, runBusyMessage, SideEffectRetryBlockedError, RetryLimitExceededError, RunThreadMismatchError, RunInputMismatchError, RunActorMismatchError, RunOwnerMismatchError, RunSweptError, ThreadOwnerMismatchError, NotAnAgentRunError } from './errors.js';
+import { admitThreadRun } from './thread-owner.js';
 import { argsHash, rawInputFingerprint, isDerivedRunId, DERIVED_RUN_ID_PREFIX, type WorkScope, type WorkScopeKind } from './hash.js';
 import { recordIdemConflict } from './idem-ledger.js';
 import { createProcessorCtx, composePrepareStep, composeOnStepFinish, durableProcessorStep, ProcessorRetry, RetryExhaustedByProcessorError, type StepHookFailure } from './processor.js';
@@ -2988,15 +2989,9 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   // satır iki farklı şeyi tek cevaba indiriyordu: "bu thread'in henüz sahibi yok" ile "sahibinin kim
   // olduğunu okuyamadım". İkincisi yutulunca kapı tam da deposu arızalıyken devre dışı kalıyor —
   // yani en çok gerektiği anda. Aynı gerekçe registry.ts'teki iş akışı ve ağ kapılarında da yazılı.
-  if (memory && threadId && resourceId && typeof memory.getThreadResource === 'function') {
-    const owner = await memory.getThreadResource(threadId);
-    if (owner && owner !== resourceId) {
-      throw new ThreadOwnerMismatchError(
-        `@gnldev/durable: thread "${threadId}" belongs to a different resourceId — this run names "${resourceId}".`,
-        { threadId, owner, requested: resourceId },
-      );
-    }
-  }
+  // One gate for every memory, asked of the thread's owner RECORD (thread-owner.ts). It used to fire
+  // only for a memory that could name an owner, so with BasicMemory it never fired at all.
+  if (threadId) await admitThreadRun(journal, memory || undefined, threadId, resourceId);
   // FAZ-4: fingerprint the RAW caller input BEFORE memory prep mutates rest.messages (post-prep
   // content grows with the thread — hashing it would 409 every legitimate resume).
   const rawInputHash = rawInputFingerprint(rest);
@@ -3486,15 +3481,9 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   // OKUNAMAYAN sahip DÜŞÜRÜR — runDurableInner'daki kardeş kapının aynısı, aynı gerekçeyle. Bu
   // yüzeyde daha da önemli: chat/agui motora BURADAN giriyor, yani yutulan bir okuma hatasının
   // bedeli en çok kullanılan yolda ödeniyordu.
-  if (memory && threadId && resourceId && typeof memory.getThreadResource === 'function') {
-    const owner = await memory.getThreadResource(threadId);
-    if (owner && owner !== resourceId) {
-      throw new ThreadOwnerMismatchError(
-        `@gnldev/durable: thread "${threadId}" belongs to a different resourceId — this run names "${resourceId}".`,
-        { threadId, owner, requested: resourceId },
-      );
-    }
-  }
+  // One gate for every memory, asked of the thread's owner RECORD (thread-owner.ts). It used to fire
+  // only for a memory that could name an owner, so with BasicMemory it never fired at all.
+  if (threadId) await admitThreadRun(journal, memory || undefined, threadId, resourceId);
   // FAZ-4: fingerprint the RAW caller input BEFORE memory prep mutates rest.messages (post-prep
   // content grows with the thread — hashing it would 409 every legitimate resume).
   const rawInputHash = rawInputFingerprint(rest);

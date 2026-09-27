@@ -13,6 +13,7 @@ import { acquireRunLock } from './run-lock.js';
 import { claim as journalClaim, claimIdentityInput, runKeys } from './journal.js';
 import { argsHash, derivedRunId, isDerivedRunId, DEPLOYMENT_SCOPE, type WorkScope, type WorkScopeKind } from './hash.js';
 import { RunBusyError, runBusyMessage, RunSweptError, RunInputMismatchError, RunOwnerMismatchError, ThreadOwnerMismatchError } from './errors.js';
+import { admitThreadRun } from './thread-owner.js';
 import { recordIdemConflict } from './idem-ledger.js';
 import { durableProcessorStep } from './processor.js';
 import { recordRunScores } from './metrics.js';
@@ -1371,15 +1372,8 @@ export function createGnl(config: CreateGnlConfig) {
     // Ama OKUNAMAYAN sahip DÜŞÜRÜR — bkz. runWorkflow'daki kardeş kapının yorumu. Burada `.catch`
     // yok, bilerek: bir okuma hatası "sahibi yok" gibi okunursa kapı tam da deposu arızalıyken
     // devre dışı kalır.
-    if (resolvedMemory && effectiveThreadId && effectiveResourceId && typeof resolvedMemory.getThreadResource === 'function') {
-      const owner = await resolvedMemory.getThreadResource(effectiveThreadId);
-      if (owner && owner !== effectiveResourceId) {
-        throw new ThreadOwnerMismatchError(
-          `@gnldev/durable: thread "${effectiveThreadId}" belongs to a different resourceId — this network run names "${effectiveResourceId}".`,
-          { threadId: effectiveThreadId, owner, requested: effectiveResourceId },
-        );
-      }
-    }
+    // The same gate as the agent and workflow doors (thread-owner.ts), for every memory.
+    if (effectiveThreadId) await admitThreadRun(journal, resolvedMemory, effectiveThreadId, effectiveResourceId);
     // SAHİP KAYDI — iş akışındakiyle AYNI desen, aynı anahtar, aynı ilk-yazan-kazanır.
     //
     // Alt-ajanlar kimliği zaten devralıyordu (aşağıda runSubAgent'a iniyor); sahipsiz kalan ROUTER'IN
@@ -1660,15 +1654,8 @@ export function createGnl(config: CreateGnlConfig) {
       const gateIdentity = serverIdentityOf(opts?.context ?? {});
       const gateResource = gateIdentity.resourceId ?? opts?.resourceId;
       const gateThread = gateIdentity.threadId ?? opts?.threadId;
-      if (resolvedMemory && gateThread && gateResource && typeof resolvedMemory.getThreadResource === 'function') {
-        const owner = await resolvedMemory.getThreadResource(gateThread);
-        if (owner && owner !== gateResource) {
-          throw new ThreadOwnerMismatchError(
-            `@gnldev/durable: thread "${gateThread}" belongs to a different resourceId — this workflow run names "${gateResource}".`,
-            { threadId: gateThread, owner, requested: gateResource },
-          );
-        }
-      }
+      // The same gate as the agent door (thread-owner.ts), for every memory.
+      if (gateThread) await admitThreadRun(journal, resolvedMemory, gateThread, gateResource);
     }
     // FAZ-8: the critical preset now covers the WORKFLOW entry path with the protections that MAP
     // to it (the old honest-scope note said "apply them explicitly" — this is that, done once here):
@@ -1753,20 +1740,23 @@ export function createGnl(config: CreateGnlConfig) {
       const owner = wfIdentity.resourceId ?? opts?.resourceId;
       const wfActor = wfIdentity.resourceId ?? opts?.actor;
       const wfThread = wfIdentity.threadId ?? opts?.threadId;
-      // `work` (package #3): the declared name joins the record, and joins the condition too — a
-      // derived run always has something worth writing, even when nobody owns it. Tonight's
-      // reconciliation is precisely that run: org-scoped, subject-less, and useless to an operator if
-      // its opaque id maps back to nothing.
-      if (owner || wfActor || wfThread || work) {
-        await claimIdentityInput(journal, runId, {
-          at: Date.now(),
-          ...(owner ? { resourceId: owner } : {}),
-          ...(wfActor ? { actor: wfActor } : {}),
-          ...(wfThread ? { threadId: wfThread } : {}),
-          ...(work ? { workKey: work.workKey, workScope: work.workScope } : {}),
-          workflow: name,
-        });
-      }
+      // `work` (package #3): the declared name joins the record. Tonight's reconciliation is an
+      // org-scoped, subject-less derived run, useless to an operator if its opaque id maps back to
+      // nothing.
+      //
+      // WRITTEN FOR EVERY RUN, owner or not. It used to be written only when there was something to
+      // put in it, and a run with no owner therefore left no record at all — which the write gates
+      // read as "not started yet" and waved an end user through: approving a staff member's
+      // suspended workflow, reading its steps, and (first write wins) becoming its owner. A record
+      // with no `resourceId` says what the gates need to hear: this run exists and nobody owns it.
+      await claimIdentityInput(journal, runId, {
+        at: Date.now(),
+        ...(owner ? { resourceId: owner } : {}),
+        ...(wfActor ? { actor: wfActor } : {}),
+        ...(wfThread ? { threadId: wfThread } : {}),
+        ...(work ? { workKey: work.workKey, workScope: work.workScope } : {}),
+        workflow: name,
+      });
     }
     const ctx = { runId, journal: journal, ...(strictSideEffects ? { strictSideEffects: true } : {}) };
     let output: unknown;

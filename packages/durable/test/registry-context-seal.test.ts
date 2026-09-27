@@ -116,7 +116,11 @@ describe('registry: server-sealed identity precedence (P1.7)', () => {
       resourceId: 'body-resource',
       context: sealRequestContext({}, { resourceId: 'server-resource' }),
     });
-    expect(calls).toHaveLength(1);
-    expect(calls[0]!.resourceId).toBe('server-resource'); // NOT 'body-resource'
+    // The thread gate also asks the memory whether a brand-new thread already has messages (an
+    // existing thread with no owner is staff's, not the first caller's) — that probe carries no
+    // resourceId. The call this test is about is the one that loads history on the caller's behalf.
+    const driven = calls.filter((c) => c.resourceId !== undefined);
+    expect(driven).toHaveLength(1);
+    expect(driven[0]!.resourceId).toBe('server-resource'); // NOT 'body-resource'
   });
 });

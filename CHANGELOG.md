@@ -30,6 +30,8 @@ Many entries below are breaking. If you are upgrading, check these first:
    is `401` (was `403`).
 8. **Knowledge bases:** label documents `shared: true` (everyone's) or `owner: '<user id>'`. An end
    user's search no longer finds unlabelled documents.
+9. **Logout revocation:** a token's `jti` is now `sessionTokenId(sid)`, not the session id. Deny that
+   value at logout.
 
 ### Added
 
@@ -64,6 +66,26 @@ Many entries below are breaking. If you are upgrading, check these first:
   now call GNL directly without the `client` token, which must stay on your server.
 
 ### Breaking
+
+- **The token route no longer puts the session id in the token.** `subjectTokenEndpoint` sets `jti` to
+  `sessionTokenId(sid)`, a one-way id of the session. The session id is usually an HttpOnly cookie's
+  value, and the token is read by JavaScript, so a stolen short-lived token carried the long-lived
+  session with it. At logout, deny `sessionTokenId(sid)`.
+- **A thread belongs to whoever opened it, on every door and with every memory.** The first run on a
+  thread records its owner (`thread:<id>:owner`). A second user naming the same thread id, including
+  two chat clients reusing a conversation id, is refused instead of sharing it. The workflow door now
+  refuses another user's thread with 403 and `code: 'thread_owner_mismatch'`, as the agent doors do
+  (it was the engine's 409).
+- **A user cannot reuse someone else's `cross-run` record.** `idempotencyWindow: 'cross-run'` records
+  now say whose they are. A call for a user whose record was made by someone else, by staff, or
+  before 0.7 fails with `IdempotencyOwnerMismatchError`; it gets neither their output nor a second
+  execution. Staff runs reach any record, as before. Records from before 0.7: purge `xrun:` or let
+  them expire.
+- **MCP serves no caller it cannot place, on any `workScope`.** Under `'org'`, a caller with no identity
+  (no token, a bad token, a staff token) listed and ran every tool. Now it needs a user, or at least an
+  organization.
+- **Every workflow run writes its owner record**, with no owner when it has none. Ownerless workflow
+  runs therefore appear in staff listings.
 
 - **An end user's knowledge-base search skips unlabelled documents.** Existing rows, and documents
   indexed without `owner`/`shared`, are visible to staff and system runs only. Re-index general
@@ -142,6 +164,24 @@ Many entries below are breaking. If you are upgrading, check these first:
   `kind`, and a role does not stand in for it: a `subject` holding `admin` is refused.
 
 ### Fixed
+
+- **An end user could take over a staff member's workflow run.** An ownerless workflow run left no
+  `:input` record, and the write gates read "no record" as "not started": an end user approved a
+  suspended staff or scheduled run, read its steps, cancelled it, and became its owner. Such a run now
+  records that nobody owns it, and a run from before this (a `wfrun:` or `:wf:` trace, no record) is
+  read as ownerless. Only staff act on it.
+- **Thread ownership was guessed, and the guess moved.** The engine's gate fired only for a memory that
+  could name an owner, so with `BasicMemory` the standalone chat and AG-UI routes handed one user's
+  history to another's model. A retention sweep of the owner's runs made her thread "new" for the next
+  caller. And one foreign run on a thread locked its owner out. All doors now ask one function,
+  `threadOwnerOf`, which reads the owner record.
+- **Deleting one user's account deleted another's messages.** `purgeResource` erased every thread the
+  person had a run on. It now erases only threads that are theirs.
+- **Tools on MCP's plain path did not know the caller.** With no `idempotencyKey` (what ordinary MCP
+  clients send) or no journal, the tool ran with no `resourceId`, and `createRagTool` searched the
+  whole knowledge base. Every path now passes the caller.
+- **A sub-agent from `createAgentTool` ran as nobody.** It took its user only from its own config, which
+  a tool built at startup does not have. It now runs as the parent's user.
 
 - **`chunkDocuments` keeps a document's `namespace`.** Split chunks dropped it and landed in the
   un-namespaced partition, out of reach of the organization that indexed them. They also keep

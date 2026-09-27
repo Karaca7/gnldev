@@ -9,8 +9,8 @@
 // `listRuns({resourceId})` süzgeci ve `purgeResource` üçü de O anahtarı okuyor. Başka bir yere
 // koymak üç yüzeyi birden yeniden yazmak olurdu.
 //
-// MUAFİYET KORUNUYOR: "org düzeyi iş, öznesi yok" gerçek bir kullanım. Özne beyan edilmezse hiçbir
-// şey yazılmaz — uydurulmuş sahip yok. Muafiyetin yanlış olduğu tek yer, iş akışının bir AJANIN
+// THE EXEMPTION STAYS: org-level work with no subject is real. With no subject declared the record
+// is still written, naming no owner — no invented owner, and no missing record for a gate to misread. Muafiyetin yanlış olduğu tek yer, iş akışının bir AJANIN
 // İÇİNDEN doğduğu hâl: o, belli bir kullanıcının koşumundan çıkıyor.
 import { describe, it, expect } from 'vitest';
 import { InMemoryJournal, nestedAgentRunId } from '../src/journal.js';
@@ -39,11 +39,17 @@ describe('iş akışı kimliği', () => {
     expect((await journal.get<{ resourceId?: string }>('wf-2:input'))?.resourceId).toBe('u-dogrulanmis');
   });
 
-  it('özne beyan edilmezse HİÇBİR ŞEY yazılmaz — muafiyet korunuyor', async () => {
+  it('with no subject, the record is written and names no owner — no invented owner, and no gap', async () => {
+    // It used to write nothing here, and "no record" read as "not started yet" at every write gate:
+    // an end user approved a staff member's suspended workflow and, first write wins, became its owner.
     const journal = new InMemoryJournal();
     const gnl = createGnl({ journal, workflows: { w: wf } } as never);
     await gnl.runWorkflow!('w', {}, { runId: 'wf-3' } as never);
-    expect(await journal.get('wf-3:input')).toBeUndefined();
+    const input = await journal.get<{ resourceId?: string; actor?: string; workflow?: string }>('wf-3:input');
+    expect(input).toBeDefined();
+    expect(input?.workflow).toBe('w');
+    expect(input?.resourceId).toBeUndefined();
+    expect(input?.actor).toBeUndefined();
   });
 
   it('AJAN İÇİNDEN doğan iş akışı ebeveynin sahibini devralır', async () => {

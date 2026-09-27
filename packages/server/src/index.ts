@@ -3,7 +3,7 @@
 import { Hono, type Context } from 'hono';
 import { toFetchHandler, type FetchHandler } from './handler.js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { createGnl, agentVisibleToOrg, withOrg, withOrgStorage, scopeConfigToOrg, withSubjectJournal, withSubjectMemory, threadOwnerFromRuns, ORG_RECORD_PRE, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, asReaderJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, sealRequestContext, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry, callerConflictCode, publicConflictDetail, describeProtections, formatProtections, teachingError, resolveWorkIdentity } from '@gnldev/durable';
+import { createGnl, agentVisibleToOrg, withOrg, withOrgStorage, scopeConfigToOrg, withSubjectJournal, withSubjectMemory, threadOwnerOf, type ThreadOwnership, ORG_RECORD_PRE, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, asReaderJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, sealRequestContext, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry, callerConflictCode, publicConflictDetail, describeProtections, formatProtections, teachingError, resolveWorkIdentity } from '@gnldev/durable';
 import type { CreateGnlConfig, Journal, JournalReader, BudgetLimit, UsageCostCache, RunLimits, ResolvedWorkIdentity, WorkScopeKind } from '@gnldev/durable';
 import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, callerKind, isReservedSubjectId, type AuthProvider, type ReadWriteAuth, type Principal, type PrincipalKind } from '@gnldev/auth';
 // P0.4 @gnldev/workflow is zero-dependency (see its package.json) — depending on it
@@ -116,6 +116,11 @@ const NO_IDENTITY = 'runId or workKey required (see docs: one names an id, the o
  * contract, not a byte-identity guarantee — `replay` means "this id had journaled input when the
  * call arrived", which is what a client reconciling duplicate submissions needs to know.
  */
+/** Whether a workflow run left any trace under `runId` — its registry row or its frozen input fingerprint. */
+async function workflowTraceOf(journal: Journal, runId: string): Promise<boolean> {
+  return (await journal.get(`wfrun:${runId}`)) !== undefined || (await journal.get(`${runId}:wf:_input`)) !== undefined;
+}
+
 async function hadPriorInput(journal: Journal, runId: string): Promise<boolean> {
   try {
     return (await journal.get(`${runId}:input`)) !== undefined;
@@ -935,34 +940,29 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   ): Promise<Response | undefined> {
     if (typeof threadId !== 'string' || !threadId || !subject) return undefined;
     const raw = rawOf(s);
-    const memory = raw.gnl.memory;
-    if (!memory) return undefined;
-    let owner: string | undefined;
+    // The thread's owner RECORD, asked the way every door asks it (@gnldev/durable `threadOwnerOf`):
+    // derived from whichever runs were left, the owner moved — a sweep of her runs made her thread
+    // "new" for the next caller, and one foreign run locked her out of it.
+    let o: ThreadOwnership;
     try {
-      // A store that cannot name an owner is asked through the run journal instead: every run on a
-      // thread records `threadId` and `resourceId`. See @gnldev/durable `threadOwnerFromRuns`.
-      owner = memory.getThreadResource
-        ? await memory.getThreadResource.call(memory, threadId)
-        : await threadOwnerFromRuns(raw.journal)(threadId);
+      o = await threadOwnerOf(raw.journal, raw.gnl.memory, threadId);
     } catch {
       return undefined; // a store that cannot answer is not evidence of a mismatch
     }
-    if (owner === subject) return undefined;
-    if (owner) return c.json({ error: 'access denied: this thread belongs to a different resourceId' }, 403);
+    if (o.owner === subject) return undefined;
+    // Typed like the engine's own refusal: the code a consumer branches on, and what the CALLER sent
+    // (its own name, the thread it named) — never the owner's.
+    const refusal = () => c.json({
+      error: 'access denied: this thread belongs to a different resourceId',
+      code: 'thread_owner_mismatch',
+      detail: { threadId, requested: subject },
+    }, 403);
+    if (o.owner) return refusal();
     // NO OWNER. A thread that does not exist yet is this caller's to start — the first turn creates
     // it. One that EXISTS with no owner is staff's work (or pre-dates ownership), and only staff may
     // write into it: measured, an end user appended to a staff member's thread and read its history.
-    // Existence is asked of the RUN JOURNAL, which records every run's `threadId`: a Memory's answer to
-    // "messages of an unknown thread" is not part of its contract, and a test double answering with
-    // messages for any id refused every first turn. A full listing, as `threadOwnerFromRuns` does.
-    if (kindOf(c) === 'operator') return undefined;
-    let runsOnThread = 0;
-    try {
-      runsOnThread = ((await raw.journal.listRuns?.()) ?? []).filter((r) => r.threadId === threadId).length;
-    } catch {
-      return undefined;
-    }
-    return runsOnThread ? c.json({ error: 'access denied: this thread belongs to a different resourceId' }, 403) : undefined;
+    if (!o.exists || kindOf(c) === 'operator') return undefined;
+    return refusal();
   }
 
   /**
@@ -985,6 +985,9 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     let input: { resourceId?: string } | undefined;
     try {
       input = await rawOf(s).journal.get<{ resourceId?: string }>(`${runId}:input`);
+      // No owner record, but a workflow trace: a run started before every workflow wrote one. It
+      // exists and nobody owns it — reading it as "not started" is how an end user approved staff work.
+      if (!input && (await workflowTraceOf(rawOf(s).journal, runId))) input = {};
     } catch {
       return undefined; // a reader that cannot serve the entry is not evidence of a mismatch
     }
@@ -1081,7 +1084,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     if (!subject) return s;
     const root = s.orgId === undefined;
     const memory = s.gnl.memory
-      ? withSubjectMemory(s.gnl.memory, subject, { root, threadOwner: threadOwnerFromRuns(s.journal) })
+      ? withSubjectMemory(s.gnl.memory, subject, { root, threadOwner: async (t) => (await threadOwnerOf(s.journal, s.gnl.memory, t)).owner })
       : undefined;
     const gnl = new Proxy(s.gnl, { get: (t, k) => (k === 'memory' ? memory : Reflect.get(t, k, t)) });
     const view = { ...s, journal: withSubjectJournal(s.journal, subject, { root }), gnl } as Instance;
@@ -1913,6 +1916,10 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
       const denied = await ownershipDenied(c, s, runId, body.resourceId);
       if (denied) return denied;
     }
+    // The thread, as on the agent doors. This route took the body's `threadId` as given, so an end user
+    // attached a workflow run to another user's thread — locking her out of it, and (the run being
+    // his) taking her messages with his account when it was deleted.
+    { const denied = await threadOwnershipDenied(c, s, body.threadId, subject); if (denied) return denied; }
     // H2: this endpoint with the same runId is the ONLY resume mechanism for a workflow. If runId is
     // given AND there's already a trace in the journal (suspended/paused) this is a resume → the budget
     // gate is skipped (new work is still ENFORCED).
@@ -2290,11 +2297,11 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     // STRICT: beklenti çağıranın BEYANI değil KİMLİĞİ. Beyan tek başına bir kontrol değildir —
     // saldırgan kurbanın adını yazınca eşleşme sağlanıyordu, yani kapı kendi anahtarını dağıtıyordu.
     const expected = boundSubjectOf(c) ?? c.req.query('resourceId');
-    if (expected && memory.getThreadResource) {
-      const owner = await memory.getThreadResource(threadId);
+    if (expected) {
+      const o = await threadOwnerOf(rawOf(s).journal, rawOf(s).gnl.memory, threadId);
       // Names neither the real owner nor whether the thread exists — a caller guessing ids would
       // otherwise learn both from the refusal (same wording as the run-ownership check).
-      if (owner && owner !== expected) return c.json({ error: 'thread not found' }, 404);
+      if (o.owner && o.owner !== expected) return c.json({ error: 'thread not found' }, 404);
     }
     // A caller who speaks for a user reads only that user's thread. Asked of OWNERSHIP, not of the
     // messages: a user's own empty thread is still theirs ([]), and a thread that is not theirs — or
@@ -2305,9 +2312,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
       const rawMemory = raw.gnl.memory!;
       let owner: string | undefined;
       try {
-        owner = rawMemory.getThreadResource
-          ? await rawMemory.getThreadResource.call(rawMemory, threadId)
-          : await threadOwnerFromRuns(raw.journal)(threadId);
+        owner = (await threadOwnerOf(raw.journal, rawMemory, threadId)).owner;
       } catch {
         owner = undefined;
       }

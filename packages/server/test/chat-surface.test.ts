@@ -66,12 +66,23 @@ describe('chatSurface on createRestApi', () => {
   it('two users whose clients number turns the same way get two runs', async () => {
     // useChat ids are the client's own; `c1:m1` is an ordinary pair. The turn key is a NAME under the
     // subject, so the same pair from two users is two pieces of work, not one run and a refusal.
+    // Each on their own conversation — the turn ids collide, the threads do not.
     const { call } = mk();
-    const a = await call(tok('u-ayse'), '/agents/a/chat', turn('c1', 'm1'));
-    const m = await call(tok('u-mallory'), '/agents/a/chat', turn('c1', 'm1'));
+    const a = await call(tok('u-ayse'), '/agents/a/chat', { ...turn('c1', 'm1'), threadId: 't-ayse' });
+    const m = await call(tok('u-mallory'), '/agents/a/chat', { ...turn('c1', 'm1'), threadId: 't-mallory' });
     expect(a.status).toBe(200);
     expect(m.status).toBe(200);
     expect(m.runId).not.toBe(a.runId);
+  });
+
+  it('a conversation id is not shared: the second user to name it is refused, not joined', async () => {
+    // The thread comes from the client's conversation id. Two users naming the same one used to share
+    // one thread — its history and its thread-scoped dedup window — whenever no memory store could
+    // name an owner.
+    const { call } = mk();
+    expect((await call(tok('u-ayse'), '/agents/a/chat', turn('c7', 'm1'))).status).toBe(200);
+    const m = await call(tok('u-mallory'), '/agents/a/chat', turn('c7', 'm1'));
+    expect([403, 404]).toContain(m.status);
   });
 
   it('a retried turn is the same run; a body cannot rename the owner', async () => {

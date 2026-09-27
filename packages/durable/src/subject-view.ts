@@ -122,7 +122,9 @@ export function withSubjectMemory<M extends Memory>(memory: M, subject: string, 
   const foreign = (threadId: string) => opts.root === true && threadId.startsWith(ORG_PREFIX);
   const mine = async (threadId: string): Promise<boolean> => {
     if (foreign(threadId)) return false;
-    const lookup = memory.getThreadResource ? (t: string) => memory.getThreadResource!(t) : opts.threadOwner;
+    // A caller-supplied answer wins: the server hands the owner RECORD's (thread-owner.ts), which a
+    // memory's own `getThreadResource` may not agree with for a thread opened before it existed.
+    const lookup = opts.threadOwner ?? (memory.getThreadResource ? (t: string) => memory.getThreadResource!(t) : undefined);
     if (!lookup) return false;
     try { return (await lookup(threadId)) === subject; } catch { return false; }
   };

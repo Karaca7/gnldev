@@ -396,6 +396,15 @@ export function createMcpServer(opts: McpServerOptions): McpServer {
     return { caller: c, identity, tools };
   }
 
+  /**
+   * What a tool is told about its caller, on the paths that do not go through `durableTool` (which
+   * hands it `resourceId` itself). These called `t.execute(args)` bare, so a tool that serves end users
+   * had nobody to narrow to: `createRagTool` answered one user with another's documents.
+   */
+  function callerOptions(identity: McpCallerIdentity): { toolCallId: string; resourceId?: string } {
+    return { toolCallId: 'mcp', ...(identity.resourceId ? { resourceId: identity.resourceId } : {}) };
+  }
+
   /** The permission answer, for one tool, asked the same way by both doors. */
   async function permitted(name: string, caller: McpCallerContext, identity: McpCallerIdentity): Promise<boolean> {
     // A server that resolves identity does not serve a caller it could not attribute — on either door,
@@ -403,7 +412,11 @@ export function createMcpServer(opts: McpServerOptions): McpServer {
     // an unknown caller: measured with an unknown token, `{"charged":9,"for":null}`. That is Claude
     // Desktop's default path, since it sends no `_meta`. The tool is hidden from listing too, so a
     // model never tries a tool it cannot call.
-    if (opts.identity && (opts.workScope ?? 'resource') === 'resource' && !identity.resourceId) return false;
+    //
+    // On EVERY workScope. The check used to apply to 'resource' only, so under 'org' a caller with no
+    // token, a garbage token or a staff token listed and ran every tool. Org-level work may name no user,
+    // but it still has to be SOMEONE's organization's work: under 'org' a caller placed in one passes.
+    if (opts.identity && !identity.resourceId && !((opts.workScope ?? 'resource') === 'org' && identity.orgId)) return false;
     if (!opts.allowTool) {
       warnMissingAllowTool();
       return true;
@@ -488,7 +501,7 @@ export function createMcpServer(opts: McpServerOptions): McpServer {
       const checked = await checkToolArgs(t.inputSchema, req.arguments ?? {});
       if (!checked.ok) return toolError(`Invalid argument (tool: ${req.name}) — ${checked.message}`);
 
-      if (!opts.journal) return t.execute(checked.value);
+      if (!opts.journal) return t.execute(checked.value, callerOptions(identity));
 
       // The client's key is a LABEL for the work, unique only within one caller — never the id itself.
       // A deployment may name the work some other way; see the `workKey` option for why that is its
@@ -509,7 +522,7 @@ export function createMcpServer(opts: McpServerOptions): McpServer {
         // clients it exists to serve is not a safer server.
         if (workKey === undefined) {
           warnMissingWorkKey(req.name);
-          return t.execute(checked.value);
+          return t.execute(checked.value, callerOptions(identity));
         }
         const scopeKind = opts.workScope ?? 'resource';
         let resolved;

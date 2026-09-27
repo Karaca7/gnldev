@@ -35,7 +35,8 @@ export const IDENTITY_FILE = `// WHO IS EACH RUN FOR? Your users — each holdin
 import { subjectTokenEndpoint } from '@gnldev/auth';
 
 /** Your own session lookup. Replace this — it is the only part of this file that is a placeholder.
- *  \`sid\` becomes the token's \`jti\`, so logging a session out can revoke its tokens (below). */
+ *  The token's \`jti\` is \`sessionTokenId(sid)\` — a one-way id, so the cookie's value never reaches
+ *  the browser's JavaScript — and logging a session out can revoke its tokens (below). */
 async function sessionOf(_req: Request): Promise<{ sub: string; sid?: string } | null> {
   // e.g. const sid = parseCookie(req.headers.get('cookie'))?.sid;
   //      const s = sid ? await sessions.get(sid) : undefined;
@@ -54,6 +55,8 @@ export async function gnlToken(req: Request): Promise<Response> {
 // give GNL a revocation check — in gnl.config.ts:
 //
 //   auth: { endUsers: { secret: process.env.GNL_END_USER_SECRET, isRevoked: ({ jti }) => loggedOut.has(jti) } }
+//
+// and at logout: loggedOut.add(sessionTokenId(sid))   — sessionTokenId from '@gnldev/auth'
 //
 // ERASING ONE PERSON — the request you answer in days, not by waiting for a sweep. Retention
 // (\`gnl sweep --older-than 30d\`) deletes by AGE and knows nothing about people:

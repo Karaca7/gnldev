@@ -12,7 +12,7 @@ export { safeEqual } from './safe-equal.js';
 // One JWT verifier for the free `endUsers` class and every @gnldev/auth-ee SSO provider.
 export { verifyJwt, jwtFromRequest, b64uDecode, declaredKind, signSubjectToken, MIN_SUBJECT_SECRET_BYTES, MAX_SUBJECT_TTL_SEC, MAX_REVOCABLE_SUBJECT_TTL_SEC, type JwtVerifyOptions } from './jwt.js';
 export { isCrossSiteStateChange } from './same-site.js';
-export { subjectTokenEndpoint, type SubjectSession } from './token-endpoint.js';
+export { subjectTokenEndpoint, sessionTokenId, type SubjectSession } from './token-endpoint.js';
 // MCP's `identity` hook, from the same provider the HTTP surfaces use: one identity decision.
 export { identityFromAuth, type McpCallerLike, type McpIdentityLike } from './mcp-identity.js';
 export { PLATFORM_ADMIN_ROLE, isPlatformAdmin, principalScope, callerKind, isPrincipalKind, assertAssignablePrivileges, actorIdOf, isReservedSubjectId, RESERVED_SUBJECT_PREFIXES, type PrincipalScope, type AssignabilityResult } from './scope.js';

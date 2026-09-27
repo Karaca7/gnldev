@@ -3,7 +3,7 @@
 // whether one is minted. These are the scenarios a panel measured, as assertions.
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { InMemoryStorage } from '@gnldev/durable';
-import { roleAuth, signSubjectToken, subjectTokenEndpoint } from '@gnldev/auth';
+import { roleAuth, signSubjectToken, subjectTokenEndpoint, sessionTokenId } from '@gnldev/auth';
 import { createRestApi } from '../src/index.js';
 import { GnlClient, GnlHttpError, tokenFrom } from '../../client/src/index.js';
 
@@ -88,7 +88,7 @@ describe('end-user token refresh', () => {
   it('logout with revocation is immediate, although the token has not expired', async () => {
     const w = world();
     await listed(w.client);
-    w.sessions.clear(); w.revoked.add('sess-1');
+    w.sessions.clear(); w.revoked.add(sessionTokenId('sess-1')); // the token's jti is derived from the session, never the session id itself
     await expect(w.client.listRuns()).rejects.toMatchObject({ status: 401 });
   });
 

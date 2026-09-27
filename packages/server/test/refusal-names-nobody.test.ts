@@ -64,7 +64,9 @@ describe('a refusal names nobody', () => {
     const res = await api()({ runId: 'r1', input: 'x', threadId: 't-ayse', resourceId: 'u-mallory' });
     const text = await res.text();
 
-    expect(res.status, 'the refusal must still happen').toBe(409);
+    // 403 from the server's thread gate, which now stands in front of the workflow door as it does
+    // the agent doors; it carries the same code the engine's 409 did.
+    expect(res.status, 'the refusal must still happen').toBe(403);
     expect(text, 'being refused told the caller whose thread it is — the id-guessing oracle, reopened')
       .not.toContain(VICTIM);
   });

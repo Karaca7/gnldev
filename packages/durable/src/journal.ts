@@ -258,6 +258,16 @@ export const runKeys = {
     return `xrun:args-${toolName}-${hash}`;
   },
   /**
+   * Whose a `toolCrossRun` record is: `{ resourceId? }`, first write wins, written when the record is
+   * claimed. A companion rather than a field, because the record itself is rewritten whole at every
+   * status change. Under `xrun:` so the same purge takes both, and not under `xrun:args-` so a
+   * listing of a tool's claims does not list it.
+   */
+  toolCrossRunOwner: (toolName: string, hash: string) => {
+    assertNoColonInToolName(toolName);
+    return `xrun:owner-${toolName}-${hash}`;
+  },
+  /**
    * FAZ-3 `idempotencyWindow: 'thread'` — like `toolCrossRun` (invisible to parseJournalKey, mirrored
    * under the run via mirrorUnderRun, org-prefixed automatically by withOrg) but carrying the
    * threadId, which is the structural fix for xrun's immortal-key problem: `purgeThread` sweeps

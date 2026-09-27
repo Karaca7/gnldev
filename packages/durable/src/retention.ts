@@ -6,6 +6,7 @@ import { runKeys, summarizeRun, nestedAgentRunId, runIdOfKey } from './journal.j
 import { identityOnlyInput } from './run.js';
 import { workKeyHash } from './hash.js';
 import { MEM_LEAVES } from './memory.js';
+import { threadOwnerOf, threadOwnerKey } from './thread-owner.js';
 import type { WorkScopeKind } from './hash.js';
 import type { Journal, JournalReader } from './journal.js';
 
@@ -216,6 +217,32 @@ async function uncountUsage(journal: Journal & Partial<JournalReader>, runId: st
 export const ownershipTraceKey = (resourceId: string, threadId: string): string =>
   `resthr:${resourceId}:${threadId}`;
 
+/**
+ * Whether erasing `resourceId` should take `threadId` with it. Only their own threads: a run of theirs
+ * on someone else's thread (an older release let one through) made this function delete her messages
+ * with his account.
+ *  - An owner record, or an owner the runs agree on, decides it.
+ *  - A thread that exists with no single owner — staff's, or claimed by two people's runs — is not
+ *    theirs to erase.
+ *  - No evidence at all (runs swept, no record: a thread from before the record existed) falls back
+ *    to the traces `purgeRun` leaves: theirs when no one else's trace points at it. Otherwise the
+ *    erasure request would leave their own arguments behind, which is the failure this path exists for.
+ */
+async function threadIsTheirs(journal: Journal, threadId: string, resourceId: string): Promise<boolean> {
+  const o = await threadOwnerOf(journal, undefined, threadId);
+  if (o.owner) return o.owner === resourceId;
+  if (o.exists) return false;
+  const lk = journal.listKeys;
+  if (typeof lk !== 'function') return true;
+  const pre = ownershipTraceKey('', '').slice(0, -1); // 'resthr:'
+  for (const k of await lk.call(journal, pre)) {
+    const rest = k.slice(pre.length);
+    const cut = rest.indexOf(':');
+    if (cut > 0 && rest.slice(cut + 1) === threadId && rest.slice(0, cut) !== resourceId) return false;
+  }
+  return true;
+}
+
 export async function purgeRun(
   journal: Journal & Partial<JournalReader>,
   runId: string,
@@ -371,16 +398,24 @@ export async function purgeResource(journal: Journal, resourceId: string): Promi
   }).listRunsPaged;
   if (typeof paged !== 'function') return total;
   const threads = new Set<string>();
+  const runIds: string[] = [];
   let cursor: string | undefined;
   do {
     const page = await paged.call(journal, { resourceId, limit: 200, ...(cursor ? { cursor } : {}) })
       .catch(() => ({ items: [] as Array<{ runId: string; threadId?: string }>, nextCursor: undefined as string | undefined }));
     for (const r of page.items) {
       if (r.threadId) threads.add(r.threadId);
-      total += await purgeRun(journal, r.runId);
+      runIds.push(r.runId);
     }
     cursor = page.nextCursor;
   } while (cursor);
+  // WHOSE THREADS. A run of this person's on a thread does not make the thread theirs: an older
+  // release let a user attach a run to someone else's thread, and this function then deleted her
+  // messages with his account. Asked BEFORE the runs go, because a thread opened before owner records
+  // existed is still answered from its runs.
+  const owned = new Set<string>();
+  for (const t of threads) if (await threadIsTheirs(journal, t, resourceId)) owned.add(t);
+  for (const id of runIds) total += await purgeRun(journal, id);
   // THE THREADS WHOSE RUNS ARE ALREADY GONE. Everything above reaches a thread through a run, so a
   // retention sweep that ran first has already taken the only link — and the erasure request would
   // walk an empty list past `xthr:<threadId>:` records built from this person's own arguments.
@@ -399,11 +434,11 @@ export async function purgeResource(journal: Journal, resourceId: string): Promi
       const t = k.slice(tracePrefix.length);
       // A threadId may itself contain ':' ('tenant:7:chat'), so this takes the WHOLE remainder
       // rather than splitting — the prefix already ends at the resourceId boundary.
-      if (t) threads.add(t);
+      if (t && (await threadIsTheirs(journal, t, resourceId))) owned.add(t);
     }
   }
-  // Thread-scoped state the runs pointed at (memory, thread dedup window, semantic tombstones).
-  for (const t of threads) total += await purgeThread(journal, t);
+  // Thread-scoped state of the threads that are theirs (memory, thread dedup window, semantic tombstones).
+  for (const t of owned) total += await purgeThread(journal, t);
   // The trace names a person and must not outlive them. Last, so a failure above cannot strand it.
   total += await del(`${ownershipTraceKey(resourceId, '')}`);
   return total;
@@ -469,6 +504,8 @@ export async function purgeThread(journal: Journal, threadId: string): Promise<n
   // reclaims them with the thread (the cross-run family's immortal-key problem does not recur here).
   let total = (await purgeThreadNamespace(journal, MEM_PREFIX, threadId, threadIdOfMemKey))
     + (await purgeThreadNamespace(journal, XTHR_PREFIX, threadId, threadIdOfXthrKey));
+  // The owner record names a person, and with the thread gone it guards nothing.
+  if ((await journal.get(threadOwnerKey(threadId))) !== undefined) total += await del(threadOwnerKey(threadId));
 
   // The ownership traces pointing HERE. Once this thread's state is gone they identify nothing —
   // and they are not inert: `resthr:<resourceId>:<threadId>` names a person, so a dead pointer is a

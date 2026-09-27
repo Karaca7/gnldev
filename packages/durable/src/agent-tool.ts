@@ -170,7 +170,11 @@ export function createAgentTool(
         approvals: inheritedApprovals,
         // Aynı devir, agent-as-tool yolunda. (Yukarıdaki kardeşiyle tek fark nestedRunId'nin nereden
         // geldiği; kimlik açısından ikisi de aynı isteğin bir kare derinidir.)
-        ...(config.resourceId ? { resourceId: config.resourceId } : {}),
+        //
+        // The PARENT's user first: durable-tool hands it over in `options.resourceId`, as it hands over
+        // `parentRunId`. A tool built once at startup has no user in its config, so reading only the
+        // config ran the child as nobody — born ownerless, and searching the knowledge base unfiltered.
+        ...((options?.resourceId ?? config.resourceId) ? { resourceId: options?.resourceId ?? config.resourceId } : {}),
         ...(config.threadId ? { threadId: config.threadId } : {}),
         ...(config.actor ? { actor: config.actor } : {}),
         ...(config.channel ? { channel: config.channel } : {}),

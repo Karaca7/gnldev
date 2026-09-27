@@ -127,7 +127,7 @@ credential pasted into an MCP client's config, or a link in an email.
 ```ts
 import { roleAuth } from '@gnldev/auth';
 
-const loggedOut = new Set<string>(); // your store: a jti deny-list, or a per-user logout time
+const loggedOut = new Set<string>(); // your store: a jti deny-list (at logout: add sessionTokenId(sid)), or a per-user logout time
 
 export const auth = roleAuth({
   endUsers: {
@@ -152,8 +152,9 @@ call it:
 ```ts
 import { subjectTokenEndpoint } from '@gnldev/auth';
 
-// Your session lookup; `null` = logged out → 401. `sid` becomes the token's `jti`, so
-// `isRevoked` can refuse every token of a session at logout.
+// Your session lookup; `null` = logged out → 401. The token's `jti` is `sessionTokenId(sid)`, a
+// one-way id of the session: the session cookie's value never reaches the browser's JavaScript.
+// At logout, deny `sessionTokenId(sid)` and `isRevoked` refuses every token of that session.
 declare function sessionOf(req: Request): Promise<{ sub: string; sid?: string } | null>;
 
 export const gnlToken = subjectTokenEndpoint(sessionOf, process.env.GNL_END_USER_SECRET!, { ttlSec: 300 });
