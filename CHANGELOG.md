@@ -157,7 +157,10 @@ Many entries below are breaking. If you are upgrading, check these first:
 - **End-user reads go through one view.** `withSubjectJournal` / `withSubjectMemory` (@gnldev/durable)
   wrap the reader an end user's request holds, so a route that forgets its gate still cannot return
   another user's run or thread. A walk over every REST route as five kinds of attacker found 45 leaks
-  on 6 routes before this and finds none after (`subject-isolation-conformance.test.ts`).
+  on 6 routes before this and finds none after (`subject-isolation-conformance.test.ts`). Reading by
+  key goes through it as well: `get` and `listKeys` answer only for keys under runs the user owns. A
+  run id may contain `:`, so every run a key could belong to must be theirs. Naming a run after
+  someone else's prefix can block a read but never grant one.
 - **An organization is a boundary on MCP, chat and AG-UI too.** These surfaces derived a run id from
   `(tool or agent, subject, work key)` and wrote every organization's work to one shared journal. Two
   organizations can each have a user `u1`, so the same work key collided. Measured: on MCP, globex's

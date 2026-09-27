@@ -68,3 +68,66 @@ describe('threadOwnerFromRuns', () => {
     expect(await a.getMessages('t-a')).toEqual([]); // an ownerless run on it pins it to nobody
   });
 });
+
+// `get` is the door the rest of this view does not cover by itself: a route that reads a run's entry
+// by key — a workflow step, a model turn, the registry row — got it whoever owned the run. The view's
+// promise is that a forgotten gate still cannot produce another user's record; that has to hold here.
+describe('withSubjectJournal.get', () => {
+  async function seeded() {
+    const j = asReaderJournal(new InMemoryJournal() as object) as any;
+    await j.put('wf-ayse:input', { resourceId: 'ayse' });
+    await j.put('wf-ayse:wf:summarise', { text: 'AYSE-STEP' });
+    await j.put('wfrun:wf-ayse', { runId: 'wf-ayse', status: 'completed' });
+    await j.put('wf-mal:input', { resourceId: 'mallory' });
+    await j.put('wf-mal:wf:summarise', { text: 'MAL-STEP' });
+    await j.put('wfrun:wf-mal', { runId: 'wf-mal', status: 'completed' });
+    await j.put('ops:input', {});
+    await j.put('ops:wf:s', { text: 'OPS-STEP' });
+    await j.put('not-a-run-record', { text: 'LOOSE' });
+    // Run ids contain ':', so one key can sit under two runs. It is readable only when EVERY run it
+    // could belong to is the caller's: someone who names a run after another's prefix can then block
+    // a read, never make one.
+    await j.put('x:input', { resourceId: 'mallory' });
+    await j.put('x:y:input', { resourceId: 'ayse' });
+    await j.put('x:y:wf:s', { text: 'AYSE-NESTED' });
+    await j.put('x:wf:s', { text: 'MAL-OUTER' });
+    return j;
+  }
+
+  it('reads a key only under a run the caller owns', async () => {
+    const m = withSubjectJournal(await seeded(), 'mallory');
+    expect(await m.get('wf-ayse:wf:summarise')).toBeUndefined();
+    expect(await m.get('wf-ayse:input')).toBeUndefined();
+    expect(await m.get('wfrun:wf-ayse')).toBeUndefined();
+    expect(await m.get('wf-mal:wf:summarise')).toEqual({ text: 'MAL-STEP' });
+    expect(await m.get('wfrun:wf-mal')).toEqual({ runId: 'wf-mal', status: 'completed' });
+  });
+
+  it('an ownerless run and a key that belongs to no run are nobody\'s', async () => {
+    const m = withSubjectJournal(await seeded(), 'mallory');
+    expect(await m.get('ops:wf:s')).toBeUndefined();
+    expect(await m.get('not-a-run-record')).toBeUndefined();
+  });
+
+  it('a key under two runs with different owners is readable by neither', async () => {
+    const m = withSubjectJournal(await seeded(), 'mallory');
+    const a = withSubjectJournal(await seeded(), 'ayse');
+    expect(await m.get('x:y:wf:s')).toBeUndefined();
+    expect(await a.get('x:y:wf:s')).toBeUndefined();
+    // A key under only one run is that run's.
+    expect(await a.get('x:wf:s')).toBeUndefined();
+    expect(await m.get('x:wf:s')).toEqual({ text: 'MAL-OUTER' });
+  });
+
+  it('naming a run after someone else\'s record does not make the record yours', async () => {
+    const j = await seeded();
+    // Mallory's own run, named so that Ayşe's step key sits under it too.
+    await j.put('wf-ayse:wf:input', { resourceId: 'mallory' });
+    expect(await withSubjectJournal(j, 'mallory').get('wf-ayse:wf:summarise')).toBeUndefined();
+  });
+
+  it('listKeys names only what get would answer', async () => {
+    const m = withSubjectJournal(await seeded(), 'mallory');
+    expect((await m.listKeys!('wfrun:')).sort()).toEqual(['wfrun:wf-mal']);
+  });
+});

@@ -12,6 +12,13 @@
  * it is not this user's. That is the difference from the gates, which pass on an unknown owner — and
  * the reason an operator-started run was readable by any end user who guessed its id.
  *
+ * A KEY IS READ THROUGH ITS RUN. `get` answers only for a key under a run this user owns — and a run
+ * id may contain ':', so one key can sit under several. Every run it could belong to must be this
+ * user's, and there must be at least one; a key under no run (registry rows aside) is nobody's. The
+ * other readings are exploitable: "the longest prefix wins" lets a user name a run `<victim>:wf` and
+ * claim the victim's `:wf:` steps. Under "all of them", naming a run after someone's prefix can block
+ * a read and can never make one.
+ *
  * THE ROOT IS NOT A PARTITION. Organization rows live physically in the root under `org:<id>:`. An
  * end user served from the root (no organization bound) must see the root's own rows and no
  * organization's; `root: true` hides every id carrying the organization prefix.
@@ -22,6 +29,8 @@ import type { Journal, JournalReader, RunSummary } from './journal.js';
 import type { Memory } from './memory.js';
 
 const ORG_PREFIX = 'org:';
+/** @gnldev/workflow's run registry: one `wfrun:<runId>` row per workflow run. */
+const WF_REGISTRY = 'wfrun:';
 
 export interface SubjectViewOptions {
   /** The wrapped store is the unscoped root, which physically holds every organization's rows. */
@@ -66,9 +75,32 @@ export function withSubjectJournal<J extends Journal & Partial<JournalReader>>(j
     try { return (await journal.get<{ resourceId?: string }>(`${runId}:input`))?.resourceId; } catch { return undefined; }
   };
   const mine = async (runId: string) => !foreignKey(runId) && (await ownerOf(runId)) === subject;
+  // Every run `key` could belong to: each ':'-bounded prefix that has a frozen input. A registry row
+  // (`wfrun:<runId>`) is its run's, so it is read as if it were `<runId>:`.
+  const keyIsMine = async (key: string): Promise<boolean> => {
+    if (foreignKey(key)) return false;
+    const base = key.startsWith(WF_REGISTRY) ? `${key.slice(WF_REGISTRY.length)}:` : key;
+    let claimed = false;
+    for (let i = base.indexOf(':'); i > 0; i = base.indexOf(':', i + 1)) {
+      const runId = base.slice(0, i);
+      let input: { resourceId?: string } | undefined;
+      try { input = await journal.get<{ resourceId?: string }>(`${runId}:input`); } catch { return false; }
+      if (input === undefined) continue;
+      if (input?.resourceId !== subject) return false;
+      claimed = true;
+    }
+    return claimed;
+  };
   const visible = (r: RunSummary) => r.resourceId === subject && !foreignKey(r.runId);
   return view(journal, {
-    get: async (key: string) => (foreignKey(key) ? undefined : journal.get(key)),
+    get: async (key: string) => ((await keyIsMine(key)) ? journal.get(key) : undefined),
+    listKeys: journal.listKeys
+      ? async (prefix: string) => {
+          const out: string[] = [];
+          for (const k of await journal.listKeys!(prefix)) if (await keyIsMine(k)) out.push(k);
+          return out;
+        }
+      : undefined,
     readRun: journal.readRun ? async (runId: string) => ((await mine(runId)) ? journal.readRun!(runId) : []) : undefined,
     readRunStats: journal.readRunStats
       ? async (runId: string) => ((await mine(runId)) ? journal.readRunStats!(runId) : { entries: 0, bytes: 0 })

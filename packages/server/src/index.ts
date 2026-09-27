@@ -1041,7 +1041,9 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     if (!own) return undefined;
     let stamped: string | undefined;
     try {
-      stamped = (await s.journal.get<{ actor?: string }>(`${runId}:input`))?.actor;
+      // The raw instance, as `ownershipDenied` reads it: the caller's view hides a stranger's input,
+      // and a gate that saw "no stamp" there would wave the stranger's run through.
+      stamped = (await rawOf(s).journal.get<{ actor?: string }>(`${runId}:input`))?.actor;
     } catch {
       return undefined; // a reader that cannot serve the entry is not evidence of a mismatch
     }
@@ -2046,8 +2048,11 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     // way it answered 404-vs-403 to a caller who had not identified who it was acting for, which is a
     // (small) existence oracle handed out for free.
     { const denied = clientSubjectDenied(c); if (denied) return denied; }
-    const status = await getWorkflowRunStatus(s.journal, runId);
-    const visible = status !== undefined || (await s.journal.get(`${runId}:wf:_suspend`)) !== undefined;
+    // Existence from the raw instance, as on `/runs/:id/cancel`: a stranger's run is the ownership 403
+    // below, like every write — the view would turn it into a 404.
+    const raw = rawOf(s).journal;
+    const status = await getWorkflowRunStatus(raw, runId);
+    const visible = status !== undefined || (await raw.get(`${runId}:wf:_suspend`)) !== undefined;
     if (!visible) return c.json({ error: `workflow run '${runId}' not found` }, 404);
     // Same expectation-check as the agent-run cancel next door — a workflow run carries an owner for
     // the same reason and stopping one is the same act.
@@ -2168,7 +2173,9 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     // way it answered 404-vs-403 to a caller who had not identified who it was acting for, which is a
     // (small) existence oracle handed out for free.
     { const denied = clientSubjectDenied(c); if (denied) return denied; }
-    const visible = await s.journal.get(`${runId}:input`);
+    // Existence is asked of the raw instance: the caller's view hides a stranger's run, and this route
+    // answers a stranger's run with the ownership 403 below, like every write, not with a 404.
+    const visible = await rawOf(s).journal.get(`${runId}:input`);
     if (visible === undefined) return c.json({ error: `run '${runId}' not found` }, 404);
     // Stopping someone else's work is a write, and an application credential serves many end users
     // under one token — so the SAME `?resourceId=` expectation the read path honours is honoured here.
