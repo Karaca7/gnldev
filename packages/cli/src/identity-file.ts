@@ -20,10 +20,11 @@ export const IDENTITY_FILE = `// WHO IS EACH RUN FOR? Your users — each holdin
 //
 // SETUP
 //   GNL_END_USER_SECRET   at least 32 random bytes, the same value for your app and for GNL
-//                         (src/app.ts and \`gnl dev\` read it as \`auth.endUsers\`).
+//                         (\`gnl dev\`, and a server from \`--serving own\`, read it as \`auth.endUsers\`).
 //   Mount \`gnlToken\` below as POST /gnl-token on YOUR app's own origin.
 //   In the browser: new GnlClient({ baseUrl, getToken: tokenFrom('/gnl-token') }) (@gnldev/client),
-//   which refreshes before the token expires. APP_ORIGIN (src/app.ts) lets that browser call GNL.
+//   which refreshes before the token expires. APP_ORIGIN lets that browser call GNL directly (CORS;
+//   read by \`gnl dev\` and by a server from \`--serving own\`).
 //
 // THE ONE WRONG ANSWER, said out loud because it is the one people reach for first:
 //

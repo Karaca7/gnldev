@@ -338,7 +338,7 @@ describe('@gnldev/server budget enforcement', () => {
       expect(charges.n).toBe(1);
     });
 
-    it('/agents/:name/resume: only a GENUINE resume (a trace exists in the journal) bypasses the budget gate; a spoofed (traceless) runId still gets 402', async () => {
+    it('/agents/:name/resume: only a GENUINE resume (a trace exists in the journal) bypasses the budget gate; a spoofed (traceless) runId is refused before any work', async () => {
       const journal = new InMemoryJournal();
       await journal.put(BUDGET_PRE + 'acme', { tokenLimit: 15 });
       const charges = { n: 0 };
@@ -372,12 +372,11 @@ describe('@gnldev/server budget enforcement', () => {
       expect((await run(api, 'acme', 'r2')).status).toBe(200);
       expect((await run(api, 'acme', 'r3')).status).toBe(402);
 
-      // Abuse attempt: a direct /resume call with a runId that never existed — no trace in the
-      // journal → the "resume intent" check returns false → the budget gate is ENFORCED (no backdoor).
+      // Abuse attempt: a direct /resume call with a runId that never existed. It used to reach the budget
+      // gate (402); it is now refused before any work as a run that does not exist (404). Either way no
+      // backdoor: nothing runs and nothing is charged.
       const fake = await post('/agents/pay/resume', { runId: 'never-existed', approvals: {} });
-      expect(fake.status).toBe(402);
-      const fakeBody = await fake.json();
-      expect(fakeBody.code).toBe('budget_exceeded');
+      expect(fake.status).toBe(404);
       expect(charges.n).toBe(0);
 
       // Complete the genuinely suspended approval via /resume → a trace exists in the journal → gate is bypassed → 200, charge once.

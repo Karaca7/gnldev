@@ -142,7 +142,7 @@ ve sonradan ucuza değiştiremeyeceği kararlardır:
 | Aynı iş ikinci kez gelirse ne olsun? | `--preset assistant\|headless\|critical` | Bir tool'un `effectClass`'ı **yalnızca** bir profil üzerinden okunur. Yanlış seçerseniz projedeki her bildirim sessizce etkisiz kalır. |
 | Her koşum kime ait? | `--identity internal\|end-users` | Sahiplik, sahipsiz doğmuş koşumlara sonradan eklenemez. |
 | Her koşumun kaydı nerede tutulsun? | `--store sqlite\|pg` | İlk gün tek satır fark, doksanıncı gün bir göç. |
-| İnsanlar buraya nasıl ulaşacak? | `--serving dev\|own\|mount` | `gnl dev` siz geliştirirken her şeyi servis eder, yani "şimdilik hayır" gerçek bir cevaptır — worker/cron projesinin kalıcı cevabı da budur. Diğer ikisi dosya yazar ve yazdıkları farklıdır: `own` `src/server.ts` alır, `mount` zaten sahip olduğunuz sunucuya yapıştıracağınız satırları alır (`--host` çerçeveyi adlandırır). |
+| İnsanlar buraya nasıl ulaşacak? | `--serving dev\|own\|mount` | `gnl dev` siz geliştirirken her şeyi servis eder, yani "şimdilik hayır" gerçek bir cevaptır — worker/cron projesinin kalıcı cevabı da budur. Diğer ikisi dosya yazar ve yazdıkları farklıdır: `own` `src/server.ts` alır, `mount` zaten sahip olduğunuz sunucuya yapıştıracağınız satırları alır. Soracak kimse yoksa (`--yes`, CI, bir ajan) ikisi de `--host` ister (çerçeveyi adlandırır). |
 
 Verdiğiniz her bayrak kendi sorusunu **cevaplar**, o soru sorulmaz. `--yes` ya da hiç terminal
 olmaması (CI, bir ajan) varsayılanları alır ve asla beklemez.

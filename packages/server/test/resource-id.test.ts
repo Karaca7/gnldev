@@ -224,20 +224,21 @@ describe('resourceId: the WRITE paths honour the same expectation', () => {
   // it matters most: its body carries `approvals`, the field that decides a tool call a human gate had
   // stopped, so the path left open was the one where being wrong costs the most.
 
+  // Refused as 404: to a caller who is not staff, someone else's run is one that does not exist.
   it('cancelling a run you named the wrong owner for is refused', async () => {
     const { run, post } = api();
     await run('ayse');
     expect((await post('/runs/r-ayse/cancel?resourceId=u-ayse')).status).toBe(200);
-    expect((await post('/runs/r-ayse/cancel?resourceId=u-mehmet')).status).toBe(403);
+    expect((await post('/runs/r-ayse/cancel?resourceId=u-mehmet')).status).toBe(404);
   });
 
   it('resuming another end user run is refused — stated in the query OR in the body', async () => {
     const { run, post, postOp } = api();
     await run('ayse');
-    expect((await post('/agents/a/resume?resourceId=u-mehmet', { runId: 'r-ayse' })).status).toBe(403);
+    expect((await post('/agents/a/resume?resourceId=u-mehmet', { runId: 'r-ayse' })).status).toBe(404);
     // Also from the body, which is where a JSON caller naturally puts it. An implementation reading
     // only the query passes the line above and fails this one.
-    expect((await post('/agents/a/resume', { runId: 'r-ayse', resourceId: 'u-mehmet' })).status).toBe(403);
+    expect((await post('/agents/a/resume', { runId: 'r-ayse', resourceId: 'u-mehmet' })).status).toBe(404);
     expect((await post('/agents/a/resume', { runId: 'r-ayse', resourceId: 'u-ayse' })).status).toBe(200);
     // Unstated is the OPERATOR's privilege; a client naming nobody is refused before anything else.
     expect((await postOp('/agents/a/resume', { runId: 'r-ayse' })).status).toBe(200);

@@ -22,7 +22,7 @@
 import { createHash } from 'node:crypto';
 import type { AuthProvider, Principal, Decision, AuthContext, Cred } from './types.js';
 import { safeEqual } from './safe-equal.js';
-import { PLATFORM_ADMIN_ROLE, isReservedSubjectId } from './scope.js';
+import { PLATFORM_ADMIN_ROLE, subjectIdProblem } from './scope.js';
 import { verifyJwt, MIN_SUBJECT_SECRET_BYTES, MAX_SUBJECT_TTL_SEC, MAX_REVOCABLE_SUBJECT_TTL_SEC } from './jwt.js';
 
 /** The reserved role naming the application credential class (see `CLIENT_WRITES`). */
@@ -82,15 +82,8 @@ export interface EndUserTokens {
 }
 
 /** Longest `sub` accepted; matches @gnldev/server's resourceId bound. */
-const MAX_SUBJECT_ID = 200;
-/** Why a `sub` cannot be a subject id, or null. Same rules a `client` meets for `resourceId`, plus the reserved namespaces. */
-function badSubject(sub: string): string | null {
-  if (sub.length === 0 || sub.length > MAX_SUBJECT_ID) return 'length';
-  // eslint-disable-next-line no-control-regex
-  if (/[\u0000-\u001f\u007f]/.test(sub)) return 'control characters';
-  if (isReservedSubjectId(sub)) return 'reserved prefix';
-  return null;
-}
+/** Why a `sub` cannot be a subject id, or null — the one rule, `subjectIdProblem` (scope.ts). */
+const badSubject = (sub: string) => subjectIdProblem(sub);
 
 /** Basic auth header value (same base64 logic as studio basicAuth). */
 function basicValue(user: string, pass: string): string {

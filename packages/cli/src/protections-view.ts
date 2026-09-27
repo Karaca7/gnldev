@@ -62,7 +62,7 @@ export function identityRow(config: GnlDevConfig, authBound: boolean): IdentityR
       // Said as a gap rather than as a failure: the project declared end users and this SURFACE is not
       // the one binding them. That is normal — the resolver is wired into the chat/AG-UI route, which
       // `gnl dev`'s REST mount is not. It stops being normal in production, which is why it is a row.
-      note: "declared `subjects: 'end-users'` — but no end-user credential is configured; add `auth.endUsers` (see src/auth.ts)",
+      note: "declared `subjects: 'end-users'` — but no end-user credential is configured; set GNL_END_USER_SECRET (≥32 bytes) or `auth.endUsers` in gnl.config.ts — see src/identity.ts",
     };
   }
   if (config.subjects === 'internal') {

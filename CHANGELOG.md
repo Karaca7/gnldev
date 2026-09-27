@@ -37,6 +37,12 @@ Many entries below are breaking. If you are upgrading, check these first:
 
 ### Added
 
+- **`GnlClient.clearToken()`**: forget the held token at logout or when the signed-in user changes,
+  so the next user's requests do not go out on the previous user's token until it expires.
+- **`gnl dev` serves the project's `surfaces`** (the scaffold now declares its chat surface in
+  gnl.config.ts) and answers `APP_ORIGIN` with CORS, as a scaffolded server does.
+- **`subjectIdProblem`** (@gnldev/auth): the one rule for what can be an end user's id.
+
 - **Background work keeps its owner end to end.** `ctx.enqueue` in a queue handler enqueues a follow-up
   as the same user and organization. `emit(…, { resourceId, orgId })` delivers both in the handler's
   `meta`. `budgetGuard` receives them. `createWorkflowWaker({ orgs })` wakes sleeping workflows inside
@@ -74,6 +80,21 @@ Many entries below are breaking. If you are upgrading, check these first:
   now call GNL directly without the `client` token, which must stay on your server.
 
 ### Breaking
+
+- **A write to someone else's run answers as a run that does not exist.** For a caller who is not
+  staff (an end user, or an application naming a user), cancel, workflow cancel and resume return the
+  route's own 404 for a foreign run — same status and body as for a missing one — instead of 403.
+  Staff still get 403. A resume of a run that does not exist is 404 (it used to reach the budget
+  gate). A write that STARTS work under a name cannot hide that the name is taken.
+- **An end user whose id could pass for staff is no user.** `callerKind` now applies the subject-id
+  rule for every provider: an id with a reserved prefix (`operator:` …), a control character (C0, DEL,
+  C1) or a line separator reads as unnamed and is refused everywhere. It was checked in `roleAuth`'s
+  own verifier only, so SSO, Auth0/WorkOS or a user store could mint `operator:ops`.
+- **The audit trail names staff `operator:<id>`**, so an end user named `ops` and the operator `ops`
+  are two actors.
+- **`createJwtSso` refuses an HS256 secret under 32 bytes**, as `roleAuth({ endUsers })` does.
+- **A JWT with characters outside base64url in any segment is refused.** Node's decoder skipped them,
+  so `<token>=` verified as `<token>`.
 
 - **Explicit job, trigger and event ids are names within their owner.** Queue, scheduler and event logs
   are shared by every organization, so `weekly-report` from globex collapsed into acme's, and the second
@@ -191,6 +212,11 @@ Many entries below are breaking. If you are upgrading, check these first:
 
 ### Fixed
 
+- The chat and AG-UI READMEs showed standalone routes without `identity`, which refuse to start in
+  production; both now pass one, and the chat README shows how `useChat` sends the user's token.
+- The protections matrix pointed at a `src/auth.ts` the scaffold does not write; the server banner said
+  a bearer token falls back to `body.resourceId`; the ADR's "not covered yet" list predated the audit.
+
 - **Erasure and retention snippets passed the wrong type.** The scaffold suggested
   `purgeResource(storage, userId)` and `sweepRuns(storage.runs, …)`; both need `toJournal(storage.runs)`.
 
@@ -240,7 +266,6 @@ Many entries below are breaking. If you are upgrading, check these first:
 - A refusal no longer puts the owner's id in `detail` (server, chat-adapter, agui).
 - `GET /runs` with no query returns the same shape for every caller.
 - The protections banner prints `? identity` instead of a `✓` it could not prove.
-- `gnl init --identity end-users` wires the resolver it writes into the chat route.
 - Studio passes the caller's organization to the host when it runs a code workflow.
 
 ---

@@ -146,12 +146,13 @@ describe('GET /workflows/runs — özne süzgeci', () => {
 });
 
 describe('POST /workflows/runs/:id/cancel — kapı ARTIK bir şey buluyor', () => {
+  // Refused as 404: to a caller who is not staff, someone else's run is one that does not exist.
   it('başka bir bağlı özne kurbanın koşumunu iptal EDEMEZ', async () => {
     // Bu kapı kodda hep vardı ama sahibi hiç bulamıyordu (`:input` yazılmıyordu), yani her çağrıda
     // sessizce geçiyordu. Sahip kaydı geldi; test artık kapının gerçekten kapandığını sabitliyor.
     const { api } = await seeded();
     const res = await call(api, '/workflows/runs/wf-ayse/cancel', { method: 'POST', headers: { authorization: MALLORY } });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(404);
   });
 
   it('sahibi iptal EDEBİLİR', async () => {

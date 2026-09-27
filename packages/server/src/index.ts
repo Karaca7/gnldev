@@ -5,7 +5,7 @@ import { toFetchHandler, type FetchHandler } from './handler.js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { createGnl, agentVisibleToOrg, withOrg, withOrgStorage, scopeConfigToOrg, withSubjectJournal, withSubjectMemory, threadOwnerOf, type ThreadOwnership, ORG_RECORD_PRE, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, asReaderJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, sealRequestContext, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry, callerConflictCode, publicConflictDetail, describeProtections, formatProtections, teachingError, resolveWorkIdentity } from '@gnldev/durable';
 import type { CreateGnlConfig, Journal, JournalReader, BudgetLimit, UsageCostCache, RunLimits, ResolvedWorkIdentity, WorkScopeKind } from '@gnldev/durable';
-import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, callerKind, isReservedSubjectId, type AuthProvider, type ReadWriteAuth, type Principal, type PrincipalKind } from '@gnldev/auth';
+import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, callerKind, isReservedSubjectId, actorIdOf, type AuthProvider, type ReadWriteAuth, type Principal, type PrincipalKind } from '@gnldev/auth';
 // P0.4 @gnldev/workflow is zero-dependency (see its package.json) — depending on it
 // from @gnldev/server is a clean one-way edge (server→workflow), NOT circular: @gnldev/durable's registry.ts
 // deliberately stays workflow-agnostic (WorkflowLike is a structural type, no import) to avoid a
@@ -741,7 +741,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
               bound: 'unknown',
               via: 'the authenticated principal, IF its credential carries a name',
               from: 'explicit',
-              note: 'a bearer token carries no `id`, so the subject falls back to `body.resourceId`; `gnl doctor` reads the credentials and can tell you which',
+              note: 'an end user\'s own token binds them; staff and an application name the user in the request (an application with `?resourceId=`); `gnl doctor` reads the credentials and can tell you which classes are configured',
             }
           : {
               bound: false,
@@ -974,7 +974,13 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     return kindOf(c) === 'subject' ? principalOf(c.req.raw)?.id : undefined;
   }
 
-  async function ownershipDenied(c: Context, s: Instance, runId: string, fromBody?: unknown): Promise<Response | undefined> {
+  /**
+   * `asMissing`: the answer this route gives for a run that does not exist. A route whose target must
+   * exist passes it, and a caller who is not staff then gets THAT for someone else's run — same status,
+   * same body — instead of a 403 that told them the id was taken. A route that starts work under the
+   * id cannot hide that it is taken, and passes nothing.
+   */
+  async function ownershipDenied(c: Context, s: Instance, runId: string, fromBody?: unknown, asMissing?: () => Response): Promise<Response | undefined> {
     // The query string is the uniform source, so a GET and a POST state the expectation the same way.
     // `fromBody` exists for the POST paths whose caller naturally puts it in the JSON it is already
     // sending; the query still wins, so one route cannot be checked against two different claims.
@@ -999,6 +1005,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     // everyone — measured: an end user approved a staff member's pending tool call, cancelled the run
     // and replayed its output. Staff keep acting on it; nobody who speaks for a user may.
     if (!owner && kindOf(c) === 'operator') return undefined;
+    if (asMissing && kindOf(c) !== 'operator') return asMissing();
     // The message names neither the real owner nor whether the run exists — a caller guessing ids
     // would otherwise learn both from the refusal.
     return c.json({ error: 'access denied: this run belongs to a different resourceId' }, 403);
@@ -1037,7 +1044,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
    * here would break the inbox. So the parity claim is one-directional for admins: never stricter
    * than the engine, knowingly looser on this one credential.
    */
-  async function actorParityDenied(c: Context, s: Instance, runId: unknown): Promise<Response | undefined> {
+  async function actorParityDenied(c: Context, s: Instance, runId: unknown, asMissing?: () => Response): Promise<Response | undefined> {
     if (typeof runId !== 'string' || !runId) return undefined;
     // Only a USER is held to its own runs; staff resume strangers' runs by design (Studio's approve flow).
     const own = boundSubjectOf(c);
@@ -1051,6 +1058,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
       return undefined; // a reader that cannot serve the entry is not evidence of a mismatch
     }
     if (!stamped || stamped === own) return undefined;
+    if (asMissing) return asMissing(); // only a user reaches here — see ownershipDenied's `asMissing`
     // Word for word what `ownershipDenied` answers on this same route: the refusal names neither the
     // real owner nor whether the run exists, and one route should not have two vocabularies for one
     // refusal. The engine's 409 carries both names and stays where it is — it is reached by callers
@@ -1305,7 +1313,9 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
    */
   function actorOf(c: Context): string {
     const p = principalOf(c.req.raw);
-    return p?.id ?? c.req.header('x-gnl-actor') ?? (p?.roles[0] ? `role:${p.roles[0]}` : 'anon');
+    // `actorIdOf`, not the raw id: staff are `operator:<id>`, so an end user whose token says `sub: 'ops'`
+    // and the operator `ops` are two actors in the trail, not one.
+    return actorIdOf(p) ?? c.req.header('x-gnl-actor') ?? (p?.roles[0] ? `role:${p.roles[0]}` : 'anon');
   }
 
   /**
@@ -1504,12 +1514,16 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     // run it believes this to be (`?resourceId=`, or `resourceId` in the body it is already sending)
     // and is refused when the run says otherwise. Unstated stays permitted: see ownershipDenied.
     { const denied = clientSubjectDenied(c, body.resourceId); if (denied) return denied; }
-    { const denied = await ownershipDenied(c, s, body.runId, body.resourceId); if (denied) return denied; }
+    // A resume needs a run. One that does not exist is a 404 — and so, for a caller who is not staff, is
+    // one that is someone else's (`asMissing`), so the two cannot be told apart.
+    const missingRun = () => c.json({ error: `run '${String(body.runId)}' not found` }, 404);
+    if (!(await hadPriorInput(rawOf(s).journal, String(body.runId)))) return missingRun();
+    { const denied = await ownershipDenied(c, s, body.runId, body.resourceId, missingRun); if (denied) return denied; }
     // …and the half of the same rule that no declaration can satisfy. The gate above asks about the
     // subject the CALLER STATED; this one asks the question the engine asks on every other route and
     // cannot ask on this one, because the identity this route seals is the run's own. See
     // actorParityDenied — measured, `/run` answered 409 and `/resume` answered 200 to the same caller.
-    { const denied = await actorParityDenied(c, s, body.runId); if (denied) return denied; }
+    { const denied = await actorParityDenied(c, s, body.runId, missingRun); if (denied) return denied; }
     // CONSISTENT with H2/1.3: only a REAL resume (there's a trace in the journal) skips the budget
     // gate — otherwise this endpoint would be an unlimited backdoor (bypassing the quota with a
     // traceless/made-up runId). Without a trace (typo/abuse) it's ENFORCED normally; input also comes
@@ -2060,10 +2074,11 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     const raw = rawOf(s).journal;
     const status = await getWorkflowRunStatus(raw, runId);
     const visible = status !== undefined || (await raw.get(`${runId}:wf:_suspend`)) !== undefined;
-    if (!visible) return c.json({ error: `workflow run '${runId}' not found` }, 404);
+    const missingWf = () => c.json({ error: `workflow run '${runId}' not found` }, 404);
+    if (!visible) return missingWf();
     // Same expectation-check as the agent-run cancel next door — a workflow run carries an owner for
     // the same reason and stopping one is the same act.
-    { const denied = await ownershipDenied(c, s, runId); if (denied) return denied; }
+    { const denied = await ownershipDenied(c, s, runId, undefined, missingWf); if (denied) return denied; }
     // D4-FGA: runs AFTER the coarse allow(c,'write') gate above.
     const resourceDenied = await resourceGate(c, principalOf(c.req.raw), { type: 'workflow', id: runId }, 'cancel');
     if (resourceDenied) return resourceDenied;
@@ -2183,10 +2198,11 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     // Existence is asked of the raw instance: the caller's view hides a stranger's run, and this route
     // answers a stranger's run with the ownership 403 below, like every write, not with a 404.
     const visible = await rawOf(s).journal.get(`${runId}:input`);
-    if (visible === undefined) return c.json({ error: `run '${runId}' not found` }, 404);
+    const missingRun = () => c.json({ error: `run '${runId}' not found` }, 404);
+    if (visible === undefined) return missingRun();
     // Stopping someone else's work is a write, and an application credential serves many end users
     // under one token — so the SAME `?resourceId=` expectation the read path honours is honoured here.
-    { const denied = await ownershipDenied(c, s, runId); if (denied) return denied; }
+    { const denied = await ownershipDenied(c, s, runId, undefined, missingRun); if (denied) return denied; }
     // D4-FGA: runs AFTER the coarse allow(c,'write') gate above.
     const resourceDenied = await resourceGate(c, principalOf(c.req.raw), { type: 'run', id: runId }, 'cancel');
     if (resourceDenied) return resourceDenied;

@@ -109,6 +109,12 @@ export interface GnlDevConfig extends CreateGnlConfig {
    */
   subjects?: 'internal' | 'end-users';
   /**
+   * Formats mounted on the REST API while `gnl dev` runs — `chatSurface()` from @gnldev/chat-adapter,
+   * `aguiSurface()` from @gnldev/agui. Your own server passes the same list to `createRestApi`'s
+   * `surfaces`. Typed loosely here so the CLI does not depend on the server's types.
+   */
+  surfaces?: ReadonlyArray<object>;
+  /**
    * Optional auth (opt-in), the classes of `@gnldev/auth`'s `roleAuth`. If none is given, REST + Studio
    * stay OPEN. Each can also come from env: GNL_<SUPERADMIN|ADMIN|CLIENT|VIEWER>_TOKEN, or _USER + _PASS;
    * and GNL_END_USER_SECRET for `endUsers.secret`. `endUsers` is how end users hold a token of their own.

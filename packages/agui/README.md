@@ -16,6 +16,11 @@ import { SqliteStorage } from '@gnldev/durable/sqlite';
 const app = createAguiRoute({
   journal: new SqliteStorage('runs.db').runs,
   agents: { support: { model: 'anthropic/claude-opus-4-8', tools, guard, maxSteps: 8 } },
+}, {
+  // Whose run each request is. In production the route refuses to start without this: pass your
+  // session lookup (see "identity" below), or say explicitly that there is no per-user identity.
+  // With end users, prefer `aguiSurface()` on createRestApi: the API's auth decides it for you.
+  identity: () => undefined,
 });
 serve({ fetch: app.fetch, port: 3001 }); // POST /agents/:name/run → AG-UI SSE
 ```

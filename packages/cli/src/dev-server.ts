@@ -124,7 +124,15 @@ export function buildDevApp(config: GnlDevConfig, rt: DevRuntimeModules, auth?: 
   // `protectionsBanner: false` — serveDev prints the matrix itself, a few lines down, and its copy
   // knows something this one cannot: that the branch above DERIVED a memory store which the project's
   // own src/app.ts does not have. Letting both print would put the less informed block on screen too.
-  app.mount('/', rt.server.createRestApi(config, { title: config.title, auth: provider, protectionsBanner: false }));
+  app.mount('/', rt.server.createRestApi(config, {
+    title: config.title,
+    auth: provider,
+    protectionsBanner: false,
+    // The formats the project declares (the scaffold's chat surface), and the browser origin its
+    // generated src/identity.ts points at — the same two things the project's own server passes.
+    ...(config.surfaces?.length ? { surfaces: config.surfaces as never } : {}),
+    ...(process.env.APP_ORIGIN ? { cors: { origins: [process.env.APP_ORIGIN] } } : {}),
+  }));
   return app;
 }
 

@@ -339,7 +339,9 @@ export const auth: { admin?: Cred; viewer?: Cred } = {
       place: 'configField',
       code: 'auth',
     },
-    configTypeExt: '{ auth?: { admin?: { token?: string }; viewer?: { token?: string } } }',
+    // The real type, not a copy of its shape: the copy had admin and viewer only, so the `endUsers` block
+    // src/identity.ts tells you to paste landed as TS2353. A class added to the CLI widens this with it.
+    configTypeExt: "{ auth?: import('@gnldev/cli').GnlDevConfig['auth'] }",
     humanWire: `import { auth } from './src/auth.js';
 // …then add to the config object (top level):
   auth,   // { admin: { token }, viewer: { token } } — omit to keep the API open`,
@@ -472,11 +474,13 @@ import { chatSurface } from '@gnldev/chat-adapter';
 export const chat = chatSurface(); // POST /agents/:name/chat
 `,
     wiring: {
-      // Passed to createRestApi in src/app.ts (a surface of the REST API), not to gnl.config.ts.
+      // Declared in gnl.config.ts so `gnl dev` serves it; a server of your own passes the same list
+      // to createRestApi (src/app.ts does).
       import: "import { chat } from './src/routes/chat.js';",
       place: 'configField',
-      code: '',
+      code: 'surfaces: [chat]',
     },
+    configTypeExt: "{ surfaces?: import('@gnldev/cli').GnlDevConfig['surfaces'] }",
     humanWire: `Pass it to the REST API as a surface:
   import { chat } from './routes/chat.js';
   createRestApi(config, { auth, surfaces: [chat] })

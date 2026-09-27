@@ -62,7 +62,25 @@ export function principalScope(principal: Principal | null | undefined): Princip
 export function callerKind(principal: Principal | null | undefined): PrincipalKind | 'unnamed' {
   if (!principal) return 'unnamed';
   if (principal.kind === 'operator' || principal.kind === 'application') return principal.kind;
-  return typeof principal.id === 'string' && principal.id !== '' ? 'subject' : 'unnamed';
+  // A subject's id is checked HERE, where every consumer asks what a caller is — not only in the one
+  // provider that happened to check it. SSO, Auth0/WorkOS and a user store could each mint a user
+  // named `operator:ops`, the actor name of the operator `ops`.
+  return typeof principal.id === 'string' && subjectIdProblem(principal.id) === null ? 'subject' : 'unnamed';
+}
+
+const MAX_SUBJECT_ID = 200;
+
+/**
+ * Why a string cannot be an end user's id, or `null` when it can: empty or over 200 characters,
+ * a control character (C0, DEL, C1) or a line/paragraph separator — each breaks a log line or a key
+ * round-trip, or hides in one — or a prefix reserved for staff and synthetic ids.
+ */
+export function subjectIdProblem(id: string): 'length' | 'control characters' | 'reserved prefix' | null {
+  if (id.length === 0 || id.length > MAX_SUBJECT_ID) return 'length';
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(id)) return 'control characters';
+  if (isReservedSubjectId(id)) return 'reserved prefix';
+  return null;
 }
 
 /**
@@ -84,6 +102,7 @@ export function isReservedSubjectId(id: string): boolean {
 export function actorIdOf(principal: Principal | null | undefined): string | undefined {
   if (!principal || typeof principal.id !== 'string' || principal.id === '') return undefined;
   const kind = callerKind(principal);
+  if (kind === 'unnamed') return undefined; // a subject id that is no user's names nobody
   return kind === 'subject' ? principal.id : `${kind}:${principal.id}`;
 }
 

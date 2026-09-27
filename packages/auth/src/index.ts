@@ -15,7 +15,7 @@ export { isCrossSiteStateChange } from './same-site.js';
 export { subjectTokenEndpoint, sessionTokenId, type SubjectSession } from './token-endpoint.js';
 // MCP's `identity` hook, from the same provider the HTTP surfaces use: one identity decision.
 export { identityFromAuth, type McpCallerLike, type McpIdentityLike } from './mcp-identity.js';
-export { PLATFORM_ADMIN_ROLE, isPlatformAdmin, principalScope, callerKind, isPrincipalKind, assertAssignablePrivileges, actorIdOf, isReservedSubjectId, RESERVED_SUBJECT_PREFIXES, type PrincipalScope, type AssignabilityResult } from './scope.js';
+export { PLATFORM_ADMIN_ROLE, isPlatformAdmin, principalScope, callerKind, isPrincipalKind, assertAssignablePrivileges, actorIdOf, isReservedSubjectId, subjectIdProblem, RESERVED_SUBJECT_PREFIXES, type PrincipalScope, type AssignabilityResult } from './scope.js';
 // Who may reach a surface that listens on a socket. One decision for every GNL surface that binds
 // one; see exposure.ts's header for why @gnldev/cli keeps a pinned second implementation.
 export { decideExposure, isLoopbackHost, isPublishedDevCredential, PUBLISHED_DEV_TOKENS, type ExposureInput, type ExposureDecision } from './exposure.js';

@@ -152,7 +152,7 @@ describe('an operator acting outside any organization', () => {
   it('and the actor is still recorded, so the trail is not anonymous', async () => {
     const { api, journal } = await mkApi();
     const rec = await cancelAndAudit(api, journal, 'r-acme', { ...AS.ops, 'x-gnl-org': 'acme' });
-    expect(rec!.actor, 'the record does not say who did it').toBe('u-ops');
+    expect(rec!.actor, 'the record does not say who did it').toBe('operator:u-ops'); // staff are named operator:<id> in the trail, apart from end users
     expect(rec!.action).toBe('run.cancel');
     expect(rec!.target).toBe('r-acme');
   });

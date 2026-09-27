@@ -141,7 +141,9 @@ export const auth = roleAuth({
 ```
 
 Without `isRevoked`, a token lives until its `exp` even after logout; that is what the 1-hour bound is
-for.
+for. A per-user logout time (`iat < loggedOutAt(sub)`) needs `iat` in the token: `signSubjectToken`
+and `subjectTokenEndpoint` set it, but a token minted elsewhere may not — deny by `jti`, or refuse
+tokens with no `iat` in `isRevoked`.
 
 ### Refreshing an end user's token
 

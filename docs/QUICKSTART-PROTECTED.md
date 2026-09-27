@@ -148,7 +148,7 @@ by reading its own code and cannot cheaply change later:
 | If the same work arrives twice, what should happen? | `--preset assistant\|headless\|critical` | A tool's `effectClass` is read **only** through a profile. Pick wrong and every declaration in the project is inert, silently. |
 | Who does each run belong to? | `--identity internal\|end-users` | Ownership cannot be added to runs that were born without it. |
 | Where should the record of every run be kept? | `--store sqlite\|pg` | One line apart on day one, a migration on day ninety. |
-| How will people reach this? | `--serving dev\|own\|mount` | `gnl dev` serves everything while you build, so "not yet" is a real answer — and the same one a worker or cron process keeps. The other two write files, and which files differs: `own` gets `src/server.ts`, `mount` gets the lines for the server you already have (`--host` names the framework). |
+| How will people reach this? | `--serving dev\|own\|mount` | `gnl dev` serves everything while you build, so "not yet" is a real answer — and the same one a worker or cron process keeps. The other two write files, and which files differs: `own` gets `src/server.ts`, `mount` gets the lines for the server you already have. Both need `--host` (the framework) when nothing can ask — `--yes`, CI, an agent. |
 
 Any flag you pass **answers** its question, so it is not asked. `--yes`, or no terminal at all (CI, an
 agent), takes the defaults and never blocks.

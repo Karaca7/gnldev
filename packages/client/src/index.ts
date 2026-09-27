@@ -168,18 +168,38 @@ export class GnlClient {
     this._fetch = this.getToken ? ((input: any, init?: RequestInit) => this.authedFetch(base, input, init)) as typeof fetch : base;
   }
 
+  /** Bumped by `clearToken`: a refresh that started before it must not become the held token. */
+  private tokenGeneration = 0;
+
+  /**
+   * Forget the held token; the next request asks `getToken` again. Call it at logout, or whenever the
+   * signed-in user changes without a reload — otherwise the next user's requests go out on the previous
+   * user's token until it expires.
+   */
+  clearToken(): void {
+    this.tokenGeneration++;
+    this.held = undefined;
+    this.refreshing = undefined;
+  }
+
   /** One refresh at a time: every caller waiting on an expired token awaits the same promise. */
   private refresh(): Promise<string | null> {
-    this.refreshing ??= (async () => {
+    if (this.refreshing) return this.refreshing;
+    const generation = this.tokenGeneration;
+    let run!: Promise<string | null>;
+    run = (async () => {
       try {
         const token = (await this.getToken!()) ?? null;
-        this.held = { token, expMs: token ? expMsOf(token) : Infinity };
+        // Kept only if no clearToken() came in between: that token belongs to the user who left.
+        if (generation === this.tokenGeneration) this.held = { token, expMs: token ? expMsOf(token) : Infinity };
         return token;
       } finally {
-        this.refreshing = undefined;
+        // Only our own slot: after a clearToken() another refresh may already own it.
+        if (this.refreshing === run) this.refreshing = undefined;
       }
     })();
-    return this.refreshing;
+    this.refreshing = run;
+    return run;
   }
 
   /** The token to send, and whether it was minted for this very request. */

@@ -89,6 +89,10 @@ export function verifyJwt(token: string, opts: JwtVerifyOptions, now: number): P
   try {
     const parts = token.split('.');
     if (parts.length !== 3) return null;
+    // Strict base64url, all three segments. Node's decoder skips characters outside the alphabet, so
+    // `<token>=` or `<token>~` verified as the same token — harmless to the signature, but any list
+    // keyed by the raw token string (a deny-list) was one character from being bypassed.
+    if (!parts.every((p) => /^[A-Za-z0-9_-]+$/.test(p))) return null;
     const [headerB64, payloadB64, sigB64] = parts;
     const header = JSON.parse(b64uDecode(headerB64).toString('utf8')) as JwtHeader;
     const claims = JSON.parse(b64uDecode(payloadB64).toString('utf8')) as JwtClaims;

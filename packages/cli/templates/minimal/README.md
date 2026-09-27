@@ -93,4 +93,5 @@ React: `import { useChat } from '@gnldev/client/react'`.
 ## Note
 
 Dev tokens written by `gnl add auth` live in your source tree — treat them as public. In production
-the process refuses to start without `GNL_ADMIN_TOKEN` / `GNL_VIEWER_TOKEN` from the environment.
+the process refuses to start with no credential at all: set `GNL_ADMIN_TOKEN` / `GNL_VIEWER_TOKEN`
+(staff) and/or `GNL_END_USER_SECRET` (end users' own tokens) in the environment.

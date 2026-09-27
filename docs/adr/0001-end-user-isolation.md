@@ -2,7 +2,8 @@
 
 - **Status:** Accepted, 2026-09-27
 - **Supersedes:** an internal decision of 2026-08-24, kept on file by the maintainers and not part of this repository: its opt-in, fail-open ownership rule, its "no signed token in the free tier", and its "signed token issuance is paid"
-- **Commits:** 87916a79 … 01a191f4 on `feat/isolation-0.7`
+- **Where:** the 0.7.0 entry in CHANGELOG.md lists every change this decision produced, including the
+  fixes from the audit that followed it
 
 ## Context
 
@@ -68,9 +69,11 @@ an option documented nowhere. Two review panels then measured what was left afte
 - **Guarded by** `subject-isolation-conformance.test.ts`. It walks every REST route, including
   surfaces, as five attackers and three controls, and its list of known leaks is empty and may only
   shrink. The same holds for `subject-refused-everywhere.test.ts` over Studio's routes.
-- **Not covered yet:** a subject on scheduled workflows and queued jobs (work done for a user must be
-  stamped with `resourceId` to be theirs); vector search per user; ownership in the storage port
-  (`ListQuery.owner`, the long-term form of point 2); edge runtimes.
+- **Covered since:** queued jobs, scheduled workflows and events carry their user and organization
+  (`enqueue`/`scheduleWorkflow`/`emit` take `resourceId` and `orgId`); a knowledge base answers an end
+  user from shared documents and their own (`visibleTo`); a thread's owner is recorded, not derived.
+- **Not covered yet:** ownership in the storage port (`ListQuery.owner`, the long-term form of point 2);
+  edge runtimes.
 
 ## Prediction (to be checked by git)
 

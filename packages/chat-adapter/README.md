@@ -36,6 +36,26 @@ A request with no valid credential is refused before the model runs. An end user
 under that user and their organization, shows up in their `GET /runs`, and is visible to their
 organization's staff in Studio. `chatSurface({ path })` changes the mount path.
 
+**Sending the user's token from `useChat`.** With end users, a request without a token is a 401, so
+the browser attaches one on every request. `headers` may be an async function, so each request asks
+your token route for a current one:
+
+<!-- doccheck: skip — @ai-sdk/react is the browser app's dependency, not this repository's -->
+```ts
+import { useChat } from '@ai-sdk/react';
+import { DefaultChatTransport } from 'ai';
+import { tokenFrom } from '@gnldev/client';
+
+const getToken = tokenFrom('/gnl-token'); // your app's route (subjectTokenEndpoint in @gnldev/auth)
+
+const chat = useChat({
+  transport: new DefaultChatTransport({
+    api: 'https://api.example.com/agents/pay/chat',
+    headers: async () => ({ authorization: `Bearer ${await getToken()}` }),
+  }),
+});
+```
+
 ## Chat route (standalone)
 
 For a host that already authenticates the request itself (a session cookie) and passes the user in
@@ -45,7 +65,12 @@ through `identity`. In production it refuses to start without `identity`; pass
 ```ts
 import { createChatRoute } from '@gnldev/chat-adapter';
 
-app.route('/api', createChatRoute({ gnl }));
+// Your session lookup: the user this request is for, as YOUR server established it.
+declare function userOf(req: Request): Promise<string | undefined>;
+
+app.route('/api', createChatRoute({ gnl }, {
+  identity: async (req) => ({ resourceId: await userOf(req) }),
+}));
 // POST /api/agents/:name/chat — useChat({ api: '/api/agents/pay/chat' }) works unchanged.
 ```
 

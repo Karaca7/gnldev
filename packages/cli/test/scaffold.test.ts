@@ -150,9 +150,12 @@ describe('scaffold — feature composition', () => {
     expect(pkg.devDependencies.vitest).toBeTruthy();
     expect(pkg.scripts.test).toBe('vitest run');
 
-    // generated gnl.config.ts: correct imports + wiring, NO @gnldev/cli import
+    // generated gnl.config.ts: correct imports + wiring, and NO value import of @gnldev/cli — it is a
+    // devDependency, so a runtime import would fail on a production install. The satisfies clause may
+    // name its TYPES (`import('@gnldev/cli').GnlDevConfig[…]`): a type position is erased, loads nothing.
     const config = readFileSync(join(dir, 'gnl.config.ts'), 'utf8');
-    expect(config).not.toContain('@gnldev/cli');
+    expect(config).not.toMatch(/^\s*import\b[^\n]*from\s+'@gnldev\/cli'/m);
+    expect(config).not.toMatch(/\brequire\(\s*'@gnldev\/cli'/);
     expect(config).toContain("import { chargeOrder } from './src/tools/charge-order.js';");
     expect(config).toContain("import { searchDocs } from './src/tools/rag.js';");
     expect(config).toContain("import { memoryFactory } from './src/memory.js';");
@@ -173,7 +176,7 @@ describe('scaffold — feature composition', () => {
     expect(config).toContain("agents: { assistant, 'charge-demo':");
     expect(config).toContain('workflows: { checkout },');
     expect(config).toContain('auth,');
-    expect(config).toContain('& { auth?: { admin?: { token?: string }; viewer?: { token?: string } } }');
+    expect(config).toContain("& { auth?: import('@gnldev/cli').GnlDevConfig['auth'] }");
     const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
     expect(pkg.dependencies['@gnldev/workflow']).toBeTruthy();
   });

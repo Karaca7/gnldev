@@ -93,7 +93,8 @@ const auth = roleAuth(Object.fromEntries(Object.entries(classes).filter(([, v]) 
  * WHO IS EACH RUN FOR? The \`auth\` above decides it, for REST and for chat alike: an end user's own
  * token binds the run to that user; staff and the application name the user in the request. The chat
  * surface (src/routes/chat.ts) only translates useChat's format, so there is no second identity hook
- * to wire: useChat({ api: '<where you mount this>/agents/assistant/chat' }).
+ * to wire: useChat({ api: '<where you mount this>/agents/assistant/chat' }) — with end users, send
+ * their token too (a transport with \`headers\`; see the @gnldev/chat-adapter README).
  *
  * APP_ORIGIN lets a browser on that origin call this API directly (CORS); unset, none can.
  */

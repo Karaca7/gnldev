@@ -80,6 +80,8 @@ async function seeded() {
   return { api, journal };
 }
 
+// Refusals below are 404: to a caller who is not staff, someone else's run answers as one that does
+// not exist (see foreign-write-is-missing.test.ts).
 describe('POST /agents/:name/resume — damga eşitliği (/run neyi reddediyorsa o da reddeder)', () => {
   it('ANCHOR: the same caller on /run is refused at the edge (403) and learns no owner', async () => {
     const { api } = await seeded();
@@ -94,7 +96,7 @@ describe('POST /agents/:name/resume — damga eşitliği (/run neyi reddediyorsa
   it('KIRMIZI: beyan etmeyen yabancı kimlik, başkasının koşumunu resume edemez', async () => {
     const { api } = await seeded();
     const res = await post(api, '/agents/a/resume', MALLORY, { runId: 'raw-ayse' });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(404);
     expect(await res.text()).not.toContain(SECRET);
   });
 
@@ -109,7 +111,7 @@ describe('POST /agents/:name/resume — damga eşitliği (/run neyi reddediyorsa
         headers: { authorization: MALLORY, 'content-type': 'application/json' },
         body: JSON.stringify({ runId: 'raw-ayse', resourceId: 'u-ayse', approvals: { charge: true } }),
       });
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(404);
       expect(await res.text()).not.toContain(SECRET);
     }
   });
@@ -139,7 +141,7 @@ describe('POST /agents/:name/resume — damga eşitliği (/run neyi reddediyorsa
     const { resourceId: _drop, ...actorOnly } = input as { resourceId?: string };
     await journal.put('raw-ayse:input', actorOnly);
     const res = await post(api, '/agents/a/resume', MALLORY, { runId: 'raw-ayse' });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(404);
     expect(await res.text()).not.toContain(SECRET);
   });
 
@@ -151,6 +153,6 @@ describe('POST /agents/:name/resume — damga eşitliği (/run neyi reddediyorsa
     const { actor: _drop, ...withoutActor } = input as { actor?: string };
     await journal.put('raw-ayse:input', withoutActor);
     expect((await post(api, '/agents/a/run', MALLORY, { runId: 'raw-ayse', prompt: 'hi' })).status).toBe(403);
-    expect((await post(api, '/agents/a/resume', MALLORY, { runId: 'raw-ayse' })).status).toBe(403);
+    expect((await post(api, '/agents/a/resume', MALLORY, { runId: 'raw-ayse' })).status).toBe(404);
   });
 });
