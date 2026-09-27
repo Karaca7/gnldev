@@ -59,6 +59,12 @@ documents and that user's own. You don't pass anything for this; the run tells t
 A document with no label is visible to no end user. A forgotten label shows up as "not found", never as
 a leak. Organizations stay apart as before: use a store from `withOrgStorage`.
 
+An upsert **updates** a document; it does not move it to another owner or label. Upserting an existing
+id with a different `owner`/`shared` (or namespace) fails with `VectorOwnerConflictError`, so one user
+cannot take over another's document or replace a shared one. To relabel, `delete` it first.
+`delete({ owner })` removes one person's documents; `purgeResource(journal, userId, { vectors })` in
+`@gnldev/durable` does it as part of erasing them.
+
 Your own `VectorStore` gets the same request as `QueryOptions.visibleTo`. Return only documents with
 `shared: true` or `owner === visibleTo`, and filter **before** taking the top K.
 

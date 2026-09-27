@@ -1,5 +1,5 @@
 import { cosineSimilarity } from 'ai';
-import { visibleToSubject } from '@gnldev/durable';
+import { visibleToSubject, assertVectorLabels, assertSameVectorOwner } from '@gnldev/durable';
 
 export interface VectorDoc {
   id: string;
@@ -44,6 +44,8 @@ export interface DeleteWhere {
   ids?: string[];
   filter?: Record<string, unknown>;
   namespace?: string;
+  /** Every document of this end user — `owner` is a label, not metadata, so `filter` cannot reach it. */
+  owner?: string;
 }
 
 export interface VectorStore {
@@ -105,6 +107,9 @@ export class InMemoryVectorStore implements VectorStore {
   private items: VectorItem[] = [];
 
   async upsert(items: VectorItem[]): Promise<void> {
+    assertVectorLabels(items);
+    // Whole batch checked first: a refused batch leaves no half. See assertSameVectorOwner.
+    for (const it of items) assertSameVectorOwner(this.items.find((x) => x.id === it.id), it);
     for (const it of items) {
       const i = this.items.findIndex((x) => x.id === it.id);
       if (i >= 0) this.items[i] = it;
@@ -138,8 +143,9 @@ export class InMemoryVectorStore implements VectorStore {
       if (ids && !ids.has(it.id)) return true;
       if (where.namespace !== undefined && it.namespace !== where.namespace) return true;
       if (where.filter && !matchesFilter(it.metadata, where.filter)) return true;
+      if (where.owner !== undefined && it.owner !== where.owner) return true;
       // If no condition was given (empty where), delete NOTHING (safe side).
-      if (!ids && where.namespace === undefined && !where.filter) return true;
+      if (!ids && where.namespace === undefined && !where.filter && where.owner === undefined) return true;
       return false; // delete
     });
     return before - this.items.length;

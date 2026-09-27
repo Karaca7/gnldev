@@ -51,11 +51,17 @@ createWorker(storage, {
 - If a handler forgets `resourceId`, the run has no owner. Only staff can see it; it never leaks to
   another user.
 - `retryJob` keeps the owner and the organization.
+- An explicit `id` is a name **within its owner**: two organizations (or two users) using `weekly-report`
+  get two jobs. `enqueue` returns the stored id (`acme:ayse:weekly-report`); use that one with `retryJob`
+  and `listJobs`. A system job's id is kept as given.
+- A follow-up job from a handler: `ctx.enqueue(type, payload)`. It inherits the user and the organization.
+  Passing `ctx.storage.work` to `enqueue` is refused, since no worker polls that store.
+- `maxDepth` is counted per organization.
 
 ## API
 - `enqueue(work, type, payload, { id?, maxDepth?, resourceId?, orgId? }) → jobId` — `work` is `storage.work`
 - `createWorker(storage, handlers, opts?) → { runOnce, start, stop }` — `opts`: `owner`, `ttlMs` (stale lock reclaim), `pollMs`, `maxAttempts`, `onError`, `backoff`, `maxPollMs`, `heartbeat`
-- `JobCtx` gives the handler `{ journal, jobId, runId, storage, resourceId?, orgId? }` — the handler typically calls `runDurable({ runId, ... })` to keep the side effect at-most-once.
+- `JobCtx` gives the handler `{ journal, jobId, runId, storage, resourceId?, orgId?, enqueue }` — the handler typically calls `runDurable({ runId, ... })` to keep the side effect at-most-once.
 - `listJobs(work)` shows each job's `resourceId`/`orgId` next to its status.
 
 ## How it works

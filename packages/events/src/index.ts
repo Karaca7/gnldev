@@ -11,12 +11,32 @@
 // in the same pass, and after `maxAttempts` the event is QUARANTINED (dead-letter) rather than
 // retried forever — listDeadEvents() shows it, retryDeadEvent() hands it back. Quarantine is not an
 // ack: a quarantined event is never counted as delivered, because the consumer never saw it.
-import { createPollLoop } from '@gnldev/durable';
+import { createPollLoop, orgPrefix, orgStorageScopeOf, ownedName } from '@gnldev/durable';
 import type { WorkStore } from '@gnldev/durable';
 
-export interface EventMeta {
+/** Whose an event is. Delivered to the handler, so the run it starts belongs to that user and organization. */
+export interface EventOwner {
+  resourceId?: string;
+  orgId?: string;
+}
+
+export interface EventMeta extends EventOwner {
   id: string;
   topic: string;
+}
+
+/**
+ * An owned event is stored in an envelope; a system event (no owner) is stored exactly as before, so
+ * nothing already in a log changes shape. The key is spelled so no ordinary payload carries it.
+ */
+const OWNER_ENVELOPE = '__gnlEventOwner';
+type Envelope = { [OWNER_ENVELOPE]: EventOwner; payload: unknown };
+function unwrap(stored: unknown): { payload: unknown; owner: EventOwner } {
+  if (stored !== null && typeof stored === 'object' && OWNER_ENVELOPE in stored) {
+    const env = stored as Envelope;
+    return { payload: env.payload, owner: env[OWNER_ENVELOPE] ?? {} };
+  }
+  return { payload: stored, owner: {} };
 }
 
 export type EventHandler = (payload: any, meta: EventMeta) => Promise<void> | void;
@@ -117,6 +137,9 @@ export interface DeadEvent extends StoredDead {
   topic: string;
   consumer: string;
   payload: unknown;
+  /** Whose the event is, when it has an owner. */
+  resourceId?: string;
+  orgId?: string;
   /**
    * `quarantined` = parked, will NOT be delivered until released. `released` = `retryDeadEvent` has
    * handed it back, awaiting the next poll. `delivered` = it eventually succeeded; the record is kept
@@ -162,26 +185,49 @@ export class EventDepthExceededError extends Error {
  * O(min(actual depth, maxDepth)) pages, NOT the ENTIRE log. Unless `maxDepth` is given (default
  * behavior), this function is NEVER called → existing unbounded-topic behavior is preserved.
  */
-async function countUpTo(work: WorkStore, ns: string, limit: number): Promise<number> {
+async function countUpTo(work: WorkStore, ns: string, limit: number, counts: (stored: unknown) => boolean = () => true): Promise<number> {
   let count = 0;
   let cursor: string | undefined;
   for (;;) {
     const page = await work.list(ns, { cursor });
-    count += page.items.length;
+    count += page.items.filter((it) => counts(it.payload)).length;
     if (count >= limit || !page.nextCursor) return count;
     cursor = page.nextCursor;
   }
 }
 
-/** Publish an event to a topic (idempotent: same id → a single event again). Returns eventId. */
+/**
+ * Publish an event to a topic (idempotent: same id → a single event again). Returns the stored id.
+ *
+ * `resourceId`/`orgId` say whose the event is — the handler gets them in `meta`. An explicit `id` is a
+ * name within that owner (`ownedName`), as a queued job's is: the log is one for every organization.
+ */
 export async function emit(
   work: WorkStore,
   topic: string,
   payload: unknown,
-  opts: { id?: string; maxDepth?: number } = {},
+  opts: { id?: string; maxDepth?: number } & EventOwner = {},
 ): Promise<string> {
+  // Consumers poll the root log. An organization-scoped work store files the event under
+  // `org:<id>:…`, where no consumer reads it — lost without a word, so refused instead.
+  const scopedTo = orgStorageScopeOf(work);
+  if (scopedTo !== undefined) {
+    throw new Error(
+      `@gnldev/events: emit was handed organization '${scopedTo}''s work store — consumers poll the root log, so the event ` +
+        'would never be delivered. Pass the root storage\'s work with { orgId }.',
+    );
+  }
+  if (opts.orgId !== undefined) orgPrefix(opts.orgId);
+  if (opts.resourceId !== undefined && (typeof opts.resourceId !== 'string' || opts.resourceId === '')) {
+    throw new Error(`@gnldev/events: invalid resourceId '${String(opts.resourceId)}' — must be a non-empty string, or omitted for a system event`);
+  }
+  const owner: EventOwner = {
+    ...(opts.resourceId !== undefined ? { resourceId: opts.resourceId } : {}),
+    ...(opts.orgId !== undefined ? { orgId: opts.orgId } : {}),
+  };
   if (opts.maxDepth != null) {
-    const depth = await countUpTo(work, logNsOf(topic), opts.maxDepth);
+    // Per organization: one organization filling a topic refused every other one's events.
+    const depth = await countUpTo(work, logNsOf(topic), opts.maxDepth, (stored) => unwrap(stored).owner.orgId === opts.orgId);
     if (depth >= opts.maxDepth) {
       throw new EventDepthExceededError(
         `@gnldev/events: topic depth limit exceeded (${depth} >= ${opts.maxDepth}) — event rejected (topic='${topic}').`,
@@ -189,7 +235,9 @@ export async function emit(
       );
     }
   }
-  return work.append(logNsOf(topic), payload, opts.id);
+  const owned = owner.resourceId !== undefined || owner.orgId !== undefined;
+  const record: unknown = owned ? ({ [OWNER_ENVELOPE]: owner, payload } satisfies Envelope) : payload;
+  return work.append(logNsOf(topic), record, opts.id === undefined ? undefined : ownedName(opts.id, owner));
 }
 
 /**
@@ -399,7 +447,8 @@ export function createConsumer(
         // the handler; a crash between handler success and ackOnce (or a concurrent poll race) →
         // redelivery is possible. Write the handler idempotently, or use durable (runDurable/claim) inside it.
         try {
-          await handler(e.payload, { id: e.id, topic });
+          const { payload, owner } = unwrap(e.payload);
+          await handler(payload, { id: e.id, topic, ...owner });
         } catch (err) {
           // Handler threw → ack marker NOT WRITTEN → the event is not lost. The poll loop doesn't
           // die: this event is skipped, the rest of the page keeps processing.
@@ -559,7 +608,7 @@ export async function listDeadEvents(work: WorkStore, topic: string, consumer: s
         id: e.id,
         topic,
         consumer,
-        payload: e.payload,
+        ...(() => { const u = unwrap(e.payload); return { payload: u.payload, ...u.owner }; })(),
         status: acked ? 'delivered' : rec.releasedAt ? 'released' : 'quarantined',
       });
     }

@@ -52,6 +52,26 @@ createScheduler(journal, gnl, { runnerForOrg: gnlFor }).start();
   with a clear error (`listTriggers` → `lastError`), because a run written there is invisible to the
   organization.
 - A bad `orgId` or an empty `resourceId` is refused by `scheduleWorkflow` itself.
+- A trigger id (or the workflow name, when no id is given) is a name **within its owner**. Two users
+  scheduling the same workflow get two triggers. `scheduleWorkflow` returns the stored id.
+- `budgetGuard` receives `orgId` and `resourceId`, so one scheduler can charge each organization.
+- Sleeping workflows inside organizations: give the waker their ids. It scans each partition and tells
+  `resume` which organization the run is in:
+
+```ts
+import { createWorkflowWaker } from '@gnldev/scheduler';
+import { toJournal } from '@gnldev/durable';
+declare const storage: import('@gnldev/durable').Storage;
+declare const gnl: { runWorkflow(n: string, i: unknown, o?: { runId?: string }): Promise<unknown> };
+declare const gnlFor: (orgId: string) => typeof gnl;
+
+createWorkflowWaker({
+  journal: toJournal(storage.runs),
+  orgs: ['acme', 'globex'], // or a function, asked on every tick
+  resume: (runId, status, where) =>
+    (where ? gnlFor(where.orgId) : gnl).runWorkflow(status.workflowName, undefined, { runId }),
+}).start();
+```
 
 ## Lock TTL and what "once" covers
 

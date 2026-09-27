@@ -38,7 +38,7 @@ export type { ModelPricing, PricingDoc } from './pricing.js';
 export {
   DivergenceError, RunBusyError, SideEffectRetryBlockedError, RetryLimitExceededError,
   ReplicationNotAcknowledgedError, SuiteVersionMismatchError, RunThreadMismatchError,
-  RunInputMismatchError, RunActorMismatchError, RunOwnerMismatchError, ThreadOwnerMismatchError, IdempotencyOwnerMismatchError, RunSweptError, BatchPlanMismatchError,
+  RunInputMismatchError, RunActorMismatchError, RunOwnerMismatchError, ThreadOwnerMismatchError, IdempotencyOwnerMismatchError, VectorOwnerConflictError, RunSweptError, BatchPlanMismatchError,
   NotAnAgentRunError,
   CALLER_CONFLICT_CODES, callerConflictCode, publicConflictDetail, FOREIGN_PARTY_DETAIL_FIELDS,
   BLOCKED_ERROR_CODES, blockedErrorCode, upstreamFailure, UPSTREAM_ERROR_CODES,
@@ -97,7 +97,7 @@ export type { RunDurableArgs, StreamDurableArgs, DurableResult, ResumeAgentConfi
 // K1/W1 (B): sentinel→error conversion helper for code that consumes streamDurable directly.
 export { streamFinishError } from './run.js';
 // Greenfield storage contracts (ports + Storage + capability + composite).
-export { CapabilityError, requireCapability, composite, toJournal, matchFilter, visibleToSubject, assertUniformSeq } from './storage.js';
+export { CapabilityError, requireCapability, composite, toJournal, matchFilter, visibleToSubject, assertVectorLabels, assertSameVectorOwner, assertUniformSeq } from './storage.js';
 export type { AdoptIntoOrgResult,
   Page, ListQuery,
   RunJournal, MemoryStore, VectorStore, WorkStore, CacheStore, MetaStore,
@@ -146,6 +146,7 @@ export { withOrg, orgScopeOf, orgPrefix, isPlatformKey, assertOrgRegistered, ass
 export { withOrgStorage, orgStorageScopeOf, scopeConfigToOrg } from './org-storage.js';
 export { withSubjectJournal, withSubjectMemory, threadOwnerFromRuns, type SubjectViewOptions } from './subject-view.js';
 export { threadOwnerOf, admitThreadRun, threadOwnerKey, type ThreadOwnership } from './thread-owner.js';
+export { ownedName } from './owned-name.js';
 export { orgPurgedKey, purgeRun, isRealRun, purgeThread, purgeResource, purgeBatch, purgeOrganization, purgeOrganizationWork, sweepRuns, sweepLog, sweepThreads, listOrphanThreadState, createRetentionSweeper } from './retention.js';
 export type { LogSweepTarget, RetentionSweeperOptions, RetentionSweepSummary, RetentionSweeper } from './retention.js';
 export { recordIdemConflict, readIdemLedger } from './idem-ledger.js';

@@ -11,11 +11,11 @@ import { runIdOfKey, parseJournalKey, outcomeStatusOf, deriveRunStatus } from '.
 import { ENGINE_META_KEYS, assertNoRunsInFlight, assertOrgRegistered, isPlatformKey, orgPrefix } from './organization.js';
 import type { JournalBatch, JournalEntry, RunSummary, ToolJournalRecord } from './journal.js';
 import { serialize, deserialize } from './serialize.js';
-import { matchFilter } from './storage.js';
+import { matchFilter, assertVectorLabels, assertSameVectorOwner } from './storage.js';
 import type {
   Storage, CapabilityMatrix, Page, ListQuery,
   RunJournal, MemoryStore, VectorStore, WorkStore, CacheStore, MetaStore,
-  AdoptIntoOrgResult, ThreadRecord, MessageRecord, MessageAppend, Observation, RecallOptions, VectorItem, VectorMatch, VectorQueryOptions, LogRecord,
+  AdoptIntoOrgResult, ThreadRecord, MessageRecord, MessageAppend, Observation, RecallOptions, VectorItem, VectorMatch, VectorQueryOptions, VectorDeleteWhere, LogRecord,
 } from './storage.js';
 // P2-migrate schema introspection/migration façade — see migrate.ts's header.
 import { tablesFromDDL } from './migrate.js';
@@ -401,7 +401,8 @@ export class SqliteStorage implements Storage {
 
       const vecs = this.db.prepare(`SELECT COUNT(*) AS c FROM gnl_vectors WHERE namespace IS NULL`).get().c as number;
       alreadyScoped += this.db.prepare(`SELECT COUNT(*) AS c FROM gnl_vectors WHERE namespace IS NOT NULL`).get().c as number;
-      if (!dryRun && vecs) this.db.prepare(`UPDATE gnl_vectors SET namespace = ? WHERE namespace IS NULL`).run(ns);
+      // Renamed as well as stamped: an organization stores its documents as `<ns>:<id>` (withOrgStorage).
+      if (!dryRun && vecs) this.db.prepare(`UPDATE gnl_vectors SET namespace = ?, id = ? || ':' || id WHERE namespace IS NULL`).run(ns, ns);
       bump('vectors', vecs);
     };
 
@@ -1174,11 +1175,29 @@ class SqliteMemoryStore implements MemoryStore {
 class SqliteVectorStore implements VectorStore {
   constructor(private db: any) {}
   async upsert(items: VectorItem[]): Promise<void> {
+    assertVectorLabels(items);
+    // The whole batch is checked before anything is written, so a refused batch leaves no half; the
+    // conditional UPDATE below then closes the window between this read and the write.
+    const probe = this.db.prepare('SELECT namespace, owner, shared FROM gnl_vectors WHERE id = ?');
+    for (const it of items) assertSameVectorOwner(probe.get(it.id), it);
     const stmt = this.db.prepare(
       `INSERT INTO gnl_vectors (id, text, embedding, metadata, namespace, owner, shared, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET text=excluded.text, embedding=excluded.embedding, metadata=excluded.metadata, namespace=excluded.namespace, owner=excluded.owner, shared=excluded.shared`,
+       ON CONFLICT(id) DO UPDATE SET text=excluded.text, embedding=excluded.embedding, metadata=excluded.metadata
+       WHERE gnl_vectors.namespace IS excluded.namespace AND gnl_vectors.owner IS excluded.owner AND gnl_vectors.shared IS excluded.shared`,
     );
-    for (const it of items) stmt.run(it.id, it.text, JSON.stringify(it.embedding), it.metadata ? serialize(it.metadata) : null, it.namespace ?? null, it.owner ?? null, it.shared ? 1 : null, Date.now());
+    for (const it of items) {
+      const r = stmt.run(it.id, it.text, JSON.stringify(it.embedding), it.metadata ? serialize(it.metadata) : null, it.namespace ?? null, it.owner ?? null, it.shared ? 1 : null, Date.now());
+      if (Number(r?.changes ?? 1) === 0) assertSameVectorOwner(probe.get(it.id) ?? { namespace: '\u0000' }, it);
+    }
+  }
+  async delete(where: VectorDeleteWhere): Promise<number> {
+    const conds: string[] = [];
+    const params: unknown[] = [];
+    if (where.ids) { if (!where.ids.length) return 0; conds.push(`id IN (${where.ids.map(() => '?').join(',')})`); params.push(...where.ids); }
+    if (where.owner !== undefined) { conds.push('owner = ?'); params.push(where.owner); }
+    if (where.namespace !== undefined) { conds.push('namespace IS ?'); params.push(where.namespace); }
+    if (!conds.length) return 0;
+    return Number(this.db.prepare(`DELETE FROM gnl_vectors WHERE ${conds.join(' AND ')}`).run(...params).changes ?? 0);
   }
   async query(embedding: number[], topK: number, opts?: VectorQueryOptions): Promise<VectorMatch[]> {
     // Filtered in SQL, so the rows that reach the ranking are already the eligible ones. Ranking the

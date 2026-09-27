@@ -208,6 +208,20 @@ export class ThreadOwnerMismatchError extends Error {
 }
 
 /**
+ * An upsert would have replaced a document with one of a different owner, label or partition. A
+ * document id is not a claim anyone can make: ids came from one global space, so a second user (or a
+ * second organization, or anyone writing `shared: true`) upserting the same id silently took the
+ * document over. The detail names the id, never the owner.
+ */
+export class VectorOwnerConflictError extends Error {
+  readonly code = 'vector_owner_conflict';
+  constructor(message: string, public readonly detail: { id: string }) {
+    super(message);
+    this.name = 'VectorOwnerConflictError';
+  }
+}
+
+/**
  * A `cross-run` dedup record — keyed by a business key such as an order id — was reached by a user it
  * does not belong to. It is refused: neither the recorded output (it is someone else's result) nor a
  * second execution (the key promises one). The detail names the tool, never the owner.

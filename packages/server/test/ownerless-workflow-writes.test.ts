@@ -49,12 +49,13 @@ describe('an ownerless workflow run, as seen by an end user', () => {
   it('a system trigger\'s run is the same: staff\'s', async () => {
     const journal = new InMemoryJournal();
     const config = { journal, workflows: { report: mkWf('SYS-SECRET') } } as any;
-    await scheduleWorkflow(journal as never, { id: 'rep', name: 'report', input: {}, at: 0, orgId: 'acme' }, 0);
+    const trigger = await scheduleWorkflow(journal as never, { id: 'rep', name: 'report', input: {}, at: 0, orgId: 'acme' }, 0);
+    const runId = `sched:${trigger}:0`;
     await pollScheduler(journal as never, createGnl(config), 1, { runnerForOrg: (o) => createGnl(scopeConfigToOrg(config, o).config) });
     const api = createRestApi(config, { auth } as never) as never;
-    const res = await post(api, '/workflows/report/run', 'ayse', { runId: 'sched:rep:0', resume: { approve: { ok: true } } });
+    const res = await post(api, '/workflows/report/run', 'ayse', { runId, resume: { approve: { ok: true } } });
     expect(refused(res.status), `status ${res.status}`).toBe(true);
-    expect((await journal.get<any>('org:acme:wfrun:sched:rep:0'))?.status).toBe('suspended');
+    expect((await journal.get<any>(`org:acme:wfrun:${runId}`))?.status).toBe('suspended');
   });
 
   it('a run written before owner records existed (no :input, but a trace) is ownerless, not new', async () => {

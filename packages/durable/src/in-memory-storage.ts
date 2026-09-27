@@ -7,12 +7,12 @@ import { InMemoryJournal } from './journal.js';
 import { stableStringify } from './hash.js';
 import { ENGINE_META_KEYS, assertNoRunsInFlight, assertOrgRegistered, isPlatformKey, orgPrefix } from './organization.js';
 import type { JournalEntry, RunSummary } from './journal.js';
-import { matchFilter, visibleToSubject } from './storage.js';
+import { matchFilter, visibleToSubject, assertVectorLabels, assertSameVectorOwner } from './storage.js';
 import type {
   Storage, CapabilityMatrix, Page, ListQuery,
   RunJournal, MemoryStore, VectorStore, WorkStore, CacheStore, MetaStore,
   ThreadRecord, MessageRecord, MessageAppend, Observation, RecallOptions,
-  AdoptIntoOrgResult, VectorItem, VectorMatch, VectorQueryOptions, LogRecord } from './storage.js';
+  AdoptIntoOrgResult, VectorItem, VectorMatch, VectorQueryOptions, VectorDeleteWhere, LogRecord } from './storage.js';
 
 let idc = 0;
 function genId(prefix: string): string {
@@ -231,17 +231,32 @@ class InMemoryMemoryStore implements MemoryStore {
 class InMemoryVectorStore implements VectorStore {
   /** @internal — see Storage.adoptIntoOrg. Stamps the namespace on documents that have none. */
   _stamp(ns: string): number {
+    // Renamed as well as stamped: an organization's documents are stored under `<ns>:<id>` (see
+    // withOrgStorage), so an adopted document keeps its identity instead of being duplicated by the
+    // organization's next upsert of the same id.
     let n = 0;
-    for (const it of this.items) if (it.namespace === undefined) { it.namespace = ns; n++; }
+    for (const it of this.items) if (it.namespace === undefined) { it.namespace = ns; it.id = `${ns}:${it.id}`; n++; }
     return n;
   }
 
   items: VectorItem[] = [];
   async upsert(items: VectorItem[]) {
+    assertVectorLabels(items);
+    // Checked for the whole batch before anything is written, so a refused batch leaves no half.
+    for (const it of items) assertSameVectorOwner(this.items.find((x) => x.id === it.id), it);
     for (const it of items) {
       const i = this.items.findIndex((x) => x.id === it.id);
       if (i >= 0) this.items[i] = it; else this.items.push(it);
     }
+  }
+  async delete(where: VectorDeleteWhere): Promise<number> {
+    if (!where.ids && where.owner === undefined && where.namespace === undefined) return 0;
+    const ids = where.ids ? new Set(where.ids) : undefined;
+    const before = this.items.length;
+    this.items = this.items.filter((it) => !(
+      (!ids || ids.has(it.id)) && (where.owner === undefined || it.owner === where.owner) && (where.namespace === undefined || it.namespace === where.namespace)
+    ));
+    return before - this.items.length;
   }
   async query(embedding: number[], topK: number, opts?: VectorQueryOptions): Promise<VectorMatch[]> {
     // Filter, THEN rank, THEN slice. Ranking first and filtering after would make a caller's result

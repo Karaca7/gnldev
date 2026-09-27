@@ -8,9 +8,9 @@
 // GraphRAG as a query-time layer is the user's pattern. Since it runs durable inside `createRagTool`,
 // the query RESULT is journaled → the graph isn't retraversed on resume/replay (exactly-once RAG preserved).
 import { cosineSimilarity } from 'ai';
-import { visibleToSubject } from '@gnldev/durable';
+import { visibleToSubject, assertVectorLabels, assertSameVectorOwner } from '@gnldev/durable';
 import { matchesFilter } from './vector-store.js';
-import type { VectorStore, VectorItem, VectorMatch, QueryOptions } from './vector-store.js';
+import type { VectorStore, VectorItem, VectorMatch, QueryOptions, DeleteWhere } from './vector-store.js';
 
 export interface GraphRagOptions {
   /** Edge threshold: two chunks become neighbors in the graph if their cosine similarity exceeds this. Default 0.75. */
@@ -49,6 +49,12 @@ export class GraphRag implements VectorStore {
   }
 
   async upsert(newItems: VectorItem[]): Promise<void> {
+    assertVectorLabels(newItems);
+    // Whole batch checked first: a refused batch leaves no half. See assertSameVectorOwner.
+    for (const it of newItems) {
+      const at = this.byId.get(it.id);
+      assertSameVectorOwner(at === undefined ? undefined : this.items[at], it);
+    }
     for (const it of newItems) {
       const existing = this.byId.get(it.id);
       if (existing !== undefined) {
@@ -74,6 +80,23 @@ export class GraphRag implements VectorStore {
         }
       }
     }
+  }
+
+  /** Removes the matching documents and every edge touching them. No condition removes nothing. */
+  async delete(where: DeleteWhere): Promise<number> {
+    if (!where.ids && where.namespace === undefined && !where.filter && where.owner === undefined) return 0;
+    const ids = where.ids ? new Set(where.ids) : undefined;
+    const gone = new Set(this.items.filter((it) =>
+      (!ids || ids.has(it.id))
+      && (where.namespace === undefined || it.namespace === where.namespace)
+      && (!where.filter || matchesFilter(it.metadata, where.filter))
+      && (where.owner === undefined || it.owner === where.owner)).map((it) => it.id));
+    if (!gone.size) return 0;
+    this.items = this.items.filter((it) => !gone.has(it.id));
+    this.byId = new Map(this.items.map((it, i) => [it.id, i]));
+    for (const g of gone) this.edges.delete(g);
+    for (const [k, list] of this.edges) this.edges.set(k, list.filter((e) => !gone.has(e.id)));
+    return gone.size;
   }
 
   private rebuildEdgesFor(id: string): void {

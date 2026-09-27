@@ -29,7 +29,11 @@ await consumer.poll();   // or consumer.start()
 ```
 
 ## API
-- `emit(work, topic, payload, { id?, maxDepth? }) → eventId` — `work` is `storage.work`
+- `emit(work, topic, payload, { id?, maxDepth?, resourceId?, orgId? }) → eventId` — `work` is `storage.work`.
+  With an owner, the handler's `meta` carries `resourceId`/`orgId`, so the run it starts is that user's.
+  An explicit `id` is then a name within that owner (the returned id is the stored one), `maxDepth` is
+  counted per organization, and an organization-scoped work store is refused (no consumer polls it).
+  A system event (no owner) is stored and delivered exactly as before.
 - `createConsumer(work, topic, handler, { name, pollMs?, backoff?, maxPollMs?, maxAttempts?, retryDelayMs? }) → { poll, start, stop }`
   — `name` is required to separate fan-out acks; `maxAttempts`/`retryDelayMs` govern the dead-letter below.
 - `listDeadEvents(work, topic, consumer) → DeadEvent[]` — everything quarantined for that consumer,

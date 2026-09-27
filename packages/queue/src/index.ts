@@ -4,7 +4,7 @@
 // resumes from the RunJournal → SIDE EFFECT HAPPENS ONCE. acquireRunLock (M4) prevents two workers
 // from running the same job concurrently.
 // Job log + markers live in WorkStore (own namespace); the lock + handler's durability live in RunJournal.
-import { acquireRunLock, requireCapability, createPollLoop, orgPrefix, withOrgStorage } from '@gnldev/durable';
+import { acquireRunLock, requireCapability, createPollLoop, orgPrefix, withOrgStorage, orgStorageScopeOf, ownedName } from '@gnldev/durable';
 import type { Storage, WorkStore, RunJournal, LogRecord } from '@gnldev/durable';
 
 export interface JobCtx {
@@ -22,8 +22,16 @@ export interface JobCtx {
   resourceId?: string;
   /** The organization this job was enqueued for. */
   orgId?: string;
-  /** The worker's storage, scoped to `orgId` when the job has one — build the organization's instance from it. */
+  /**
+   * The worker's storage, scoped to `orgId` when the job has one — build the organization's instance
+   * from it. Not for follow-up jobs: its work store is the organization's, which no worker polls.
+   */
   storage: Storage;
+  /**
+   * Enqueue a follow-up job into the worker's own queue, as the same user in the same organization
+   * (both overridable). What `enqueue(ctx.storage.work, …)` looks like it does, and did not.
+   */
+  enqueue(type: string, payload: unknown, opts?: { id?: string; maxDepth?: number } & JobOwner): Promise<string>;
 }
 
 /** Whose a job is. Kept beside the payload, never inside it: a payload is the handler's, this is the queue's. */
@@ -34,6 +42,7 @@ export interface JobOwner {
 
 /** A `qjob` log entry. */
 type JobRecord = { type: string; payload: unknown } & JobOwner;
+
 
 export type JobHandler = (payload: any, ctx: JobCtx) => Promise<any>;
 
@@ -102,12 +111,12 @@ export class QueueDepthExceededError extends Error {
  * maxDepth)) pages, NOT the entire log. Unless `maxDepth` is given (the default behavior), this function
  * is NEVER called → the existing unbounded-queue behavior is preserved.
  */
-async function countUpTo(work: WorkStore, ns: string, limit: number): Promise<number> {
+async function countUpTo(work: WorkStore, ns: string, limit: number, counts: (payload: unknown) => boolean = () => true): Promise<number> {
   let count = 0;
   let cursor: string | undefined;
   for (;;) {
     const page = await work.list(ns, { cursor });
-    count += page.items.length;
+    count += page.items.filter((it) => counts(it.payload)).length;
     if (count >= limit || !page.nextCursor) return count;
     cursor = page.nextCursor;
   }
@@ -126,12 +135,23 @@ export async function enqueue(
   payload: unknown,
   opts: { id?: string; maxDepth?: number } & JobOwner = {},
 ): Promise<string> {
+  // The queue is ONE log that the worker polls at the root. An organization-scoped work store (a
+  // handler's `ctx.storage.work`) takes the append and files it under `org:<id>:qjob`, where nothing
+  // ever reads it: the job is lost without a word. Refused instead.
+  const scopedTo = orgStorageScopeOf(work);
+  if (scopedTo !== undefined) {
+    throw new Error(
+      `@gnldev/queue: enqueue was handed organization '${scopedTo}''s work store — the worker polls the root queue, so the job ` +
+        "would never run. In a handler use ctx.enqueue(type, payload); elsewhere pass the root storage's work with { orgId }.",
+    );
+  }
   if (opts.orgId !== undefined) orgPrefix(opts.orgId);
   if (opts.resourceId !== undefined && (typeof opts.resourceId !== 'string' || opts.resourceId === '')) {
     throw new Error(`@gnldev/queue: invalid resourceId '${String(opts.resourceId)}' — must be a non-empty string, or omitted for a system job`);
   }
   if (opts.maxDepth != null) {
-    const depth = await countUpTo(work, 'qjob', opts.maxDepth);
+    // Counted per organization: one organization filling the queue refused every other one's work.
+    const depth = await countUpTo(work, 'qjob', opts.maxDepth, (j) => (j as JobRecord).orgId === opts.orgId);
     if (depth >= opts.maxDepth) {
       throw new QueueDepthExceededError(
         `@gnldev/queue: queue depth limit exceeded (${depth} >= ${opts.maxDepth}) — job rejected (type='${type}').`,
@@ -145,7 +165,9 @@ export async function enqueue(
     ...(opts.resourceId !== undefined ? { resourceId: opts.resourceId } : {}),
     ...(opts.orgId !== undefined ? { orgId: opts.orgId } : {}),
   };
-  return work.append('qjob', rec, opts.id);
+  // A caller's id is a name within its owner (`ownedName`): the log is one for every organization. The
+  // id returned is the stored one — what `retryJob` and `listJobs` speak.
+  return work.append('qjob', rec, opts.id === undefined ? undefined : ownedName(opts.id, opts));
 }
 
 /**
@@ -370,6 +392,11 @@ export function createWorker(
             journal: scoped.runs, jobId: job.id, runId, storage: scoped,
             ...(resourceId !== undefined ? { resourceId } : {}),
             ...(orgId !== undefined ? { orgId } : {}),
+            enqueue: (type, payload, o = {}) => enqueue(work, type, payload, {
+              ...(resourceId !== undefined ? { resourceId } : {}),
+              ...(orgId !== undefined ? { orgId } : {}),
+              ...o,
+            }),
           });
           if (await stillOwns()) await work.put(`qdone:${job.id}`, { at: Date.now(), ok: true });
         } catch (err) {

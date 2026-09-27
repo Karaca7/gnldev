@@ -15,11 +15,11 @@ describe('a scheduled workflow for an end user, end to end', () => {
 
     // Triggers live in the platform journal; the runs they start live in each organization's.
     const platform = createGnl(config);
-    await scheduleWorkflow(storage.runs as never, { id: 'ayse-weekly', name: 'weekly', input: { week: 39 }, at: 0, resourceId: 'ayse', orgId: 'acme' }, 0);
+    const trigger = await scheduleWorkflow(storage.runs as never, { id: 'ayse-weekly', name: 'weekly', input: { week: 39 }, at: 0, resourceId: 'ayse', orgId: 'acme' }, 0);
     const r = await pollScheduler(storage.runs as never, platform, 1, { runnerForOrg: gnlFor });
     expect(r.fired).toBe(1);
 
-    const runId = 'sched:ayse-weekly:0';
+    const runId = `sched:${trigger}:0`;
     const step0 = `${runId}:wf:summarise`;
     const acme = scopeConfigToOrg(config, 'acme').journal as never;
     expect(await (acme as any).get(step0)).toEqual({ text: 'SUMMARY-W39' });

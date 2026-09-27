@@ -7,6 +7,7 @@
 // core stays thin; concrete impls (in-memory/sqlite/postgres-storage) implement these ports.
 
 import type { Journal, JournalEntry, RunSummary, JournalReader, RunStatus } from './journal.js';
+import { VectorOwnerConflictError } from './errors.js';
 
 // ── Common ──────────────────────────────────────────────────────────────────
 
@@ -342,6 +343,51 @@ export interface VectorQueryOptions {
   visibleTo?: string;
 }
 
+/** What `VectorStore.delete` removes: every given condition must match. No condition removes nothing. */
+export interface VectorDeleteWhere {
+  ids?: string[];
+  /** Every document of this end user — the erasure path (`purgeResource(…, { vectors })`). */
+  owner?: string;
+  namespace?: string;
+}
+
+/**
+ * Labels are checked where they are written, the same way in every store. The SQL stores read any
+ * truthy `shared` as shared and the others only `true`, so `shared: "false"` from a JSON form was
+ * a private document in one store and everyone's in the next.
+ */
+export function assertVectorLabels(items: ReadonlyArray<{ id: string; owner?: unknown; shared?: unknown }>): void {
+  for (const it of items) {
+    if (it.shared !== undefined && it.shared !== true && it.shared !== false) {
+      throw new TypeError(`@gnldev/durable: document '${it.id}': 'shared' must be true, false or absent — got ${JSON.stringify(it.shared)}`);
+    }
+    if (it.owner !== undefined && (typeof it.owner !== 'string' || it.owner === '')) {
+      throw new TypeError(`@gnldev/durable: document '${it.id}': 'owner' must be a non-empty string or absent — got ${JSON.stringify(it.owner)}`);
+    }
+  }
+}
+
+/**
+ * An upsert updates a document; it does not move it to another owner, label or partition. The one
+ * rule every store applies before writing over an existing id.
+ */
+export function assertSameVectorOwner(
+  existing: { namespace?: string | null; owner?: string | null; shared?: boolean | number | null } | undefined,
+  incoming: { id: string; namespace?: string; owner?: string; shared?: boolean },
+): void {
+  if (!existing) return;
+  const same = (existing.namespace ?? undefined) === incoming.namespace
+    && (existing.owner ?? undefined) === incoming.owner
+    && !!existing.shared === !!incoming.shared;
+  if (!same) {
+    throw new VectorOwnerConflictError(
+      `@gnldev/durable: document '${incoming.id}' already exists with a different owner or label — an upsert updates a ` +
+        'document, it does not hand it to someone else. Use another id, or delete the document first.',
+      { id: incoming.id },
+    );
+  }
+}
+
 /** The one reading of `VectorQueryOptions.visibleTo`, shared by every implementation that filters in code. */
 export function visibleToSubject(doc: { owner?: string; shared?: boolean }, visibleTo: string | undefined): boolean {
   return visibleTo === undefined || doc.shared === true || (doc.owner !== undefined && doc.owner === visibleTo);
@@ -359,6 +405,8 @@ export interface VectorStore {
    * every organization but the busiest one.
    */
   query(embedding: number[], topK: number, opts?: VectorQueryOptions): Promise<VectorMatch[]>;
+  /** Removes the documents matching every given condition; returns how many. No condition removes nothing. */
+  delete?(where: VectorDeleteWhere): Promise<number>;
 }
 
 // ── 4) WorkStore = queue + events + scheduler primitive (has its OWN namespace; doesn't pollute RunJournal) ──

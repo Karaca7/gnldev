@@ -12,7 +12,7 @@ import type { Journal, JournalReader } from './journal.js';
 
 /** What sweepRuns needs off a `:input` record: the freeze stamp, plus whatever identityOnlyInput reads. */
 type FrozenInputLike = { at?: number } & Record<string, unknown>;
-import type { WorkStore } from './storage.js';
+import type { WorkStore, VectorStore } from './storage.js';
 import { getRunCost } from './cost.js';
 import { USAGE_KEY, usageCountedKey } from './budget.js';
 import type { OrganizationUsage } from './budget.js';
@@ -379,8 +379,23 @@ export async function purgeBatch(journal: Journal, batchId: string): Promise<num
  *  - Needs `listKeys`+`listRunsPaged`; an adapter without them keeps today's three-prefix behaviour
  *    rather than silently reporting a fuller erasure than it performed.
  */
-export async function purgeResource(journal: Journal, resourceId: string): Promise<number> {
+export async function purgeResource(
+  journal: Journal,
+  resourceId: string,
+  opts: {
+    /**
+     * The knowledge base, to erase this person's own documents (`owner: resourceId`) too. The vector
+     * store is a separate port from the journal, so without it their documents stay — a store with no
+     * `delete` is refused rather than skipped, since an erasure that quietly keeps half is the failure
+     * this function exists to avoid.
+     */
+    vectors?: Pick<VectorStore, 'delete'>;
+  } = {},
+): Promise<number> {
   const del = requireDelete(journal);
+  if (opts.vectors && typeof opts.vectors.delete !== 'function') {
+    throw new Error('@gnldev/durable: purgeResource was given a vector store that cannot delete, so this person\'s documents cannot be erased');
+  }
   // `suggstats:` carries the FULL lesson key (`suggstats:lesson:res:<rid>:<id>`) — the injection
   // counter's key itself names the person, so it must die with them (GDPR brief audit, K27 EK-3).
   // deletePrefix sweeps counter rows since P1.6, so this reaches HINCRBY-backed adapters too.
@@ -396,6 +411,9 @@ export async function purgeResource(journal: Journal, resourceId: string): Promi
   const paged = (journal as unknown as {
     listRunsPaged?: (q: { resourceId: string; limit: number; cursor?: string }) => Promise<{ items: Array<{ runId: string; threadId?: string }>; nextCursor?: string }>;
   }).listRunsPaged;
+  // Their own documents in the knowledge base (shared ones are nobody's to erase with one person).
+  // Before the early return below, which a journal without paged listing takes.
+  if (opts.vectors) total += await opts.vectors.delete!({ owner: resourceId });
   if (typeof paged !== 'function') return total;
   const threads = new Set<string>();
   const runIds: string[] = [];

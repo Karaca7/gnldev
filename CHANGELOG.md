@@ -32,8 +32,16 @@ Many entries below are breaking. If you are upgrading, check these first:
    user's search no longer finds unlabelled documents.
 9. **Logout revocation:** a token's `jti` is now `sessionTokenId(sid)`, not the session id. Deny that
    value at logout.
+10. **Owned job, trigger and event ids:** with an `orgId` or `resourceId`, an explicit id is stored as
+    `<org>:<user>:<id>`. Use the id `enqueue`/`scheduleWorkflow`/`emit` return, not the one you passed.
 
 ### Added
+
+- **Background work keeps its owner end to end.** `ctx.enqueue` in a queue handler enqueues a follow-up
+  as the same user and organization. `emit(…, { resourceId, orgId })` delivers both in the handler's
+  `meta`. `budgetGuard` receives them. `createWorkflowWaker({ orgs })` wakes sleeping workflows inside
+  organizations and tells `resume` which one. `purgeResource(…, { vectors })` erases a person's own
+  documents, through the new `VectorStore.delete` (`delete({ owner })` in every store).
 
 - **A knowledge base holds general documents and each user's own.** `VectorDoc` takes `owner` and
   `shared`; `VectorQueryOptions.visibleTo` (and `QueryOptions.visibleTo` in @gnldev/rag) answers from
@@ -66,6 +74,19 @@ Many entries below are breaking. If you are upgrading, check these first:
   now call GNL directly without the `client` token, which must stay on your server.
 
 ### Breaking
+
+- **Explicit job, trigger and event ids are names within their owner.** Queue, scheduler and event logs
+  are shared by every organization, so `weekly-report` from globex collapsed into acme's, and the second
+  user to schedule a workflow without an id got the first one's trigger. Owned ids are now stored as
+  `<org>:<user>:<id>` (`ownedName`); the returned id is the stored one. System ids are unchanged.
+- **An upsert cannot move a document to another owner, label or namespace.** It fails with
+  `VectorOwnerConflictError`; delete first to relabel. Labels are checked at write in every store:
+  `shared` must be a boolean, `owner` a non-empty string.
+- **`withOrgStorage` stores an organization's documents as `<ns>:<id>`** and hands them back as `<id>`,
+  so two organizations can use the same id. `adoptIntoOrg` renames adopted documents the same way.
+- **`enqueue` and `emit` refuse an organization-scoped work store.** A job or event written there was
+  never polled. Use `ctx.enqueue`, or the root store with `{ orgId }`.
+- **`maxDepth` is counted per organization** in the queue and in event topics.
 
 - **The token route no longer puts the session id in the token.** `subjectTokenEndpoint` sets `jti` to
   `sessionTokenId(sid)`, a one-way id of the session. The session id is usually an HttpOnly cookie's
@@ -163,7 +184,15 @@ Many entries below are breaking. If you are upgrading, check these first:
 - **Only an operator can grant `operator` or `application`.** `assertAssignablePrivileges` checks
   `kind`, and a role does not stand in for it: a `subject` holding `admin` is refused.
 
+### Known limits
+
+- Queue and scheduler lease locks live in the root partition while the run lives in the organization's.
+  With owned ids they cannot collide, but `purgeOrganization` leaves those short-lived lock records behind.
+
 ### Fixed
+
+- **Erasure and retention snippets passed the wrong type.** The scaffold suggested
+  `purgeResource(storage, userId)` and `sweepRuns(storage.runs, …)`; both need `toJournal(storage.runs)`.
 
 - **An end user could take over a staff member's workflow run.** An ownerless workflow run left no
   `:input` record, and the write gates read "no record" as "not started": an end user approved a

@@ -9,7 +9,7 @@
 // The waker does NOT know how to rebuild a workflow instance — it has no `workflows: {}` registry.
 // `resume(runId, status)` is host-supplied and closes over whatever registry (e.g. `createGnl` /
 // a plain `Workflow` map) actually knows how to call `runResumable` again for that run.
-import { claim, createPollLoop } from '@gnldev/durable';
+import { claim, createPollLoop, withOrg } from '@gnldev/durable';
 import type { PollLoop } from '@gnldev/durable';
 import { listWorkflowRuns } from '@gnldev/workflow';
 import type { JournalLike, WorkflowRunStatus } from '@gnldev/workflow';
@@ -39,7 +39,14 @@ export interface WorkflowWakerOptions {
    * `runResumable(input, { runId, journal }, opts)` again (completed steps replay from the journal;
    * the suspended step re-evaluates and either continues or suspends again).
    */
-  resume: (runId: string, status: WorkflowRunStatus) => Promise<unknown>;
+  resume: (runId: string, status: WorkflowRunStatus, where?: { orgId: string }) => Promise<unknown>;
+  /**
+   * Organizations to scan besides the root. A workflow started inside an organization sleeps in its
+   * partition (`org:<id>:wfrun:…`), which a scan of the root never sees — it was never woken. For each
+   * one found, `resume` is called with `{ orgId }`, so it can resume on that organization's instance.
+   * A list, or a function asked on every tick (e.g. read from your organization registry).
+   */
+  orgs?: string[] | (() => string[] | Promise<string[]>);
   /** Poll interval (ms). Default 5000. */
   intervalMs?: number;
   /**
@@ -103,47 +110,56 @@ export function createWorkflowWaker(opts: WorkflowWakerOptions): WorkflowWaker {
   const failStreak = new Map<string, number>();
 
   async function tick(now: number = Date.now()): Promise<WorkflowWakerTickResult> {
-    const runs = await listWorkflowRuns(journal, { status: 'suspended' });
     const out: WorkflowWakerTickResult = { resumed: 0, skipped: 0, errored: 0 };
+    // The root, then each organization's partition — its runs, and its wake tickets, live there.
+    const orgList = typeof opts.orgs === 'function' ? await opts.orgs() : (opts.orgs ?? []);
+    const partitions: Array<{ j: JournalLike; orgId?: string }> = [
+      { j: journal },
+      ...orgList.map((orgId) => ({ j: withOrg(journal as never, orgId) as unknown as JournalLike, orgId })),
+    ];
+    for (const { j, orgId } of partitions) {
+      const runs = await listWorkflowRuns(j, { status: 'suspended' });
+      for (const run of runs) {
+        const reason = reasonKind(run.reason);
+        const due =
+          reason.kind === 'time'
+            ? reason.untilMs !== undefined && now >= reason.untilMs
+            : reason.kind === 'event' || reason.kind === 'resume'
+              ? wakeEvented
+              : false; // unknown reason shape — conservatively don't wake it
+        if (!due) {
+          out.skipped++;
+          continue;
+        }
 
-    for (const run of runs) {
-      const reason = reasonKind(run.reason);
-      const due =
-        reason.kind === 'time'
-          ? reason.untilMs !== undefined && now >= reason.untilMs
-          : reason.kind === 'event' || reason.kind === 'resume'
-            ? wakeEvented
-            : false; // unknown reason shape — conservatively don't wake it
-      if (!due) {
-        out.skipped++;
-        continue;
-      }
+        // Cost/politeness optimization ONLY — correctness does NOT depend on this CAS. `runResumable`
+        // is idempotent by construction (completed steps replay from the journal), so even if two
+        // waker instances both win this race (e.g. the journal lacks `putIfAbsent` and falls back to
+        // the documented get+put race window), both `resume()` calls are harmless — at most one of
+        // them actually advances the run.
+        // Per partition: two organizations may each have a run with this id.
+        const streakKey = `${orgId ?? ''}\u0000${run.runId}`;
+        const ticketKey = WAKE_TICKET(run.runId, run.updatedAt);
+        const gotTicket = await claim(j as never, ticketKey, { at: now });
+        if (!gotTicket) {
+          out.skipped++;
+          continue;
+        }
 
-      // Cost/politeness optimization ONLY — correctness does NOT depend on this CAS. `runResumable`
-      // is idempotent by construction (completed steps replay from the journal), so even if two
-      // waker instances both win this race (e.g. the journal lacks `putIfAbsent` and falls back to
-      // the documented get+put race window), both `resume()` calls are harmless — at most one of
-      // them actually advances the run.
-      const ticketKey = WAKE_TICKET(run.runId, run.updatedAt);
-      const gotTicket = await claim(journal, ticketKey, { at: now });
-      if (!gotTicket) {
-        out.skipped++;
-        continue;
-      }
-
-      out.resumed++;
-      try {
-        await resume(run.runId, run);
-        failStreak.delete(run.runId);
-      } catch (err) {
-        out.errored++;
-        if (onError) {
-          onError(run.runId, err);
-        } else {
-          const streak = (failStreak.get(run.runId) ?? 0) + 1;
-          failStreak.set(run.runId, streak);
-          if (streak === 1) {
-            console.warn(`@gnldev/scheduler: workflow-waker resume('${run.runId}') failed (chain continues):`, err);
+        out.resumed++;
+        try {
+          await (orgId === undefined ? resume(run.runId, run) : resume(run.runId, run, { orgId }));
+          failStreak.delete(streakKey);
+        } catch (err) {
+          out.errored++;
+          if (onError) {
+            onError(run.runId, err);
+          } else {
+            const streak = (failStreak.get(streakKey) ?? 0) + 1;
+            failStreak.set(streakKey, streak);
+            if (streak === 1) {
+              console.warn(`@gnldev/scheduler: workflow-waker resume('${run.runId}') failed (chain continues):`, err);
+            }
           }
         }
       }

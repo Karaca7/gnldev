@@ -21,7 +21,9 @@ function fakePool(): PoolLike {
         } else {
           rows.push({ id, text, embedding, metadata });
         }
-        return { rows: [] };
+        // What `INSERT … RETURNING id` answers: the row it wrote (an update of an existing id included,
+        // which this fake folds into the insert). The store reads an empty answer as "id taken".
+        return { rows: [{ id }] };
       }
       if (/ORDER\s+BY\s+embedding/i.test(sql)) {
         const [vec, topK] = params as [string, number];
@@ -164,7 +166,12 @@ describe('setup interrupted by a dropped connection', () => {
 describe('PostgresVectorStore: end-user narrowing reaches the SQL', () => {
   function recordingPool() {
     const calls: Array<{ sql: string; params: unknown[] }> = [];
-    const pool: PoolLike = { async query(sql: string, params: unknown[] = []) { calls.push({ sql, params }); return { rows: [] }; } };
+    const pool: PoolLike = {
+      async query(sql: string, params: unknown[] = []) {
+        calls.push({ sql, params });
+        return { rows: /^\s*INSERT/i.test(sql) ? [{ id: params[0] }] : [] };
+      },
+    };
     return { pool, calls };
   }
 
@@ -192,6 +199,8 @@ describe('PostgresVectorStore: end-user narrowing reaches the SQL', () => {
       { id: 'g', text: 'y', embedding: [1, 0], shared: true },
     ]);
     const ins = calls.filter((c) => /^\s*INSERT/i.test(c.sql));
+    expect(calls.some((c) => /^\s*UPDATE/i.test(c.sql) && /COALESCE\(owner/.test(c.sql)), 'an update only when the labels match').toBe(true);
+    expect(ins[0]!.sql).toMatch(/ON CONFLICT \(id\) DO NOTHING/);
     expect(ins[0]!.sql).toMatch(/\(id, text, embedding, metadata, namespace, owner, shared, created_at\)/);
     expect(ins[0]!.params.slice(5, 7)).toEqual(['ayse', null]);
     expect(ins[1]!.params.slice(5, 7)).toEqual([null, true]);

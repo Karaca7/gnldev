@@ -2,7 +2,7 @@
 // Keeps triggers in the journal (definition immutable, state mutable). The poll loop (now=Date.now())
 // fires due triggers exactly-once (acquireRunLock + per-fireCount runId). The workflow run carries its
 // own durable guarantee. Time = DATA (nextRunAt in the journal) → resolve-then-freeze, replay-safe.
-import { acquireRunLock, createPollLoop, orgPrefix } from '@gnldev/durable';
+import { acquireRunLock, createPollLoop, orgPrefix, ownedName } from '@gnldev/durable';
 import type { Journal } from '@gnldev/durable';
 import { nextCronTime } from './cron.js';
 
@@ -154,7 +154,15 @@ function isRunBusyAtAcquisition(e: unknown): boolean {
  *   budgetGuard: () => assertBudget(journal, { orgId, fallback })
  * Kept simple: the scheduler does NOT EMBED quota logic itself, the host injects it (same pattern as limits/guard).
  */
-export type BudgetGuard = (ctx: { triggerId: string; workflowName: string; input: unknown; now: number }) => Promise<unknown> | unknown;
+export type BudgetGuard = (ctx: {
+  triggerId: string;
+  workflowName: string;
+  input: unknown;
+  now: number;
+  /** Whose trigger is firing — so one scheduler serving many organizations can charge the right one. */
+  orgId?: string;
+  resourceId?: string;
+}) => Promise<unknown> | unknown;
 
 function firstRunAt(spec: ScheduleSpec, now: number): number {
   if (spec.at != null) return spec.at;
@@ -226,7 +234,9 @@ export async function scheduleWorkflow(journal: Journal, spec: ScheduleSpec, now
   if (spec.resourceId !== undefined && (typeof spec.resourceId !== 'string' || spec.resourceId === '')) {
     throw new Error(`@gnldev/scheduler: invalid resourceId '${String(spec.resourceId)}' — must be a non-empty string, or omitted for a system trigger`);
   }
-  const id = spec.id ?? spec.name;
+  // A name within its owner (`ownedName`): triggers of every organization share this journal, and the
+  // id defaults to the workflow's name, so the second user to schedule it got the first one's trigger.
+  const id = ownedName(spec.id ?? spec.name, spec);
   if ((await journal.get(DEF(id))) !== undefined) {
     /**
      * THE DEFINITION EXISTS. That used to end the function — and it was reading only half the record.
@@ -389,7 +399,11 @@ export async function pollScheduler(
       // 1.4: optional budget/quota hook — checked before runner.runWorkflow is CALLED.
       if (opts.budgetGuard) {
         try {
-          await opts.budgetGuard({ triggerId: id, workflowName: def.name, input: def.input, now });
+          await opts.budgetGuard({
+            triggerId: id, workflowName: def.name, input: def.input, now,
+            ...(def.orgId !== undefined ? { orgId: def.orgId } : {}),
+            ...(def.resourceId !== undefined ? { resourceId: def.resourceId } : {}),
+          });
         } catch (e) {
           // attempts DOES NOT increase; the diagnostic record is only written if the CAS was won (a
           // stale poller must not leave a budget-skip note on someone else's fire either).

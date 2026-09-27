@@ -32,10 +32,11 @@ describe('a trigger on behalf of an end user', () => {
   it('with an organization but no way to reach it, it does not run — and says why', async () => {
     const j = new InMemoryJournal();
     const calls: Call[] = [];
-    await scheduleWorkflow(j, { id: 't1', name: 'weekly', at: 0, orgId: 'acme', maxAttempts: 1 }, 0);
+    // The id scheduleWorkflow returns is the stored one (`ownedName`: a name within its owner).
+    const id = await scheduleWorkflow(j, { id: 't1', name: 'weekly', at: 0, orgId: 'acme', maxAttempts: 1 }, 0);
     await pollScheduler(j, recorder('default', calls), 1);
     expect(calls, 'the organization-less runner must not be used').toEqual([]);
-    const t = (await listTriggers(j)).find((x) => x.id === 't1')!;
+    const t = (await listTriggers(j)).find((x) => x.id === id)!;
     expect(t.status).toBe('failed');
     expect(t.lastError).toMatch(/runnerForOrg/);
   });

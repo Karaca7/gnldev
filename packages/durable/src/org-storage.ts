@@ -27,7 +27,7 @@ import { asReaderJournal, type Journal, type JournalReader } from './journal.js'
 import type {
   CacheStore, CapabilityMatrix, ListQuery, LogRecord, MemoryStore, MessageRecord, MessageAppend, MetaStore,
   Page, RunJournal, Storage, ThreadRecord,
-  VectorItem, VectorMatch, VectorQueryOptions, VectorStore, WorkStore,
+  VectorItem, VectorMatch, VectorQueryOptions, VectorDeleteWhere, VectorStore, WorkStore,
 } from './storage.js';
 import type { RunSummary } from './journal.js';
 
@@ -237,16 +237,26 @@ function scopedVectors(vectors: VectorStore, p: string): VectorStore {
   // The namespace is the prefix WITHOUT its trailing colon — `org:acme` — so it reads as an identifier
   // in a namespace column rather than as a key fragment.
   const ns = p.endsWith(':') ? p.slice(0, -1) : p;
-  const stripNs = (m: VectorMatch): VectorMatch => { const { namespace: _n, ...rest } = m; return rest; };
-  return {
+  // IDS ARE PER ORGANIZATION TOO. The store keys a document by id alone, so two organizations using the
+  // same id — the scaffold's own `doc-1` — replaced each other's document. Stored as `<ns>:<id>`, handed
+  // back as `<id>`; a document adopted into the organization is renamed the same way (adoptIntoOrg).
+  const own = (id: string) => `${ns}:${id}`;
+  const bare = (id: string) => (id.startsWith(`${ns}:`) ? id.slice(ns.length + 1) : id);
+  const stripNs = (m: VectorMatch): VectorMatch => { const { namespace: _n, ...rest } = m; return { ...rest, id: bare(m.id) }; };
+  const scoped: VectorStore = {
     // The caller's own `namespace` is deliberately overwritten, not merged or respected. This wrapper
     // is the organization boundary; a document that could choose its own namespace could choose
     // another organization's.
-    upsert: (items: VectorItem[]) => vectors.upsert(items.map((it) => ({ ...it, namespace: ns }))),
+    upsert: (items: VectorItem[]) => vectors.upsert(items.map((it) => ({ ...it, id: own(it.id), namespace: ns }))),
     // `opts.namespace` is likewise ignored rather than honoured — same reason, in the read direction.
     query: async (embedding: number[], topK: number, opts?: VectorQueryOptions) =>
       (await vectors.query(embedding, topK, { ...opts, namespace: ns })).map(stripNs),
   };
+  if (vectors.delete) {
+    // Always inside the organization: the namespace is forced, and ids are this organization's.
+    scoped.delete = (where: VectorDeleteWhere) => vectors.delete!({ ...where, namespace: ns, ...(where.ids ? { ids: where.ids.map(own) } : {}) });
+  }
+  return scoped;
 }
 
 function scopedWork(work: WorkStore, p: string): WorkStore {
@@ -263,6 +273,9 @@ function scopedWork(work: WorkStore, p: string): WorkStore {
   if (work.deletePrefix) {
     scoped.deletePrefix = (prefix) => work.deletePrefix!(add(p, prefix));
   }
+  // Marked like the storage it belongs to, so `orgStorageScopeOf(work)` answers too. @gnldev/queue
+  // reads it: a job appended here lands under `org:<id>:qjob`, where no worker polls.
+  Object.defineProperty(scoped, STORAGE_SCOPE, { value: p.slice('org:'.length, -1), enumerable: false });
   return scoped;
 }
 

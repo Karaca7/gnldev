@@ -9,11 +9,11 @@ import { cosineSimilarity } from 'ai';
 import { runIdOfKey, parseJournalKey, outcomeStatusOf, deriveRunStatus } from './journal.js';
 import type { JournalBatch, JournalEntry, RunSummary, ToolJournalRecord } from './journal.js';
 import { serialize, deserialize } from './serialize.js';
-import { matchFilter } from './storage.js';
+import { matchFilter, assertVectorLabels, assertSameVectorOwner } from './storage.js';
 import type { AdoptIntoOrgResult,
   Storage, CapabilityMatrix, Page, ListQuery,
   RunJournal, MemoryStore, VectorStore, WorkStore, CacheStore, MetaStore,
-  ThreadRecord, MessageRecord, MessageAppend, Observation, RecallOptions, VectorItem, VectorMatch, VectorQueryOptions, LogRecord,
+  ThreadRecord, MessageRecord, MessageAppend, Observation, RecallOptions, VectorItem, VectorMatch, VectorQueryOptions, VectorDeleteWhere, LogRecord,
 } from './storage.js';
 // P2-migrate schema introspection/migration façade — see migrate.ts's header.
 import { tablesFromDDL } from './migrate.js';
@@ -561,7 +561,8 @@ export class PostgresStorage implements Storage {
 
       const vecs = Number((await q(`SELECT COUNT(*) AS c FROM gnl_vectors WHERE namespace IS NULL`)).rows[0].c);
       alreadyScoped += Number((await q(`SELECT COUNT(*) AS c FROM gnl_vectors WHERE namespace IS NOT NULL`)).rows[0].c);
-      if (!dryRun && vecs) await q(`UPDATE gnl_vectors SET namespace = $1 WHERE namespace IS NULL`, [ns]);
+      // Renamed as well as stamped: an organization stores its documents as `<ns>:<id>` (withOrgStorage).
+      if (!dryRun && vecs) await q(`UPDATE gnl_vectors SET namespace = $1, id = $1 || ':' || id WHERE namespace IS NULL`, [ns]);
       bump('vectors', vecs);
 
       if (!dryRun) await q('COMMIT');
@@ -1420,10 +1421,39 @@ class PgMemoryStore implements MemoryStore {
 class PgVectorStore implements VectorStore {
   constructor(private q: Q) {}
   async upsert(items: VectorItem[]): Promise<void> {
-    for (const it of items) await this.q(
-      `INSERT INTO gnl_vectors (id, text, embedding, metadata, namespace, owner, shared, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO UPDATE SET text=EXCLUDED.text, embedding=EXCLUDED.embedding, metadata=EXCLUDED.metadata, namespace=EXCLUDED.namespace, owner=EXCLUDED.owner, shared=EXCLUDED.shared`,
-      [it.id, it.text, JSON.stringify(it.embedding), it.metadata ? serialize(it.metadata) : null, it.namespace ?? null, it.owner ?? null, it.shared ? true : null, Date.now()],
-    );
+    assertVectorLabels(items);
+    // The whole batch is checked before anything is written (a refused batch leaves no half); the
+    // conditional UPDATE then closes the window between this read and the write.
+    const probe = async (id: string) =>
+      (await this.q('SELECT namespace, owner, shared FROM gnl_vectors WHERE id = $1', [id])).rows[0] as { namespace: string | null; owner: string | null; shared: boolean | null } | undefined;
+    for (const it of items) assertSameVectorOwner(await probe(it.id), it);
+    // Two statements, neither of which can overwrite a document of another owner: update only when the
+    // labels match, otherwise insert only when the id is free. Neither landing means the id is taken
+    // under other labels. (One `ON CONFLICT … DO UPDATE … WHERE` would do it, but not every Postgres
+    // speaker in use parses it.)
+    for (const it of items) {
+      const labels = [it.namespace ?? null, it.owner ?? null, it.shared ? true : null];
+      const updated = await this.q(
+        // NULL-safe equality spelled with COALESCE: '' is never a namespace or an owner (both refused).
+        `UPDATE gnl_vectors SET text=$2, embedding=$3, metadata=$4 WHERE id=$1 AND COALESCE(namespace, '') = COALESCE($5, '') AND COALESCE(owner, '') = COALESCE($6, '') AND COALESCE(shared, false) = COALESCE($7, false)`,
+        [it.id, it.text, JSON.stringify(it.embedding), it.metadata ? serialize(it.metadata) : null, ...labels],
+      );
+      if (((updated as { rowCount?: number | null }).rowCount ?? 0) > 0) continue;
+      const inserted = await this.q(
+        `INSERT INTO gnl_vectors (id, text, embedding, metadata, namespace, owner, shared, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO NOTHING`,
+        [it.id, it.text, JSON.stringify(it.embedding), it.metadata ? serialize(it.metadata) : null, ...labels, Date.now()],
+      );
+      if (((inserted as { rowCount?: number | null }).rowCount ?? 0) === 0) assertSameVectorOwner((await probe(it.id)) ?? { namespace: '\u0000' }, it);
+    }
+  }
+  async delete(where: VectorDeleteWhere): Promise<number> {
+    const conds: string[] = [];
+    const params: unknown[] = [];
+    if (where.ids) { if (!where.ids.length) return 0; params.push(where.ids); conds.push(`id = ANY($${params.length})`); }
+    if (where.owner !== undefined) { params.push(where.owner); conds.push(`owner = $${params.length}`); }
+    if (where.namespace !== undefined) { params.push(where.namespace); conds.push(`namespace = $${params.length}`); }
+    if (!conds.length) return 0;
+    return Number((await this.q(`DELETE FROM gnl_vectors WHERE ${conds.join(' AND ')}`, params) as { rowCount?: number | null }).rowCount ?? 0);
   }
   async query(embedding: number[], topK: number, opts?: VectorQueryOptions): Promise<VectorMatch[]> {
     // Filtered in SQL, so only eligible rows reach the ranking. Ranking the whole table and filtering
@@ -1435,7 +1465,8 @@ class PgVectorStore implements VectorStore {
     // un-namespaced partition would match nothing at all.
     const where: string[] = [];
     const params: unknown[] = [];
-    if (opts?.namespace !== undefined) { params.push(opts.namespace); where.push(`namespace IS NOT DISTINCT FROM $${params.length}`); }
+    // `=` is exact here: a namespace is never null on this path (undefined means "no filter" above).
+    if (opts?.namespace !== undefined) { params.push(opts.namespace); where.push(`namespace = $${params.length}`); }
     if (opts?.visibleTo !== undefined) { params.push(opts.visibleTo); where.push(`(shared IS TRUE OR owner = $${params.length})`); }
     const r = await this.q(`SELECT id, text, embedding, metadata, namespace, owner, shared FROM gnl_vectors${where.length ? ` WHERE ${where.join(' AND ')}` : ''}`, params);
     return r.rows

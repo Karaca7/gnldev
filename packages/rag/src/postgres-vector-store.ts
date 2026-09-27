@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { assertVectorLabels, assertSameVectorOwner } from '@gnldev/durable';
 import type { VectorStore, VectorItem, VectorMatch, QueryOptions, DeleteWhere } from './vector-store.js';
 
 /** Minimal pg.Pool surface — injectable for tests/custom setups (same pattern as PostgresJournal). */
@@ -99,20 +100,33 @@ export class PostgresVectorStore implements VectorStore {
 
   async upsert(items: VectorItem[]): Promise<void> {
     if (items.length === 0) return;
+    assertVectorLabels(items);
     await this.ensureReady(items[0]!.embedding.length);
+    const probe = async (id: string) =>
+      (await this.pool.query(`SELECT namespace, owner, shared FROM ${this.table} WHERE id = $1`, [id])).rows[0] as
+        { namespace: string | null; owner: string | null; shared: boolean | null } | undefined;
+    // Whole batch checked first: a refused batch leaves no half (assertSameVectorOwner).
+    for (const it of items) assertSameVectorOwner(await probe(it.id), it);
+    // Then two statements, neither of which can overwrite another owner's document: update only when
+    // the labels match, else insert only when the id is free. Neither landing = taken under other labels.
     for (const it of items) {
-      await this.pool.query(
+      const labels = [it.namespace ?? null, it.owner ?? null, it.shared ? true : null];
+      const updated = await this.pool.query(
+        `UPDATE ${this.table} SET text = $2, embedding = $3::vector, metadata = $4
+           WHERE id = $1 AND COALESCE(namespace, '') = COALESCE($5, '') AND COALESCE(owner, '') = COALESCE($6, '')
+             AND COALESCE(shared, false) = COALESCE($7, false)
+           RETURNING id`,
+        [it.id, it.text, toVectorLiteral(it.embedding), it.metadata ? JSON.stringify(it.metadata) : null, ...labels],
+      );
+      if (updated.rows.length) continue;
+      const inserted = await this.pool.query(
         `INSERT INTO ${this.table} (id, text, embedding, metadata, namespace, owner, shared, created_at)
            VALUES ($1, $2, $3::vector, $4, $5, $6, $7, $8)
-           ON CONFLICT (id) DO UPDATE SET
-             text = EXCLUDED.text,
-             embedding = EXCLUDED.embedding,
-             metadata = EXCLUDED.metadata,
-             namespace = EXCLUDED.namespace,
-             owner = EXCLUDED.owner,
-             shared = EXCLUDED.shared`,
-        [it.id, it.text, toVectorLiteral(it.embedding), it.metadata ? JSON.stringify(it.metadata) : null, it.namespace ?? null, it.owner ?? null, it.shared ? true : null, Date.now()],
+           ON CONFLICT (id) DO NOTHING
+           RETURNING id`,
+        [it.id, it.text, toVectorLiteral(it.embedding), it.metadata ? JSON.stringify(it.metadata) : null, ...labels, Date.now()],
       );
+      if (!inserted.rows.length) assertSameVectorOwner((await probe(it.id)) ?? { namespace: '\u0000' }, it);
     }
   }
 
@@ -166,7 +180,7 @@ export class PostgresVectorStore implements VectorStore {
 
   /** 7.2: delete by id/filter/namespace (count deleted via RETURNING). Empty where → deletes nothing. */
   async delete(where: DeleteWhere): Promise<number> {
-    if (!where.ids && where.namespace === undefined && !where.filter) return 0; // safe side
+    if (!where.ids && where.namespace === undefined && !where.filter && where.owner === undefined) return 0; // safe side
     await this.ensureReady(this.dimension ?? 1);
     const params: unknown[] = [];
     const conds: string[] = [];
@@ -181,6 +195,10 @@ export class PostgresVectorStore implements VectorStore {
     if (where.filter && Object.keys(where.filter).length > 0) {
       params.push(JSON.stringify(where.filter));
       conds.push(`metadata @> $${params.length}::jsonb`);
+    }
+    if (where.owner !== undefined) {
+      params.push(where.owner);
+      conds.push(`owner = $${params.length}`);
     }
     const res = await this.pool.query(
       `DELETE FROM ${this.table} WHERE ${conds.join(' AND ')} RETURNING id`,

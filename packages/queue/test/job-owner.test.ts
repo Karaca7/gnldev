@@ -8,7 +8,8 @@ import { enqueue, createWorker, listJobs, retryJob, type JobCtx } from '../src/i
 describe('a job enqueued on behalf of an end user', () => {
   it('reaches the handler with the user, the organization, and storage scoped to it', async () => {
     const storage = new InMemoryStorage();
-    await enqueue(storage.work!, 'summary', { week: 39 }, { id: 'j1', resourceId: 'ayse', orgId: 'acme' });
+    // An owned job's id is the one enqueue returns (`<org>:<user>:<id>`), not the bare name given.
+    const j1 = await enqueue(storage.work!, 'summary', { week: 39 }, { id: 'j1', resourceId: 'ayse', orgId: 'acme' });
     let seen: JobCtx | undefined;
     await createWorker(storage, {
       summary: async (_p, ctx) => {
@@ -21,20 +22,20 @@ describe('a job enqueued on behalf of an end user', () => {
     expect(seen?.orgId).toBe('acme');
 
     // The run is in acme's partition, and nowhere else.
-    expect(await storage.runs.get('org:acme:job:j1:model:0')).toEqual({ text: 'WEEKLY' });
-    expect(await storage.runs.get('job:j1:model:0')).toBeUndefined();
+    expect(await storage.runs.get(`org:acme:job:${j1}:model:0`)).toEqual({ text: 'WEEKLY' });
+    expect(await storage.runs.get(`job:${j1}:model:0`)).toBeUndefined();
     // Through acme's own view: Ayşe reads it, Mallory does not.
     const acme = withOrgStorage(storage, 'acme').runs as any;
-    expect(JSON.stringify(await withSubjectJournal(acme, 'ayse').readRun!('job:j1'))).toContain('WEEKLY');
-    expect(JSON.stringify(await withSubjectJournal(acme, 'mallory').readRun!('job:j1') ?? null)).not.toContain('WEEKLY');
+    expect(JSON.stringify(await withSubjectJournal(acme, 'ayse').readRun!(`job:${j1}`))).toContain('WEEKLY');
+    expect(JSON.stringify(await withSubjectJournal(acme, 'mallory').readRun!(`job:${j1}`) ?? null)).not.toContain('WEEKLY');
   });
 
   it('the listing says whose each job is', async () => {
     const storage = new InMemoryStorage();
-    await enqueue(storage.work!, 't', {}, { id: 'mine', resourceId: 'ayse', orgId: 'acme' });
+    const mine = await enqueue(storage.work!, 't', {}, { id: 'mine', resourceId: 'ayse', orgId: 'acme' });
     await enqueue(storage.work!, 't', {}, { id: 'sys' });
     const byId = Object.fromEntries((await listJobs(storage.work!)).map((j) => [j.id, j]));
-    expect({ r: byId.mine!.resourceId, o: byId.mine!.orgId }).toEqual({ r: 'ayse', o: 'acme' });
+    expect({ r: byId[mine]!.resourceId, o: byId[mine]!.orgId }).toEqual({ r: 'ayse', o: 'acme' });
     expect({ r: byId.sys!.resourceId, o: byId.sys!.orgId }).toEqual({ r: undefined, o: undefined });
   });
 
@@ -47,9 +48,9 @@ describe('a job enqueued on behalf of an end user', () => {
 
   it('a retried job is still the same user\'s, in the same organization', async () => {
     const storage = new InMemoryStorage();
-    await enqueue(storage.work!, 't', {}, { id: 'dead', resourceId: 'ayse', orgId: 'acme' });
+    const dead = await enqueue(storage.work!, 't', {}, { id: 'dead', resourceId: 'ayse', orgId: 'acme' });
     await createWorker(storage, { t: async () => { throw new Error('boom'); } }, { maxAttempts: 1 }).drain();
-    const again = await retryJob(storage.work!, 'dead');
+    const again = await retryJob(storage.work!, dead);
     const job = (await listJobs(storage.work!)).find((j) => j.id === again)!;
     expect({ r: job.resourceId, o: job.orgId }).toEqual({ r: 'ayse', o: 'acme' });
   });

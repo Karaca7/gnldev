@@ -860,7 +860,7 @@ a deletion that silently did nothing would be the worst possible failure here.
 |---|---|---|
 | `purgeRun(journal, runId)` | one run and its nested sub-agent/workflow children | a single run must go |
 | `purgeThread(journal, threadId)` | `mem:` + the whole `xthr:` family (dedup window, semantic records, tombstones, judge verdicts) | a conversation must go |
-| `purgeResource(journal, resourceId)` | a PERSON: their runs, their threads, cross-channel ids, lesson counters | an erasure request arrives |
+| `purgeResource(journal, resourceId, { vectors? })` | a PERSON: their runs, their own threads (not other people's they wrote into), cross-channel ids, lesson counters — and, given the vector store, their own documents | an erasure request arrives |
 | `purgeBatch(journal, batchId)` | one batch's bookkeeping | a batch must be re-run from scratch |
 | `purgeOrganization(journal, orgId)` | everything under `org:<id>:` | a tenant leaves |
 | `sweepRuns(journal, { olderThanMs })` | runs whose LAST activity is older than the threshold | scheduled retention |

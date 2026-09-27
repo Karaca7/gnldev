@@ -123,13 +123,17 @@ describe('GraphRag — edges are built namespace-locally (structure, not just qu
   // The rebuild path must also TEAR DOWN an edge when an item moves out of a shared namespace. Without
   // the namespace rule on rebuild, the pre-existing same-namespace edge would simply be recomputed and
   // survive the move — a stale cross-tenant edge, which is exactly what the walk guard has to catch.
-  it('re-upserting an item into a different namespace drops the edge it had inside the old one', async () => {
+  it('an item moved to a different namespace keeps no edge inside the old one', async () => {
     const graph = new GraphRag(GRAPH_OPTS);
     await graph.upsert([
       { id: 'b', text: 'bridge', embedding: BRIDGE_EMB, namespace: 'org:globex' },
       { id: 'f', text: 'far', embedding: FAR_EMB, namespace: 'org:globex' },
     ]);
     expect(graph.stats().edges).toBe(1);
+    // An upsert updates a document; it does not move it to another partition (assertSameVectorOwner),
+    // so a move is a delete and an insert — and neither half may leave the old edge behind.
+    await expect(graph.upsert([{ id: 'f', text: 'far', embedding: FAR_EMB, namespace: 'org:acme' }])).rejects.toThrow(/different owner or label/);
+    expect(await graph.delete({ ids: ['f'] })).toBe(1);
     await graph.upsert([{ id: 'f', text: 'far', embedding: FAR_EMB, namespace: 'org:acme' }]); // moved out
     expect(graph.stats(), 'moving an item out of a namespace must remove its edges there').toEqual({ nodes: 2, edges: 0 });
   });
