@@ -1,6 +1,7 @@
 import { tool } from 'ai';
 import type { Tool } from 'ai';
 import { z } from 'zod';
+import { gnlOf, SHARED_ONLY } from '@gnldev/durable';
 import type { VectorStore, Embed } from './vector-store.js';
 import type { Reranker } from './rerank.js';
 
@@ -48,14 +49,19 @@ export function createRagTool(opts: {
   return Object.assign(tool({
     description: opts.description ?? 'Retrieves documents relevant to the query from the knowledge base',
     inputSchema: z.object({ query: z.string().describe('search query') }),
-    execute: async ({ query }, options: { resourceId?: string } = {}) => {
+    execute: async ({ query }, options) => {
+      // WHO is asking — the engine's typed context (`options.gnl`, see @gnldev/durable run-identity).
+      // A user sees the general shelf and theirs; staff sees everything; a call that lost its
+      // identity (`unknown`: called by hand, or by another tool that did not forward its options)
+      // sees the general shelf only — closed, never the whole index.
+      const who = gnlOf(options);
       const embedding = await opts.embed(query);
       let matches = await opts.store.query(embedding, opts.topK ?? 4, {
         ...(opts.namespace !== undefined ? { namespace: opts.namespace } : {}),
         ...(opts.filter !== undefined ? { filter: opts.filter } : {}),
         // A run on behalf of an end user answers from the general shelf and theirs — not by the
         // author remembering to ask, but because the run says whose it is (see durableTool).
-        ...(options.resourceId !== undefined ? { visibleTo: options.resourceId } : {}),
+        ...(who.kind === 'user' ? { visibleTo: who.resourceId } : who.kind === 'unknown' ? { visibleTo: SHARED_ONLY } : {}),
       });
       if (opts.rerank) matches = await opts.rerank.rerank(query, matches, opts.rerankTopK);
       return matches.map((m): RagHit => ({

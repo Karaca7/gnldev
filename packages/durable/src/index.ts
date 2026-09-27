@@ -97,7 +97,15 @@ export type { RunDurableArgs, StreamDurableArgs, DurableResult, ResumeAgentConfi
 // K1/W1 (B): sentinel→error conversion helper for code that consumes streamDurable directly.
 export { streamFinishError } from './run.js';
 // Greenfield storage contracts (ports + Storage + capability + composite).
-export { CapabilityError, requireCapability, composite, toJournal, matchFilter, visibleToSubject, assertVectorLabels, assertSameVectorOwner, assertUniformSeq } from './storage.js';
+export { CapabilityError, requireCapability, composite, toJournal, matchFilter, visibleToSubject, SHARED_ONLY, assertVectorLabels, assertSameVectorOwner, assertUniformSeq } from './storage.js';
+// One explicit, typed run identity + the one "whose is this" module (run-identity.ts).
+export {
+  STAFF, UNKNOWN, user, principalFrom, principalOf, runIdentity, childIdentity, userIdOf, toolContextFor, gnlOf,
+  runOwnerOf, runExists, decideRunAccess, decideRun, claimRunOwner, SUBJECT_VIEW,
+  type Principal, type UserPrincipal, type StaffPrincipal, type UnknownPrincipal, type RunIdentity, type GnlToolContext,
+  type RunOwner, type AccessDecision, type RawJournal,
+} from './run-identity.js';
+export { callPrincipal, GNL_STAFF_KEY } from './registry.js';
 export type { AdoptIntoOrgResult,
   Page, ListQuery,
   RunJournal, MemoryStore, VectorStore, WorkStore, CacheStore, MetaStore,

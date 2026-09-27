@@ -25,36 +25,71 @@ import { claim } from './journal.js';
 import type { Journal, JournalReader, RunSummary } from './journal.js';
 import type { Memory } from './memory.js';
 import { ThreadOwnerMismatchError } from './errors.js';
+import type { Principal } from './run-identity.js';
 
 export const threadOwnerKey = (threadId: string): string => `thread:${threadId}:owner`;
 
 export interface ThreadOwnership {
   /** Whether the thread exists at all. A thread that does not exist yet is the first caller's to open. */
   exists: boolean;
-  /** Its owner. Absent on an existing thread means nobody owns it: it is staff's. */
+  /** Its owner. */
   owner?: string;
+  /**
+   * An existing thread with no owner: `true` when staff CLAIMED it (a record says so — nobody else
+   * may join), `false` when it only has anonymous history (the first named user claims it).
+   */
+  staffClaimed?: boolean;
 }
 
-/** The one answer to "whose thread is this". Read errors propagate: not knowing is not permission. */
+type ThreadOwnerRecord = { resourceId?: string; principal?: string; at?: number };
+
+/**
+ * The one answer to "whose thread is this" — for the gate, the listing, the reading and the
+ * erasure alike. Read errors propagate: not knowing is not permission.
+ *
+ * The RECORD wins, with one exception: an ownerless record never overrides a memory that names the
+ * owner (the record is upgraded to that owner). A legacy thread's derived owner is WRITTEN to the
+ * record the first time it is read, so a later runs sweep cannot move it.
+ */
 export async function threadOwnerOf(journal: Journal, memory: Memory | undefined, threadId: string): Promise<ThreadOwnership> {
-  const rec = await journal.get<{ resourceId?: string }>(threadOwnerKey(threadId));
-  if (rec !== undefined) return { exists: true, ...(rec.resourceId ? { owner: rec.resourceId } : {}) };
+  const key = threadOwnerKey(threadId);
+  const rec = await journal.get<ThreadOwnerRecord>(key);
+  if (rec !== undefined) {
+    if (rec.resourceId) return { exists: true, owner: rec.resourceId };
+    if (memory?.getThreadResource) {
+      const owner = await memory.getThreadResource(threadId);
+      if (owner) {
+        await journal.put(key, { ...rec, resourceId: owner, upgradedAt: Date.now() });
+        return { exists: true, owner };
+      }
+    }
+    return { exists: true, staffClaimed: rec.principal !== 'unknown' };
+  }
   // Older threads, from before the record: the memory's own answer, then the runs, then the messages.
+  let derived: string | undefined;
+  let exists = false;
   if (memory?.getThreadResource) {
-    const owner = await memory.getThreadResource(threadId);
-    if (owner) return { exists: true, owner };
+    derived = await memory.getThreadResource(threadId);
+    exists = derived !== undefined;
   }
-  const runs = await runsOnThread(journal, threadId);
-  if (runs.length) {
-    const owners = new Set(runs.map((r) => r.resourceId));
-    return { exists: true, ...(owners.size === 1 && [...owners][0] ? { owner: [...owners][0]! } : {}) };
+  if (!exists) {
+    const runs = await runsOnThread(journal, threadId);
+    if (runs.length) {
+      exists = true;
+      const owners = new Set(runs.map((r) => r.resourceId));
+      if (owners.size === 1 && [...owners][0]) derived = [...owners][0]!;
+    }
   }
-  // Messages with no owner anywhere: the thread exists and is nobody's. Asked only of a memory that
-  // cannot name owners — one that can is the authority on its own threads, and what `getMessages`
-  // answers for an unknown id is not part of the Memory contract (a double answering for any id would
-  // otherwise refuse every first turn).
-  if (memory && !memory.getThreadResource && ((await memory.getMessages(threadId)) ?? []).length > 0) return { exists: true };
-  return { exists: false };
+  // Messages with no owner anywhere: the thread exists and is nobody's (anonymous history). Asked only
+  // of a memory that cannot name owners — one that can is the authority on its own threads.
+  if (!exists && memory && !memory.getThreadResource && ((await memory.getMessages(threadId)) ?? []).length > 0) exists = true;
+  if (derived) {
+    // LAZY BACKFILL: the derived owner becomes the record, first write wins.
+    await claim(journal, key, { at: Date.now(), resourceId: derived, backfilled: true });
+    const now = await journal.get<ThreadOwnerRecord>(key);
+    return { exists: true, ...(now?.resourceId ? { owner: now.resourceId } : { staffClaimed: true }) };
+  }
+  return exists ? { exists: true, staffClaimed: false } : { exists: false };
 }
 
 /**
@@ -77,25 +112,35 @@ async function runsOnThread(journal: Journal, threadId: string): Promise<RunSumm
 }
 
 /**
- * The engine's thread gate, for every door that starts a run on a thread: a new thread is claimed for
- * `resourceId` (or for nobody, when the run names nobody), an existing one must be `resourceId`'s.
- * Claiming here rather than after the run starts closes the race where two callers open the same new
- * thread at once: the claim has one winner, and the loser is held to it.
+ * The engine's thread gate, for every door that starts a run on a thread. Returns the thread's
+ * ownership after the gate (the run adopts a thread owner from THIS answer, not from memory).
  *
- * An existing thread with NO owner is let through: the engine cannot tell staff from an end user.
- * The server's gate, which can, refuses it to anyone who is not staff.
+ *  - no thread yet: a user claims it; staff claims it ownerless; `unknown` claims nothing (an
+ *    anonymous first turn does not pin the thread ownerless forever);
+ *  - owned: only that user, or staff; `unknown` is refused (closed);
+ *  - staff-claimed: staff only;
+ *  - anonymous history, no record: the first named user claims it; staff and unknown pass.
  */
-export async function admitThreadRun(journal: Journal, memory: Memory | undefined, threadId: string, resourceId: string | undefined): Promise<void> {
+export async function admitThreadRun(journal: Journal, memory: Memory | undefined, threadId: string, principal: Principal): Promise<ThreadOwnership> {
   let o = await threadOwnerOf(journal, memory, threadId);
-  if (!o.exists) {
-    await claim(journal, threadOwnerKey(threadId), { at: Date.now(), ...(resourceId ? { resourceId } : {}) });
-    const rec = await journal.get<{ resourceId?: string }>(threadOwnerKey(threadId));
-    o = { exists: true, ...(rec?.resourceId ? { owner: rec.resourceId } : {}) };
+  const claimFor = async (fields: ThreadOwnerRecord) => {
+    await claim(journal, threadOwnerKey(threadId), { at: Date.now(), ...fields });
+    const rec = await journal.get<ThreadOwnerRecord>(threadOwnerKey(threadId));
+    return rec?.resourceId ? { exists: true, owner: rec.resourceId } : { exists: true, staffClaimed: rec?.principal !== 'unknown' };
+  };
+  if (!o.exists || (o.owner === undefined && o.staffClaimed === false)) {
+    if (principal.kind === 'user') o = await claimFor({ resourceId: principal.resourceId });
+    else if (principal.kind === 'staff' && !o.exists) o = await claimFor({ principal: 'staff' });
+    else return o;
   }
-  if (resourceId && o.owner && o.owner !== resourceId) {
+  const refuse = (requested: string) => {
     throw new ThreadOwnerMismatchError(
-      `@gnldev/durable: thread "${threadId}" belongs to a different resourceId — this run names "${resourceId}".`,
-      { threadId, owner: o.owner, requested: resourceId },
+      `@gnldev/durable: thread "${threadId}" belongs to ${o.owner ? 'a different resourceId' : 'staff'} — this run names "${requested}".`,
+      { threadId, owner: o.owner ?? '(staff)', requested },
     );
-  }
+  };
+  if (principal.kind === 'staff') return o;
+  if (principal.kind === 'unknown') return o.owner || o.staffClaimed ? refuse('(unknown)') : o;
+  if (o.owner ? o.owner !== principal.resourceId : o.staffClaimed) refuse(principal.resourceId);
+  return o;
 }

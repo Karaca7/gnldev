@@ -4,6 +4,7 @@ import { withTimeout } from './timeout.js';
 import { stampFormat, upgradeFormat } from './format.js';
 import { DivergenceError, RetryLimitExceededError, RunBusyError, SideEffectRetryBlockedError, IdempotencyOwnerMismatchError } from './errors.js';
 import { claim, ctxGet, runKeys } from './journal.js';
+import { userIdOf, ownerFields, toolContextFor } from './run-identity.js';
 import { orgScopeOf } from './organization.js';
 import { CompensatedRunError, runCompensated } from './compensation.js';
 import { recordIncident } from './incidents.js';
@@ -565,9 +566,11 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       // Staff and system runs (no resourceId) reach any record, as before.
       const ownerKey = effWindow === 'cross-run' && mode === 'args' ? runKeys.toolCrossRunOwner(toolName, hash) : undefined;
       const assertCrossRunOwner = async (): Promise<void> => {
-        if (!ownerKey || ctx.resourceId === undefined) return;
-        const owner = (await ctx.journal.get<{ resourceId?: string }>(ownerKey))?.resourceId;
-        if (owner === ctx.resourceId) return;
+        if (!ownerKey || ctx.identity.kind === 'staff') return;
+        // The owner record and the caller are read from the SAME value (ctx.identity): an unknown
+        // caller reuses only a record an unknown caller made, a user only their own.
+        const rec = await ctx.journal.get<{ resourceId?: string; principal?: string }>(ownerKey);
+        if (ctx.identity.kind === 'user' ? rec?.resourceId === ctx.identity.resourceId : rec?.principal === 'unknown') return;
         throw new IdempotencyOwnerMismatchError(
           `@gnldev/durable: '${toolName}' was already run for these arguments by someone else — this call is refused ` +
             `rather than returning their result or running it a second time. A key that identifies one person's work ` +
@@ -799,11 +802,11 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
               // but under the DUPLICATE source — precision@suspend measures whether the SIMILARITY
               // chain was worth asking, and an exact-hash hit was never in doubt.
               repeatSignal = { source: 'duplicate-guard', origin: 'marker', ...(prior.firstToolCallId ? { firstToolCallId: prior.firstToolCallId } : {}) };
-            } else if (tool.semanticIdentity && ctx.resourceId && !identityUnusable && await (async () => {
+            } else if (tool.semanticIdentity && userIdOf(ctx.identity) && !identityUnusable && await (async () => {
               // KANALLAR-ARASI bakış (XID) — semantikten ÖNCE: bu konuşmada iz yok ama aynı iş
               // kimliği başka kanaldan (batch/API/başka sohbet) tamamlanmış olabilir; soru
               // "5 dk önce, batch'ten" diyebilmeli. Deterministik ve O(1) — embedder'sız da çalışır.
-              const cfXid = await readXid(ctx.journal, xidPlanOf(tool.semanticIdentity!, toolName, input, ctx.resourceId!, ctx.channel));
+              const cfXid = await readXid(ctx.journal, xidPlanOf(tool.semanticIdentity!, toolName, input, userIdOf(ctx.identity)!, ctx.channel));
               if (!cfXid || cfXid.first.runId === ctx.runId) return false;
               let nowC = Date.now(); try { if (ctx.journal.now) nowC = await ctx.journal.now(); } catch { /* fail-open: süsleme saati işi düşüremez */ }
               const amountsDiffer = amountsDifferOf(cfXid, input);
@@ -924,7 +927,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
         // the PERSON and (by design, see xid.ts) it outlives the thread — so one bad declaration
         // locks that person across every channel until someone notices.
         if (identityUnusable) await reportUnusableIdentity();
-        else if (ctx.resourceId) xidPlan = xidPlanOf(tool.semanticIdentity, toolName, input, ctx.resourceId, ctx.channel);
+        else if (userIdOf(ctx.identity)) xidPlan = xidPlanOf(tool.semanticIdentity, toolName, input, userIdOf(ctx.identity)!, ctx.channel);
         else warnThreadScopeFallback('cross-channel identity (XID)', toolName, 'resourceId');
       }
 
@@ -1447,7 +1450,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
           // counter that only starts existing at the first takeover is one attempt short of the truth.
           const won = await claim(ctx.journal, key, stampFormat({ status: 'running', startedAt: nowTs, attempts: 1 }));
           if (won) {
-            if (ownerKey) await claim(ctx.journal, ownerKey, ctx.resourceId !== undefined ? { resourceId: ctx.resourceId } : {});
+            if (ownerKey) await claim(ctx.journal, ownerKey, ownerFields(ctx.identity));
             break claimLoop; // won → execute below
           }
           record = upgradeFormat(await ctx.journal.get<ToolJournalRecord>(key), key); // H13
@@ -1719,7 +1722,7 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       // açılıyordu (bkz. nestedApprovalsFor): iki koşumun id uzayı aynıdır.
       // `resourceId` — whose run this is — so a tool that serves end users can narrow to theirs
       // (`createRagTool` does) without its author threading it through by hand.
-      const execOpts: any = { ...(options ?? {}), idempotencyKey, parentRunId: ctx.runId, gnlApprovals: nestedApprovalsFor(record, ctx.approvals), ...(ctx.resourceId !== undefined ? { resourceId: ctx.resourceId } : {}) };
+      const execOpts: any = { ...(options ?? {}), idempotencyKey, parentRunId: ctx.runId, gnlApprovals: nestedApprovalsFor(record, ctx.approvals), gnl: toolContextFor(ctx.identity) };
       if (timeoutMs) {
         const tSignal = AbortSignal.timeout(timeoutMs);
         execOpts.abortSignal = execOpts.abortSignal ? AbortSignal.any([execOpts.abortSignal, tSignal]) : tSignal;

@@ -463,6 +463,7 @@ export async function frozenGet<T>(journal: Journal, key: string, compute: () =>
 }
 
 /** Context of a durable run: journal, run, optional policy and approvals. */
+import type { RunIdentity } from './run-identity.js';
 export interface DurableCtx {
   /**
    * Set by callers that have NO approvals channel — `withIdempotency` runs outside runDurable, and the
@@ -490,8 +491,12 @@ export interface DurableCtx {
    * `limits.taintScope === 'thread'` (to write the thread taint key alongside the per-run mark).
    */
   threadId?: string;
-  /** XID (kanallar-arası iş kimliği) için kaynak sahibi — resourceId'siz koşuda XID yazılmaz/okunmaz. */
-  resourceId?: string;
+  /**
+   * WHO this run acts for — decided once at the run's start (run-identity.ts) and REQUIRED: a ctx
+   * built without it does not compile. Tools receive it as `options.gnl.identity`; the owner records
+   * this run writes (window owners, XID) are read from the same value.
+   */
+  identity: RunIdentity;
   /** Kanal etiketi ('chat' | 'api' | 'batch:<id>' | 'cron' ...) — XID origin verisine ve soru
    *  metinlerine girer ("5 dk önce, sohbetten"). Salt veri; karar okuyanın profilinden gelir. */
   channel?: string;

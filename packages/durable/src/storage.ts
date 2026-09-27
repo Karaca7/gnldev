@@ -388,6 +388,13 @@ export function assertSameVectorOwner(
   }
 }
 
+/**
+ * `visibleTo: SHARED_ONLY` narrows to the general shelf alone — what a caller whose identity was lost
+ * (`unknown`, run-identity.ts) may read. It is the empty string: no document may be owned by ''
+ * (assertVectorLabels), so every store's existing `owner = visibleTo` test answers false for it.
+ */
+export const SHARED_ONLY = '';
+
 /** The one reading of `VectorQueryOptions.visibleTo`, shared by every implementation that filters in code. */
 export function visibleToSubject(doc: { owner?: string; shared?: boolean }, visibleTo: string | undefined): boolean {
   return visibleTo === undefined || doc.shared === true || (doc.owner !== undefined && doc.owner === visibleTo);

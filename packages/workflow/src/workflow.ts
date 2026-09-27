@@ -42,8 +42,27 @@ export interface JournalLike {
   now?(): Promise<number>;
 }
 
+/**
+ * Who a workflow run acts for — structurally the same value as @gnldev/durable's `RunIdentity`
+ * (this package does not depend on durable). The engine fills it for every step: a run started
+ * without one is `unknown`, which durable-aware tools treat as closed.
+ */
+export type WorkflowRunIdentity =
+  | ({ kind: 'user'; resourceId: string; orgId?: string } & WorkflowRunPlace)
+  | ({ kind: 'staff' } & WorkflowRunPlace)
+  | ({ kind: 'unknown' } & WorkflowRunPlace);
+type WorkflowRunPlace = { runId: string; threadId?: string; parentRunId?: string };
+
+/** What a caller hands `run`/`runResumable`: a step context whose identity the engine may fill. */
+export type WorkflowEntryCtx = Omit<StepCtx, 'identity'> & { identity?: WorkflowRunIdentity };
+
 export interface StepCtx {
   runId: string;
+  /**
+   * The run's identity, ALWAYS present inside a step. Pass it on explicitly: to a tool as
+   * `{ gnl: toolContextFor(ctx.identity) }`, to a child agent as `runDurable({ principal: ctx.identity })`.
+   */
+  identity: WorkflowRunIdentity;
   journal: JournalLike;
   /** Journal-key prefix for nested workflows (propagated via asStep; prevents collisions). */
   keyPrefix?: string;
@@ -77,6 +96,11 @@ export interface StepCtx {
 }
 
 // ── P0.4 key builders (single source of truth for the new key shapes) ──────────
+/** A run started without an identity is `unknown` — never staff by omission. */
+function withIdentity(entry: WorkflowEntryCtx): StepCtx {
+  return entry.identity ? (entry as StepCtx) : { ...entry, identity: { kind: 'unknown', runId: entry.runId } };
+}
+
 /** Resume payload for a waitId (per-run namespace, NOT keyPrefix-scoped — see StepCtx.resumeData). */
 const resumeKey = (runId: string, waitId: string) => `${runId}:wf:_resume:${waitId}`;
 /** Durable cancel flag — once written, NO worker will run further steps of this run (cross-process). */
@@ -493,7 +517,8 @@ export class Workflow<I = any, O = any> {
 
   /** Run the workflow durably. Calling again with the same runId = resume (completed steps don't re-run).
    * Note: if it contains a suspending step (sleep/waitFor), use `runResumable` (run() throws the suspend). */
-  async run(input: I, ctx: StepCtx): Promise<O> {
+  async run(input: I, entry: WorkflowEntryCtx): Promise<O> {
+    const ctx = withIdentity(entry);
     let cur: any = input;
     for (const s of this.steps) cur = await runStep(s, cur, ctx);
     return cur as O;
@@ -528,7 +553,7 @@ export class Workflow<I = any, O = any> {
    */
   async runResumable(
     input: I,
-    ctx: StepCtx,
+    entry: WorkflowEntryCtx,
     opts: {
       maxSteps?: number;
       resume?: Record<string, unknown>;
@@ -544,6 +569,7 @@ export class Workflow<I = any, O = any> {
       workflowName?: string;
     } = {},
   ): Promise<WorkflowResult<O>> {
+    const ctx = withIdentity(entry);
     const limit = opts.maxSteps ?? Infinity;
     const journal = ctx.journal;
     // Deliver typed resume payloads FIRST (plain put — before consumption an operator may overwrite a

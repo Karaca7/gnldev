@@ -1,7 +1,7 @@
 // Converts a createGnl instance into the Playground/Tools runner (StudioAgentRunner). Pure adapter — does not import `ai`.
 // @gnldev/cli and the studio CLI `--config` share this → single source of truth.
 import type { AgentMeta, StudioAgentRunner, StudioCallbackCtx, ToolMeta, ToolListItem } from './server.js';
-import { durableTool, toolDescriptionText, sealRequestContext } from '@gnldev/durable';
+import { durableTool, toolDescriptionText, sealRequestContext, runIdentity, STAFF } from '@gnldev/durable';
 import type { Guard, Journal, WorkflowMeta, WorkflowRunResult } from '@gnldev/durable';
 
 export interface RunnerToolLike {
@@ -213,7 +213,7 @@ export function createStudioRunner(
         const rec: any = await config.journal.get(`${runId}:tool:${toolCallId}`);
         const args = rec?.output?.__gnl_suspend ? rec.output.__gnl_suspend.args : input;
         try {
-          const out: any = await durableTool(t as any, { journal: config.journal, runId, guard, approvals: { [toolCallId]: approved } }, name).execute(args, { toolCallId });
+          const out: any = await durableTool(t as any, { journal: config.journal, runId, guard, identity: runIdentity(STAFF, runId), approvals: { [toolCallId]: approved } }, name).execute(args, { toolCallId });
           if (out && out.__gnl_suspend) return { error: 'still awaiting approval', blocked: 'approval', runId };
           if (out && out.__denied) return { error: `approval denied${out.reason ? ': ' + out.reason : ''}`, blocked: 'deny', runId };
           return { result: out, runId };
@@ -226,7 +226,7 @@ export function createStudioRunner(
       if (runOpts?.durable && config.journal) {
         const runId = `tooltest-${name}-${Date.now()}`;
         try {
-          const out: any = await durableTool(t as any, { journal: config.journal, runId, guard }, name).execute(input, { toolCallId: `${runId}:call` });
+          const out: any = await durableTool(t as any, { journal: config.journal, runId, guard, identity: runIdentity(STAFF, runId) }, name).execute(input, { toolCallId: `${runId}:call` });
           if (out && out.__gnl_suspend) return { error: `requires approval — appears as suspended in the Inspector`, blocked: 'approval', runId };
           if (out && out.__denied) return { error: `guard denied${out.reason ? ': ' + out.reason : ''}`, blocked: 'deny', runId };
           return { result: out, runId };

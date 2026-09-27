@@ -6,6 +6,7 @@ import { durableTools, CLAIM_TTL_MS } from './durable-tool.js';
 import { acquireRunLock } from './run-lock.js';
 import { RunBusyError, runBusyMessage, SideEffectRetryBlockedError, RetryLimitExceededError, RunThreadMismatchError, RunInputMismatchError, RunActorMismatchError, RunOwnerMismatchError, RunSweptError, ThreadOwnerMismatchError, NotAnAgentRunError } from './errors.js';
 import { admitThreadRun } from './thread-owner.js';
+import { UNKNOWN, ownerFields, principalFrom, principalOf, userIdOf, user, runIdentity, effectivePrincipal, recordedPrincipal, type Principal, type RunIdentity } from './run-identity.js';
 import { argsHash, rawInputFingerprint, isDerivedRunId, DERIVED_RUN_ID_PREFIX, type WorkScope, type WorkScopeKind } from './hash.js';
 import { recordIdemConflict } from './idem-ledger.js';
 import { createProcessorCtx, composePrepareStep, composeOnStepFinish, durableProcessorStep, ProcessorRetry, RetryExhaustedByProcessorError, type StepHookFailure } from './processor.js';
@@ -51,8 +52,14 @@ export type RunDurableArgs = GenerateTextOptions & {
    */
   memory?: Memory | false;
   threadId?: string;
-  /** Phase 14: resource (user) identity — for resource-scope recall / cross-thread memory. */
+  /** Phase 14: resource (user) identity — shorthand for `principal: user(resourceId)`. */
   resourceId?: string;
+  /**
+   * WHO this run acts for (run-identity.ts). A child run passes its parent's identity here. With
+   * neither this nor `resourceId`, the run is `unknown` — closed for end users' data; staff must be
+   * said out loud (`principal: STAFF`). A re-entry of an existing run runs as its RECORDED owner.
+   */
+  principal?: Principal | RunIdentity;
   /** Kanal etiketi — XID origin'i ve tekrar sorularının "nereden" bilgisi (bkz. DurableCtx.channel). */
   channel?: string;
   /** The agent's registry name — frozen into the invisible `:input` entry so studio /runs can LABEL
@@ -162,8 +169,10 @@ export type StreamDurableArgs = StreamTextOptions & {
    *  ends. `false` = deliberately none — see RunDurableArgs.memory for what that buys. */
   memory?: Memory | false;
   threadId?: string;
-  /** Resource (user) identity — for resource-scope recall / cross-thread memory. */
+  /** Resource (user) identity — shorthand for `principal: user(resourceId)`. */
   resourceId?: string;
+  /** Who this run acts for — see RunDurableArgs.principal. */
+  principal?: Principal | RunIdentity;
   /** Kanal etiketi — XID origin'i ve tekrar sorularının "nereden" bilgisi (bkz. DurableCtx.channel). */
   channel?: string;
   /** Agent registry name — frozen into the `:input` entry so studio /runs can label the run (see RunDurableArgs). */
@@ -744,7 +753,7 @@ async function persistInput(
   alreadyFrozen: boolean,
   threadId?: string,
   agentName?: string,
-  resourceId?: string,
+  owner: Principal = UNKNOWN,
   // FAZ-4: the RAW caller input's fingerprint (computed BEFORE memory prep mutates `input.messages` —
   // post-prep content grows with the thread, so a post-prep hash would 409 every legitimate resume)
   // and the opaque actor identity. Both first-wins with the rest of the entry.
@@ -791,7 +800,7 @@ async function persistInput(
   // answered). The `...(x ? {x} : {})` spelling is not cosmetic either — every reader here asks
   // `'workKey' in record`, and an explicit `undefined` would turn "this caller never declared a
   // name" into "this caller declared nothing", which are different facts.
-  await journal.put(key, stampFormat({ at: Date.now(), prompt: input.prompt, messages: input.messages, system: input.system, ...(threadId ? { threadId } : {}), ...(agentName ? { agent: agentName } : {}), ...(resourceId ? { resourceId } : {}), ...(rawInputHash ? { hash: rawInputHash } : {}), ...(actor ? { actor } : {}), ...(work?.workKey ? { workKey: work.workKey } : {}), ...(work?.workScope ? { workScope: work.workScope } : {}) })); // H13
+  await journal.put(key, stampFormat({ at: Date.now(), prompt: input.prompt, messages: input.messages, system: input.system, ...(threadId ? { threadId } : {}), ...(agentName ? { agent: agentName } : {}), ...ownerFields(owner), ...(rawInputHash ? { hash: rawInputHash } : {}), ...(actor ? { actor } : {}), ...(work?.workKey ? { workKey: work.workKey } : {}), ...(work?.workScope ? { workScope: work.workScope } : {}) })); // H13
 }
 
 /** FAZ-6: `limits` is FROZEN to the journal and must stay serializable — the semantic block's
@@ -1400,7 +1409,8 @@ async function prepareMemoryContext(
   // karar). Yutulan hata burada "sahibi yok" diye okunuyordu ve `:input` ilk yazan kazandığı için
   // sonucu KALICI: depo bir an arızalandı diye koşum sonsuza dek sahipsiz doğuyor, `ownershipDenied`
   // `!owner` dalında sessizce geçiyor ve `purgeResource` o koşumu hiç bulamıyor.
-  const rid = resourceId ?? (memory.getThreadResource ? await memory.getThreadResource(threadId) : undefined);
+  // R14: the owner comes from the run's principal, which the thread gate resolved from the RECORD.
+  const rid = resourceId;
 
   if (typeof memory.loadContext === 'function') {
     // Rich path (Phase 14 AgentMemory): composes recall + WM + OM + tool in a single pass.
@@ -2953,11 +2963,40 @@ async function runDurableGuarded(args: RunDurableArgs): Promise<DurableResult> {
   return runDurableInner(args);
 }
 
+
+/** The principal the caller declared: `principal`, or the `resourceId` shorthand, or `unknown`. */
+function declaredPrincipal(args: { resourceId?: string; principal?: Principal | RunIdentity }): Principal {
+  if (args.principal) {
+    const p = principalOf(args.principal);
+    if (args.resourceId !== undefined && userIdOf(p) !== args.resourceId) {
+      throw new TypeError('@gnldev/durable: a run was given both `principal` and a different `resourceId` — one owner per run.');
+    }
+    return p;
+  }
+  return principalFrom(args.resourceId);
+}
+/** A passed identity is either the child's own (same runId: its parentRunId counts) or the parent's. */
+function parentOf(args: { runId: string; principal?: Principal | RunIdentity }): string | undefined {
+  const id = args.principal as RunIdentity | undefined;
+  if (!id?.runId) return undefined;
+  return id.runId === args.runId ? id.parentRunId : id.runId;
+}
+/** A re-entry runs as the RECORDED owner; a caller naming a different user is refused (R5). */
+function entryPrincipal(runId: string, frozen: unknown, declared: Principal): Principal {
+  const eff = effectivePrincipal(recordedPrincipal(frozen), declared);
+  if (eff.ok) return eff.principal;
+  const owner = userIdOf(eff.owner) ?? '(staff)';
+  throw new RunOwnerMismatchError(
+    `@gnldev/durable: run '${runId}' belongs to a different subject — this call names '${userIdOf(declared)}'. A run acts for the owner recorded at its start.`,
+    { runId, owner, requested: userIdOf(declared) ?? '' },
+  );
+}
+
 async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   // `workKey`/`workScope` are pulled OUT of `rest` deliberately: `rest` is both the frozen input and
   // the option bag handed to `generateText`, so a declared name left in it would travel to the
   // provider as an unknown request field and land in `:input` twice under two different meanings.
-  const { journal, runId, guard, approvals, memory, threadId, resourceId, channel, agentName, workKey, workScope, replay, lock: _lock, processors, schemaCompat, limits, exclusiveModelStep, replayCacheMaxBytes, toolPolicy, timeouts, strictInput, conflictLedger, tombstonePolicy, actor, auditOnReject, replayDisclosure, model, tools, stopWhen, ...rest } =
+  const { journal, runId, guard, approvals, memory, threadId, resourceId: _declaredResourceId, principal: _declaredPrincipal, channel, agentName, workKey, workScope, replay, lock: _lock, processors, schemaCompat, limits, exclusiveModelStep, replayCacheMaxBytes, toolPolicy, timeouts, strictInput, conflictLedger, tombstonePolicy, actor, auditOnReject, replayDisclosure, model, tools, stopWhen, ...rest } =
     args as RunDurableArgs & Record<string, any>;
   // `model` is already a model object here — string ids are resolved in normalizeEntryArgs.
   // ONE read of `:input`, shared by the ownership check, the adoption and persistInput below (see
@@ -2991,7 +3030,15 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   // yani en çok gerektiği anda. Aynı gerekçe registry.ts'teki iş akışı ve ağ kapılarında da yazılı.
   // One gate for every memory, asked of the thread's owner RECORD (thread-owner.ts). It used to fire
   // only for a memory that could name an owner, so with BasicMemory it never fired at all.
-  if (threadId) await admitThreadRun(journal, memory || undefined, threadId, resourceId);
+  // WHO THIS RUN ACTS FOR — decided once, here, from the record and the caller (run-identity.ts).
+  let principal = entryPrincipal(runId, frozenInput, declaredPrincipal(args));
+  if (threadId) {
+    const th = await admitThreadRun(journal, memory || undefined, threadId, principal);
+    // Staff starting a NEW run on a user's thread acts for that user (the thread RECORD's owner).
+    if (principal.kind === 'staff' && th.owner && frozenInput === undefined) principal = user(th.owner);
+  }
+  const resourceId = userIdOf(principal);
+  const identity = runIdentity(principal, runId, { ...(threadId ? { threadId } : {}), ...(parentOf(args) ? { parentRunId: parentOf(args) } : {}) });
   // FAZ-4: fingerprint the RAW caller input BEFORE memory prep mutates rest.messages (post-prep
   // content grows with the thread — hashing it would 409 every legitimate resume).
   const rawInputHash = rawInputFingerprint(rest);
@@ -3017,7 +3064,7 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   });
   // C2: on resume, fetch model/tool entries in a single query → hot replay reads take 1 round-trip instead of N.
   // On the first run there are no entries → undefined (no cache). Consume-once: see ctxGet.
-  const ctx: DurableCtx = { journal, runId, threadId, resourceId, channel, guard, approvals: resolvedApprovals, replay, limits, toolPolicy, blockedAsSentinel: true, toolTimeoutMs: timeouts?.toolMs, claimTtlMs: timeouts?.claimTtlMs, toolResultProcessors: processors, replayCache: await loadReplayCache(journal, runId, { maxBytes: replayCacheMaxBytes }), replayLog: [] };
+  const ctx: DurableCtx = { journal, runId, threadId, identity, channel, guard, approvals: resolvedApprovals, replay, limits, toolPolicy, blockedAsSentinel: true, toolTimeoutMs: timeouts?.toolMs, claimTtlMs: timeouts?.claimTtlMs, toolResultProcessors: processors, replayCache: await loadReplayCache(journal, runId, { maxBytes: replayCacheMaxBytes }), replayLog: [] };
   const procCtx = processors?.length ? createProcessorCtx(journal, runId) : undefined;
 
   // Memory: load thread history (prepend to messages) + inject working memory into the system prompt.
@@ -3067,7 +3114,7 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   // sahipsiz bir koşumda `ownershipDenied` sessiz geçer: sonradan gelen bir çağrı kendi öznesini
   // beyan edip cevabı kurbanın thread'ine yazdırabiliyordu. Belleğin okuduğu sahiple journal'ın
   // yazdığı sahip AYNI olmalı, yoksa iki farklı gerçeklik olur ve kapı yanlış olanı okur.
-  await persistInput(journal, runId, rest, frozenInput !== undefined, threadId, agentName, resourceId ?? adoptedResourceId, rawInputHash, actor, { ...(workKey ? { workKey } : {}), ...(workScope ? { workScope } : {}) });
+  await persistInput(journal, runId, rest, frozenInput !== undefined, threadId, agentName, principal, rawInputHash, actor, { ...(workKey ? { workKey } : {}), ...(workScope ? { workScope } : {}) });
   await persistMemoryContext(journal, runId, memCtx);
   // Freeze `limits` into the journal on the first run (idempotent via `claim` — the FIRST
   // run's limits win, a later resume never overwrites them). resumeRun reads this back when the caller
@@ -3264,7 +3311,7 @@ export interface ResumeAgentConfig {
 type DurableOwnKey = Exclude<keyof RunDurableArgs, keyof GenerateTextOptions>;
 const RESUME_POLICY = {
   journal: 'set', runId: 'set', approvals: 'set', limits: 'set',
-  threadId: 'from-input', resourceId: 'from-input', agentName: 'from-input',
+  threadId: 'from-input', resourceId: 'from-input', principal: 'from-input', agentName: 'from-input',
   workKey: 'from-input', workScope: 'from-input', // frozen in `:input`; the gates read them from there
   guard: 'forward', memory: 'forward', channel: 'forward', replay: 'forward', lock: 'forward',
   processors: 'forward', schemaCompat: 'forward', exclusiveModelStep: 'forward', toolPolicy: 'forward',
@@ -3314,7 +3361,8 @@ export async function resumeRun(
     ...(input.system ? { system: input.system } : {}),
     ...(input.threadId ? { threadId: input.threadId } : {}),
     ...(input.agent ? { agentName: input.agent } : {}),
-    ...((opts as { resourceId?: string }).resourceId ?? input.resourceId ? { resourceId: (opts as { resourceId?: string }).resourceId ?? input.resourceId } : {}),
+    // The owner is the RECORD's (entryPrincipal); a caller that names a user is checked against it.
+    ...((opts as { resourceId?: string }).resourceId !== undefined ? { resourceId: (opts as { resourceId?: string }).resourceId } : {}),
   } as any);
 }
 
@@ -3400,7 +3448,7 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   await assertNotCanceled(args.journal, args.runId);
   // Same reason as runDurableInner: the declared name leaves `rest` before `rest` becomes both the
   // frozen input and the `streamText` option bag.
-  const { journal, runId, guard, approvals, memory, threadId, resourceId, channel, agentName, workKey, workScope, replay, lock, processors, schemaCompat, limits, exclusiveModelStep, replayCacheMaxBytes, toolPolicy, timeouts, strictInput, conflictLedger, tombstonePolicy, actor, auditOnReject, replayDisclosure, model, tools, stopWhen, onBlocked, ...rest } =
+  const { journal, runId, guard, approvals, memory, threadId, resourceId: _declaredResourceId, principal: _declaredPrincipal, channel, agentName, workKey, workScope, replay, lock, processors, schemaCompat, limits, exclusiveModelStep, replayCacheMaxBytes, toolPolicy, timeouts, strictInput, conflictLedger, tombstonePolicy, actor, auditOnReject, replayDisclosure, model, tools, stopWhen, onBlocked, ...rest } =
     args as StreamDurableArgs & Record<string, any>;
   // (a): opt-in run-lock — acquire BEFORE the setup work (reject a concurrent stream/run of the
   // same runId with RunBusyError). Released on stream finish/error (see the onFinish/onError wrappers).
@@ -3483,7 +3531,15 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   // bedeli en çok kullanılan yolda ödeniyordu.
   // One gate for every memory, asked of the thread's owner RECORD (thread-owner.ts). It used to fire
   // only for a memory that could name an owner, so with BasicMemory it never fired at all.
-  if (threadId) await admitThreadRun(journal, memory || undefined, threadId, resourceId);
+  // WHO THIS RUN ACTS FOR — decided once, here, from the record and the caller (run-identity.ts).
+  let principal = entryPrincipal(runId, frozenInput, declaredPrincipal(args));
+  if (threadId) {
+    const th = await admitThreadRun(journal, memory || undefined, threadId, principal);
+    // Staff starting a NEW run on a user's thread acts for that user (the thread RECORD's owner).
+    if (principal.kind === 'staff' && th.owner && frozenInput === undefined) principal = user(th.owner);
+  }
+  const resourceId = userIdOf(principal);
+  const identity = runIdentity(principal, runId, { ...(threadId ? { threadId } : {}), ...(parentOf(args) ? { parentRunId: parentOf(args) } : {}) });
   // FAZ-4: fingerprint the RAW caller input BEFORE memory prep mutates rest.messages (post-prep
   // content grows with the thread — hashing it would 409 every legitimate resume).
   const rawInputHash = rawInputFingerprint(rest);
@@ -3504,7 +3560,7 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
     hasRun: hasRunProbe(journal, runId, timeouts?.claimTtlMs),
   });
   // C2: on resume, load the replay snapshot (same as runDurableInner).
-  const ctx: DurableCtx = { journal, runId, threadId, resourceId, channel, guard, approvals: resolvedApprovals, replay, limits, toolPolicy, blockedAsSentinel: true, toolTimeoutMs: timeouts?.toolMs, claimTtlMs: timeouts?.claimTtlMs, toolResultProcessors: processors, replayCache: await loadReplayCache(journal, runId, { maxBytes: replayCacheMaxBytes }), replayLog: [] };
+  const ctx: DurableCtx = { journal, runId, threadId, identity, channel, guard, approvals: resolvedApprovals, replay, limits, toolPolicy, blockedAsSentinel: true, toolTimeoutMs: timeouts?.toolMs, claimTtlMs: timeouts?.claimTtlMs, toolResultProcessors: processors, replayCache: await loadReplayCache(journal, runId, { maxBytes: replayCacheMaxBytes }), replayLog: [] };
   const procCtx = processors?.length ? createProcessorCtx(journal, runId) : undefined;
 
   // Memory: load thread history + inject into system (BEFORE persistInput → replayable).
@@ -3551,7 +3607,7 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   // sahipsiz bir koşumda `ownershipDenied` sessiz geçer: sonradan gelen bir çağrı kendi öznesini
   // beyan edip cevabı kurbanın thread'ine yazdırabiliyordu. Belleğin okuduğu sahiple journal'ın
   // yazdığı sahip AYNI olmalı, yoksa iki farklı gerçeklik olur ve kapı yanlış olanı okur.
-  await persistInput(journal, runId, rest, frozenInput !== undefined, threadId, agentName, resourceId ?? adoptedResourceId, rawInputHash, actor, { ...(workKey ? { workKey } : {}), ...(workScope ? { workScope } : {}) });
+  await persistInput(journal, runId, rest, frozenInput !== undefined, threadId, agentName, principal, rawInputHash, actor, { ...(workKey ? { workKey } : {}), ...(workScope ? { workScope } : {}) });
   await persistMemoryContext(journal, runId, memCtx);
   // Freeze `limits` on the first run (parity with runDurableInner) — idempotent via `claim`.
   if (limits) await claim(journal, runKeys.cfgLimits(runId), serializableLimits(limits));

@@ -1,3 +1,4 @@
+import { childIdentity, gnlOf, type RunIdentity } from './run-identity.js';
 import { nestedAgentRunId } from './journal.js';
 import { tool, stepCountIs } from 'ai';
 import type { Tool } from 'ai';
@@ -46,21 +47,11 @@ export interface AgentToolConfig {
    */
   limits?: RunLimits;
   /**
-   * WHOSE work the delegation is, carried into the nested run.
-   *
-   * Taint was forwarded here from the start; identity was not. So "delegate" quietly meant "drop the
-   * protection layer": with no `resourceId` the nested run builds no cross-channel identity plan
-   * (durable-tool's XID/`semanticIdentity` both require it), its `:input` records no owner — so
-   * `ownershipDenied` passes on the `!owner` branch, the actor lock never fires, and
-   * `purgeResource` cannot find that run when the person asks to be deleted.
-   *
-   * The asymmetry was the tell: the parent's taint, limits and tool policy all crossed the boundary
-   * because each was noticed once. Identity was never noticed, and a sub-agent is not a different
-   * person — it is the same request, one frame deeper.
+   * WHOSE work the delegation is is NOT configured here: the nested run takes the principal of the
+   * run that called it — `options.gnl` for agent-as-tool, the `parent` argument of `runSubAgent` for a
+   * network. A sub-agent is the same request, one frame deeper; a static owner here was how a tool
+   * built once at startup ran every user's delegation as nobody.
    */
-  resourceId?: string;
-  /** The conversation the delegation belongs to — same reason as `resourceId`. */
-  threadId?: string;
   /** The verified caller identity (ownership lock). Inherited, never invented. */
   actor?: string;
   /** Where the work came in from — kept so a nested run's channel is not silently 'unknown'. */
@@ -89,6 +80,7 @@ export async function runSubAgent(
   config: AgentToolConfig,
   task: string,
   nestedRunId: string,
+  parent: RunIdentity,
 ): Promise<{ text: string; interrupts: Interrupt[] }> {
   const model = typeof config.model === 'function' ? await config.model(nestedRunId) : config.model;
   // Carry the parent's taint into the nested run BEFORE it executes any tools.
@@ -104,10 +96,8 @@ export async function runSubAgent(
     prompt: task,
     stopWhen: stepCountIs(config.maxSteps ?? 8),
     limits: config.limits,
-    // KİMLİK DEVRİ — taint'in geçtiği sınırdan kimliğin de geçmesi. Yoksa alt koşum sahipsiz doğar
-    // ve sahipsizlik kalıcıdır (`:input` ilk yazan kazanır).
-    ...(config.resourceId ? { resourceId: config.resourceId } : {}),
-    ...(config.threadId ? { threadId: config.threadId } : {}),
+    // The child's principal IS the parent's (one value, typed, required by this signature).
+    principal: childIdentity(parent, nestedRunId),
     ...(config.actor ? { actor: config.actor } : {}),
     ...(config.channel ? { channel: config.channel } : {}),
     ...(config.toolPolicy ? { toolPolicy: config.toolPolicy } : {}),
@@ -171,11 +161,9 @@ export function createAgentTool(
         // Aynı devir, agent-as-tool yolunda. (Yukarıdaki kardeşiyle tek fark nestedRunId'nin nereden
         // geldiği; kimlik açısından ikisi de aynı isteğin bir kare derinidir.)
         //
-        // The PARENT's user first: durable-tool hands it over in `options.resourceId`, as it hands over
-        // `parentRunId`. A tool built once at startup has no user in its config, so reading only the
-        // config ran the child as nobody — born ownerless, and searching the knowledge base unfiltered.
-        ...((options?.resourceId ?? config.resourceId) ? { resourceId: options?.resourceId ?? config.resourceId } : {}),
-        ...(config.threadId ? { threadId: config.threadId } : {}),
+        // The PARENT's identity, as durable-tool hands it over (`options.gnl`). Called by hand without
+        // it, the child is `unknown` — closed, never open.
+        principal: childIdentity(gnlOf(options), nestedRunId),
         ...(config.actor ? { actor: config.actor } : {}),
         ...(config.channel ? { channel: config.channel } : {}),
         ...(config.toolPolicy ? { toolPolicy: config.toolPolicy } : {}),

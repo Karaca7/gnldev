@@ -17,6 +17,7 @@
 // never runs twice", not full durability.
 import { durableTool } from './durable-tool.js';
 import { runKeys, type Journal } from './journal.js';
+import { gnlOf, runIdentity, toolContextFor, UNKNOWN, type Principal } from './run-identity.js';
 import { argsHash } from './hash.js';
 import type { AnyTool, ToolSet } from './types.js';
 
@@ -40,6 +41,11 @@ export interface WithIdempotencyOptions {
    * logical key collapse to a single execution.
    */
   key?: (toolName: string, args: unknown) => string;
+  /**
+   * Who these tools act for when a call carries no engine context (`options.gnl`). Absent is
+   * `unknown`: such a caller reuses only records an unknown caller made — never a user's.
+   */
+  principal?: Principal;
 }
 
 /**
@@ -51,7 +57,14 @@ export function withIdempotency<T extends ToolSet>(tools: T, opts: WithIdempoten
   // MINIMAL ctx: journal + runId only. No `blockedAsSentinel` → standalone throw semantics (documented
   // honest limit). runId is irrelevant in the cross-run window (the journal key is runId-free), and
   // scopes dedup in the 'run' window.
-  const ctx = { journal: opts.journal, runId: opts.runId ?? 'ambient', noApprovals: true };
+  const runId = opts.runId ?? 'ambient';
+  // The identity is PER CALL: the call's own engine context when it has one, else the configured
+  // principal. The owner record the window writes and the identity the tool sees are that one value.
+  const ctxFor = (options: unknown) => {
+    const called = gnlOf(options);
+    const identity = called.kind !== 'unknown' ? called : runIdentity(opts.principal ?? UNKNOWN, runId);
+    return { journal: opts.journal, runId, noApprovals: true, identity };
+  };
   const out: Record<string, AnyTool> = {};
   for (const [name, tool] of Object.entries(tools) as [string, AnyTool][]) {
     if (typeof tool.execute !== 'function') {
@@ -65,7 +78,14 @@ export function withIdempotency<T extends ToolSet>(tools: T, opts: WithIdempoten
       const keyFn = opts.key;
       configured.idempotencyKey = (args: unknown) => keyFn(name, args);
     }
-    out[name] = durableTool(configured, ctx, name);
+    out[name] = {
+      ...configured,
+      execute: (args: unknown, options: unknown) => {
+        const ctx = ctxFor(options);
+        const wrapped = durableTool(configured, ctx, name) as AnyTool;
+        return wrapped.execute!(args, { ...(options as object), gnl: toolContextFor(ctx.identity) });
+      },
+    };
   }
   return out as T;
 }
