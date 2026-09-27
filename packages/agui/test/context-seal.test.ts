@@ -64,7 +64,7 @@ describe('agui: bağlam mührü', () => {
   it('çözücü verilirse SUNUCUNUN öznesi yazılır ve damga ondan basılır', async () => {
     const input = await drive(
       { runId: 'ag-2', prompt: 'x', context: { [GNL_RESOURCE_ID_KEY]: 'KURBAN' } },
-      { resolveResourceId: () => 'ayse' },
+      { identity: () => ({ resourceId: 'ayse' }) },
     );
     expect(input?.resourceId).toBe('ayse');
     expect(input?.actor).toBe('ayse');

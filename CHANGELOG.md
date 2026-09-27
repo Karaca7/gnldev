@@ -31,6 +31,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `kind: 'operator'` on the people who use Studio.
 - **The actor-lock message no longer names the owner.** `RunActorMismatchError` now says "belongs to a
   different actor". The owner is still in `detail.ownerActor`.
+- **`resolveResourceId` is removed from `createChatRoute` and `createAguiRoute`.** It handed the resolver
+  the request body and won over `identity`. `identity: (req) => ({ resourceId })` is now the only
+  source of the subject. Passing the old option throws at construction instead of being ignored.
+  `resolveThreadId` stays.
+- **`createEnterpriseAuth({ users })` is removed, with the `EeUser`, `EeSession` and `UserStore` types.**
+  The option was never read. Use `userStore`. Passing `users` now throws.
 - **Only an operator can grant `operator` or `application`.** `assertAssignablePrivileges` checks
   `kind`, and a role does not stand in for it: a `subject` holding `admin` is refused.
 

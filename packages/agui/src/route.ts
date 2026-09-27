@@ -181,41 +181,26 @@ export interface CreateAguiRouteOptions {
   /** AG-UI threadId resolver (from request + body). If not given, uses body.threadId, else runId. */
   resolveThreadId?: (c: Context, body: any) => string | undefined;
   /**
-   * WHO this request acts for — resolved from something the SERVER trusts, never from the body.
+   * WHO this request acts for, WHICH ORGANIZATION, and optionally WHICH CONVERSATION — resolved from
+   * something the SERVER trusts, never from the body. The SAME signature @gnldev/chat-adapter's route
+   * takes, so a host that has written it once can mount either adapter with it.
    *
-   * This route declares auth out of scope (see createAguiRoute's own note) and that boundary is
-   * right. What was NOT right is what the boundary implied: `body.context` went to the engine
-   * untouched, and the engine reads the reserved context keys as "the server established this". So
-   * a request could name its own subject. Measured on the sibling route (chat-adapter, identical
-   * shape): a POST carrying `{"context":{"__gnl_resourceId":"KURBAN"}}` produced a run owned by
-   * that name — and once ownership stamping landed, the forged name became the LOCK's value too,
-   * i.e. the caller handed itself the key.
+   * The ONLY source of the subject. A `resolveResourceId(c, body)` hook used to sit beside it and win
+   * over it; it handed the host the parsed body, the one place a subject must never come from. It is
+   * gone. `resolveThreadId` still wins for the thread: choosing a conversation is not an identity
+   * claim, and the thread's owner is checked separately.
    *
-   * The route now always seals. With no resolver the seal carries no identity, which strips the
-   * reserved keys: no forged subject gets in, and none is asserted either.
+   * Why the route needs it: `body.context` used to reach the engine untouched, and the engine reads
+   * the reserved context keys as "the server established this". Measured on the sibling route: a POST
+   * carrying `{"context":{"__gnl_resourceId":"victim"}}` produced a run owned by that name, and the
+   * forged name became the ownership LOCK's value too. The route always seals now; with no resolver
+   * the seal carries no identity, which strips the reserved keys.
    *
-   * HONEST BOUND: a resolver reading an unauthenticated request asserts a subject nobody verified.
-   * Put auth in front of this route, or the subject is only as good as the caller's honesty.
-   */
-  resolveResourceId?: (c: Context, body: any) => string | undefined;
-  /**
-   * WHO and WHICH CONVERSATION, in one hook — the SAME signature @gnldev/chat-adapter's route takes, so a
-   * host that has written this function once can mount either adapter with it.
-   *
-   * One signature for both routes is the point. Until now the two adapters asked the same question
-   * with two hooks each, in two shapes, and this one had the sharper lesson: `resolveThreadId` was
-   * called, its answer went into the SSE envelope, and the run still read and wrote the thread the
-   * client named (see the Turkish note in the stream call below). A host could wire identity, watch
-   * the right value appear in the response, and have changed nothing about where memory went.
-   *
-   * Takes the web `Request` rather than the Hono `Context`, matching @gnldev/server's `OrgOptions.resolve`:
-   * a host mounting this from Express or Fastify has a Request and no Context.
-   *
-   * PRECEDENCE: `resolveResourceId` / `resolveThreadId` still win, field by field — an existing
-   * deployment's answer is not taken away by a newer convenience. Called once per request.
+   * Takes the web `Request` rather than the Hono `Context`: a host mounting this from Express or
+   * Fastify has a Request and no Context. Called once per request.
    *
    * HONEST BOUND: this route declares auth out of scope. A resolver reading an unauthenticated
-   * request asserts a subject nobody verified.
+   * request asserts a subject nobody verified. Put auth in front of this route.
    */
   identity?: GnlIdentity;
 }
@@ -232,9 +217,18 @@ function aguiRouteApp(config: CreateGnlConfig, opts: CreateAguiRouteOptions = {}
   // that can name nobody starts runs that are born ownerless, and an ownership gate with no owner to
   // compare against passes. Warn once at construction — never throw, because a deployment that puts
   // its own boundary in front of this route is not broken and must not be stopped at boot.
-  if (process.env.NODE_ENV === 'production' && !opts.identity && !opts.resolveResourceId) {
+  // A REMOVED option fails loudly. Ignoring it would be worse than the hook it replaced: a JavaScript
+  // config (or one cast past the types) that still passes it would start every run ownerless, and
+  // nothing would say so.
+  if ((opts as { resolveResourceId?: unknown }).resolveResourceId !== undefined) {
+    throw new TypeError(
+      '[gnl agui-route] `resolveResourceId` was removed: it handed the resolver the request body, the one place a ' +
+      'subject must never come from. Use `identity: (req) => ({ resourceId })`, reading your session or a verified token.',
+    );
+  }
+  if (process.env.NODE_ENV === 'production' && !opts.identity) {
     console.warn(
-      '[gnl agui-route] no `identity` and no `resolveResourceId` in production — runs will be born ownerless; ' +
+      '[gnl agui-route] no `identity` in production — runs will be born ownerless; ' +
       'ownership gates stay fail-open (a run with no owner is refused to nobody). Pass `identity: (req) => ({ resourceId })` ' +
       'reading your session/JWT — never the request body.',
     );
@@ -247,7 +241,7 @@ function aguiRouteApp(config: CreateGnlConfig, opts: CreateAguiRouteOptions = {}
     // answer differently the second time, and these two fields must agree about who this is.
     // Resolved FIRST, because the identity decision below cannot be made without knowing the subject.
     const ident = await opts.identity?.(c.req.raw);
-    const subject = opts.resolveResourceId?.(c, body) ?? ident?.resourceId;
+    const subject = ident?.resourceId;
     // WHICH ORGANIZATION — only `identity` can say, and never the body. Same rule and same reason as
     // the sibling route: an org is an isolation boundary, so it comes from the hook that already
     // reads a verified session, and `sealRequestContext` strips any the caller tried to assert.

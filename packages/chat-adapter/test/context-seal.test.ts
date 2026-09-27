@@ -52,7 +52,7 @@ describe('chat rotası: bağlam mührü', () => {
 
   it('çözücü verilirse SUNUCUNUN değeri yazılır, istemcininki değil', async () => {
     const { gnl, seen } = spyGnl();
-    const app = createChatRoute({ gnl }, { resolveResourceId: () => 'ayse' });
+    const app = createChatRoute({ gnl }, { identity: () => ({ resourceId: 'ayse' }) });
     await post(app, { runId: 'r2', messages: MSG, context: { [GNL_RESOURCE_ID_KEY]: 'KURBAN' } });
     expect(seen[0]!.context?.[GNL_RESOURCE_ID_KEY]).toBe('ayse');
     expect(seen[0]!.resourceId).toBe('ayse');
@@ -70,7 +70,7 @@ describe('chat rotası: bağlam mührü', () => {
 
   it('bağlam hiç gönderilmese de mühür çalışır', async () => {
     const { gnl, seen } = spyGnl();
-    const app = createChatRoute({ gnl }, { resolveResourceId: () => 'mehmet' });
+    const app = createChatRoute({ gnl }, { identity: () => ({ resourceId: 'mehmet' }) });
     await post(app, { runId: 'r4', messages: MSG });
     expect(seen[0]!.context?.[GNL_RESOURCE_ID_KEY]).toBe('mehmet');
   });

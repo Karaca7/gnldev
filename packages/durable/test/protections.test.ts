@@ -53,9 +53,9 @@ describe('describeProtections — what the config actually turned on', () => {
   });
 
   it('a caller that binds a subject gets ✓; one that does not gets the fail-open sentence', () => {
-    const bound = describeProtections({ journal: journal() }, { identity: { bound: true, via: 'resolveResourceId' } });
+    const bound = describeProtections({ journal: journal() }, { identity: { bound: true, via: 'identity' } });
     expect(row(bound, 'identity')).toMatchObject({ mark: 'on', from: 'explicit' });
-    expect(row(bound, 'identity').value).toContain('resolveResourceId');
+    expect(row(bound, 'identity').value).toContain('identity');
 
     const open = describeProtections({ journal: journal() }, { identity: { bound: false } });
     expect(row(open, 'identity').mark).toBe('off');

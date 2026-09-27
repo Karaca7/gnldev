@@ -19,50 +19,29 @@ export interface CreateChatRouteOptions {
   /** Resolve the conversation `threadId` (memory continuity across requests) from the request/body. */
   resolveThreadId?: (c: Context, body: any) => string | undefined;
   /**
-   * WHO this request acts for — the end user's `resourceId`, read from something the SERVER trusts
-   * (a session cookie, a verified JWT, `principalOf(c.req.raw)?.id`) and NEVER from the body.
+   * WHO this request acts for, WHICH ORGANIZATION, and optionally WHICH CONVERSATION — read from
+   * something the SERVER trusts (a session cookie, a verified JWT, `principalOf(req)?.id`), never from
+   * the body. The same signature @gnldev/agui's route takes, so a host writes it once for both.
    *
-   * WHY IT EXISTS. GNL has no end-user identity: an end user is a SUBJECT that a trusted application
-   * names, not a principal GNL authenticates (`resolveResourceId` in @gnldev/server states this).
-   * The engine treats the reserved context keys as "the server established this", and this route used
-   * to forward `body.context` verbatim — so the reserved key arrived from whoever sent the request.
-   * MEASURED against a running app: a plain POST carrying
-   * `{"context":{"__gnl_resourceId":"KURBAN-KULLANICI"}}` produced a run owned by that name, and the
-   * ownership stamp followed it. The seal that exists precisely to prevent this (registry.ts's
-   * `sealRequestContext`, whose own comment names the attack) was never applied on this path.
+   * The ONLY source of the subject. A `resolveResourceId(c, body)` hook used to sit beside it and win
+   * over it; it handed the host the parsed body, which is the one place a subject must never come
+   * from, and two hooks answering "who" is how one of them ends up unwired. It is gone.
    *
-   * The route now ALWAYS seals. With no resolver the seal carries no identity, which STRIPS the
-   * reserved keys: a forged subject cannot get through, and none is asserted either.
+   * Why the route needs it: the engine treats the reserved context keys as "the server established
+   * this". MEASURED before the route sealed: a POST carrying `{"context":{"__gnl_resourceId":"victim"}}`
+   * produced a run owned by that name. The route ALWAYS seals now; with no resolver the seal carries
+   * no identity, which strips the reserved keys — a forged subject cannot get through, and none is
+   * asserted either.
    *
-   * HONEST BOUND — it decides what every ownership guarantee downstream is worth: this route ships
-   * with NO auth of its own (see the createChatRoute JSDoc). A resolver reading an unauthenticated
-   * request asserts a subject nobody verified. Put auth in front of this route, or the subject is
-   * only as trustworthy as the caller.
-   */
-  resolveResourceId?: (c: Context, body: any) => string | undefined;
-  /**
-   * WHO and WHICH CONVERSATION, in one hook — the same signature @gnldev/agui's route takes, so the
-   * function a host writes once works on both.
+   * `resolveThreadId` still wins for the thread: choosing a conversation is not an identity claim,
+   * and the thread's owner is checked separately.
    *
-   * It exists because the two hooks above are two hooks. A host wiring identity had to write
-   * `resolveResourceId` AND `resolveThreadId`, and on the sibling adapter the second one had a
-   * different shape and, for a while, no effect at all (see agui's route.ts note on the dead
-   * `threadId` line). Answering "who is this request for" twice is how one of the answers ends up
-   * missing.
+   * Takes the web `Request`, not the Hono `Context`: a host binding this route from Express or Fastify
+   * has a Request and no Context. Called ONCE per request — a resolver that reads the request may
+   * answer differently the second time.
    *
-   * Takes the web `Request`, not the Hono `Context` — the precedent is @gnldev/server's
-   * `OrgOptions.resolve`, and the reason is the same: a host binding this route from Express or
-   * Fastify has a Request and no Context.
-   *
-   * PRECEDENCE: `resolveResourceId` / `resolveThreadId` still WIN, field by field. They are the
-   * existing contract and a new convenience must not silently take a working deployment's answer
-   * away. This fills whichever of the two the host did not supply.
-   *
-   * Called ONCE per request, for the reason already written below about `subject`: a resolver that
-   * reads the request may answer differently the second time.
-   *
-   * HONEST BOUND — unchanged from `resolveResourceId`: this route ships with no auth of its own. A
-   * resolver reading an unauthenticated request asserts a subject nobody verified.
+   * HONEST BOUND: this route ships with no auth of its own. A resolver reading an unauthenticated
+   * request asserts a subject nobody verified. Put auth in front of this route.
    */
   identity?: GnlIdentity;
   /**
@@ -195,9 +174,18 @@ export function createChatRoute(
   // WARN, never throw: an existing deployment that has decided its own boundary lives in front of
   // this route is not broken, and a framework that refuses to start over a posture question would be
   // discovered at the worst possible moment. Once, at construction, addressed and with the fix in it.
-  if (process.env.NODE_ENV === 'production' && !opts.identity && !opts.resolveResourceId) {
+  // A REMOVED option fails loudly. Ignoring it would be worse than the hook it replaced: a JavaScript
+  // config (or one cast past the types) that still passes it would start every run ownerless, and
+  // nothing would say so.
+  if ((opts as { resolveResourceId?: unknown }).resolveResourceId !== undefined) {
+    throw new TypeError(
+      '[gnl chat-route] `resolveResourceId` was removed: it handed the resolver the request body, the one place a ' +
+      'subject must never come from. Use `identity: (req) => ({ resourceId })`, reading your session or a verified token.',
+    );
+  }
+  if (process.env.NODE_ENV === 'production' && !opts.identity) {
     console.warn(
-      '[gnl chat-route] no `identity` and no `resolveResourceId` in production — runs will be born ownerless; ' +
+      '[gnl chat-route] no `identity` in production — runs will be born ownerless; ' +
       'ownership gates stay fail-open (a run with no owner is refused to nobody). Pass `identity: (req) => ({ resourceId })` ' +
       'reading your session/JWT — never the request body.',
     );
@@ -219,7 +207,7 @@ export function createChatRoute(
     // iki alanı birden besliyor, ikisi ayrı çağrıdan gelirse ayrı cevaplardan gelebilir.
     // KİMLİK ARTIK ÖNDE ÇÖZÜLÜYOR: aşağıdaki anahtar kararı özneyi bilmeden verilemiyor.
     const ident = await opts.identity?.(c.req.raw);
-    const subject = opts.resolveResourceId?.(c, body) ?? ident?.resourceId;
+    const subject = ident?.resourceId;
     // WHICH ORGANIZATION. Only `identity` can answer it — there is no `resolveOrgId` hook and there
     // will not be one; the hook that already resolves the subject from a verified session is the
     // right place for the boundary that CONTAINS the subject. Never read from the body: an org is an

@@ -68,7 +68,7 @@ describe('agui: the single `identity` hook', () => {
     expect(input?.threadId).toBe('thr-ayse');
   });
 
-  it('the existing resolvers WIN, field by field', async () => {
+  it('`resolveThreadId` wins for the thread; the subject comes from `identity` alone', async () => {
     const { journal } = await drive(
       { runId: 'ag-2', prompt: 'x' },
       { identity: () => ({ resourceId: 'from-identity', threadId: 'from-identity' }), resolveThreadId: () => 'from-resolver' },
@@ -159,17 +159,6 @@ describe('agui: the regime boundary', () => {
     expect(input?.resourceId, 'boş özne SAHİP olarak dondurulmaz').toBeUndefined();
   });
 
-  it('an empty `resolveResourceId` answer behaves identically — one rule, both hooks', async () => {
-    const { res, journal } = await drive(
-      { prompt: 'x' },
-      { resolveResourceId: () => '', identity: () => ({ resourceId: 'u-ayse' }) },
-      { 'Idempotency-Key': 'hdr-empty-2' },
-    );
-    // `??` falls through on nullish only, and `''` is not nullish — the dedicated hook's answer
-    // stands, which is the documented field-by-field precedence doing its job.
-    expect(res.status).toBe(200);
-    expect(await journal.get('hdr-empty-2:input')).toBeDefined();
-  });
 });
 
 describe('agui: production without any way to name a caller', () => {
@@ -190,11 +179,14 @@ describe('agui: production without any way to name a caller', () => {
     expect(msg).toContain('fail-open');
   });
 
-  it('stays silent with either hook, and outside production', () => {
+  it('refuses the removed `resolveResourceId` at construction, not silently', () => {
+    expect(() => mk({ resolveResourceId: () => 'u' })).toThrow(/resolveResourceId.*removed.*identity/s);
+  });
+
+  it('stays silent with `identity`, and outside production', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     withEnv('production', () => {
       mk({ identity: () => ({ resourceId: 'u' }) });
-      mk({ resolveResourceId: () => 'u' });
     });
     withEnv('development', () => { mk(); });
     expect(warn.mock.calls.map((c) => String(c[0])).filter((m) => m.includes('ownerless'))).toEqual([]);

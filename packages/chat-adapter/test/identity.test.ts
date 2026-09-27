@@ -65,18 +65,22 @@ describe('chat route: the single `identity` hook', () => {
     expect(seenReq).toBeInstanceOf(Request);
   });
 
-  it('the existing resolvers WIN, field by field', async () => {
+  it('`resolveThreadId` wins for the thread; the subject comes from `identity` alone', async () => {
     const { gnl, seen } = spyGnl();
     const app = createChatRoute(
       { gnl },
       {
         identity: () => ({ resourceId: 'from-identity', threadId: 'from-identity' }),
-        resolveResourceId: () => 'from-resolver',
+        resolveThreadId: () => 'from-resolver',
       },
     );
     await post(app, { id: 'conv', runId: 'r1', messages: MSG });
-    // resourceId comes from the dedicated resolver; threadId, which it does not answer, falls to identity.
-    expect(seen[0]).toMatchObject({ resourceId: 'from-resolver', threadId: 'from-identity' });
+    expect(seen[0]).toMatchObject({ resourceId: 'from-identity', threadId: 'from-resolver' });
+  });
+
+  it('the removed `resolveResourceId` is refused at construction, not silently ignored', () => {
+    const { gnl } = spyGnl();
+    expect(() => createChatRoute({ gnl }, { resolveResourceId: () => 'u' } as never)).toThrow(/resolveResourceId.*removed.*identity/s);
   });
 
   it('identity outranks the BODY — it is server-derived and the body is not', async () => {
@@ -142,16 +146,6 @@ describe('chat route: the regime boundary', () => {
     expect(seen[0]!.resourceId, 'boş özne SAHİP olarak dondurulmaz').toBeUndefined();
   });
 
-  it('an explicit `resolveResourceId` returning \'\' behaves identically — one rule, both hooks', async () => {
-    const { gnl, seen } = spyGnl();
-    const app = createChatRoute({ gnl }, { resolveResourceId: () => '', identity: () => ({ resourceId: 'u-ayse' }) });
-    // The dedicated hook WINS field by field — but `??` only falls through on nullish, and `''` is
-    // not nullish, so the empty answer is the route's answer. That is the documented precedence
-    // working, not leaking: a host that wired the specific hook gets the specific hook.
-    await post(app, { id: 'conv', messages: MSG });
-    expect(seen[0]!.runId).toBe('conv:m1');
-    expect(seen[0]!.resourceId).toBeUndefined();
-  });
 });
 
 describe('chat route: production without any way to name a caller', () => {
@@ -172,12 +166,11 @@ describe('chat route: production without any way to name a caller', () => {
     expect(msg).toContain('identity');
   });
 
-  it('stays silent when EITHER hook is present', () => {
+  it('stays silent when `identity` is present', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { gnl } = spyGnl();
     withEnv('production', () => {
       createChatRoute({ gnl }, { identity: () => ({ resourceId: 'u' }) });
-      createChatRoute({ gnl }, { resolveResourceId: () => 'u' });
     });
     expect(warn.mock.calls.map((c) => String(c[0])).filter((m) => m.includes('ownerless'))).toEqual([]);
   });

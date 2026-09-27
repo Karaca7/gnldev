@@ -31,7 +31,7 @@ WHOLE conversation, so every later turn would replay turn 1 from the journal for
 derived string *is* — a name the engine hashes into an id, or the id itself — depends on whether the
 route can name the user; see [the idempotency contract](#the-idempotency-contract).
 
-## Who is this request for? (`identity` / `resolveResourceId`)
+## Who is this request for? (`identity`)
 
 This route ships with **no auth of its own** — deliberately, and the same posture as `@gnldev/agui`.
 What that leaves you responsible for is one thing: naming the end user each run acts for.
@@ -76,12 +76,13 @@ throws, because a deployment whose boundary genuinely lives in front of this rou
 
 | Field | Order |
 |---|---|
-| `resourceId` | `resolveResourceId(c, body)` → `identity(req).resourceId` → *(none)* |
+| `resourceId` | `identity(req).resourceId` → *(none)* |
 | `threadId` | `resolveThreadId(c, body)` → `identity(req).threadId` → `body.threadId` → `body.id` → the runId |
 
-`resolveResourceId` / `resolveThreadId` still win: they are the existing contract, and a newer
-convenience must not quietly take a working deployment's answer away. `identity` outranks the body,
-because it is server-derived and the body is not.
+`identity` is the only source of the subject. The older `resolveResourceId(c, body)` hook was removed:
+it handed you the request body, the one place a subject must never come from. Passing it now throws at
+construction. `resolveThreadId` stays, because choosing a conversation is not an identity claim and the
+thread's owner is checked separately.
 
 **Honest bound.** A resolver reading an *unauthenticated* request asserts a subject nobody verified.
 Put auth in front of this route — or compose `@gnldev/server`'s `createRestApi` auth middleware
@@ -91,7 +92,7 @@ around it — or the subject is only as trustworthy as the caller.
 
 **Two regimes, decided by whether the route can name a subject.** The per-turn key
 (`${body.id}:${lastMessage.id}`, or an `Idempotency-Key` header when a gateway sends one) is this
-route's name for *the work this turn is*. When `identity` / `resolveResourceId` gives that turn an
+route's name for *the work this turn is*. When `identity` gives that turn an
 owner, the key is promoted to a **`workKey`**: the engine derives the run's id from it
 (`run1_<digest>`) and the string you sent stops being a journal key. When there is nobody to name —
 the anonymous quickstart, no auth, no session store — the same string stays the raw runId it has

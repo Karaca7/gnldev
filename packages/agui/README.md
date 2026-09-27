@@ -82,8 +82,8 @@ context keys as "the server established this", and a body-supplied subject is th
 whoever they like. The route always seals the context, so that forgery is closed either way; what
 `identity` decides is whether the run has an owner **at all**.
 
-Precedence, field by field: `resolveResourceId` / `resolveThreadId` win (the existing contract), then
-`identity`, then the body. With none of them, runs are born ownerless — ownership gates stay
+`identity` is the only source of the subject; the older `resolveResourceId(c, body)` hook was removed
+and now throws at construction. For the thread: `resolveThreadId`, then `identity`, then the body. With none of them, runs are born ownerless — ownership gates stay
 fail-open — and in `NODE_ENV=production` the route says so once with a `console.warn`. It never
 throws.
 

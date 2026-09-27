@@ -70,7 +70,7 @@ export interface ProtectionContext {
   /**
    * Does the surface in front of this config bind a SUBJECT to each run?
    *
-   * `@gnldev/durable` genuinely cannot answer this. A resolver (`resolveResourceId` / `identity` on the
+   * `@gnldev/durable` genuinely cannot answer this. A resolver (`identity` on the
    * chat and AG-UI routes, `principalOf` in @gnldev/server) is an option of the ROUTE, and the same config
    * can be mounted behind one route that binds and another that does not. Left out, the row reads
    * 'unknown' — which is the honest answer, and a louder one than a wrong ✓.
@@ -173,7 +173,7 @@ export function describeProtections(config: CreateGnlConfig, ctx: ProtectionCont
           ...(ctx.identity.note
             ? { note: ctx.identity.note }
             : ctx.identity.bound === false
-              ? { note: 'ownership gates stay fail-open; give the route `identity` or `resolveResourceId`' }
+              ? { note: 'ownership gates stay fail-open; give the route `identity`' }
               : {}),
         }
       : {
