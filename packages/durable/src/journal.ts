@@ -463,7 +463,7 @@ export async function frozenGet<T>(journal: Journal, key: string, compute: () =>
 }
 
 /** Context of a durable run: journal, run, optional policy and approvals. */
-import type { RunIdentity } from './run-identity.js';
+import type { RunIdentity } from './identity-types.js';
 export interface DurableCtx {
   /**
    * Set by callers that have NO approvals channel — `withIdempotency` runs outside runDurable, and the
