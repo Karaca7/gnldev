@@ -9,6 +9,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+**Candidate B (architecture comparison branch): one explicit, typed run identity.** Breaking:
+
+- Tools no longer receive `options.resourceId`. They receive `options.gnl: { identity, runId, parentRunId }`;
+  read it with `gnlOf(options)`. A tool called without it is `unknown`.
+- `DurableCtx.resourceId` is replaced by the required `DurableCtx.identity: RunIdentity`.
+- A run that names nobody is `unknown`, not staff: `createRagTool` then reads the shared shelf only, and an
+  owned thread refuses it. Staff must be said out loud (`principal: STAFF`; the server seals operators as staff).
+- A re-entry of an existing run runs as its recorded owner; another user naming it gets `RunOwnerMismatchError`
+  on raw ids too (not only derived ones).
+- `AgentToolConfig.resourceId`/`threadId` are gone: a child run takes its parent's identity.
+- Network and batch runs write their owner record unconditionally (ownerless too).
+- Owned names (`ownedName`) are `~o~<org>:<user>:<name>`; a system name may not start with `~o~`. Owned events
+  keep their owner in the id, not in a payload envelope. New `eraseSubject` erases runs, threads, documents,
+  jobs, triggers and events (jobs/events need `WorkStore.deleteIdPrefix`; in-memory only on this branch).
+
 **A minor (0.7.0): end users are isolated by default, at one point, for free.** The decision and the
 alternatives it rejected are in [docs/adr/0001-end-user-isolation.md](./docs/adr/0001-end-user-isolation.md).
 Many entries below are breaking. If you are upgrading, check these first:
