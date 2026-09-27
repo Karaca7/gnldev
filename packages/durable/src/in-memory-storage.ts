@@ -296,6 +296,15 @@ class InMemoryWorkStore implements WorkStore {
   }
   /** FAZ-9: both families in one sweep — a log namespace and a KV key share the same prefix space
    *  under `withOrg`, so an org purge cannot half-clean. */
+  async deleteIdPrefix(idPrefix: string): Promise<number> {
+    let n = 0;
+    for (const [ns, log] of this.logs) {
+      const keep = log.filter((r) => !r.id.startsWith(idPrefix));
+      n += log.length - keep.length;
+      this.logs.set(ns, keep);
+    }
+    return n;
+  }
   async deletePrefix(prefix: string): Promise<number> {
     let n = 0;
     for (const ns of [...this.logs.keys()]) {

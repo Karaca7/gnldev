@@ -90,12 +90,16 @@ export function withSubjectJournal<J extends Journal & Partial<JournalReader>>(j
   const mine = async (runId: string) => !foreignKey(runId) && (await ownerOf(runId)) === subject;
   // Every run `key` could belong to: each ':'-bounded prefix that has a frozen input. A registry row
   // (`wfrun:<runId>`) is its run's, so it is read as if it were `<runId>:`.
-  const keyIsMine = async (key: string): Promise<boolean> => {
+  // `listed`: a listing already in hand. A candidate run whose `:input` key falls inside the listed
+  // range EXISTS only if the listing holds that key — answered without a read, so a 400-key listing of
+  // one run costs one owner read, not one per key per ':'.
+  const keyIsMine = async (key: string, listed?: { prefix: string; inputs: Set<string> }): Promise<boolean> => {
     if (foreignKey(key)) return false;
     const base = key.startsWith(WF_REGISTRY) ? `${key.slice(WF_REGISTRY.length)}:` : key;
     let claimed = false;
     for (let i = base.indexOf(':'); i > 0; i = base.indexOf(':', i + 1)) {
       const runId = base.slice(0, i);
+      if (listed && `${runId}:input`.startsWith(listed.prefix) && !listed.inputs.has(runId)) continue;
       const input = await inputOf(runId);
       if (input === 'error') return false;
       if (input === undefined) continue;
@@ -112,7 +116,9 @@ export function withSubjectJournal<J extends Journal & Partial<JournalReader>>(j
     listKeys: journal.listKeys
       ? async (prefix: string) => {
           const out: string[] = [];
-          for (const k of await journal.listKeys!(prefix)) if (await keyIsMine(k)) out.push(k);
+          const keys = await journal.listKeys!(prefix);
+          const listed = { prefix, inputs: new Set(keys.filter((k) => k.endsWith(':input')).map((k) => k.slice(0, -':input'.length))) };
+          for (const k of keys) if (await keyIsMine(k, listed)) out.push(k);
           return out;
         }
       : undefined,

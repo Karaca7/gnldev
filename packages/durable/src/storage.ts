@@ -465,6 +465,12 @@ export interface WorkStore {
    * error rather than report a silent success.
    */
   deletePrefix?(prefix: string): Promise<number>;
+  /**
+   * (optional) Delete every LOG RECORD whose id starts with `idPrefix`, in every namespace. An owned
+   * job or event carries its owner in its id (`ownedName`), so this is how one person's jobs and
+   * events are erased without the store knowing what a job is. (Candidate B: in-memory only.)
+   */
+  deleteIdPrefix?(idPrefix: string): Promise<number>;
 }
 
 // ── 5) CacheStore = content-addressed cache (optional TTL) ────────────────────

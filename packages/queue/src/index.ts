@@ -4,6 +4,7 @@
 // resumes from the RunJournal → SIDE EFFECT HAPPENS ONCE. acquireRunLock (M4) prevents two workers
 // from running the same job concurrently.
 // Job log + markers live in WorkStore (own namespace); the lock + handler's durability live in RunJournal.
+import { randomUUID } from 'node:crypto';
 import { acquireRunLock, requireCapability, createPollLoop, orgPrefix, withOrgStorage, orgStorageScopeOf, ownedName } from '@gnldev/durable';
 import type { Storage, WorkStore, RunJournal, LogRecord } from '@gnldev/durable';
 
@@ -167,7 +168,10 @@ export async function enqueue(
   };
   // A caller's id is a name within its owner (`ownedName`): the log is one for every organization. The
   // id returned is the stored one — what `retryJob` and `listJobs` speak.
-  return work.append('qjob', rec, opts.id === undefined ? undefined : ownedName(opts.id, opts));
+  // An owned job always has an engine-written owned id: that is where erasure finds it.
+  const owned = opts.resourceId !== undefined || opts.orgId !== undefined;
+  const name = opts.id ?? (owned ? randomUUID() : undefined);
+  return work.append('qjob', rec, name === undefined ? undefined : ownedName(name, opts));
 }
 
 /**
