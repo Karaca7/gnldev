@@ -170,13 +170,9 @@ describe('agui: production without any way to name a caller', () => {
   const mk = (opts: Record<string, unknown> = {}) =>
     createAguiRoute({ journal: new InMemoryJournal(), agents: { a: { model: textMock() } } } as never, opts as never);
 
-  it('warns once and does NOT throw', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    withEnv('production', () => { expect(() => mk()).not.toThrow(); });
-    const msg = warn.mock.calls.map((c) => String(c[0])).find((m) => m.includes('agui-route'));
-    expect(msg).toBeDefined();
-    expect(msg).toContain('ownerless');
-    expect(msg).toContain('fail-open');
+  it('refuses to start without `identity`, and names the surface to use instead', () => {
+    withEnv('production', () => { expect(() => mk()).toThrow(/no `identity` in production.*surfaces: \[aguiSurface\(\)\]/s); });
+    withEnv('production', () => { expect(() => mk({ identity: () => undefined })).not.toThrow(); });
   });
 
   it('refuses the removed `resolveResourceId` at construction, not silently', () => {

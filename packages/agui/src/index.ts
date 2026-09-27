@@ -20,5 +20,5 @@ export type {
 export { toAguiEvents, initialAguiConvertState } from './convert.js';
 export type { GnlSseEvent, AguiConvertContext, AguiConvertState, AguiConvertResult } from './convert.js';
 
-export { pipeAguiStream, createAguiRoute } from './route.js';
+export { pipeAguiStream, createAguiRoute, aguiSurface } from './route.js';
 export type { PipeAguiStreamOptions, CreateAguiRouteOptions } from './route.js';

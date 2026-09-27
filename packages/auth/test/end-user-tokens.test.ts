@@ -109,3 +109,19 @@ describe('actorIdOf — staff and users never share a name', () => {
     expect(actorIdOf({ kind: 'operator', roles: [] })).toBeUndefined();
   });
 });
+
+describe('identityFromAuth — MCP asks the same provider the HTTP surfaces ask', () => {
+  it('an end user is an MCP identity, bound to itself and its organization; nobody else is', async () => {
+    const { identityFromAuth } = await import('../src/index.js');
+    const auth = roleAuth({ admin: { token: 'STAFF' }, client: { token: 'APP' }, endUsers: { secret: SECRET, orgId: 'acme' } })!;
+    const identity = identityFromAuth(auth);
+    const ayse = signSubjectToken({ sub: 'u-ayse' }, SECRET);
+    expect(await identity({ authInfo: { token: ayse } })).toEqual({ resourceId: 'u-ayse', orgId: 'acme', actor: 'u-ayse' });
+    // Staff names nobody, so no per-user work id can be derived; an application could only name its
+    // user in the call body. Both are refused — mint the user a subject token instead.
+    expect(await identity({ authInfo: { token: 'STAFF' } })).toBeUndefined();
+    expect(await identity({ authInfo: { token: 'APP' } })).toBeUndefined();
+    expect(await identity({ authInfo: { token: 'forged.token.value' } })).toBeUndefined();
+    expect(await identity({})).toBeUndefined();
+  });
+});

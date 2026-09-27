@@ -104,6 +104,28 @@ events with `id <= lastEventId` it **produces them but does not write them to th
 cheap: replay does not call the model/tools). Only events with `id > lastEventId` are sent. If `lastEventId`
 is not given, behavior is identical to before (aside from the added id).
 
+## Other wire formats and browsers (`surfaces`, `cors`)
+
+`surfaces` mounts another wire format on the agent stream: `chatSurface()` from
+`@gnldev/chat-adapter` (useChat) at `/agents/:name/chat`, `aguiSurface()` from `@gnldev/agui` at
+`/agents/:name/agui`. A surface only translates the format. Auth, organization, ownership, budget
+and cancel are this API's, the same as `/agents/:name/stream`. A surface may not take a REST path.
+
+`cors` lets a browser on another origin call this API, which is what an end user holding their own
+token needs. It is off by default. Name the origins, or `'*'`:
+
+```ts
+import { createRestApi } from '@gnldev/server';
+import type { CreateGnlConfig } from '@gnldev/durable';
+
+declare const config: CreateGnlConfig;
+
+export const api = createRestApi(config, { cors: { origins: ['https://app.example.com'], maxAge: 600 } });
+```
+
+A preflight is answered before any gate. No `Access-Control-Allow-Credentials` is sent: credentials
+here are bearer tokens. `X-Gnl-Run-Id`, `X-Gnl-Idempotency-Status` and `Retry-After` are exposed.
+
 ## Frontend
 For type-safe calls use [`@gnldev/client`](../client) (core) + `@gnldev/client/react` (hooks). For REST + Studio Playground in one command use [`@gnldev/cli`](../cli) `gnl dev`.
 

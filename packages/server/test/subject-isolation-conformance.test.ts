@@ -21,7 +21,7 @@
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
 import { InMemoryJournal } from '@gnldev/durable';
-import { createRestApi } from '../src/index.js';
+import { createRestApi, type StreamSurface } from '../src/index.js';
 
 (globalThis as any).AI_SDK_LOG_WARNINGS = false;
 
@@ -45,6 +45,7 @@ export const VERDICTS: Record<string, { verdict: Verdict; why: string }> = {
   'GET /workflows/runs': { verdict: 'owned-read', why: 'workflow run inventory' },
   'POST /agents/:name/run': { verdict: 'owned-write', why: 'replays a run / appends to a thread' },
   'POST /agents/:name/stream': { verdict: 'owned-write', why: 'replays a run / appends to a thread' },
+  'POST /agents/:name/echo': { verdict: 'owned-write', why: 'a surface: the stream door under another wire format' },
   'POST /agents/:name/resume': { verdict: 'owned-write', why: 'approves a suspended tool call' },
   'POST /runs/:id/cancel': { verdict: 'owned-write', why: 'terminally stops a run' },
   'POST /workflows/:name/run': { verdict: 'owned-write', why: 'replays a workflow run' },
@@ -125,6 +126,23 @@ function fakeMemory(withOwnerLookup: boolean) {
   return { memory, threads };
 }
 
+/**
+ * A wire format mounted as a surface (as @gnldev/chat-adapter's `chatSurface` is): it passes the body
+ * through, so every probe the stream door gets, the surface gets too. A surface that skipped a gate
+ * would show up here as a leak on its own route.
+ */
+const echoSurface: StreamSurface = {
+  path: '/agents/:name/echo',
+  decode: (b: any) => ({
+    prompt: b.prompt ?? 'x',
+    ...(b.threadId !== undefined ? { threadId: b.threadId } : {}),
+    ...(b.runId !== undefined ? { runId: b.runId } : { turnKey: 'conv:1' }),
+    ...(b.resourceId !== undefined ? { resourceId: b.resourceId } : {}),
+    ...(b.approvals !== undefined ? { approvals: b.approvals } : {}),
+  }),
+  encode: (result: any) => new Response(result.textStream.pipeThrough(new TextEncoderStream())),
+};
+
 export type Fixture = { api: (r: Request) => Promise<Response>; journal: InMemoryJournal; threads: Map<string, { owner?: string; messages: unknown[] }>; ids: Record<string, string> };
 
 export async function seed(opts: { withOwnerLookup?: boolean; extend?: (api: any) => void } = {}): Promise<Fixture> {
@@ -144,7 +162,7 @@ export async function seed(opts: { withOwnerLookup?: boolean; extend?: (api: any
       },
       workflows: { w: { build: () => [{ id: 's1' }], run: async (input: unknown) => ({ echo: input }) } },
     } as never,
-    { auth: auth as never, protectionsBanner: false } as never,
+    { auth: auth as never, protectionsBanner: false, surfaces: [echoSurface] } as never,
   );
   const post = async (who: string, path: string, body: object) => {
     const r: Response = await api(new Request(`http://x${path}`, { method: 'POST', headers: { authorization: `Bearer ${who}`, 'content-type': 'application/json' }, body: JSON.stringify(body) }));
@@ -181,7 +199,7 @@ function probesFor(method: string, path: string, ids: Record<string, string>): P
   // detector would have nothing to see.
   if (path.includes(':id')) { for (const r of runTargets) add(path.replace(':id', r) + (path.endsWith('/cancel') ? '?durable=true' : ''), method === 'GET' ? undefined : {}); return out; }
   if (path === '/agents/:name/resume') { add('/agents/g/resume', { runId: ids.sus, approvals: { c1: true } }); add('/agents/g/resume', { runId: ids.opsSus, approvals: { c1: true } }); return out; }
-  if (path === '/agents/:name/run' || path === '/agents/:name/stream') {
+  if (path === '/agents/:name/run' || path === '/agents/:name/stream' || path === '/agents/:name/echo') {
     const p = path.replace(':name', 'a');
     add(p, { runId: ids.run, prompt: 'x' }); add(p, { runId: ids.opsRun, prompt: 'x' });
     // A FRESH run id: without one the route answers 400 before any thread gate is asked, and this

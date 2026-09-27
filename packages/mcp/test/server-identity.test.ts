@@ -150,15 +150,18 @@ describe('the run has an owner, so a deletion request can find it', () => {
 });
 
 describe('an unattributable call is refused, not quietly run under the old key', () => {
-  it('a caller the resolver cannot place gets a structured error and no side effect', async () => {
+  it('a caller the resolver cannot place reaches no tool at all, with or without a work key', async () => {
+    // It answers as a missing tool does — the same refusal `allowTool` gives, so a caller cannot map
+    // what exists by being refused. Without a work key this used to RUN the tool for an unknown caller.
     const charges: number[] = [];
     const srv = createMcpServer({ journal: new InMemoryJournal(), identity: tenantOf, tools: { charge: chargeTool(charges) } });
-    const res = await srv.callTool({
-      name: 'charge', arguments: { amount: 900 },
-      idempotencyKey: 'order-9', caller: { authInfo: { clientId: 'unknown-key' } },
-    });
-    expect(res.isError, 'a resolver that resolved nothing must not fall back to the client key').toBe(true);
-    expect(res.content[0].text).toContain("Refusing to run 'charge'");
+    for (const idempotencyKey of ['order-9', undefined]) {
+      await expect(srv.callTool({
+        name: 'charge', arguments: { amount: 900 },
+        ...(idempotencyKey ? { idempotencyKey } : {}), caller: { authInfo: { clientId: 'unknown-key' } },
+      })).rejects.toThrow(/no such tool/);
+    }
+    expect((await srv.listTools({ caller: { authInfo: { clientId: 'unknown-key' } } })).tools).toEqual([]);
     expect(charges, 'nothing may have run').toEqual([]);
   });
 

@@ -146,6 +146,9 @@ export function buildServer(deps: ServerDeps) {
     createChatRoute(
       { gnl },
       {
+        // An internal on-call tool: every caller is an engineer, and there is no end user whose data
+        // must be kept apart. Said explicitly — in production the route refuses to start otherwise.
+        identity: () => undefined,
         resolveThreadId: (_c, body) => body?.incidentId ?? body?.id,
         resolveRunId: (_c, body) => body?.runId,
       },

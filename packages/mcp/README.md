@@ -82,6 +82,28 @@ The run id is then **derived** from `(tool, subject, workKey)` through the same 
 
 **On stdio this changes nothing, and that is correct.** The client spawned the process, so the trust boundary is the process boundary and `authInfo` is legitimately absent. The transport where a second caller exists is HTTP, and that is where the SDK gives you a validated token.
 
+**With `@gnldev/auth`, derive it from the same provider your HTTP API uses:**
+
+```ts
+import { identityFromAuth, roleAuth } from '@gnldev/auth';
+import { createMcpServer } from '@gnldev/mcp';
+
+const auth = roleAuth({ endUsers: { secret: process.env.GNL_END_USER_SECRET!, orgId: 'acme' } });
+
+export const server = createMcpServer({
+  tools: {},
+  identity: identityFromAuth(auth),
+});
+```
+
+Only an end user's token is an MCP identity. Staff and application credentials are refused: staff
+names nobody, and an application could only name its user in the call body. Give each user a token
+of their own (`signSubjectToken`) for their MCP client; with `isRevoked` set it may live up to 30
+days, which suits a token pasted into a client's config.
+
+**A caller `identity` cannot place reaches no tool.** It is left out of `tools/list` and `tools/call`
+answers as for a missing tool, with or without a work key.
+
 **Leaving `identity` out keeps the previous behaviour**, so a server written against an earlier release still compiles and still dedupes. It warns once, the first time a journal-backed call arrives without it, naming what is not protected — the same shape `gnl studio` uses for a surface that is open but not silent.
 
 ### Clients that send no key

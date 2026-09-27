@@ -21,6 +21,7 @@ import { streamSSE } from 'hono/streaming';
 // caller matches on, and this route mirroring sse.ts by hand is exactly how the docs check ended up
 // with a list it had to maintain. `interruptsFromSteps` already makes this a build-order dependency.
 import { interruptsFromSteps, EDGE_ERROR_CODES } from '@gnldev/server';
+import type { StreamSurface } from '@gnldev/server';
 import { toAguiEvents, initialAguiConvertState, type GnlSseEvent } from './convert.js';
 import { EventType, type AguiEvent, type RunStartedEvent } from './types.js';
 
@@ -236,11 +237,15 @@ function aguiRouteApp(config: CreateGnlConfig, opts: CreateAguiRouteOptions = {}
       'subject must never come from. Use `identity: (req) => ({ resourceId })`, reading your session or a verified token.',
     );
   }
+  // PRODUCTION REFUSES a route that names nobody. It used to warn and serve: every caller, with or
+  // without a credential, ran the model and left an ownerless run (measured). The recommended shape
+  // is a surface on the REST API, where the auth provider decides who the caller is. A host that
+  // really has no per-user identity says so explicitly with `identity: () => undefined`.
   if (process.env.NODE_ENV === 'production' && !opts.identity) {
-    console.warn(
-      '[gnl agui-route] no `identity` in production — runs will be born ownerless; ' +
-      'ownership gates stay fail-open (a run with no owner is refused to nobody). Pass `identity: (req) => ({ resourceId })` ' +
-      'reading your session/JWT — never the request body.',
+    throw new Error(
+      '[gnl agui-route] no `identity` in production: this route has no auth of its own, so every caller would run the model ' +
+      'and leave an ownerless run. Mount it on the REST API instead — createRestApi(config, { auth, surfaces: [aguiSurface()] }) — ' +
+      'or pass `identity: (req) => ({ resourceId })` from your verified session. `identity: () => undefined` opts out, explicitly.',
     );
   }
   const app = new Hono();
@@ -367,6 +372,33 @@ function aguiRouteApp(config: CreateGnlConfig, opts: CreateAguiRouteOptions = {}
     return pipeAguiStream(c, runId, result, { threadId });
   });
   return app;
+}
+
+/**
+ * The AG-UI wire format as a surface of @gnldev/server's createRestApi:
+ * `createRestApi(config, { auth, surfaces: [aguiSurface()] })`. Decodes and encodes only — identity,
+ * organization, subject and every gate are the REST door's. Default path `/agents/:name/agui`
+ * (`/agents/:name/run` is REST's own).
+ */
+export function aguiSurface(opts: { path?: string } = {}): StreamSurface {
+  return {
+    path: opts.path ?? '/agents/:name/agui',
+    decode(body: any) {
+      return {
+        prompt: body.prompt,
+        messages: body.messages,
+        threadId: body.threadId,
+        ...(body.approvals ? { approvals: body.approvals } : {}),
+        ...(body.context ? { context: body.context } : {}),
+        ...(body.runId ? { runId: body.runId } : {}),
+        ...(body.workKey ? { workKey: body.workKey } : {}),
+        ...(body.resourceId !== undefined ? { resourceId: body.resourceId } : {}),
+      };
+    },
+    encode(result, meta) {
+      return pipeAguiStream(meta.c, meta.runId, result, { threadId: meta.threadId ?? meta.runId });
+    },
+  };
 }
 
 /** The AG-UI route as a fetch handler — mount with `app.mount(path, ...)` on a Hono host. */

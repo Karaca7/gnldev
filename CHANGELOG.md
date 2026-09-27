@@ -11,6 +11,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **`surfaces` on `createRestApi`: chat and AG-UI on the REST door.** `chatSurface()` (@gnldev/chat-adapter)
+  and `aguiSurface()` (@gnldev/agui) translate the wire format only; identity, organization, ownership,
+  budget and cancel are the REST API's. A turn with no credential no longer reaches the model, and an
+  end user's chat turn is in their history and their organization. The route-table walk covers
+  surfaces.
+- **`cors` on `createRestApi`**, off by default, for browsers calling the API directly.
+- **`identityFromAuth`** (@gnldev/auth): MCP's `identity` from the same provider; end users only.
 - **Token refresh, owned by the application.** `subjectTokenEndpoint` (@gnldev/auth) turns your
   session into a fresh short-lived token; `GnlClient`'s `getToken` / `tokenFrom` (@gnldev/client)
   refresh before expiry and after a `401`, one refresh for concurrent requests. `endUsers.isRevoked`
@@ -22,6 +29,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Breaking
 
+- **The standalone chat and AG-UI routes refuse to start in production without `identity`.** They
+  warned and served before: any caller ran the model and left an ownerless run. Mount them on the REST
+  API instead (`surfaces`, below), or pass `identity`; `identity: () => undefined` opts out explicitly.
+- **@gnldev/mcp: a server with `identity` serves no caller it cannot place.** Such a caller sees no
+  tools and a call answers as for a missing tool. Before, a call with no work key ran the tool for it.
 - **End-user tokens are hardened.** `endUsers.secret` (and `signSubjectToken`'s) must be at least 32
   bytes; a shorter one throws at startup. A token may live at most 1 hour unless `isRevoked` is set
   (then up to 30 days via `maxTtlSec`). A `sub` must be a valid `resourceId` and may not start with

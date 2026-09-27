@@ -192,11 +192,15 @@ export function createChatRoute(
       'subject must never come from. Use `identity: (req) => ({ resourceId })`, reading your session or a verified token.',
     );
   }
+  // PRODUCTION REFUSES a route that names nobody. It used to warn and serve: every caller, with or
+  // without a credential, ran the model and left an ownerless run (measured). The recommended shape
+  // is a surface on the REST API, where the auth provider decides who the caller is. A host that
+  // really has no per-user identity says so explicitly with `identity: () => undefined`.
   if (process.env.NODE_ENV === 'production' && !opts.identity) {
-    console.warn(
-      '[gnl chat-route] no `identity` in production — runs will be born ownerless; ' +
-      'ownership gates stay fail-open (a run with no owner is refused to nobody). Pass `identity: (req) => ({ resourceId })` ' +
-      'reading your session/JWT — never the request body.',
+    throw new Error(
+      '[gnl chat-route] no `identity` in production: this route has no auth of its own, so every caller would run the model ' +
+      'and leave an ownerless run. Mount it on the REST API instead — createRestApi(config, { auth, surfaces: [chatSurface()] }) — ' +
+      'or pass `identity: (req) => ({ resourceId })` from your verified session. `identity: () => undefined` opts out, explicitly.',
     );
   }
   const app = new Hono();

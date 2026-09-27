@@ -155,15 +155,18 @@ describe('chat route: production without any way to name a caller', () => {
     try { fn(); } finally { process.env.NODE_ENV = prev; }
   };
 
-  it('warns once, says what it costs and how to fix it — and does NOT throw', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  it('refuses to start, and says what to do instead', () => {
+    // It used to warn and serve: with no identity every caller ran the model and left an ownerless
+    // run, which (since ownerless records are staff's) no user could even see afterwards.
     const { gnl } = spyGnl();
-    withEnv('production', () => { expect(() => createChatRoute({ gnl })).not.toThrow(); });
-    const msg = warn.mock.calls.map((c) => String(c[0])).find((m) => m.includes('chat-route'));
-    expect(msg).toBeDefined();
-    expect(msg).toContain('ownerless');
-    expect(msg).toContain('fail-open');
-    expect(msg).toContain('identity');
+    withEnv('production', () => {
+      expect(() => createChatRoute({ gnl })).toThrow(/no `identity` in production.*surfaces: \[chatSurface\(\)\]/s);
+    });
+  });
+
+  it('an explicit `identity: () => undefined` is the way to say "no per-user identity here"', () => {
+    const { gnl } = spyGnl();
+    withEnv('production', () => { expect(() => createChatRoute({ gnl }, { identity: () => undefined })).not.toThrow(); });
   });
 
   it('stays silent when `identity` is present', () => {

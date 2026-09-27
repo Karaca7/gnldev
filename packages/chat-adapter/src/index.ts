@@ -8,6 +8,8 @@ export { toUIMessages } from './messages.js';
 export type { ToUIMessagesOptions, Interrupt } from './messages.js';
 
 export { createChatRoute } from './chat-route.js';
+export { chatSurface } from './surface.js';
+export type { ChatSurfaceOptions } from './surface.js';
 export type { CreateChatRouteOptions } from './chat-route.js';
 
 export { maskSentinelOutput } from './sentinel-mask.js';

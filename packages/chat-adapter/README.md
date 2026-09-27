@@ -11,7 +11,36 @@ Compatibility with the Vercel AI SDK's UI layer: run a durable agent on the serv
 npm i @gnldev/chat-adapter
 ```
 
-## Chat route
+## On the REST API (recommended)
+
+Mount the chat format on `@gnldev/server`'s REST API. The API's auth decides who the caller is, which
+organization they are in and whose run this is — the same gates as every REST route — and there is
+no second identity resolver to write:
+
+```ts
+import { createRestApi } from '@gnldev/server';
+import { chatSurface } from '@gnldev/chat-adapter';
+import { roleAuth } from '@gnldev/auth';
+import type { CreateGnlConfig } from '@gnldev/durable';
+
+declare const config: CreateGnlConfig;
+
+export const api = createRestApi(config, {
+  auth: roleAuth({ endUsers: { secret: process.env.GNL_END_USER_SECRET!, orgId: 'acme' } }),
+  surfaces: [chatSurface()], // POST /agents/:name/chat — useChat({ api: '/agents/pay/chat' })
+  cors: { origins: ['https://app.example.com'] }, // if the browser calls this API directly
+});
+```
+
+A request with no valid credential is refused before the model runs. An end user's turn is filed
+under that user and their organization, shows up in their `GET /runs`, and is visible to their
+organization's staff in Studio. `chatSurface({ path })` changes the mount path.
+
+## Chat route (standalone)
+
+For a host that already authenticates the request itself (a session cookie) and passes the user in
+through `identity`. In production it refuses to start without `identity`; pass
+`identity: () => undefined` to say, explicitly, that there is no per-user identity.
 
 ```ts
 import { createChatRoute } from '@gnldev/chat-adapter';

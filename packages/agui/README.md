@@ -44,6 +44,14 @@ agent.runAgent({ runId: 'r1', threadId: 't1', prompt: 'hi' });
 spec](https://github.com/ag-ui-protocol/ag-ui) are marked with comments in `types.ts`/`convert.ts`
 (no made-up fields were added) — there is no vendored copy of the spec in this repo to check against.
 
+## On the REST API (recommended)
+
+`aguiSurface()` mounts the AG-UI format on `@gnldev/server`'s REST API, at `/agents/:name/agui`, so
+the API's auth decides identity, organization and ownership:
+`createRestApi(config, { auth, surfaces: [aguiSurface()] })`. `aguiSurface({ path })` changes the
+path. The standalone `createAguiRoute` below is for a host that authenticates the request itself; in
+production it refuses to start without `identity` (`identity: () => undefined` opts out, explicitly).
+
 ## API
 - `createAguiRoute(config, opts?)` — a single-endpoint Hono router from `@gnldev/durable`'s `CreateGnlConfig`:
   `POST /agents/:name/run {runId, prompt|messages, threadId?, approvals?}` → AG-UI SSE. Deliberately

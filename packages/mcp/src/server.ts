@@ -398,6 +398,12 @@ export function createMcpServer(opts: McpServerOptions): McpServer {
 
   /** The permission answer, for one tool, asked the same way by both doors. */
   async function permitted(name: string, caller: McpCallerContext, identity: McpCallerIdentity): Promise<boolean> {
+    // A server that resolves identity does not serve a caller it could not attribute — on either door,
+    // whether or not the call names a unit of work. Before, a call with no work key ran the tool for
+    // an unknown caller: measured with an unknown token, `{"charged":9,"for":null}`. That is Claude
+    // Desktop's default path, since it sends no `_meta`. The tool is hidden from listing too, so a
+    // model never tries a tool it cannot call.
+    if (opts.identity && (opts.workScope ?? 'resource') === 'resource' && !identity.resourceId) return false;
     if (!opts.allowTool) {
       warnMissingAllowTool();
       return true;

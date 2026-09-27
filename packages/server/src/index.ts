@@ -311,6 +311,61 @@ export interface RestApiOptions {
    * that has not thought about any of these rows.
    */
   protectionsBanner?: boolean;
+  /**
+   * Other wire formats for the SAME agent stream door — `chatSurface()` from @gnldev/chat-adapter
+   * (useChat) and `aguiSurface()` from @gnldev/agui (AG-UI/CopilotKit).
+   *
+   * A surface translates bytes and nothing else. Who the caller is, which organization it is in,
+   * whose run this is, and every gate a run crosses (auth, org scope, agent visibility, approval,
+   * resource auth, thread and run ownership, budget, cancel registry) are decided HERE, by the same
+   * code `/agents/:name/stream` runs. A surface mounted standalone had none of those and a second
+   * identity resolver to re-derive what `auth` already knew; mounted here it has no identity input at
+   * all, so there is nothing to forget to wire.
+   */
+  surfaces?: StreamSurface[];
+  /**
+   * Cross-origin access for browsers calling this API directly — the point of `roleAuth({ endUsers })`.
+   * OFF by default: no CORS headers, a cross-origin preflight is not answered (same as before). Name
+   * the origins that may call; `'*'` is accepted because credentials here are bearer tokens, not
+   * cookies (no `Allow-Credentials` is ever sent). The allowed request headers and the exposed
+   * response headers are this API's own (`X-Gnl-Run-Id`, `Idempotency-Key`, `Last-Event-ID`, ...).
+   */
+  cors?: { origins: string[] | '*'; maxAge?: number };
+}
+
+/** What a surface's decoder hands the stream door: the REST `/stream` body shape, plus a turn key. */
+export interface StreamSurfaceInput {
+  prompt?: string;
+  messages?: unknown;
+  threadId?: string;
+  approvals?: Record<string, boolean>;
+  context?: Record<string, unknown>;
+  limits?: RunLimits;
+  /** An explicit id — addressing already decided by the caller. */
+  runId?: string;
+  /** A declared name for the work (always a workKey). */
+  workKey?: string;
+  /**
+   * The wire format's own name for this turn (useChat: `${id}:${lastMessage.id}`). Becomes a workKey
+   * when the door resolves a subject, a raw runId otherwise — the regime the standalone routes had.
+   */
+  turnKey?: string;
+  /**
+   * The subject the BODY names. Read only for callers allowed to name one (application / operator);
+   * a subject token's own id always wins — the same `resolveResourceId` rule REST applies.
+   */
+  resourceId?: unknown;
+  lastEventId?: string | number;
+}
+
+/** A wire format mounted on createRestApi's stream door. See `RestApiOptions.surfaces`. */
+export interface StreamSurface {
+  /** POST path under this API; must contain `:name` (the agent). E.g. `/agents/:name/chat`. */
+  path: string;
+  /** Wire format in. Throwing answers 400. Must not decide identity — it is never asked. */
+  decode(body: any, req: Request): StreamSurfaceInput | Promise<StreamSurfaceInput>;
+  /** Wire format out, for a started run. Error responses before the run are the door's own (typed JSON). */
+  encode(result: any, meta: { runId: string; threadId?: string; c: Context }): Response;
 }
 
 /**
@@ -1644,9 +1699,50 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     const name = c.req.param('name');
     const parsed = await readSignedBody(c); // F1: A2A signature enforced here too
     if ('denied' in parsed) return parsed.denied;
-    const body = parsed.body as any;
+    return streamDoor(c, name, parsed.body as any, ({ result, runId }) => {
+      // Disconnect-recovery — if there's a Last-Event-ID header (sent automatically by
+      // EventSource) or body.lastEventId, events the client has already seen are not rewritten (see the note in sse.ts).
+      const lastEventIdRaw = c.req.header('Last-Event-ID') ?? (parsed.body as any)?.lastEventId;
+      const lastEventId = lastEventIdRaw != null && lastEventIdRaw !== '' ? Number(lastEventIdRaw) : undefined;
+      return pipeAgentStream(c, runId, result, Number.isFinite(lastEventId as number) ? { lastEventId } : undefined);
+    });
+  });
+
+  // THE OTHER WIRE FORMATS, on the same door. Registered here, after `/stream`, so a surface cannot
+  // shadow a REST route — and refused at construction if it tries to take one of REST's own paths.
+  for (const surface of opts.surfaces ?? []) {
+    if (!surface.path.includes(':name')) throw new Error(`createRestApi: surface path '${surface.path}' must contain ':name' (the agent)`);
+    if (['/agents/:name/run', '/agents/:name/resume', '/agents/:name/stream'].includes(surface.path)) {
+      throw new Error(`createRestApi: surface path '${surface.path}' is a REST route; mount the surface on its own path (e.g. '/agents/:name/chat')`);
+    }
+    app.post(surface.path, async (c) => {
+      if (!(await allowP(c.req.raw, 'agents:run'))) return deny(c.req.raw, 'write');
+      const name = c.req.param('name') as string;
+      const parsed = await readSignedBody(c);
+      if ('denied' in parsed) return parsed.denied;
+      let input: StreamSurfaceInput;
+      try {
+        input = await surface.decode(parsed.body ?? {}, c.req.raw);
+      } catch (e: any) {
+        return c.json({ error: String(e?.message ?? e) }, 400);
+      }
+      return streamDoor(c, name, { ...input }, ({ result, runId, threadId }) => surface.encode(result, { runId, threadId, c }));
+    });
+  }
+
+  /**
+   * The agent stream door: every gate between "a caller asked for a stream" and "the stream exists",
+   * written once. `/agents/:name/stream` and every `surfaces` entry go through it; they differ only
+   * in how the body was decoded and how the result is encoded.
+   */
+  async function streamDoor(
+    c: Context,
+    name: string,
+    body: any,
+    encode: (m: { result: any; runId: string; threadId?: string }) => Response,
+  ): Promise<Response> {
     adoptIdempotencyKey(c, body);
-    if (!body.runId && !body.workKey) return c.json({ error: NO_IDENTITY }, 400);
+    if (!body.runId && !body.workKey && !body.turnKey) return c.json({ error: NO_IDENTITY }, 400);
     const s = await scope(c);
     if ('error' in s) return c.json({ error: s.error }, s.status);
     const gated = agentGate(c, name, s.orgId);
@@ -1661,6 +1757,13 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     // WHOSE run this is — see resolveResourceId. A per-caller identity wins; otherwise the request says.
     const subject = resolveResourceId(kindOf(c), principal?.id, body.resourceId);
     if ('error' in subject) return c.json({ error: subject.error }, 400);
+    // A surface's turn key: a NAME when there is a subject to address it under, the raw id it has
+    // always been otherwise (the standalone chat/agui regime, kept so an operator's playground turn
+    // without a subject still runs).
+    if (!body.runId && !body.workKey && body.turnKey) {
+      if (subject.resourceId) body.workKey = body.turnKey;
+      else body.runId = body.turnKey;
+    }
     // WHICH RUN — the same resolution `/agents/:name/run` makes, and deliberately not a variation of
     // it: a rule that held on one of these two doors is a rule missing from the other.
     const identity = identityOrError(() => resolveWorkIdentity(`agent:${name}`, {
@@ -1670,7 +1773,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
       ...(subject.resourceId ? { resourceId: subject.resourceId } : {}),
       ...((s.orgId ?? principal?.orgId) ? { orgId: s.orgId ?? principal?.orgId } : {}),
       anonymous: 'refuse',
-      surface: `POST /agents/${name}/stream`,
+      surface: `POST ${c.req.routePath.replace(':name', name)}`,
     }));
     if ('error' in identity) return c.json({ error: identity.error }, 400);
     const runId = identity.runId!;
@@ -1741,18 +1844,14 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     // completion hook — use it. Swallowed on rejection (a stream error already produces its own `error`
     // SSE event in pipeAgentStream); this is ONLY registry bookkeeping.
     void Promise.resolve(result.finishReason).catch(() => {}).finally(() => unregisterInflight(key, ctrl));
-    // Disconnect-recovery — if there's a Last-Event-ID header (sent automatically by
-    // EventSource) or body.lastEventId, events the client has already seen are not rewritten (see the note in sse.ts).
-    const lastEventIdRaw = c.req.header('Last-Event-ID') ?? body.lastEventId;
-    const lastEventId = lastEventIdRaw != null && lastEventIdRaw !== '' ? Number(lastEventIdRaw) : undefined;
     // `__gnlPriorRun` is streamDurable's own answer to the replay question (run.ts), so the streamed
     // path uses it rather than the pre-read: same question, asked by the code that already knows.
     return stampRunHeaders(
-      pipeAgentStream(c, runId, result, Number.isFinite(lastEventId as number) ? { lastEventId } : undefined),
+      encode({ result, runId, ...(body.threadId !== undefined ? { threadId: body.threadId } : {}) }),
       runId,
       (result as { __gnlPriorRun?: boolean })?.__gnlPriorRun === true,
     );
-  });
+  }
 
   // Metadata list of registered workflows (name + steps + kind).
   app.get('/workflows', async (c) => ((await allowP(c.req.raw, 'catalog:read')) ? c.json(defaultInstance.gnl.listWorkflows()) : deny(c.req.raw, 'read')));
@@ -2274,5 +2373,38 @@ export function createRestApi(
   config: CreateGnlConfig & { run?: never; agent?: never },
   opts: RestApiOptions = {},
 ): FetchHandler {
-  return toFetchHandler(restApiApp(config, opts));
+  const handler = toFetchHandler(restApiApp(config, opts));
+  return opts.cors ? withCors(handler, opts.cors) : handler;
+}
+
+/**
+ * CORS around the whole handler, OUTSIDE routing: a preflight is answered before any gate (it carries
+ * no credential by specification — gating it is a 401 the browser reports as a CORS failure), and the
+ * route inventory stays a list of routes. Bearer credentials only, so no `Allow-Credentials`, ever.
+ */
+function withCors(h: FetchHandler, cfg: NonNullable<RestApiOptions['cors']>): FetchHandler {
+  const allowedOrigin = (origin: string | null): string | undefined =>
+    !origin ? undefined : cfg.origins === '*' ? '*' : cfg.origins.includes(origin) ? origin : undefined;
+  const call = async (req: Request, ...rest: unknown[]): Promise<Response> => {
+    const allowed = allowedOrigin(req.headers.get('origin'));
+    if (req.method === 'OPTIONS' && req.headers.has('access-control-request-method')) {
+      const headers = new Headers({ Vary: 'Origin' });
+      if (allowed) {
+        headers.set('Access-Control-Allow-Origin', allowed);
+        headers.set('Access-Control-Allow-Methods', 'GET, POST, DELETE');
+        headers.set('Access-Control-Allow-Headers', 'authorization, content-type, idempotency-key, last-event-id, x-gnl-org');
+        headers.set('Access-Control-Max-Age', String(cfg.maxAge ?? 600));
+      }
+      return new Response(null, { status: 204, headers });
+    }
+    const res = await (h as (r: Request, ...a: unknown[]) => Promise<Response>)(req, ...rest);
+    if (!allowed) return res;
+    // A new Response rather than mutating: a response's headers may be immutable (one produced by fetch).
+    const headers = new Headers(res.headers);
+    headers.set('Access-Control-Allow-Origin', allowed);
+    headers.set('Access-Control-Expose-Headers', 'X-Gnl-Run-Id, X-Gnl-Idempotency-Status, Retry-After');
+    headers.append('Vary', 'Origin');
+    return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+  };
+  return Object.assign(call, { fetch: call, routeTable: (h as { routeTable?: unknown }).routeTable }) as unknown as FetchHandler;
 }
