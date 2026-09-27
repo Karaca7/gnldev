@@ -9,7 +9,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **End users can hold their own token, in the free tier.** `roleAuth({ endUsers: { secret, orgId } })`
+  verifies a short-lived token your backend signs with `signSubjectToken({ sub })`. The holder is that
+  one user (`kind: 'subject'`). Only `sub` is read; the organization comes from config. A browser can
+  now call GNL directly without the `client` token, which must stay on your server.
+
 ### Breaking
+
+- **`verifyJwt`, `jwtFromRequest` and `b64uDecode` moved from `@gnldev/auth-ee` to `@gnldev/auth`.**
+  There is one JWT verifier now, shared by the free `endUsers` class and every auth-ee SSO provider.
+  Import them from `@gnldev/auth`.
 
 - **`Principal.kind` is required** (`'operator' | 'application' | 'subject'`, `@gnldev/auth`). It says
   whose data a caller acts on, and the one who mints the principal decides it. Before this, hosts

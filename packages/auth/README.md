@@ -88,7 +88,36 @@ GET /runs/r-882?resourceId=u-mehmet     → 403, the run belongs to someone else
 > **Keep the client token on your server.** It is trusted to say who it acts for, so anyone holding it
 > can claim any `resourceId`. That is safe in your backend, where you already know who your user is.
 > It is not safe in a browser or a mobile app — ship neither the token nor a proxy that forwards a
-> caller-supplied `resourceId` unchecked.
+> caller-supplied `resourceId` unchecked. To let a browser call GNL directly, give it an end-user
+> token instead (next section).
+
+### An end user can carry its own token
+
+When your user logs in, your backend signs a short-lived token for that one user. The browser or app
+calls GNL with it. The holder is that user and nobody else:
+
+```ts
+import { roleAuth, signSubjectToken } from '@gnldev/auth';
+
+// In GNL's config:
+const auth = roleAuth({
+  endUsers: { secret: process.env.GNL_END_USER_SECRET!, orgId: 'acme' },
+});
+
+// In your backend, after YOUR login succeeds:
+const token = signSubjectToken({ sub: 'u-ayse' }, process.env.GNL_END_USER_SECRET!, { ttlSec: 900 });
+```
+
+Only `sub` is read. The holder is always a `subject`, with the organization from `orgId` above. A
+`kind`, `roles` or `orgId` claim in the token is ignored, so a token cannot make its holder staff or
+move it to another organization. Writes are the same whitelist as `client`.
+
+A token signed with a different key, an expired one, or one without `sub` is nobody (`401`). Tokens
+last 15 minutes by default. Use `publicKey` instead of `secret` if you sign with RS256 or Ed25519, and
+`issuer`/`audience` to pin those claims.
+
+GNL can check that your backend signed the token. It cannot check that your backend signed it for the
+right person; that part is your login.
 
 ### `superAdmin` is stated, never inferred
 
@@ -125,7 +154,8 @@ everyone else.
 |---|---|
 | `AuthProvider` | `authenticate(request)` → a `Principal` or `null`, then `authorize(principal, request, ctx)` → `{ allow }` |
 | `roleAuth` | The bundled provider above |
-| `CLIENT_WRITES` | The exact set of writes a `client` may perform — read it rather than guessing |
+| `CLIENT_WRITES` | The exact set of writes a `client` (and an end user) may perform — read it rather than guessing |
+| `signSubjectToken` / `verifyJwt` | Sign an end user's token in your backend; the verifier every GNL token goes through |
 | `PLATFORM_ADMIN_ROLE` / `isPlatformAdmin` | The reserved cross-organization grant `superAdmin` carries |
 | `callerKind` / `isPrincipalKind` / `PRINCIPAL_KINDS` | What a caller is (see above), read fail-closed |
 | `assertAssignablePrivileges` | The ceiling for user management: no one hands out a grant they do not hold |

@@ -13,6 +13,8 @@
 //   admin       an organization's manager. Studio, governance, everything inside one org.
 //   client      an application's server-to-server credential. Runs agents; manages nothing.
 //   viewer      read-only.
+//   endUsers    not a credential in this file: a token the APPLICATION signs for one logged-in user
+//               (`signSubjectToken`). Its holder is that user — `kind: 'subject'` — and nobody else.
 //
 // `client` is deliberately a WHITELIST, not "admin minus a few things": a write whose permission this
 // file does not name is denied. A route added later without a name costs a 403 (visible, reported)
@@ -21,6 +23,7 @@ import { createHash } from 'node:crypto';
 import type { AuthProvider, Principal, Decision, AuthContext, Cred } from './types.js';
 import { safeEqual } from './safe-equal.js';
 import { PLATFORM_ADMIN_ROLE } from './scope.js';
+import { verifyJwt } from './jwt.js';
 
 /** The reserved role naming the application credential class (see `CLIENT_WRITES`). */
 export const CLIENT_ROLE = 'client';
@@ -39,6 +42,30 @@ export const CLIENT_WRITES: ReadonlySet<string> = new Set([
   'workflow:run',
   'run:cancel',
 ]);
+
+/** The role an `endUsers` token carries. Its writes are `CLIENT_WRITES`: run work, stop work. */
+export const END_USER_ROLE = 'end-user';
+
+/**
+ * Who may verify an end user's token, and where that user lives.
+ *
+ * The application signs a short-lived token for its logged-in user (`signSubjectToken`) and hands it to
+ * the user's browser or app, which calls GNL with it directly. Only `sub` is read. KIND, ROLES and
+ * ORGANIZATION come from here, never from the token: a claim is whatever the signer wrote, and the
+ * point of this class is that the holder cannot be more than one user of one organization.
+ */
+export interface EndUserTokens {
+  /** HS256 secret the application signs with. */
+  secret?: string;
+  /** Or a public key (PEM or base64url SPKI; RS256/Ed25519), when the application signs asymmetrically. */
+  publicKey?: string;
+  /** Expected `iss`; unchecked if unset. */
+  issuer?: string;
+  /** Expected `aud`; unchecked if unset. */
+  audience?: string;
+  /** The organization every token holder belongs to. Bound here, because a token claim would let the signer pick. */
+  orgId?: string;
+}
 
 /** Basic auth header value (same base64 logic as studio basicAuth). */
 function basicValue(user: string, pass: string): string {
@@ -117,14 +144,31 @@ export function roleAuth(cfg: {
   /** An application's server-to-server credential: runs agents, manages nothing (see `CLIENT_WRITES`). */
   client?: Cred;
   viewer?: Cred;
+  /** End users holding a token your application signed for them. See `EndUserTokens`. */
+  endUsers?: EndUserTokens;
 }): AuthProvider | undefined {
   const superAdmin = credValues(cfg.superAdmin);
   const admin = credValues(cfg.admin);
   const client = credValues(cfg.client);
   const viewer = credValues(cfg.viewer);
-  if (superAdmin.headers.size === 0 && admin.headers.size === 0 && client.headers.size === 0 && viewer.headers.size === 0) {
+  const endUsers = cfg.endUsers;
+  if (endUsers && endUsers.secret == null && endUsers.publicKey == null) {
+    throw new Error('@gnldev/auth: `endUsers` needs `secret` or `publicKey` — without one, no token can be verified.');
+  }
+  if (superAdmin.headers.size === 0 && admin.headers.size === 0 && client.headers.size === 0 && viewer.headers.size === 0 && !endUsers) {
     return undefined;
   }
+
+  /** The one user a verified token names, or null. Nothing but `sub` is taken from it. */
+  const endUserOf = (req: Request): Principal | null => {
+    if (!endUsers) return null;
+    const h = req.headers.get('authorization');
+    const token = h?.startsWith('Bearer ') ? h.slice(7) : undefined;
+    if (!token || token.split('.').length !== 3) return null;
+    const verified = verifyJwt(token, endUsers, Date.now());
+    if (!verified?.id) return null;
+    return { kind: 'subject', id: verified.id, roles: [END_USER_ROLE], ...(endUsers.orgId ? { orgId: endUsers.orgId } : {}) };
+  };
 
   // safeEqual loop instead of Set.has (===): so the secret comparison is constant-time (the number of
   // accepted tokens/basics per role is small — loop cost is negligible).
@@ -190,7 +234,7 @@ export function roleAuth(cfg: {
       if (admin.headers.size && matchRole(req, admin)) return principalOfRole('admin', cfg.admin);
       if (client.headers.size && matchRole(req, client)) return principalOfRole(CLIENT_ROLE, cfg.client);
       if (viewer.headers.size && matchRole(req, viewer)) return principalOfRole('viewer', cfg.viewer);
-      return null;
+      return endUserOf(req);
     },
     authorize(principal: Principal | null, _req: Request, ctx: AuthContext): Decision {
       const roles = principal?.roles ?? [];
@@ -198,14 +242,14 @@ export function roleAuth(cfg: {
         if (roles.includes('admin')) return { allow: true };
         // An application credential may only perform writes this file NAMES. `ctx.permission` is
         // undefined for a route gated with the coarse `allow(req,'write')` — denied, deliberately.
-        if (roles.includes(CLIENT_ROLE)) {
+        if (roles.includes(CLIENT_ROLE) || roles.includes(END_USER_ROLE)) {
           return ctx.permission && CLIENT_WRITES.has(ctx.permission)
             ? { allow: true }
-            : { allow: false, status: 403, reason: `unauthorized (client credentials cannot ${ctx.permission ?? 'perform this write'})` };
+            : { allow: false, status: 403, reason: `unauthorized (${roles.includes(END_USER_ROLE) ? "an end user" : "client credentials"} cannot ${ctx.permission ?? 'perform this write'})` };
         }
         return { allow: false, status: 403, reason: 'unauthorized (admin required)' };
       }
-      return roles.includes('admin') || roles.includes(CLIENT_ROLE) || roles.includes('viewer')
+      return roles.includes('admin') || roles.includes(CLIENT_ROLE) || roles.includes('viewer') || roles.includes(END_USER_ROLE)
         ? { allow: true }
         : { allow: false, status: 401, reason: 'unauthorized' };
     },

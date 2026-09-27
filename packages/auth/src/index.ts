@@ -5,10 +5,12 @@
 //   normalizeAuth → AuthProvider | {read,write} backward-compat bridge
 export { PRINCIPAL_KINDS } from './types.js';
 export type { Principal, PrincipalKind, AuthContext, Decision, AuthCapabilities, AuthProvider, Cred } from './types.js';
-export { roleAuth, CLIENT_ROLE, CLIENT_WRITES } from './role-auth.js';
+export { roleAuth, CLIENT_ROLE, CLIENT_WRITES, END_USER_ROLE, type EndUserTokens } from './role-auth.js';
 export { makeGate, principalOf, type Gate, type GateOptions } from './gate.js';
 export { fromReadWrite, normalizeAuth, bindsIdentity, type ReadWriteAuth } from './adapter.js';
 export { safeEqual } from './safe-equal.js';
+// One JWT verifier for the free `endUsers` class and every @gnldev/auth-ee SSO provider.
+export { verifyJwt, jwtFromRequest, b64uDecode, declaredKind, signSubjectToken, type JwtVerifyOptions } from './jwt.js';
 export { isCrossSiteStateChange } from './same-site.js';
 export { PLATFORM_ADMIN_ROLE, isPlatformAdmin, principalScope, callerKind, isPrincipalKind, assertAssignablePrivileges, type PrincipalScope, type AssignabilityResult } from './scope.js';
 // Who may reach a surface that listens on a socket. One decision for every GNL surface that binds
