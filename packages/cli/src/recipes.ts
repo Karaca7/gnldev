@@ -17,8 +17,8 @@ export type WiringPlace = 'agentTool' | 'configField';
  * `picked` is only meaningful for a recipe that declares `variants` — the guards file is the one
  * that does. Passing it to a recipe without variants is harmless: those generators ignore it.
  */
-export function recipeContents(r: Recipe, picked?: readonly string[]): string {
-  return typeof r.contents === 'function' ? r.contents(picked) : r.contents;
+export function recipeContents(r: Recipe, picked?: readonly string[], ctx?: RecipeContext): string {
+  return typeof r.contents === 'function' ? r.contents(picked, ctx) : r.contents;
 }
 
 /** The default `picked` for a variant recipe: everything marked `default`. */
@@ -51,6 +51,19 @@ export interface RecipeWiring {
   code: string;
 }
 
+/**
+ * What the person ANSWERED, for the recipes whose output depends on it.
+ *
+ * `gnl init` asks four questions and this file used to read none of them, so a project that answered
+ * `identity: 'end-users'` — and got `src/identity.ts` written for it — still got a chat route with
+ * `identity: (_req) => undefined` and a comment telling it to wire the file up by hand. Measured: the
+ * two projects' routes were byte-identical. An answer that reaches the generator of one file and not
+ * the generator of the file that uses it is an answer nobody acted on.
+ */
+export interface RecipeContext {
+  identity?: 'internal' | 'end-users';
+}
+
 export interface Recipe {
   id: string;
   /** Label shown in the `gnl init` checkbox. */
@@ -65,7 +78,7 @@ export interface Recipe {
    * generates a random dev token, because a literal in this file is a literal in the npm tarball,
    * and an admin API guarded by a published string is not guarded.
    */
-  contents: string | ((picked?: readonly string[]) => string);
+  contents: string | ((picked?: readonly string[], ctx?: RecipeContext) => string);
   /**
    * Parts a caller can choose between, instead of one fixed file.
    *
@@ -453,17 +466,18 @@ Produce jobs with \`enqueue(storage.work, 'summarize', payload, { id })\` from a
     // commented out, including the identity resolver — the single most security-relevant function a
     // host writes. A commented resolver compiles never, is tested never, and is copied by hand into
     // the one place a typo means "runs are born owned by whoever asked". Now it is code.
-    contents: `// The chat surface: the Vercel AI SDK's \`useChat\` talks to this route unchanged, while the run
-// behind it is journaled, replayable, and its side effects are at-most-once.
-//
-// One durable run PER TURN. The route derives it from the conversation id + the last message id, so
-// a network retry of the same turn replays instead of running twice — and when a subject is known
-// (below), that derived string is promoted to a \`workKey\` and the engine mints the run id itself.
-import { createChatRoute } from '@gnldev/chat-adapter';
-import config from '../../gnl.config.js';
-
-export const chat = createChatRoute(config, {
-  // WHO IS THIS REQUEST ACTING FOR?
+    contents: (_picked, ctx) => {
+      // The resolver the person ASKED for, wired — or the honest placeholder when they declined one.
+      // Both shapes seal the context either way; the difference is whether a subject is named at all.
+      const endUsers = ctx?.identity === 'end-users';
+      const resolverImport = endUsers ? "import { identity } from '../identity.js';\n" : '';
+      const resolver = endUsers
+        ? `  // The resolver \`gnl init --identity end-users\` wrote for you, wired here rather than left as a
+  // comment to copy: a resolver copied by hand is the one place a typo means "runs are born owned by
+  // whoever asked". Read \`src/identity.ts\` — it returns \`undefined\` until you point \`sessionOf\` at
+  // whatever your app already verified, and the protections matrix says \`○ identity\` until you do.
+  identity,`
+        : `  // WHO IS THIS REQUEST ACTING FOR?
   //
   // Returning \`undefined\` is the honest default: runs are born with no owner, ownership gates have
   // nothing to compare against, and the protections matrix prints \`○ identity\` rather than pretending.
@@ -477,12 +491,22 @@ export const chat = createChatRoute(config, {
   //
   // A subject read out of the request body is the caller naming whoever they like.
   //
-  // If you ran \`gnl init --identity end-users\`, that resolver is already written for you:
-  //     import { identity } from '../identity.js';
-  //     createChatRoute(config, { identity })
-  identity: (_req) => undefined,
+  // \`gnl init --identity end-users\` writes that resolver and wires it here for you.
+  identity: (_req) => undefined,`;
+      return `// The chat surface: the Vercel AI SDK's \`useChat\` talks to this route unchanged, while the run
+// behind it is journaled, replayable, and its side effects are at-most-once.
+//
+// One durable run PER TURN. The route derives it from the conversation id + the last message id, so
+// a network retry of the same turn replays instead of running twice — and when a subject is known
+// (below), that derived string is promoted to a \`workKey\` and the engine mints the run id itself.
+import { createChatRoute } from '@gnldev/chat-adapter';
+import config from '../../gnl.config.js';
+${resolverImport}
+export const chat = createChatRoute(config, {
+${resolver}
 });
-`,
+`;
+    },
     wiring: {
       // Mounted by the server file, not by gnl.config.ts — it is an HTTP surface, like the REST API
       // and Studio, and those are mounted next to it in src/server.ts.

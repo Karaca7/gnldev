@@ -5028,7 +5028,9 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     let begin: (() => Promise<any>) | null = null;
     if (isCode && gnl?.runWorkflow) {
       const runWf = gnl.runWorkflow.bind(gnl); // unbound method → loses this; bind it.
-      begin = () => runWf(name, body.input, { runId });
+      // The organization, exactly as the managed branch below and the non-streaming sibling (:4941)
+      // hand it over. A code workflow reached the runner as a call from nobody.
+      begin = () => runWf(name, body.input, { runId }, { orgId: callerOrg(c) });
     } else if (!isCode && canRunManaged && wf && (await wf.get(name))) {
       begin = () => runManaged(wf!, name, body.input, runId, undefined, undefined, (n) => managedOverrides(n, c), undefined, { orgId: callerOrg(c) });
     }

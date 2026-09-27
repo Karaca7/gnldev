@@ -17,6 +17,15 @@ pnpm start
 4. **Approve** → the refund is processed (**at-most-once** — an approved refund already recorded as done is not repeated), triggering a background email job (`@gnldev/queue`) + a refund event (`@gnldev/events`).
 5. The refund/email/notification counters on the ops bar increase. Inspect the run with time-travel in **Ops Studio**.
 
+> **No auth, on purpose — and that is what makes the `customerId` here wrong for production.** This
+> demo takes the customer from the request body (`src/server.ts`), which is exactly what
+> `docs/QUICKSTART-PROTECTED.md` and the resolver `gnl init --identity end-users` writes both spell as
+> **NEVER**: a subject read out of the body is the caller naming whoever they like. It is harmless
+> here because there is no credential to lie about — every caller is the operator — and it keeps the
+> example about the packages. In a real app the subject comes from something the SERVER verified; see
+> [@gnldev/server](../../packages/server/README.md#identity). The row below says per-customer recall
+> because the memory layer does scope on the id it is handed; nothing here checks who handed it.
+
 ## Which packages, where
 | Package | Usage |
 |---|---|

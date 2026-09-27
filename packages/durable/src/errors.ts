@@ -330,6 +330,44 @@ export const CALLER_CONFLICT_CODES: Record<string, string> = {
   BatchPlanMismatchError: 'batch_plan_mismatch',
 };
 
+/**
+ * The `detail` fields that name a party the CALLER IS NOT — never serialised back to that caller.
+ *
+ * The edge gates already hold this line and say why: `ownershipDenied`'s comment in @gnldev/server —
+ * "The message names neither the real owner nor whether the run exists — a caller guessing ids would
+ * otherwise learn both from the refusal." The typed conflicts above carry the same answer in a field,
+ * and four of the eight name somebody else. Measured on 0.6.0: `POST /workflows/:name/run` naming a
+ * stranger's `threadId` answered 409 with `"owner":"u-ayse"` in the body — the id-guessing oracle the
+ * gates were written to close, reopened one layer down. (The two agent routes call the edge gate and
+ * answer a 403 that names nothing; the workflow route does not call it, which is why the engine's
+ * error is what the caller sees there.)
+ *
+ * HERE and not in each host: `CALLER_CONFLICT_CODES` sits here for exactly this reason, and its
+ * consumers are @gnldev/server, @gnldev/studio, @gnldev/chat-adapter and @gnldev/agui — a redaction
+ * list copied per consumer is the drift that left one route unmapped the last time.
+ *
+ * What SURVIVES is the caller's own input: the id it named, the subject it claimed, the hashes. A
+ * refusal must stay actionable — telling someone only "no" is how a typed error decays back into a
+ * sentence to be parsed.
+ *
+ * `startedForThread` is NOT in the list, and the reason is a measurement rather than a reading. It
+ * was, for one run of the suite, and `blocked-errors.test.ts` went red: there the caller re-uses its
+ * OWN runId on a second thread, so `startedForThread` is that caller's own earlier input and the
+ * refusal is only useful if it says which two collided. `owner`/`ownerActor` never have that
+ * reading — the words mean "the party you are not".
+ */
+export const FOREIGN_PARTY_DETAIL_FIELDS: readonly string[] = ['owner', 'ownerActor'];
+
+/** `detail`, with every field naming a party the caller is not removed. Safe to return over HTTP. */
+export function publicConflictDetail(detail: unknown): unknown {
+  if (!detail || typeof detail !== 'object' || Array.isArray(detail)) return detail;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(detail as Record<string, unknown>)) {
+    if (!FOREIGN_PARTY_DETAIL_FIELDS.includes(k)) out[k] = v;
+  }
+  return out;
+}
+
 /** Name-matched like blockedErrorCode below (dist/src class-identity resilience). */
 export function callerConflictCode(err: unknown): string | undefined {
   const name = (err as { name?: unknown } | null | undefined)?.name;

@@ -9,7 +9,7 @@ import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { convertToModelMessages } from 'ai';
 import type { UIMessage } from 'ai';
-import { createGnl, RunThreadMismatchError, blockedErrorCode, callerConflictCode, upstreamFailure, sealRequestContext, resolveWorkIdentity } from '@gnldev/durable';
+import { createGnl, RunThreadMismatchError, blockedErrorCode, callerConflictCode, publicConflictDetail, upstreamFailure, sealRequestContext, resolveWorkIdentity } from '@gnldev/durable';
 import type { CreateGnlConfig, GnlIdentity } from '@gnldev/durable';
 import { toUIMessageStreamResponse } from './ui-stream.js';
 
@@ -117,7 +117,8 @@ function typedErrorResponse(c: Context, e: unknown, workKey?: string): Response 
   const conflictCode = callerConflictCode(e);
   if (conflictCode && conflictCode !== 'run_thread_mismatch') {
     const err = e as { message?: string; detail?: unknown };
-    return c.json({ error: err.message, code: conflictCode, detail: withWorkKey(err.detail, workKey) }, 409);
+    // Redacted: see `publicConflictDetail` (durable/errors.ts) for what is withheld and why.
+    return c.json({ error: err.message, code: conflictCode, detail: withWorkKey(publicConflictDetail(err.detail), workKey) }, 409);
   }
   const code = blockedErrorCode(e);
   if (code) {

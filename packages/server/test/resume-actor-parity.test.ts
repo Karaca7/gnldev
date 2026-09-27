@@ -84,7 +84,22 @@ describe('POST /agents/:name/resume — damga eşitliği (/run neyi reddediyorsa
     const { api } = await seeded();
     const res = await post(api, '/agents/a/run', MALLORY, { runId: 'raw-ayse', prompt: 'zzz' });
     expect(res.status).toBe(409);
-    expect(await res.json()).toMatchObject({ code: 'run_actor_mismatch', detail: { ownerActor: 'u-ayse', requestedActor: 'mallory' } });
+    const body = await res.json();
+    // The anchor is the CODE: it proves the engine's actor lock is what answers here, which is what
+    // makes the parity claim below meaningful. `detail.ownerActor` used to be asserted too, and that
+    // assertion pinned a disclosure: mallory learned the run belongs to 'u-ayse' by being refused —
+    // the id-guessing oracle `ownershipDenied`'s own comment exists to close. It is redacted now
+    // (see `FOREIGN_PARTY_DETAIL_FIELDS` in @gnldev/durable), so the refusal names only what THIS
+    // caller sent. The assertion that it is absent lives in `refusal-names-nobody.test.ts`.
+    expect(body).toMatchObject({ code: 'run_actor_mismatch', detail: { requestedActor: 'mallory' } });
+    expect(body.detail, 'the STRUCTURED refusal still named the owner').not.toHaveProperty('ownerActor');
+    // STILL OPEN, and measured rather than assumed: the redaction covers `detail`, not the sentence.
+    // `body.error` here is still "run 'raw-ayse' belongs to actor 'u-ayse' — 'mallory' may not
+    // re-drive it." Seven message sites in @gnldev/durable name the owner this way and two test files
+    // assert them. Closing it is a separate decision, not a wider version of this one: the sentence
+    // is what an operator reads in a log, and a code-only refusal moves that explanation into
+    // docs/errors/<code>.md. Trigger: the first report of an id-guessing probe against a deployment
+    // that hands end users their own credentials.
   });
 
   it('KIRMIZI: beyan etmeyen yabancı kimlik, başkasının koşumunu resume edemez', async () => {

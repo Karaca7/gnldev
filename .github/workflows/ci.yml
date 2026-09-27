@@ -72,6 +72,9 @@ jobs:
       # a package with no `test` script is skipped by `pnpm -r test` with no warning — @gnldev/studio
       # sat that way holding 718 passing tests, the cross-org isolation suite among them.
       - run: pnpm check:hygiene
+      # An option a deployment can set and nobody documented: `subjectBinding` closes a
+      # cross-subject read and appeared in zero .md files. check:docs verifies what IS written.
+      - run: pnpm check:option-docs
 
 
   integration:

@@ -12,7 +12,7 @@
 import type { Context } from 'hono';
 import { toFetchHandler, type FetchHandler } from './handler.js';
 import { Hono } from 'hono';
-import { limitBreachFromSteps, blockedFromSteps, BLOCKED_ERROR_CODES, blockedErrorCode, callerConflictCode, sealRequestContext, resolveWorkIdentity } from '@gnldev/durable';
+import { limitBreachFromSteps, blockedFromSteps, BLOCKED_ERROR_CODES, blockedErrorCode, callerConflictCode, publicConflictDetail, sealRequestContext, resolveWorkIdentity } from '@gnldev/durable';
 import type { CreateGnlConfig, GnlIdentity, ResolvedWorkIdentity } from '@gnldev/durable';
 import { createGnl } from '@gnldev/durable';
 import { streamSSE } from 'hono/streaming';
@@ -340,7 +340,8 @@ function aguiRouteApp(config: CreateGnlConfig, opts: CreateAguiRouteOptions = {}
       // first cut forgot; a critical-profile input/actor/swept refusal must not collapse to a bare 400).
       const conflict = callerConflictCode(e);
       if (conflict) {
-        return c.json({ error: e.message, code: conflict, detail: withWorkKey(e.detail, declared) }, 409);
+        // Redacted: see `publicConflictDetail` (durable/errors.ts) for what is withheld and why.
+        return c.json({ error: e.message, code: conflict, detail: withWorkKey(publicConflictDetail(e.detail), declared) }, 409);
       }
       const blocked = blockedErrorCode(e);
       if (blocked) {

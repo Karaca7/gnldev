@@ -3,7 +3,7 @@
 import { Hono, type Context } from 'hono';
 import { toFetchHandler, type FetchHandler } from './handler.js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { createGnl, agentVisibleToOrg, withOrg, withOrgStorage, ORG_RECORD_PRE, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, asReaderJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, sealRequestContext, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry, callerConflictCode, describeProtections, formatProtections, teachingError, resolveWorkIdentity } from '@gnldev/durable';
+import { createGnl, agentVisibleToOrg, withOrg, withOrgStorage, ORG_RECORD_PRE, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, asReaderJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, sealRequestContext, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry, callerConflictCode, publicConflictDetail, describeProtections, formatProtections, teachingError, resolveWorkIdentity } from '@gnldev/durable';
 import type { CreateGnlConfig, Journal, JournalReader, BudgetLimit, UsageCostCache, RunLimits, ResolvedWorkIdentity, WorkScopeKind } from '@gnldev/durable';
 import { makeGate, normalizeAuth, principalOf, isPlatformAdmin, CLIENT_ROLE, type AuthProvider, type ReadWriteAuth, type Principal } from '@gnldev/auth';
 // P0.4 @gnldev/workflow is zero-dependency (see its package.json) — depending on it
@@ -541,7 +541,8 @@ function limitErrorResponse(c: Context, e: unknown): Response | undefined {
 function threadMismatchResponse(c: Context, e: unknown, workKey?: string): Response | undefined {
   if (!(e instanceof RunThreadMismatchError) && (e as { name?: string })?.name !== 'RunThreadMismatchError') return undefined;
   const err = e as RunThreadMismatchError;
-  return c.json({ error: err.message, code: 'run_thread_mismatch', detail: withWorkKey(err.detail, workKey) }, 409);
+  // Redacted: see `publicConflictDetail` (durable/errors.ts) for what is withheld and why.
+  return c.json({ error: err.message, code: 'run_thread_mismatch', detail: withWorkKey(publicConflictDetail(err.detail), workKey) }, 409);
 }
 
 /**
@@ -577,7 +578,8 @@ function callerConflictResponse(c: Context, e: unknown, workKey?: string): Respo
   const code = callerConflictCode(e);
   if (!code) return undefined;
   const err = e as { message?: string; detail?: unknown };
-  return c.json({ error: err.message, code, detail: withWorkKey(err.detail, workKey) }, 409);
+  // Redacted: see `publicConflictDetail` (durable/errors.ts) for what is withheld and why.
+  return c.json({ error: err.message, code, detail: withWorkKey(publicConflictDetail(err.detail), workKey) }, 409);
 }
 
 function blockedErrorResponse(c: Context, e: unknown): Response | undefined {
@@ -679,17 +681,26 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   // "(auth: protected)" for a project whose only credential was one this framework had published.
   // One derivation, every surface.
   //
-  // The identity row is the half durable cannot see, so this file fills it in, and it answers the
-  // question this host actually implements (resolveResourceId, ~250 lines up): with an auth provider
-  // the subject is the authenticated principal; without one there is no principal at all and the
-  // subject can only come from the request body. That is a real difference in what an ownership gate
-  // is worth, so it is stated rather than flattened into a ✓.
+  // The identity row is the half durable cannot see, so this file fills it in — and it says only what
+  // it can prove. WITHOUT a provider there is no principal at all, so the subject can only come from
+  // the request body: provable, and stated. WITH one, this host sees a provider and not its
+  // credentials, and whether a principal carries a name is a property of those: `roleAuth` fills
+  // `principal.id` only from `cred.user`, so the bearer-token shape `gnl add auth` generates carries
+  // none, `resolveResourceId` never reaches the principal, and runs are born ownerless. This line used
+  // to print `✓ bound via the authenticated principal` for that deployment — the claim measured false,
+  // on the shape the scaffold itself writes. `gnl doctor` and `gnl dev` read the config's credentials
+  // and can answer it; this surface cannot, so it says `unknown` and names where the answer lives.
   if (opts.protectionsBanner !== false) console.log(
     formatProtections(
       describeProtections(config, {
         surface: 'createRestApi',
         identity: authProvider
-          ? { bound: true, via: 'the authenticated principal', from: 'explicit' }
+          ? {
+              bound: 'unknown',
+              via: 'the authenticated principal, IF its credential carries a name',
+              from: 'explicit',
+              note: 'a bearer token carries no `id`, so the subject falls back to `body.resourceId`; `gnl doctor` reads the credentials and can tell you which',
+            }
           : {
               bound: false,
               from: 'default',
@@ -1953,12 +1964,21 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     // silinen envanter buradan aynen okunuyordu — üstelik `threadId` + `resourceId` alanlarıyla,
     // yani kapanan deliğin HEDEF LİSTESİNİ geri veriyordu. Aynı sınıf, komşu uç: kapıyı üç yere
     // koyup dördüncüsünü atlamak, kapıyı hiç koymamakla aynı kapıdan geçilmesini engellemiyor.
-    const resourceId = boundSubjectOf(c) ?? c.req.query('resourceId');
+    // The REQUEST's own word for the subject, kept apart from the RESOLVED one below: the legacy
+    // shortcut keys on this, so the response SHAPE stays a fact about the request. Keyed on the
+    // resolved subject it made the same parameterless URL answer an array to an operator and
+    // `{items:[…]}` to a bound end user — and @gnldev/client's `listRuns()` casts to an array, so
+    // turning on the switch that closes a leak broke the typed client for the caller it protects.
+    const declaredResource = c.req.query('resourceId');
+    const resourceId = boundSubjectOf(c) ?? declaredResource;
     // Checked BEFORE the no-params shortcut below, which is the branch that would otherwise hand a
     // client the whole organization's run list — the exact read this rule exists to scope.
     { const denied = clientSubjectDenied(c, resourceId); if (denied) return denied; }
-    if (limitRaw == null && cursor == null && statusRaw == null && agent == null && resourceId == null) {
-      return c.json(await s.journal.listRuns()); // no params → legacy array (unchanged)
+    if (limitRaw == null && cursor == null && statusRaw == null && agent == null && declaredResource == null) {
+      // Shape unchanged; the BOUND subject is still applied, because a stable shape that stopped
+      // filtering would hand this caller the whole organization — see the line above.
+      const rows = await s.journal.listRuns();
+      return c.json(resourceId ? rows.filter((r) => r.resourceId === resourceId) : rows);
     }
     // A list rather than a chain of !==: this validation has lagged the vocabulary at every widening
     // ('failed', then 'running', now 'canceled'), and a chain invites the next one. The message is

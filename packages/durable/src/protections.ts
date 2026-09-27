@@ -75,7 +75,15 @@ export interface ProtectionContext {
    * can be mounted behind one route that binds and another that does not. Left out, the row reads
    * 'unknown' — which is the honest answer, and a louder one than a wrong ✓.
    */
-  identity?: { bound: boolean; via?: string; from?: ProtectionSource; note?: string };
+  /**
+   * `'unknown'` is a real answer, not a missing one. Whether a subject gets bound can depend on facts
+   * the surface does not have at construction: @gnldev/server sees an auth PROVIDER, and whether its
+   * principals carry a name is a property of the CREDENTIALS behind it (`roleAuth` fills `id` only
+   * from `cred.user`, so a bearer token carries none). A surface that printed `✓` from the provider's
+   * mere existence claimed a protection it had not proved — which is the failure the header of
+   * @gnldev/cli's protections-view was written about.
+   */
+  identity?: { bound: boolean | 'unknown'; via?: string; from?: ProtectionSource; note?: string };
   /**
    * Protections THIS PROCESS turned on that the project's config does not carry. Marked `─`, because
    * the reader's next deployment will not have them.
@@ -155,16 +163,18 @@ export function describeProtections(config: CreateGnlConfig, ctx: ProtectionCont
       ? {
           id: 'identity',
           label: 'identity',
-          mark: ctx.identity.bound ? 'on' : 'off',
-          value: ctx.identity.bound
+          mark: ctx.identity.bound === true ? 'on' : ctx.identity.bound === false ? 'off' : 'unknown',
+          value: ctx.identity.bound === true
             ? `bound via ${ctx.identity.via ?? 'the adapter'}`
-            : 'not bound — runs are born ownerless',
-          from: ctx.identity.from ?? (ctx.identity.bound ? 'explicit' : 'default'),
+            : ctx.identity.bound === false
+              ? 'not bound — runs are born ownerless'
+              : ctx.identity.via ?? 'depends on the credentials behind the provider',
+          from: ctx.identity.from ?? (ctx.identity.bound === true ? 'explicit' : 'default'),
           ...(ctx.identity.note
             ? { note: ctx.identity.note }
-            : ctx.identity.bound
-              ? {}
-              : { note: 'ownership gates stay fail-open; give the route `identity` or `resolveResourceId`' }),
+            : ctx.identity.bound === false
+              ? { note: 'ownership gates stay fail-open; give the route `identity` or `resolveResourceId`' }
+              : {}),
         }
       : {
           id: 'identity',

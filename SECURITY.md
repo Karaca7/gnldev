@@ -42,6 +42,25 @@ have already authenticated the user. Putting that token in a client device, or p
 caller-supplied `resourceId` without checking it, hands every user the ability to name any other; that
 is a deployment mistake rather than a gnl vulnerability, and it is the one most worth avoiding.
 
+**The third row above has a condition, and it is the default that breaks it.** "Once your application
+says whose it is" means exactly that: the guarantee holds on the shape where one application
+credential names its users. A deployment that instead gives each end user a credential of their own
+gets a different default, and on the read paths it is open — the expectation comes from what the
+caller STATES, so a caller that states nobody is not filtered. Measured: one such end user read
+`GET /threads`, then another subject's `/threads/<id>/messages`, then their `/runs/<id>` — all `200`,
+and naming the other user explicitly was `200` too.
+
+`subjectBinding: 'strict'` (see [@gnldev/server](packages/server/README.md)) closes it for that shape.
+It is opt-in because turning it on also binds an operator that carries a name of its own, and reading
+across one organization is what an operator is for — the two are told apart by credential class, not
+by intent.
+
+So, plainly: **the only isolation boundary enforced by default is the organization.** Within one
+organization, identities that carry their own name see each other's runs, threads and tool arguments
+unless you name your users through one application credential or set that flag. A report about that
+default is a report about this sentence, not a vulnerability — a report that the flag does not hold
+where this says it does is a vulnerability.
+
 ## Scope
 
 In scope: everything in this repository — the durable engine and its journal, the REST server,

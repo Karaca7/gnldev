@@ -40,7 +40,7 @@ export {
   ReplicationNotAcknowledgedError, SuiteVersionMismatchError, RunThreadMismatchError,
   RunInputMismatchError, RunActorMismatchError, RunOwnerMismatchError, ThreadOwnerMismatchError, RunSweptError, BatchPlanMismatchError,
   NotAnAgentRunError,
-  CALLER_CONFLICT_CODES, callerConflictCode,
+  CALLER_CONFLICT_CODES, callerConflictCode, publicConflictDetail, FOREIGN_PARTY_DETAIL_FIELDS,
   BLOCKED_ERROR_CODES, blockedErrorCode, upstreamFailure, UPSTREAM_ERROR_CODES,
   // The error→note→help formatter. Exported because the refusals a user actually meets are split
   // across packages — @gnldev/server writes the ones that happen before a run starts — and a second

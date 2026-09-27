@@ -176,6 +176,30 @@ GET  /runs/:id?resourceId=u-mehmet                                 → 403 if th
 That id is what keeps two of your users' conversations, memories and runs apart — the memory layer
 scopes on it. Operator credentials may omit it; they work across the organization by design.
 
+**If your end users carry their OWN credentials, set `subjectBinding: 'strict'`.** The shape above —
+one `client` credential naming its users — is the supported one, and on it the reads are already
+scoped. A deployment that instead hands each end user a credential of their own has a different
+default, and it is open: on the read paths the expectation comes from what the CALLER states, so a
+caller that states nobody is not filtered.
+
+Measured, with per-user credentials and no flag: one end user read `GET /threads` (every subject's
+conversation list), then `/threads/<other>/messages`, then `/runs/<other>` — all `200`. Naming the
+other user explicitly was `200` as well. The flag makes an authenticated non-operator speak for
+itself, and its own name outranks anything the request says:
+
+```ts
+createRestApi(config, { auth, subjectBinding: 'strict' })
+```
+
+It is not the default because turning it on answers `403` to an operator that carries a name of its
+own — and reading across one organization is what an operator is for. The two are told apart by
+credential class today: `client` and `platform-admin` stay exempt, a named `admin` does not.
+
+**The only enforced isolation boundary is the organization.** Within one organization, and with the
+default `subjectBinding`, identities that carry their own name see each other's runs, threads and tool
+arguments. If that is not what you want, either name your users through one application credential
+(above) or set the flag.
+
 ## License
 
 Apache-2.0 — see [LICENSE](./LICENSE).

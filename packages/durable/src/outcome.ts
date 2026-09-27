@@ -15,7 +15,7 @@
 // convert a real error into a different one on the failure path.
 import { runKeys } from './journal.js';
 import type { Journal, RunOutcomeRecord } from './journal.js';
-import { RunBusyError } from './errors.js';
+import { RunBusyError, CALLER_CONFLICT_CODES } from './errors.js';
 
 /**
  * Errors that mean "this run did not run", not "this run failed".
@@ -56,10 +56,21 @@ import { RunBusyError } from './errors.js';
  *   call arrives against an id that very often already carries the owner's 'completed'. Letting it
  *   through as a failure would mean the leak we just refused still edits the victim's history.
  *
- * Matched by name rather than by instanceof: cancel.ts/compensation.ts/errors.ts import from run.ts's
- * side of the graph, and importing them back here would be a cycle for no gain.
+ * Matched by name rather than by instanceof: cancel.ts/compensation.ts import from run.ts's side of
+ * the graph, and importing THOSE back here would be a cycle. `errors.ts` is not on that side — it
+ * imports nothing at all, and this file already reads `RunBusyError` from it — so the table there is
+ * reachable, and it is the same set by construction.
+ *
+ * DERIVED, not restated. `CALLER_CONFLICT_CODES` names the refusals the CALLER caused; none of them
+ * is the run failing, because the run was never re-entered. Restating them here listed six of ten,
+ * and the two reachable omissions cost the owner's outcome: measured on 0.6.0, a completed run
+ * re-driven with a different prompt answered 409 (the guard worked) and flipped to `failed`. A
+ * conflict added to the table from now on is classified correctly without anyone editing this line.
+ *
+ * The two that are NOT caller conflicts stay written out: a compensation and a cancel are deliberate
+ * lifecycle ends, not somebody being refused.
  */
-const NOT_A_RUN_FAILURE = new Set(['CompensatedRunError', 'RunCanceledError', 'RunThreadMismatchError', 'ThreadOwnerMismatchError', 'RunOwnerMismatchError', 'NotAnAgentRunError']);
+const NOT_A_RUN_FAILURE = new Set([...Object.keys(CALLER_CONFLICT_CODES), 'CompensatedRunError', 'RunCanceledError']);
 
 /**
  * How a run's error relates to its outcome record. RunBusyError alone cannot answer this — it is

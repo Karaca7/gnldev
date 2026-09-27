@@ -430,8 +430,11 @@ async function makeApi(optIn = false) {
     // A plain boolean, not a host object — `GET /a2a-network` answers `[]` to everybody without it
     // (server.ts:3775) without reading any data at all, which is a 200 that looks like isolation.
     a2a: true,
-    resume: async () => ({}),
-    compensate: async () => ({ ok: true }),
+    // RECORDED, like `chat` and `gnl.run`. Both answer a constant to every caller, so the organization
+    // they were TOLD about is the only observable — and an unrecorded constant is how the fork route's
+    // and the compensate route's ctx went unexamined through four rounds of this suite.
+    resume: async (_id: string, _a: unknown, ctx?: { orgId?: string }) => rec('resume', ctx, {}),
+    compensate: async (_id: string, _o?: unknown, ctx?: { orgId?: string }) => rec('compensate', ctx, { ok: true }),
     otelExport: async (runId: string) => ({ ok: true, target: runId }),
     // `chat` is a FUNCTION, not an object with `.send` — the route calls `chat(message, {runId}, ctx)`.
     // An earlier fixture used `{ send }`, which produced "chat is not a function" and left the route
@@ -486,7 +489,11 @@ async function makeApi(optIn = false) {
         rec('gnl.stream', ctx, { textStream: (async function* () { yield 'ok'; })() }),
       listTools: () => [{ name: 'acme-tool' }],
       runTool: async (_n: string, _i: unknown, _o?: unknown, ctx?: { orgId?: string }) => rec('gnl.runTool', ctx, { ok: true }),
-      listWorkflows: () => [],
+      // NOT empty. Both run routes branch on `isCode`, and with no code workflow in existence the
+      // `isCode` half never ran in this suite — which is exactly where the missing ctx was.
+      listWorkflows: () => [{ name: 'code-wf' }],
+      runWorkflow: async (_n: string, _i: unknown, _o?: unknown, ctx?: { orgId?: string }) =>
+        rec('gnl.runWorkflow', ctx, { runId: 'r-code', output: {}, suspended: false, steps: [] }),
     },
     ...(({ __dishonest: _d, ...rest }) => rest)(hostObjects(optIn) as never),
   } as never) as unknown as ((r: Request) => Promise<Response>) & { routeTable: readonly { method: string; path: string }[] };
@@ -1039,6 +1046,66 @@ describe('the ownership control — acme must SEE what globex must not', () => {
     expect([...new Set(globexCalls.map((c) => c.orgId))],
       `${what} was told the wrong organization, or none at all — the runner cannot scope what it does`)
       .toEqual(['globex']);
+  }, 30_000);
+
+  /**
+   * THE CALLER'S ORGANIZATION REACHES THE HOST — asserted for its own sake, separately from isolation.
+   *
+   * The table above compares two callers, which only works where BOTH reach the host. A route that
+   * refuses a stranger (fork answers globex 404) never calls the seam for globex, so the comparison
+   * cannot be made and the route lands in the refusal pile — proven isolated, and never asked whether
+   * it told the host anything at all. That gap is not hypothetical: deleting the ctx argument at
+   * server.ts:3163 (fork → resume), :3310 (compensate) and :4941 (run → runWorkflow) left this whole
+   * suite green, and the sibling of the third, server.ts:5031, ships with no ctx at all.
+   *
+   * So this asks one question of the OWNER's request only: was the seam called, and was it told 'acme'.
+   *
+   * The two workflow rows name a CODE workflow explicitly rather than taking the probe's `:name`
+   * substitution, which is always the MANAGED `acme-workflow`. Both routes branch on `isCode`, and the
+   * probe only ever took the managed branch — the verdict text ("executes a managed definition")
+   * describes exactly the half that was reachable.
+   */
+  describe.each([
+    ['POST /runs/:id/fork', 'POST', '/runs/:id/fork', 'resume'],
+    ['POST /runs/:id/compensate', 'POST', '/runs/:id/compensate', 'compensate'],
+    ['POST /workflows/:name/run (code workflow)', 'POST', '/workflows/code-wf/run', 'gnl.runWorkflow'],
+    ['POST /workflows/:name/run-stream (code workflow)', 'POST', '/workflows/code-wf/run-stream', 'gnl.runWorkflow'],
+  ])('%s tells the host which organization is asking', (_label, method, path, what) => {
+    it('the owner\'s request reaches the seam carrying its own organization', async () => {
+      const { api } = await makeApi(true);
+
+      const start = hostCalls.length;
+      await drive(api, { method, path }, AS.acme);
+      // The stream route hands the seam over inside the SSE body, after the response headers.
+      await new Promise((r) => setTimeout(r, 150));
+      const calls = hostCalls.slice(start).filter((c) => c.what === what);
+
+      expect(calls.length, `${what} was never called — the route did not reach the host at all`).toBeGreaterThan(0);
+      expect([...new Set(calls.map((c) => c.orgId))],
+        `${what} was told nothing, or the wrong organization — a host that scopes by organization cannot`
+        + ' separate this caller from any other')
+        .toEqual(['acme']);
+    }, 30_000);
+  });
+
+  /**
+   * The last route whose behaviour is chosen by the CLASS of its `:name`, and the only one the probe's
+   * single substitution still cannot reach. `DELETE /workflows/:name` refuses a CODE workflow (403) and
+   * deletes a MANAGED one; the probe always sends the managed `acme-workflow`, so the refusal half has
+   * never run here. It is not an isolation question — nothing leaks either way — but an unexercised
+   * branch is how the run/run-stream pair kept a missing organization for four rounds.
+   *
+   * Counted rather than assumed: `isCode`/`codeNames`/`isCodeDefined` are the branch shapes grep finds
+   * (server.ts:4932, :5026, :5345, :5380). The first two are covered by the block above, the fourth by
+   * `POST /managed-agents versions the agent…`, and this closes the third. A branch that reads
+   * "does this exist" rather than "what kind is this" is already covered, because acme finds it and
+   * globex does not.
+   */
+  it('DELETE /workflows/:name refuses a CODE workflow instead of deleting it', async () => {
+    const { api } = await makeApi(true);
+    const res = await drive(api, { method: 'DELETE', path: '/workflows/code-wf' }, AS.acme);
+    expect(res.status, 'a code-defined workflow was not refused — the managed branch ran for a code name').toBe(403);
+    expect(res.body, 'the refusal did not say why').toContain('code-defined');
   }, 30_000);
 
   /**

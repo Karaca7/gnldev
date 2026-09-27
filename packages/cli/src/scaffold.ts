@@ -19,7 +19,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, s
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import { RECIPES, FEATURE_IDS, E2E_FEATURE, recipeContents, defaultVariants, type Recipe } from './recipes.js';
+import { RECIPES, FEATURE_IDS, E2E_FEATURE, recipeContents, type RecipeContext, defaultVariants, type Recipe } from './recipes.js';
 import { DEFAULT_ANSWERS, type InitAnswers } from './init-answers.js';
 import { IDENTITY_FILE } from './identity-file.js';
 import { hostById, APP_FILE, hostReadme, type HostMode } from './hosts.js';
@@ -102,7 +102,7 @@ export interface ScaffoldResult {
  * managed runtime consume `app.ts` and never see `server.ts`. Keeping them apart is what lets the
  * question be answered honestly.
  */
-export function addHost(dir: string, hostId: string, mode: HostMode = 'own'): void {
+export function addHost(dir: string, hostId: string, mode: HostMode = 'own', ctx?: RecipeContext): void {
   const host = hostById(hostId);
   if (!host) throw new Error(`gnl: unknown host: ${hostId}`);
   mkdirSync(join(dir, 'src'), { recursive: true });
@@ -116,7 +116,9 @@ export function addHost(dir: string, hostId: string, mode: HostMode = 'own'): vo
   const chatDst = join(dir, chatRecipe.file);
   if (!existsSync(chatDst)) {
     mkdirSync(dirname(chatDst), { recursive: true });
-    writeFileSync(chatDst, recipeContents(chatRecipe));
+    // The answer reaches the generator, not just the file next to it: `--identity end-users` wrote
+    // `src/identity.ts`, and this is the route that has to import it.
+    writeFileSync(chatDst, recipeContents(chatRecipe, undefined, ctx));
   }
   // `src/app.ts` in BOTH modes — it is the server-neutral surface, and mounting needs exactly it.
   // `src/server.ts` only when this project owns the server: in mount mode the server file is the
@@ -463,7 +465,7 @@ export function scaffold(targetDir: string, opts: ScaffoldOptions = {}): Scaffol
   const answers = opts.answers ?? DEFAULT_ANSWERS;
   const compose = (features: readonly string[], aliasedFrom?: string): ScaffoldResult => {
     const res = scaffoldFeatures(dir, name, [...features], !!opts.e2e, answers);
-    if (opts.host) addHost(dir, opts.host, opts.hostMode);
+    if (opts.host) addHost(dir, opts.host, opts.hostMode, { identity: answers.identity });
     return { ...res, files: listFiles(dir).sort(), ...(aliasedFrom ? { aliasedFrom } : {}) };
   };
 

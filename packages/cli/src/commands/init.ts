@@ -315,7 +315,7 @@ export const initCommand: Command = {
       if (serving === 'mount' && host) {
         // src/app.ts + the lines for the reader's own server file. `addHost` in mount mode writes no
         // server.ts and touches no dependency — both belong to the app that is already here.
-        addHost(targetDir, host, 'mount');
+        addHost(targetDir, host, 'mount', { identity: resolved.answers.identity });
         const { hostById, hostReadme } = await import('../hosts.js');
         console.log(`${green('✓')} created ${bold('src/app.ts')}   (the GNL surface — this is what you mount)`);
         console.log(`\n${cyan(`Paste into your ${hostById(host)!.label} server:`)}`);

@@ -132,7 +132,18 @@ describe('src/routes/chat.ts — the subject, in code rather than in a comment',
 
   it('names the already-written resolver for projects that have one', () => {
     // `gnl init --identity end-users` writes src/identity.ts; a reader who has it should be told to
-    // use it rather than filling in a second copy here.
-    expect(chat).toContain("import { identity } from '../identity.js';");
+    // use it rather than filling in a second copy here. This file renders the DEFAULT answer, where
+    // that file does not exist — so what it owes the reader is the route to it, not an import of
+    // something absent.
+    expect(chat).toContain('--identity end-users');
+  });
+
+  it('…and a project that ANSWERED end-users gets the import, not the advice', () => {
+    // The advice above used to be all there was: the resolver was written and the route still shipped
+    // `identity: (_req) => undefined` with a comment saying where the answer lived. Measured: the two
+    // projects' chat routes were byte-identical. The answer reaches the generator now.
+    const wired = recipeContents(RECIPES['chat']!, undefined, { identity: 'end-users' });
+    expect(wired).toMatch(/^import \{ identity \} from '\.\.\/identity\.js';$/m);
+    expect(wired, 'the placeholder survived alongside the real one').not.toContain('identity: (_req) => undefined');
   });
 });
