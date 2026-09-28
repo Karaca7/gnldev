@@ -168,9 +168,17 @@ What it borrowed from server now lives in `@gnldev/durable`, which every door al
   runs as the trigger's owner.
 - The scheduler, the waker and `moveTrigger` refuse an organization-scoped journal or a subject view:
   they poll the root.
-- `eraseSubject({ …, erasers })`: `jobEraser` (@gnldev/queue), `triggerEraser` (@gnldev/scheduler) and
-  `eventEraser` (@gnldev/events) remove what only their package knows. `EraseReport` is
-  `{ journalRows, workRecords, memoryThreads, byEraser }`. With an `orgId`, runs and documents are erased
+- `eraseSubject(storage, resourceId, { orgId?, erasers? })` takes the STORAGE and finds the journal,
+  memory, vector and work stores in it, so none can be forgotten; the old `{ journal, work?, vectors?,
+  memory? }` form is refused. It refuses, before deleting anything, a store that cannot erase (a journal
+  without `deletePrefix`, a work store without `deleteIdPrefix`, a vector store that cannot delete) and an
+  organization's storage view. `jobEraser` (@gnldev/queue), `triggerEraser` (@gnldev/scheduler) and
+  `eventEraser` (@gnldev/events) remove what only their package knows:
+  `eraseSubject(storage, 'ayse', { orgId: 'acme', erasers: [jobEraser(storage), triggerEraser(toJournal(storage.runs)), eventEraser(storage.work!)] })`.
+  `EraseReport` is `{ journalRows, workRecords, memoryThreads, workingMemory, byEraser }`. Erasure now
+  also deletes the person's resource-scoped working memory (it was left while the report said success)
+  and the observational memory's journal rows (`om:`, the observer's summary of the conversation), and
+  AgentMemory threads are no longer left when `memory` was not passed. With an `orgId`, runs and documents are erased
   in that organization only; without one, outside every organization. Erasure needs the root work store
   (`assertRootWorkForErasure` says so). Erasing `bob` no longer deletes `bob:evil`'s traces, lessons or
   stats.
@@ -190,6 +198,33 @@ What it borrowed from server now lives in `@gnldev/durable`, which every door al
 - `resthr:` keys escape the `resourceId`; old traces whose id contains `:` are no longer read.
 - `WorkStore.deleteIdPrefix` ships in SQLite, Postgres and Redis (it was in-memory only), and the
   shared erasure contract runs on all of them under `pnpm check:real`.
+
+**Working memory.** Breaking, security:
+
+- Working-memory keys are `thread:<id>` and `resource:<id>` (`workingMemoryScope`). A thread named
+  `res:u-ayse` read and wrote Ayşe's resource-scoped working memory. Stored values under the old keys are
+  not read: move `res:<id>` → `resource:<id>` and `<threadId>` → `thread:<threadId>` (an `org:<id>:`
+  prefix stays in front). `MemoryStore.deleteWorkingMemory(scopeId)` is required; `deleteThread` deletes
+  the thread's key. New: `workingMemoryScope`, `OM_LEAVES`.
+
+**What the release panels found.** Breaking:
+
+- With a thread in the call, a foreign run is refused (`run_owner_mismatch`) before the thread gates.
+  The standalone chat and AG-UI routes and `resumeRun` no longer name a foreign run's thread (they
+  answered `run_thread_mismatch` with the victim's thread id).
+- A thread with history whose owner cannot be derived (a 0.6 thread whose runs were deleted but whose
+  messages remain; runs naming two users, or nobody) is no longer handed to the first named user. It is
+  recorded as staff's on first read and closed to end users; an operator gives it to a user with
+  `assignThreadOwner(journal, threadId, resourceId)`. A thread opened anonymously in this version is
+  still taken by the first named user.
+- A sealed context together with a different explicit `caller` throws a `TypeError` (the seal silently
+  won). The `resourceId` shorthand is still overruled by the seal. New: `resolveCaller`, `sealFieldsOf`,
+  `SealFields`, `assignThreadOwner`.
+- Server: resuming a missing workflow run (`POST /workflows/:name/run` with `resume`) answers 404 and
+  writes nothing (it answered 400 with an internal error and left a "completed" run owned by the
+  caller); a foreign run answers the same 404 to a non-staff caller; a resume without `runId` is 400.
+- MCP: the `rateLimit` window is per organization and caller; a namesake in another organization no
+  longer spends yours.
 
 **What the ADR-0002 conformance table found.** Breaking:
 
