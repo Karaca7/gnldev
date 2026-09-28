@@ -14,7 +14,7 @@ import { claim as journalClaim, runKeys } from './journal.js';
 import { argsHash, derivedRunId, isDerivedRunId, DEPLOYMENT_SCOPE, type WorkScope, type WorkScopeKind } from './hash.js';
 import { RunBusyError, runBusyMessage, RunSweptError, RunInputMismatchError, RunOwnerMismatchError, ThreadOwnerMismatchError } from './errors.js';
 import { admitThreadRun } from './thread-owner.js';
-import { user, staff, callerOf, callerFromResourceId, userIdOf, identityOf, runIdentity, admitRun, type Caller, type RunIdentity } from './run-identity.js';
+import { user, staff, callerOf, callerFromResourceId, userIdOf, resolveCaller, identityOf, runIdentity, admitRun, type Caller, type RunIdentity } from './run-identity.js';
 import { recordIdemConflict } from './idem-ledger.js';
 import { durableProcessorStep } from './processor.js';
 import { recordRunScores } from './metrics.js';
@@ -170,16 +170,8 @@ export function serverIdentityOf(ctx: RequestContext): { resourceId?: string; or
  * sealed staff), then the call's explicit `caller`, then the `resourceId` shorthand, else `unknown`.
  */
 function callerOfCall(rc: RequestContext, opts: { resourceId?: string; caller?: Caller } | undefined): Caller {
-  const seal = serverIdentityOf(rc);
-  if (seal.resourceId !== undefined) return user(seal.resourceId, seal.orgId);
-  if (seal.staff) return staff(seal.orgId);
-  if (opts?.caller) {
-    if (opts.resourceId !== undefined && userIdOf(opts.caller) !== opts.resourceId) {
-      throw new TypeError('@gnldev/durable: a call was given both `caller` and a different `resourceId` — one caller per call.');
-    }
-    return callerOf(opts.caller);
-  }
-  return callerFromResourceId(opts?.resourceId, seal.orgId);
+  // One rule (run-identity.ts `resolveCaller`): the seal decides, and a declaration that disagrees with it throws.
+  return resolveCaller(serverIdentityOf(rc), opts);
 }
 
 /**

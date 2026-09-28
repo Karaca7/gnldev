@@ -3,7 +3,7 @@
 import { Hono, type Context } from 'hono';
 import { toFetchHandler, type FetchHandler } from './handler.js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { createGnl, agentVisibleToOrg, withOrg, withOrgStorage, scopeConfigToOrg, withSubjectJournal, withSubjectMemory, threadOwnerOf, type ThreadOwnership, ORG_RECORD_PRE, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, asReaderJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, sealRequestContext, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry, callerConflictCode, publicConflictDetail, describeProtections, formatProtections, teachingError, resolveWorkIdentity, runOwnerOf, decideRunAccess, userIdOf, type Caller, type RunDecision, type RunOwner, type RawJournal, type RequestContext } from '@gnldev/durable';
+import { createGnl, agentVisibleToOrg, withOrg, withOrgStorage, scopeConfigToOrg, withSubjectJournal, withSubjectMemory, threadOwnerOf, type ThreadOwnership, ORG_RECORD_PRE, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, asReaderJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, sealRequestContext, sealFieldsOf, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry, callerConflictCode, publicConflictDetail, describeProtections, formatProtections, teachingError, resolveWorkIdentity, runOwnerOf, decideRunAccess, userIdOf, type Caller, type RunDecision, type RunOwner, type RawJournal, type RequestContext } from '@gnldev/durable';
 import type { CreateGnlConfig, Journal, JournalReader, BudgetLimit, UsageCostCache, RunLimits, ResolvedWorkIdentity, WorkScopeKind, StreamSurface as DurableStreamSurface, StreamSurfaceInput } from '@gnldev/durable';
 import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, callerKind, subjectIdProblem, actorIdOf, engineCallerOf, type AuthProvider, type ReadWriteAuth, type Principal, type PrincipalKind } from '@gnldev/auth';
 // P0.4 @gnldev/workflow is zero-dependency (see its package.json) — depending on it
@@ -1024,7 +1024,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
    * An `unknown` caller seals neither, and the engine reads it as `unknown`.
    */
   const sealFor = (ctx: RequestContext, caller: Caller, orgId: string | undefined): RequestContext =>
-    sealRequestContext(ctx, { orgId, resourceId: userIdOf(caller), staff: caller.kind === 'staff' });
+    sealRequestContext(ctx, sealFieldsOf(caller, orgId));
   /** The address a declared `workKey` is unique within, for a caller: its user, when it has one. */
   const workAddressOf = (caller: Caller): { resourceId?: string } => {
     const id = userIdOf(caller);

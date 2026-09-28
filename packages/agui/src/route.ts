@@ -12,7 +12,7 @@
 import type { Context } from 'hono';
 import { toFetchHandler, type FetchHandler } from './handler.js';
 import { Hono } from 'hono';
-import { limitBreachFromSteps, blockedFromSteps, BLOCKED_ERROR_CODES, blockedErrorCode, callerConflictCode, publicConflictDetail, sealRequestContext, resolveWorkIdentity } from '@gnldev/durable';
+import { limitBreachFromSteps, blockedFromSteps, BLOCKED_ERROR_CODES, blockedErrorCode, callerConflictCode, publicConflictDetail, sealRequestContext, sealFieldsOf, resolveWorkIdentity } from '@gnldev/durable';
 import type { CreateGnlConfig, ResolvedWorkIdentity } from '@gnldev/durable';
 import { createGnl, scopeConfigToOrg } from '@gnldev/durable';
 import { callerOfRequest, type Identify } from '@gnldev/auth';
@@ -331,14 +331,10 @@ function aguiRouteApp(config: CreateGnlConfig, opts: CreateAguiRouteOptions = {}
         approvals: body.approvals,
         // HER ZAMAN mühürlü — kimlik bilinmese bile. Ayrılmış anahtarlar motorun "bunu sunucu
         // doğruladı" kanalıdır; mühürsüz bir gövde o kanalın sahibi olur.
-        context: sealRequestContext(body.context ?? {}, {
-          ...(subject ? { resourceId: subject } : {}),
-          // The org goes into the seal too, so the record and the dynamic `system`/`tools` see the
-          // same organization the id was derived under — the derivation and the seal must not
-          // disagree about which boundary this run is inside.
-          ...(org ? { orgId: org } : {}),
-          ...(caller.kind === 'staff' ? { staff: true } : {}),
-        }),
+        // The org goes into the seal too, so the record and the dynamic `system`/`tools` see the same
+        // organization the id was derived under — the derivation and the seal must not disagree about
+        // which boundary this run is inside. One mapping (durable `sealFieldsOf`) for every door.
+        context: sealRequestContext(body.context ?? {}, sealFieldsOf(caller, org)),
         // THE CALLER, from the one mapping; the seal above carries the same decision into the context.
         caller,
       });

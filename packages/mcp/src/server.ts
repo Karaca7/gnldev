@@ -24,7 +24,7 @@
 // over what the transport authenticated — and the runId is derived from it through the same
 // `resolveWorkIdentity` the HTTP surfaces use. The client's key is demoted to what it honestly is: a
 // label for the work, unique only within one caller.
-import { durableTool, resolveWorkIdentity, sealRequestContext, blockedErrorCode, withOrg, admitRun, UNKNOWN, runIdentity, toolContextFor } from '@gnldev/durable';
+import { durableTool, resolveWorkIdentity, sealRequestContext, sealFieldsOf, blockedErrorCode, withOrg, admitRun, UNKNOWN, runIdentity, toolContextFor } from '@gnldev/durable';
 import type { Journal, WorkScope, RequestContext, Caller, GnlToolContext } from '@gnldev/durable';
 import { callerOfRequest, actorIdOf, type Identify, type Principal } from '@gnldev/auth';
 import { asSchema } from 'ai';
@@ -424,11 +424,7 @@ export function createMcpServer(opts: McpServerOptions): McpServer {
     // Sealed BEFORE the user's function sees it: the reserved keys are stripped from whatever was
     // supplied and rewritten from the caller, so the tool set cannot be built from a subject the caller
     // named. Same function @gnldev/durable seals agent contexts with.
-    const context = sealRequestContext({}, {
-      ...(runsAs.kind === 'user' ? { resourceId: runsAs.id } : {}),
-      ...(runsAs.kind !== 'unknown' && runsAs.orgId !== undefined ? { orgId: runsAs.orgId } : {}),
-      ...(runsAs.kind === 'staff' ? { staff: true } : {}),
-    });
+    const context = sealRequestContext({}, sealFieldsOf(runsAs, runsAs.kind === 'unknown' ? undefined : runsAs.orgId));
     let tools: Record<string, McpServerToolDef>;
     if (typeof opts.tools === 'function') {
       // Wrapped like the other hooks: this IS a hook — the deployment's own function, and the one most

@@ -9,7 +9,7 @@ import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { convertToModelMessages } from 'ai';
 import type { UIMessage } from 'ai';
-import { createGnl, scopeConfigToOrg, RunThreadMismatchError, blockedErrorCode, callerConflictCode, publicConflictDetail, upstreamFailure, sealRequestContext, resolveWorkIdentity } from '@gnldev/durable';
+import { createGnl, scopeConfigToOrg, RunThreadMismatchError, blockedErrorCode, callerConflictCode, publicConflictDetail, upstreamFailure, sealRequestContext, sealFieldsOf, resolveWorkIdentity } from '@gnldev/durable';
 import type { CreateGnlConfig } from '@gnldev/durable';
 import { callerOfRequest, type Identify } from '@gnldev/auth';
 import { toUIMessageStreamResponse } from './ui-stream.js';
@@ -348,11 +348,7 @@ export function createChatRoute(
         // disagree. `sealRequestContext` writes the reserved `__gnl_orgId`/`org` keys from what the
         // SERVER established, so an org-scoped run's record and its dynamic `system`/`tools` see the
         // same organization the id was derived under, and a body that named its own is stripped.
-        context: sealRequestContext(body.context ?? {}, {
-          ...(subject ? { resourceId: subject } : {}),
-          ...(org ? { orgId: org } : {}),
-          ...(caller.kind === 'staff' ? { staff: true } : {}),
-        }),
+        context: sealRequestContext(body.context ?? {}, sealFieldsOf(caller, org)),
         // THE CALLER, from the one mapping. The seal above carries the same decision into the
         // context (it wins in the engine), and an `unknown` seals nothing: it stays closed.
         caller,

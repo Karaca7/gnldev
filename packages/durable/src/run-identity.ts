@@ -62,6 +62,60 @@ export function userIdOf(c: Caller | undefined): string | undefined {
   return c?.kind === 'user' ? c.id : undefined;
 }
 
+/** The fields a server seals onto a request context (`sealRequestContext`) for this caller. */
+export interface SealFields { resourceId?: string; orgId?: string; staff?: true }
+
+/**
+ * THE caller → seal mapping, for every door: a user seals its id, staff seals the staff flag, `unknown`
+ * seals neither (it stays closed), and the organization is the one the door established. The REST,
+ * chat, AG-UI and MCP doors each wrote this out by hand.
+ */
+export function sealFieldsOf(caller: Caller, orgId?: string): SealFields {
+  return {
+    ...(caller.kind === 'user' ? { resourceId: caller.id } : {}),
+    ...(orgId !== undefined ? { orgId } : {}),
+    ...(caller.kind === 'staff' ? { staff: true as const } : {}),
+  };
+}
+
+/** Whether two callers are the same party: kind, user id, and organization where both name one. */
+function sameParty(a: Caller, b: Caller): boolean {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === 'user' && a.id !== (b as UserCaller).id) return false;
+  const ao = a.kind === 'unknown' ? undefined : a.orgId;
+  const bo = b.kind === 'unknown' ? undefined : b.orgId;
+  return ao === undefined || bo === undefined || ao === bo;
+}
+
+/**
+ * THE caller of a call, decided once, from what the server sealed and what the call declared (`caller`,
+ * or the `resourceId` shorthand). The seal is what a server verified, so it decides.
+ *
+ * An explicit `caller` that names somebody else is REFUSED, not overruled: `caller` is a door's own
+ * decision, and the seal used to win silently — a host passing `caller: mallory` with a context sealed
+ * for ayse started ayse's run and was never told. The `resourceId` shorthand keeps its documented
+ * precedence (P1.7: a sealed identity overrides it): it is the field a request body reaches, and the
+ * seal is there to overrule exactly that.
+ */
+export function resolveCaller(seal: SealFields, declared?: { resourceId?: string; caller?: Caller }): Caller {
+  let named: Caller | undefined;
+  if (declared?.caller) {
+    named = callerOf(declared.caller);
+    if (declared.resourceId !== undefined && userIdOf(named) !== declared.resourceId) {
+      throw new TypeError('@gnldev/durable: a call was given both `caller` and a different `resourceId` — one caller per call.');
+    }
+  }
+  const sealed = seal.resourceId !== undefined ? user(seal.resourceId, seal.orgId) : seal.staff ? staff(seal.orgId) : undefined;
+  if (!sealed) return named ?? callerFromResourceId(declared?.resourceId, seal.orgId);
+  if (named && !sameParty(sealed, named)) {
+    throw new TypeError(
+      `@gnldev/durable: the request context is sealed for ${ownerLabel(sealed)} and the call names ${ownerLabel(named)} — one caller per call. ` +
+        'Pass the caller the server established (or drop the declaration and let the seal speak).',
+    );
+  }
+  return sealed;
+}
+
 export function runIdentity(c: Caller, runId: string, place: { threadId?: string; parentRunId?: string } = {}): RunIdentity {
   return { ...callerOf(c), runId, ...(place.threadId ? { threadId: place.threadId } : {}), ...(place.parentRunId ? { parentRunId: place.parentRunId } : {}) };
 }

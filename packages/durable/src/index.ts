@@ -103,7 +103,7 @@ export { CapabilityError, requireCapability, composite, toJournal, matchFilter, 
 // ADR-0002: the caller a door hands the engine, the one identity channel to tools and child runs, and
 // the one answer to "does this run exist, and whose is it" (run-identity.ts).
 export {
-  STAFF, UNKNOWN, user, staff, userIdOf, runIdentity, childIdentity, toolContextFor, identityOf,
+  STAFF, UNKNOWN, user, staff, userIdOf, sealFieldsOf, resolveCaller, type SealFields, runIdentity, childIdentity, toolContextFor, identityOf,
   runOwnerOf, decideRunAccess, decideRun, admitRun, claimRunOwner, inheritRunOwner, SUBJECT_VIEW,
   type Caller, type UserCaller, type StaffCaller, type UnknownCaller, type RunIdentity, type GnlToolContext,
   type RunOwner, type RunKind, type RunDecision, type RawJournal,
