@@ -420,6 +420,14 @@ export function vectorWriteBatch<T extends VectorLabels>(items: readonly T[]): T
 }
 
 /**
+ * What an in-memory store keeps: a copy, as the SQL stores keep one — a caller changing its item
+ * after the upsert (its text, its metadata, its `owner`) changes nothing stored.
+ */
+export function vectorItemCopy(it: VectorItem): VectorItem {
+  return { ...it, embedding: [...it.embedding], ...(it.metadata ? { metadata: structuredClone(it.metadata) } : {}) };
+}
+
+/**
  * An upsert updates a document; it does not move it to another owner, label or partition. The one
  * rule every store applies before writing over an existing id.
  */

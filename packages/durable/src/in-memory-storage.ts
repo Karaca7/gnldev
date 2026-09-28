@@ -7,7 +7,7 @@ import { InMemoryJournal } from './journal.js';
 import { stableStringify } from './hash.js';
 import { ENGINE_META_KEYS, assertNoRunsInFlight, assertOrgRegistered, isPlatformKey, orgPrefix } from './organization.js';
 import type { JournalEntry, RunSummary } from './journal.js';
-import { matchFilter, visibleToSubject, vectorWriteBatch, assertSameVectorOwner, vectorDeletePlan, vectorQueryScope, vectorMetadataMatches, orgVectorId, vectorAdoptCollision } from './storage.js';
+import { matchFilter, visibleToSubject, vectorWriteBatch, assertSameVectorOwner, vectorDeletePlan, vectorQueryScope, vectorMetadataMatches, vectorItemCopy, orgVectorId, vectorAdoptCollision } from './storage.js';
 import type {
   Storage, CapabilityMatrix, Page, ListQuery,
   RunJournal, MemoryStore, VectorStore, WorkStore, CacheStore, MetaStore,
@@ -248,8 +248,7 @@ class InMemoryVectorStore implements VectorStore {
     // Checked for the whole batch before anything is written, so a refused batch leaves no half.
     for (const it of batch) assertSameVectorOwner(this.items.find((x) => x.id === it.id), it);
     for (const it of batch) {
-      // A copy, as the SQL stores keep one: a caller mutating its item afterwards changes nothing here.
-      const own: VectorItem = { ...it, embedding: [...it.embedding], ...(it.metadata ? { metadata: structuredClone(it.metadata) } : {}) };
+      const own = vectorItemCopy(it);
       const i = this.items.findIndex((x) => x.id === it.id);
       if (i >= 0) this.items[i] = own; else this.items.push(own);
     }

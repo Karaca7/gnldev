@@ -8,7 +8,7 @@
 // GraphRAG as a query-time layer is the user's pattern. Since it runs durable inside `createRagTool`,
 // the query RESULT is journaled → the graph isn't retraversed on resume/replay (exactly-once RAG preserved).
 import { cosineSimilarity } from 'ai';
-import { visibleToSubject, vectorWriteBatch, assertSameVectorOwner, vectorDeletePlan, vectorQueryScope } from '@gnldev/durable';
+import { visibleToSubject, vectorWriteBatch, assertSameVectorOwner, vectorDeletePlan, vectorQueryScope, vectorItemCopy } from '@gnldev/durable';
 import { matchesFilter } from './vector-store.js';
 import type { VectorStore, VectorItem, VectorMatch, QueryOptions, DeleteWhere } from './vector-store.js';
 
@@ -57,8 +57,7 @@ export class GraphRag implements VectorStore {
       assertSameVectorOwner(at === undefined ? undefined : this.items[at], it);
     }
     for (const given of batch) {
-      // A copy, as the SQL stores keep one: a caller mutating its item afterwards changes nothing here.
-      const it: VectorItem = { ...given, embedding: [...given.embedding], ...(given.metadata ? { metadata: structuredClone(given.metadata) } : {}) };
+      const it = vectorItemCopy(given); // a copy, as the SQL stores keep one
       const existing = this.byId.get(it.id);
       if (existing !== undefined) {
         this.items[existing] = it;

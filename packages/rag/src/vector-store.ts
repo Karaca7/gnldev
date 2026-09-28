@@ -1,5 +1,5 @@
 import { cosineSimilarity } from 'ai';
-import { visibleToSubject, vectorWriteBatch, assertSameVectorOwner, vectorDeletePlan, vectorQueryScope, vectorMetadataMatches } from '@gnldev/durable';
+import { visibleToSubject, vectorWriteBatch, assertSameVectorOwner, vectorDeletePlan, vectorQueryScope, vectorMetadataMatches, vectorItemCopy } from '@gnldev/durable';
 
 export interface VectorDoc {
   id: string;
@@ -109,8 +109,7 @@ export class InMemoryVectorStore implements VectorStore {
     const batch = vectorWriteBatch(items);
     for (const it of batch) assertSameVectorOwner(this.items.find((x) => x.id === it.id), it);
     for (const it of batch) {
-      // A copy, as the SQL stores keep one: a caller mutating its item afterwards changes nothing here.
-      const own: VectorItem = { ...it, embedding: [...it.embedding], ...(it.metadata ? { metadata: structuredClone(it.metadata) } : {}) };
+      const own = vectorItemCopy(it); // a copy, as the SQL stores keep one
       const i = this.items.findIndex((x) => x.id === it.id);
       if (i >= 0) this.items[i] = own;
       else this.items.push(own);
