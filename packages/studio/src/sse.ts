@@ -4,8 +4,7 @@
 // `__gnl_limit_exceeded` sentinel and ended a limit breach with `done` after the server had stopped.
 import { streamSSE } from 'hono/streaming';
 import type { Context } from 'hono';
-import { agentStreamEvents, interruptsFromSteps } from '@gnldev/durable';
-import { STUDIO_ERROR_CODES } from './error-codes.js';
+import { agentStreamEvents, interruptsFromSteps, LIMIT_ERROR_CODES } from '@gnldev/durable';
 
 export { interruptsFromSteps };
 
@@ -51,7 +50,7 @@ export function sseResponse(
 /** Writes @gnldev/durable's agent stream events as SSE — the same schema and endings as @gnldev/server. */
 export function pipeAgentStream(c: Context, runId: string, result: any) {
   return sseResponse(c, async (stream) => {
-    for await (const { event, data } of agentStreamEvents(result, runId, STUDIO_ERROR_CODES)) {
+    for await (const { event, data } of agentStreamEvents(result, runId, LIMIT_ERROR_CODES)) {
       if (stream.aborted) break;
       await stream.writeSSE({ event, data: JSON.stringify(data) });
     }

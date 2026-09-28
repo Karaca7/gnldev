@@ -5,7 +5,7 @@ import { Hono, type Context } from 'hono';
 import { sseResponse } from './sse.js';
 
 import { STUDIO_ERROR_CODES } from './error-codes.js';
-import { ORG_RECORD_PRE, asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, countLog, purgeRun, isRealRun, purgeOrganization, orgPurgedKey, sweepRuns, sweepLog, listOrphanThreadState, POLICY_KEY, PRICING_KEY, effectivePricingTable, DEFAULT_PRICING, readPricing, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, knownModelProviders, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent, callerConflictCode, surfacedInterrupts, resolveApprovals as dResolveApprovals, hasRunProbe, runOwnerOf, inheritRunOwner } from '@gnldev/durable';
+import { ORG_RECORD_PRE, asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, countLog, purgeRun, isRealRun, purgeOrganization, orgPurgedKey, sweepRuns, sweepLog, listOrphanThreadState, POLICY_KEY, PRICING_KEY, effectivePricingTable, DEFAULT_PRICING, readPricing, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, knownModelProviders, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent, callerConflictCode, surfacedInterrupts, resolveApprovals as dResolveApprovals, hasRunProbe, runOwnerOf, inheritRunOwner, LIMIT_ERROR_CODES } from '@gnldev/durable';
 import type { PolicyDoc, PolicyRule, BudgetLimit, PricingDoc } from '@gnldev/durable';
 import type { JournalReader, Journal, WorkflowLike, MetricsRunRow, Caller } from '@gnldev/durable';
 import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, principalScope, assertAssignablePrivileges, isPrincipalKind, callerKind, actorIdOf, engineCallerOf, type AuthProvider, type Principal, type PrincipalKind } from '@gnldev/auth';
@@ -3716,11 +3716,11 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   function runErrorResponse(c: Context, e: unknown): Response | undefined {
     if (e instanceof RunLimitExceededError || (e as any)?.name === 'RunLimitExceededError') {
       const err = e as RunLimitExceededError;
-      return c.json({ error: err.message, code: 'run_limit_exceeded', detail: err.detail, resumable: true }, 422);
+      return c.json({ error: err.message, code: LIMIT_ERROR_CODES.runLimitExceeded, detail: err.detail, resumable: true }, 422);
     }
     if (e instanceof ToolLoopDetectedError || (e as any)?.name === 'ToolLoopDetectedError') {
       const err = e as ToolLoopDetectedError;
-      return c.json({ error: err.message, code: 'tool_loop_detected', detail: err.detail, resumable: true }, 422);
+      return c.json({ error: err.message, code: LIMIT_ERROR_CODES.toolLoopDetected, detail: err.detail, resumable: true }, 422);
     }
     // A `runId` re-used for a different conversation. 409 rather than the generic 400: the request is
     // well-formed and collides with something that already exists. NO `resumable`, unlike everything
