@@ -161,7 +161,7 @@ export interface McpServerOptions {
    * still hands the caller the tool's name and argument schema — information it cannot use, and an
    * invitation the model will follow. A tool a caller may not run is a tool it does not see.
    *
-   * `identity` answers WHO; this answers WHAT. Neither answers "is THIS object theirs" — only the tool
+   * `identify` answers WHO; this answers WHAT. Neither answers "is THIS object theirs" — only the tool
    * can, which is what the function form of `tools` is for.
    *
    * Async, so the answer may come from a database or an HTTP call. @gnldev/auth-ee's `fga.check(...)`
@@ -266,7 +266,7 @@ function toolError(text: string): { isError: true; content: { type: 'text'; text
 /**
  * A configured hook threw, told to the caller without telling it the deployment's business.
  *
- * `identity`, `allowTool`, `workKey` and `rateLimit` are the deployment's own functions, and the useful
+ * `identify`, `allowTool`, `workKey` and `rateLimit` are the deployment's own functions, and the useful
  * ones reach a store: an OAuth introspection, an FGA rule set, a Redis counter. Those fail, and when
  * they did the exception travelled straight through the protocol. Measured over a real SDK Client:
  *
@@ -474,7 +474,7 @@ export function createMcpServer(opts: McpServerOptions): McpServer {
 
   // Fixed-window counter, per subject, in THIS process — see `rateLimit`'s note for why that limit is
   // stated rather than papered over. Keyed by the resolved subject when there is one; a server with no
-  // `identity` has one bucket for everybody, which is the honest reading of "we cannot tell callers
+  // `identify` has one bucket for everybody, which is the honest reading of "we cannot tell callers
   // apart".
   // The window table is its own module so that `size()` can be asserted — the half of the sweep that
   // no behaviour distinguishes. See rate-window.ts for the two measurement attempts that failed first.

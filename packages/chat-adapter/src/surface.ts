@@ -2,7 +2,7 @@
 //
 // It decodes and encodes and does nothing else. Identity, organization, subject and every gate come
 // from the REST door it is mounted on (`createRestApi(config, { auth, surfaces: [chatSurface()] })`),
-// so there is no `identity` option here to leave unwired, and no second copy of the auth decision.
+// so there is no `identify` option here to leave unwired, and no second copy of the auth decision.
 // Structurally typed against server's `StreamSurface`: the dependency direction stays
 // chat-adapter → durable, never chat-adapter → server.
 import { convertToModelMessages } from 'ai';
