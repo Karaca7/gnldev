@@ -15,9 +15,12 @@
 //
 // WHY IN @gnldev/server RATHER THAN @gnldev/durable. These are route-level facts: an HTTP status is
 // attached to each one, and the engine has no routes and no statuses — putting them next to
-// `RunBusyError` would say the engine produces them, and it does not. Server is also the lowest
-// package that every printer shares: `@gnldev/agui` depends on `@gnldev/server` already (it imports
-// `interruptsFromSteps`), so both edges can read the same constant.
+// `RunBusyError` would say the engine produces them, and it does not.
+//
+// The two LIMIT codes (`run_limit_exceeded`, `tool_loop_detected`) used to be here too. They are
+// not route-level: the engine throws the errors that carry them, and @gnldev/agui prints them with no
+// server in front. They moved to `LIMIT_ERROR_CODES` in @gnldev/durable (ADR-0002 point 0: a door
+// package must not need another door package to read a code).
 //
 // Deliberately its own module rather than a block inside `index.ts`: the docs check imports the
 // BUILT value, and importing `dist/index.js` would drag Hono and the whole route table into a
@@ -34,10 +37,6 @@
  * SSE `error` frame, and in whatever the client library re-throws.
  */
 export const EDGE_ERROR_CODES = {
-  /** 422, `resumable` — `limits` ceiling met (`server/index.ts`, `sse.ts`, `agui/route.ts`). */
-  runLimitExceeded: 'run_limit_exceeded',
-  /** 422, `resumable` — one tool, the same arguments, no progress (same three sites). */
-  toolLoopDetected: 'tool_loop_detected',
   /** 403 — the agent is pending, changed since approval, or blocked (`requireAgentApproval`). */
   agentNotApproved: 'agent_not_approved',
   /** 403 — `opts.resourceAuth` refused this principal for this agent (the paid FGA layer). */
@@ -62,8 +61,6 @@ export type EdgeErrorCode = (typeof EDGE_ERROR_CODES)[keyof typeof EDGE_ERROR_CO
  * are pinned to them by `check:errors`, and a new code without an entry fails the gate.
  */
 export const EDGE_ERROR_STATUS: Record<string, number> = {
-  run_limit_exceeded: 422,
-  tool_loop_detected: 422,
   agent_not_approved: 403,
   resource_denied: 403,
   budget_exceeded: 402,

@@ -30,7 +30,7 @@ const PAGES = join(ROOT, 'docs', 'errors');
  * — the same reasoning `check-doc-samples.mjs` gives for reading docs-mcp's examples out of dist.
  */
 /**
- * The five families, each read from the module that OWNS it.
+ * The six families, each read from the module that OWNS it.
  *
  * There used to be a fourth source here: a hand-written `EDGE_CODES` object listing the three codes
  * the HTTP edge spelled inline, with a comment admitting that a fourth literal added tomorrow would
@@ -46,6 +46,7 @@ const SOURCES = [
     CALLER_CONFLICT_CODES: (cls) => `caller-conflict (${cls})`,
     BLOCKED_ERROR_CODES: (cls) => `blocked (${cls})`,
     UPSTREAM_ERROR_CODES: (cls) => `upstream (${cls})`,
+    LIMIT_ERROR_CODES: (cls) => `limit (${cls})`,
   } },
   { dist: ['packages', 'server', 'dist', 'edge-errors.js'], build: '@gnldev/server', status: 'EDGE_ERROR_STATUS', maps: {
     EDGE_ERROR_CODES: (cls) => `HTTP edge (${cls})`,

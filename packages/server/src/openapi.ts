@@ -1,5 +1,5 @@
 // Generate an OpenAPI 3.1 schema from the createGnl agent + workflow registry (auto-docs).
-import { EDGE_ERROR_CODES } from './edge-errors.js';
+import { LIMIT_ERROR_CODES } from '@gnldev/durable';
 
 export function buildOpenApi(agentNames: string[], workflowNames: string[] = [], title = 'gnl agents'): any {
   // ONE identity per call, and the spec says which two spellings it accepts. `required: ['runId']`
@@ -56,7 +56,7 @@ export function buildOpenApi(agentNames: string[], workflowNames: string[] = [],
             type: 'object',
             properties: {
               error: { type: 'string' },
-              code: { type: 'string', enum: [EDGE_ERROR_CODES.runLimitExceeded, EDGE_ERROR_CODES.toolLoopDetected] },
+              code: { type: 'string', enum: [LIMIT_ERROR_CODES.runLimitExceeded, LIMIT_ERROR_CODES.toolLoopDetected] },
               detail: { type: 'object' },
               resumable: { type: 'boolean' },
             },

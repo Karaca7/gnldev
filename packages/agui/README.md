@@ -1,11 +1,21 @@
 # @gnldev/agui
 
-**AG-UI protocol adapter**: converts `@gnldev/server`'s SSE contract ([see `@gnldev/server` README](../server/README.md)) into [AG-UI](https://github.com/ag-ui-protocol/ag-ui) (CopilotKit's open agent↔UI event protocol) event sequences. **Zero `@ag-ui/*` dependency** — event types are hand-defined (AG-UI is an open SSE/JSON protocol, no SDK required).
+**AG-UI protocol adapter**: converts the GNL agent stream (the `{event, data}` schema of `@gnldev/durable`'s `agentStreamEvents`) into [AG-UI](https://github.com/ag-ui-protocol/ag-ui) (CopilotKit's open agent↔UI event protocol) event sequences. **Zero `@ag-ui/*` dependency** — event types are hand-defined (AG-UI is an open SSE/JSON protocol, no SDK required).
+
+**Two ways to run it:**
+
+- **Standalone.** `createAguiRoute(config, { identify })` is a complete AG-UI endpoint. It needs
+  only `@gnldev/durable` and `@gnldev/auth`. It does **not** need `@gnldev/server`, and installing
+  this package does not install it. The isolation is the same as through the server: the route maps
+  your `identify` to an engine caller, and the engine checks run and thread owners.
+- **As a server surface.** `aguiSurface()` puts the same format on `@gnldev/server`'s REST API
+  (`createRestApi(config, { auth, surfaces: [aguiSurface()] })`). Then the API's auth decides who
+  the caller is. See [On the REST API](#on-the-rest-api-recommended).
 
 > Install: `pnpm add @gnldev/agui` — or use it from a [repo clone](https://github.com/Karaca7/gnldev): `pnpm install && pnpm -r build`.
 
 ```bash
-npm i @gnldev/agui   # dep: @gnldev/server, @gnldev/auth, hono  ·  peer: @gnldev/durable
+npm i @gnldev/agui   # dep: @gnldev/auth, hono  ·  peer: @gnldev/durable  (no @gnldev/server)
 ```
 
 ```ts
@@ -25,8 +35,10 @@ const app = createAguiRoute({
 serve({ fetch: app.fetch, port: 3001 }); // POST /agents/:name/run → AG-UI SSE
 ```
 
-`createAguiRoute` returns a fetch handler, so it binds to any Node server through the bridge in
-@gnldev/server — a package this one already depends on, so there is nothing extra to install:
+`createAguiRoute` returns a fetch handler, so any host that speaks web `Request`/`Response` can
+call it (`@hono/node-server` above, Workers, Bun, Deno). For Express, the Node bridge lives in
+@gnldev/server. This package does not depend on it, so install it only if you want the bridge
+(`npm i @gnldev/server`):
 
 ```ts
 import { toNodeHandler } from '@gnldev/server/node';

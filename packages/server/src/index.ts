@@ -4,7 +4,7 @@ import { Hono, type Context } from 'hono';
 import { toFetchHandler, type FetchHandler } from './handler.js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { createGnl, agentVisibleToOrg, withOrg, withOrgStorage, scopeConfigToOrg, withSubjectJournal, withSubjectMemory, threadOwnerOf, type ThreadOwnership, ORG_RECORD_PRE, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, asReaderJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, sealRequestContext, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry, callerConflictCode, publicConflictDetail, describeProtections, formatProtections, teachingError, resolveWorkIdentity, runOwnerOf, decideRunAccess, userIdOf, type Caller, type RunDecision, type RunOwner, type RawJournal, type RequestContext } from '@gnldev/durable';
-import type { CreateGnlConfig, Journal, JournalReader, BudgetLimit, UsageCostCache, RunLimits, ResolvedWorkIdentity, WorkScopeKind } from '@gnldev/durable';
+import type { CreateGnlConfig, Journal, JournalReader, BudgetLimit, UsageCostCache, RunLimits, ResolvedWorkIdentity, WorkScopeKind, StreamSurface as DurableStreamSurface, StreamSurfaceInput } from '@gnldev/durable';
 import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, callerKind, subjectIdProblem, actorIdOf, engineCallerOf, type AuthProvider, type ReadWriteAuth, type Principal, type PrincipalKind } from '@gnldev/auth';
 // P0.4 @gnldev/workflow is zero-dependency (see its package.json) — depending on it
 // from @gnldev/server is a clean one-way edge (server→workflow), NOT circular: @gnldev/durable's registry.ts
@@ -14,6 +14,7 @@ import { listWorkflowRuns, getWorkflowRunStatus, cancelWorkflowRun } from '@gnld
 import type { WorkflowRunStatus } from '@gnldev/workflow';
 import { buildOpenApi } from './openapi.js';
 import { EDGE_ERROR_CODES } from './edge-errors.js';
+import { LIMIT_ERROR_CODES } from '@gnldev/durable';
 import { pipeAgentStream } from './sse.js';
 
 /** (audit: A2A unsigned) — signature window: a request with a timestamp this old/future is rejected (replay resistance). */
@@ -353,40 +354,13 @@ export interface RestApiOptions {
   cors?: { origins: string[] | '*'; maxAge?: number };
 }
 
-/** What a surface's decoder hands the stream door: the REST `/stream` body shape, plus a turn key. */
-export interface StreamSurfaceInput {
-  prompt?: string;
-  messages?: unknown;
-  threadId?: string;
-  approvals?: Record<string, boolean>;
-  context?: Record<string, unknown>;
-  limits?: RunLimits;
-  /** An explicit id — addressing already decided by the caller. */
-  runId?: string;
-  /** A declared name for the work (always a workKey). */
-  workKey?: string;
-  /**
-   * The wire format's own name for this turn (useChat: `${id}:${lastMessage.id}`). Becomes a workKey
-   * when the door resolves a subject, a raw runId otherwise — the regime the standalone routes had.
-   */
-  turnKey?: string;
-  /**
-   * The subject the BODY names. Read only for callers allowed to name one (application / operator);
-   * a subject token's own id always wins — the same `resolveResourceId` rule REST applies.
-   */
-  resourceId?: unknown;
-  lastEventId?: string | number;
-}
-
-/** A wire format mounted on createRestApi's stream door. See `RestApiOptions.surfaces`. */
-export interface StreamSurface {
-  /** POST path under this API; must contain `:name` (the agent). E.g. `/agents/:name/chat`. */
-  path: string;
-  /** Wire format in. Throwing answers 400. Must not decide identity — it is never asked. */
-  decode(body: any, req: Request): StreamSurfaceInput | Promise<StreamSurfaceInput>;
-  /** Wire format out, for a started run. Error responses before the run are the door's own (typed JSON). */
-  encode(result: any, meta: { runId: string; threadId?: string; c: Context }): Response;
-}
+/**
+ * A wire format mounted on createRestApi's stream door. See `RestApiOptions.surfaces`. The contract
+ * is owned by @gnldev/durable (so a door package can implement it without depending on this one);
+ * here it is bound to Hono's `Context`.
+ */
+export type StreamSurface = DurableStreamSurface<Context>;
+export type { StreamSurfaceInput };
 
 /**
  * Merge the server cap with the client request — the STRICTER one (smaller number) wins, the
@@ -570,11 +544,11 @@ function listAgentMeta(config: CreateGnlConfig, callerOrgId?: string): AgentMeta
 function limitErrorResponse(c: Context, e: unknown): Response | undefined {
   if (e instanceof RunLimitExceededError || (e as any)?.name === 'RunLimitExceededError') {
     const err = e as RunLimitExceededError;
-    return c.json({ error: err.message, code: EDGE_ERROR_CODES.runLimitExceeded, detail: err.detail, resumable: true }, 422);
+    return c.json({ error: err.message, code: LIMIT_ERROR_CODES.runLimitExceeded, detail: err.detail, resumable: true }, 422);
   }
   if (e instanceof ToolLoopDetectedError || (e as any)?.name === 'ToolLoopDetectedError') {
     const err = e as ToolLoopDetectedError;
-    return c.json({ error: err.message, code: EDGE_ERROR_CODES.toolLoopDetected, detail: err.detail, resumable: true }, 422);
+    return c.json({ error: err.message, code: LIMIT_ERROR_CODES.toolLoopDetected, detail: err.detail, resumable: true }, 422);
   }
   return undefined;
 }
@@ -2425,7 +2399,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
 export type { FetchHandler, RouteInfo } from './handler.js';
 export { buildOpenApi } from './openapi.js';
 // The edge's own codes, exported for the same reason durable exports its two maps: a check can
-// enumerate them, and `@gnldev/agui` prints two of them from the same constant. See edge-errors.ts.
+// enumerate them. The two limit codes are durable's `LIMIT_ERROR_CODES`. See edge-errors.ts.
 export { EDGE_ERROR_CODES, type EdgeErrorCode } from './edge-errors.js';
 export { pipeAgentStream, interruptsFromSteps, sseResponse } from './sse.js';
 

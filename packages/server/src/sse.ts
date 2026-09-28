@@ -19,8 +19,7 @@
 // assertions look at the event/data fields, they don't care about id).
 import { streamSSE } from 'hono/streaming';
 import type { Context } from 'hono';
-import { agentStreamEvents, interruptsFromSteps } from '@gnldev/durable';
-import { EDGE_ERROR_CODES } from './edge-errors.js';
+import { agentStreamEvents, interruptsFromSteps, LIMIT_ERROR_CODES } from '@gnldev/durable';
 
 export { interruptsFromSteps };
 
@@ -74,7 +73,7 @@ export function pipeAgentStream(c: Context, runId: string, result: any, opts?: P
   const lastEventId = opts?.lastEventId;
   return sseResponse(c, async (stream) => {
     let nextId = 0; // deterministic: the same runId replays the same events, so the same ids
-    for await (const { event, data } of agentStreamEvents(result, runId, EDGE_ERROR_CODES)) {
+    for await (const { event, data } of agentStreamEvents(result, runId, LIMIT_ERROR_CODES)) {
       if (stream.aborted) break;
       const id = nextId++;
       if (lastEventId != null && id <= lastEventId) continue; // the client already saw it

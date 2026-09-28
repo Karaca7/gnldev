@@ -459,6 +459,22 @@ export const UPSTREAM_ERROR_CODES = {
   timeout: 'upstream_timeout',
 } as const;
 
+/**
+ * The two codes a run that stopped at a limit ends with: `RunLimitExceededError` (a `limits`
+ * ceiling met) and `ToolLoopDetectedError` (one tool, the same arguments, no progress), both thrown
+ * by this engine (`limits.ts`). Both are `resumable`: raise the ceiling or fix the cause and re-drive
+ * the SAME runId.
+ *
+ * WHY HERE AND NOT IN @gnldev/server. They used to sit in server's `EDGE_ERROR_CODES`, and
+ * @gnldev/agui depended on @gnldev/server only to read them. ADR-0002 point 0: a door package works
+ * without any other door package. So the codes live with the errors that produce them, in the one
+ * package every door already depends on.
+ */
+export const LIMIT_ERROR_CODES = {
+  runLimitExceeded: 'run_limit_exceeded',
+  toolLoopDetected: 'tool_loop_detected',
+} as const;
+
 export interface UpstreamFailure {
   /** HTTP status to answer the CALLER with — never the upstream's status verbatim (see below). */
   status: 429 | 502 | 504;
@@ -547,6 +563,9 @@ export const WIRE_ERROR_STATUS: Record<string, number> = {
   retry_limit_exceeded: 422,
   run_busy: 409,
   step_retry_blocked: 409,
+  // limit — resumable: raise the ceiling (or fix the loop) and re-drive the same runId
+  run_limit_exceeded: 422,
+  tool_loop_detected: 422,
   // upstream — chosen for what the caller should DO, never copied (see upstreamFailure)
   upstream_rate_limited: 429,
   upstream_unauthorized: 502,

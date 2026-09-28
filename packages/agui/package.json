@@ -5,7 +5,7 @@
   "engines": {
     "node": ">=22.13.0"
   },
-  "description": "AG-UI (CopilotKit) protocol adapter: converts @gnldev/server SSE contract to AG-UI event sequences + Hono endpoint factory.",
+  "description": "AG-UI (CopilotKit) protocol adapter: a standalone AG-UI route for @gnldev/durable agents, and the same format as a surface of @gnldev/server.",
   "keywords": [
     "ai",
     "agent",
@@ -37,7 +37,6 @@
   },
   "dependencies": {
     "@gnldev/auth": "workspace:^",
-    "@gnldev/server": "workspace:^",
     "hono": "^4.13.2"
   },
   "peerDependencies": {

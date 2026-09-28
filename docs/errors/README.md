@@ -4,17 +4,18 @@ Every error code this framework puts on the wire has a page here, named by its c
 that true in both directions: a code with no page fails `pnpm check:errors`, and a page whose code no
 longer exists fails it too.
 
-**What "every" is checked against, precisely.** Five exported maps, and nothing else:
+**What "every" is checked against, precisely.** Six exported maps, and nothing else:
 
 | Map | Package | What it holds |
 | --- | --- | --- |
 | `CALLER_CONFLICT_CODES` | `@gnldev/durable` | 409s about the id, its content, or who is asking |
 | `BLOCKED_ERROR_CODES` | `@gnldev/durable` | runs waiting on a decision |
 | `UPSTREAM_ERROR_CODES` | `@gnldev/durable` | the model provider failed |
+| `LIMIT_ERROR_CODES` | `@gnldev/durable` | a run stopped at a `limits` ceiling or a tool loop |
 | `EDGE_ERROR_CODES` | `@gnldev/server` | refusals the HTTP layer writes itself |
 | `STUDIO_ERROR_CODES` | `@gnldev/studio` | the operator console's own refusals |
 
-All five are enumerable values, so the check reads them and keeps no list of its own. It used to keep
+All six are enumerable values, so the check reads them and keeps no list of its own. It used to keep
 one — three edge codes typed into the script by hand, under a comment admitting that a fourth added
 tomorrow would be caught by nothing. That was measured before it was replaced, and it had already
 happened: the edge was printing **nine** codes, and the upstream family existed only as a TypeScript
@@ -72,16 +73,24 @@ itself.
 | [`upstream_unavailable`](./upstream_unavailable.md) | 502 | The provider broke, or rejected the request we built. |
 | [`upstream_timeout`](./upstream_timeout.md) | 504 | The provider took too long. |
 
-## Written at the HTTP edge
+## A run stopped at a limit
 
-Refusals the route layer makes on its own, before or around the run — `EDGE_ERROR_CODES` in
-`@gnldev/server`. The first two are `resumable`: raise the ceiling or fix the cause and re-drive the
-**same** runId, and the journal replays what already completed.
+The engine stopped the run — `LIMIT_ERROR_CODES` in `@gnldev/durable`. Every door prints them the
+same way (REST, chat, AG-UI, Studio). Both are `resumable`: raise the ceiling or fix the cause and
+re-drive the **same** runId, and the journal replays what already completed.
 
 | Code | Status | In one line |
 | --- | --- | --- |
 | [`run_limit_exceeded`](./run_limit_exceeded.md) | 422 | The run met a `limits` ceiling and stopped there. |
 | [`tool_loop_detected`](./tool_loop_detected.md) | 422 | One tool, the same arguments, over and over — no progress. |
+
+## Written at the HTTP edge
+
+Refusals the route layer makes on its own, before or around the run — `EDGE_ERROR_CODES` in
+`@gnldev/server`.
+
+| Code | Status | In one line |
+| --- | --- | --- |
 | [`agent_not_approved`](./agent_not_approved.md) | 403 | The agent is pending, changed since approval, or blocked. |
 | [`resource_denied`](./resource_denied.md) | 403 | A fine-grained policy refused this principal for this agent. |
 | [`budget_exceeded`](./budget_exceeded.md) | 402 | The organization's budget is spent; a new run is refused. |

@@ -24,6 +24,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   keep their owner in the id, not in a payload envelope. New `eraseSubject` erases runs, threads, documents,
   jobs, triggers and events (jobs/events need `WorkStore.deleteIdPrefix`; in-memory only on this branch).
 
+**`@gnldev/agui` runs on its own (ADR-0002 point 0).** Installing it no longer installs `@gnldev/server`.
+What it borrowed from server now lives in `@gnldev/durable`, which every door already depends on.
+`pnpm check:hygiene` fails if a door package (chat-adapter, agui, mcp) depends on another door,
+`@gnldev/server` or `@gnldev/studio`. Breaking:
+
+- `EDGE_ERROR_CODES` (@gnldev/server) no longer has `runLimitExceeded` / `toolLoopDetected`, and
+  `EDGE_ERROR_STATUS` no longer lists their codes. Use `LIMIT_ERROR_CODES` from `@gnldev/durable`
+  (statuses in `WIRE_ERROR_STATUS`). The wire strings did not change.
+- `StreamSurface` and `StreamSurfaceInput` are defined in `@gnldev/durable`. Server still exports both;
+  its `StreamSurface` is now `StreamSurface<Context>` from durable (same shape).
+- `@gnldev/agui` no longer brings the Express bridge. `npm i @gnldev/server` for `toNodeHandler`.
+
 **A minor (0.7.0): end users are isolated by default, at one point, for free.** The decision and the
 alternatives it rejected are in [docs/adr/0001-end-user-isolation.md](./docs/adr/0001-end-user-isolation.md).
 Many entries below are breaking. If you are upgrading, check these first:

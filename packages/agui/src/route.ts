@@ -17,12 +17,12 @@ import type { CreateGnlConfig, ResolvedWorkIdentity } from '@gnldev/durable';
 import { createGnl, scopeConfigToOrg } from '@gnldev/durable';
 import { callerOfRequest, type Identify } from '@gnldev/auth';
 import { streamSSE } from 'hono/streaming';
-// The two limit codes are READ from @gnldev/server rather than spelled again here. The event/data
-// SHAPE is deliberately a copy (see the note above), but a code is not a shape: it is the string a
-// caller matches on, and this route mirroring sse.ts by hand is exactly how the docs check ended up
-// with a list it had to maintain. `interruptsFromSteps` already makes this a build-order dependency.
-import { interruptsFromSteps, EDGE_ERROR_CODES } from '@gnldev/server';
-import type { StreamSurface } from '@gnldev/server';
+// The two limit codes are READ from @gnldev/durable (`LIMIT_ERROR_CODES`) rather than spelled again
+// here. The event/data SHAPE is deliberately a copy (see the note above), but a code is not a shape:
+// it is the string a caller matches on. The codes, `interruptsFromSteps` and the surface contract all
+// come from durable, never from @gnldev/server: this package runs standalone (ADR-0002 point 0).
+import { interruptsFromSteps, LIMIT_ERROR_CODES } from '@gnldev/durable';
+import type { StreamSurface } from '@gnldev/durable';
 import { toAguiEvents, initialAguiConvertState, type GnlSseEvent } from './convert.js';
 import { EventType, type AguiEvent, type RunStartedEvent } from './types.js';
 
@@ -133,7 +133,7 @@ export function pipeAguiStream(c: Context, runId: string, result: any, opts?: Pi
           event: 'error',
           data: {
             error: breach.message,
-            code: breach.kind === 'loop' ? EDGE_ERROR_CODES.toolLoopDetected : EDGE_ERROR_CODES.runLimitExceeded,
+            code: breach.kind === 'loop' ? LIMIT_ERROR_CODES.toolLoopDetected : LIMIT_ERROR_CODES.runLimitExceeded,
             detail: breach.detail,
           },
         });
@@ -375,7 +375,7 @@ function aguiRouteApp(config: CreateGnlConfig, opts: CreateAguiRouteOptions = {}
         return res;
       }
       if (name === 'RunLimitExceededError' || name === 'ToolLoopDetectedError') {
-        const code = name === 'RunLimitExceededError' ? EDGE_ERROR_CODES.runLimitExceeded : EDGE_ERROR_CODES.toolLoopDetected;
+        const code = name === 'RunLimitExceededError' ? LIMIT_ERROR_CODES.runLimitExceeded : LIMIT_ERROR_CODES.toolLoopDetected;
         return c.json({ error: e.message, code, detail: e.detail, resumable: true }, 422);
       }
       return c.json({ error: String(e?.message ?? e) }, 400);
@@ -391,7 +391,7 @@ function aguiRouteApp(config: CreateGnlConfig, opts: CreateAguiRouteOptions = {}
  * organization, subject and every gate are the REST door's. Default path `/agents/:name/agui`
  * (`/agents/:name/run` is REST's own).
  */
-export function aguiSurface(opts: { path?: string } = {}): StreamSurface {
+export function aguiSurface(opts: { path?: string } = {}): StreamSurface<Context> {
   return {
     path: opts.path ?? '/agents/:name/agui',
     decode(body: any) {

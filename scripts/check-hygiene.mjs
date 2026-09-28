@@ -18,8 +18,15 @@
 //    the cross-org isolation conformance suite. They all passed the moment they were wired up, which
 //    is the worst version of this: nothing was broken, so nothing would ever have raised a flag.
 //
-// The shape both share: the failure is INVISIBLE rather than loud, so the only defence is a check
-// that goes looking. That is what this file is.
+// 3) A door package that needs another door package. ADR-0002 point 0: chat-adapter, agui and mcp
+//    each work on their own, without any other door and without a composition package (server,
+//    studio). @gnldev/agui depended on @gnldev/server for two error codes and one type, so installing
+//    agui alone pulled in server (measured with `npm install` of the packed tarballs). Nothing failed:
+//    every test runs in the workspace, where server is always there. This check reads the manifests
+//    and the sources.
+//
+// The shape all three share: the failure is INVISIBLE rather than loud, so the only defence is a
+// check that goes looking. That is what this file is.
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -78,8 +85,47 @@ for (const name of readdirSync(pkgDir)) {
   if (count > 0) unrun.push({ name: manifest.name ?? name, count });
 }
 
+// ── 3. door packages that need another door ───────────────────────────────────────────────────────
+// Directory name → what it may never need. A door may use durable and auth (the shared contract and
+// the shared functions), never a sibling door and never a package that composes the doors.
+const DOORS = ['chat-adapter', 'agui', 'mcp'];
+const FORBIDDEN = new Set(['@gnldev/server', '@gnldev/studio', ...DOORS.map((d) => `@gnldev/${d}`)]);
+// What a consumer installs. devDependencies are not installed by a consumer, so they are not checked.
+const INSTALLED = ['dependencies', 'peerDependencies', 'optionalDependencies'];
+const IMPORT_OF = /\bfrom\s+['"](@gnldev\/[a-z0-9-]+)(?:\/[^'"]*)?['"]|\bimport\(\s*['"](@gnldev\/[a-z0-9-]+)(?:\/[^'"]*)?['"]\s*\)/g;
+const coupled = [];
+for (const door of DOORS) {
+  const dir = join(pkgDir, door);
+  const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
+  for (const field of INSTALLED) {
+    for (const dep of Object.keys(manifest[field] ?? {})) {
+      if (FORBIDDEN.has(dep) && dep !== manifest.name) coupled.push(`${manifest.name} — package.json ${field} lists ${dep}`);
+    }
+  }
+  // A source import with no declared dependency fails to build under pnpm, but a type-only import
+  // can still slip through a hoisted install. Read the sources too.
+  const src = join(dir, 'src');
+  if (!existsSync(src)) continue;
+  for (const file of walk(src)) {
+    const text = readFileSync(file, 'utf8');
+    for (const m of text.matchAll(IMPORT_OF)) {
+      const dep = m[1] ?? m[2];
+      if (FORBIDDEN.has(dep) && dep !== manifest.name) coupled.push(`${manifest.name} — ${relative(root, file)} imports ${dep}`);
+    }
+  }
+}
+
 // ── report ────────────────────────────────────────────────────────────────────────────────────────
 let failed = false;
+
+if (coupled.length) {
+  failed = true;
+  console.error('\n✗ a door package needs another door or a composition package (ADR-0002 point 0):\n');
+  for (const line of coupled) console.error(`    ${line}`);
+  console.error('\n  Fix: move what it needs down to @gnldev/durable or @gnldev/auth, which every door already');
+  console.error('  depends on, and import it from there. A developer who installs only this door must get a');
+  console.error('  working door.\n');
+}
 
 if (dirty.length) {
   failed = true;
@@ -106,3 +152,4 @@ if (failed) process.exit(1);
 const scanned = [...walk(root)].length;
 console.log(`✓ ${scanned} text files carry no control bytes (grep and git diff can read all of them)`);
 console.log('✓ every package with test files has a `test` script (none is silently skipped)');
+console.log(`✓ no door package (${DOORS.join(', ')}) needs another door, @gnldev/server or @gnldev/studio`);
