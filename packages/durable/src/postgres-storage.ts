@@ -9,7 +9,7 @@ import { cosineSimilarity } from 'ai';
 import { runIdOfKey, parseJournalKey, outcomeStatusOf, deriveRunStatus } from './journal.js';
 import type { JournalBatch, JournalEntry, RunSummary, ToolJournalRecord } from './journal.js';
 import { serialize, deserialize } from './serialize.js';
-import { matchFilter, assertVectorLabels, assertSameVectorOwner } from './storage.js';
+import { matchFilter, vectorWriteBatch, assertSameVectorOwner, vectorDeletePlan, vectorQueryScope, vectorMetadataMatches, vectorAdoptCollision } from './storage.js';
 import type { AdoptIntoOrgResult,
   Storage, CapabilityMatrix, Page, ListQuery,
   RunJournal, MemoryStore, VectorStore, WorkStore, CacheStore, MetaStore,
@@ -372,7 +372,7 @@ export class PostgresStorage implements Storage {
     } else {
       this.memory = new PgMemoryStore(q, tx, () => this.advisoryLocks);
     }
-    this.vectors = new PgVectorStore(q);
+    this.vectors = new PgVectorStore(q, tx);
     this.work = new PgWorkStore(q, this.prefixShape);
     this.cache = new PgCacheStore(q);
     this.meta = new PgMetaStore(q);
@@ -537,6 +537,12 @@ export class PostgresStorage implements Storage {
 
     if (!dryRun) await q('BEGIN');
     try {
+      // Vectors first, before anything moves (pg-mem's ROLLBACK undoes nothing): a legacy document
+      // whose adopted id (`orgVectorId`) is already taken refuses the whole adoption, as in every store.
+      const clash = (await q(
+        `SELECT a.id AS id FROM gnl_vectors a JOIN gnl_vectors b ON b.id = $1 || ':' || a.id WHERE a.namespace IS NULL LIMIT 1`, [ns],
+      )).rows[0] as { id: string } | undefined;
+      if (clash) throw vectorAdoptCollision(clash.id);
       for (const [table, col, store] of KEYED) {
         alreadyScoped += Number((await q(`SELECT COUNT(*) AS c FROM ${table} WHERE ${col} LIKE 'org:%'`)).rows[0].c);
         const rows = (await q(`SELECT DISTINCT ${col} AS k FROM ${table} WHERE ${col} NOT LIKE 'org:%'`)).rows as { k: string }[];
@@ -1424,41 +1430,56 @@ class PgMemoryStore implements MemoryStore {
 }
 
 class PgVectorStore implements VectorStore {
-  constructor(private q: Q) {}
+  constructor(private q: Q, private tx: Tx) {}
   async upsert(items: VectorItem[]): Promise<void> {
-    assertVectorLabels(items);
-    // The whole batch is checked before anything is written (a refused batch leaves no half); the
-    // conditional UPDATE then closes the window between this read and the write.
-    const probe = async (id: string) =>
-      (await this.q('SELECT namespace, owner, shared FROM gnl_vectors WHERE id = $1', [id])).rows[0] as { namespace: string | null; owner: string | null; shared: boolean | null } | undefined;
-    for (const it of items) assertSameVectorOwner(await probe(it.id), it);
-    // Two statements, neither of which can overwrite a document of another owner: update only when the
-    // labels match, otherwise insert only when the id is free. Neither landing means the id is taken
-    // under other labels. (One `ON CONFLICT … DO UPDATE … WHERE` would do it, but not every Postgres
-    // speaker in use parses it.)
-    for (const it of items) {
-      const labels = [it.namespace ?? null, it.owner ?? null, it.shared ? true : null];
-      const updated = await this.q(
-        // NULL-safe equality spelled with COALESCE: '' is never a namespace or an owner (both refused).
-        `UPDATE gnl_vectors SET text=$2, embedding=$3, metadata=$4 WHERE id=$1 AND COALESCE(namespace, '') = COALESCE($5, '') AND COALESCE(owner, '') = COALESCE($6, '') AND COALESCE(shared, false) = COALESCE($7, false)`,
-        [it.id, it.text, JSON.stringify(it.embedding), it.metadata ? serialize(it.metadata) : null, ...labels],
-      );
-      if (((updated as { rowCount?: number | null }).rowCount ?? 0) > 0) continue;
-      const inserted = await this.q(
-        `INSERT INTO gnl_vectors (id, text, embedding, metadata, namespace, owner, shared, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO NOTHING`,
-        [it.id, it.text, JSON.stringify(it.embedding), it.metadata ? serialize(it.metadata) : null, ...labels, Date.now()],
-      );
-      if (((inserted as { rowCount?: number | null }).rowCount ?? 0) === 0) assertSameVectorOwner((await probe(it.id)) ?? { namespace: '\u0000' }, it);
-    }
+    const batch = vectorWriteBatch(items);
+    // One transaction (where the pool can give one): a batch refused half-way, by a writer that took
+    // an id after the check, is rolled back rather than left half-written.
+    await this.tx(async (q) => {
+      const probe = async (id: string) =>
+        (await q('SELECT namespace, owner, shared FROM gnl_vectors WHERE id = $1', [id])).rows[0] as { namespace: string | null; owner: string | null; shared: boolean | null } | undefined;
+      for (const it of batch) assertSameVectorOwner(await probe(it.id), it);
+      // Two statements, neither of which can overwrite a document of another owner: update only when
+      // the labels match, otherwise insert only when the id is free. Neither landing means the id was
+      // taken under other labels since the check. (One `ON CONFLICT … DO UPDATE … WHERE` would do it,
+      // but not every Postgres speaker in use parses it.) `RETURNING` counts rows the same way on pg
+      // and pg-mem; pg-mem's rowCount does not.
+      for (const it of batch) {
+        const labels = [it.namespace ?? null, it.owner ?? null, it.shared ? true : null];
+        const updated = await q(
+          // NULL-safe equality spelled with COALESCE: '' is never a namespace or an owner (vectorWriteBatch).
+          `UPDATE gnl_vectors SET text=$2, embedding=$3, metadata=$4 WHERE id=$1 AND COALESCE(namespace, '') = COALESCE($5, '') AND COALESCE(owner, '') = COALESCE($6, '') AND COALESCE(shared, false) = COALESCE($7, false) RETURNING id`,
+          [it.id, it.text, JSON.stringify(it.embedding), it.metadata ? serialize(it.metadata) : null, ...labels],
+        );
+        if (updated.rows.length > 0) continue;
+        const inserted = await q(
+          `INSERT INTO gnl_vectors (id, text, embedding, metadata, namespace, owner, shared, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO NOTHING RETURNING id`,
+          [it.id, it.text, JSON.stringify(it.embedding), it.metadata ? serialize(it.metadata) : null, ...labels, Date.now()],
+        );
+        if (inserted.rows.length === 0) assertSameVectorOwner((await probe(it.id)) ?? { namespace: '\u0000' }, it);
+      }
+    });
   }
   async delete(where: VectorDeleteWhere): Promise<number> {
+    const w = vectorDeletePlan(where);
+    if (!w) return 0;
     const conds: string[] = [];
     const params: unknown[] = [];
-    if (where.ids) { if (!where.ids.length) return 0; params.push(where.ids); conds.push(`id = ANY($${params.length})`); }
-    if (where.owner !== undefined) { params.push(where.owner); conds.push(`owner = $${params.length}`); }
-    if (where.namespace !== undefined) { params.push(where.namespace); conds.push(`namespace = $${params.length}`); }
-    if (!conds.length) return 0;
-    return Number((await this.q(`DELETE FROM gnl_vectors WHERE ${conds.join(' AND ')}`, params) as { rowCount?: number | null }).rowCount ?? 0);
+    // `IN ($1,…)`, not `= ANY($1)`: pg-mem matches nothing with the array form (see getMany), so a
+    // delete by id removed nothing there and did on a real server.
+    const idIn = (ids: string[], at: number) => `id IN (${ids.map((_, i) => `$${at + i + 1}`).join(',')})`;
+    if (w.ids) { conds.push(idIn(w.ids, params.length)); params.push(...w.ids); }
+    if (w.owner !== undefined) { params.push(w.owner); conds.push(`owner = $${params.length}`); }
+    if (w.namespace !== undefined) { params.push(w.namespace); conds.push(`namespace = $${params.length}`); }
+    if (!w.filter) return (await this.q(`DELETE FROM gnl_vectors WHERE ${conds.join(' AND ')} RETURNING id`, params)).rows.length;
+    // Metadata is serialized, so the filter is read in code (vectorMetadataMatches) and the matching
+    // rows deleted by id, in one transaction.
+    const filter = w.filter;
+    return this.tx(async (q) => {
+      const rows = (await q(`SELECT id, metadata FROM gnl_vectors${conds.length ? ` WHERE ${conds.join(' AND ')}` : ''}`, params)).rows as { id: string; metadata: string | null }[];
+      const ids = rows.filter((r) => vectorMetadataMatches(r.metadata ? deserialize<Record<string, unknown>>(r.metadata) : undefined, filter)).map((r) => r.id);
+      return ids.length ? (await q(`DELETE FROM gnl_vectors WHERE ${idIn(ids, 0)} RETURNING id`, ids)).rows.length : 0;
+    });
   }
   async query(embedding: number[], topK: number, opts?: VectorQueryOptions): Promise<VectorMatch[]> {
     // Filtered in SQL, so only eligible rows reach the ranking. Ranking the whole table and filtering
@@ -1468,14 +1489,17 @@ class PgVectorStore implements VectorStore {
     //
     // `IS NOT DISTINCT FROM` rather than `=`: `= NULL` is never true in SQL, so a query for the
     // un-namespaced partition would match nothing at all.
+    const scope = vectorQueryScope(opts);
+    if (scope.none) return [];
     const where: string[] = [];
     const params: unknown[] = [];
     // `=` is exact here: a namespace is never null on this path (undefined means "no filter" above).
-    if (opts?.namespace !== undefined) { params.push(opts.namespace); where.push(`namespace = $${params.length}`); }
-    if (opts?.visibleTo !== undefined) { params.push(opts.visibleTo); where.push(`(shared IS TRUE OR owner = $${params.length})`); }
+    if (scope.namespace !== undefined) { params.push(scope.namespace); where.push(`namespace = $${params.length}`); }
+    if (scope.visibleTo !== undefined) { params.push(scope.visibleTo); where.push(`(shared IS TRUE OR owner = $${params.length})`); }
     const r = await this.q(`SELECT id, text, embedding, metadata, namespace, owner, shared FROM gnl_vectors${where.length ? ` WHERE ${where.join(' AND ')}` : ''}`, params);
     return r.rows
       .map((x) => ({ id: x.id, text: x.text, metadata: x.metadata ? deserialize<Record<string, unknown>>(x.metadata) : undefined, ...(x.namespace != null ? { namespace: x.namespace as string } : {}), ...(x.owner != null ? { owner: x.owner as string } : {}), ...(x.shared ? { shared: true } : {}), score: cosineSimilarity(embedding, JSON.parse(x.embedding)) }))
+      .filter((m) => vectorMetadataMatches(m.metadata, opts?.filter)) // before ranking, like every narrowing
       .sort((a, b) => b.score - a.score).slice(0, topK);
   }
 }

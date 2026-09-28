@@ -22,7 +22,7 @@
  * edit cannot move one without seeing the other.
  */
 import { ORG_SCOPE, orgPrefix, orgScopeOf, withOrg } from './organization.js';
-import { toJournal } from './storage.js';
+import { toJournal, orgVectorId } from './storage.js';
 import { asReaderJournal, type Journal, type JournalReader } from './journal.js';
 import type {
   CacheStore, CapabilityMatrix, ListQuery, LogRecord, MemoryStore, MessageRecord, MessageAppend, MetaStore,
@@ -240,7 +240,7 @@ function scopedVectors(vectors: VectorStore, p: string): VectorStore {
   // IDS ARE PER ORGANIZATION TOO. The store keys a document by id alone, so two organizations using the
   // same id — the scaffold's own `doc-1` — replaced each other's document. Stored as `<ns>:<id>`, handed
   // back as `<id>`; a document adopted into the organization is renamed the same way (adoptIntoOrg).
-  const own = (id: string) => `${ns}:${id}`;
+  const own = (id: string) => orgVectorId(ns, id);
   const bare = (id: string) => (id.startsWith(`${ns}:`) ? id.slice(ns.length + 1) : id);
   const stripNs = (m: VectorMatch): VectorMatch => { const { namespace: _n, ...rest } = m; return { ...rest, id: bare(m.id) }; };
   const scoped: VectorStore = {

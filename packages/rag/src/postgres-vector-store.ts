@@ -1,11 +1,13 @@
 import { createRequire } from 'node:module';
-import { assertVectorLabels, assertSameVectorOwner } from '@gnldev/durable';
+import { vectorWriteBatch, assertSameVectorOwner, vectorDeletePlan, vectorQueryScope } from '@gnldev/durable';
 import type { VectorStore, VectorItem, VectorMatch, QueryOptions, DeleteWhere } from './vector-store.js';
 
 /** Minimal pg.Pool surface — injectable for tests/custom setups (same pattern as PostgresJournal). */
 export interface PoolLike {
   query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }>;
   end?: () => Promise<void>;
+  /** A real `pg.Pool` has it: an upsert batch then runs in one transaction. Without it, statement by statement. */
+  connect?: () => Promise<{ query: PoolLike['query']; release?: () => void }>;
 }
 
 export interface PostgresVectorStoreOptions {
@@ -100,10 +102,27 @@ export class PostgresVectorStore implements VectorStore {
 
   async upsert(items: VectorItem[]): Promise<void> {
     if (items.length === 0) return;
-    assertVectorLabels(items);
-    await this.ensureReady(items[0]!.embedding.length);
+    const batch = vectorWriteBatch(items);
+    await this.ensureReady(batch[0]!.embedding.length);
+    // One transaction when the pool can hand out a connection: a batch refused half-way, by a writer
+    // that took an id after the check, is rolled back rather than left half-written.
+    const client = typeof this.pool.connect === 'function' ? await this.pool.connect() : undefined;
+    const q = client ? (sql: string, p?: unknown[]) => client.query(sql, p) : (sql: string, p?: unknown[]) => this.pool.query(sql, p);
+    try {
+      if (client) await q('BEGIN');
+      await this.writeBatch(q, batch);
+      if (client) await q('COMMIT');
+    } catch (e) {
+      if (client) await q('ROLLBACK').catch(() => {});
+      throw e;
+    } finally {
+      client?.release?.();
+    }
+  }
+
+  private async writeBatch(q: PoolLike['query'], items: VectorItem[]): Promise<void> {
     const probe = async (id: string) =>
-      (await this.pool.query(`SELECT namespace, owner, shared FROM ${this.table} WHERE id = $1`, [id])).rows[0] as
+      (await q(`SELECT namespace, owner, shared FROM ${this.table} WHERE id = $1`, [id])).rows[0] as
         { namespace: string | null; owner: string | null; shared: boolean | null } | undefined;
     // Whole batch checked first: a refused batch leaves no half (assertSameVectorOwner).
     for (const it of items) assertSameVectorOwner(await probe(it.id), it);
@@ -111,7 +130,7 @@ export class PostgresVectorStore implements VectorStore {
     // the labels match, else insert only when the id is free. Neither landing = taken under other labels.
     for (const it of items) {
       const labels = [it.namespace ?? null, it.owner ?? null, it.shared ? true : null];
-      const updated = await this.pool.query(
+      const updated = await q(
         `UPDATE ${this.table} SET text = $2, embedding = $3::vector, metadata = $4
            WHERE id = $1 AND COALESCE(namespace, '') = COALESCE($5, '') AND COALESCE(owner, '') = COALESCE($6, '')
              AND COALESCE(shared, false) = COALESCE($7, false)
@@ -119,7 +138,7 @@ export class PostgresVectorStore implements VectorStore {
         [it.id, it.text, toVectorLiteral(it.embedding), it.metadata ? JSON.stringify(it.metadata) : null, ...labels],
       );
       if (updated.rows.length) continue;
-      const inserted = await this.pool.query(
+      const inserted = await q(
         `INSERT INTO ${this.table} (id, text, embedding, metadata, namespace, owner, shared, created_at)
            VALUES ($1, $2, $3::vector, $4, $5, $6, $7, $8)
            ON CONFLICT (id) DO NOTHING
@@ -138,18 +157,20 @@ export class PostgresVectorStore implements VectorStore {
    */
   async query(embedding: number[], topK: number, opts?: QueryOptions): Promise<VectorMatch[]> {
     await this.ensureReady(embedding.length);
+    const scope = vectorQueryScope(opts);
+    if (scope.none) return [];
     const params: unknown[] = [toVectorLiteral(embedding)];
     const where: string[] = [];
-    if (opts?.namespace !== undefined) {
-      params.push(opts.namespace);
+    if (scope.namespace !== undefined) {
+      params.push(scope.namespace);
       where.push(`namespace = $${params.length}`);
     }
     if (opts?.filter && Object.keys(opts.filter).length > 0) {
       params.push(JSON.stringify(opts.filter));
       where.push(`metadata @> $${params.length}::jsonb`);
     }
-    if (opts?.visibleTo !== undefined) {
-      params.push(opts.visibleTo);
+    if (scope.visibleTo !== undefined) {
+      params.push(scope.visibleTo);
       where.push(`(shared IS TRUE OR owner = $${params.length})`);
     }
     if (opts?.minScore !== undefined) {
@@ -180,24 +201,25 @@ export class PostgresVectorStore implements VectorStore {
 
   /** 7.2: delete by id/filter/namespace (count deleted via RETURNING). Empty where → deletes nothing. */
   async delete(where: DeleteWhere): Promise<number> {
-    if (!where.ids && where.namespace === undefined && !where.filter && where.owner === undefined) return 0; // safe side
+    const w = vectorDeletePlan(where); // no condition (`{}`, `{ ids: [] }`, `{ filter: {} }`) → nothing
+    if (!w) return 0;
     await this.ensureReady(this.dimension ?? 1);
     const params: unknown[] = [];
     const conds: string[] = [];
-    if (where.ids) {
-      params.push(where.ids);
+    if (w.ids) {
+      params.push(w.ids);
       conds.push(`id = ANY($${params.length})`);
     }
-    if (where.namespace !== undefined) {
-      params.push(where.namespace);
+    if (w.namespace !== undefined) {
+      params.push(w.namespace);
       conds.push(`namespace = $${params.length}`);
     }
-    if (where.filter && Object.keys(where.filter).length > 0) {
-      params.push(JSON.stringify(where.filter));
+    if (w.filter && Object.keys(w.filter).length > 0) {
+      params.push(JSON.stringify(w.filter));
       conds.push(`metadata @> $${params.length}::jsonb`);
     }
-    if (where.owner !== undefined) {
-      params.push(where.owner);
+    if (w.owner !== undefined) {
+      params.push(w.owner);
       conds.push(`owner = $${params.length}`);
     }
     const res = await this.pool.query(

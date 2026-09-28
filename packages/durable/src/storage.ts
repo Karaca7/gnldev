@@ -8,6 +8,7 @@
 
 import type { Journal, JournalEntry, RunSummary, JournalReader, RunStatus } from './journal.js';
 import { VectorOwnerConflictError } from './errors.js';
+import { assertOwnerId, isWellFormed, OwnerIdError } from './owned-name.js';
 
 // ── Common ──────────────────────────────────────────────────────────────────
 
@@ -341,6 +342,12 @@ export interface VectorQueryOptions {
    * never as "everyone's". Omitted means no end user, and nothing is narrowed.
    */
   visibleTo?: string;
+  /**
+   * Metadata narrowing, before ranking: every key must equal (`===`) the document's metadata value
+   * (`vectorMetadataMatches`). `createRagTool` passes its `filter` here; this storage ignored it, so a
+   * RAG tool with a filter answered from outside it on every `@gnldev/durable` store.
+   */
+  filter?: Record<string, unknown>;
 }
 
 /** What `VectorStore.delete` removes: every given condition must match. No condition removes nothing. */
@@ -349,22 +356,67 @@ export interface VectorDeleteWhere {
   /** Every document of this end user — the erasure path (`purgeResource(…, { vectors })`). */
   owner?: string;
   namespace?: string;
+  /** Metadata narrowing, as `VectorQueryOptions.filter`. An empty filter is no condition. */
+  filter?: Record<string, unknown>;
 }
 
-/**
- * Labels are checked where they are written, the same way in every store. The SQL stores read any
- * truthy `shared` as shared and the others only `true`, so `shared: "false"` from a JSON form was
- * a private document in one store and everyone's in the next.
+/** The metadata narrowing of `filter` on a query or a delete: every key equals (`===`), as in @gnldev/rag. */
+export function vectorMetadataMatches(metadata: Record<string, unknown> | undefined, filter: Record<string, unknown> | undefined): boolean {
+  if (!filter) return true;
+  const m = metadata ?? {};
+  return Object.entries(filter).every(([k, v]) => m[k] === v);
+}
+
+/*
+ * THE VECTOR WRITE RULE. Every store — the three in this package and the three in @gnldev/rag — runs
+ * the same functions below, and one contract test (vector-store-contract.test.ts) feeds them all the
+ * same input. Each store used to carry its own copy of these checks, and the copies disagreed: one
+ * batch naming the same id under two owners was the second owner's document in memory, the first
+ * owner's in Postgres, and a refused half-written batch in SQLite.
  */
-export function assertVectorLabels(items: ReadonlyArray<{ id: string; owner?: unknown; shared?: unknown }>): void {
+
+type VectorLabels = { id: string; namespace?: unknown; owner?: unknown; shared?: unknown };
+
+/**
+ * The batch a store may write, checked before anything is written, so a refused batch leaves no half:
+ *
+ * - `shared` is `true`, `false` or absent. The SQL stores read any truthy `shared` as shared and the
+ *   others only `true`, so `shared: "false"` from a JSON form was a private document in one store and
+ *   everyone's in the next.
+ * - `owner` is an id an end user can carry — the one owner-id rule, `ownerIdProblem`.
+ * - `namespace` is a non-empty string or absent. `''` is refused: the Postgres stores compare
+ *   labels with `COALESCE(namespace, '')`, where it is the un-namespaced partition.
+ * - `id`, `owner` and `namespace` hold no lone surrogate: Postgres stores one as U+FFFD, so two
+ *   owners became one there and stayed two in memory.
+ * - The same id twice in one batch is one document: under the same labels the last copy wins, under
+ *   different ones the batch is refused (`VectorOwnerConflictError`) — the same takeover as a second
+ *   upsert, only in one call.
+ *
+ * Returns the batch with repeated ids collapsed to their last copy. The stored documents are then
+ * checked with `assertSameVectorOwner`, by the store that can read them.
+ */
+export function vectorWriteBatch<T extends VectorLabels>(items: readonly T[]): T[] {
+  const byId = new Map<string, T>();
   for (const it of items) {
+    if (typeof it.id !== 'string' || it.id === '' || !isWellFormed(it.id)) {
+      throw new TypeError(`@gnldev/durable: a document id must be a non-empty, well-formed string — got ${JSON.stringify(it.id)}`);
+    }
     if (it.shared !== undefined && it.shared !== true && it.shared !== false) {
       throw new TypeError(`@gnldev/durable: document '${it.id}': 'shared' must be true, false or absent — got ${JSON.stringify(it.shared)}`);
     }
-    if (it.owner !== undefined && (typeof it.owner !== 'string' || it.owner === '')) {
-      throw new TypeError(`@gnldev/durable: document '${it.id}': 'owner' must be a non-empty string or absent — got ${JSON.stringify(it.owner)}`);
+    if (it.owner !== undefined) {
+      assertOwnerId(it.owner, `document '${it.id}': 'owner'`);
+      if (!isWellFormed(it.owner)) throw new OwnerIdError('lone surrogate', `document '${it.id}': 'owner'`);
     }
+    if (it.namespace !== undefined && (typeof it.namespace !== 'string' || it.namespace === '' || !isWellFormed(it.namespace))) {
+      throw new TypeError(`@gnldev/durable: document '${it.id}': 'namespace' must be a non-empty, well-formed string or absent — got ${JSON.stringify(it.namespace)}`);
+    }
+    const before = byId.get(it.id);
+    if (before) assertSameVectorOwner(before, it);
+    byId.delete(it.id); // re-inserted, so the survivor sits where its last copy was
+    byId.set(it.id, it);
   }
+  return [...byId.values()];
 }
 
 /**
@@ -372,8 +424,8 @@ export function assertVectorLabels(items: ReadonlyArray<{ id: string; owner?: un
  * rule every store applies before writing over an existing id.
  */
 export function assertSameVectorOwner(
-  existing: { namespace?: string | null; owner?: string | null; shared?: boolean | number | null } | undefined,
-  incoming: { id: string; namespace?: string; owner?: string; shared?: boolean },
+  existing: { namespace?: unknown; owner?: unknown; shared?: unknown } | undefined,
+  incoming: VectorLabels,
 ): void {
   if (!existing) return;
   const same = (existing.namespace ?? undefined) === incoming.namespace
@@ -391,13 +443,72 @@ export function assertSameVectorOwner(
 /**
  * `visibleTo: SHARED_ONLY` narrows to the general shelf alone — what a caller whose identity was lost
  * (`unknown`, run-identity.ts) may read. It is the empty string: no document may be owned by ''
- * (assertVectorLabels), so every store's existing `owner = visibleTo` test answers false for it.
+ * (vectorWriteBatch), so every store's existing `owner = visibleTo` test answers false for it.
  */
 export const SHARED_ONLY = '';
+
+/**
+ * The narrowing a store applies to a query, as it should pass it on — `none` when nothing can match.
+ * A `visibleTo` or `namespace` holding a lone surrogate names nobody (no document can carry one,
+ * `vectorWriteBatch`), but Postgres would compare it as U+FFFD and answer with someone else's
+ * documents; so it reads here as what it means in every store: the general shelf, or nothing.
+ */
+export function vectorQueryScope(opts: { namespace?: string; visibleTo?: string } | undefined): { namespace?: string; visibleTo?: string; none: boolean } {
+  const out: { namespace?: string; visibleTo?: string; none: boolean } = { none: false };
+  if (opts?.namespace !== undefined) {
+    out.namespace = opts.namespace;
+    if (!isWellFormed(opts.namespace)) out.none = true;
+  }
+  if (opts?.visibleTo !== undefined) out.visibleTo = isWellFormed(opts.visibleTo) ? opts.visibleTo : SHARED_ONLY;
+  return out;
+}
 
 /** The one reading of `VectorQueryOptions.visibleTo`, shared by every implementation that filters in code. */
 export function visibleToSubject(doc: { owner?: string; shared?: boolean }, visibleTo: string | undefined): boolean {
   return visibleTo === undefined || doc.shared === true || (doc.owner !== undefined && doc.owner === visibleTo);
+}
+
+/**
+ * What a `delete` may touch, the same in every store — or `null` when it touches nothing. No condition
+ * (`{}`, `{ ids: [] }`, `{ filter: {} }`) removes nothing: an empty filter matched EVERY document in
+ * one store and was a SQL syntax error in another. A condition holding a lone surrogate names no
+ * document either, where Postgres would compare it as U+FFFD: erasing user `u\uD800` must not delete
+ * `u\uFFFD`'s documents.
+ */
+export function vectorDeletePlan(where: VectorDeleteWhere): VectorDeleteWhere | null {
+  const ids = where.ids?.filter((id) => typeof id === 'string' && isWellFormed(id));
+  if (ids !== undefined && ids.length === 0) return null;
+  if (where.owner !== undefined && !isWellFormed(where.owner)) return null;
+  if (where.namespace !== undefined && !isWellFormed(where.namespace)) return null;
+  const filter = where.filter !== undefined && Object.keys(where.filter).length > 0 ? where.filter : undefined;
+  if (ids === undefined && where.owner === undefined && where.namespace === undefined && filter === undefined) return null;
+  return {
+    ...(ids ? { ids } : {}),
+    ...(where.owner !== undefined ? { owner: where.owner } : {}),
+    ...(where.namespace !== undefined ? { namespace: where.namespace } : {}),
+    ...(filter ? { filter } : {}),
+  };
+}
+
+/**
+ * The id a document adopted into an organization gets: the id `withOrgStorage` stores it under, so the
+ * organization's next upsert of the same id updates it instead of adding a second one. The SQL stores
+ * spell the same thing as `ns || ':' || id`; the contract test holds them to it.
+ */
+export const orgVectorId = (ns: string, id: string): string => `${ns}:${id}`;
+
+/**
+ * An adoption would give a legacy (un-namespaced) document an id another document already has — the
+ * organization wrote the same id itself before the upgrade. Refused before anything moves, in every
+ * store: renaming it anyway gave the organization two documents under one id in memory, and a raw
+ * UNIQUE violation in SQL. The operator decides which copy stays.
+ */
+export function vectorAdoptCollision(id: string): VectorOwnerConflictError {
+  return new VectorOwnerConflictError(
+    `@gnldev/durable: adoptIntoOrg would store the un-namespaced document '${id}' under an id that is already taken. ` +
+      'Delete or rename one of the two copies, then adopt again. Nothing was moved.',
+    { id },
+  );
 }
 
 export interface VectorStore {

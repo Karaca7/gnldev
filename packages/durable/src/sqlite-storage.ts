@@ -11,7 +11,7 @@ import { runIdOfKey, parseJournalKey, outcomeStatusOf, deriveRunStatus } from '.
 import { ENGINE_META_KEYS, assertNoRunsInFlight, assertOrgRegistered, isPlatformKey, orgPrefix } from './organization.js';
 import type { JournalBatch, JournalEntry, RunSummary, ToolJournalRecord } from './journal.js';
 import { serialize, deserialize } from './serialize.js';
-import { matchFilter, assertVectorLabels, assertSameVectorOwner } from './storage.js';
+import { matchFilter, vectorWriteBatch, assertSameVectorOwner, vectorDeletePlan, vectorQueryScope, vectorMetadataMatches, vectorAdoptCollision } from './storage.js';
 import type {
   Storage, CapabilityMatrix, Page, ListQuery,
   RunJournal, MemoryStore, VectorStore, WorkStore, CacheStore, MetaStore,
@@ -377,6 +377,12 @@ export class SqliteStorage implements Storage {
     const bump = (store: string, n: number) => { moved[store] = (moved[store] ?? 0) + n; };
 
     const run = () => {
+      // Vectors first, before anything moves: a legacy document whose adopted id (`orgVectorId`) is
+      // already taken refuses the whole adoption, the same in every store.
+      const clash = this.db.prepare(
+        `SELECT a.id AS id FROM gnl_vectors a JOIN gnl_vectors b ON b.id = ? || ':' || a.id WHERE a.namespace IS NULL LIMIT 1`,
+      ).get(ns) as { id: string } | undefined;
+      if (clash) throw vectorAdoptCollision(clash.id);
       for (const [table, col, store] of KEYED) {
         alreadyScoped += this.db.prepare(`SELECT COUNT(*) AS c FROM ${table} WHERE ${col} LIKE 'org:%'`).get().c as number;
         // Row by row rather than one UPDATE, because which reserved keys are the PLATFORM's is a rule
@@ -1179,28 +1185,37 @@ class SqliteMemoryStore implements MemoryStore {
 class SqliteVectorStore implements VectorStore {
   constructor(private db: any) {}
   async upsert(items: VectorItem[]): Promise<void> {
-    assertVectorLabels(items);
-    // The whole batch is checked before anything is written, so a refused batch leaves no half; the
-    // conditional UPDATE below then closes the window between this read and the write.
+    const batch = vectorWriteBatch(items);
+    // Check and write in ONE transaction, with no await inside (node:sqlite is synchronous): a refused
+    // batch leaves no half, and no other writer can take an id between the check and the write.
     const probe = this.db.prepare('SELECT namespace, owner, shared FROM gnl_vectors WHERE id = ?');
-    for (const it of items) assertSameVectorOwner(probe.get(it.id), it);
     const stmt = this.db.prepare(
       `INSERT INTO gnl_vectors (id, text, embedding, metadata, namespace, owner, shared, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET text=excluded.text, embedding=excluded.embedding, metadata=excluded.metadata
-       WHERE gnl_vectors.namespace IS excluded.namespace AND gnl_vectors.owner IS excluded.owner AND gnl_vectors.shared IS excluded.shared`,
+       ON CONFLICT(id) DO UPDATE SET text=excluded.text, embedding=excluded.embedding, metadata=excluded.metadata`,
     );
-    for (const it of items) {
-      const r = stmt.run(it.id, it.text, JSON.stringify(it.embedding), it.metadata ? serialize(it.metadata) : null, it.namespace ?? null, it.owner ?? null, it.shared ? 1 : null, Date.now());
-      if (Number(r?.changes ?? 1) === 0) assertSameVectorOwner(probe.get(it.id) ?? { namespace: '\u0000' }, it);
-    }
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const it of batch) assertSameVectorOwner(probe.get(it.id), it);
+      for (const it of batch) stmt.run(it.id, it.text, JSON.stringify(it.embedding), it.metadata ? serialize(it.metadata) : null, it.namespace ?? null, it.owner ?? null, it.shared ? 1 : null, Date.now());
+      this.db.exec('COMMIT');
+    } catch (e) { this.db.exec('ROLLBACK'); throw e; }
   }
   async delete(where: VectorDeleteWhere): Promise<number> {
+    const w = vectorDeletePlan(where);
+    if (!w) return 0;
     const conds: string[] = [];
     const params: unknown[] = [];
-    if (where.ids) { if (!where.ids.length) return 0; conds.push(`id IN (${where.ids.map(() => '?').join(',')})`); params.push(...where.ids); }
-    if (where.owner !== undefined) { conds.push('owner = ?'); params.push(where.owner); }
-    if (where.namespace !== undefined) { conds.push('namespace IS ?'); params.push(where.namespace); }
-    if (!conds.length) return 0;
+    if (w.ids) { conds.push(`id IN (${w.ids.map(() => '?').join(',')})`); params.push(...w.ids); }
+    if (w.owner !== undefined) { conds.push('owner = ?'); params.push(w.owner); }
+    if (w.namespace !== undefined) { conds.push('namespace = ?'); params.push(w.namespace); }
+    if (w.filter) {
+      // Metadata is serialized, so the filter is read in code (vectorMetadataMatches) and the matching
+      // rows deleted by id. No await in between: node:sqlite is synchronous.
+      const rows = this.db.prepare(`SELECT id, metadata FROM gnl_vectors${conds.length ? ` WHERE ${conds.join(' AND ')}` : ''}`).all(...params) as { id: string; metadata: string | null }[];
+      const ids = rows.filter((r) => vectorMetadataMatches(r.metadata ? deserialize<Record<string, unknown>>(r.metadata) : undefined, w.filter)).map((r) => r.id);
+      if (!ids.length) return 0;
+      return Number(this.db.prepare(`DELETE FROM gnl_vectors WHERE id IN (${ids.map(() => '?').join(',')})`).run(...ids).changes ?? 0);
+    }
     return Number(this.db.prepare(`DELETE FROM gnl_vectors WHERE ${conds.join(' AND ')}`).run(...params).changes ?? 0);
   }
   async query(embedding: number[], topK: number, opts?: VectorQueryOptions): Promise<VectorMatch[]> {
@@ -1211,15 +1226,18 @@ class SqliteVectorStore implements VectorStore {
     //
     // `IS` rather than `=`: SQLite's `=` is never true against NULL, so a query for the un-namespaced
     // partition would silently match nothing at all.
+    const scope = vectorQueryScope(opts);
+    if (scope.none) return [];
     const where: string[] = [];
     const params: unknown[] = [];
-    if (opts?.namespace !== undefined) { where.push('namespace IS ?'); params.push(opts.namespace); }
-    if (opts?.visibleTo !== undefined) { where.push('(shared = 1 OR owner = ?)'); params.push(opts.visibleTo); }
+    if (scope.namespace !== undefined) { where.push('namespace IS ?'); params.push(scope.namespace); }
+    if (scope.visibleTo !== undefined) { where.push('(shared = 1 OR owner = ?)'); params.push(scope.visibleTo); }
     const rows = this.db
       .prepare(`SELECT id, text, embedding, metadata, namespace, owner, shared FROM gnl_vectors${where.length ? ` WHERE ${where.join(' AND ')}` : ''}`)
       .all(...params) as any[];
     return rows
       .map((r) => ({ id: r.id, text: r.text, metadata: r.metadata ? deserialize<Record<string, unknown>>(r.metadata) : undefined, ...(r.namespace != null ? { namespace: r.namespace as string } : {}), ...(r.owner != null ? { owner: r.owner as string } : {}), ...(r.shared ? { shared: true } : {}), score: cosineSimilarity(embedding, JSON.parse(r.embedding)) }))
+      .filter((m) => vectorMetadataMatches(m.metadata, opts?.filter)) // before ranking, like every narrowing
       .sort((a, b) => b.score - a.score)
       .slice(0, topK);
   }

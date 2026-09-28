@@ -47,23 +47,37 @@ await indexDocuments(store, embed, [
 ]);
 ```
 
-When a run is on behalf of an end user (it has a `resourceId`), `createRagTool` answers from the shared
-documents and that user's own. You don't pass anything for this; the run tells the tool whose it is.
+When a run is on behalf of an end user, `createRagTool` answers from the shared documents and that
+user's own. You don't pass anything for this: the tool reads whose run it is from the engine's identity
+channel (`identityOf(options)` in `@gnldev/durable`), the same value the run's owner record comes from.
 
-| Document | Ayşe's search | Mehmet's search | Staff / system (no `resourceId`) |
-|---|---|---|---|
-| `shared: true` | ✅ | ✅ | ✅ |
-| `owner: 'ayse'` | ✅ | ❌ | ✅ |
-| no label | ❌ | ❌ | ✅ |
+| Document | Ayşe's search | Mehmet's search | Staff / system | Identity lost (`unknown`) |
+|---|---|---|---|---|
+| `shared: true` | ✅ | ✅ | ✅ | ✅ |
+| `owner: 'ayse'` | ✅ | ❌ | ✅ | ❌ |
+| no label | ❌ | ❌ | ✅ | ❌ |
 
 A document with no label is visible to no end user. A forgotten label shows up as "not found", never as
-a leak. Organizations stay apart as before: use a store from `withOrgStorage`.
+a leak. A call that lost its identity (called by hand, or by another tool that did not pass its
+`options` on) gets the shared documents only. Organizations stay apart as before: use a store from
+`withOrgStorage`.
 
-An upsert **updates** a document; it does not move it to another owner or label. Upserting an existing
-id with a different `owner`/`shared` (or namespace) fails with `VectorOwnerConflictError`, so one user
-cannot take over another's document or replace a shared one. To relabel, `delete` it first.
+Every store (`InMemoryVectorStore`, `GraphRag`, `PostgresVectorStore` and the `@gnldev/durable`
+storages) applies the same write rule, before anything is written:
+
+- `owner` must be an id an end user can carry: not empty, at most 200 characters, no control
+  characters, no staff prefix such as `operator:` (`ownerIdProblem` in `@gnldev/durable`, the same rule
+  as `subjectIdProblem` in `@gnldev/auth`). Otherwise the upsert throws `OwnerIdError`.
+- `shared` is `true`, `false` or absent; `namespace` is a non-empty string or absent.
+- An upsert **updates** a document; it does not move it to another owner or label. Upserting an
+  existing id with a different `owner`/`shared` (or namespace) fails with `VectorOwnerConflictError`,
+  so one user cannot take over another's document or replace a shared one. The same id twice in one
+  batch under two owners fails the same way, and nothing of the batch is written. To relabel, `delete`
+  it first.
+
 `delete({ owner })` removes one person's documents; `purgeResource(journal, userId, { vectors })` in
-`@gnldev/durable` does it as part of erasing them.
+`@gnldev/durable` does it as part of erasing them. A `delete` with no condition (`{}`, `{ ids: [] }`,
+`{ filter: {} }`) removes nothing.
 
 Your own `VectorStore` gets the same request as `QueryOptions.visibleTo`. Return only documents with
 `shared: true` or `owner === visibleTo`, and filter **before** taking the top K.

@@ -7,7 +7,7 @@ import { InMemoryJournal } from './journal.js';
 import { stableStringify } from './hash.js';
 import { ENGINE_META_KEYS, assertNoRunsInFlight, assertOrgRegistered, isPlatformKey, orgPrefix } from './organization.js';
 import type { JournalEntry, RunSummary } from './journal.js';
-import { matchFilter, visibleToSubject, assertVectorLabels, assertSameVectorOwner } from './storage.js';
+import { matchFilter, visibleToSubject, vectorWriteBatch, assertSameVectorOwner, vectorDeletePlan, vectorQueryScope, vectorMetadataMatches, orgVectorId, vectorAdoptCollision } from './storage.js';
 import type {
   Storage, CapabilityMatrix, Page, ListQuery,
   RunJournal, MemoryStore, VectorStore, WorkStore, CacheStore, MetaStore,
@@ -230,31 +230,37 @@ class InMemoryMemoryStore implements MemoryStore {
 // ── VectorStore (cosine, same behavior as rag's InMemoryVectorStore) ───────────
 class InMemoryVectorStore implements VectorStore {
   /** @internal — see Storage.adoptIntoOrg. Stamps the namespace on documents that have none. */
-  _stamp(ns: string): number {
+  _stamp(ns: string, dryRun: boolean): number {
     // Renamed as well as stamped: an organization's documents are stored under `<ns>:<id>` (see
     // withOrgStorage), so an adopted document keeps its identity instead of being duplicated by the
-    // organization's next upsert of the same id.
-    let n = 0;
-    for (const it of this.items) if (it.namespace === undefined) { it.namespace = ns; it.id = `${ns}:${it.id}`; n++; }
-    return n;
+    // organization's next upsert of the same id. A rename onto a taken id is refused first.
+    const legacy = this.items.filter((it) => it.namespace === undefined);
+    const taken = new Set(this.items.map((it) => it.id));
+    const clash = legacy.find((it) => taken.has(orgVectorId(ns, it.id)));
+    if (clash) throw vectorAdoptCollision(clash.id);
+    if (!dryRun) for (const it of legacy) { it.namespace = ns; it.id = orgVectorId(ns, it.id); }
+    return legacy.length;
   }
 
   items: VectorItem[] = [];
   async upsert(items: VectorItem[]) {
-    assertVectorLabels(items);
+    const batch = vectorWriteBatch(items);
     // Checked for the whole batch before anything is written, so a refused batch leaves no half.
-    for (const it of items) assertSameVectorOwner(this.items.find((x) => x.id === it.id), it);
-    for (const it of items) {
+    for (const it of batch) assertSameVectorOwner(this.items.find((x) => x.id === it.id), it);
+    for (const it of batch) {
+      // A copy, as the SQL stores keep one: a caller mutating its item afterwards changes nothing here.
+      const own: VectorItem = { ...it, embedding: [...it.embedding], ...(it.metadata ? { metadata: structuredClone(it.metadata) } : {}) };
       const i = this.items.findIndex((x) => x.id === it.id);
-      if (i >= 0) this.items[i] = it; else this.items.push(it);
+      if (i >= 0) this.items[i] = own; else this.items.push(own);
     }
   }
   async delete(where: VectorDeleteWhere): Promise<number> {
-    if (!where.ids && where.owner === undefined && where.namespace === undefined) return 0;
-    const ids = where.ids ? new Set(where.ids) : undefined;
+    const w = vectorDeletePlan(where);
+    if (!w) return 0;
+    const ids = w.ids ? new Set(w.ids) : undefined;
     const before = this.items.length;
     this.items = this.items.filter((it) => !(
-      (!ids || ids.has(it.id)) && (where.owner === undefined || it.owner === where.owner) && (where.namespace === undefined || it.namespace === where.namespace)
+      (!ids || ids.has(it.id)) && (w.owner === undefined || it.owner === w.owner) && (w.namespace === undefined || it.namespace === w.namespace) && vectorMetadataMatches(it.metadata, w.filter)
     ));
     return before - this.items.length;
   }
@@ -263,8 +269,10 @@ class InMemoryVectorStore implements VectorStore {
     // count depend on how many other namespaces exist and how similar their documents happen to be:
     // ask for 4, get however many of the global top 4 were yours. No error, no leak, just recall that
     // quietly degrades as other organizations upload — invisible unless a test has two of them in it.
+    const scope = vectorQueryScope(opts);
+    if (scope.none) return [];
     return this.items
-      .filter((it) => (opts?.namespace === undefined || it.namespace === opts.namespace) && visibleToSubject(it, opts?.visibleTo))
+      .filter((it) => (scope.namespace === undefined || it.namespace === scope.namespace) && visibleToSubject(it, scope.visibleTo) && vectorMetadataMatches(it.metadata, opts?.filter))
       .map((it) => ({ id: it.id, text: it.text, metadata: it.metadata, ...(it.namespace !== undefined ? { namespace: it.namespace } : {}), ...(it.owner !== undefined ? { owner: it.owner } : {}), ...(it.shared ? { shared: true } : {}), score: cosineSimilarity(embedding, it.embedding) }))
       .sort((a, b) => b.score - a.score)
       .slice(0, topK);
@@ -389,11 +397,13 @@ export class InMemoryStorage implements Storage {
     // without applying, which is what passing a no-op mover does.
     const count = (keys: string[]): number => keys.filter((k) => rename(k) !== undefined).length;
 
+    // Vectors are checked first, before anything moves: a rename onto a taken id refuses the adoption.
+    const vectors = this.vectors._stamp(prefix.slice(0, -1), true);
     if (dryRun) {
       const moved = {
         runs: count([...this.runs.journal.keys()]),
         memory: 0, work: 0, cache: 0, meta: 0,
-        vectors: this.vectors.items.filter((i) => i.namespace === undefined).length,
+        vectors,
       };
       return { orgId, dryRun, moved, alreadyScoped, skippedPlatformKeys: [...skipped].sort() };
     }
@@ -403,7 +413,7 @@ export class InMemoryStorage implements Storage {
       work: this.work._rekey(rename),
       cache: this.cache._rekey(rename),
       meta: this.meta._rekey(rename),
-      vectors: this.vectors._stamp(prefix.slice(0, -1)),
+      vectors: this.vectors._stamp(prefix.slice(0, -1), false),
     };
     return { orgId, dryRun, moved, alreadyScoped, skippedPlatformKeys: [...skipped].sort() };
   }

@@ -8,7 +8,7 @@
 // GraphRAG as a query-time layer is the user's pattern. Since it runs durable inside `createRagTool`,
 // the query RESULT is journaled → the graph isn't retraversed on resume/replay (exactly-once RAG preserved).
 import { cosineSimilarity } from 'ai';
-import { visibleToSubject, assertVectorLabels, assertSameVectorOwner } from '@gnldev/durable';
+import { visibleToSubject, vectorWriteBatch, assertSameVectorOwner, vectorDeletePlan, vectorQueryScope } from '@gnldev/durable';
 import { matchesFilter } from './vector-store.js';
 import type { VectorStore, VectorItem, VectorMatch, QueryOptions, DeleteWhere } from './vector-store.js';
 
@@ -49,13 +49,16 @@ export class GraphRag implements VectorStore {
   }
 
   async upsert(newItems: VectorItem[]): Promise<void> {
-    assertVectorLabels(newItems);
-    // Whole batch checked first: a refused batch leaves no half. See assertSameVectorOwner.
-    for (const it of newItems) {
+    // The one write rule every store runs (@gnldev/durable vectorWriteBatch), then the whole batch is
+    // checked against what is stored: a refused batch leaves no half.
+    const batch = vectorWriteBatch(newItems);
+    for (const it of batch) {
       const at = this.byId.get(it.id);
       assertSameVectorOwner(at === undefined ? undefined : this.items[at], it);
     }
-    for (const it of newItems) {
+    for (const given of batch) {
+      // A copy, as the SQL stores keep one: a caller mutating its item afterwards changes nothing here.
+      const it: VectorItem = { ...given, embedding: [...given.embedding], ...(given.metadata ? { metadata: structuredClone(given.metadata) } : {}) };
       const existing = this.byId.get(it.id);
       if (existing !== undefined) {
         this.items[existing] = it;
@@ -84,13 +87,14 @@ export class GraphRag implements VectorStore {
 
   /** Removes the matching documents and every edge touching them. No condition removes nothing. */
   async delete(where: DeleteWhere): Promise<number> {
-    if (!where.ids && where.namespace === undefined && !where.filter && where.owner === undefined) return 0;
-    const ids = where.ids ? new Set(where.ids) : undefined;
+    const w = vectorDeletePlan(where);
+    if (!w) return 0;
+    const ids = w.ids ? new Set(w.ids) : undefined;
     const gone = new Set(this.items.filter((it) =>
       (!ids || ids.has(it.id))
-      && (where.namespace === undefined || it.namespace === where.namespace)
-      && (!where.filter || matchesFilter(it.metadata, where.filter))
-      && (where.owner === undefined || it.owner === where.owner)).map((it) => it.id));
+      && (w.namespace === undefined || it.namespace === w.namespace)
+      && (!w.filter || matchesFilter(it.metadata, w.filter))
+      && (w.owner === undefined || it.owner === w.owner)).map((it) => it.id));
     if (!gone.size) return 0;
     this.items = this.items.filter((it) => !gone.has(it.id));
     this.byId = new Map(this.items.map((it, i) => [it.id, i]));
@@ -130,13 +134,14 @@ export class GraphRag implements VectorStore {
    *   query(q, 5, { namespace: 'does-not-exist' })  ->  2 rows
    */
   async query(embedding: number[], topK: number, opts?: QueryOptions): Promise<VectorMatch[]> {
-    if (this.items.length === 0) return [];
+    const scope = vectorQueryScope(opts);
+    if (this.items.length === 0 || scope.none) return [];
     // Narrow FIRST, then score. Scoring an item this caller may not see and discarding it later would
     // still let it seed the graph walk below and lend its score to a neighbour.
     const visible = this.items.filter((it) =>
-      (opts?.namespace === undefined || it.namespace === opts.namespace)
+      (scope.namespace === undefined || it.namespace === scope.namespace)
       && matchesFilter(it.metadata, opts?.filter)
-      && visibleToSubject(it, opts?.visibleTo));
+      && visibleToSubject(it, scope.visibleTo));
     if (visible.length === 0) return [];
     const allowed = new Set(visible.map((it) => it.id));
 

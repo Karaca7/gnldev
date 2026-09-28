@@ -1,5 +1,5 @@
 import { cosineSimilarity } from 'ai';
-import { visibleToSubject, assertVectorLabels, assertSameVectorOwner } from '@gnldev/durable';
+import { visibleToSubject, vectorWriteBatch, assertSameVectorOwner, vectorDeletePlan, vectorQueryScope, vectorMetadataMatches } from '@gnldev/durable';
 
 export interface VectorDoc {
   id: string;
@@ -94,12 +94,8 @@ export function keywordScore(query: string, doc: string): number {
  * implement none of this — the second copy of a filtering rule is where the copies start to differ.
  */
 export function matchesFilter(metadata: Record<string, unknown> | undefined, filter?: Record<string, unknown>): boolean {
-  if (!filter) return true;
-  const m = metadata ?? {};
-  for (const [k, v] of Object.entries(filter)) {
-    if (m[k] !== v) return false;
-  }
-  return true;
+  // The one reading, shared with the @gnldev/durable stores (which ignored `filter` until they used it).
+  return vectorMetadataMatches(metadata, filter);
 }
 
 /** In-memory vector store (cosine similarity). The pgvector adapter implements the same interface for prod. */
@@ -107,25 +103,31 @@ export class InMemoryVectorStore implements VectorStore {
   private items: VectorItem[] = [];
 
   async upsert(items: VectorItem[]): Promise<void> {
-    assertVectorLabels(items);
-    // Whole batch checked first: a refused batch leaves no half. See assertSameVectorOwner.
-    for (const it of items) assertSameVectorOwner(this.items.find((x) => x.id === it.id), it);
-    for (const it of items) {
+    // The one write rule every store runs (@gnldev/durable vectorWriteBatch): labels, the owner-id
+    // rule, one id twice in a batch. Then the whole batch is checked against what is stored, so a
+    // refused batch leaves no half.
+    const batch = vectorWriteBatch(items);
+    for (const it of batch) assertSameVectorOwner(this.items.find((x) => x.id === it.id), it);
+    for (const it of batch) {
+      // A copy, as the SQL stores keep one: a caller mutating its item afterwards changes nothing here.
+      const own: VectorItem = { ...it, embedding: [...it.embedding], ...(it.metadata ? { metadata: structuredClone(it.metadata) } : {}) };
       const i = this.items.findIndex((x) => x.id === it.id);
-      if (i >= 0) this.items[i] = it;
-      else this.items.push(it);
+      if (i >= 0) this.items[i] = own;
+      else this.items.push(own);
     }
   }
 
   async query(embedding: number[], topK: number, opts?: QueryOptions): Promise<VectorMatch[]> {
     const w = opts?.keywordWeight ?? 0;
     const hybrid = w > 0 && !!opts?.text;
+    const scope = vectorQueryScope(opts);
+    if (scope.none) return [];
     const out: VectorMatch[] = [];
     for (const it of this.items) {
       // 7.2: namespace + metadata narrowing (BEFORE score computation — no wasted work).
-      if (opts?.namespace !== undefined && it.namespace !== opts.namespace) continue;
+      if (scope.namespace !== undefined && it.namespace !== scope.namespace) continue;
       if (!matchesFilter(it.metadata, opts?.filter)) continue;
-      if (!visibleToSubject(it, opts?.visibleTo)) continue;
+      if (!visibleToSubject(it, scope.visibleTo)) continue;
       const vec = cosineSimilarity(embedding, it.embedding);
       // 7.2: hybrid → (1-w)·vector + w·keyword; otherwise pure vector (old behavior).
       const score = hybrid ? (1 - w) * vec + w * keywordScore(opts!.text!, it.text) : vec;
@@ -136,16 +138,17 @@ export class InMemoryVectorStore implements VectorStore {
   }
 
   async delete(where: DeleteWhere): Promise<number> {
+    // No condition (`{}`, `{ ids: [] }`, `{ filter: {} }`) deletes NOTHING — the one rule, vectorDeletePlan.
+    const w = vectorDeletePlan(where);
+    if (!w) return 0;
     const before = this.items.length;
-    const ids = where.ids ? new Set(where.ids) : undefined;
+    const ids = w.ids ? new Set(w.ids) : undefined;
     this.items = this.items.filter((it) => {
-      // Should it be deleted? ALL given conditions must match (ids ∧ filter ∧ namespace).
+      // Should it be deleted? ALL given conditions must match (ids ∧ filter ∧ namespace ∧ owner).
       if (ids && !ids.has(it.id)) return true;
-      if (where.namespace !== undefined && it.namespace !== where.namespace) return true;
-      if (where.filter && !matchesFilter(it.metadata, where.filter)) return true;
-      if (where.owner !== undefined && it.owner !== where.owner) return true;
-      // If no condition was given (empty where), delete NOTHING (safe side).
-      if (!ids && where.namespace === undefined && !where.filter && where.owner === undefined) return true;
+      if (w.namespace !== undefined && it.namespace !== w.namespace) return true;
+      if (w.filter && !matchesFilter(it.metadata, w.filter)) return true;
+      if (w.owner !== undefined && it.owner !== w.owner) return true;
       return false; // delete
     });
     return before - this.items.length;
