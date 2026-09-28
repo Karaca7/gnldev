@@ -72,7 +72,11 @@ export async function eraseSubject(target: EraseTarget, resourceId: string, opts
       }
     }
   }
-  const journalRows = await purgeResource(runs, resourceId, { ...(target.vectors ? { vectors: target.vectors } : {}), ...(target.memory ? { memory: target.memory } : {}) });
+  const journalRows = await purgeResource(runs, resourceId, {
+    ...(target.vectors ? { vectors: target.vectors } : {}),
+    ...(target.memory ? { memory: target.memory } : {}),
+    ...(opts.orgId === undefined ? { outsideOrganizations: true } : {}),
+  });
   const owner = { resourceId, ...(opts.orgId !== undefined ? { orgId: opts.orgId } : {}) };
   const workRecords = target.work ? await target.work.deleteIdPrefix!(ownedPrefix(owner)) : 0;
   const byEraser: Record<string, number> = {};

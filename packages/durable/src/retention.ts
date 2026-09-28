@@ -468,6 +468,13 @@ export async function purgeResource(
      * owner's messages with the wrong person's erasure.
      */
     memory?: Memory;
+    /**
+     * Erase only the runs OUTSIDE organization partitions. A root journal lists every organization's
+     * runs too (`org:<id>:…`), and the same user id in an organization is a different person
+     * (`user(id, orgId)`); `eraseSubject` without an `orgId` sets this, so erasing the organization-less
+     * `ayse` does not take acme's `ayse`'s runs (measured before: it did).
+     */
+    outsideOrganizations?: boolean;
   } = {},
 ): Promise<number> {
   const del = requireDelete(journal);
@@ -498,6 +505,7 @@ export async function purgeResource(
     const page = await paged.call(journal, { resourceId, limit: 200, ...(cursor ? { cursor } : {}) })
       .catch(() => ({ items: [] as Array<{ runId: string; threadId?: string }>, nextCursor: undefined as string | undefined }));
     for (const r of page.items) {
+      if (opts.outsideOrganizations && r.runId.startsWith('org:')) continue;
       if (r.threadId) threads.add(r.threadId);
       runIds.push(r.runId);
     }

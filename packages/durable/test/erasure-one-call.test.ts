@@ -86,7 +86,7 @@ describe('eraseSubject with the background erasers', () => {
     const after = await everything(storage, vectors);
     expect(after).not.toContain('ayse--');
     expect(after.split("\n").filter((l) => l.includes("~o~:ayse:"))).toEqual([]);
-    for (const other of ['JOB-bora--', 'EVT-bora--', 'WF-bora--', 'JOB-ayse-acme', 'EVT-ayse-acme']) expect(after, other).toContain(other);
+    for (const other of ['JOB-bora--', 'EVT-bora--', 'WF-bora--', 'JOB-ayse-acme', 'EVT-ayse-acme', 'WF-ayse-acme', 'JOBRUN-JOB-ayse-acme']) expect(after, other).toContain(other);
   });
 
   it('the job run erased is the one the worker recorded as hers (ctx.run), found by its owner record', async () => {
