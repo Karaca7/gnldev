@@ -1946,7 +1946,17 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     // sürdürüp dönen `steps[].output` içinde adım çıktılarını okuyabiliyordu — `/agents/:name/resume`
     // için kapatılan deliğin kelimesi kelimesine aynısı, komşu uçta. runId beyan edilmemişse
     // sorulacak bir koşum da yok (üretilen ad yepyeni).
-    if (runId) {
+    if (body.resume !== undefined) {
+      // A RESUME NEEDS A RUN (0.7.0 release panel D-8). Without this, a resume naming an id that did not
+      // exist ran the workflow with no input — a 400 carrying an internal TypeError, and a "completed"
+      // run owned by the caller left in the listing. A missing run is a 404 and nothing is written; for
+      // a caller who is not staff a foreign run is the same 404 (ADR-0001), as on `/agents/:name/resume`.
+      if (!runId) return c.json({ error: 'resume needs the runId (or workKey) of the run to resume' }, 400);
+      const missingWf = () => c.json({ error: `workflow run '${runId}' not found` }, 404);
+      const d = await runDecision(c, s, runId, subject);
+      if (d === 'missing') return missingWf();
+      if (d === 'deny') return kindOf(c) === 'operator' ? foreignRun(c) : missingWf();
+    } else if (runId) {
       if ((await runDecision(c, s, runId, subject)) === 'deny') return foreignRun(c);
     }
     // The thread, as on the agent doors. This route took the body's `threadId` as given, so an end user

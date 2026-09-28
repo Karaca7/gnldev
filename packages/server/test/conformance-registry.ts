@@ -684,7 +684,8 @@ export async function walk(filter?: { births?: string[]; doors?: string[] }) {
               if (changed.length) findings.push(`${label(cell)} | ${res.status} | changed ${changed.slice(0, 3).join(',')}`);
               // ORACLE: an end user (or unknown) must not tell "exists, not yours" from "does not exist".
               // Where the same operation on an id that never existed answers 404, the target must too.
-              if (CALLERS[ck].principal.kind !== 'operator' && res.status >= 400 && res.status !== 404) {
+              // (Not for an id the caller's own organization holds: that answer is about the caller's own run.)
+              if (CALLERS[ck].principal.kind !== 'operator' && res.status >= 400 && res.status !== 404 && !sameIdInOwnOrg) {
                 const g = await op.act(w, ghost(), CALLERS[ck]).catch(() => undefined);
                 if (g?.status === 404) findings.push(`${label(cell)} | ${res.status} | oracle: a missing id answers 404`);
               }
