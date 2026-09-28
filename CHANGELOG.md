@@ -45,6 +45,15 @@ If you are upgrading, check these first:
     throws.
 12. **A custom `WorkStore` adapter** implements `deleteIdPrefix` for erasure (SQLite, Postgres and
     Redis ship it).
+13. **`resumeRun(runId, { …, caller })`**: say who is resuming (`caller: STAFF`, or the owner as
+    `user(id)`). The type keeps `caller` optional, so the compiler does not catch a missing one: without
+    it the resume runs as `unknown` and a user's or staff's run is refused (`RunOwnerMismatchError`).
+    The same holds for a `createWorkflowWaker` `resume` (see the @gnldev/scheduler README).
+14. **Runs started on 0.6 have no recorded owner.** They read as "exists, ownerless", which only staff
+    may continue. A chat turn started on 0.6 and re-sent with the same id after the upgrade, by a door
+    with `identify: () => undefined`, answers `409 run_owner_mismatch` with "belongs to a different
+    subject": it is the missing owner record, not another user. Let such turns finish before the
+    upgrade, or continue them as staff.
 
 ### ADR-0002: one way in for identity, one owner per rule
 
@@ -70,7 +79,8 @@ If you are upgrading, check these first:
   best-effort. `forkRun` writes the owner first and throws on a missing source; `rolloverRun` carries
   the owner kind; a replayed run belongs to the source's owner.
 - Tools: `options.resourceId` is removed and reading it throws; use `identityOf(options)`
-  (`options.gnl.identity`). `DurableCtx.identity: RunIdentity` is required. A workflow step reads
+  (`options.gnl.identity`). `DurableCtx.identity: RunIdentity` is required; build one with
+  `runIdentity(caller, runId)`. A workflow step reads
   `ctx.identity`, calls a tool by hand with `{ gnl: toolContextFor(ctx.identity) }`, and starts a child
   run with `runDurable({ caller: ctx.identity })`. `AgentToolConfig.resourceId`/`threadId` are gone: a
   child run takes its parent's identity.
@@ -173,7 +183,10 @@ What it borrowed from server now lives in `@gnldev/durable`, which every door al
   `VECTOR_OUTSIDE_ORGANIZATIONS_SQL`.
 - An owned event's marker keys are ordered by id first; a topic may not start with `~o~`.
 - `maxDepth` for jobs and events is counted from a per-organization index; system jobs and events
-  enqueued before the upgrade are not counted.
+  enqueued before the upgrade are not counted. Every `enqueue` writes its index record, with or without
+  `maxDepth` (a later call with `maxDepth` counts the jobs enqueued without it), so an enqueue is one
+  more store round trip. Measured on Postgres: 1 000 enqueues took 596 ms on 0.6 and 1 140 ms now
+  (about +0.55 ms per job).
 - `resthr:` keys escape the `resourceId`; old traces whose id contains `:` are no longer read.
 - `WorkStore.deleteIdPrefix` ships in SQLite, Postgres and Redis (it was in-memory only), and the
   shared erasure contract runs on all of them under `pnpm check:real`.
