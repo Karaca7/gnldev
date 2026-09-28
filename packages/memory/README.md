@@ -56,6 +56,11 @@ organization they also carry its namespace: pass the organization's vector store
 organization's vector store is refused. A staff or ownerless thread's observations carry no owner, so
 no end user's query is answered from them.
 
+Each observation vector also carries `metadata: { source: 'observational-memory', threadId }`
+(`OM_VECTOR_SOURCE` from @gnldev/durable), and erasing a thread's owner deletes the thread's
+observations by that pair — including ones indexed while the thread was still anonymous. The value is
+reserved: a knowledge-base document written with the same `source` and `threadId` goes with the thread.
+
 ## Upgrading from 0.6
 0.6.0 kept working memory under `res:<resourceId>` and the bare thread id; 0.7 reads
 `resource:<id>` / `thread:<id>` only. Move the old records once:
