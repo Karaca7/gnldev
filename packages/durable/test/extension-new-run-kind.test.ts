@@ -1,8 +1,8 @@
-// Extension experiment (candidate B): a NEW run kind ("cron-agent": a scheduled agent run that calls
+// Extension check (ADR-0002 prediction): a NEW run kind ("cron-agent": a scheduled agent run that calls
 // a tool) and a NEW root-polled log, written ONLY with public API — no framework file touched.
 import { describe, it, expect } from 'vitest';
 import { InMemoryVectorStore, indexDocuments, createRagTool } from '../../rag/src/index.js';
-import { InMemoryStorage, createGnl, toJournal, eraseSubject, ownedName, ownerOfName, principalFrom, runIdentity, toolContextFor, type WorkStore } from '../src/index.js';
+import { InMemoryStorage, createGnl, toJournal, eraseSubject, ownedName, ownerOfName, user, UNKNOWN, runIdentity, toolContextFor, type WorkStore } from '../src/index.js';
 import { scheduleWorkflow, pollScheduler, listTriggers } from '../../scheduler/src/index.js';
 import { createMockModel, countToolResults, toolCallResult, finalTextResult } from './mock.js';
 
@@ -45,8 +45,8 @@ describe('extension: cron-agent + a new root-polled log', () => {
     await append({ what: 'login' }, { resourceId: 'mehmet' });
     // Consumer: the identity a tool call made from this log runs under comes from the NAME.
     const page = await work.list('app:audit');
-    const who = page.items.map((r) => toolContextFor(runIdentity(principalFrom(ownerOfName(r.id).resourceId), `audit:${r.id}`)).identity);
-    expect(who.map((w) => (w.kind === 'user' ? w.resourceId : w.kind))).toEqual(['ayse', 'mehmet']);
+    const who = page.items.map((r) => toolContextFor(runIdentity(((o) => (o ? user(o) : UNKNOWN))(ownerOfName(r.id).resourceId), `audit:${r.id}`)).identity);
+    expect(who.map((w) => (w.kind === 'user' ? w.id : w.kind))).toEqual(['ayse', 'mehmet']);
     await eraseSubject({ journal: toJournal(new InMemoryStorage().runs), work }, 'ayse');
     expect((await work.list('app:audit')).items.map((r) => ownerOfName(r.id).resourceId)).toEqual(['mehmet']);
   });

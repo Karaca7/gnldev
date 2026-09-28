@@ -1,7 +1,7 @@
 // Workflow what-if fork: the first `upto` steps' journal output is copied to a new runId;
 // composite sub-keys (foreach[i], loop#k) travel with their owning step; lands in audit.
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnldev/durable';
+import { InMemoryJournal, claimRunOwner, runOwnerOf, user, STAFF } from '@gnldev/durable';
 import { createStudioApi } from '../src/server.js';
 import { call } from './call.js';
 
@@ -63,5 +63,33 @@ describe('workflow what-if fork', () => {
     expect(res.copied).toBe(1); // only 'a'; 'ab' is outside upto and was NOT mixed up by the prefix
     expect(await journal.get('r2:wf:a')).toBe(1);
     expect(await journal.get('r2:wf:ab')).toBeUndefined();
+  });
+});
+
+// A fork is a run birth (ADR-0002 point 3): it belongs to its SOURCE's owner, recorded before a row is
+// copied — so a crash half-way leaves a fork its owner can finish and nobody else can take.
+describe('workflow what-if fork: the owner comes with it', () => {
+  const fork = (app: ReturnType<typeof appWith>, src: string, dst: string) => call(app, `/workflows/order/runs/${src}/fork`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ upto: 1, newRunId: dst }),
+  });
+
+  it('a fork of Ayşe\'s run is Ayşe\'s; a fork of a staff run is staff\'s', async () => {
+    const journal = new InMemoryJournal();
+    await claimRunOwner(journal, 'mine', user('u-ayse'), { workflow: 'order' });
+    await journal.put('mine:wf:validate', { ok: true });
+    await claimRunOwner(journal, 'ops', STAFF, { workflow: 'order' });
+    await journal.put('ops:wf:validate', { ok: true });
+    const app = appWith(journal);
+    expect((await fork(app, 'mine', 'mine-f')).status).toBe(200);
+    expect((await fork(app, 'ops', 'ops-f')).status).toBe(200);
+    expect(await runOwnerOf(journal, 'mine-f')).toMatchObject({ state: 'owned', owner: { kind: 'user', id: 'u-ayse' }, kind: 'workflow' });
+    expect(await runOwnerOf(journal, 'ops-f')).toMatchObject({ state: 'owned', owner: { kind: 'staff' } });
+  });
+
+  it('a fork of a run that does not exist is a 404, and leaves nothing behind', async () => {
+    const journal = new InMemoryJournal();
+    const res = await fork(appWith(journal), 'ghost', 'ghost-f');
+    expect(res.status).toBe(404);
+    expect(await journal.listKeys('ghost-f')).toEqual([]);
   });
 });
