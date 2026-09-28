@@ -132,6 +132,17 @@ A new door, or a new run kind, is covered for identity and ownership by adding o
 and touching **≤ 3 files**, without editing `runOwnerOf` or any other door. Check after the next three
 doors or run kinds land.
 
+**Checked, 2026-09-28** (the 0.7.0 architecture panel, one new door and one new run kind added on a
+branch):
+
+- **A new door took 2 files. Held.**
+- **A new run kind took 4 files. Falsified.** The fourth file is the test itself:
+  `packages/server/test/ownership-matrix.test.ts` keeps an `EXPECTED` map of how many start-point calls
+  each source file holds, and a new run kind changes that count. The map repeats what `BIRTHS[*].sites`
+  in `conformance-registry.ts` already says.
+- **Proposed fix, for a follow-up:** derive `EXPECTED` from `BIRTHS`' `sites`, so a new run kind is
+  one row in the registry and no edit to the test.
+
 ## Scope
 
 - **Measured:** the base findings, the mutation counts and the dependency direction (package.json).
@@ -140,6 +151,14 @@ doors or run kinds land.
   - PostgreSQL cost of `runOwnerOf`;
   - M10–M12 mutations;
   - bundle size for chat-adapter/mcp with `@gnldev/auth` added.
+- **Known limit: the table finds doors by name.** The completeness check in
+  `packages/server/test/ownership-matrix.test.ts` lists a package's exports that match
+  `/^(create|serve)\w*$|Surface$|^pipe\w+Stream$/` and fails on any that is not a `DOOR` or in
+  `NOT_A_DOOR`. A door exported under another name is not seen. Measured by the architecture panel
+  (2026-09-28): a door exported as `webhookHandler` passed the check without a row in the table.
+  Proposed fix, for a follow-up: every source file that calls an engine starter (`createGnl(`,
+  `runDurable(`, `streamDurable(`, `resumeRun(`, `.runWorkflow(`, `admitRun(`) must be listed in a
+  `DOOR`'s files or in `NOT_A_DOOR`. The panel sized this at two files.
 - **This decision is wrong if:**
   - a door package cannot be used on its own anymore;
   - a door can still be written that passes the table while taking identity in another shape;
