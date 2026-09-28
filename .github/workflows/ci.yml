@@ -122,12 +122,24 @@ jobs:
         ports: ['6379:6379']
         options: >-
           --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 10
+      # A second Postgres with the `vector` extension (docker-compose.yml's `pgvector`), for the stores
+      # that need it. Without it and GNL_PGVECTOR_URL, the pgvector tests below skipped themselves on
+      # every run and the job said nothing. Not collation-matrixed: the vector contract does no prefix
+      # ranges, which is what the two legs exist for.
+      pgvector:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       GNL_INTEGRATION: '1'
       # integration-real.test.ts reads GNL_PG_URL / GNL_REDIS_URL (audit finding: the old
       # PG_URL/REDIS_PORT names never matched what the test expected -> instead of the job
       # services it connected to the defaults 55432/6380 and failed with a retry-timeout).
       GNL_PG_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      GNL_PGVECTOR_URL: postgresql://postgres:postgres@localhost:5433/postgres
       GNL_REDIS_URL: redis://localhost:6379
       # The leg asserts it really got the ordering it was assigned. Without this, POSTGRES_INITDB_ARGS
       # silently not taking effect would leave both legs byte-ordered and the job would report coverage
@@ -165,3 +177,8 @@ jobs:
       # runs the same files locally — the two lists are meant to stay identical, since a repository
       # with no remote never reaches this job at all.
       - run: pnpm exec vitest run packages/durable/test/integration-real.test.ts packages/durable/test/prefix-astral-postgres.test.ts packages/rag/test/postgres-vector-store.test.ts packages/otel/test/metrics-org-postgres.test.ts
+      # A SEPARATE run, after the one above, as check-real-backends.mjs does: integration-real's
+      # failover case terminates every backend on the database, and in the same vitest run it reached
+      # these contracts' open pools (4 uncaught 57P01 errors, a red caused by the schedule).
+      # One erasure over every store, the vector write rule, and owned names on the real servers.
+      - run: pnpm exec vitest run packages/durable/test/erasure-store-contract.test.ts packages/durable/test/vector-store-contract.test.ts packages/durable/test/owned-name-namespaces.test.ts
