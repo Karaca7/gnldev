@@ -5,22 +5,35 @@
 // from running the same job concurrently.
 // Job log + markers live in WorkStore (own namespace); the lock + handler's durability live in RunJournal.
 import { randomUUID } from 'node:crypto';
-import { acquireRunLock, requireCapability, createPollLoop, orgPrefix, withOrgStorage, orgStorageScopeOf, ownedName } from '@gnldev/durable';
-import type { Storage, WorkStore, RunJournal, LogRecord } from '@gnldev/durable';
+import {
+  acquireRunLock, requireCapability, createPollLoop, orgPrefix, withOrgStorage, orgStorageScopeOf, ownedName, ownedPrefix,
+  claimRunOwner, runDurable, user, staff, UNKNOWN, toJournal, ownerOfName,
+} from '@gnldev/durable';
+import type { Storage, WorkStore, RunJournal, LogRecord, Caller, RunDurableArgs, DurableResult } from '@gnldev/durable';
+
+/** What `ctx.run` takes: `runDurable`'s arguments without the four the job already decides. */
+export type JobRunArgs = RunDurableArgs extends infer A ? (A extends unknown ? Omit<A, 'journal' | 'runId' | 'caller' | 'resourceId'> : never) : never;
 
 export interface JobCtx {
   /**
-   * RunJournal for the job's own durable runId ('job:<id>') (passed to the handler as the journal for
-   * runDurable). Scoped to `orgId` when the job has one, so the run lands in that organization.
+   * RunJournal for the job's own durable runId ('job:<id>'). Scoped to `orgId` when the job has one,
+   * so the run lands in that organization.
    */
   journal: RunJournal;
   jobId: string;
   runId: string;
   /**
-   * The end user this job was enqueued for. Pass it on as the run's `resourceId` and the run is theirs:
-   * they can see it and approve it. Left out, the run has no owner and only staff can.
+   * WHO the job runs for, read once from the owner recorded when the job was enqueued: the user
+   * (`user(resourceId, orgId)`), staff when it was enqueued with `caller: staff()`, else `unknown`.
+   * The worker records it as the owner of `runId` BEFORE the handler runs, so a run started on `runId`
+   * as anyone else is refused instead of being born ownerless.
    */
-  resourceId?: string;
+  caller: Caller;
+  /**
+   * Start (or resume) the job's durable run as its owner: `runDurable` on `journal` + `runId` with
+   * `caller` bound. Nothing to pass on by hand.
+   */
+  run(args: JobRunArgs): Promise<DurableResult>;
   /** The organization this job was enqueued for. */
   orgId?: string;
   /**
@@ -29,10 +42,10 @@ export interface JobCtx {
    */
   storage: Storage;
   /**
-   * Enqueue a follow-up job into the worker's own queue, as the same user in the same organization
+   * Enqueue a follow-up job into the worker's own queue, for the same owner in the same organization
    * (both overridable). What `enqueue(ctx.storage.work, …)` looks like it does, and did not.
    */
-  enqueue(type: string, payload: unknown, opts?: { id?: string; maxDepth?: number } & JobOwner): Promise<string>;
+  enqueue(type: string, payload: unknown, opts?: EnqueueOptions): Promise<string>;
 }
 
 /** Whose a job is. Kept beside the payload, never inside it: a payload is the handler's, this is the queue's. */
@@ -41,8 +54,61 @@ export interface JobOwner {
   orgId?: string;
 }
 
-/** A `qjob` log entry. */
-type JobRecord = { type: string; payload: unknown } & JobOwner;
+export interface EnqueueOptions extends JobOwner {
+  id?: string;
+  maxDepth?: number;
+  /**
+   * Whose the job is, as an engine `Caller` (the value a door hands `runDurable`). `user(id, org)` is
+   * the same as `{ resourceId, orgId }`; `staff(org?)` is an explicit operator/system job. With neither
+   * this nor `resourceId`, the job's run is `unknown`: never staff by omission.
+   */
+  caller?: Caller;
+}
+
+/** A `qjob` log entry. The owner fields are written by `enqueue` only, beside the payload. */
+type JobRecord = { type: string; payload: unknown; ownerKind?: 'staff' } & JobOwner;
+
+/** The caller a job's recorded owner stands for — the ONE reading (worker, `ctx.enqueue`, `retryJob`). */
+function callerOfJob(rec: JobRecord): Caller {
+  if (typeof rec.resourceId === 'string' && rec.resourceId !== '') return user(rec.resourceId, rec.orgId);
+  if (rec.ownerKind === 'staff') return staff(rec.orgId);
+  return UNKNOWN;
+}
+
+/** The enqueue options that recreate a job's owner (a retry, or a follow-up's defaults). */
+function ownerOptionsOf(rec: JobRecord): EnqueueOptions {
+  return {
+    ...(rec.resourceId !== undefined ? { resourceId: rec.resourceId } : {}),
+    ...(rec.orgId !== undefined ? { orgId: rec.orgId } : {}),
+    ...(rec.ownerKind === 'staff' ? { caller: staff(rec.orgId) } : {}),
+  };
+}
+
+/** The owner fields a job record carries, from `enqueue`'s options. One owner per job. */
+function jobOwnerOf(opts: EnqueueOptions): JobOwner & { ownerKind?: 'staff' } {
+  const c = opts.caller;
+  const cOrg = c === undefined || c.kind === 'unknown' ? undefined : c.orgId;
+  const cRes = c?.kind === 'user' ? c.id : undefined;
+  if (c !== undefined && ((opts.resourceId !== undefined && opts.resourceId !== cRes) || (opts.orgId !== undefined && cOrg !== undefined && opts.orgId !== cOrg))) {
+    throw new TypeError('@gnldev/queue: a job was given both `caller` and a different `resourceId`/`orgId` — one owner per job.');
+  }
+  const resourceId = cRes ?? opts.resourceId;
+  const orgId = cOrg ?? opts.orgId;
+  return {
+    ...(resourceId !== undefined ? { resourceId } : {}),
+    ...(orgId !== undefined ? { orgId } : {}),
+    ...(c?.kind === 'staff' ? { ownerKind: 'staff' as const } : {}),
+  };
+}
+
+/**
+ * The per-organization depth index: one small log per owner group, holding one record per job under
+ * the job's own id. `maxDepth` counts this log, so the cost is O(min(depth, maxDepth)) pages of the
+ * caller's OWN organization, never the whole shared queue. Under `org:<id>:` so that
+ * `purgeOrganizationWork` takes it with the organization; an owned record's id is the job's owned id,
+ * so a person's erasure takes it too.
+ */
+const depthNs = (orgId: string | undefined) => (orgId === undefined ? 'qdepth' : `org:${orgId}:qdepth`);
 
 
 export type JobHandler = (payload: any, ctx: JobCtx) => Promise<any>;
@@ -112,12 +178,12 @@ export class QueueDepthExceededError extends Error {
  * maxDepth)) pages, NOT the entire log. Unless `maxDepth` is given (the default behavior), this function
  * is NEVER called → the existing unbounded-queue behavior is preserved.
  */
-async function countUpTo(work: WorkStore, ns: string, limit: number, counts: (payload: unknown) => boolean = () => true): Promise<number> {
+async function countUpTo(work: WorkStore, ns: string, limit: number): Promise<number> {
   let count = 0;
   let cursor: string | undefined;
   for (;;) {
     const page = await work.list(ns, { cursor });
-    count += page.items.filter((it) => counts(it.payload)).length;
+    count += page.items.length;
     if (count >= limit || !page.nextCursor) return count;
     cursor = page.nextCursor;
   }
@@ -126,16 +192,19 @@ async function countUpTo(work: WorkStore, ns: string, limit: number, counts: (pa
 /**
  * Adds a job to the queue (idempotent: repeating with the same id = a single job).
  *
- * `resourceId`/`orgId` say whose the job is. The worker hands them to the handler (see `JobCtx`); a job
- * without them is the system's. Both are checked here, at the door — a bad organization id found by the
- * worker would be five failed attempts and a dead letter instead of one error to the caller.
+ * `caller` (or the `resourceId`/`orgId` shorthand) says whose the job is. The worker runs the job as
+ * that owner (see `JobCtx.caller`); a job with no owner runs as `unknown`. The owner is checked here,
+ * at the door — a bad organization id found by the worker would be five failed attempts and a dead
+ * letter instead of one error to the caller.
  */
 export async function enqueue(
   work: WorkStore,
   type: string,
   payload: unknown,
-  opts: { id?: string; maxDepth?: number } & JobOwner = {},
+  options: EnqueueOptions = {},
 ): Promise<string> {
+  const opts: EnqueueOptions = { ...options, ...jobOwnerOf(options), caller: undefined };
+  const ownerKind = options.caller?.kind === 'staff' ? ('staff' as const) : undefined;
   // The queue is ONE log that the worker polls at the root. An organization-scoped work store (a
   // handler's `ctx.storage.work`) takes the append and files it under `org:<id>:qjob`, where nothing
   // ever reads it: the job is lost without a word. Refused instead.
@@ -152,7 +221,9 @@ export async function enqueue(
   }
   if (opts.maxDepth != null) {
     // Counted per organization: one organization filling the queue refused every other one's work.
-    const depth = await countUpTo(work, 'qjob', opts.maxDepth, (j) => (j as JobRecord).orgId === opts.orgId);
+    // Read from the organization's own depth index, so an organization with 5 jobs pays for 5 records,
+    // not for every other organization's backlog (R22).
+    const depth = await countUpTo(work, depthNs(opts.orgId), opts.maxDepth);
     if (depth >= opts.maxDepth) {
       throw new QueueDepthExceededError(
         `@gnldev/queue: queue depth limit exceeded (${depth} >= ${opts.maxDepth}) — job rejected (type='${type}').`,
@@ -165,13 +236,18 @@ export async function enqueue(
     payload,
     ...(opts.resourceId !== undefined ? { resourceId: opts.resourceId } : {}),
     ...(opts.orgId !== undefined ? { orgId: opts.orgId } : {}),
+    ...(ownerKind ? { ownerKind } : {}),
   };
   // A caller's id is a name within its owner (`ownedName`): the log is one for every organization. The
   // id returned is the stored one — what `retryJob` and `listJobs` speak.
   // An owned job always has an engine-written owned id: that is where erasure finds it.
   const owned = opts.resourceId !== undefined || opts.orgId !== undefined;
   const name = opts.id ?? (owned ? randomUUID() : undefined);
-  return work.append('qjob', rec, name === undefined ? undefined : ownedName(name, opts));
+  const id = await work.append('qjob', rec, name === undefined ? undefined : ownedName(name, { resourceId: opts.resourceId, orgId: opts.orgId }));
+  // The depth index, under the SAME id (idempotent with the job). A crash between the two appends
+  // under-counts this one job by one; never over-counts.
+  await work.append(depthNs(opts.orgId), { type }, id);
+  return id;
 }
 
 /**
@@ -248,7 +324,7 @@ export async function retryJob(work: WorkStore, id: string, opts: { maxDepth?: n
   const fail = await work.get(`qfail:${id}`);
   if (!fail) return null; // only dead-letter jobs are retried — pending/done is a no-op
   // The copy is the same user's, in the same organization: a retry must not turn their job into the system's.
-  return enqueue(work, rec.payload.type, rec.payload.payload, { ...opts, resourceId: rec.payload.resourceId, orgId: rec.payload.orgId });
+  return enqueue(work, rec.payload.type, rec.payload.payload, { ...opts, ...ownerOptionsOf(rec.payload) });
 }
 
 export interface Worker {
@@ -390,17 +466,28 @@ export function createWorker(
             if (await stillOwns()) await work.put(`qfail:${job.id}`, { error: `no handler: ${job.payload.type}` });
             return true;
           }
-          const { resourceId, orgId } = job.payload;
+          const rec = job.payload;
+          const orgId = rec.orgId;
           const scoped = orgId !== undefined ? withOrgStorage(storage, orgId) : storage;
-          await handler(job.payload.payload, {
-            journal: scoped.runs, jobId: job.id, runId, storage: scoped,
-            ...(resourceId !== undefined ? { resourceId } : {}),
+          const caller = callerOfJob(rec);
+          // ADR-0002 5a: the job's run belongs to the job's recorded owner WITHOUT the handler passing
+          // it. Recorded here, before the handler runs (first write wins, so a retry or a resumed run
+          // keeps the owner it was born with). A handler that starts `runId` as anyone else — the old
+          // `runDurable({ runId: ctx.runId, … })` with the user forgotten — is now refused by the
+          // engine's own admission instead of producing a run nobody but staff can see.
+          await claimRunOwner(toJournal(scoped.runs), runId, caller);
+          const followUp = (o: EnqueueOptions = {}): EnqueueOptions => {
+            if (o.caller !== undefined) return o;
+            const base = ownerOptionsOf(rec);
+            if (o.resourceId !== undefined) delete base.caller;
+            else if (base.caller && o.orgId !== undefined) base.caller = staff(o.orgId);
+            return { ...base, ...o };
+          };
+          await handler(rec.payload, {
+            journal: scoped.runs, jobId: job.id, runId, storage: scoped, caller,
             ...(orgId !== undefined ? { orgId } : {}),
-            enqueue: (type, payload, o = {}) => enqueue(work, type, payload, {
-              ...(resourceId !== undefined ? { resourceId } : {}),
-              ...(orgId !== undefined ? { orgId } : {}),
-              ...o,
-            }),
+            run: (args) => runDurable({ ...args, journal: toJournal(scoped.runs), runId, caller }),
+            enqueue: (type, payload, o) => enqueue(work, type, payload, followUp(o)),
           });
           if (await stillOwns()) await work.put(`qdone:${job.id}`, { at: Date.now(), ok: true });
         } catch (err) {
@@ -461,5 +548,85 @@ export function createWorker(
     drain,
     start: loop.start,
     stop: loop.stop,
+  };
+}
+
+// ─── Upgrades and erasure ──────────────────────────────────────────────────────────────────────
+
+/**
+ * Give an existing SYSTEM job (an id written before jobs had owners) to an owner, without doubling it.
+ *
+ * `enqueue` stores an owned job under `ownedName(id, owner)`, so after an upgrade the same caller
+ * re-enqueuing `weekly-report` with `{ orgId }` adds a SECOND job next to the old one, and both run.
+ * This moves it instead: the owned job gets the old one's markers (a finished job stays finished, a
+ * dead letter stays dead), then the old one is marked done with `movedTo`. Run it once per id during
+ * the upgrade, with the workers stopped; afterwards the post-upgrade `enqueue` is idempotent with it.
+ * A job that had started keeps no progress: its run was `job:<old id>`, the moved job's is new.
+ *
+ * Returns the owned id, or `null` when there is no such job. Refuses an id that already has an owner.
+ */
+export async function moveJob(work: WorkStore, fromId: string, to: Omit<EnqueueOptions, 'id' | 'maxDepth'>): Promise<string | null> {
+  const from = ownerOfName(fromId);
+  if (from.resourceId !== undefined || from.orgId !== undefined) {
+    throw new TypeError(`@gnldev/queue: moveJob('${fromId}') — that job already has an owner; only a system job is moved.`);
+  }
+  const owner = jobOwnerOf(to);
+  if (owner.resourceId === undefined && owner.orgId === undefined) {
+    throw new TypeError('@gnldev/queue: moveJob needs an owner to move the job to (`caller`, `resourceId` or `orgId`).');
+  }
+  const old = await findJob(work, fromId);
+  if (!old) return null;
+  const toId = ownedName(fromId, { resourceId: owner.resourceId, orgId: owner.orgId });
+  // Markers FIRST: a worker that saw the owned job before its markers would run a finished job again.
+  for (const m of ['qdone', 'qfail', 'qatt'] as const) {
+    const v = await work.get(`${m}:${fromId}`);
+    if (v !== undefined && (await work.get(`${m}:${toId}`)) === undefined) await work.put(`${m}:${toId}`, v);
+  }
+  await enqueue(work, old.payload.type, old.payload.payload, { ...to, id: fromId });
+  if ((await work.get(`qdone:${fromId}`)) === undefined && (await work.get(`qfail:${fromId}`)) === undefined) {
+    await work.put(`qdone:${fromId}`, { at: Date.now(), movedTo: toId });
+  }
+  return toId;
+}
+
+/** What `eraseSubject` (in `@gnldev/durable`) calls to erase one person's share of a package. */
+export interface SubjectEraser {
+  name: string;
+  erase(owner: { resourceId: string; orgId?: string }): Promise<number>;
+}
+
+/**
+ * Erase one person's jobs: the job records and their depth-index records, the `qdone`/`qfail`/`qatt`/
+ * `qown` markers (a `qfail` holds the handler's error text), the worker's lease locks in the root
+ * journal, and the job runs themselves (`job:<owned id>` in the organization's journal).
+ *
+ * Found by the id prefix the engine wrote (`ownedPrefix`), never by payload. Refuses, rather than
+ * reporting a partial erasure as done, when a store cannot delete: the work store needs
+ * `deleteIdPrefix` and `deletePrefix`, the run journal `deletePrefix`.
+ *
+ * Pass it to `eraseSubject({ …, erasers: [jobEraser(storage)] }, id)`, or call `.erase(owner)`.
+ */
+export function jobEraser(storage: Storage): SubjectEraser {
+  return {
+    name: 'jobs',
+    async erase(owner) {
+      requireCapability(storage, 'work');
+      const work = storage.work!;
+      if (typeof work.deleteIdPrefix !== 'function' || typeof work.deletePrefix !== 'function') {
+        throw new Error("@gnldev/queue: this work store cannot delete by id prefix (`deleteIdPrefix`) and key prefix (`deletePrefix`), so this person's jobs cannot be erased through it");
+      }
+      const root = toJournal(storage.runs);
+      const scoped = owner.orgId !== undefined ? toJournal(withOrgStorage(storage, owner.orgId).runs) : root;
+      if (typeof root.deletePrefix !== 'function' || typeof scoped.deletePrefix !== 'function') {
+        throw new Error("@gnldev/queue: the run journal cannot deletePrefix, so this person's job runs and locks cannot be erased");
+      }
+      const prefix = ownedPrefix(owner);
+      let n = await work.deleteIdPrefix(prefix);
+      for (const m of ['qdone', 'qfail', 'qatt', 'qown']) n += await work.deletePrefix(`${m}:${prefix}`);
+      // The lease lock lives in the ROOT journal (`job:<id>:lease:lock`); the run in the job's organization.
+      n += await root.deletePrefix(`job:${prefix}`);
+      if (owner.orgId !== undefined) n += await scoped.deletePrefix(`job:${prefix}`);
+      return n;
+    },
   };
 }

@@ -21,48 +21,101 @@ await enqueue(storage.work, 'send-email', { to: 'a@x.com' }, { id: 'email:order-
 // it needs the work store to lock jobs and the run journal to keep the side effect at-most-once.
 const worker = createWorker(storage, {
   // A bare `await sendEmail(...)` here is AT-LEAST-once: a crash after the send but before the
-  // job is acked reclaims the lock and calls the handler again. Route through runDurable with a
-  // stable runId, and the send happens once.
-  'send-email': async (payload, ctx) =>
-    runDurable({ runId: ctx.runId, journal: ctx.journal, model, tools, prompt: '...' }),
+  // job is acked reclaims the lock and calls the handler again. Route it through the job's durable
+  // run (`ctx.run`, a runDurable on a stable runId), and the send happens once.
+  'send-email': async (payload, ctx) => ctx.run({ model, tools, prompt: '...' }),
 });
 await worker.runOnce();   // or worker.start() (poll loop)
 ```
 
 ## Jobs for an end user
 
-A job can say whose it is. The worker passes this on, and the run the job starts belongs to that user
-in that organization. The user can see it and approve it; other users cannot.
+A job can say whose it is. The job's run belongs to that owner, and the handler does not pass it on:
+`ctx.run` starts the run as the owner.
 
 ```ts
 import { enqueue, createWorker } from '@gnldev/queue';
+import { InMemoryStorage, user } from '@gnldev/durable';
+declare const model: import('@ai-sdk/provider').LanguageModelV4;
 
-await enqueue(storage.work, 'weekly-summary', { week: 39 }, { resourceId: 'ayse', orgId: 'acme' });
+const storage = new InMemoryStorage();
+await enqueue(storage.work!, 'weekly-summary', { week: 39 }, { caller: user('ayse', 'acme') });
+// the same job, in the shorthand: { resourceId: 'ayse', orgId: 'acme' }
 
 createWorker(storage, {
-  'weekly-summary': async (payload, ctx) =>
-    // ctx.journal is already acme's. Pass ctx.resourceId on and the run is Ayşe's.
-    runDurable({ runId: ctx.runId, journal: ctx.journal, resourceId: ctx.resourceId, model, prompt: '...' }),
+  // ctx.run = runDurable on the job's journal and runId, as the job's owner. Nothing to forget.
+  'weekly-summary': async (payload, ctx) => ctx.run({ model, prompt: `Summarise week ${payload.week}` }),
 });
 ```
 
-- Leave both out and the job is the system's (maintenance, cleanups). Only staff can see its run.
-- `ctx.storage` is the worker's storage scoped to `orgId`. Build the organization's `createGnl` from it.
-- If a handler forgets `resourceId`, the run has no owner. Only staff can see it; it never leaks to
-  another user.
-- `retryJob` keeps the owner and the organization.
-- An explicit `id` is a name **within its owner**: two organizations (or two users) using `weekly-report`
-  get two jobs. `enqueue` returns the stored id (`acme:ayse:weekly-report`); use that one with `retryJob`
-  and `listJobs`. A system job's id is kept as given.
-- A follow-up job from a handler: `ctx.enqueue(type, payload)`. It inherits the user and the organization.
+- **Who the run is.** `ctx.caller` is read once from the owner recorded at `enqueue`: `user(id, org)`,
+  `staff(org?)` when you enqueued with `caller: staff()`, else `unknown`. A job with no owner is never
+  staff by omission — the same rule as `runDurable`.
+- **Forgetting cannot give an ownerless run.** Before the handler runs, the worker records the job's
+  owner as the owner of `ctx.runId`. A handler that still calls `runDurable({ runId: ctx.runId, … })`
+  without the user, or with another user, is refused (`RunOwnerMismatchError`) — the job fails
+  loudly instead of producing a run only staff can see.
+- **A workflow instead of an agent:** `gnl.runWorkflow(name, input, { runId: ctx.runId, caller: ctx.caller })`.
+- `ctx.journal` and `ctx.storage` are scoped to the job's organization. Build the organization's
+  `createGnl` from `ctx.storage`.
+- `retryJob` and `ctx.enqueue(type, payload)` keep the owner and the organization.
   Passing `ctx.storage.work` to `enqueue` is refused, since no worker polls that store.
-- `maxDepth` is counted per organization.
+- An explicit `id` is a name **within its owner**: two organizations (or two users) using `weekly-report`
+  get two jobs. `enqueue` returns the stored id; use that one with `retryJob` and `listJobs`. A system
+  job's id is kept as given.
+- `maxDepth` is counted per organization, from a small per-organization index: its cost is
+  `min(depth, maxDepth)` records of your own organization, not the whole shared queue.
+
+### Upgrading a job that already exists
+
+A job enqueued before it had an owner keeps its old id. Enqueuing it again with an owner would add a
+second job, and both would run. Move it once, with the workers stopped:
+
+```ts
+import { moveJob } from '@gnldev/queue';
+import { InMemoryStorage } from '@gnldev/durable';
+const storage = new InMemoryStorage();
+
+await moveJob(storage.work!, 'weekly-report', { orgId: 'acme' }); // → the owned id
+```
+
+The owned job takes over the old one's state (finished stays finished, a dead letter stays dead) and
+the old one is marked done with `movedTo`. After that, `enqueue(…, { id: 'weekly-report', orgId: 'acme' })`
+finds the moved job.
+
+### Erasing a person
+
+`jobEraser(storage)` removes one person's jobs: the records, the `qdone`/`qfail`/`qatt`/`qown` markers
+(`qfail` holds the handler's error text), the worker's lease locks, and the job runs. Hand it to
+`eraseSubject` from `@gnldev/durable` together with the other packages' erasers:
+
+```ts
+import { jobEraser } from '@gnldev/queue';
+import { triggerEraser } from '@gnldev/scheduler';
+import { eventEraser } from '@gnldev/events';
+import { InMemoryStorage, eraseSubject, toJournal } from '@gnldev/durable';
+
+const storage = new InMemoryStorage();
+const journal = toJournal(storage.runs);
+await eraseSubject(
+  { journal, work: storage.work!, erasers: [jobEraser(storage), triggerEraser(journal), eventEraser(storage.work!)] },
+  'ayse', { orgId: 'acme' },
+);
+```
+
+The work store needs `deleteIdPrefix` and `deletePrefix`. A store without them makes the eraser throw,
+rather than report a partial erasure as done.
 
 ## API
-- `enqueue(work, type, payload, { id?, maxDepth?, resourceId?, orgId? }) → jobId` — `work` is `storage.work`
-- `createWorker(storage, handlers, opts?) → { runOnce, start, stop }` — `opts`: `owner`, `ttlMs` (stale lock reclaim), `pollMs`, `maxAttempts`, `onError`, `backoff`, `maxPollMs`, `heartbeat`
-- `JobCtx` gives the handler `{ journal, jobId, runId, storage, resourceId?, orgId?, enqueue }` — the handler typically calls `runDurable({ runId, ... })` to keep the side effect at-most-once.
+- `enqueue(work, type, payload, { id?, maxDepth?, caller?, resourceId?, orgId? }) → jobId` — `work` is `storage.work`.
+  `caller` is an engine `Caller` (`user(id, org)`, `staff(org?)`); `resourceId`/`orgId` are its shorthand.
+- `createWorker(storage, handlers, opts?) → { runOnce, drain, start, stop }` — `opts`: `owner`, `ttlMs` (stale lock reclaim), `pollMs`, `maxAttempts`, `onError`, `backoff`, `maxPollMs`, `heartbeat`
+- `JobCtx` gives the handler `{ journal, jobId, runId, caller, run, storage, orgId?, enqueue }`. `ctx.run(args)` is
+  `runDurable` on `journal`/`runId` as `caller` — it keeps the side effect at-most-once and the run the owner's.
 - `listJobs(work)` shows each job's `resourceId`/`orgId` next to its status.
+- `retryJob(work, id)` re-enqueues a dead letter for the same owner.
+- `moveJob(work, id, owner)` gives a pre-upgrade system job its owner, without doubling it.
+- `jobEraser(storage)` erases one person's jobs (see above).
 
 ## How it works
 Jobs are written to an append-only log; the worker locks a job and runs it. Crash → lock goes stale → reclaim → handler runs again → `runDurable` resumes from the journal → **a side effect already recorded as done is not repeated**; one caught in the crash window blocks and asks rather than re-firing ([at-most-once](../durable/README.md#what-never-charged-twice-actually-means)).

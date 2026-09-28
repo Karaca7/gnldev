@@ -4,7 +4,7 @@
 // enqueued through the handler's org-scoped storage landed where no worker polls. And one
 // organization filling `maxDepth` refused every other organization's work.
 import { describe, it, expect } from 'vitest';
-import { InMemoryStorage, withOrgStorage } from '@gnldev/durable';
+import { InMemoryStorage, withOrgStorage, userIdOf } from '@gnldev/durable';
 import { enqueue, createWorker, listJobs, retryJob, QueueDepthExceededError } from '../src/index.js';
 
 describe('job ids belong to their owner', () => {
@@ -14,7 +14,7 @@ describe('job ids belong to their owner', () => {
     const b = await enqueue(storage.work!, 'report', { who: 'globex' }, { id: 'weekly-report', resourceId: 'bora', orgId: 'globex' });
     expect(b).not.toBe(a);
     const seen: unknown[] = [];
-    await createWorker(storage, { report: async (p, ctx) => { seen.push([p, ctx.orgId, ctx.resourceId]); } }).drain();
+    await createWorker(storage, { report: async (p, ctx) => { seen.push([p, ctx.orgId, userIdOf(ctx.caller)]); } }).drain();
     expect(seen).toEqual([[{ who: 'acme' }, 'acme', 'ayse'], [{ who: 'globex' }, 'globex', 'bora']]);
   });
 
@@ -59,7 +59,7 @@ describe('a follow-up job', () => {
     const ran: unknown[] = [];
     await createWorker(storage, {
       parent: async (_p, ctx) => { ran.push('parent'); await ctx.enqueue('child', { n: 1 }); },
-      child: async (p, ctx) => { ran.push(['child', p, ctx.orgId, ctx.resourceId]); },
+      child: async (p, ctx) => { ran.push(['child', p, ctx.orgId, userIdOf(ctx.caller)]); },
     }).drain();
     expect(ran).toEqual(['parent', ['child', { n: 1 }, 'acme', 'ayse']]);
   });

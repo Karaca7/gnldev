@@ -2,7 +2,7 @@
 // belongs to, and hands both to the handler — so the run it starts lands in that organization, stamped
 // with that user, and the user can see and approve it. A job without them is the system's, as before.
 import { describe, it, expect } from 'vitest';
-import { InMemoryStorage, withOrgStorage, withSubjectJournal, claimRunOwner, user } from '@gnldev/durable';
+import { InMemoryStorage, withOrgStorage, withSubjectJournal, user, UNKNOWN } from '@gnldev/durable';
 import { enqueue, createWorker, listJobs, retryJob, type JobCtx } from '../src/index.js';
 
 describe('a job enqueued on behalf of an end user', () => {
@@ -14,11 +14,11 @@ describe('a job enqueued on behalf of an end user', () => {
     await createWorker(storage, {
       summary: async (_p, ctx) => {
         seen = ctx;
-        await claimRunOwner(ctx.journal as never, ctx.runId, user(ctx.resourceId!)); // a run's owner record, as the engine writes it (stamped)
+        // The worker has already recorded the job's owner as the owner of ctx.runId.
         await ctx.journal.put(`${ctx.runId}:model:0`, { text: 'WEEKLY' });
       },
     }).drain();
-    expect(seen?.resourceId).toBe('ayse');
+    expect(seen?.caller).toEqual(user('ayse', 'acme'));
     expect(seen?.orgId).toBe('acme');
 
     // The run is in acme's partition, and nowhere else.
@@ -60,7 +60,7 @@ describe('a job enqueued on behalf of an end user', () => {
     await enqueue(storage.work!, 't', {}, { id: 's1' });
     let seen: JobCtx | undefined;
     await createWorker(storage, { t: async (_p, ctx) => { seen = ctx; await ctx.journal.put(`${ctx.runId}:x`, 1); } }).drain();
-    expect(seen?.resourceId).toBeUndefined();
+    expect(seen?.caller).toEqual(UNKNOWN);
     expect(seen?.orgId).toBeUndefined();
     expect(seen?.storage).toBe(storage);
     expect(await storage.runs.get('job:s1:x')).toBe(1);
