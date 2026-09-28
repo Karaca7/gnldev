@@ -19,7 +19,7 @@ import { createMcpServer, serveMcp, type McpServerOptions } from '../src/server.
 
 const SECRET = 'pg: connection to 10.0.3.14:5432 refused (user=svc_gnl)';
 const boom = () => { throw new Error(SECRET); };
-const ok: McpServerOptions['identity'] = () => ({ resourceId: 'acme-ltd' });
+const ok: McpServerOptions['identify'] = () => ({ kind: 'subject', id: 'acme-ltd', roles: [] });
 
 let err: ReturnType<typeof vi.spyOn>;
 afterEach(() => { err?.mockRestore(); });
@@ -28,7 +28,7 @@ const quiet = () => { err = vi.spyOn(console, 'error').mockImplementation(() => 
 function serverWith(extra: Partial<McpServerOptions>, ran: string[]) {
   return createMcpServer({
     journal: new InMemoryJournal(),
-    identity: ok,
+    identify: ok,
     allowTool: () => true,
     tools: { t: { description: 'c', execute: async () => { ran.push('ran'); return { ok: 1 }; } } },
     ...extra,
@@ -37,7 +37,7 @@ function serverWith(extra: Partial<McpServerOptions>, ran: string[]) {
 
 /** Every hook, the door it can fail on, and whether the list door reaches it at all. */
 const CASES: { hook: string; extra: Partial<McpServerOptions>; breaksList: boolean }[] = [
-  { hook: 'identity', extra: { identity: boom as McpServerOptions['identity'] }, breaksList: true },
+  { hook: 'identify', extra: { identify: boom as McpServerOptions['identify'] }, breaksList: true },
   { hook: 'allowTool', extra: { allowTool: boom as McpServerOptions['allowTool'] }, breaksList: true },
   { hook: 'tools', extra: { tools: boom as unknown as McpServerOptions['tools'] }, breaksList: true },
   { hook: 'workKey', extra: { workKey: boom as McpServerOptions['workKey'] }, breaksList: false },
@@ -82,7 +82,7 @@ describe('a hook that throws', () => {
     quiet();
     const { InMemoryTransport } = (await import('@modelcontextprotocol/sdk/inMemory.js')) as any;
     const { Client } = (await import('@modelcontextprotocol/sdk/client/index.js')) as any;
-    const s = serverWith({ identity: boom as McpServerOptions['identity'] }, []);
+    const s = serverWith({ identify: boom as McpServerOptions['identify'] }, []);
     const [ct, st] = InMemoryTransport.createLinkedPair();
     await serveMcp(s, st, { name: 't', version: '0' });
     const c = new Client({ name: 'c', version: '0' }, { capabilities: {} });
@@ -91,7 +91,7 @@ describe('a hook that throws', () => {
       .then(() => 'resolved', (e: Error) => e.message);
     await c.close();
     expect(String(called), 'the wire is where it was measured leaking').not.toContain('10.0.3.14');
-    expect(String(called)).toContain("'identity' hook failed");
+    expect(String(called)).toContain("'identify' hook failed");
   }, 60_000);
 
   it('a hook that RETURNS badly still fails closed — undefined is not consent', async () => {

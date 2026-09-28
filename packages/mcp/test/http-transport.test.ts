@@ -20,6 +20,7 @@ import { createServer, type Server as HttpServer, type IncomingMessage } from 'n
 import { randomUUID } from 'node:crypto';
 import { InMemoryJournal, purgeResource } from '@gnldev/durable';
 import { createMcpServer, serveMcp, type McpServer } from '../src/server.js';
+import { bearerOf, subject } from './principals.js';
 
 /** ① The company's own token table. GNL never sees this. */
 const TOKENS: Record<string, { clientId: string; scopes: string[] }> = {
@@ -42,10 +43,11 @@ beforeAll(async () => {
   journal = new InMemoryJournal();
   gnl = createMcpServer({
     journal,
-    identity: (caller) => {
-      seenCallers.push(caller);
-      const t = TENANT[caller.authInfo?.clientId ?? ''];
-      return t ? { resourceId: t, actor: caller.authInfo?.clientId } : {};
+    // `identify` is handed the HTTP request the call arrived in — the header the middleware validated.
+    identify: (req) => {
+      seenCallers.push(req);
+      const t = TENANT[TOKENS[bearerOf(req)]?.clientId ?? ''];
+      return t ? subject(t) : undefined;
     },
     allowTool: ({ name, caller }) => (caller.authInfo?.scopes ?? []).includes(`tool:${name}`),
     rateLimit: { maxCalls: 10, windowMs: 60_000 },
@@ -110,15 +112,14 @@ async function connect(token: string) {
 }
 
 describe('over a real HTTP transport', () => {
-  it('THE DECISIVE ONE — the validated token reaches identity', async () => {
-    // If this fails with an empty authInfo, everything built today is inert where it matters.
+  it('THE DECISIVE ONE — the validated request reaches identify', async () => {
+    // If this fails with no authorization header, everything built today is inert where it matters.
     const c = await connect('acme-token');
     await c.listTools();
     await c.close();
-    const withId = seenCallers.filter((x: any) => x?.authInfo?.clientId);
-    expect(withId.length, 'identity must receive the clientId the middleware validated').toBeGreaterThan(0);
-    expect((withId[0] as any).authInfo.clientId).toBe('acme-key');
-    expect((withId[0] as any).authInfo.scopes).toContain('tool:read_invoice');
+    const withId = seenCallers.filter((x) => x instanceof Request && bearerOf(x) !== '');
+    expect(withId.length, 'identify must receive the request the middleware validated').toBeGreaterThan(0);
+    expect(bearerOf(withId[0] as Request)).toBe('acme-token');
   }, 60_000);
 
   it('an unauthenticated caller never reaches GNL at all', async () => {

@@ -9,6 +9,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { InMemoryJournal, purgeResource, argsHash } from '@gnldev/durable';
 import { createMcpServer, serveMcp, type McpServerOptions } from '../src/server.js';
+import { usersByToken, subject } from './principals.js';
 
 
 /** Warnings matching one phrase. Counting ALL console.warn calls was brittle: this server says several
@@ -40,26 +41,22 @@ function chargeTool(charges: number[]) {
 }
 
 /** Identity resolved the way a real deployment would: from the token the transport validated. */
-const tenantOf: McpServerOptions['identity'] = (caller) => {
-  const map: Record<string, string> = { 'acme-key': 'acme-ltd', 'attacker-key': 'attacker-co' };
-  const id = caller.authInfo?.clientId;
-  return id && map[id] ? { resourceId: map[id] } : {};
-};
+const tenantOf: McpServerOptions['identify'] = usersByToken({ 'acme-key': 'acme-ltd', 'attacker-key': 'attacker-co' });
 
 describe('a reused idempotencyKey no longer reaches another caller', () => {
   it('two callers sending the SAME key get their own results, and the tool runs for each', async () => {
     // BEFORE: the attacker's call returned {"customer":"acme-ltd","iban":"TR44 **** 9021"} and `execute`
     // ran ONCE — the second caller was served the first caller's record, arguments ignored.
     const ran = { n: 0 };
-    const srv = createMcpServer({ journal: new InMemoryJournal(), identity: tenantOf, tools: { get_invoice: invoiceTool(ran) } });
+    const srv = createMcpServer({ journal: new InMemoryJournal(), identify: tenantOf, tools: { get_invoice: invoiceTool(ran) } });
 
     const a = await srv.callTool({
       name: 'get_invoice', arguments: { customer: 'acme-ltd' },
-      idempotencyKey: 'req-1', caller: { authInfo: { clientId: 'acme-key' } },
+      idempotencyKey: 'req-1', caller: { authInfo: { token: 'acme-key' } },
     });
     const b = await srv.callTool({
       name: 'get_invoice', arguments: { customer: 'attacker-co' },
-      idempotencyKey: 'req-1', caller: { authInfo: { clientId: 'attacker-key' } },
+      idempotencyKey: 'req-1', caller: { authInfo: { token: 'attacker-key' } },
     });
 
     expect(a.customer).toBe('acme-ltd');
@@ -71,8 +68,8 @@ describe('a reused idempotencyKey no longer reaches another caller', () => {
   it('the SAME caller sending the same key twice still runs the tool once', async () => {
     // The guarantee itself. Closing the hole above by keying on the caller must not cost the dedup.
     const ran = { n: 0 };
-    const srv = createMcpServer({ journal: new InMemoryJournal(), identity: tenantOf, tools: { get_invoice: invoiceTool(ran) } });
-    const caller = { authInfo: { clientId: 'acme-key' } };
+    const srv = createMcpServer({ journal: new InMemoryJournal(), identify: tenantOf, tools: { get_invoice: invoiceTool(ran) } });
+    const caller = { authInfo: { token: 'acme-key' } };
     const first = await srv.callTool({ name: 'get_invoice', arguments: { customer: 'acme-ltd' }, idempotencyKey: 'req-1', caller });
     const again = await srv.callTool({ name: 'get_invoice', arguments: { customer: 'acme-ltd' }, idempotencyKey: 'req-1', caller });
     expect(ran.n, 'at-most-once for the effect').toBe(1);
@@ -85,15 +82,15 @@ describe('a pre-claimed key no longer suppresses somebody else’s work', () => 
     // BEFORE: the attacker charged 1 under 'order-2026-0042', and the real 18500 charge returned
     // {"charged":1} without running — the caller was told it had succeeded and 1 was taken.
     const charges: number[] = [];
-    const srv = createMcpServer({ journal: new InMemoryJournal(), identity: tenantOf, tools: { charge: chargeTool(charges) } });
+    const srv = createMcpServer({ journal: new InMemoryJournal(), identify: tenantOf, tools: { charge: chargeTool(charges) } });
 
     await srv.callTool({
       name: 'charge', arguments: { amount: 1 },
-      idempotencyKey: 'order-2026-0042', caller: { authInfo: { clientId: 'attacker-key' } },
+      idempotencyKey: 'order-2026-0042', caller: { authInfo: { token: 'attacker-key' } },
     });
     const real = await srv.callTool({
       name: 'charge', arguments: { amount: 18500 },
-      idempotencyKey: 'order-2026-0042', caller: { authInfo: { clientId: 'acme-key' } },
+      idempotencyKey: 'order-2026-0042', caller: { authInfo: { token: 'acme-key' } },
     });
 
     expect(real.charged, 'the real caller must get its own result').toBe(18500);
@@ -105,10 +102,10 @@ describe('a pre-claimed key no longer suppresses somebody else’s work', () => 
     const charges: number[] = [];
     const ran = { n: 0 };
     const srv = createMcpServer({
-      journal: new InMemoryJournal(), identity: tenantOf,
+      journal: new InMemoryJournal(), identify: tenantOf,
       tools: { charge: chargeTool(charges), get_invoice: invoiceTool(ran) },
     });
-    const caller = { authInfo: { clientId: 'acme-key' } };
+    const caller = { authInfo: { token: 'acme-key' } };
     await srv.callTool({ name: 'charge', arguments: { amount: 500 }, idempotencyKey: 'k', caller });
     await srv.callTool({ name: 'get_invoice', arguments: { customer: 'acme-ltd' }, idempotencyKey: 'k', caller });
     expect(charges).toEqual([500]);
@@ -122,10 +119,10 @@ describe('the run has an owner, so a deletion request can find it', () => {
     // the charge stayed in the journal with nothing saying whose it was.
     const journal = new InMemoryJournal();
     const charges: number[] = [];
-    const srv = createMcpServer({ journal, identity: tenantOf, tools: { charge: chargeTool(charges) } });
+    const srv = createMcpServer({ journal, identify: tenantOf, tools: { charge: chargeTool(charges) } });
     await srv.callTool({
       name: 'charge', arguments: { amount: 250 },
-      idempotencyKey: 'order-1', caller: { authInfo: { clientId: 'acme-key' } },
+      idempotencyKey: 'order-1', caller: { authInfo: { token: 'acme-key' } },
     });
 
     const runs = await journal.listRuns();
@@ -140,9 +137,9 @@ describe('the run has an owner, so a deletion request can find it', () => {
 
   it('another caller’s records are not collateral', async () => {
     const journal = new InMemoryJournal();
-    const srv = createMcpServer({ journal, identity: tenantOf, tools: { charge: chargeTool([]) } });
-    await srv.callTool({ name: 'charge', arguments: { amount: 1 }, idempotencyKey: 'o', caller: { authInfo: { clientId: 'acme-key' } } });
-    await srv.callTool({ name: 'charge', arguments: { amount: 2 }, idempotencyKey: 'o', caller: { authInfo: { clientId: 'attacker-key' } } });
+    const srv = createMcpServer({ journal, identify: tenantOf, tools: { charge: chargeTool([]) } });
+    await srv.callTool({ name: 'charge', arguments: { amount: 1 }, idempotencyKey: 'o', caller: { authInfo: { token: 'acme-key' } } });
+    await srv.callTool({ name: 'charge', arguments: { amount: 2 }, idempotencyKey: 'o', caller: { authInfo: { token: 'attacker-key' } } });
     await purgeResource(journal, 'acme-ltd');
     const runs = await journal.listRuns();
     expect(runs.map((r: any) => r.resourceId), 'only the named subject is purged').toEqual(['attacker-co']);
@@ -154,14 +151,14 @@ describe('an unattributable call is refused, not quietly run under the old key',
     // It answers as a missing tool does — the same refusal `allowTool` gives, so a caller cannot map
     // what exists by being refused. Without a work key this used to RUN the tool for an unknown caller.
     const charges: number[] = [];
-    const srv = createMcpServer({ journal: new InMemoryJournal(), identity: tenantOf, tools: { charge: chargeTool(charges) } });
+    const srv = createMcpServer({ journal: new InMemoryJournal(), identify: tenantOf, tools: { charge: chargeTool(charges) } });
     for (const idempotencyKey of ['order-9', undefined]) {
       await expect(srv.callTool({
         name: 'charge', arguments: { amount: 900 },
-        ...(idempotencyKey ? { idempotencyKey } : {}), caller: { authInfo: { clientId: 'unknown-key' } },
+        ...(idempotencyKey ? { idempotencyKey } : {}), caller: { authInfo: { token: 'unknown-key' } },
       })).rejects.toThrow(/no such tool/);
     }
-    expect((await srv.listTools({ caller: { authInfo: { clientId: 'unknown-key' } } })).tools).toEqual([]);
+    expect((await srv.listTools({ caller: { authInfo: { token: 'unknown-key' } } })).tools).toEqual([]);
     expect(charges, 'nothing may have run').toEqual([]);
   });
 
@@ -173,8 +170,8 @@ describe('an unattributable call is refused, not quietly run under the old key',
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       const charges: number[] = [];
-      const srv = createMcpServer({ journal: new InMemoryJournal(), identity: tenantOf, tools: { charge: chargeTool(charges) } });
-      const res = await srv.callTool({ name: 'charge', arguments: { amount: 5 }, caller: { authInfo: { clientId: 'acme-key' } } });
+      const srv = createMcpServer({ journal: new InMemoryJournal(), identify: tenantOf, tools: { charge: chargeTool(charges) } });
+      const res = await srv.callTool({ name: 'charge', arguments: { amount: 5 }, caller: { authInfo: { token: 'acme-key' } } });
       expect(res.isError, 'an ordinary MCP call must not be rejected').toBeUndefined();
       expect(charges).toEqual([5]);
       // Not deduped, and not silent about it.
@@ -197,11 +194,11 @@ describe('the workKey hook', () => {
     const charges: number[] = [];
     const srv = createMcpServer({
       journal: new InMemoryJournal(),
-      identity: tenantOf,
+      identify: tenantOf,
       workKey: (r) => argsHash({ name: r.name, args: r.arguments }),
       tools: { charge: chargeTool(charges) },
     });
-    const caller = { authInfo: { clientId: 'acme-key' } };
+    const caller = { authInfo: { token: 'acme-key' } };
     for (let i = 0; i < 3; i++) await srv.callTool({ name: 'charge', arguments: { amount: 500 }, caller });
     expect(charges, 'three identical requests, one side effect').toEqual([500]);
   });
@@ -210,11 +207,11 @@ describe('the workKey hook', () => {
     const charges: number[] = [];
     const srv = createMcpServer({
       journal: new InMemoryJournal(),
-      identity: tenantOf,
+      identify: tenantOf,
       workKey: (r) => argsHash({ name: r.name, args: r.arguments }),
       tools: { charge: chargeTool(charges) },
     });
-    const caller = { authInfo: { clientId: 'acme-key' } };
+    const caller = { authInfo: { token: 'acme-key' } };
     await srv.callTool({ name: 'charge', arguments: { amount: 500 }, caller });
     await srv.callTool({ name: 'charge', arguments: { amount: 900 }, caller });
     expect(charges).toEqual([500, 900]);
@@ -224,11 +221,11 @@ describe('the workKey hook', () => {
     const charges: number[] = [];
     const srv = createMcpServer({
       journal: new InMemoryJournal(),
-      identity: tenantOf,
+      identify: tenantOf,
       workKey: (r) => String((r.arguments as { orderId?: string } | undefined)?.orderId ?? ''),
       tools: { charge: chargeTool(charges) },
     });
-    const caller = { authInfo: { clientId: 'acme-key' } };
+    const caller = { authInfo: { token: 'acme-key' } };
     // Two DIFFERENT client keys, one order id: the order id is what identifies the work here.
     await srv.callTool({ name: 'charge', arguments: { amount: 500, orderId: 'o-7' }, idempotencyKey: 'a', caller });
     await srv.callTool({ name: 'charge', arguments: { amount: 500, orderId: 'o-7' }, idempotencyKey: 'b', caller });
@@ -247,7 +244,7 @@ describe('servers built against the previous release keep working, and stop bein
       expect(ran.n, 'the previous behaviour is unchanged').toBe(1);
       const said = warningsSaying(warn, 'a key the CLIENT chooses');
       expect(said).toHaveLength(1);
-      expect(said[0], 'the warning must name the way out').toContain('identity');
+      expect(said[0], 'the warning must name the way out').toContain('identify');
       expect(said[0], 'and say where the current behaviour is correct').toContain('stdio');
     } finally {
       warn.mockRestore();
@@ -283,7 +280,7 @@ describe('servers built against the previous release keep working, and stop bein
 });
 
 describe('serveMcp carries the transport’s identity, which it used to drop', () => {
-  it('the SDK handler’s second parameter reaches the identity resolver', async () => {
+  it('the SDK handler’s second parameter reaches `identify`', async () => {
     // The bridge took `(req)` and the SDK passes `(req, extra)`, so authInfo and sessionId never
     // arrived. Asserted over a REAL SDK Client/Server pair rather than by calling callTool directly.
     const { InMemoryTransport } = (await import('@modelcontextprotocol/sdk/inMemory.js')) as any;
@@ -292,9 +289,9 @@ describe('serveMcp carries the transport’s identity, which it used to drop', (
     const seen: unknown[] = [];
     const srv = createMcpServer({
       journal: new InMemoryJournal(),
-      identity: (caller) => {
-        seen.push(caller);
-        return { resourceId: 'acme-ltd' };
+      identify: (req) => {
+        seen.push(req);
+        return subject('acme-ltd');
       },
       tools: { charge: chargeTool([]) },
     });
@@ -306,8 +303,8 @@ describe('serveMcp carries the transport’s identity, which it used to drop', (
     await c.close();
 
     expect(seen, 'the resolver must be consulted for a call arriving over the wire').toHaveLength(1);
-    // An in-memory transport authenticates nobody, so the context is legitimately empty — what is
-    // asserted is that it ARRIVES, as an object, rather than the resolver never being called.
-    expect(typeof seen[0]).toBe('object');
+    // An in-memory transport authenticates nobody, so the request carries no credential — what is
+    // asserted is that one ARRIVES, as a web Request, rather than the resolver never being called.
+    expect(seen[0]).toBeInstanceOf(Request);
   });
 });

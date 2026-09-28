@@ -9,16 +9,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { InMemoryJournal } from '@gnldev/durable';
 import { InMemoryVectorStore, indexDocuments, createRagTool } from '../../rag/src/index.js';
 import { createMcpServer, type McpServerOptions } from '../src/server.js';
+import { byToken, subject, operator } from './principals.js';
 
 beforeEach(() => { vi.spyOn(console, 'warn').mockImplementation(() => {}); });
 
-const who: McpServerOptions['identity'] = (c) => {
-  const id = (c as { authInfo?: { clientId?: string } }).authInfo?.clientId;
-  if (id === 'mehmet-token') return { resourceId: 'mehmet', orgId: 'acme' };
-  if (id === 'service-token') return { orgId: 'acme' };
-  return {};
-};
-const as = (clientId?: string) => (clientId ? { authInfo: { clientId } } : {});
+const who: McpServerOptions['identify'] = byToken({ 'mehmet-token': subject('mehmet', 'acme'), 'service-token': operator('nightly', 'acme') });
+const as = (token?: string) => (token ? { authInfo: { token } } : {});
 const recorder = () => {
   const seen: Array<string | undefined> = [];
   return { seen, tool: { description: 'r', execute: async (_a: unknown, o?: unknown) => { seen.push(userIdOf(identityOf(o))); return { ok: true }; } } };
@@ -32,7 +28,7 @@ describe('the caller reaches the tool on every path', () => {
   ] as const) {
     it(label, async () => {
       const r = recorder();
-      const srv = createMcpServer({ ...(journal ? { journal: new InMemoryJournal() } : {}), identity: who, tools: { t: r.tool as never } } as never);
+      const srv = createMcpServer({ ...(journal ? { journal: new InMemoryJournal() } : {}), identify: who, tools: { t: r.tool as never } } as never);
       await srv.callTool({ name: 't', arguments: {}, ...(key ? { idempotencyKey: key } : {}), caller: as('mehmet-token') } as never);
       expect(r.seen).toEqual(['mehmet']);
     });
@@ -47,7 +43,7 @@ describe('the caller reaches the tool on every path', () => {
       { id: 'm', text: 'MEHMET invoice', owner: 'mehmet' },
       { id: 'u', text: 'UNTAGGED note' },
     ]);
-    const srv = createMcpServer({ journal: new InMemoryJournal(), identity: who, tools: { kb: createRagTool({ store, embed, topK: 10 }) as never } } as never);
+    const srv = createMcpServer({ journal: new InMemoryJournal(), identify: who, tools: { kb: createRagTool({ store, embed, topK: 10 }) } } as never);
     const out = JSON.stringify(await srv.callTool({ name: 'kb', arguments: { query: 'invoice' }, caller: as('mehmet-token') } as never));
     expect(out).toContain('GENERAL handbook');
     expect(out).toContain('MEHMET invoice');
@@ -60,7 +56,7 @@ describe('a caller the server cannot place is not served', () => {
   for (const workScope of ['resource', 'org'] as const) {
     it(`workScope '${workScope}'`, async () => {
       const r = recorder();
-      const srv = createMcpServer({ journal: new InMemoryJournal(), identity: who, workScope, tools: { t: r.tool as never } } as never);
+      const srv = createMcpServer({ journal: new InMemoryJournal(), identify: who, workScope, tools: { t: r.tool as never } } as never);
       for (const c of [as(), as('garbage-token')]) {
         await expect(srv.callTool({ name: 't', arguments: {}, caller: c } as never)).rejects.toThrow(/no such tool/);
         expect(JSON.stringify(await srv.listTools({ caller: c } as never))).not.toContain('"t"');
@@ -70,12 +66,20 @@ describe('a caller the server cannot place is not served', () => {
     });
   }
 
-  it('org-level work: a caller placed in an organization but naming no user is served under workScope \'org\' only', async () => {
+  it('staff (an operator) is served — as staff, never as a user — and names no per-user work', async () => {
+    // Before ADR-0002 an identity could only say "an org, no user", and that was refused under
+    // 'resource'. An operator is now said out loud, and the engine reads it as staff.
     const r = recorder();
-    const org = createMcpServer({ journal: new InMemoryJournal(), identity: who, workScope: 'org', tools: { t: r.tool as never } } as never);
-    await org.callTool({ name: 't', arguments: {}, caller: as('service-token') } as never);
+    const org = createMcpServer({ journal: new InMemoryJournal(), identify: who, workScope: 'org', tools: { t: r.tool } });
+    await org.callTool({ name: 't', arguments: {}, idempotencyKey: 'nightly', caller: as('service-token') });
     expect(r.seen).toEqual([undefined]);
-    const res = createMcpServer({ journal: new InMemoryJournal(), identity: who, tools: { t: recorder().tool as never } } as never);
-    await expect(res.callTool({ name: 't', arguments: {}, caller: as('service-token') } as never)).rejects.toThrow(/no such tool/);
+    const r2 = recorder();
+    const res = createMcpServer({ journal: new InMemoryJournal(), identify: who, tools: { t: r2.tool } });
+    await res.callTool({ name: 't', arguments: {}, caller: as('service-token') });
+    expect(r2.seen).toEqual([undefined]);
+    // …but a per-user ('resource') work id cannot be derived for staff: a keyed call is refused.
+    const keyed = await res.callTool({ name: 't', arguments: {}, idempotencyKey: 'k', caller: as('service-token') });
+    expect(JSON.stringify(keyed)).toMatch(/Refusing to run 't'/);
+    expect(r2.seen).toEqual([undefined]);
   });
 });

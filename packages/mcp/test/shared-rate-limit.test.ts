@@ -16,6 +16,7 @@
 import { describe, it, expect } from 'vitest';
 import { InMemoryJournal, type Journal } from '@gnldev/durable';
 import { createMcpServer, type McpServerOptions } from '../src/server.js';
+import { usersByToken } from './principals.js';
 
 /**
  * A rate limit every instance shares, as a `rateLimit` function.
@@ -27,8 +28,8 @@ import { createMcpServer, type McpServerOptions } from '../src/server.js';
  * refuses one call too early is a limiter; one that occasionally allows one too many is not.
  */
 function sharedRateLimit(journal: Journal, opts: { maxCalls: number; windowMs: number }): McpServerOptions['rateLimit'] {
-  return async ({ identity }) => {
-    const subject = identity.resourceId ?? identity.orgId ?? '__anonymous';
+  return async ({ runsAs }) => {
+    const subject = runsAs.kind === 'user' ? runsAs.id : '__anonymous';
     const bucket = Math.floor(Date.now() / opts.windowMs);
     const key = `__ratelimit:${subject}:${bucket}`;
     await journal.incrBy!(key, { calls: 1 });
@@ -37,10 +38,10 @@ function sharedRateLimit(journal: Journal, opts: { maxCalls: number; windowMs: n
   };
 }
 
-const caller = { authInfo: { clientId: 'acme-key' } };
-const otherCaller = { authInfo: { clientId: 'globex-key' } };
+const caller = { authInfo: { token: 'acme-key' } };
+const otherCaller = { authInfo: { token: 'globex-key' } };
 const TENANT: Record<string, string> = { 'acme-key': 'acme-ltd', 'globex-key': 'globex-inc' };
-const identity: McpServerOptions['identity'] = (c) => ({ resourceId: TENANT[c.authInfo?.clientId ?? ''] });
+const identify: McpServerOptions['identify'] = usersByToken(TENANT);
 
 /** Two servers on ONE journal — the shape two processes behind a load balancer have. */
 function twoInstances(rateLimit: (j: Journal) => McpServerOptions['rateLimit']) {
@@ -49,7 +50,7 @@ function twoInstances(rateLimit: (j: Journal) => McpServerOptions['rateLimit']) 
   const make = () =>
     createMcpServer({
       journal,
-      identity,
+      identify,
       allowTool: () => true,
       rateLimit: rateLimit(journal),
       tools: { charge: { description: 'c', execute: async (a: any) => { ran.push(a.n); return { ok: 1 }; } } },

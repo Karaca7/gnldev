@@ -9,17 +9,14 @@
 import { describe, it, expect } from 'vitest';
 import { InMemoryJournal, purgeResource, withOrg } from '@gnldev/durable';
 import { createMcpServer } from '../src/server.js';
+import { byToken, subject } from './principals.js';
 
 function server() {
   const journal = new InMemoryJournal();
   const effects: string[] = [];
   const s = createMcpServer({
     journal,
-    identity: (c) =>
-      c.authInfo?.token === 'A' ? { resourceId: 'u1', orgId: 'acme' }
-      : c.authInfo?.token === 'B' ? { resourceId: 'u1', orgId: 'globex' }
-      : c.authInfo?.token === 'N' ? { resourceId: 'u1' }
-      : undefined,
+    identify: byToken({ A: subject('u1', 'acme'), B: subject('u1', 'globex'), N: subject('u1') }),
     workKey: (req) => String((req.arguments as { ref?: string } | undefined)?.ref),
     tools: {
       charge: {

@@ -14,14 +14,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import { InMemoryJournal, serverIdentityOf } from '@gnldev/durable';
 import { createMcpServer, serveMcp, type McpServerOptions } from '../src/server.js';
+import { usersByToken, subject, bearerOf } from './principals.js';
 
-const tenantOf: McpServerOptions['identity'] = (caller) => {
-  const map: Record<string, string> = { 'acme-key': 'acme-ltd', 'other-key': 'other-co' };
-  const id = caller.authInfo?.clientId;
-  return id && map[id] ? { resourceId: map[id] } : {};
-};
-const acme = { authInfo: { clientId: 'acme-key' } };
-const other = { authInfo: { clientId: 'other-key' } };
+const tenantOf: McpServerOptions['identify'] = usersByToken({ 'acme-key': 'acme-ltd', 'other-key': 'other-co' });
+const acme = { authInfo: { token: 'acme-key' } };
+const other = { authInfo: { token: 'other-key' } };
 
 /** Permission by scope, the recipe the README gives: the token says what it may do. */
 const byScope: McpServerOptions['allowTool'] = ({ name, caller }) =>
@@ -34,11 +31,11 @@ describe('③ a caller cannot reach a tool it has no permission for', () => {
   const srv = () =>
     createMcpServer({
       journal: new InMemoryJournal(),
-      identity: tenantOf,
+      identify: tenantOf,
       allowTool: byScope,
       tools: { read_invoice: noop, delete_account: noop },
     });
-  const reader = { authInfo: { clientId: 'acme-key', scopes: ['tool:read_invoice'] } };
+  const reader = { authInfo: { token: 'acme-key', scopes: ['tool:read_invoice'] } };
 
   it('ORIGINAL — the call door refuses it, indistinguishably from a tool that does not exist', async () => {
     // Was `{isError, "Not permitted: 'delete_account'"}` — which confirmed the tool exists to a caller
@@ -93,7 +90,7 @@ describe('③ a caller cannot reach a tool it has no permission for', () => {
     // The transport authenticates nobody, so `allowTool` sees no scopes → nothing is permitted. That
     // is the point: the filter runs on the wire path at all, which it could not before (the SDK's
     // list handler was given no caller context).
-    const s = createMcpServer({ identity: tenantOf, allowTool: byScope, tools: { read_invoice: noop } });
+    const s = createMcpServer({ identify: tenantOf, allowTool: byScope, tools: { read_invoice: noop } });
     const [ct, st] = InMemoryTransport.createLinkedPair();
     await serveMcp(s, st, { name: 't', version: '0' });
     const c = new Client({ name: 'c', version: '0' }, { capabilities: {} });
@@ -109,7 +106,7 @@ describe('③ a caller cannot reach a tool it has no permission for', () => {
 
   it('SIBLING — a different caller gets a different list, not a cached one', async () => {
     const s = srv();
-    const admin = { authInfo: { clientId: 'acme-key', scopes: ['tool:read_invoice', 'tool:delete_account'] } };
+    const admin = { authInfo: { token: 'acme-key', scopes: ['tool:read_invoice', 'tool:delete_account'] } };
     expect((await s.listTools({ caller: reader })).tools.map((t) => t.name)).toEqual(['read_invoice']);
     expect((await s.listTools({ caller: admin })).tools.map((t) => t.name)).toEqual(['read_invoice', 'delete_account']);
     expect((await s.listTools({ caller: reader })).tools.map((t) => t.name), 'and back again').toEqual(['read_invoice']);
@@ -150,7 +147,7 @@ describe('④ a tool can tell whether the object is the caller’s', () => {
   };
 
   it('ORIGINAL — its own order goes through', async () => {
-    const s = createMcpServer({ journal: new InMemoryJournal(), identity: tenantOf, allowTool: () => true, tools });
+    const s = createMcpServer({ journal: new InMemoryJournal(), identify: tenantOf, allowTool: () => true, tools });
     const r = await s.callTool({ name: 'refund', arguments: { orderId: 'order-42' }, idempotencyKey: 'k1', caller: acme });
     expect(r).toEqual({ refunded: 'order-42' });
   });
@@ -159,7 +156,7 @@ describe('④ a tool can tell whether the object is the caller’s', () => {
     // Identity is right and permission is right; only the tool can answer this one, and now it can.
     // Measured on the previous version: `execute` received no caller at all, so this check was
     // impossible to write.
-    const s = createMcpServer({ journal: new InMemoryJournal(), identity: tenantOf, allowTool: () => true, tools });
+    const s = createMcpServer({ journal: new InMemoryJournal(), identify: tenantOf, allowTool: () => true, tools });
     const r: any = await s.callTool({ name: 'refund', arguments: { orderId: 'order-99' }, idempotencyKey: 'k2', caller: acme });
     expect(r.refused).toBe(true);
   });
@@ -171,7 +168,7 @@ describe('④ a tool can tell whether the object is the caller’s', () => {
     let seen: unknown;
     const s = createMcpServer({
       journal: new InMemoryJournal(),
-      identity: tenantOf,
+      identify: tenantOf,
       allowTool: () => true,
       tools: (ctx) => {
         seen = serverIdentityOf(ctx).resourceId;
@@ -197,7 +194,7 @@ describe('④ a tool can tell whether the object is the caller’s', () => {
     let viaSpread: unknown;
     let writable: boolean | undefined;
     const s = createMcpServer({
-      identity: tenantOf,
+      identify: tenantOf,
       allowTool: () => true,
       tools: (ctx) => {
         viaSpread = serverIdentityOf({ ...ctx }).resourceId;
@@ -215,7 +212,7 @@ describe('④ a tool can tell whether the object is the caller’s', () => {
     // the caller should not see the name of.
     const subjects: unknown[] = [];
     const s = createMcpServer({
-      identity: tenantOf,
+      identify: tenantOf,
       allowTool: () => true,
       tools: (ctx) => {
         subjects.push(serverIdentityOf(ctx).resourceId);
@@ -240,7 +237,7 @@ describe('⑤ one caller cannot exceed its share', () => {
     const ran: string[] = [];
     const s = createMcpServer({
       journal: new InMemoryJournal(),
-      identity: tenantOf,
+      identify: tenantOf,
       allowTool: () => true,
       rateLimit,
       tools: { charge: { description: 'c', execute: async (a: any) => { ran.push(String(a.amount)); return { ok: 1 }; } } },
@@ -325,7 +322,7 @@ describe('the gates do not damage each other', () => {
     const journal = new InMemoryJournal();
     const s = createMcpServer({
       journal,
-      identity: () => ({ resourceId: 'acme-ltd' }),
+      identify: () => subject('acme-ltd'),
       allowTool,
       rateLimit,
       tools: {
@@ -406,7 +403,7 @@ describe('the rate limiter does not grow without bound', () => {
     let n = 0;
     const ran: string[] = [];
     const s = createMcpServer({
-      identity: (c) => ({ resourceId: (c as { authInfo?: { clientId?: string } }).authInfo?.clientId ?? `gen-${n++}` }),
+      identify: (req) => subject(bearerOf(req) || `gen-${n++}`),
       allowTool: () => true,
       rateLimit: { maxCalls: 2, windowMs },
       tools: { t: { description: 't', execute: async (a: any) => { ran.push(String(a.n)); return { ok: 1 }; } } },
@@ -419,7 +416,7 @@ describe('the rate limiter does not grow without bound', () => {
     // allowance is the limit not holding. Over 1024 one-shot subjects push the table past the sweep
     // threshold while one real caller's window stays live.
     const { s, ran } = build(60_000);
-    const live = { authInfo: { clientId: 'acme-key' } };
+    const live = { authInfo: { token: 'acme-key' } };
     await s.callTool({ name: 't', arguments: { n: 'a1' }, idempotencyKey: 'a1', caller: live });
     await s.callTool({ name: 't', arguments: { n: 'a2' }, idempotencyKey: 'a2', caller: live });
     // 1500 distinct one-shot subjects — crosses the sweep threshold several times over.
@@ -433,7 +430,7 @@ describe('the rate limiter does not grow without bound', () => {
     vi.useFakeTimers();
     try {
       const { s, ran } = build(1_000);
-      const c = { authInfo: { clientId: 'acme-key' } };
+      const c = { authInfo: { token: 'acme-key' } };
       await s.callTool({ name: 't', arguments: { n: '1' }, idempotencyKey: '1', caller: c });
       await s.callTool({ name: 't', arguments: { n: '2' }, idempotencyKey: '2', caller: c });
       expect((await s.callTool({ name: 't', arguments: { n: '3' }, idempotencyKey: '3', caller: c }) as any).isError).toBe(true);
@@ -472,7 +469,7 @@ describe('concurrent calls under one key', () => {
   it('the side effect runs exactly ONCE for 10 parallel calls', async () => {
     const ran: number[] = [];
     const s = createMcpServer({
-      journal: new InMemoryJournal(), identity: tenantOf, allowTool: () => true,
+      journal: new InMemoryJournal(), identify: tenantOf, allowTool: () => true,
       tools: { charge: slowCharge(ran) },
     });
     await Promise.all(Array.from({ length: 10 }, () =>
@@ -487,7 +484,7 @@ describe('concurrent calls under one key', () => {
     // for these names; this door was the surface not using it.
     const ran: number[] = [];
     const s = createMcpServer({
-      journal: new InMemoryJournal(), identity: tenantOf, allowTool: () => true,
+      journal: new InMemoryJournal(), identify: tenantOf, allowTool: () => true,
       tools: { charge: slowCharge(ran) },
     });
     const results = await Promise.all(Array.from({ length: 10 }, () =>
@@ -515,7 +512,7 @@ describe('concurrent calls under one key', () => {
   it('retrying after the race collects the result without running again', async () => {
     const ran: number[] = [];
     const s = createMcpServer({
-      journal: new InMemoryJournal(), identity: tenantOf, allowTool: () => true,
+      journal: new InMemoryJournal(), identify: tenantOf, allowTool: () => true,
       tools: { charge: slowCharge(ran) },
     });
     const [first, second] = await Promise.all([
@@ -533,7 +530,7 @@ describe('concurrent calls under one key', () => {
   it('different keys in parallel all run — the lock is per unit of work', async () => {
     const ran: number[] = [];
     const s = createMcpServer({
-      journal: new InMemoryJournal(), identity: tenantOf, allowTool: () => true,
+      journal: new InMemoryJournal(), identify: tenantOf, allowTool: () => true,
       tools: { charge: slowCharge(ran) },
     });
     await Promise.all(Array.from({ length: 10 }, (_, i) =>

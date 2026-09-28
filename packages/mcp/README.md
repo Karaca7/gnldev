@@ -5,7 +5,7 @@
 > Install: `pnpm add @gnldev/mcp` — or use it from a [repo clone](https://github.com/Karaca7/gnldev): `pnpm install && pnpm -r build`.
 
 ```bash
-npm i @gnldev/mcp   # peer: @gnldev/durable, ai  ·  dep: @modelcontextprotocol/sdk (installed for you)
+npm i @gnldev/mcp   # peer: @gnldev/durable, ai  ·  dep: @modelcontextprotocol/sdk, @gnldev/auth (installed for you)
 ```
 
 ```ts
@@ -29,9 +29,9 @@ const server = createMcpServer({ tools: { lookupOrder } });
   - `handle.describeTools() → Promise<McpToolSummary[]>` — a firewall-ready summary: `{ name, description, inputSchema, descriptionHash }` (consumed by W2)
   - `handle.close() → Promise<void>` — closes the connection, idempotent (no-op if never connected)
 - `createMcpTools(client, { prefix? })` / `connectMcp(transport, info?)` — older, lower-level APIs (kept for compatibility); `mcpTools` is a higher-level, lazy handle wrapping them
-- `createMcpServer(opts: { tools, journal?, identity?, allowTool?, rateLimit?, workKey?, workScope? })` / `serveMcp(server, transport, info?)` — server side, `callTool` is idempotent (journal + the derived run id)
-  - `identity(caller) → { resourceId?, orgId?, actor? }` — WHO is calling, from what the TRANSPORT authenticated (`caller.authInfo`, `caller.sessionId`)
-  - `allowTool({ name, caller, identity }) → boolean` — WHAT they may call. Applied to `tools/list` AND `tools/call`
+- `createMcpServer(opts: { tools, journal?, identify?, allowTool?, rateLimit?, workKey?, workScope? })` / `serveMcp(server, transport, info?)` — server side, `callTool` is idempotent (journal + the derived run id)
+  - `identify(req) → Principal | undefined` — WHO is calling (`Identify` from `@gnldev/auth`, the same function every GNL door takes). Handed the HTTP request the call came in, or one carrying the token the transport validated
+  - `allowTool({ name, caller, principal, runsAs }) → boolean` — WHAT they may call. Applied to `tools/list` AND `tools/call`
   - `rateLimit: { maxCalls, windowMs } | fn` — HOW OFTEN. The object form counts per caller, in this process
   - `tools: {...} | (ctx) => {...}` — the function form hands the tool a sealed caller context, so it can answer "is this object theirs"
   - `workKey(req) → string | undefined` — what NAMES the unit of work when the client sends no `_meta.idempotencyKey`. Defaults to the client's key; returning undefined means that call is not deduped
@@ -56,13 +56,16 @@ Three things were measured on a server built exactly as this README described, o
 | a caller claimed `order-2026-0042` with `amount: 1`, then the real `18500` charge arrived under it | the real caller was told `{"charged":1}`; the 18500 charge **never ran** |
 | a call was journaled, then `purgeResource('user-ayse')` was run | **0 rows deleted, 2 left behind** — nothing recorded whose call it was |
 
-So identity is resolved **server-side**, from what the transport authenticated:
+So the caller is resolved **server-side**, by `identify` — the same function `@gnldev/server`,
+`@gnldev/chat-adapter` and `@gnldev/agui` take — over what the transport authenticated:
 
 ```ts
 import { createMcpServer } from '@gnldev/mcp';
+import type { Principal } from '@gnldev/auth';
 
-/** Your own mapping from a credential the transport already validated to a SUBJECT. */
-const tenantOf = (clientId?: string) => (clientId === 'acme-key' ? 'acme-ltd' : undefined);
+/** Your own mapping from a credential the transport already validated to an END USER. */
+const tenantOf = (req: Request): Principal | undefined =>
+  req.headers.get('authorization') === 'Bearer acme-key' ? { kind: 'subject', id: 'acme-ltd', roles: [] } : undefined;
 
 const charge = {
   description: 'Charge the customer',
@@ -72,9 +75,10 @@ const charge = {
 const server = createMcpServer({
   tools: { charge },
   journal,
-  // `caller` is the MCP SDK's own handler context: the access token the transport validated
-  // (`caller.authInfo.clientId`) and the transport session. Never the request body.
-  identity: (caller) => ({ resourceId: tenantOf(caller.authInfo?.clientId) }),
+  // Handed the HTTP request the call arrived in (the SDK's `extra.requestInfo`), or — on a transport
+  // with none — a request carrying the token the transport validated (`extra.authInfo.token`) as
+  // `authorization: Bearer …`. Never the tool call's arguments.
+  identify: tenantOf,
 });
 ```
 
@@ -82,29 +86,60 @@ The run id is then **derived** from `(tool, subject, workKey)` through the same 
 
 **On stdio this changes nothing, and that is correct.** The client spawned the process, so the trust boundary is the process boundary and `authInfo` is legitimately absent. The transport where a second caller exists is HTTP, and that is where the SDK gives you a validated token.
 
-**With `@gnldev/auth`, derive it from the same provider your HTTP API uses:**
+**With `@gnldev/auth`, the provider your HTTP API uses is the function:**
 
 ```ts
-import { identityFromAuth, roleAuth } from '@gnldev/auth';
+import { roleAuth } from '@gnldev/auth';
 import { createMcpServer } from '@gnldev/mcp';
 
-const auth = roleAuth({ endUsers: { secret: process.env.GNL_END_USER_SECRET!, orgId: 'acme' } });
+const auth = roleAuth({
+  admin: { token: process.env.GNL_STAFF_TOKEN!, orgId: 'acme' },
+  client: { token: process.env.GNL_APP_TOKEN!, orgId: 'acme' },
+  endUsers: { secret: process.env.GNL_END_USER_SECRET!, orgId: 'acme' },
+})!;
 
 export const server = createMcpServer({
   tools: {},
-  identity: identityFromAuth(auth),
+  identify: (req) => auth.authenticate(req),
 });
 ```
 
-Only an end user's token is an MCP identity. Staff and application credentials are refused: staff
-names nobody, and an application could only name its user in the call body. Give each user a token
-of their own (`signSubjectToken`) for their MCP client; with `isRevoked` set it may live up to 30
-days, which suits a token pasted into a client's config.
+The principal is mapped to the engine's caller with `engineCallerOf`, the one mapping every door uses:
 
-**A caller `identity` cannot place reaches no tool.** It is left out of `tools/list` and `tools/call`
+| `principal.kind` | The call runs as | Notes |
+|---|---|---|
+| `subject` | that user | the work, its derived id and what a tool sees are theirs |
+| `operator` | staff | reaches the tools `allowTool` lets it; a per-user (`'resource'`) work id cannot be derived for staff, so a keyed call under that scope is refused |
+| `application` | the end user it names in `params._meta.resourceId` | read for an application ONLY; naming nobody is refused |
+| *(nothing)* | `unknown` | reaches no tool |
+
+**An application acting for its users.** A backend holding an application credential names the user
+on each call in `_meta` — written by the client's code, never by the model, which writes `arguments`:
+
+<!-- doccheck: skip — the client side, where `client` is an MCP SDK Client -->
+```ts
+await client.callTool({ name: 'kb', arguments: { query }, _meta: { resourceId: 'u-ayse' } });
+await client.listTools({ _meta: { resourceId: 'u-ayse' } });
+```
+
+In process: `server.callTool({ …, resourceId: 'u-ayse' })`. A user who sends it is still itself, and
+staff is still staff. An application that names nobody gets a tool error and sees an empty list. The
+organization is the principal's (`orgId`), never the call's. Giving each end user a token of their
+own (`signSubjectToken`) remains the simplest shape for a user's own MCP client; with `isRevoked` set
+it may live up to 30 days, which suits a token pasted into a client's config.
+
+**A caller `identify` cannot place reaches no tool.** It is left out of `tools/list` and `tools/call`
 answers as for a missing tool, with or without a work key.
 
-**Leaving `identity` out keeps the previous behaviour**, so a server written against an earlier release still compiles and still dedupes. It warns once, the first time a journal-backed call arrives without it, naming what is not protected — the same shape `gnl studio` uses for a surface that is open but not silent.
+**Breaking in 0.7.** `identity: (caller) => ({ resourceId, orgId, actor })` was replaced by
+`identify: (req) => Principal`, and `McpCallerIdentity` and `@gnldev/auth`'s `identityFromAuth` are
+gone: the old shape could not say "staff", and every door now takes the same function. Passing
+`identity` throws at construction. `allowTool`/`rateLimit` get `{ name, caller, principal, runsAs }`
+instead of `identity`. `actor` is now `actorIdOf(principal)` (a user's own id, `operator:<id>` for
+staff). An `operator` is served (as staff) where an org-only identity used to be refused under
+`'resource'`. The package now depends on `@gnldev/auth`.
+
+**Leaving `identify` out keeps the previous behaviour**, so a server with no per-caller identity (a stdio server its one client spawned) still dedupes. It warns once, the first time a journal-backed call arrives without it, naming what is not protected — the same shape `gnl studio` uses for a surface that is open but not silent.
 
 ### Clients that send no key
 
@@ -116,11 +151,9 @@ Nothing is invented for those calls, because what makes two requests "the same w
 import { createMcpServer } from '@gnldev/mcp';
 import { argsHash } from '@gnldev/durable';
 
-const tenantOf = (clientId?: string) => (clientId === 'acme-key' ? 'acme-ltd' : undefined);
-
 createMcpServer({
   tools, journal,
-  identity: (caller) => ({ resourceId: tenantOf(caller.authInfo?.clientId) }),
+  identify: (req) => (req.headers.get('authorization') === 'Bearer acme-key' ? { kind: 'subject', id: 'acme-ltd', roles: [] } : undefined),
   // identical arguments from the same caller = one unit of work (measured: 3 requests → 1 side effect)
   workKey: (req) => argsHash({ name: req.name, args: req.arguments }),
 });
@@ -146,7 +179,7 @@ Authorizing a tool call is not one check. Each of these is a different question,
 | | question | who answers | how |
 |---|---|---|---|
 | ① | is this token real? | **you** | transport / SDK auth middleware / reverse proxy |
-| ② | who is calling? | `identity` | reads `caller.authInfo` |
+| ② | who is calling? | `identify` | reads the request the transport authenticated |
 | ③ | may they call this tool? | `allowTool` | your rule, on list AND call |
 | ④ | is this object theirs? | **the tool** | closes over the sealed context |
 | ⑤ | are they calling too much? | `rateLimit` | per-caller window |
@@ -159,7 +192,6 @@ Authorizing a tool call is not one check. Each of these is a different question,
 import { createMcpServer } from '@gnldev/mcp';
 import { serverIdentityOf, argsHash } from '@gnldev/durable';
 
-const tenantOf = (clientId?: string) => (clientId === 'acme-key' ? 'acme-ltd' : undefined);
 /** Your data. Which invoice belongs to whom is the thing no framework layer can know — see ④. */
 const ownerOf = async (orderId: string): Promise<string | undefined> => db.ownerOf(orderId);
 const refund = async (orderId: string) => payments.refund(orderId);
@@ -167,7 +199,7 @@ const refund = async (orderId: string) => payments.refund(orderId);
 const server = createMcpServer({
   journal,
   // ② from the transport, never the request body
-  identity: (caller) => ({ resourceId: tenantOf(caller.authInfo?.clientId) }),
+  identify: (req) => (req.headers.get('authorization') === 'Bearer acme-key' ? { kind: 'subject', id: 'acme-ltd', roles: [] } : undefined),
 
   // ③ the spec's own mechanism: the token says what it may do
   allowTool: ({ name, caller }) => (caller.authInfo?.scopes ?? []).includes(`tool:${name}`),
@@ -198,7 +230,7 @@ Every one of these is optional and every one of them warns once when it is missi
 
 The cost is a misleading message while debugging. The place to answer "why can't my client call this" is your own `allowTool` — it already knows the reason, and logging there does not send it to the caller being refused.
 
-**What each layer costs.** Measured, 10 runs, median of 20 calls: this package's own overhead is **0.08 ms per call**. `identity` is resolved **once per request** — including `tools/list` — so if it does I/O you pay that once per request: with a 2 ms lookup, 2.89 ms per call (+2.81 ms). Put the tenant in the token and `identity` becomes a pure read.
+**What each layer costs.** Measured, 10 runs, median of 20 calls: this package's own overhead is **0.08 ms per call**. `identify` is resolved **once per request** — including `tools/list` — so if it does I/O you pay that once per request: with a 2 ms lookup, 2.89 ms per call (+2.81 ms, measured on the previous `identity` hook, which was called the same way). Put the tenant in the token and `identify` becomes a pure read.
 
 **What ⑤ does NOT do:** the object form counts in ONE process. Two instances behind a load balancer each allow `maxCalls`. Pass a function and keep the counter where your other counters live.
 
@@ -211,8 +243,8 @@ import { createMcpServer, type McpServerOptions } from '@gnldev/mcp';
 import { type Journal } from '@gnldev/durable';
 
 function sharedRateLimit(journal: Journal, o: { maxCalls: number; windowMs: number }): McpServerOptions['rateLimit'] {
-  return async ({ identity }) => {
-    const subject = identity.resourceId ?? identity.orgId ?? '__anonymous';
+  return async ({ runsAs }) => {
+    const subject = runsAs.kind === 'user' ? runsAs.id : runsAs.kind === 'staff' ? `staff:${runsAs.orgId ?? ''}` : '__anonymous';
     // The bucket comes from the clock, so instances agree on it without coordinating.
     const key = `__ratelimit:${subject}:${Math.floor(Date.now() / o.windowMs)}`;
     await journal.incrBy!(key, { calls: 1 });
@@ -241,10 +273,9 @@ const userStore = createJournalUserStore(journal);
 createMcpServer({
   tools,
   journal,
-  allowTool: async ({ name, caller }) => {
-    const principal = await userStore.authenticate(caller.authInfo?.token ?? '');
-    return fga.check(principal, { type: 'tool', id: name }, 'run').allowed;
-  },
+  // ② the user store is the identity; ③ the rule set answers on the SAME principal.
+  identify: (req) => userStore.authenticate((req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '')),
+  allowTool: ({ name, principal }) => fga.check(principal ?? null, { type: 'tool', id: name }, 'run').allowed,
 });
 ```
 
@@ -292,7 +323,8 @@ const sweepIdle = (now = Date.now()) => {
 
 const http = createServer(async (req, res) => {
   // ① YOUR layer: validate the credential and publish the result as `req.auth`. The SDK carries it to
-  // the handler as `extra.authInfo`, which is the only thing `identity` can read.
+  // the handler as `extra.authInfo` (what `allowTool` reads as `caller.authInfo`), and the request's
+  // headers as `extra.requestInfo` — the request `identify` is handed.
   const principal = await authenticate(req.headers.authorization);
   if (!principal) { res.writeHead(401, { 'WWW-Authenticate': 'Bearer' }).end(); return; }
   (req as any).auth = { token: principal.token, clientId: principal.clientId, scopes: principal.scopes };
@@ -330,7 +362,7 @@ A complete, runnable version of this — with a test that asserts every claim on
 
 ### `serveMcp` does not authenticate
 
-It takes a transport you built and connects to it; it opens no socket and validates no credential. Whatever authenticates the caller — the SDK's auth middleware on a streamable-HTTP transport, a reverse proxy, mTLS — is yours to put in front, and `identity` is how its result reaches the dedup key. `gnl studio` refuses to serve an unauthenticated surface off loopback because it owns the `listen()` call; this package never binds, so it cannot refuse a bind. What it can do, and now does, is refuse to pretend a client-chosen string identifies a caller.
+It takes a transport you built and connects to it; it opens no socket and validates no credential. Whatever authenticates the caller — the SDK's auth middleware on a streamable-HTTP transport, a reverse proxy, mTLS — is yours to put in front, and `identify` is how its result reaches the dedup key. `gnl studio` refuses to serve an unauthenticated surface off loopback because it owns the `listen()` call; this package never binds, so it cannot refuse a bind. What it can do, and now does, is refuse to pretend a client-chosen string identifies a caller.
 
 ## Running MCP safely (`mcpFirewall`)
 

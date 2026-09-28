@@ -20,18 +20,27 @@
 // @gnldev/durable had already decided this question for its own doors — `workScope` is read from the
 // AGENT's configuration, not from the call, because (its words) a per-call override "would put the
 // dangerous half within reach of a request body". This door had handed the request body the WHOLE
-// identity. So `identity` below is resolved SERVER-SIDE from what the transport authenticated, and the
-// runId is derived from it through the same `resolveWorkIdentity` the HTTP surfaces use. The client's
-// key is demoted to what it honestly is: a label for the work, unique only within one caller.
-import { durableTool, resolveWorkIdentity, sealRequestContext, blockedErrorCode, withOrg, admitRun, user, UNKNOWN, runIdentity, toolContextFor } from '@gnldev/durable';
+// identity. So the caller is resolved SERVER-SIDE — `identify`, the same function every door takes,
+// over what the transport authenticated — and the runId is derived from it through the same
+// `resolveWorkIdentity` the HTTP surfaces use. The client's key is demoted to what it honestly is: a
+// label for the work, unique only within one caller.
+import { durableTool, resolveWorkIdentity, sealRequestContext, blockedErrorCode, withOrg, admitRun, UNKNOWN, runIdentity, toolContextFor } from '@gnldev/durable';
 import type { Journal, WorkScope, RequestContext, Caller, GnlToolContext } from '@gnldev/durable';
+import { callerOfRequest, actorIdOf, type Identify, type Principal } from '@gnldev/auth';
+import { asSchema } from 'ai';
 import type { McpToolDef } from './index.js';
 import { createRateWindow, type RateWindow } from './rate-window.js';
 
+/**
+ * A tool this server exposes: an AI SDK `tool()` as it is (a `createRagTool`, a `durableTool`), or a
+ * plain `{ description, inputSchema, execute }`. The AI SDK's shape is the one to accept without a
+ * cast: its `description` may be a function of the context and its `execute` is optional. A tool with
+ * no `execute` is not callable and is not listed.
+ */
 export interface McpServerToolDef {
-  description?: string;
-  inputSchema?: any; // JSON Schema
-  execute: (args: any, opts?: any) => Promise<any> | any;
+  description?: string | ((options: { context: any }) => string);
+  inputSchema?: any; // JSON Schema, or an executable schema (zod, standard-schema)
+  execute?: (args: any, opts?: any) => unknown;
 }
 
 /**
@@ -45,20 +54,15 @@ export interface McpServerToolDef {
  * On a stdio transport both are normally absent, and that is correct rather than a gap: the client
  * SPAWNED this process, so the trust boundary is the process boundary and there is no second caller to
  * tell apart. The dangerous transport is HTTP, and that is where `authInfo` exists.
+ *
+ * `request` is the HTTP request the message arrived in (the SDK's `extra.requestInfo`), when there is
+ * one. `identify` is handed THAT request; without one, a request carrying only the transport's
+ * validated token (`authorization: Bearer <authInfo.token>`) — see `requestOf`.
  */
 export interface McpCallerContext {
   authInfo?: { token?: string; clientId?: string; scopes?: string[] };
   sessionId?: string;
-}
-
-/** Who the server decided the caller is. The subject the work belongs to, resolved server-side. */
-export interface McpCallerIdentity {
-  /** The subject this work belongs to — a tenant, an account, a person. Required to derive a run id. */
-  resourceId?: string;
-  /** The organization, when the deployment has one. */
-  orgId?: string;
-  /** Who acted, for the audit trail. Not part of the derived id. */
-  actor?: string;
+  request?: Request;
 }
 
 /**
@@ -70,7 +74,7 @@ export interface McpCallerIdentity {
  * and the resolved identity stopped at the dedup key. It is the SAME mechanism `@gnldev/durable`
  * already gives agents (`AgentConfig.tools?: DynamicArg<ToolSet>`), and the context is sealed by the
  * same `sealRequestContext`: the reserved `__gnl_resourceId`/`__gnl_orgId` keys are stripped from
- * anything the caller supplied and rewritten from what `identity` resolved, so a request body cannot
+ * anything the caller supplied and rewritten from what `identify` resolved, so a request body cannot
  * name its own subject. Read it back with `serverIdentityOf(ctx)`.
  *
  * WHAT THE SEAL IS NOT: the key stays writable and configurable, deliberately — `sealRequestContext`'s
@@ -93,8 +97,11 @@ export interface McpToolRequestInfo {
   name: string;
   /** What the transport knows about the caller (never the request body). */
   caller: McpCallerContext;
-  /** What `identity` resolved, or `{}` when no resolver is configured. */
-  identity: McpCallerIdentity;
+  /** What `identify` returned — e.g. for @gnldev/auth-ee's `fga.check(principal, …)`. Undefined when
+   *  it returned nothing, or no `identify` is configured. */
+  principal: Principal | undefined;
+  /** Who the call runs as, for the engine (`engineCallerOf`): a user, staff, or `unknown`. */
+  runsAs: Caller;
 }
 
 export interface McpServerOptions {
@@ -104,20 +111,26 @@ export interface McpServerOptions {
   /** If given, callTool is wrapped with durableTool → server-side exactly-once (via idempotencyKey). */
   journal?: Journal;
   /**
-   * Resolves the caller from what the transport authenticated. When given, the dedup key is DERIVED
-   * from `(tool, identity, workKey)` instead of being the client's string, and the run's owner is
-   * written to the journal so `listRuns`/`purgeResource` can find it.
+   * WHO is calling — the application's one answer (@gnldev/auth `Identify`), the same function it hands
+   * @gnldev/server, @gnldev/chat-adapter and @gnldev/agui. It is handed the HTTP request the call came
+   * in (or one carrying the transport's validated token) and returns a `Principal`. An AuthProvider's
+   * `authenticate` is one as it is: `identify: (req) => auth.authenticate(req)`.
    *
-   * Optional, because making it required would stop every server built against the previous release
-   * from compiling. Leaving it out keeps exactly the old behaviour and warns once, the first time a
-   * journal-backed call arrives without it — the same shape `gnl studio` uses for a surface that is
-   * open but not silent.
+   * The principal is mapped with `engineCallerOf`:
    *
-   * Returning no `resourceId` for a call is a REFUSAL, not a fallback: a server that resolves identity
-   * has said identity matters here, and quietly reverting to a client-chosen key for the one call that
-   * could not be attributed is how the hole comes back.
+   *   subject      → that user: the work is theirs, the derived id is theirs, a tool sees them
+   *   operator     → staff: reaches every tool it is allowed; a per-user (`'resource'`) work id cannot
+   *                  be derived for it, so a keyed call under that scope is refused
+   *   application  → the end user it names in `params._meta.resourceId` (`callTool({ resourceId })`
+   *                  in process) — read for an application ONLY. Naming nobody is refused.
+   *   nothing      → unknown: every tool is hidden and refused
+   *
+   * With `identify`, the dedup key is DERIVED from `(tool, caller, workKey)` instead of being the
+   * client's string, and the run's owner is written to the journal so `listRuns`/`purgeResource` can
+   * find it. Without it, the server keeps the old behaviour and warns once — right for a stdio server
+   * whose one client spawned it.
    */
-  identity?: (caller: McpCallerContext) => McpCallerIdentity | undefined | Promise<McpCallerIdentity | undefined>;
+  identify?: Identify;
   /**
    * What NAMES the unit of work, when the client does not.
    *
@@ -191,7 +204,7 @@ export interface McpServer {
    * computed without knowing who is asking, and neither hook can be synchronous if the answer may come
    * from a store. A server with a static tool set and no hooks returns the same list it always did.
    */
-  listTools(req?: { caller?: McpCallerContext }): Promise<{ tools: McpToolDef[] }>;
+  listTools(req?: { caller?: McpCallerContext; resourceId?: string }): Promise<{ tools: McpToolDef[] }>;
   callTool(req: {
     name: string;
     arguments?: Record<string, unknown>;
@@ -199,6 +212,9 @@ export interface McpServer {
     /** What the transport knows about the caller. `serveMcp` fills this from the SDK's handler `extra`;
      *  an in-process caller passes it directly. Never read from the request body. */
     caller?: McpCallerContext;
+    /** The end user an APPLICATION principal acts for (`params._meta.resourceId` over the wire). Read for
+     *  an application only: a user is itself and staff is staff, whatever this says. */
+    resourceId?: string;
   }): Promise<any>;
 }
 
@@ -302,8 +318,41 @@ function blockedToolError(err: unknown, toolName: string): { isError: true; cont
   );
 }
 
+/**
+ * The web Request `identify` is handed for one MCP message: the transport's own request when it has one,
+ * else a request carrying only the token the transport validated. The transport's validated token is
+ * added when the request lacks an `authorization` header, so a provider reading the header sees it.
+ */
+function requestOf(caller: McpCallerContext): Request {
+  const headers = new Headers(caller.request?.headers);
+  const token = caller.authInfo?.token;
+  if (token && !headers.has('authorization')) headers.set('authorization', `Bearer ${token}`);
+  return new Request(caller.request?.url ?? 'http://mcp.invalid/', { method: 'POST', headers });
+}
+
+/**
+ * A tool's input schema as MCP announces it: JSON Schema. An AI SDK tool (a `createRagTool`) carries an
+ * executable schema — zod, a standard-schema, or an AI SDK `jsonSchema()` wrapper — and announcing that
+ * object as it is failed the SDK's own `tools/list` validation, so such a tool could be called in
+ * process and never listed over the wire (measured). A plain JSON Schema is announced unchanged.
+ */
+async function announcedSchema(schema: any): Promise<any> {
+  if (!schema || typeof schema !== 'object') return { type: 'object', properties: {}, additionalProperties: true };
+  if ('jsonSchema' in schema) return await schema.jsonSchema;
+  if (typeof schema.safeParse === 'function' || schema['~standard']) return await asSchema(schema).jsonSchema;
+  return schema;
+}
+
 /** Produces an MCP server surface from a tool set (listTools + callTool). */
 export function createMcpServer(opts: McpServerOptions): McpServer {
+  // The replaced option fails loudly: a JavaScript config that still passes it would otherwise run every
+  // call as `unknown` and hide every tool, with nothing saying why.
+  if ((opts as { identity?: unknown }).identity !== undefined) {
+    throw new TypeError(
+      '@gnldev/mcp: `identity` was replaced by `identify` (0.7.0): it takes the request and returns a Principal from ' +
+        "@gnldev/auth — `identify: (req) => auth.authenticate(req)`, or `{ kind: 'subject', id, orgId, roles: [] }` for an end user.",
+    );
+  }
   // Said once per server, not per call: a warning printed on every request is a warning nobody reads.
   let warnedAboutIdentity = false;
   const warnMissingIdentity = (toolName: string) => {
@@ -316,7 +365,7 @@ export function createMcpServer(opts: McpServerOptions): McpServer {
         `served the first one's RESULT without running the tool, and a caller who claims a key first ` +
         `suppresses the work later sent under it.\n` +
         `  Nothing records whose call it was either, so listRuns() and purgeResource() cannot find it.\n` +
-        `  Pass \`identity\` to createMcpServer to resolve the caller from what the transport ` +
+        `  Pass \`identify\` to createMcpServer to resolve the caller from what the transport ` +
         `authenticated. On a stdio transport, where the client spawned this process, the current ` +
         `behaviour is the correct one and this warning can be ignored.`,
     );
@@ -352,81 +401,72 @@ export function createMcpServer(opts: McpServerOptions): McpServer {
     );
   };
 
-  // ONE checkpoint. The identity resolve, the sealed context, the tool set and the permission answer are
-  // produced here and nowhere else, because `tools/list` and `tools/call` must agree about them: a tool
-  // the list shows and the call refuses (or worse, the reverse) is the shape this package has already
-  // been wrong in twice. Both doors below call this and nothing else.
-  async function prepare(caller: McpCallerContext | undefined): Promise<{
-    caller: McpCallerContext;
-    identity: McpCallerIdentity;
-    tools: Record<string, McpServerToolDef>;
-  }> {
+  // ONE checkpoint. The caller, the sealed context, the tool set and the permission answer are produced
+  // here and nowhere else, because `tools/list` and `tools/call` must agree about them: a tool the list
+  // shows and the call refuses (or worse, the reverse) is the shape this package has already been wrong
+  // in twice. Both doors below call this and nothing else.
+  type Prepared = { caller: McpCallerContext; principal: Principal | undefined; runsAs: Caller; tools: Record<string, McpServerToolDef>; context: RequestContext };
+  async function prepare(caller: McpCallerContext | undefined, named: string | undefined): Promise<Prepared | { refused: string }> {
     const c = caller ?? {};
-    let identity: McpCallerIdentity;
-    try {
-      identity = opts.identity ? ((await opts.identity(c)) ?? {}) : {};
-    } catch (err) {
-      throw hookFailure('identity', err);
+    let principal: Principal | undefined;
+    let runsAs: Caller = UNKNOWN;
+    if (opts.identify) {
+      let who;
+      try {
+        who = await callerOfRequest(opts.identify, requestOf(c), named);
+      } catch (err) {
+        throw hookFailure('identify', err);
+      }
+      if ('refused' in who) return who;
+      principal = who.principal;
+      runsAs = who.caller;
     }
+    // Sealed BEFORE the user's function sees it: the reserved keys are stripped from whatever was
+    // supplied and rewritten from the caller, so the tool set cannot be built from a subject the caller
+    // named. Same function @gnldev/durable seals agent contexts with.
+    const context = sealRequestContext({}, {
+      ...(runsAs.kind === 'user' ? { resourceId: runsAs.id } : {}),
+      ...(runsAs.kind !== 'unknown' && runsAs.orgId !== undefined ? { orgId: runsAs.orgId } : {}),
+      ...(runsAs.kind === 'staff' ? { staff: true } : {}),
+    });
     let tools: Record<string, McpServerToolDef>;
     if (typeof opts.tools === 'function') {
-      // Sealed BEFORE the user's function sees it: the reserved keys are stripped from whatever was
-      // supplied and rewritten from what `identity` resolved, so the tool set cannot be built from a
-      // subject the caller named. Same function @gnldev/durable seals agent contexts with.
-      //
-      // Wrapped like the other four: this IS a hook — the deployment's own function, and the one most
-      // likely to reach a database, since a per-caller tool set is usually built from one. It was the
-      // hook left unwrapped when the other four were done, and the test above caught it.
+      // Wrapped like the other hooks: this IS a hook — the deployment's own function, and the one most
+      // likely to reach a database, since a per-caller tool set is usually built from one.
       try {
-        tools = await opts.tools(
-          sealRequestContext(
-            {},
-            {
-              ...(identity.resourceId !== undefined ? { resourceId: identity.resourceId } : {}),
-              ...(identity.orgId !== undefined ? { orgId: identity.orgId } : {}),
-            },
-          ),
-        );
+        tools = await opts.tools(context);
       } catch (err) {
         throw hookFailure('tools', err);
       }
     } else {
       tools = opts.tools;
     }
-    return { caller: c, identity, tools };
+    return { caller: c, principal, runsAs, tools, context };
   }
 
   /**
    * What a tool is told about its caller, on the paths that do not go through `durableTool` (which
-   * hands it `resourceId` itself). These called `t.execute(args)` bare, so a tool that serves end users
-   * had nobody to narrow to: `createRagTool` answered one user with another's documents.
+   * hands it the run's identity itself). These called `t.execute(args)` bare, so a tool that serves end
+   * users had nobody to narrow to: `createRagTool` answered one user with another's documents.
    */
-  function callerOptions(identity: McpCallerIdentity): { toolCallId: string; gnl: GnlToolContext } {
-    return { toolCallId: 'mcp', gnl: toolContextFor(runIdentity(mcpCaller(identity), 'mcp')) };
-  }
-  /** The engine's caller: the resolved subject, else `unknown` (closed) — never staff by omission. */
-  function mcpCaller(identity: McpCallerIdentity): Caller {
-    return identity.resourceId ? user(identity.resourceId, identity.orgId) : UNKNOWN;
+  function callerOptions(runsAs: Caller): { toolCallId: string; gnl: GnlToolContext } {
+    return { toolCallId: 'mcp', gnl: toolContextFor(runIdentity(runsAs, 'mcp')) };
   }
 
   /** The permission answer, for one tool, asked the same way by both doors. */
-  async function permitted(name: string, caller: McpCallerContext, identity: McpCallerIdentity): Promise<boolean> {
+  async function permitted(name: string, p: Prepared): Promise<boolean> {
     // A server that resolves identity does not serve a caller it could not attribute — on either door,
     // whether or not the call names a unit of work. Before, a call with no work key ran the tool for
     // an unknown caller: measured with an unknown token, `{"charged":9,"for":null}`. That is Claude
     // Desktop's default path, since it sends no `_meta`. The tool is hidden from listing too, so a
-    // model never tries a tool it cannot call.
-    //
-    // On EVERY workScope. The check used to apply to 'resource' only, so under 'org' a caller with no
-    // token, a garbage token or a staff token listed and ran every tool. Org-level work may name no user,
-    // but it still has to be SOMEONE's organization's work: under 'org' a caller placed in one passes.
-    if (opts.identity && !identity.resourceId && !((opts.workScope ?? 'resource') === 'org' && identity.orgId)) return false;
+    // model never tries a tool it cannot call. A user and staff are attributable; `unknown` is not.
+    if (opts.identify && p.runsAs.kind === 'unknown') return false;
     if (!opts.allowTool) {
       warnMissingAllowTool();
       return true;
     }
     try {
-      return (await opts.allowTool({ name, caller, identity })) === true;
+      return (await opts.allowTool({ name, caller: p.caller, principal: p.principal, runsAs: p.runsAs })) === true;
     } catch (err) {
       throw hookFailure('allowTool', err);
     }
@@ -451,29 +491,42 @@ export function createMcpServer(opts: McpServerOptions): McpServer {
       }
     }
     windows ??= createRateWindow(rl);
-    // The subject, not the connection: a rate limit without one punishes whichever caller happens to
-    // arrive after a noisy neighbour. A server with no `identity` has one bucket for everybody, which is
-    // the honest reading of "we cannot tell callers apart".
-    return windows.bump(info.identity.resourceId ?? info.identity.orgId ?? '__anonymous');
+    // The caller, not the connection: a rate limit without one punishes whichever caller happens to
+    // arrive after a noisy neighbour. A user is its own bucket (an application's users each theirs);
+    // staff is its kind-qualified name. A server with no `identify` has one bucket for everybody, which
+    // is the honest reading of "we cannot tell callers apart".
+    const r = info.runsAs;
+    return windows.bump(r.kind === 'user' ? r.id : (actorIdOf(info.principal) ?? (r.kind === 'staff' ? r.orgId : undefined) ?? '__anonymous'));
+  }
+
+  /** A tool's description as MCP announces it: a string, or the AI SDK's function of the context. */
+  function describe(t: McpServerToolDef, context: RequestContext): string | undefined {
+    if (typeof t.description !== 'function') return t.description;
+    try {
+      return t.description({ context });
+    } catch (err) {
+      throw hookFailure('description', err);
+    }
   }
 
   return {
     async listTools(req) {
-      const { caller, identity, tools } = await prepare(req?.caller);
+      const p = await prepare(req?.caller, req?.resourceId);
+      // A refused caller (an application that named nobody) sees nothing — the same as an unknown one.
+      if ('refused' in p) return { tools: [] };
       const out: McpToolDef[] = [];
-      for (const [name, t] of Object.entries(tools)) {
-        if (!(await permitted(name, caller, identity))) continue;
-        out.push({
-          name,
-          description: t.description,
-          inputSchema: t.inputSchema ?? { type: 'object', properties: {}, additionalProperties: true },
-        });
+      for (const [name, t] of Object.entries(p.tools)) {
+        if (typeof t.execute !== 'function' || !(await permitted(name, p))) continue;
+        out.push({ name, description: describe(t, p.context), inputSchema: await announcedSchema(t.inputSchema) });
       }
       return { tools: out };
     },
     async callTool(req) {
-      const { caller, identity, tools } = await prepare(req.caller);
-      const t = tools[req.name];
+      const p = await prepare(req.caller, req.resourceId);
+      // Answered BEFORE the tool is looked up, so the refusal says nothing about which tools exist.
+      if ('refused' in p) return toolError(p.refused);
+      const { runsAs } = p;
+      const t = p.tools[req.name];
 
       // MISSING AND FORBIDDEN ARE THE SAME ANSWER, and that is the whole point of filtering the list.
       //
@@ -493,10 +546,10 @@ export function createMcpServer(opts: McpServerOptions): McpServer {
       //
       // Permission is asked BEFORE argument validation for the same reason: a refused caller must not be
       // able to map a tool's schema by reading which field the server complained about.
-      const reachable =
-        t !== undefined && typeof t.execute === 'function' && (await permitted(req.name, caller, identity));
-      if (!reachable) throw new Error(`MCP server: no such tool: ${req.name}`);
-      if (!(await withinRate({ name: req.name, caller, identity }))) {
+      const execute = t?.execute;
+      const reachable = t !== undefined && typeof execute === 'function' && (await permitted(req.name, p));
+      if (!reachable || !execute) throw new Error(`MCP server: no such tool: ${req.name}`);
+      if (!(await withinRate({ name: req.name, caller: p.caller, principal: p.principal, runsAs }))) {
         return toolError(`Rate limit exceeded for '${req.name}'`);
       }
       // Validate arguments against inputSchema BEFORE execute (if the schema is executable).
@@ -505,7 +558,7 @@ export function createMcpServer(opts: McpServerOptions): McpServer {
       const checked = await checkToolArgs(t.inputSchema, req.arguments ?? {});
       if (!checked.ok) return toolError(`Invalid argument (tool: ${req.name}) — ${checked.message}`);
 
-      if (!opts.journal) return t.execute(checked.value, callerOptions(identity));
+      if (!opts.journal) return execute(checked.value, callerOptions(runsAs));
 
       // The client's key is a LABEL for the work, unique only within one caller — never the id itself.
       // A deployment may name the work some other way; see the `workKey` option for why that is its
@@ -517,8 +570,8 @@ export function createMcpServer(opts: McpServerOptions): McpServer {
         throw hookFailure('workKey', err);
       }
 
-      // ── identity resolved server-side → derive the id, and record whose it is ──────────────────
-      if (opts.identity) {
+      // ── the caller resolved server-side → derive the id, and record whose it is ──────────────────
+      if (opts.identify) {
         // NO WORK NAMED, so there is nothing to dedupe against and nothing to journal — this call runs
         // exactly as it did before. Refusing instead was the first version of this branch, and it broke
         // every third-party client: measured over a real SDK Client, three ordinary `tools/call`
@@ -526,16 +579,17 @@ export function createMcpServer(opts: McpServerOptions): McpServer {
         // clients it exists to serve is not a safer server.
         if (workKey === undefined) {
           warnMissingWorkKey(req.name);
-          return t.execute(checked.value, callerOptions(identity));
+          return execute(checked.value, callerOptions(runsAs));
         }
         const scopeKind = opts.workScope ?? 'resource';
+        const orgId = runsAs.kind === 'unknown' ? undefined : runsAs.orgId;
         let resolved;
         try {
           resolved = resolveWorkIdentity(`mcp:${req.name}`, {
             workKey,
             scopeKind,
-            ...(identity.resourceId ? { resourceId: identity.resourceId } : {}),
-            ...(identity.orgId ? { orgId: identity.orgId } : {}),
+            ...(runsAs.kind === 'user' ? { resourceId: runsAs.id } : {}),
+            ...(orgId ? { orgId } : {}),
             // A resolver was configured, so an unattributable call is a refusal. Falling back to the
             // client's key here would reinstate the hole for exactly the calls that could not be
             // attributed — the ones an attacker controls.
@@ -551,27 +605,20 @@ export function createMcpServer(opts: McpServerOptions): McpServer {
         // WHICH ORGANIZATION'S JOURNAL. The derived id names the work within a subject, and two
         // organizations can each have a user `u1` with an invoice `inv-7`. Measured with one shared
         // journal: globex's charge of 1 returned acme's `{charged: 900}` and never ran. @gnldev/server
-        // scopes each organization's journal with `withOrg`; this door now does the same, so the record
+        // scopes each organization's journal with `withOrg`; this door does the same, so the record
         // also lands where that organization's own readers (listRuns, purgeResource) look for it.
-        const journal = identity.orgId ? withOrg(opts.journal, identity.orgId) : opts.journal;
-        // WHOSE RUN THIS IS. Without this the journal holds the side effect and nothing can attribute
-        // it: measured on this exact path, purgeResource deleted 0 rows and left 2 behind. `run()` is
-        // never called on this door, so `persistInput` never writes the owner index — this helper is
-        // what the three other doors that skip `run()` use, and it stamps the record so the paged
-        // readers (listRunsPaged, purgeResource) can see it. An unstamped copy satisfies key-based
-        // readers only, which is the failure its own note predicts for a fourth door.
-        // The same entry as every run kind (@gnldev/durable admitRun): a derived run someone else
-        // owns is refused, and a re-entry acts for the recorded owner.
-        const { acting } = await admitRun(journal, runId, mcpCaller(identity), {
-          ...(identity.actor ? { actor: identity.actor } : {}),
+        const journal = orgId ? withOrg(opts.journal, orgId) : opts.journal;
+        // WHOSE RUN THIS IS — the same entry as every run kind (@gnldev/durable admitRun): the owner is
+        // recorded at birth, a derived run someone else owns is refused, and a re-entry acts for the
+        // recorded owner. `actor` is who acted, kind-qualified for staff and applications.
+        const actor = actorIdOf(p.principal);
+        const { acting } = await admitRun(journal, runId, runsAs, {
+          ...(actor ? { actor } : {}),
           ...(resolved.work ? { workKey: resolved.work.workKey, workScope: resolved.work.workScope } : {}),
         });
-        // No `as any` here: DurableCtx declares `resourceId?`, so the object type-checks as written.
-        // The cast that was here disabled checking on the whole ctx, which would have accepted a
-        // misspelled field silently — the field would then simply not reach the tool.
-        const dt = durableTool(t, { journal, runId, identity: runIdentity(acting, runId) }, req.name);
+        const dt = durableTool({ ...t, execute }, { journal, runId, identity: runIdentity(acting, runId) }, req.name);
         try {
-          return await dt.execute!(checked.value, { toolCallId: 'mcp' });
+          return await dt.execute(checked.value, { toolCallId: 'mcp' });
         } catch (err) {
           const blocked = blockedToolError(err, req.name);
           if (blocked) return blocked;
@@ -582,18 +629,28 @@ export function createMcpServer(opts: McpServerOptions): McpServer {
       // ── no resolver: the previous behaviour, kept working and no longer silent ──────────────────
       if (workKey !== undefined) {
         warnMissingIdentity(req.name);
-        const dt = durableTool(t, { journal: opts.journal, runId: workKey, identity: runIdentity(mcpCaller(identity), workKey) }, req.name);
+        const dt = durableTool({ ...t, execute }, { journal: opts.journal, runId: workKey, identity: runIdentity(runsAs, workKey) }, req.name);
         try {
-          return await dt.execute!(checked.value, { toolCallId: 'mcp' });
+          return await dt.execute(checked.value, { toolCallId: 'mcp' });
         } catch (err) {
           const blocked = blockedToolError(err, req.name);
           if (blocked) return blocked;
           throw err;
         }
       }
-      return t.execute(checked.value);
+      return execute(checked.value);
     },
   };
+}
+
+/** The SDK's `extra.requestInfo` (headers, url) as a web Request — what `identify` reads. */
+function requestFromInfo(info: { headers?: Record<string, string | string[] | undefined>; url?: URL }): Request {
+  const headers = new Headers();
+  for (const [k, v] of Object.entries(info.headers ?? {})) {
+    if (typeof v === 'string') headers.set(k, v);
+    else if (Array.isArray(v)) for (const x of v) headers.append(k, x);
+  }
+  return new Request(info.url ? String(info.url) : 'http://mcp.invalid/', { method: 'POST', headers });
 }
 
 /**
@@ -612,6 +669,7 @@ export async function serveMcp(server: McpServer, transport: any, info: { name?:
   // eventually disagree about who is calling — and `tools/list` filtering is only as good as the
   // identity it filters by.
   const callerOf = (extra: any): McpCallerContext => ({
+    ...(extra?.requestInfo?.headers ? { request: requestFromInfo(extra.requestInfo) } : {}),
     ...(extra?.authInfo
       ? {
           authInfo: {
@@ -625,8 +683,14 @@ export async function serveMcp(server: McpServer, transport: any, info: { name?:
   });
   // The LIST is filtered per caller too, so this handler needs `extra` exactly as much as the call
   // handler does. It took none, which is why a filtered list was not possible before.
-  s.setRequestHandler(ListToolsRequestSchema, async (_req: any, extra: any) =>
-    server.listTools({ caller: callerOf(extra) }),
+  // The end user an APPLICATION names, from `params._meta` — written by the client's code, not by the
+  // model (the model writes `arguments`). Read by the server for an application principal only.
+  const namedOf = (req: any): { resourceId?: string } => {
+    const r = req?.params?._meta?.resourceId;
+    return typeof r === 'string' ? { resourceId: r } : {};
+  };
+  s.setRequestHandler(ListToolsRequestSchema, async (req: any, extra: any) =>
+    server.listTools({ caller: callerOf(extra), ...namedOf(req) }),
   );
   // TWO parameters. The SDK passes `(request, extra)`, and this handler took only the first — so
   // `extra.authInfo` (the access token the transport validated) and `extra.sessionId` were dropped on
@@ -650,6 +714,7 @@ export async function serveMcp(server: McpServer, transport: any, info: { name?:
       arguments: req.params?.arguments,
       ...(typeof idempotencyKey === 'string' && idempotencyKey ? { idempotencyKey } : {}),
       caller,
+      ...namedOf(req),
     });
     // The SDK validates the handler's return against CallToolResultSchema (expects `{ content: [...] }`).
     // createMcpServer's tools can return a raw value (existing contract preserved) — here, ONLY in the
