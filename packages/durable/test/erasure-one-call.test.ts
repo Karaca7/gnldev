@@ -27,7 +27,11 @@ async function world(orgs: Array<string | undefined>) {
   const gnlFor = (org: string) => createGnl(scopeConfigToOrg(config, org).config);
   const people: Array<{ who: string; orgId?: string }> = [];
   for (const orgId of orgs) for (const who of ['ayse', 'bora']) people.push({ who, ...(orgId ? { orgId } : {}) });
-  await indexDocuments(vectors, async () => [1, 0], people.map((p, i) => ({ id: `d${i}`, text: `DOC-${p.who}-${p.orgId ?? '-'}`, owner: p.who })));
+  // An organization's documents sit in its namespace, under its ids — as withOrgStorage writes them.
+  await indexDocuments(vectors, async () => [1, 0], people.map((p, i) => ({
+    ...(p.orgId ? { id: `org:${p.orgId}:d${i}`, namespace: `org:${p.orgId}` } : { id: `d${i}` }),
+    text: `DOC-${p.who}-${p.orgId ?? '-'}`, owner: p.who,
+  })));
   for (const p of people) {
     const tag = `${p.who}-${p.orgId ?? '-'}`;
     await enqueue(work, 'weekly', { note: `JOB-${tag}` }, { resourceId: p.who, ...(p.orgId ? { orgId: p.orgId } : {}) });
@@ -75,7 +79,7 @@ describe('eraseSubject with the background erasers', () => {
     expect(after).not.toContain('ayse-acme');
     expect(after.split("\n").filter((l) => l.includes("~o~acme:ayse:"))).toEqual([]);
     // Everyone else is intact: bora in acme, and the other ayse — in globex, a different person.
-    for (const other of ['JOB-bora-acme', 'EVT-bora-acme', 'WF-bora-acme', 'JOB-ayse-globex', 'EVT-ayse-globex', 'WF-ayse-globex', 'FAIL-JOB-bora-acme']) {
+    for (const other of ['JOB-bora-acme', 'EVT-bora-acme', 'WF-bora-acme', 'DOC-bora-acme', 'JOB-ayse-globex', 'EVT-ayse-globex', 'WF-ayse-globex', 'DOC-ayse-globex', 'FAIL-JOB-bora-acme']) {
       expect(after, other).toContain(other);
     }
   });

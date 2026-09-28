@@ -252,11 +252,23 @@ function scopedVectors(vectors: VectorStore, p: string): VectorStore {
     query: async (embedding: number[], topK: number, opts?: VectorQueryOptions) =>
       (await vectors.query(embedding, topK, { ...opts, namespace: ns })).map(stripNs),
   };
-  if (vectors.delete) {
-    // Always inside the organization: the namespace is forced, and ids are this organization's.
-    scoped.delete = (where: VectorDeleteWhere) => vectors.delete!({ ...where, namespace: ns, ...(where.ids ? { ids: where.ids.map(own) } : {}) });
-  }
+  if (vectors.delete) scoped.delete = scopedVectorDelete(vectors, ns).delete;
   return scoped;
+}
+
+/** Always inside the organization: the namespace is forced, and ids are this organization's. */
+function scopedVectorDelete(vectors: Pick<VectorStore, 'delete'>, ns: string): Pick<VectorStore, 'delete'> {
+  return { delete: (where: VectorDeleteWhere) => vectors.delete!({ ...where, namespace: ns, ...(where.ids ? { ids: where.ids.map((id) => orgVectorId(ns, id)) } : {}) }) };
+}
+
+/**
+ * The delete half of one organization's vector store, over the ROOT store: what `withOrgStorage` gives
+ * `.vectors.delete`, for a caller that holds only the root store — `eraseSubject` with an `orgId`.
+ * Without it the erasure named the owner and no namespace, and took the same id's documents in every
+ * other organization.
+ */
+export function orgVectorDelete(vectors: Pick<VectorStore, 'delete'>, orgId: string): Pick<VectorStore, 'delete'> {
+  return scopedVectorDelete(vectors, orgPrefix(orgId).slice(0, -1));
 }
 
 function scopedWork(work: WorkStore, p: string): WorkStore {

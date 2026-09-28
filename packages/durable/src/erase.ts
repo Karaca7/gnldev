@@ -18,6 +18,7 @@ import { purgeResource } from './retention.js';
 import { ownedPrefix } from './owned-name.js';
 import { threadOwnerOf } from './thread-owner.js';
 import { withOrg } from './organization.js';
+import { orgVectorDelete } from './org-storage.js';
 import type { Journal } from './journal.js';
 import type { Memory } from './memory.js';
 import type { VectorStore, WorkStore } from './storage.js';
@@ -59,6 +60,8 @@ export async function eraseSubject(target: EraseTarget, resourceId: string, opts
   // A person in an organization: their runs live in that organization's partition, and the same id in
   // another organization is somebody else.
   const runs = opts.orgId !== undefined ? withOrg(target.journal, opts.orgId) : target.journal;
+  // …and their documents in that organization's namespace, the one withOrgStorage writes them under.
+  const vectors = target.vectors && opts.orgId !== undefined && target.vectors.delete ? orgVectorDelete(target.vectors, opts.orgId) : target.vectors;
   // Threads first, while the owner records still exist: the ones this person owns, by the ONE question.
   let memoryThreads = 0;
   if (target.memory?.deleteThread) {
@@ -73,7 +76,7 @@ export async function eraseSubject(target: EraseTarget, resourceId: string, opts
     }
   }
   const journalRows = await purgeResource(runs, resourceId, {
-    ...(target.vectors ? { vectors: target.vectors } : {}),
+    ...(vectors ? { vectors } : {}),
     ...(target.memory ? { memory: target.memory } : {}),
     ...(opts.orgId === undefined ? { outsideOrganizations: true } : {}),
   });
