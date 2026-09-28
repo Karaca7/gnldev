@@ -57,9 +57,11 @@ If you are upgrading, check these first:
 15. **Stored working memory from 0.6** is not read until it is migrated. Its keys moved from
     `res:<id>` to `resource:<id>` and from `<threadId>` to `thread:<threadId>` (an `org:<id>:` prefix
     stays in front). Move them once, before users come back:
-    `await migrateWorkingMemoryKeys(memoryStore, { resourceIds, threadIds })` (@gnldev/memory), with
-    the users and threads you have. Until then, agents start with empty working memory. `eraseSubject`
-    deletes the old keys too.
+    `await migrateWorkingMemoryKeys(memoryStore)` (@gnldev/memory) moves every thread the store lists
+    and its owner; pass `{ resourceIds, threadIds }` to name them yourself. It never overwrites a newer
+    value, is safe to run twice, and returns `{ moved, kept, skipped }` (`skipped`: ids it cannot tell
+    apart, for you to decide). For an organization, pass its view: `withOrgStorage(storage, 'acme').memory`.
+    Until then, agents start with empty working memory. `eraseSubject` deletes the old keys too.
 
 ### ADR-0002: one way in for identity, one owner per rule
 
@@ -184,7 +186,12 @@ What it borrowed from server now lives in `@gnldev/durable`, which every door al
   `EraseReport` is `{ journalRows, workRecords, memoryThreads, workingMemory, byEraser }`. Erasure now
   also deletes the person's resource-scoped working memory (it was left while the report said success)
   and the observational memory's journal rows (`om:`, the observer's summary of the conversation), and
-  AgentMemory threads are no longer left when `memory` was not passed. With an `orgId`, runs and documents are erased
+  AgentMemory threads on `storage.memory` are no longer left. A memory built over ANOTHER storage
+  (`memoryPreset(otherStorage)`) is erased when you pass it: `eraseSubject(storage, id, { memory:
+  otherStorage })`. Without it, threads the person owns that no reached store held are listed in
+  `EraseReport.unreachedThreads` — never counted as erased. `memoryThreads` counts only threads a store
+  actually held, and `workingMemory` counts the 0.6 record too. Erasure deletes the person's 0.6
+  working memory (`res:<id>`, `org:<id>:res:<id>`). With an `orgId`, runs and documents are erased
   in that organization only; without one, outside every organization. Erasure needs the root work store
   (`assertRootWorkForErasure` says so). Erasing `bob` no longer deletes `bob:evil`'s traces, lessons or
   stats.
@@ -212,6 +219,15 @@ What it borrowed from server now lives in `@gnldev/durable`, which every door al
   not read: move `res:<id>` → `resource:<id>` and `<threadId>` → `thread:<threadId>` (an `org:<id>:`
   prefix stays in front). `MemoryStore.deleteWorkingMemory(scopeId)` is required; `deleteThread` deletes
   the thread's key. New: `workingMemoryScope`, `OM_LEAVES`.
+- `MemoryStore.deleteThread` (in-memory, SQLite, Postgres) also deletes the thread's 0.6 bare-id key,
+  never one beginning `thread:`, `resource:` or `res:`. New: `legacyWorkingMemoryScope`, and
+  `migrateWorkingMemoryKeys` (@gnldev/memory; upgrade checklist item 15).
+- Observational-memory vectors are written with the thread owner's `owner` label (and, when
+  `omVectors.store` is not the organization's view, the organization's namespace and id) through
+  `vectorWriteBatch`, so `eraseSubject` deletes them. Another organization's vector store is refused.
+  A staff or ownerless thread's observations stay unlabelled: no end user's search sees them and no
+  person's erasure takes them. `orgVectorId` is exported; an organization's vector view answers
+  `orgStorageScopeOf`.
 
 **What the release panels found.** Breaking:
 
