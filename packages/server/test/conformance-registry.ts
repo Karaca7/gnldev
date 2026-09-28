@@ -577,6 +577,9 @@ async function prepare(birth: Birth, state: State): Promise<{ w: W; t: Target; b
   return { wrong: `${t.runId} reads as '${got}'` };
 }
 
+/** An id nothing ever used — what "does not exist" looks like at each door. */
+const GHOST: Target = { runId: 'zzGhostRun', threadId: 'zzGhostThread' };
+
 /** A run lock another caller took and RELEASED is bookkeeping; one still held would lock the owner out. */
 function heldLockOrData(k: string, after: Record<string, string>): boolean {
   if (!k.endsWith(':lock')) return true;
@@ -641,6 +644,12 @@ export async function walk(filter?: { births?: string[]; doors?: string[] }) {
               const sameIdInOwnOrg = orgOf(CALLERS[ck]) !== ORG && (await w.storage.runs.listKeys!(`org:${orgOf(CALLERS[ck])}:${t.runId}:`)).length > 0;
               if (op.kind === 'list' && res.body.includes(t.runId) && !sameIdInOwnOrg) findings.push(`${label(cell)} | ${res.status} | listing shows ${t.runId}`);
               if (changed.length) findings.push(`${label(cell)} | ${res.status} | changed ${changed.slice(0, 3).join(',')}`);
+              // ORACLE: an end user (or unknown) must not tell "exists, not yours" from "does not exist".
+              // Where the same operation on an id that never existed answers 404, the target must too.
+              if (CALLERS[ck].principal.kind !== 'operator' && res.status >= 400 && res.status !== 404) {
+                const ghost = await op.act(w, GHOST, CALLERS[ck]).catch(() => undefined);
+                if (ghost?.status === 404) findings.push(`${label(cell)} | ${res.status} | oracle: a missing id answers 404`);
+              }
             }
           }
         }
