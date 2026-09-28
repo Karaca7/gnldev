@@ -1,5 +1,5 @@
 import { cosineSimilarity } from 'ai';
-import { visibleToSubject, vectorWriteBatch, assertSameVectorOwner, vectorDeletePlan, vectorQueryScope, vectorMetadataMatches, vectorItemCopy } from '@gnldev/durable';
+import { visibleToSubject, vectorWriteBatch, assertSameVectorOwner, vectorDeletePlan, vectorDeleteMatcher, vectorQueryScope, vectorMetadataMatches, vectorItemCopy } from '@gnldev/durable';
 
 export interface VectorDoc {
   id: string;
@@ -46,6 +46,8 @@ export interface DeleteWhere {
   namespace?: string;
   /** Every document of this end user — `owner` is a label, not metadata, so `filter` cannot reach it. */
   owner?: string;
+  /** Only documents outside every organization (`org:<id>` namespaces) — see @gnldev/durable `VectorDeleteWhere`. */
+  outsideOrganizations?: boolean;
 }
 
 export interface VectorStore {
@@ -54,6 +56,8 @@ export interface VectorStore {
   query(embedding: number[], topK: number, opts?: QueryOptions): Promise<VectorMatch[]>;
   /** 7.2 (optional): delete by id/filter/namespace, returns the number deleted. */
   delete?(where: DeleteWhere): Promise<number>;
+  /** `true` when `delete` honours `outsideOrganizations`; erasure refuses a store that does not say so. */
+  readonly deleteOutsideOrganizations?: boolean;
 }
 
 /** text → embedding function. Wired to the AI SDK `embed` in prod; faked in tests. */
@@ -100,6 +104,7 @@ export function matchesFilter(metadata: Record<string, unknown> | undefined, fil
 
 /** In-memory vector store (cosine similarity). The pgvector adapter implements the same interface for prod. */
 export class InMemoryVectorStore implements VectorStore {
+  readonly deleteOutsideOrganizations = true;
   private items: VectorItem[] = [];
 
   async upsert(items: VectorItem[]): Promise<void> {
@@ -141,15 +146,9 @@ export class InMemoryVectorStore implements VectorStore {
     const w = vectorDeletePlan(where);
     if (!w) return 0;
     const before = this.items.length;
-    const ids = w.ids ? new Set(w.ids) : undefined;
-    this.items = this.items.filter((it) => {
-      // Should it be deleted? ALL given conditions must match (ids ∧ filter ∧ namespace ∧ owner).
-      if (ids && !ids.has(it.id)) return true;
-      if (w.namespace !== undefined && it.namespace !== w.namespace) return true;
-      if (w.filter && !matchesFilter(it.metadata, w.filter)) return true;
-      if (w.owner !== undefined && it.owner !== w.owner) return true;
-      return false; // delete
-    });
+    // ALL given conditions must match — the one reading, vectorDeleteMatcher.
+    const gone = vectorDeleteMatcher(w);
+    this.items = this.items.filter((it) => !gone(it));
     return before - this.items.length;
   }
 }

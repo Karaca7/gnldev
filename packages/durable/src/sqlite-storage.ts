@@ -11,7 +11,7 @@ import { runIdOfKey, parseJournalKey, outcomeStatusOf, deriveRunStatus } from '.
 import { ENGINE_META_KEYS, assertNoRunsInFlight, assertOrgRegistered, isPlatformKey, orgPrefix } from './organization.js';
 import type { JournalBatch, JournalEntry, RunSummary, ToolJournalRecord } from './journal.js';
 import { serialize, deserialize } from './serialize.js';
-import { matchFilter, vectorWriteBatch, assertSameVectorOwner, vectorDeletePlan, vectorQueryScope, vectorMetadataMatches, vectorAdoptCollision } from './storage.js';
+import { matchFilter, vectorWriteBatch, assertSameVectorOwner, vectorDeletePlan, VECTOR_OUTSIDE_ORGANIZATIONS_SQL, vectorQueryScope, vectorMetadataMatches, vectorAdoptCollision } from './storage.js';
 import type {
   Storage, CapabilityMatrix, Page, ListQuery,
   RunJournal, MemoryStore, VectorStore, WorkStore, CacheStore, MetaStore,
@@ -1183,6 +1183,7 @@ class SqliteMemoryStore implements MemoryStore {
 
 // ── VectorStore (scan/brute-force) ──────────────────────────────────────────────
 class SqliteVectorStore implements VectorStore {
+  readonly deleteOutsideOrganizations = true;
   constructor(private db: any) {}
   async upsert(items: VectorItem[]): Promise<void> {
     const batch = vectorWriteBatch(items);
@@ -1208,6 +1209,7 @@ class SqliteVectorStore implements VectorStore {
     if (w.ids) { conds.push(`id IN (${w.ids.map(() => '?').join(',')})`); params.push(...w.ids); }
     if (w.owner !== undefined) { conds.push('owner = ?'); params.push(w.owner); }
     if (w.namespace !== undefined) { conds.push('namespace = ?'); params.push(w.namespace); }
+    if (w.outsideOrganizations) conds.push(VECTOR_OUTSIDE_ORGANIZATIONS_SQL);
     if (w.filter) {
       // Metadata is serialized, so the filter is read in code (vectorMetadataMatches) and the matching
       // rows deleted by id. No await in between: node:sqlite is synchronous.

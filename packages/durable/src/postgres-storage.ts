@@ -9,7 +9,7 @@ import { cosineSimilarity } from 'ai';
 import { runIdOfKey, parseJournalKey, outcomeStatusOf, deriveRunStatus } from './journal.js';
 import type { JournalBatch, JournalEntry, RunSummary, ToolJournalRecord } from './journal.js';
 import { serialize, deserialize } from './serialize.js';
-import { matchFilter, vectorWriteBatch, assertSameVectorOwner, vectorDeletePlan, vectorQueryScope, vectorMetadataMatches, vectorAdoptCollision } from './storage.js';
+import { matchFilter, vectorWriteBatch, assertSameVectorOwner, vectorDeletePlan, VECTOR_OUTSIDE_ORGANIZATIONS_SQL, vectorQueryScope, vectorMetadataMatches, vectorAdoptCollision } from './storage.js';
 import type { AdoptIntoOrgResult,
   Storage, CapabilityMatrix, Page, ListQuery,
   RunJournal, MemoryStore, VectorStore, WorkStore, CacheStore, MetaStore,
@@ -1430,6 +1430,7 @@ class PgMemoryStore implements MemoryStore {
 }
 
 class PgVectorStore implements VectorStore {
+  readonly deleteOutsideOrganizations = true;
   constructor(private q: Q, private tx: Tx) {}
   async upsert(items: VectorItem[]): Promise<void> {
     const batch = vectorWriteBatch(items);
@@ -1471,6 +1472,7 @@ class PgVectorStore implements VectorStore {
     if (w.ids) { conds.push(idIn(w.ids, params.length)); params.push(...w.ids); }
     if (w.owner !== undefined) { params.push(w.owner); conds.push(`owner = $${params.length}`); }
     if (w.namespace !== undefined) { params.push(w.namespace); conds.push(`namespace = $${params.length}`); }
+    if (w.outsideOrganizations) conds.push(VECTOR_OUTSIDE_ORGANIZATIONS_SQL);
     if (!w.filter) return (await this.q(`DELETE FROM gnl_vectors WHERE ${conds.join(' AND ')} RETURNING id`, params)).rows.length;
     // Metadata is serialized, so the filter is read in code (vectorMetadataMatches) and the matching
     // rows deleted by id, in one transaction.

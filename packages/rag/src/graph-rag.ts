@@ -8,7 +8,7 @@
 // GraphRAG as a query-time layer is the user's pattern. Since it runs durable inside `createRagTool`,
 // the query RESULT is journaled → the graph isn't retraversed on resume/replay (exactly-once RAG preserved).
 import { cosineSimilarity } from 'ai';
-import { visibleToSubject, vectorWriteBatch, assertSameVectorOwner, vectorDeletePlan, vectorQueryScope, vectorItemCopy } from '@gnldev/durable';
+import { visibleToSubject, vectorWriteBatch, assertSameVectorOwner, vectorDeletePlan, vectorDeleteMatcher, vectorQueryScope, vectorItemCopy } from '@gnldev/durable';
 import { matchesFilter } from './vector-store.js';
 import type { VectorStore, VectorItem, VectorMatch, QueryOptions, DeleteWhere } from './vector-store.js';
 
@@ -31,6 +31,7 @@ export interface GraphRagOptions {
  * the HIGHEST score is kept.
  */
 export class GraphRag implements VectorStore {
+  readonly deleteOutsideOrganizations = true;
   private items: VectorItem[] = [];
   private byId = new Map<string, number>(); // id → items index
   private edges = new Map<string, { id: string; w: number }[]>(); // id → neighbors (edge weight = similarity)
@@ -88,12 +89,7 @@ export class GraphRag implements VectorStore {
   async delete(where: DeleteWhere): Promise<number> {
     const w = vectorDeletePlan(where);
     if (!w) return 0;
-    const ids = w.ids ? new Set(w.ids) : undefined;
-    const gone = new Set(this.items.filter((it) =>
-      (!ids || ids.has(it.id))
-      && (w.namespace === undefined || it.namespace === w.namespace)
-      && (!w.filter || matchesFilter(it.metadata, w.filter))
-      && (w.owner === undefined || it.owner === w.owner)).map((it) => it.id));
+    const gone = new Set(this.items.filter(vectorDeleteMatcher(w)).map((it) => it.id));
     if (!gone.size) return 0;
     this.items = this.items.filter((it) => !gone.has(it.id));
     this.byId = new Map(this.items.map((it, i) => [it.id, i]));

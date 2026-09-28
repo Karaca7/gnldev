@@ -7,7 +7,7 @@ import { InMemoryJournal } from './journal.js';
 import { stableStringify } from './hash.js';
 import { ENGINE_META_KEYS, assertNoRunsInFlight, assertOrgRegistered, isPlatformKey, orgPrefix } from './organization.js';
 import type { JournalEntry, RunSummary } from './journal.js';
-import { matchFilter, visibleToSubject, vectorWriteBatch, assertSameVectorOwner, vectorDeletePlan, vectorQueryScope, vectorMetadataMatches, vectorItemCopy, orgVectorId, vectorAdoptCollision } from './storage.js';
+import { matchFilter, visibleToSubject, vectorWriteBatch, assertSameVectorOwner, vectorDeletePlan, vectorDeleteMatcher, vectorQueryScope, vectorMetadataMatches, vectorItemCopy, orgVectorId, vectorAdoptCollision } from './storage.js';
 import type {
   Storage, CapabilityMatrix, Page, ListQuery,
   RunJournal, MemoryStore, VectorStore, WorkStore, CacheStore, MetaStore,
@@ -229,6 +229,7 @@ class InMemoryMemoryStore implements MemoryStore {
 
 // ── VectorStore (cosine, same behavior as rag's InMemoryVectorStore) ───────────
 class InMemoryVectorStore implements VectorStore {
+  readonly deleteOutsideOrganizations = true;
   /** @internal — see Storage.adoptIntoOrg. Stamps the namespace on documents that have none. */
   _stamp(ns: string, dryRun: boolean): number {
     // Renamed as well as stamped: an organization's documents are stored under `<ns>:<id>` (see
@@ -256,11 +257,9 @@ class InMemoryVectorStore implements VectorStore {
   async delete(where: VectorDeleteWhere): Promise<number> {
     const w = vectorDeletePlan(where);
     if (!w) return 0;
-    const ids = w.ids ? new Set(w.ids) : undefined;
+    const gone = vectorDeleteMatcher(w);
     const before = this.items.length;
-    this.items = this.items.filter((it) => !(
-      (!ids || ids.has(it.id)) && (w.owner === undefined || it.owner === w.owner) && (w.namespace === undefined || it.namespace === w.namespace) && vectorMetadataMatches(it.metadata, w.filter)
-    ));
+    this.items = this.items.filter((it) => !gone(it));
     return before - this.items.length;
   }
   async query(embedding: number[], topK: number, opts?: VectorQueryOptions): Promise<VectorMatch[]> {

@@ -226,6 +226,9 @@ const NEIGHBOURS: Person[] = [
 // (the `%` of an id is written `%25` in the stored name, so `pz25q` is what `p%25q` as LIKE matches).
 const LITERAL_TARGETS: Person[] = ['p%q', 'p_q', 'p*q', 'p?q', 'p[ab]q', 'p\\q', 'p%_*[x'].map((who) => ({ who, orgId: 'acme' }));
 const LITERAL_NEIGHBOURS: Person[] = ['pz25q', 'pzq', 'pzzq', 'paq', 'pq', 'p%25_*[x', 'pX25Y*[x', 'p%Z*[x'].map((who) => ({ who, orgId: 'acme' }));
+// ── Scenario 3: the organization-less bob, next to the bobs of two organizations (E1b) ──────────────
+const LONE_BOB: Person = { who: 'bob' };
+const LONE_NEIGHBOURS: Person[] = [{ who: 'bob', orgId: 'acme' }, { who: 'bob', orgId: 'globex' }, { who: 'bob:evil' }, { who: 'ayse' }];
 
 const EVERYTHING = [...KINDS];
 const results: Record<string, Record<string, unknown>> = {};
@@ -248,6 +251,21 @@ describe.each(BACKENDS)('eraseSubject on %s', (name, make) => {
     expect(text.split('\n').filter((l) => l.includes('~o~acme:bob:') || l.includes('bob@acme|'))).toEqual([]);
     for (const p of NEIGHBOURS) expect(after[tagOf(p)], tagOf(p)).toEqual(EVERYTHING);
     (results[name] ??= {}).neighbours = { after, report };
+  });
+
+  it('the organization-less bob: everything of his is gone; acme\'s bob, globex\'s bob, bob:evil and ayse stay whole', async () => {
+    const b = await make();
+    const people = [LONE_BOB, ...LONE_NEIGHBOURS];
+    const { root } = await world(b, people);
+    const before = survivors(await dump(b, people), people);
+    for (const p of people) expect(before[tagOf(p)], `seeded ${tagOf(p)}`).toEqual(EVERYTHING);
+
+    await erase(b, root, LONE_BOB);
+
+    const after = survivors(await dump(b, people), people);
+    expect(after[tagOf(LONE_BOB)]).toEqual([]);
+    for (const p of LONE_NEIGHBOURS) expect(after[tagOf(p)], tagOf(p)).toEqual(EVERYTHING);
+    (results[name] ??= {}).lone = after;
   });
 
   it('an id with LIKE or glob metacharacters is a literal prefix: each target goes, each lookalike stays', async () => {
@@ -289,7 +307,7 @@ describe.each(BACKENDS)('eraseSubject on %s', (name, make) => {
 describe('drift: every store gives the in-memory store\'s answer', () => {
   it('the same scenarios, the same survivors, on every store', () => {
     const names = BACKENDS.map(([n]) => n);
-    const ran = names.filter((n) => results[n]?.neighbours && results[n]?.literal && results[n]?.primitive);
+    const ran = names.filter((n) => results[n]?.neighbours && results[n]?.literal && results[n]?.lone && results[n]?.primitive);
     expect(ran, 'every store completed all three scenarios').toEqual(names);
     const strip = (r: Record<string, unknown>) => ({ ...r, neighbours: (r.neighbours as { after: unknown }).after });
     const reference = strip(results.InMemory!);

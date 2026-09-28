@@ -146,6 +146,30 @@ describe.each(STORES)('vector write rule — $name', (store) => {
     expect(await all(s)).toBe('r1/u\uFFFD=r1');
   });
 
+  it('outsideOrganizations: an owner\'s documents outside every organization go; acme\'s and globex\'s stay (E1b)', async () => {
+    const s = await store.vectors();
+    // `org:acme` is the namespace withOrgStorage writes acme's documents under; `organic` and `ORG:acme` only look like one.
+    await s.upsert([
+      doc('root-bob', { owner: 'bob' }), doc('n-bob', { owner: 'bob', namespace: 'n' }), doc('organic-bob', { owner: 'bob', namespace: 'organic' }), doc('upper-bob', { owner: 'bob', namespace: 'ORG:acme' }),
+      doc('org:acme:bob', { owner: 'bob', namespace: 'org:acme' }), doc('org:globex:bob', { owner: 'bob', namespace: 'org:globex' }),
+      doc('root-cem', { owner: 'cem' }), doc('s1', { shared: true }), doc('org:acme:s1', { shared: true, namespace: 'org:acme' }),
+    ]);
+    const del = (w: unknown) => outcome(() => s.delete!(w as VectorDeleteWhere));
+    // A store that honours the flag says so; erasure refuses one that does not (erase-vectors-org.test.ts).
+    expect(s.deleteOutsideOrganizations).toBe(true);
+    // It narrows, it never selects: alone it is no condition, and inside an organization it matches nothing.
+    expect([await del({ outsideOrganizations: true }), await del({ owner: 'bob', namespace: 'org:acme', outsideOrganizations: true })])
+      .toEqual(['ok:0', 'ok:0']);
+    expect(await del({ owner: 'bob', outsideOrganizations: true })).toBe('ok:4');
+    expect(await all(s)).toBe('org:acme:bob/bob=org:acme:bob,org:acme:s1/-/S=org:acme:s1,org:globex:bob/bob=org:globex:bob,root-cem/cem=root-cem,s1/-/S=s1');
+    // With ids it is one more condition like the others.
+    await s.upsert([doc('n-bob', { owner: 'bob', namespace: 'n' })]);
+    expect(await del({ ids: ['n-bob', 'org:acme:bob'], outsideOrganizations: true })).toBe('ok:1');
+    // `false` is the old meaning: every namespace.
+    expect(await del({ owner: 'bob', outsideOrganizations: false })).toBe('ok:2');
+    expect(await all(s)).toBe('org:acme:s1/-/S=org:acme:s1,root-cem/cem=root-cem,s1/-/S=s1');
+  });
+
   it('filter: metadata narrows a query before ranking and a delete to exactly its matches', async () => {
     const s = await store.vectors();
     const m = (id: string, owner: string, k: number) => ({ ...doc(id, { owner }), metadata: { k } });

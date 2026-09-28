@@ -8,6 +8,8 @@ import { InMemoryStorage } from '../src/in-memory-storage.js';
 import { withOrgStorage } from '../src/org-storage.js';
 import { toJournal } from '../src/storage.js';
 import { eraseSubject } from '../src/erase.js';
+import { purgeResource } from '../src/retention.js';
+import type { VectorStore } from '../src/storage.js';
 
 async function world() {
   const storage = new InMemoryStorage();
@@ -43,11 +45,57 @@ describe('eraseSubject with orgId erases documents in that organization only', (
     expect(await left()).toContain('DOC-root-bob');
   });
 
+  it('sibling: erasing acme\'s bob keeps shared documents', async () => {
+    const { storage, left } = await world();
+    await withOrgStorage(storage, 'acme').vectors!.upsert([{ id: 'DOC-acme-shared', text: 's', embedding: [1, 0], shared: true }]);
+    await eraseSubject({ journal: toJournal(storage.runs), vectors: storage.vectors! }, 'bob', { orgId: 'acme' });
+    expect(await left()).toContain('org:acme:DOC-acme-shared');
+  });
+
   it('sibling: an organization-scoped vector store handed in is not scoped twice (its own bob goes)', async () => {
     const { storage, left } = await world();
     await eraseSubject({ journal: toJournal(storage.runs), vectors: withOrgStorage(storage, 'acme').vectors! }, 'bob', { orgId: 'acme' });
     const ids = await left();
     expect(ids.some((id) => id.includes('DOC-acme-bob'))).toBe(false);
     expect(ids).toContain('org:globex:DOC-globex-bob');
+  });
+});
+
+// E1b, the other direction. Erasing the ORGANIZATION-LESS bob named the owner and nothing else, so
+// the delete also took acme's and globex's bob — two other people. Measured before the fix:
+// `LEFT []`. The runs half already skips organization partitions (`outsideOrganizations`); the
+// documents half now says the same thing to the store.
+describe('eraseSubject without orgId erases documents outside every organization only', () => {
+  it('the organization-less bob goes; acme\'s and globex\'s bob stay (the claim)', async () => {
+    const { storage, left } = await world();
+    await storage.vectors!.upsert([{ id: 'DOC-topic-bob', text: 't', embedding: [1, 0], owner: 'bob', namespace: 'topic' }]);
+    await eraseSubject({ journal: toJournal(storage.runs), vectors: storage.vectors! }, 'bob');
+    expect(await left()).toEqual(['org:acme:DOC-acme-bob', 'org:acme:DOC-acme-cem', 'org:globex:DOC-globex-bob']);
+  });
+
+  it('sibling: shared documents, in or out of an organization, stay', async () => {
+    const { storage, left } = await world();
+    await storage.vectors!.upsert([{ id: 'DOC-root-shared', text: 's', embedding: [1, 0], shared: true }]);
+    await withOrgStorage(storage, 'acme').vectors!.upsert([{ id: 'DOC-acme-shared', text: 's', embedding: [1, 0], shared: true }]);
+    await eraseSubject({ journal: toJournal(storage.runs), vectors: storage.vectors! }, 'bob');
+    expect(await left()).toEqual(expect.arrayContaining(['DOC-root-shared', 'org:acme:DOC-acme-shared']));
+  });
+
+  it('sibling: purgeResource without outsideOrganizations keeps its old meaning — the owner everywhere', async () => {
+    const { storage, left } = await world();
+    await purgeResource(toJournal(storage.runs), 'bob', { vectors: storage.vectors! });
+    expect(await left()).toEqual(['org:acme:DOC-acme-cem']);
+  });
+
+  it('a store that does not declare the flag is refused before anything is deleted, not trusted to understand it', async () => {
+    const { storage, left } = await world();
+    // A third-party adapter written before the flag: it reads `owner` and ignores the rest.
+    const legacy: Pick<VectorStore, 'delete'> = { delete: (w) => storage.vectors!.delete!({ ...(w.owner !== undefined ? { owner: w.owner } : {}) }) };
+    await expect(eraseSubject({ journal: toJournal(storage.runs), vectors: legacy }, 'bob')).rejects.toThrow(/outsideOrganizations/);
+    expect(await left()).toHaveLength(4);
+    // The same kind of adapter still serves an organization's erasure: that path carries a namespace.
+    const nsAware: Pick<VectorStore, 'delete'> = { delete: (w) => storage.vectors!.delete!({ owner: w.owner!, namespace: w.namespace! }) };
+    await eraseSubject({ journal: toJournal(storage.runs), vectors: nsAware }, 'bob', { orgId: 'acme' });
+    expect(await left()).toEqual(['DOC-root-bob', 'org:acme:DOC-acme-cem', 'org:globex:DOC-globex-bob']);
   });
 });

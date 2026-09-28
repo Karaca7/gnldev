@@ -14,7 +14,7 @@
  * Runs, threads and documents are erased by `purgeResource`, whose thread question is `threadOwnerOf`
  * — the same one the gate and the listing ask.
  */
-import { purgeResource } from './retention.js';
+import { purgeResource, assertDeletesOutsideOrganizations } from './retention.js';
 import { ownedPrefix } from './owned-name.js';
 import { threadOwnerOf } from './thread-owner.js';
 import { withOrg } from './organization.js';
@@ -34,7 +34,12 @@ export interface EraseTarget {
   journal: Journal;
   /** Owned log records (jobs and events): the ROOT storage's work store (an organization's view is refused). Needs `deleteIdPrefix`: an erasure that cannot reach them refuses, loudly. */
   work?: WorkStore;
-  vectors?: Pick<VectorStore, 'delete'>;
+  /**
+   * The ROOT vector store. With `orgId`, the person's documents in that organization's namespace go;
+   * without it, their documents outside every organization (`outsideOrganizations`), which the store
+   * must declare it honours (`deleteOutsideOrganizations`) or the erasure refuses.
+   */
+  vectors?: Pick<VectorStore, 'delete' | 'deleteOutsideOrganizations'>;
   /** A memory whose threads live outside the journal (e.g. AgentMemory over storage.memory). */
   memory?: Memory & { deleteThread?: (id: string) => Promise<void> };
   /** The background packages' erasers: `jobEraser(storage)`, `triggerEraser(journal)`, `eventEraser(work)`. */
@@ -75,6 +80,9 @@ export async function eraseSubject(target: EraseTarget, resourceId: string, opts
   if (target.work && typeof target.work.deleteIdPrefix !== 'function') {
     throw new Error('@gnldev/durable: eraseSubject was given a work store that cannot delete by id prefix, so this person\'s jobs and events cannot be erased');
   }
+  // Without an organization, the documents half says "outside every organization" — asked here, before
+  // the threads below go, so a store that cannot honour it leaves this person entirely in place.
+  if (opts.orgId === undefined && target.vectors?.delete) assertDeletesOutsideOrganizations(target.vectors, '@gnldev/durable: eraseSubject');
   // A person in an organization: their runs live in that organization's partition, and the same id in
   // another organization is somebody else.
   const runs = opts.orgId !== undefined ? withOrg(target.journal, opts.orgId) : target.journal;

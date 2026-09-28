@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module';
-import { vectorWriteBatch, assertSameVectorOwner, vectorDeletePlan, vectorQueryScope } from '@gnldev/durable';
+import { vectorWriteBatch, assertSameVectorOwner, vectorDeletePlan, VECTOR_OUTSIDE_ORGANIZATIONS_SQL, vectorQueryScope } from '@gnldev/durable';
 import type { VectorStore, VectorItem, VectorMatch, QueryOptions, DeleteWhere } from './vector-store.js';
 
 /** Minimal pg.Pool surface — injectable for tests/custom setups (same pattern as PostgresJournal). */
@@ -33,6 +33,7 @@ export interface PostgresVectorStoreOptions {
  * the pg query does NOT RE-RUN on resume/replay. Even if ANN/HNSW is approximate, the result comes back from the journal.
  */
 export class PostgresVectorStore implements VectorStore {
+  readonly deleteOutsideOrganizations = true;
   private pool: PoolLike;
   private table: string;
   private dimension?: number;
@@ -214,6 +215,7 @@ export class PostgresVectorStore implements VectorStore {
       params.push(w.namespace);
       conds.push(`namespace = $${params.length}`);
     }
+    if (w.outsideOrganizations) conds.push(VECTOR_OUTSIDE_ORGANIZATIONS_SQL);
     if (w.filter && Object.keys(w.filter).length > 0) {
       params.push(JSON.stringify(w.filter));
       conds.push(`metadata @> $${params.length}::jsonb`);

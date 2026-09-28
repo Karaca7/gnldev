@@ -356,6 +356,17 @@ export interface VectorDeleteWhere {
   /** Every document of this end user — the erasure path (`purgeResource(…, { vectors })`). */
   owner?: string;
   namespace?: string;
+  /**
+   * Only documents OUTSIDE every organization: no namespace, or one that is not an organization's
+   * (`org:<id>`, the namespace `withOrgStorage` writes). The documents half of `purgeResource`'s
+   * `outsideOrganizations`: erasing the organization-less `bob` named the owner alone and also took
+   * acme's and globex's `bob`, who are other people. It narrows, it never selects: alone it is no
+   * condition, and with an organization's `namespace` it matches nothing.
+   *
+   * A store that honours it says so with `VectorStore.deleteOutsideOrganizations`. One written before
+   * it would read this delete as "the owner everywhere", so erasure refuses such a store.
+   */
+  outsideOrganizations?: boolean;
   /** Metadata narrowing, as `VectorQueryOptions.filter`. An empty filter is no condition. */
   filter?: Record<string, unknown>;
 }
@@ -488,14 +499,57 @@ export function vectorDeletePlan(where: VectorDeleteWhere): VectorDeleteWhere | 
   if (ids !== undefined && ids.length === 0) return null;
   if (where.owner !== undefined && !isWellFormed(where.owner)) return null;
   if (where.namespace !== undefined && !isWellFormed(where.namespace)) return null;
+  // Outside every organization and inside one names no document. With another namespace the flag
+  // already holds, so the plan drops it and the store sees a plain namespace.
+  const outside = where.outsideOrganizations === true;
+  if (outside && vectorInOrganization(where.namespace)) return null;
   const filter = where.filter !== undefined && Object.keys(where.filter).length > 0 ? where.filter : undefined;
+  // `outsideOrganizations` narrows and never selects: `{ outsideOrganizations: true }` alone would be
+  // every document of every organization-less person.
   if (ids === undefined && where.owner === undefined && where.namespace === undefined && filter === undefined) return null;
   return {
     ...(ids ? { ids } : {}),
     ...(where.owner !== undefined ? { owner: where.owner } : {}),
     ...(where.namespace !== undefined ? { namespace: where.namespace } : {}),
+    ...(outside && where.namespace === undefined ? { outsideOrganizations: true } : {}),
     ...(filter ? { filter } : {}),
   };
+}
+
+/*
+ * WHICH DOCUMENTS ARE AN ORGANIZATION'S. `withOrgStorage` writes acme's documents under the namespace
+ * `org:acme` (`orgPrefix` without its colon), so a namespace that starts `org:` is an organization's —
+ * the same reading `purgeResource` gives a run id. Written once for the stores that filter in code
+ * (`vectorInOrganization`) and once for the stores that filter in SQL (the fragment below); the
+ * contract test holds the six stores to one answer.
+ */
+const ORG_NAMESPACE = 'org:';
+
+/** Is this an organization's namespace? No namespace is nobody's organization. */
+export function vectorInOrganization(namespace: string | null | undefined): boolean {
+  return typeof namespace === 'string' && namespace.startsWith(ORG_NAMESPACE);
+}
+
+/**
+ * `outsideOrganizations` for a `namespace` column, in SQLite and Postgres alike. `substring`, not `LIKE`:
+ * SQLite's LIKE ignores ASCII case, so `ORG:x` would be an organization there and nowhere else. (Not
+ * `substr` or `left`: pg-mem has neither.) `NULL` is spelled out because a comparison with it is never true.
+ */
+export const VECTOR_OUTSIDE_ORGANIZATIONS_SQL = `(namespace IS NULL OR substring(namespace, 1, ${ORG_NAMESPACE.length}) <> '${ORG_NAMESPACE}')`;
+
+/**
+ * Which stored documents a delete plan (`vectorDeletePlan`) takes: every given condition must hold.
+ * The one reading for the stores that delete in code; the SQL stores spell the same conditions.
+ */
+export function vectorDeleteMatcher(
+  w: VectorDeleteWhere,
+): (doc: { id: string; namespace?: string; owner?: string; metadata?: Record<string, unknown> }) => boolean {
+  const ids = w.ids ? new Set(w.ids) : undefined;
+  return (doc) => (!ids || ids.has(doc.id))
+    && (w.owner === undefined || doc.owner === w.owner)
+    && (w.namespace === undefined || doc.namespace === w.namespace)
+    && (w.outsideOrganizations !== true || !vectorInOrganization(doc.namespace))
+    && vectorMetadataMatches(doc.metadata, w.filter);
 }
 
 /**
@@ -533,6 +587,12 @@ export interface VectorStore {
   query(embedding: number[], topK: number, opts?: VectorQueryOptions): Promise<VectorMatch[]>;
   /** Removes the documents matching every given condition; returns how many. No condition removes nothing. */
   delete?(where: VectorDeleteWhere): Promise<number>;
+  /**
+   * `true` when `delete` honours `VectorDeleteWhere.outsideOrganizations`. Declared, not assumed: a
+   * store written before the flag ignores it and deletes the owner in every organization, so erasing
+   * an organization-less person refuses a store that does not say this.
+   */
+  readonly deleteOutsideOrganizations?: boolean;
 }
 
 // ── 4) WorkStore = queue + events + scheduler primitive (has its OWN namespace; doesn't pollute RunJournal) ──

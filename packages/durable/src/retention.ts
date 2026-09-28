@@ -450,6 +450,21 @@ function xidShape(rest: string, value: unknown): 'own' | 'foreign' {
  *  - Needs `listKeys`+`listRunsPaged`; an adapter without them keeps today's three-prefix behaviour
  *    rather than silently reporting a fuller erasure than it performed.
  */
+/**
+ * Refuses a vector store that has not declared `deleteOutsideOrganizations`, before anything is
+ * deleted. A store that does not know the flag reads `{ owner, outsideOrganizations: true }` as "the
+ * owner everywhere" and takes the same id's documents in every organization — other people.
+ */
+export function assertDeletesOutsideOrganizations(vectors: Pick<VectorStore, 'deleteOutsideOrganizations'>, who: string): void {
+  if (vectors.deleteOutsideOrganizations === true) return;
+  throw new Error(
+    `${who} was asked to erase documents outside organizations only (outsideOrganizations), but the vector store ` +
+      'does not declare deleteOutsideOrganizations. Nothing was deleted: an adapter that ignores the flag would also ' +
+      'delete this person\'s namesakes in every organization. Make the adapter honour ' +
+      'VectorDeleteWhere.outsideOrganizations and set deleteOutsideOrganizations: true.',
+  );
+}
+
 export async function purgeResource(
   journal: Journal,
   resourceId: string,
@@ -458,9 +473,10 @@ export async function purgeResource(
      * The knowledge base, to erase this person's own documents (`owner: resourceId`) too. The vector
      * store is a separate port from the journal, so without it their documents stay — a store with no
      * `delete` is refused rather than skipped, since an erasure that quietly keeps half is the failure
-     * this function exists to avoid.
+     * this function exists to avoid. With `outsideOrganizations` the store must also declare
+     * `deleteOutsideOrganizations`, for the same reason.
      */
-    vectors?: Pick<VectorStore, 'delete'>;
+    vectors?: Pick<VectorStore, 'delete' | 'deleteOutsideOrganizations'>;
     /**
      * The memory that holds the threads, when it can name their owners (`getThreadResource`). Asked
      * so erasure decides "is this thread theirs" exactly as the engine's gate does; without it a
@@ -472,7 +488,9 @@ export async function purgeResource(
      * Erase only the runs OUTSIDE organization partitions. A root journal lists every organization's
      * runs too (`org:<id>:…`), and the same user id in an organization is a different person
      * (`user(id, orgId)`); `eraseSubject` without an `orgId` sets this, so erasing the organization-less
-     * `ayse` does not take acme's `ayse`'s runs (measured before: it did).
+     * `ayse` does not take acme's `ayse`'s runs (measured before: it did). Her documents likewise: the
+     * vector delete carries `outsideOrganizations`, so acme's and globex's `ayse` keep theirs (E1b —
+     * measured before: none of the three kept any).
      */
     outsideOrganizations?: boolean;
   } = {},
@@ -481,6 +499,7 @@ export async function purgeResource(
   if (opts.vectors && typeof opts.vectors.delete !== 'function') {
     throw new Error('@gnldev/durable: purgeResource was given a vector store that cannot delete, so this person\'s documents cannot be erased');
   }
+  if (opts.vectors && opts.outsideOrganizations) assertDeletesOutsideOrganizations(opts.vectors, '@gnldev/durable: purgeResource');
   // `suggstats:` carries the FULL lesson key (`suggstats:lesson:res:<rid>:<id>`) — the injection
   // counter's key itself names the person, so it must die with them (GDPR brief audit, K27 EK-3).
   // deletePrefix sweeps counter rows since P1.6, so this reaches HINCRBY-backed adapters too.
@@ -496,7 +515,7 @@ export async function purgeResource(
   }).listRunsPaged;
   // Their own documents in the knowledge base (shared ones are nobody's to erase with one person).
   // Before the early return below, which a journal without paged listing takes.
-  if (opts.vectors) total += await opts.vectors.delete!({ owner: resourceId });
+  if (opts.vectors) total += await opts.vectors.delete!({ owner: resourceId, ...(opts.outsideOrganizations ? { outsideOrganizations: true } : {}) });
   if (typeof paged !== 'function') return total;
   const threads = new Set<string>();
   const runIds: string[] = [];
