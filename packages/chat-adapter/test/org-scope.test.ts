@@ -71,3 +71,35 @@ describe('chat route: a prebuilt { gnl } cannot keep organizations apart', () =>
     expect(await res.text()).toContain('cannot keep organizations apart');
   });
 });
+
+describe('chat route: a memory object cannot keep organizations apart', () => {
+  // The standalone route scopes each organization with @gnldev/durable's scopeConfigToOrg, which passed
+  // an explicit `memory` object through: every organization shared one set of threads.
+  it('an org-bound turn is refused, and no organization reads another\'s thread', async () => {
+    const { InMemoryStorage, BasicMemory } = await import('@gnldev/durable');
+    const storage = new InMemoryStorage();
+    const model: any = {
+      specificationVersion: 'v2', provider: 'mock', modelId: 'm', supportedUrls: {},
+      doGenerate: async () => { throw new Error('no gen'); },
+      doStream: async ({ prompt }: any) => ({ stream: mkStream([
+        { type: 'stream-start', warnings: [] }, { type: 'text-start', id: '1' },
+        { type: 'text-delta', id: '1', delta: `saw:${JSON.stringify(prompt)}` }, { type: 'text-end', id: '1' },
+        { type: 'finish', finishReason: 'stop', usage },
+      ]) }),
+    };
+    const app = createChatRoute({ storage, memory: new BasicMemory(storage.runs), agents: { a: { model } } } as never, {
+      identify: (req) => ({ kind: 'subject', id: req.headers.get('x-user')!, roles: [], orgId: req.headers.get('x-test-org')! }),
+    });
+    const post = async (org: string, who: string, text: string) => {
+      const res = await app.request('/agents/a/chat', {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-test-org': org, 'x-user': who },
+        body: JSON.stringify({ id: 'T', messages: [{ id: `m-${who}`, role: 'user', parts: [{ type: 'text', text }] }] }),
+      });
+      return { status: res.status, body: await res.text() };
+    };
+    const acme = await post('acme', 'ayse', 'SECRET-OF-ACME');
+    const globex = await post('globex', 'eve', 'hi');
+    expect(globex.body).not.toContain('SECRET-OF-ACME');
+    expect(acme.status).toBe(500); // refused; the reason is the server log's, not the caller's
+  });
+});

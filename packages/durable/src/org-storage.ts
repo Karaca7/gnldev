@@ -347,6 +347,19 @@ export function scopeConfigToOrg<C extends { storage?: Storage; journal?: unknow
   config: C,
   orgId: string,
 ): { config: C; journal: Journal & JournalReader } {
+  // A conversation store handed over as an OBJECT owns its own store: nothing here can confine it to
+  // one organization, so every organization built from this config would share one set of threads,
+  // keyed by a caller-chosen thread id alone. Measured through the standalone doors: another
+  // organization's user read a secret in the same thread. Refused here, where every door scopes, and
+  // not only at @gnldev/server's boot. `memory: false` ("no store") needs no boundary.
+  const memory = (config as { memory?: unknown }).memory;
+  if (memory !== undefined && memory !== null && memory !== false) {
+    throw new Error(
+      `@gnldev/durable: cannot scope this config to organization '${orgId}': its \`memory\` is an object, which ` +
+        'owns its own store and cannot be given an organization boundary — every organization would share one ' +
+        "set of threads. Pass `memoryFactory` instead (it is called with the organization's storage), or `memory: false`.",
+    );
+  }
   if (config.storage) {
     const storage = withOrgStorage(config.storage, orgId);
     return { config: { ...config, storage, journal: undefined }, journal: toJournal(storage.runs) as Journal & JournalReader };

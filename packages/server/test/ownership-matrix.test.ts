@@ -112,17 +112,20 @@ describe('the registry is complete', () => {
   });
 });
 
-// Found while building the fixture, kept as its own row: an explicit `memory` INSTANCE in a config is not
-// confined by scopeConfigToOrg (only `storage` is), so every organization built from that config shares
-// one memory. The table itself uses `memoryFactory`, the scoped form, so it measures ownership alone.
+// Found while building the fixture, kept as its own row: an explicit `memory` INSTANCE in a config was
+// not confined by scopeConfigToOrg (only `storage` was), so every organization built from that config
+// shared one memory. scopeConfigToOrg now refuses it; the table itself uses `memoryFactory`, the scoped
+// form, so it measures ownership alone.
 describe('an explicit memory instance and organizations', () => {
   it('another organization\'s user does not read a thread through scopeConfigToOrg', async () => {
     const storage = new InMemoryStorage();
     const config: any = { storage, memory: new BasicMemory(storage.runs), agents: { a: { model: echo } } };
-    const acme = createGnl(scopeConfigToOrg(config, ORG).config);
-    const globex = createGnl(scopeConfigToOrg(config, OTHER_ORG).config);
-    await acme.run('a', { runId: 'r1', prompt: SECRET, threadId: 'T', caller: engineCallerOf(P.ayse!) as Caller });
-    const r = await globex.run('a', { runId: 'r2', prompt: 'x', threadId: 'T', caller: engineCallerOf(P.eve!) as Caller }).catch((e: Error) => ({ text: `refused: ${e.message}` }));
-    expect((r as { text: string }).text).not.toContain(SECRET);
+    const got = await (async () => {
+      const acme = createGnl(scopeConfigToOrg(config, ORG).config);
+      const globex = createGnl(scopeConfigToOrg(config, OTHER_ORG).config);
+      await acme.run('a', { runId: 'r1', prompt: SECRET, threadId: 'T', caller: engineCallerOf(P.ayse!) as Caller });
+      return (await globex.run('a', { runId: 'r2', prompt: 'x', threadId: 'T', caller: engineCallerOf(P.eve!) as Caller })).text;
+    })().catch((e: Error) => `refused: ${e.message}`);
+    expect(got).not.toContain(SECRET);
   });
 });
