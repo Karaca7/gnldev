@@ -228,6 +228,10 @@ What it borrowed from server now lives in `@gnldev/durable`, which every door al
   A staff or ownerless thread's observations stay unlabelled: no end user's search sees them and no
   person's erasure takes them. `orgVectorId` is exported; an organization's vector view answers
   `orgStorageScopeOf`.
+- A thread's observational-memory vectors go with the thread when its owner is erased, whoever they
+  were labelled for: one indexed while the thread was anonymous (a guest who later signs in) carried no
+  owner and survived. They carry `metadata.source: 'observational-memory'` (`OM_VECTOR_SOURCE`), and
+  erasure deletes `{ source, threadId }` — a document that merely names the thread id is not taken.
 
 **What the release panels found.** Breaking:
 

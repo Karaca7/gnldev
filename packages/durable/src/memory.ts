@@ -188,6 +188,15 @@ export type MemLeaf = (typeof MEM_LEAVES)[number];
 export const OM_LEAVES = ['observedSeq', 'observeSeq', 'reflectSeq'] as const;
 export type OmLeaf = (typeof OM_LEAVES)[number];
 
+/**
+ * The `metadata.source` of an observational-memory vector (`@gnldev/memory`, `omVectors.store`). A
+ * thread's observations go with the thread, whoever they were labelled for: one indexed while the
+ * thread was anonymous carries no owner, and the person who later claimed the thread is still erased
+ * with it. `eraseSubject` deletes by `{ source, threadId }`, so a document that merely mentions a
+ * thread id in its metadata is not taken.
+ */
+export const OM_VECTOR_SOURCE = 'observational-memory';
+
 export function memKey(threadId: string, leaf: MemLeaf): string {
   // The rule itself lives beside parseJournalKey, which is what makes it a rule — and it is shared,
   // because this was NOT the only door. `mem:` was guarded here while `xthr:` was not, so a

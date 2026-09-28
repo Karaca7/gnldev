@@ -27,7 +27,7 @@ import { threadOwnerOf } from './thread-owner.js';
 import { withOrg } from './organization.js';
 import { orgVectorDelete, orgStorageScopeOf, withOrgStorage } from './org-storage.js';
 import { toJournal, workingMemoryScope, legacyWorkingMemoryScope } from './storage.js';
-import { memKey, MEM_LEAVES } from './memory.js';
+import { memKey, MEM_LEAVES, OM_VECTOR_SOURCE } from './memory.js';
 import type { Memory } from './memory.js';
 import type { Journal } from './journal.js';
 import type { MemoryStore, Storage, WorkStore } from './storage.js';
@@ -241,6 +241,10 @@ export async function eraseSubject(storage: Storage, resourceId: string, opts: E
   for (const { thread, runs: memRuns } of deleted) {
     journalRows += await purgeThread(runs, thread);
     if (memRuns !== runs) journalRows += await purgeThread(memRuns, thread);
+    // …and its observational-memory vectors, by thread: one indexed while the thread was anonymous
+    // has no owner label, and the owner delete above does not see it.
+    const ofThread = { filter: { source: OM_VECTOR_SOURCE, threadId: thread }, ...(outside ? { outsideOrganizations: true } : {}) };
+    for (const v of [vectors, homeVectors && docs(homeVectors)]) if (v) journalRows += await v.delete!(ofThread);
   }
   const owner = { resourceId, ...(opts.orgId !== undefined ? { orgId: opts.orgId } : {}) };
   const workRecords = work ? await work.deleteIdPrefix!(ownedPrefix(owner)) : 0;

@@ -4,7 +4,7 @@
 //   • RunJournal   (storage.runs):   OM's LLM memoization + durable progress (replay is deterministic).
 // loadContext runs BEFORE persistInput, so the whole context freezes into `:input` = replayable.
 import { cosineSimilarity } from 'ai';
-import { requireCapability, durableProcessorStep, workingMemoryScope, OM_LEAVES, type OmLeaf } from '@gnldev/durable';
+import { requireCapability, durableProcessorStep, workingMemoryScope, OM_LEAVES, OM_VECTOR_SOURCE, type OmLeaf } from '@gnldev/durable';
 import { threadOwnerOf, toJournal, orgStorageScopeOf, orgPrefix, orgVectorId, vectorWriteBatch, type Memory } from '@gnldev/durable';
 import { PROVENANCE_RECENT_CAP, messagePreview } from '@gnldev/durable';
 import type { Storage, RunJournal, MemoryStore, MessageRecord, MessageAppend, ThreadRecord, RecallOptions, MemoryContextProvenance, RecalledMessageRef } from '@gnldev/durable';
@@ -613,7 +613,7 @@ export class AgentMemory {
       embedding: embedding!,
       ...(ns ? { namespace: ns } : {}),
       ...(owner !== undefined ? { owner } : {}),
-      metadata: { threadId, level, fromSeq: o.fromSeq, toSeq: o.toSeq, obsId: o.id },
+      metadata: { source: OM_VECTOR_SOURCE, threadId, level, fromSeq: o.fromSeq, toSeq: o.toSeq, obsId: o.id },
     }]);
     await ov.store.upsert([item!]);
   }

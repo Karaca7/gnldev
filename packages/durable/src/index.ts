@@ -21,7 +21,7 @@ export type {
   RunStatus,
   RunOutcomeRecord,
 } from './journal.js';
-export { BasicMemory, PROVENANCE_RECENT_CAP, messagePreview, memKey, MEM_LEAVES, OM_LEAVES, type OmLeaf } from './memory.js';
+export { BasicMemory, PROVENANCE_RECENT_CAP, messagePreview, memKey, MEM_LEAVES, OM_LEAVES, OM_VECTOR_SOURCE, type OmLeaf } from './memory.js';
 export type { Memory, MemoryContextProvenance, RecalledMessageRef, MemLeaf } from './memory.js';
 export { getRunCost, toTraceSpans } from './cost.js';
 // Sibling packages (@gnldev/otel's span builder) read the same journal records and hit the same

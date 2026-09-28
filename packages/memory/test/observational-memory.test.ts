@@ -223,7 +223,7 @@ describe('Track 4 OM vector-indexed retrieval (D4-om)', () => {
     expect(embedCounter.calls).toBe(1);
     expect(store.items).toHaveLength(1);
     expect(store.items[0]!.id).toBe('om:th:0:0'); // deterministic: om:<threadId>:<level>:<seq>
-    expect(store.items[0]!.metadata).toEqual({ threadId: 'th', level: 0, fromSeq: 0, toSeq: 7, obsId: 'obs-0' });
+    expect(store.items[0]!.metadata).toEqual({ source: 'observational-memory', threadId: 'th', level: 0, fromSeq: 0, toSeq: 7, obsId: 'obs-0' });
 
     // Partial-crash / replay simulation (same shape as the "durable twist" test above): reset OM progress
     // so compaction re-enters the SAME seq=0. Both the LLM call AND the embed call are journal-memoized →
