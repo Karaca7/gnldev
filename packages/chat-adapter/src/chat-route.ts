@@ -10,7 +10,8 @@ import { Hono } from 'hono';
 import { convertToModelMessages } from 'ai';
 import type { UIMessage } from 'ai';
 import { createGnl, scopeConfigToOrg, RunThreadMismatchError, blockedErrorCode, callerConflictCode, publicConflictDetail, upstreamFailure, sealRequestContext, resolveWorkIdentity } from '@gnldev/durable';
-import type { CreateGnlConfig, GnlIdentity } from '@gnldev/durable';
+import type { CreateGnlConfig } from '@gnldev/durable';
+import { callerOfRequest, type Identify } from '@gnldev/auth';
 import { toUIMessageStreamResponse } from './ui-stream.js';
 
 export interface CreateChatRouteOptions {
@@ -19,31 +20,27 @@ export interface CreateChatRouteOptions {
   /** Resolve the conversation `threadId` (memory continuity across requests) from the request/body. */
   resolveThreadId?: (c: Context, body: any) => string | undefined;
   /**
-   * WHO this request acts for, WHICH ORGANIZATION, and optionally WHICH CONVERSATION — read from
-   * something the SERVER trusts (a session cookie, a verified JWT, `principalOf(req)?.id`), never from
-   * the body. The same signature @gnldev/agui's route takes, so a host writes it once for both.
+   * WHO is calling — the application's one answer (@gnldev/auth `Identify`), the same function it hands
+   * @gnldev/server, @gnldev/agui and @gnldev/mcp. It reads a session cookie, a verified token or a user
+   * store — never the body — and returns a `Principal`, or nothing for an anonymous request.
    *
-   * The ONLY source of the subject. A `resolveResourceId(c, body)` hook used to sit beside it and win
-   * over it; it handed the host the parsed body, which is the one place a subject must never come
-   * from, and two hooks answering "who" is how one of them ends up unwired. It is gone.
+   * The route maps the principal with `engineCallerOf` and hands the engine that caller:
    *
-   * Why the route needs it: the engine treats the reserved context keys as "the server established
-   * this". MEASURED before the route sealed: a POST carrying `{"context":{"__gnl_resourceId":"victim"}}`
-   * produced a run owned by that name. The route ALWAYS seals now; with no resolver the seal carries
-   * no identity, which strips the reserved keys — a forged subject cannot get through, and none is
-   * asserted either.
+   *   subject      → that user; its runs and its thread are its own
+   *   operator     → staff; reaches every run and thread in its organization
+   *   application  → the end user it names in the body's `resourceId` — read for an application ONLY,
+   *                  the same field @gnldev/server's REST routes read. Naming nobody is a 400.
+   *   nothing      → unknown: the run is born ownerless-unknown and reaches no user's or staff's thread
    *
-   * `resolveThreadId` still wins for the thread: choosing a conversation is not an identity claim,
-   * and the thread's owner is checked separately.
+   * The organization comes from the principal (`orgId`), never from the body.
    *
    * Takes the web `Request`, not the Hono `Context`: a host binding this route from Express or Fastify
-   * has a Request and no Context. Called ONCE per request — a resolver that reads the request may
-   * answer differently the second time.
+   * has a Request and no Context. Called ONCE per request.
    *
-   * HONEST BOUND: this route ships with no auth of its own. A resolver reading an unauthenticated
-   * request asserts a subject nobody verified. Put auth in front of this route.
+   * HONEST BOUND: this route ships with no auth of its own. An `identify` that trusts an
+   * unauthenticated request asserts a caller nobody verified.
    */
-  identity?: GnlIdentity;
+  identify?: Identify;
   /**
    * FAZ-2 — per-run concurrency lock, ON by default (`{ ttlMs: 300_000 }`). Two CONCURRENT requests
    * with the same runId (double-click, two tabs, a retry racing the original) used to BOTH execute;
@@ -189,18 +186,24 @@ export function createChatRoute(
   if ((opts as { resolveResourceId?: unknown }).resolveResourceId !== undefined) {
     throw new TypeError(
       '[gnl chat-route] `resolveResourceId` was removed: it handed the resolver the request body, the one place a ' +
-      'subject must never come from. Use `identity: (req) => ({ resourceId })`, reading your session or a verified token.',
+      'subject must never come from. Use `identify: (req) => principal`, reading your session or a verified token.',
+    );
+  }
+  if ((opts as { identity?: unknown }).identity !== undefined) {
+    throw new TypeError(
+      '[gnl chat-route] `identity` was replaced by `identify` (0.7.0): it returns a Principal from @gnldev/auth — ' +
+      "`{ kind: 'subject', id, orgId, roles: [] }` for an end user — so the route can tell a user from staff.",
     );
   }
   // PRODUCTION REFUSES a route that names nobody. It used to warn and serve: every caller, with or
   // without a credential, ran the model and left an ownerless run (measured). The recommended shape
   // is a surface on the REST API, where the auth provider decides who the caller is. A host that
-  // really has no per-user identity says so explicitly with `identity: () => undefined`.
-  if (process.env.NODE_ENV === 'production' && !opts.identity) {
+  // really has no per-user identity says so explicitly with `identify: () => undefined`.
+  if (process.env.NODE_ENV === 'production' && !opts.identify) {
     throw new Error(
-      '[gnl chat-route] no `identity` in production: this route has no auth of its own, so every caller would run the model ' +
+      '[gnl chat-route] no `identify` in production: this route has no auth of its own, so every caller would run the model ' +
       'and leave an ownerless run. Mount it on the REST API instead — createRestApi(config, { auth, surfaces: [chatSurface()] }) — ' +
-      'or pass `identity: (req) => ({ resourceId })` from your verified session. `identity: () => undefined` opts out, explicitly.',
+      'or pass `identify: (req) => principal` from your verified session. `identify: () => undefined` opts out, explicitly.',
     );
   }
   const app = new Hono();
@@ -213,27 +216,27 @@ export function createChatRoute(
       threadId?: string;
       approvals?: Record<string, boolean>;
       context?: Record<string, unknown>;
+      resourceId?: unknown;
     };
     const lastMsg = body.messages?.[body.messages.length - 1];
-    // Bir kez çözülür: hem mühür hem resourceId aynı değeri kullansın. İsteğe bakan bir çözücüyü
-    // iki kez çağırmak, iki farklı cevap alma ihtimali demektir. `identity` de aynı sebeple tek çağrı:
-    // iki alanı birden besliyor, ikisi ayrı çağrıdan gelirse ayrı cevaplardan gelebilir.
-    // KİMLİK ARTIK ÖNDE ÇÖZÜLÜYOR: aşağıdaki anahtar kararı özneyi bilmeden verilemiyor.
-    const ident = await opts.identity?.(c.req.raw);
-    const subject = ident?.resourceId;
-    // WHICH ORGANIZATION. Only `identity` can answer it — there is no `resolveOrgId` hook and there
-    // will not be one; the hook that already resolves the subject from a verified session is the
-    // right place for the boundary that CONTAINS the subject. Never read from the body: an org is an
-    // isolation boundary, and a caller who picks their own has none (sealRequestContext strips the
-    // reserved key for exactly this reason).
-    const org = ident?.orgId;
+    // WHO, resolved once and FIRST: the key decision below cannot be made without the subject, and a
+    // resolver that reads the request may answer differently the second time. `body.resourceId` is
+    // read by `callerOfRequest` for an APPLICATION principal only — a user or staff naming someone in
+    // the body names nobody.
+    const who = await callerOfRequest(opts.identify, c.req.raw, body.resourceId);
+    if ('refused' in who) return c.json({ error: who.refused }, 400);
+    const caller = who.caller;
+    const subject = caller.kind === 'user' ? caller.id : undefined;
+    // WHICH ORGANIZATION: the principal's, never the body's. An org is an isolation boundary, and a
+    // caller who picks their own has none (sealRequestContext strips the reserved key for this reason).
+    const org = caller.kind === 'unknown' ? undefined : caller.orgId;
     // A prebuilt `{ gnl }` is ONE instance over one storage, so it cannot be split by organization.
     // Serving an org-bound turn from it put two organizations' identical turns on one run id —
     // measured: globex was replayed acme's answer. Refused, loudly, rather than served across the line.
     if (org && 'gnl' in config) {
       return c.json({
         error: 'this chat route was built from a prebuilt `{ gnl }` instance, which cannot keep organizations apart, '
-          + `and \`identity\` named organization '${org}'. Pass the config (createChatRoute(config, ...)) so each `
+          + `and \`identify\` named organization '${org}'. Pass the config (createChatRoute(config, ...)) so each `
           + 'organization gets its own partition.',
       }, 500);
     }
@@ -305,9 +308,9 @@ export function createChatRoute(
       );
     }
     // The conversation id (NOT the per-turn runId) anchors memory — see the runId note in the JSDoc.
-    // `identity` sits BELOW the dedicated resolver and ABOVE the body: it is server-derived, the body
-    // is not, so it must not be overridable by what the caller sent.
-    const threadId = opts.resolveThreadId?.(c, body) ?? ident?.threadId ?? body.threadId ?? body.id ?? runId;
+    // Choosing a conversation is not an identity claim: the ENGINE checks the thread's owner against
+    // the caller (admitThreadRun), so a user naming staff's or another user's thread is refused there.
+    const threadId = opts.resolveThreadId?.(c, body) ?? body.threadId ?? body.id ?? runId;
     // V1: `tools` is not passed to convertToModelMessages — a conversation whose CLIENT-side history
     // still carries tool-invocation parts from a prior turn round-trips as best-effort (text/reasoning
     // are unaffected). Fine for the common case (server-side history via toUIMessages + threadId memory
@@ -348,8 +351,11 @@ export function createChatRoute(
         context: sealRequestContext(body.context ?? {}, {
           ...(subject ? { resourceId: subject } : {}),
           ...(org ? { orgId: org } : {}),
+          ...(caller.kind === 'staff' ? { staff: true } : {}),
         }),
-        ...(subject ? { resourceId: subject } : {}),
+        // THE CALLER, from the one mapping. The seal above carries the same decision into the
+        // context (it wins in the engine), and an `unknown` seals nothing: it stays closed.
+        caller,
         ...(lock ? { lock } : {}),
         // P0.2 thread the REQUEST's AbortSignal through to generation — a client
         // disconnect (tab close, useChat's `stop()`, navigation away) stops token generation instead of

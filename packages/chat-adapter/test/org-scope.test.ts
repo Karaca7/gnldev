@@ -27,7 +27,7 @@ function route() {
     },
   };
   const app = createChatRoute({ journal, agents: { a: { model } } }, {
-    identity: (req) => ({ resourceId: 'u1', orgId: req.headers.get('x-test-org') ?? undefined }),
+    identify: (req) => ({ kind: 'subject', id: 'u1', roles: [], orgId: req.headers.get('x-test-org') ?? undefined }),
   });
   const post = async (org: string) => {
     const res = await app.request('/agents/a/chat', {
@@ -62,7 +62,7 @@ describe('chat route: a prebuilt { gnl } cannot keep organizations apart', () =>
   it('an org-bound turn is refused, not served from the shared instance', async () => {
     const { createGnl } = await import('@gnldev/durable');
     const gnl = createGnl({ journal: new InMemoryJournal(), agents: {} } as never);
-    const app = createChatRoute({ gnl }, { identity: () => ({ resourceId: 'u1', orgId: 'acme' }) });
+    const app = createChatRoute({ gnl }, { identify: () => ({ kind: 'subject', id: 'u1', roles: [], orgId: 'acme' }) });
     const res = await app.request('/agents/a/chat', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ id: 'c1', messages: [{ id: 'm1', role: 'user', parts: [{ type: 'text', text: 'hi' }] }] }),

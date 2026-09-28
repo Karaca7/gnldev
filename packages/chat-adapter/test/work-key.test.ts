@@ -61,7 +61,7 @@ const turn = (convo: string, msg: string) => ({
 
 describe('chat route — a named subject promotes the turn key to a workKey', () => {
   it('the derived string names the work; the engine names the run', async () => {
-    const { journal, post } = mkRoute({ identity: () => ({ resourceId: 'u-ayse' }) });
+    const { journal, post } = mkRoute({ identify: () => ({ kind: 'subject', id: 'u-ayse', roles: [] }) });
     const res = await post(turn('c1', 'm1'));
     expect(res.status).toBe(200);
     const id = derivedRunId('agent:pay', 'resource', 'u-ayse', 'c1:m1');
@@ -73,7 +73,7 @@ describe('chat route — a named subject promotes the turn key to a workKey', ()
   });
 
   it('the same turn retried replays; a new turn is new work', async () => {
-    const { post } = mkRoute({ identity: () => ({ resourceId: 'u-ayse' }) });
+    const { post } = mkRoute({ identify: () => ({ kind: 'subject', id: 'u-ayse', roles: [] }) });
     await (await post(turn('c1', 'm1'))).text();
     const retry = await post(turn('c1', 'm1'));
     expect(retry.headers.get('X-Gnl-Idempotency-Status')).toBe('replay');
@@ -86,7 +86,7 @@ describe('chat route — a named subject promotes the turn key to a workKey', ()
 
   it('the same conversation id from two people is two jobs', async () => {
     let who = 'u-ayse';
-    const { post } = mkRoute({ identity: () => ({ resourceId: who }) });
+    const { post } = mkRoute({ identify: () => ({ kind: 'subject', id: who, roles: [] }) });
     const a = await post(turn('c1', 'm1'));
     await a.text();
     who = 'u-veli';
@@ -96,7 +96,7 @@ describe('chat route — a named subject promotes the turn key to a workKey', ()
   });
 
   it('an explicit body.runId is still raw — the two regimes do not touch', async () => {
-    const { journal, post } = mkRoute({ identity: () => ({ resourceId: 'u-ayse' }) });
+    const { journal, post } = mkRoute({ identify: () => ({ kind: 'subject', id: 'u-ayse', roles: [] }) });
     const res = await post({ ...turn('c1', 'm1'), runId: 'mine-1' });
     expect(res.headers.get('X-Gnl-Run-Id')).toBe('mine-1');
     await res.text();
@@ -105,7 +105,7 @@ describe('chat route — a named subject promotes the turn key to a workKey', ()
 
   it('resolveRunId is still a runId resolver — it names an id, not a job', async () => {
     const { journal, post } = mkRoute({
-      identity: () => ({ resourceId: 'u-ayse' }),
+      identify: () => ({ kind: 'subject', id: 'u-ayse', roles: [] }),
       resolveRunId: () => 'host-chosen',
     });
     const res = await post(turn('c1', 'm1'));
@@ -115,7 +115,7 @@ describe('chat route — a named subject promotes the turn key to a workKey', ()
   });
 
   it('an Idempotency-Key header names the work when there is somebody to name it for', async () => {
-    const { journal, post } = mkRoute({ identity: () => ({ resourceId: 'u-ayse' }) });
+    const { journal, post } = mkRoute({ identify: () => ({ kind: 'subject', id: 'u-ayse', roles: [] }) });
     const res = await post(turn('c1', 'm1'), { 'Idempotency-Key': 'gateway-key' });
     const id = derivedRunId('agent:pay', 'resource', 'u-ayse', 'gateway-key');
     expect(res.headers.get('X-Gnl-Run-Id')).toBe(id);
@@ -159,7 +159,7 @@ describe('chat route — with nobody named, the derivation stays exactly what it
 describe('chat route — a conflict body reflects the caller\'s own workKey', () => {
   it('detail carries the workKey the request declared; the sentence does not', async () => {
     // Same turn key, different content: `run1_` enforces strictInput unconditionally (§5).
-    const { post } = mkRoute({ identity: () => ({ resourceId: 'u-ayse' }) });
+    const { post } = mkRoute({ identify: () => ({ kind: 'subject', id: 'u-ayse', roles: [] }) });
     await (await post(turn('c1', 'm1'))).text();
     const changed = {
       id: 'c1',
@@ -203,7 +203,7 @@ describe('chat route — the org in the seal reaches the derivation (REST parity
   }
 
   it('an org-scoped agent derives the SAME id REST would derive', async () => {
-    const { journal, post } = mkOrgRoute({ identity: () => ({ resourceId: 'u-ayse', orgId: 'org-akme' }) });
+    const { journal, post } = mkOrgRoute({ identify: () => ({ kind: 'subject', id: 'u-ayse', roles: [], orgId: 'org-akme' }) });
     const res = await post(turn('c1', 'm1'));
     expect(res.status).toBe(200);
     // What @gnldev/server computes for the same tuple — the org address, not the sentinel.
@@ -217,7 +217,7 @@ describe('chat route — the org in the seal reaches the derivation (REST parity
   it('two people in ONE org, same turn key → one run; a second org is a second run', async () => {
     let org = 'org-akme';
     let who = 'u-ayse';
-    const { post } = mkOrgRoute({ identity: () => ({ resourceId: who, orgId: org }) });
+    const { post } = mkOrgRoute({ identify: () => ({ kind: 'subject', id: who, roles: [], orgId: org }) });
     const a = await post(turn('c1', 'm1'));
     await a.text();
     who = 'u-veli';
@@ -231,7 +231,7 @@ describe('chat route — the org in the seal reaches the derivation (REST parity
   });
 
   it('a RESOURCE-scoped agent ignores the org — the scope decides the address, not the request', async () => {
-    const { post } = mkRoute({ identity: () => ({ resourceId: 'u-ayse', orgId: 'org-akme' }) });
+    const { post } = mkRoute({ identify: () => ({ kind: 'subject', id: 'u-ayse', roles: [], orgId: 'org-akme' }) });
     const res = await post(turn('c1', 'm1'));
     expect(res.headers.get('X-Gnl-Run-Id')).toBe(derivedRunId('agent:pay', 'resource', 'u-ayse', 'c1:m1'));
     await res.text();

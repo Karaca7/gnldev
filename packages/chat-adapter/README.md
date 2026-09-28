@@ -58,18 +58,22 @@ const chat = useChat({
 
 ## Chat route (standalone)
 
-For a host that already authenticates the request itself (a session cookie) and passes the user in
-through `identity`. In production it refuses to start without `identity`; pass
-`identity: () => undefined` to say, explicitly, that there is no per-user identity.
+For a host that authenticates the request itself (a session cookie, a verified token) and tells the
+route who is calling through `identify`. In production it refuses to start without `identify`; pass
+`identify: () => undefined` to say, explicitly, that there is no per-user identity.
 
 ```ts
 import { createChatRoute } from '@gnldev/chat-adapter';
+import type { Principal } from '@gnldev/auth';
 
-// Your session lookup: the user this request is for, as YOUR server established it.
+// Your session lookup: who this request is, as YOUR server established it.
 declare function userOf(req: Request): Promise<string | undefined>;
 
 app.route('/api', createChatRoute({ gnl }, {
-  identity: async (req) => ({ resourceId: await userOf(req) }),
+  identify: async (req): Promise<Principal | undefined> => {
+    const id = await userOf(req);
+    return id ? { kind: 'subject', id, roles: [] } : undefined;
+  },
 }));
 // POST /api/agents/:name/chat — useChat({ api: '/api/agents/pay/chat' }) works unchanged.
 ```
@@ -85,69 +89,81 @@ WHOLE conversation, so every later turn would replay turn 1 from the journal for
 derived string *is* — a name the engine hashes into an id, or the id itself — depends on whether the
 route can name the user; see [the idempotency contract](#the-idempotency-contract).
 
-## Who is this request for? (`identity`)
+## Who is calling? (`identify`)
 
 This route ships with **no auth of its own** — deliberately, and the same posture as `@gnldev/agui`.
-What that leaves you responsible for is one thing: naming the end user each run acts for.
-
-**Why it is not optional.** GNL has no end-user identity of its own. An end user is a *subject* a
-trusted application names, not a principal GNL authenticates. The engine treats a few reserved
-context keys as "the server established this" — and an early version of this route forwarded
-`body.context` verbatim, so the reserved key arrived from whoever sent the request. Measured against
-a running app: a plain POST carrying `{"context":{"__gnl_resourceId":"VICTIM"}}` produced a run owned
-by that name, and the ownership stamp followed it.
-
-The route now **always seals** the context, so that specific forgery is closed whether or not you
-pass a resolver. What a resolver decides is the other half: whether the run has an owner at all.
+What that leaves you responsible for is one function: `identify(req)`, which returns a `Principal`
+from `@gnldev/auth`. It is the same function `@gnldev/agui`, `@gnldev/mcp` and `@gnldev/server` take, so you
+write "who is this caller" once. An `AuthProvider` is one as it is:
 
 ```ts
 import { createChatRoute } from '@gnldev/chat-adapter';
+import { roleAuth } from '@gnldev/auth';
 
-const chat = createChatRoute({ gnl }, {
-  // ONE hook for both fields. The same signature @gnldev/agui's route takes.
-  identity: (req) => {
-    const session = db.sessions.get(req.headers.get('cookie'));   // YOUR session store
-    return session ? { resourceId: session.userId, threadId: session.conversationId } : undefined;
-  },
+const auth = roleAuth({ endUsers: { secret: process.env.GNL_END_USER_SECRET!, orgId: 'acme' } })!;
+
+const chat = createChatRoute(config, {
+  identify: (req) => auth.authenticate(req), // an end user's signed token → that user, in acme
 });
 ```
 
-`identity` receives the **web `Request`**, not the Hono context, so a host bridging this route from
-Express or Fastify can use it. It is called once per request and may return `undefined`.
+The route maps the principal to the engine's caller with `engineCallerOf`, the one mapping every door
+uses:
 
-**Read it from something the server trusts** — a session cookie, a verified JWT,
-`principalOf(req)?.id` — and **never from the request body**. A body-supplied subject is the caller
-naming whoever they like, which is the hole the context seal exists to close.
+| `principal.kind` | The run acts for | Reaches |
+|---|---|---|
+| `subject` | that user (`principal.id`) | its own runs and threads |
+| `operator` | staff | every run and thread in its organization |
+| `application` | the end user it names in the body's `resourceId` | that user's runs and threads |
+| *(nothing)* | `unknown` | nothing that belongs to a user or to staff |
 
-**If you give none.** Nothing is asserted and nothing is forged: runs are born **ownerless**. That is
-safe against impersonation and weak in the other direction — an ownership gate with no owner to
-compare against refuses nobody, so the protection reads as present and is not. Memory also has
-nothing to scope on, so per-user recall and `listThreads` have no subject to key by. In
-`NODE_ENV=production` the route says so once, at construction, with a `console.warn` — it never
-throws, because a deployment whose boundary genuinely lives in front of this route is not broken.
+The **organization** is `principal.orgId`. It is never read from the body: an org is an isolation
+boundary, and a caller who picks their own has none. A run of an org-bound caller is stored in that
+organization's partition, where the REST API and Studio read it.
 
-**Precedence**, field by field:
+**The thread is checked, not trusted.** `resolveThreadId`, then `body.threadId`, then `body.id` picks
+the conversation — choosing one is not an identity claim. The engine checks the thread's owner against
+the caller: a user naming staff's thread or another user's thread gets `409 thread_owner_mismatch`,
+and the model never sees that thread's history.
 
-| Field | Order |
-|---|---|
-| `resourceId` | `identity(req).resourceId` → *(none)* |
-| `threadId` | `resolveThreadId(c, body)` → `identity(req).threadId` → `body.threadId` → `body.id` → the runId |
+### An application acting for its users
 
-`identity` is the only source of the subject. The older `resolveResourceId(c, body)` hook was removed:
-it handed you the request body, the one place a subject must never come from. Passing it now throws at
-construction. `resolveThreadId` stays, because choosing a conversation is not an identity claim and the
-thread's owner is checked separately.
+An `application` principal (a backend holding an application credential, `roleAuth`'s `client`) speaks
+**for** one of its users on each request. It names that user in the body:
 
-**Honest bound.** A resolver reading an *unauthenticated* request asserts a subject nobody verified.
-Put auth in front of this route — or compose `@gnldev/server`'s `createRestApi` auth middleware
-around it — or the subject is only as trustworthy as the caller.
+<!-- doccheck: skip — a JSON request body, not TypeScript -->
+```json
+{ "id": "conv-1", "messages": [ ... ], "resourceId": "u-ayse" }
+```
+
+`resourceId` is read **for an application only** — the same field, and the same rule, as
+`@gnldev/server`'s REST routes. A user who sends it is still itself; staff is still staff. An
+application that names nobody, or a name no user can carry (`operator:…`), gets a `400` and nothing
+runs: it is never treated as staff and never as anonymous.
+
+**Read the principal from something the server trusts** — a session cookie, a verified JWT, your
+`AuthProvider` — and **never from the request body**. The route always seals the request context too,
+so a body carrying `{"context":{"__gnl_resourceId":"VICTIM"}}` names nobody.
+
+**If `identify` answers nothing** (or `identify: () => undefined`), the caller is `unknown`. Its runs
+are closed to every user and to staff's threads. Memory has nothing to scope on, so per-user recall
+and `listThreads` have no subject to key by.
+
+**Honest bound.** An `identify` that trusts an *unauthenticated* request asserts a caller nobody
+verified. Put auth in front of this route — or mount `chatSurface()` on `@gnldev/server` instead.
+
+**Breaking in 0.7.** `identity: (req) => ({ resourceId, orgId, threadId })` was replaced by
+`identify: (req) => Principal`: the old shape could not say "this caller is staff", and the standalone
+route let an end user read a staff member's ownerless thread (measured). Passing `identity` now throws
+at construction. `threadId` is no longer taken from the identity hook — use `resolveThreadId`. The
+package now depends on `@gnldev/auth`.
 
 ## The idempotency contract
 
 **Two regimes, decided by whether the route can name a subject.** The per-turn key
 (`${body.id}:${lastMessage.id}`, or an `Idempotency-Key` header when a gateway sends one) is this
-route's name for *the work this turn is*. When `identity` gives that turn an
-owner, the key is promoted to a **`workKey`**: the engine derives the run's id from it
+route's name for *the work this turn is*. When `identify` names a user for that turn (its
+owner), the key is promoted to a **`workKey`**: the engine derives the run's id from it
 (`run1_<digest>`) and the string you sent stops being a journal key. When there is nobody to name —
 the anonymous quickstart, no auth, no session store — the same string stays the raw runId it has
 always been, byte for byte. Deriving an id from a name needs an *address* to make it unique within,
@@ -156,12 +172,12 @@ minutes with an error message. Your retry contract is identical in both: the sam
 produce the same key, and the same key lands on the same run.
 
 One migration note, because the regime is decided by the resolver: **adopting this version — or
-wiring `identity` into a deployment that ran without it — changes which id an in-flight turn's retry
+wiring `identify` into a deployment that ran without it — changes which id an in-flight turn's retry
 lands on** (raw key on the old pods, `run1_` on the new). During that window a retried turn can run
 once more. Close the window by draining in-flight requests over the deploy rather than rolling
 through it.
 
-**Turns stored before 0.7.** A turn whose `identity` names an organization is stored in that
+**Turns stored before 0.7.** A turn whose caller belongs to an organization is stored in that
 organization's partition (`org:<id>:`), the same place the REST API and Studio read. Earlier versions
 stored every turn in the shared root, so those older turns are not in any organization's history.
 

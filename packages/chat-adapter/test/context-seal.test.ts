@@ -14,12 +14,12 @@ import { GNL_RESOURCE_ID_KEY } from '@gnldev/durable';
 
 /** Koşuma NE ULAŞTIĞINI yakalayan sahte gnl — motora hiç inmeden sözleşmeyi ölçer. */
 function spyGnl() {
-  const seen: { context?: Record<string, unknown>; resourceId?: string }[] = [];
+  const seen: { context?: Record<string, unknown>; resourceId?: string; caller?: { kind: string; id?: string } }[] = [];
   return {
     seen,
     gnl: {
       stream: async (_name: string, opts: any) => {
-        seen.push({ context: opts.context, resourceId: opts.resourceId });
+        seen.push({ context: opts.context, resourceId: opts.resourceId, caller: opts.caller });
         return {
           toUIMessageStream: () => new ReadableStream({ start: (c) => c.close() }),
           text: Promise.resolve(''),
@@ -52,10 +52,10 @@ describe('chat rotası: bağlam mührü', () => {
 
   it('çözücü verilirse SUNUCUNUN değeri yazılır, istemcininki değil', async () => {
     const { gnl, seen } = spyGnl();
-    const app = createChatRoute({ gnl }, { identity: () => ({ resourceId: 'ayse' }) });
+    const app = createChatRoute({ gnl }, { identify: () => ({ kind: 'subject', id: 'ayse', roles: [] }) });
     await post(app, { runId: 'r2', messages: MSG, context: { [GNL_RESOURCE_ID_KEY]: 'KURBAN' } });
     expect(seen[0]!.context?.[GNL_RESOURCE_ID_KEY]).toBe('ayse');
-    expect(seen[0]!.resourceId).toBe('ayse');
+    expect(seen[0]!.caller).toEqual({ kind: 'user', id: 'ayse' });
   });
 
   it('çözücü yoksa özne HİÇ beyan edilmez — sessiz bir varsayılan uydurulmaz', async () => {
@@ -65,12 +65,13 @@ describe('chat rotası: bağlam mührü', () => {
     const app = createChatRoute({ gnl });
     await post(app, { runId: 'r3', messages: MSG, resourceId: 'gövdeden', context: {} });
     expect(seen[0]!.resourceId).toBeUndefined();
+    expect(seen[0]!.caller).toEqual({ kind: 'unknown' });
     expect(GNL_RESOURCE_ID_KEY in (seen[0]!.context ?? {})).toBe(false);
   });
 
   it('bağlam hiç gönderilmese de mühür çalışır', async () => {
     const { gnl, seen } = spyGnl();
-    const app = createChatRoute({ gnl }, { identity: () => ({ resourceId: 'mehmet' }) });
+    const app = createChatRoute({ gnl }, { identify: () => ({ kind: 'subject', id: 'mehmet', roles: [] }) });
     await post(app, { runId: 'r4', messages: MSG });
     expect(seen[0]!.context?.[GNL_RESOURCE_ID_KEY]).toBe('mehmet');
   });
