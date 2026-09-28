@@ -191,8 +191,11 @@ What it borrowed from server now lives in `@gnldev/durable`, which every door al
 
 - **`GnlClient.clearToken()`**: forget the held token at logout or when the signed-in user changes,
   so the next user's requests do not go out on the previous user's token until it expires.
-- **`gnl dev` serves the project's `surfaces`** (the scaffold now declares its chat surface in
-  gnl.config.ts) and answers `APP_ORIGIN` with CORS, as a scaffolded server does.
+- **`gnl dev` serves the project's `surfaces`** and answers `APP_ORIGIN` with CORS, as a scaffolded
+  server does. The scaffold declares its chat surface in gnl.config.ts whenever it writes one: with
+  `--features chat`, and with `--host` / `--serving own|mount`, so `pnpm dev` and `pnpm start` both
+  answer `POST /agents/assistant/chat`. `gnl add host` into an existing project leaves gnl.config.ts
+  alone and prints the `surfaces: [chat]` line to add.
 - **`subjectIdProblem`** (@gnldev/auth): the one rule for what can be an end user's id.
 
 - **Background work keeps its owner end to end.** `ctx.enqueue` in a queue handler enqueues a follow-up

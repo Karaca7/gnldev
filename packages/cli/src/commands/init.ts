@@ -262,7 +262,10 @@ export const initCommand: Command = {
         process.exit(1);
       }
       const featuresCsv = flag(ctx.argv, 'features');
-      const featureIds = featuresCsv !== undefined ? parseFeatures(featuresCsv).filter((f) => f !== 'e2e') : [];
+      const parsedIds = featuresCsv !== undefined ? parseFeatures(featuresCsv).filter((f) => f !== 'e2e') : [];
+      // Mounting writes src/app.ts, which serves the chat surface; the chat feature declares the same
+      // surface in gnl.config.ts so `gnl dev` serves it too (see scaffold()'s compose).
+      const featureIds = serving === 'mount' && host && !parsedIds.includes('chat') ? [...parsedIds, 'chat'] : parsedIds;
       const recipes = featureIds.map((f) => RECIPES[f]).filter((r): r is Recipe => r !== undefined);
 
       console.log(`${cyan('existing project detected')} (package.json) — integrating gnl instead of scaffolding.`);

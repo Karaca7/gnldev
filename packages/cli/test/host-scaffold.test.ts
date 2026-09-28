@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { scaffold } from '../src/scaffold.js';
 import { HOSTS, HOST_IDS } from '../src/hosts.js';
+import { DEFAULT_ANSWERS } from '../src/init-answers.js';
 
 const dirs: string[] = [];
 const fresh = (): string => {
@@ -41,6 +42,17 @@ describe('gnl init --host', () => {
     for (const dep of Object.keys(HOSTS.find((h) => h.id === id)!.deps ?? {})) {
       expect(p.dependencies[dep], `${id} needs ${dep}`).toBeTruthy();
     }
+  });
+
+  it.each(HOST_IDS)('%s: gnl.config.ts declares the chat surface src/app.ts serves, so `gnl dev` serves it too', (id) => {
+    // Release finding C-2: with a host, src/app.ts mounted the chat surface and gnl.config.ts did
+    // not declare it, so `pnpm start` answered POST /agents/assistant/chat and `pnpm dev` 404'd.
+    const dir = fresh();
+    scaffold(dir, { template: 'minimal', host: id, answers: { ...DEFAULT_ANSWERS, identity: 'end-users' } });
+    const config = readFileSync(join(dir, 'gnl.config.ts'), 'utf8');
+    expect(config).toContain("import { chat } from './src/routes/chat.js';");
+    expect(config).toMatch(/^\s*surfaces: \[chat\],$/m);
+    expect(readFileSync(join(dir, 'src/app.ts'), 'utf8')).toContain('surfaces: [chat]');
   });
 
   it('says where the choice applies — and where it does not', () => {

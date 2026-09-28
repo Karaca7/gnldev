@@ -463,7 +463,12 @@ export function scaffold(targetDir: string, opts: ScaffoldOptions = {}): Scaffol
 
   const answers = opts.answers ?? DEFAULT_ANSWERS;
   const compose = (features: readonly string[], aliasedFrom?: string): ScaffoldResult => {
-    const res = scaffoldFeatures(dir, name, [...features], !!opts.e2e, answers);
+    // A project with a server gets the chat surface as a FEATURE, not only as the file addHost
+    // writes: the feature is what puts `surfaces: [chat]` into gnl.config.ts, and that line is what
+    // `gnl dev` serves. Without it `pnpm start` answered POST /agents/:name/chat and `pnpm dev`
+    // answered 404 for the same project.
+    const withChat = opts.host && !features.includes('chat') ? [...features, 'chat'] : [...features];
+    const res = scaffoldFeatures(dir, name, withChat, !!opts.e2e, answers);
     if (opts.host) addHost(dir, opts.host, opts.hostMode);
     return { ...res, files: listFiles(dir).sort(), ...(aliasedFrom ? { aliasedFrom } : {}) };
   };

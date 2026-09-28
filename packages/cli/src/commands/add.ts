@@ -45,6 +45,14 @@ export const addCommand: Command = {
       const { hostById } = await import('../hosts.js');
       addHost(resolve('.'), id, mount ? 'mount' : 'own');
       const host = hostById(id)!;
+      // gnl.config.ts is the reader's file and is not edited; the one line that makes `gnl dev`
+      // serve the chat surface src/app.ts serves is printed instead.
+      const configText = readFileSync(resolve('gnl.config.ts'), 'utf8');
+      if (!/\bsurfaces\s*:/.test(configText)) {
+        console.log(`${cyan('So `gnl dev` serves the chat route too, add to gnl.config.ts:')}`);
+        console.log(`  import { chat } from './src/routes/chat.js';`);
+        console.log(`  surfaces: [chat],`);
+      }
       if (mount) {
         console.log(`${green('✓')} created ${bold('src/app.ts')}   (the GNL surface — this is what you mount)`);
         console.log(`\n${cyan(`Paste into your ${host.label} server:`)}`);
