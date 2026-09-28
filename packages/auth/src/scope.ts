@@ -147,3 +147,42 @@ export function assertAssignablePrivileges(
   }
   return { ok: true };
 }
+
+/**
+ * "Who is this request?", answered once by the application and handed to every door the same way:
+ * the REST API, the chat and AG-UI routes, MCP. It reads a session cookie, a verified token or a
+ * user store — never the request body — and returns the principal, or nothing for an anonymous one.
+ */
+export type Identify = (req: Request) => Principal | null | undefined | Promise<Principal | null | undefined>;
+
+/**
+ * The engine's caller (@gnldev/durable `Caller`), written structurally so this package keeps depending
+ * on nothing. The shapes must stay equal to durable's; a test in each package holds them to it.
+ */
+export type EngineCaller = { kind: 'user'; id: string; orgId?: string } | { kind: 'staff'; orgId?: string } | { kind: 'unknown' };
+
+/**
+ * A principal as the engine's caller — the one mapping every door uses (ADR-0002).
+ *
+ *   subject      → user, its own id
+ *   operator     → staff, in its organization
+ *   application  → the user it names on this request (`named`), when that id can be a user's;
+ *                  unknown otherwise — an application speaks FOR somebody, never as staff
+ *   unnamed      → unknown
+ *
+ * `unknown` is closed in the engine: it reaches no user's and no staff's record.
+ */
+export function engineCallerOf(principal: Principal | null | undefined, named?: string): EngineCaller {
+  const orgId = principal?.orgId;
+  const withOrg = <T extends object>(c: T): T & { orgId?: string } => (orgId ? { ...c, orgId } : c);
+  switch (callerKind(principal)) {
+    case 'subject':
+      return withOrg({ kind: 'user' as const, id: principal!.id! });
+    case 'operator':
+      return withOrg({ kind: 'staff' as const });
+    case 'application':
+      return typeof named === 'string' && subjectIdProblem(named) === null ? withOrg({ kind: 'user' as const, id: named }) : { kind: 'unknown' };
+    default:
+      return { kind: 'unknown' };
+  }
+}
