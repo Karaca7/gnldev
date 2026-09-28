@@ -7,7 +7,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   acquireRunLock, requireCapability, createPollLoop, orgPrefix, withOrgStorage, orgStorageScopeOf, ownedName, ownedPrefix,
-  claimRunOwner, runDurable, user, staff, UNKNOWN, toJournal, ownerOfName,
+  claimRunOwner, runDurable, user, staff, UNKNOWN, toJournal, ownerOfName, assertRootWorkForErasure,
 } from '@gnldev/durable';
 import type { Storage, WorkStore, RunJournal, LogRecord, Caller, RunDurableArgs, DurableResult } from '@gnldev/durable';
 
@@ -612,6 +612,7 @@ export function jobEraser(storage: Storage): SubjectEraser {
     async erase(owner) {
       requireCapability(storage, 'work');
       const work = storage.work!;
+      assertRootWorkForErasure(work, '@gnldev/queue: jobEraser');
       if (typeof work.deleteIdPrefix !== 'function' || typeof work.deletePrefix !== 'function') {
         throw new Error("@gnldev/queue: this work store cannot delete by id prefix (`deleteIdPrefix`) and key prefix (`deletePrefix`), so this person's jobs cannot be erased through it");
       }

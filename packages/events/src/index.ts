@@ -11,7 +11,7 @@
 // in the same pass, and after `maxAttempts` the event is QUARANTINED (dead-letter) rather than
 // retried forever — listDeadEvents() shows it, retryDeadEvent() hands it back. Quarantine is not an
 // ack: a quarantined event is never counted as delivered, because the consumer never saw it.
-import { createPollLoop, orgPrefix, orgStorageScopeOf, ownedName, ownedPrefix, ownerOfName, assertSystemName } from '@gnldev/durable';
+import { createPollLoop, orgPrefix, orgStorageScopeOf, ownedName, ownedPrefix, ownerOfName, assertSystemName, assertRootWorkForErasure } from '@gnldev/durable';
 import { randomUUID } from 'node:crypto';
 import type { WorkStore } from '@gnldev/durable';
 
@@ -748,6 +748,7 @@ export function eventEraser(work: WorkStore): SubjectEraser {
   return {
     name: 'events',
     async erase(owner) {
+      assertRootWorkForErasure(work, '@gnldev/events: eventEraser');
       if (typeof work.deleteIdPrefix !== 'function' || typeof work.deletePrefix !== 'function') {
         throw new Error("@gnldev/events: this work store cannot delete by id prefix (`deleteIdPrefix`) and key prefix (`deletePrefix`), so this person's events cannot be erased through it");
       }

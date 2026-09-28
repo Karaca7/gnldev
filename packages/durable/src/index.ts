@@ -154,7 +154,7 @@ export { withOrgStorage, orgStorageScopeOf, scopeConfigToOrg } from './org-stora
 export { withSubjectJournal, withSubjectMemory, type SubjectViewOptions, type SubjectMemoryOptions } from './subject-view.js';
 export { threadOwnerOf, admitThreadRun, threadOwnerKey, type ThreadOwnership } from './thread-owner.js';
 export { ownedName, ownerOfName, assertSystemName, ownedPrefix, ownerIdProblem, assertOwnerId, OwnerIdError, RESERVED_OWNER_PREFIXES } from './owned-name.js';
-export { eraseSubject, type EraseTarget, type EraseReport } from './erase.js';
+export { eraseSubject, assertRootWorkForErasure, type EraseTarget, type EraseReport } from './erase.js';
 export { orgPurgedKey, purgeRun, isRealRun, purgeThread, purgeResource, purgeBatch, purgeOrganization, purgeOrganizationWork, sweepRuns, sweepLog, sweepThreads, listOrphanThreadState, createRetentionSweeper } from './retention.js';
 export type { LogSweepTarget, RetentionSweeperOptions, RetentionSweepSummary, RetentionSweeper } from './retention.js';
 export { recordIdemConflict, readIdemLedger } from './idem-ledger.js';

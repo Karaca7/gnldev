@@ -18,7 +18,7 @@ import { purgeResource } from './retention.js';
 import { ownedPrefix } from './owned-name.js';
 import { threadOwnerOf } from './thread-owner.js';
 import { withOrg } from './organization.js';
-import { orgVectorDelete } from './org-storage.js';
+import { orgVectorDelete, orgStorageScopeOf } from './org-storage.js';
 import type { Journal } from './journal.js';
 import type { Memory } from './memory.js';
 import type { VectorStore, WorkStore } from './storage.js';
@@ -32,7 +32,7 @@ export interface SubjectEraser {
 export interface EraseTarget {
   /** The ROOT journal. With `orgId`, the person's runs are erased in that organization's partition. */
   journal: Journal;
-  /** Owned log records (jobs and events). Needs `deleteIdPrefix`: an erasure that cannot reach them refuses, loudly. */
+  /** Owned log records (jobs and events): the ROOT storage's work store (an organization's view is refused). Needs `deleteIdPrefix`: an erasure that cannot reach them refuses, loudly. */
   work?: WorkStore;
   vectors?: Pick<VectorStore, 'delete'>;
   /** A memory whose threads live outside the journal (e.g. AgentMemory over storage.memory). */
@@ -50,10 +50,28 @@ export interface EraseReport {
   byEraser: Record<string, number>;
 }
 
+/**
+ * Refuses an organization's view of the work store in an erasure. Owned jobs and events live in the
+ * ROOT work log — their owner, organization included, is in their id — so the organization's view holds
+ * none of them, and its `deleteIdPrefix` cannot be confined: the port deletes by id prefix in every
+ * namespace. `eraseSubject`, `jobEraser` and `eventEraser` all ask this, so the three say one thing.
+ */
+export function assertRootWorkForErasure(work: WorkStore | undefined, who: string): void {
+  const org = work ? orgStorageScopeOf(work) : undefined;
+  if (org !== undefined) {
+    throw new Error(
+      `${who} was handed organization '${org}''s work store. A person's jobs and events live in the root work log, ` +
+        "with their organization in their id, so this view holds none of them. Pass the root storage (its `work`), " +
+        'and name the organization with `{ orgId }`.',
+    );
+  }
+}
+
 export async function eraseSubject(target: EraseTarget, resourceId: string, opts: { orgId?: string } = {}): Promise<EraseReport> {
   if (typeof resourceId !== 'string' || resourceId === '') throw new TypeError('@gnldev/durable: eraseSubject needs the id of the person to erase');
   const del = target.journal.deletePrefix;
   if (typeof del !== 'function') throw new Error('@gnldev/durable: eraseSubject needs a journal that can deletePrefix');
+  assertRootWorkForErasure(target.work, '@gnldev/durable: eraseSubject');
   if (target.work && typeof target.work.deleteIdPrefix !== 'function') {
     throw new Error('@gnldev/durable: eraseSubject was given a work store that cannot delete by id prefix, so this person\'s jobs and events cannot be erased');
   }
