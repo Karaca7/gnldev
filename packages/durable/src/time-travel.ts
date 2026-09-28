@@ -5,6 +5,7 @@ import { runKeys } from './journal.js';
 import { argsHash, derivedRunIdBase, forkRunId } from './hash.js';
 import { assertNotCompensated } from './compensation.js';
 import { assertRunIdSafe } from './run.js';
+import { inheritRunOwner } from './run-identity.js';
 import type { Journal, JournalReader, JournalEntry } from './journal.js';
 
 export interface ReconstructedState {
@@ -300,6 +301,11 @@ export async function forkRun(
   if (newRunId !== undefined) assertRunIdSafe(newRunId);
   await assertNotCompensated(journal, srcRunId);
   const dst = newRunId ?? (await pickForkRunId(journal, srcRunId));
+  // THE OWNER FIRST. The rows below are copied one by one and the source's input last; a crash in
+  // between used to leave a fork with the source's rows and no owner record — i.e. an ownerless run
+  // that the next end user to name it took over (measured: another user read the source's secret).
+  // Written before the first row, the fork belongs to the source's owner however far the copy got.
+  await inheritRunOwner(journal, srcRunId, dst);
   const entries = await journal.readRun(srcRunId);
   const models = entries.filter((e) => e.kind === 'model');
   const keep = models.slice(0, Math.max(0, step)); // first `step` model steps

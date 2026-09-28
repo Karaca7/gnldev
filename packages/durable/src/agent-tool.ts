@@ -1,4 +1,4 @@
-import { childIdentity, gnlOf, type RunIdentity } from './run-identity.js';
+import { childIdentity, identityOf, type RunIdentity } from './run-identity.js';
 import { nestedAgentRunId } from './journal.js';
 import { tool, stepCountIs } from 'ai';
 import type { Tool } from 'ai';
@@ -47,7 +47,7 @@ export interface AgentToolConfig {
    */
   limits?: RunLimits;
   /**
-   * WHOSE work the delegation is is NOT configured here: the nested run takes the principal of the
+   * WHOSE work the delegation is is NOT configured here: the nested run takes the caller of the
    * run that called it — `options.gnl` for agent-as-tool, the `parent` argument of `runSubAgent` for a
    * network. A sub-agent is the same request, one frame deeper; a static owner here was how a tool
    * built once at startup ran every user's delegation as nobody.
@@ -96,8 +96,8 @@ export async function runSubAgent(
     prompt: task,
     stopWhen: stepCountIs(config.maxSteps ?? 8),
     limits: config.limits,
-    // The child's principal IS the parent's (one value, typed, required by this signature).
-    principal: childIdentity(parent, nestedRunId),
+    // The child's caller IS the parent's (one value, typed, required by this signature).
+    caller: childIdentity(parent, nestedRunId),
     ...(parent.threadId ? { threadId: parent.threadId } : {}),
     ...(config.actor ? { actor: config.actor } : {}),
     ...(config.channel ? { channel: config.channel } : {}),
@@ -164,8 +164,8 @@ export function createAgentTool(
         //
         // The PARENT's identity, as durable-tool hands it over (`options.gnl`). Called by hand without
         // it, the child is `unknown` — closed, never open.
-        principal: childIdentity(gnlOf(options), nestedRunId),
-        ...(gnlOf(options).threadId ? { threadId: gnlOf(options).threadId } : {}),
+        caller: childIdentity(identityOf(options), nestedRunId),
+        ...(identityOf(options).threadId ? { threadId: identityOf(options).threadId } : {}),
         ...(config.actor ? { actor: config.actor } : {}),
         ...(config.channel ? { channel: config.channel } : {}),
         ...(config.toolPolicy ? { toolPolicy: config.toolPolicy } : {}),

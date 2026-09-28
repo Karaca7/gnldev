@@ -102,7 +102,7 @@ describe('runWorkflow — türetilmiş id, profilden bağımsız kapı', () => {
     await gnl.runWorkflow('w', { a: 1 }, { runId: 'ham-2', resourceId: 'u-ayse' } as never);
     await expect(gnl.runWorkflow('w', { a: 1 }, { runId: 'ham-2', resourceId: 'u-mehmet' } as never)).rejects.toThrow(/different subject/);
     // Girdi: ham id'de parmak izi opt-in, farklı girdi geçer.
-    await gnl.runWorkflow('w', { a: 2 }, { runId: 'ham-2' } as never);
+    await gnl.runWorkflow('w', { a: 2 }, { runId: 'ham-2', resourceId: 'u-ayse' } as never); // (a caller naming nobody is refused on Ayşe's run)
     expect(runs.n, 'ham-1 bir kez; ham-2 journal replay ettiği için bir kez').toBe(2);
   });
 });

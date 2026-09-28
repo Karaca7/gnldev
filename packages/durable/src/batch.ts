@@ -29,7 +29,7 @@
 // politikadan gelir (kayıtlar veri taşır).
 import { argsHash } from './hash.js';
 import { runKeys, claim } from './journal.js';
-import { claimRunOwner, principalFrom, runIdentity, userIdOf, type Principal } from './run-identity.js';
+import { admitRun, callerFromResourceId, callerOf, runIdentity, userIdOf, type Caller } from './run-identity.js';
 import type { Journal, DurableCtx } from './journal.js';
 import { durableTool } from './durable-tool.js';
 import { resolveApprovals, hasRunProbe } from './run.js';
@@ -49,9 +49,9 @@ export interface BatchConfig {
   resourceId?: string;
   /**
    * Who the batch acts for. `resourceId` is the shorthand for a user; staff must be said out loud
-   * (`principal: STAFF`). Neither is `unknown` — closed for any end user's data.
+   * (`caller: STAFF`). Neither is `unknown` — closed for any end user's data.
    */
-  principal?: Principal;
+  caller?: Caller;
   /** Tekrar politikası (heyet): transactional default'u 'suspend-item'. 'fail-batch' ilk tekrar
    *  tespitinde kalan item'ları KESER (koşulmazlar, raporda not-run). */
   onDuplicate?: 'skip' | 'suspend-item' | 'fail-batch';
@@ -138,10 +138,10 @@ function classify(out: unknown, replayed: boolean): { outcome: BatchItemOutcome;
 }
 
 export function createBatch(journal: Journal, cfg: BatchConfig) {
-  if (cfg.principal && cfg.resourceId !== undefined && userIdOf(cfg.principal) !== cfg.resourceId) {
-    throw new Error('@gnldev/durable: batch was given both `principal` and a different `resourceId` — one owner per batch.');
+  if (cfg.caller && cfg.resourceId !== undefined && userIdOf(cfg.caller) !== cfg.resourceId) {
+    throw new Error('@gnldev/durable: batch was given both `caller` and a different `resourceId` — one owner per batch.');
   }
-  const batchPrincipal: Principal = cfg.principal ?? principalFrom(cfg.resourceId);
+  const batchCaller: Caller = cfg.caller ? callerOf(cfg.caller) : callerFromResourceId(cfg.resourceId);
   if (typeof cfg.itemKey !== 'function') {
     throw new Error("@gnldev/durable: batch requires `itemKey` — it is the developer's one critical duty (what makes an item unique in the BUSINESS, not the row number). Refused loudly rather than silently keyless.");
   }
@@ -272,10 +272,12 @@ export function createBatch(journal: Journal, cfg: BatchConfig) {
       // İlk yazan kazanır ve best-effort: bir kimlik kaydı item'ın koşmasını engelleyemez.
       // The owner record is written UNCONDITIONALLY (ownerless too): an item run with no record read
       // as "not started", and any end user could adopt it through the agent door.
-      const principal = await claimRunOwner(journal, runId, batchPrincipal, { batch: batchId, itemKey: key });
+      // The same entry as every run kind (run-identity.ts admitRun): an item run that is someone
+      // else's is refused, a re-entry runs as the recorded owner.
+      const { acting } = await admitRun(journal, runId, batchCaller, { batch: batchId, itemKey: key });
       const ctx: DurableCtx = {
         journal, runId, approvals: resolved,
-        identity: runIdentity(principal, runId),
+        identity: runIdentity(acting, runId),
         channel: `batch:${batchId}`,
         replayLog: [], blockedAsSentinel: true,
         // scope 'run' BİLİNÇLİ: batch bir konuşma değildir (threadId yok) — thread istemek her

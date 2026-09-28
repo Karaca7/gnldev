@@ -8,6 +8,7 @@
 // quietly). So both sites check both shapes; this pins that, because a comment cannot fail.
 import { describe, it, expect } from 'vitest';
 import { runDurable, InMemoryStorage, runKeys, purgeRun, RunLimitExceededError } from '../src/index.js';
+import { claimRunOwner, UNKNOWN as NOBODY } from '../src/run-identity.js';
 
 const usage = { inputTokens: 5, outputTokens: 5, totalTokens: 10 };
 
@@ -21,6 +22,7 @@ function plainModel() {
 
 /** Writes the parent chain + a sub-run counter in the pre-scoping shape. */
 async function seedLegacySubRun(journal: any, parentRunId: string, toolCallId: string, tokens: number) {
+  await claimRunOwner(journal, parentRunId, NOBODY); // the parent was born (its owner recorded) before any row
   await journal.put(runKeys.proc(parentRunId, '__gnl_limits_state'), {
     lastToolName: undefined, lastArgsHash: undefined, consecutiveRepeats: 0, subRunIds: [toolCallId],
   });

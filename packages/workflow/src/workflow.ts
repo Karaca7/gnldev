@@ -48,8 +48,8 @@ export interface JournalLike {
  * without one is `unknown`, which durable-aware tools treat as closed.
  */
 export type WorkflowRunIdentity =
-  | ({ kind: 'user'; resourceId: string; orgId?: string } & WorkflowRunPlace)
-  | ({ kind: 'staff' } & WorkflowRunPlace)
+  | ({ kind: 'user'; id: string; orgId?: string } & WorkflowRunPlace)
+  | ({ kind: 'staff'; orgId?: string } & WorkflowRunPlace)
   | ({ kind: 'unknown' } & WorkflowRunPlace);
 type WorkflowRunPlace = { runId: string; threadId?: string; parentRunId?: string };
 
@@ -60,7 +60,7 @@ export interface StepCtx {
   runId: string;
   /**
    * The run's identity, ALWAYS present inside a step. Pass it on explicitly: to a tool as
-   * `{ gnl: toolContextFor(ctx.identity) }`, to a child agent as `runDurable({ principal: ctx.identity })`.
+   * `{ gnl: toolContextFor(ctx.identity) }`, to a child agent as `runDurable({ caller: ctx.identity })`.
    */
   identity: WorkflowRunIdentity;
   journal: JournalLike;

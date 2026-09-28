@@ -4,7 +4,7 @@ import { withTimeout } from './timeout.js';
 import { stampFormat, upgradeFormat } from './format.js';
 import { DivergenceError, RetryLimitExceededError, RunBusyError, SideEffectRetryBlockedError, IdempotencyOwnerMismatchError } from './errors.js';
 import { claim, ctxGet, runKeys } from './journal.js';
-import { userIdOf, ownerFields, toolContextFor } from './run-identity.js';
+import { userIdOf, ownerFields, fieldsOwner, decideRunAccess, toolContextFor, closeLegacyResourceId } from './run-identity.js';
 import { orgScopeOf } from './organization.js';
 import { CompensatedRunError, runCompensated } from './compensation.js';
 import { recordIncident } from './incidents.js';
@@ -565,16 +565,16 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       // it — and any user could, until the record said whose it is: Mallory naming Ayşe's order got her
       // address back as his own result. A user may use only a record they made; one made by someone
       // else, by staff, or before owners were recorded is refused — no output, and no second execution.
-      // Staff and system runs (no resourceId) reach any record, as before.
+      // Staff reach any record, as before.
       const ownerKey = effWindow === 'cross-run' && mode === 'args' ? runKeys.toolCrossRunOwner(toolName, hash) : undefined;
       const assertCrossRunOwner = async (): Promise<void> => {
-        if (!ownerKey || ctx.identity.kind === 'staff') return;
-        // The owner record and the caller are read from the SAME value (ctx.identity): an unknown
-        // caller reuses only a record an unknown caller made, a user only their own.
-        const rec = await ctx.journal.get<{ resourceId?: string; principal?: string }>(ownerKey);
-        // `unknown` may reuse a record that is nobody's in particular (made by an unknown caller, or
-        // before owners were recorded) — never a user's or staff's.
-        if (ctx.identity.kind === 'user' ? rec?.resourceId === ctx.identity.resourceId : (rec?.resourceId === undefined && rec?.principal !== 'staff')) return;
+        if (!ownerKey) return;
+        // THE ENGINE'S RULE, not a copy of it (run-identity.ts decideRunAccess), with the caller passed
+        // explicitly: the owner record and the caller are read from the SAME value (ctx.identity). A
+        // user reuses only their own record; `unknown` only one an unknown caller made (or one from
+        // before owners were recorded) — never a user's or staff's. A read error propagates.
+        const owner = fieldsOwner(await ctx.journal.get(ownerKey));
+        if (decideRunAccess({ state: 'owned', owner, kind: 'other', recorded: true }, ctx.identity) === 'allow') return;
         throw new IdempotencyOwnerMismatchError(
           `@gnldev/durable: '${toolName}' was already run for these arguments by someone else — this call is refused ` +
             `rather than returning their result or running it a second time. A key that identifies one person's work ` +
@@ -1726,7 +1726,10 @@ export function durableTool<T extends AnyTool>(tool: T, ctx: DurableCtx, toolNam
       // açılıyordu (bkz. nestedApprovalsFor): iki koşumun id uzayı aynıdır.
       // `resourceId` — whose run this is — so a tool that serves end users can narrow to theirs
       // (`createRagTool` does) without its author threading it through by hand.
-      const execOpts: any = { ...(options ?? {}), idempotencyKey, parentRunId: ctx.runId, gnlApprovals: nestedApprovalsFor(record, ctx.approvals), gnl: toolContextFor(ctx.identity) };
+      // `gnl`: who the tool runs for — THE channel (`identityOf(options)`). The old `resourceId` key
+      // throws when read (closeLegacyResourceId): a tool that still reads it must fail loudly, not
+      // serve "nobody" (which a knowledge-base tool used to read as "everything").
+      const execOpts: any = closeLegacyResourceId({ ...(options ?? {}), idempotencyKey, parentRunId: ctx.runId, gnlApprovals: nestedApprovalsFor(record, ctx.approvals), gnl: toolContextFor(ctx.identity) });
       if (timeoutMs) {
         const tSignal = AbortSignal.timeout(timeoutMs);
         execOpts.abortSignal = execOpts.abortSignal ? AbortSignal.any([execOpts.abortSignal, tSignal]) : tSignal;

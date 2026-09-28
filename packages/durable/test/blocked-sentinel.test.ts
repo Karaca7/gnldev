@@ -18,11 +18,13 @@ import {
   RunBusyError,
 } from '../src/index.js';
 import { createMockModel, countToolResults, toolCallResult, finalTextResult } from './mock.js';
+import { claimRunOwner, UNKNOWN as NOBODY } from '../src/run-identity.js';
 
 const STALE_MS = 60_000; // above CLAIM_TTL_MS (30s) — definitely stale
 
 /** Crash window: the side effect HAS RUN (counter is 1) but the ledger is still 'running'. */
 async function crashWindow(journal: InMemoryJournal, runId: string, toolCallId: string) {
+  await claimRunOwner(journal, runId, NOBODY); // rows are written by a run that was born first
   await journal.put(runKeys.tool(runId, toolCallId), {
     status: 'running',
     startedAt: Date.now() - STALE_MS,
@@ -67,6 +69,7 @@ describe('K1 — blocked sentinel: the model cannot bypass the protection', () =
   it('failed record (side-effecting, unapproved): runDurable throws SideEffectRetryBlockedError', async () => {
     const journal = new InMemoryJournal();
     let charges = 0;
+    await claimRunOwner(journal, 'k2', NOBODY);
     await journal.put(runKeys.tool('k2', 'call-1'), { status: 'failed', error: 'timeout', attempts: 1 });
     const gen = { calls: 0 };
 
@@ -87,6 +90,7 @@ describe('K1 — blocked sentinel: the model cannot bypass the protection', () =
 
   it('idempotent tool with maxRetries exhausted: throws with type RetryLimitExceededError', async () => {
     const journal = new InMemoryJournal();
+    await claimRunOwner(journal, 'k3', NOBODY);
     await journal.put(runKeys.tool('k3', 'call-1'), { status: 'failed', error: 'boom', attempts: 3 });
     const gen = { calls: 0 };
 
@@ -107,6 +111,7 @@ describe('K1 — blocked sentinel: the model cannot bypass the protection', () =
   it('FRESH running (another executor in-flight): throws with type RunBusyError, execute does not run', async () => {
     const journal = new InMemoryJournal();
     let charges = 0;
+    await claimRunOwner(journal, 'k4', NOBODY);
     await journal.put(runKeys.tool('k4', 'call-1'), { status: 'running', startedAt: Date.now() });
     const gen = { calls: 0 };
 

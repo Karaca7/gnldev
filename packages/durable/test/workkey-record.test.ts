@@ -34,7 +34,7 @@ import {
 import { SqliteStorage } from '../src/sqlite-storage.js';
 import { PostgresStorage } from '../src/postgres-storage.js';
 import { makeFakeRedis } from './fake-redis.js';
-import { claimIdentityInput } from '../src/journal.js';
+import { claimRunOwner, user } from '../src/run-identity.js';
 import { runDurable } from '../src/run.js';
 import { createMockModel, finalTextResult } from './mock.js';
 import type { Storage } from '../src/index.js';
@@ -84,13 +84,13 @@ describe('workKey — the record (package #2)', () => {
     expect((await journal.listRunsPaged({ workKey: 'invoice-9999' })).items).toEqual([]);
   });
 
-  it('claimIdentityInput carries it too — the workflow/batch/network doors are not second-class', async () => {
-    // Those three paths never call `run()`, so `claimIdentityInput` is the only writer of their
+  it('claimRunOwner carries it too — the workflow/batch/network doors are not second-class', async () => {
+    // Those three paths never call `run()`, so `claimRunOwner` is the only writer of their
     // `:input`. A workKey that only the agent door could record would make "the same job" a concept
     // half the engine cannot express.
     const journal = new InMemoryJournal();
-    await claimIdentityInput(journal, 'wf-mutabakat', {
-      at: Date.now(), resourceId: 'u-ayse', workflow: 'gece-mutabakati',
+    await claimRunOwner(journal, 'wf-mutabakat', user('u-ayse'), {
+      at: Date.now(), workflow: 'gece-mutabakati',
       workKey: 'recon-2026-09-12', workScope: { kind: 'org', value: '~deployment' },
     });
     const rec = await journal.get<Record<string, unknown>>(runKeys.input('wf-mutabakat'));
@@ -189,8 +189,8 @@ describe('workKey and the tombstone (§10.3 — deletion stays deleted)', () => 
   it('the same, through the slow scan and an identity record', async () => {
     const journal = slowScan(new InMemoryJournal());
     const now = Date.now();
-    await claimIdentityInput(journal, 'wf-tomb', {
-      at: now - 3 * HOUR, resourceId: 'u-ayse', workflow: 'gece-mutabakati',
+    await claimRunOwner(journal, 'wf-tomb', user('u-ayse'), {
+      at: now - 3 * HOUR, workflow: 'gece-mutabakati',
       workKey: 'recon-2026-09-12', workScope: { kind: 'org', value: '~deployment' },
     });
     const res = await sweepRuns(journal, { olderThanMs: HOUR, now, tombstones: true });

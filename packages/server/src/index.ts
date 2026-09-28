@@ -3,7 +3,7 @@
 import { Hono, type Context } from 'hono';
 import { toFetchHandler, type FetchHandler } from './handler.js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { createGnl, agentVisibleToOrg, withOrg, withOrgStorage, scopeConfigToOrg, withSubjectJournal, withSubjectMemory, threadOwnerOf, type ThreadOwnership, ORG_RECORD_PRE, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, asReaderJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, sealRequestContext, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry, callerConflictCode, publicConflictDetail, describeProtections, formatProtections, teachingError, resolveWorkIdentity, runOwnerOf, decideRunAccess, user, STAFF, UNKNOWN, type Principal as RunPrincipal, type AccessDecision, type RunOwner, type RawJournal } from '@gnldev/durable';
+import { createGnl, agentVisibleToOrg, withOrg, withOrgStorage, scopeConfigToOrg, withSubjectJournal, withSubjectMemory, threadOwnerOf, type ThreadOwnership, ORG_RECORD_PRE, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, asReaderJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, sealRequestContext, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry, callerConflictCode, publicConflictDetail, describeProtections, formatProtections, teachingError, resolveWorkIdentity, runOwnerOf, decideRunAccess, user, STAFF, UNKNOWN, type Caller, type RunDecision, type RawJournal } from '@gnldev/durable';
 import type { CreateGnlConfig, Journal, JournalReader, BudgetLimit, UsageCostCache, RunLimits, ResolvedWorkIdentity, WorkScopeKind } from '@gnldev/durable';
 import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, callerKind, isReservedSubjectId, actorIdOf, type AuthProvider, type ReadWriteAuth, type Principal, type PrincipalKind } from '@gnldev/auth';
 // P0.4 @gnldev/workflow is zero-dependency (see its package.json) — depending on it
@@ -970,16 +970,10 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   }
 
   /**
-   * `asMissing`: the answer this route gives for a run that does not exist. A route whose target must
-   * exist passes it, and a caller who is not staff then gets THAT for someone else's run — same status,
-   * same body — instead of a 403 that told them the id was taken. A route that starts work under the
-   * id cannot hide that it is taken, and passes nothing.
-   */
-  /**
-   * The caller's principal on this request. A bound subject, or the user a caller STATES it acts for
+   * The caller on this request, as the engine's `Caller`. A bound subject, or the user a caller STATES it acts for
    * (`?resourceId=`, or the body's `resourceId`), is that user; staff otherwise; anyone else unknown.
    */
-  function callerPrincipalOf(c: Context, fromBody?: unknown): RunPrincipal {
+  function callerOf(c: Context, fromBody?: unknown): Caller {
     const expected = boundSubjectOf(c) ?? c.req.query('resourceId') ?? (typeof fromBody === 'string' ? fromBody : undefined);
     if (expected) return user(expected);
     return kindOf(c) === 'operator' ? STAFF : UNKNOWN;
@@ -987,19 +981,15 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
 
   /**
    * THE run gate: one decision (@gnldev/durable `runOwnerOf` + `decideRunAccess`), asked of the RAW
-   * instance for every run kind. Each route maps `allow | deny | missing` to its own answer; there
-   * is no flag. An unreadable owner is `deny` — not knowing is not permission.
+   * instance for every run kind. Each route maps `allow | deny | missing` to its own answer (a
+   * foreign run reads as missing to a non-staff caller where the route's target must exist); there is
+   * no flag. An unreadable owner is `deny` — `runOwnerOf` says so, not this route.
    */
-  async function runDecision(c: Context, s: Instance, runId: string, fromBody?: unknown): Promise<AccessDecision> {
-    let owner: RunOwner;
-    try {
-      owner = await runOwnerOf(rawOf(s).journal as RawJournal, runId);
-    } catch {
-      return 'deny';
-    }
-    const d = decideRunAccess(owner, callerPrincipalOf(c, fromBody));
+  async function runDecision(c: Context, s: Instance, runId: string, fromBody?: unknown): Promise<RunDecision> {
+    const owner = await runOwnerOf(rawOf(s).journal as RawJournal, runId);
+    const d = decideRunAccess(owner, callerOf(c, fromBody));
     // Staff stating an expectation still reaches a staff (ownerless) run.
-    if (d === 'deny' && kindOf(c) === 'operator' && owner.exists && owner.principal.kind !== 'user') return 'allow';
+    if (d === 'deny' && kindOf(c) === 'operator' && owner.state === 'owned' && owner.owner.kind !== 'user') return 'allow';
     return d;
   }
   const foreignRun = (c: Context) => c.json({ error: 'access denied: this run belongs to a different resourceId' }, 403);

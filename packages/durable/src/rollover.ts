@@ -31,7 +31,8 @@
 import { runKeys, claim } from './journal.js';
 import { derivedRunIdBase, executionRunId, parseDerivedRunId, rawInputFingerprint } from './hash.js';
 import type { WorkScope } from './hash.js';
-import { stampFormat, upgradeFormat } from './format.js';
+import { upgradeFormat } from './format.js';
+import { runOwnerOf, claimRunOwner, UNKNOWN } from './run-identity.js';
 import { reconstructState } from './time-travel.js';
 import type { ReconstructSeed } from './time-travel.js';
 import type { Journal, JournalReader } from './journal.js';
@@ -254,21 +255,24 @@ export async function rolloverRun(journal: Journal, runId: string, opts?: Rollov
   // var — devrin sözleşmesi zaten bu: yeni dönem tohumun İÇERİĞİYLE sürdürülür. Ham devirde de
   // yazılıyor: orada kapı `strictInput` opt-in'i olmadan açılmaz, yani eski davranış aynı kalır,
   // ama isteyen için artık bağlayacak bir parmak izi vardır.
+  // The owner is the SOURCE's, read the one way every door reads it (run-identity.ts) — ownerless
+  // included: copying only `resourceId` turned a staff run's next generation into an `unknown` one.
+  const src = await runOwnerOf(journal, runId);
+  if (src.state === 'unreadable') throw src.error;
   const seed = {
     messages,
     hash: rawInputFingerprint({ messages, ...(oldInput?.system !== undefined ? { system: oldInput.system } : {}) }),
     ...(oldInput?.system !== undefined ? { system: oldInput.system } : {}),
     ...(oldInput?.threadId !== undefined ? { threadId: oldInput.threadId } : {}),
-    ...(oldInput?.resourceId !== undefined ? { resourceId: oldInput.resourceId } : {}),
     ...(oldInput?.actor !== undefined ? { actor: oldInput.actor } : {}),
     ...(oldInput?.agent !== undefined ? { agent: oldInput.agent } : {}),
     ...(oldInput?.workKey !== undefined ? { workKey: oldInput.workKey } : {}),
     ...(oldInput?.workScope !== undefined ? { workScope: oldInput.workScope } : {}),
   };
-  if (!(await claim(journal, inputKey, stampFormat(seed as object)))) {
-    const winner = await journal.get<{ messages?: unknown[] }>(inputKey);
-    const msgs = Array.isArray(winner?.messages) ? winner!.messages! : [];
-    return { newRunId, seededMessages: msgs.length, messages: msgs };
-  }
-  return { newRunId, seededMessages: messages.length, messages };
+  // Born through the one start point (claimRunOwner): the owner is the SOURCE's, ownerless included.
+  // First write wins; the loser of a race reports the winner's seed.
+  await claimRunOwner(journal, newRunId, src.state === 'owned' ? src.owner : UNKNOWN, seed);
+  const winner = await journal.get<{ messages?: unknown[] }>(inputKey);
+  const msgs = Array.isArray(winner?.messages) ? winner!.messages! : [];
+  return { newRunId, seededMessages: msgs.length, messages: msgs };
 }

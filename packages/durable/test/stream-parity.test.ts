@@ -10,6 +10,7 @@ import { BasicMemory } from '../src/memory.js';
 import { streamDurable } from '../src/run.js';
 import type { Processor } from '../src/processor.js';
 import { createMockStreamAgent } from './mock.js';
+import { stampFormat } from '../src/format.js';
 
 const usage = { inputTokens: 5, outputTokens: 5, totalTokens: 10 };
 
@@ -102,7 +103,7 @@ describe('stream-parity: processor pipeline within streamDurable', () => {
       name: 'gate-spy',
       processInput: (pin, ctx) => { if (ctx.resume) gatePasses++; return { ...pin, prompt: String(pin.prompt).replace('SECRET', '[REDACTED]') }; },
     };
-    await journal.put(runKeys.input('sp1b'), { prompt: '[REDACTED] wire' }); // froze input, died before any outcome
+    await journal.put(runKeys.input('sp1b'), stampFormat({ prompt: '[REDACTED] wire', ownerKind: 'unknown' })); // froze input, died before any outcome
     const seen3 = { prompts: [] as any[], tools: [] as any[] };
     const r3 = await streamDurable({
       runId: 'sp1b', journal, model: textStreamModel('ok', seen3),

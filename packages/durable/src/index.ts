@@ -98,14 +98,14 @@ export type { RunDurableArgs, StreamDurableArgs, DurableResult, ResumeAgentConfi
 export { streamFinishError } from './run.js';
 // Greenfield storage contracts (ports + Storage + capability + composite).
 export { CapabilityError, requireCapability, composite, toJournal, matchFilter, visibleToSubject, SHARED_ONLY, assertVectorLabels, assertSameVectorOwner, assertUniformSeq } from './storage.js';
-// One explicit, typed run identity + the one "whose is this" module (run-identity.ts).
+// ADR-0002: the caller a door hands the engine, the one identity channel to tools and child runs, and
+// the one answer to "does this run exist, and whose is it" (run-identity.ts).
 export {
-  STAFF, UNKNOWN, user, principalFrom, principalOf, runIdentity, childIdentity, userIdOf, toolContextFor, gnlOf,
-  runOwnerOf, runExists, decideRunAccess, decideRun, claimRunOwner, SUBJECT_VIEW,
-  type Principal, type UserPrincipal, type StaffPrincipal, type UnknownPrincipal, type RunIdentity, type GnlToolContext,
-  type RunOwner, type AccessDecision, type RawJournal,
+  STAFF, UNKNOWN, user, staff, userIdOf, runIdentity, childIdentity, toolContextFor, identityOf,
+  runOwnerOf, decideRunAccess, decideRun, admitRun, claimRunOwner, inheritRunOwner, SUBJECT_VIEW,
+  type Caller, type UserCaller, type StaffCaller, type UnknownCaller, type RunIdentity, type GnlToolContext,
+  type RunOwner, type RunKind, type RunDecision, type RawJournal,
 } from './run-identity.js';
-export { callPrincipal, GNL_STAFF_KEY } from './registry.js';
 export type { AdoptIntoOrgResult,
   Page, ListQuery,
   RunJournal, MemoryStore, VectorStore, WorkStore, CacheStore, MetaStore,
@@ -129,7 +129,7 @@ export type { RunIncident } from './incidents.js';
 export type { Processor, ProcessorInput, ProcessorOutput, ProcessorCtx, ProcessorToolResult, ProcessorReport, ProcessorStepInput, ProcessorStepOverride, ProcessorStepOutput } from './processor.js';
 export { createAgentTool, runSubAgent } from './agent-tool.js';
 export type { AgentToolConfig } from './agent-tool.js';
-export { createGnl, agentVisibleToOrg, sealRequestContext, serverIdentityOf, GNL_RESOURCE_ID_KEY, GNL_ORG_ID_KEY, GNL_THREAD_ID_KEY } from './registry.js';
+export { createGnl, agentVisibleToOrg, sealRequestContext, serverIdentityOf, GNL_RESOURCE_ID_KEY, GNL_ORG_ID_KEY, GNL_THREAD_ID_KEY, GNL_STAFF_KEY } from './registry.js';
 // Package #5: the HTTP surfaces resolve the SAME tuple the doors resolve, because they need the id
 // before they call one (gates, cancel registry, `X-Gnl-Run-Id`). See resolveWorkIdentity's own note
 // on why this is exported rather than re-derived per adapter.
@@ -141,7 +141,6 @@ export { resolveWorkIdentity } from './registry.js';
 // the side effect and `listRuns`/`purgeResource` cannot see whose it was. Measured on an MCP-shaped
 // call: `purgeResource('user-ayse')` deleted 0 rows and left 2 behind; with this record it deleted 3
 // and left none. Exported rather than re-implemented, because a copied claim is how it goes unstamped.
-export { claimIdentityInput } from './journal.js';
 export type { CreateGnlConfig, AgentConfig, RunOptions, WorkflowLike, WorkflowMeta, WorkflowRunResult, RequestContext, DynamicArg, ScorerLike, NetworkConfig, GnlIdentity, WorkIdentityRequest, ResolvedWorkIdentity } from './registry.js';
 // The protection matrix an entry point prints at startup — ONE derivation, so a banner cannot claim
 // a protection the config does not carry (see protections.ts for the banner that already did).

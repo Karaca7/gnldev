@@ -10,11 +10,11 @@ import { resolveModel, withModelFallback, type FallbackCandidate } from './model
 import { createAgentTool, runSubAgent } from './agent-tool.js';
 import { runNetwork as runNetworkCore, type NetworkResult, type NetworkTarget } from './network.js';
 import { acquireRunLock } from './run-lock.js';
-import { claim as journalClaim, claimIdentityInput, runKeys } from './journal.js';
+import { claim as journalClaim, runKeys } from './journal.js';
 import { argsHash, derivedRunId, isDerivedRunId, DEPLOYMENT_SCOPE, type WorkScope, type WorkScopeKind } from './hash.js';
 import { RunBusyError, runBusyMessage, RunSweptError, RunInputMismatchError, RunOwnerMismatchError, ThreadOwnerMismatchError } from './errors.js';
 import { admitThreadRun } from './thread-owner.js';
-import { STAFF, user, principalOf, principalFrom, userIdOf, gnlOf, runIdentity, childIdentity, claimRunOwner, effectivePrincipal, type Principal, type RunIdentity } from './run-identity.js';
+import { user, staff, callerOf, callerFromResourceId, userIdOf, identityOf, runIdentity, admitRun, type Caller, type RunIdentity } from './run-identity.js';
 import { recordIdemConflict } from './idem-ledger.js';
 import { durableProcessorStep } from './processor.js';
 import { recordRunScores } from './metrics.js';
@@ -45,7 +45,7 @@ export type RequestContext = Record<string, unknown>;
 export const GNL_RESOURCE_ID_KEY = '__gnl_resourceId';
 export const GNL_ORG_ID_KEY = '__gnl_orgId';
 export const GNL_THREAD_ID_KEY = '__gnl_threadId';
-/** The server's seal for an operator/system call: an EXPLICIT staff principal (run-identity.ts). */
+/** The server's seal for an operator/system call: an EXPLICIT staff caller (run-identity.ts). */
 export const GNL_STAFF_KEY = '__gnl_staff';
 
 /**
@@ -166,15 +166,20 @@ export function serverIdentityOf(ctx: RequestContext): { resourceId?: string; or
 }
 
 /**
- * THE principal of a call through the registry, decided once: the server's seal wins (a sealed user,
- * or sealed staff), then the caller's `principal`, then the `resourceId` shorthand, else `unknown`.
+ * THE caller of a call through the registry, decided once: the server's seal wins (a sealed user, or
+ * sealed staff), then the call's explicit `caller`, then the `resourceId` shorthand, else `unknown`.
  */
-export function callPrincipal(rc: RequestContext, opts: { resourceId?: string; principal?: Principal } | undefined): Principal {
+function callerOfCall(rc: RequestContext, opts: { resourceId?: string; caller?: Caller } | undefined): Caller {
   const seal = serverIdentityOf(rc);
   if (seal.resourceId !== undefined) return user(seal.resourceId, seal.orgId);
-  if (seal.staff) return STAFF;
-  if (opts?.principal) return principalOf(opts.principal);
-  return principalFrom(opts?.resourceId, seal.orgId);
+  if (seal.staff) return staff(seal.orgId);
+  if (opts?.caller) {
+    if (opts.resourceId !== undefined && userIdOf(opts.caller) !== opts.resourceId) {
+      throw new TypeError('@gnldev/durable: a call was given both `caller` and a different `resourceId` — one caller per call.');
+    }
+    return callerOf(opts.caller);
+  }
+  return callerFromResourceId(opts?.resourceId, seal.orgId);
 }
 
 /**
@@ -407,9 +412,10 @@ export interface WorkflowRunOpts {
   maxSteps?: number;
   resume?: Record<string, unknown>;
   signal?: AbortSignal;
+  /** Shorthand for `caller: user(resourceId)`. */
   resourceId?: string;
-  /** See RunOptions.principal. */
-  principal?: Principal;
+  /** See RunOptions.caller. */
+  caller?: Caller;
   /** The calling run's identity, for a workflow started from inside a run (child run). */
   parent?: RunIdentity;
   actor?: string;
@@ -680,8 +686,13 @@ export interface RunOptions {
   threadId?: string;
   /** P1.7: same precedence as `threadId` above — a server-sealed `context` resourceId wins. */
   resourceId?: string;
-  /** Who the run acts for when it is not an end user: `STAFF`, said out loud. See run-identity.ts. */
-  principal?: Principal;
+  /**
+   * WHO is calling (run-identity.ts): `user(id)`, `STAFF`, or `UNKNOWN`. `resourceId` is the shorthand
+   * for a user; with neither, the call is `unknown` — closed. A server-sealed `context` identity wins
+   * over both. Re-entering an existing run runs it as its RECORDED owner; a caller that may not act on
+   * it is refused (`RunOwnerMismatchError`).
+   */
+  caller?: Caller;
   approvals?: Record<string, boolean>;
   /** Request context: passed to dynamic model/system/tools functions (organization/role/user…). */
   context?: RequestContext;
@@ -999,8 +1010,8 @@ export function createGnl(config: CreateGnlConfig) {
           // muafiyeti bu doğum yolu için yanlış — bu, belli bir kullanıcının koşumundan çıkıyor.
           const r = await runWorkflow(wfName, input ?? {}, {
             runId: nestedAgentRunId(options?.parentRunId, options?.toolCallId, 'wf'),
-            // The calling run's identity (options.gnl) — a child run is its parent's principal.
-            parent: gnlOf(options),
+            // The calling run's identity (options.gnl) — a child run is its parent's caller.
+            parent: identityOf(options),
             ...(identity?.actor ? { actor: identity.actor } : {}),
           });
           return r.suspended
@@ -1072,8 +1083,8 @@ export function createGnl(config: CreateGnlConfig) {
     // P1.7: a server-sealed resourceId/threadId (sealRequestContext) ALWAYS wins over opts.resourceId/
     // opts.threadId when present — see the RunOptions.resourceId/threadId precedence note below.
     const serverIdentity = serverIdentityOf(rc);
-    const principal = callPrincipal(rc, opts);
-    const effectiveResourceId = userIdOf(principal);
+    const caller = callerOfCall(rc, opts);
+    const effectiveResourceId = userIdOf(caller);
     const effectiveThreadId = serverIdentity.threadId ?? opts.threadId;
     // THE GATE (package #3), before the model is resolved and therefore before anything touches the
     // journal: from here on `runId` is the run's id — either the raw one the caller passed or the one
@@ -1092,7 +1103,7 @@ export function createGnl(config: CreateGnlConfig) {
     const runId = identity.runId!;
     const model = await materializeModel(opts.model ?? (await resolveDyn(a.model, rc)), runId);
     const agentTools = a.tools ? await resolveDyn(a.tools, rc) : undefined;
-    // Sub-agent and workflow tools take the principal from the CALL (options.gnl), not from here.
+    // Sub-agent and workflow tools take the caller from the CALL (options.gnl), not from here.
     const subTools = await buildSubAgentTools(a.agents, rc, opts.limits, opts.toolPolicy, {
       ...((serverIdentity.resourceId ?? opts.actor) ? { actor: serverIdentity.resourceId ?? opts.actor } : {}),
       ...(opts.channel ? { channel: opts.channel } : {}),
@@ -1123,7 +1134,7 @@ export function createGnl(config: CreateGnlConfig) {
       guard: a.guard,
       memory: memoryArg,
       threadId: effectiveThreadId,
-      principal,
+      caller,
       // SAHİPLİK DAMGASI — ÖNCELİK BURADA KURULUR: mühürlü kimlik kazanır, çağıranın beyanı değil.
       // Bu satır eklendiğinde aşağıda ayrıca `...(opts.actor ? { actor: opts.actor } : {})` vardı ve
       // object-literal'de SON yazan kazandığı için damgayı EZİYORDU. Sonuç sessizdi: doğrulanmış
@@ -1242,8 +1253,8 @@ export function createGnl(config: CreateGnlConfig) {
     const rc = opts.context ?? {};
     // P1.7: same server-identity precedence as run() above — see RunOptions.threadId/resourceId JSDoc.
     const serverIdentity = serverIdentityOf(rc);
-    const principal = callPrincipal(rc, opts);
-    const effectiveResourceId = userIdOf(principal);
+    const caller = callerOfCall(rc, opts);
+    const effectiveResourceId = userIdOf(caller);
     const effectiveThreadId = serverIdentity.threadId ?? opts.threadId;
     // THE GATE, the same call run() makes and deliberately not a variation of it (see
     // resolveWorkIdentity): chat-adapter and agui stream, so a rule that held only on the generate
@@ -1260,7 +1271,7 @@ export function createGnl(config: CreateGnlConfig) {
     const runId = identity.runId!;
     const model = await materializeModel(opts.model ?? (await resolveDyn(a.model, rc)), runId);
     const agentTools = a.tools ? await resolveDyn(a.tools, rc) : undefined;
-    // Sub-agent and workflow tools take the principal from the CALL (options.gnl), not from here.
+    // Sub-agent and workflow tools take the caller from the CALL (options.gnl), not from here.
     const subTools = await buildSubAgentTools(a.agents, rc, opts.limits, opts.toolPolicy, {
       ...((serverIdentity.resourceId ?? opts.actor) ? { actor: serverIdentity.resourceId ?? opts.actor } : {}),
       ...(opts.channel ? { channel: opts.channel } : {}),
@@ -1288,7 +1299,7 @@ export function createGnl(config: CreateGnlConfig) {
       guard: a.guard,
       memory: memoryArg,
       threadId: effectiveThreadId,
-      principal,
+      caller,
       // SAHİPLİK DAMGASI — ÖNCELİK BURADA KURULUR: mühürlü kimlik kazanır, çağıranın beyanı değil.
       // Bu satır eklendiğinde aşağıda ayrıca `...(opts.actor ? { actor: opts.actor } : {})` vardı ve
       // object-literal'de SON yazan kazandığı için damgayı EZİYORDU. Sonuç sessizdi: doğrulanmış
@@ -1344,15 +1355,15 @@ export function createGnl(config: CreateGnlConfig) {
     // now because a caller may name the WORK instead (`workKey`), exactly as on the agent doors; the
     // scope is per-call here rather than per-agent, since a network has no AgentConfig of its own to
     // declare one on. Its default is the same conservative `'resource'`.
-    opts: { runId?: string; workKey?: string; workScope?: WorkScopeKind; task: string; context?: RequestContext; limits?: RunLimits; approvals?: Record<string, boolean>; resourceId?: string; principal?: Principal; threadId?: string; actor?: string; channel?: string },
+    opts: { runId?: string; workKey?: string; workScope?: WorkScopeKind; task: string; context?: RequestContext; limits?: RunLimits; approvals?: Record<string, boolean>; resourceId?: string; caller?: Caller; threadId?: string; actor?: string; channel?: string },
   ): Promise<NetworkResult> {
     const net = config.networks?.[name];
     if (!net) throw new Error(`network '${name}' is not registered`);
     const rc = opts.context ?? {};
     // Ajan yollarıyla AYNI öncelik: mühürlü kimlik kazanır, gövdeden gelen ancak mühür yokken.
     const serverIdentity = serverIdentityOf(rc);
-    const principal = callPrincipal(rc, opts);
-    const effectiveResourceId = userIdOf(principal);
+    const caller = callerOfCall(rc, opts);
+    const effectiveResourceId = userIdOf(caller);
     const effectiveThreadId = serverIdentity.threadId ?? opts.threadId;
     const effectiveActor = serverIdentity.resourceId ?? opts.actor;
     // THE GATE (package #3) — the same one the agent doors call. It sits above `assertRunIdSafe`
@@ -1391,7 +1402,7 @@ export function createGnl(config: CreateGnlConfig) {
     // yok, bilerek: bir okuma hatası "sahibi yok" gibi okunursa kapı tam da deposu arızalıyken
     // devre dışı kalır.
     // The same gate as the agent and workflow doors (thread-owner.ts), for every memory.
-    if (effectiveThreadId) await admitThreadRun(journal, resolvedMemory, effectiveThreadId, principal);
+    if (effectiveThreadId) await admitThreadRun(journal, resolvedMemory, effectiveThreadId, caller);
     // SAHİP KAYDI — iş akışındakiyle AYNI desen, aynı anahtar, aynı ilk-yazan-kazanır.
     //
     // Alt-ajanlar kimliği zaten devralıyordu (aşağıda runSubAgent'a iniyor); sahipsiz kalan ROUTER'IN
@@ -1410,15 +1421,16 @@ export function createGnl(config: CreateGnlConfig) {
     // to the job it was.
     // WRITTEN FOR EVERY NETWORK RUN, ownerless too (the common start point, run-identity.ts): a
     // missing record read as "not started" and let an end user adopt a staff network run.
-    const recorded = await claimRunOwner(journal, runId, principal, {
+    // The same entry as every run kind (run-identity.ts admitRun): an existing run — even one whose
+    // record is gone but whose rows remain — is refused to a caller who may not act on it, and a
+    // re-entry runs as the recorded owner.
+    const { acting } = await admitRun(journal, runId, caller, {
       ...(effectiveActor ? { actor: effectiveActor } : {}),
       ...(effectiveThreadId ? { threadId: effectiveThreadId } : {}),
       ...(identity.work ? { workKey: identity.work.workKey, workScope: identity.work.workScope } : {}),
       network: name,
     });
-    const eff = effectivePrincipal(recorded, principal);
-    if (!eff.ok) throw new RunOwnerMismatchError(`@gnldev/durable: network run '${runId}' belongs to a different subject.`, { runId, owner: userIdOf(eff.owner) ?? '(staff)', requested: effectiveResourceId ?? '' });
-    const netIdentity = runIdentity(eff.principal, runId, effectiveThreadId ? { threadId: effectiveThreadId } : {});
+    const netIdentity = runIdentity(acting, runId, effectiveThreadId ? { threadId: effectiveThreadId } : {});
     // Targets are set up BEFORE the router model → an unregistered agent gives a clear error before model resolution.
     // Sub-agent call semantics are CENTRALIZED in runSubAgent (same path as agent-tool; interrupts propagate upward).
     const targets: Record<string, NetworkTarget> = {};
@@ -1538,7 +1550,7 @@ export function createGnl(config: CreateGnlConfig) {
    * `WorkflowRunOpts` has no such field to read: the choice is refuse-or-ignore with nobody to ask,
    * and a swept derived run whose steps would silently re-fire is the wrong side to guess on.
    */
-  async function assertWorkflowAdmissible(wfRunId: string, input: unknown, opts: WorkflowRunOpts | undefined): Promise<void> {
+  async function assertWorkflowAdmissible(name: string, wfRunId: string, input: unknown, opts: WorkflowRunOpts | undefined, work: { workKey: string; workScope: WorkScope } | undefined): Promise<Caller> {
     const derived = isDerivedRunId(wfRunId);
     // Which sentence the refusal ends with. A derived id was minted by us and the caller cannot
     // simply "use a fresh runId" — they would have to name different work — so the two cases do not
@@ -1563,7 +1575,7 @@ export function createGnl(config: CreateGnlConfig) {
     // key (workflow-identity.test.ts pins that, and `listRuns`/`purgeResource`/the cancel gate all
     // read it), while the second holds this door's input fingerprint. Two keys, two questions.
     if (derived) {
-      const asking = userIdOf(workflowPrincipal(opts));
+      const asking = userIdOf(workflowCaller(opts));
       const frozenOwner = (await journal.get<{ resourceId?: string }>(runKeys.input(wfRunId)))?.resourceId;
       if (frozenOwner && asking && frozenOwner !== asking) {
         await recordIdemConflict(journal, { runId: wfRunId, code: 'run_owner_mismatch', detail: { owner: frozenOwner, requested: asking } });
@@ -1576,6 +1588,9 @@ export function createGnl(config: CreateGnlConfig) {
         );
       }
     }
+    // The owner is recorded BEFORE the fingerprint below writes the run's first row: a row with no
+    // owner record reads as an existing, ownerless run (run-identity.ts), i.e. nobody's to start.
+    const acting = await enterWorkflowRun(name, wfRunId, opts, work);
     const inputHash = argsHash(input);
     const frozen = await journal.get<{ hash?: string }>(`${wfRunId}:wf:_input`);
     // RESUME ESCAPES (denetçi blokeri — F7'nin K6 dersi, workflow'a taşınmış hali): the REAL resume
@@ -1605,11 +1620,30 @@ export function createGnl(config: CreateGnlConfig) {
         { runId: wfRunId, expectedHash: frozen.hash, actualHash: inputHash },
       );
     }
+    return acting;
   }
 
-  /** A workflow's principal: its parent run's (child run), else the call's (callPrincipal). */
-  function workflowPrincipal(opts: WorkflowRunOpts | undefined): Principal {
-    return opts?.parent ? principalOf(opts.parent) : callPrincipal(opts?.context ?? {}, opts);
+  /**
+   * A workflow run's ENTRY (run-identity.ts admitRun): the owner record is written for every run —
+   * owner or not — and a re-entry runs as the RECORDED owner; a caller who may not act on the run is
+   * refused. Returns who the run acts for.
+   */
+  async function enterWorkflowRun(name: string, runId: string, opts: WorkflowRunOpts | undefined, work: { workKey: string; workScope: WorkScope } | undefined): Promise<Caller> {
+    const seal = serverIdentityOf(opts?.context ?? {});
+    const actor = seal.resourceId ?? opts?.actor;
+    const thread = seal.threadId ?? opts?.threadId;
+    const { acting } = await admitRun(journal, runId, workflowCaller(opts), {
+      ...(actor ? { actor } : {}),
+      ...(thread ? { threadId: thread } : {}),
+      ...(work ? { workKey: work.workKey, workScope: work.workScope } : {}),
+      workflow: name,
+    });
+    return acting;
+  }
+
+  /** A workflow's caller: its parent run's (child run), else the call's (callerOfCall). */
+  function workflowCaller(opts: WorkflowRunOpts | undefined): Caller {
+    return opts?.parent ? callerOf(opts.parent) : callerOfCall(opts?.context ?? {}, opts);
   }
 
   async function runWorkflow(name: string, input: unknown, opts?: WorkflowRunOpts): Promise<WorkflowRunResult> {
@@ -1628,7 +1662,7 @@ export function createGnl(config: CreateGnlConfig) {
       ...(opts?.runId !== undefined ? { runId: opts.runId } : {}),
       ...(opts?.workKey !== undefined ? { workKey: opts.workKey } : {}),
       scopeKind: opts?.workScope ?? 'resource',
-      ...(userIdOf(workflowPrincipal(opts)) ? { resourceId: userIdOf(workflowPrincipal(opts)) } : {}),
+      ...(userIdOf(workflowCaller(opts)) ? { resourceId: userIdOf(workflowCaller(opts)) } : {}),
       ...(wfSeal.orgId ? { orgId: wfSeal.orgId } : {}),
       anonymous: 'allow',
       surface: `runWorkflow('${name}')`,
@@ -1676,7 +1710,7 @@ export function createGnl(config: CreateGnlConfig) {
       const gateIdentity = serverIdentityOf(opts?.context ?? {});
       const gateThread = gateIdentity.threadId ?? opts?.threadId;
       // The same gate as the agent door (thread-owner.ts), for every memory.
-      if (gateThread) await admitThreadRun(journal, resolvedMemory, gateThread, workflowPrincipal(opts));
+      if (gateThread) await admitThreadRun(journal, resolvedMemory, gateThread, workflowCaller(opts));
     }
     // FAZ-8: the critical preset now covers the WORKFLOW entry path with the protections that MAP
     // to it (the old honest-scope note said "apply them explicitly" — this is that, done once here):
@@ -1705,7 +1739,7 @@ export function createGnl(config: CreateGnlConfig) {
         }
       }
       const wfRunId = opts.runId;
-      await assertWorkflowAdmissible(wfRunId, input, opts);
+      const acting = await assertWorkflowAdmissible(name, wfRunId, input, opts, wfIdentityGate.work);
       const lockTtl = 300_000;
       const lockHandle = await acquireRunLock(journal, wfRunId, `critical-wf-${randomUUID()}`, lockTtl);
       if (!lockHandle) {
@@ -1716,7 +1750,7 @@ export function createGnl(config: CreateGnlConfig) {
       const beat = setInterval(() => { hbInflight = lockHandle.renew(lockTtl).catch(() => false); }, Math.floor(lockTtl / 2));
       (beat as { unref?: () => void }).unref?.();
       try {
-        return await runWorkflowInner(name, wf, input, opts, true, wfIdentityGate.work);
+        return await runWorkflowInner(name, wf, input, opts, true, wfIdentityGate.work, acting);
       } finally {
         clearInterval(beat);
         try { await hbInflight; } catch { /* a failed renew changes nothing about release */ }
@@ -1727,13 +1761,13 @@ export function createGnl(config: CreateGnlConfig) {
     // derived carries the engine's own promise, so the three checks follow the ID here, not the
     // preset. A raw runId falls straight through, exactly as it always has: it is the caller's own
     // name for their own key and nothing was ever vouched for it on this path.
-    if (opts?.runId !== undefined && isDerivedRunId(opts.runId)) {
-      await assertWorkflowAdmissible(opts.runId, input, opts);
-    }
-    return runWorkflowInner(name, wf, input, opts, undefined, wfIdentityGate.work);
+    const acting = opts?.runId !== undefined && isDerivedRunId(opts.runId)
+      ? await assertWorkflowAdmissible(name, opts.runId, input, opts, wfIdentityGate.work)
+      : undefined;
+    return runWorkflowInner(name, wf, input, opts, undefined, wfIdentityGate.work, acting);
   }
 
-  async function runWorkflowInner(name: string, wf: WorkflowLike, input: unknown, opts?: WorkflowRunOpts, strictSideEffects?: boolean, work?: { workKey: string; workScope: WorkScope }): Promise<WorkflowRunResult> {
+  async function runWorkflowInner(name: string, wf: WorkflowLike, input: unknown, opts?: WorkflowRunOpts, strictSideEffects?: boolean, work?: { workKey: string; workScope: WorkScope }, entered?: Caller): Promise<WorkflowRunResult> {
     // The generated fallback is the SAME contract as the chat route's anon fallback: LOUD, never
     // silent — a fresh id per call means a retry of this exact call re-runs every step (zero dedup),
     // which is the framework breaking its own rule quietly. The id is returned on the result
@@ -1758,9 +1792,7 @@ export function createGnl(config: CreateGnlConfig) {
     // SAHİP KAYDI — ilk yazan kazanır (koşum kimliği devir boyunca değişmez). `wfrun:` durum
     // kütüğüyle karışmasın diye ayrı: o "iş akışı nerede", bu "kimin işi".
     {
-      const wfIdentity = serverIdentityOf(opts?.context ?? {});
-      const wfActor = wfIdentity.resourceId ?? opts?.actor;
-      const wfThread = wfIdentity.threadId ?? opts?.threadId;
+      const wfThread = serverIdentityOf(opts?.context ?? {}).threadId ?? opts?.threadId;
       // `work` (package #3): the declared name joins the record. Tonight's reconciliation is an
       // org-scoped, subject-less derived run, useless to an operator if its opaque id maps back to
       // nothing.
@@ -1770,20 +1802,13 @@ export function createGnl(config: CreateGnlConfig) {
       // read as "not started yet" and waved an end user through: approving a staff member's
       // suspended workflow, reading its steps, and (first write wins) becoming its owner. A record
       // with no `resourceId` says what the gates need to hear: this run exists and nobody owns it.
-      const declared = workflowPrincipal(opts);
-      const recorded = await claimRunOwner(journal, runId, declared, {
-        ...(wfActor ? { actor: wfActor } : {}),
-        ...(wfThread ? { threadId: wfThread } : {}),
-        ...(work ? { workKey: work.workKey, workScope: work.workScope } : {}),
-        workflow: name,
-      });
-      // A re-entry runs as the RECORDED owner; another user naming this run is refused.
-      const eff = effectivePrincipal(recorded, declared);
-      if (!eff.ok) throw new RunOwnerMismatchError(`@gnldev/durable: workflow run '${runId}' belongs to a different subject.`, { runId, owner: userIdOf(eff.owner) ?? '(staff)', requested: userIdOf(declared) ?? '' });
-      wfRunIdentity = runIdentity(eff.principal, runId, { ...(wfThread ? { threadId: wfThread } : {}), ...(opts?.parent?.runId ? { parentRunId: opts.parent.runId } : {}) });
+      // (enterWorkflowRun — already done when an admission check ran first, see assertWorkflowAdmissible.)
+      const acting = entered ?? (await enterWorkflowRun(name, runId, opts, work));
+      // A re-entry runs as the RECORDED owner; a caller who may not act on this run is refused.
+      wfRunIdentity = runIdentity(acting, runId, { ...(wfThread ? { threadId: wfThread } : {}), ...(opts?.parent?.runId ? { parentRunId: opts.parent.runId } : {}) });
     }
     // The step context carries the run's identity: a step that calls a tool or starts an agent
-    // passes it on (`toolContextFor(ctx.identity)`, `runDurable({ principal: ctx.identity })`).
+    // passes it on (`toolContextFor(ctx.identity)`, `runDurable({ caller: ctx.identity })`).
     const ctx = { runId, journal: journal, identity: wfRunIdentity, ...(strictSideEffects ? { strictSideEffects: true } : {}) };
     let output: unknown;
     let suspended = false;

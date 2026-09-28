@@ -2,7 +2,7 @@
 // belongs to, and hands both to the handler — so the run it starts lands in that organization, stamped
 // with that user, and the user can see and approve it. A job without them is the system's, as before.
 import { describe, it, expect } from 'vitest';
-import { InMemoryStorage, withOrgStorage, withSubjectJournal } from '@gnldev/durable';
+import { InMemoryStorage, withOrgStorage, withSubjectJournal, claimRunOwner, user } from '@gnldev/durable';
 import { enqueue, createWorker, listJobs, retryJob, type JobCtx } from '../src/index.js';
 
 describe('a job enqueued on behalf of an end user', () => {
@@ -14,7 +14,7 @@ describe('a job enqueued on behalf of an end user', () => {
     await createWorker(storage, {
       summary: async (_p, ctx) => {
         seen = ctx;
-        await ctx.journal.put(`${ctx.runId}:input`, { resourceId: ctx.resourceId });
+        await claimRunOwner(ctx.journal as never, ctx.runId, user(ctx.resourceId!)); // a run's owner record, as the engine writes it (stamped)
         await ctx.journal.put(`${ctx.runId}:model:0`, { text: 'WEEKLY' });
       },
     }).drain();

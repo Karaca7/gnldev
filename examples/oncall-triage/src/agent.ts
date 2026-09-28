@@ -1,7 +1,7 @@
 // The triage agent: what it may read, what it may do, and what it must ask a human about first.
 import { z } from 'zod';
 import { stepCountIs } from 'ai';
-import { createGnl, resumeRun } from '@gnldev/durable';
+import { createGnl, resumeRun, STAFF } from '@gnldev/durable';
 import { AgentMemory } from '@gnldev/memory';
 import { piiRedactor } from '@gnldev/processors';
 import { defaultRules } from '@gnldev/tool-schema';
@@ -95,9 +95,12 @@ export async function buildTriage(storage: any, extraTools: Record<string, any> 
     agents,
   });
 
-  /** Continues a suspended run once a human has answered the approval. */
+  /**
+   * Continues a suspended run once a human has answered the approval. The on-call engineer is staff:
+   * the run continues as the service it was opened for (its recorded owner), not as whoever approved.
+   */
   const resume = (runId: string, approvals: Record<string, boolean>) =>
-    resumeRun(runId, { journal, model, tools, guard, stopWhen: stepCountIs(8), approvals });
+    resumeRun(runId, { journal, model, tools, guard, stopWhen: stepCountIs(8), approvals, caller: STAFF });
 
   return { gnl, agents, memory, resume, fleet, journal, tools, model, guard };
 }

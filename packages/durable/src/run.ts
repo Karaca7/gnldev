@@ -6,7 +6,7 @@ import { durableTools, CLAIM_TTL_MS } from './durable-tool.js';
 import { acquireRunLock } from './run-lock.js';
 import { RunBusyError, runBusyMessage, SideEffectRetryBlockedError, RetryLimitExceededError, RunThreadMismatchError, RunInputMismatchError, RunActorMismatchError, RunOwnerMismatchError, RunSweptError, ThreadOwnerMismatchError, NotAnAgentRunError } from './errors.js';
 import { admitThreadRun } from './thread-owner.js';
-import { UNKNOWN, ownerFields, principalFrom, principalOf, userIdOf, user, runIdentity, effectivePrincipal, recordedPrincipal, type Principal, type RunIdentity } from './run-identity.js';
+import { UNKNOWN, ownerFields, callerFromResourceId, callerOf, userIdOf, user, runIdentity, runOwnerOf, actingCaller, claimRunOwner, ownerLabel, type Caller, type RunIdentity, type RunOwner } from './run-identity.js';
 import { argsHash, rawInputFingerprint, isDerivedRunId, DERIVED_RUN_ID_PREFIX, type WorkScope, type WorkScopeKind } from './hash.js';
 import { recordIdemConflict } from './idem-ledger.js';
 import { createProcessorCtx, composePrepareStep, composeOnStepFinish, durableProcessorStep, ProcessorRetry, RetryExhaustedByProcessorError, type StepHookFailure } from './processor.js';
@@ -52,14 +52,15 @@ export type RunDurableArgs = GenerateTextOptions & {
    */
   memory?: Memory | false;
   threadId?: string;
-  /** Phase 14: resource (user) identity — shorthand for `principal: user(resourceId)`. */
+  /** Phase 14: resource (user) identity — shorthand for `caller: user(resourceId)`. */
   resourceId?: string;
   /**
-   * WHO this run acts for (run-identity.ts). A child run passes its parent's identity here. With
-   * neither this nor `resourceId`, the run is `unknown` — closed for end users' data; staff must be
-   * said out loud (`principal: STAFF`). A re-entry of an existing run runs as its RECORDED owner.
+   * WHO is calling (run-identity.ts): `user(id)`, `STAFF`, `UNKNOWN`, or — for a child run — the
+   * parent's `RunIdentity`. With neither this nor `resourceId` the call is `unknown`: closed for end
+   * users' data, and refused on any run that is a user's or staff's. Staff must be said out loud
+   * (`caller: STAFF`). Re-entering an existing run (resume) runs it as its RECORDED owner.
    */
-  principal?: Principal | RunIdentity;
+  caller?: Caller | RunIdentity;
   /** Kanal etiketi — XID origin'i ve tekrar sorularının "nereden" bilgisi (bkz. DurableCtx.channel). */
   channel?: string;
   /** The agent's registry name — frozen into the invisible `:input` entry so studio /runs can LABEL
@@ -169,10 +170,10 @@ export type StreamDurableArgs = StreamTextOptions & {
    *  ends. `false` = deliberately none — see RunDurableArgs.memory for what that buys. */
   memory?: Memory | false;
   threadId?: string;
-  /** Resource (user) identity — shorthand for `principal: user(resourceId)`. */
+  /** Resource (user) identity — shorthand for `caller: user(resourceId)`. */
   resourceId?: string;
-  /** Who this run acts for — see RunDurableArgs.principal. */
-  principal?: Principal | RunIdentity;
+  /** Who is calling — see RunDurableArgs.caller. */
+  caller?: Caller | RunIdentity;
   /** Kanal etiketi — XID origin'i ve tekrar sorularının "nereden" bilgisi (bkz. DurableCtx.channel). */
   channel?: string;
   /** Agent registry name — frozen into the `:input` entry so studio /runs can label the run (see RunDurableArgs). */
@@ -753,7 +754,7 @@ async function persistInput(
   alreadyFrozen: boolean,
   threadId?: string,
   agentName?: string,
-  owner: Principal = UNKNOWN,
+  owner: Caller = UNKNOWN,
   // FAZ-4: the RAW caller input's fingerprint (computed BEFORE memory prep mutates `input.messages` —
   // post-prep content grows with the thread, so a post-prep hash would 409 every legitimate resume)
   // and the opaque actor identity. Both first-wins with the rest of the entry.
@@ -1409,7 +1410,7 @@ async function prepareMemoryContext(
   // karar). Yutulan hata burada "sahibi yok" diye okunuyordu ve `:input` ilk yazan kazandığı için
   // sonucu KALICI: depo bir an arızalandı diye koşum sonsuza dek sahipsiz doğuyor, `ownershipDenied`
   // `!owner` dalında sessizce geçiyor ve `purgeResource` o koşumu hiç bulamıyor.
-  // R14: the owner comes from the run's principal, which the thread gate resolved from the RECORD.
+  // R14: the owner comes from the run's caller, which the thread gate resolved from the RECORD.
   const rid = resourceId;
 
   if (typeof memory.loadContext === 'function') {
@@ -2964,56 +2965,89 @@ async function runDurableGuarded(args: RunDurableArgs): Promise<DurableResult> {
 }
 
 
-/** The principal the caller declared: `principal`, or the `resourceId` shorthand, or `unknown`. */
-function declaredPrincipal(args: { resourceId?: string; principal?: Principal | RunIdentity }): Principal {
-  if (args.principal) {
-    const p = principalOf(args.principal);
-    if (args.resourceId !== undefined && userIdOf(p) !== args.resourceId) {
-      throw new TypeError('@gnldev/durable: a run was given both `principal` and a different `resourceId` — one owner per run.');
+/** The caller a direct engine call declared: `caller`, or the `resourceId` shorthand, or `unknown`. */
+function declaredCaller(args: { resourceId?: string; caller?: Caller | RunIdentity }): Caller {
+  if (args.caller) {
+    const c = callerOf(args.caller);
+    if (args.resourceId !== undefined && userIdOf(c) !== args.resourceId) {
+      throw new TypeError('@gnldev/durable: a run was given both `caller` and a different `resourceId` — one caller per run.');
     }
-    return p;
+    return c;
   }
-  return principalFrom(args.resourceId);
+  return callerFromResourceId(args.resourceId);
 }
 /** A passed identity is either the child's own (same runId: its parentRunId counts) or the parent's. */
-function parentOf(args: { runId: string; principal?: Principal | RunIdentity }): string | undefined {
-  const id = args.principal as RunIdentity | undefined;
+function parentOf(args: { runId: string; caller?: Caller | RunIdentity }): string | undefined {
+  const id = args.caller as RunIdentity | undefined;
   if (!id?.runId) return undefined;
   return id.runId === args.runId ? id.parentRunId : id.runId;
 }
+
 /**
- * A re-entry runs as the RECORDED owner; a caller naming a different user is refused (R5). The
- * refusal is returned, not thrown, so the older, more specific gates (thread, actor) speak first.
+ * THE ENTRY of an agent run (both runDurableInner and streamDurable): ONE read of the owner
+ * (run-identity.ts `runOwnerOf` — the record, the `_v` rule, the bounded probe for a record that is
+ * gone while rows remain), and the ONE rule on it (`actingCaller`). An unreadable owner propagates
+ * the store's error: not knowing is not permission.
+ *
+ * `frozenInput` is the record only when it holds an input. A record with no input is an agent run
+ * that was BORN (its owner written first, see bornAs) and failed before it froze one: it has an
+ * owner, and its retry is a first run.
+ *
+ * The refusal is returned, not thrown, so the older, more specific gates (thread, actor) speak first.
  */
-function entryPrincipal(runId: string, frozen: unknown, declared: Principal): { principal: Principal; refusal?: RunOwnerMismatchError } {
-  const eff = effectivePrincipal(recordedPrincipal(frozen), declared);
-  if (eff.ok) return { principal: eff.principal };
-  const owner = userIdOf(eff.owner) ?? '(staff)';
+async function enterAgentRun(journal: Journal, runId: string, args: { resourceId?: string; caller?: Caller | RunIdentity }): Promise<{
+  owner: RunOwner; recorded: unknown; frozenInput: FrozenInput | undefined; caller: Caller; refusal?: RunOwnerMismatchError;
+}> {
+  const owner = await runOwnerOf(journal, runId);
+  if (owner.state === 'unreadable') throw owner.error;
+  const recorded = owner.state === 'owned' ? owner.record : undefined;
+  const frozenInput = recorded && (recorded.prompt !== undefined || recorded.messages !== undefined) ? (recorded as FrozenInput) : undefined;
+  const declared = declaredCaller(args);
+  const acting = actingCaller(owner, declared);
+  if (acting) return { owner, recorded, frozenInput, caller: acting };
   return {
-    principal: declared,
+    owner, recorded, frozenInput, caller: declared,
     refusal: new RunOwnerMismatchError(
-      `@gnldev/durable: run '${runId}' belongs to a different subject — this call names '${userIdOf(declared)}'. A run acts for the owner recorded at its start.`,
-      { runId, owner, requested: userIdOf(declared) ?? '' },
+      `@gnldev/durable: run '${runId}' belongs to a different subject. A run acts for the owner recorded at its start.`,
+      { runId, owner: owner.state === 'owned' ? ownerLabel(owner.owner) : '(unknown)', requested: ownerLabel(declared) },
     ),
   };
+}
+
+/**
+ * A NEW agent run is BORN here — its owner written before its first row (`claimRunOwner`, the one
+ * start point every run kind shares), so a run that fails before it freezes its input still has an
+ * owner and cannot be taken by someone else. `persistInput` later writes the frozen input over it
+ * with the same owner fields.
+ */
+async function bornAs(journal: Journal, runId: string, owner: RunOwner, caller: Caller, fields: Record<string, unknown>): Promise<void> {
+  if (owner.state !== 'missing') return;
+  const recorded = await claimRunOwner(journal, runId, caller, fields);
+  if (actingCaller({ state: 'owned', owner: recorded, kind: 'agent', recorded: true }, caller) === undefined) {
+    throw new RunOwnerMismatchError(
+      `@gnldev/durable: run '${runId}' belongs to a different subject. A run acts for the owner recorded at its start.`,
+      { runId, owner: ownerLabel(recorded), requested: ownerLabel(caller) },
+    );
+  }
 }
 
 async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   // `workKey`/`workScope` are pulled OUT of `rest` deliberately: `rest` is both the frozen input and
   // the option bag handed to `generateText`, so a declared name left in it would travel to the
   // provider as an unknown request field and land in `:input` twice under two different meanings.
-  const { journal, runId, guard, approvals, memory, threadId, resourceId: _declaredResourceId, principal: _declaredPrincipal, channel, agentName, workKey, workScope, replay, lock: _lock, processors, schemaCompat, limits, exclusiveModelStep, replayCacheMaxBytes, toolPolicy, timeouts, strictInput, conflictLedger, tombstonePolicy, actor, auditOnReject, replayDisclosure, model, tools, stopWhen, ...rest } =
+  const { journal, runId, guard, approvals, memory, threadId, resourceId: _declaredResourceId, caller: _declaredCaller, channel, agentName, workKey, workScope, replay, lock: _lock, processors, schemaCompat, limits, exclusiveModelStep, replayCacheMaxBytes, toolPolicy, timeouts, strictInput, conflictLedger, tombstonePolicy, actor, auditOnReject, replayDisclosure, model, tools, stopWhen, ...rest } =
     args as RunDurableArgs & Record<string, any>;
   // `model` is already a model object here — string ids are resolved in normalizeEntryArgs.
   // ONE read of `:input`, shared by the ownership check, the adoption and persistInput below (see
   // applyInputProcessors). Read + asserted BEFORE runStarted/resolveApprovals — see
   // assertThreadOwnership's own doc for why the order matters (K2/K3 hardening).
-  const frozenInput = await journal.get<FrozenInput>(runKeys.input(runId));
+  const entry = await enterAgentRun(journal, runId, args);
+  const frozenInput = entry.frozenInput;
   // WHOSE runId IS THIS — asked before the ownership check, because a workflow/batch identity record
   // is not a frozen agent input at all (see identityOnlyInput). Refused on the SAME read, and before
   // anything is written: an agent attempt against a workflow's runId used to proceed on an empty
   // request and leave its rows under that workflow's prefix.
-  const identityOnly = identityOnlyInput(frozenInput);
+  const identityOnly = identityOnlyInput(entry.recorded as FrozenInput | undefined);
   if (identityOnly) throw refuseIdentityOnlyInput(runId, identityOnly);
   try {
     assertThreadOwnership(frozenInput, runId, threadId);
@@ -3037,20 +3071,20 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   // One gate for every memory, asked of the thread's owner RECORD (thread-owner.ts). It used to fire
   // only for a memory that could name an owner, so with BasicMemory it never fired at all.
   // WHO THIS RUN ACTS FOR — decided once, here, from the record and the caller (run-identity.ts).
-  const entry = entryPrincipal(runId, frozenInput, declaredPrincipal(args));
-  let principal = entry.principal;
+  let caller = entry.caller;
   if (threadId) {
-    const th = await admitThreadRun(journal, memory || undefined, threadId, principal);
+    const th = await admitThreadRun(journal, memory || undefined, threadId, caller);
     // Staff starting a NEW run on a user's thread acts for that user (the thread RECORD's owner).
-    if (principal.kind === 'staff' && th.owner && frozenInput === undefined) principal = user(th.owner);
+    if (caller.kind === 'staff' && th.owner && entry.owner.state === 'missing') caller = user(th.owner);
   }
-  const resourceId = userIdOf(principal);
-  const identity = runIdentity(principal, runId, { ...(threadId ? { threadId } : {}), ...(parentOf(args) ? { parentRunId: parentOf(args) } : {}) });
+  const resourceId = userIdOf(caller);
+  const identity = runIdentity(caller, runId, { ...(threadId ? { threadId } : {}), ...(parentOf(args) ? { parentRunId: parentOf(args) } : {}) });
   // FAZ-4: fingerprint the RAW caller input BEFORE memory prep mutates rest.messages (post-prep
   // content grows with the thread — hashing it would 409 every legitimate resume).
   const rawInputHash = rawInputFingerprint(rest);
   await assertRunAdmissible(journal, runId, frozenInput, rawInputHash, { strictInput, conflictLedger, auditOnReject, tombstonePolicy, actor, resourceId, approvals });
   if (entry.refusal) throw entry.refusal;
+  await bornAs(journal, runId, entry.owner, caller, { ...(agentName ? { agent: agentName } : {}), ...(threadId ? { threadId } : {}), ...(actor ? { actor } : {}), ...(workKey ? { workKey } : {}), ...(workScope ? { workScope } : {}) });
   // RESUME-GATE probe, BEFORE runStarted buries the verdict under 'running': a re-entry of a run
   // that already ENDED replays from the journal and must not be judged by the input gates — a throw
   // there overwrites the ending with 'failed' (see runResumeGates). 'failed' is NOT an ending here:
@@ -3122,7 +3156,7 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   // sahipsiz bir koşumda `ownershipDenied` sessiz geçer: sonradan gelen bir çağrı kendi öznesini
   // beyan edip cevabı kurbanın thread'ine yazdırabiliyordu. Belleğin okuduğu sahiple journal'ın
   // yazdığı sahip AYNI olmalı, yoksa iki farklı gerçeklik olur ve kapı yanlış olanı okur.
-  await persistInput(journal, runId, rest, frozenInput !== undefined, threadId, agentName, principal, rawInputHash, actor, { ...(workKey ? { workKey } : {}), ...(workScope ? { workScope } : {}) });
+  await persistInput(journal, runId, rest, frozenInput !== undefined, threadId, agentName, caller, rawInputHash, actor, { ...(workKey ? { workKey } : {}), ...(workScope ? { workScope } : {}) });
   await persistMemoryContext(journal, runId, memCtx);
   // Freeze `limits` into the journal on the first run (idempotent via `claim` — the FIRST
   // run's limits win, a later resume never overwrites them). resumeRun reads this back when the caller
@@ -3319,7 +3353,7 @@ export interface ResumeAgentConfig {
 type DurableOwnKey = Exclude<keyof RunDurableArgs, keyof GenerateTextOptions>;
 const RESUME_POLICY = {
   journal: 'set', runId: 'set', approvals: 'set', limits: 'set',
-  threadId: 'from-input', resourceId: 'from-input', principal: 'from-input', agentName: 'from-input',
+  threadId: 'from-input', resourceId: 'from-input', caller: 'set', agentName: 'from-input',
   workKey: 'from-input', workScope: 'from-input', // frozen in `:input`; the gates read them from there
   guard: 'forward', memory: 'forward', channel: 'forward', replay: 'forward', lock: 'forward',
   processors: 'forward', schemaCompat: 'forward', exclusiveModelStep: 'forward', toolPolicy: 'forward',
@@ -3329,7 +3363,17 @@ const RESUME_POLICY = {
 
 export async function resumeRun(
   runId: string,
-  opts: ResumeAgentConfig & { journal: Journal; approvals?: Record<string, boolean> },
+  opts: ResumeAgentConfig & {
+    journal: Journal;
+    approvals?: Record<string, boolean>;
+    /**
+     * WHO is resuming (run-identity.ts). The run continues as its RECORDED owner; this only decides
+     * whether the caller may: the owner, or staff (`STAFF`). Absent is `unknown` — refused on a user's
+     * or staff's run. `resourceId` is the shorthand for a user.
+     */
+    caller?: Caller;
+    resourceId?: string;
+  },
 ): Promise<DurableResult> {
   assertRunIdSafe(runId); // journal I/O'dan ÖNCE: rezerve bir aile adıyla okuma bile yapılmasın
   const input = upgradeFormat(
@@ -3369,8 +3413,9 @@ export async function resumeRun(
     ...(input.system ? { system: input.system } : {}),
     ...(input.threadId ? { threadId: input.threadId } : {}),
     ...(input.agent ? { agentName: input.agent } : {}),
-    // The owner is the RECORD's (entryPrincipal); a caller that names a user is checked against it.
-    ...((opts as { resourceId?: string }).resourceId !== undefined ? { resourceId: (opts as { resourceId?: string }).resourceId } : {}),
+    // The run acts for the RECORD's owner (enterAgentRun); the caller is only checked against it.
+    ...(opts.caller ? { caller: opts.caller } : {}),
+    ...(opts.resourceId !== undefined ? { resourceId: opts.resourceId } : {}),
   } as any);
 }
 
@@ -3456,7 +3501,7 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   await assertNotCanceled(args.journal, args.runId);
   // Same reason as runDurableInner: the declared name leaves `rest` before `rest` becomes both the
   // frozen input and the `streamText` option bag.
-  const { journal, runId, guard, approvals, memory, threadId, resourceId: _declaredResourceId, principal: _declaredPrincipal, channel, agentName, workKey, workScope, replay, lock, processors, schemaCompat, limits, exclusiveModelStep, replayCacheMaxBytes, toolPolicy, timeouts, strictInput, conflictLedger, tombstonePolicy, actor, auditOnReject, replayDisclosure, model, tools, stopWhen, onBlocked, ...rest } =
+  const { journal, runId, guard, approvals, memory, threadId, resourceId: _declaredResourceId, caller: _declaredCaller, channel, agentName, workKey, workScope, replay, lock, processors, schemaCompat, limits, exclusiveModelStep, replayCacheMaxBytes, toolPolicy, timeouts, strictInput, conflictLedger, tombstonePolicy, actor, auditOnReject, replayDisclosure, model, tools, stopWhen, onBlocked, ...rest } =
     args as StreamDurableArgs & Record<string, any>;
   // (a): opt-in run-lock — acquire BEFORE the setup work (reject a concurrent stream/run of the
   // same runId with RunBusyError). Released on stream finish/error (see the onFinish/onError wrappers).
@@ -3514,10 +3559,11 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   async function afterAcquire(): Promise<StreamTextResult<any, any, any>> {
   // ONE read of `:input`, shared with persistInput below — parity with runDurableInner. Read + asserted
   // BEFORE runStarted/resolveApprovals — see assertThreadOwnership's own doc (K2/K3 hardening).
-  const frozenInput = await journal.get<FrozenInput>(runKeys.input(runId));
+  const entry = await enterAgentRun(journal, runId, args);
+  const frozenInput = entry.frozenInput;
   // Parity with runDurableInner — "unutulan hep yüzeyler": chat-adapter and agui reach the engine
   // through THIS function, so a client-supplied workflow/batch runId arrives here first.
-  const identityOnly = identityOnlyInput(frozenInput);
+  const identityOnly = identityOnlyInput(entry.recorded as FrozenInput | undefined);
   if (identityOnly) throw refuseIdentityOnlyInput(runId, identityOnly);
   try {
     assertThreadOwnership(frozenInput, runId, threadId);
@@ -3540,20 +3586,20 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   // One gate for every memory, asked of the thread's owner RECORD (thread-owner.ts). It used to fire
   // only for a memory that could name an owner, so with BasicMemory it never fired at all.
   // WHO THIS RUN ACTS FOR — decided once, here, from the record and the caller (run-identity.ts).
-  const entry = entryPrincipal(runId, frozenInput, declaredPrincipal(args));
-  let principal = entry.principal;
+  let caller = entry.caller;
   if (threadId) {
-    const th = await admitThreadRun(journal, memory || undefined, threadId, principal);
+    const th = await admitThreadRun(journal, memory || undefined, threadId, caller);
     // Staff starting a NEW run on a user's thread acts for that user (the thread RECORD's owner).
-    if (principal.kind === 'staff' && th.owner && frozenInput === undefined) principal = user(th.owner);
+    if (caller.kind === 'staff' && th.owner && entry.owner.state === 'missing') caller = user(th.owner);
   }
-  const resourceId = userIdOf(principal);
-  const identity = runIdentity(principal, runId, { ...(threadId ? { threadId } : {}), ...(parentOf(args) ? { parentRunId: parentOf(args) } : {}) });
+  const resourceId = userIdOf(caller);
+  const identity = runIdentity(caller, runId, { ...(threadId ? { threadId } : {}), ...(parentOf(args) ? { parentRunId: parentOf(args) } : {}) });
   // FAZ-4: fingerprint the RAW caller input BEFORE memory prep mutates rest.messages (post-prep
   // content grows with the thread — hashing it would 409 every legitimate resume).
   const rawInputHash = rawInputFingerprint(rest);
   await assertRunAdmissible(journal, runId, frozenInput, rawInputHash, { strictInput, conflictLedger, auditOnReject, tombstonePolicy, actor, resourceId, approvals });
   if (entry.refusal) throw entry.refusal;
+  await bornAs(journal, runId, entry.owner, caller, { ...(agentName ? { agent: agentName } : {}), ...(threadId ? { threadId } : {}), ...(actor ? { actor } : {}), ...(workKey ? { workKey } : {}), ...(workScope ? { workScope } : {}) });
   // RESUME-GATE probe — the stream twin of runDurableInner's, and it matters MORE here: this is the
   // path chat/agui use, so an at-least-once redelivery of a finished turn arrives on this line.
   // Read BEFORE runStarted buries the verdict (see runResumeGates' "NOT on a run that already ENDED").
@@ -3617,7 +3663,7 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   // sahipsiz bir koşumda `ownershipDenied` sessiz geçer: sonradan gelen bir çağrı kendi öznesini
   // beyan edip cevabı kurbanın thread'ine yazdırabiliyordu. Belleğin okuduğu sahiple journal'ın
   // yazdığı sahip AYNI olmalı, yoksa iki farklı gerçeklik olur ve kapı yanlış olanı okur.
-  await persistInput(journal, runId, rest, frozenInput !== undefined, threadId, agentName, principal, rawInputHash, actor, { ...(workKey ? { workKey } : {}), ...(workScope ? { workScope } : {}) });
+  await persistInput(journal, runId, rest, frozenInput !== undefined, threadId, agentName, caller, rawInputHash, actor, { ...(workKey ? { workKey } : {}), ...(workScope ? { workScope } : {}) });
   await persistMemoryContext(journal, runId, memCtx);
   // Freeze `limits` on the first run (parity with runDurableInner) — idempotent via `claim`.
   if (limits) await claim(journal, runKeys.cfgLimits(runId), serializableLimits(limits));

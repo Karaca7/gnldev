@@ -14,6 +14,7 @@ import { getRunCost } from '../src/cost.js';
 import { usageAndCostFromModelValue } from '../src/cost.js';
 import { priceFor, DEFAULT_PRICING } from '../src/pricing.js';
 import { createMockModel, finalTextResult } from './mock.js';
+import { claimRunOwner, UNKNOWN as NOBODY } from '../src/run-identity.js';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -53,6 +54,7 @@ describe('unpriced models', () => {
   it('maxCostUsd + an unpriced model warns that the ceiling is not capping the run', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const journal = new InMemoryJournal();
+    await claimRunOwner(journal, 'r1', NOBODY);
     await journal.put('r1:model:0', step(UNKNOWN));
 
     await runDurable({
@@ -70,6 +72,7 @@ describe('unpriced models', () => {
   it('limits.strict turns that silence into a thrown error', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const journal = new InMemoryJournal();
+    await claimRunOwner(journal, 'r2', NOBODY);
     await journal.put('r2:model:0', step(UNKNOWN));
 
     await expect(runDurable({
@@ -83,6 +86,7 @@ describe('unpriced models', () => {
   it('a priced run is unaffected: no warning, and the ceiling still fires', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const journal = new InMemoryJournal();
+    await claimRunOwner(journal, 'r3', NOBODY);
     await journal.put('r3:model:0', step('claude-opus-4'));
 
     await expect(runDurable({
@@ -97,6 +101,7 @@ describe('unpriced models', () => {
   it('getRunCost still reports the tokens it could count', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const journal = new InMemoryJournal();
+    await claimRunOwner(journal, 'r4', NOBODY);
     await journal.put('r4:model:0', step(UNKNOWN));
     const cost = await getRunCost(journal as never, 'r4');
     expect(cost.totalTokens).toBe(2_000_000);

@@ -8,7 +8,7 @@
 //
 // Every scenario has the same shape: the charge succeeds at the provider, then the process "crashes"
 // before the result is durably recorded.
-import { InMemoryJournal, durableTool } from '@gnldev/durable';
+import { InMemoryJournal, durableTool, runIdentity, STAFF } from '@gnldev/durable';
 import type { DurableCtx } from '@gnldev/durable';
 import { MockStripe } from './mock-stripe.js';
 
@@ -65,7 +65,8 @@ export async function scenarioApprovedRetry(): Promise<Outcome> {
       return charge;
     },
   };
-  const ctx: DurableCtx = { journal: new InMemoryJournal(), runId: 'order-77', approvals: { 'call-charge': true } };
+  // Who the charge runs for: the checkout service itself (staff), said out loud.
+  const ctx: DurableCtx = { journal: new InMemoryJournal(), runId: 'order-77', identity: runIdentity(STAFF, 'order-77'), approvals: { 'call-charge': true } };
   const dt = durableTool(chargeCard as any, ctx, 'chargeCard');
 
   let firstAttemptError: string | undefined;
@@ -101,7 +102,7 @@ export async function scenarioRecover(): Promise<Outcome> {
       return existing ? { done: true, output: existing } : { done: false };
     },
   };
-  const ctx: DurableCtx = { journal: new InMemoryJournal(), runId: 'order-78' }; // NO approvals — recover() resolves it
+  const ctx: DurableCtx = { journal: new InMemoryJournal(), runId: 'order-78', identity: runIdentity(STAFF, 'order-78') }; // NO approvals — recover() resolves it
   const dt = durableTool(chargeCard as any, ctx, 'chargeCard');
 
   let firstAttemptError: string | undefined;

@@ -122,7 +122,7 @@ describe('/agents/:name/resume', () => {
    */
   async function seedInput(journal: InMemoryJournal, runId: string): Promise<void> {
     // Alice's run: the resume below is Alice resuming her own work (an ownerless one is staff's).
-    await journal.put(`org:acme:${runId}:input`, { prompt: 'hi', resourceId: 'alice' });
+    await journal.put(`org:acme:${runId}:input`, { _v: 2, prompt: 'hi', resourceId: 'alice' });
   }
 
   // Pre-change this path built `s.orgId ? { org: s.orgId } : undefined` by hand, so a dynamic

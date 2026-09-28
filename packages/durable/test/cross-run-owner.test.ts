@@ -7,7 +7,7 @@ import { stepCountIs, tool } from 'ai';
 import { z } from 'zod';
 import { InMemoryJournal } from '../src/journal.js';
 import { runDurable } from '../src/run.js';
-import { STAFF, gnlOf, userIdOf } from '../src/run-identity.js';
+import { STAFF, identityOf, userIdOf } from '../src/run-identity.js';
 import { createMockModel, countToolResults, toolCallResult, finalTextResult } from './mock.js';
 
 function setup() {
@@ -16,7 +16,7 @@ function setup() {
   const lookup = Object.assign(tool({
     description: 'look up an order',
     inputSchema: z.object({ orderId: z.string() }),
-    execute: async ({ orderId }, o: any) => { executedFor.push(userIdOf(gnlOf(o))); return { orderId, address: `ADDRESS-OF-${userIdOf(gnlOf(o)) ?? 'staff'}` }; },
+    execute: async ({ orderId }, o: any) => { executedFor.push(userIdOf(identityOf(o))); return { orderId, address: `ADDRESS-OF-${userIdOf(identityOf(o)) ?? 'staff'}` }; },
   }), { idempotencyWindow: 'cross-run' as const });
   async function call(runId: string, resourceId?: string) {
     let seen = '';
@@ -25,7 +25,7 @@ function setup() {
       seen = JSON.stringify(prompt);
       return finalTextResult('done');
     });
-    await runDurable({ runId, journal, model, tools: { lookup }, prompt: 'x', stopWhen: stepCountIs(4), ...(resourceId ? { resourceId } : { principal: STAFF }) } as never);
+    await runDurable({ runId, journal, model, tools: { lookup }, prompt: 'x', stopWhen: stepCountIs(4), ...(resourceId ? { resourceId } : { caller: STAFF }) } as never);
     return seen;
   }
   return { call, executedFor };

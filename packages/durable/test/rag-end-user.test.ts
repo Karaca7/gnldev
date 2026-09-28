@@ -2,7 +2,7 @@
 // that user's own. Never a third person's, and never a document nobody labelled — an unlabelled
 // document is a forgotten label, and a forgotten label must read as "not found", not as "everyone's".
 //
-// Staff (said out loud: `principal: STAFF`) keep the unrestricted view. A run that names nobody is
+// Staff (said out loud: `caller: STAFF`) keep the unrestricted view. A run that names nobody is
 // `unknown` (candidate B) and reads the general shelf only — closed, not open.
 import { describe, it, expect } from 'vitest';
 import { stepCountIs } from 'ai';
@@ -36,7 +36,7 @@ async function search(resourceId: string | undefined, staff = false): Promise<st
   });
   await runDurable({
     runId: `r-${resourceId ?? 'staff'}`, journal, model, tools: { searchKnowledge: tool },
-    prompt: 'find my invoices', stopWhen: stepCountIs(4), ...(resourceId ? { resourceId } : {}), ...(staff ? { principal: STAFF } : {}),
+    prompt: 'find my invoices', stopWhen: stepCountIs(4), ...(resourceId ? { resourceId } : {}), ...(staff ? { caller: STAFF } : {}),
   });
   return seen;
 }

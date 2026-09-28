@@ -5,7 +5,7 @@ import {
   InMemoryJournal, BasicMemory, appendLog, listLog, consumeOnce, sweepLog, sweepThreads, sweepRuns,
   createRetentionSweeper, runKeys, stampFormat,
 } from '../src/index.js';
-import { claimIdentityInput } from '../src/journal.js';
+import { claimRunOwner, user } from '../src/run-identity.js';
 
 const HOUR = 60 * 60 * 1000;
 
@@ -149,7 +149,7 @@ describe('sweepThreads (BasicMemory retention)', () => {
 
 // KİMLİK AMAÇLI `:input` — süpürmenin göremediği kayıt sınıfı.
 //
-// İş akışı / batch / ağ koşumları `<runId>:input`'a bir SAHİP kaydı yazıyor (claimIdentityInput).
+// İş akışı / batch / ağ koşumları `<runId>:input`'a bir SAHİP kaydı yazıyor (claimRunOwner).
 // O kayıtla koşum `listRuns`'ta görünüyor, ama `readRun` ona hiç entry döndürmüyor (`:input`
 // parseJournalKey'e görünmez) → `lastActivity === undefined` → `keptNoTs` → SONSUZA DEK saklanır.
 // Yani kişisel veri taşıyan bir kayıt sınıfı tam olarak her retention penceresinin dışındaydı.
@@ -163,10 +163,10 @@ describe('sweepRuns — kimlik amaçlı :input', () => {
   it('yaşlı kimlik kaydı süpürülür, genci kalır', async () => {
     const journal = slowScan(new InMemoryJournal());
     const now = Date.now();
-    await claimIdentityInput(journal, 'wf-eski', { at: now - 3 * HOUR, resourceId: 'u-ayse', workflow: 'aylik-rapor' });
-    await claimIdentityInput(journal, 'wf-yeni', { at: now - 1000, resourceId: 'u-ayse', workflow: 'aylik-rapor' });
-    await claimIdentityInput(journal, 'batch:f-1:F-9', { at: now - 3 * HOUR, resourceId: 'u-ayse', batch: 'f-1' });
-    await claimIdentityInput(journal, 'net-eski', { at: now - 3 * HOUR, resourceId: 'u-ayse', network: 'destek' });
+    await claimRunOwner(journal, 'wf-eski', user('u-ayse'), { at: now - 3 * HOUR, workflow: 'aylik-rapor' });
+    await claimRunOwner(journal, 'wf-yeni', user('u-ayse'), { at: now - 1000, workflow: 'aylik-rapor' });
+    await claimRunOwner(journal, 'batch:f-1:F-9', user('u-ayse'), { at: now - 3 * HOUR, batch: 'f-1' });
+    await claimRunOwner(journal, 'net-eski', user('u-ayse'), { at: now - 3 * HOUR, network: 'destek' });
 
     const res = await sweepRuns(journal, { olderThanMs: HOUR, now });
     expect([...res.purged].sort()).toEqual(['batch:f-1:F-9', 'net-eski', 'wf-eski']);

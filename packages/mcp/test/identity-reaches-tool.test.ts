@@ -1,4 +1,4 @@
-import { gnlOf, userIdOf } from '@gnldev/durable';
+import { identityOf, userIdOf } from '@gnldev/durable';
 // On a server that resolves who is calling, every call hands the tool that caller — whether or not it
 // names a unit of work, whether or not the server keeps a journal. The plain path (no key: what an
 // ordinary third-party client sends) used to call `t.execute(args)` bare, so a tool that serves end
@@ -21,7 +21,7 @@ const who: McpServerOptions['identity'] = (c) => {
 const as = (clientId?: string) => (clientId ? { authInfo: { clientId } } : {});
 const recorder = () => {
   const seen: Array<string | undefined> = [];
-  return { seen, tool: { description: 'r', execute: async (_a: unknown, o?: unknown) => { seen.push(userIdOf(gnlOf(o))); return { ok: true }; } } };
+  return { seen, tool: { description: 'r', execute: async (_a: unknown, o?: unknown) => { seen.push(userIdOf(identityOf(o))); return { ok: true }; } } };
 };
 
 describe('the caller reaches the tool on every path', () => {

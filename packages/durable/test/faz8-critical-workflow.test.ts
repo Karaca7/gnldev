@@ -121,6 +121,8 @@ describe('FAZ-8 audit fixes', () => {
     });
     // The winner (input X) has already written the claim:
     const { argsHash } = await import('../src/hash.js');
+    const { claimRunOwner, UNKNOWN } = await import('../src/run-identity.js');
+    await claimRunOwner(inner, 'k4', UNKNOWN); // the winner was born (its owner recorded) before its fingerprint
     await inner.put('k4:wf:_input', { hash: argsHash({ q: 'X' }), at: 1 });
     const gnl = createGnl({ journal, preset: 'critical', workflows: { w: { async run(i: unknown) { return i; }, build: () => [] } as any } });
     // The loser (input Y): sees undefined → claim false → re-reads → mismatches the winner → 409

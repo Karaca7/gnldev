@@ -17,7 +17,7 @@
 // never runs twice", not full durability.
 import { durableTool } from './durable-tool.js';
 import { runKeys, type Journal } from './journal.js';
-import { gnlOf, runIdentity, toolContextFor, UNKNOWN, type Principal } from './run-identity.js';
+import { identityOf, runIdentity, toolContextFor, UNKNOWN, type Caller } from './run-identity.js';
 import { argsHash } from './hash.js';
 import type { AnyTool, ToolSet } from './types.js';
 
@@ -45,7 +45,7 @@ export interface WithIdempotencyOptions {
    * Who these tools act for when a call carries no engine context (`options.gnl`). Absent is
    * `unknown`: such a caller reuses only records an unknown caller made — never a user's.
    */
-  principal?: Principal;
+  caller?: Caller;
 }
 
 /**
@@ -59,10 +59,10 @@ export function withIdempotency<T extends ToolSet>(tools: T, opts: WithIdempoten
   // scopes dedup in the 'run' window.
   const runId = opts.runId ?? 'ambient';
   // The identity is PER CALL: the call's own engine context when it has one, else the configured
-  // principal. The owner record the window writes and the identity the tool sees are that one value.
+  // caller. The owner record the window writes and the identity the tool sees are that one value.
   const ctxFor = (options: unknown) => {
-    const called = gnlOf(options);
-    const identity = called.kind !== 'unknown' ? called : runIdentity(opts.principal ?? UNKNOWN, runId);
+    const called = identityOf(options);
+    const identity = called.kind !== 'unknown' ? called : runIdentity(opts.caller ?? UNKNOWN, runId);
     return { journal: opts.journal, runId, noApprovals: true, identity };
   };
   const out: Record<string, AnyTool> = {};

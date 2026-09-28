@@ -23,8 +23,8 @@
 // identity. So `identity` below is resolved SERVER-SIDE from what the transport authenticated, and the
 // runId is derived from it through the same `resolveWorkIdentity` the HTTP surfaces use. The client's
 // key is demoted to what it honestly is: a label for the work, unique only within one caller.
-import { durableTool, resolveWorkIdentity, sealRequestContext, blockedErrorCode, withOrg, claimRunOwner, principalFrom, runIdentity, toolContextFor } from '@gnldev/durable';
-import type { Journal, WorkScope, RequestContext, Principal, GnlToolContext } from '@gnldev/durable';
+import { durableTool, resolveWorkIdentity, sealRequestContext, blockedErrorCode, withOrg, admitRun, user, UNKNOWN, runIdentity, toolContextFor } from '@gnldev/durable';
+import type { Journal, WorkScope, RequestContext, Caller, GnlToolContext } from '@gnldev/durable';
 import type { McpToolDef } from './index.js';
 import { createRateWindow, type RateWindow } from './rate-window.js';
 
@@ -402,11 +402,11 @@ export function createMcpServer(opts: McpServerOptions): McpServer {
    * had nobody to narrow to: `createRagTool` answered one user with another's documents.
    */
   function callerOptions(identity: McpCallerIdentity): { toolCallId: string; gnl: GnlToolContext } {
-    return { toolCallId: 'mcp', gnl: toolContextFor(runIdentity(mcpPrincipal(identity), 'mcp')) };
+    return { toolCallId: 'mcp', gnl: toolContextFor(runIdentity(mcpCaller(identity), 'mcp')) };
   }
-  /** The caller's principal: the resolved subject, else `unknown` (closed) — never staff by omission. */
-  function mcpPrincipal(identity: McpCallerIdentity): Principal {
-    return principalFrom(identity.resourceId, identity.orgId);
+  /** The engine's caller: the resolved subject, else `unknown` (closed) — never staff by omission. */
+  function mcpCaller(identity: McpCallerIdentity): Caller {
+    return identity.resourceId ? user(identity.resourceId, identity.orgId) : UNKNOWN;
   }
 
   /** The permission answer, for one tool, asked the same way by both doors. */
@@ -560,14 +560,16 @@ export function createMcpServer(opts: McpServerOptions): McpServer {
         // what the three other doors that skip `run()` use, and it stamps the record so the paged
         // readers (listRunsPaged, purgeResource) can see it. An unstamped copy satisfies key-based
         // readers only, which is the failure its own note predicts for a fourth door.
-        const principal = await claimRunOwner(journal, runId, mcpPrincipal(identity), {
+        // The same entry as every run kind (@gnldev/durable admitRun): a derived run someone else
+        // owns is refused, and a re-entry acts for the recorded owner.
+        const { acting } = await admitRun(journal, runId, mcpCaller(identity), {
           ...(identity.actor ? { actor: identity.actor } : {}),
           ...(resolved.work ? { workKey: resolved.work.workKey, workScope: resolved.work.workScope } : {}),
         });
         // No `as any` here: DurableCtx declares `resourceId?`, so the object type-checks as written.
         // The cast that was here disabled checking on the whole ctx, which would have accepted a
         // misspelled field silently — the field would then simply not reach the tool.
-        const dt = durableTool(t, { journal, runId, identity: runIdentity(principal, runId) }, req.name);
+        const dt = durableTool(t, { journal, runId, identity: runIdentity(acting, runId) }, req.name);
         try {
           return await dt.execute!(checked.value, { toolCallId: 'mcp' });
         } catch (err) {
@@ -580,7 +582,7 @@ export function createMcpServer(opts: McpServerOptions): McpServer {
       // ── no resolver: the previous behaviour, kept working and no longer silent ──────────────────
       if (workKey !== undefined) {
         warnMissingIdentity(req.name);
-        const dt = durableTool(t, { journal: opts.journal, runId: workKey, identity: runIdentity(mcpPrincipal(identity), workKey) }, req.name);
+        const dt = durableTool(t, { journal: opts.journal, runId: workKey, identity: runIdentity(mcpCaller(identity), workKey) }, req.name);
         try {
           return await dt.execute!(checked.value, { toolCallId: 'mcp' });
         } catch (err) {

@@ -14,6 +14,7 @@ import { runDurable, resumeRun } from '../src/run.js';
 import { derivedRunId } from '../src/hash.js';
 import { RunInputMismatchError } from '../src/errors.js';
 import { createMockModel, finalTextResult } from './mock.js';
+import { STAFF } from '../src/run-identity.js';
 
 describe('rollover kimliği devreder', () => {
   it('threadId, resourceId, actor ve agent yeni koşuma taşınır', async () => {
@@ -53,7 +54,8 @@ describe('rollover kimliği devreder', () => {
       prompt: 'x', threadId: 't-3', resourceId: 'u-mehmet',
     } as any);
     const { newRunId } = await rolloverRun(journal, 'ro-3');
-    await runDurable({ runId: newRunId, journal, model: createMockModel(async () => finalTextResult('devam')) } as any);
+    // Continued by staff (a caller that names nobody is refused on a user's run): it runs as the SEED's owner.
+    await runDurable({ runId: newRunId, journal, model: createMockModel(async () => finalTextResult('devam')), caller: STAFF } as any);
     expect((await journal.get<{ resourceId?: string }>(runKeys.input(newRunId)))?.resourceId).toBe('u-mehmet');
   });
 });

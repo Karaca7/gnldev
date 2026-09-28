@@ -5,7 +5,7 @@ import { Hono, type Context } from 'hono';
 import { sseResponse } from './sse.js';
 
 import { STUDIO_ERROR_CODES } from './error-codes.js';
-import { ORG_RECORD_PRE, asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, countLog, purgeRun, isRealRun, purgeOrganization, orgPurgedKey, sweepRuns, sweepLog, listOrphanThreadState, POLICY_KEY, PRICING_KEY, effectivePricingTable, DEFAULT_PRICING, readPricing, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, knownModelProviders, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent, callerConflictCode, surfacedInterrupts, resolveApprovals as dResolveApprovals, hasRunProbe } from '@gnldev/durable';
+import { ORG_RECORD_PRE, asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, countLog, purgeRun, isRealRun, purgeOrganization, orgPurgedKey, sweepRuns, sweepLog, listOrphanThreadState, POLICY_KEY, PRICING_KEY, effectivePricingTable, DEFAULT_PRICING, readPricing, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, knownModelProviders, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent, callerConflictCode, surfacedInterrupts, resolveApprovals as dResolveApprovals, hasRunProbe, runOwnerOf, inheritRunOwner } from '@gnldev/durable';
 import type { PolicyDoc, PolicyRule, BudgetLimit, PricingDoc } from '@gnldev/durable';
 import type { JournalReader, Journal, WorkflowLike, MetricsRunRow } from '@gnldev/durable';
 import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, principalScope, assertAssignablePrivileges, isPrincipalKind, callerKind, actorIdOf, type AuthProvider, type Principal, type PrincipalKind } from '@gnldev/auth';
@@ -5010,6 +5010,13 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     const upto = Math.max(0, Math.min(body.upto ?? stepIds.length, stepIds.length));
     const keep = new Set(stepIds.slice(0, upto));
     const dst = body.newRunId ?? `${src}:fork:${Date.now()}`;
+    // The fork is BORN its source's — owner record first, before a single row is copied (the one start
+    // point every run kind shares). A copy with no owner record read as an ownerless run: nobody's to
+    // continue but staff's, and never the source owner's.
+    const source = await runOwnerOf(rw as Journal, src);
+    if (source.state === 'unreadable') throw source.error;
+    if (source.state === 'missing') return c.json({ error: `run '${src}' not found` }, 404);
+    await inheritRunOwner(rw as Journal, src, dst, { workflow: name, forkedFrom: src });
     const prefix = `${src}:wf:`;
     const keys = await rw.listKeys!(prefix).catch(() => [] as string[]);
     let copied = 0;

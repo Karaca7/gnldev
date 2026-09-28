@@ -17,6 +17,7 @@ import { z } from 'zod';
 import { InMemoryJournal, runKeys, runDurable, streamDurable, parseJournalKey } from '../src/index.js';
 import type { Journal } from '../src/index.js';
 import { createMockModel, countToolResults, toolCallResult, finalTextResult, createMockStreamAgent } from './mock.js';
+import { claimRunOwner, UNKNOWN as NOBODY } from '../src/run-identity.js';
 
 /** Above CLAIM_TTL_MS (30s) — a 'running' this old is a corpse, not a claim (crash-window.test.ts's twin). */
 const STALE_MS = 60_000;
@@ -243,6 +244,7 @@ describe('first-class approval: approvals journal persistence', () => {
     // standing behind any more. The reclaim ladder will take this over and re-run it, so a human
     // must still be able to say "don't" — freezing the decision here would be the freeze the
     // first-decision-wins rule was never meant to give.
+    await claimRunOwner(journal, 'stale-1', NOBODY);
     await journal.put(runKeys.approval('stale-1', 'call-1'), { v: 1, decision: true, at: Date.now() - STALE_MS });
     await journal.put(runKeys.tool('stale-1', 'call-1'), { status: 'running', startedAt: Date.now() - STALE_MS });
 

@@ -25,7 +25,7 @@ import { claim } from './journal.js';
 import type { Journal, JournalReader, RunSummary } from './journal.js';
 import type { Memory } from './memory.js';
 import { ThreadOwnerMismatchError } from './errors.js';
-import type { Principal } from './run-identity.js';
+import type { Caller } from './identity-types.js';
 
 export const threadOwnerKey = (threadId: string): string => `thread:${threadId}:owner`;
 
@@ -41,7 +41,7 @@ export interface ThreadOwnership {
   staffClaimed?: boolean;
 }
 
-type ThreadOwnerRecord = { resourceId?: string; principal?: string; at?: number };
+type ThreadOwnerRecord = { resourceId?: string; ownerKind?: 'staff' | 'unknown'; at?: number };
 
 /**
  * The one answer to "whose thread is this" — for the gate, the listing, the reading and the
@@ -63,7 +63,7 @@ export async function threadOwnerOf(journal: Journal, memory: Memory | undefined
         return { exists: true, owner };
       }
     }
-    return { exists: true, staffClaimed: rec.principal !== 'unknown' };
+    return { exists: true, staffClaimed: rec.ownerKind !== 'unknown' };
   }
   // Older threads, from before the record: the memory's own answer, then the runs, then the messages.
   let derived: string | undefined;
@@ -121,16 +121,16 @@ async function runsOnThread(journal: Journal, threadId: string): Promise<RunSumm
  *  - staff-claimed: staff only;
  *  - anonymous history, no record: the first named user claims it; staff and unknown pass.
  */
-export async function admitThreadRun(journal: Journal, memory: Memory | undefined, threadId: string, principal: Principal): Promise<ThreadOwnership> {
+export async function admitThreadRun(journal: Journal, memory: Memory | undefined, threadId: string, caller: Caller): Promise<ThreadOwnership> {
   let o = await threadOwnerOf(journal, memory, threadId);
   const claimFor = async (fields: ThreadOwnerRecord) => {
     await claim(journal, threadOwnerKey(threadId), { at: Date.now(), ...fields });
     const rec = await journal.get<ThreadOwnerRecord>(threadOwnerKey(threadId));
-    return rec?.resourceId ? { exists: true, owner: rec.resourceId } : { exists: true, staffClaimed: rec?.principal !== 'unknown' };
+    return rec?.resourceId ? { exists: true, owner: rec.resourceId } : { exists: true, staffClaimed: rec?.ownerKind !== 'unknown' };
   };
   if (!o.exists || (o.owner === undefined && o.staffClaimed === false)) {
-    if (principal.kind === 'user') o = await claimFor({ resourceId: principal.resourceId });
-    else if (principal.kind === 'staff' && !o.exists) o = await claimFor({ principal: 'staff' });
+    if (caller.kind === 'user') o = await claimFor({ resourceId: caller.id });
+    else if (caller.kind === 'staff' && !o.exists) o = await claimFor({ ownerKind: 'staff' });
     else return o;
   }
   const refuse = (requested: string) => {
@@ -139,8 +139,8 @@ export async function admitThreadRun(journal: Journal, memory: Memory | undefine
       { threadId, owner: o.owner ?? '(staff)', requested },
     );
   };
-  if (principal.kind === 'staff') return o;
-  if (principal.kind === 'unknown') return o.owner || o.staffClaimed ? refuse('(unknown)') : o;
-  if (o.owner ? o.owner !== principal.resourceId : o.staffClaimed) refuse(principal.resourceId);
+  if (caller.kind === 'staff') return o;
+  if (caller.kind === 'unknown') return o.owner || o.staffClaimed ? refuse('(unknown)') : o;
+  if (o.owner ? o.owner !== caller.id : o.staffClaimed) refuse(caller.id);
   return o;
 }

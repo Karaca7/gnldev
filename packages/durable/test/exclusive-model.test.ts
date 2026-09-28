@@ -15,6 +15,7 @@ import { InMemoryJournal, runKeys } from '../src/journal.js';
 import { runDurable } from '../src/run.js';
 import { RunBusyError } from '../src/errors.js';
 import { createMockModel, countToolResults, toolCallResult, finalTextResult } from './mock.js';
+import { claimRunOwner, UNKNOWN as NOBODY } from '../src/run-identity.js';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -70,6 +71,7 @@ describe('§5.3(b) exclusiveModelStep ON — stale claim', () => {
     const journal = new InMemoryJournal();
     const runId = 'r-stale';
     // Crash simulation: step 0's claim stayed 'running' but startedAt is OLD (older than ttl=30s).
+    await claimRunOwner(journal, runId, NOBODY);
     await journal.put(runKeys.proc(runId, '__gnl_model_claim:0'), {
       status: 'running',
       startedAt: Date.now() - 60_000,
@@ -96,6 +98,7 @@ describe('§5.3(b) exclusiveModelStep ON — stale claim', () => {
   it('BOUNDARY CONTRAST: FRESH running marker → RunBusyError (another worker is processing that step)', async () => {
     const journal = new InMemoryJournal();
     const runId = 'r-fresh';
+    await claimRunOwner(journal, runId, NOBODY);
     await journal.put(runKeys.proc(runId, '__gnl_model_claim:0'), {
       status: 'running',
       startedAt: Date.now(), // FRESH — within the ttl window
@@ -116,6 +119,7 @@ describe('§5.3(b) exclusiveModelStep ON — stale claim', () => {
     const journal = new InMemoryJournal();
     const runId = 'r-ttl';
     // A 5s-old marker: would be FRESH with the default ttl (30s); with ttlMs=3000 it's STALE → should continue.
+    await claimRunOwner(journal, runId, NOBODY);
     await journal.put(runKeys.proc(runId, '__gnl_model_claim:0'), {
       status: 'running',
       startedAt: Date.now() - 5_000,

@@ -5,6 +5,7 @@
 import { runKeys } from './journal.js';
 import type { Journal, JournalEntry, JournalReader } from './journal.js';
 import { runDurable } from './run.js';
+import { runOwnerOf } from './run-identity.js';
 import type { DurableResult, RunDurableArgs } from './run.js';
 import { argsHash, stableStringify, derivedRunIdBase } from './hash.js';
 import type { Guard } from './guard.js';
@@ -333,6 +334,10 @@ export async function replayRun(cfg: ReplayRunConfig): Promise<ReplayRunResult> 
   }
 
   const dst = newRunId ?? (await pickReplayRunId(journal, runId));
+  // A replay re-runs the source's content, so it is the source's owner's run (never the replayer's,
+  // and never `unknown`): the same owner every door reads (run-identity.ts).
+  const src = await runOwnerOf(journal, runId);
+  if (src.state === 'unreadable') throw src.error;
 
   const result = await runDurable({
     runId: dst,
@@ -346,6 +351,7 @@ export async function replayRun(cfg: ReplayRunConfig): Promise<ReplayRunResult> 
     ...(messages ? { messages } : {}),
     ...(input.prompt && !messages ? { prompt: input.prompt } : {}),
     system: system ?? (input.system as string | undefined),
+    ...(src.state === 'owned' ? { caller: src.owner } : {}),
   } as any);
 
   return { newRunId: dst, result };
