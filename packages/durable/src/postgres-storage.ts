@@ -3,7 +3,7 @@
 // Injectable pool pattern → zero-infra testing with pg-mem. `pg` is an optional peer dep.
 // Vector is 'scan' for now (brute-force cosine; pgvector deferred — pg-mem compatibility + lean first cut).
 import { prefixUpperBound } from './organization.js';
-import { assertUniformSeq } from './storage.js';
+import { assertUniformSeq, workingMemoryScope } from './storage.js';
 import { createRequire } from 'node:module';
 import { cosineSimilarity } from 'ai';
 import { runIdOfKey, parseJournalKey, outcomeStatusOf, deriveRunStatus } from './journal.js';
@@ -1227,7 +1227,7 @@ class PgMemoryStore implements MemoryStore {
   async deleteThread(id: string): Promise<void> {
     await this.q('UPDATE gnl_threads SET deleted_at = $1 WHERE id = $2', [Date.now(), id]);
     await this.q('DELETE FROM gnl_messages WHERE thread_id = $1', [id]);
-    await this.q('DELETE FROM gnl_working_memory WHERE scope_id = $1', [id]);
+    await this.q('DELETE FROM gnl_working_memory WHERE scope_id = $1', [workingMemoryScope.thread(id)]);
     await this.q('DELETE FROM gnl_observations WHERE thread_id = $1', [id]);
     // Batch markers too. A thread is soft-deleted while its messages are hard-deleted, and
     // `upsertThread` can bring the id back — a resurrected thread that kept its markers answers a
@@ -1419,6 +1419,9 @@ class PgMemoryStore implements MemoryStore {
   }
   async setWorkingMemory(scopeId: string, data: unknown): Promise<void> {
     await this.q(`INSERT INTO gnl_working_memory (scope_id, data, updated_at) VALUES ($1,$2,$3) ON CONFLICT (scope_id) DO UPDATE SET data=EXCLUDED.data, updated_at=EXCLUDED.updated_at`, [scopeId, serialize(data), Date.now()]);
+  }
+  async deleteWorkingMemory(scopeId: string): Promise<boolean> {
+    return (await this.q('DELETE FROM gnl_working_memory WHERE scope_id = $1 RETURNING scope_id', [scopeId])).rows.length > 0;
   }
   async getObservations(threadId: string): Promise<Observation[]> {
     const r = await this.q('SELECT obs FROM gnl_observations WHERE thread_id = $1', [threadId]);

@@ -75,8 +75,8 @@ storages) applies the same write rule, before anything is written:
   batch under two owners fails the same way, and nothing of the batch is written. To relabel, `delete`
   it first.
 
-`delete({ owner })` removes one person's documents; `purgeResource(journal, userId, { vectors })` in
-`@gnldev/durable` does it as part of erasing them. A `delete` with no condition (`{}`, `{ ids: [] }`,
+`delete({ owner })` removes one person's documents; `eraseSubject(storage, userId)` in
+`@gnldev/durable` does it for the storage's vector store as part of erasing them. A `delete` with no condition (`{}`, `{ ids: [] }`,
 `{ filter: {} }`) removes nothing.
 
 Your own `VectorStore` gets the same request as `QueryOptions.visibleTo`. Return only documents with

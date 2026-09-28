@@ -212,11 +212,30 @@ export function assertUniformSeq(threadId: string, rows: MessageAppend[]): boole
   return explicit === 0;
 }
 
+/**
+ * The scope ids working memory is stored under, one namespace per scope, so no thread id can name a
+ * person's working memory.
+ *
+ * Thread-scoped working memory used to live under the bare thread id and a person's under
+ * `res:<resourceId>`. A caller who picked the thread id `res:u-ayse` (an anonymous caller, or any
+ * thread-scoped agent on the same storage) read Ayse's working memory into its system prompt and could
+ * write it through `updateWorkingMemory`. The two prefixes below cannot collide: every thread's key
+ * begins `thread:`, every person's `resource:`.
+ *
+ * `MemoryStore.deleteThread` removes `workingMemoryScope.thread(id)`; a person's goes with
+ * `eraseSubject`, through `deleteWorkingMemory(workingMemoryScope.resource(id))`.
+ */
+export const workingMemoryScope = {
+  thread: (threadId: string): string => `thread:${threadId}`,
+  resource: (resourceId: string): string => `resource:${resourceId}`,
+} as const;
+
 export interface MemoryStore {
   upsertThread(rec: ThreadRecord): Promise<void>;
   getThread(id: string): Promise<ThreadRecord | undefined>;
   /** If resourceId is given, that user's threads; otherwise global (studio). PAGINATED. */
   listThreads(q: { resourceId?: string } & ListQuery): Promise<Page<ThreadRecord>>;
+  /** The thread, its messages, observations, batch markers and its thread-scoped working memory (`workingMemoryScope.thread(id)`). */
   deleteThread(id: string): Promise<void>;
 
   /**
@@ -266,8 +285,11 @@ export interface MemoryStore {
   /** Vector recall (thread or resource scope). */
   recall(threadId: string, queryEmbedding: number[], opts: RecallOptions): Promise<MessageRecord[]>;
 
+  /** `scopeId` is a `workingMemoryScope` key. */
   getWorkingMemory(scopeId: string): Promise<unknown>;
   setWorkingMemory(scopeId: string, data: unknown): Promise<void>;
+  /** Removes the record, not only its value: a person's key names them. Returns whether one existed. */
+  deleteWorkingMemory(scopeId: string): Promise<boolean>;
 
   /** ONLY final/derived observation texts (LLM-memoization stays in RunJournal). */
   getObservations(threadId: string): Promise<Observation[]>;

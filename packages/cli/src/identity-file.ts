@@ -62,9 +62,9 @@ export async function gnlToken(req: Request): Promise<Response> {
 // ERASING ONE PERSON — the request you answer in days, not by waiting for a sweep. Retention
 // (\`gnl sweep --older-than 30d\`) deletes by AGE and knows nothing about people:
 //
-//   import { purgeResource, toJournal } from '@gnldev/durable';
-//   // every run, thread and message that is theirs — and, with \`vectors\`, their own documents
-//   await purgeResource(toJournal(storage.runs), userId, { vectors: storage.vectors });
+//   import { eraseSubject } from '@gnldev/durable';
+//   // every run, thread, message, working memory and document that is theirs, in every store the storage holds
+//   await eraseSubject(storage, userId);
 //
 // That call is only possible because the runs were born with an owner. It is the concrete reason this
 // file is worth writing on day one rather than on the day somebody asks to be forgotten.

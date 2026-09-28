@@ -179,6 +179,15 @@ export interface Memory {
 export const MEM_LEAVES = ['messages', 'working'] as const;
 export type MemLeaf = (typeof MEM_LEAVES)[number];
 
+/**
+ * Observational memory's journal records for a thread (`@gnldev/memory`): `om:<threadId>:<leaf>` for
+ * its counters, and `om:<threadId>:proc:<step>` for the memoized observer, reflector and embedding
+ * steps — those hold the model's summary of the conversation. Listed here, beside `MEM_LEAVES`, so
+ * `purgeThread` erases them with the thread; `@gnldev/memory` builds its keys from this list.
+ */
+export const OM_LEAVES = ['observedSeq', 'observeSeq', 'reflectSeq'] as const;
+export type OmLeaf = (typeof OM_LEAVES)[number];
+
 export function memKey(threadId: string, leaf: MemLeaf): string {
   // The rule itself lives beside parseJournalKey, which is what makes it a rule — and it is shared,
   // because this was NOT the only door. `mem:` was guarded here while `xthr:` was not, so a

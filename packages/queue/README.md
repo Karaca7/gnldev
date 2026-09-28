@@ -87,7 +87,9 @@ finds the moved job.
 
 `jobEraser(storage)` removes one person's jobs: the records, the `qdone`/`qfail`/`qatt`/`qown` markers
 (`qfail` holds the handler's error text), the worker's lease locks, and the job runs. Hand it to
-`eraseSubject` from `@gnldev/durable` together with the other packages' erasers:
+`eraseSubject` from `@gnldev/durable` together with the other packages' erasers. `eraseSubject` takes
+the storage itself and erases every store it holds (runs, threads, working memory, documents, owned
+jobs and events); the erasers add what each package keeps in its own format:
 
 ```ts
 import { jobEraser } from '@gnldev/queue';
@@ -97,10 +99,10 @@ import { InMemoryStorage, eraseSubject, toJournal } from '@gnldev/durable';
 
 const storage = new InMemoryStorage();
 const journal = toJournal(storage.runs);
-await eraseSubject(
-  { journal, work: storage.work!, erasers: [jobEraser(storage), triggerEraser(journal), eventEraser(storage.work!)] },
-  'ayse', { orgId: 'acme' },
-);
+await eraseSubject(storage, 'ayse', {
+  orgId: 'acme',
+  erasers: [jobEraser(storage), triggerEraser(journal), eventEraser(storage.work!)],
+});
 ```
 
 The work store needs `deleteIdPrefix` and `deletePrefix`. A store without them makes the eraser throw,

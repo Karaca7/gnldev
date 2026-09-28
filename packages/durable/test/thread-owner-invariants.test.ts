@@ -100,14 +100,14 @@ describe('R13: gate, listing, reading and erasure ask the same question with the
   });
 
   it('after an anonymous first turn (AgentMemory): listed ⇔ readable, and her erasure takes the PIN', async () => {
-    const { gnl, j, memory } = world('agent');
+    const { gnl, j, memory, storage } = world('agent');
     await gnl.run('a', { runId: 'r0', prompt: 'welcome', threadId: 't' });
     await gnl.run('a', { runId: 'r1', prompt: 'my PIN is 4417', threadId: 't', resourceId: 'ayse' });
     const ayse = withSubjectMemory(memory, 'ayse', { journal: j });
     const listed = (await ayse.listThreads!({ resourceId: 'ayse' })).map((r: any) => r.id);
     expect(listed).toEqual(['t']);
     expect((await ayse.getMessages('t')).length).toBeGreaterThan(0);
-    await D.eraseSubject({ journal: j, memory }, 'ayse');
+    await D.eraseSubject(storage, 'ayse');
     expect(JSON.stringify(await memory.getMessages('t'))).not.toContain('4417');
   });
 

@@ -22,7 +22,7 @@
  * edit cannot move one without seeing the other.
  */
 import { ORG_SCOPE, orgPrefix, orgScopeOf, withOrg } from './organization.js';
-import { toJournal, orgVectorId } from './storage.js';
+import { toJournal, orgVectorId, workingMemoryScope } from './storage.js';
 import { asReaderJournal, type Journal, type JournalReader } from './journal.js';
 import type {
   CacheStore, CapabilityMatrix, ListQuery, LogRecord, MemoryStore, MessageRecord, MessageAppend, MetaStore,
@@ -194,7 +194,13 @@ function scopedMemory(memory: MemoryStore, p: string): MemoryStore {
     // EMPTY page for this organization whenever another organization's rows happened to sort first,
     // which stops a client that paginates until empty.
     listThreads: (q) => drainOwned((qq) => memory.listThreads({ ...q, ...qq }), outThread, q),
-    deleteThread: (id) => memory.deleteThread(add(p, id)),
+    // The thread's working memory is keyed `org:<id>:thread:<threadId>` (this wrapper prefixes the
+    // whole scope key), while the store's own deleteThread removes `thread:org:<id>:<threadId>`. Measured
+    // before this line: an organization member's thread went and its working memory stayed.
+    deleteThread: async (id) => {
+      await memory.deleteThread(add(p, id));
+      await memory.deleteWorkingMemory(add(p, workingMemoryScope.thread(id)));
+    },
     // A `MessageRecord` carries its own `threadId`, so the message methods have a second id to keep in
     // step with the key — and getting only the key right is invisible until someone uses the value.
     // Measured before this existed: `getMessages('t-1')` returned rows whose `threadId` read
@@ -218,6 +224,7 @@ function scopedMemory(memory: MemoryStore, p: string): MemoryStore {
         .map(outMsg).filter((r): r is MessageRecord => r !== undefined),
     getWorkingMemory: (scopeId) => memory.getWorkingMemory(add(p, scopeId)),
     setWorkingMemory: (scopeId, data) => memory.setWorkingMemory(add(p, scopeId), data),
+    deleteWorkingMemory: (scopeId) => memory.deleteWorkingMemory(add(p, scopeId)),
     getObservations: (threadId) => memory.getObservations(add(p, threadId)),
     putObservations: (threadId, obs) => memory.putObservations(add(p, threadId), obs),
   };

@@ -33,13 +33,14 @@ describe('extension: cron-agent + a new root-polled log', () => {
     expect(seen).not.toContain('MEHMET invoice');
     const runId = (await journal.listKeys('sched:')).find((k) => k.endsWith(':input'))!.slice(0, -':input'.length);
     expect((await journal.get<{ resourceId?: string }>(`${runId}:input`))?.resourceId).toBe('ayse');
-    await eraseSubject({ journal, work: storage.work!, erasers: [triggerEraser(journal)] }, 'ayse');
+    await eraseSubject(storage, 'ayse', { erasers: [triggerEraser(journal)] });
     expect(await listTriggers(journal)).toEqual([]);
     expect(await journal.get(`${runId}:input`)).toBeUndefined();
   });
 
   it('a new root-polled log: owner in the name → identity for the consumer and erasure for free', async () => {
-    const work: WorkStore = new InMemoryStorage().work!;
+    const storage = new InMemoryStorage();
+    const work: WorkStore = storage.work!;
     // Producer: an "audit-log" of our own. The owner goes into the engine's owned name, not the payload.
     const append = (payload: unknown, owner: { resourceId?: string }) => work.append('app:audit', payload, ownedName(crypto.randomUUID(), owner));
     await append({ what: 'login' }, { resourceId: 'ayse' });
@@ -48,7 +49,7 @@ describe('extension: cron-agent + a new root-polled log', () => {
     const page = await work.list('app:audit');
     const who = page.items.map((r) => toolContextFor(runIdentity(((o) => (o ? user(o) : UNKNOWN))(ownerOfName(r.id).resourceId), `audit:${r.id}`)).identity);
     expect(who.map((w) => (w.kind === 'user' ? w.id : w.kind))).toEqual(['ayse', 'mehmet']);
-    await eraseSubject({ journal: toJournal(new InMemoryStorage().runs), work }, 'ayse');
+    await eraseSubject(storage, 'ayse');
     expect((await work.list('app:audit')).items.map((r) => ownerOfName(r.id).resourceId)).toEqual(['mehmet']);
   });
 });

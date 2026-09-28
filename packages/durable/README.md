@@ -888,14 +888,40 @@ a deletion that silently did nothing would be the worst possible failure here.
 
 | Call | Deletes | Reach for it when |
 |---|---|---|
+| `eraseSubject(storage, resourceId, { orgId?, erasers? })` | a PERSON, from every store the storage holds: runs, their own threads (not other people's they wrote into) with messages, observations and observational-memory records, their working memory, cross-channel ids, lesson counters, documents, owned jobs and events — plus what the `erasers` reach | an erasure request arrives |
 | `purgeRun(journal, runId)` | one run and its nested sub-agent/workflow children | a single run must go |
-| `purgeThread(journal, threadId)` | `mem:` + the whole `xthr:` family (dedup window, semantic records, tombstones, judge verdicts) | a conversation must go |
-| `purgeResource(journal, resourceId, { vectors?, memory? })` | a PERSON: their runs, their own threads (not other people's they wrote into), cross-channel ids, lesson counters — and, given the vector store, their own documents | an erasure request arrives |
+| `purgeThread(journal, threadId)` | `mem:`, `om:` (observational memory's counters and memoized summaries) + the whole `xthr:` family (dedup window, semantic records, tombstones, judge verdicts) | a conversation's journal side must go |
+| `purgeResource(journal, resourceId, { vectors?, memory? })` | the JOURNAL's share of a person (and, given the vector store, their documents). It does not reach the memory store or the work log | building your own erasure; for a request, use `eraseSubject` |
 | `purgeBatch(journal, batchId)` | one batch's bookkeeping | a batch must be re-run from scratch |
 | `purgeOrganization(journal, orgId)` | everything under `org:<id>:` | a tenant leaves |
 | `sweepRuns(journal, { olderThanMs })` | runs whose LAST activity is older than the threshold | scheduled retention |
 | `sweepThreads(journal, { olderThanMs })` | threads the memory port knows, by age | scheduled retention |
 | `sweepLog(journal, ns, opts)` | durable-log entries in one namespace | a log namespace grows without bound |
+
+### Erasing a person
+
+`eraseSubject` takes the storage itself, not a list of its stores, so no store it holds can be left
+out: the journal, the memory store (threads, messages, observations, working memory), the vector
+store and the work log. It refuses, before deleting anything, a store that cannot delete what it
+holds. What lives outside the storage comes in as `erasers`: the background packages' own records,
+or a store of yours.
+
+```ts
+import { InMemoryStorage, eraseSubject, toJournal } from '@gnldev/durable';
+import { jobEraser } from '@gnldev/queue';
+import { triggerEraser } from '@gnldev/scheduler';
+import { eventEraser } from '@gnldev/events';
+
+const storage = new InMemoryStorage();
+const report = await eraseSubject(storage, 'ayse', {
+  orgId: 'acme', // omit for a person outside organizations
+  erasers: [jobEraser(storage), triggerEraser(toJournal(storage.runs)), eventEraser(storage.work!)],
+});
+// { journalRows, workRecords, memoryThreads, workingMemory, byEraser: { jobs, triggers, events } }
+```
+
+Pass the ROOT storage and name the organization with `orgId`; an organization's view is refused,
+because owned jobs and events live in the root work log.
 
 Two things the sweeps deliberately do NOT do:
 
@@ -922,7 +948,7 @@ await sweeper.stop();
 
 ### Erasure and retention run in any order
 
-`purgeResource(rid)` finds a person's threads through their RUNS, and retention deletes runs by age.
+`purgeResource(rid)` (which `eraseSubject` runs) finds a person's threads through their RUNS, and retention deletes runs by age.
 Run the sweep first and the link is gone — the erasure request would walk an empty list while
 thread-scoped state built from that person's own arguments stayed on disk. Measured before this was
 closed: after `sweepRuns` + `purgeResource`, a record carrying `'createRecord: iban-tr55'` survived.

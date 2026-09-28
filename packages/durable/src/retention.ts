@@ -5,7 +5,7 @@
 import { runKeys, summarizeRun, nestedAgentRunId, runIdOfKey } from './journal.js';
 import { identityOnlyInput } from './run.js';
 import { workKeyHash } from './hash.js';
-import { MEM_LEAVES } from './memory.js';
+import { MEM_LEAVES, OM_LEAVES } from './memory.js';
 import type { Memory } from './memory.js';
 import { threadOwnerOf, threadOwnerKey } from './thread-owner.js';
 import type { WorkScopeKind } from './hash.js';
@@ -623,8 +623,12 @@ export async function purgeThread(journal: Journal, threadId: string): Promise<n
   // FAZ-3: the thread owns its dedup state too — `idempotencyWindow: 'thread'` records and
   // thread-scoped duplicate markers both live under `xthr:<threadId>:` PRECISELY so this one sweep
   // reclaims them with the thread (the cross-run family's immortal-key problem does not recur here).
+  // `om:` is observational memory's: its counters and its memoized observer output, which is the
+  // model's summary of what the person said. Measured before it was here: after an erasure the thread
+  // was gone and `om:<thread>:proc:observe:0` still held that summary.
   let total = (await purgeThreadNamespace(journal, MEM_PREFIX, threadId, threadIdOfMemKey))
-    + (await purgeThreadNamespace(journal, XTHR_PREFIX, threadId, threadIdOfXthrKey));
+    + (await purgeThreadNamespace(journal, XTHR_PREFIX, threadId, threadIdOfXthrKey))
+    + (await purgeThreadNamespace(journal, OM_PREFIX, threadId, threadIdOfOmKey));
   // The owner record names a person, and with the thread gone it guards nothing.
   if ((await journal.get(threadOwnerKey(threadId))) !== undefined) total += await del(threadOwnerKey(threadId));
 
@@ -1096,6 +1100,18 @@ const MEM_SUFFIXES = MEM_LEAVES.map((leaf) => `:${leaf}`);
 // Ordered longest-first so ':semtomb-' is never mistaken for ':sem-' + 'tomb-'.
 const XTHR_PREFIX = 'xthr:';
 const XTHR_FAMILIES = [':semjudge-', ':semtomb-', ':sem-', ':dup-', ':args-'] as const;
+
+// `om:<threadId>:<leaf>` and `om:<threadId>:proc:<step>`. The step names (`observe:0`, `vec:0:1`)
+// never contain ':proc:', so the LAST ':proc:' is the boundary, whatever the thread id holds.
+const OM_PREFIX = 'om:';
+const OM_SUFFIXES = OM_LEAVES.map((leaf) => `:${leaf}`);
+
+function threadIdOfOmKey(key: string): string | undefined {
+  const rest = key.slice(OM_PREFIX.length);
+  for (const suffix of OM_SUFFIXES) if (rest.endsWith(suffix) && rest.length > suffix.length) return rest.slice(0, -suffix.length);
+  const cut = rest.lastIndexOf(':proc:');
+  return cut > 0 ? rest.slice(0, cut) : undefined;
+}
 
 /** threadId out of `xthr:<threadId>:<family>-…`, or undefined when no known family boundary is found. */
 function threadIdOfXthrKey(key: string): string | undefined {

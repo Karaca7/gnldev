@@ -357,11 +357,11 @@ export function generateConfig(recipes: Recipe[], answers: InitAnswers = DEFAULT
     '  // RETENTION is not scheduled by anything here, deliberately. Runs stay — and a run holds the',
     '  // prompt it was given — until something sweeps them: `gnl sweep --older-than 30d` from cron or',
     '  // your scheduler, or `sweepRuns(toJournal(storage.runs), { olderThanMs: 30 * 864e5 })` in your own job. One',
-    '  // person\'s data is erased with `purgeResource`, not by waiting.',
+    '  // person\'s data is erased with `eraseSubject`, not by waiting.',
     ...(endUsers
       ? [
         '  //   const onAccountDeleted = (userId: string) =>',
-        '  //     purgeResource(toJournal(storage.runs), userId, { vectors: storage.vectors }); // their documents too',
+        '  //     eraseSubject(storage, userId); // every store the storage holds: runs, threads, working memory, documents',
         '  // — that one is not retention, it is erasure, and it is the request you have to answer in',
         '  // days rather than by waiting for a sweep.',
       ]

@@ -4,7 +4,7 @@
 //   • RunJournal   (storage.runs):   OM's LLM memoization + durable progress (replay is deterministic).
 // loadContext runs BEFORE persistInput, so the whole context freezes into `:input` = replayable.
 import { cosineSimilarity } from 'ai';
-import { requireCapability, durableProcessorStep } from '@gnldev/durable';
+import { requireCapability, durableProcessorStep, workingMemoryScope, OM_LEAVES, type OmLeaf } from '@gnldev/durable';
 import { PROVENANCE_RECENT_CAP, messagePreview } from '@gnldev/durable';
 import type { Storage, RunJournal, MemoryStore, MessageRecord, MessageAppend, ThreadRecord, RecallOptions, MemoryContextProvenance, RecalledMessageRef } from '@gnldev/durable';
 import { messageText, hasNorm, type Embed } from './keys.js';
@@ -63,7 +63,8 @@ function assertOmThreadId(tid: string): string {
   }
   return tid;
 }
-const omKey = (tid: string, k: string) => `om:${assertOmThreadId(tid)}:${k}`;
+/** Its leaves are `OM_LEAVES`, which `purgeThread` in @gnldev/durable erases with the thread. */
+const omKey = (tid: string, k: OmLeaf) => `om:${assertOmThreadId(tid)}:${k}`;
 /** The pseudo-runId OM's durable steps run under — validated for the same reason as omKey. */
 const omRunId = (tid: string) => `om:${assertOmThreadId(tid)}`;
 
@@ -645,8 +646,12 @@ export class AgentMemory {
   }
 
   // ── Track 2: schema working memory ──────────────────────────────────────────
+  /**
+   * Thread and person live in disjoint key namespaces (`workingMemoryScope`). The person's key used to
+   * be `res:<id>` next to the bare thread id, so a thread named `res:u-ayse` read and wrote Ayse's.
+   */
   protected wmKey(threadId: string, resourceId?: string): string {
-    return this.wm?.scope === 'resource' && resourceId ? `res:${resourceId}` : threadId;
+    return this.wm?.scope === 'resource' && resourceId ? workingMemoryScope.resource(resourceId) : workingMemoryScope.thread(threadId);
   }
   protected async readWM(threadId: string, resourceId?: string): Promise<Record<string, unknown>> {
     const v = await this.store.getWorkingMemory(this.wmKey(threadId, resourceId));
@@ -690,13 +695,14 @@ export class AgentMemory {
       return merged;
     });
   }
+  /** The THREAD's working memory — never a person's, whatever the thread is called. */
   async getWorkingMemory(threadId: string): Promise<string | undefined> {
-    const data = await this.store.getWorkingMemory(threadId);
+    const data = await this.store.getWorkingMemory(workingMemoryScope.thread(threadId));
     if (data === undefined) return undefined;
     return typeof data === 'string' ? data : JSON.stringify(data);
   }
   async setWorkingMemory(threadId: string, value: string): Promise<void> {
-    await this.store.setWorkingMemory(threadId, value);
+    await this.store.setWorkingMemory(workingMemoryScope.thread(threadId), value);
   }
 
   // ── Track 3: thread + resource management ─────────────────────────────────────
@@ -741,14 +747,14 @@ export class AgentMemory {
     const dst = opts.newThreadId ?? genId('th');
     const msgs = (await this.store.getMessages(srcThreadId, { limit: HUGE })).items;
     if (msgs.length) await this.store.appendMessages(dst, msgs.map((m) => ({ ...m, threadId: dst })));
-    const wm = await this.store.getWorkingMemory(srcThreadId);
-    if (wm !== undefined) await this.store.setWorkingMemory(dst, wm);
+    const wm = await this.store.getWorkingMemory(workingMemoryScope.thread(srcThreadId));
+    if (wm !== undefined) await this.store.setWorkingMemory(workingMemoryScope.thread(dst), wm);
     const obs = await this.store.getObservations(srcThreadId);
     if (obs.length) await this.store.putObservations(dst, obs);
     // Also copy the OM RunJournal counters (observedSeq/observeSeq/reflectSeq). Otherwise the clone
     // would re-observe the already-copied observations from scratch (double observation) AND the `obs-${seq}`
     // ids would collide with the copied observations (observeSeq/reflectSeq start at 0 but the obs array is already full).
-    for (const k of ['observedSeq', 'observeSeq', 'reflectSeq']) {
+    for (const k of OM_LEAVES) {
       const v = await this.runs.get<number>(omKey(srcThreadId, k));
       if (v !== undefined) await this.runs.put(omKey(dst, k), v);
     }

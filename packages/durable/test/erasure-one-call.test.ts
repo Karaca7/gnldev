@@ -8,7 +8,7 @@
 // and every owned log record by the owner's id prefix.
 import { describe, it, expect } from 'vitest';
 import { InMemoryStorage, createGnl, scopeConfigToOrg, eraseSubject, toJournal, withOrgStorage, runOwnerOf } from '../src/index.js';
-import { InMemoryVectorStore, indexDocuments } from '../../rag/src/index.js';
+import { indexDocuments } from '../../rag/src/index.js';
 import { enqueue, createWorker, listJobs, jobEraser } from '../../queue/src/index.js';
 import { emit, createConsumer, eventEraser } from '../../events/src/index.js';
 import { scheduleWorkflow, pollScheduler, listTriggers, triggerEraser } from '../../scheduler/src/index.js';
@@ -21,17 +21,16 @@ async function world(orgs: Array<string | undefined>) {
   const storage = new InMemoryStorage();
   const root = toJournal(storage.runs);
   const work = storage.work!;
-  const vectors = new InMemoryVectorStore();
+  const vectors = storage.vectors!;
   const wf = workflow<{ who: string }>().then(step('s', async (i) => ({ text: `WF-${i.who}` })));
   const config = { storage, workflows: { weekly: wf } };
   const gnlFor = (org: string) => createGnl(scopeConfigToOrg(config, org).config);
   const people: Array<{ who: string; orgId?: string }> = [];
   for (const orgId of orgs) for (const who of ['ayse', 'bora']) people.push({ who, ...(orgId ? { orgId } : {}) });
-  // An organization's documents sit in its namespace, under its ids — as withOrgStorage writes them.
-  await indexDocuments(vectors, async () => [1, 0], people.map((p, i) => ({
-    ...(p.orgId ? { id: `org:${p.orgId}:d${i}`, namespace: `org:${p.orgId}` } : { id: `d${i}` }),
-    text: `DOC-${p.who}-${p.orgId ?? '-'}`, owner: p.who,
-  })));
+  // An organization's documents sit in its namespace, under its ids — written through withOrgStorage.
+  for (const [i, p] of people.entries()) {
+    await indexDocuments((p.orgId ? withOrgStorage(storage, p.orgId) : storage).vectors!, async () => [1, 0], [{ id: `d${i}`, text: `DOC-${p.who}-${p.orgId ?? '-'}`, owner: p.who }]);
+  }
   for (const p of people) {
     const tag = `${p.who}-${p.orgId ?? '-'}`;
     await enqueue(work, 'weekly', { note: `JOB-${tag}` }, { resourceId: p.who, ...(p.orgId ? { orgId: p.orgId } : {}) });
@@ -49,7 +48,7 @@ async function world(orgs: Array<string | undefined>) {
   return { storage, root, work, vectors };
 }
 
-async function everything(storage: InMemoryStorage, vectors: InMemoryVectorStore): Promise<string> {
+async function everything(storage: InMemoryStorage, vectors: NonNullable<InMemoryStorage['vectors']>): Promise<string> {
   const keys = await storage.runs.listKeys('');
   const values = await Promise.all(keys.map(async (k) => `${k}=${JSON.stringify(await storage.runs.get(k))}`));
   const jobs = await listJobs(storage.work!);
@@ -67,10 +66,7 @@ describe('eraseSubject with the background erasers', () => {
     const { storage, root, work, vectors } = await world(['acme', 'globex']);
     const before = await everything(storage, vectors);
     expect(before).toContain('ayse-acme');
-    const report = await eraseSubject(
-      { journal: root, work, vectors, erasers: [jobEraser(storage), triggerEraser(root), eventEraser(work)] },
-      'ayse', { orgId: 'acme' },
-    );
+    const report = await eraseSubject(storage, 'ayse', { orgId: 'acme', erasers: [jobEraser(storage), triggerEraser(root), eventEraser(work)] });
     expect(report.byEraser.jobs).toBeGreaterThan(0);
     expect(report.byEraser.triggers).toBeGreaterThan(0);
     expect(report.byEraser.events).toBeGreaterThan(0);
@@ -86,7 +82,7 @@ describe('eraseSubject with the background erasers', () => {
 
   it('a person with no organization: the same, and organization members of the same id are untouched', async () => {
     const { storage, root, work, vectors } = await world([undefined, 'acme']);
-    await eraseSubject({ journal: root, work, vectors, erasers: [jobEraser(storage), triggerEraser(root), eventEraser(work)] }, 'ayse');
+    await eraseSubject(storage, 'ayse', { erasers: [jobEraser(storage), triggerEraser(root), eventEraser(work)] });
     const after = await everything(storage, vectors);
     expect(after).not.toContain('ayse--');
     expect(after.split("\n").filter((l) => l.includes("~o~:ayse:"))).toEqual([]);
@@ -98,7 +94,7 @@ describe('eraseSubject with the background erasers', () => {
     const job = (await listJobs(work)).find((j) => j.resourceId === 'ayse')!;
     const acme = toJournal(withOrgStorage(storage, 'acme').runs);
     expect((await runOwnerOf(acme, `job:${job.id}`)).state).toBe('owned');
-    await eraseSubject({ journal: root, work, vectors, erasers: [jobEraser(storage)] }, 'ayse', { orgId: 'acme' });
+    await eraseSubject(storage, 'ayse', { orgId: 'acme', erasers: [jobEraser(storage)] });
     expect((await runOwnerOf(acme, `job:${job.id}`)).state).toBe('missing');
   });
 

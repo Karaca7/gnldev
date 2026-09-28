@@ -21,7 +21,7 @@ async function world() {
 describe('an organization-scoped work store is refused by every erasure, with the remedy', () => {
   it('eraseSubject', async () => {
     const { storage, acme } = await world();
-    await expect(eraseSubject({ journal: toJournal(storage.runs), work: acme.work! }, 'ayse', { orgId: 'acme' })).rejects.toThrow(REMEDY);
+    await expect(eraseSubject(acme, 'ayse', { orgId: 'acme' })).rejects.toThrow(REMEDY);
   });
 
   it('jobEraser', async () => {
@@ -36,7 +36,7 @@ describe('an organization-scoped work store is refused by every erasure, with th
 
   it('control: the root store with { orgId } erases her jobs and events', async () => {
     const { storage } = await world();
-    const r = await eraseSubject({ journal: toJournal(storage.runs), work: storage.work!, erasers: [jobEraser(storage), eventEraser(storage.work!)] }, 'ayse', { orgId: 'acme' });
+    const r = await eraseSubject(storage, 'ayse', { orgId: 'acme', erasers: [jobEraser(storage), eventEraser(storage.work!)] });
     expect(r.workRecords).toBeGreaterThan(0);
   });
 });

@@ -2,7 +2,7 @@
 // erasure (`eraseSubject`) removes a person's runs, threads, documents, jobs, triggers and events.
 // (Kept from the candidate-B acceptance probes; these areas belong to ADR-0002 phase 2.)
 import { describe, it, expect } from 'vitest';
-import { InMemoryVectorStore, indexDocuments } from '../../rag/src/index.js';
+import { indexDocuments } from '../../rag/src/index.js';
 import { runDurable } from '../src/run.js';
 import { InMemoryStorage, BasicMemory, eraseSubject, toJournal } from '../src/index.js';
 import { enqueue, listJobs, jobEraser } from '../../queue/src/index.js';
@@ -34,7 +34,7 @@ describe('owner in the name, one erasure', () => {
   it('eraseSubject removes a person\'s runs, threads, documents, jobs, triggers and events', async () => {
     const storage = new InMemoryStorage();
     const journal = toJournal(storage.runs);
-    const vectors = new InMemoryVectorStore();
+    const vectors = storage.vectors!;
     await indexDocuments(vectors, async () => [1, 0], [{ id: 'd', text: 'Ayse private', owner: 'ayse' }, { id: 's', text: 'shared', shared: true }]);
     await enqueue(storage.work!, 'weekly', { note: 'Ayse data' }, { resourceId: 'ayse' });
     await enqueue(storage.work!, 'weekly', { note: 'system' });
@@ -43,7 +43,7 @@ describe('owner in the name, one erasure', () => {
     await scheduleWorkflow(journal, { id: 'sys', every: 3600_000, name: 'summary' });
     const memory = new BasicMemory(journal);
     await runDurable({ runId: 'ra', journal, model: createMockModel(async () => finalTextResult('ok')), prompt: 'AYSE-SECRET', threadId: 'ta', memory, resourceId: 'ayse' });
-    await eraseSubject({ journal, work: storage.work!, vectors, memory, erasers: [jobEraser(storage), triggerEraser(journal), eventEraser(storage.work!)] }, 'ayse');
+    await eraseSubject(storage, 'ayse', { erasers: [jobEraser(storage), triggerEraser(journal), eventEraser(storage.work!)] });
     const events: unknown[] = [];
     await createConsumer(storage.work!, 'audit', (p) => { events.push(p); }, { name: 'c' }).poll();
     expect((await vectors.query([1, 0], 10)).map((m) => m.text)).toEqual(['shared']);

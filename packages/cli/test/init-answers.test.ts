@@ -159,7 +159,7 @@ describe('the end-users answer writes a file, and only a file', () => {
     expect(file).toMatch(/request body/i);
     expect(file).toMatch(/session cookie|JWT|principalOf/);
     // Erasure, which is the concrete payoff of runs being born with an owner.
-    expect(file).toContain('purgeResource');
+    expect(file).toContain('eraseSubject(storage, userId)');
   });
 
   it('and the internal answer writes no such file', () => {

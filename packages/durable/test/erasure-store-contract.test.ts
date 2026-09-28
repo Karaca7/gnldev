@@ -16,7 +16,7 @@ import { describe, it, expect, afterAll, beforeAll, vi } from 'vitest';
 import { newDb } from 'pg-mem';
 import pg from 'pg';
 import {
-  InMemoryStorage, RedisStorage, BasicMemory, composite, createGnl, scopeConfigToOrg, eraseSubject, toJournal, withOrgStorage,
+  InMemoryStorage, RedisStorage, BasicMemory, composite, createGnl, scopeConfigToOrg, eraseSubject, toJournal, withOrgStorage, workingMemoryScope,
   type Storage, type Journal,
 } from '../src/index.js';
 import { SqliteStorage } from '../src/sqlite-storage.js';
@@ -28,6 +28,7 @@ import { enqueue, createWorker, listJobs, jobEraser } from '../../queue/src/inde
 import { emit, createConsumer, eventEraser } from '../../events/src/index.js';
 import { scheduleWorkflow, pollScheduler, listTriggers, triggerEraser } from '../../scheduler/src/index.js';
 import { workflow, step } from '../../workflow/src/index.js';
+import { AgentMemory } from '../../memory/src/index.js';
 import { createMockModel, finalTextResult } from './mock.js';
 
 const PG_URL = process.env.GNL_PG_URL;
@@ -123,8 +124,9 @@ async function scanRaw(client: RedisLike, pfx: string): Promise<string[]> {
 
 function redisBackend(client: RedisLike, pfx: string): Backend {
   const redis = new RedisStorage({ client, keyPrefix: pfx, replicationWarning: false });
-  // Redis keeps no documents: the knowledge base comes from another store, as `composite` documents.
-  const storage = composite({ default: redis, overrides: { vectors: new InMemoryStorage() } });
+  // Redis keeps no documents and no memory store: those come from another store, as `composite` documents.
+  const side = new InMemoryStorage();
+  const storage = composite({ default: redis, overrides: { vectors: side, memory: side } });
   return {
     storage,
     rawWork: async () => {
@@ -212,8 +214,7 @@ function survivors(text: string, people: Person[]): Record<string, string[]> {
 const erasers = (storage: Storage, root: ReturnType<typeof toJournal>) => [jobEraser(storage), triggerEraser(root), eventEraser(storage.work!)];
 
 async function erase(b: Backend, root: ReturnType<typeof toJournal>, p: Person) {
-  const vectors = (p.orgId ? withOrgStorage(b.storage, p.orgId) : b.storage).vectors!;
-  return eraseSubject({ journal: root, work: b.storage.work!, vectors, erasers: erasers(b.storage, root) }, p.who, p.orgId ? { orgId: p.orgId } : {});
+  return eraseSubject(b.storage, p.who, { ...(p.orgId ? { orgId: p.orgId } : {}), erasers: erasers(b.storage, root) });
 }
 
 // ── Scenario 1: bob in acme, and every id that begins like his ────────────────────────────────────
@@ -304,11 +305,89 @@ describe.each(BACKENDS)('eraseSubject on %s', (name, make) => {
   });
 });
 
+// ── Scenario 4: what AgentMemory keeps (M-1/M-2 of the 0.7.0 release panel) ──────────────────────
+// The person's threads and messages, their own working memory (`workingMemoryScope.resource`), a
+// thread's working memory, and observational memory's journal records (the observer's summary). Asked
+// with nothing but the storage: no store is listed, so none can be forgotten. Measured before: the
+// person's working memory survived every erasure, and without `memory` so did every thread.
+const MEM_KINDS = ['MEMTHREAD', 'WMRES', 'WMTHR', 'OM'] as const;
+const MEM_TARGETS: Person[] = [{ who: 'ayse' }, { who: 'bob', orgId: 'acme' }];
+const MEM_NEIGHBOURS: Person[] = [{ who: 'ayse', orgId: 'acme' }, { who: 'ayse:x' }, { who: 'bob' }, { who: 'bob', orgId: 'globex' }, { who: 'bob%' , orgId: 'acme' }];
+const memThread = (i: number) => `mt-${i}`;
+
+/**
+ * A store that withdraws its memory port after `init` (pg-mem: no `pg_advisory_xact_lock`) gets one
+ * from another store, as its own refusal tells a deployment to. Real Postgres keeps its own.
+ */
+async function withMemoryPort(b: Backend): Promise<Backend> {
+  await b.storage.init?.();
+  if (b.storage.capabilities.memory !== 'none') return b;
+  return { ...b, storage: composite({ default: b.storage, overrides: { memory: new InMemoryStorage() } }) };
+}
+
+async function memoryWorld(b: Backend, people: Person[]) {
+  for (const [i, p] of people.entries()) {
+    const tag = tagOf(p);
+    const view = p.orgId ? withOrgStorage(b.storage, p.orgId) : b.storage;
+    const observer = createMockModel(async () => finalTextResult(`OM|${tag}|`));
+    const mem = new AgentMemory({ storage: view, workingMemory: { scope: 'resource' }, observationalMemory: { enabled: true, observerModel: observer, observation: { messageThreshold: 3 } } });
+    const t = memThread(i);
+    await mem.createThread({ id: t, resourceId: p.who });
+    for (let n = 0; n < 4; n++) await mem.append(t, [{ role: 'user', content: `MEMTHREAD|${tag}| ${n}` }]);
+    await mem.compact(t);
+    await mem.applyWorkingMemoryUpdate(t, { v: `WMRES|${tag}|` }, p.who);
+    await new AgentMemory({ storage: view, workingMemory: { scope: 'thread' } }).applyWorkingMemoryUpdate(t, { v: `WMTHR|${tag}|` });
+  }
+}
+
+/** The journal (every organization), and every person's threads, messages and working memory, as text. */
+async function memoryDump(b: Backend, people: Person[]): Promise<string> {
+  const keys = await b.storage.runs.listKeys!('');
+  const out = await Promise.all(keys.map(async (k) => `${k}=${JSON.stringify(await b.storage.runs.get(k))}`));
+  for (const [i, p] of people.entries()) {
+    const m = (p.orgId ? withOrgStorage(b.storage, p.orgId) : b.storage).memory!;
+    out.push(JSON.stringify((await m.getMessages(memThread(i), { limit: 100 })).items.map((r) => r.message)));
+    out.push(JSON.stringify(await m.getObservations(memThread(i))));
+    out.push(JSON.stringify(await m.getWorkingMemory(workingMemoryScope.resource(p.who)) ?? null));
+    out.push(JSON.stringify(await m.getWorkingMemory(workingMemoryScope.thread(memThread(i))) ?? null));
+  }
+  return out.join('\n');
+}
+
+function memSurvivors(text: string, people: Person[]): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const p of people) {
+    const tag = tagOf(p);
+    out[tag] = MEM_KINDS.filter((k) => text.includes(`${k}|${tag}|`) || text.includes(JSON.stringify(`${k}|${tag}|`).slice(1, -1)));
+  }
+  return out;
+}
+
+describe.each(BACKENDS)('eraseSubject(storage) and AgentMemory on %s', (name, make) => {
+  it('the person\'s threads, messages, working memory and observations go; namesakes and lookalikes keep theirs', async () => {
+    const b = await withMemoryPort(await make());
+    const people = [...MEM_TARGETS, ...MEM_NEIGHBOURS];
+    await memoryWorld(b, people);
+    const before = memSurvivors(await memoryDump(b, people), people);
+    for (const p of people) expect(before[tagOf(p)], `seeded ${tagOf(p)}`).toEqual([...MEM_KINDS]);
+
+    const root = toJournal(b.storage.runs);
+    const reports = [];
+    for (const p of MEM_TARGETS) reports.push(await erase(b, root, p));
+
+    const after = memSurvivors(await memoryDump(b, people), people);
+    for (const p of MEM_TARGETS) expect(after[tagOf(p)], `erased ${tagOf(p)}`).toEqual([]);
+    for (const p of MEM_NEIGHBOURS) expect(after[tagOf(p)], `kept ${tagOf(p)}`).toEqual([...MEM_KINDS]);
+    for (const r of reports) expect({ threads: r.memoryThreads, wm: r.workingMemory }).toEqual({ threads: 1, wm: 1 });
+    (results[name] ??= {}).memory = after;
+  });
+});
+
 describe('drift: every store gives the in-memory store\'s answer', () => {
   it('the same scenarios, the same survivors, on every store', () => {
     const names = BACKENDS.map(([n]) => n);
-    const ran = names.filter((n) => results[n]?.neighbours && results[n]?.literal && results[n]?.lone && results[n]?.primitive);
-    expect(ran, 'every store completed all three scenarios').toEqual(names);
+    const ran = names.filter((n) => results[n]?.neighbours && results[n]?.literal && results[n]?.lone && results[n]?.primitive && results[n]?.memory);
+    expect(ran, 'every store completed every scenario').toEqual(names);
     const strip = (r: Record<string, unknown>) => ({ ...r, neighbours: (r.neighbours as { after: unknown }).after });
     const reference = strip(results.InMemory!);
     for (const n of names) expect(strip(results[n]!), n).toEqual(reference);

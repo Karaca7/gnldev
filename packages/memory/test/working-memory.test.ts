@@ -1,7 +1,7 @@
 // Track 2: deepMerge (null=delete) + updateWorkingMemory tool round-trip (journaled exactly-once) + system + readOnly.
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
-import { InMemoryStorage, runDurable } from '@gnldev/durable';
+import { InMemoryStorage, runDurable, workingMemoryScope } from '@gnldev/durable';
 import { AgentMemory, deepMerge } from '../src/index.js';
 
 describe('Track 2 deepMerge', () => {
@@ -35,7 +35,7 @@ describe('Track 2 working memory tool', () => {
     const storage = new InMemoryStorage();
     const mem = new AgentMemory({ storage, workingMemory: { schema } });
     await runDurable({ runId: 'r1', journal: storage.runs, model: wmModel(), memory: mem, threadId: 'th', prompt: 'save' });
-    expect(await storage.memory.getWorkingMemory('th')).toEqual({ name: 'Ada' });
+    expect(await storage.memory.getWorkingMemory(workingMemoryScope.thread('th'))).toEqual({ name: 'Ada' });
 
     let seenSystem = '';
     await runDurable({ runId: 'r2', journal: storage.runs, model: wmModel((s) => (seenSystem = s)), memory: mem, threadId: 'th', prompt: 'again' });
@@ -47,9 +47,9 @@ describe('Track 2 working memory tool', () => {
     const storage = new InMemoryStorage();
     const mem = new AgentMemory({ storage, workingMemory: { schema } });
     await runDurable({ runId: 'r', journal: storage.runs, model: wmModel(), memory: mem, threadId: 'th', prompt: 'save' });
-    expect(await storage.memory.getWorkingMemory('th')).toEqual({ name: 'Ada' });
+    expect(await storage.memory.getWorkingMemory(workingMemoryScope.thread('th'))).toEqual({ name: 'Ada' });
     await runDurable({ runId: 'r', journal: storage.runs, model: wmModel(), memory: mem, threadId: 'th', prompt: 'save' });
-    expect(await storage.memory.getWorkingMemory('th')).toEqual({ name: 'Ada' });
+    expect(await storage.memory.getWorkingMemory(workingMemoryScope.thread('th'))).toEqual({ name: 'Ada' });
   });
 
   it('readOnly: the tool is not registered but WM is injected into system', async () => {
@@ -72,7 +72,7 @@ describe('Track 2 working memory mutex', () => {
       mem.applyWorkingMemoryUpdate('th', { name: 'Ada' }),
       mem.applyWorkingMemoryUpdate('th', { tier: 'gold' }),
     ]);
-    expect(await storage.memory.getWorkingMemory('th')).toEqual({ name: 'Ada', tier: 'gold' });
+    expect(await storage.memory.getWorkingMemory(workingMemoryScope.thread('th'))).toEqual({ name: 'Ada', tier: 'gold' });
   });
 
   it('sequential updates still apply in order (unchanged behavior)', async () => {
@@ -80,7 +80,7 @@ describe('Track 2 working memory mutex', () => {
     const mem = new AgentMemory({ storage, workingMemory: { schema } });
     await mem.applyWorkingMemoryUpdate('th', { name: 'Ada' });
     await mem.applyWorkingMemoryUpdate('th', { tier: 'gold' });
-    expect(await storage.memory.getWorkingMemory('th')).toEqual({ name: 'Ada', tier: 'gold' });
+    expect(await storage.memory.getWorkingMemory(workingMemoryScope.thread('th'))).toEqual({ name: 'Ada', tier: 'gold' });
   });
 
   it('different scopeIds do not serialize each other', async () => {
@@ -90,7 +90,7 @@ describe('Track 2 working memory mutex', () => {
     const slowGate = new Promise<void>((r) => (releaseSlow = r));
     const origGet = storage.memory.getWorkingMemory.bind(storage.memory);
     (storage.memory as any).getWorkingMemory = async (scopeId: string) => {
-      if (scopeId === 'slow') await slowGate;
+      if (scopeId === workingMemoryScope.thread('slow')) await slowGate;
       return origGet(scopeId);
     };
 
@@ -105,7 +105,7 @@ describe('Track 2 working memory mutex', () => {
 
     releaseSlow();
     await slowPromise;
-    expect(await storage.memory.getWorkingMemory('fast')).toEqual({ name: 'Fast' });
-    expect(await storage.memory.getWorkingMemory('slow')).toEqual({ name: 'Slow' });
+    expect(await storage.memory.getWorkingMemory(workingMemoryScope.thread('fast'))).toEqual({ name: 'Fast' });
+    expect(await storage.memory.getWorkingMemory(workingMemoryScope.thread('slow'))).toEqual({ name: 'Slow' });
   });
 });

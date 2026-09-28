@@ -23,6 +23,9 @@ await runDurable({ runId, journal, model, memory: mem, threadId: 'th-1', resourc
   **`scope:'resource'`** (cross-thread).
 - **Schema working memory** — zod/template WM + the `updateWorkingMemory` tool (deep-merge, `null` =
   delete) + `readOnly`. The tool is wrapped with `durableTool` → the merge is journaled.
+  `scope: 'thread'` (default) keeps it per thread, `scope: 'resource'` per person. The two live in
+  separate key spaces (`workingMemoryScope.thread(id)` / `.resource(id)` from `@gnldev/durable`), so
+  no thread id reaches a person's working memory.
 - **Thread + resource management** — `createThread/getThreadById/listThreads/updateThread/deleteThread/cloneThread`
   (+ ancestry).
 - **Observational memory** — the Observer folds old messages into observations, the Reflector compresses
@@ -35,6 +38,13 @@ await runDurable({ runId, journal, model, memory: mem, threadId: 'th-1', resourc
   comes back from the record instead of being applied a second time (no double-write).
 - **OM is replayable:** the same `seq` again → the Observer/Reflector LLM is **never called**, the summary
   is reproduced verbatim (survives even a crash mid-compaction).
+
+## Forgetting a person
+`eraseSubject(storage, userId)` from `@gnldev/durable` removes what this package keeps for them: their
+threads with messages and observations, the thread and person working memory, and observational
+memory's journal records (the observer's memoized summaries). Pass the same storage the memory was
+built on; nothing has to be listed. `deleteThread(id)` removes one thread from the memory store; its
+observational-memory records in the journal go with `purgeThread(journal, id)`.
 
 ## Honest caveats
 - **Recall freezes on the first run:** resume recalls based on the resource graph from the first run

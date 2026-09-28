@@ -387,7 +387,16 @@ describe('a thread id is not a prefix — purging one must not take its descenda
     await counting.put('xthr:solo:sem-pay-a', { v: 1 });
 
     await purgeThread(counting, 'solo');
-    expect(prefixDeletes, 'one per namespace — mem: and xthr: — not one per key').toBe(2);
+    expect(prefixDeletes, 'one per namespace — mem:, xthr: and om: — not one per key').toBe(3);
+  });
+
+  it("om: (observational memory) keeps the same boundary — 't' goes, 't:2' and 't:proc:x' stay", async () => {
+    const j: any = toJournal(new InMemoryStorage().runs);
+    const mine = ['om:t:observedSeq', 'om:t:observeSeq', 'om:t:reflectSeq', 'om:t:proc:observe:0', 'om:t:proc:vec:0:1'];
+    const theirs = ['om:t:2:observedSeq', 'om:t:2:proc:observe:0', 'om:t:proc:x:observedSeq', 'om:t:proc:x:proc:observe:0'];
+    for (const k of [...mine, ...theirs]) await j.put(k, 'SUMMARY');
+    await purgeThread(j, 't');
+    expect((await j.listKeys('om:')).sort()).toEqual([...theirs].sort());
   });
 
   it('CONTROL: with no descendant, nothing changes — including the single-call fast path', async () => {

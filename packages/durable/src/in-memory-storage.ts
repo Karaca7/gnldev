@@ -2,7 +2,7 @@
 // Zero-infra test storage (moat): per-storage bundles mimic this behavior.
 // Correctness matters, not perf (naive filter/sort). Date.now/Math.random are free to use here (runtime code).
 import { cosineSimilarity } from 'ai';
-import { assertUniformSeq } from './storage.js';
+import { assertUniformSeq, workingMemoryScope } from './storage.js';
 import { InMemoryJournal } from './journal.js';
 import { stableStringify } from './hash.js';
 import { ENGINE_META_KEYS, assertNoRunsInFlight, assertOrgRegistered, isPlatformKey, orgPrefix } from './organization.js';
@@ -121,7 +121,7 @@ class InMemoryMemoryStore implements MemoryStore {
     const t = this.threads.get(id);
     if (t) this.threads.set(id, { ...t, deletedAt: Date.now() });
     this.messages.delete(id);
-    this.wm.delete(id);
+    this.wm.delete(workingMemoryScope.thread(id));
     this.obs.delete(id);
     // A soft-deleted thread can be brought back by `upsertThread`; markers left behind would answer a
     // legitimate later batch with "already applied" and drop it silently.
@@ -210,6 +210,7 @@ class InMemoryMemoryStore implements MemoryStore {
 
   async getWorkingMemory(scopeId: string) { return this.wm.get(scopeId); }
   async setWorkingMemory(scopeId: string, data: unknown) { this.wm.set(scopeId, data); }
+  async deleteWorkingMemory(scopeId: string) { return this.wm.delete(scopeId); }
   async getObservations(threadId: string) { return [...(this.obs.get(threadId) ?? [])]; }
   async putObservations(threadId: string, obs: Observation[]) { this.obs.set(threadId, [...obs]); }
 
