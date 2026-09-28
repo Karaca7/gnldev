@@ -1,4 +1,4 @@
-// The AG-UI route's half of two contracts it shares with @gnldev/chat-adapter: one `identity` hook with the
+// The AG-UI route's half of two contracts it shares with @gnldev/chat-adapter: one `identify` hook with the
 // SAME signature, and `Idempotency-Key` as an alias for the runId it has always demanded.
 //
 // IDENTITY. This route is where "two hooks per adapter" cost the most: `resolveThreadId` was called,
@@ -56,41 +56,52 @@ async function drive(body: unknown, opts: Record<string, unknown> = {}, headers:
 
 afterEach(() => vi.restoreAllMocks());
 
-describe('agui: the single `identity` hook', () => {
-  it('feeds BOTH fields, and the thread it names is the one the RUN uses', async () => {
-    const { journal } = await drive(
-      { runId: 'ag-1', prompt: 'x' },
-      { identity: () => ({ resourceId: 'ayse', threadId: 'thr-ayse' }) },
-    );
+describe('agui: the single `identify` hook', () => {
+  it('hands the engine the caller the principal maps to — the run is frozen as that user\'s', async () => {
+    const { journal } = await drive({ runId: 'ag-1', prompt: 'x', threadId: 'thr-ayse' }, { identify: () => ({ kind: 'subject', id: 'ayse', roles: [] }) });
     const input = await journal.get<{ resourceId?: string; threadId?: string }>('ag-1:input');
     expect(input?.resourceId).toBe('ayse');
     // The regression this route already paid for once: a threadId that only reaches the envelope.
     expect(input?.threadId).toBe('thr-ayse');
   });
 
-  it('`resolveThreadId` wins for the thread; the subject comes from `identity` alone', async () => {
+  it('`resolveThreadId` picks the thread; the subject comes from `identify` alone', async () => {
     const { journal } = await drive(
       { runId: 'ag-2', prompt: 'x' },
-      { identity: () => ({ resourceId: 'from-identity', threadId: 'from-identity' }), resolveThreadId: () => 'from-resolver' },
+      { identify: () => ({ kind: 'subject', id: 'from-identify', roles: [] }), resolveThreadId: () => 'from-resolver' },
     );
     const input = await journal.get<{ resourceId?: string; threadId?: string }>('ag-2:input');
     expect(input?.threadId).toBe('from-resolver');
-    expect(input?.resourceId).toBe('from-identity');
+    expect(input?.resourceId).toBe('from-identify');
   });
 
-  it('identity outranks the BODY — server-derived beats caller-asserted', async () => {
-    const { journal } = await drive(
-      { runId: 'ag-3', prompt: 'x', threadId: 'client-thread' },
-      { identity: () => ({ threadId: 'server-thread' }) },
-    );
-    expect((await journal.get<{ threadId?: string }>('ag-3:input'))?.threadId).toBe('server-thread');
+  it('a user naming someone in the body names nobody — the body is read for an application only', async () => {
+    const { journal } = await drive({ runId: 'ag-3', prompt: 'x', resourceId: 'ayse' }, { identify: () => ({ kind: 'subject', id: 'mallory', roles: [] }) });
+    expect((await journal.get<{ resourceId?: string }>('ag-3:input'))?.resourceId).toBe('mallory');
+  });
+
+  it('an application is the user it names; naming nobody is a 400 and nothing runs', async () => {
+    const app = { identify: () => ({ kind: 'application', id: 'backend', roles: [] }) };
+    const refused = await drive({ runId: 'ag-5', prompt: 'x' }, app);
+    expect(refused.res.status).toBe(400);
+    expect(refused.text).toMatch(/resourceId is required/);
+    expect(await refused.journal.get('ag-5:input')).toBeUndefined();
+    const named = await drive({ runId: 'ag-6', prompt: 'x', resourceId: 'ayse' }, app);
+    expect((await named.journal.get<{ resourceId?: string }>('ag-6:input'))?.resourceId).toBe('ayse');
+  });
+
+  it('an operator is staff: the run is born staff\'s, whatever the body names', async () => {
+    const { journal } = await drive({ runId: 'ag-7', prompt: 'x', resourceId: 'ayse' }, { identify: () => ({ kind: 'operator', id: 'ops', roles: ['admin'] }) });
+    const input = await journal.get<{ resourceId?: string; ownerKind?: string }>('ag-7:input');
+    expect(input?.resourceId).toBeUndefined();
+    expect(input?.ownerKind).toBe('staff');
   });
 
   it('receives the web Request — a host bridging from Express has one and no Hono context', async () => {
     let seenReq: unknown;
     await drive(
       { runId: 'ag-4', prompt: 'x' },
-      { identity: (req: Request) => { seenReq = req; return { resourceId: req.headers.get('x-user') ?? undefined }; } },
+      { identify: (req: Request) => { seenReq = req; return { kind: 'subject', id: req.headers.get('x-user') ?? 'nobody', roles: [] }; } },
       { 'x-user': 'header-user' },
     );
     expect(seenReq).toBeInstanceOf(Request);
@@ -126,8 +137,8 @@ describe('agui: Idempotency-Key with nobody named stays an alias for body.runId'
 // half is fail-closed. The header is the forgiving one. So "no subject" has two different answers
 // here depending on which name arrived, and both are pinned below.
 describe('agui: the regime boundary', () => {
-  it('`identity: () => undefined` keeps the HEADER raw — the anonymous deployment still runs', async () => {
-    const { res, journal } = await drive({ prompt: 'x' }, { identity: () => undefined }, { 'Idempotency-Key': 'hdr-raw' });
+  it('`identify: () => undefined` keeps the HEADER raw — the anonymous deployment still runs', async () => {
+    const { res, journal } = await drive({ prompt: 'x' }, { identify: () => undefined }, { 'Idempotency-Key': 'hdr-raw' });
     expect(res.status).toBe(200);
     expect(await journal.get('hdr-raw:input'), 'ham rejim: başlık id olarak geçer').toBeDefined();
   });
@@ -136,12 +147,12 @@ describe('agui: the regime boundary', () => {
     // Not an inconsistency. The header is old and often a proxy's, so turning its 200 into a 400
     // would break deployments that never asked for any of this; `body.workKey` is new, so nobody can
     // lose anything by it being strict. §6's fail-closed rule applies where it costs nothing.
-    const { res, text } = await drive({ workKey: 'invoice-1', prompt: 'x' }, { identity: () => undefined });
+    const { res, text } = await drive({ workKey: 'invoice-1', prompt: 'x' }, { identify: () => undefined });
     expect(res.status).toBe(400);
     expect(text).toContain('resourceId');
   });
 
-  it('`resourceId: \'\'` is NOT a subject — raw regime, and no owner is frozen', async () => {
+  it('a subject with `id: \'\'` is NOT a user — raw regime, and no owner is frozen', async () => {
     // Pinned rather than normalized, for the reason written out in chat-adapter's identity.test.ts:
     // `''` is falsy, so it takes the "no answer" branch at the promotion decision and at the spreads
     // that pass `resourceId` onward. The outcome that matters is the last assertion — an empty
@@ -150,7 +161,7 @@ describe('agui: the regime boundary', () => {
     // the other's run.
     const { res, journal } = await drive(
       { prompt: 'x' },
-      { identity: () => ({ resourceId: '' }) },
+      { identify: () => ({ kind: 'subject', id: '', roles: [] }) },
       { 'Idempotency-Key': 'hdr-empty' },
     );
     expect(res.status).toBe(200);
@@ -170,19 +181,23 @@ describe('agui: production without any way to name a caller', () => {
   const mk = (opts: Record<string, unknown> = {}) =>
     createAguiRoute({ journal: new InMemoryJournal(), agents: { a: { model: textMock() } } } as never, opts as never);
 
-  it('refuses to start without `identity`, and names the surface to use instead', () => {
-    withEnv('production', () => { expect(() => mk()).toThrow(/no `identity` in production.*surfaces: \[aguiSurface\(\)\]/s); });
-    withEnv('production', () => { expect(() => mk({ identity: () => undefined })).not.toThrow(); });
+  it('refuses to start without `identify`, and names the surface to use instead', () => {
+    withEnv('production', () => { expect(() => mk()).toThrow(/no `identify` in production.*surfaces: \[aguiSurface\(\)\]/s); });
+    withEnv('production', () => { expect(() => mk({ identify: () => undefined })).not.toThrow(); });
   });
 
   it('refuses the removed `resolveResourceId` at construction, not silently', () => {
-    expect(() => mk({ resolveResourceId: () => 'u' })).toThrow(/resolveResourceId.*removed.*identity/s);
+    expect(() => mk({ resolveResourceId: () => 'u' })).toThrow(/resolveResourceId.*removed.*identify/s);
   });
 
-  it('stays silent with `identity`, and outside production', () => {
+  it('refuses the replaced `identity` at construction — it could not say "staff"', () => {
+    expect(() => mk({ identity: () => ({ resourceId: 'u' }) })).toThrow(/`identity` was replaced by `identify`/);
+  });
+
+  it('stays silent with `identify`, and outside production', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     withEnv('production', () => {
-      mk({ identity: () => ({ resourceId: 'u' }) });
+      mk({ identify: () => ({ kind: 'subject', id: 'u', roles: [] }) });
     });
     withEnv('development', () => { mk(); });
     expect(warn.mock.calls.map((c) => String(c[0])).filter((m) => m.includes('ownerless'))).toEqual([]);

@@ -27,7 +27,7 @@ function route() {
     },
   };
   const app = createAguiRoute({ journal, agents: { a: { model } } } as never, {
-    identity: (req: Request) => ({ resourceId: 'u1', orgId: req.headers.get('x-test-org') ?? undefined }),
+    identify: (req: Request) => ({ kind: 'subject', id: 'u1', roles: [], orgId: req.headers.get('x-test-org') ?? undefined }),
   } as never);
   const post = async (org: string) => {
     const res = await call(app, '/agents/a/run', {

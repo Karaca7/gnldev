@@ -13,8 +13,9 @@ import type { Context } from 'hono';
 import { toFetchHandler, type FetchHandler } from './handler.js';
 import { Hono } from 'hono';
 import { limitBreachFromSteps, blockedFromSteps, BLOCKED_ERROR_CODES, blockedErrorCode, callerConflictCode, publicConflictDetail, sealRequestContext, resolveWorkIdentity } from '@gnldev/durable';
-import type { CreateGnlConfig, GnlIdentity, ResolvedWorkIdentity } from '@gnldev/durable';
+import type { CreateGnlConfig, ResolvedWorkIdentity } from '@gnldev/durable';
 import { createGnl, scopeConfigToOrg } from '@gnldev/durable';
+import { callerOfRequest, type Identify } from '@gnldev/auth';
 import { streamSSE } from 'hono/streaming';
 // The two limit codes are READ from @gnldev/server rather than spelled again here. The event/data
 // SHAPE is deliberately a copy (see the note above), but a code is not a shape: it is the string a
@@ -182,28 +183,29 @@ export interface CreateAguiRouteOptions {
   /** AG-UI threadId resolver (from request + body). If not given, uses body.threadId, else runId. */
   resolveThreadId?: (c: Context, body: any) => string | undefined;
   /**
-   * WHO this request acts for, WHICH ORGANIZATION, and optionally WHICH CONVERSATION — resolved from
-   * something the SERVER trusts, never from the body. The SAME signature @gnldev/chat-adapter's route
-   * takes, so a host that has written it once can mount either adapter with it.
+   * WHO is calling — the application's one answer (@gnldev/auth `Identify`), the same function it hands
+   * @gnldev/server, @gnldev/chat-adapter and @gnldev/mcp. It reads a session cookie, a verified token or
+   * a user store — never the body — and returns a `Principal`, or nothing for an anonymous request.
    *
-   * The ONLY source of the subject. A `resolveResourceId(c, body)` hook used to sit beside it and win
-   * over it; it handed the host the parsed body, the one place a subject must never come from. It is
-   * gone. `resolveThreadId` still wins for the thread: choosing a conversation is not an identity
-   * claim, and the thread's owner is checked separately.
+   * The route maps the principal with `engineCallerOf` and hands the engine that caller:
    *
-   * Why the route needs it: `body.context` used to reach the engine untouched, and the engine reads
-   * the reserved context keys as "the server established this". Measured on the sibling route: a POST
-   * carrying `{"context":{"__gnl_resourceId":"victim"}}` produced a run owned by that name, and the
-   * forged name became the ownership LOCK's value too. The route always seals now; with no resolver
-   * the seal carries no identity, which strips the reserved keys.
+   *   subject      → that user; its runs and its thread are its own
+   *   operator     → staff; reaches every run and thread in its organization
+   *   application  → the end user it names in the body's `resourceId` — read for an application ONLY,
+   *                  the same field @gnldev/server's REST routes read. Naming nobody is a 400.
+   *   nothing      → unknown: closed, it reaches no user's or staff's thread
+   *
+   * The organization comes from the principal (`orgId`), never from the body. `resolveThreadId`
+   * still picks the thread: choosing a conversation is not an identity claim, and the engine checks
+   * the thread's owner against the caller.
    *
    * Takes the web `Request` rather than the Hono `Context`: a host mounting this from Express or
    * Fastify has a Request and no Context. Called once per request.
    *
-   * HONEST BOUND: this route declares auth out of scope. A resolver reading an unauthenticated
-   * request asserts a subject nobody verified. Put auth in front of this route.
+   * HONEST BOUND: this route declares auth out of scope. An `identify` that trusts an
+   * unauthenticated request asserts a caller nobody verified.
    */
-  identity?: GnlIdentity;
+  identify?: Identify;
 }
 
 /**
@@ -234,33 +236,40 @@ function aguiRouteApp(config: CreateGnlConfig, opts: CreateAguiRouteOptions = {}
   if ((opts as { resolveResourceId?: unknown }).resolveResourceId !== undefined) {
     throw new TypeError(
       '[gnl agui-route] `resolveResourceId` was removed: it handed the resolver the request body, the one place a ' +
-      'subject must never come from. Use `identity: (req) => ({ resourceId })`, reading your session or a verified token.',
+      'subject must never come from. Use `identify: (req) => principal`, reading your session or a verified token.',
+    );
+  }
+  if ((opts as { identity?: unknown }).identity !== undefined) {
+    throw new TypeError(
+      '[gnl agui-route] `identity` was replaced by `identify` (0.7.0): it returns a Principal from @gnldev/auth — ' +
+      "`{ kind: 'subject', id, orgId, roles: [] }` for an end user — so the route can tell a user from staff.",
     );
   }
   // PRODUCTION REFUSES a route that names nobody. It used to warn and serve: every caller, with or
   // without a credential, ran the model and left an ownerless run (measured). The recommended shape
   // is a surface on the REST API, where the auth provider decides who the caller is. A host that
-  // really has no per-user identity says so explicitly with `identity: () => undefined`.
-  if (process.env.NODE_ENV === 'production' && !opts.identity) {
+  // really has no per-user identity says so explicitly with `identify: () => undefined`.
+  if (process.env.NODE_ENV === 'production' && !opts.identify) {
     throw new Error(
-      '[gnl agui-route] no `identity` in production: this route has no auth of its own, so every caller would run the model ' +
+      '[gnl agui-route] no `identify` in production: this route has no auth of its own, so every caller would run the model ' +
       'and leave an ownerless run. Mount it on the REST API instead — createRestApi(config, { auth, surfaces: [aguiSurface()] }) — ' +
-      'or pass `identity: (req) => ({ resourceId })` from your verified session. `identity: () => undefined` opts out, explicitly.',
+      'or pass `identify: (req) => principal` from your verified session. `identify: () => undefined` opts out, explicitly.',
     );
   }
   const app = new Hono();
   app.post('/agents/:name/run', async (c) => {
     const name = c.req.param('name');
     const body = (await c.req.json().catch(() => ({}))) as any;
-    // Resolved once — the same reason chat-adapter states: a resolver that reads the request may
-    // answer differently the second time, and these two fields must agree about who this is.
-    // Resolved FIRST, because the identity decision below cannot be made without knowing the subject.
-    const ident = await opts.identity?.(c.req.raw);
-    const subject = ident?.resourceId;
-    // WHICH ORGANIZATION — only `identity` can say, and never the body. Same rule and same reason as
-    // the sibling route: an org is an isolation boundary, so it comes from the hook that already
-    // reads a verified session, and `sealRequestContext` strips any the caller tried to assert.
-    const org = ident?.orgId;
+    // WHO, resolved once and FIRST — the same reason chat-adapter states: the identity decision below
+    // cannot be made without the subject, and a resolver may answer differently the second time.
+    // `body.resourceId` is read by `callerOfRequest` for an APPLICATION principal only.
+    const who = await callerOfRequest(opts.identify, c.req.raw, body.resourceId);
+    if ('refused' in who) return c.json({ error: who.refused }, 400);
+    const caller = who.caller;
+    const subject = caller.kind === 'user' ? caller.id : undefined;
+    // WHICH ORGANIZATION — the principal's, never the body's. Same rule and same reason as the sibling
+    // route: an org is an isolation boundary, and `sealRequestContext` strips any the caller asserted.
+    const org = caller.kind === 'unknown' ? undefined : caller.orgId;
     const gnl = gnlFor(org);
     // WHICH RUN (package #5, §7). Two names can arrive, and they follow different rules:
     //
@@ -303,9 +312,9 @@ function aguiRouteApp(config: CreateGnlConfig, opts: CreateAguiRouteOptions = {}
     }
     const runId = identity.runId!;
     const declared = identity.work?.workKey;
-    // `identity` sits below the dedicated resolver and above the body: it is server-derived, the body
-    // is not.
-    const threadId = opts.resolveThreadId?.(c, body) ?? ident?.threadId ?? body.threadId ?? runId;
+    // Choosing a conversation is not an identity claim: the ENGINE checks the thread's owner against
+    // the caller (admitThreadRun), so naming staff's or another user's thread is refused there.
+    const threadId = opts.resolveThreadId?.(c, body) ?? body.threadId ?? runId;
     let result: any;
     try {
       result = await gnl.stream(name, {
@@ -328,8 +337,10 @@ function aguiRouteApp(config: CreateGnlConfig, opts: CreateAguiRouteOptions = {}
           // same organization the id was derived under — the derivation and the seal must not
           // disagree about which boundary this run is inside.
           ...(org ? { orgId: org } : {}),
+          ...(caller.kind === 'staff' ? { staff: true } : {}),
         }),
-        ...(subject ? { resourceId: subject } : {}),
+        // THE CALLER, from the one mapping; the seal above carries the same decision into the context.
+        caller,
       });
     } catch (e: any) {
       // A refusal thrown BEFORE the stream exists is still one of ours, and it used to arrive as a bare

@@ -48,7 +48,7 @@ function mkRoute(opts: Parameters<typeof createAguiRoute>[1] = {}) {
 
 describe('agui route — workKey', () => {
   it('names the work; the engine mints the id and freezes the declaration', async () => {
-    const { journal, post } = mkRoute({ identity: () => ({ resourceId: 'u-ayse' }) });
+    const { journal, post } = mkRoute({ identify: () => ({ kind: 'subject', id: 'u-ayse', roles: [] }) });
     const res = await post({ workKey: 'invoice-4471', prompt: 'hi' });
     expect(res.status).toBe(200);
     await res.text();
@@ -57,7 +57,7 @@ describe('agui route — workKey', () => {
   });
 
   it('runId AND workKey together is refused', async () => {
-    const { post } = mkRoute({ identity: () => ({ resourceId: 'u-ayse' }) });
+    const { post } = mkRoute({ identify: () => ({ kind: 'subject', id: 'u-ayse', roles: [] }) });
     const res = await post({ runId: 'raw-1', workKey: 'invoice-4471', prompt: 'hi' });
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/BOTH a runId and a workKey/);
@@ -77,7 +77,7 @@ describe('agui route — workKey', () => {
   });
 
   it('the header names the work when there is a subject…', async () => {
-    const { journal, post } = mkRoute({ identity: () => ({ resourceId: 'u-ayse' }) });
+    const { journal, post } = mkRoute({ identify: () => ({ kind: 'subject', id: 'u-ayse', roles: [] }) });
     const res = await post({ prompt: 'hi' }, { 'Idempotency-Key': 'gateway-key' });
     expect(res.status).toBe(200);
     await res.text();
@@ -94,7 +94,7 @@ describe('agui route — workKey', () => {
   });
 
   it('a raw body.runId is untouched by any of this', async () => {
-    const { journal, post } = mkRoute({ identity: () => ({ resourceId: 'u-ayse' }) });
+    const { journal, post } = mkRoute({ identify: () => ({ kind: 'subject', id: 'u-ayse', roles: [] }) });
     const res = await post({ runId: 'raw-1', prompt: 'hi' }, { 'Idempotency-Key': 'ignored' });
     expect(res.status).toBe(200);
     await res.text();
@@ -127,7 +127,7 @@ describe('agui route — the org in the seal reaches the derivation (REST parity
   }
 
   it('an org-scoped agent derives the SAME id REST would derive', async () => {
-    const { journal, post } = mkOrgRoute({ identity: () => ({ resourceId: 'u-ayse', orgId: 'org-akme' }) });
+    const { journal, post } = mkOrgRoute({ identify: () => ({ kind: 'subject', id: 'u-ayse', roles: [], orgId: 'org-akme' }) });
     const res = await post({ workKey: 'gece-mutabakati', prompt: 'hi' });
     expect(res.status).toBe(200);
     await res.text();
@@ -140,7 +140,7 @@ describe('agui route — the org in the seal reaches the derivation (REST parity
     // The `'resource'` scope's fail-closed rule does not apply here: an org address IS an address.
     // This is the nightly-reconciliation case, and refusing it would be refusing the reason `'org'`
     // exists.
-    const { journal, post } = mkOrgRoute({ identity: () => ({ orgId: 'org-akme' }) });
+    const { journal, post } = mkOrgRoute({ identify: () => ({ kind: 'operator', id: 'nightly', roles: [], orgId: 'org-akme' }) });
     const res = await post({ workKey: 'gece-mutabakati', prompt: 'hi' });
     expect(res.status).toBe(200);
     await res.text();
@@ -149,7 +149,7 @@ describe('agui route — the org in the seal reaches the derivation (REST parity
   });
 
   it('a RESOURCE-scoped agent ignores the org — the scope decides the address, not the request', async () => {
-    const { journal, post } = mkRoute({ identity: () => ({ resourceId: 'u-ayse', orgId: 'org-akme' }) });
+    const { journal, post } = mkRoute({ identify: () => ({ kind: 'subject', id: 'u-ayse', roles: [], orgId: 'org-akme' }) });
     await (await post({ workKey: 'invoice-4471', prompt: 'hi' })).text();
     expect(await journal.get(`org:org-akme:${derivedRunId('agent:pay', 'resource', 'u-ayse', 'invoice-4471')}:input`)).toBeDefined();
   });

@@ -5,7 +5,7 @@
 > Install: `pnpm add @gnldev/agui` — or use it from a [repo clone](https://github.com/Karaca7/gnldev): `pnpm install && pnpm -r build`.
 
 ```bash
-npm i @gnldev/agui   # dep: @gnldev/server, hono  ·  peer: @gnldev/durable
+npm i @gnldev/agui   # dep: @gnldev/server, @gnldev/auth, hono  ·  peer: @gnldev/durable
 ```
 
 ```ts
@@ -17,10 +17,10 @@ const app = createAguiRoute({
   journal: new SqliteStorage('runs.db').runs,
   agents: { support: { model: 'anthropic/claude-opus-4-8', tools, guard, maxSteps: 8 } },
 }, {
-  // Whose run each request is. In production the route refuses to start without this: pass your
-  // session lookup (see "identity" below), or say explicitly that there is no per-user identity.
+  // Who is calling. In production the route refuses to start without this: pass your auth
+  // (see "identify" below), or say explicitly that there is no per-user identity.
   // With end users, prefer `aguiSurface()` on createRestApi: the API's auth decides it for you.
-  identity: () => undefined,
+  identify: () => undefined,
 });
 serve({ fetch: app.fetch, port: 3001 }); // POST /agents/:name/run → AG-UI SSE
 ```
@@ -55,7 +55,7 @@ spec](https://github.com/ag-ui-protocol/ag-ui) are marked with comments in `type
 the API's auth decides identity, organization and ownership:
 `createRestApi(config, { auth, surfaces: [aguiSurface()] })`. `aguiSurface({ path })` changes the
 path. The standalone `createAguiRoute` below is for a host that authenticates the request itself; in
-production it refuses to start without `identity` (`identity: () => undefined` opts out, explicitly).
+production it refuses to start without `identify` (`identify: () => undefined` opts out, explicitly).
 
 ## API
 - `createAguiRoute(config, opts?)` — a single-endpoint Hono router from `@gnldev/durable`'s `CreateGnlConfig`:
@@ -70,42 +70,61 @@ production it refuses to start without `identity` (`identity: () => undefined` o
   is threaded in from outside (`initialAguiConvertState`) — a SINGLE state object must be threaded
   through from start to end for an ENTIRE run (this is required for text message framing START/END).
 
-## Who is this request for? (`identity`)
+## Who is calling? (`identify`)
 
 This route declares auth out of scope, and that boundary is right. What it leaves you responsible for
-is naming the end user each run acts for — the subject memory scopes on and every ownership gate
-compares against.
+is one function: `identify(req)`, which returns a `Principal` from `@gnldev/auth`. It is the same
+function `@gnldev/chat-adapter`, `@gnldev/mcp` and `@gnldev/server` take — write "who is this caller" once,
+mount any door. An `AuthProvider` is one as it is:
 
 ```ts
 import { createAguiRoute } from '@gnldev/agui';
+import { roleAuth } from '@gnldev/auth';
+
+const auth = roleAuth({ endUsers: { secret: process.env.GNL_END_USER_SECRET!, orgId: 'acme' } })!;
 
 const route = createAguiRoute(config, {
-  // The SAME signature @gnldev/chat-adapter's route takes — write the function once, mount either adapter.
-  identity: (req) => {
-    const session = db.sessions.get(req.headers.get('cookie'));   // YOUR session store
-    return session ? { resourceId: session.userId, threadId: session.conversationId } : undefined;
-  },
+  identify: (req) => auth.authenticate(req), // an end user's signed token → that user, in acme
 });
 ```
 
 It receives the web `Request` (not the Hono context, so an Express or Fastify bridge can use it), is
-called once per request, and may return `undefined`. **Read it from something the server trusts** — a
-session cookie, a verified JWT — and never from the request body: the engine treats its reserved
-context keys as "the server established this", and a body-supplied subject is the caller naming
-whoever they like. The route always seals the context, so that forgery is closed either way; what
-`identity` decides is whether the run has an owner **at all**.
+called once per request, and may return nothing. The route maps the principal to the engine's caller
+with `engineCallerOf`, the one mapping every door uses:
 
-`identity` is the only source of the subject; the older `resolveResourceId(c, body)` hook was removed
-and now throws at construction. For the thread: `resolveThreadId`, then `identity`, then the body. With none of them, runs are born ownerless — ownership gates stay
-fail-open — and in `NODE_ENV=production` the route says so once with a `console.warn`. It never
-throws.
+| `principal.kind` | The run acts for | Reaches |
+|---|---|---|
+| `subject` | that user (`principal.id`) | its own runs and threads |
+| `operator` | staff | every run and thread in its organization |
+| `application` | the end user it names in the body's `resourceId` | that user's runs and threads |
+| *(nothing)* | `unknown` | nothing that belongs to a user or to staff |
 
-A run whose `identity` names an organization is stored in that organization's partition, where the
-REST API and Studio read it. Runs stored before 0.7 are in the shared root; `@gnldev/chat-adapter`'s
-README says how to move them.
+**An application** (a backend holding an application credential) speaks for one of its users on each
+request and names it in the body: `{ runId, prompt, resourceId: 'u-ayse' }`. `resourceId` is read
+**for an application only** — the same field and rule as `@gnldev/server`'s REST routes. A user who
+sends it is still itself; staff is still staff. An application that names nobody gets a `400` and
+nothing runs.
 
-`@gnldev/chat-adapter`'s README carries the long version of the same section, including the attack it was
-measured against.
+**The organization** is `principal.orgId`, never the body's. A run of an org-bound caller is stored in
+that organization's partition, where the REST API and Studio read it. Runs stored before 0.7 are in
+the shared root; `@gnldev/chat-adapter`'s README says how to move them.
+
+**The thread is checked, not trusted.** `resolveThreadId`, then `body.threadId`, then the runId picks
+it. The engine checks the thread's owner against the caller: a user naming staff's thread or another
+user's gets `409 thread_owner_mismatch`, and the model never sees that history.
+
+**Read the principal from something the server trusts** — a session cookie, a verified JWT — never
+from the request body. The route always seals the request context, so a body-supplied
+`__gnl_resourceId` names nobody. `identify: () => undefined` says, explicitly, that there is no
+per-user identity: every caller is `unknown`, closed to every user's and staff's data.
+
+**Breaking in 0.7.** `identity: (req) => ({ resourceId, orgId, threadId })` was replaced by
+`identify: (req) => Principal`: the old shape could not say "this caller is staff", and the standalone
+route let an end user read a staff member's ownerless thread (measured). Passing `identity` now throws
+at construction; `threadId` comes from `resolveThreadId` or the body. The package now depends on
+`@gnldev/auth`.
+
+`@gnldev/chat-adapter`'s README carries the long version of the same section.
 
 ## Which run is this? (`workKey`, and the two regimes)
 
@@ -138,10 +157,10 @@ how the name arrived:
 
 The header is the forgiving one on purpose: it is usually stamped by a gateway, and turning a working
 deployment's 200 into a 400 is not a fix. An `'org'` workScope is addressed by the organization, so
-org-scoped work runs **without** a subject — that is the nightly-reconciliation case, not a hole. Pass
-`orgId` from `identity` for it, and for parity with `@gnldev/server`: without it, org-scoped work
-derives a *different* id here than it does through REST, which duplicates silently rather than
-failing.
+org-scoped work runs **without** a subject — that is the nightly-reconciliation case, not a hole:
+an `operator` principal with an `orgId` (staff of that organization). The org comes from the
+principal, as on `@gnldev/server`: without it, org-scoped work derives a *different* id here than it
+does through REST, which duplicates silently rather than failing.
 
 ### Refusals
 
