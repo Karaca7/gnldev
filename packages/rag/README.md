@@ -59,8 +59,50 @@ channel (`identityOf(options)` in `@gnldev/durable`), the same value the run's o
 
 A document with no label is visible to no end user. A forgotten label shows up as "not found", never as
 a leak. A call that lost its identity (called by hand, or by another tool that did not pass its
-`options` on) gets the shared documents only. Organizations stay apart as before: use a store from
-`withOrgStorage`.
+`options` on) gets the shared documents only.
+
+## One tool per organization
+
+> **Warning.** `visibleTo` separates users, not organizations. A tool built once over the ROOT vector
+> store searches every organization's documents. The run knows the caller's organization, but the
+> tool does not filter by it. Measured with one root store: a user of `acme` got `globex`'s shared
+> document, and the private document of a `globex` user with the same id as theirs.
+
+Give each organization its own tool, over that organization's part of the store
+(`withOrgStorage(storage, orgId).vectors`). `tools` on an agent may be a function of the request
+context, so the tool can be built per request, for the caller's organization:
+
+```ts
+import { createGnl, InMemoryStorage, withOrgStorage, serverIdentityOf } from '@gnldev/durable';
+import { createRagTool, indexDocuments } from '@gnldev/rag';
+declare const embed: (text: string) => Promise<number[]>;
+
+const storage = new InMemoryStorage(); // the root storage, shared by every organization
+
+// Index into the organization's part of the store, not into `storage.vectors`.
+await indexDocuments(withOrgStorage(storage, 'acme').vectors!, embed, [
+  { id: 'handbook', text: 'Leave policy…', shared: true },
+]);
+
+const gnl = createGnl({
+  storage,
+  agents: {
+    assistant: {
+      model,
+      // Called for every run, with the request context the server sealed.
+      tools: (ctx) => {
+        const orgId = serverIdentityOf(ctx).orgId;
+        if (!orgId) return {}; // no organization on the request: no knowledge base
+        return { search: createRagTool({ store: withOrgStorage(storage, orgId).vectors!, embed }) };
+      },
+    },
+  },
+});
+```
+
+Read the organization with `serverIdentityOf(ctx)`: the server writes it from the credential, and a
+request body cannot set it. A call to `gnl.run` from your own code has no sealed organization, so it
+gets no tool here.
 
 Every store (`InMemoryVectorStore`, `GraphRag`, `PostgresVectorStore` and the `@gnldev/durable`
 storages) applies the same write rule, before anything is written:
