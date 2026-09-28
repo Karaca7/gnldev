@@ -12,6 +12,8 @@ import { claim, frozenGet } from './journal.js';
 import type { Journal } from './journal.js';
 import type { Interrupt } from './guard.js';
 import { toolDescriptionText } from './types.js';
+import { admitRun, UNKNOWN } from './run-identity.js';
+import type { Caller } from './identity-types.js';
 
 /** The router's single-turn decision: either give a task to an agent OR write the final answer. */
 export type RouteDecision =
@@ -45,6 +47,11 @@ export interface RunNetworkOptions {
    * otherwise-silent blocking decisions. See `NetworkObserver` for the full replay-visibility + veto contract.
    */
   observer?: NetworkObserver;
+  /**
+   * Who is calling, as `runDurable`'s `caller`. The run's owner is recorded from it before the first
+   * route row, and a run someone else owns is refused. Absent is `unknown`: never staff by omission.
+   */
+  caller?: Caller;
 }
 
 /** A delegation veto — returned from `onAgentStart` to skip a sub-agent's run entirely. */
@@ -248,9 +255,27 @@ async function decideOnce(opts: RunNetworkOptions, history: NetworkStep[], force
  * freezes into the journal → calling again with the same runId (resume) returns the same result without an LLM (exactly-once).
  */
 export async function runNetwork(opts: RunNetworkOptions): Promise<NetworkResult> {
+  requireAgents(opts);
+  // A run birth like every other (run-identity.ts admitRun): the owner is recorded before the first
+  // row, a run someone else owns is refused, and a re-entry acts for the recorded owner. Without it
+  // this exported primitive wrote route rows under no owner record (read as staff's, not recorded).
+  await admitRun(opts.journal, opts.runId, opts.caller ?? UNKNOWN, { network: '' });
+  return runNetworkAdmitted(opts);
+}
+
+function requireAgents(opts: RunNetworkOptions): void {
   if (Object.keys(opts.agents).length === 0) {
     throw new Error('@gnldev/durable network: at least one agent is required');
   }
+}
+
+/**
+ * The network loop for a run that is ALREADY admitted — `gnl.runNetwork` admits with the registered
+ * network's name, actor and thread, then calls this. Not exported from the package: every other
+ * caller goes through `runNetwork`, which admits first.
+ */
+export async function runNetworkAdmitted(opts: RunNetworkOptions): Promise<NetworkResult> {
+  requireAgents(opts);
   const maxIterations = opts.maxIterations ?? 6;
   const steps: NetworkStep[] = [];
   const obs = opts.observer;

@@ -8,7 +8,7 @@ import { runDurable, streamDurable, assertRunIdSafe } from './run.js';
 import type { StreamBreach } from './run.js';
 import { resolveModel, withModelFallback, type FallbackCandidate } from './model-router.js';
 import { createAgentTool, runSubAgent } from './agent-tool.js';
-import { runNetwork as runNetworkCore, type NetworkResult, type NetworkTarget } from './network.js';
+import { runNetworkAdmitted as runNetworkCore, type NetworkResult, type NetworkTarget } from './network.js';
 import { acquireRunLock } from './run-lock.js';
 import { claim as journalClaim, runKeys } from './journal.js';
 import { argsHash, derivedRunId, isDerivedRunId, DEPLOYMENT_SCOPE, type WorkScope, type WorkScopeKind } from './hash.js';

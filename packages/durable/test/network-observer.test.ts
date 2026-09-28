@@ -7,6 +7,7 @@ import { describe, it, expect } from 'vitest';
 import { InMemoryJournal } from '../src/journal.js';
 import { runNetwork, netKeys, type NetworkTarget, type NetworkObserver } from '../src/network.js';
 import { createMockModel, finalTextResult } from './mock.js';
+import { claimRunOwner, UNKNOWN } from '../src/run-identity.js';
 
 function scriptedRouter(answers: string[], counter?: { calls: number }) {
   let i = 0;
@@ -247,6 +248,8 @@ describe('runNetwork observer — delegation veto', () => {
     const journal = new InMemoryJournal();
     // Simulate the crash window manually: journal a veto record directly, WITHOUT a step record,
     // exactly as runNetwork would leave it if the process died between claim(vetoKey) and claim(stepKey).
+    // The owner record is written first, as runNetwork admits the run before its first row.
+    await claimRunOwner(journal, 'v4', UNKNOWN, { network: '' });
     await journal.put(netKeys.route('v4', 0), { v: { action: 'route', agent: 'a', task: 't1' } });
     await journal.put(netKeys.veto('v4', 0), { v: { replaceResult: 'crash-window veto' } });
 

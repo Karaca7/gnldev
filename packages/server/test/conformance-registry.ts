@@ -322,10 +322,10 @@ export const BIRTHS: Record<string, Birth> = {
     start: async (w, who) => { const e = ctxOf(w, who); await e.gnl.runNetwork('n', { runId: 'tgtN', task: SECRET, caller: e.caller }); return { runId: 'tgtN' }; },
   },
   'network: runNetwork (the exported primitive)': {
-    sites: [], starters: ['runNetwork'],
+    sites: ['durable/src/network.ts'], starters: ['runNetwork'],
     start: async (w, who) => {
       const e = ctxOf(w, who);
-      await runNetwork({ runId: 'tgtNP', journal: e.journal, task: SECRET, routerModel: router, agents: { a: { description: 'a', run: async (task: string) => ({ text: `a:${task}` }) } } } as never);
+      await runNetwork({ runId: 'tgtNP', journal: e.journal, task: SECRET, routerModel: router, agents: { a: { description: 'a', run: async (task: string) => ({ text: `a:${task}` }) } }, caller: e.caller } as never);
       return { runId: 'tgtNP' };
     },
   },
