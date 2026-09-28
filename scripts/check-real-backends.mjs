@@ -37,6 +37,8 @@ const keep = args.has('--keep');
 // docker-compose.yml sets POSTGRES_PASSWORD and POSTGRES_DB but not POSTGRES_USER, so the role is the
 // image default `postgres` — the same URL integration-real.test.ts falls back to when GNL_PG_URL is unset.
 const PG_URL = 'postgres://postgres:gnl@localhost:55432/gnl';
+// The `pgvector` service: same credentials, its own port (docker-compose.yml).
+const PGVECTOR_URL = 'postgres://postgres:gnl@localhost:55433/gnl';
 const REDIS_URL = 'redis://localhost:6380';
 
 const run = (cmd, argv, opts = {}) =>
@@ -73,16 +75,16 @@ const composeRun = (file, ...rest) => run(bin, [...pre, '-f', file, ...rest]);
  *  names for the same service (`<project>_postgres_1` vs `<project>-postgres-1`), and a hardcoded guess
  *  fails on whichever machine has the other one — as a timeout, which reads as "the database is
  *  broken" rather than "the script looked for the wrong container". */
-function waitForPostgres(seconds = 90) {
+function waitForPostgres(service = 'postgres', seconds = 90) {
   const deadline = Date.now() + seconds * 1000;
   for (;;) {
-    const id = quiet(bin, [...pre, '-f', 'docker-compose.yml', 'ps', '-q', 'postgres']).stdout?.trim().split('\n')[0];
+    const id = quiet(bin, [...pre, '-f', 'docker-compose.yml', 'ps', '-q', service]).stdout?.trim().split('\n')[0];
     if (id) {
       const r = quiet('docker', ['exec', id, 'psql', '-U', 'postgres', '-d', 'gnl', '-c', 'SELECT 1']);
       if (r.status === 0) return true;
     }
     if (Date.now() > deadline) {
-      console.error(id ? '  postgres is up but never answered a query' : '  the postgres container was never found');
+      console.error(id ? `  ${service} is up but never answered a query` : `  the ${service} container was never found`);
       return false;
     }
     spawnSync('sleep', ['2']);
@@ -103,24 +105,35 @@ try {
   step('postgres + redis up', () => composeRun('docker-compose.yml', 'up', '-d').status === 0);
   if (failures.length) throw new Error('compose up failed');
 
-  if (!waitForPostgres()) {
-    failures.push('postgres never became reachable');
-    throw new Error('postgres unreachable');
+  for (const service of ['postgres', 'pgvector']) {
+    if (!waitForPostgres(service)) {
+      failures.push(`${service} never became reachable`);
+      throw new Error(`${service} unreachable`);
+    }
   }
 
   // The env names matter and have been wrong before: the CI job originally exported PG_URL/REDIS_PORT,
   // which the tests never read, so it connected to the built-in defaults and failed on a retry timeout
   // while looking like a real-backend run. These are the names integration-real.test.ts actually reads.
-  const env = { ...process.env, GNL_INTEGRATION: '1', GNL_PG_URL: PG_URL, GNL_REDIS_URL: REDIS_URL };
+  // GNL_PGVECTOR_URL was missing until the erasure contract round: the real pgvector test listed below
+  // was skipped by its own `skipIf` on every run of this gate, and the gate said nothing.
+  const env = { ...process.env, GNL_INTEGRATION: '1', GNL_PG_URL: PG_URL, GNL_PGVECTOR_URL: PGVECTOR_URL, GNL_REDIS_URL: REDIS_URL };
 
-  step('real Postgres + Redis (integration-real, prefix ranges, pgvector)', () =>
+  step('real Postgres + Redis (integration-real, prefix ranges, pgvector, erasure and naming contracts)', () =>
     run('pnpm', ['exec', 'vitest', 'run',
       'packages/durable/test/integration-real.test.ts',
       'packages/durable/test/prefix-astral-postgres.test.ts',
       'packages/rag/test/postgres-vector-store.test.ts',
       // Organization isolation for the metrics export: an in-memory journal addresses counters by
       // exact key, so the cross-tenant read this guards against cannot even be written against it.
-      'packages/otel/test/metrics-org-postgres.test.ts'], { env }).status === 0);
+      'packages/otel/test/metrics-org-postgres.test.ts',
+      // One erasure, every store: SQLite, pg-mem and FakeRedis run in the default suite; the real
+      // Postgres and real Redis rows (and the cross-store drift check over them) only run here.
+      'packages/durable/test/erasure-store-contract.test.ts',
+      // The vector write rule on a real Postgres and on rag's PostgresVectorStore over real pgvector.
+      'packages/durable/test/vector-store-contract.test.ts',
+      // Owned names on a real Postgres, where a lone surrogate would become U+FFFD.
+      'packages/durable/test/owned-name-namespaces.test.ts'], { env }).status === 0);
 
   step('real model provider', () => {
     if (!process.env.NVIDIA_API_KEY && !process.env.OPENAI_API_KEY) {

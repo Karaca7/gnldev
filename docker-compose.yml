@@ -2,6 +2,9 @@
 #   docker compose up -d
 #   GNL_INTEGRATION=1 pnpm --filter @gnldev/durable exec vitest run test/integration-real.test.ts
 #   docker compose down
+# `pgvector` is a second Postgres with the `vector` extension, for the stores that need it
+# (GNL_PGVECTOR_URL: rag's PostgresVectorStore, the vector write contract). A separate service rather
+# than swapping the image of `postgres`, so the durable suite keeps running on the server it always has.
 services:
   postgres:
     image: postgres:15-alpine
@@ -10,6 +13,13 @@ services:
       POSTGRES_DB: gnl
     ports:
       - '55432:5432'
+  pgvector:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_PASSWORD: gnl
+      POSTGRES_DB: gnl
+    ports:
+      - '55433:5432'
   redis:
     image: redis:7-alpine
     ports:
