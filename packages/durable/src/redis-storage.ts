@@ -225,6 +225,8 @@ function cmpStr(a: string, b: string): number { return a < b ? -1 : a > b ? 1 : 
 // contract) → the caller can match by index. For very large key lists, split into MGET_CHUNK-sized
 // chunks to avoid a single MGET blocking Redis / hitting command-size limits.
 const MGET_CHUNK = 500;
+/** Keys per DEL in a paged delete: the same bound as MGET_CHUNK, for the same reason. */
+const DEL_CHUNK = 500;
 async function bulkGet(client: RedisLike, keys: string[]): Promise<(string | null)[]> {
   if (keys.length === 0) return [];
   if (!client.mget) {
@@ -847,6 +849,35 @@ class RedisWorkStore implements WorkStore {
     const kvKeys = await scanAll(this.client, globEscape(`${this.pfx}${WK}${prefix}`) + '*');
     const all = [...new Set([...logKeys, ...kvKeys])];
     return all.length ? await this.client.del(...all) : 0;
+  }
+  /**
+   * Every log record whose ID starts with `idPrefix`, in every namespace (`WorkStore.deleteIdPrefix`).
+   *
+   * A record lives at `<pfx>wl:<encNs(ns)>:<id>`, and `encNs` leaves no `:` in the namespace, so the
+   * first `:` after `wl:` is where the id begins. The SCAN pattern only narrows (`*` also spans a `:`,
+   * so `wl:*:<prefix>*` can match an id that merely CONTAINS the prefix after a colon); the key text is
+   * then checked exactly, so the prefix is literal. Both halves are glob-escaped: an id or a keyPrefix
+   * holding `*`, `?`, `[` or `\` is text, not a pattern.
+   *
+   * Bounded: deleted page by page as SCAN returns them (a key present for the whole scan is returned
+   * at least once; one returned twice is deleted once and counted once, as DEL counts what it removed).
+   */
+  async deleteIdPrefix(idPrefix: string): Promise<number> {
+    const base = `${this.pfx}${WL}`;
+    const match = `${globEscape(base)}*:${globEscape(idPrefix)}*`;
+    let n = 0;
+    let cursor: string | number = '0';
+    do {
+      const [next, keys] = await this.client.scan(cursor, 'MATCH', match, 'COUNT', 1000);
+      const mine = keys.filter((k) => {
+        const rest = k.slice(base.length);
+        const colon = rest.indexOf(':');
+        return k.startsWith(base) && colon >= 0 && rest.slice(colon + 1).startsWith(idPrefix);
+      });
+      for (let i = 0; i < mine.length; i += DEL_CHUNK) n += await this.client.del(...mine.slice(i, i + DEL_CHUNK));
+      cursor = next;
+    } while (String(cursor) !== '0');
+    return n;
   }
   /**
    * 8.2: uses RunJournal's Lua CAS (CAS_LUA, defined in the same module — shared with RedisRunJournal) —

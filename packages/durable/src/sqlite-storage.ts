@@ -1292,6 +1292,13 @@ class SqliteWorkStore implements WorkStore {
     const ki = this.db.prepare(`DELETE FROM gnl_work_kv WHERE ${kr.where}`).run(...kr.params);
     return Number(li.changes ?? 0) + Number(ki.changes ?? 0);
   }
+  /** Every log record whose ID starts with `idPrefix`, in every namespace (`WorkStore.deleteIdPrefix`).
+   *  The same byte range as the other prefix deletes, so the prefix is literal: no LIKE, nothing in an
+   *  id (`%`, `_`, `\`) can act as a wildcard. One statement, so it is all or nothing. */
+  async deleteIdPrefix(idPrefix: string): Promise<number> {
+    const r = range('id', idPrefix);
+    return Number(this.db.prepare(`DELETE FROM gnl_work_log WHERE ${r.where}`).run(...r.params).changes ?? 0);
+  }
 }
 
 // ── CacheStore (TTL'li) ─────────────────────────────────────────────────────────

@@ -587,7 +587,9 @@ export interface WorkStore {
   /**
    * (optional) Delete every LOG RECORD whose id starts with `idPrefix`, in every namespace. An owned
    * job or event carries its owner in its id (`ownedName`), so this is how one person's jobs and
-   * events are erased without the store knowing what a job is. (Candidate B: in-memory only.)
+   * events are erased without the store knowing what a job is. The prefix is LITERAL (no wildcard
+   * characters), and KV keys are not touched — only log records. Every bundled store implements it
+   * (in-memory, SQLite, Postgres, Redis); `eraseSubject` refuses a work store without it.
    */
   deleteIdPrefix?(idPrefix: string): Promise<number>;
 }

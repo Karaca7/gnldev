@@ -1549,6 +1549,13 @@ class PgWorkStore implements WorkStore {
     const k = await this.q(`DELETE FROM gnl_work_kv WHERE ${kr.where}`, kr.params);
     return Number(l.rowCount ?? 0) + Number(k.rowCount ?? 0);
   }
+  /** Every log record whose ID starts with `idPrefix`, in every namespace (`WorkStore.deleteIdPrefix`).
+   *  A byte range under the probed collation, like `deletePrefix`: literal (no LIKE, so `%`, `_` and
+   *  `\` in an id are characters, not wildcards) and exact on a linguistic collation. One statement. */
+  async deleteIdPrefix(idPrefix: string): Promise<number> {
+    const r = pgRange('id', this.shape.collate, idPrefix, 1);
+    return Number((await this.q(`DELETE FROM gnl_work_log WHERE ${r.where}`, r.params)).rowCount ?? 0);
+  }
 }
 
 class PgCacheStore implements CacheStore {
