@@ -110,18 +110,21 @@ describe('actorIdOf — staff and users never share a name', () => {
   });
 });
 
-describe('identityFromAuth — MCP asks the same provider the HTTP surfaces ask', () => {
-  it('an end user is an MCP identity, bound to itself and its organization; nobody else is', async () => {
-    const { identityFromAuth } = await import('../src/index.js');
-    const auth = roleAuth({ admin: { token: 'STAFF' }, client: { token: 'APP' }, endUsers: { secret: SECRET, orgId: 'acme' } })!;
-    const identity = identityFromAuth(auth);
+describe('callerOfRequest — every standalone door asks the same provider the REST API asks', () => {
+  it('a user is itself; staff is staff; an application is the user it names, or refused; nothing is unknown', async () => {
+    const { callerOfRequest, APPLICATION_NAMES_NO_USER } = await import('../src/index.js');
+    const auth = roleAuth({ admin: { token: 'STAFF', orgId: 'acme' }, client: { token: 'APP', orgId: 'acme' }, endUsers: { secret: SECRET, orgId: 'acme' } })!;
+    const identify = (req: Request) => auth.authenticate(req);
     const ayse = signSubjectToken({ sub: 'u-ayse' }, SECRET);
-    expect(await identity({ authInfo: { token: ayse } })).toEqual({ resourceId: 'u-ayse', orgId: 'acme', actor: 'u-ayse' });
-    // Staff names nobody, so no per-user work id can be derived; an application could only name its
-    // user in the call body. Both are refused — mint the user a subject token instead.
-    expect(await identity({ authInfo: { token: 'STAFF' } })).toBeUndefined();
-    expect(await identity({ authInfo: { token: 'APP' } })).toBeUndefined();
-    expect(await identity({ authInfo: { token: 'forged.token.value' } })).toBeUndefined();
-    expect(await identity({})).toBeUndefined();
+    // A user speaks for itself: a name in the request is not read.
+    expect(await callerOfRequest(identify, bearer(ayse), 'u-mehmet')).toMatchObject({ caller: { kind: 'user', id: 'u-ayse', orgId: 'acme' } });
+    expect(await callerOfRequest(identify, bearer('STAFF'), 'u-ayse')).toMatchObject({ caller: { kind: 'staff', orgId: 'acme' } });
+    expect(await callerOfRequest(identify, bearer('APP'), 'u-ayse')).toMatchObject({ caller: { kind: 'user', id: 'u-ayse', orgId: 'acme' } });
+    // An application that names nobody, or a name no user can carry, runs nothing — never staff, never unknown.
+    expect(await callerOfRequest(identify, bearer('APP'))).toEqual({ refused: APPLICATION_NAMES_NO_USER });
+    expect(await callerOfRequest(identify, bearer('APP'), 'operator:ops')).toEqual({ refused: APPLICATION_NAMES_NO_USER });
+    expect(await callerOfRequest(identify, bearer('APP'), 42)).toEqual({ refused: APPLICATION_NAMES_NO_USER });
+    expect(await callerOfRequest(identify, bearer('forged.token.value'))).toMatchObject({ caller: { kind: 'unknown' } });
+    expect(await callerOfRequest(undefined, bearer(ayse))).toEqual({ principal: undefined, caller: { kind: 'unknown' } });
   });
 });

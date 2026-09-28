@@ -210,12 +210,18 @@ everyone else.
 | `signSubjectToken` / `verifyJwt` | Sign an end user's token in your backend; the verifier every GNL token goes through. `verifyJwt`'s `onClaims` receives the claims once signature and time checks pass, for a caller that needs more than the `Principal` (e.g. `iat`/`jti` for revocation) |
 | `subjectTokenEndpoint` | Your app's refresh route: session → fresh short-lived token |
 | `actorIdOf` | The name identity comparisons use: a user's own id, `operator:<id>` for staff |
+| `Identify` | `(req) => Principal \| null \| undefined` (may be async): "who is this request", written once and handed to every door — `@gnldev/server`, `@gnldev/chat-adapter`, `@gnldev/agui`, `@gnldev/mcp`. A provider's `authenticate` is one: `(req) => auth.authenticate(req)` |
+| `engineCallerOf` | The one mapping from a principal to the engine's caller: `subject` → that user, `operator` → staff, `application` → the user it names on the request (unknown if none), nothing → unknown |
+| `callerOfRequest` | What a standalone door does with a request: `identify` once, then `engineCallerOf`. An application's user is read from the request's `resourceId` for an application only; an application naming nobody is refused (`APPLICATION_NAMES_NO_USER`) |
 | `PLATFORM_ADMIN_ROLE` / `isPlatformAdmin` | The reserved cross-organization grant `superAdmin` carries |
 | `callerKind` / `isPrincipalKind` / `PRINCIPAL_KINDS` | What a caller is (see above), read fail-closed |
 | `assertAssignablePrivileges` | The ceiling for user management: no one hands out a grant they do not hold |
 | `makeGate` | Turns a provider into a gate a host can apply to routes |
 | `principalOf` | Reads the principal a gate resolved for a request |
 | `normalizeAuth` / `fromReadWrite` | Accepts the older `{ read, write }` predicate pair and adapts it to the provider interface |
+
+`identityFromAuth` (the MCP-only adapter) was removed in 0.7: `@gnldev/mcp` takes `identify` like every
+other door, and a provider's `authenticate` is already one.
 
 ## Extending it
 
