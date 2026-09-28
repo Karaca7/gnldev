@@ -427,7 +427,8 @@ export const NOT_A_BIRTH: Record<string, string> = {
 
 // ── doors and their operations ──────────────────────────────────────────────────────────────────
 type OpKind = 'read' | 'list' | 'write';
-type Op = { kind: OpKind; act: (w: W, t: Target, who: Who) => Promise<Res | undefined> };
+/** `typesThread`: the operation sends the target's thread id itself, so an answer that repeats it tells the caller nothing new. */
+type Op = { kind: OpKind; typesThread?: true; act: (w: W, t: Target, who: Who) => Promise<Res | undefined> };
 type Door = {
   /** The exported factories this door stands for. */
   factories: string[];
@@ -452,31 +453,31 @@ export const DOORS: Record<string, Door> = {
       'list runs': { kind: 'list', act: (w, _t, who) => restDoor(w)(who, 'GET', '/runs') },
       'list workflow runs': { kind: 'list', act: (w, _t, who) => restDoor(w)(who, 'GET', '/workflows/runs') },
       'list threads': { kind: 'list', act: (w, t, who) => withThread(t, () => restDoor(w)(who, 'GET', '/threads')) },
-      'read thread': { kind: 'read', act: (w, t, who) => withThread(t, (th) => restDoor(w)(who, 'GET', `/threads/${th}/messages`)) },
+      'read thread': { kind: 'read', typesThread: true, act: (w, t, who) => withThread(t, (th) => restDoor(w)(who, 'GET', `/threads/${th}/messages`)) },
       'start agent run on the id': { kind: 'write', act: (w, t, who) => restDoor(w)(who, 'POST', '/agents/a/run', { runId: t.runId, prompt: 'x' }) },
       'stream agent run on the id': { kind: 'write', act: (w, t, who) => restDoor(w)(who, 'POST', '/agents/a/stream', { runId: t.runId, prompt: 'x' }) },
       'resume agent run': { kind: 'write', act: (w, t, who) => restDoor(w)(who, 'POST', '/agents/a/resume', { runId: t.runId, approvals: {} }) },
       'cancel run': { kind: 'write', act: (w, t, who) => restDoor(w)(who, 'POST', `/runs/${encodeURIComponent(t.runId)}/cancel?durable=true`, {}) },
       'workflow run/resume on the id': { kind: 'write', act: (w, t, who) => restDoor(w)(who, 'POST', '/workflows/w/run', { runId: t.runId, resume: { approve: { ok: true } } }) },
       'workflow cancel': { kind: 'write', act: (w, t, who) => restDoor(w)(who, 'POST', `/workflows/runs/${encodeURIComponent(t.runId)}/cancel`, {}) },
-      'new run on the thread': { kind: 'write', act: (w, t, who) => withThread(t, (th) => restDoor(w)(who, 'POST', '/agents/a/run', { runId: fresh('atkR', who), prompt: 'x', threadId: th })) },
+      'new run on the thread': { kind: 'write', typesThread: true, act: (w, t, who) => withThread(t, (th) => restDoor(w)(who, 'POST', '/agents/a/run', { runId: fresh('atkR', who), prompt: 'x', threadId: th })) },
       'chat surface turn on the run id': { kind: 'write', act: (w, t, who) => restDoor(w)(who, 'POST', '/agents/a/chat', { id: fresh('atkThread', who), runId: t.runId, messages: [{ id: 'm1', role: 'user', parts: [{ type: 'text', text: 'hi' }] }] }) },
       'run the cross-run tool with the same key': { kind: 'write', act: (w, _t, who) => restDoor(w)(who, 'POST', '/agents/l/run', { runId: fresh('atkL', who), prompt: 'x' }) },
-      'agui surface run on the thread': { kind: 'write', act: (w, t, who) => withThread(t, (th) => restDoor(w)(who, 'POST', '/agents/a/agui', { runId: fresh('atkU', who), threadId: th, prompt: 'hi' })) },
+      'agui surface run on the thread': { kind: 'write', typesThread: true, act: (w, t, who) => withThread(t, (th) => restDoor(w)(who, 'POST', '/agents/a/agui', { runId: fresh('atkU', who), threadId: th, prompt: 'hi' })) },
     },
   },
   'chat-adapter (standalone)': {
     factories: ['createChatRoute'],
     ops: {
       'turn on the run id': { kind: 'write', act: (w, t, who) => chatDoor(w, who)({ id: fresh('atkThread', who), runId: t.runId, messages: [{ id: 'm1', role: 'user', parts: [{ type: 'text', text: 'hi' }] }] }) },
-      'turn on the thread': { kind: 'write', act: (w, t, who) => withThread(t, (th) => chatDoor(w, who)({ id: th, runId: fresh('atkC', who), messages: [{ id: 'm1', role: 'user', parts: [{ type: 'text', text: 'hi' }] }] })) },
+      'turn on the thread': { kind: 'write', typesThread: true, act: (w, t, who) => withThread(t, (th) => chatDoor(w, who)({ id: th, runId: fresh('atkC', who), messages: [{ id: 'm1', role: 'user', parts: [{ type: 'text', text: 'hi' }] }] })) },
     },
   },
   'agui (standalone)': {
     factories: ['createAguiRoute', 'pipeAguiStream'],
     ops: {
       'run on the run id': { kind: 'write', act: (w, t, who) => aguiDoor(w, who)({ runId: t.runId, threadId: fresh('atkThread', who), prompt: 'hi' }) },
-      'run on the thread': { kind: 'write', act: (w, t, who) => withThread(t, (th) => aguiDoor(w, who)({ runId: fresh('atkG', who), threadId: th, prompt: 'hi' })) },
+      'run on the thread': { kind: 'write', typesThread: true, act: (w, t, who) => withThread(t, (th) => aguiDoor(w, who)({ runId: fresh('atkG', who), threadId: th, prompt: 'hi' })) },
     },
   },
   mcp: {
@@ -495,7 +496,7 @@ export const DOORS: Record<string, Door> = {
       'list runs': { kind: 'list', act: (w, _t, who) => studioDoor(w)(who, 'GET', '/runs') },
       'list workflow runs': { kind: 'list', act: (w, _t, who) => studioDoor(w)(who, 'GET', '/workflows/runs') },
       'list threads': { kind: 'list', act: (w, t, who) => withThread(t, () => studioDoor(w)(who, 'GET', '/threads')) },
-      'read thread': { kind: 'read', act: (w, t, who) => withThread(t, (th) => studioDoor(w)(who, 'GET', `/threads/${th}/messages`)) },
+      'read thread': { kind: 'read', typesThread: true, act: (w, t, who) => withThread(t, (th) => studioDoor(w)(who, 'GET', `/threads/${th}/messages`)) },
       'cancel run': { kind: 'write', act: (w, t, who) => studioDoor(w)(who, 'POST', `/runs/${encodeURIComponent(t.runId)}/cancel`, {}) },
       'fork workflow run': { kind: 'write', act: (w, t, who) => studioDoor(w)(who, 'POST', `/workflows/w/runs/${encodeURIComponent(t.runId)}/fork`, { upto: 1, newRunId: fresh('atkV', who) }) },
     },
@@ -509,7 +510,7 @@ export const DOORS: Record<string, Door> = {
       'gnl.runWorkflow on the id': { kind: 'write', act: async (w, t, who) => { const e = engineDoor(w, who); return engineRes(e.gnl.runWorkflow('w', undefined, { runId: t.runId, caller: e.caller, resume: { approve: { ok: true } } })); } },
       'gnl.runNetwork on the id': { kind: 'write', act: async (w, t, who) => { const e = engineDoor(w, who); return engineRes(e.gnl.runNetwork('n', { runId: t.runId, task: 'x', caller: e.caller })); } },
       'gnl.run the cross-run tool with the same key': { kind: 'write', act: async (w, _t, who) => { const e = engineDoor(w, who); return engineRes(e.gnl.run('l', { runId: fresh('atkL', who), prompt: 'x', caller: e.caller })); } },
-      'new run on the thread': { kind: 'write', act: async (w, t, who) => { const e = engineDoor(w, who); return t.threadId ? engineRes(e.gnl.run('a', { runId: fresh('atkE', who), prompt: 'x', threadId: t.threadId, caller: e.caller })) : undefined; } },
+      'new run on the thread': { kind: 'write', typesThread: true, act: async (w, t, who) => { const e = engineDoor(w, who); return t.threadId ? engineRes(e.gnl.run('a', { runId: fresh('atkE', who), prompt: 'x', threadId: t.threadId, caller: e.caller })) : undefined; } },
     },
   },
   'queue worker': {
@@ -669,6 +670,13 @@ export async function walk(filter?: { births?: string[]; doors?: string[] }) {
               const changed = touched.filter((k) => heldLockOrData(k, after));
               if (touched.length > changed.length) lockTouched++;
               if (res.body.includes(SECRET)) findings.push(`${label(cell)} | ${res.status} | body has the secret`);
+              // The target's thread is its owner's too: a refusal that names it tells a stranger which
+              // conversation a run id belongs to (0.7.0 release panel D-4: a foreign run id sent with the
+              // caller's own thread was answered "runId … was started for thread <the victim's>").
+              // Another organization may hold a thread of its own under the same id (an earlier cell opened it there).
+              const sameThreadInOwnOrg = !!t.threadId && orgOf(CALLERS[ck]) !== ORG
+                && (await w.storage.runs.listKeys!(`org:${orgOf(CALLERS[ck])}:`)).some((k: string) => k.includes(t.threadId!));
+              if (t.threadId && !op.typesThread && res.body.includes(t.threadId) && !sameThreadInOwnOrg) findings.push(`${label(cell)} | ${res.status} | body names the target's thread`);
               // Another organization may hold a run of its own under the same id (an earlier cell started
               // it there); its listing showing that id is its own run, not the target.
               const sameIdInOwnOrg = orgOf(CALLERS[ck]) !== ORG && (await w.storage.runs.listKeys!(`org:${orgOf(CALLERS[ck])}:${t.runId}:`)).length > 0;

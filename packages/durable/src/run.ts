@@ -3000,7 +3000,9 @@ function parentOf(args: { runId: string; caller?: Caller | RunIdentity }): strin
  * that was BORN (its owner written first, see bornAs) and failed before it froze one: it has an
  * owner, and its retry is a first run.
  *
- * The refusal is returned, not thrown, so the older, more specific gates (thread, actor) speak first.
+ * The refusal is returned, not thrown, so the older, more specific gates (actor, tombstone) speak first —
+ * except the thread gates, whose messages name the run's thread: on a call with a thread the refusal
+ * is thrown before them.
  */
 async function enterAgentRun(journal: Journal, runId: string, args: { resourceId?: string; caller?: Caller | RunIdentity }): Promise<{
   owner: RunOwner; recorded: unknown; frozenInput: FrozenInput | undefined; caller: Caller; refusal?: RunOwnerMismatchError;
@@ -3056,6 +3058,13 @@ async function runDurableInner(args: RunDurableArgs, admission: { admitted: bool
   // request and leave its rows under that workflow's prefix.
   const identityOnly = identityOnlyInput(entry.recorded as FrozenInput | undefined);
   if (identityOnly) throw refuseIdentityOnlyInput(runId, identityOnly);
+  // A run this caller may not act on is refused as THAT before the thread gates below: they name the
+  // thread the run was started for, which is the owner's. Answered first, they told a stranger who sent
+  // another user's runId which conversation it belongs to — with a thread of their own (the mismatch
+  // names the run's) or re-entering the run's own (`resumeRun`; the thread gate names it). Measured on
+  // the standalone chat and AG-UI doors, 0.7.0 release panel D-4. Without a thread no gate describes
+  // the run, and the refusal keeps its place after the actor/tombstone gates.
+  if (entry.refusal && threadId !== undefined) throw entry.refusal;
   try {
     assertThreadOwnership(frozenInput, runId, threadId);
   } catch (e) {
@@ -3574,6 +3583,13 @@ export async function streamDurable(args: StreamDurableArgs): Promise<StreamText
   // through THIS function, so a client-supplied workflow/batch runId arrives here first.
   const identityOnly = identityOnlyInput(entry.recorded as FrozenInput | undefined);
   if (identityOnly) throw refuseIdentityOnlyInput(runId, identityOnly);
+  // A run this caller may not act on is refused as THAT before the thread gates below: they name the
+  // thread the run was started for, which is the owner's. Answered first, they told a stranger who sent
+  // another user's runId which conversation it belongs to — with a thread of their own (the mismatch
+  // names the run's) or re-entering the run's own (`resumeRun`; the thread gate names it). Measured on
+  // the standalone chat and AG-UI doors, 0.7.0 release panel D-4. Without a thread no gate describes
+  // the run, and the refusal keeps its place after the actor/tombstone gates.
+  if (entry.refusal && threadId !== undefined) throw entry.refusal;
   try {
     assertThreadOwnership(frozenInput, runId, threadId);
   } catch (e) {
