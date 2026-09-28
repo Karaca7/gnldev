@@ -65,7 +65,7 @@ class InMemoryRunJournal implements RunJournal {
   putIfAbsent(k: string, v: unknown) { return this.journal.putIfAbsent(k, v); }
   /** H1: delegates to InMemoryJournal.putIfMatch (stableStringify comparison, structurally atomic). */
   putIfMatch(k: string, e: unknown, v: unknown) { return this.journal.putIfMatch(k, e, v); }
-  listKeys(p: string) { return this.journal.listKeys(p); }
+  listKeys(p: string, opts?: { limit?: number }) { return this.journal.listKeys(p, opts); }
   readRun(runId: string): Promise<JournalEntry[]> { return this.journal.readRun(runId); }
   // Capability parity with the real adapters (sqlite/postgres expose these as extra methods and
   // toJournal forwards whatever exists): the inner InMemoryJournal always had them, but this wrapper

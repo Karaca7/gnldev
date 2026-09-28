@@ -110,8 +110,12 @@ export interface Journal {
    * `false` without touching anything if it exists. Provides exactly-once under concurrency via CAS. If undefined, `claim()` falls back to get+put.
    */
   putIfAbsent?(key: string, value: unknown): Promise<boolean>;
-  /** Phase 12 (optional): return keys starting with a prefix (queue/events/cache enumeration). */
-  listKeys?(prefix: string): Promise<string[]>;
+  /**
+   * Phase 12 (optional): return keys starting with a prefix (queue/events/cache enumeration).
+   * `limit` makes it a bounded PROBE: at most that many keys, WHICH ones unspecified (no ordering is
+   * promised with a limit). An adapter that ignores it stays correct, only unbounded.
+   */
+  listKeys?(prefix: string, opts?: { limit?: number }): Promise<string[]>;
   /**
    * Retention/GDPR (optional): PERMANENTLY deletes ALL keys starting with a prefix, returns the
    * number deleted. The single exception to the journal's append-only philosophy — only for lawful
@@ -1102,8 +1106,17 @@ export class InMemoryJournal implements Journal, JournalReader {
     return [...new Set([...this.store.keys(), ...this.counters.keys()])];
   }
 
-  async listKeys(prefix: string): Promise<string[]> {
-    return this.keys().filter((k) => k.startsWith(prefix));
+  async listKeys(prefix: string, opts?: { limit?: number }): Promise<string[]> {
+    const limit = opts?.limit;
+    if (limit === undefined) return this.keys().filter((k) => k.startsWith(prefix));
+    const out: string[] = [];
+    for (const src of [this.store.keys(), this.counters.keys()]) {
+      for (const k of src) {
+        if (out.length >= limit) return out;
+        if (k.startsWith(prefix) && !out.includes(k)) out.push(k);
+      }
+    }
+    return out;
   }
 
   async deletePrefix(prefix: string): Promise<number> {

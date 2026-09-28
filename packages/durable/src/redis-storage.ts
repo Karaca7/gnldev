@@ -206,13 +206,15 @@ function encNs(ns: string): string {
 /** Collect all matching keys by rolling SCAN forward until cursor '0' (NOT KEYS → doesn't block in prod).
  * Redis SCAN's guarantee is at-least-once: the same key CAN come back MULTIPLE TIMES during a rehash →
  *  dedupe with a Set (otherwise readRun produces duplicate entries, listRuns produces double counts). */
-async function scanAll(client: RedisLike, match: string): Promise<string[]> {
+async function scanAll(client: RedisLike, match: string, limit?: number): Promise<string[]> {
   const out = new Set<string>();
   let cursor: string | number = '0';
   do {
     const [next, keys] = await client.scan(cursor, 'MATCH', match, 'COUNT', 1000);
     for (const k of keys) out.add(k);
     cursor = next;
+    // A bounded probe (listKeys `limit`) stops at the first SCAN page that has enough.
+    if (limit !== undefined && out.size >= limit) return [...out].slice(0, limit);
   } while (cursor !== '0');
   return [...out];
 }
@@ -621,8 +623,8 @@ class RedisRunJournal implements RunJournal {
     const [sec, usec] = await this.client.time();
     return Number(sec) * 1000 + Math.floor(Number(usec) / 1000);
   }
-  async listKeys(prefix: string): Promise<string[]> {
-    const keys = await scanAll(this.client, globEscape(this.ns() + prefix) + '*');
+  async listKeys(prefix: string, opts?: { limit?: number }): Promise<string[]> {
+    const keys = await scanAll(this.client, globEscape(this.ns() + prefix) + '*', opts?.limit);
     const cut = this.ns().length;
     return keys.map((k) => k.slice(cut));
   }

@@ -783,8 +783,12 @@ class SqliteRunJournal implements RunJournal {
          suspended=excluded.suspended, suspended_count=excluded.suspended_count, updated_at=excluded.updated_at`,
     ).run(runId, c.m ?? 0, c.t ?? 0, (c.s ?? 0) > 0 ? 1 : 0, c.s ?? 0, c.c0 ?? Date.now(), Date.now());
   }
-  async listKeys(prefix: string): Promise<string[]> {
+  async listKeys(prefix: string, opts?: { limit?: number }): Promise<string[]> {
     const rg = range('key', prefix);
+    // A bounded probe asks "is anything here", not "in what order": no sort, the index stops early.
+    if (opts?.limit !== undefined) {
+      return (this.db.prepare(`SELECT key FROM gnl_run_journal WHERE ${rg.where} LIMIT ?`).all(...rg.params, opts.limit) as { key: string }[]).map((r) => r.key);
+    }
     // `key` tie-breaker — same reason `readRun` below carries one (Decision #4): entries written in
     // the same millisecond have no defined order without it, so two reads of one prefix can disagree.
     // SQLite's plan is stabler than Postgres's in practice, which is exactly why this was easy to

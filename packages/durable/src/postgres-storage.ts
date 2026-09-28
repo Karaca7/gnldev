@@ -910,7 +910,7 @@ class PgRunJournal implements RunJournal {
       [runId, Number(c.m) || 0, Number(c.t) || 0, Number(c.s) > 0, Number(c.s) || 0, Number(c.c0) || Date.now(), Date.now()],
     );
   }
-  async listKeys(prefix: string): Promise<string[]> {
+  async listKeys(prefix: string, opts?: { limit?: number }): Promise<string[]> {
     // COLLATE "C" is load-bearing, not a micro-optimisation. Under a linguistic collation (en_US.utf8,
     // the default of nearly every managed Postgres) string comparison is NOT byte order: U+FFFF is a
     // noncharacter and collates as if absent, so `key < prefix || U+FFFF` reduces to `key < prefix` and
@@ -929,6 +929,11 @@ class PgRunJournal implements RunJournal {
     // this since Decision #4 and Redis sorts the same way — this one call was left behind, so two
     // reads of the same prefix could disagree and a caller paging through them could see a key twice
     // or not at all.
+    // A bounded probe asks "is anything here", not "in what order": no sort, the index stops early.
+    if (opts?.limit !== undefined) {
+      const p = await this.q(`SELECT key FROM gnl_run_journal WHERE ${rg.where} LIMIT $${rg.params.length + 1}`, [...rg.params, opts.limit]);
+      return p.rows.map((x) => x.key);
+    }
     const r = await this.q(`SELECT key FROM gnl_run_journal WHERE ${rg.where} ORDER BY created_at, key`, rg.params);
     return r.rows.map((x) => x.key);
   }

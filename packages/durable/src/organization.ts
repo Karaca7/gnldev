@@ -255,7 +255,7 @@ export function withOrg(journal: Journal, orgId: string): Journal & Partial<Jour
     out.putIfAbsent = (key, value) => journal.putIfAbsent!(prefix + key, value);
   }
   if (journal.listKeys) {
-    out.listKeys = async (p) => (await journal.listKeys!(prefix + p)).map((k) => k.slice(prefix.length));
+    out.listKeys = async (p, opts) => (await journal.listKeys!(prefix + p, opts)).map((k) => k.slice(prefix.length));
   }
   if (journal.deletePrefix) {
     out.deletePrefix = (p) => journal.deletePrefix!(prefix + p); // an organization can only delete its own scope

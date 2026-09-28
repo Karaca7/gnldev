@@ -70,8 +70,8 @@ export interface RunJournal {
   put(key: string, value: unknown): Promise<void>;
   /** MANDATORY (exactly-once): write+true if the key is absent, don't touch+false if present (atomic CAS). */
   putIfAbsent(key: string, value: unknown): Promise<boolean>;
-  /** Keys starting with a given prefix. */
-  listKeys(prefix: string): Promise<string[]>;
+  /** Keys starting with a given prefix. `limit`: a bounded probe (see Journal.listKeys). */
+  listKeys(prefix: string, opts?: { limit?: number }): Promise<string[]>;
   /** A run's entries (model/tool), in write order. */
   readRun(runId: string): Promise<JournalEntry[]>;
   /** Runs — PAGINATED (NO full-table scan). */
@@ -596,7 +596,7 @@ export function toJournal(runs: RunJournal): Journal & JournalReader {
     get: (k) => runs.get(k),
     put: (k, v) => runs.put(k, v),
     putIfAbsent: (k, v) => runs.putIfAbsent(k, v),
-    listKeys: (p) => runs.listKeys(p),
+    listKeys: (p, opts) => runs.listKeys(p, opts),
     readRun: (runId) => runs.readRun(runId),
     listRuns: async () => (await runs.listRuns({ limit: 1_000_000_000 })).items,
     // P0.3: RunJournal.listRuns is MANDATORY (unlike the optional methods forwarded in the loop below)
