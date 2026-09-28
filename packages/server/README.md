@@ -192,7 +192,7 @@ users, so `resourceId` in the body (or `?resourceId=` on a read) says which one:
 POST /agents/:name/run   { runId, prompt, threadId, resourceId }   → 400 without resourceId
 GET  /runs?resourceId=u-ayse                                       → only that user's runs
 GET  /threads?resourceId=u-ayse                                    → only that user's conversations
-GET  /runs/:id?resourceId=u-mehmet                                 → 403 if the run is someone else's
+GET  /runs/:id?resourceId=u-mehmet                                 → 404 if the run is someone else's
 ```
 
 That id is what keeps two of your users' conversations, memories and runs apart — the memory layer
@@ -204,8 +204,8 @@ itself. Its own name wins over any `resourceId` in the request:
 
 ```
 GET  /runs                              → only its own runs
-GET  /runs/:id                          → 403 if the run is someone else's, even with ?resourceId=<owner>
-GET  /threads/:id/messages              → 403 if the thread is someone else's
+GET  /runs/:id                          → 404 if the run is someone else's, even with ?resourceId=<owner>
+GET  /threads/:id/messages              → 404 if the thread is someone else's
 POST /agents/:name/run { resourceId }   → filed under its own name, whatever the body says
 GET  /usage                             → 403: organization-wide, staff only
 ```
@@ -213,6 +213,32 @@ GET  /usage                             → 403: organization-wide, staff only
 Staff (`kind: 'operator'`) works across the organization and may name any end user, or none. A caller
 that is not staff and carries no name is refused. See [@gnldev/auth](../auth/README.md) for how the
 kind is set.
+
+**How a request becomes the engine's caller.** `auth.authenticate(req)` is the one place a request
+is identified — it has the shape of `@gnldev/auth`'s `Identify`, the same function chat-adapter,
+agui and mcp take. The server then maps the principal the ONE way every door does,
+`engineCallerOf(principal, named)`, where `named` is the `resourceId` the request carries (body on a
+write, `?resourceId=` on a read):
+
+| principal `kind` | names a user? | engine caller | a run it starts belongs to |
+|---|---|---|---|
+| `subject` | ignored | that user | that user |
+| `application` | yes | the named user | the named user |
+| `application` | no | `unknown` (the agent routes and the reads answer 400 first) | nobody it can reach again |
+| `operator` | no | staff | nobody (staff's own work) |
+| `operator` | yes | the named user: staff speaks for her on this request | the named user |
+| none, or no principal model (`{read, write}`, no `auth`) | — | staff (single-operator mode) | nobody |
+
+A name no user can have (over 200 characters, a control character, a line separator, or a reserved
+prefix such as `operator:`) is a 400, not a run filed under nobody. Staff that names a user is held to
+that user's runs (a run of someone else's answers 403), and still reaches staff's own runs. Whose a run
+is, is read one way everywhere — `@gnldev/durable` `runOwnerOf` + `decideRunAccess` — including the
+lists: `GET /workflows/runs?resourceId=u-ayse` holds exactly the runs the gates would let Ayşe open.
+
+**Replay and budget read the same "work".** `X-Gnl-Idempotency-Status: replay` and the budget gate's
+exemption for a continuation both ask whether work exists under the run: a frozen input, a workflow
+step or registry row, or rows with no owner record. An owner record alone (a run born and failed
+before it froze its input) is `new`, and over budget its retry is a 402 like any new run.
 
 ## License
 

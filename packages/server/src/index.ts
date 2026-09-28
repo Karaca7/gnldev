@@ -3,9 +3,9 @@
 import { Hono, type Context } from 'hono';
 import { toFetchHandler, type FetchHandler } from './handler.js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { createGnl, agentVisibleToOrg, withOrg, withOrgStorage, scopeConfigToOrg, withSubjectJournal, withSubjectMemory, threadOwnerOf, type ThreadOwnership, ORG_RECORD_PRE, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, asReaderJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, sealRequestContext, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry, callerConflictCode, publicConflictDetail, describeProtections, formatProtections, teachingError, resolveWorkIdentity, runOwnerOf, decideRunAccess, user, STAFF, UNKNOWN, type Caller, type RunDecision, type RawJournal } from '@gnldev/durable';
+import { createGnl, agentVisibleToOrg, withOrg, withOrgStorage, scopeConfigToOrg, withSubjectJournal, withSubjectMemory, threadOwnerOf, type ThreadOwnership, ORG_RECORD_PRE, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, asReaderJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, sealRequestContext, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry, callerConflictCode, publicConflictDetail, describeProtections, formatProtections, teachingError, resolveWorkIdentity, runOwnerOf, decideRunAccess, userIdOf, type Caller, type RunDecision, type RunOwner, type RawJournal, type RequestContext } from '@gnldev/durable';
 import type { CreateGnlConfig, Journal, JournalReader, BudgetLimit, UsageCostCache, RunLimits, ResolvedWorkIdentity, WorkScopeKind } from '@gnldev/durable';
-import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, callerKind, isReservedSubjectId, actorIdOf, type AuthProvider, type ReadWriteAuth, type Principal, type PrincipalKind } from '@gnldev/auth';
+import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, callerKind, subjectIdProblem, actorIdOf, engineCallerOf, type AuthProvider, type ReadWriteAuth, type Principal, type PrincipalKind } from '@gnldev/auth';
 // P0.4 @gnldev/workflow is zero-dependency (see its package.json) — depending on it
 // from @gnldev/server is a clean one-way edge (server→workflow), NOT circular: @gnldev/durable's registry.ts
 // deliberately stays workflow-agnostic (WorkflowLike is a structural type, no import) to avoid a
@@ -108,19 +108,39 @@ function identityOrError(
 const NO_IDENTITY = 'runId or workKey required (see docs: one names an id, the other names the work)';
 
 /**
- * Had this id been run before this call? — the `X-Gnl-Idempotency-Status` answer.
+ * Is there WORK under this run already? — the one question behind two answers: the
+ * `X-Gnl-Idempotency-Status` header (`replay` vs `new`) and the budget gate's exemption (a
+ * continuation of existing work is not new spend).
  *
- * The same question `runDurable` asks itself (`frozenInput !== undefined`) and the same one the
- * streaming path already answers via `__gnlPriorRun`; asked here with one point read so the generate
- * path can answer it too, and so both endpoints answer it the SAME way. It is an observability
- * contract, not a byte-identity guarantee — `replay` means "this id had journaled input when the
- * call arrived", which is what a client reconciling duplicate submissions needs to know.
+ * Asked of the run's owner, read the one way (`runOwnerOf`), and NOT of "does `<runId>:input`
+ * exist". Every run birth writes its owner record first (ADR-0002), so a run that was born and failed
+ * before it froze its input has a record and nothing else — and the engine runs its retry as a FIRST
+ * run (`frozenInput` is undefined, `__gnlPriorRun` is false). Reading the bare record here made the
+ * generate door answer `replay` where the stream door answered `new` for the same state, and let the
+ * retry of an empty birth past the budget gate as a "resume" (measured,
+ * test/prior-work-is-not-an-owner-record.test.ts).
+ *
+ *   - a record holding a frozen input (prompt/messages): prior work — the engine's own test;
+ *   - a workflow record: prior work once a step left a trace (`<runId>:wf:*`), or its registry row
+ *     exists (`wfrun:<runId>`: suspended, completed, canceled);
+ *   - rows present with no record (legacy, or a record lost): prior work — something ran;
+ *   - an owner record alone, a missing run, an unreadable one: no.
+ *
+ * The RAW journal: this is a decision, and a subject view hides rows.
  */
-async function hadPriorInput(journal: Journal, runId: string): Promise<boolean> {
+async function priorWork(journal: RawJournal, runId: string, known?: RunOwner): Promise<boolean> {
+  const o = known ?? (await runOwnerOf(journal, runId));
+  if (o.state !== 'owned') return false;
+  if (!o.recorded) return true;
+  const rec = o.record ?? {};
+  if (rec.prompt !== undefined || rec.messages !== undefined) return true;
+  if (o.kind !== 'workflow') return false;
   try {
-    return (await journal.get(`${runId}:input`)) !== undefined;
+    if ((await journal.get(`wfrun:${runId}`)) !== undefined) return true;
+    if (typeof journal.listKeys === 'function') return (await journal.listKeys(`${runId}:wf:`, { limit: 1 })).length > 0;
+    return (await journal.get(`${runId}:wf:_suspend`)) !== undefined;
   } catch {
-    return false; // a reader that cannot answer is not evidence either way
+    return false; // a reader that cannot answer is not evidence of prior work: the gate stays on
   }
 }
 
@@ -377,6 +397,13 @@ export interface StreamSurface {
 const MAX_RESOURCE_ID = 200;
 
 /**
+ * The caller of a deployment with no principal model — no auth provider, or one that binds no
+ * identity (the `{read,write}` pair): whoever got past it is staff, because nothing else exists. Named
+ * as a principal so it goes through the same mapping (`engineCallerOf`) as every other caller.
+ */
+const SINGLE_OPERATOR: Principal = Object.freeze({ kind: 'operator', roles: [] as string[] });
+
+/**
  * The one sentence a client credential gets when it names nobody — written once, sent from both the
  * read gate and the write gate.
  *
@@ -462,15 +489,17 @@ function resolveResourceId(
   }
   if (typeof raw !== 'string') return { error: 'resourceId must be a string' };
   if (raw.length === 0) return { error: 'resourceId must not be empty' };
-  if (raw.length > MAX_RESOURCE_ID) return { error: `resourceId must be at most ${MAX_RESOURCE_ID} characters` };
-  // It becomes part of a storage key (`res:<id>`), and it is echoed back in listings. Control
-  // characters serve no purpose in an identifier and are the part of the input space that surprises
-  // key parsers and log readers; everything printable is left alone, because a customer's own user ids
-  // are not ours to shape.
-  // eslint-disable-next-line no-control-regex
-  if (/[\u0000-\u001f\u007f]/.test(raw)) return { error: 'resourceId must not contain control characters' };
-  // Staff ids are compared in the same space, kind-qualified (`operator:ops`); nobody may file work there.
-  if (isReservedSubjectId(raw)) return { error: 'resourceId must not start with a reserved prefix (operator:, application:, role:, token:)' };
+  // ONE rule for "can this string be a user's id" — @gnldev/auth `subjectIdProblem`, the same one
+  // `engineCallerOf` applies when it maps this name to the engine's caller. Two rules drifted here: this
+  // one let C1 control characters and U+2028 through, and the mapping then read the same name as
+  // nobody (`unknown`), so the run was born to no one while the caller believed it was scoped.
+  // It becomes part of a storage key (`res:<id>`) and is echoed back in listings; everything printable
+  // is left alone, because a customer's own user ids are not ours to shape. Staff ids are compared in
+  // the same space, kind-qualified (`operator:ops`), so nobody may file work under those prefixes.
+  const problem = subjectIdProblem(raw);
+  if (problem === 'length') return { error: `resourceId must be at most ${MAX_RESOURCE_ID} characters` };
+  if (problem === 'control characters') return { error: 'resourceId must not contain control characters' };
+  if (problem === 'reserved prefix') return { error: 'resourceId must not start with a reserved prefix (operator:, application:, role:, token:)' };
   return { resourceId: raw };
 }
 
@@ -879,8 +908,9 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
    * No provider, or one with no principal model (`bindsIdentity: false`, the {read,write} pair), is
    * the deliberate single-operator mode: whoever got past it is staff, because nothing else exists.
    */
-  const kindOf = (c: Context): PrincipalKind | 'unnamed' =>
-    !authProvider || !bindsIdentity(authProvider) ? 'operator' : callerKind(principalOf(c.req.raw));
+  const principalFor = (c: Context): Principal | null =>
+    !authProvider || !bindsIdentity(authProvider) ? SINGLE_OPERATOR : principalOf(c.req.raw);
+  const kindOf = (c: Context): PrincipalKind | 'unnamed' => callerKind(principalFor(c));
   /** Whether THIS caller is an application credential — one that speaks for a user it names. */
   const isClient = (c: Context): boolean => kindOf(c) === 'application';
 
@@ -970,28 +1000,62 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   }
 
   /**
-   * The caller on this request, as the engine's `Caller`. A bound subject, or the user a caller STATES it acts for
-   * (`?resourceId=`, or the body's `resourceId`), is that user; staff otherwise; anyone else unknown.
+   * THE caller of this request, as the engine's `Caller` — through the one mapping every door uses,
+   * @gnldev/auth `engineCallerOf` (ADR-0002). No route builds a caller by hand.
+   *
+   * `named` is the user the request names: the body's `resourceId` on a write, `?resourceId=` on a
+   * read (the body wins when a route has one — it is what the run is filed under).
+   *
+   *   subject      → that user; a name in the request is ignored (a user speaks only for itself)
+   *   application  → the user it names; `unknown` when it names nobody or an id no user can have
+   *   operator     → staff. When it NAMES a user it speaks FOR that user on this request, which is
+   *                  what the `application` kind means, and it is mapped as one: work it starts is
+   *                  filed under that user, a list it asks for is that user's, and a run it asks about
+   *                  is held to that user (`runDecision` keeps the one staff exception)
+   *   unnamed      → unknown (`scope` refuses it before any route gets here)
+   *
+   * Single-operator mode (no provider, or one with no principal model) is `SINGLE_OPERATOR`.
    */
-  function callerOf(c: Context, fromBody?: unknown): Caller {
-    const expected = boundSubjectOf(c) ?? c.req.query('resourceId') ?? (typeof fromBody === 'string' ? fromBody : undefined);
-    if (expected) return user(expected);
-    return kindOf(c) === 'operator' ? STAFF : UNKNOWN;
+  function callerOf(c: Context, named?: unknown): Caller {
+    const p = principalFor(c);
+    const name = typeof named === 'string' && named !== '' ? named : undefined;
+    return engineCallerOf(name !== undefined && callerKind(p) === 'operator' ? { ...p!, kind: 'application' } : p, name);
   }
+  /** The user a read names: its own for a subject, `?resourceId=` for anyone else. */
+  const namedOnRead = (c: Context): string | undefined => c.req.query('resourceId') || undefined;
 
   /**
    * THE run gate: one decision (@gnldev/durable `runOwnerOf` + `decideRunAccess`), asked of the RAW
-   * instance for every run kind. Each route maps `allow | deny | missing` to its own answer (a
-   * foreign run reads as missing to a non-staff caller where the route's target must exist); there is
-   * no flag. An unreadable owner is `deny` — `runOwnerOf` says so, not this route.
+   * instance for every run kind, with the caller `callerOf` maps. Each route maps `allow | deny |
+   * missing` to its own answer (a foreign run reads as missing to a non-staff caller where the route's
+   * target must exist); there is no flag. An unreadable owner is `deny` — `runOwnerOf` says so.
+   *
+   * ONE staff exception: staff naming a user is held to that user's runs, but still reaches a run that
+   * is nobody's (staff's own, or an unknown caller's) — naming a user narrows what staff may touch, it
+   * does not take away staff's own work.
    */
-  async function runDecision(c: Context, s: Instance, runId: string, fromBody?: unknown): Promise<RunDecision> {
+  async function runAccess(c: Context, s: Instance, runId: string, named?: unknown): Promise<{ decision: RunDecision; owner: RunOwner }> {
     const owner = await runOwnerOf(rawOf(s).journal as RawJournal, runId);
-    const d = decideRunAccess(owner, callerOf(c, fromBody));
-    // Staff stating an expectation still reaches a staff (ownerless) run.
-    if (d === 'deny' && kindOf(c) === 'operator' && owner.state === 'owned' && owner.owner.kind !== 'user') return 'allow';
-    return d;
+    const decision = decideRunAccess(owner, callerOf(c, named ?? namedOnRead(c)));
+    if (decision === 'deny' && kindOf(c) === 'operator' && owner.state === 'owned' && owner.owner.kind !== 'user') return { decision: 'allow', owner };
+    return { decision, owner };
   }
+  const runDecision = async (c: Context, s: Instance, runId: string, named?: unknown): Promise<RunDecision> =>
+    (await runAccess(c, s, runId, named)).decision;
+
+  /**
+   * The engine's input for a caller: the request context sealed with that caller (a user's id, or the
+   * staff flag) and the organization. The seal is what the engine reads identity from, and what a
+   * dynamic `system`/`model`/`tools` function sees — written from a `Caller`, never field by field.
+   * An `unknown` caller seals neither, and the engine reads it as `unknown`.
+   */
+  const sealFor = (ctx: RequestContext, caller: Caller, orgId: string | undefined): RequestContext =>
+    sealRequestContext(ctx, { orgId, resourceId: userIdOf(caller), staff: caller.kind === 'staff' });
+  /** The address a declared `workKey` is unique within, for a caller: its user, when it has one. */
+  const workAddressOf = (caller: Caller): { resourceId?: string } => {
+    const id = userIdOf(caller);
+    return id === undefined ? {} : { resourceId: id };
+  };
   const foreignRun = (c: Context) => c.json({ error: 'access denied: this run belongs to a different resourceId' }, 403);
 
   /**
@@ -1248,22 +1312,13 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   }
 
   /**
-   * "Resume intent" test (H2/1.3): if state ALREADY exists in the journal for the given runId (a
-   * pending tool approval, a suspended/paused workflow, or the exactly-once repeat of a completed run),
-   * this is NOT new work, it's a continuation of existing work — budgetGate is SKIPPED (otherwise
-   * suspended work in an over-budget organization could NEVER be finished, an exactly-once violation).
-   * For new-work requests (where the runId has no trace at all in the journal) the gate is ENFORCED
-   * normally — no regression. `listKeys` is an optional Journal capability; without it, intent can't be
-   * detected and it fails closed (the gate behaves normally; only this optimization is missed).
+   * "Resume intent" (H2/1.3): work that ALREADY exists under the runId (a pending tool approval, a
+   * suspended workflow, the exactly-once repeat of a completed run) is a continuation, not new work —
+   * budgetGate is SKIPPED, or suspended work in an over-budget organization could never finish. A
+   * runId with no work under it is new work and the gate is ENFORCED. "Work" is `priorWork`'s answer,
+   * the same one the replay header gives: an owner record alone is not work.
    */
-  async function isResumeIntent(journal: Journal, runId: string): Promise<boolean> {
-    if (typeof journal.listKeys !== 'function') return false;
-    try {
-      return (await journal.listKeys(`${runId}:`)).length > 0;
-    } catch {
-      return false;
-    }
-  }
+  const isResumeIntent = (s: Instance, runId: string): Promise<boolean> => priorWork(rawOf(s).journal as RawJournal, runId);
 
   /**
    * P0.3 in-process registry of the AbortControllers backing CURRENTLY IN-FLIGHT
@@ -1374,9 +1429,11 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     const principal = principalOf(c.req.raw);
     const resourceDenied = await resourceGate(c, principal, { type: 'agent', id: name }, 'run');
     if (resourceDenied) return resourceDenied;
-    // WHOSE run this is — see resolveResourceId. A per-caller identity wins; otherwise the request says.
+    // WHOSE run this is — see resolveResourceId (it refuses a name no user can have) and callerOf (the
+    // one mapping). A user's own identity wins; otherwise the request names the user.
     const subject = resolveResourceId(kindOf(c), principal?.id, body.resourceId);
     if ('error' in subject) return c.json({ error: subject.error }, 400);
+    const caller = callerOf(c, subject.resourceId);
     // WHICH RUN — see identityOrError. From here on `runId` is the run's id (raw or derived) and
     // `declared` is the caller's name for the work: the door is handed the NAME, the gates below use
     // the ID, and a refusal reflects the name back.
@@ -1384,7 +1441,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
       ...(body.runId !== undefined ? { runId: body.runId } : {}),
       ...(body.workKey !== undefined ? { workKey: body.workKey } : {}),
       scopeKind: agentWorkScope(name),
-      ...(subject.resourceId ? { resourceId: subject.resourceId } : {}),
+      ...workAddressOf(caller),
       ...((s.orgId ?? principal?.orgId) ? { orgId: s.orgId ?? principal?.orgId } : {}),
       anonymous: 'refuse',
       surface: `POST /agents/${name}/run`,
@@ -1401,16 +1458,16 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     // ama iki düzeltme birbirinin yerine geçmez: biri sahipsizliği azaltır, bu onu SORAR.
     // Türetilmiş id'de kapı yine sorar: `'org'` kapsamında iki özne TEK digest paylaşır, yani
     // sahipliği hash'in kendisi garanti etmez.
-    if ((await runDecision(c, s, runId, body.resourceId)) === 'deny') return foreignRun(c);
+    if ((await runDecision(c, s, runId, subject.resourceId)) === 'deny') return foreignRun(c);
     // CONSISTENT with 1.3: continuing a suspended run from this endpoint with the SAME runId + approvals
     // (like stream does) is also resume intent → if there's a trace in the journal the budget gate is
     // skipped; new runIds are still ENFORCED (no regression).
-    if (!(await isResumeIntent(s.journal, runId))) {
+    if (!(await isResumeIntent(s, runId))) {
       const over = await budgetGate(c, s);
       if (over) return over;
     }
-    // §8's replay signal, read BEFORE the run — see hadPriorInput.
-    const prior = await hadPriorInput(s.journal, runId);
+    // §8's replay signal, read BEFORE the run — see priorWork.
+    const prior = await priorWork(rawOf(s).journal as RawJournal, runId);
     // P0.3: register an org-scoped AbortController so POST /runs/:id/cancel can stop THIS generation.
     // Composed with the client's own disconnect signal (P0.2) via AbortSignal.any — whichever fires
     // first wins; either way the journal keeps whatever prefix already completed (resumable, same as P0.2).
@@ -1429,7 +1486,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
         messages: body.messages,
         threadId: body.threadId,
         approvals: body.approvals,
-        context: sealRequestContext(
+        context: sealFor(
           // Not merged here, because sealRequestContext writes `org` itself from the server-derived
           // value. This is a simplification, NOT a fix: measured over 21 body shapes × 4 server states
           // — including a prototype-polluted body, a getter for `org`, a null-prototype object and an
@@ -1437,7 +1494,8 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
           // an unconditional delete that dominates anything written here. The security property lives
           // entirely in sealRequestContext; the earlier version of this comment claimed otherwise.
           body.context ?? {},
-          { orgId: s.orgId ?? principal?.orgId, resourceId: subject.resourceId, staff: kindOf(c) === 'operator' },
+          caller,
+          s.orgId ?? principal?.orgId,
         ),
         limits: clampLimits(opts.limits, body.limits),
         // P0.2 a client disconnect stops generation instead of billing tokens to
@@ -1500,11 +1558,11 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     // A resume needs a run. One that does not exist is a 404 — and so, for a caller who is not staff, is
     // one that is someone else's (`asMissing`), so the two cannot be told apart.
     const missingRun = () => c.json({ error: `run '${String(body.runId)}' not found` }, 404);
-    {
-      const d = await runDecision(c, s, String(body.runId), body.resourceId);
-      if (d === 'missing') return missingRun();
-      if (d === 'deny') return kindOf(c) === 'operator' ? foreignRun(c) : missingRun();
-    }
+    const access = await runAccess(c, s, String(body.runId), body.resourceId);
+    if (access.decision === 'missing') return missingRun();
+    if (access.decision === 'deny') return kindOf(c) === 'operator' ? foreignRun(c) : missingRun();
+    const owner = access.owner;
+    if (owner.state !== 'owned') return missingRun(); // `allow` is only ever given for a run that exists
     // …and the half of the same rule that no declaration can satisfy. The gate above asks about the
     // subject the CALLER STATED; this one asks the question the engine asks on every other route and
     // cannot ask on this one, because the identity this route seals is the run's own. See
@@ -1514,12 +1572,13 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     // gate — otherwise this endpoint would be an unlimited backdoor (bypassing the quota with a
     // traceless/made-up runId). Without a trace (typo/abuse) it's ENFORCED normally; input also comes
     // back empty and the request fails harmlessly.
-    if (!(await isResumeIntent(s.journal, body.runId))) {
+    if (!(await priorWork(rawOf(s).journal as RawJournal, body.runId, owner))) {
       const over = await budgetGate(c, s);
       if (over) return over;
     }
-    // Read the input from the journal → no need to re-supply the prompt (self-contained resume).
-    const input = (await s.journal.get<any>(`${body.runId}:input`)) ?? {};
+    // The frozen input, from the owner read the gate already made → no need to re-supply the prompt
+    // (self-contained resume), and no second reading of the same record.
+    const input: any = owner.record ?? {};
     try {
       const r = await s.gnl.run(name, {
         runId: body.runId,
@@ -1528,15 +1587,12 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
         // neither `__gnl_resourceId` nor `__gnl_threadId`, so a dynamic `system`/`model`/`tools`
         // function saw an identity on a fresh run and none on the resume of that same run — the two
         // halves of one conversation disagreeing about who the caller is.
-        context: sealRequestContext({}, {
-          orgId: s.orgId ?? principalOf(c.req.raw)?.orgId,
-          // From the FROZEN `:input`, for the same reason the prompt and threadId below are: a resume
-          // is self-contained and the client does not re-send it. Deriving it from the resuming
-          // caller instead would let the second half of a conversation belong to someone else —
-          // and on the shared-application-credential shape it resolved to undefined anyway.
-          resourceId: input.resourceId ?? (kindOf(c) === 'operator' ? undefined : principalOf(c.req.raw)?.id),
-          staff: kindOf(c) === 'operator',
-        }),
+        // Sealed with the run's RECORDED owner (`runOwnerOf`), for the same reason the prompt and
+        // threadId below come from the frozen input: a resume is self-contained, and the second half
+        // of a conversation must not change owner. It is also who the engine runs an existing run as
+        // (`actingCaller`), so the seal and the engine agree — staff resuming Ayşe's run runs it as
+        // Ayşe. Read through the one reading, so an unstamped record names nobody here either.
+        context: sealFor({}, owner.owner, s.orgId ?? principalOf(c.req.raw)?.orgId),
         limits: clampLimits(opts.limits, body.limits),
         ...(input.messages ? { messages: input.messages } : { prompt: input.prompt }),
         // The threadId comes from `:input` for the same reason the prompt does: a resume is
@@ -1760,9 +1816,10 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     const principal = principalOf(c.req.raw);
     const resourceDenied = await resourceGate(c, principal, { type: 'agent', id: name }, 'run');
     if (resourceDenied) return resourceDenied;
-    // WHOSE run this is — see resolveResourceId. A per-caller identity wins; otherwise the request says.
+    // WHOSE run this is — see the same lines in /agents/:name/run.
     const subject = resolveResourceId(kindOf(c), principal?.id, body.resourceId);
     if ('error' in subject) return c.json({ error: subject.error }, 400);
+    const caller = callerOf(c, subject.resourceId);
     // A surface's turn key: a NAME when there is a subject to address it under, the raw id it has
     // always been otherwise (the standalone chat/agui regime, kept so an operator's playground turn
     // without a subject still runs).
@@ -1776,7 +1833,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
       ...(body.runId !== undefined ? { runId: body.runId } : {}),
       ...(body.workKey !== undefined ? { workKey: body.workKey } : {}),
       scopeKind: agentWorkScope(name),
-      ...(subject.resourceId ? { resourceId: subject.resourceId } : {}),
+      ...workAddressOf(caller),
       ...((s.orgId ?? principal?.orgId) ? { orgId: s.orgId ?? principal?.orgId } : {}),
       anonymous: 'refuse',
       surface: `POST ${c.req.routePath.replace(':name', name)}`,
@@ -1791,11 +1848,11 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     // threadId gönderilmeyen bir istekte tek kapı da sessiz kalıyordu. Sömürü, sahipsiz doğan
     // koşumlara dayanıyordu — bu turda o üretim de kapandı (persistInput benimsenen sahibi yazıyor),
     // ama iki düzeltme birbirinin yerine geçmez: biri sahipsizliği azaltır, bu onu SORAR.
-    if ((await runDecision(c, s, runId, body.resourceId)) === 'deny') return foreignRun(c);
+    if ((await runDecision(c, s, runId, subject.resourceId)) === 'deny') return foreignRun(c);
     // 1.3: resume intent via approvals+runId (a pending tool approval) → the budget gate is skipped
     // CONSISTENTLY with /agents/:name/resume (otherwise a pending interrupt in an over-budget
     // organization would never finish).
-    if (!(await isResumeIntent(s.journal, runId))) {
+    if (!(await isResumeIntent(s, runId))) {
       const over = await budgetGate(c, s);
       if (over) return over;
     }
@@ -1813,7 +1870,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
         messages: body.messages,
         threadId: body.threadId,
         approvals: body.approvals,
-        context: sealRequestContext(
+        context: sealFor(
           // Not merged here, because sealRequestContext writes `org` itself from the server-derived
           // value. This is a simplification, NOT a fix: measured over 21 body shapes × 4 server states
           // — including a prototype-polluted body, a getter for `org`, a null-prototype object and an
@@ -1821,7 +1878,8 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
           // an unconditional delete that dominates anything written here. The security property lives
           // entirely in sealRequestContext; the earlier version of this comment claimed otherwise.
           body.context ?? {},
-          { orgId: s.orgId ?? principal?.orgId, resourceId: subject.resourceId, staff: kindOf(c) === 'operator' },
+          caller,
+          s.orgId ?? principal?.orgId,
         ),
         limits: clampLimits(opts.limits, body.limits),
         // P0.2 same as /agents/:name/run above — stop generation (and its token
@@ -1885,7 +1943,8 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     // body and the owner record becomes a tool for impersonation instead of a protection. Staff and
     // applications name the subject in the body; staff may name none, because an org-level workflow
     // ("nightly reconciliation") has no subject and this route's documented exemption keeps it so.
-    const subject = boundSubjectOf(c) ?? (body.resourceId ? String(body.resourceId) : undefined);
+    const caller = callerOf(c, body.resourceId);
+    const subject = userIdOf(caller);
     // WHICH RUN. The workflow door takes its scope PER CALL — unlike the agent doors, where it is the
     // agent's declaration — and this route passes the body's through, because a workflow has no
     // config site to declare it on and `workScope: 'org'` is the whole point of the jobs that arrive
@@ -1899,7 +1958,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
       ...(body.runId !== undefined ? { runId: String(body.runId) } : {}),
       ...(body.workKey !== undefined ? { workKey: body.workKey } : {}),
       scopeKind: (body.workScope as WorkScopeKind | undefined) ?? 'resource',
-      ...(subject ? { resourceId: subject } : {}),
+      ...workAddressOf(caller),
       ...((s.orgId ?? principal?.orgId) ? { orgId: s.orgId ?? principal?.orgId } : {}),
       // This door keeps its loud anonymous fallback — `runWorkflow` generates a name and says so.
       anonymous: 'allow',
@@ -1914,7 +1973,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     // için kapatılan deliğin kelimesi kelimesine aynısı, komşu uçta. runId beyan edilmemişse
     // sorulacak bir koşum da yok (üretilen ad yepyeni).
     if (runId) {
-      if ((await runDecision(c, s, runId, body.resourceId)) === 'deny') return foreignRun(c);
+      if ((await runDecision(c, s, runId, subject)) === 'deny') return foreignRun(c);
     }
     // The thread, as on the agent doors. This route took the body's `threadId` as given, so an end user
     // attached a workflow run to another user's thread — locking her out of it, and (the run being
@@ -1923,7 +1982,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     // H2: this endpoint with the same runId is the ONLY resume mechanism for a workflow. If runId is
     // given AND there's already a trace in the journal (suspended/paused) this is a resume → the budget
     // gate is skipped (new work is still ENFORCED).
-    if (!(runId && (await isResumeIntent(s.journal, runId)))) {
+    if (!(runId && (await isResumeIntent(s, runId)))) {
       const over = await budgetGate(c, s);
       if (over) return over;
     }
@@ -1947,7 +2006,8 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
         // yani kontrol her zaman sessizce geçiyordu. Muafiyet ("org düzeyi iş, öznesi yok") ajan
         // İÇİNDEN doğan iş akışları için yanlış: o, belli bir kullanıcının koşumundan çıkıyor.
         // Beyan edilmezse hiçbir şey yazılmaz — muafiyet korunur, uydurulmuş sahip olmaz.
-        ...(subject ? { resourceId: subject } : {}),
+        // The CALLER, as the one mapping gave it — not a resourceId string re-read into one.
+        caller,
         ...(body.threadId ? { threadId: String(body.threadId) } : {}),
         // (c) MÜHÜR — ajan rotalarındaki desenin aynısı (`sealRequestContext`). Gövdenin kendi
         // `context`'i BİLEREK alınmıyor: bu rota bugün onu hiç okumuyor, dolayısıyla mühürlenecek bir
@@ -1955,11 +2015,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
         // açmak olurdu. Mühürlenen tek şey sunucunun kendi türettiği kimlik — /agents/:name/resume
         // ile birebir aynı biçim. Motorun içindeki `serverIdentityOf` mühürlü değeri gövdeden gelene
         // tercih ediyor, yani thread sahiplik kapısı ve sahip kaydı aynı çifti görüyor.
-        context: sealRequestContext({}, {
-          orgId: s.orgId ?? principal?.orgId,
-          ...(subject ? { resourceId: subject } : {}),
-          staff: kindOf(c) === 'operator',
-        }),
+        context: sealFor({}, caller, s.orgId ?? principal?.orgId),
         // P0.4 typed resume: `{ [waitId]: payload }` — journaled before any step runs (see waitForResume).
         ...(body.resume ? { resume: body.resume } : {}),
         // Composed with the client's disconnect signal — same non-destructive semantics as P0.2/P0.3 for
@@ -2015,20 +2071,19 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     try {
       const runs = await listWorkflowRuns(s.journal, status ? { status } : {});
       if (!resourceId) return c.json(runs); // operatör: org boyunca çalışır, kimseyi adlandırmaz
-      // The `wfrun:` record carries no subject — the owner lives in `<runId>:input`, which is where
-      // the ownership gate, `listRunsPaged({resourceId})` and `purgeResource` all look. A point read
-      // per row, only on the filtered path; the registry scan already reads one record per row.
+      // WHOSE ROW: the gates' own answer, row by row — `runOwnerOf` (the one reading: the `_v` rule,
+      // a record lost while rows remain) and `decideRunAccess` (the one rule), for the caller the list
+      // is for. The `wfrun:` record carries no subject; the owner lives in `<runId>:input`.
+      // This route used to read `resourceId` off that record by hand (M5): an unstamped record naming
+      // Ayşe — staff's to every gate — was listed as hers, and a mutation letting ownerless rows in
+      // failed no test. A row the gates would refuse this user is not in this user's list: ownerless,
+      // unknown, lost-record and unreadable rows are all `deny` here, with no exception for staff —
+      // staff asking for Ayşe's list asks for Ayşe's rows.
+      const raw = rawOf(s).journal as RawJournal;
+      const listFor = callerOf(c, resourceId);
       const mine: WorkflowRunStatus[] = [];
       for (const r of runs) {
-        let owner: string | undefined;
-        // An UNREADABLE owner excludes the row. Note this is the opposite call from `ownershipDenied`,
-        // deliberately: there, silence is refusing to call an unanswered question a mismatch; here,
-        // silence would be putting a row nobody can vouch for INTO someone's personal list. A hidden
-        // row is a smaller wrong than a leaked one, and an ownerless run is filtered out for the same
-        // reason `listRunsPaged({resourceId})` filters it out — a subject's list holds that subject's
-        // work, not everything that failed to say otherwise.
-        try { owner = (await s.journal.get<{ resourceId?: string }>(`${r.runId}:input`))?.resourceId; } catch { continue; }
-        if (owner === resourceId) mine.push(r);
+        if (decideRunAccess(await runOwnerOf(raw, r.runId), listFor) === 'allow') mine.push(r);
       }
       return c.json(mine);
     } catch (e: any) {
