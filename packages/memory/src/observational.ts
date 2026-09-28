@@ -79,6 +79,10 @@ export interface OmVectorItem {
   text: string;
   embedding: number[];
   metadata?: Record<string, unknown>;
+  /** The thread's owner — what `eraseSubject` deletes by. Absent for a staff or ownerless thread. */
+  owner?: string;
+  /** The organization's namespace (`org:<id>`), when the memory is an organization's and the store is not its view. */
+  namespace?: string;
 }
 export interface OmVectorMatch {
   id: string;
@@ -90,7 +94,7 @@ export interface OmVectorMatch {
 /** Structural VectorStore port — see `omVectors.store`'s doc above for why there's no filter param. */
 export interface OmVectorStore {
   upsert(items: OmVectorItem[]): Promise<void>;
-  query(embedding: number[], topK: number): Promise<OmVectorMatch[]>;
+  query(embedding: number[], topK: number, opts?: { namespace?: string }): Promise<OmVectorMatch[]>;
 }
 
 /** Approximate token count (not a real tokenizer; the char/4 heuristic). */

@@ -5,6 +5,7 @@
 // loadContext runs BEFORE persistInput, so the whole context freezes into `:input` = replayable.
 import { cosineSimilarity } from 'ai';
 import { requireCapability, durableProcessorStep, workingMemoryScope, OM_LEAVES, type OmLeaf } from '@gnldev/durable';
+import { threadOwnerOf, toJournal, orgStorageScopeOf, orgPrefix, orgVectorId, vectorWriteBatch, type Memory } from '@gnldev/durable';
 import { PROVENANCE_RECENT_CAP, messagePreview } from '@gnldev/durable';
 import type { Storage, RunJournal, MemoryStore, MessageRecord, MessageAppend, ThreadRecord, RecallOptions, MemoryContextProvenance, RecalledMessageRef } from '@gnldev/durable';
 import { messageText, hasNorm, type Embed } from './keys.js';
@@ -68,6 +69,26 @@ const omKey = (tid: string, k: OmLeaf) => `om:${assertOmThreadId(tid)}:${k}`;
 /** The pseudo-runId OM's durable steps run under — validated for the same reason as omKey. */
 const omRunId = (tid: string) => `om:${assertOmThreadId(tid)}`;
 
+/**
+ * The namespace an organization's memory writes its observation vectors under when the store is not
+ * already its organization's view (see `AgentMemory.omVectorNs`). A store that is ANOTHER organization's
+ * view is refused: the memory's threads are one organization's, and its observations would land in the
+ * other's namespace, readable and erasable there.
+ */
+function omVectorNamespace(storage: Storage, store: unknown): string | undefined {
+  if (!store) return undefined;
+  const memOrg = orgStorageScopeOf(storage);
+  const storeOrg = orgStorageScopeOf(store);
+  if (storeOrg !== undefined && storeOrg !== memOrg) {
+    throw new Error(
+      `@gnldev/memory: observationalMemory.omVectors.store is organization '${storeOrg}''s vector store, but this memory is ` +
+        (memOrg === undefined ? 'not an organization\'s' : `organization '${memOrg}''s`) +
+        '. Pass the vector store of the storage this memory was built over.',
+    );
+  }
+  return memOrg !== undefined && storeOrg === undefined ? orgPrefix(memOrg).slice(0, -1) : undefined;
+}
+
 let idCounter = 0;
 function genId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${(idCounter++).toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
@@ -96,7 +117,15 @@ export class AgentMemory {
     this.wm = config.workingMemory;
     this.om = config.observationalMemory;
     this.titleGen = config.generateTitle;
+    this.omVectorNs = omVectorNamespace(config.storage, this.om?.omVectors?.store);
   }
+
+  /**
+   * The namespace this memory labels its observation vectors with itself: its organization's, when it
+   * is an organization's memory and `omVectors.store` is not that organization's view (a view sets the
+   * namespace and the id on its own). `undefined` otherwise.
+   */
+  private omVectorNs: string | undefined;
 
   protected async allMessages(threadId: string): Promise<MessageRecord[]> {
     return (await this.store.getMessages(threadId, { limit: HUGE })).items;
@@ -565,12 +594,28 @@ export class AgentMemory {
   protected async indexObservationVector(threadId: string, level: number, seqKey: number, o: Observation): Promise<void> {
     const ov = this.om?.omVectors;
     if (!ov) return;
+    const ns = this.omVectorNs;
     const id = `${omRunId(threadId)}:${level}:${seqKey}`;
     const [embedding] = await durableProcessorStep(
       this.runs as any, omRunId(threadId), `vec:${level}:${seqKey}`,
       () => ov.embed([o.text]),
     );
-    await ov.store.upsert([{ id, text: o.text, embedding: embedding!, metadata: { threadId, level, fromSeq: o.fromSeq, toSeq: o.toSeq, obsId: o.id } }]);
+    // An observation is the model's summary of what the person said, so it is THEIRS: labelled with
+    // the thread's owner (the ONE answer, `threadOwnerOf`), which is what `eraseSubject` deletes by.
+    // Written ownerless it survived every erasure. A staff or ownerless thread has no end user to
+    // label it with: its observations stay unlabelled, which no end user's query is answered from.
+    const owner = (await threadOwnerOf(toJournal(this.runs), this as unknown as Memory, threadId)).owner;
+    // The one vector write rule every store runs — here too, since `omVectors.store` may be any
+    // structural store that does not run it.
+    const [item] = vectorWriteBatch([{
+      id: ns ? orgVectorId(ns, id) : id,
+      text: o.text,
+      embedding: embedding!,
+      ...(ns ? { namespace: ns } : {}),
+      ...(owner !== undefined ? { owner } : {}),
+      metadata: { threadId, level, fromSeq: o.fromSeq, toSeq: o.toSeq, obsId: o.id },
+    }]);
+    await ov.store.upsert([item!]);
   }
 
   /**
@@ -617,7 +662,7 @@ export class AgentMemory {
     const threshold = opts?.threshold ?? 0;
     const [qEmbedding] = await this.om.omVectors.embed([q]);
     const overfetch = Math.max(topK * 20, 100);
-    const hits = await this.om.omVectors.store.query(qEmbedding!, overfetch);
+    const hits = await this.om.omVectors.store.query(qEmbedding!, overfetch, ...(this.omVectorNs ? [{ namespace: this.omVectorNs }] : []));
     const obsById = new Map((await this.store.getObservations(threadId)).map((o) => [o.id, o as Observation]));
     const scoped = hits
       .filter((h) => h.metadata?.threadId === threadId && h.score >= threshold)

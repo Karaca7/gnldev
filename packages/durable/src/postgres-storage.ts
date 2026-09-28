@@ -3,7 +3,7 @@
 // Injectable pool pattern → zero-infra testing with pg-mem. `pg` is an optional peer dep.
 // Vector is 'scan' for now (brute-force cosine; pgvector deferred — pg-mem compatibility + lean first cut).
 import { prefixUpperBound } from './organization.js';
-import { assertUniformSeq, workingMemoryScope } from './storage.js';
+import { assertUniformSeq, workingMemoryScope, legacyWorkingMemoryScope } from './storage.js';
 import { createRequire } from 'node:module';
 import { cosineSimilarity } from 'ai';
 import { runIdOfKey, parseJournalKey, outcomeStatusOf, deriveRunStatus } from './journal.js';
@@ -1228,6 +1228,8 @@ class PgMemoryStore implements MemoryStore {
     await this.q('UPDATE gnl_threads SET deleted_at = $1 WHERE id = $2', [Date.now(), id]);
     await this.q('DELETE FROM gnl_messages WHERE thread_id = $1', [id]);
     await this.q('DELETE FROM gnl_working_memory WHERE scope_id = $1', [workingMemoryScope.thread(id)]);
+    const legacy = legacyWorkingMemoryScope.thread(id);
+    if (legacy !== undefined) await this.q('DELETE FROM gnl_working_memory WHERE scope_id = $1', [legacy]);
     await this.q('DELETE FROM gnl_observations WHERE thread_id = $1', [id]);
     // Batch markers too. A thread is soft-deleted while its messages are hard-deleted, and
     // `upsertThread` can bring the id back — a resurrected thread that kept its markers answers a

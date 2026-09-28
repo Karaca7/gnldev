@@ -2,7 +2,7 @@
 // Zero-infra test storage (moat): per-storage bundles mimic this behavior.
 // Correctness matters, not perf (naive filter/sort). Date.now/Math.random are free to use here (runtime code).
 import { cosineSimilarity } from 'ai';
-import { assertUniformSeq, workingMemoryScope } from './storage.js';
+import { assertUniformSeq, workingMemoryScope, legacyWorkingMemoryScope } from './storage.js';
 import { InMemoryJournal } from './journal.js';
 import { stableStringify } from './hash.js';
 import { ENGINE_META_KEYS, assertNoRunsInFlight, assertOrgRegistered, isPlatformKey, orgPrefix } from './organization.js';
@@ -122,6 +122,8 @@ class InMemoryMemoryStore implements MemoryStore {
     if (t) this.threads.set(id, { ...t, deletedAt: Date.now() });
     this.messages.delete(id);
     this.wm.delete(workingMemoryScope.thread(id));
+    const legacy = legacyWorkingMemoryScope.thread(id);
+    if (legacy !== undefined) this.wm.delete(legacy);
     this.obs.delete(id);
     // A soft-deleted thread can be brought back by `upsertThread`; markers left behind would answer a
     // legitimate later batch with "already applied" and drop it silently.

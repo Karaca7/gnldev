@@ -12,3 +12,5 @@ export { MessageList } from './message-list.js';
 export type { MessageSource, TaggedMessage } from './message-list.js';
 export { defaultEmbed, createDefaultEmbed, memoryPreset } from './presets.js';
 export type { MemoryPresetKind, MemoryPresetOptions } from './presets.js';
+export { migrateWorkingMemoryKeys } from './migrate.js';
+export type { MigrateWorkingMemoryOptions, MigrateWorkingMemoryReport } from './migrate.js';

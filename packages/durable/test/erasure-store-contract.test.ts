@@ -310,7 +310,11 @@ describe.each(BACKENDS)('eraseSubject on %s', (name, make) => {
 // thread's working memory, and observational memory's journal records (the observer's summary). Asked
 // with nothing but the storage: no store is listed, so none can be forgotten. Measured before: the
 // person's working memory survived every erasure, and without `memory` so did every thread.
-const MEM_KINDS = ['MEMTHREAD', 'WMRES', 'WMTHR', 'OM'] as const;
+//
+// And what the final 0.7.0 panel measured left behind on f9dd23ad: working memory 0.6.0 wrote
+// (`res:<id>` for the person, the thread's bare id — `LEGRES`, `LEGTHR`), and observational memory's
+// vectors (`OMVEC`), written with no owner and so outside every erasure.
+const MEM_KINDS = ['MEMTHREAD', 'WMRES', 'WMTHR', 'OM', 'LEGRES', 'LEGTHR', 'OMVEC'] as const;
 const MEM_TARGETS: Person[] = [{ who: 'ayse' }, { who: 'bob', orgId: 'acme' }];
 const MEM_NEIGHBOURS: Person[] = [{ who: 'ayse', orgId: 'acme' }, { who: 'ayse:x' }, { who: 'bob' }, { who: 'bob', orgId: 'globex' }, { who: 'bob%' , orgId: 'acme' }];
 const memThread = (i: number) => `mt-${i}`;
@@ -330,8 +334,12 @@ async function memoryWorld(b: Backend, people: Person[]) {
     const tag = tagOf(p);
     const view = p.orgId ? withOrgStorage(b.storage, p.orgId) : b.storage;
     const observer = createMockModel(async () => finalTextResult(`OM|${tag}|`));
-    const mem = new AgentMemory({ storage: view, workingMemory: { scope: 'resource' }, observationalMemory: { enabled: true, observerModel: observer, observation: { messageThreshold: 3 } } });
+    const omVectors = { store: view.vectors!, embed: async (texts: string[]) => texts.map(() => [1, 0]) };
+    const mem = new AgentMemory({ storage: view, workingMemory: { scope: 'resource' }, observationalMemory: { enabled: true, observerModel: observer, observation: { messageThreshold: 3 }, omVectors } });
     const t = memThread(i);
+    // Where 0.6.0 kept working memory: `res:<id>` and the bare thread id (the view adds `org:<id>:`).
+    await view.memory!.setWorkingMemory(`res:${p.who}`, { v: `LEGRES|${tag}|` });
+    await view.memory!.setWorkingMemory(t, { v: `LEGTHR|${tag}|` });
     await mem.createThread({ id: t, resourceId: p.who });
     for (let n = 0; n < 4; n++) await mem.append(t, [{ role: 'user', content: `MEMTHREAD|${tag}| ${n}` }]);
     await mem.compact(t);
@@ -350,6 +358,13 @@ async function memoryDump(b: Backend, people: Person[]): Promise<string> {
     out.push(JSON.stringify(await m.getObservations(memThread(i))));
     out.push(JSON.stringify(await m.getWorkingMemory(workingMemoryScope.resource(p.who)) ?? null));
     out.push(JSON.stringify(await m.getWorkingMemory(workingMemoryScope.thread(memThread(i))) ?? null));
+    out.push(JSON.stringify(await m.getWorkingMemory(`res:${p.who}`) ?? null));
+    out.push(JSON.stringify(await m.getWorkingMemory(memThread(i)) ?? null));
+  }
+  // Observation vectors, from every partition: the observer's `OM|…|` text, read back as `OMVEC|…|`.
+  for (const org of new Set(people.map((p) => p.orgId))) {
+    const v = (org ? withOrgStorage(b.storage, org) : b.storage).vectors!;
+    for (const m of await v.query([1, 0], 1000)) out.push(m.text.replace(/^OM\|/, 'OMVEC|'));
   }
   return out.join('\n');
 }
@@ -378,7 +393,8 @@ describe.each(BACKENDS)('eraseSubject(storage) and AgentMemory on %s', (name, ma
     const after = memSurvivors(await memoryDump(b, people), people);
     for (const p of MEM_TARGETS) expect(after[tagOf(p)], `erased ${tagOf(p)}`).toEqual([]);
     for (const p of MEM_NEIGHBOURS) expect(after[tagOf(p)], `kept ${tagOf(p)}`).toEqual([...MEM_KINDS]);
-    for (const r of reports) expect({ threads: r.memoryThreads, wm: r.workingMemory }).toEqual({ threads: 1, wm: 1 });
+    // Working memory: the 0.7 record and the 0.6 one.
+    for (const r of reports) expect({ threads: r.memoryThreads, wm: r.workingMemory, unreached: r.unreachedThreads }).toEqual({ threads: 1, wm: 2, unreached: [] });
     (results[name] ??= {}).memory = after;
   });
 });

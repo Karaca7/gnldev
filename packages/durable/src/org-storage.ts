@@ -260,6 +260,10 @@ function scopedVectors(vectors: VectorStore, p: string): VectorStore {
       (await vectors.query(embedding, topK, { ...opts, namespace: ns })).map(stripNs),
   };
   if (vectors.delete) scoped.delete = scopedVectorDelete(vectors, ns).delete;
+  // Marked like the storage it belongs to, so `orgStorageScopeOf(vectors)` answers too. @gnldev/memory
+  // reads it: an organization's observational memory labels its vectors itself only when the store it
+  // was handed is NOT already this organization's view.
+  Object.defineProperty(scoped, STORAGE_SCOPE, { value: p.slice('org:'.length, -1), enumerable: false });
   return scoped;
 }
 

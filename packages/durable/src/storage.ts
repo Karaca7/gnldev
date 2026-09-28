@@ -230,12 +230,35 @@ export const workingMemoryScope = {
   resource: (resourceId: string): string => `resource:${resourceId}`,
 } as const;
 
+/**
+ * Where 0.6.0 kept working memory: a person's under `res:<resourceId>`, a thread's under its bare id
+ * (inside an organization both carry the `org:<id>:` prefix, which `withOrgStorage` adds). 0.7 no
+ * longer reads these keys, so a record left there is a person's data nothing shows and nothing
+ * erased — until `eraseSubject` and `MemoryStore.deleteThread` removed it too. `migrateWorkingMemoryKeys`
+ * in @gnldev/memory moves it to `workingMemoryScope`.
+ *
+ * `thread` answers `undefined` for an id whose bare key is ambiguous: one that begins with a working-
+ * memory prefix (`thread:`, `resource:`, `res:`), after an organization prefix if there is one. In 0.6
+ * the thread `res:u-ayse` and the person `u-ayse` shared one key, and the thread `resource:u-ayse`
+ * would now name Ayse's 0.7 record; deleting such a thread must not delete a person's working memory.
+ */
+export const legacyWorkingMemoryScope = {
+  thread: (threadId: string): string | undefined => {
+    const bare = /^org:[^:]+:/.test(threadId) ? threadId.slice(threadId.indexOf(':', 4) + 1) : threadId;
+    return /^(thread|resource|res):/.test(bare) ? undefined : threadId;
+  },
+  resource: (resourceId: string): string => `res:${resourceId}`,
+} as const;
+
 export interface MemoryStore {
   upsertThread(rec: ThreadRecord): Promise<void>;
   getThread(id: string): Promise<ThreadRecord | undefined>;
   /** If resourceId is given, that user's threads; otherwise global (studio). PAGINATED. */
   listThreads(q: { resourceId?: string } & ListQuery): Promise<Page<ThreadRecord>>;
-  /** The thread, its messages, observations, batch markers and its thread-scoped working memory (`workingMemoryScope.thread(id)`). */
+  /**
+   * The thread, its messages, observations, batch markers and its thread-scoped working memory
+   * (`workingMemoryScope.thread(id)`, and the 0.6 key `legacyWorkingMemoryScope.thread(id)` when there is one).
+   */
   deleteThread(id: string): Promise<void>;
 
   /**

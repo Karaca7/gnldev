@@ -3,7 +3,7 @@
 // MemoryStore = gnl_threads + gnl_messages (per-message PK → idempotent append) + WM + observations.
 // vectors = 'scan' (brute-force cosine; no pgvector). node:sqlite (loaded at runtime via createRequire).
 import { prefixUpperBound } from './organization.js';
-import { assertUniformSeq, workingMemoryScope } from './storage.js';
+import { assertUniformSeq, workingMemoryScope, legacyWorkingMemoryScope } from './storage.js';
 import { createRequire } from 'node:module';
 import { statSync, existsSync } from 'node:fs';
 import { cosineSimilarity } from 'ai';
@@ -982,6 +982,8 @@ class SqliteMemoryStore implements MemoryStore {
     this.db.prepare('UPDATE gnl_threads SET deleted_at = ? WHERE id = ?').run(Date.now(), id);
     this.db.prepare('DELETE FROM gnl_messages WHERE thread_id = ?').run(id);
     this.db.prepare('DELETE FROM gnl_working_memory WHERE scope_id = ?').run(workingMemoryScope.thread(id));
+    const legacy = legacyWorkingMemoryScope.thread(id);
+    if (legacy !== undefined) this.db.prepare('DELETE FROM gnl_working_memory WHERE scope_id = ?').run(legacy);
     this.db.prepare('DELETE FROM gnl_observations WHERE thread_id = ?').run(id);
     // See the Postgres twin: a resurrected thread that kept its markers silently drops a legitimate
     // batch that reuses one of them.
