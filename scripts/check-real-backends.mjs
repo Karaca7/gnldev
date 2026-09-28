@@ -119,14 +119,22 @@ try {
   // was skipped by its own `skipIf` on every run of this gate, and the gate said nothing.
   const env = { ...process.env, GNL_INTEGRATION: '1', GNL_PG_URL: PG_URL, GNL_PGVECTOR_URL: PGVECTOR_URL, GNL_REDIS_URL: REDIS_URL };
 
-  step('real Postgres + Redis (integration-real, prefix ranges, pgvector, erasure and naming contracts)', () =>
+  step('real Postgres + Redis (integration-real, prefix ranges, pgvector)', () =>
     run('pnpm', ['exec', 'vitest', 'run',
       'packages/durable/test/integration-real.test.ts',
       'packages/durable/test/prefix-astral-postgres.test.ts',
       'packages/rag/test/postgres-vector-store.test.ts',
       // Organization isolation for the metrics export: an in-memory journal addresses counters by
       // exact key, so the cross-tenant read this guards against cannot even be written against it.
-      'packages/otel/test/metrics-org-postgres.test.ts',
+      'packages/otel/test/metrics-org-postgres.test.ts'], { env }).status === 0);
+
+  // A SEPARATE vitest run, after the one above, on purpose. integration-real's failover case
+  // terminates every backend on the database (`pg_terminate_backend` over pg_stat_activity), and
+  // vitest runs files in parallel: measured with these files in the list above, the kill reached the
+  // vector contract's open pools and vitest reported 4 uncaught `57P01` errors — a red gate caused
+  // by the schedule, not by any store.
+  step('real Postgres + Redis + pgvector (erasure, vector and owned-name contracts)', () =>
+    run('pnpm', ['exec', 'vitest', 'run',
       // One erasure, every store: SQLite, pg-mem and FakeRedis run in the default suite; the real
       // Postgres and real Redis rows (and the cross-store drift check over them) only run here.
       'packages/durable/test/erasure-store-contract.test.ts',

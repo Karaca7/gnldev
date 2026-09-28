@@ -73,8 +73,11 @@ if (PG_URL) {
   BACKENDS.push(['Postgres (real)', async () => {
     const schema = `erasecontract_${process.pid}_${Date.now().toString(36)}_${seq++}`;
     const admin = new pg.Pool({ connectionString: PG_URL, max: 1 });
-    await admin.query(`CREATE SCHEMA ${schema}`);
     const pool = new pg.Pool({ connectionString: PG_URL, max: 4, options: `-c search_path=${schema}` });
+    // An idle connection the server drops (another suite on the same database may terminate every
+    // backend) must reject the next query, not end the process as an unhandled 'error' event.
+    for (const p of [admin, pool]) p.on('error', () => {});
+    await admin.query(`CREATE SCHEMA ${schema}`);
     ends.push(async () => { await pool.end(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); });
     return pgBackend(pool);
   }]);
