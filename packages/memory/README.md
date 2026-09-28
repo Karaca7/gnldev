@@ -41,10 +41,41 @@ await runDurable({ runId, journal, model, memory: mem, threadId: 'th-1', resourc
 
 ## Forgetting a person
 `eraseSubject(storage, userId)` from `@gnldev/durable` removes what this package keeps for them: their
-threads with messages and observations, the thread and person working memory, and observational
-memory's journal records (the observer's memoized summaries). Pass the same storage the memory was
-built on; nothing has to be listed. `deleteThread(id)` removes one thread from the memory store; its
-observational-memory records in the journal go with `purgeThread(journal, id)`.
+threads with messages and observations, the thread and person working memory (0.7 keys and the 0.6
+ones), observational memory's journal records (the observer's memoized summaries) and its vectors.
+Built over the same storage the engine runs on, nothing has to be listed. Built over ANOTHER storage
+(`memoryPreset(otherStorage)`), name it: `eraseSubject(storage, userId, { memory: otherStorage })` —
+otherwise that memory is not reached, and the report lists the person's threads in `unreachedThreads`.
+`deleteThread(id)` removes one thread from the memory store; its observational-memory records in the
+journal go with `purgeThread(journal, id)`.
+
+Observation vectors (`observationalMemory.omVectors`) are written with the thread owner's `owner`
+label, through the same vector write rule every store runs, so erasing the person takes them. In an
+organization they also carry its namespace: pass the organization's vector store (the storage
+`memoryFactory` receives), or the root one — the memory then labels namespace and id itself. Another
+organization's vector store is refused. A staff or ownerless thread's observations carry no owner, so
+no end user's query is answered from them.
+
+## Upgrading from 0.6
+0.6.0 kept working memory under `res:<resourceId>` and the bare thread id; 0.7 reads
+`resource:<id>` / `thread:<id>` only. Move the old records once:
+
+```ts
+import { SqliteStorage } from '@gnldev/durable/sqlite';
+import { withOrgStorage } from '@gnldev/durable';
+import { migrateWorkingMemoryKeys } from '@gnldev/memory';
+
+const storage = new SqliteStorage('./gnl.db');
+await migrateWorkingMemoryKeys(storage.memory!); // every thread the store lists, and their owners
+// one organization, named people and threads only:
+await migrateWorkingMemoryKeys(withOrgStorage(storage, 'acme').memory!, { resourceIds: ['ayse'], threadIds: ['t-1'] });
+// → { moved: ['res:ayse', …], kept: [...], skipped: [...] }
+```
+
+`resourceIds` and `threadIds` narrow it to those people and threads; omitted, they are every thread
+the store lists and those threads' owners. A value already under the new key is never overwritten (the old key is reported in `kept` and left
+in place); a thread id that begins `thread:`, `resource:` or `res:` is ambiguous and reported in
+`skipped`. Running it twice moves nothing the second time.
 
 ## Honest caveats
 - **Recall freezes on the first run:** resume recalls based on the resource graph from the first run

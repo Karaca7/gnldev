@@ -888,7 +888,7 @@ a deletion that silently did nothing would be the worst possible failure here.
 
 | Call | Deletes | Reach for it when |
 |---|---|---|
-| `eraseSubject(storage, resourceId, { orgId?, erasers? })` | a PERSON, from every store the storage holds: runs, their own threads (not other people's they wrote into) with messages, observations and observational-memory records, their working memory, cross-channel ids, lesson counters, documents, owned jobs and events — plus what the `erasers` reach | an erasure request arrives |
+| `eraseSubject(storage, resourceId, { orgId?, erasers?, memory? })` | a PERSON, from every store the storage holds: runs, their own threads (not other people's they wrote into) with messages, observations and observational-memory records and vectors, their working memory (0.7 and 0.6 keys), cross-channel ids, lesson counters, documents, owned jobs and events — plus what the `erasers` reach, and a memory kept in another storage (`memory`) | an erasure request arrives |
 | `purgeRun(journal, runId)` | one run and its nested sub-agent/workflow children | a single run must go |
 | `purgeThread(journal, threadId)` | `mem:`, `om:` (observational memory's counters and memoized summaries) + the whole `xthr:` family (dedup window, semantic records, tombstones, judge verdicts) | a conversation's journal side must go |
 | `purgeResource(journal, resourceId, { vectors?, memory? })` | the JOURNAL's share of a person (and, given the vector store, their documents). It does not reach the memory store or the work log | building your own erasure; for a request, use `eraseSubject` |
@@ -917,11 +917,38 @@ const report = await eraseSubject(storage, 'ayse', {
   orgId: 'acme', // omit for a person outside organizations
   erasers: [jobEraser(storage), triggerEraser(toJournal(storage.runs)), eventEraser(storage.work!)],
 });
-// { journalRows, workRecords, memoryThreads, workingMemory, byEraser: { jobs, triggers, events } }
+// { journalRows, workRecords, memoryThreads, workingMemory, unreachedThreads, byEraser: { jobs, triggers, events } }
 ```
 
 Pass the ROOT storage and name the organization with `orgId`; an organization's view is refused,
 because owned jobs and events live in the root work log.
+
+The report counts what was deleted, never what was looked for. If your agents' memory was built over
+ANOTHER storage (`createGnl({ storage, memory: memoryPreset(otherStorage) })`), nothing in `storage`
+says so, and the erasure cannot find it by itself: pass that storage as `memory` (the root one; `orgId`
+applies to it too) and its threads, working memory, observational-memory records and documents go by
+the same rules. Without it, a thread whose owner record names the person but whose messages no
+reached store held is listed in `unreachedThreads` — not empty means the erasure did NOT reach
+everything.
+
+```ts
+import { InMemoryStorage, eraseSubject } from '@gnldev/durable';
+
+const storage = new InMemoryStorage();      // runs, jobs, documents
+const otherStorage = new InMemoryStorage(); // the one memoryPreset(otherStorage) was built over
+const { memoryThreads, unreachedThreads } = await eraseSubject(storage, 'ayse', { memory: otherStorage });
+```
+
+Working memory written by 0.6.0 (`res:<id>` for a person, the bare thread id for a thread, under
+`org:<id>:` in an organization) is erased too: `eraseSubject` deletes the person's `res:<id>`, and
+`MemoryStore.deleteThread` deletes a thread's bare-id key (`legacyWorkingMemoryScope`) — except for a
+thread id that begins `thread:`, `resource:` or `res:`, whose bare key could be a person's. 0.7 does
+not READ those keys; move them with `migrateWorkingMemoryKeys` from `@gnldev/memory`.
+
+Observational-memory vectors (`omVectors`) carry the thread owner's `owner` label (and, in an
+organization, its namespace), so the documents half of the erasure takes them. A staff or ownerless
+thread's observations carry no owner: no end user's query is answered from them, and no person's
+erasure takes them — they go with the thread's own retention.
 
 Two things the sweeps deliberately do NOT do:
 
