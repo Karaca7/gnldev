@@ -4,7 +4,7 @@
 // one right tells you nothing about the rest:
 //
 //   ① is this token real?          YOUR code (below, in `startServer`) — never GNL's
-//   ② who is calling?              `identity`
+//   ② who is calling?              `identify`
 //   ③ may they call this tool?     `allowTool`   — applied to tools/list AND tools/call
 //   ④ is this object theirs?       the TOOL, closing over the sealed caller context
 //   ⑤ are they calling too much?   `rateLimit`
@@ -66,9 +66,12 @@ export async function startServer(opts: ServerOptions = {}): Promise<RunningServ
 
     // ② From the transport, never the request body. @gnldev/durable makes the same choice for `workScope`,
     // and says why: a per-call override "would put the dangerous half within reach of a request body".
-    identity: (caller) => {
-      const tenant = TENANT[caller.authInfo?.clientId ?? ''];
-      return tenant ? { resourceId: tenant, actor: caller.authInfo?.clientId } : {};
+    // `identify` is the function every GNL door takes. Here it is handed a request carrying the token the
+    // transport validated (`authorization: Bearer …`), and names the tenant as the end user.
+    identify: (req) => {
+      const token = req.headers.get('authorization')?.replace(/^Bearer /, '') ?? '';
+      const tenant = TENANT[TOKENS[token]?.clientId ?? ''];
+      return tenant ? { kind: 'subject', id: tenant, roles: [] } : undefined;
     },
 
     // ③ The spec's own mechanism — the token says what it may do. Applied to BOTH doors, so a tool this

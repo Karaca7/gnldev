@@ -18,7 +18,7 @@ Authorizing a tool call is not one check. Answering any of these tells you nothi
 | | question | who answers | in this example |
 |---|---|---|---|
 | ① | is this token real? | **you** | `startServer`'s middleware sets `req.auth` |
-| ② | who is calling? | `identity` | `caller.authInfo.clientId` → a tenant |
+| ② | who is calling? | `identify` | the validated token → a tenant, as the end user |
 | ③ | may they call this tool? | `allowTool` | the token's scopes, on **list and call** |
 | ④ | is this object theirs? | **the tool** | `refund` closes over the sealed caller |
 | ⑤ | are they calling too much? | `rateLimit` | per caller, per minute |
