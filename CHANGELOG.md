@@ -36,6 +36,20 @@ What it borrowed from server now lives in `@gnldev/durable`, which every door al
   its `StreamSurface` is now `StreamSurface<Context>` from durable (same shape).
 - `@gnldev/agui` no longer brings the Express bridge. `npm i @gnldev/server` for `toNodeHandler`.
 
+**What the ADR-0002 conformance table found.** Breaking:
+
+- `@gnldev/a2a`: inside a GNL run, the tool names the calling run's end user to the remote as
+  `resourceId` (read from the run's identity, never from the tool's input). With an application
+  credential the remote run is now that user's (it was a 400); with an operator credential it is that
+  user's, not staff's. A staff or `unknown` run, or a call outside a GNL run, names nobody, as before.
+- `runNetwork` (the exported primitive) records its owner before its first row, like every run birth. It
+  takes `caller`; without one the run is `unknown`'s, and another caller re-entering it is refused
+  (`RunOwnerMismatchError`). `gnl.runNetwork` is unchanged.
+- `scopeConfigToOrg` refuses a config whose `memory` is an object: that store cannot be confined to one
+  organization. The standalone chat and AG-UI routes therefore answer 500 to an organization's request
+  with such a config, instead of sharing threads across organizations. Use `memoryFactory`, or
+  `memory: false`.
+
 **A minor (0.7.0): end users are isolated by default, at one point, for free.** The decision and the
 alternatives it rejected are in [docs/adr/0001-end-user-isolation.md](./docs/adr/0001-end-user-isolation.md).
 Many entries below are breaking. If you are upgrading, check these first:
