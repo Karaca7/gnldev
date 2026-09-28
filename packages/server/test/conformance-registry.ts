@@ -12,6 +12,7 @@ import {
 import { engineCallerOf, type Principal } from '@gnldev/auth';
 import { workflow, step, waitForResume } from '@gnldev/workflow';
 import { stepCountIs } from 'ai';
+import { z } from 'zod';
 import { createRestApi } from '../src/index.js';
 import { createChatRoute } from '../../chat-adapter/src/chat-route.js';
 import { chatSurface } from '../../chat-adapter/src/surface.js';
@@ -49,6 +50,24 @@ const delegating: any = {
     ? echo.doGenerate({ prompt })
     : { content: [{ type: 'tool-call', toolCallId: 'c1', toolName: 'helper', input: JSON.stringify({ task: userText(prompt) }) }], finishReason: { unified: 'tool-calls', raw: 'tool-calls' }, usage, warnings: [] }),
 };
+/**
+ * A cross-run idempotent tool (`idempotencyWindow: 'cross-run'`): its record is shared across runs by a
+ * business key and says whose it is. It returns the SECRET only when it runs for the target's owner
+ * (whoever started the target: `lookupSecretFor`, set by prepare), so a replay of HER record is the only way another caller sees it.
+ */
+let lookupSecretFor = 'user:u-ayse';
+const lookup = Object.assign({
+  description: 'look up an order', inputSchema: z.object({ orderId: z.string() }),
+  execute: async (_i: unknown, o: unknown) => { const id = durable.identityOf(o); return (id.kind === 'user' ? `user:${id.id}` : id.kind) === lookupSecretFor ? SECRET : 'OWN-RESULT'; },
+}, { idempotencyWindow: 'cross-run' as const });
+const lookupModel: any = {
+  ...echo,
+  doGenerate: async ({ prompt }: any) => ((prompt ?? []).some((m: any) => m.role === 'tool')
+    ? { content: [{ type: 'text', text: 'looked up' }], finishReason: stop, usage, warnings: [] }
+    : { content: [{ type: 'tool-call', toolCallId: 'l1', toolName: 'lookup', input: JSON.stringify({ orderId: 'ORD-1' }) }], finishReason: { unified: 'tool-calls', raw: 'tool-calls' }, usage, warnings: [] }),
+};
+/** A run id of the caller's own, so one attacker's run is never another's target. */
+const ownId = (base: string, who: Who) => `${base}-${(who.principal as { id?: string }).id ?? 'anon'}-${who.names ?? ''}`;
 const router: any = { ...echo, doGenerate: async ({ prompt }: any) => ({ content: [{ type: 'text', text: JSON.stringify({ action: 'final', answer: `net:${userText(prompt)}` }) }], finishReason: stop, usage, warnings: [] }) };
 
 // ── callers ─────────────────────────────────────────────────────────────────────────────────────
@@ -112,6 +131,7 @@ function world() {
     memoryFactory: (src: any) => new BasicMemory(src.runs ?? src),
     agents: {
       a: { model: echo },
+      l: { model: lookupModel, tools: { lookup }, stopWhen: stepCountIs(3) },
     },
     workflows: {
       w: workflow<any>().then(step('draft', async ({ input }: any) => `draft:${input?.s ?? ''}`)).then(waitForResume<{ ok: boolean }>('approve')),
@@ -352,6 +372,10 @@ export const BIRTHS: Record<string, Birth> = {
       return { runId: k.replace(/^org:[^:]+:/, '').slice(0, -':input'.length) };
     },
   },
+  'cross-run tool record (an agent run that called a cross-run tool)': {
+    sites: ['durable/src/run.ts'], starters: [],
+    start: async (w, who) => { const e = ctxOf(w, who); await e.gnl.run('l', { runId: 'tgtL', prompt: 'x', caller: e.caller }); return { runId: 'tgtL' }; },
+  },
   'studio workflow fork': {
     sites: ['studio/src/server.ts'], starters: [],
     start: async (w, who) => {
@@ -433,6 +457,7 @@ export const DOORS: Record<string, Door> = {
       'workflow cancel': { kind: 'write', act: (w, t, who) => restDoor(w)(who, 'POST', `/workflows/runs/${encodeURIComponent(t.runId)}/cancel`, {}) },
       'new run on the thread': { kind: 'write', act: (w, t, who) => withThread(t, (th) => restDoor(w)(who, 'POST', '/agents/a/run', { runId: 'atkR', prompt: 'x', threadId: th })) },
       'chat surface turn on the run id': { kind: 'write', act: (w, t, who) => restDoor(w)(who, 'POST', '/agents/a/chat', { id: 'atkThread', runId: t.runId, messages: [{ id: 'm1', role: 'user', parts: [{ type: 'text', text: 'hi' }] }] }) },
+      'run the cross-run tool with the same key': { kind: 'write', act: (w, _t, who) => restDoor(w)(who, 'POST', '/agents/l/run', { runId: ownId('atkL', who), prompt: 'x' }) },
       'agui surface run on the thread': { kind: 'write', act: (w, t, who) => withThread(t, (th) => restDoor(w)(who, 'POST', '/agents/a/agui', { runId: 'atkU', threadId: th, prompt: 'hi' })) },
     },
   },
@@ -482,6 +507,7 @@ export const DOORS: Record<string, Door> = {
       'resumeRun': { kind: 'write', act: async (w, t, who) => { const e = engineDoor(w, who); return engineRes(durable.resumeRun(t.runId, { journal: e.journal, model: echo, caller: e.caller } as never)); } },
       'gnl.runWorkflow on the id': { kind: 'write', act: async (w, t, who) => { const e = engineDoor(w, who); return engineRes(e.gnl.runWorkflow('w', undefined, { runId: t.runId, caller: e.caller, resume: { approve: { ok: true } } })); } },
       'gnl.runNetwork on the id': { kind: 'write', act: async (w, t, who) => { const e = engineDoor(w, who); return engineRes(e.gnl.runNetwork('n', { runId: t.runId, task: 'x', caller: e.caller })); } },
+      'gnl.run the cross-run tool with the same key': { kind: 'write', act: async (w, _t, who) => { const e = engineDoor(w, who); return engineRes(e.gnl.run('l', { runId: ownId('atkL', who), prompt: 'x', caller: e.caller })); } },
       'new run on the thread': { kind: 'write', act: async (w, t, who) => { const e = engineDoor(w, who); return t.threadId ? engineRes(e.gnl.run('a', { runId: 'atkE', prompt: 'x', threadId: t.threadId, caller: e.caller })) : undefined; } },
     },
   },
@@ -559,6 +585,7 @@ async function prepare(birth: Birth, state: State): Promise<{ w: W; t: Target; b
   // An ownerless run a birth cannot start for staff is started for nobody instead (`unknown`).
   const born: CallerKey = BORN_BY[state] === 'staff' && birth.cannot?.staff ? 'unknown' : BORN_BY[state];
   if (birth.cannot?.[born]) return { skip: birth.cannot[born]! };
+  lookupSecretFor = born === 'owner' ? 'user:u-ayse' : born;
   let t: Target;
   try { t = await birth.start(w, CALLERS[born]); } catch (e) { return { skip: `cannot be started for ${born}: ${(e as Error).message.slice(0, 120)}` }; }
   await new Promise((r) => setTimeout(r, 5)); // a stream's last write lands after its text resolves
