@@ -163,6 +163,13 @@ What it borrowed from server now lives in `@gnldev/durable`, which every door al
   in that organization only; without one, outside every organization. Erasure needs the root work store
   (`assertRootWorkForErasure` says so). Erasing `bob` no longer deletes `bob:evil`'s traces, lessons or
   stats.
+- Erasing an organization-less person keeps the documents of namesakes in `org:<id>` namespaces (they
+  were deleted too). `VectorDeleteWhere.outsideOrganizations` selects only documents with no namespace
+  or one not starting `org:` (alone it selects nothing). `eraseSubject` without `orgId`, and
+  `purgeResource` with `outsideOrganizations` and `vectors`, refuse — before deleting anything — a
+  vector store that does not declare `deleteOutsideOrganizations: true`: a third-party adapter must
+  honour the field and declare it. New: `vectorDeleteMatcher`, `vectorInOrganization`,
+  `VECTOR_OUTSIDE_ORGANIZATIONS_SQL`.
 - An owned event's marker keys are ordered by id first; a topic may not start with `~o~`.
 - `maxDepth` for jobs and events is counted from a per-organization index; system jobs and events
   enqueued before the upgrade are not counted.
