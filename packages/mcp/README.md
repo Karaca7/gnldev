@@ -78,7 +78,7 @@ const server = createMcpServer({
 });
 ```
 
-The run id is then **derived** from `(tool, subject, workKey)` through the same `resolveWorkIdentity` the HTTP surfaces use, and the run's owner is written to the journal with `claimIdentityInput`, so `listRuns()` and `purgeResource()` can find it. The client's key is demoted to what it honestly is: a label for the work, unique only *within one caller*.
+The run id is then **derived** from `(tool, subject, workKey)` through the same `resolveWorkIdentity` the HTTP surfaces use, and the run's owner is written to the journal with `claimRunOwner` (the one start point every run kind shares), so `listRuns()` and `purgeResource()` can find it. The client's key is demoted to what it honestly is: a label for the work, unique only *within one caller*.
 
 **On stdio this changes nothing, and that is correct.** The client spawned the process, so the trust boundary is the process boundary and `authInfo` is legitimately absent. The transport where a second caller exists is HTTP, and that is where the SDK gives you a validated token.
 

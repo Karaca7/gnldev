@@ -368,6 +368,34 @@ const tools = durableTools(myTools, { journal, runId, identity });
 // use these with your own generateText OR with another framework's agent
 ```
 
+## Who a run acts for
+
+Every run acts for one `Caller`: `user(id)`, `STAFF` (an operator or the system, said out loud) or
+`UNKNOWN` (nobody was named). A door translates its own request into one; a direct call passes it:
+
+```ts
+import { runDurable, identityOf, STAFF, user } from '@gnldev/durable';
+
+await runDurable({ journal, runId, model, tools, prompt, caller: user('ayse') }); // or `resourceId: 'ayse'`
+
+// Inside a tool: who the call runs for. A call that lost it (by hand, from a tool that did not forward
+// its options) is `unknown`, which is closed — never "everyone".
+const lookup = { execute: async (args: unknown, options: unknown) => {
+  const who = identityOf(options); // { kind: 'user', id } | { kind: 'staff' } | { kind: 'unknown' }
+  return who.kind === 'user' ? `rows of ${who.id}` : who.kind === 'staff' ? 'all rows' : 'shared rows only';
+} };
+```
+
+- The old `options.resourceId` is gone, and reading it **throws**: a tool that still reads it fails
+  loudly instead of serving "nobody".
+- A child run — agent-as-tool, a network sub-agent, an agent started inside a workflow step
+  (`runDurable({ caller: ctx.identity })`) — acts for its parent's caller.
+- Re-entering an existing run (resume, retry) acts for its RECORDED owner. Another user, or a call
+  that names nobody, is refused (`RunOwnerMismatchError`); staff may, and the run stays its owner's.
+- `runOwnerOf(journal, runId)` is the one answer to "does this run exist, and whose is it", and
+  `decideRunAccess(owner, caller)` the one rule (`allow | deny | missing`). A run whose record is lost
+  but whose rows remain exists and is nobody's; an unreadable record is denied.
+
 ## Tools
 
 - **`@gnldev/studio`** (separate package) — web UI: runs/timeline + **time-travel** + approval queue.
@@ -386,7 +414,7 @@ npx tsx examples/no-double-charge.ts   # no API key needed (mock model) — at-m
 | | |
 |---|---|
 | `runDurable(args) → DurableResult` | Drop-in `generateText` + `journal`/`runId`/`guard`/`approvals`. Adds `.interrupts`. Optional `timeouts: { modelStepMs, toolMs, claimTtlMs }` — on timeout `StepTimeoutError` flows through the existing failed/retry/recover paths (opt-in, behavior unchanged if not provided). |
-| `resumeRun(args)` | Resume a suspended run: reads the prompt and the frozen limits back from the journal, so the resumed turn runs under the same bounds as the original. NOT an alias for `runDurable` — that name never existed. |
+| `resumeRun(runId, opts)` | Resume a suspended run: reads the prompt and the frozen limits back from the journal, so the resumed turn runs under the same bounds as the original — and as its RECORDED owner. Say who is resuming (`caller: STAFF`, or the owner as `user(id)`); with no caller a user's run is refused. NOT an alias for `runDurable` — that name never existed. |
 | `withDurableModel(model, ctx)` / `durableTools(tools, ctx)` | Composable wrappers. |
 | `InMemoryJournal` / `SqliteStorage` (`/sqlite`, journal at `.runs`) | Journal adapters. |
 | `Guard`, `Interrupt`, `Journal`, `DurableResult` | Types. |
@@ -834,21 +862,21 @@ A host that serves end users hands each request a reader narrowed to that user, 
 ownership route by route. `@gnldev/server` does this for every caller that speaks for a user.
 
 ```ts
-import { withSubjectJournal, withSubjectMemory, threadOwnerFromRuns, type Journal, type JournalReader, type Memory } from '@gnldev/durable';
+import { withSubjectJournal, withSubjectMemory, type Journal, type JournalReader, type Memory } from '@gnldev/durable';
 
 export function readerFor(journal: Journal & JournalReader, memory: Memory, userId: string) {
   return {
     journal: withSubjectJournal(journal, userId),
-    memory: withSubjectMemory(memory, userId, { threadOwner: threadOwnerFromRuns(journal) }),
+    memory: withSubjectMemory(memory, userId, { journal }),
   };
 }
 ```
 
 - A run or thread whose recorded owner is not this user reads as nothing. So does one with **no**
   owner: nothing proves it is this user's.
-- `threadOwner` answers "whose thread is this?" when the memory cannot (`getThreadResource` absent).
-  `threadOwnerFromRuns` answers from the run journal, which records `threadId` and `resourceId` on
-  every run. It lists every run per call, so a store with `getThreadResource` is faster.
+- A thread is this user's when `threadOwnerOf(journal, memory, threadId)` says so: the owner record,
+  the one question the engine's gate and `purgeResource`/`eraseSubject` ask too. That is why the
+  memory view takes the raw `journal`. A thread is listed only when it can be read.
 - `root: true` hides every organization's rows, for a reader over the unscoped store.
 
 ## Retention and erasure
@@ -862,7 +890,7 @@ a deletion that silently did nothing would be the worst possible failure here.
 |---|---|---|
 | `purgeRun(journal, runId)` | one run and its nested sub-agent/workflow children | a single run must go |
 | `purgeThread(journal, threadId)` | `mem:` + the whole `xthr:` family (dedup window, semantic records, tombstones, judge verdicts) | a conversation must go |
-| `purgeResource(journal, resourceId, { vectors? })` | a PERSON: their runs, their own threads (not other people's they wrote into), cross-channel ids, lesson counters — and, given the vector store, their own documents | an erasure request arrives |
+| `purgeResource(journal, resourceId, { vectors?, memory? })` | a PERSON: their runs, their own threads (not other people's they wrote into), cross-channel ids, lesson counters — and, given the vector store, their own documents | an erasure request arrives |
 | `purgeBatch(journal, batchId)` | one batch's bookkeeping | a batch must be re-run from scratch |
 | `purgeOrganization(journal, orgId)` | everything under `org:<id>:` | a tenant leaves |
 | `sweepRuns(journal, { olderThanMs })` | runs whose LAST activity is older than the threshold | scheduled retention |
