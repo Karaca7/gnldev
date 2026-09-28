@@ -452,42 +452,6 @@ export interface WorkflowRunResult {
   steps: { id: string; kind: string; output: unknown; fallback?: { attempts: number; stepId: string } }[];
 }
 
-/**
- * WHO a request acts for, WHICH ORGANIZATION it belongs to, and WHICH CONVERSATION — the three
- * things an HTTP surface knows and this engine cannot work out for itself.
- *
- * It lives here rather than in each adapter because it was living in each adapter, twice, under
- * different names: @gnldev/chat-adapter had `resolveResourceId` + `resolveThreadId` and @gnldev/agui had
- * `resolveResourceId` + `resolveThreadId` with a different signature for the same question. Two
- * hooks per route meant a host wired one, shipped, and found the other still reading the body —
- * measured on agui, whose `resolveThreadId` result reached the SSE envelope and never the run.
- *
- * `orgId` IS THE THIRD FIELD BECAUSE THE DERIVATION NEEDS IT. `AgentConfig.workScope: 'org'` says a
- * workKey is unique within an organization, and with no org to name, `resolveWorkIdentity` falls
- * back to the deployment sentinel (§10.2). @gnldev/server's REST route has always passed the org
- * through; the two adapters could not, because this type had nowhere to put it. That is not a 400 —
- * it is worse, because it succeeds: the same org's same named work derives one id through REST and a
- * different one through the chat or AG-UI surface, so one job becomes two runs and two charges, and
- * the surface the request happened to arrive through is the only thing that decided which.
- *
- * Takes a web `Request`, not a framework context, for the reason already written on
- * `OrgOptions.resolve` in @gnldev/server: a host binding these routes from Express or Fastify has a
- * Request and no Context.
- *
- * HONEST BOUND, and it decides what every ownership guarantee downstream is worth: a resolver
- * reading an UNAUTHENTICATED request asserts a subject nobody verified. Read it from a session
- * cookie, a verified JWT, `principalOf(req)?.id` — never from the body. Put auth in front of the
- * route, or the subject is only as trustworthy as the caller. The same goes double for `orgId`: it
- * is an isolation boundary, and a caller who can choose their own org has none.
- */
-// May return a Promise: real token verification (WebCrypto, a JWKS fetch) is async, and a resolver
-// that cannot await is a resolver that reads claims nobody verified. Widened before first release —
-// after it, the same widening would have been a breaking change for every synchronous caller.
-export type GnlIdentity = (req: Request) =>
-  | { resourceId?: string; orgId?: string; threadId?: string }
-  | undefined
-  | Promise<{ resourceId?: string; orgId?: string; threadId?: string } | undefined>;
-
 export interface CreateGnlConfig {
   /** Storage (RunJournal + optional MemoryStore/...). Preferred over `journal` (composite + memory). */
   storage?: Storage;

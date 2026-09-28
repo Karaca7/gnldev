@@ -141,7 +141,7 @@ export { resolveWorkIdentity } from './registry.js';
 // the side effect and `listRuns`/`purgeResource` cannot see whose it was. Measured on an MCP-shaped
 // call: `purgeResource('user-ayse')` deleted 0 rows and left 2 behind; with this record it deleted 3
 // and left none. Exported rather than re-implemented, because a copied claim is how it goes unstamped.
-export type { CreateGnlConfig, AgentConfig, RunOptions, WorkflowLike, WorkflowMeta, WorkflowRunResult, RequestContext, DynamicArg, ScorerLike, NetworkConfig, GnlIdentity, WorkIdentityRequest, ResolvedWorkIdentity } from './registry.js';
+export type { CreateGnlConfig, AgentConfig, RunOptions, WorkflowLike, WorkflowMeta, WorkflowRunResult, RequestContext, DynamicArg, ScorerLike, NetworkConfig, WorkIdentityRequest, ResolvedWorkIdentity } from './registry.js';
 // The protection matrix an entry point prints at startup — ONE derivation, so a banner cannot claim
 // a protection the config does not carry (see protections.ts for the banner that already did).
 export { describeProtections, formatProtections } from './protections.js';
