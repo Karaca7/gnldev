@@ -5,9 +5,9 @@ import { describe, it, expect } from 'vitest';
 import { InMemoryVectorStore, indexDocuments } from '../../rag/src/index.js';
 import { runDurable } from '../src/run.js';
 import { InMemoryStorage, BasicMemory, eraseSubject, toJournal } from '../src/index.js';
-import { enqueue, listJobs } from '../../queue/src/index.js';
-import { emit, createConsumer } from '../../events/src/index.js';
-import { scheduleWorkflow, listTriggers } from '../../scheduler/src/index.js';
+import { enqueue, listJobs, jobEraser } from '../../queue/src/index.js';
+import { emit, createConsumer, eventEraser } from '../../events/src/index.js';
+import { scheduleWorkflow, listTriggers, triggerEraser } from '../../scheduler/src/index.js';
 import { createMockModel, finalTextResult } from './mock.js';
 
 const J = (v: unknown) => JSON.stringify(v);
@@ -43,7 +43,7 @@ describe('owner in the name, one erasure', () => {
     await scheduleWorkflow(journal, { id: 'sys', every: 3600_000, name: 'summary' });
     const memory = new BasicMemory(journal);
     await runDurable({ runId: 'ra', journal, model: createMockModel(async () => finalTextResult('ok')), prompt: 'AYSE-SECRET', threadId: 'ta', memory, resourceId: 'ayse' });
-    await eraseSubject({ journal, work: storage.work!, vectors, memory }, 'ayse');
+    await eraseSubject({ journal, work: storage.work!, vectors, memory, erasers: [jobEraser(storage), triggerEraser(journal), eventEraser(storage.work!)] }, 'ayse');
     const events: unknown[] = [];
     await createConsumer(storage.work!, 'audit', (p) => { events.push(p); }, { name: 'c' }).poll();
     expect((await vectors.query([1, 0], 10)).map((m) => m.text)).toEqual(['shared']);

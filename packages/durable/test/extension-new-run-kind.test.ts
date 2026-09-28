@@ -2,8 +2,8 @@
 // a tool) and a NEW root-polled log, written ONLY with public API — no framework file touched.
 import { describe, it, expect } from 'vitest';
 import { InMemoryVectorStore, indexDocuments, createRagTool } from '../../rag/src/index.js';
-import { InMemoryStorage, createGnl, toJournal, eraseSubject, ownedName, ownerOfName, user, UNKNOWN, runIdentity, toolContextFor, type WorkStore } from '../src/index.js';
-import { scheduleWorkflow, pollScheduler, listTriggers } from '../../scheduler/src/index.js';
+import { InMemoryStorage, createGnl, toJournal, eraseSubject, ownedName, ownerOfName, user, UNKNOWN, runIdentity, toolContextFor, type WorkStore, type Caller } from '../src/index.js';
+import { scheduleWorkflow, pollScheduler, listTriggers, triggerEraser } from '../../scheduler/src/index.js';
 import { createMockModel, countToolResults, toolCallResult, finalTextResult } from './mock.js';
 
 const embed = async () => [1, 0, 0];
@@ -21,8 +21,9 @@ describe('extension: cron-agent + a new root-polled log', () => {
     });
     const gnl = createGnl({ storage, agents: { digest: { model, tools: { kb: createRagTool({ store, embed, topK: 10 }) } } } } as never);
     // The cron-agent: the scheduler's runner contract, mapped onto an agent run. User code, 6 lines.
-    const cronAgent = { runWorkflow: async (name: string, _input: unknown, o?: { runId?: string; resourceId?: string }) => {
-      const r = await gnl.run(name, { runId: o!.runId!, prompt: 'daily digest', ...(o?.resourceId ? { resourceId: o.resourceId } : {}) });
+    // The scheduler hands the trigger's recorded owner as `caller`; the runner passes it straight on.
+    const cronAgent = { runWorkflow: async (name: string, _input: unknown, o?: { runId?: string; caller?: Caller }) => {
+      const r = await gnl.run(name, { runId: o!.runId!, prompt: 'daily digest', ...(o?.caller ? { caller: o.caller } : {}) });
       return { runId: r.runId ?? o!.runId! };
     } };
     const now = 1_000_000;
@@ -32,7 +33,7 @@ describe('extension: cron-agent + a new root-polled log', () => {
     expect(seen).not.toContain('MEHMET invoice');
     const runId = (await journal.listKeys('sched:')).find((k) => k.endsWith(':input'))!.slice(0, -':input'.length);
     expect((await journal.get<{ resourceId?: string }>(`${runId}:input`))?.resourceId).toBe('ayse');
-    await eraseSubject({ journal, work: storage.work! }, 'ayse');
+    await eraseSubject({ journal, work: storage.work!, erasers: [triggerEraser(journal)] }, 'ayse');
     expect(await listTriggers(journal)).toEqual([]);
     expect(await journal.get(`${runId}:input`)).toBeUndefined();
   });
