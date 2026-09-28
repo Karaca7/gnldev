@@ -28,7 +28,7 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import * as durable from '@gnldev/durable';
 import {
-  InMemoryStorage, createGnl, scopeConfigToOrg, runDurable, streamDurable, createBatch, createAgentTool,
+  InMemoryStorage, BasicMemory, createGnl, scopeConfigToOrg, runDurable, streamDurable, createBatch, createAgentTool,
   forkRun, rolloverRun, replayRun, runNetwork, toJournal, runOwnerOf, type Caller,
 } from '@gnldev/durable';
 import { engineCallerOf, type Principal } from '@gnldev/auth';
@@ -36,7 +36,8 @@ import { workflow, step, waitForResume } from '@gnldev/workflow';
 import { stepCountIs } from 'ai';
 import { createRestApi } from '../src/index.js';
 import { createChatRoute } from '../../chat-adapter/src/chat-route.js';
-import { createAguiRoute } from '../../agui/src/route.js';
+import { chatSurface } from '../../chat-adapter/src/surface.js';
+import { createAguiRoute, aguiSurface } from '../../agui/src/route.js';
 import { createMcpServer } from '../../mcp/src/server.js';
 import { createStudioApi } from '../../studio/src/server.js';
 import { enqueue, createWorker } from '../../queue/src/index.js';
@@ -128,6 +129,9 @@ function world() {
   runs.get = async (k: string) => { if ([...fail].some((f) => k.endsWith(f))) throw new Error('EIO (injected)'); return g(k); };
   const config: any = {
     storage,
+    // Memory from each organization's own storage (the documented factory form). An explicit `memory`
+    // instance is NOT scoped by scopeConfigToOrg — see the separate test at the end of this file.
+    memoryFactory: (src: any) => new BasicMemory(src.runs ?? src),
     agents: {
       a: { model: echo },
     },
@@ -162,7 +166,7 @@ function restDoor(w: W) {
   return lazy(w, 'rest', () => {
     const byToken = new Map<string, Principal>(Object.entries(P));
     const auth = { authenticate: (r: Request) => byToken.get(r.headers.get('authorization')?.replace('Bearer ', '') ?? '') ?? null, authorize: () => ({ allow: true }) };
-    const api = createRestApi(w.config, { auth: auth as never, protectionsBanner: false }) as (r: Request) => Promise<Response>;
+    const api = createRestApi(w.config, { auth: auth as never, protectionsBanner: false, surfaces: [chatSurface() as never, aguiSurface() as never] }) as (r: Request) => Promise<Response>;
     const token = (who: Who) => Object.entries(P).find(([, p]) => p === who.principal)![0];
     return async (who: Who, method: string, path: string, body?: Record<string, unknown>): Promise<Res> => {
       let url = path;
@@ -423,9 +427,12 @@ type Door = {
   factories: string[];
   /** Callers this door cannot express today, with why (the cell is reported as inexpressible, not skipped silently). */
   cannot?: Partial<Record<CallerKey, string>>;
+  /** Why no control can reach a target through this door (the non-vacuity check is then waived, with this reason). */
+  controlExempt?: string;
   ops: Record<string, Op>;
 };
 const withThread = (t: Target, f: (thread: string) => Promise<Res>) => (t.threadId ? f(t.threadId) : Promise.resolve(undefined));
+const STAFF_INEXPRESSIBLE = 'the door takes { resourceId, orgId } today: staff arrives as `unknown` (ADR-0002 point 1; agent D)';
 const LEGACY_IDENTITY = 'the door takes { resourceId, orgId } today: it cannot say staff or name a user for an application (ADR-0002 point 1; agent D)';
 const RESOURCE_ID_ONLY = 'the owner is a resourceId: staff and "an application naming" are not expressible (agent B)';
 
@@ -445,11 +452,13 @@ const DOORS: Record<string, Door> = {
       'workflow run/resume on the id': { kind: 'write', act: (w, t, who) => restDoor(w)(who, 'POST', '/workflows/w/run', { runId: t.runId, resume: { approve: { ok: true } } }) },
       'workflow cancel': { kind: 'write', act: (w, t, who) => restDoor(w)(who, 'POST', `/workflows/runs/${encodeURIComponent(t.runId)}/cancel`, {}) },
       'new run on the thread': { kind: 'write', act: (w, t, who) => withThread(t, (th) => restDoor(w)(who, 'POST', '/agents/a/run', { runId: 'atkR', prompt: 'x', threadId: th })) },
+      'chat surface turn on the run id': { kind: 'write', act: (w, t, who) => restDoor(w)(who, 'POST', '/agents/a/chat', { id: 'atkThread', runId: t.runId, messages: [{ id: 'm1', role: 'user', parts: [{ type: 'text', text: 'hi' }] }] }) },
+      'agui surface run on the thread': { kind: 'write', act: (w, t, who) => withThread(t, (th) => restDoor(w)(who, 'POST', '/agents/a/agui', { runId: 'atkU', threadId: th, prompt: 'hi' })) },
     },
   },
   'chat-adapter (standalone)': {
     factories: ['createChatRoute'],
-    cannot: { 'other-user-naming-owner': LEGACY_IDENTITY, 'unknown-naming-owner': LEGACY_IDENTITY },
+    cannot: { staff: STAFF_INEXPRESSIBLE, 'other-org-staff': STAFF_INEXPRESSIBLE, 'other-user-naming-owner': LEGACY_IDENTITY, 'unknown-naming-owner': LEGACY_IDENTITY },
     ops: {
       'turn on the run id': { kind: 'write', act: (w, t, who) => chatDoor(w, who)({ id: 'atkThread', runId: t.runId, messages: [{ id: 'm1', role: 'user', parts: [{ type: 'text', text: 'hi' }] }] }) },
       'turn on the thread': { kind: 'write', act: (w, t, who) => withThread(t, (th) => chatDoor(w, who)({ id: th, runId: 'atkC', messages: [{ id: 'm1', role: 'user', parts: [{ type: 'text', text: 'hi' }] }] })) },
@@ -457,7 +466,7 @@ const DOORS: Record<string, Door> = {
   },
   'agui (standalone)': {
     factories: ['createAguiRoute', 'pipeAguiStream'],
-    cannot: { 'other-user-naming-owner': LEGACY_IDENTITY, 'unknown-naming-owner': LEGACY_IDENTITY },
+    cannot: { staff: STAFF_INEXPRESSIBLE, 'other-org-staff': STAFF_INEXPRESSIBLE, 'other-user-naming-owner': LEGACY_IDENTITY, 'unknown-naming-owner': LEGACY_IDENTITY },
     ops: {
       'run on the run id': { kind: 'write', act: (w, t, who) => aguiDoor(w, who)({ runId: t.runId, threadId: 'atkThread', prompt: 'hi' }) },
       'run on the thread': { kind: 'write', act: (w, t, who) => withThread(t, (th) => aguiDoor(w, who)({ runId: 'atkG', threadId: th, prompt: 'hi' })) },
@@ -465,7 +474,7 @@ const DOORS: Record<string, Door> = {
   },
   mcp: {
     factories: ['createMcpServer', 'serveMcp'],
-    cannot: { 'other-user-naming-owner': LEGACY_IDENTITY, 'unknown-naming-owner': LEGACY_IDENTITY },
+    cannot: { staff: STAFF_INEXPRESSIBLE, 'other-org-staff': STAFF_INEXPRESSIBLE, 'other-user-naming-owner': LEGACY_IDENTITY, 'unknown-naming-owner': LEGACY_IDENTITY },
     ops: {
       'tools/call with the owner\'s work key': { kind: 'write', act: (w, _t, who) => mcpDoor(w, who)({ s: 'x' }, 'tgtM') },
       'tools/call naming the run id as the key': { kind: 'write', act: (w, t, who) => mcpDoor(w, who)({ s: 'x' }, t.runId) },
@@ -510,6 +519,7 @@ const DOORS: Record<string, Door> = {
   },
   'scheduler fire': {
     factories: ['createScheduler'],
+    controlExempt: 'a fire\'s run id is derived from an owned trigger name: no caller-chosen id reaches another run, so no control can reach the target through it either (the fire\'s own run is a BIRTH, read through the other doors)',
     cannot: { staff: RESOURCE_ID_ONLY, 'other-org-staff': RESOURCE_ID_ONLY },
     ops: {
       'trigger with the owner\'s trigger id': { kind: 'write', act: (w, _t, who) => schedulerDoor(w)(who, 'tgtC', { s: 'x' }) },
@@ -532,7 +542,7 @@ const NOT_A_DOOR: Record<string, string> = {
   createEnterpriseAuth: 'an auth provider (produces principals; not a door)', createCache: 'a cache',
   createDocsProvider: 'docs search, no runs', createDatasetsManager: 'eval datasets', createTrajectoryScorer: 'a scorer',
   serverIdentityOf: 'reads a sealed identity', createAgentTool: 'a birth (agent-tool child)', createBatch: 'a birth (batch item)',
-  createGnl: 'the engine (engine door)', createProcessorCtx: 'processor plumbing', createRetentionSweeper: 'erasure worker',
+createProcessorCtx: 'processor plumbing', createRetentionSweeper: 'erasure worker',
   createSuggestions: 'suggestion store', createPollLoop: 'a timer', createBoundedUsageCache: 'a cache',
 };
 
@@ -600,18 +610,21 @@ async function walk(filter?: { births?: string[]; doors?: string[] }) {
   const controlBlind: string[] = [];
   let cells = 0;
   let lockTouched = 0;
+  const doorMs = new Map<string, number>();
   for (const [bname, birth] of Object.entries(BIRTHS)) {
     if (filter?.births && !filter.births.includes(bname)) continue;
     for (const state of STATES) {
       const p = await prepare(birth, state);
       if ('skip' in p) { bornSkipped.push(`${bname} | ${state}: ${p.skip}`); continue; }
       if ('wrong' in p) { findings.push(`${bname} | ${state} | (the birth itself) | records its owner | - | 0 | ${p.wrong}`); continue; }
-      const { w, t } = p;
+      let { w, t } = p;
       // A run born `unknown` is reachable by an unknown caller BY DESIGN (decideRunAccess): theirs, not attacked.
       const unchecked = p.born === 'unknown' ? [...UNCHECKED[state], 'unknown', 'unknown-naming-owner'] : UNCHECKED[state];
       const doors = Object.entries(DOORS).filter(([d]) => !filter?.doors || filter.doors.includes(d));
       for (const pass of ['attack', 'control'] as const) {
         for (const [dname, door] of doors) {
+          // Each door's controls get a fresh world: another door's control (a cancel) must not blind them.
+          if (pass === 'control' && CONTROLS[state].length) { const q = await prepare(birth, state); if ('w' in q) ({ w, t } = q); }
           // controls: reads and listings before writes, so a control's cancel cannot blind a later read
           const ops = Object.entries(door.ops).sort(([, a], [, b]) => (pass === 'control' ? Number(a.kind === 'write') - Number(b.kind === 'write') : 0));
           for (const [oname, op] of ops) {
@@ -620,12 +633,17 @@ async function walk(filter?: { births?: string[]; doors?: string[] }) {
               if ((pass === 'control') !== control || unchecked.includes(ck)) continue;
               const cell: Cell = { birth: bname, state, door: dname, op: oname, caller: ck };
               if (door.cannot?.[ck]) { inexpressible.push(label(cell)); continue; }
-              const before = control ? {} : await targetState(w, t);
+              const before = await targetState(w, t);
+              const t1 = Date.now();
               const res = await op.act(w, t, CALLERS[ck]).catch((e) => ({ status: -1, body: `THREW ${(e as Error)?.message ?? e}` }));
+              doorMs.set(dname, (doorMs.get(dname) ?? 0) + Date.now() - t1);
               if (!res) break; // the operation does not apply to this target (it has no thread)
               cells++;
               if (control) {
-                const seen = res.body.includes(SECRET) || (op.kind === 'list' && res.body.includes(t.runId));
+                // A control shows the op reaches the target: it sees the secret, lists the id, or changes the run.
+                const after = await targetState(w, t);
+                const reached = Object.keys({ ...before, ...after }).some((k) => before[k] !== after[k] && heldLockOrData(k, after));
+                const seen = res.body.includes(SECRET) || (op.kind === 'list' && res.body.includes(t.runId)) || reached;
                 if (seen) controlSeen.set(dname, (controlSeen.get(dname) ?? 0) + 1);
                 else if (dname === 'rest' && op.kind !== 'write' && state === 'normal') controlBlind.push(`${label(cell)} | ${res.status} ${res.body.slice(0, 80)}`);
                 continue;
@@ -646,20 +664,111 @@ async function walk(filter?: { births?: string[]; doors?: string[] }) {
       }
     }
   }
-  return { findings, inexpressible, bornSkipped, controlSeen, controlBlind, cells, lockTouched };
+  return { findings, inexpressible, bornSkipped, controlSeen, controlBlind, cells, lockTouched, doorMs };
 }
 
 describe('conformance registry: births x states x doors x callers', () => {
   it('every cell holds: no attacker reads a secret, lists a foreign id, or changes the target', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {}); vi.spyOn(console, 'error').mockImplementation(() => {});
     const t0 = Date.now();
-    const r = await walk();
+    const r = await walk(process.env.REG_BIRTHS ? { births: process.env.REG_BIRTHS.split(',') } : undefined);
     vi.restoreAllMocks();
     console.log(`[registry] ${r.cells} cells in ${Date.now() - t0} ms; ${r.findings.length} findings; ${r.inexpressible.length} inexpressible; ${r.bornSkipped.length} birth x state not startable; ${r.lockTouched} cells took and released the target's run lock`);
+    console.log('[registry] ms per door', JSON.stringify(Object.fromEntries(r.doorMs)));
     console.log(['[registry] findings:', ...r.findings].join('\n  '));
     console.log(['[registry] births that cannot be started in a state:', ...r.bornSkipped].join('\n  '));
     console.log(['[registry] control blind on REST reads:', ...r.controlBlind].join('\n  '));
-    for (const d of Object.keys(DOORS)) expect(r.controlSeen.get(d) ?? 0, `door ${d}: no control ever saw the target (the negatives would be vacuous)`).toBeGreaterThan(0);
+    for (const d of Object.keys(DOORS).filter((x) => !DOORS[x]!.controlExempt)) expect(r.controlSeen.get(d) ?? 0, `door ${d}: no control ever saw the target (the negatives would be vacuous)`).toBeGreaterThan(0);
     expect(r.findings).toEqual([]);
   }, 600_000);
+});
+
+// ── completeness: an unlisted birth or door FAILS ───────────────────────────────────────────────
+/** Code lines of a source file, comments and imports dropped. */
+function codeLines(src: string): string[] {
+  return src.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').filter((l) => !/^\s*(\/\/|import\b|export\s*\{|export\s+type\b)/.test(l));
+}
+function sources(): Array<{ rel: string; src: string }> {
+  const out: Array<{ rel: string; src: string }> = [];
+  for (const pkg of readdirSync(PACKAGES)) {
+    const dir = join(PACKAGES, pkg, 'src');
+    if (!existsSync(dir)) continue;
+    for (const f of readdirSync(dir, { recursive: true }) as string[]) if (/\.tsx?$/.test(f)) out.push({ rel: `${pkg}/src/${f}`, src: readFileSync(join(dir, f), 'utf8') });
+  }
+  return out;
+}
+
+describe('the registry is complete', () => {
+  it('every call of the ONE start point (claimRunOwner / inheritRunOwner / admitRun) is a listed birth site', () => {
+    const START = /\b(claimRunOwner|inheritRunOwner|admitRun)\(/;
+    const found = new Map<string, number>();
+    for (const { rel, src } of sources()) {
+      if (rel === 'durable/src/run-identity.ts') continue; // where they are defined (and call each other)
+      const n = codeLines(src).filter((l) => START.test(l) && !/function\s+(claimRunOwner|inheritRunOwner|admitRun)\b/.test(l)).length;
+      if (n) found.set(rel, n);
+    }
+    // How many calls each file holds today. A NEW call site changes a count: add the birth it makes.
+    const EXPECTED: Record<string, number> = {
+      'durable/src/run.ts': 1, 'durable/src/registry.ts': 2, 'durable/src/batch.ts': 1, 'durable/src/rollover.ts': 1,
+      'durable/src/time-travel.ts': 1, 'studio/src/server.ts': 1, 'mcp/src/server.ts': 1,
+    };
+    expect(Object.fromEntries(found), 'a start-point call site appeared, moved or went away — list its birth in BIRTHS').toEqual(EXPECTED);
+    const covered = new Set(Object.values(BIRTHS).flatMap((b) => b.sites));
+    expect(Object.keys(EXPECTED).filter((f) => !covered.has(f)), 'a start-point site no BIRTH exercises').toEqual([]);
+    expect([...covered].filter((f) => !(f in EXPECTED)), 'a BIRTH names a site that does not exist').toEqual([]);
+  });
+
+  it('every exported run starter of @gnldev/durable and of a createGnl instance is a BIRTH or NOT_A_BIRTH', () => {
+    const STARTER = /^(run|stream|resume|fork|rollover|replay|spawn|start)|Run$|Durable$|^create/;
+    const exported = Object.keys(durable).filter((k) => typeof (durable as any)[k] === 'function' && STARTER.test(k));
+    const gnl = createGnl({ journal: new durable.InMemoryJournal(), agents: {} } as never) as Record<string, unknown>;
+    const methods = Object.keys(gnl).filter((k) => typeof gnl[k] === 'function').map((k) => `gnl.${k}`);
+    const listed = new Set([...Object.values(BIRTHS).flatMap((b) => b.starters), ...Object.keys(NOT_A_BIRTH)]);
+    expect([...exported, ...methods].filter((k) => !listed.has(k)), 'unclassified run starter — add it to BIRTHS or NOT_A_BIRTH').toEqual([]);
+    expect([...listed].filter((k) => !exported.includes(k) && !methods.includes(k)), 'a listed starter no longer exists').toEqual([]);
+  });
+
+  it('every exported door factory in any package is a DOOR or NOT_A_DOOR', () => {
+    const DOOR = /^(create|serve)\w*$|Surface$|^pipe\w+Stream$/;
+    const exported = new Set<string>();
+    for (const pkg of readdirSync(PACKAGES)) {
+      const f = join(PACKAGES, pkg, 'src', 'index.ts');
+      if (!existsSync(f)) continue;
+      const src = readFileSync(f, 'utf8').replace(/\/\/.*$/gm, '');
+      for (const m of src.matchAll(/export\s+(?:async\s+)?(?:function|class|const)\s+(\w+)/g)) if (DOOR.test(m[1]!)) exported.add(m[1]!);
+      for (const m of src.matchAll(/export\s*\{([^}]*)\}/g)) {
+        for (const part of m[1]!.split(',')) {
+          const t = part.trim();
+          if (!t || t.startsWith('type ')) continue;
+          const name = t.split(/\s+as\s+/).pop()!.trim();
+          if (DOOR.test(name)) exported.add(name);
+        }
+      }
+    }
+    const doors = new Set(Object.values(DOORS).flatMap((d) => d.factories));
+    const both = [...doors].filter((d) => d in NOT_A_DOOR);
+    expect(both, 'a factory is both a DOOR and NOT_A_DOOR').toEqual([]);
+    expect([...exported].filter((n) => !doors.has(n) && !(n in NOT_A_DOOR)), 'unclassified door factory — add a DOOR (one helper) or a NOT_A_DOOR reason').toEqual([]);
+    expect([...doors, ...Object.keys(NOT_A_DOOR)].filter((n) => !exported.has(n)), 'a listed factory is no longer exported').toEqual([]);
+  });
+
+  it('every birth reaches every state it can, and every door has a helper and at least one operation', () => {
+    for (const [name, d] of Object.entries(DOORS)) expect(Object.keys(d.ops).length, name).toBeGreaterThan(0);
+    expect(Object.keys(BIRTHS).length).toBeGreaterThanOrEqual(10);
+  });
+});
+
+// Found while building the fixture, kept as its own row: an explicit `memory` INSTANCE in a config is not
+// confined by scopeConfigToOrg (only `storage` is), so every organization built from that config shares
+// one memory. The table itself uses `memoryFactory`, the scoped form, so it measures ownership alone.
+describe('an explicit memory instance and organizations', () => {
+  it('another organization\'s user does not read a thread through scopeConfigToOrg', async () => {
+    const storage = new InMemoryStorage();
+    const config: any = { storage, memory: new BasicMemory(storage.runs), agents: { a: { model: echo } } };
+    const acme = createGnl(scopeConfigToOrg(config, ORG).config);
+    const globex = createGnl(scopeConfigToOrg(config, OTHER_ORG).config);
+    await acme.run('a', { runId: 'r1', prompt: SECRET, threadId: 'T', caller: engineCallerOf(P.ayse!) as Caller });
+    const r = await globex.run('a', { runId: 'r2', prompt: 'x', threadId: 'T', caller: engineCallerOf(P.eve!) as Caller }).catch((e: Error) => ({ text: `refused: ${e.message}` }));
+    expect((r as { text: string }).text).not.toContain(SECRET);
+  });
 });
