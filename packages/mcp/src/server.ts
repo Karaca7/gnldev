@@ -495,8 +495,14 @@ export function createMcpServer(opts: McpServerOptions): McpServer {
     // arrive after a noisy neighbour. A user is its own bucket (an application's users each theirs);
     // staff is its kind-qualified name. A server with no `identify` has one bucket for everybody, which
     // is the honest reading of "we cannot tell callers apart".
+    //
+    // AND ITS ORGANIZATION (0.7.0 release panel D-9): a caller id is unique within an organization, not
+    // across them — keyed by the id alone, globex's `u1` exhausted acme's `u1`. The pair is JSON-encoded
+    // so no id can spell another bucket's key.
     const r = info.runsAs;
-    return windows.bump(r.kind === 'user' ? r.id : (actorIdOf(info.principal) ?? (r.kind === 'staff' ? r.orgId : undefined) ?? '__anonymous'));
+    const org = r.kind === 'unknown' ? info.principal?.orgId : r.orgId;
+    const who = r.kind === 'user' ? `user:${r.id}` : (actorIdOf(info.principal) ?? (r.kind === 'staff' ? 'staff' : '__anonymous'));
+    return windows.bump(JSON.stringify([org ?? null, who]));
   }
 
   /** A tool's description as MCP announces it: a string, or the AI SDK's function of the context. */
