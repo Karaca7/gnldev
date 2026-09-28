@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import * as durable from '@gnldev/durable';
 import {
   InMemoryStorage, BasicMemory, createGnl, scopeConfigToOrg, runDurable, streamDurable, createBatch, createAgentTool,
-  forkRun, rolloverRun, replayRun, runNetwork, toJournal, runOwnerOf, type Caller,
+  forkRun, rolloverRun, replayRun, runNetwork, toJournal, runOwnerOf, user, type Caller,
 } from '@gnldev/durable';
 import { engineCallerOf, type Principal } from '@gnldev/auth';
 import { workflow, step, waitForResume } from '@gnldev/workflow';
@@ -155,7 +155,7 @@ type Target = { runId: string; threadId?: string; also?: string[] };
 const settle = (p: Promise<string>) => Promise.race([p, new Promise<string>((res) => setTimeout(() => res('<<stream>>'), 1000))]);
 const lazy = <T>(w: W, key: string, make: () => T): T => (w.lazy.has(key) ? w.lazy.get(key) as T : (w.lazy.set(key, make()), w.lazy.get(key) as T));
 
-// ── door helpers: ONE per door. After ADR-0002 phase 2 lands, only these change. ────────────────
+// ── door helpers: ONE per door. A change to a door's identity API changes only its helper. ───────
 type Res = { status: number; body: string };
 const asRes = async (r: Response): Promise<Res> => ({ status: r.status, body: await settle(r.text()) });
 
@@ -175,43 +175,36 @@ function restDoor(w: W) {
   });
 }
 
-/**
- * The identity the standalone doors take TODAY (`GnlIdentity`, `McpCallerIdentity`): a resourceId and an
- * org. It cannot say "staff" — that is ADR-0002 point 1. Used by chatDoor/aguiDoor/mcpDoor only; after
- * agent D lands they take the principal itself (`identify: () => who.principal`).
- */
-function legacyIdentity(who: Who): { resourceId?: string; orgId?: string } {
-  const c = engineCallerOf(who.principal, who.names);
-  return { ...(c.kind === 'user' ? { resourceId: c.id } : {}), ...(orgOf(who) ? { orgId: orgOf(who) } : {}) };
-}
+/** What an application names in a request body (`resourceId`): read by the door for an application only. */
+const named = (who: Who, body: Record<string, unknown>) => (who.names ? { ...body, resourceId: who.names } : body);
 
 /** @gnldev/chat-adapter, standalone — no server gate in front of the engine. */
 function chatDoor(w: W, who: Who) {
   const key = `chat:${JSON.stringify(who)}`;
-  const app = lazy(w, key, () => createChatRoute(w.config, { identity: () => legacyIdentity(who) } as never) as any);
+  const app = lazy(w, key, () => createChatRoute(w.config, { identify: () => who.principal }) as any);
   return async (body: Record<string, unknown>): Promise<Res> =>
-    asRes(await app.request('/agents/a/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }));
+    asRes(await app.request('/agents/a/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(named(who, body)) }));
 }
 
 /** @gnldev/agui, standalone. */
 function aguiDoor(w: W, who: Who) {
   const key = `agui:${JSON.stringify(who)}`;
-  const handler = lazy(w, key, () => createAguiRoute(w.config, { identity: () => legacyIdentity(who) } as never) as (r: Request) => Promise<Response>);
+  const handler = lazy(w, key, () => createAguiRoute(w.config, { identify: () => who.principal }) as (r: Request) => Promise<Response>);
   return async (body: Record<string, unknown>): Promise<Res> =>
-    asRes(await handler(new Request('http://x/agents/a/run', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })));
+    asRes(await handler(new Request('http://x/agents/a/run', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(named(who, body)) })));
 }
 
-/** @gnldev/mcp — `createMcpServer({ tools, journal, identity })`; a tool that returns what it was given. */
+/** @gnldev/mcp — `createMcpServer({ tools, journal, identify })`; a tool that returns what it was given. */
 const mcpTools = { note: { description: 'n', inputSchema: { type: 'object', properties: { s: { type: 'string' } } }, execute: async (a: any) => ({ noted: a.s }) } };
 function mcpDoor(w: W, who: Who | undefined) {
   const key = `mcp:${JSON.stringify(who ?? null)}`;
   const server = lazy(w, key, () => createMcpServer({
     tools: mcpTools as never,
     journal: w.storage.runs as never,
-    ...(who ? { identity: () => legacyIdentity(who) } : {}),
+    ...(who ? { identify: () => who.principal } : {}),
   } as never) as any);
   return async (args: Record<string, unknown>, idempotencyKey: string): Promise<Res> => {
-    const r = await server.callTool({ name: 'note', arguments: args, idempotencyKey, caller: {} });
+    const r = await server.callTool({ name: 'note', arguments: args, idempotencyKey, caller: {}, ...(who?.names ? { resourceId: who.names } : {}) });
     return { status: r?.isError ? 400 : 200, body: JSON.stringify(r) };
   };
 }
@@ -234,20 +227,28 @@ function engineDoor(w: W, who: Who) {
   return { gnl: w.gnlOf(org), journal: w.scoped(org).journal, caller: engineCallerOf(who.principal, who.names) as Caller };
 }
 
-/** @gnldev/queue — a job is enqueued for the owner the host decided; the handler follows the README. */
+/**
+ * The owner a host records for a job, trigger or event: the engine caller it decided, or — for a caller
+ * the engine cannot name (`unknown`) — only its organization.
+ */
+function ownerFor(who: Who): { caller: Caller } | { orgId?: string } {
+  const c = engineCallerOf(who.principal, who.names) as Caller;
+  return c.kind === 'unknown' ? (orgOf(who) ? { orgId: orgOf(who) } : {}) : { caller: c };
+}
+
+/** @gnldev/queue — a job is enqueued for the owner the host decided; the handler follows the README (`ctx.run`, `ctx.caller`). */
 function queueDoor(w: W) {
   return lazy(w, 'queue', () => {
     const results: unknown[] = [];
     const worker = createWorker(w.storage, {
       // "continue this run in the background": the run named in the payload, for the job's owner.
-      cont: async (payload: any, ctx) => { results.push(await runDurable({ runId: payload.runId, journal: ctx.journal as never, model: echo, prompt: payload.prompt, resourceId: ctx.resourceId })); },
+      cont: async (payload: any, ctx) => { results.push(await runDurable({ runId: payload.runId, journal: ctx.journal as never, model: echo, prompt: payload.prompt, caller: ctx.caller })); },
       // a job's own run, as the README writes it.
-      own: async (payload: any, ctx) => { results.push(await runDurable({ runId: ctx.runId, journal: ctx.journal as never, model: echo, prompt: payload.prompt, resourceId: ctx.resourceId })); },
+      own: async (payload: any, ctx) => { results.push(await ctx.run({ model: echo, prompt: payload.prompt } as never)); },
     }, { maxAttempts: 1 });
-    const ownerOf = (who: Who) => { const c = engineCallerOf(who.principal, who.names); return { ...(c.kind === 'user' ? { resourceId: c.id } : {}), ...(orgOf(who) ? { orgId: orgOf(who) } : {}) }; };
     return async (who: Who, type: 'cont' | 'own', payload: unknown, id?: string): Promise<Res> => {
       results.length = 0;
-      const jobId = await enqueue(w.storage.work!, type, payload, { ...ownerOf(who), ...(id ? { id } : {}) });
+      const jobId = await enqueue(w.storage.work!, type, payload, { ...ownerFor(who), ...(id ? { id } : {}) });
       await worker.drain();
       return { status: 200, body: JSON.stringify({ jobId, results }) };
     };
@@ -260,7 +261,7 @@ function eventsDoor(w: W) {
     const results: unknown[] = [];
     const consumer = createConsumer(w.storage.work!, 'topic', async (payload: any, meta: any) => {
       const journal = meta.orgId ? w.scoped(meta.orgId).journal : toJournal(w.storage.runs);
-      results.push(await runDurable({ runId: payload.runId, journal, model: echo, prompt: payload.prompt, resourceId: meta.resourceId }));
+      results.push(await runDurable({ runId: payload.runId, journal, model: echo, prompt: payload.prompt, ...(meta.resourceId ? { caller: user(meta.resourceId, meta.orgId) } : {}) }));
     }, { name: 'c', maxAttempts: 1 });
     return async (who: Who, payload: unknown): Promise<Res> => {
       results.length = 0;
@@ -275,9 +276,8 @@ function eventsDoor(w: W) {
 /** @gnldev/scheduler — a trigger for the owner the host decided, fired once. */
 function schedulerDoor(w: W) {
   return async (who: Who, id: string, input: unknown): Promise<Res> => {
-    const c = engineCallerOf(who.principal, who.names);
     const journal = toJournal(w.storage.runs);
-    const tid = await scheduleWorkflow(journal, { id, name: 'w', input, at: 0, ...(c.kind === 'user' ? { resourceId: c.id } : {}), ...(orgOf(who) ? { orgId: orgOf(who) } : {}) });
+    const tid = await scheduleWorkflow(journal, { id, name: 'w', input, at: 0, ...ownerFor(who) });
     const r = await pollScheduler(journal, w.gnlOf(ORG), Date.now(), { runnerForOrg: (org: string) => w.gnlOf(org) } as never);
     return { status: 200, body: JSON.stringify({ tid, r }) };
   };
@@ -364,7 +364,7 @@ export const BIRTHS: Record<string, Birth> = {
   },
   'MCP-derived run': {
     sites: ['mcp/src/server.ts'], starters: [],
-    cannot: { staff: 'mcp `identity` has no way to say staff (ADR-0002 point 1; agent D)' },
+    cannot: { staff: 'the default work scope (`resource`) derives the id from a user: a caller with none (staff, unknown) is refused and no run is born' },
     start: async (w, who) => {
       const before = new Set(await w.storage.runs.listKeys!(''));
       await mcpDoor(w, who)({ s: SECRET }, 'tgtM');
@@ -387,8 +387,7 @@ export const BIRTHS: Record<string, Birth> = {
     },
   },
   'queue job run': {
-    sites: ['durable/src/run.ts'], starters: [],
-    cannot: { staff: 'a job owner is a resourceId: the queue cannot say staff (ADR-0002 point 5a; agent B)' },
+    sites: ['queue/src/index.ts'], starters: [],
     start: async (w, who) => {
       const r = JSON.parse((await queueDoor(w)(who, 'own', { prompt: SECRET }, 'tgtQ')).body);
       return { runId: `job:${r.jobId}` };
@@ -396,7 +395,6 @@ export const BIRTHS: Record<string, Birth> = {
   },
   'scheduler fire': {
     sites: ['durable/src/registry.ts'], starters: [],
-    cannot: { staff: 'a trigger owner is a resourceId: the scheduler cannot say staff (agent B)' },
     start: async (w, who) => {
       await schedulerDoor(w)(who, 'tgtC', { s: SECRET });
       const k = (await w.storage.runs.listKeys!('')).find((x) => x.includes('sched:') && x.endsWith(':input'))!;
@@ -436,9 +434,9 @@ type Door = {
   ops: Record<string, Op>;
 };
 const withThread = (t: Target, f: (thread: string) => Promise<Res>) => (t.threadId ? f(t.threadId) : Promise.resolve(undefined));
-const STAFF_INEXPRESSIBLE = 'the door takes { resourceId, orgId } today: staff arrives as `unknown` (ADR-0002 point 1; agent D)';
-const LEGACY_IDENTITY = 'the door takes { resourceId, orgId } today: it cannot say staff or name a user for an application (ADR-0002 point 1; agent D)';
-const RESOURCE_ID_ONLY = 'the owner is a resourceId: staff and "an application naming" are not expressible (agent B)';
+
+/** Why the events consumer has no staff cells: `emit` records a user and an organization, never staff (a system event names no one). */
+const EVENT_OWNER_IS_A_USER = 'an event owner is a user or an organization: `emit` has no staff owner, so an operator\'s event is a system event';
 
 export const DOORS: Record<string, Door> = {
   rest: {
@@ -463,7 +461,6 @@ export const DOORS: Record<string, Door> = {
   },
   'chat-adapter (standalone)': {
     factories: ['createChatRoute'],
-    cannot: { staff: STAFF_INEXPRESSIBLE, 'other-org-staff': STAFF_INEXPRESSIBLE, 'other-user-naming-owner': LEGACY_IDENTITY, 'unknown-naming-owner': LEGACY_IDENTITY },
     ops: {
       'turn on the run id': { kind: 'write', act: (w, t, who) => chatDoor(w, who)({ id: 'atkThread', runId: t.runId, messages: [{ id: 'm1', role: 'user', parts: [{ type: 'text', text: 'hi' }] }] }) },
       'turn on the thread': { kind: 'write', act: (w, t, who) => withThread(t, (th) => chatDoor(w, who)({ id: th, runId: 'atkC', messages: [{ id: 'm1', role: 'user', parts: [{ type: 'text', text: 'hi' }] }] })) },
@@ -471,7 +468,6 @@ export const DOORS: Record<string, Door> = {
   },
   'agui (standalone)': {
     factories: ['createAguiRoute', 'pipeAguiStream'],
-    cannot: { staff: STAFF_INEXPRESSIBLE, 'other-org-staff': STAFF_INEXPRESSIBLE, 'other-user-naming-owner': LEGACY_IDENTITY, 'unknown-naming-owner': LEGACY_IDENTITY },
     ops: {
       'run on the run id': { kind: 'write', act: (w, t, who) => aguiDoor(w, who)({ runId: t.runId, threadId: 'atkThread', prompt: 'hi' }) },
       'run on the thread': { kind: 'write', act: (w, t, who) => withThread(t, (th) => aguiDoor(w, who)({ runId: 'atkG', threadId: th, prompt: 'hi' })) },
@@ -481,7 +477,6 @@ export const DOORS: Record<string, Door> = {
     // A derived run id is minted from (tool, subject, work key): only the MCP birth is addressable.
     controlBirths: ['MCP-derived run'],
     factories: ['createMcpServer', 'serveMcp'],
-    cannot: { staff: STAFF_INEXPRESSIBLE, 'other-org-staff': STAFF_INEXPRESSIBLE, 'other-user-naming-owner': LEGACY_IDENTITY, 'unknown-naming-owner': LEGACY_IDENTITY },
     ops: {
       'tools/call with the owner\'s work key': { kind: 'write', act: (w, _t, who) => mcpDoor(w, who)({ s: 'x' }, 'tgtM') },
       'tools/call naming the run id as the key': { kind: 'write', act: (w, t, who) => mcpDoor(w, who)({ s: 'x' }, t.runId) },
@@ -513,7 +508,6 @@ export const DOORS: Record<string, Door> = {
   },
   'queue worker': {
     factories: ['createWorker'],
-    cannot: { staff: RESOURCE_ID_ONLY, 'other-org-staff': RESOURCE_ID_ONLY },
     ops: {
       'job continuing the named run': { kind: 'write', act: (w, t, who) => queueDoor(w)(who, 'cont', { runId: t.runId, prompt: 'x' }) },
       'job with the owner\'s job name': { kind: 'write', act: (w, _t, who) => queueDoor(w)(who, 'own', { prompt: 'x' }, 'tgtQ') },
@@ -521,7 +515,7 @@ export const DOORS: Record<string, Door> = {
   },
   'events consumer': {
     factories: ['createConsumer'],
-    cannot: { staff: RESOURCE_ID_ONLY, 'other-org-staff': RESOURCE_ID_ONLY },
+    cannot: { staff: EVENT_OWNER_IS_A_USER, 'other-org-staff': EVENT_OWNER_IS_A_USER },
     ops: {
       'event continuing the named run': { kind: 'write', act: (w, t, who) => eventsDoor(w)(who, { runId: t.runId, prompt: 'x' }) },
     },
@@ -529,7 +523,6 @@ export const DOORS: Record<string, Door> = {
   'scheduler fire': {
     factories: ['createScheduler'],
     controlExempt: 'a fire\'s run id is derived from an owned trigger name: no caller-chosen id reaches another run, so no control can reach the target through it either (the fire\'s own run is a BIRTH, read through the other doors)',
-    cannot: { staff: RESOURCE_ID_ONLY, 'other-org-staff': RESOURCE_ID_ONLY },
     ops: {
       'trigger with the owner\'s trigger id': { kind: 'write', act: (w, _t, who) => schedulerDoor(w)(who, 'tgtC', { s: 'x' }) },
     },

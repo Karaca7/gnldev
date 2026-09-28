@@ -64,7 +64,7 @@ describe('the registry is complete', () => {
     // How many calls each file holds today. A NEW call site changes a count: add the birth it makes.
     const EXPECTED: Record<string, number> = {
       'durable/src/run.ts': 1, 'durable/src/registry.ts': 2, 'durable/src/batch.ts': 1, 'durable/src/rollover.ts': 1,
-      'durable/src/time-travel.ts': 1, 'studio/src/server.ts': 1, 'mcp/src/server.ts': 1,
+      'durable/src/time-travel.ts': 1, 'studio/src/server.ts': 1, 'mcp/src/server.ts': 1, 'queue/src/index.ts': 1,
     };
     expect(Object.fromEntries(found), 'a start-point call site appeared, moved or went away — list its birth in BIRTHS').toEqual(EXPECTED);
     const covered = new Set(Object.values(BIRTHS).flatMap((b) => b.sites));
