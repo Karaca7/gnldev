@@ -249,6 +249,21 @@ them. The triple travels in the query string / body rather than the path because
 contain `.`, `:` and `/`. The routes are deliberately not under `/events` — that path is already this
 API's SSE change stream — which is also why the capability is named `deadEvents`.
 
+### Runner options and who a run belongs to
+
+`createStudioRunner(gnl, config, opts)` options:
+
+| Option | Does |
+|---|---|
+| `toolExec` | `true` turns on test-running a tool from the Tools view (`POST /tools/:name/execute`). Non-durable by default; `durable: true` with a journal journals it exactly-once. A guard on the agent still applies. Off by default — mind tools with side effects |
+
+Studio takes identity the way every door does: its `auth` provider yields a `Principal`, and the
+engine gets `engineCallerOf(principal, named)` from `@gnldev/auth` on the callback ctx as `caller`.
+Studio admits operators only, so a playground run, a code workflow run or a tool test-run is **staff's**;
+an operator naming a user in the playground (`resourceId`) runs it as that user. The runner seals that
+caller into the run, and a tool reads it with `identityOf(options)`. A host bridge that calls the
+runner without a ctx runs as `unknown` (closed), not as staff.
+
 ## How it works
 **Runs view note:** nested runs (network steps `net:<parentRunId>:<i>`, agent-tool sub-agents
 `agent:<toolCallId>`) show up in the list as SEPARATE top-level runs — by design (two-level durability;

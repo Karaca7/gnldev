@@ -7,8 +7,8 @@ import { sseResponse } from './sse.js';
 import { STUDIO_ERROR_CODES } from './error-codes.js';
 import { ORG_RECORD_PRE, asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, countLog, purgeRun, isRealRun, purgeOrganization, orgPurgedKey, sweepRuns, sweepLog, listOrphanThreadState, POLICY_KEY, PRICING_KEY, effectivePricingTable, DEFAULT_PRICING, readPricing, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, knownModelProviders, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent, callerConflictCode, surfacedInterrupts, resolveApprovals as dResolveApprovals, hasRunProbe, runOwnerOf, inheritRunOwner } from '@gnldev/durable';
 import type { PolicyDoc, PolicyRule, BudgetLimit, PricingDoc } from '@gnldev/durable';
-import type { JournalReader, Journal, WorkflowLike, MetricsRunRow } from '@gnldev/durable';
-import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, principalScope, assertAssignablePrivileges, isPrincipalKind, callerKind, actorIdOf, type AuthProvider, type Principal, type PrincipalKind } from '@gnldev/auth';
+import type { JournalReader, Journal, WorkflowLike, MetricsRunRow, Caller } from '@gnldev/durable';
+import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, principalScope, assertAssignablePrivileges, isPrincipalKind, callerKind, actorIdOf, engineCallerOf, type AuthProvider, type Principal, type PrincipalKind } from '@gnldev/auth';
 import { listTriggers } from '@gnldev/scheduler';
 import { mountSpa, notBuiltHtml } from './spa.js';
 import { openapiSpec, swaggerHtml } from './swagger.js';
@@ -43,8 +43,26 @@ export type { TriggerInfo } from '@gnldev/scheduler';
  * and made the id the host sees depend on who called. The org travels separately, and a host that
  * ignores it behaves exactly as before — which is why this is a third parameter and not a changed one.
  */
+/**
+ * The caller of a Studio with no principal model — no auth provider (local development), or one that
+ * binds no identity (the `{read,write}` pair): whoever got past it is the operator, because nothing
+ * else exists. A principal, so it goes through the same mapping (`engineCallerOf`) as every caller.
+ */
+const SINGLE_OPERATOR: Principal = Object.freeze({ kind: 'operator', roles: [] as string[] });
+
 export interface StudioCallbackCtx {
   orgId?: string;
+  /**
+   * WHO the engine runs this for — the engine's `Caller`, mapped from the request's principal the one
+   * way every door maps it (@gnldev/auth `engineCallerOf`, ADR-0002). Studio admits operators only, so
+   * this is staff in the caller's organization — or, when the operator names a user in the request
+   * (the playground's `resourceId`), that user: staff speaks FOR her on that request.
+   *
+   * Pass it to the engine as the call's caller (`createStudioRunner` does: it seals it into the run's
+   * context). A host bridge that ignores it runs its calls as nobody (`unknown`), which the engine
+   * keeps closed. It is not `actor` below: `actor` names who clicked, `caller` is whose work it is.
+   */
+  caller?: Caller;
   /**
    * KİM sürüyor — Studio'nun kendi kimliği (`actorOf`: principal id → x-gnl-actor → role:<rol> → 'anon').
    *
@@ -3172,7 +3190,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     // hata mesajı gövdede ama 5xx kalıyor; iki uçta iki farklı davranış olmasın.
     let r: Awaited<ReturnType<StudioResume>>;
     try {
-      r = await resume(fork.newRunId, {}, { orgId: callerOrg(c), actor: verifiedActorOf(c) });
+      r = await resume(fork.newRunId, {}, { ...callbackCtx(c), actor: verifiedActorOf(c) });
     } catch (e) {
       const code = callerConflictCode(e);
       const err = e as { message?: string; detail?: unknown };
@@ -3239,7 +3257,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     //     failure must not be dressed up as a clean client error.
     let result: Awaited<ReturnType<StudioResume>>;
     try {
-      result = await resume(id, body.approvals ?? {}, { orgId: callerOrg(c), actor: verifiedActorOf(c) });
+      result = await resume(id, body.approvals ?? {}, { ...callbackCtx(c), actor: verifiedActorOf(c) });
     } catch (e) {
       const code = callerConflictCode(e);
       const err = e as { message?: string; detail?: unknown };
@@ -3319,7 +3337,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     // Also gated on the dryRun path: a preview still discloses another organization's saga plan.
     if (!(await runVisible(id))) return c.json({ error: `run '${id}' not found` }, 404);
     const body = (await c.req.json().catch(() => ({}))) as { dryRun?: boolean };
-    const report = (await compensate(id, { dryRun: !!body.dryRun }, { orgId: callerOrg(c) })) as { entries?: { status: string }[] };
+    const report = (await compensate(id, { dryRun: !!body.dryRun }, callbackCtx(c))) as { entries?: { status: string }[] };
     if (!body.dryRun) {
       const counts: Record<string, number> = {};
       for (const e of report.entries ?? []) counts[e.status] = (counts[e.status] ?? 0) + 1;
@@ -3678,7 +3696,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     const body = (await c.req.json().catch(() => ({}))) as { message?: string; runId?: string };
     if (!body.message) return c.json({ error: 'message is required' }, 400);
     try {
-      return c.json({ ok: true, ...(await chat(String(body.message), { runId: body.runId }, { orgId: callerOrg(c) })) });
+      return c.json({ ok: true, ...(await chat(String(body.message), { runId: body.runId }, callbackCtx(c))) });
     } catch (e) {
       // This endpoint had no catch at all, so the SAME upstream failure that other endpoints turned
       // into a 400 became an unhandled 500 here — one fault, two answers, depending only on which
@@ -3745,6 +3763,19 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
    * A global agent (no orgs) is always visible → backward-compatible.
    */
   const callerOrg = (c: Context): string | undefined => principalOf(c.req.raw)?.orgId ?? orgALS.getStore();
+  /**
+   * The ctx every engine call from Studio carries: the organization, and the CALLER — through the one
+   * mapping, @gnldev/auth `engineCallerOf`. Studio's callers are operators (see the staff-only
+   * middleware), so this is staff; an operator naming a user (`named`, the playground's `resourceId`)
+   * speaks for that user on this request, which is what the `application` kind means, and is mapped as
+   * one. No auth, or a provider with no principal model, is the single operator.
+   */
+  const callbackCtx = (c: Context, named?: unknown): StudioCallbackCtx => {
+    const p: Principal | null = authProvider && bindsIdentity(authProvider) ? principalOf(c.req.raw) : SINGLE_OPERATOR;
+    const name = typeof named === 'string' && named !== '' ? named : undefined;
+    const caller = engineCallerOf(name !== undefined && callerKind(p) === 'operator' ? { ...p!, kind: 'application' } : p, name);
+    return { orgId: callerOrg(c), caller };
+  };
   /**
    * An org-invisible CODE-DEFINED agent → 404 (does NOT LEAK that it exists, same body as unknown-agent).
    * `orgs` is a property only of code-defined AgentConfig; names NOT IN listAgents (managed agent /
@@ -3817,6 +3848,11 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     const body = (await c.req.json().catch(() => ({}))) as any;
     if (!body.runId) return c.json({ error: 'runId is required (idempotency key)' }, 400);
     { const denied = requireScopedThread(c, body.threadId); if (denied) return denied; }
+    const playCtx = callbackCtx(c, body.resourceId);
+    // A name the mapping reads as nobody is refused, not run for nobody (@gnldev/auth subjectIdProblem).
+    if (body.resourceId !== undefined && (playCtx.caller?.kind !== 'user' || playCtx.caller.id !== body.resourceId)) {
+      return c.json({ error: 'resourceId must be an id a user can have (a non-empty string of at most 200 characters, no control characters, no reserved prefix)' }, 400);
+    }
     try {
       const mo = await managedOverrides(name, c);
       const r = await gnl.run(name, {
@@ -3824,7 +3860,8 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
         prompt: body.prompt,
         messages: body.messages,
         threadId: body.threadId,
-        resourceId: body.resourceId,
+        // WHOSE run: not a run option any more — the named user travels as the CALLER on the ctx
+        // (`playCtx`), mapped the one way (`engineCallerOf`), and the runner seals it.
         // AKTÖR. Playground `resourceId`'yi gövdeden alıyor (operatör kimin adına koşacağını yazar)
         // ama koşum ACTOR'süz doğuyordu — yani `/runs/:id/resume`'dan 409 yiyen operatör, aynı
         // onayı yandaki kapıdan bedavaya verebiliyordu. Damga operatörün DOĞRULANMIŞ kimliği:
@@ -3836,7 +3873,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
         topP: body.topP,
         system: body.system ?? mo?.system,
         ...(Array.isArray(body.tools) ? { tools: body.tools as string[] } : {}),
-      }, { orgId: callerOrg(c) });
+      }, playCtx);
       await audit(c, 'agent.run', name, { runId: body.runId, ...(mo && body.model == null ? { managedVersion: true } : {}) });
       // `finishReason` is here because without it an empty answer is unreadable. A run whose model
       // returned nothing answers 200 with `text: ""` — identical, on the wire, to a model that
@@ -3860,6 +3897,11 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     const body = (await c.req.json().catch(() => ({}))) as any;
     if (!body.runId) return c.json({ error: 'runId is required (idempotency key)' }, 400);
     { const denied = requireScopedThread(c, body.threadId); if (denied) return denied; }
+    const playCtx = callbackCtx(c, body.resourceId);
+    // A name the mapping reads as nobody is refused, not run for nobody (@gnldev/auth subjectIdProblem).
+    if (body.resourceId !== undefined && (playCtx.caller?.kind !== 'user' || playCtx.caller.id !== body.resourceId)) {
+      return c.json({ error: 'resourceId must be an id a user can have (a non-empty string of at most 200 characters, no control characters, no reserved prefix)' }, 400);
+    }
     let result: any;
     try {
       const mo = await managedOverrides(name, c);
@@ -3868,7 +3910,8 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
         prompt: body.prompt,
         messages: body.messages,
         threadId: body.threadId,
-        resourceId: body.resourceId,
+        // WHOSE run: not a run option any more — the named user travels as the CALLER on the ctx
+        // (`playCtx`), mapped the one way (`engineCallerOf`), and the runner seals it.
         // AKTÖR. Playground `resourceId`'yi gövdeden alıyor (operatör kimin adına koşacağını yazar)
         // ama koşum ACTOR'süz doğuyordu — yani `/runs/:id/resume`'dan 409 yiyen operatör, aynı
         // onayı yandaki kapıdan bedavaya verebiliyordu. Damga operatörün DOĞRULANMIŞ kimliği:
@@ -3880,7 +3923,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
         topP: body.topP,
         system: body.system ?? mo?.system,
         ...(Array.isArray(body.tools) ? { tools: body.tools as string[] } : {}),
-      }, { orgId: callerOrg(c) });
+      }, playCtx);
     } catch (e: any) {
       // Same taxonomy as the non-streaming /agents/:name/run handler above: this catch fires
       // BEFORE the SSE body starts (gnl.stream() only sets up the run — pipeAgentStream() below
@@ -3904,7 +3947,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     if (!gnl?.runTool) return c.json({ error: 'tool execution is not enabled' }, 501);
     const name = decodeURIComponent(c.req.param('name'));
     const body = (await c.req.json().catch(() => ({}))) as { input?: unknown; durable?: boolean; approve?: { runId: string; toolCallId: string; approved: boolean } };
-    const r = await gnl.runTool(name, body.input, { durable: !!body.durable, approve: body.approve }, { orgId: callerOrg(c) });
+    const r = await gnl.runTool(name, body.input, { durable: !!body.durable, approve: body.approve }, callbackCtx(c));
     await audit(c, 'tool.exec', name, { durable: !!body.durable });
     return c.json(r.error ? { error: r.error, blocked: r.blocked, runId: r.runId } : { ok: true, result: r.result, runId: r.runId });
   });
@@ -4950,7 +4993,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
             ...(body.maxSteps != null ? { maxSteps: body.maxSteps } : {}),
             ...(body.resume ? { resume: body.resume } : {}),
           };
-          return c.json({ ok: true, ...(await gnl.runWorkflow(name, body.input, Object.keys(wfOpts).length ? wfOpts : undefined, { orgId: callerOrg(c) })) });
+          return c.json({ ok: true, ...(await gnl.runWorkflow(name, body.input, Object.keys(wfOpts).length ? wfOpts : undefined, callbackCtx(c))) });
         } catch (e: any) {
           // K9/K10: the critical preset's workflow gates throw the SAME conflict family the agent
           // routes map — flattening them to 400 here made one error wear two shapes on two surfaces.
@@ -4967,7 +5010,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     if (canRunManaged && wf && (await wf.get(name))) {
       try {
         const runId = body.runId ?? `${body.dryRun ? 'dry-' : ''}wf-${name}-${Date.now()}`;
-        return c.json({ ok: true, ...(await runManaged(wf!, name, body.input, runId, body.maxSteps, body.dryRun, (n) => managedOverrides(n, c), body.resume, { orgId: callerOrg(c) })) });
+        return c.json({ ok: true, ...(await runManaged(wf!, name, body.input, runId, body.maxSteps, body.dryRun, (n) => managedOverrides(n, c), body.resume, callbackCtx(c))) });
       } catch (e: any) {
         return c.json({ error: String(e?.message ?? e) }, 400);
       }
@@ -5049,9 +5092,9 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       const runWf = gnl.runWorkflow.bind(gnl); // unbound method → loses this; bind it.
       // The organization, exactly as the managed branch below and the non-streaming sibling (:4941)
       // hand it over. A code workflow reached the runner as a call from nobody.
-      begin = () => runWf(name, body.input, { runId }, { orgId: callerOrg(c) });
+      begin = () => runWf(name, body.input, { runId }, callbackCtx(c));
     } else if (!isCode && canRunManaged && wf && (await wf.get(name))) {
-      begin = () => runManaged(wf!, name, body.input, runId, undefined, undefined, (n) => managedOverrides(n, c), undefined, { orgId: callerOrg(c) });
+      begin = () => runManaged(wf!, name, body.input, runId, undefined, undefined, (n) => managedOverrides(n, c), undefined, callbackCtx(c));
     }
     if (!begin) {
       if (wf && !compileWorkflow && (await wf.get(name)))
@@ -5441,7 +5484,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
         // The organization too. This is the eval gate for PROMOTING a managed agent version, which
         // happens in an organization's context — leaving it off would be the same rule applied to
         // the call sites that were easy to find rather than to all of them.
-        aggregate = (await datasets.run(opts.evalGate.datasetId, undefined, { orgId: callerOrg(c) })).aggregate;
+        aggregate = (await datasets.run(opts.evalGate.datasetId, undefined, callbackCtx(c))).aggregate;
       } catch (e: any) {
         return c.json({ error: `eval gate could not run: ${String(e?.message ?? e)}` }, 500);
       }
@@ -5547,7 +5590,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     const id = decodeURIComponent(c.req.param('id'));
     const body = (await c.req.json().catch(() => ({}))) as { scorers?: string[] };
     try {
-      return c.json({ ok: true, ...(await datasets.run(id, { scorers: body.scorers }, { orgId: callerOrg(c) })) });
+      return c.json({ ok: true, ...(await datasets.run(id, { scorers: body.scorers }, callbackCtx(c))) });
     } catch (e: any) {
       return c.json({ error: String(e?.message ?? e) }, 400);
     }

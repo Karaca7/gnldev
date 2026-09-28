@@ -1,7 +1,7 @@
 // Converts a createGnl instance into the Playground/Tools runner (StudioAgentRunner). Pure adapter — does not import `ai`.
 // @gnldev/cli and the studio CLI `--config` share this → single source of truth.
 import type { AgentMeta, StudioAgentRunner, StudioCallbackCtx, ToolMeta, ToolListItem } from './server.js';
-import { durableTool, toolDescriptionText, sealRequestContext, runIdentity, STAFF } from '@gnldev/durable';
+import { durableTool, toolDescriptionText, sealRequestContext, serverIdentityOf, runIdentity, userIdOf, UNKNOWN } from '@gnldev/durable';
 import type { Guard, Journal, WorkflowMeta, WorkflowRunResult } from '@gnldev/durable';
 
 export interface RunnerToolLike {
@@ -45,7 +45,7 @@ export interface GnlLike {
 }
 
 /**
- * The calling organization, put where the ENGINE reads it.
+ * The calling organization and CALLER, put where the ENGINE reads them.
  *
  * `StudioCallbackCtx` was forwarded as an extra positional argument to `gnl.run`/`stream`/`runWorkflow`,
  * and those take 2, 2 and 3 parameters — measured with `fn.length`. So it arrived as `arguments[n]` and
@@ -67,9 +67,24 @@ export interface GnlLike {
  * ONE helper for three call sites on purpose. Three copies is the shape the defect had.
  */
 function withCallerOrg<T>(runOpts: T, ctx?: StudioCallbackCtx): T {
-  if (ctx?.orgId === undefined) return runOpts;
+  if (ctx?.orgId === undefined && ctx?.caller === undefined) return runOpts;
   const o = (runOpts ?? {}) as { context?: Record<string, unknown> };
-  return { ...o, context: sealRequestContext(o.context ?? {}, { orgId: ctx.orgId }) } as T;
+  const context = o.context ?? {};
+  const caller = ctx.caller;
+  return {
+    ...o,
+    // The CALLER (ADR-0002): the engine's own `Caller`, which the server mapped from the principal
+    // (@gnldev/auth `engineCallerOf`). Sealed, so a dynamic `system`/`model`/`tools` function sees the
+    // same identity the run is recorded under, and passed as `caller`, so an `unknown` one — which
+    // seals nothing — is still said out loud. Without it every playground run an operator started was
+    // born nobody's (`unknown`).
+    ...(caller ? { caller } : {}),
+    context: sealRequestContext(context, {
+      // A host's own org survives a ctx that carries only a caller (the seal strips what it is not given).
+      orgId: ctx.orgId ?? serverIdentityOf(context).orgId,
+      ...(caller ? { resourceId: userIdOf(caller), staff: caller.kind === 'staff' } : {}),
+    }),
+  } as T;
 }
 
 /** Playground/Tools runner options. */
@@ -81,8 +96,12 @@ export interface MakeRunnerOptions {
    */
   toJsonSchema?: (schema: unknown) => unknown;
   /**
-   * true → tools can be run from studio for TEST purposes (NON-DURABLE: no journal). If a guard exists
-   * it IS APPLIED (won't run deny/require-approval). Still enable with care for tools with side effects.
+   * true → tools can be run from studio for TEST purposes (`POST /tools/:name/execute`, the Tools view's
+   * "Run" button). NON-DURABLE by default (no journal); with `durable: true` and a journal the call is
+   * journaled exactly-once and shows in the Inspector. If a guard exists it IS APPLIED (won't run
+   * deny/require-approval). The tool runs for the caller on the request's ctx — staff, for an
+   * operator in Studio — and for `unknown` when the host calls `runTool` with no ctx. Off by default;
+   * enable with care for tools with side effects.
    */
   toolExec?: boolean;
 }
@@ -194,15 +213,12 @@ export function createStudioRunner(
   // journal (exactly-once, visible in the Inspector); otherwise a fast NON-DURABLE sandbox.
   if (hasAnyTool && toolExec) {
     runner.toolExecDurable = !!config.journal; // durable test-run is possible if a journal exists
-    // `_ctx` is ACCEPTED and not yet used, and the underscore is the honest spelling. The other three
-    // entry points now SEAL the caller's organization into `opts.context`, which is where createGnl
-    // reads identity from — forwarding ctx positionally reached nothing (see withCallerOrg).
-    // `durableTool` has no ctx parameter and no RequestContext, so
-    // there is nowhere to forward it to. Taking it anyway matters: the interface promises four
-    // arguments, and a signature that quietly takes three is how the host learns the wrong lesson
-    // from the reference implementation. When the durable side grows an identity parameter, the
-    // value is already here instead of having to be re-plumbed from the server.
-    runner.runTool = async (name, input, runOpts, _ctx) => {
+    // The tool runs for the CALLER on ctx (the one the server mapped, ADR-0002): `durableTool` takes
+    // it as the run's identity, and the tool reads it with `identityOf(options)`. It used to be
+    // `STAFF` for everyone — a host calling this with no ctx included — so a tool that scopes by the
+    // caller served staff's whole view to a call nobody had identified. No ctx is `unknown`: closed.
+    runner.runTool = async (name, input, runOpts, ctx) => {
+      const caller = ctx?.caller ?? UNKNOWN;
       const t = resolveTool(name);
       if (!t || typeof t.execute !== 'function') return { error: `tool not found or not executable: ${name}` };
       const guard = resolveGuard(name);
@@ -213,7 +229,7 @@ export function createStudioRunner(
         const rec: any = await config.journal.get(`${runId}:tool:${toolCallId}`);
         const args = rec?.output?.__gnl_suspend ? rec.output.__gnl_suspend.args : input;
         try {
-          const out: any = await durableTool(t as any, { journal: config.journal, runId, guard, identity: runIdentity(STAFF, runId), approvals: { [toolCallId]: approved } }, name).execute(args, { toolCallId });
+          const out: any = await durableTool(t as any, { journal: config.journal, runId, guard, identity: runIdentity(caller, runId), approvals: { [toolCallId]: approved } }, name).execute(args, { toolCallId });
           if (out && out.__gnl_suspend) return { error: 'still awaiting approval', blocked: 'approval', runId };
           if (out && out.__denied) return { error: `approval denied${out.reason ? ': ' + out.reason : ''}`, blocked: 'deny', runId };
           return { result: out, runId };
@@ -226,7 +242,7 @@ export function createStudioRunner(
       if (runOpts?.durable && config.journal) {
         const runId = `tooltest-${name}-${Date.now()}`;
         try {
-          const out: any = await durableTool(t as any, { journal: config.journal, runId, guard, identity: runIdentity(STAFF, runId) }, name).execute(input, { toolCallId: `${runId}:call` });
+          const out: any = await durableTool(t as any, { journal: config.journal, runId, guard, identity: runIdentity(caller, runId) }, name).execute(input, { toolCallId: `${runId}:call` });
           if (out && out.__gnl_suspend) return { error: `requires approval — appears as suspended in the Inspector`, blocked: 'approval', runId };
           if (out && out.__denied) return { error: `guard denied${out.reason ? ': ' + out.reason : ''}`, blocked: 'deny', runId };
           return { result: out, runId };
