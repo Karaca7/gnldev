@@ -34,8 +34,18 @@ await consumer.poll();   // or consumer.start()
   An explicit `id` is then a name within that owner (the returned id is the stored one), `maxDepth` is
   counted per organization, and an organization-scoped work store is refused (no consumer polls it).
   A system event (no owner) is stored and delivered exactly as before.
+  **The owner never travels in the payload.** It is recorded in the id the engine writes (`ownedName`),
+  and `meta` is read from that id. A payload that carries its own "owner" field — a forwarded webhook,
+  say — is delivered as bytes, never read as someone's. A system `id` or a topic cannot start with the
+  owned-name marker (`~o~`), so no caller can spell one either.
 - `createConsumer(work, topic, handler, { name, pollMs?, backoff?, maxPollMs?, maxAttempts?, retryDelayMs? }) → { poll, start, stop }`
   — `name` is required to separate fan-out acks; `maxAttempts`/`retryDelayMs` govern the dead-letter below.
+- `eventEraser(work)` erases one person's events on every topic, with every consumer's ack, attempt and
+  dead-letter marker for them, without knowing a topic or consumer name. Pass it to `eraseSubject` from
+  `@gnldev/durable` with the queue's and the scheduler's erasers
+  ([example](../queue/README.md#erasing-a-person)). An owned event's markers are keyed by its id first
+  (`evtack:<id>:<topic>:<consumer>`); a system event's keys are unchanged. The work store needs
+  `deleteIdPrefix` and `deletePrefix`, or the eraser throws.
 - `listDeadEvents(work, topic, consumer) → DeadEvent[]` — everything quarantined for that consumer,
   with `status` (`quarantined` | `released` | `delivered`), `attempts`, `error`, `releases` and the
   original `payload`. A management call: it reads the whole topic log, so don't put it in a poll loop.

@@ -11,7 +11,7 @@
 // in the same pass, and after `maxAttempts` the event is QUARANTINED (dead-letter) rather than
 // retried forever — listDeadEvents() shows it, retryDeadEvent() hands it back. Quarantine is not an
 // ack: a quarantined event is never counted as delivered, because the consumer never saw it.
-import { createPollLoop, orgPrefix, orgStorageScopeOf, ownedName, ownerOfName } from '@gnldev/durable';
+import { createPollLoop, orgPrefix, orgStorageScopeOf, ownedName, ownedPrefix, ownerOfName, assertSystemName } from '@gnldev/durable';
 import { randomUUID } from 'node:crypto';
 import type { WorkStore } from '@gnldev/durable';
 
@@ -182,12 +182,12 @@ export class EventDepthExceededError extends Error {
  * O(min(actual depth, maxDepth)) pages, NOT the ENTIRE log. Unless `maxDepth` is given (default
  * behavior), this function is NEVER called → existing unbounded-topic behavior is preserved.
  */
-async function countUpTo(work: WorkStore, ns: string, limit: number, counts: (id: string) => boolean = () => true): Promise<number> {
+async function countUpTo(work: WorkStore, ns: string, limit: number): Promise<number> {
   let count = 0;
   let cursor: string | undefined;
   for (;;) {
     const page = await work.list(ns, { cursor });
-    count += page.items.filter((it) => counts(it.id)).length;
+    count += page.items.length;
     if (count >= limit || !page.nextCursor) return count;
     cursor = page.nextCursor;
   }
@@ -214,6 +214,7 @@ export async function emit(
         'would never be delivered. Pass the root storage\'s work with { orgId }.',
     );
   }
+  assertTopic(topic);
   if (opts.orgId !== undefined) orgPrefix(opts.orgId);
   if (opts.resourceId !== undefined && (typeof opts.resourceId !== 'string' || opts.resourceId === '')) {
     throw new Error(`@gnldev/events: invalid resourceId '${String(opts.resourceId)}' — must be a non-empty string, or omitted for a system event`);
@@ -224,7 +225,9 @@ export async function emit(
   };
   if (opts.maxDepth != null) {
     // Per organization: one organization filling a topic refused every other one's events.
-    const depth = await countUpTo(work, logNsOf(topic), opts.maxDepth, (id) => ownerOf(id).orgId === opts.orgId);
+    // Read from the organization's own depth index: an organization with 5 events on a topic pays for
+    // 5 records, not for every other organization's backlog on it (R22).
+    const depth = await countUpTo(work, depthNsOf(topic, opts.orgId), opts.maxDepth);
     if (depth >= opts.maxDepth) {
       throw new EventDepthExceededError(
         `@gnldev/events: topic depth limit exceeded (${depth} >= ${opts.maxDepth}) — event rejected (topic='${topic}').`,
@@ -235,7 +238,11 @@ export async function emit(
   const owned = owner.resourceId !== undefined || owner.orgId !== undefined;
   // An owned event always has an engine-written id: that is where its owner is recorded.
   const name = opts.id ?? (owned ? randomUUID() : undefined);
-  return work.append(logNsOf(topic), payload, name === undefined ? undefined : ownedName(name, owner));
+  const id = await work.append(logNsOf(topic), payload, name === undefined ? undefined : ownedName(name, owner));
+  // The depth index, under the SAME id (idempotent with the event). A crash between the two appends
+  // under-counts this one event; it never over-counts.
+  await work.append(depthNsOf(topic, opts.orgId), {}, id);
+  return id;
 }
 
 /**
@@ -302,9 +309,27 @@ const enc = (part: string) => part.replace(/%/g, '%25').replace(/:/g, '%3A');
 // sites have to agree on is a key format that must exist in exactly one place.
 /** The append-log namespace an event lives in. The sixth key family — see `enc`. */
 const logNsOf = (topic: string) => `evt:${enc(topic)}`;
-const ackKey = (topic: string, consumer: string, id: string) => `evtack:${enc(topic)}:${enc(consumer)}:${enc(id)}`;
-const attKey = (topic: string, consumer: string, id: string) => `evtatt:${enc(topic)}:${enc(consumer)}:${enc(id)}`;
-const deadKey = (topic: string, consumer: string, id: string) => `evtdead:${enc(topic)}:${enc(consumer)}:${enc(id)}`;
+/**
+ * The per-event markers. An OWNED event's markers are keyed by its id FIRST
+ * (`evtack:<id>:<topic>:<consumer>`), so one person's markers share the key prefix of their owned
+ * name and an erasure reaches them without knowing any topic or consumer (a work store cannot list its
+ * keys). A system event's keep the historical order, byte for byte. No topic may start with the owned
+ * marker (`assertTopic`), so the two shapes cannot collide.
+ */
+const isOwnedId = (id: string) => { const o = ownerOfName(id); return o.orgId !== undefined || o.resourceId !== undefined; };
+const markerKey = (fam: string, topic: string, consumer: string, id: string) =>
+  isOwnedId(id) ? `${fam}:${enc(id)}:${enc(topic)}:${enc(consumer)}` : `${fam}:${enc(topic)}:${enc(consumer)}:${enc(id)}`;
+const ackKey = (topic: string, consumer: string, id: string) => markerKey('evtack', topic, consumer, id);
+const attKey = (topic: string, consumer: string, id: string) => markerKey('evtatt', topic, consumer, id);
+const deadKey = (topic: string, consumer: string, id: string) => markerKey('evtdead', topic, consumer, id);
+/** A topic's per-organization depth index (see `emit`'s `maxDepth`); under `org:<id>:` for an organization's. */
+const depthNsOf = (topic: string, orgId: string | undefined) => (orgId === undefined ? `evtdepth:${enc(topic)}` : `org:${orgId}:evtdepth:${enc(topic)}`);
+
+/** A topic is a system name: it may not wear the owned-name marker (see `markerKey`). */
+function assertTopic(topic: string): void {
+  if (typeof topic !== 'string' || topic === '') throw new TypeError('@gnldev/events: a topic must be a non-empty string');
+  assertSystemName(topic);
+}
 const cursorKeyOf = (topic: string, consumer: string) => `evtcursor:${enc(topic)}:${enc(consumer)}`;
 const rescanKeyOf = (topic: string, consumer: string) => `evtrescan:${enc(topic)}:${enc(consumer)}`;
 
@@ -337,6 +362,7 @@ export function createConsumer(
   handler: EventHandler,
   opts: ConsumerOptions,
 ): Consumer {
+  assertTopic(topic);
   const ns = logNsOf(topic);
   const pollMs = opts.pollMs ?? 200;
   const backoffOn = opts.backoff ?? true;
@@ -699,4 +725,36 @@ export async function retryDeadEvent(work: WorkStore, topic: string, consumer: s
   }
   console.warn(`@gnldev/events: release abandoned — the dead-letter record kept changing under it (topic=${topic}, consumer=${consumer}, event=${eventId}, tries=${RELEASE_CAS_TRIES}); nothing was overwritten, call retryDeadEvent() again.`);
   return false;
+}
+
+// ─── Erasure ───────────────────────────────────────────────────────────────────────────────────
+
+/** What `eraseSubject` (in `@gnldev/durable`) calls to erase one person's share of a package. */
+export interface SubjectEraser {
+  name: string;
+  erase(owner: { resourceId: string; orgId?: string }): Promise<number>;
+}
+
+/**
+ * Erase one person's events on every topic: the events and their depth-index records, and every
+ * consumer's `evtack`/`evtatt`/`evtdead` marker for them (a dead-letter record holds the handler's
+ * error text). Found by the id prefix the engine wrote (`ownedPrefix`), never by payload, and without
+ * knowing a single topic or consumer name — see `markerKey`.
+ *
+ * Refuses a work store that cannot delete by id prefix (`deleteIdPrefix`) and key prefix
+ * (`deletePrefix`), rather than report a partial erasure as done.
+ */
+export function eventEraser(work: WorkStore): SubjectEraser {
+  return {
+    name: 'events',
+    async erase(owner) {
+      if (typeof work.deleteIdPrefix !== 'function' || typeof work.deletePrefix !== 'function') {
+        throw new Error("@gnldev/events: this work store cannot delete by id prefix (`deleteIdPrefix`) and key prefix (`deletePrefix`), so this person's events cannot be erased through it");
+      }
+      const prefix = ownedPrefix(owner);
+      let n = await work.deleteIdPrefix(prefix);
+      for (const fam of ['evtack', 'evtatt', 'evtdead']) n += await work.deletePrefix(`${fam}:${enc(prefix)}`);
+      return n;
+    },
+  };
 }
