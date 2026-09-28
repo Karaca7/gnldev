@@ -9,20 +9,117 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-**Candidate B (architecture comparison branch): one explicit, typed run identity.** Breaking:
+**A minor (0.7.0): end users are isolated by default, at one point, for free — and every package asks
+"who is this?" the same way.** Two decisions, each with the alternatives it rejected:
+[docs/adr/0001-end-user-isolation.md](./docs/adr/0001-end-user-isolation.md) (what is isolated) and
+[docs/adr/0002-one-identity-in-one-owner-per-rule.md](./docs/adr/0002-one-identity-in-one-owner-per-rule.md)
+(one way in for identity, one owner per rule, one conformance table). Many entries below are breaking.
+If you are upgrading, check these first:
 
-- Tools no longer receive `options.resourceId`. They receive `options.gnl: { identity, runId, parentRunId }`;
-  read it with `gnlOf(options)`. A tool called without it is `unknown`.
-- `DurableCtx.resourceId` is replaced by the required `DurableCtx.identity: RunIdentity`.
-- A run that names nobody is `unknown`, not staff: `createRagTool` then reads the shared shelf only, and an
-  owned thread refuses it. Staff must be said out loud (`principal: STAFF`; the server seals operators as staff).
-- A re-entry of an existing run runs as its recorded owner; another user naming it gets `RunOwnerMismatchError`
-  on raw ids too (not only derived ones).
-- `AgentToolConfig.resourceId`/`threadId` are gone: a child run takes its parent's identity.
-- Network and batch runs write their owner record unconditionally (ownerless too).
-- Owned names (`ownedName`) are `~o~<org>:<user>:<name>`; a system name may not start with `~o~`. Owned events
-  keep their owner in the id, not in a payload envelope. New `eraseSubject` erases runs, threads, documents,
-  jobs, triggers and events (jobs/events need `WorkStore.deleteIdPrefix`; in-memory only on this branch).
+1. **A custom `AuthProvider`** must stamp `kind` on every principal it returns (`operator`,
+   `application` or `subject`). `roleAuth` and auth-ee do it for you.
+2. **Staff users in an auth-ee user store or behind SSO** are `subject` unless you say otherwise. Set
+   `kind: 'operator'` on them (Studio `PATCH /users/:id`), or pass `kindOf` to the SSO provider.
+   Otherwise they get 403 in Studio.
+3. **Work an agent, a worker or a schedule does for a user** must say whose it is at the source:
+   `enqueue(…, { resourceId, orgId })` or `{ caller }`, `scheduleWorkflow({ …, resourceId, orgId })` or
+   `{ caller }`. Work that names nobody runs as `unknown`, never as staff; staff work says
+   `caller: staff()`. A queue handler starts its run with `ctx.run(…)`, which is already that owner's.
+4. **`subjectBinding`, `resolveResourceId` (chat/agui) and `createEnterpriseAuth({ users })` are
+   gone.** Delete them from your config. The last two throw if passed.
+5. **Chat, AG-UI and MCP take `identify`:** one function, `(req) => Principal`, handed to every door
+   (`createRestApi` keeps `auth`). Mount chat and AG-UI on `createRestApi` with `surfaces`, or give the
+   standalone route `identify`. In production it refuses to start without one; `identify: () => undefined`
+   opts out, explicitly. The old `identity` option throws.
+6. **End-user tokens:** 32-byte secret or longer; at most 1 hour unless you pass `isRevoked`.
+7. **Clients:** a foreign or missing run is `404` (was `403` / `200 []`); an unauthenticated write
+   is `401` (was `403`).
+8. **Knowledge bases:** label documents `shared: true` (everyone's) or `owner: '<user id>'`. An end
+   user's search no longer finds unlabelled documents.
+9. **Logout revocation:** a token's `jti` is now `sessionTokenId(sid)`, not the session id. Deny that
+   value at logout.
+10. **Owned job, trigger and event ids:** with an `orgId` or `resourceId`, an explicit id is stored as
+    `~o~<org>:<user>:<id>`. Use the id `enqueue`/`scheduleWorkflow`/`emit` return, not the one you
+    passed. `moveJob` / `moveTrigger` move an existing id to its owned form without running it twice.
+11. **Tools read the user with `identityOf(options)`.** `options.resourceId` is gone, and reading it
+    throws.
+12. **A custom `WorkStore` adapter** implements `deleteIdPrefix` for erasure (SQLite, Postgres and
+    Redis ship it).
+
+### ADR-0002: one way in for identity, one owner per rule
+
+**The engine (`@gnldev/durable`).** Breaking:
+
+- New `Caller`: `user(id, orgId?)` | `staff(orgId?)` | `UNKNOWN` (also `STAFF`). `runDurable`,
+  `streamDurable`, `gnl.run`/`stream`/`runWorkflow`/`runNetwork`, `runNetwork`, `createBatch`,
+  `withIdempotency` and `resumeRun` take `caller`. `resourceId` stays as a shorthand for a user; both,
+  with different values, throw a `TypeError`.
+- A direct call that names nobody is `unknown`: it is refused (`RunOwnerMismatchError`) on a user's or
+  staff's run and on an owned or staff thread. `resumeRun` needs a `caller` (`STAFF` or the owner).
+- Re-entering an existing run runs it as its RECORDED owner. Staff opening a user's run continues it as
+  that user.
+- Every run kind (agent, workflow, network, batch, fork/replay/rollover, MCP-derived, agent-tool child,
+  queue job, scheduler fire) records its owner before its first row, ownerless too
+  (`ownerKind: 'staff' | 'unknown'`). One answer to "whose run is this": `runOwnerOf` +
+  `decideRunAccess` (`allow | deny | missing`).
+- A run whose rows exist but whose owner record is missing is "exists, ownerless" — closed to end
+  users and `unknown` (it read as "not started"). An unreadable owner record refuses the call with the
+  store's own error, and a refused caller writes nothing under the run. An unstamped `<x>:input`
+  (no `_v`) names nobody.
+- `claimIdentityInput` is replaced by `claimRunOwner(journal, runId, caller, fields)`, which is not
+  best-effort. `forkRun` writes the owner first and throws on a missing source; `rolloverRun` carries
+  the owner kind; a replayed run belongs to the source's owner.
+- Tools: `options.resourceId` is removed and reading it throws; use `identityOf(options)`
+  (`options.gnl.identity`). `DurableCtx.identity: RunIdentity` is required. A workflow step reads
+  `ctx.identity`, calls a tool by hand with `{ gnl: toolContextFor(ctx.identity) }`, and starts a child
+  run with `runDurable({ caller: ctx.identity })`. `AgentToolConfig.resourceId`/`threadId` are gone: a
+  child run takes its parent's identity.
+- `threadOwnerFromRuns` is removed; `threadOwnerOf` is the one thread owner.
+  `withSubjectMemory(memory, subject, { journal, root? })` requires `journal` and lists only threads the
+  subject may read. A legacy ownerless thread record is upgraded to the owner memory knows, unless staff
+  claimed it.
+- `GnlIdentity` is removed (see the doors below).
+- `purgeResource(journal, id, { vectors?, memory?, outsideOrganizations? })`. `purgeRun` also deletes the
+  run's `__metrics__run/done/scores` rows.
+- `listKeys(prefix, { limit? })` — a bounded probe; the port is unchanged otherwise.
+- `scopeConfigToOrg` refuses a config whose `memory` is an object: that store cannot be confined to one
+  organization. The standalone chat and AG-UI routes therefore answer 500 to an organization's request
+  with such a config, instead of sharing threads across organizations. Use `memoryFactory`, or
+  `memory: false`.
+
+**Owned names and documents.** Breaking:
+
+- `ownedName`/`ownedPrefix` throw `OwnerIdError` on a `resourceId` no user can carry (empty, over 200
+  characters, control characters, a reserved prefix) and on an empty `orgId`. The rule is `ownerIdProblem`,
+  held to @gnldev/auth's `subjectIdProblem` by a parity test. An owner with a lone surrogate is stored
+  escaped (`%uXXXX`); on SQLite and Postgres such owners used to collapse into one row.
+- `assertVectorLabels` is replaced by `vectorWriteBatch`: one write rule every vector store runs
+  (in-memory, SQLite, Postgres, and rag's stores). An `owner` label follows the owner-id rule;
+  `namespace: ''` and lone surrogates are refused; a batch that gives one id two different labels is
+  refused whole; SQL stores write a batch in one transaction. `adoptIntoOrg` throws
+  `VectorOwnerConflictError` on an id collision.
+- The durable vector stores apply `filter` on query and delete (it was ignored: a filtered RAG tool
+  answered from outside the filter). `VectorQueryOptions` and `VectorDeleteWhere` gain `filter`.
+  rag's `PoolLike` gains an optional `connect`.
+
+**Doors: one way in.** Breaking:
+
+- `@gnldev/chat-adapter`, `@gnldev/agui`: `identity: (req) => ({ resourceId, orgId, threadId })` is
+  replaced by `identify: (req) => Principal` (@gnldev/auth `Identify`). The thread comes from
+  `resolveThreadId` or the body, not from identity. An operator runs as staff. An application names its
+  user in the body's `resourceId`, or gets 400.
+- `@gnldev/mcp`: `identity(caller)` is replaced by `identify(req)` (the transport's request, or one
+  carrying its validated token); `McpCallerIdentity` is removed. An application names its user in
+  `params._meta.resourceId` (in process: `callTool({ resourceId })`). `allowTool` and `rateLimit` receive
+  `{ name, caller, principal, runsAs }`. The audit `actor` is `actorIdOf(principal)`. An operator is
+  served as staff in the `'resource'` work scope without a key, and refused with one. `McpServerToolDef`
+  accepts an AI SDK tool as it is (`description` may be a function, `execute` optional), and a runnable
+  schema is announced as JSON Schema in `tools/list`.
+- `@gnldev/auth`: `identityFromAuth`, `McpCallerLike`, `McpIdentityLike` are removed. New: `Identify`,
+  `engineCallerOf` (the one mapping from a principal to the engine's caller: subject → user, operator →
+  staff or the user it names, application → the user it names or `unknown`), `EngineCaller`,
+  `callerOfRequest`.
+- chat-adapter, agui and mcp depend on `@gnldev/auth`.
 
 **`@gnldev/agui` runs on its own (ADR-0002 point 0).** Installing it no longer installs `@gnldev/server`.
 What it borrowed from server now lives in `@gnldev/durable`, which every door already depends on.
@@ -31,10 +128,47 @@ What it borrowed from server now lives in `@gnldev/durable`, which every door al
 
 - `EDGE_ERROR_CODES` (@gnldev/server) no longer has `runLimitExceeded` / `toolLoopDetected`, and
   `EDGE_ERROR_STATUS` no longer lists their codes. Use `LIMIT_ERROR_CODES` from `@gnldev/durable`
-  (statuses in `WIRE_ERROR_STATUS`). The wire strings did not change.
+  (statuses in `WIRE_ERROR_STATUS`). The wire strings did not change. Studio's
+  `STUDIO_ERROR_CODES` drops its copy of the same two.
 - `StreamSurface` and `StreamSurfaceInput` are defined in `@gnldev/durable`. Server still exports both;
   its `StreamSurface` is now `StreamSurface<Context>` from durable (same shape).
 - `@gnldev/agui` no longer brings the Express bridge. `npm i @gnldev/server` for `toNodeHandler`.
+
+**Server and Studio.** Breaking:
+
+- A `resourceId` in a request follows the subject-id rule: control characters (C1 too) and
+  U+2028/2029 are a 400.
+- An operator that names a user (`?resourceId=`, the body's `resourceId`) speaks for that user on that
+  request, through `engineCallerOf`. With both a body and a query `resourceId`, the body's wins on run
+  gates (it is the name the run is filed under).
+- A run with only an owner record counts as new, not as a replay, and gets no budget exemption.
+- `/resume` seals the RECORDED owner; an unstamped record's `resourceId` is ignored.
+- `GET /workflows/runs?resourceId=` shows no unstamped or ownerless rows, for an operator's filter too.
+- Studio: `StudioCallbackCtx.caller`; the runner runs playground and code workflows as that caller,
+  and a host bridge that passes no ctx runs as `unknown`. `runTool` runs as the ctx's caller (it was
+  always `STAFF`). The playground passes `resourceId` through the caller; an invalid name is a 400.
+
+**Background work and erasure.** Breaking:
+
+- `JobCtx.resourceId` is removed: use `ctx.caller` / `ctx.run(…)`. The worker records the job's owner
+  before the handler runs, so a handler that starts `runDurable(ctx.runId)` with no caller or another
+  user's is refused.
+- `WorkflowRunner.runWorkflow` options are `{ runId, caller }` (was `resourceId`); each scheduler fire
+  runs as the trigger's owner.
+- The scheduler, the waker and `moveTrigger` refuse an organization-scoped journal or a subject view:
+  they poll the root.
+- `eraseSubject({ …, erasers })`: `jobEraser` (@gnldev/queue), `triggerEraser` (@gnldev/scheduler) and
+  `eventEraser` (@gnldev/events) remove what only their package knows. `EraseReport` is
+  `{ journalRows, workRecords, memoryThreads, byEraser }`. With an `orgId`, runs and documents are erased
+  in that organization only; without one, outside every organization. Erasure needs the root work store
+  (`assertRootWorkForErasure` says so). Erasing `bob` no longer deletes `bob:evil`'s traces, lessons or
+  stats.
+- An owned event's marker keys are ordered by id first; a topic may not start with `~o~`.
+- `maxDepth` for jobs and events is counted from a per-organization index; system jobs and events
+  enqueued before the upgrade are not counted.
+- `resthr:` keys escape the `resourceId`; old traces whose id contains `:` are no longer read.
+- `WorkStore.deleteIdPrefix` ships in SQLite, Postgres and Redis (it was in-memory only), and the
+  shared erasure contract runs on all of them under `pnpm check:real`.
 
 **What the ADR-0002 conformance table found.** Breaking:
 
@@ -45,36 +179,6 @@ What it borrowed from server now lives in `@gnldev/durable`, which every door al
 - `runNetwork` (the exported primitive) records its owner before its first row, like every run birth. It
   takes `caller`; without one the run is `unknown`'s, and another caller re-entering it is refused
   (`RunOwnerMismatchError`). `gnl.runNetwork` is unchanged.
-- `scopeConfigToOrg` refuses a config whose `memory` is an object: that store cannot be confined to one
-  organization. The standalone chat and AG-UI routes therefore answer 500 to an organization's request
-  with such a config, instead of sharing threads across organizations. Use `memoryFactory`, or
-  `memory: false`.
-
-**A minor (0.7.0): end users are isolated by default, at one point, for free.** The decision and the
-alternatives it rejected are in [docs/adr/0001-end-user-isolation.md](./docs/adr/0001-end-user-isolation.md).
-Many entries below are breaking. If you are upgrading, check these first:
-
-1. **A custom `AuthProvider`** must stamp `kind` on every principal it returns (`operator`,
-   `application` or `subject`). `roleAuth` and auth-ee do it for you.
-2. **Staff users in an auth-ee user store or behind SSO** are `subject` unless you say otherwise. Set
-   `kind: 'operator'` on them (Studio `PATCH /users/:id`), or pass `kindOf` to the SSO provider.
-   Otherwise they get 403 in Studio.
-3. **Work an agent, a worker or a schedule does for a user** must carry that user's `resourceId`.
-   Records with no owner are staff's now. Queue and scheduler take it at the source:
-   `enqueue(…, { resourceId, orgId })`, `scheduleWorkflow({ …, resourceId, orgId })`.
-4. **`subjectBinding`, `resolveResourceId` (chat/agui) and `createEnterpriseAuth({ users })` are
-   gone.** Delete them from your config. The last two throw if passed.
-5. **Chat and AG-UI:** mount them on `createRestApi` with `surfaces`, or give the standalone route
-   an `identity`. In production it refuses to start without one.
-6. **End-user tokens:** 32-byte secret or longer; at most 1 hour unless you pass `isRevoked`.
-7. **Clients:** a foreign or missing run is `404` (was `403` / `200 []`); an unauthenticated write
-   is `401` (was `403`).
-8. **Knowledge bases:** label documents `shared: true` (everyone's) or `owner: '<user id>'`. An end
-   user's search no longer finds unlabelled documents.
-9. **Logout revocation:** a token's `jti` is now `sessionTokenId(sid)`, not the session id. Deny that
-   value at logout.
-10. **Owned job, trigger and event ids:** with an `orgId` or `resourceId`, an explicit id is stored as
-    `<org>:<user>:<id>`. Use the id `enqueue`/`scheduleWorkflow`/`emit` return, not the one you passed.
 
 ### Added
 
@@ -98,7 +202,7 @@ Many entries below are breaking. If you are upgrading, check these first:
   `PostgresVectorStore`, `GraphRag`. The SQLite and Postgres tables gain `owner` and `shared` columns
   on startup.
 - **Queue jobs and scheduled triggers can belong to an end user.** `enqueue(…, { resourceId, orgId })`
-  hands the handler `ctx.resourceId`, `ctx.orgId`, and `ctx.journal`/`ctx.storage` scoped to that
+  hands the handler `ctx.caller` (and `ctx.run`, already that owner's), `ctx.orgId`, and `ctx.journal`/`ctx.storage` scoped to that
   organization; `retryJob` keeps them. `scheduleWorkflow({ …, resourceId, orgId })` passes the user to
   `runWorkflow` and runs on `runnerForOrg(orgId)`. A trigger with an organization and no
   `runnerForOrg` fails with a clear error; it is never run where its organization cannot see it.
@@ -110,7 +214,6 @@ Many entries below are breaking. If you are upgrading, check these first:
   end user's chat turn is in their history and their organization. The route-table walk covers
   surfaces.
 - **`cors` on `createRestApi`**, off by default, for browsers calling the API directly.
-- **`identityFromAuth`** (@gnldev/auth): MCP's `identity` from the same provider; end users only.
 - **Token refresh, owned by the application.** `subjectTokenEndpoint` (@gnldev/auth) turns your
   session into a fresh short-lived token; `GnlClient`'s `getToken` / `tokenFrom` (@gnldev/client)
   refresh before expiry and after a `401`, one refresh for concurrent requests. `endUsers.isRevoked`
@@ -179,10 +282,10 @@ Many entries below are breaking. If you are upgrading, check these first:
   so `useChat` points at `<where the API is mounted>/agents/:name/chat` instead of `/api/...`.
   `--identity end-users` writes `src/identity.ts` as your app's token route (`subjectTokenEndpoint`)
   instead of an `identity` hook.
-- **The standalone chat and AG-UI routes refuse to start in production without `identity`.** They
+- **The standalone chat and AG-UI routes refuse to start in production without `identify`.** They
   warned and served before: any caller ran the model and left an ownerless run. Mount them on the REST
-  API instead (`surfaces`, below), or pass `identity`; `identity: () => undefined` opts out explicitly.
-- **@gnldev/mcp: a server with `identity` serves no caller it cannot place.** Such a caller sees no
+  API instead (`surfaces`, below), or pass `identify`; `identify: () => undefined` opts out explicitly.
+- **@gnldev/mcp: a server with `identify` serves no caller it cannot place.** Such a caller sees no
   tools and a call answers as for a missing tool. Before, a call with no work key ran the tool for it.
 - **End-user tokens are hardened.** `endUsers.secret` (and `signSubjectToken`'s) must be at least 32
   bytes; a shorter one throws at startup. A token may live at most 1 hour unless `isRevoked` is set
@@ -211,7 +314,7 @@ Many entries below are breaking. If you are upgrading, check these first:
 - **Chat and AG-UI turns that carry an organization are stored in that organization's partition**
   (`org:<id>:`), not in the shared root. They now show up in that organization's REST history and
   Studio. Turns stored before this stay in the root; to move them, see the chat-adapter README.
-  `createChatRoute({ gnl })` with an `identity` that names an organization answers 500: a prebuilt
+  `createChatRoute({ gnl })` with an `identify` whose principal names an organization answers 500: a prebuilt
   instance cannot keep organizations apart. Pass the config instead.
 - **`verifyJwt`, `jwtFromRequest` and `b64uDecode` moved from `@gnldev/auth-ee` to `@gnldev/auth`.**
   There is one JWT verifier now, shared by the free `endUsers` class and every auth-ee SSO provider.
@@ -238,8 +341,8 @@ Many entries below are breaking. If you are upgrading, check these first:
 - **The actor-lock message no longer names the owner.** `RunActorMismatchError` now says "belongs to a
   different actor". The owner is still in `detail.ownerActor`.
 - **`resolveResourceId` is removed from `createChatRoute` and `createAguiRoute`.** It handed the resolver
-  the request body and won over `identity`. `identity: (req) => ({ resourceId })` is now the only
-  source of the subject. Passing the old option throws at construction instead of being ignored.
+  the request body and won over the identity hook. `identify: (req) => Principal` is now the only
+  source of the subject (an application names its user in the body's `resourceId`, read for that kind only). Passing the old option throws at construction instead of being ignored.
   `resolveThreadId` stays.
 - **`createEnterpriseAuth({ users })` is removed, with the `EeUser`, `EeSession` and `UserStore` types.**
   The option was never read. Use `userStore`. Passing `users` now throws.
@@ -253,7 +356,7 @@ Many entries below are breaking. If you are upgrading, check these first:
 
 ### Fixed
 
-- The chat and AG-UI READMEs showed standalone routes without `identity`, which refuse to start in
+- The chat and AG-UI READMEs showed standalone routes without `identify`, which refuse to start in
   production; both now pass one, and the chat README shows how `useChat` sends the user's token.
 - The protections matrix pointed at a `src/auth.ts` the scaffold does not write; the server banner said
   a bearer token falls back to `body.resourceId`; the ADR's "not covered yet" list predated the audit.
