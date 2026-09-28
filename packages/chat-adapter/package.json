@@ -36,6 +36,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@gnldev/auth": "workspace:^",
     "@gnldev/durable": "workspace:^"
   },
   "peerDependencies": {

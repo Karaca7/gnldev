@@ -36,6 +36,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@gnldev/auth": "workspace:^",
     "@gnldev/server": "workspace:^",
     "hono": "^4.13.2"
   },
