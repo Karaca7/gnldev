@@ -604,8 +604,12 @@ async function prepare(birth: Birth, state: State): Promise<{ w: W; t: Target; b
   return { wrong: `${t.runId} reads as '${got}'` };
 }
 
-/** An id nothing ever used — what "does not exist" looks like at each door. */
-const GHOST: Target = { runId: 'zzGhostRun', threadId: 'zzGhostThread' };
+/**
+ * An id nothing ever used — what "does not exist" looks like at each door. One per cell: a ghost that an
+ * earlier cell's write created would exist, and answer as the caller's own.
+ */
+let ghosts = 0;
+const ghost = (): Target => { ghosts++; return { runId: `zzGhost${ghosts}`, threadId: `zzGhostThread${ghosts}` }; };
 
 /** A run lock another caller took and RELEASED is bookkeeping; one still held would lock the owner out. */
 function heldLockOrData(k: string, after: Record<string, string>): boolean {
@@ -674,8 +678,8 @@ export async function walk(filter?: { births?: string[]; doors?: string[] }) {
               // ORACLE: an end user (or unknown) must not tell "exists, not yours" from "does not exist".
               // Where the same operation on an id that never existed answers 404, the target must too.
               if (CALLERS[ck].principal.kind !== 'operator' && res.status >= 400 && res.status !== 404) {
-                const ghost = await op.act(w, GHOST, CALLERS[ck]).catch(() => undefined);
-                if (ghost?.status === 404) findings.push(`${label(cell)} | ${res.status} | oracle: a missing id answers 404`);
+                const g = await op.act(w, ghost(), CALLERS[ck]).catch(() => undefined);
+                if (g?.status === 404) findings.push(`${label(cell)} | ${res.status} | oracle: a missing id answers 404`);
               }
             }
           }
