@@ -54,6 +54,12 @@ If you are upgrading, check these first:
     with `identify: () => undefined`, answers `409 run_owner_mismatch` with "belongs to a different
     subject": it is the missing owner record, not another user. Let such turns finish before the
     upgrade, or continue them as staff.
+15. **Stored working memory from 0.6** is not read until it is migrated. Its keys moved from
+    `res:<id>` to `resource:<id>` and from `<threadId>` to `thread:<threadId>` (an `org:<id>:` prefix
+    stays in front). Move them once, before users come back:
+    `await migrateWorkingMemoryKeys(memoryStore, { resourceIds, threadIds })` (@gnldev/memory), with
+    the users and threads you have. Until then, agents start with empty working memory. `eraseSubject`
+    deletes the old keys too.
 
 ### ADR-0002: one way in for identity, one owner per rule
 
@@ -412,6 +418,29 @@ What it borrowed from server now lives in `@gnldev/durable`, which every door al
 
 - Queue and scheduler lease locks live in the root partition while the run lives in the organization's.
   With owned ids they cannot collide, but `purgeOrganization` leaves those short-lived lock records behind.
+- **The engine's `gnl.runWorkflow` does not check that a resumed run exists.**
+  `gnl.runWorkflow(name, input, { runId, resume })` on a run id that does not exist, or on an agent
+  run's id, runs the workflow from its first step with the input it was given (none, on a resume). On
+  a missing run it records the caller as the owner (`:input`); in both cases it writes the
+  `:wf:_resume:*` payloads. The REST route answers a resume of a missing run with 404 and writes
+  nothing; a call from your own code gets no such check. Check that the run exists before you resume
+  it.
+- **`wf.runResumable` (@gnldev/workflow) does no owner check.** It is the primitive under the engine.
+  `gnl.runWorkflow` and every door check the owner before they call it; your own code that calls it
+  directly must do the same.
+- **A thread opened anonymously in 0.7 is taken by the first named user who names it,** history
+  included. This is the one case the thread gate keeps open on purpose (see *What the release panels
+  found*): a thread whose only runs were started by `unknown`. Give anonymous turns a thread id no
+  one else can guess, or open the thread as staff.
+- **Erasure of queue, scheduler and event records needs their erasers.** Pass `jobEraser`,
+  `triggerEraser` and `eventEraser` to `eraseSubject`. Without them it still deletes the records named
+  by the person's owned id prefix, but keys that put another prefix before the id, such as the
+  queue's `qdone:` and `qown:`, stay. The report's `byEraser` shows which erasers ran.
+- **Every enqueue writes one more record** (the per-organization depth index). The cost is measured
+  under *Background work and erasure* above.
+- **The conformance table finds doors by name** (`create*`, `serve*`, `*Surface`, `pipe*Stream`). A
+  door exported under another name is not required to have a row. See the Scope section of
+  [ADR-0002](./docs/adr/0002-one-identity-in-one-owner-per-rule.md), which also has the proposed fix.
 
 ### Fixed
 
