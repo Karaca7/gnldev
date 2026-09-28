@@ -66,8 +66,14 @@ const lookupModel: any = {
     ? { content: [{ type: 'text', text: 'looked up' }], finishReason: stop, usage, warnings: [] }
     : { content: [{ type: 'tool-call', toolCallId: 'l1', toolName: 'lookup', input: JSON.stringify({ orderId: 'ORD-1' }) }], finishReason: { unified: 'tool-calls', raw: 'tool-calls' }, usage, warnings: [] }),
 };
-/** A run id of the caller's own, so one attacker's run is never another's target. */
-const ownId = (base: string, who: Who) => `${base}-${(who.principal as { id?: string }).id ?? 'anon'}-${who.names ?? ''}`;
+/**
+ * An id of the attacker's own (a run, or the thread an attack runs in), NEW for every call. A fixed id
+ * was shared by every caller and by the oracle's ghost call, so an earlier cell's write of it made a
+ * later cell meet a different refusal ("runId was started for another thread") instead of the gate
+ * under test — M9 (thread owner record ignored) was caught or missed depending on which cell ran first.
+ */
+let attackSeq = 0;
+const fresh = (base: string, who: Who) => `${base}-${(who.principal as { id?: string }).id ?? 'anon'}-${who.names ?? ''}-${++attackSeq}`;
 const router: any = { ...echo, doGenerate: async ({ prompt }: any) => ({ content: [{ type: 'text', text: JSON.stringify({ action: 'final', answer: `net:${userText(prompt)}` }) }], finishReason: stop, usage, warnings: [] }) };
 
 // ── callers ─────────────────────────────────────────────────────────────────────────────────────
@@ -453,24 +459,24 @@ export const DOORS: Record<string, Door> = {
       'cancel run': { kind: 'write', act: (w, t, who) => restDoor(w)(who, 'POST', `/runs/${encodeURIComponent(t.runId)}/cancel?durable=true`, {}) },
       'workflow run/resume on the id': { kind: 'write', act: (w, t, who) => restDoor(w)(who, 'POST', '/workflows/w/run', { runId: t.runId, resume: { approve: { ok: true } } }) },
       'workflow cancel': { kind: 'write', act: (w, t, who) => restDoor(w)(who, 'POST', `/workflows/runs/${encodeURIComponent(t.runId)}/cancel`, {}) },
-      'new run on the thread': { kind: 'write', act: (w, t, who) => withThread(t, (th) => restDoor(w)(who, 'POST', '/agents/a/run', { runId: 'atkR', prompt: 'x', threadId: th })) },
-      'chat surface turn on the run id': { kind: 'write', act: (w, t, who) => restDoor(w)(who, 'POST', '/agents/a/chat', { id: 'atkThread', runId: t.runId, messages: [{ id: 'm1', role: 'user', parts: [{ type: 'text', text: 'hi' }] }] }) },
-      'run the cross-run tool with the same key': { kind: 'write', act: (w, _t, who) => restDoor(w)(who, 'POST', '/agents/l/run', { runId: ownId('atkL', who), prompt: 'x' }) },
-      'agui surface run on the thread': { kind: 'write', act: (w, t, who) => withThread(t, (th) => restDoor(w)(who, 'POST', '/agents/a/agui', { runId: 'atkU', threadId: th, prompt: 'hi' })) },
+      'new run on the thread': { kind: 'write', act: (w, t, who) => withThread(t, (th) => restDoor(w)(who, 'POST', '/agents/a/run', { runId: fresh('atkR', who), prompt: 'x', threadId: th })) },
+      'chat surface turn on the run id': { kind: 'write', act: (w, t, who) => restDoor(w)(who, 'POST', '/agents/a/chat', { id: fresh('atkThread', who), runId: t.runId, messages: [{ id: 'm1', role: 'user', parts: [{ type: 'text', text: 'hi' }] }] }) },
+      'run the cross-run tool with the same key': { kind: 'write', act: (w, _t, who) => restDoor(w)(who, 'POST', '/agents/l/run', { runId: fresh('atkL', who), prompt: 'x' }) },
+      'agui surface run on the thread': { kind: 'write', act: (w, t, who) => withThread(t, (th) => restDoor(w)(who, 'POST', '/agents/a/agui', { runId: fresh('atkU', who), threadId: th, prompt: 'hi' })) },
     },
   },
   'chat-adapter (standalone)': {
     factories: ['createChatRoute'],
     ops: {
-      'turn on the run id': { kind: 'write', act: (w, t, who) => chatDoor(w, who)({ id: 'atkThread', runId: t.runId, messages: [{ id: 'm1', role: 'user', parts: [{ type: 'text', text: 'hi' }] }] }) },
-      'turn on the thread': { kind: 'write', act: (w, t, who) => withThread(t, (th) => chatDoor(w, who)({ id: th, runId: 'atkC', messages: [{ id: 'm1', role: 'user', parts: [{ type: 'text', text: 'hi' }] }] })) },
+      'turn on the run id': { kind: 'write', act: (w, t, who) => chatDoor(w, who)({ id: fresh('atkThread', who), runId: t.runId, messages: [{ id: 'm1', role: 'user', parts: [{ type: 'text', text: 'hi' }] }] }) },
+      'turn on the thread': { kind: 'write', act: (w, t, who) => withThread(t, (th) => chatDoor(w, who)({ id: th, runId: fresh('atkC', who), messages: [{ id: 'm1', role: 'user', parts: [{ type: 'text', text: 'hi' }] }] })) },
     },
   },
   'agui (standalone)': {
     factories: ['createAguiRoute', 'pipeAguiStream'],
     ops: {
-      'run on the run id': { kind: 'write', act: (w, t, who) => aguiDoor(w, who)({ runId: t.runId, threadId: 'atkThread', prompt: 'hi' }) },
-      'run on the thread': { kind: 'write', act: (w, t, who) => withThread(t, (th) => aguiDoor(w, who)({ runId: 'atkG', threadId: th, prompt: 'hi' })) },
+      'run on the run id': { kind: 'write', act: (w, t, who) => aguiDoor(w, who)({ runId: t.runId, threadId: fresh('atkThread', who), prompt: 'hi' }) },
+      'run on the thread': { kind: 'write', act: (w, t, who) => withThread(t, (th) => aguiDoor(w, who)({ runId: fresh('atkG', who), threadId: th, prompt: 'hi' })) },
     },
   },
   mcp: {
@@ -491,7 +497,7 @@ export const DOORS: Record<string, Door> = {
       'list threads': { kind: 'list', act: (w, t, who) => withThread(t, () => studioDoor(w)(who, 'GET', '/threads')) },
       'read thread': { kind: 'read', act: (w, t, who) => withThread(t, (th) => studioDoor(w)(who, 'GET', `/threads/${th}/messages`)) },
       'cancel run': { kind: 'write', act: (w, t, who) => studioDoor(w)(who, 'POST', `/runs/${encodeURIComponent(t.runId)}/cancel`, {}) },
-      'fork workflow run': { kind: 'write', act: (w, t, who) => studioDoor(w)(who, 'POST', `/workflows/w/runs/${encodeURIComponent(t.runId)}/fork`, { upto: 1, newRunId: 'atkV' }) },
+      'fork workflow run': { kind: 'write', act: (w, t, who) => studioDoor(w)(who, 'POST', `/workflows/w/runs/${encodeURIComponent(t.runId)}/fork`, { upto: 1, newRunId: fresh('atkV', who) }) },
     },
   },
   'engine (direct)': {
@@ -502,8 +508,8 @@ export const DOORS: Record<string, Door> = {
       'resumeRun': { kind: 'write', act: async (w, t, who) => { const e = engineDoor(w, who); return engineRes(durable.resumeRun(t.runId, { journal: e.journal, model: echo, caller: e.caller } as never)); } },
       'gnl.runWorkflow on the id': { kind: 'write', act: async (w, t, who) => { const e = engineDoor(w, who); return engineRes(e.gnl.runWorkflow('w', undefined, { runId: t.runId, caller: e.caller, resume: { approve: { ok: true } } })); } },
       'gnl.runNetwork on the id': { kind: 'write', act: async (w, t, who) => { const e = engineDoor(w, who); return engineRes(e.gnl.runNetwork('n', { runId: t.runId, task: 'x', caller: e.caller })); } },
-      'gnl.run the cross-run tool with the same key': { kind: 'write', act: async (w, _t, who) => { const e = engineDoor(w, who); return engineRes(e.gnl.run('l', { runId: ownId('atkL', who), prompt: 'x', caller: e.caller })); } },
-      'new run on the thread': { kind: 'write', act: async (w, t, who) => { const e = engineDoor(w, who); return t.threadId ? engineRes(e.gnl.run('a', { runId: 'atkE', prompt: 'x', threadId: t.threadId, caller: e.caller })) : undefined; } },
+      'gnl.run the cross-run tool with the same key': { kind: 'write', act: async (w, _t, who) => { const e = engineDoor(w, who); return engineRes(e.gnl.run('l', { runId: fresh('atkL', who), prompt: 'x', caller: e.caller })); } },
+      'new run on the thread': { kind: 'write', act: async (w, t, who) => { const e = engineDoor(w, who); return t.threadId ? engineRes(e.gnl.run('a', { runId: fresh('atkE', who), prompt: 'x', threadId: t.threadId, caller: e.caller })) : undefined; } },
     },
   },
   'queue worker': {
