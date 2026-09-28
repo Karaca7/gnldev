@@ -64,20 +64,23 @@ createScheduler(journal, gnl, { runnerForOrg: gnlFor }).start();
   (`withOrg`) or an end user's view — a trigger filed there would never fire. Pass the root journal and
   the trigger's `orgId`.
 - Sleeping workflows inside organizations: give the waker their ids. It scans each partition and tells
-  `resume` which organization the run is in:
+  `resume` which organization the run is in.
+- The waker resumes as staff (`caller: STAFF`). A resume that names nobody is refused on a user's run
+  (`RunOwnerMismatchError`), and the waker only logs it, so that workflow never wakes. Staff re-entering a
+  run continues it as its recorded owner: a user's workflow stays that user's.
 
 ```ts
 import { createWorkflowWaker } from '@gnldev/scheduler';
-import { toJournal } from '@gnldev/durable';
+import { STAFF, toJournal } from '@gnldev/durable';
 declare const storage: import('@gnldev/durable').Storage;
-declare const gnl: { runWorkflow(n: string, i: unknown, o?: { runId?: string }): Promise<unknown> };
+declare const gnl: { runWorkflow(n: string, i: unknown, o?: { runId?: string; caller?: typeof STAFF }): Promise<unknown> };
 declare const gnlFor: (orgId: string) => typeof gnl;
 
 createWorkflowWaker({
   journal: toJournal(storage.runs),
   orgs: ['acme', 'globex'], // or a function, asked on every tick
   resume: (runId, status, where) =>
-    (where ? gnlFor(where.orgId) : gnl).runWorkflow(status.workflowName, undefined, { runId }),
+    (where ? gnlFor(where.orgId) : gnl).runWorkflow(status.workflowName, undefined, { runId, caller: STAFF }),
 }).start();
 ```
 
