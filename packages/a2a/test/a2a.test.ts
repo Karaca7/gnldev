@@ -269,3 +269,42 @@ describe('@gnldev/a2a', () => {
     expect(seenRunIds).toEqual(['a2a:raw1']);
   });
 });
+
+// ADR-0002: whose the remote run is. The user is read from the run's identity channel
+// (`options.gnl.identity`, what @gnldev/durable's `identityOf` reads) — never from the tool's input.
+describe('a2a names the calling run\'s end user, and only that', () => {
+  function capture(secret?: string) {
+    const bodies: string[] = [];
+    const fetchImpl = (async (_url: any, init: any) => {
+      bodies.push(String(init.body));
+      return new Response(JSON.stringify({ text: 'ok', interrupts: [] }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as unknown as typeof fetch;
+    return { bodies, tool: createA2ATool({ endpoint: 'http://r', agentName: 'w', fetchImpl, ...(secret ? { secret } : {}) }) };
+  }
+
+  it('outside a GNL run (no identity channel): no user is sent, as before', async () => {
+    const { bodies, tool } = capture();
+    await tool.execute!({ task: 't' }, { toolCallId: 'c1' } as any);
+    expect(JSON.parse(bodies[0]!)).toEqual({ runId: 'a2a:c1', prompt: 't' });
+  });
+
+  it('inside a user\'s run: that user is sent as resourceId', async () => {
+    const { bodies, tool } = capture();
+    await tool.execute!({ task: 't' }, { toolCallId: 'c1', gnl: { identity: { kind: 'user', id: 'u-ayse', runId: 'p' } } } as any);
+    expect(JSON.parse(bodies[0]!)).toMatchObject({ resourceId: 'u-ayse' });
+  });
+
+  it('a staff or unknown run names nobody', async () => {
+    for (const identity of [{ kind: 'staff', runId: 'p' }, { kind: 'unknown', runId: 'p' }]) {
+      const { bodies, tool } = capture();
+      await tool.execute!({ task: 't' }, { toolCallId: 'c1', gnl: { identity } } as any);
+      expect(JSON.parse(bodies[0]!), identity.kind).not.toHaveProperty('resourceId');
+    }
+  });
+
+  it('the name travels inside the signed body (the HMAC covers it)', async () => {
+    const { bodies, tool } = capture('s');
+    await tool.execute!({ task: 't' }, { toolCallId: 'c1', gnl: { identity: { kind: 'user', id: 'u-ayse', runId: 'p' } } } as any);
+    expect(bodies[0]).toContain('"resourceId":"u-ayse"');
+  });
+});

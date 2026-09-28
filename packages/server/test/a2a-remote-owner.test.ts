@@ -3,10 +3,11 @@
 // (createRestApi, through `fetchImpl` = the remote app) with the service's own credential, the way the
 // a2a README wires it. The remote run's owner is read with the engine's one reading, `runOwnerOf`.
 //
-// The ADR's decision: the remote run should be Ayşe's (the tool reads her from the run's identity and
-// calls as an application naming her). This test states that and stays red until it holds.
+// Measured red first: with an application credential the remote answered 400 "resourceId is required";
+// with an operator credential the remote run was staff's. The ADR's resolution, now held here: the tool
+// reads the user from the run's identity channel and names her to the remote (`resourceId`).
 import { describe, it, expect } from 'vitest';
-import { InMemoryStorage, createGnl, runOwnerOf, toJournal, user } from '@gnldev/durable';
+import { InMemoryStorage, createGnl, runOwnerOf, toJournal, user, staff } from '@gnldev/durable';
 import { stepCountIs } from 'ai';
 import { createRestApi } from '../src/index.js';
 import { createA2ATool } from '../../a2a/src/index.js';
@@ -16,12 +17,13 @@ const usage = { inputTokens: { total: 1, text: 1 }, outputTokens: { total: 1, te
 const stop = { unified: 'stop', raw: 'stop' };
 const text = (t: string): any => ({ specificationVersion: 'v4', provider: 'm', modelId: 'm', supportedUrls: {}, doGenerate: async () => ({ content: [{ type: 'text', text: t }], finishReason: stop, usage, warnings: [] }) });
 /** Delegates once to the `remote` tool, then answers with what came back. */
-const delegating: any = {
+const delegatingWith = (input: Record<string, unknown>): any => ({
   specificationVersion: 'v4', provider: 'm', modelId: 'd', supportedUrls: {},
   doGenerate: async ({ prompt }: any) => ((prompt ?? []).some((m: any) => m.role === 'tool')
     ? { content: [{ type: 'text', text: 'done' }], finishReason: stop, usage, warnings: [] }
-    : { content: [{ type: 'tool-call', toolCallId: 'c1', toolName: 'remote', input: JSON.stringify({ task: 'AYSE-TASK' }) }], finishReason: { unified: 'tool-calls', raw: 'tool-calls' }, usage, warnings: [] }),
-};
+    : { content: [{ type: 'tool-call', toolCallId: 'c1', toolName: 'remote', input: JSON.stringify(input) }], finishReason: { unified: 'tool-calls', raw: 'tool-calls' }, usage, warnings: [] }),
+});
+const delegating = delegatingWith({ task: 'AYSE-TASK' });
 
 /** The remote deployment: one service credential, as an application (roleAuth's `client`) or as staff. */
 function remote(kind: 'application' | 'operator') {
@@ -51,4 +53,34 @@ describe('a2a: whose is the remote run', () => {
       expect(owners[0]).toMatch(/-> user:u-ayse$/);
     });
   }
+
+  /** The remote's runs, each with its owner as the engine reads it. */
+  async function remoteOwners(r: ReturnType<typeof remote>): Promise<string[]> {
+    const ids = (await r.storage.runs.listKeys!('')).filter((k) => k.endsWith(':input')).map((k) => k.slice(0, -':input'.length));
+    return Promise.all(ids.map(async (id) => {
+      const o = await runOwnerOf(toJournal(r.storage.runs) as never, id);
+      return o.state === 'owned' ? `${o.owner.kind}${o.owner.kind === 'user' ? `:${o.owner.id}` : ''}` : o.state;
+    }));
+  }
+
+  for (const kind of ['application', 'operator'] as const) {
+    it(`service credential as ${kind}: a user cannot make the remote run someone else's (a name in the tool input is ignored)`, async () => {
+      const r = remote(kind);
+      const tool = createA2ATool({ endpoint: 'http://remote', agentName: 'worker', fetchImpl: r.fetchImpl, headers: { authorization: 'Bearer svc' } });
+      const model = delegatingWith({ task: 'x', resourceId: 'u-ayse' });
+      const local = createGnl({ storage: new InMemoryStorage(), agents: { a: { model, tools: { remote: tool }, stopWhen: stepCountIs(3) } } } as never);
+      await local.run('a', { runId: 'local-m', prompt: 'hi', caller: user('u-mallory') });
+      expect(await remoteOwners(r)).toEqual(['user:u-mallory']);
+    });
+  }
+
+  it('a staff run names no user: an operator credential\'s remote run is staff\'s, an application\'s is refused', async () => {
+    for (const [kind, want] of [['operator', ['staff']], ['application', []]] as const) {
+      const r = remote(kind);
+      const tool = createA2ATool({ endpoint: 'http://remote', agentName: 'worker', fetchImpl: r.fetchImpl, headers: { authorization: 'Bearer svc' } });
+      const local = createGnl({ storage: new InMemoryStorage(), agents: { a: { model: delegating, tools: { remote: tool }, stopWhen: stepCountIs(3) } } } as never);
+      await local.run('a', { runId: 'local-s', prompt: 'hi', caller: staff() });
+      expect(await remoteOwners(r), kind).toEqual(want);
+    }
+  });
 });

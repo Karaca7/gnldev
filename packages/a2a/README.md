@@ -36,6 +36,17 @@ await runDurable({ runId: 'parent-1', journal, model, tools, prompt: 'Research X
 ## How it works
 The tool POSTs to the remote REST endpoint with a deterministic runId. Since both the remote and parent are durable, there's no double-execution even across the network — deterministic for distributed agent calls.
 
+## Whose run the remote run is
+Inside a GNL run, the tool names the calling run's end user to the remote as `resourceId` — read from
+the run's identity (`identityOf(options)`), never from the tool's input, so the model cannot name
+someone else. Give the remote a credential that may act for your users:
+- an **application** credential (`roleAuth`'s `client`): the remote run belongs to that user. Without a
+  user (a staff or `unknown` run, or a call outside a GNL run) the remote refuses with 400, as it refuses
+  any application that names nobody;
+- an **operator** credential: the remote run belongs to the named user; with no user named, it is staff's.
+
+A user credential ignores the name: a user speaks only for itself.
+
 ## License
 
 Apache-2.0 — see [LICENSE](./LICENSE).

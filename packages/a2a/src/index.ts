@@ -60,6 +60,23 @@ export class StepTimeoutError extends Error {
 }
 
 /**
+ * WHOSE WORK THIS IS, for the remote: the end user of the calling run, read from @gnldev/durable's
+ * identity channel — `options.gnl.identity`, what `identityOf(options)` reads. Read structurally, so
+ * this package keeps depending on no @gnldev package.
+ *
+ * Only a user is named. Staff, `unknown`, or a call outside a GNL run (no channel) names nobody, and
+ * the remote runs the call as the credential's own, as before. The user comes from the channel and
+ * never from the tool's input: the model cannot make the remote run someone else's.
+ *
+ * Measured before this (ADR-0002 open point): with an application credential the remote answered
+ * 400 "resourceId is required"; with an operator credential the remote run was staff's, not the user's.
+ */
+function endUserOf(options: unknown): string | undefined {
+  const id = (options as { gnl?: { identity?: { kind?: unknown; id?: unknown } } } | undefined)?.gnl?.identity;
+  return id && typeof id === 'object' && id.kind === 'user' && typeof id.id === 'string' && id.id !== '' ? id.id : undefined;
+}
+
+/**
  * Exposes a remote agent as a tool. The router/parent agent calls it with `task`; the tool POSTs to the
  * remote `/agents/:name/run` (with deterministic runId) and returns the result. Durable when used within
  * `@gnldev/durable`'s `runDurable`.
@@ -103,7 +120,10 @@ export function createA2ATool(opts: A2AToolOptions): Tool<{ task: string }, A2AR
       // the thrown error passes upward as-is (K3: no silent failure).
       if (opts.budgetGuard) await opts.budgetGuard({ agentName: opts.agentName, task, runId });
       const timeoutMs = opts.timeoutMs ?? 30_000;
-      const bodyStr = JSON.stringify({ runId, prompt: task });
+      // The remote reads `resourceId` for an application credential (the user it acts for) and for an
+      // operator (staff naming a user speaks for that user); a user credential ignores it.
+      const user = endUserOf(options);
+      const bodyStr = JSON.stringify({ runId, prompt: task, ...(user !== undefined ? { resourceId: user } : {}) });
       const headers: Record<string, string> = { 'content-type': 'application/json', ...(opts.headers ?? {}) };
       if (opts.secret) {
         // signature = HMAC(secret, timestamp + '.' + body) → the server side (a2aSecret) verifies with the SAME formula.
