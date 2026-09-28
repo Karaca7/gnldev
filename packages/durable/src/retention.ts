@@ -15,6 +15,7 @@ import type { Journal, JournalReader } from './journal.js';
 type FrozenInputLike = { at?: number } & Record<string, unknown>;
 import type { WorkStore, VectorStore } from './storage.js';
 import { getRunCost } from './cost.js';
+import { metricsRunKey, metricsDoneKey, metricsScoresDoneKey } from './metrics.js';
 import { USAGE_KEY, usageCountedKey } from './budget.js';
 import type { OrganizationUsage } from './budget.js';
 import type { LogItem } from './durable-log.js';
@@ -214,9 +215,17 @@ async function uncountUsage(journal: Journal & Partial<JournalReader>, runId: st
  * one without, the `${runId}:` prefix delete still takes it, which is the bound stated rather than
  * assumed away. Every adapter shipped here has listKeys.
  */
-/** `resthr:<resourceId>:<threadId>` — who a thread belonged to, kept AFTER the run that said so. */
+/**
+ * `resthr:<resourceId>:<threadId>` — who a thread belonged to, kept AFTER the run that said so.
+ *
+ * The resourceId part is ESCAPED (`%` and `:`), because both halves may contain ':' and the key has
+ * to say where one ends. Unescaped, `resthr:bob:evil:th1` read as bob's trace of thread `evil:th1`,
+ * and erasing `bob` deleted `bob:evil`'s trace. An id with neither character is written byte for byte
+ * as before.
+ */
+const escOwnerPart = (v: string) => v.replace(/%/g, '%25').replace(/:/g, '%3A');
 export const ownershipTraceKey = (resourceId: string, threadId: string): string =>
-  `resthr:${resourceId}:${threadId}`;
+  `resthr:${escOwnerPart(resourceId)}:${threadId}`;
 
 /**
  * Whether erasing `resourceId` should take `threadId` with it. Only their own threads: a run of theirs
@@ -240,7 +249,7 @@ async function threadIsTheirs(journal: Journal, threadId: string, resourceId: st
   for (const k of await lk.call(journal, pre)) {
     const rest = k.slice(pre.length);
     const cut = rest.indexOf(':');
-    if (cut > 0 && rest.slice(cut + 1) === threadId && rest.slice(0, cut) !== resourceId) return false;
+    if (cut > 0 && rest.slice(cut + 1) === threadId && rest.slice(0, cut) !== escOwnerPart(resourceId)) return false;
   }
   return true;
 }
@@ -322,6 +331,9 @@ export async function purgeRun(
   total += await deleteExactKey(journal, runKeys.memUserAppended(runId)); // write-ahead marker — same lifecycle
   total += await del(`net:${runId}:`); // blanket cascade for journals without listKeys (direct level)
   total += await deleteExactKey(journal, workflowStatusKey(runId)); // top-level, so the prefixes above miss it
+  // The per-run metrics rows are top-level too, and their keys carry the runId — which for an owned
+  // job or trigger run is its owner's name (`job:~o~acme:ayse:…`). The aggregate counters stay.
+  for (const k of [metricsRunKey(runId), metricsDoneKey(runId), metricsScoresDoneKey(runId)]) total += await deleteExactKey(journal, k);
   return total;
 }
 
@@ -353,6 +365,63 @@ export async function purgeBatch(journal: Journal, batchId: string): Promise<num
   if (batchId.includes(':')) throw new Error(`@gnldev/durable: purgeBatch('${batchId}') — batchId must not contain ':' (prefix boundary)`);
   const del = requireDelete(journal);
   return del(`batch:${batchId}:`);
+}
+
+/**
+ * The person-keyed families (`xid:res:<rid>:`, `lesson:res:<rid>:`, `suggstats:lesson:res:<rid>:`)
+ * erased WITHOUT taking a longer id's keys.
+ *
+ * `xid:res:bob:` is not a boundary: user ids may contain ':', and `xid:res:bob:evil:send:<h>` belongs
+ * to `bob:evil`. Measured before this: erasing `bob` deleted `bob:evil`'s cross-channel ids, lessons
+ * and lesson counters. What the family writes AFTER the id tells them apart: a lesson ends in one
+ * uuid (no ':'), a cross-channel id in `<toolName>:<16-hex hash>` with the tool named in the value. A
+ * longer id's key always has a ':' more than that shape allows ("foreign").
+ *
+ * The same shape as `purgeThreadNamespace`: no foreign key visible (the overwhelmingly common case)
+ * → the three prefix deletes of before, which also reach the `suggstats:` COUNTER rows a key listing
+ * cannot see. A foreign key visible → exact deletes of this person's keys only, and their counters by
+ * the lesson ids found. Without `listKeys` there is nothing to filter on, so the prefix deletes stand —
+ * the bound `purgeOwnNamespace` states too; every adapter shipped here has listKeys.
+ */
+async function purgePersonFamilies(journal: Journal, resourceId: string): Promise<number> {
+  const del = requireDelete(journal);
+  const xidPre = `xid:res:${resourceId}:`;
+  const lessonPre = `lesson:res:${resourceId}:`;
+  const statsPre = `suggstats:lesson:res:${resourceId}:`;
+  const lk = journal.listKeys;
+  if (typeof lk !== 'function') return (await del(xidPre)) + (await del(lessonPre)) + (await del(statsPre));
+  const own: string[] = [];
+  const suggIds = new Set<string>();
+  let foreign = false;
+  for (const k of await lk.call(journal, xidPre)) {
+    const rest = k.slice(xidPre.length);
+    if (xidShape(rest, await journal.get(k)) === 'own') own.push(k); else foreign = true;
+  }
+  for (const [pre, isStats] of [[lessonPre, false], [statsPre, true]] as const) {
+    for (const k of await lk.call(journal, pre)) {
+      const rest = k.slice(pre.length);
+      if (rest.includes(':')) { foreign = true; continue; }
+      own.push(k);
+      if (!isStats) suggIds.add(rest);
+    }
+  }
+  if (!foreign) return (await del(xidPre)) + (await del(lessonPre)) + (await del(statsPre));
+  let total = 0;
+  for (const k of own) total += await deleteExactKey(journal, k);
+  // A counter row is invisible to listKeys and to get(): reached by its full key. The key ends in a
+  // uuid, so the prefix delete of the full key is that one row.
+  for (const id of suggIds) total += await del(`${statsPre}${id}`);
+  return total;
+}
+/**
+ * `xid:res:<rid>:<toolName>:<argsHash>`. `own` when the rest is this person's shape — the tool the
+ * record names, then the hash; a rest with fewer than two ':' cannot belong to a longer id either.
+ */
+function xidShape(rest: string, value: unknown): 'own' | 'foreign' {
+  const cut = rest.lastIndexOf(':');
+  const tool = (value as { toolName?: unknown } | undefined)?.toolName;
+  if (cut > 0 && /^[0-9a-f]{16}$/.test(rest.slice(cut + 1)) && typeof tool === 'string') return rest.slice(0, cut) === tool ? 'own' : 'foreign';
+  return rest.split(':').length - 1 < 2 ? 'own' : 'foreign';
 }
 
 /**
@@ -409,9 +478,7 @@ export async function purgeResource(
   // counter's key itself names the person, so it must die with them (GDPR brief audit, K27 EK-3).
   // deletePrefix sweeps counter rows since P1.6, so this reaches HINCRBY-backed adapters too.
   let total =
-    (await del(`xid:res:${resourceId}:`)) +
-    (await del(`lesson:res:${resourceId}:`)) +
-    (await del(`suggstats:lesson:res:${resourceId}:`));
+    (await purgePersonFamilies(journal, resourceId));
 
   // The person's RUNS — enumerated by the same field the ownership gates read.
   // Structural read: `listRunsPaged` lives on JournalReader, and a Journal usually IS one (the
