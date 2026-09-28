@@ -27,6 +27,7 @@ export type {
   DatasetMeta,
   EvalDatasetResultLike,
   StudioMcpServer,
+  StudioCallbackCtx,
 } from './server.js';
 export { createStudioRunner } from './runner.js';
 export type { GnlLike, RunnerConfigLike, RunnerAgentLike, RunnerToolLike, MakeRunnerOptions } from './runner.js';

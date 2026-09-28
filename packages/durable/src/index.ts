@@ -42,6 +42,8 @@ export {
   NotAnAgentRunError,
   CALLER_CONFLICT_CODES, callerConflictCode, publicConflictDetail, FOREIGN_PARTY_DETAIL_FIELDS,
   BLOCKED_ERROR_CODES, blockedErrorCode, upstreamFailure, UPSTREAM_ERROR_CODES, LIMIT_ERROR_CODES,
+  // The HTTP status of every wire code, for a client or a door that maps a code to a response.
+  WIRE_ERROR_STATUS,
   // The error→note→help formatter. Exported because the refusals a user actually meets are split
   // across packages — @gnldev/server writes the ones that happen before a run starts — and a second
   // hand-rolled copy of this shape is how three surfaces end up teaching three different lessons.
@@ -110,7 +112,7 @@ export type { AdoptIntoOrgResult,
   Page, ListQuery,
   RunJournal, MemoryStore, VectorStore, WorkStore, CacheStore, MetaStore,
   ThreadRecord, MessageRecord, MessageAppend, Observation, RecallOptions,
-  VectorDoc, VectorItem, VectorMatch, LogRecord,
+  VectorDoc, VectorItem, VectorMatch, VectorQueryOptions, VectorDeleteWhere, LogRecord,
   Storage, CapabilityLevel, CapabilityMatrix, StoreName, CompositeConfig,
 } from './storage.js';
 export { InMemoryStorage } from './in-memory-storage.js';

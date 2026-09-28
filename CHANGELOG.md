@@ -99,7 +99,8 @@ If you are upgrading, check these first:
   refused whole; SQL stores write a batch in one transaction. `adoptIntoOrg` throws
   `VectorOwnerConflictError` on an id collision.
 - The durable vector stores apply `filter` on query and delete (it was ignored: a filtered RAG tool
-  answered from outside the filter). `VectorQueryOptions` and `VectorDeleteWhere` gain `filter`.
+  answered from outside the filter). `VectorQueryOptions` and `VectorDeleteWhere` gain `filter`,
+  and both types are now exported from `@gnldev/durable`.
   rag's `PoolLike` gains an optional `connect`.
 
 **Doors: one way in.** Breaking:
@@ -126,9 +127,9 @@ What it borrowed from server now lives in `@gnldev/durable`, which every door al
 `pnpm check:hygiene` fails if a door package (chat-adapter, agui, mcp) depends on another door,
 `@gnldev/server` or `@gnldev/studio`. Breaking:
 
-- `EDGE_ERROR_CODES` (@gnldev/server) no longer has `runLimitExceeded` / `toolLoopDetected`, and
-  `EDGE_ERROR_STATUS` no longer lists their codes. Use `LIMIT_ERROR_CODES` from `@gnldev/durable`
-  (statuses in `WIRE_ERROR_STATUS`). The wire strings did not change. Studio's
+- `EDGE_ERROR_CODES` (@gnldev/server) no longer has `runLimitExceeded` / `toolLoopDetected`. Use
+  `LIMIT_ERROR_CODES` from `@gnldev/durable`; their HTTP statuses are in `WIRE_ERROR_STATUS`, now
+  exported from `@gnldev/durable`. The wire strings did not change. Studio's
   `STUDIO_ERROR_CODES` drops its copy of the same two.
 - `StreamSurface` and `StreamSurfaceInput` are defined in `@gnldev/durable`. Server still exports both;
   its `StreamSurface` is now `StreamSurface<Context>` from durable (same shape).
@@ -144,7 +145,7 @@ What it borrowed from server now lives in `@gnldev/durable`, which every door al
 - A run with only an owner record counts as new, not as a replay, and gets no budget exemption.
 - `/resume` seals the RECORDED owner; an unstamped record's `resourceId` is ignored.
 - `GET /workflows/runs?resourceId=` shows no unstamped or ownerless rows, for an operator's filter too.
-- Studio: `StudioCallbackCtx.caller`; the runner runs playground and code workflows as that caller,
+- Studio: `StudioCallbackCtx.caller` (the type is now exported from `@gnldev/studio`); the runner runs playground and code workflows as that caller,
   and a host bridge that passes no ctx runs as `unknown`. `runTool` runs as the ctx's caller (it was
   always `STAFF`). The playground passes `resourceId` through the caller; an invalid name is a 400.
 
