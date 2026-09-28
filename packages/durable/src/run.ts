@@ -2916,9 +2916,16 @@ export async function runDurable(args: RunDurableArgs): Promise<DurableResult> {
   // BEFORE the try: a bad runId must reject the CALL, not be recorded as this run's failure —
   // `runFailed(journal, args.runId, ...)` would itself write under the very prefix being refused.
   assertRunIdSafe(args.runId);
+  // The outcome record is the ADMITTED run's. An error thrown before admission — an owner record the
+  // store could not read, a thread whose owner it could not read, a refusal — is the caller's, not
+  // the run's: recording it wrote `failed` under a run the caller had no right to touch. Measured by
+  // the conformance registry: with the owner record unreadable, another user's call rejected with
+  // EIO and still stamped the owner's run `failed`. An unreadable owner is not written through.
+  const admission = { admitted: false };
   try {
-    return await runDurableGuarded(await normalizeEntryArgs(args));
+    return await runDurableGuarded(await normalizeEntryArgs(args), admission);
   } catch (err) {
+    if (!admission.admitted) throw err;
     const kind = classifyRunError(err);
     if (kind === 'failure') await runFailed(args.journal, args.runId, err, Date.now());
     // Fenced out MID-FLIGHT: this worker got in and lost to a concurrent executor. Fill-only, so the
@@ -2929,7 +2936,7 @@ export async function runDurable(args: RunDurableArgs): Promise<DurableResult> {
   }
 }
 
-async function runDurableGuarded(args: RunDurableArgs): Promise<DurableResult> {
+async function runDurableGuarded(args: RunDurableArgs, admission: { admitted: boolean }): Promise<DurableResult> {
   // A COMPENSATED (unwound) run refuses to run/resume — replaying memoized successes
   // on top of an already-reverted world would silently "complete" a transaction that was undone.
   await assertNotCompensated(args.journal, args.runId);
@@ -2954,14 +2961,14 @@ async function runDurableGuarded(args: RunDurableArgs): Promise<DurableResult> {
     const heartbeat = setInterval(() => { inflight = handle.renew(lock.ttlMs).catch(() => false); }, beat);
     (heartbeat as any).unref?.();
     try {
-      return await runDurableInner(args);
+      return await runDurableInner(args, admission);
     } finally {
       clearInterval(heartbeat);
       await inflight;
       await handle.release();
     }
   }
-  return runDurableInner(args);
+  return runDurableInner(args, admission);
 }
 
 
@@ -3031,7 +3038,7 @@ async function bornAs(journal: Journal, runId: string, owner: RunOwner, caller: 
   }
 }
 
-async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
+async function runDurableInner(args: RunDurableArgs, admission: { admitted: boolean }): Promise<DurableResult> {
   // `workKey`/`workScope` are pulled OUT of `rest` deliberately: `rest` is both the frozen input and
   // the option bag handed to `generateText`, so a declared name left in it would travel to the
   // provider as an unknown request field and land in `:input` twice under two different meanings.
@@ -3085,6 +3092,8 @@ async function runDurableInner(args: RunDurableArgs): Promise<DurableResult> {
   await assertRunAdmissible(journal, runId, frozenInput, rawInputHash, { strictInput, conflictLedger, auditOnReject, tombstonePolicy, actor, resourceId, approvals });
   if (entry.refusal) throw entry.refusal;
   await bornAs(journal, runId, entry.owner, caller, { ...(agentName ? { agent: agentName } : {}), ...(threadId ? { threadId } : {}), ...(actor ? { actor } : {}), ...(workKey ? { workKey } : {}), ...(workScope ? { workScope } : {}) });
+  // ADMITTED: the run is this caller's to act in. From here on a failure is the run's own (runDurable).
+  admission.admitted = true;
   // RESUME-GATE probe, BEFORE runStarted buries the verdict under 'running': a re-entry of a run
   // that already ENDED replays from the journal and must not be judged by the input gates — a throw
   // there overwrites the ending with 'failed' (see runResumeGates). 'failed' is NOT an ending here:
