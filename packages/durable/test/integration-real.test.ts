@@ -354,6 +354,15 @@ describe.skipIf(!RUN)('REAL Redis — SET NX / TTL / MGET (FakeRedis fidelity ch
     }
   });
 
+  it('listKeys with a limit is a bounded probe on real Redis (SCAN stops early)', async () => {
+    for (let i = 0; i < 50; i++) await a.runs.put(`probe:tool:c${i}`, { i });
+    const probe = await a.runs.listKeys('probe:', { limit: 2 });
+    expect(probe.length).toBeLessThanOrEqual(2);
+    expect(probe.length).toBeGreaterThan(0);
+    for (const k of probe) expect(k.startsWith('probe:')).toBe(true);
+    expect(await a.runs.listKeys('probe-none:', { limit: 2 })).toEqual([]);
+  });
+
   it('ackOnce on real Redis: concurrent from two connections → exactly one true', async () => {
     const results = await Promise.all([a.work.ackOnce('job-1'), b.work.ackOnce('job-1')]);
     expect(results.filter(Boolean).length).toBe(1);
@@ -795,6 +804,11 @@ describe.skipIf(!RUN)('REAL Postgres — prefix ranges under this server\'s coll
     const keys = await s.runs.listKeys(`${run}:`);
     // THE assertion. With the fix reverted this is [] on en_US.utf8 — an empty list, no error.
     expect(keys.sort()).toEqual([`${run}:model:a`, `${run}:model:b`, `${run}:model:c`]);
+    // The bounded probe (`runOwnerOf` asks it on every new run): at most `limit` keys, from inside the prefix.
+    const probe = await s.runs.listKeys(`${run}:`, { limit: 2 });
+    expect(probe.length).toBe(2);
+    for (const k of probe) expect(k.startsWith(`${run}:`)).toBe(true);
+    expect(await s.runs.listKeys(`${SEED}nothing:`, { limit: 2 })).toEqual([]);
   });
 
   it('deletePrefix really deletes, and stops at the prefix boundary', async () => {
