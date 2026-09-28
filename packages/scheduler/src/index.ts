@@ -2,9 +2,10 @@
 // Keeps triggers in the journal (definition immutable, state mutable). The poll loop (now=Date.now())
 // fires due triggers exactly-once (acquireRunLock + per-fireCount runId). The workflow run carries its
 // own durable guarantee. Time = DATA (nextRunAt in the journal) → resolve-then-freeze, replay-safe.
-import { acquireRunLock, createPollLoop, orgPrefix, ownedName } from '@gnldev/durable';
-import type { Journal } from '@gnldev/durable';
+import { acquireRunLock, createPollLoop, orgPrefix, ownedName, ownedPrefix, ownerOfName, user, staff, UNKNOWN } from '@gnldev/durable';
+import type { Journal, Caller } from '@gnldev/durable';
 import { nextCronTime } from './cron.js';
+import { assertRootJournal } from './root-journal.js';
 
 export { nextCronTime, parseField } from './cron.js';
 export { createWorkflowWaker } from './workflow-waker.js';
@@ -15,7 +16,8 @@ export interface WorkflowRunner {
   runWorkflow(
     name: string,
     input: unknown,
-    opts?: { runId?: string; resourceId?: string },
+    /** `caller` is the trigger's recorded owner (see `ScheduleSpec.caller`), decided by the scheduler. */
+    opts?: { runId?: string; caller?: Caller },
   ): Promise<{ runId: string; suspended?: boolean; output?: unknown }>;
 }
 
@@ -40,10 +42,16 @@ export interface ScheduleSpec {
   /** Max attempts on failure (default 5). */
   maxAttempts?: number;
   /**
-   * The end user this trigger works for. Each fire's run gets it as `resourceId`, so the run is theirs:
-   * they can see it and approve it. Left out, the trigger is the system's and only staff can.
+   * The end user this trigger works for — shorthand for `caller: user(resourceId, orgId)`. Each fire
+   * runs as them, so the run is theirs: they can see it and approve it.
    */
   resourceId?: string;
+  /**
+   * Whose the trigger is, as an engine `Caller`. Every fire hands it to `runWorkflow` as the run's
+   * caller. `staff(org?)` is an explicit operator/system trigger. With neither this nor `resourceId` the
+   * fires run as `unknown`: never staff by omission, and never visible to an end user.
+   */
+  caller?: Caller;
   /**
    * The organization this trigger works in. Each fire runs on `runnerForOrg(orgId)`; without one the
    * fire fails rather than run on the organization-less runner, where the organization cannot see it.
@@ -68,12 +76,39 @@ interface TriggerDef {
   misfire: MisfirePolicy;
   resourceId?: string;
   orgId?: string;
+  ownerKind?: 'staff';
+}
+
+/** The caller a trigger's recorded owner stands for — the ONE reading every fire uses. */
+function callerOfTrigger(def: TriggerDef): Caller {
+  if (typeof def.resourceId === 'string' && def.resourceId !== '') return user(def.resourceId, def.orgId);
+  if (def.ownerKind === 'staff') return staff(def.orgId);
+  return UNKNOWN;
+}
+
+/** The owner fields a trigger records, from its spec. One owner per trigger. */
+function triggerOwnerOf(spec: Pick<ScheduleSpec, 'caller' | 'resourceId' | 'orgId'>): { resourceId?: string; orgId?: string; ownerKind?: 'staff' } {
+  const c = spec.caller;
+  const cOrg = c === undefined || c.kind === 'unknown' ? undefined : c.orgId;
+  const cRes = c?.kind === 'user' ? c.id : undefined;
+  if (c !== undefined && ((spec.resourceId !== undefined && spec.resourceId !== cRes) || (spec.orgId !== undefined && cOrg !== undefined && spec.orgId !== cOrg))) {
+    throw new TypeError('@gnldev/scheduler: a trigger was given both `caller` and a different `resourceId`/`orgId` — one owner per trigger.');
+  }
+  const resourceId = cRes ?? spec.resourceId;
+  const orgId = cOrg ?? spec.orgId;
+  return {
+    ...(resourceId !== undefined ? { resourceId } : {}),
+    ...(orgId !== undefined ? { orgId } : {}),
+    ...(c?.kind === 'staff' ? { ownerKind: 'staff' as const } : {}),
+  };
 }
 interface TriggerState {
   nextRunAt: number;
   attempts: number;
   fireCount: number;
   status: 'pending' | 'done' | 'failed';
+  /** Set by `moveTrigger` on the retired system trigger: the owned id it now lives under. */
+  movedTo?: string;
 }
 
 const DEF = (id: string) => `sched:def:${id}`;
@@ -227,7 +262,10 @@ async function fireCountAfterLoss(journal: Journal, id: string): Promise<number>
 }
 
 /** Schedules a workflow (at | every | cron). Idempotent: repeating with the same id = no-op. Returns the id. */
-export async function scheduleWorkflow(journal: Journal, spec: ScheduleSpec, now: number = Date.now()): Promise<string> {
+export async function scheduleWorkflow(journal: Journal, input: ScheduleSpec, now: number = Date.now()): Promise<string> {
+  assertRootJournal(journal, 'scheduleWorkflow');
+  const owner = triggerOwnerOf(input);
+  const spec: ScheduleSpec = { ...input, caller: undefined, resourceId: owner.resourceId, orgId: owner.orgId };
   // Checked when the trigger is set: found at fire time, a bad id is maxAttempts failures and a dead
   // trigger instead of one error to the caller.
   if (spec.orgId !== undefined) orgPrefix(spec.orgId);
@@ -236,7 +274,7 @@ export async function scheduleWorkflow(journal: Journal, spec: ScheduleSpec, now
   }
   // A name within its owner (`ownedName`): triggers of every organization share this journal, and the
   // id defaults to the workflow's name, so the second user to schedule it got the first one's trigger.
-  const id = ownedName(spec.id ?? spec.name, spec);
+  const id = ownedName(spec.id ?? spec.name, { resourceId: owner.resourceId, orgId: owner.orgId });
   if ((await journal.get(DEF(id))) !== undefined) {
     /**
      * THE DEFINITION EXISTS. That used to end the function — and it was reading only half the record.
@@ -285,8 +323,7 @@ export async function scheduleWorkflow(journal: Journal, spec: ScheduleSpec, now
     value,
     maxAttempts: spec.maxAttempts ?? 5,
     misfire: spec.misfire ?? 'skip',
-    ...(spec.resourceId !== undefined ? { resourceId: spec.resourceId } : {}),
-    ...(spec.orgId !== undefined ? { orgId: spec.orgId } : {}),
+    ...owner,
   };
   await journal.put(DEF(id), def);
   const state: TriggerState = { nextRunAt: firstRunAt(spec, now), attempts: 0, fireCount: 0, status: 'pending' };
@@ -324,6 +361,7 @@ export async function pollScheduler(
   now: number = Date.now(),
   opts: { owner?: string; retryMs?: number; budgetGuard?: BudgetGuard; lockTtlMs?: number; runnerForOrg?: RunnerForOrg } = {},
 ): Promise<PollResult> {
+  assertRootJournal(journal, 'pollScheduler');
   if (!journal.listKeys) throw new Error('@gnldev/scheduler: journal.listKeys is required (trigger enumeration)');
   const owner = opts.owner ?? `sched-${Math.random().toString(36).slice(2, 8)}`;
   const retryMs = opts.retryMs ?? 30_000;
@@ -425,7 +463,9 @@ export async function pollScheduler(
             `it was NOT run on the organization-less runner, where that organization could not see it. Pass runnerForOrg to createScheduler/pollScheduler.`,
           );
         }
-        result = await target.runWorkflow(def.name, def.input, { runId, ...(def.resourceId !== undefined ? { resourceId: def.resourceId } : {}) });
+        // The fire runs AS the trigger's recorded owner (ADR-0002): the caller is decided here, once,
+        // from the definition — the runner does not get to pick it, and forgetting it cannot happen.
+        result = await target.runWorkflow(def.name, def.input, { runId, caller: callerOfTrigger(def) });
       } catch (e) {
         // DEFERRAL, not attempt: the run is already in flight elsewhere (see isRunBusyAtAcquisition).
         // `attempts` is untouched, `status` stays 'pending', and — this is the half that cost the live
@@ -510,6 +550,8 @@ export interface TriggerInfo {
   resourceId?: string;
   /** The organization this trigger works in. */
   orgId?: string;
+  /** Set when `moveTrigger` retired this trigger: the owned id that replaced it. */
+  movedTo?: string;
   /** Last error if status='failed' (if any, from `sched:fail:<id>`). */
   lastError?: string;
   lastErrorAt?: number;
@@ -534,6 +576,7 @@ export interface TriggerInfo {
  * results sorted alphabetically by id (stable list order).
  */
 export async function listTriggers(journal: Journal): Promise<TriggerInfo[]> {
+  assertRootJournal(journal, 'listTriggers');
   if (!journal.listKeys) throw new Error('@gnldev/scheduler: listTriggers requires journal.listKeys (trigger enumeration)');
   const defKeys = await journal.listKeys('sched:def:');
   const out: TriggerInfo[] = [];
@@ -556,6 +599,7 @@ export async function listTriggers(journal: Journal): Promise<TriggerInfo[]> {
       misfire: def.misfire,
       ...(def.resourceId !== undefined ? { resourceId: def.resourceId } : {}),
       ...(def.orgId !== undefined ? { orgId: def.orgId } : {}),
+      ...(state.movedTo !== undefined ? { movedTo: state.movedTo } : {}),
     };
     if (state.status === 'failed') {
       const fail = await journal.get<{ error: string; at: number }>(FAIL(id));
@@ -597,6 +641,7 @@ export function createScheduler(
   runner: WorkflowRunner,
   opts: { pollMs?: number; owner?: string; retryMs?: number; backoff?: boolean; maxPollMs?: number; budgetGuard?: BudgetGuard; lockTtlMs?: number; runnerForOrg?: RunnerForOrg } = {},
 ): Scheduler {
+  assertRootJournal(journal, 'createScheduler');
   const pollMs = opts.pollMs ?? 1000;
   const backoffOn = opts.backoff ?? false;
   const maxPollMs = opts.maxPollMs ?? pollMs * 32;
@@ -615,5 +660,93 @@ export function createScheduler(
     poll,
     start: loop.start,
     stop: loop.stop,
+  };
+}
+
+// ─── Upgrades and erasure ──────────────────────────────────────────────────────────────────────
+
+/**
+ * Give an existing SYSTEM trigger (an id written before triggers had owners) to an owner, without
+ * doubling it.
+ *
+ * `scheduleWorkflow` stores an owned trigger under `ownedName(id, owner)`. A host that adds `orgId` (or
+ * a user) to a spec it already scheduled gets a SECOND trigger on its next boot, and both fire. Call
+ * this once per id during the upgrade, BEFORE the first boot with the new spec: the owned trigger gets
+ * the old definition (plus the owner) and the old state — its next time, attempts and fire count — and
+ * the old one is retired (`status: 'done'`, `movedTo`). The post-upgrade `scheduleWorkflow` then finds
+ * the owned trigger and is a no-op.
+ *
+ * Returns the owned id, or `null` when there is no such trigger. Refuses an id that already has an owner.
+ */
+export async function moveTrigger(
+  journal: Journal,
+  fromId: string,
+  to: Pick<ScheduleSpec, 'caller' | 'resourceId' | 'orgId'>,
+): Promise<string | null> {
+  assertRootJournal(journal, 'moveTrigger');
+  const from = ownerOfName(fromId);
+  if (from.resourceId !== undefined || from.orgId !== undefined) {
+    throw new TypeError(`@gnldev/scheduler: moveTrigger('${fromId}') — that trigger already has an owner; only a system trigger is moved.`);
+  }
+  const owner = triggerOwnerOf(to);
+  if (owner.resourceId === undefined && owner.orgId === undefined) {
+    throw new TypeError('@gnldev/scheduler: moveTrigger needs an owner to move the trigger to (`caller`, `resourceId` or `orgId`).');
+  }
+  if (owner.orgId !== undefined) orgPrefix(owner.orgId);
+  const def = await journal.get<TriggerDef>(DEF(fromId));
+  const state = await journal.get<TriggerState>(STATE(fromId));
+  if (!def || !state) return null;
+  const toId = ownedName(fromId, { resourceId: owner.resourceId, orgId: owner.orgId });
+  if ((await journal.get(DEF(toId))) === undefined) {
+    const { resourceId: _r, orgId: _o, ownerKind: _k, ...rest } = def;
+    await journal.put(DEF(toId), { ...rest, ...owner } satisfies TriggerDef);
+    // The run ids start over under the new id (`sched:<toId>:<n>`), so the count carries on without
+    // pointing a fire at a run the old id already completed.
+    const { movedTo: _m, ...carried } = state;
+    await journal.put(STATE(toId), carried satisfies TriggerState);
+  }
+  if (state.status === 'pending') {
+    const retired: TriggerState = { ...state, status: 'done', movedTo: toId };
+    if (journal.putIfMatch) {
+      if (!(await journal.putIfMatch(STATE(fromId), state, retired))) {
+        throw new Error(`@gnldev/scheduler: moveTrigger('${fromId}') — the trigger fired while it was being moved; stop the pollers and run it again.`);
+      }
+    } else {
+      await journal.put(STATE(fromId), retired);
+    }
+  }
+  return toId;
+}
+
+/** What `eraseSubject` (in `@gnldev/durable`) calls to erase one person's share of a package. */
+export interface SubjectEraser {
+  name: string;
+  erase(owner: { resourceId: string; orgId?: string }): Promise<number>;
+}
+
+/**
+ * Erase one person's triggers: definition (with its `input`), state, failure and skip records, and the
+ * fire locks (`sched:<id>:<n>:fire:lock`, plus the fires' runs when the trigger has no organization).
+ * Found by the id prefix the engine wrote (`ownedPrefix`), never by payload. The fires' runs in an
+ * organization's journal carry the owner record, so `purgeResource` (called by `eraseSubject`) takes them.
+ *
+ * Refuses a journal that cannot `deletePrefix` rather than report a partial erasure as done.
+ */
+export function triggerEraser(journal: Journal): SubjectEraser {
+  assertRootJournal(journal, 'triggerEraser');
+  return {
+    name: 'triggers',
+    async erase(owner) {
+      const del = journal.deletePrefix;
+      if (typeof del !== 'function') {
+        throw new Error("@gnldev/scheduler: the journal cannot deletePrefix, so this person's triggers cannot be erased");
+      }
+      const prefix = ownedPrefix(owner);
+      let n = 0;
+      for (const fam of ['sched:def:', 'sched:state:', 'sched:fail:', 'sched:budget-skip:', 'sched:busy-skip:', 'sched:']) {
+        n += await del.call(journal, `${fam}${prefix}`);
+      }
+      return n;
+    },
   };
 }

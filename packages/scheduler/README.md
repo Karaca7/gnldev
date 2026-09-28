@@ -47,7 +47,11 @@ const gnlFor = (orgId: string) => createGnl(scopeConfigToOrg(config, orgId).conf
 createScheduler(journal, gnl, { runnerForOrg: gnlFor }).start();
 ```
 
-- Leave both out and the trigger is the system's, as before.
+- **Each fire runs as the trigger's recorded owner.** The scheduler hands the runner `{ runId, caller }`,
+  with `caller` read from the trigger (`user(id, org)`), so the runner has nothing to pass on and
+  nothing to forget. `caller: user('ayse', 'acme')` is the same as `resourceId` + `orgId`.
+- An operator or system trigger says so: `caller: staff()` (or `staff('acme')`). Leave the owner out
+  and the fires run as `unknown`: never staff by omission, never visible to an end user.
 - A trigger with an `orgId` never runs on the organization-less runner. Without `runnerForOrg` it fails
   with a clear error (`listTriggers` → `lastError`), because a run written there is invisible to the
   organization.
@@ -55,6 +59,10 @@ createScheduler(journal, gnl, { runnerForOrg: gnlFor }).start();
 - A trigger id (or the workflow name, when no id is given) is a name **within its owner**. Two users
   scheduling the same workflow get two triggers. `scheduleWorkflow` returns the stored id.
 - `budgetGuard` receives `orgId` and `resourceId`, so one scheduler can charge each organization.
+- Triggers live in the **root** journal, which the poller reads. `scheduleWorkflow`, `pollScheduler`,
+  `listTriggers`, `createScheduler` and `createWorkflowWaker` refuse an organization's journal
+  (`withOrg`) or an end user's view — a trigger filed there would never fire. Pass the root journal and
+  the trigger's `orgId`.
 - Sleeping workflows inside organizations: give the waker their ids. It scans each partition and tells
   `resume` which organization the run is in:
 
@@ -72,6 +80,30 @@ createWorkflowWaker({
     (where ? gnlFor(where.orgId) : gnl).runWorkflow(status.workflowName, undefined, { runId }),
 }).start();
 ```
+
+### Upgrading a trigger that already exists
+
+A trigger scheduled before it had an owner keeps its old id. Adding `orgId` (or a user) to the spec
+would schedule a second trigger on the next boot, and both would fire. Move it once, before that boot:
+
+```ts
+import { moveTrigger, scheduleWorkflow } from '@gnldev/scheduler';
+import { InMemoryJournal } from '@gnldev/durable';
+const journal = new InMemoryJournal();
+
+await moveTrigger(journal, 'nightly', { orgId: 'acme' });          // once, during the upgrade
+await scheduleWorkflow(journal, { name: 'nightly', every: 86_400_000, orgId: 'acme' }); // every boot: a no-op now
+```
+
+The owned trigger keeps the old one's next time, attempts and fire count. The old one is retired
+(`status: 'done'`, `movedTo` in `listTriggers`).
+
+### Erasing a person
+
+`triggerEraser(journal)` removes one person's triggers: definitions (with their `input`), state,
+failure and skip records, and fire locks. Pass it to `eraseSubject` from `@gnldev/durable`, with the
+queue's and the events bus's erasers — see [@gnldev/queue](../queue/README.md#erasing-a-person). The
+fires' runs carry their owner record, so `eraseSubject` erases them with the person's other runs.
 
 ## Lock TTL and what "once" covers
 
@@ -149,6 +181,8 @@ replay sees the same schedule the original run saw.
 | `createScheduler` | The stateful wrapper, if you would rather hold an object than call functions |
 | `nextCronTime`, `parseField` | The cron arithmetic, exported for testing and for building your own UI |
 | `createWorkflowWaker` | Wakes a suspended workflow when its sleep or wait elapses |
+| `moveTrigger` | Gives a pre-upgrade system trigger its owner, without doubling it |
+| `triggerEraser` | One person's triggers, for `eraseSubject` |
 
 ## License
 

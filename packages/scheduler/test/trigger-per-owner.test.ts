@@ -4,12 +4,12 @@
 // The budget hook could not tell whose trigger was firing, and a waker scanning the root never saw a
 // sleeping workflow inside an organization.
 import { describe, it, expect, vi } from 'vitest';
-import { InMemoryJournal, InMemoryStorage, createGnl, scopeConfigToOrg, toJournal } from '@gnldev/durable';
+import { InMemoryJournal, InMemoryStorage, createGnl, scopeConfigToOrg, toJournal, userIdOf } from '@gnldev/durable';
 import { workflow, step, sleep } from '@gnldev/workflow';
 import { scheduleWorkflow, pollScheduler, listTriggers, createWorkflowWaker, type WorkflowRunner } from '../src/index.js';
 
 const recorder = (calls: unknown[]): WorkflowRunner => ({
-  async runWorkflow(name, input, o) { calls.push([name, input, o?.resourceId]); return { runId: o?.runId ?? 'x' }; },
+  async runWorkflow(name, input, o) { calls.push([name, input, userIdOf(o?.caller)]); return { runId: o?.runId ?? 'x' }; },
 });
 
 describe('trigger ids belong to their owner', () => {

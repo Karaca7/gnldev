@@ -2,7 +2,7 @@
 // is and hands it to the run. A trigger with an organization is never run on an organization-less
 // runner — that would write the user's work where their organization cannot see it.
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal } from '@gnldev/durable';
+import { InMemoryJournal, user, UNKNOWN } from '@gnldev/durable';
 import { scheduleWorkflow, pollScheduler, listTriggers, type WorkflowRunner } from '../src/index.js';
 
 type Call = { who: string; name: string; opts: Record<string, unknown> };
@@ -11,13 +11,13 @@ function recorder(who: string, calls: Call[]): WorkflowRunner {
 }
 
 describe('a trigger on behalf of an end user', () => {
-  it('fires with the user as the run\'s resourceId', async () => {
+  it('fires as the user: the run\'s caller is the recorded owner', async () => {
     const j = new InMemoryJournal();
     const calls: Call[] = [];
     await scheduleWorkflow(j, { id: 't1', name: 'weekly', at: 0, resourceId: 'ayse' }, 0);
     await pollScheduler(j, recorder('default', calls), 1);
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.opts.resourceId).toBe('ayse');
+    expect(calls[0]!.opts.caller).toEqual(user('ayse'));
   });
 
   it('fires on its organization\'s runner, and only there', async () => {
@@ -26,7 +26,7 @@ describe('a trigger on behalf of an end user', () => {
     await scheduleWorkflow(j, { id: 't1', name: 'weekly', at: 0, resourceId: 'ayse', orgId: 'acme' }, 0);
     await pollScheduler(j, recorder('default', calls), 1, { runnerForOrg: (org) => recorder(`org:${org}`, calls) });
     expect(calls.map((c) => c.who)).toEqual(['org:acme']);
-    expect(calls[0]!.opts.resourceId).toBe('ayse');
+    expect(calls[0]!.opts.caller).toEqual(user('ayse', 'acme'));
   });
 
   it('with an organization but no way to reach it, it does not run — and says why', async () => {
@@ -47,7 +47,7 @@ describe('a trigger on behalf of an end user', () => {
     await scheduleWorkflow(j, { id: 's', name: 'nightly', at: 0 }, 0);
     await pollScheduler(j, recorder('default', calls), 1, { runnerForOrg: (org) => recorder(`org:${org}`, calls) });
     expect(calls.map((c) => c.who)).toEqual(['default']);
-    expect(calls[0]!.opts.resourceId).toBeUndefined();
+    expect(calls[0]!.opts.caller).toEqual(UNKNOWN);
   });
 
   it('the listing says whose each trigger is', async () => {
