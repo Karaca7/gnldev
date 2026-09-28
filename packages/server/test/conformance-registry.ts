@@ -2,7 +2,7 @@
 // ownership-matrix.test.ts (completeness) and ownership-matrix.shard-*.test.ts (the walk, split so the
 // cells run in parallel workers). Not a test file: vitest only collects *.test.ts.
 import { expect } from 'vitest';
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import * as durable from '@gnldev/durable';
 import {
@@ -661,6 +661,8 @@ export async function assertShard(shard: number, of: number): Promise<void> {
   try { r = await walk({ births }); } finally { console.warn = warn; console.error = error; }
   console.log(`[registry ${shard + 1}/${of}] ${r.cells} cells in ${Date.now() - t0} ms; ${r.findings.length} findings; ${r.inexpressible.length} inexpressible; ${r.bornSkipped.length} birth x state not startable; ${r.lockTouched} cells took and released the target's run lock`);
   if (r.findings.length) console.log(['[registry] findings:', ...r.findings].join('\n  '));
+  // For mutation runs: the findings as data (a mutation is caught when it ADDS a finding).
+  if (process.env.REG_FINDINGS_OUT) writeFileSync(`${process.env.REG_FINDINGS_OUT}-${shard}.json`, JSON.stringify(r.findings));
   if (r.bornSkipped.length) console.log(['[registry] births that cannot be started in a state:', ...r.bornSkipped].join('\n  '));
   const needed = Object.keys(DOORS).filter((x) => !DOORS[x]!.controlExempt && (!DOORS[x]!.controlBirths || DOORS[x]!.controlBirths!.some((b) => births.includes(b))));
   for (const d of needed) expect(r.controlSeen.get(d) ?? 0, `door ${d}: no control ever saw the target (the negatives would be vacuous)`).toBeGreaterThan(0);
