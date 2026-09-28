@@ -3767,13 +3767,12 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
    * The ctx every engine call from Studio carries: the organization, and the CALLER — through the one
    * mapping, @gnldev/auth `engineCallerOf`. Studio's callers are operators (see the staff-only
    * middleware), so this is staff; an operator naming a user (`named`, the playground's `resourceId`)
-   * speaks for that user on this request, which is what the `application` kind means, and is mapped as
-   * one. No auth, or a provider with no principal model, is the single operator.
+   * speaks for that user on this request (`engineCallerOf` says so). No auth, or a provider with no principal model, is the single operator.
    */
   const callbackCtx = (c: Context, named?: unknown): StudioCallbackCtx => {
     const p: Principal | null = authProvider && bindsIdentity(authProvider) ? principalOf(c.req.raw) : SINGLE_OPERATOR;
     const name = typeof named === 'string' && named !== '' ? named : undefined;
-    const caller = engineCallerOf(name !== undefined && callerKind(p) === 'operator' ? { ...p!, kind: 'application' } : p, name);
+    const caller = engineCallerOf(p, name);
     return { orgId: callerOrg(c), caller };
   };
   /**

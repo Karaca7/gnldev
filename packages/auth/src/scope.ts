@@ -164,11 +164,16 @@ export type EngineCaller = { kind: 'user'; id: string; orgId?: string } | { kind
 /**
  * A principal as the engine's caller — the one mapping every door uses (ADR-0002).
  *
- *   subject      → user, its own id
- *   operator     → staff, in its organization
+ *   subject      → user, its own id; `named` is ignored (a user speaks only for itself)
+ *   operator     → staff, in its organization. When it NAMES a user (`named`) it speaks FOR that user
+ *                  on this request, as an application does: that user, or unknown for an id no user
+ *                  can have
  *   application  → the user it names on this request (`named`), when that id can be a user's;
  *                  unknown otherwise — an application speaks FOR somebody, never as staff
  *   unnamed      → unknown
+ *
+ * Which request field a door reads `named` from, and for which kinds, is the door's; what a name
+ * means is decided here, once.
  *
  * `unknown` is closed in the engine: it reaches no user's and no staff's record.
  */
@@ -179,7 +184,8 @@ export function engineCallerOf(principal: Principal | null | undefined, named?: 
     case 'subject':
       return withOrg({ kind: 'user' as const, id: principal!.id! });
     case 'operator':
-      return withOrg({ kind: 'staff' as const });
+      if (named === undefined || named === '') return withOrg({ kind: 'staff' as const });
+      return subjectIdProblem(named) === null ? withOrg({ kind: 'user' as const, id: named }) : { kind: 'unknown' };
     case 'application':
       return typeof named === 'string' && subjectIdProblem(named) === null ? withOrg({ kind: 'user' as const, id: named }) : { kind: 'unknown' };
     default:

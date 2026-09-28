@@ -10,9 +10,21 @@ describe('engineCallerOf — one mapping from a principal to the engine caller',
     expect(engineCallerOf(p({ kind: 'subject', id: 'ayse' }))).toEqual({ kind: 'user', id: 'ayse' });
   });
 
-  it('an operator is staff, even with a name', () => {
+  it('an operator is staff, even with a name of its own', () => {
     expect(engineCallerOf(p({ kind: 'operator', id: 'ops', orgId: 'acme' }))).toEqual({ kind: 'staff', orgId: 'acme' });
     expect(engineCallerOf(p({ kind: 'operator' }))).toEqual({ kind: 'staff' });
+    expect(engineCallerOf(p({ kind: 'operator' }), '')).toEqual({ kind: 'staff' });
+  });
+
+  it('an operator naming a user speaks for that user — and a name no user can carry is nobody', () => {
+    const ops = p({ kind: 'operator', id: 'ops', orgId: 'acme' });
+    expect(engineCallerOf(ops, 'ayse')).toEqual({ kind: 'user', id: 'ayse', orgId: 'acme' });
+    expect(engineCallerOf(ops, 'operator:ops')).toEqual({ kind: 'unknown' });
+    expect(engineCallerOf(ops, 'a\u0085b')).toEqual({ kind: 'unknown' });
+  });
+
+  it('a subject naming someone else is still itself', () => {
+    expect(engineCallerOf(p({ kind: 'subject', id: 'mallory' }), 'ayse')).toEqual({ kind: 'user', id: 'mallory' });
   });
 
   it('an application is the user it names — never staff', () => {

@@ -1009,7 +1009,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
    *   subject      → that user; a name in the request is ignored (a user speaks only for itself)
    *   application  → the user it names; `unknown` when it names nobody or an id no user can have
    *   operator     → staff. When it NAMES a user it speaks FOR that user on this request, which is
-   *                  what the `application` kind means, and it is mapped as one: work it starts is
+   *                  what the `application` kind means (`engineCallerOf` says so): work it starts is
    *                  filed under that user, a list it asks for is that user's, and a run it asks about
    *                  is held to that user (`runDecision` keeps the one staff exception)
    *   unnamed      → unknown (`scope` refuses it before any route gets here)
@@ -1019,7 +1019,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   function callerOf(c: Context, named?: unknown): Caller {
     const p = principalFor(c);
     const name = typeof named === 'string' && named !== '' ? named : undefined;
-    return engineCallerOf(name !== undefined && callerKind(p) === 'operator' ? { ...p!, kind: 'application' } : p, name);
+    return engineCallerOf(p, name);
   }
   /** The user a read names: its own for a subject, `?resourceId=` for anyone else. */
   const namedOnRead = (c: Context): string | undefined => c.req.query('resourceId') || undefined;
