@@ -46,17 +46,20 @@ describe('the budget hook knows whose trigger it is', () => {
 describe('the waker reaches organizations', () => {
   it('wakes a sleeping workflow inside an organization, and says which one', async () => {
     const storage = new InMemoryStorage();
-    const wf = workflow<unknown>().then(sleep('nap', Date.now() + 10)).then(step('after', async () => 'woke'));
+    // The sleep's deadline is fixed when the workflow is DEFINED, so it must outlive a slow start: a
+    // 10 ms window was already past under load (the run did not suspend; measured 40/48 failures at
+    // 12 parallel runs). The waker is ticked with an explicit clock past it.
+    const wf = workflow<unknown>().then(sleep('nap', Date.now() + 60_000)).then(step('after', async () => 'woke'));
     const config = { storage, workflows: { napper: wf } };
     const acme = createGnl(scopeConfigToOrg(config, 'acme').config);
     expect((await acme.runWorkflow('napper', {}, { runId: 'nap-1', resourceId: 'ayse' })).suspended).toBe(true);
     const resume = vi.fn(async () => {});
     const waker = createWorkflowWaker({ journal: toJournal(storage.runs) as never, resume, orgs: ['acme', 'globex'] });
-    const t = await waker.tick(Date.now() + 1000);
+    const t = await waker.tick(Date.now() + 120_000);
     expect(t.resumed).toBe(1);
     expect(resume.mock.calls[0]![0]).toBe('nap-1');
     expect(resume.mock.calls[0]![2]).toEqual({ orgId: 'acme' });
     // Once per wake: the ticket lives in the organization's partition too.
-    expect((await waker.tick(Date.now() + 1000)).resumed).toBe(0);
+    expect((await waker.tick(Date.now() + 120_000)).resumed).toBe(0);
   });
 });
