@@ -20,12 +20,20 @@
  * A thread written before this record existed is still read the old way, and one step more strictly:
  * in a memory that cannot name owners, a thread with messages and no owner anywhere is NOT new. It
  * exists and nobody owns it — staff's.
+ *
+ * And it STAYS staff's (0.7.0 release panel D-3): a thread with history whose owner cannot be derived —
+ * messages with no runs left, runs that name two users, runs that name nobody — used to go to the first
+ * named user who ran on it, history included. Its verdict is now written as a staff record the first
+ * time it is read, so no claim moves it; an operator gives it to a user with `assignThreadOwner`. The
+ * one exception is kept on purpose: a thread whose only runs were born `unknown` under a versioned
+ * record (an anonymous first turn in this release) is still claimed by the first named user (R11).
  */
-import { claim } from './journal.js';
+import { claim, runKeys } from './journal.js';
 import type { Journal, JournalReader, RunSummary } from './journal.js';
 import type { Memory } from './memory.js';
 import { ThreadOwnerMismatchError } from './errors.js';
 import type { Caller } from './identity-types.js';
+import { recordOwner } from './run-identity.js';
 
 export const threadOwnerKey = (threadId: string): string => `thread:${threadId}:owner`;
 
@@ -70,6 +78,7 @@ export async function threadOwnerOf(journal: Journal, memory: Memory | undefined
   // Older threads, from before the record: the memory's own answer, then the runs, then the messages.
   let derived: string | undefined;
   let exists = false;
+  let anonymous = false;
   if (memory?.getThreadResource) {
     derived = await memory.getThreadResource(threadId);
     exists = derived !== undefined;
@@ -80,18 +89,45 @@ export async function threadOwnerOf(journal: Journal, memory: Memory | undefined
       exists = true;
       const owners = new Set(runs.map((r) => r.resourceId));
       if (owners.size === 1 && [...owners][0]) derived = [...owners][0]!;
+      else if (owners.size === 1) anonymous = await allBornUnknown(journal, runs);
     }
   }
-  // Messages with no owner anywhere: the thread exists and is nobody's (anonymous history). Asked only
-  // of a memory that cannot name owners — one that can is the authority on its own threads.
+  // Messages with no owner anywhere: the thread exists and is nobody's. Asked only of a memory that
+  // cannot name owners — one that can is the authority on its own threads.
   if (!exists && memory && !memory.getThreadResource && ((await memory.getMessages(threadId)) ?? []).length > 0) exists = true;
-  if (derived) {
-    // LAZY BACKFILL: the derived owner becomes the record, first write wins.
-    await claim(journal, key, { at: Date.now(), resourceId: derived, backfilled: true });
-    const now = await journal.get<ThreadOwnerRecord>(key);
-    return { exists: true, ...(now?.resourceId ? { owner: now.resourceId } : { staffClaimed: true }) };
+  if (!exists) return { exists: false };
+  // An anonymous first turn in this release: the first named user claims it (admitThreadRun). Not
+  // written — the claim is the record.
+  if (!derived && anonymous) return { exists: true, staffClaimed: false };
+  // LAZY BACKFILL, first write wins: the derived owner — or, when none can be derived, staff (closed to
+  // end users until an operator assigns it) — becomes the record, so a later sweep or claim cannot move it.
+  await claim(journal, key, derived
+    ? { at: Date.now(), resourceId: derived, backfilled: true }
+    : { at: Date.now(), ownerKind: 'staff', backfilled: true, underivable: true });
+  const now = await journal.get<ThreadOwnerRecord>(key);
+  return { exists: true, ...(now?.resourceId ? { owner: now.resourceId } : { staffClaimed: now?.ownerKind !== 'unknown' }) };
+}
+
+/**
+ * Whether every run on the thread was born `unknown` under a VERSIONED owner record — an anonymous
+ * caller of this release, whose thread the first named user may claim. An unversioned record (0.6) or
+ * one that cannot be read is not that evidence: its thread stays closed.
+ */
+async function allBornUnknown(journal: Journal, runs: RunSummary[]): Promise<boolean> {
+  for (const r of runs) {
+    if (recordOwner(await journal.get(runKeys.input(r.runId)))?.kind !== 'unknown') return false;
   }
-  return exists ? { exists: true, staffClaimed: false } : { exists: false };
+  return true;
+}
+
+/**
+ * An OPERATOR's answer to "whose thread is this": writes the owner record, replacing whatever it said.
+ * The one way a closed thread (history, no derivable owner — see `threadOwnerOf`) reaches a user again.
+ * Staff-only by nature: call it from an operator path, never with an id an end user supplied.
+ */
+export async function assignThreadOwner(journal: Journal, threadId: string, resourceId: string): Promise<void> {
+  if (typeof resourceId !== 'string' || resourceId === '') throw new TypeError('@gnldev/durable: assignThreadOwner needs a user id.');
+  await journal.put(threadOwnerKey(threadId), { at: Date.now(), resourceId, assigned: true });
 }
 
 /**
@@ -121,7 +157,8 @@ async function runsOnThread(journal: Journal, threadId: string): Promise<RunSumm
  *    anonymous first turn does not pin the thread ownerless forever);
  *  - owned: only that user, or staff; `unknown` is refused (closed);
  *  - staff-claimed: staff only;
- *  - anonymous history, no record: the first named user claims it; staff and unknown pass.
+ *  - anonymous history of this release, no record: the first named user claims it; staff and unknown
+ *    pass. History whose owner cannot be derived is staff-claimed (threadOwnerOf) and closed.
  */
 export async function admitThreadRun(journal: Journal, memory: Memory | undefined, threadId: string, caller: Caller): Promise<ThreadOwnership> {
   let o = await threadOwnerOf(journal, memory, threadId);
