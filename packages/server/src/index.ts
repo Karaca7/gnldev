@@ -1075,7 +1075,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     if (!subject) return s;
     const root = s.orgId === undefined;
     const memory = s.gnl.memory
-      ? withSubjectMemory(s.gnl.memory, subject, { root, threadOwner: async (t) => (await threadOwnerOf(s.journal, s.gnl.memory, t)).owner })
+      ? withSubjectMemory(s.gnl.memory, subject, { root, journal: s.journal })
       : undefined;
     const gnl = new Proxy(s.gnl, { get: (t, k) => (k === 'memory' ? memory : Reflect.get(t, k, t)) });
     const view = { ...s, journal: withSubjectJournal(s.journal, subject, { root }), gnl } as Instance;

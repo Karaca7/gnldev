@@ -52,7 +52,7 @@ export async function eraseSubject(target: EraseTarget, resourceId: string, opts
       }
     }
   }
-  const journalRows = await purgeResource(target.journal, resourceId, target.vectors ? { vectors: target.vectors } : {});
+  const journalRows = await purgeResource(target.journal, resourceId, { ...(target.vectors ? { vectors: target.vectors } : {}), ...(target.memory ? { memory: target.memory } : {}) });
   const prefix = ownedPrefix({ ...(opts.orgId !== undefined ? { orgId: opts.orgId } : {}), resourceId });
   let triggers = 0;
   for (const fam of TRIGGER_FAMILIES) triggers += await del.call(target.journal, `${fam}${prefix}`);

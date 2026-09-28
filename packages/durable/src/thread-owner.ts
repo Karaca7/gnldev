@@ -47,16 +47,18 @@ type ThreadOwnerRecord = { resourceId?: string; ownerKind?: 'staff' | 'unknown';
  * The one answer to "whose thread is this" — for the gate, the listing, the reading and the
  * erasure alike. Read errors propagate: not knowing is not permission.
  *
- * The RECORD wins, with one exception: an ownerless record never overrides a memory that names the
- * owner (the record is upgraded to that owner). A legacy thread's derived owner is WRITTEN to the
- * record the first time it is read, so a later runs sweep cannot move it.
+ * The RECORD wins, with one exception: a record that names NOBODY — a legacy `{ at }` record, or one an
+ * `unknown` caller left — never overrides a memory that names the owner; the record is upgraded to that
+ * owner. (Written in 2a569018 for an anonymous first turn, such a record pinned the thread ownerless
+ * and locked out the user the memory knew.) A record staff claimed stays staff's. A legacy thread's
+ * derived owner is WRITTEN to the record the first time it is read, so a later runs sweep cannot move it.
  */
 export async function threadOwnerOf(journal: Journal, memory: Memory | undefined, threadId: string): Promise<ThreadOwnership> {
   const key = threadOwnerKey(threadId);
   const rec = await journal.get<ThreadOwnerRecord>(key);
   if (rec !== undefined) {
     if (rec.resourceId) return { exists: true, owner: rec.resourceId };
-    if (memory?.getThreadResource) {
+    if (rec.ownerKind !== 'staff' && memory?.getThreadResource) {
       const owner = await memory.getThreadResource(threadId);
       if (owner) {
         await journal.put(key, { ...rec, resourceId: owner, upgradedAt: Date.now() });

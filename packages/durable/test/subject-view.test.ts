@@ -1,17 +1,17 @@
 // A reader handed to an end user cannot produce another user's run or thread — whether or not the
 // code holding it remembered to ask. This is the "forgotten gate" property, tested on the view itself.
 import { describe, it, expect } from 'vitest';
-import { InMemoryJournal, withSubjectJournal, withSubjectMemory, threadOwnerFromRuns, asReaderJournal } from '../src/index.js';
+import { InMemoryJournal, withSubjectJournal, withSubjectMemory, asReaderJournal } from '../src/index.js';
 
 async function seed() {
   const j = asReaderJournal(new InMemoryJournal() as object) as any;
-  await j.put('r-ayse:input', { resourceId: 'ayse' });
+  await j.put('r-ayse:input', { _v: 2, resourceId: 'ayse' });
   await j.put('r-ayse:model:0', { text: 'AYSE-SECRET' });
-  await j.put('r-ops:input', {});
+  await j.put('r-ops:input', { _v: 2 });
   await j.put('r-ops:model:0', { text: 'OPS-SECRET' });
-  await j.put('r-mal:input', { resourceId: 'mallory' });
+  await j.put('r-mal:input', { _v: 2, resourceId: 'mallory' });
   await j.put('r-mal:model:0', { text: 'MINE' });
-  await j.put('org:acme:r-x:input', { resourceId: 'mallory' });
+  await j.put('org:acme:r-x:input', { _v: 2, resourceId: 'mallory' });
   await j.put('org:acme:r-x:model:0', { text: 'ACME-SECRET' });
   return j;
 }
@@ -41,30 +41,30 @@ describe('withSubjectMemory', () => {
     ...(lookup ? { getThreadResource: async (t: string) => (t === 't-mallory' ? 'mallory' : t === 't-ayse' ? 'ayse' : undefined) } : {}),
   });
   it('refuses another user\'s thread and an ownerless one', async () => {
-    const m = withSubjectMemory(base(true), 'mallory');
+    const m = withSubjectMemory(base(true), 'mallory', { journal: new InMemoryJournal() });
     expect(await m.getMessages('t-ayse')).toEqual([]);
     expect(await m.getMessages('t-nobody')).toEqual([]);
     expect(await m.getMessages('t-mallory')).toEqual([{ content: 'MSG-t-mallory' }]);
     expect(await m.listAllThreads!()).toEqual([{ id: 't-mallory', resourceId: 'mallory' }]);
   });
   it('fails closed when the store cannot name an owner', async () => {
-    const m = withSubjectMemory(base(false), 'mallory');
+    const m = withSubjectMemory(base(false), 'mallory', { journal: new InMemoryJournal() });
     expect(await m.getMessages('t-mallory')).toEqual([]);
   });
 });
 
-describe('threadOwnerFromRuns', () => {
-  it('lets an owner-blind memory serve its owner, and nobody else', async () => {
+describe('an owner-blind memory, read through the thread owner (threadOwnerOf)', () => {
+  it('serves its owner, and nobody else', async () => {
     const j = asReaderJournal(new InMemoryJournal() as object) as any;
-    await j.put('r1:input', { resourceId: 'mallory', threadId: 't-m' });
-    await j.put('r2:input', { resourceId: 'ayse', threadId: 't-a' });
-    await j.put('r3:input', { threadId: 't-a' });
+    await j.put('r1:input', { _v: 2, resourceId: 'mallory', threadId: 't-m' });
+    await j.put('r2:input', { _v: 2, resourceId: 'ayse', threadId: 't-a' });
+    await j.put('r3:input', { _v: 2, threadId: 't-a' });
     for (const r of ['r1', 'r2', 'r3']) await j.put(`${r}:model:0`, {});
     const mem: any = { append: async () => {}, getMessages: async (t: string) => [t] };
-    const m = withSubjectMemory(mem, 'mallory', { threadOwner: threadOwnerFromRuns(j) });
+    const m = withSubjectMemory(mem, 'mallory', { journal: j });
     expect(await m.getMessages('t-m')).toEqual(['t-m']);
     expect(await m.getMessages('t-a')).toEqual([]);
-    const a = withSubjectMemory(mem, 'ayse', { threadOwner: threadOwnerFromRuns(j) });
+    const a = withSubjectMemory(mem, 'ayse', { journal: j });
     expect(await a.getMessages('t-a')).toEqual([]); // an ownerless run on it pins it to nobody
   });
 });
@@ -75,20 +75,20 @@ describe('threadOwnerFromRuns', () => {
 describe('withSubjectJournal.get', () => {
   async function seeded() {
     const j = asReaderJournal(new InMemoryJournal() as object) as any;
-    await j.put('wf-ayse:input', { resourceId: 'ayse' });
+    await j.put('wf-ayse:input', { _v: 2, resourceId: 'ayse' });
     await j.put('wf-ayse:wf:summarise', { text: 'AYSE-STEP' });
     await j.put('wfrun:wf-ayse', { runId: 'wf-ayse', status: 'completed' });
-    await j.put('wf-mal:input', { resourceId: 'mallory' });
+    await j.put('wf-mal:input', { _v: 2, resourceId: 'mallory' });
     await j.put('wf-mal:wf:summarise', { text: 'MAL-STEP' });
     await j.put('wfrun:wf-mal', { runId: 'wf-mal', status: 'completed' });
-    await j.put('ops:input', {});
+    await j.put('ops:input', { _v: 2 });
     await j.put('ops:wf:s', { text: 'OPS-STEP' });
     await j.put('not-a-run-record', { text: 'LOOSE' });
     // Run ids contain ':', so one key can sit under two runs. It is readable only when EVERY run it
     // could belong to is the caller's: someone who names a run after another's prefix can then block
     // a read, never make one.
-    await j.put('x:input', { resourceId: 'mallory' });
-    await j.put('x:y:input', { resourceId: 'ayse' });
+    await j.put('x:input', { _v: 2, resourceId: 'mallory' });
+    await j.put('x:y:input', { _v: 2, resourceId: 'ayse' });
     await j.put('x:y:wf:s', { text: 'AYSE-NESTED' });
     await j.put('x:wf:s', { text: 'MAL-OUTER' });
     return j;
@@ -122,7 +122,7 @@ describe('withSubjectJournal.get', () => {
   it('naming a run after someone else\'s record does not make the record yours', async () => {
     const j = await seeded();
     // Mallory's own run, named so that Ayşe's step key sits under it too.
-    await j.put('wf-ayse:wf:input', { resourceId: 'mallory' });
+    await j.put('wf-ayse:wf:input', { _v: 2, resourceId: 'mallory' });
     expect(await withSubjectJournal(j, 'mallory').get('wf-ayse:wf:summarise')).toBeUndefined();
   });
 

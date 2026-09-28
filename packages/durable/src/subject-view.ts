@@ -27,7 +27,8 @@
  */
 import type { Journal, JournalReader, RunSummary } from './journal.js';
 import type { Memory } from './memory.js';
-import type { SubjectViewBrand } from './run-identity.js';
+import { recordOwner, userIdOf, type SubjectViewBrand } from './run-identity.js';
+import { threadOwnerOf } from './thread-owner.js';
 
 const ORG_PREFIX = 'org:';
 /** @gnldev/workflow's run registry: one `wfrun:<runId>` row per workflow run. */
@@ -36,25 +37,16 @@ const WF_REGISTRY = 'wfrun:';
 export interface SubjectViewOptions {
   /** The wrapped store is the unscoped root, which physically holds every organization's rows. */
   root?: boolean;
-  /**
-   * Who owns a thread when the memory cannot say (`getThreadResource` absent, e.g. `BasicMemory`).
-   * Without it such a thread is refused to every end user, its owner included. `threadOwnerFromRuns`
-   * answers from the run journal, which records `threadId` and `resourceId` on every run's `:input`.
-   */
-  threadOwner?: (threadId: string) => Promise<string | undefined>;
 }
 
-/**
- * A thread's owner as the RUN JOURNAL records it: the single `resourceId` every run on that thread
- * carries. Two different owners, or any ownerless run on it, answer `undefined` — a thread the journal
- * cannot pin to one user is pinned to none. A full listing per call: correct, not cheap.
- */
-export function threadOwnerFromRuns(journal: Partial<JournalReader>): (threadId: string) => Promise<string | undefined> {
-  return async (threadId) => {
-    if (!journal.listRuns) return undefined;
-    const owners = new Set((await journal.listRuns()).filter((r) => r.threadId === threadId).map((r) => r.resourceId));
-    return owners.size === 1 ? [...owners][0] : undefined;
-  };
+export interface SubjectMemoryOptions extends SubjectViewOptions {
+  /**
+   * The RAW journal that holds the threads' owner records. A thread is this user's when
+   * `threadOwnerOf(journal, memory, threadId)` says so — the same question, with the same arguments,
+   * that the engine's gate and the erasure ask. Required: a view that asked the memory instead
+   * (`getThreadResource`) disagreed with the gate about exactly the threads that matter.
+   */
+  journal: Journal;
 }
 
 /** A forwarding view: overrides win, everything else is the target's own, bound to the target. */
@@ -74,18 +66,20 @@ export function withSubjectJournal<J extends Journal & Partial<JournalReader>>(j
   const foreignKey = (key: string) => opts.root === true && key.startsWith(ORG_PREFIX);
   // ONE owner lookup per run for the view's lifetime (a view is built per request): the key rule
   // below asks about every ':'-prefix of every key, and a 400-key listing used to cost 400×N reads.
-  const owners = new Map<string, Promise<{ resourceId?: string } | undefined | 'error'>>();
+  // The record's owner is read by `recordOwner` (run-identity.ts) — the same reading, `_v` rule
+  // included, that `runOwnerOf` gives every gate: an unstamped record names nobody this view can trust.
+  const owners = new Map<string, Promise<{ owner: string | undefined } | undefined | 'error'>>();
   const inputOf = (runId: string) => {
     let p = owners.get(runId);
     if (!p) {
-      p = journal.get<{ resourceId?: string }>(`${runId}:input`).then((v) => v, () => 'error' as const);
+      p = journal.get(`${runId}:input`).then((v) => (v === undefined ? undefined : { owner: userIdOf(recordOwner(v)) }), () => 'error' as const);
       owners.set(runId, p);
     }
     return p;
   };
   const ownerOf = async (runId: string): Promise<string | undefined> => {
     const v = await inputOf(runId);
-    return v === 'error' ? undefined : v?.resourceId;
+    return v === 'error' ? undefined : v?.owner;
   };
   const mine = async (runId: string) => !foreignKey(runId) && (await ownerOf(runId)) === subject;
   // Every run `key` could belong to: each ':'-bounded prefix that has a frozen input. A registry row
@@ -103,7 +97,7 @@ export function withSubjectJournal<J extends Journal & Partial<JournalReader>>(j
       const input = await inputOf(runId);
       if (input === 'error') return false;
       if (input === undefined) continue;
-      if (input?.resourceId !== subject) return false;
+      if (input.owner !== subject) return false;
       claimed = true;
     }
     return claimed;
@@ -138,20 +132,22 @@ export function withSubjectJournal<J extends Journal & Partial<JournalReader>>(j
   }) as J & SubjectViewBrand;
 }
 
-export function withSubjectMemory<M extends Memory>(memory: M, subject: string, opts: SubjectViewOptions = {}): M {
+export function withSubjectMemory<M extends Memory>(memory: M, subject: string, opts: SubjectMemoryOptions): M {
   if (!subject) throw new Error('@gnldev/durable: withSubjectMemory needs a non-empty subject');
+  if (!opts?.journal) throw new Error('@gnldev/durable: withSubjectMemory needs the raw journal that holds the thread owner records (`{ journal }`)');
   const foreign = (threadId: string) => opts.root === true && threadId.startsWith(ORG_PREFIX);
+  // ONE question for reading, listing, the engine's gate and erasure: `threadOwnerOf` (thread-owner.ts).
+  // Unreadable is not this user's (a view fails closed; the gate, which writes, propagates instead).
   const mine = async (threadId: string): Promise<boolean> => {
     if (foreign(threadId)) return false;
-    // A caller-supplied answer wins: the server hands the owner RECORD's (thread-owner.ts), which a
-    // memory's own `getThreadResource` may not agree with for a thread opened before it existed.
-    const lookup = opts.threadOwner ?? (memory.getThreadResource ? (t: string) => memory.getThreadResource!(t) : undefined);
-    if (!lookup) return false;
-    try { return (await lookup(threadId)) === subject; } catch { return false; }
+    try { return (await threadOwnerOf(opts.journal, memory, threadId)).owner === subject; } catch { return false; }
   };
+  // The memory's listing proposes, the owner record decides: a thread is listed only when it can be read.
   const own = async () => {
     const rows = memory.listThreads ? await memory.listThreads({ resourceId: subject }) : [];
-    return rows.filter((r) => !foreign(String((r as { id?: unknown })?.id ?? '')));
+    const out: typeof rows = [];
+    for (const r of rows) if (await mine(String((r as { id?: unknown })?.id ?? ''))) out.push(r);
+    return out;
   };
   return view(memory, {
     getMessages: async (threadId: string, o?: Parameters<Memory['getMessages']>[1]) =>

@@ -151,7 +151,7 @@ export { runNetwork, getNetworkTrace, netKeys } from './network.js';
 export type { NetworkResult, NetworkStep, NetworkTarget, RouteDecision, RunNetworkOptions } from './network.js';
 export { withOrg, orgScopeOf, orgPrefix, isPlatformKey, assertOrgRegistered, assertNoRunsInFlight, ORG_RECORD_PRE, ADOPTABLE_RESERVED_PREFIXES, ENGINE_META_KEYS } from './organization.js';
 export { withOrgStorage, orgStorageScopeOf, scopeConfigToOrg } from './org-storage.js';
-export { withSubjectJournal, withSubjectMemory, threadOwnerFromRuns, type SubjectViewOptions } from './subject-view.js';
+export { withSubjectJournal, withSubjectMemory, type SubjectViewOptions, type SubjectMemoryOptions } from './subject-view.js';
 export { threadOwnerOf, admitThreadRun, threadOwnerKey, type ThreadOwnership } from './thread-owner.js';
 export { ownedName, ownerOfName, assertSystemName, ownedPrefix } from './owned-name.js';
 export { eraseSubject, type EraseTarget, type EraseReport } from './erase.js';

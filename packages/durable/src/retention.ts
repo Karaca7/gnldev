@@ -6,6 +6,7 @@ import { runKeys, summarizeRun, nestedAgentRunId, runIdOfKey } from './journal.j
 import { identityOnlyInput } from './run.js';
 import { workKeyHash } from './hash.js';
 import { MEM_LEAVES } from './memory.js';
+import type { Memory } from './memory.js';
 import { threadOwnerOf, threadOwnerKey } from './thread-owner.js';
 import type { WorkScopeKind } from './hash.js';
 import type { Journal, JournalReader } from './journal.js';
@@ -228,8 +229,9 @@ export const ownershipTraceKey = (resourceId: string, threadId: string): string 
  *    to the traces `purgeRun` leaves: theirs when no one else's trace points at it. Otherwise the
  *    erasure request would leave their own arguments behind, which is the failure this path exists for.
  */
-async function threadIsTheirs(journal: Journal, threadId: string, resourceId: string): Promise<boolean> {
-  const o = await threadOwnerOf(journal, undefined, threadId);
+async function threadIsTheirs(journal: Journal, threadId: string, resourceId: string, memory?: Memory): Promise<boolean> {
+  // The same question, with the same arguments, the gate and the reading ask (thread-owner.ts).
+  const o = await threadOwnerOf(journal, memory, threadId);
   if (o.owner) return o.owner === resourceId;
   if (o.exists) return false;
   const lk = journal.listKeys;
@@ -390,6 +392,13 @@ export async function purgeResource(
      * this function exists to avoid.
      */
     vectors?: Pick<VectorStore, 'delete'>;
+    /**
+     * The memory that holds the threads, when it can name their owners (`getThreadResource`). Asked
+     * so erasure decides "is this thread theirs" exactly as the engine's gate does; without it a
+     * legacy thread was judged by its surviving runs alone, and one foreign run on it took the
+     * owner's messages with the wrong person's erasure.
+     */
+    memory?: Memory;
   } = {},
 ): Promise<number> {
   const del = requireDelete(journal);
@@ -432,7 +441,7 @@ export async function purgeResource(
   // messages with his account. Asked BEFORE the runs go, because a thread opened before owner records
   // existed is still answered from its runs.
   const owned = new Set<string>();
-  for (const t of threads) if (await threadIsTheirs(journal, t, resourceId)) owned.add(t);
+  for (const t of threads) if (await threadIsTheirs(journal, t, resourceId, opts.memory)) owned.add(t);
   for (const id of runIds) total += await purgeRun(journal, id);
   // THE THREADS WHOSE RUNS ARE ALREADY GONE. Everything above reaches a thread through a run, so a
   // retention sweep that ran first has already taken the only link — and the erasure request would
@@ -452,7 +461,7 @@ export async function purgeResource(
       const t = k.slice(tracePrefix.length);
       // A threadId may itself contain ':' ('tenant:7:chat'), so this takes the WHOLE remainder
       // rather than splitting — the prefix already ends at the resourceId boundary.
-      if (t && (await threadIsTheirs(journal, t, resourceId))) owned.add(t);
+      if (t && (await threadIsTheirs(journal, t, resourceId, opts.memory))) owned.add(t);
     }
   }
   // Thread-scoped state of the threads that are theirs (memory, thread dedup window, semantic tombstones).
