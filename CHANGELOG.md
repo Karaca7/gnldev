@@ -7,6 +7,45 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased]
+
+Two type changes can stop code that compiled on 0.7.0 from compiling. Nothing changes at runtime.
+
+1. **`Principal` no longer accepts any field.** It named `kind`, `id`, `roles` and the rest, and then
+   took `[k: string]: unknown` — so `orgID: 'acme'` compiled and left the principal with no
+   organization. A field that is not on `Principal` is now a compile error. `email` is named (SSO sets
+   it). To carry a claim of your own, add it by declaration merging:
+   `declare module '@gnldev/auth' { interface Principal { tenant?: string } }`.
+2. **The error-code maps read a known name as its exact code.** `CALLER_CONFLICT_CODES`,
+   `BLOCKED_ERROR_CODES` and `WIRE_ERROR_STATUS` were `Record<string, …>`; a misspelled key compiled as
+   a string and was `undefined` at runtime. A known key now reads as its literal, any other key as
+   `code | undefined`, so a dynamic lookup still compiles and a misspelling assigned to a string does
+   not. `callerConflictCode` and `blockedErrorCode` return the closed sets, exported as
+   `CallerConflictCode` and `BlockedErrorCode`; `WireErrorCode` is exported too.
+
+### Changed
+
+- **Every published package declares `sideEffects`**, so bundlers drop the modules an app does not
+  use. Measured (gzip, `pnpm --filter @gnldev/showcase bundle`): the durable core 61.5 → 57.4 KiB, with
+  the AI SDK 129.2 → 125.1 KiB. One error class imported from `@gnldev/durable` under webpack: 5.5 KB →
+  0.2 KB, and it no longer pulls in `ai`. Whole-package imports are unchanged. `check:hygiene` imports
+  every module the manifests call side-effect free and fails on any top-level effect.
+
+### Fixed
+
+- Documented samples that did not compile in a strict project: the scheduler waker (an optional
+  `workflowName` passed on), the rag per-request tools function (its return was not a `ToolSet`), the
+  studio user-erasure and dead-event samples, and two docs-mcp examples (`storage.runs` where a
+  journal reader is needed: `toJournal(storage.runs)`). `check:docs` now compiles samples with
+  `strict` (`noImplicitAny` off) and a typed `storage`, and failed on each of these before the fix.
+
+### Internal
+
+- 196 type-level tests (`packages/*/test/public-types.test.ts`) compile what a user writes against the
+  published declarations and fail when a public type loosens.
+
+---
+
 ## [0.7.0] — 2026-09-29
 
 **A minor (0.7.0): end users are isolated by default, at one point, for free — and every package asks
