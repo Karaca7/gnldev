@@ -31,7 +31,9 @@ const skippedForAbsentPackage = [];
  *  documentation genuinely elides: the object you already have, and the import line a fragment omits
  *  because the surrounding prose just showed it. */
 const GLOBALS = `declare global {
-  const journal: any; const storage: any; const model: any; const tools: any;
+  // storage is the real Storage type, not any: typed as any it hid five samples that passed
+  // storage.runs where a JournalReader is needed (toJournal), or storage.work unchecked.
+  const journal: any; const storage: import('@gnldev/durable').Storage; const model: any; const tools: any;
   const config: any; const cfg: any; const embed: any;
   const app: any; const api: any; const studio: any; const payments: any;
   const stripe: any; const db: any; const notify: any; const sendEmail: any;

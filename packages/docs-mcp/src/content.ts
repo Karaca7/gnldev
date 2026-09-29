@@ -497,7 +497,7 @@ import { toJournal } from '@gnldev/durable';`,
     oneLiner: `Roll back already-executed side effects in reverse order with per-tool compensate hooks.`,
     tier: `core`,
     package: `@gnldev/durable`,
-    install: `import { createGnl, compensateRun, CompensatedRunError } from '@gnldev/durable';`,
+    install: `import { createGnl, compensateRun, CompensatedRunError, toJournal } from '@gnldev/durable';`,
     apis: [
       `compensateRun(runId, { journal, tools?, dryRun? }) — reverse-order unwind of already-executed side effects; returns CompensationReport`,
       `AnyTool.compensate(input, output, { idempotencyKey, toolCallId, runId }) — per-tool rollback hook; called ONLY by compensateRun, never automatically on failure`,
@@ -509,7 +509,7 @@ import { toJournal } from '@gnldev/durable';`,
   compensate: async (input, output, { idempotencyKey }) => stripe.refund(output.id, { idempotencyKey }),
 };
 await gnl.run('order', { runId: 'r3', prompt: 'process order' });
-const report = await compensateRun('r3', { journal: storage.runs, tools: { charge } });
+const report = await compensateRun('r3', { journal: toJournal(storage.runs), tools: { charge } });
 console.log(report.condemned, report.entries.map((e) => e.status));`,
   },
   {
@@ -641,14 +641,15 @@ const gnl = createGnl({ storage, agents: { asst: { model, tools: { search: creat
     tier: `core`,
     package: `@gnldev/otel`,
     install: `import { otlpPresets, exportRunToOtlp } from '@gnldev/otel';
-import { liveObservability } from '@gnldev/otel/live';`,
+import { liveObservability } from '@gnldev/otel/live';
+import { toJournal } from '@gnldev/durable';`,
     apis: [
       `otlpPresets — { langfuse, langsmith, braintrust, honeycomb, datadogAgent, collector }, pure config builders`,
       `exportRunToOtlp(reader, runId, opts) — POSTs a journaled run to an OTLP/HTTP endpoint; { traceId, spans, ok, status }`,
       `exportRun(reader, runId, opts?) — to an OTEL SpanExporter; ids are deterministic, so exporting twice is idempotent`,
       `liveObservability(opts) — live spans and cost; instrument()/cost()/flush(); composes under durable and never touches the journal`,
     ],
-    example: `await exportRunToOtlp(storage.runs, 'r1', otlpPresets.langfuse({ publicKey, secretKey }));`,
+    example: `await exportRunToOtlp(toJournal(storage.runs), 'r1', otlpPresets.langfuse({ publicKey, secretKey }));`,
   },
   {
     slug: `semantic-duplicate-gate`,

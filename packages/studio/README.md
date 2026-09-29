@@ -135,12 +135,13 @@ entry. Pass the storage your agents run on:
 
 ```ts
 import { createStudioApi } from '@gnldev/studio';
+import { toJournal } from '@gnldev/durable';
 import { jobEraser } from '@gnldev/queue';
 import { createJournalUserStore } from '@gnldev/auth-ee';
 
 // `storage`: the root storage your agents run on.
 const users = createJournalUserStore(storage.runs);
-createStudioApi({ reader: storage.runs, users, userErasure: { storage, erasers: [jobEraser(storage)] } });
+createStudioApi({ reader: toJournal(storage.runs), users, userErasure: { storage, erasers: [jobEraser(storage)] } });
 ```
 
 The answer carries the erasure report: `{ ok, id, erased: { journalRows, memoryThreads, … }, complete }`.
@@ -181,8 +182,8 @@ createStudioApp({
   events: {
     orgScoped: true,                                   // required before an org-scoped caller is served
     topics: () => [{ topic: 'refunds', consumers: ['refunder'] }],
-    listDead: (topic, consumer) => listDeadEvents(storage.work, topic, consumer),
-    release: (topic, consumer, id) => retryDeadEvent(storage.work, topic, consumer, id),
+    listDead: (topic, consumer) => listDeadEvents(storage.work!, topic, consumer),
+    release: (topic, consumer, id) => retryDeadEvent(storage.work!, topic, consumer, id),
   },
 });
 ```
