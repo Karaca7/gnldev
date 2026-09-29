@@ -207,3 +207,28 @@ describe('engineCallerOf and EngineCaller', () => {
     expect(d.userNeedsId).toEqual(only(2322, "Property 'id' is missing"));
   });
 });
+
+describe('Principal names its fields; a deployment adds its own by declaration merging', () => {
+  // Principal carried `[k: string]: unknown`, so a misspelled orgId compiled and the principal was
+  // unscoped. Now a misspelling is refused and a claim of the deployment's own is added on purpose.
+  const cases = {
+    base: `import type { Principal } from '@gnldev/auth';
+const p: Principal = { kind: 'subject', id: 'u-1', roles: [], orgId: 'acme', email: 'u1@example.com' };
+export { p };`,
+    typo: `import type { Principal } from '@gnldev/auth';
+const p: Principal = { kind: 'subject', id: 'u-1', roles: [], orgID: 'acme' };
+export { p };`,
+    merged: `import type { Principal } from '@gnldev/auth';
+declare module '@gnldev/auth' { interface Principal { tenant?: string } }
+const p: Principal = { kind: 'subject', id: 'u-1', roles: [], tenant: 'eu-1' };
+const t: string | undefined = p.tenant;
+export { p, t };`,
+  };
+  let d: Record<keyof typeof cases, TypeDiagnostic[]>;
+  beforeAll(() => { d = typeDiagnostics(__dirname, cases) as typeof d; }, 60_000);
+
+  it('the named fields, email included, compile', () => expect(d.base).toEqual([]));
+  it('a misspelled orgId is refused, and the compiler names orgId (TS2561)', () =>
+    expect(d.typo).toEqual(only(2561, "Did you mean to write 'orgId'?")));
+  it('a claim added by declaration merging compiles and reads back typed', () => expect(d.merged).toEqual([]));
+});

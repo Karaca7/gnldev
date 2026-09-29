@@ -44,7 +44,12 @@ export interface Principal {
   /** The field name identifying an organization — auth-ee/server/studio and stored records use this name. */
   orgId?: string;
   permissions?: string[];
-  [k: string]: unknown;
+  /** The address an identity provider vouched for (SSO sets it). Informational: never an owner or a key. */
+  email?: string;
+  // No `[k: string]: unknown`: with it, `{ kind: 'subject', id, roles: [], orgID: 'acme' }` compiled —
+  // a misspelled orgId made an unscoped principal with no error. A deployment that carries its own
+  // claims adds them by declaration merging, which keeps every other name checked:
+  //   declare module '@gnldev/auth' { interface Principal { tenant?: string } }
 }
 
 /** See `Principal.kind`. Granting anything but `subject` is an operator's decision (`assertAssignablePrivileges`). */
