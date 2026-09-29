@@ -10,8 +10,10 @@ import { InMemoryStorage, createGnl, scopeConfigToOrg, toJournal, runOwnerOf, wi
 import { workflow, step, sleep, listWorkflowRuns, type WorkflowRunIdentity } from '@gnldev/workflow';
 import { createWorkflowWaker } from '../src/index.js';
 
-const README_RESUME = `  resume: (runId, status, where) =>
-    (where ? gnlFor(where.orgId) : gnl).runWorkflow(status.workflowName, undefined, { runId, caller: STAFF }),`;
+const README_RESUME = `  resume: async (runId, status, where) => {
+    if (!status.workflowName) return; // recorded without its workflow's name: nothing to rebuild it from
+    return (where ? gnlFor(where.orgId) : gnl).runWorkflow(status.workflowName, undefined, { runId, caller: STAFF });
+  },`;
 
 afterEach(() => { vi.useRealTimers(); });
 
@@ -41,8 +43,10 @@ describe('the scheduler README waker example', () => {
       journal: toJournal(storage.runs),
       orgs: ['acme'],
       // README_RESUME, as code:
-      resume: (runId, status, where) =>
-        (where ? gnlFor(where.orgId) : gnl).runWorkflow(status.workflowName, undefined, { runId, caller: STAFF }),
+      resume: async (runId, status, where) => {
+        if (!status.workflowName) return; // recorded without its workflow's name: nothing to rebuild it from
+        return (where ? gnlFor(where.orgId) : gnl).runWorkflow(status.workflowName, undefined, { runId, caller: STAFF });
+      },
       onError: (_runId, e) => { errors.push(e); },
     });
     // Past the deadline for the waker AND for the resumed sleep step, which reads the clock itself.

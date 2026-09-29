@@ -75,6 +75,7 @@ context, so the tool can be built per request, for the caller's organization:
 ```ts
 import { createGnl, InMemoryStorage, withOrgStorage, serverIdentityOf } from '@gnldev/durable';
 import { createRagTool, indexDocuments } from '@gnldev/rag';
+import type { ToolSet } from 'ai';
 declare const embed: (text: string) => Promise<number[]>;
 
 const storage = new InMemoryStorage(); // the root storage, shared by every organization
@@ -90,7 +91,7 @@ const gnl = createGnl({
     assistant: {
       model,
       // Called for every run, with the request context the server sealed.
-      tools: (ctx) => {
+      tools: (ctx): ToolSet => {
         const orgId = serverIdentityOf(ctx).orgId;
         if (!orgId) return {}; // no organization on the request: no knowledge base
         return { search: createRagTool({ store: withOrgStorage(storage, orgId).vectors!, embed }) };

@@ -79,8 +79,10 @@ declare const gnlFor: (orgId: string) => typeof gnl;
 createWorkflowWaker({
   journal: toJournal(storage.runs),
   orgs: ['acme', 'globex'], // or a function, asked on every tick
-  resume: (runId, status, where) =>
-    (where ? gnlFor(where.orgId) : gnl).runWorkflow(status.workflowName, undefined, { runId, caller: STAFF }),
+  resume: async (runId, status, where) => {
+    if (!status.workflowName) return; // recorded without its workflow's name: nothing to rebuild it from
+    return (where ? gnlFor(where.orgId) : gnl).runWorkflow(status.workflowName, undefined, { runId, caller: STAFF });
+  },
 }).start();
 ```
 

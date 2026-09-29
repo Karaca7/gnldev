@@ -405,8 +405,11 @@ writeFileSync(join(OUT, '_modules.d.ts'), [
 writeFileSync(join(OUT, 'tsconfig.json'), JSON.stringify({
   compilerOptions: {
     target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext',
-    // Samples elide error handling and exhaustive types on purpose; the point is the API shape.
-    strict: false, noEmit: true, skipLibCheck: true, allowJs: true,
+    // Strict, because the reader's project is: under `strict: false` two samples compiled here and
+    // failed when copied into a strict project (a waker passing an optional workflowName on, and a
+    // per-request tools function whose inferred return was not a ToolSet). Only noImplicitAny is off —
+    // samples leave parameters unannotated on purpose, and 14 of the 16 strict errors were that.
+    strict: true, noImplicitAny: false, noEmit: true, skipLibCheck: true, allowJs: true,
     // react-jsx would demand react's type packages for every sample run; 'preserve' typechecks the
     // TSX shapes without requiring the runtime's types — the point is the API surface, not the JSX transform.
     jsx: 'preserve',
