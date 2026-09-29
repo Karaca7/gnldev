@@ -320,9 +320,9 @@ importers:
 
   packages/agui:
     dependencies:
-      '@gnldev/server':
+      '@gnldev/auth':
         specifier: workspace:^
-        version: link:../server
+        version: link:../auth
       hono:
         specifier: ^4.13.2
         version: 4.13.9
@@ -351,6 +351,9 @@ importers:
 
   packages/chat-adapter:
     dependencies:
+      '@gnldev/auth':
+        specifier: workspace:^
+        version: link:../auth
       '@gnldev/durable':
         specifier: workspace:^
         version: link:../durable
@@ -485,6 +488,9 @@ importers:
 
   packages/mcp:
     dependencies:
+      '@gnldev/auth':
+        specifier: workspace:^
+        version: link:../auth
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.30.1(zod@4.6.5)
