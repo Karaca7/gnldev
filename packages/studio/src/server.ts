@@ -2736,6 +2736,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     if (own) {
       // Org-admin: the target is always ITS OWN org (a different/operator request is rejected).
       if (targetOrg && targetOrg !== own) {
+        markRefusal(c.req.raw, 'organization', { detail: 'org_scope_refused' });
         return c.json({ error: `you can only create users in your own org ('${own}')` }, 403);
       }
       targetOrg = own;
@@ -2786,6 +2787,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
      */
     const target = (await opts.users.list()).find((u) => u.id === id);
     if (own && (!target || target.orgId !== own)) {
+      markRefusal(c.req.raw, 'organization', { detail: 'org_scope_refused' });
       return c.json({ error: `you can only delete members of your own org ('${own}')` }, 403);
     }
     if (!target) return c.json({ error: `user '${id}' not found` }, 404);
@@ -2848,6 +2850,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       // Org-admin can only revoke a member of ITS OWN org. `!target` refuses — see the delete route.
       const target = (await opts.users.list()).find((u) => u.id === id);
       if (!target || target.orgId !== own) {
+        markRefusal(c.req.raw, 'organization', { detail: 'org_scope_refused' });
         return c.json({ error: `you can only revoke members of your own org ('${own}')` }, 403);
       }
     }
@@ -2869,6 +2872,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       // `!target` refuses — see the delete route.
       const target = (await opts.users.list()).find((u) => u.id === id);
       if (!target || target.orgId !== own) {
+        markRefusal(c.req.raw, 'organization', { detail: 'org_scope_refused' });
         return c.json({ error: `you can only update members of your own org ('${own}')` }, 403);
       }
     }
