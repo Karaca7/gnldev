@@ -30,8 +30,9 @@
 //    act on it: they DROP a module whose exports go unused, without running it. Measured on the
 //    built dist, one export each, bytes before → after the field was added: `RunBusyError` from
 //    @gnldev/durable 5502 → 188 (webpack) and 2025 → 99 (rollup); `buildOpenApi` from @gnldev/server
-//    12482 → 5822 and 8747 → 5741; `enqueue` from @gnldev/queue 8892 → 3637. (esbuild already got
-//    there without the field.) The price is that the promise must stay TRUE: a module that installs
+//    12482 → 5822 and 8747 → 5741; `enqueue` from @gnldev/queue 8892 → 3637. esbuild reads the
+//    field too: the showcase bundle of the whole durable core went from 61.5 to 57.4 KiB gzip (and
+//    129.2 → 125.1 with the AI SDK). The price is that the promise must stay TRUE: a module that installs
 //    a global, a process listener or a timer when imported would be silently skipped in a user's
 //    bundle and in no test, because tests do not bundle. So this check imports every dist module the
 //    manifest calls side-effect free, in a fresh process, and fails on any observable top-level
