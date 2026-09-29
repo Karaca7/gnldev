@@ -1,0 +1,5 @@
+# Local runs write their results next to the recorded ones. Only the recorded run is published;
+# a run of your own may carry your own traffic, so it stays out of git unless you add it on purpose.
+results/**/*.json
+!results/re-emission/traffic-report.2026-09-08.json
+!results/re-emission/tally.2026-09-08.json

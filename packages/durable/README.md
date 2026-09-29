@@ -830,8 +830,8 @@ work / approve / deny / score-alone-never-decides / embedder-down) is pinned in
 
 ## Scale characteristics (measured)
 
-Measured on real Postgres, real key schemas, 2048-dim vectors (`scripts/bench-scale.ts` in the
-companion prod-test app). What grows with what:
+Measured on real Postgres, real key schemas, 2048-dim vectors
+([`examples/benchmarks`](../../examples/benchmarks#scale), `pnpm scale`). What grows with what:
 
 | Layer | Cost shape | Measured |
 |---|---|---|

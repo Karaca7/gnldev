@@ -1,0 +1,14 @@
+{
+  "source": "traffic-report.2026-09-08.json",
+  "turns": 144,
+  "toolTurns": 126,
+  "questions": 47,
+  "repeatsAsked": "31/34",
+  "modelReEmittedIdenticalCall": 13,
+  "falseAlarms": 3,
+  "judgeCalls": 12,
+  "byOrigin": {
+    "exact": 39,
+    "identity": 8
+  }
+}

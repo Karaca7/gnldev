@@ -1,0 +1,1351 @@
+{
+ "v": 1,
+ "runId": "mtsdbaj3",
+ "rows": [
+  {
+   "scenario": "s01",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": false,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s02",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s03",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": false,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s04",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": false,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s05",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s05",
+   "turn": 2,
+   "intent": "repeat-of:1",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s06",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s06",
+   "turn": 2,
+   "intent": "repeat-of:1",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s07",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s07",
+   "turn": 2,
+   "intent": "repeat-of:1",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s08",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s08",
+   "turn": 2,
+   "intent": "near-new:1",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s09",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s09",
+   "turn": 2,
+   "intent": "near-new:1",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s10",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s10",
+   "turn": 2,
+   "intent": "near-new:1",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 1
+  },
+  {
+   "scenario": "s11",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s11",
+   "turn": 2,
+   "intent": "near-new:1",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 1
+  },
+  {
+   "scenario": "s11",
+   "turn": 3,
+   "intent": "repeat-of:1",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s12",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s12",
+   "turn": 2,
+   "intent": "near-new:1",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s12",
+   "turn": 3,
+   "intent": "repeat-of:1",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s13",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s13",
+   "turn": 2,
+   "intent": "near-new:1",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 1
+  },
+  {
+   "scenario": "s13",
+   "turn": 3,
+   "intent": "repeat-of:1",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s14",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s14",
+   "turn": 2,
+   "intent": "near-new:1",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s14",
+   "turn": 3,
+   "intent": "repeat-of:1",
+   "asked": true,
+   "origin": "identity",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s15",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s15",
+   "turn": 2,
+   "intent": "new",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 1
+  },
+  {
+   "scenario": "s15",
+   "turn": 3,
+   "intent": "repeat-of:1",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s16",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": false,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s16",
+   "turn": 2,
+   "intent": "new",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s16",
+   "turn": 3,
+   "intent": "repeat-of:1",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s17",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s17",
+   "turn": 2,
+   "intent": "new",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s17",
+   "turn": 3,
+   "intent": "repeat-of:1",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s18",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s18",
+   "turn": 2,
+   "intent": "new",
+   "asked": false,
+   "executed": false,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s18",
+   "turn": 3,
+   "intent": "repeat-of:1",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s19",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s19",
+   "turn": 2,
+   "intent": "repeat-of:1",
+   "asked": true,
+   "origin": "identity",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s19",
+   "turn": 3,
+   "intent": "near-new:1",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s19",
+   "turn": 4,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s20",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s20",
+   "turn": 2,
+   "intent": "repeat-of:1",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s20",
+   "turn": 3,
+   "intent": "near-new:1",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s20",
+   "turn": 4,
+   "intent": "new",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s21",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s21",
+   "turn": 2,
+   "intent": "repeat-of:1",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 1
+  },
+  {
+   "scenario": "s21",
+   "turn": 3,
+   "intent": "near-new:1",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 1
+  },
+  {
+   "scenario": "s21",
+   "turn": 4,
+   "intent": "new",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 1
+  },
+  {
+   "scenario": "s22",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": false,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s22",
+   "turn": 2,
+   "intent": "repeat-of:1",
+   "asked": false,
+   "executed": false,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s22",
+   "turn": 3,
+   "intent": "near-new:1",
+   "asked": false,
+   "executed": false,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s22",
+   "turn": 4,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s23",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s23",
+   "turn": 2,
+   "intent": "repeat-of:1",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s23",
+   "turn": 3,
+   "intent": "near-new:1",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s23",
+   "turn": 4,
+   "intent": "new",
+   "asked": false,
+   "executed": false,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s24",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s24",
+   "turn": 2,
+   "intent": "near-new:1",
+   "asked": true,
+   "origin": "identity",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s24",
+   "turn": 3,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s24",
+   "turn": 4,
+   "intent": "repeat-of:1",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s25",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s25",
+   "turn": 2,
+   "intent": "near-new:1",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s25",
+   "turn": 3,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s25",
+   "turn": 4,
+   "intent": "repeat-of:1",
+   "asked": false,
+   "executed": false,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s26",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s26",
+   "turn": 2,
+   "intent": "near-new:1",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s26",
+   "turn": 3,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s26",
+   "turn": 4,
+   "intent": "repeat-of:1",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 1
+  },
+  {
+   "scenario": "s27",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s27",
+   "turn": 2,
+   "intent": "near-new:1",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 1
+  },
+  {
+   "scenario": "s27",
+   "turn": 3,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s27",
+   "turn": 4,
+   "intent": "repeat-of:1",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s28",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s28",
+   "turn": 2,
+   "intent": "near-new:1",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s28",
+   "turn": 3,
+   "intent": "new",
+   "asked": false,
+   "executed": false,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s28",
+   "turn": 4,
+   "intent": "repeat-of:1",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s29",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s29",
+   "turn": 2,
+   "intent": "new",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s29",
+   "turn": 3,
+   "intent": "repeat-of:1",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s29",
+   "turn": 4,
+   "intent": "near-new:2",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s29",
+   "turn": 5,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s30",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s30",
+   "turn": 2,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s30",
+   "turn": 3,
+   "intent": "repeat-of:1",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s30",
+   "turn": 4,
+   "intent": "near-new:2",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s30",
+   "turn": 5,
+   "intent": "repeat-of:1",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s31",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s31",
+   "turn": 2,
+   "intent": "new",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s31",
+   "turn": 3,
+   "intent": "repeat-of:1",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s31",
+   "turn": 4,
+   "intent": "near-new:2",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s31",
+   "turn": 5,
+   "intent": "new",
+   "asked": false,
+   "executed": false,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s32",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s32",
+   "turn": 2,
+   "intent": "new",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s32",
+   "turn": 3,
+   "intent": "repeat-of:1",
+   "asked": true,
+   "origin": "identity",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s32",
+   "turn": 4,
+   "intent": "near-new:2",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s32",
+   "turn": 5,
+   "intent": "repeat-of:1",
+   "asked": false,
+   "executed": false,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s33",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s33",
+   "turn": 2,
+   "intent": "near-new:1",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s33",
+   "turn": 3,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s33",
+   "turn": 4,
+   "intent": "repeat-of:1",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s33",
+   "turn": 5,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s34",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s34",
+   "turn": 2,
+   "intent": "near-new:1",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s34",
+   "turn": 3,
+   "intent": "new",
+   "asked": true,
+   "origin": "identity",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s34",
+   "turn": 4,
+   "intent": "repeat-of:1",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s34",
+   "turn": 5,
+   "intent": "new",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s35",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s35",
+   "turn": 2,
+   "intent": "near-new:1",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 1
+  },
+  {
+   "scenario": "s35",
+   "turn": 3,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s35",
+   "turn": 4,
+   "intent": "repeat-of:1",
+   "asked": true,
+   "origin": "identity",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s35",
+   "turn": 5,
+   "intent": "near-new:2",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 1
+  },
+  {
+   "scenario": "s36",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s36",
+   "turn": 2,
+   "intent": "near-new:1",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 1
+  },
+  {
+   "scenario": "s36",
+   "turn": 3,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s36",
+   "turn": 4,
+   "intent": "repeat-of:1",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s36",
+   "turn": 5,
+   "intent": "near-new:3",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s37",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s37",
+   "turn": 2,
+   "intent": "repeat-of:1",
+   "asked": false,
+   "executed": false,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s37",
+   "turn": 3,
+   "intent": "near-new:1",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s37",
+   "turn": 4,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s37",
+   "turn": 5,
+   "intent": "repeat-of:4",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s37",
+   "turn": 6,
+   "intent": "new",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s38",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s38",
+   "turn": 2,
+   "intent": "repeat-of:1",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s38",
+   "turn": 3,
+   "intent": "near-new:1",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s38",
+   "turn": 4,
+   "intent": "new",
+   "asked": false,
+   "executed": false,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s38",
+   "turn": 5,
+   "intent": "repeat-of:1",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s38",
+   "turn": 6,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s39",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s39",
+   "turn": 2,
+   "intent": "repeat-of:1",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s39",
+   "turn": 3,
+   "intent": "near-new:1",
+   "asked": true,
+   "origin": "identity",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s39",
+   "turn": 4,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s39",
+   "turn": 5,
+   "intent": "repeat-of:4",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s39",
+   "turn": 6,
+   "intent": "new",
+   "asked": true,
+   "origin": "exact",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s40",
+   "turn": 1,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s40",
+   "turn": 2,
+   "intent": "repeat-of:1",
+   "asked": false,
+   "executed": false,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s40",
+   "turn": 3,
+   "intent": "near-new:1",
+   "asked": false,
+   "executed": false,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s40",
+   "turn": 4,
+   "intent": "new",
+   "asked": false,
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s40",
+   "turn": 5,
+   "intent": "repeat-of:4",
+   "asked": true,
+   "origin": "identity",
+   "executed": true,
+   "tombstoned": false,
+   "judged": 0
+  },
+  {
+   "scenario": "s40",
+   "turn": 6,
+   "intent": "near-new:4",
+   "asked": false,
+   "executed": false,
+   "tombstoned": false,
+   "judged": 0
+  }
+ ],
+ "judgeCalls": 12,
+ "executions": 139
+}

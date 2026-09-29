@@ -1,0 +1,23 @@
+{
+  "name": "@gnldev/benchmarks",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "description": "The measurements quoted on gnl.dev, with the scripts and raw results that produced them.",
+  "scripts": {
+    "re-emission": "tsx src/re-emission/run.ts",
+    "re-emission:tally": "tsx src/re-emission/tally.ts",
+    "scale": "tsx src/scale/bench-scale.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "^4.0.0",
+    "@gnldev/durable": "workspace:*",
+    "ai": "^7.0.0",
+    "pg": "^8.0.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0"
+  }
+}

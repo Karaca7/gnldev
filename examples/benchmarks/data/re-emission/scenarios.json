@@ -1,0 +1,389 @@
+{
+  "v": 1,
+  "scenarios": [
+    {
+      "id": "s01",
+      "persona": "yeni işe başlayan depo elemanı",
+      "turns": [
+        { "n": 1, "user": "Merkez Depo'ya ROUTER-9'dan 15 adet sipariş girer misin", "intent": "new", "note": "tek turluk, sıradan sipariş" }
+      ]
+    },
+    {
+      "id": "s02",
+      "persona": "satış temsilcisi, hızlı iş",
+      "turns": [
+        { "n": 1, "user": "TELEFON-A13 stoğu düşük görünüyor, tedarikçiye 30 adet sipariş açalım", "intent": "new", "note": "tek turluk yeni iş" }
+      ]
+    },
+    {
+      "id": "s03",
+      "persona": "insan kaynakları asistanı",
+      "turns": [
+        { "n": 1, "user": "Yeni başlayan personele hoş geldin mailini gönder", "intent": "new", "note": "tek turluk, sendMail" }
+      ]
+    },
+    {
+      "id": "s04",
+      "persona": "muhasebe stajyeri",
+      "turns": [
+        { "n": 1, "user": "FTR-501 numaralı faturayı 8.400 TL olarak öde", "intent": "new", "note": "tek turluk ödeme" }
+      ]
+    },
+    {
+      "id": "s05",
+      "persona": "aceleci mağaza müdürü",
+      "turns": [
+        { "n": 1, "user": "AYAKKABI-42'den 20 çift sipariş verelim, stok tükeniyor", "intent": "new", "note": "ilk iş" },
+        { "n": 2, "user": "az önce verdiğim ayakkabı siparişini onaylayabildin mi, emin olamadım, bir daha dener misin", "intent": "repeat-of:1", "note": "kaza - geçip geçmediğinden emin değil" }
+      ]
+    },
+    {
+      "id": "s06",
+      "persona": "unutkan operasyon sorumlusu",
+      "turns": [
+        { "n": 1, "user": "Kocaeli-1 depodan SOBA-3 için 40 birim çıkış yapalım, sevkiyat gidiyor", "intent": "new", "note": "ilk stok düşümü" },
+        { "n": 2, "user": "Kocaeli deposundaki soba düşümünü yapmış mıydık, yapmadıysak şimdi yap", "intent": "repeat-of:1", "note": "kaza - unutmuş, aynı işi tekrar soruyor" }
+      ]
+    },
+    {
+      "id": "s07",
+      "persona": "dikkatsiz satın alma uzmanı",
+      "turns": [
+        { "n": 1, "user": "TDR-4471 faturasını 12.900 TL olarak ödeyelim", "intent": "new", "note": "ilk ödeme" },
+        { "n": 2, "user": "o faturayı geçtim mi acaba, bilmiyorum, tekrar gönderiyorum: TDR-4471", "intent": "repeat-of:1", "note": "kaza - aynı fatura numarası ve tutar" }
+      ]
+    },
+    {
+      "id": "s08",
+      "persona": "depo sorumlusu, çoklu sipariş",
+      "turns": [
+        { "n": 1, "user": "LAP-X1 modelinden 5 adet sipariş açalım", "intent": "new", "note": "ilk sipariş" },
+        { "n": 2, "user": "LAP-X2 modelinden de 5 adet sipariş girelim, ikisi birlikte gelsin", "intent": "near-new:1", "note": "komşu model, farklı sku - tuzak" }
+      ]
+    },
+    {
+      "id": "s09",
+      "persona": "muhasebeci",
+      "turns": [
+        { "n": 1, "user": "ODM-1123 faturasını 6.750 TL ödeyelim", "intent": "new", "note": "ilk ödeme" },
+        { "n": 2, "user": "ODM-1124 faturasını da öde, tutarı 9.300 TL", "intent": "near-new:1", "note": "ardışık fatura no ama farklı tutar - tuzak" }
+      ]
+    },
+    {
+      "id": "s10",
+      "persona": "depo transfer sorumlusu",
+      "turns": [
+        { "n": 1, "user": "Izmir-1 depoda KLV-100 stoğundan 10 adet düş, arızalı çıktı", "intent": "new", "note": "ilk stok düşümü" },
+        { "n": 2, "user": "Antalya-1 depodaki KLV-100'den de 10 adet düşelim, orada da arıza var", "intent": "near-new:1", "note": "aynı ürün farklı depo - tuzak" }
+      ]
+    },
+    {
+      "id": "s11",
+      "persona": "e-ticaret operasyon uzmanı",
+      "turns": [
+        { "n": 1, "user": "PS5-STD'den 12 adet sipariş açalım", "intent": "new", "note": "ilk sipariş" },
+        { "n": 2, "user": "PS5-DIG'den de 12 adet sipariş girelim, kampanya için lazım", "intent": "near-new:1", "note": "kardeş model, aynı adet - tuzak" },
+        { "n": 3, "user": "PS5-STD siparişi geçti mi emin değilim, bir daha oluşturayım mı, evet lütfen tekrar gir", "intent": "repeat-of:1", "note": "kaza - orijinal siparişin tekrarı" }
+      ]
+    },
+    {
+      "id": "s12",
+      "persona": "muhasebe departmanı çalışanı",
+      "turns": [
+        { "n": 1, "user": "FAT-990 faturasını 22.500 TL olarak ödeyelim", "intent": "new", "note": "ilk ödeme" },
+        { "n": 2, "user": "FAT-991 faturası için de ödeme yapalım, 5.100 TL", "intent": "near-new:1", "note": "ardışık fatura no, farklı tutar - tuzak" },
+        { "n": 3, "user": "FAT-990'ı biliyorum ödemiştik ama muhasebe programında görünmüyor, bir daha yapar mısın", "intent": "repeat-of:1", "note": "bilinçli tekrar - programda görünmediği için ısrarlı" }
+      ]
+    },
+    {
+      "id": "s13",
+      "persona": "depo müdürü, stok düzeltme",
+      "turns": [
+        { "n": 1, "user": "Bursa-1 depoda MASA-C1 stoğundan 18 adet düş", "intent": "new", "note": "ilk düşüm" },
+        { "n": 2, "user": "Gebze-1 depoda da MASA-C1'den 18 adet düşelim, orada da sayım farkı çıktı", "intent": "near-new:1", "note": "aynı ürün aynı miktar farklı depo - tuzak" },
+        { "n": 3, "user": "Bursa'daki masa düşümünü tekrar yapalım, sistemde eski sayı duruyor gibi", "intent": "repeat-of:1", "note": "kaza - sistemin güncellenmediğini düşünüyor" }
+      ]
+    },
+    {
+      "id": "s14",
+      "persona": "müşteri hizmetleri temsilcisi",
+      "turns": [
+        { "n": 1, "user": "AYAKKABI-43 için iade işlemi başlatalım, müşteri numarası uymadığını söyledi", "intent": "new", "note": "ilk iade" },
+        { "n": 2, "user": "AYAKKABI-42 için de ayrı bir iade var, farklı müşteri, beden küçük gelmiş", "intent": "near-new:1", "note": "komşu sku, farklı müşteri - tuzak" },
+        { "n": 3, "user": "43 numaralı ayakkabının iadesini az önce girmiş miydim, emin değilim, bir daha gireyim", "intent": "repeat-of:1", "note": "kaza - kendi işlemini unutmuş" }
+      ]
+    },
+    {
+      "id": "s15",
+      "persona": "tedarik zinciri sorumlusu",
+      "turns": [
+        { "n": 1, "user": "SSD-1TB'den 50 adet sipariş açalım, depo stoğu azalmış", "intent": "new", "note": "ilk sipariş" },
+        { "n": 2, "user": "Bu siparişle ilgili tedarikçiye bilgilendirme maili at", "intent": "new", "note": "farklı araç, gerçekten yeni iş" },
+        { "n": 3, "user": "SSD siparişini onaylamış mıydık, sistemde görmüyorum, tekrar girer misin", "intent": "repeat-of:1", "note": "kaza - sipariş kaydını göremiyor" }
+      ]
+    },
+    {
+      "id": "s16",
+      "persona": "finans ekibi çalışanı",
+      "turns": [
+        { "n": 1, "user": "TDR-4472 faturasını 17.300 TL öde", "intent": "new", "note": "ilk ödeme" },
+        { "n": 2, "user": "Ödemeden sonra tedarikçiye teşekkür maili gönder", "intent": "new", "note": "farklı araç, bağımsız iş" },
+        { "n": 3, "user": "TDR-4472'yi tekrar öde, banka ekstresinde göremedim ilk ödemeyi", "intent": "repeat-of:1", "note": "kaza - ekstrede göremediği için tekrar istiyor" }
+      ]
+    },
+    {
+      "id": "s17",
+      "persona": "depo sorumlusu",
+      "turns": [
+        { "n": 1, "user": "Ankara-1 depoya KABLO-USB-C'den 100 adet sipariş girelim", "intent": "new", "note": "ilk sipariş" },
+        { "n": 2, "user": "Aynı zamanda Istanbul-1 depodaki MOUSE-7 stoğunu kontrol ettirip 30 adet düşelim, hasarlı çıktı", "intent": "new", "note": "farklı ürün, farklı depo, farklı araç" },
+        { "n": 3, "user": "USB-C kablo siparişini bir daha oluştur, ilk seferinde hata aldığımı hatırlıyorum", "intent": "repeat-of:1", "note": "kaza - hata aldığını düşünüyor" }
+      ]
+    },
+    {
+      "id": "s18",
+      "persona": "mağaza zinciri operasyon şefi",
+      "turns": [
+        { "n": 1, "user": "HOPARLOR-5 modelinden 25 adet sipariş açalım", "intent": "new", "note": "ilk sipariş" },
+        { "n": 2, "user": "Sipariş onaylandığında satış ekibine haber maili gönder", "intent": "new", "note": "farklı araç, bağımsız iş" },
+        { "n": 3, "user": "Hoparlör siparişini iptal ettim sanıyordum ama galiba geçmemiş, tekrar aynısını gir", "intent": "repeat-of:1", "note": "kaza - iptal ettiğini sanıyor ama emin değil, aynısını tekrar istiyor" }
+      ]
+    },
+    {
+      "id": "s19",
+      "persona": "aceleci depo elemanı",
+      "turns": [
+        { "n": 1, "user": "TV-42'den 8 adet sipariş verelim", "intent": "new", "note": "ilk sipariş" },
+        { "n": 2, "user": "şu televizyondan bir tane daha... yani aynı siparişi bir daha girer misin, geçmemiş gibi hissediyorum", "intent": "repeat-of:1", "note": "kaza - farklı kelimelerle aynı işi istiyor" },
+        { "n": 3, "user": "TV-43'ten de 8 adet sipariş açalım, bu farklı model", "intent": "near-new:1", "note": "komşu sku, aynı adet - tuzak" },
+        { "n": 4, "user": "İzmir depo için CAY-500G'den 60 adet sipariş girelim", "intent": "new", "note": "tamamen farklı ürün ve depo" }
+      ]
+    },
+    {
+      "id": "s20",
+      "persona": "muhasebeci, ay sonu yoğunluğu",
+      "turns": [
+        { "n": 1, "user": "INV-7702 faturasını 4.250 TL öde", "intent": "new", "note": "ilk ödeme" },
+        { "n": 2, "user": "INV-7702'yi tekrar öde, ilk denemede sistem donmuştu galiba", "intent": "repeat-of:1", "note": "kaza - sistemin donduğunu düşünüyor" },
+        { "n": 3, "user": "INV-7703 faturasını da öde ama bu 9.900 TL, farklı tedarikçi", "intent": "near-new:1", "note": "ardışık fatura no, farklı tutar ve tedarikçi - tuzak" },
+        { "n": 4, "user": "Bu ayki tüm ödemelerin özetini finans müdürüne mailleyelim", "intent": "new", "note": "farklı araç, bağımsız iş" }
+      ]
+    },
+    {
+      "id": "s21",
+      "persona": "depo transfer koordinatörü",
+      "turns": [
+        { "n": 1, "user": "Kocaeli-1 depoda RAM-16GB stoğundan 40 adet düş, transfer için çıkıyor", "intent": "new", "note": "ilk düşüm" },
+        { "n": 2, "user": "Kocaeli'deki RAM düşümünü tekrar yap, transfer listesinde hala eski sayı var", "intent": "repeat-of:1", "note": "kaza - listenin güncellenmediğini düşünüyor" },
+        { "n": 3, "user": "Gebze-1 depoda da RAM-16GB'den düşüm yapalım ama 40 değil 15 adet", "intent": "near-new:1", "note": "aynı ürün farklı depo ve farklı miktar - tuzak" },
+        { "n": 4, "user": "MONITOR-27 için Antalya-1 depoya 22 adet sipariş girelim", "intent": "new", "note": "tamamen farklı ürün" }
+      ]
+    },
+    {
+      "id": "s22",
+      "persona": "müşteri temsilcisi, yoğun gün",
+      "turns": [
+        { "n": 1, "user": "SOGUTUCU-9 için bir müşteri iadesi işleyelim, ürün bozuk gelmiş", "intent": "new", "note": "ilk iade" },
+        { "n": 2, "user": "az önceki soğutucu iadesini bir daha girer misin, ekranda hata çıktı", "intent": "repeat-of:1", "note": "kaza - ekran hatası aldığını düşünüyor" },
+        { "n": 3, "user": "başka bir müşteri de SOGUTUCU-9 iade etmek istiyor ama sebebi farklı, beğenmemiş", "intent": "near-new:1", "note": "aynı ürün farklı müşteri ve sebep - tuzak" },
+        { "n": 4, "user": "iade onaylarını müşteri hizmetleri ekibine mail ile bildirelim", "intent": "new", "note": "farklı araç, bağımsız iş" }
+      ]
+    },
+    {
+      "id": "s23",
+      "persona": "satın alma müdürü",
+      "turns": [
+        { "n": 1, "user": "JAKET-M modelinden 35 adet sipariş açalım, kış sezonu için", "intent": "new", "note": "ilk sipariş" },
+        { "n": 2, "user": "JAKET-M siparişini tekrar gönder, tedarikçiden onay maili gelmedi, sanırım gitmemiş", "intent": "repeat-of:1", "note": "kaza - onay maili gelmediği için şüpheleniyor" },
+        { "n": 3, "user": "JAKET-L modelinden de 35 adet sipariş verelim, farklı beden", "intent": "near-new:1", "note": "aynı ürün ailesi, aynı adet, farklı beden - tuzak" },
+        { "n": 4, "user": "tedarikçiye teslimat tarihini soran bir mail atalım", "intent": "new", "note": "farklı araç, bağımsız iş" }
+      ]
+    },
+    {
+      "id": "s24",
+      "persona": "depo sorumlusu, sabah rutini",
+      "turns": [
+        { "n": 1, "user": "KLIMA-12000 için Istanbul-2 depoya 18 adet sipariş girelim", "intent": "new", "note": "ilk sipariş" },
+        { "n": 2, "user": "Istanbul-1 depoya da aynı klimadan ama 10 adet sipariş açalım, farklı depo", "intent": "near-new:1", "note": "aynı ürün farklı depo ve miktar - tuzak" },
+        { "n": 3, "user": "SANDALYE-B2 stoğu için Bursa-1 depoda 12 adet düşüm yapalım, kırık çıktı", "intent": "new", "note": "tamamen farklı ürün ve araç" },
+        { "n": 4, "user": "Istanbul-2'deki klima siparişini bilerek tekrar giriyorum, ek talep geldi çünkü, yine 18 adet lazım", "intent": "repeat-of:1", "note": "bilinçli tekrar - ek talep geldiğini açıkça söylüyor" }
+      ]
+    },
+    {
+      "id": "s25",
+      "persona": "muhasebe uzmanı",
+      "turns": [
+        { "n": 1, "user": "FTR-8871 faturasını 31.000 TL öde", "intent": "new", "note": "ilk ödeme" },
+        { "n": 2, "user": "FTR-8872 faturasını da öde, farklı tedarikçi, 6.400 TL", "intent": "near-new:1", "note": "ardışık fatura no, farklı tutar - tuzak" },
+        { "n": 3, "user": "Bu iki ödeme için muhasebe kayıt maili hazırlayıp gönder", "intent": "new", "note": "farklı araç, bağımsız iş" },
+        { "n": 4, "user": "FTR-8871 ödemesini tekrar yapmam gerekiyor mu emin olamadım, garanti olsun diye bir daha gönder", "intent": "repeat-of:1", "note": "kaza - garanti olsun diye tekrar ödeme istiyor" }
+      ]
+    },
+    {
+      "id": "s26",
+      "persona": "e-ticaret sipariş yöneticisi",
+      "turns": [
+        { "n": 1, "user": "TELEFON-A12'den 40 adet sipariş açalım", "intent": "new", "note": "ilk sipariş" },
+        { "n": 2, "user": "TELEFON-A13'ten de 40 adet sipariş girelim, farklı model ama aynı kampanya", "intent": "near-new:1", "note": "komşu model, aynı adet - tuzak" },
+        { "n": 3, "user": "kampanya başlangıcında pazarlama ekibine bilgi maili gönderelim", "intent": "new", "note": "farklı araç, bağımsız iş" },
+        { "n": 4, "user": "A12 siparişi galiba iki kere gitmiş olabilir korkarım ama emin değilim, yine de bir kez daha aynısını oluştur, eksik olmasın", "intent": "repeat-of:1", "note": "kaza - iki kere gittiğinden korkuyor ama yine de tekrar istiyor" }
+      ]
+    },
+    {
+      "id": "s27",
+      "persona": "depo müdürü, sayım günü",
+      "turns": [
+        { "n": 1, "user": "Ankara-1 depoda YAZ-200 stoğundan 14 adet düşelim, sayımda fazla çıkmıştı", "intent": "new", "note": "ilk düşüm" },
+        { "n": 2, "user": "Antalya-1 depoda da YAZ-200'den düşüm yapalım ama 6 adet", "intent": "near-new:1", "note": "aynı ürün farklı depo ve miktar - tuzak" },
+        { "n": 3, "user": "sayım raporu için depo ekibine mail gönderelim", "intent": "new", "note": "farklı araç, bağımsız iş" },
+        { "n": 4, "user": "Ankara'daki YAZ-200 düşümünü bir daha yapalım, rapor hala eski sayıyı gösteriyor", "intent": "repeat-of:1", "note": "kaza - raporun güncellenmediğini düşünüyor" }
+      ]
+    },
+    {
+      "id": "s28",
+      "persona": "finans asistanı, dikkat dağınık",
+      "turns": [
+        { "n": 1, "user": "TDR-4473 faturasını 12.900 TL ödeyelim", "intent": "new", "note": "ilk ödeme" },
+        { "n": 2, "user": "TDR-4474 faturasını da öde, tutarı farklı, 3.750 TL", "intent": "near-new:1", "note": "ardışık fatura no, farklı tutar - tuzak" },
+        { "n": 3, "user": "tedarikçiye ödeme bildirimi maili gönder", "intent": "new", "note": "farklı araç, bağımsız iş" },
+        { "n": 4, "user": "TDR-4473'ü tekrar ödeyelim, ilk işlemde ekran donmuştu, gitmediğinden şüpheleniyorum", "intent": "repeat-of:1", "note": "kaza - ekranın donduğunu düşünüyor" }
+      ]
+    },
+    {
+      "id": "s29",
+      "persona": "depo operasyon şefi, yoğun pazartesi",
+      "turns": [
+        { "n": 1, "user": "MOUSE-7'den 60 adet sipariş açalım", "intent": "new", "note": "ilk sipariş" },
+        { "n": 2, "user": "KULAK-3 modelinden de 45 adet sipariş girelim, ayrı bir talep", "intent": "new", "note": "farklı ürün, gerçekten ayrı iş" },
+        { "n": 3, "user": "MOUSE-7 siparişini bir daha gönder, tedarikçiden onay gelmedi", "intent": "repeat-of:1", "note": "kaza - onay gelmediği için şüpheleniyor" },
+        { "n": 4, "user": "KULAK-3'ün başka bir varyantı var, KULAK-4'ten de 45 adet sipariş açalım", "intent": "near-new:2", "note": "komşu sku, aynı adet - tuzak" },
+        { "n": 5, "user": "Bu arada depoya gelen kırık paletler için tedarikçiye şikayet maili atalım", "intent": "new", "note": "tamamen farklı konu, sipariş işleriyle ilgisi yok" }
+      ]
+    },
+    {
+      "id": "s30",
+      "persona": "muhasebe müdürü, ay sonu kapanışı",
+      "turns": [
+        { "n": 1, "user": "INV-3301 faturasını 45.000 TL öde", "intent": "new", "note": "ilk ödeme" },
+        { "n": 2, "user": "FTR-502 faturasını 8.200 TL öde, farklı tedarikçi", "intent": "new", "note": "farklı fatura, farklı tedarikçi" },
+        { "n": 3, "user": "INV-3301 ödemesini tekrar dener misin, banka onayı gelmedi", "intent": "repeat-of:1", "note": "kaza - banka onayının gelmediğini düşünüyor" },
+        { "n": 4, "user": "FTR-502'nin devamı bir fatura daha var, FTR-503, 3.100 TL öde", "intent": "near-new:2", "note": "ardışık fatura no, farklı tutar - tuzak" },
+        { "n": 5, "user": "INV-3301'i bir daha öde, yine emin olamıyorum geçip geçmediğinden", "intent": "repeat-of:1", "note": "kaza - ısrarla aynı şüpheyi tekrarlıyor" }
+      ]
+    },
+    {
+      "id": "s31",
+      "persona": "depo sorumlusu, transfer günü",
+      "turns": [
+        { "n": 1, "user": "Izmir-1 depoda SOBA-3 stoğundan 22 adet düş", "intent": "new", "note": "ilk düşüm" },
+        { "n": 2, "user": "Merkez Depo'ya KLIMA-12000'den 30 adet sipariş girelim", "intent": "new", "note": "farklı araç ve ürün" },
+        { "n": 3, "user": "Izmir'deki soba düşümünü tekrar yap, rapor eski sayıyı gösteriyor", "intent": "repeat-of:1", "note": "kaza - raporun güncellenmediğini düşünüyor" },
+        { "n": 4, "user": "Merkez Depo'ya bir de MONITOR-27'den 30 adet sipariş açalım", "intent": "near-new:2", "note": "aynı depo aynı adet, farklı ürün - tuzak" },
+        { "n": 5, "user": "Bu arada Bursa-1 depoya JAKET-M'den 20 adet sipariş açalım, kış sezonu yaklaşıyor", "intent": "new", "note": "tamamen farklı ürün ve konu" }
+      ]
+    },
+    {
+      "id": "s32",
+      "persona": "müşteri hizmetleri temsilcisi, yoğun gün",
+      "turns": [
+        { "n": 1, "user": "TV-50 için bir iade işlemi başlatalım, ekran kırık gelmiş", "intent": "new", "note": "ilk iade" },
+        { "n": 2, "user": "AYAKKABI-42 için farklı bir müşterinin iadesini de girelim, numara küçük gelmiş", "intent": "new", "note": "farklı ürün, farklı müşteri" },
+        { "n": 3, "user": "TV-50 iadesini bir daha girer misin, sistemde kaydı göremedim", "intent": "repeat-of:1", "note": "kaza - kaydı göremediği için tekrar istiyor" },
+        { "n": 4, "user": "AYAKKABI-43 için de ayrı bir iade var, farklı müşteri", "intent": "near-new:2", "note": "komşu sku, farklı müşteri - tuzak" },
+        { "n": 5, "user": "TV-50 iadesi konusunda emin olamıyorum, bir kez daha aynısını işleyelim", "intent": "repeat-of:1", "note": "kaza - ısrarla aynı şüpheyi tekrarlıyor" }
+      ]
+    },
+    {
+      "id": "s33",
+      "persona": "depo sorumlusu, sabah vardiyası",
+      "turns": [
+        { "n": 1, "user": "LAP-X1'den 20 adet sipariş açalım", "intent": "new", "note": "ilk sipariş" },
+        { "n": 2, "user": "LAP-X2'den de 20 adet sipariş girelim", "intent": "near-new:1", "note": "komşu model, aynı adet - tuzak" },
+        { "n": 3, "user": "Bursa-1 depoda SANDALYE-B2 stoğundan 15 adet düşelim", "intent": "new", "note": "farklı ürün ve araç" },
+        { "n": 4, "user": "LAP-X1 siparişini bilerek tekrar veriyorum, ek talep geldi, yine 20 adet lazım", "intent": "repeat-of:1", "note": "bilinçli tekrar - ek talep geldiğini açıkça söylüyor" },
+        { "n": 5, "user": "Bursa-1'deki MASA-C1 stoğundan da 15 adet düşelim, o da hasarlı çıktı", "intent": "new", "note": "aynı depo ama farklı ürün, gerçekten ayrı bir iş" }
+      ]
+    },
+    {
+      "id": "s34",
+      "persona": "muhasebeci, çoklu fatura günü",
+      "turns": [
+        { "n": 1, "user": "ODM-1125 faturasını 6.750 TL öde", "intent": "new", "note": "ilk ödeme" },
+        { "n": 2, "user": "ODM-1126 faturasını da öde, 11.400 TL, farklı tedarikçi", "intent": "near-new:1", "note": "ardışık fatura no, farklı tutar - tuzak" },
+        { "n": 3, "user": "TDR-4475 faturasını 2.900 TL öde", "intent": "new", "note": "tamamen farklı fatura" },
+        { "n": 4, "user": "ODM-1125'i tekrar öde, ilk seferinde bağlantı koptu galiba", "intent": "repeat-of:1", "note": "kaza - bağlantının koptuğunu düşünüyor" },
+        { "n": 5, "user": "TDR-4476 faturasını da öde, 5.600 TL", "intent": "new", "note": "farklı fatura numarası ve tutar, bağımsız yeni ödeme" }
+      ]
+    },
+    {
+      "id": "s35",
+      "persona": "e-ticaret operasyon uzmanı, kampanya haftası",
+      "turns": [
+        { "n": 1, "user": "PS5-DIG'den 30 adet sipariş açalım", "intent": "new", "note": "ilk sipariş" },
+        { "n": 2, "user": "PS5-STD'den de 30 adet sipariş girelim", "intent": "near-new:1", "note": "kardeş model, aynı adet - tuzak" },
+        { "n": 3, "user": "kampanya duyuru maili gönderelim satış ekibine", "intent": "new", "note": "farklı araç, bağımsız iş" },
+        { "n": 4, "user": "PS5-DIG siparişini tekrar gönder, tedarikçi onay maili atmadı, sanırım ilk seferinde gitmedi", "intent": "repeat-of:1", "note": "kaza - onay maili gelmediği için şüpheleniyor" },
+        { "n": 5, "user": "PS5-STD'nin farklı bir rengi için ayrı sipariş açalım, PS5-STD-BEYAZ 30 adet", "intent": "near-new:2", "note": "aynı model aynı adet, farklı varyant - tuzak" }
+      ]
+    },
+    {
+      "id": "s36",
+      "persona": "depo müdürü, stok denetimi",
+      "turns": [
+        { "n": 1, "user": "Gebze-1 depoda ROUTER-9 stoğundan 12 adet düş", "intent": "new", "note": "ilk düşüm" },
+        { "n": 2, "user": "Kocaeli-1 depoda da ROUTER-9'dan 12 adet düşelim, orada da fazla çıkmış", "intent": "near-new:1", "note": "aynı ürün aynı miktar farklı depo - tuzak" },
+        { "n": 3, "user": "Antalya-1 depoya HOPARLOR-5'ten 20 adet sipariş açalım", "intent": "new", "note": "farklı ürün ve araç" },
+        { "n": 4, "user": "Gebze'deki router düşümünü tekrar yapalım, rapor güncellenmemiş görünüyor", "intent": "repeat-of:1", "note": "kaza - raporun güncellenmediğini düşünüyor" },
+        { "n": 5, "user": "Antalya'ya bir de KABLO-USB-C'den 20 adet sipariş girelim", "intent": "near-new:3", "note": "aynı depo aynı adet, farklı ürün - tuzak" }
+      ]
+    },
+    {
+      "id": "s37",
+      "persona": "aceleci depo sorumlusu, Pazartesi sabahı",
+      "turns": [
+        { "n": 1, "user": "TV-42'den 10 adet sipariş verelim", "intent": "new", "note": "ilk sipariş" },
+        { "n": 2, "user": "42 inçlik televizyonu tekrar sipariş ver, az önceki gitti mi bilmiyorum", "intent": "repeat-of:1", "note": "kaza - farklı kelimelerle aynı işi istiyor" },
+        { "n": 3, "user": "TV-43'ten de 10 adet sipariş açalım, farklı model bu", "intent": "near-new:1", "note": "komşu sku, aynı adet - tuzak" },
+        { "n": 4, "user": "Istanbul-1 depoda KULAK-3 stoğundan 8 adet düşelim, arızalı çıktı", "intent": "new", "note": "tamamen farklı ürün ve araç" },
+        { "n": 5, "user": "Istanbul-1'deki kulaklık düşümünü bir daha yapalım, sistemde görünmüyor", "intent": "repeat-of:4", "note": "kaza - sistemde görünmediği için tekrar istiyor" },
+        { "n": 6, "user": "Ayrıca satış ekibine bu haftaki televizyon kampanyasıyla ilgili bir bilgilendirme maili gönderelim", "intent": "new", "note": "farklı araç, tamamen bağımsız konu" }
+      ]
+    },
+    {
+      "id": "s38",
+      "persona": "muhasebe ekibi, çeyrek sonu",
+      "turns": [
+        { "n": 1, "user": "INV-2045 faturasını 19.800 TL öde", "intent": "new", "note": "ilk ödeme" },
+        { "n": 2, "user": "INV-2045'i bilerek tekrar ödüyorum, ek kalem eklendi ama tutar aynı kaldı, evet aynısını tekrar gönder", "intent": "repeat-of:1", "note": "bilinçli tekrar - ek kalem geldiğini açıkça söylüyor" },
+        { "n": 3, "user": "INV-2046 faturasını da öde, 22.100 TL, farklı fatura", "intent": "near-new:1", "note": "ardışık fatura no, farklı tutar - tuzak" },
+        { "n": 4, "user": "tedarikçiye çeyrek sonu mutabakat maili gönderelim", "intent": "new", "note": "farklı araç, bağımsız iş" },
+        { "n": 5, "user": "INV-2045 konusunda hala emin değilim, bir kez daha ödeme dener misin", "intent": "repeat-of:1", "note": "kaza - ısrarla aynı şüpheyi tekrarlıyor" },
+        { "n": 6, "user": "Bu arada MOUSE-7 stoğu için Ankara-1 depoya 20 adet sipariş açalım", "intent": "new", "note": "tamamen farklı ürün ve konu" }
+      ]
+    },
+    {
+      "id": "s39",
+      "persona": "depo transfer sorumlusu, hafta sonu mesaisi",
+      "turns": [
+        { "n": 1, "user": "Merkez Depo'dan SOGUTUCU-9 için 25 adet sipariş açalım", "intent": "new", "note": "ilk sipariş" },
+        { "n": 2, "user": "soğutucu siparişini tekrar gönder, mail kutusunda onay göremedim", "intent": "repeat-of:1", "note": "kaza - onay maili göremediği için şüpheleniyor" },
+        { "n": 3, "user": "Ek Depo'ya da SOGUTUCU-9'dan 15 adet sipariş girelim", "intent": "near-new:1", "note": "aynı ürün farklı depo ve miktar - tuzak" },
+        { "n": 4, "user": "JAKET-L stoğu için Izmir-1 depoda 20 adet düşelim, iade nedeniyle", "intent": "new", "note": "tamamen farklı ürün ve araç" },
+        { "n": 5, "user": "Izmir'deki jaket düşümünü bir daha yapalım, rapor yenilenmemiş", "intent": "repeat-of:4", "note": "kaza - raporun yenilenmediğini düşünüyor" },
+        { "n": 6, "user": "Ayrıca depo ekibine hafta sonu mesaisi için teşekkür maili gönderelim", "intent": "new", "note": "farklı araç, tamamen bağımsız konu" }
+      ]
+    },
+    {
+      "id": "s40",
+      "persona": "müşteri hizmetleri ve muhasebe ortak iş, karışık gün",
+      "turns": [
+        { "n": 1, "user": "AYAKKABI-43 için bir müşteri iadesi başlatalım, numara uymamış", "intent": "new", "note": "ilk iade" },
+        { "n": 2, "user": "az önceki ayakkabı iadesini tekrar girer misin, ekran kilitlendi galiba kaydolmadı", "intent": "repeat-of:1", "note": "kaza - ekranın kilitlendiğini düşünüyor" },
+        { "n": 3, "user": "AYAKKABI-42 için de başka bir müşterinin iadesini işleyelim", "intent": "near-new:1", "note": "komşu sku, farklı müşteri - tuzak" },
+        { "n": 4, "user": "FTR-8873 faturasını 14.600 TL öde", "intent": "new", "note": "farklı araç, farklı iş" },
+        { "n": 5, "user": "FTR-8873'ü tekrar öde, ilk denemede internet kesildi", "intent": "repeat-of:4", "note": "kaza - internetin kesildiğini düşünüyor" },
+        { "n": 6, "user": "FTR-8874 faturasını da öde, 7.250 TL, farklı fatura", "intent": "near-new:4", "note": "ardışık fatura no, farklı tutar - tuzak" }
+      ]
+    }
+  ]
+}
