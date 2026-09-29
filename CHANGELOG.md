@@ -303,6 +303,13 @@ principals on every door. What broke was the management auth-ee sells. Breaking:
   writes no row (documented). If the hook throws, the host answers 500 `decision_not_recorded` instead
   of an unrecorded response (`AUTH_ERROR_CODES`, with its page in docs/errors). `authorize` no longer
   writes rows. New in durable: `OWNERSHIP_CONFLICT_CODES`.
+- **A withheld `POST /users` leaves no user behind.** With the sink down, Studio answered 500 but had
+  created the user, whose token was never shown; the retry answered 400 "already exists" and the seat
+  stayed taken, while the error page said a write was safe to retry. The create is now rolled back when
+  its decision cannot be recorded, and the 500 says `rolledBack: true` (`false` if the removal failed
+  too). `decisionNotRecorded(err, extra?)` takes the host's note. The page lists what each kind of
+  request has already done when the 500 arrives: runs are stored and replay by their name; other
+  Studio writes stay made.
 - **A dead credential is refused on the doors that take anonymous callers.** A revoked or deleted
   user's token on the standalone chat and AG-UI routes answered 200 as an anonymous caller, recorded
   `kind: "unnamed", allowed: true`. auth-ee's `authenticate` now notes a credential that was presented

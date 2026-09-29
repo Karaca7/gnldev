@@ -933,10 +933,32 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       try {
         await settle(c.req.raw, c.res.status);
       } catch (err) {
-        c.res = decisionNotRecorded(err);
+        // A route whose change nobody can use unless the response is delivered registered its undo
+        // (`undoIfUnrecorded`); run it, so the withheld answer does not leave that change behind.
+        const undo = undoIfUnrecorded.get(c.req.raw);
+        let rolledBack: boolean | undefined;
+        if (undo) {
+          try { await undo(); rolledBack = true; } catch (undoErr) {
+            console.error('@gnldev/studio: the change could not be rolled back after its decision went unrecorded:', undoErr);
+            rolledBack = false;
+          }
+        }
+        c.res = decisionNotRecorded(err, rolledBack === undefined ? {} : { rolledBack });
       }
     });
   }
+  /**
+   * The undo of a change that is useless unless its response reaches the caller — run by the decision
+   * middleware above when the answer is withheld (500 `decision_not_recorded`).
+   *
+   * Today that is `POST /users` alone. The user was created before the record failed, and its token
+   * exists only in the withheld response: nobody could ever log in as it, it held a seat, and the retry
+   * answered 400 "already exists" (measured). Removing it is safe for the same reason it is needed —
+   * the token never left the server, so nothing can have used the user in between. Other writes stay
+   * made (their retry is safe, or they carry their own report); docs/errors/decision_not_recorded.md
+   * lists them.
+   */
+  const undoIfUnrecorded = new WeakMap<Request, () => Promise<void>>();
   /** Record why this request is refused, and answer it. */
   const refused = (c: Context, reason: RefusalReason, res: Response): Response => {
     markRefusal(c.req.raw, reason);
@@ -2757,6 +2779,11 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
         ...(body.expiresAt != null ? { expiresAt: body.expiresAt } : {}),
       });
       await audit(c, 'user.create', created.user.id, { roles: created.user.roles, ...(created.user.permissions ? { permissions: created.user.permissions } : {}), orgId: created.user.orgId, kind: created.user.kind ?? 'subject' });
+      // The token is only in this response. If it is withheld, the user goes too (see `undoIfUnrecorded`).
+      undoIfUnrecorded.set(c.req.raw, async () => {
+        await opts.users!.remove(created.user.id);
+        await audit(c, 'user.delete', created.user.id, { rolledBack: 'the decision for the create could not be recorded; its token was never delivered' });
+      });
       return c.json({ ok: true, ...created }); // { user, token } — token only here
     } catch (e: any) {
       return c.json({ error: String(e?.message ?? e) }, 400);

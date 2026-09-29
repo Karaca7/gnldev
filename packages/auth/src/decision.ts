@@ -137,8 +137,12 @@ export const AUTH_ERROR_CODES = {
 } as const;
 export const AUTH_ERROR_STATUS: Record<string, number> = { [AUTH_ERROR_CODES.decisionNotRecorded]: 500 };
 
-/** The answer a host gives when `onDecision` failed: the request is not delivered unrecorded. */
-export function decisionNotRecorded(err: unknown): Response {
+/**
+ * The answer a host gives when `onDecision` failed: the request is not delivered unrecorded. `extra`
+ * says what the host did about a change the request had already made (Studio's `POST /users` adds
+ * `rolledBack`); it never carries the withheld response.
+ */
+export function decisionNotRecorded(err: unknown, extra: Record<string, unknown> = {}): Response {
   console.error('@gnldev/auth: onDecision failed — the response was withheld:', err);
-  return Response.json({ error: 'the decision for this request could not be recorded', code: AUTH_ERROR_CODES.decisionNotRecorded }, { status: 500 });
+  return Response.json({ ...extra, error: 'the decision for this request could not be recorded', code: AUTH_ERROR_CODES.decisionNotRecorded }, { status: 500 });
 }
