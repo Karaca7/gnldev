@@ -15,14 +15,9 @@
 // negative would also pass on a typo'd import (TS2305) or a missing module (TS2307) — failing for the
 // wrong reason and holding nothing.
 import { describe, it, expect, beforeAll } from 'vitest';
-import { typeDiagnostics, type TypeDiagnostic } from '../../../test/support/type-diagnostics.js';
+import { typeDiagnostics, mutate, type TypeDiagnostic } from '../../../test/support/type-diagnostics.js';
 
 /** The baseline with `from` replaced by `to`; throws unless `from` occurs exactly once. */
-function mutate(base: string, from: string, to: string): string {
-  const at = base.indexOf(from);
-  if (at < 0 || base.indexOf(from, at + 1) >= 0) throw new Error(`mutation target must occur exactly once: ${from}`);
-  return base.slice(0, at) + to + base.slice(at + from.length);
-}
 
 const codes = (d: TypeDiagnostic[]): number[] => d.map((x) => x.code);
 

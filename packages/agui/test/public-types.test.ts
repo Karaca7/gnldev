@@ -12,14 +12,9 @@
 // positive one with exactly ONE mutation, and asserts the SPECIFIC error code it produces — a typo'd
 // import also fails to compile (TS2305), and a count-only check would pass for that reason.
 import { describe, it, expect, beforeAll } from 'vitest';
-import { typeDiagnostics, type TypeDiagnostic } from '../../../test/support/type-diagnostics.js';
+import { typeDiagnostics, mutate, type TypeDiagnostic } from '../../../test/support/type-diagnostics.js';
 
 /** Applies ONE textual mutation; throws unless `from` occurs exactly once, so a stale mutation fails loudly. */
-function mutate(base: string, from: string, to: string): string {
-  const at = base.indexOf(from);
-  if (at < 0 || base.indexOf(from, at + 1) >= 0) throw new Error(`mutation anchor must occur exactly once: ${from}`);
-  return base.slice(0, at) + to + base.slice(at + from.length);
-}
 /** Exactly one diagnostic, with this code, whose message names what the mutation broke. */
 const only = (code: number, names: string) => [{ code, message: expect.stringContaining(names) }];
 

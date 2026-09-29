@@ -42,3 +42,17 @@ export function typeDiagnostics(dir: string, snippets: Record<string, string>): 
   }
   return out;
 }
+
+/**
+ * A negative case: `base` with exactly one edit, `from` replaced by `to`. Throws unless `from` occurs
+ * exactly once — overlapping occurrences included — because an anchor that matches twice edits a place
+ * nobody chose, and the case then fails (or passes) for a reason its name does not state.
+ *
+ * One copy, here. It began as ten, one per test file, and within a day they had split into two
+ * behaviours: a `split`-based copy accepted `'aa'` in `'aaa'` and edited the first match silently.
+ */
+export function mutate(base: string, from: string, to: string): string {
+  const at = base.indexOf(from);
+  if (from === '' || at < 0 || base.indexOf(from, at + 1) >= 0) throw new Error(`mutation anchor must occur exactly once: ${from}`);
+  return base.slice(0, at) + to + base.slice(at + from.length);
+}

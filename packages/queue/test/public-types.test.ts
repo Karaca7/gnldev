@@ -10,14 +10,9 @@
 // case with ONE mutation, and asserts the exact TypeScript error code that mutation must produce — a
 // negative that only counted errors would also pass on a typo'd import (TS2305).
 import { describe, it, expect, beforeAll } from 'vitest';
-import { typeDiagnostics, type TypeDiagnostic } from '../../../test/support/type-diagnostics.js';
+import { typeDiagnostics, mutate, type TypeDiagnostic } from '../../../test/support/type-diagnostics.js';
 
 /** The base with exactly one occurrence of `from` replaced; throws if `from` is not there exactly once. */
-function mutate(base: string, from: string, to: string): string {
-  const parts = base.split(from);
-  if (parts.length !== 2) throw new Error(`mutation anchor must occur exactly once (found ${parts.length - 1}): ${from}`);
-  return parts.join(to);
-}
 
 const codes = (d: TypeDiagnostic[]) => d.map((x) => x.code);
 const TIMEOUT = 60_000;

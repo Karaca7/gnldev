@@ -14,14 +14,9 @@
 // A contract that loosens — `userErasure.storage` made optional, an option turned `any` — makes the
 // baseline still compile and the negative stop failing, and that is what turns this red.
 import { describe, it, expect, beforeAll } from 'vitest';
-import { typeDiagnostics, type TypeDiagnostic } from '../../../test/support/type-diagnostics.js';
+import { typeDiagnostics, mutate, type TypeDiagnostic } from '../../../test/support/type-diagnostics.js';
 
 /** Replace `from` (which must occur exactly once, so the mutation is exactly one) with `to`. */
-function mutate(base: string, from: string, to: string): string {
-  const at = base.indexOf(from);
-  if (at < 0 || base.indexOf(from, at + 1) >= 0) throw new Error(`mutation anchor must occur exactly once: ${from}`);
-  return base.slice(0, at) + to + base.slice(at + from.length);
-}
 
 interface Negative { name: string; from: string; to: string; codes: number[] }
 
