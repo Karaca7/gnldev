@@ -81,6 +81,25 @@ importers:
         specifier: ^4.19.0
         version: 4.23.15
 
+  examples/benchmarks:
+    dependencies:
+      '@ai-sdk/openai':
+        specifier: ^4.0.0
+        version: 4.0.75(zod@4.6.5)
+      '@gnldev/durable':
+        specifier: workspace:*
+        version: link:../../packages/durable
+      ai:
+        specifier: ^7.0.0
+        version: 7.0.114(zod@4.6.5)
+      pg:
+        specifier: ^8.0.0
+        version: 8.23.0
+    devDependencies:
+      tsx:
+        specifier: ^4.19.0
+        version: 4.23.15
+
   examples/incident-proofs:
     dependencies:
       '@gnldev/durable':
@@ -4194,6 +4213,12 @@ snapshots:
       '@ai-sdk/provider': 4.0.18
       '@ai-sdk/provider-utils': 5.0.47(zod@3.25.76)
       zod: 3.25.76
+
+  '@ai-sdk/openai@4.0.75(zod@4.6.5)':
+    dependencies:
+      '@ai-sdk/provider': 4.0.18
+      '@ai-sdk/provider-utils': 5.0.47(zod@4.6.5)
+      zod: 4.6.5
 
   '@ai-sdk/provider-utils@5.0.47(zod@3.25.76)':
     dependencies:
