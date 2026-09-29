@@ -248,7 +248,7 @@ export function createChatRoute(
     // read by `callerOfRequest` for an APPLICATION principal only — a user or staff naming someone in
     // the body names nobody.
     const who = await callerOfRequest(opts.identify, c.req.raw, body.resourceId);
-    if ('refused' in who) return c.json({ error: who.refused }, 400);
+    if ('refused' in who) return c.json({ error: who.refused }, who.status ?? 400);
     const caller = who.caller;
     const subject = caller.kind === 'user' ? caller.id : undefined;
     // WHICH ORGANIZATION: the principal's, never the body's. An org is an isolation boundary, and a

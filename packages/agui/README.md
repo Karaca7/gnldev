@@ -130,6 +130,13 @@ from the request body. The route always seals the request context, so a body-sup
 `__gnl_resourceId` names nobody. `identify: () => undefined` says, explicitly, that there is no
 per-user identity: every caller is `unknown`, closed to every user's and staff's data.
 
+**A presented credential the provider rejected is refused with 401**, not served as anonymous — a
+revoked or deleted user's token used to answer 200 as an `unknown` caller, with an audit row saying
+`allowed: true`. The route refuses when `identify` answers nothing and the provider noted the rejection
+(`@gnldev/auth-ee` does for any credential its chain did not accept; your own `identify` calls
+`markCredentialRejected(req)`); the row carries `detail: 'credential_rejected'`. No credential, or
+`identify: () => undefined`, is still anonymous.
+
 **Breaking in 0.7.** `identity: (req) => ({ resourceId, orgId, threadId })` was replaced by
 `identify: (req) => Principal`: the old shape could not say "this caller is staff", and the standalone
 route let an end user read a staff member's ownerless thread (measured). Passing `identity` now throws

@@ -149,6 +149,19 @@ so a body carrying `{"context":{"__gnl_resourceId":"VICTIM"}}` names nobody.
 are closed to every user and to staff's threads. Memory has nothing to scope on, so per-user recall
 and `listThreads` have no subject to key by.
 
+**A credential that was presented and rejected is refused (401), not served as anonymous.** This route
+lets anonymous callers in, so "no credential" and "a dead credential" used to look the same: a revoked
+or deleted user's token answered 200 as an `unknown` caller, and the audit row said `kind: "unnamed",
+allowed: true`. The caller had said who they were and it was not true; serving them anyway turns them
+into somebody else without telling them, and their client never learns to sign in again. Now, when
+`identify` answers nothing *and* the provider noted that the request carried a credential it did not
+accept, the route answers `401` and nothing runs; the row says `reason: 'unauthenticated', detail:
+'credential_rejected'`. `@gnldev/auth-ee`'s provider notes it for any `Authorization` header (or GET
+`?token=`) that nothing in its chain accepted. A request with no credential is still anonymous, and
+`identify: () => undefined` reads no credential at all, so a header changes nothing there. Your own
+`identify` opts in by calling `markCredentialRejected(req)` from `@gnldev/auth` before it answers
+`undefined`. The free `roleAuth` does not note it (0.7).
+
 **Honest bound.** An `identify` that trusts an *unauthenticated* request asserts a caller nobody
 verified. Put auth in front of this route — or mount `chatSurface()` on `@gnldev/server` instead.
 

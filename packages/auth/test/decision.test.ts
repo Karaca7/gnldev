@@ -1,6 +1,6 @@
 // The one rule for what a host reports to `onDecision`: the outcome the caller got.
 import { describe, it, expect } from 'vitest';
-import { makeGate, markRefusal, outcomeOf, type AccessDecision, type AuthProvider, type Principal } from '../src/index.js';
+import { makeGate, markRefusal, outcomeOf, markCredentialRejected, credentialRejected, callerOfRequest, CREDENTIAL_REJECTED, CREDENTIAL_NOT_ACCEPTED, type AccessDecision, type AuthProvider, type Principal } from '../src/index.js';
 
 const ayse: Principal = { kind: 'subject', id: 'ayse', orgId: 'acme', roles: [] };
 function provider(allow: boolean, seen: AccessDecision[]): AuthProvider {
@@ -63,5 +63,37 @@ describe('onDecision reports the answer, not the first verdict', () => {
     const gate = makeGate(provider(true, seen));
     await gate.settle(req(), 200);
     expect(seen).toEqual([]);
+  });
+});
+
+describe('a presented credential the provider rejected', () => {
+  const identifyRejecting = (r: Request) => {
+    if (r.headers.get('authorization')) markCredentialRejected(r);
+    return undefined;
+  };
+
+  it('a door refuses it with 401 and the row names it; no credential stays anonymous', async () => {
+    const dead = req();
+    expect(await callerOfRequest(identifyRejecting, dead)).toEqual({ refused: CREDENTIAL_NOT_ACCEPTED, status: 401 });
+    expect(outcomeOf(dead, 401)).toMatchObject({ allowed: false, reason: 'unauthenticated', detail: CREDENTIAL_REJECTED });
+
+    const anon = req(false);
+    expect(await callerOfRequest(identifyRejecting, anon)).toMatchObject({ principal: undefined, caller: { kind: 'unknown' } });
+    expect(outcomeOf(anon, 200)).toMatchObject({ allowed: true });
+    expect(outcomeOf(anon, 200)?.detail).toBeUndefined();
+  });
+
+  it('an identify that never notes a rejection (the `() => undefined` opt-out) keeps a header anonymous', async () => {
+    const r = req();
+    expect(await callerOfRequest(() => undefined, r)).toMatchObject({ caller: { kind: 'unknown' } });
+    expect(credentialRejected(r)).toBe(false);
+  });
+
+  it('a gated route: the 401 row carries the rejection instead of the verdict\'s generic reason', async () => {
+    const r = req();
+    markCredentialRejected(r);
+    const gate = makeGate({ authenticate: () => null, authorize: (p) => (p ? { allow: true } : { allow: false, status: 401, reason: 'no' }) });
+    await gate.allow(r, 'read');
+    expect(outcomeOf(r, 401)).toMatchObject({ allowed: false, reason: 'unauthenticated', detail: CREDENTIAL_REJECTED });
   });
 });

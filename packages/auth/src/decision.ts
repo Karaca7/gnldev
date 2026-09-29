@@ -12,6 +12,30 @@ const principals = new WeakMap<Request, Principal | null>();
 const verdicts = new WeakMap<Request, { ctx: AuthContext; verdict: Decision }>();
 const refusals = new WeakMap<Request, { reason: RefusalReason; detail?: string }>();
 const settled = new WeakSet<Request>();
+const rejectedCredentials = new WeakSet<Request>();
+
+/** The `detail` of a request that presented a credential the provider did not accept. */
+export const CREDENTIAL_REJECTED = 'credential_rejected';
+
+/**
+ * Note that this request CARRIED a credential and the provider accepted none of it — revoked, expired,
+ * deleted, forged or never issued. A provider's `authenticate` calls it before answering null.
+ *
+ * Why it exists: `null` from `authenticate` meant two different things, "nobody said who they are" and
+ * "somebody said who they are and it was false". A door that serves anonymous callers (the standalone
+ * chat and AG-UI routes) could not tell them apart, so a revoked user's token was served as an anonymous
+ * request — 200, recorded as `kind: "unnamed", allowed: true` — and the record hid that a dead
+ * credential had been presented. The doors now refuse such a request with 401 (`callerOfRequest`), and
+ * the row says why. A host's own `identify` can call this too; `identify: () => undefined` never does.
+ */
+export function markCredentialRejected(req: Request): void {
+  rejectedCredentials.add(req);
+}
+
+/** Whether a provider noted that this request's credential was rejected (`markCredentialRejected`). */
+export function credentialRejected(req: Request): boolean {
+  return rejectedCredentials.has(req);
+}
 
 /** Who made this request. Internal: the gate and `callerOfRequest` note it; nothing else should. */
 export function notePrincipal(req: Request, principal: Principal | null | undefined): void {
@@ -70,6 +94,9 @@ export function outcomeOf(req: Request, status: number): AccessDecision | undefi
     allowed = false;
     reason = 'policy';
   }
+  // A rejected credential is named on the row, whatever came of the request: refused as 401 (the doors,
+  // and every gated route), or served on a route that needs no identity. Never over a refusal's own detail.
+  if (principal === null && rejectedCredentials.has(req) && (refusal?.detail === undefined)) detail = CREDENTIAL_REJECTED;
   const method = req.method.toUpperCase();
   return {
     principal,

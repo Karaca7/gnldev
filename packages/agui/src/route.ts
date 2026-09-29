@@ -287,7 +287,7 @@ function aguiRouteApp(config: CreateGnlConfig, opts: CreateAguiRouteOptions = {}
     // cannot be made without the subject, and a resolver may answer differently the second time.
     // `body.resourceId` is read by `callerOfRequest` for an APPLICATION principal only.
     const who = await callerOfRequest(opts.identify, c.req.raw, body.resourceId);
-    if ('refused' in who) return c.json({ error: who.refused }, 400);
+    if ('refused' in who) return c.json({ error: who.refused }, who.status ?? 400);
     const caller = who.caller;
     const subject = caller.kind === 'user' ? caller.id : undefined;
     // WHICH ORGANIZATION — the principal's, never the body's. Same rule and same reason as the sibling

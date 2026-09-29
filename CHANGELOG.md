@@ -297,6 +297,14 @@ principals on every door. What broke was the management auth-ee sells. Breaking:
   writes no row (documented). If the hook throws, the host answers 500 `decision_not_recorded` instead
   of an unrecorded response (`AUTH_ERROR_CODES`, with its page in docs/errors). `authorize` no longer
   writes rows. New in durable: `OWNERSHIP_CONFLICT_CODES`.
+- **A dead credential is refused on the doors that take anonymous callers.** A revoked or deleted
+  user's token on the standalone chat and AG-UI routes answered 200 as an anonymous caller, recorded
+  `kind: "unnamed", allowed: true`. auth-ee's `authenticate` now notes a credential that was presented
+  and accepted by nothing (@gnldev/auth `markCredentialRejected`, `credentialRejected`,
+  `CREDENTIAL_REJECTED`); `callerOfRequest` refuses it (`{ refused, status: 401 }`,
+  `CREDENTIAL_NOT_ACCEPTED`), and the chat and AG-UI routes answer 401 — MCP refuses the call. Every
+  door's row carries `detail: 'credential_rejected'`. No credential at all, or `identify: () => undefined`,
+  is still anonymous. The free `roleAuth` does not note rejections.
 - **Audit rows say the caller's `kind`** (a subject named `ops` and the operator `ops` wrote identical
   rows) and carry `status`, `permission`, `detail`, `writer`, `seq`; `reason` is now the category and the
   old free text is `detail`. The MAC secret must be at least 32 bytes (`MIN_AUDIT_SECRET_BYTES`; an empty

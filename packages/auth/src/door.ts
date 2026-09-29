@@ -5,7 +5,7 @@
 // the same principal is the same caller whichever door the request came in through.
 import type { Principal } from './types.js';
 import { callerKind, engineCallerOf, type EngineCaller, type Identify } from './scope.js';
-import { markRefusal, notePrincipal } from './decision.js';
+import { markRefusal, notePrincipal, credentialRejected, CREDENTIAL_REJECTED } from './decision.js';
 
 /**
  * Why a door refuses an application that names no user. The sentence @gnldev/server answers an
@@ -13,11 +13,21 @@ import { markRefusal, notePrincipal } from './decision.js';
  */
 export const APPLICATION_NAMES_NO_USER = 'resourceId is required: this request used an application credential and named no end user.';
 
+/**
+ * Why a door refuses a request whose credential the provider rejected (`markCredentialRejected`).
+ * Sent with 401: the caller said who they are and it was not true, so serving them as anonymous would
+ * quietly turn them into somebody else.
+ */
+export const CREDENTIAL_NOT_ACCEPTED = 'the credential this request carried was not accepted (revoked, expired, deleted or never issued). Send a valid one — or none, to call as an anonymous caller.';
+
 export type RequestCaller =
   /** `principal` is what `identify` returned (undefined for an anonymous request); `caller` is the engine's. */
   | { principal: Principal | undefined; caller: EngineCaller }
-  /** An application that named no user, or a name no user can carry. Nothing runs. */
-  | { refused: string };
+  /**
+   * Nothing runs. `status` 401: the request carried a credential the provider rejected. Absent (400):
+   * an application that named no user, or a name no user can carry.
+   */
+  | { refused: string; status?: 401 };
 
 /**
  * Who a request is, for the engine.
@@ -38,6 +48,12 @@ export async function callerOfRequest(identify: Identify | undefined, req: Reque
   const principal = (await identify?.(req)) ?? undefined;
   // Noted for the door's `onDecision` (settleDecision): the record names who asked, whatever came of it.
   notePrincipal(req, principal);
+  // A credential was presented and rejected: refused, not served as anonymous. Only a provider that
+  // noted it says so — `identify: () => undefined` reads no credential and keeps every caller anonymous.
+  if (!principal && credentialRejected(req)) {
+    markRefusal(req, 'unauthenticated', { detail: CREDENTIAL_REJECTED });
+    return { refused: CREDENTIAL_NOT_ACCEPTED, status: 401 };
+  }
   if (callerKind(principal) === 'application') {
     const caller = engineCallerOf(principal, typeof named === 'string' ? named : undefined);
     if (caller.kind === 'user') return { principal, caller };
