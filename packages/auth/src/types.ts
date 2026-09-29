@@ -2,8 +2,8 @@
 // same interface → premium (RBAC/SSO/multi-organization/audit) plugs in without touching the core.
 
 /**
- * The authenticated subject. The free tier only uses `roles`; the `permissions`/`orgId` fields are
- * ALREADY reserved for EE (fine-grained RBAC + multi-organization) → the schema won't break later.
+ * The authenticated subject. `orgId` binds the identity to an organization — isolation is free in the
+ * core (ADR-0001 §6); `permissions` carries the fine-grained RBAC grants that @gnldev/auth-ee resolves.
  */
 export interface Principal {
   /**

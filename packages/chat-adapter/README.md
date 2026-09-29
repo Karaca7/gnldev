@@ -278,7 +278,7 @@ side effect goes through the approval ladder, never a silent re-execution.
 ```ts
 import { toUIMessages } from '@gnldev/chat-adapter';
 
-const messages = toUIMessages(await journal.list(runId));
+const messages = toUIMessages(await journal.readRun(runId));
 ```
 
 The journal is the source of truth, so a reconnecting client can rebuild the conversation without

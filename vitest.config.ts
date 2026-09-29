@@ -15,8 +15,8 @@ export default defineConfig({
      * Vitest's default is 5s, which this suite exceeds under load rather than because anything is slow.
      * Measured twice on one machine: `pricing-command.test.ts` timed out during a full run and passed
      * in 829ms on its own; the full run that failed took 149s against a usual ~50s, so the machine was
-     * contended, not the test. CI has never run against this repository, and GitHub's shared runners
-     * are two cores — the ones most likely to reproduce it.
+     * contended, not the test. CI runs on GitHub's shared runners, which are two cores — the ones most
+     * likely to reproduce it.
      *
      * A raised ceiling is not a slower suite: a test that passes in 800ms still takes 800ms. What it
      * changes is which failures are real. A timeout that fires on contention is a false red, and a

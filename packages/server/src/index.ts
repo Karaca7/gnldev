@@ -776,8 +776,8 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   // STRICT multi-org model = PAID gate: on ONLY when the auth provider (paid @gnldev/auth-ee, valid
   // license) reports the `multiOrganization` capability. When on, an unbound identity is NO LONGER a
   // super-admin by default — it must carry the EXPLICIT platform-admin grant (scope: 'platform'),
-  // otherwise it is fail-closed. When OFF (free/host-org/no-auth) behavior is preserved EXACTLY: an
-  // org-less identity is the legacy operator (sees the shared/root scope).
+  // otherwise it is fail-closed. It no longer decides isolation on its own: with `org` configured the
+  // same fail-closed rules apply on the free tier (orgIsolationActive, below).
   const strictMultiOrg = authProvider?.capabilities?.().multiOrganization === true;
   /**
    * Whether this deployment has organizations at all — and therefore whether the fail-closed rules
@@ -1159,11 +1159,10 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     if (orgIsolationActive && authProvider && !principal) {
       return { error: 'access denied: organization isolation is configured but this auth provider binds no identity to an organization (fail-closed)', status: 403 };
     }
-    // STRICT (EE multi-org) FAIL-CLOSED: an authenticated identity with NO org binding AND NO explicit
-    // platform-admin grant gets 403 — it is NOT the accidental super-admin. Kept license-gated on
-    // purpose: the FREE tier's contract is that an unbound admin is the legacy cross-org OPERATOR
-    // (see auth-org.test 'operator scenario'); a host wanting strict isolation binds every token's
-    // Cred.orgId or runs the paid strict-multi-org model.
+    // FAIL-CLOSED: with organization isolation on, an authenticated identity with NO org binding AND
+    // NO explicit platform-admin grant gets 403 — it is NOT the accidental super-admin. This holds in
+    // the free core, with or without a licence (ADR-0001 §6: isolation is free); a cross-org operator
+    // is granted explicitly (superAdmin), never implied by a missing org.
     if (orgIsolationActive && principal && !bound && !isPlatformAdmin(principal)) {
       return { error: 'access denied: no organization scope and no platform-admin grant (fail-closed)', status: 403 };
     }
