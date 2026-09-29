@@ -207,7 +207,7 @@ everyone else.
 | `AuthProvider` | `authenticate(request)` → a `Principal` or `null`, then `authorize(principal, request, ctx)` → `{ allow }` |
 | `roleAuth` | The bundled provider above |
 | `CLIENT_WRITES` | The exact set of writes a `client` (and an end user) may perform — read it rather than guessing |
-| `signSubjectToken` / `verifyJwt` | Sign an end user's token in your backend; the verifier every GNL token goes through. `verifyJwt`'s `onClaims` receives the claims once signature and time checks pass, for a caller that needs more than the `Principal` (e.g. `iat`/`jti` for revocation) |
+| `signSubjectToken` / `verifyJwt` | Sign an end user's token in your backend; the verifier every GNL token goes through. `verifyJwt`'s `onClaims` receives the claims once signature and time checks pass, for a caller that needs more than the `Principal` (e.g. `iat`/`jti` for revocation). `claimMap` renames the claims read into the `Principal` when your issuer uses other names (default: `id` ← `sub`, `roles` ← `roles`, `orgId` ← `orgId`) |
 | `subjectTokenEndpoint` | Your app's refresh route: session → fresh short-lived token |
 | `actorIdOf` | The name identity comparisons use: a user's own id, `operator:<id>` for staff |
 | `Identify` | `(req) => Principal \| null \| undefined` (may be async): "who is this request", written once and handed to every door — `@gnldev/server`, `@gnldev/chat-adapter`, `@gnldev/agui`, `@gnldev/mcp`. A provider's `authenticate` is one: `(req) => auth.authenticate(req)` |

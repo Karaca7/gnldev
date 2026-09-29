@@ -990,6 +990,8 @@ const sweeper = createRetentionSweeper(journal, {
   intervalMs: 60 * 60_000,                       // default: hourly
   sweep: { olderThanMs: 90 * 24 * 60 * 60_000 }, // runs older than 90 days
   onError: (err) => console.error('retention sweep failed', err),
+  // Optional: also sweep durable-log namespaces in the same round (one target or several).
+  // logSweep: [{ ns: '__audit__', olderThanMs: 365 * 24 * 60 * 60_000 }],
 });
 sweeper.start();
 // …

@@ -25,7 +25,9 @@ await runDurable({
 ```
 
 ## API
-- `piiRedactor(opts?)` · `moderationProcessor(opts?)` · `toolFilter(opts?)`
+- `piiRedactor(opts?)` · `moderationProcessor(opts?)` · `toolFilter(opts?)` — `piiRedactor({ redactToolResults: true })`
+  also masks what a tool returned before it is journaled (off by default: tool output from an API,
+  database or file is stored as-is unless you turn this on)
 - `tokenLimit(...)` · `promptInjectionDetector(...)` · `outputLimit(...)`
 - `piiTextRedactor(opts?) → (text: string) => string` — the same masking as `piiRedactor`, as a plain
   string function, for text that never passes through a processor at all. A `Processor` only sees

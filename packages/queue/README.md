@@ -111,7 +111,7 @@ rather than report a partial erasure as done.
 ## API
 - `enqueue(work, type, payload, { id?, maxDepth?, caller?, resourceId?, orgId? }) → jobId` — `work` is `storage.work`.
   `caller` is an engine `Caller` (`user(id, org)`, `staff(org?)`); `resourceId`/`orgId` are its shorthand.
-- `createWorker(storage, handlers, opts?) → { runOnce, drain, start, stop }` — `opts`: `owner`, `ttlMs` (stale lock reclaim), `pollMs`, `maxAttempts`, `onError`, `backoff`, `maxPollMs`, `heartbeat`
+- `createWorker(storage, handlers, opts?) → { runOnce, drain, start, stop }` — `opts`: `owner`, `ttlMs` (stale lock reclaim), `pollMs`, `maxAttempts`, `onError`, `backoff`, `maxPollMs`, `heartbeat`, `maxRenewFailures` (after this many heartbeat renewals fail in a row — default 3 — the worker treats the lock as lost rather than risk running the job twice)
 - `JobCtx` gives the handler `{ journal, jobId, runId, caller, run, storage, orgId?, enqueue }`. `ctx.run(args)` is
   `runDurable` on `journal`/`runId` as `caller` — it keeps the side effect at-most-once and the run the owner's.
 - `listJobs(work)` shows each job's `resourceId`/`orgId` next to its status.
