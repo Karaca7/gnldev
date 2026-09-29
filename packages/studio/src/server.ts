@@ -5,7 +5,7 @@ import { Hono, type Context } from 'hono';
 import { sseResponse } from './sse.js';
 
 import { STUDIO_ERROR_CODES } from './error-codes.js';
-import { ORG_RECORD_PRE, asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, countLog, purgeRun, isRealRun, purgeOrganization, orgPurgedKey, sweepRuns, sweepLog, listOrphanThreadState, POLICY_KEY, PRICING_KEY, effectivePricingTable, DEFAULT_PRICING, readPricing, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, knownModelProviders, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent, callerConflictCode, surfacedInterrupts, resolveApprovals as dResolveApprovals, hasRunProbe, runOwnerOf, inheritRunOwner, LIMIT_ERROR_CODES, eraseSubject } from '@gnldev/durable';
+import { ORG_RECORD_PRE, asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, countLog, purgeRun, isRealRun, purgeOrganization, orgPurgedKey, sweepRuns, sweepLog, listOrphanThreadState, POLICY_KEY, PRICING_KEY, effectivePricingTable, DEFAULT_PRICING, readPricing, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, knownModelProviders, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent, callerConflictCode, surfacedInterrupts, resolveApprovals as dResolveApprovals, hasRunProbe, runOwnerOf, inheritRunOwner, LIMIT_ERROR_CODES, eraseSubject, subjectRuns, toJournal } from '@gnldev/durable';
 import type { PolicyDoc, PolicyRule, BudgetLimit, PricingDoc } from '@gnldev/durable';
 import type { JournalReader, Journal, WorkflowLike, MetricsRunRow, Caller, Storage, SubjectEraser } from '@gnldev/durable';
 import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, principalScope, assertAssignablePrivileges, isPrincipalKind, callerKind, actorIdOf, engineCallerOf, markRefusal, decisionNotRecorded, type AuthProvider, type Principal, type PrincipalKind, type RefusalReason } from '@gnldev/auth';
@@ -773,8 +773,13 @@ export interface StudioApiOptions {
    * `storage` is the ROOT storage your agents run on; `erasers` are the background packages' (`jobEraser`,
    * `triggerEraser`, `eventEraser`); `memory` a storage your memory was built over, when it is another.
    * Without it, `DELETE /users/:id` refuses (409) unless the caller says `?keepData=true`.
+   *
+   * `settleMs` (default 10 000): how long the delete waits for the person's runs that are still writing
+   * — a turn inside the model when the delete arrives writes its answer and the thread's messages after
+   * it. Past it, those runs are cancelled and the delete answers 409 `user_runs_in_flight`, erasing
+   * nothing; delete again once they stopped.
    */
-  userErasure?: { storage: Storage; erasers?: SubjectEraser[]; memory?: Storage };
+  userErasure?: { storage: Storage; erasers?: SubjectEraser[]; memory?: Storage; settleMs?: number };
   /** Compiler to run a managed workflow with the real engine (@gnldev/studio/workflow → compileManagedWorkflow). */
   compileWorkflow?: CompileWorkflowFn;
   /**
@@ -2843,15 +2848,58 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       }, 409);
     }
     let erased: Awaited<ReturnType<typeof eraseSubject>> | undefined;
+    let stillWriting: string[] = [];
     if (!keepData && opts.userErasure) {
-      const { storage, erasers, memory } = opts.userErasure;
+      const { storage, erasers, memory, settleMs = 10_000 } = opts.userErasure;
+      const scope = target.orgId ? { orgId: target.orgId } : {};
+      const eraseOnce = () => eraseSubject(storage, id, { ...scope, ...(erasers ? { erasers } : {}), ...(memory ? { memory } : {}) });
       await opts.users.revoke?.(id);
+      /**
+       * A TURN ALREADY RUNNING IS NOT STOPPED BY THE REVOKE. Measured: a delete that landed while a turn
+       * was inside the model answered `complete: true`, and the turn then wrote its answer and the
+       * thread's messages under ids the erasure had just cleared — ownerless, but there. So: wait for
+       * the person's runs to stop writing (a run's own last write turns its outcome terminal), bounded
+       * by `settleMs`. Runs still writing at the deadline are cancelled — they stop at their next model
+       * step, on any worker — and nothing is erased: an erasure now would be the false report again,
+       * and erasing later needs the owner records this one would take. The user stays listed, revoked.
+       */
       try {
-        erased = await eraseSubject(storage, id, {
-          ...(target.orgId ? { orgId: target.orgId } : {}),
-          ...(erasers ? { erasers } : {}),
-          ...(memory ? { memory } : {}),
-        });
+        const deadline = Date.now() + settleMs;
+        let running = (await subjectRuns(storage, id, scope)).filter((r) => r.inFlight);
+        while (running.length && Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, Math.min(50, Math.max(1, deadline - Date.now()))));
+          running = (await subjectRuns(storage, id, scope)).filter((r) => r.inFlight);
+        }
+        if (running.length) {
+          const runsJournal = target.orgId ? withOrg(toJournal(storage.runs), target.orgId) : toJournal(storage.runs);
+          for (const r of running) await cancelAgentRun(runsJournal, r.runId, { reason: 'user deleted' });
+          const runs = running.map((r) => r.runId);
+          await audit(c, 'user.delete', id, { refused: 'runs in flight', runs });
+          return c.json({
+            error: `${runs.length} run(s) of this user were still running after ${settleMs} ms. The user is revoked and the ` +
+              'runs are cancelled (they stop at their next model step); nothing was erased. Delete again once they have ' +
+              'stopped. A run whose worker died stays listed here until you purge it (DELETE /runs/:id).',
+            code: STUDIO_ERROR_CODES.userRunsInFlight,
+            runs,
+          }, 409);
+        }
+        erased = await eraseOnce();
+        // LOOK AGAIN. A request that authenticated before the revoke can start a run after the listing
+        // above. Its runs are erased now; one still writing makes this delete incomplete, and says so.
+        const late = await subjectRuns(storage, id, scope);
+        if (late.length) {
+          const again = await eraseOnce();
+          erased = {
+            journalRows: erased.journalRows + again.journalRows,
+            workRecords: erased.workRecords + again.workRecords,
+            memoryThreads: erased.memoryThreads + again.memoryThreads,
+            workingMemory: erased.workingMemory + again.workingMemory,
+            unreachedThreads: [...new Set([...erased.unreachedThreads, ...again.unreachedThreads])].sort(),
+            byEraser: Object.fromEntries([...new Set([...Object.keys(erased.byEraser), ...Object.keys(again.byEraser)])]
+              .map((k) => [k, (erased!.byEraser[k] ?? 0) + (again.byEraser[k] ?? 0)])),
+          };
+          stillWriting = late.filter((r) => r.inFlight).map((r) => r.runId);
+        }
       } catch (e) {
         await audit(c, 'user.delete', id, { failed: String((e as Error)?.message ?? e) });
         return c.json({ error: `erasing the user's data failed; the user was revoked, not deleted: ${String((e as Error)?.message ?? e)}` }, 500);
@@ -2859,10 +2907,12 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     }
     await opts.users.remove(id);
     // `complete: false` when the erasure found threads of this person it could not reach — a memory in
-    // another storage (`userErasure.memory`). The counts alone would read as success.
-    const complete = erased ? erased.unreachedThreads.length === 0 : undefined;
-    await audit(c, 'user.delete', id, erased ? { erased, complete } : { keptData: true });
-    return c.json({ ok: true, id, ...(erased ? { erased, complete } : { keptData: true }) });
+    // another storage (`userErasure.memory`) — or a run of theirs that started during the delete and was
+    // still writing after it (`runsInFlight`). The counts alone would read as success.
+    const complete = erased ? erased.unreachedThreads.length === 0 && stillWriting.length === 0 : undefined;
+    const report = erased ? { erased, complete, ...(stillWriting.length ? { runsInFlight: stillWriting } : {}) } : { keptData: true };
+    await audit(c, 'user.delete', id, report);
+    return c.json({ ok: true, id, ...report });
   });
 
   // Invalidate the user's token WITHOUT deleting the user (audit/history remains). Only enabled if

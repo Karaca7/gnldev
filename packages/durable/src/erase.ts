@@ -29,6 +29,7 @@ import { orgVectorDelete, orgStorageScopeOf, withOrgStorage } from './org-storag
 import { toJournal, workingMemoryScope, legacyWorkingMemoryScope } from './storage.js';
 import { memKey, MEM_LEAVES, OM_VECTOR_SOURCE } from './memory.js';
 import type { Memory } from './memory.js';
+import { runKeys } from './journal.js';
 import type { Journal } from './journal.js';
 import type { MemoryStore, Storage, WorkStore } from './storage.js';
 
@@ -140,6 +141,67 @@ function memoryHome(storage: Storage, memory: Storage | undefined): Storage | un
   return memory;
 }
 
+/** One of a person's runs, as `subjectRuns` sees it. */
+export interface SubjectRun {
+  runId: string;
+  threadId?: string;
+  /**
+   * The run may still write: its outcome is the write-ahead `running` (a run's own LAST write turns it
+   * terminal), or a model step or tool call of it is claimed `running` right now (the step a canceled
+   * run is still inside). A run whose worker died stays `running` until someone purges or cancels it.
+   */
+  inFlight: boolean;
+}
+
+/** Is any model-step or tool claim of this run `running` at this moment? */
+async function hasRunningClaim(runs: Journal, runId: string): Promise<boolean> {
+  if (typeof runs.listKeys !== 'function') return false;
+  for (const k of await runs.listKeys(`${runId}:`)) {
+    if (!k.includes(':proc:') && !k.includes(':tool:')) continue;
+    const v = await runs.get<{ status?: unknown }>(k);
+    if (v && typeof v === 'object' && v.status === 'running') return true;
+  }
+  return false;
+}
+
+/**
+ * A person's runs in a storage, and which of them may still write — what an erasure must wait for.
+ *
+ * `eraseSubject` deletes what is there when it runs. A turn in flight at that moment writes its answer,
+ * the thread's messages and its outcome AFTER the erasure, under ids the erasure just took the owner
+ * records of (measured: `DELETE /users/:id` in Studio during a running turn answered `complete: true`,
+ * and the turn's secret sat in `mem:<thread>:messages` afterwards, owned by nobody). Revoke the person
+ * first, so no new turn starts; ask this until nothing is `inFlight`, cancelling what should not finish
+ * (`cancelAgentRun`), then erase — and ask again afterwards: a run listed then was started by a request
+ * that had authenticated before the revoke. Same scope rules as `eraseSubject`.
+ */
+export async function subjectRuns(storage: Storage, resourceId: string, opts: { orgId?: string } = {}): Promise<SubjectRun[]> {
+  if (typeof resourceId !== 'string' || resourceId === '') throw new TypeError('@gnldev/durable: subjectRuns needs the id of the person');
+  if (orgStorageScopeOf(storage) !== undefined) {
+    throw new Error('@gnldev/durable: subjectRuns takes the root storage; name the organization with `{ orgId }`, as for eraseSubject');
+  }
+  const journal = toJournal(storage.runs);
+  const outside = opts.orgId === undefined;
+  const runs = outside ? journal : withOrg(journal, opts.orgId!);
+  const paged = (runs as unknown as {
+    listRunsPaged?: (q: { resourceId: string; limit: number; cursor?: string }) => Promise<{ items: Array<{ runId: string; threadId?: string }>; nextCursor?: string }>;
+  }).listRunsPaged;
+  if (typeof paged !== 'function') throw new Error('@gnldev/durable: subjectRuns needs a journal that lists runs by owner (listRunsPaged)');
+  const out: SubjectRun[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await paged.call(runs, { resourceId, limit: 200, ...(cursor ? { cursor } : {}) });
+    for (const r of page.items) {
+      if (outside && r.runId.startsWith('org:')) continue;
+      const outcome = await runs.get<{ status?: unknown }>(runKeys.outcome(r.runId));
+      const inFlight = outcome?.status === 'running' || (await hasRunningClaim(runs, r.runId));
+      out.push({ runId: r.runId, ...(r.threadId ? { threadId: r.threadId } : {}), inFlight });
+    }
+    cursor = page.nextCursor;
+  } while (cursor);
+  return out;
+}
+
 /**
  * Erase one person from a storage: runs, threads (journal- and memory-store-kept, with their
  * observational-memory records and vectors), working memory (0.7 and 0.6 keys), documents, and owned
@@ -165,6 +227,8 @@ export async function eraseSubject(storage: Storage, resourceId: string, opts: E
         'so this view cannot reach them. Pass the root storage and name the organization with `{ orgId }`.',
     );
   }
+  // NOT A SNAPSHOT: a run of this person in flight while this runs writes after it returns. See
+  // `subjectRuns` for the order that closes that (revoke, wait or cancel, erase, check again).
   const home = memoryHome(storage, opts.memory);
   const journal = toJournal(storage.runs);
   if (typeof journal.deletePrefix !== 'function') throw new Error('@gnldev/durable: eraseSubject needs a journal that can deletePrefix');

@@ -145,7 +145,18 @@ createStudioApi({ reader: storage.runs, users, userErasure: { storage, erasers: 
 
 The answer carries the erasure report: `{ ok, id, erased: { journalRows, memoryThreads, … }, complete }`.
 `complete: false` means the erasure found threads of this person it could not reach (a memory kept in
-another storage: pass it as `userErasure.memory`). A member is erased in its own organization.
+another storage: pass it as `userErasure.memory`), or a run of theirs started during the delete and was
+still writing after it (`runsInFlight`). A member is erased in its own organization.
+
+**A turn that is already running is waited for.** The revoke stops new requests, not a turn inside the
+model; that turn writes its answer and the thread's messages when the model returns. (Measured: a
+delete during a running turn answered `complete: true`, and the turn's text was in the thread
+afterwards.) So the delete revokes, then waits up to `userErasure.settleMs` (default 10 000 ms) for the
+person's runs to stop writing, erases, and looks again. Runs still writing at the deadline are
+cancelled — they stop at their next model step — and the delete answers 409
+[`user_runs_in_flight`](../../docs/errors/user_runs_in_flight.md) with `runs`, erasing nothing: the user
+stays listed and revoked, and the same delete sent again finishes it. `?keepData=true` erases nothing,
+so it does not wait.
 
 Without `userErasure`, the delete is refused with 409. Revoke the user instead
 (`POST /users/:id/revoke`), or delete with `?keepData=true` when keeping the data is deliberate (a

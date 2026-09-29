@@ -923,6 +923,29 @@ const report = await eraseSubject(storage, 'ayse', {
 Pass the ROOT storage and name the organization with `orgId`; an organization's view is refused,
 because owned jobs and events live in the root work log.
 
+**It is not a snapshot.** `eraseSubject` deletes what is there when it runs. A turn of the person that
+is running at that moment — inside the model, say — writes its answer, the thread's messages and its
+outcome after the erasure returns, under ids whose owner records the erasure just took: nobody owns
+them, and no later `eraseSubject(storage, id)` finds them. Revoking the person's credential stops new
+turns, not that one. Before erasing, ask `subjectRuns(storage, id, { orgId })`: each run with
+`inFlight: true` may still write (its outcome is still the write-ahead `running`, or a model step or
+tool call of it is claimed `running`). Wait until none is, or cancel them (`cancelAgentRun` — they stop
+at their next model step, and the step they are in finishes first) and wait again; then erase, and ask
+once more, for a run that a request authenticated before the revoke started meanwhile. Studio's
+`DELETE /users/:id` does exactly this, bounded by `userErasure.settleMs`. A run whose worker died stays
+`inFlight` until you purge it.
+
+```ts
+import { InMemoryStorage, subjectRuns, eraseSubject } from '@gnldev/durable';
+
+const storage = new InMemoryStorage();
+// after revoking ayse's credential:
+while ((await subjectRuns(storage, 'ayse', { orgId: 'acme' })).some((r) => r.inFlight)) {
+  await new Promise((r) => setTimeout(r, 100));
+}
+await eraseSubject(storage, 'ayse', { orgId: 'acme' });
+```
+
 The report counts what was deleted, never what was looked for. If your agents' memory was built over
 ANOTHER storage (`createGnl({ storage, memory: memoryPreset(otherStorage) })`), nothing in `storage`
 says so, and the erasure cannot find it by itself: pass that storage as `memory` (the root one; `orgId`

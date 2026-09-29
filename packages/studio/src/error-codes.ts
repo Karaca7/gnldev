@@ -33,6 +33,11 @@ export const STUDIO_ERROR_CODES = {
    * operator "not found" about something on their screen is its own kind of lie.
    */
   runNotARun: 'run_not_a_run',
+  /**
+   * 409 — `DELETE /users/:id` found runs of the person still writing after `userErasure.settleMs`. They
+   * were cancelled and the user revoked; nothing was erased, so the report of a later delete is true.
+   */
+  userRunsInFlight: 'user_runs_in_flight',
 } as const;
 
 export type StudioErrorCode = (typeof STUDIO_ERROR_CODES)[keyof typeof STUDIO_ERROR_CODES];
@@ -49,4 +54,5 @@ export const STUDIO_ERROR_STATUS: Record<string, number> = {
   dead_scan_store_wedged: 503,
   dead_scan_timeout: 504,
   run_not_a_run: 409,
+  user_runs_in_flight: 409,
 };

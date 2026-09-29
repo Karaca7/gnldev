@@ -273,6 +273,16 @@ principals on every door. What broke was the management auth-ee sells. Breaking:
   the entry. It needs the new Studio option `userErasure: { storage, erasers?, memory? }` — without it
   the route answers 409 (it answered 200), unless the operator passes `?keepData=true` on purpose. An
   unknown id is 404 (was 200). The answer carries `erased` and `complete`.
+- **Deleting a user during one of their turns no longer reports a false `complete: true`.** The revoke
+  stopped new requests but not a turn already inside the model, which then wrote its answer and the
+  thread's messages after the erasure — ownerless, but there. `DELETE /users/:id` now waits for the
+  person's runs to stop writing (new Studio option `userErasure.settleMs`, default 10 000 ms), erases,
+  and looks again; runs still writing at the deadline are cancelled and the delete answers 409
+  `user_runs_in_flight` (`STUDIO_ERROR_CODES.userRunsInFlight`, page in docs/errors) with `runs`,
+  erasing nothing. A run started during the delete and still writing after it makes the answer
+  `complete: false` with `runsInFlight`. New in durable: `subjectRuns(storage, id, { orgId })`, which
+  says which of a person's runs are `inFlight`; its README erasure section states the same race for a
+  direct `eraseSubject` call.
 - **A login never undoes a demote, revoke or removal.** The journal user store rewrote the whole record
   on every login (`lastUsedAt`); a concurrent demote from admin/`*` to viewer came back as admin/`*`.
   `lastUsedAt` has its own key, and updates are compare-and-swap. `JournalLike` needs `putIfAbsent` and

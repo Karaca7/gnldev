@@ -121,3 +121,4 @@ counted four codes, and five were on the wire.
 | [`dead_scan_busy`](./dead_scan_busy.md) | 429 | Scan quota or queue saturated; honour `Retry-After`. An identical request joins the running scan instead. |
 | [`dead_scan_store_wedged`](./dead_scan_store_wedged.md) | 503 | Repeated scans found the store not answering. |
 | [`dead_scan_timeout`](./dead_scan_timeout.md) | 504 | One scan ran past its time budget. |
+| [`user_runs_in_flight`](./user_runs_in_flight.md) | 409 | A deleted user's runs were still writing; they were cancelled, nothing was erased yet. |
