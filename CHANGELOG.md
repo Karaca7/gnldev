@@ -279,11 +279,17 @@ principals on every door. What broke was the management auth-ee sells. Breaking:
   `putIfMatch` (every first-party journal has both). A drift test runs the same concurrent sequences
   against the journal and Postgres stores.
 - **The licence sets the seats, and they hold under concurrency.** `createEnterpriseAuth` binds the
-  licence's `seats` to the `userStore` (`bindLicenceSeats`); pass the same store object to Studio. A
-  store `seats` option above the licence is refused at boot; below it is your own cap. A seat is a slot
-  claimed atomically (with seats 1, three concurrent creates made three users); `revoke` frees it. The
-  journal store has no multi-key transaction: a process that dies mid-`create` can leave a seat or an
-  email held (README).
+  licence's `seats` to the `userStore` (`bindLicenceSeats`). A store `seats` option above the licence is
+  refused at boot; below it is your own cap. A seat is a slot claimed atomically (with seats 1, three
+  concurrent creates made three users); `revoke` frees it. The journal store has no multi-key
+  transaction: a process that dies mid-`create` can leave a seat or an email held (README).
+- **The licence's seat count lives in the data, not in the store object.** A second store over the same
+  journal, handed to Studio, created five users on a seats:1 licence. The bound store now writes the
+  count into its data (`__eelicence__:seats`, `LICENCE_SEATS_KEY`; the `gnl_ee_licence` table in
+  Postgres), and every store over that data enforces it on `create`. `bindLicenceSeats(seats)` takes
+  `number | undefined` (a licence without seats clears the record — the latest boot's licence is the
+  truth) and returns a promise that settles when the record is written; `createEnterpriseAuth` calls it
+  for every licence, with or without seats.
 - **The Postgres user store writes in one transaction** (`PoolLike` needs `connect()`); a failed create
   leaves nothing behind (it left the user row, locked the email and held a seat). Both stores drop
   duplicate roles and permissions and read a blank email, name or organization as none.
