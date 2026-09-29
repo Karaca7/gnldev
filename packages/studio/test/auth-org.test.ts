@@ -248,7 +248,7 @@ describe('@gnldev/studio auth↔org', () => {
     expect((await call(app, '/users', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer viw' }, body: '{}' })).status).toBe(403);
 
     // delete → audit
-    expect((await call(app, '/users/ayse@acme.co', { method: 'DELETE', headers: { authorization: 'Bearer adm' } })).status).toBe(200);
+    expect((await call(app, '/users/ayse@acme.co?keepData=true', { method: 'DELETE', headers: { authorization: 'Bearer adm' } })).status).toBe(200);
     const audit = await (await call(app, '/audit', { headers: { authorization: 'Bearer adm' } })).json();
     const actions = audit.items.map((i: any) => i.action);
     expect(actions).toContain('user.create');
@@ -277,8 +277,8 @@ describe('@gnldev/studio auth↔org', () => {
     expect((await call(app, '/users', { method: 'POST', headers: H, body: JSON.stringify({ email: 'z@globex.co', orgId: 'globex' }) })).status).toBe(403);
 
     // delete: its OWN member → 200, another organization's member → 403
-    expect((await call(app, '/users/yeni@acme.co', { method: 'DELETE', headers: { authorization: 'Bearer acme-adm' } })).status).toBe(200);
-    expect((await call(app, '/users/g@globex.co', { method: 'DELETE', headers: { authorization: 'Bearer acme-adm' } })).status).toBe(403);
+    expect((await call(app, '/users/yeni@acme.co?keepData=true', { method: 'DELETE', headers: { authorization: 'Bearer acme-adm' } })).status).toBe(200);
+    expect((await call(app, '/users/g@globex.co?keepData=true', { method: 'DELETE', headers: { authorization: 'Bearer acme-adm' } })).status).toBe(403);
     expect(users.mem.has('g@globex.co')).toBe(true); // not deleted
   });
 

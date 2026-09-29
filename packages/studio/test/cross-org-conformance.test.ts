@@ -518,6 +518,9 @@ async function bodyOf(res: Response, ms = 1200): Promise<string> {
  */
 const QUERY: Record<string, string> = {
   'GET /dead-events': '?topic=orders.created&consumer=acme-consumer',
+  // This host has no `userErasure`: without the flag the delete is refused (409) for owner and stranger
+  // alike, for a reason that has nothing to do with organizations.
+  'DELETE /users/:id': '?keepData=true',
 };
 
 async function drive(api: (r: Request) => Promise<Response>, route: { method: string; path: string }, who: Record<string, string>) {

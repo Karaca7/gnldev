@@ -5,9 +5,9 @@ import { Hono, type Context } from 'hono';
 import { sseResponse } from './sse.js';
 
 import { STUDIO_ERROR_CODES } from './error-codes.js';
-import { ORG_RECORD_PRE, asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, countLog, purgeRun, isRealRun, purgeOrganization, orgPurgedKey, sweepRuns, sweepLog, listOrphanThreadState, POLICY_KEY, PRICING_KEY, effectivePricingTable, DEFAULT_PRICING, readPricing, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, knownModelProviders, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent, callerConflictCode, surfacedInterrupts, resolveApprovals as dResolveApprovals, hasRunProbe, runOwnerOf, inheritRunOwner, LIMIT_ERROR_CODES } from '@gnldev/durable';
+import { ORG_RECORD_PRE, asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, countLog, purgeRun, isRealRun, purgeOrganization, orgPurgedKey, sweepRuns, sweepLog, listOrphanThreadState, POLICY_KEY, PRICING_KEY, effectivePricingTable, DEFAULT_PRICING, readPricing, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, knownModelProviders, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent, callerConflictCode, surfacedInterrupts, resolveApprovals as dResolveApprovals, hasRunProbe, runOwnerOf, inheritRunOwner, LIMIT_ERROR_CODES, eraseSubject } from '@gnldev/durable';
 import type { PolicyDoc, PolicyRule, BudgetLimit, PricingDoc } from '@gnldev/durable';
-import type { JournalReader, Journal, WorkflowLike, MetricsRunRow, Caller } from '@gnldev/durable';
+import type { JournalReader, Journal, WorkflowLike, MetricsRunRow, Caller, Storage, SubjectEraser } from '@gnldev/durable';
 import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, principalScope, assertAssignablePrivileges, isPrincipalKind, callerKind, actorIdOf, engineCallerOf, type AuthProvider, type Principal, type PrincipalKind } from '@gnldev/auth';
 import { listTriggers } from '@gnldev/scheduler';
 import { mountSpa, notBuiltHtml } from './spa.js';
@@ -767,6 +767,14 @@ export interface StudioApiOptions {
    * The `token` returned on creation is shown in the UI ONCE (the server never stores it in plaintext).
    */
   users?: StudioUserStore;
+  /**
+   * What `DELETE /users/:id` erases along with the directory entry: the person's runs, threads, memory
+   * and documents, through @gnldev/durable `eraseSubject(storage, id, { orgId, erasers, memory })`.
+   * `storage` is the ROOT storage your agents run on; `erasers` are the background packages' (`jobEraser`,
+   * `triggerEraser`, `eventEraser`); `memory` a storage your memory was built over, when it is another.
+   * Without it, `DELETE /users/:id` refuses (409) unless the caller says `?keepData=true`.
+   */
+  userErasure?: { storage: Storage; erasers?: SubjectEraser[]; memory?: Storage };
   /** Compiler to run a managed workflow with the real engine (@gnldev/studio/workflow → compileManagedWorkflow). */
   compileWorkflow?: CompileWorkflowFn;
   /**
@@ -2730,31 +2738,73 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     if (!opts.users) return c.json({ error: 'user management is not enabled' }, 501);
     const id = decodeURIComponent(c.req.param('id'));
     const own = principalOf(c.req.raw)?.orgId;
-    if (own) {
-      // Org-admin can only delete a member of ITS OWN org.
-      /**
-       * `!target` is a REFUSAL, not a pass. The guard used to read `if (target && target.orgId !== own)`,
-       * so a target the caller could not see skipped it entirely and the write went ahead. Measured
-       * against a store whose `list()` returns nothing:
-       *
-       *   DELETE /users/u1 as acme-adm  ->  200 {"ok":true}   host calls: ["remove:u1"]
-       *
-       * — acme's admin deleting globex's user. `StudioUserStore.list()` takes no argument and nothing in
-       * its contract says it must return every user of every organization, yet three guards depended on
-       * exactly that. Both first-party stores do, so the shipped path was safe; a third-party store, or
-       * scoping `list()` later as a security improvement, would have disabled all three at once.
-       *
-       * An organization-bound caller acting on a user it cannot see is refused. `POST /users` never had
-       * this shape — it compares `body.orgId` to the caller directly, with no lookup.
-       */
-      const target = (await opts.users.list()).find((u) => u.id === id);
-      if (!target || target.orgId !== own) {
-        return c.json({ error: `you can only delete members of your own org ('${own}')` }, 403);
+    // Org-admin can only delete a member of ITS OWN org.
+    /**
+     * `!target` is a REFUSAL, not a pass. The guard used to read `if (target && target.orgId !== own)`,
+     * so a target the caller could not see skipped it entirely and the write went ahead. Measured
+     * against a store whose `list()` returns nothing:
+     *
+     *   DELETE /users/u1 as acme-adm  ->  200 {"ok":true}   host calls: ["remove:u1"]
+     *
+     * — acme's admin deleting globex's user. `StudioUserStore.list()` takes no argument and nothing in
+     * its contract says it must return every user of every organization, yet three guards depended on
+     * exactly that. Both first-party stores do, so the shipped path was safe; a third-party store, or
+     * scoping `list()` later as a security improvement, would have disabled all three at once.
+     *
+     * An organization-bound caller acting on a user it cannot see is refused. `POST /users` never had
+     * this shape — it compares `body.orgId` to the caller directly, with no lookup. An unbound caller
+     * gets 404: the erasure below needs the target's organization.
+     */
+    const target = (await opts.users.list()).find((u) => u.id === id);
+    if (own && (!target || target.orgId !== own)) {
+      return c.json({ error: `you can only delete members of your own org ('${own}')` }, 403);
+    }
+    if (!target) return c.json({ error: `user '${id}' not found` }, 404);
+    /**
+     * Deleting a user deletes the PERSON, not just the directory entry.
+     *
+     * It used to remove only the entry. Measured: 15 journal keys of ayse@x before the delete and 15
+     * after, her runs still recording `resourceId: "ayse@x"` as their owner. The stores then gave the
+     * next ayse@x the same id, and that person read her run, listed it and continued her thread — the
+     * model saw her old secret. Two fixes: ids are random now (a new person never inherits one), and
+     * the data goes with the entry, so an operator's delete is what it says.
+     *
+     * Without `userErasure` Studio cannot erase, and it will not pretend: 409, unless the caller says
+     * `?keepData=true` (a legal hold, or an erasure done elsewhere). Kind does not exempt anyone: a user
+     * whose kind was changed after it wrote data still owns that data, and erasing someone who owns
+     * nothing is a cheap no-op that reports zeros.
+     *
+     * Order: access is cut first (revoke), so nothing new is written under the id while it is erased;
+     * the entry goes last, so a failed erasure leaves a user the operator can see and retry.
+     */
+    const keepData = c.req.query('keepData') === 'true';
+    if (!keepData && !opts.userErasure) {
+      return c.json({
+        error: "deleting a user erases their data, and this Studio has no `userErasure` configured. Configure it, " +
+          'revoke the user instead (POST /users/:id/revoke), or delete with ?keepData=true to keep the data on purpose.',
+      }, 409);
+    }
+    let erased: Awaited<ReturnType<typeof eraseSubject>> | undefined;
+    if (!keepData && opts.userErasure) {
+      const { storage, erasers, memory } = opts.userErasure;
+      await opts.users.revoke?.(id);
+      try {
+        erased = await eraseSubject(storage, id, {
+          ...(target.orgId ? { orgId: target.orgId } : {}),
+          ...(erasers ? { erasers } : {}),
+          ...(memory ? { memory } : {}),
+        });
+      } catch (e) {
+        await audit(c, 'user.delete', id, { failed: String((e as Error)?.message ?? e) });
+        return c.json({ error: `erasing the user's data failed; the user was revoked, not deleted: ${String((e as Error)?.message ?? e)}` }, 500);
       }
     }
     await opts.users.remove(id);
-    await audit(c, 'user.delete', id);
-    return c.json({ ok: true, id });
+    // `complete: false` when the erasure found threads of this person it could not reach — a memory in
+    // another storage (`userErasure.memory`). The counts alone would read as success.
+    const complete = erased ? erased.unreachedThreads.length === 0 : undefined;
+    await audit(c, 'user.delete', id, erased ? { erased, complete } : { keptData: true });
+    return c.json({ ok: true, id, ...(erased ? { erased, complete } : { keptData: true }) });
   });
 
   // Invalidate the user's token WITHOUT deleting the user (audit/history remains). Only enabled if

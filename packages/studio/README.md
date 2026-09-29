@@ -112,6 +112,7 @@ for `{ reader }`:
 | `org` | multi-organization mode |
 | `auth: { read, write }`, `allowOpenAccess` | the auth gate (see the note above) |
 | `users` | the Users view (a paid surface — the contract is here, the implementation is in `@gnldev/auth-ee`) |
+| `userErasure` | `DELETE /users/:id` erasing the person's data with the entry (see below) |
 | `apiBase` | *(`createStudioApp`/`createStudioAdmin` only)* the prefix the UI fetches against |
 
 Also exported: `bearerAuth(token)` · `basicAuth({ user, pass })` · `roleAuth(...)` ·
@@ -125,6 +126,31 @@ endpoint is deliberately public. Around three dozen booleans, including `resume`
 `deadEvents`, `eventsManage`, `knowledge`, `approvals`, `audit`, `organizations`, `authRequired`.
 The `*Manage` pairs are button visibility only — the write action behind each one is enforced
 server-side on every request regardless.
+
+### Deleting a user (when `users` is given)
+
+`DELETE /users/:id` deletes the person, not only the directory entry. It revokes the token, erases
+their runs, threads, memory and documents with `@gnldev/durable`'s `eraseSubject`, then removes the
+entry. Pass the storage your agents run on:
+
+```ts
+import { createStudioApi } from '@gnldev/studio';
+import { jobEraser } from '@gnldev/queue';
+import { createJournalUserStore } from '@gnldev/auth-ee';
+
+// `storage`: the root storage your agents run on.
+const users = createJournalUserStore(storage.runs);
+createStudioApi({ reader: storage.runs, users, userErasure: { storage, erasers: [jobEraser(storage)] } });
+```
+
+The answer carries the erasure report: `{ ok, id, erased: { journalRows, memoryThreads, … }, complete }`.
+`complete: false` means the erasure found threads of this person it could not reach (a memory kept in
+another storage: pass it as `userErasure.memory`). A member is erased in its own organization.
+
+Without `userErasure`, the delete is refused with 409. Revoke the user instead
+(`POST /users/:id/revoke`), or delete with `?keepData=true` when keeping the data is deliberate (a
+legal hold, or an erasure you run elsewhere). A user id is never handed to someone else afterwards:
+the auth-ee stores give every new user a fresh random id, even for the same email.
 
 ### Playground endpoints (when `gnl` is given, write-gated)
 `GET /api/agents` · `POST /api/agents/:name/run` · `POST /api/agents/:name/stream` (SSE — same schema as

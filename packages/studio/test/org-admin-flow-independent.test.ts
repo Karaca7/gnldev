@@ -208,7 +208,7 @@ describe('what an org admin may do to a user in ANOTHER organization', () => {
     })).status, 'an org admin could not update its own member').toBe(200);
     expect((await send(`/users/${id}/revoke`, { method: 'POST', headers: H })).status,
       'an org admin could not revoke its own member').toBe(200);
-    expect((await send(`/users/${id}`, { method: 'DELETE', headers: H })).status,
+    expect((await send(`/users/${id}?keepData=true`, { method: 'DELETE', headers: H })).status,
       'an org admin could not delete its own member').toBe(200);
     expect(us.calls).toEqual([`update:${id}`, `revoke:${id}`, `remove:${id}`]);
   });
@@ -231,7 +231,9 @@ describe('what an org admin may do to a user in ANOTHER organization', () => {
  */
 describe('a user write whose target the caller cannot see', () => {
   const ROUTES = [
-    { verb: 'delete', init: (H: Record<string, string>) => ({ method: 'DELETE', headers: H }), call: 'remove' },
+    // `?keepData=true`: this host has no `userErasure`, and these cases are about who may act, not about
+    // what a delete erases (users-delete-erasure.test.ts).
+    { verb: 'delete', init: (H: Record<string, string>) => ({ method: 'DELETE', headers: H }), call: 'remove', suffix: '?keepData=true' },
     { verb: 'revoke', init: (H: Record<string, string>) => ({ method: 'POST', headers: H }), call: 'revoke', suffix: '/revoke' },
     { verb: 'update', init: (H: Record<string, string>) => ({ method: 'PATCH', headers: { ...H, 'content-type': 'application/json' }, body: JSON.stringify({ roles: ['viewer'] }) }), call: 'update' },
   ] as const;
