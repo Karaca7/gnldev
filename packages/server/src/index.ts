@@ -3,9 +3,9 @@
 import { Hono, type Context } from 'hono';
 import { toFetchHandler, type FetchHandler } from './handler.js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { createGnl, agentVisibleToOrg, withOrg, withOrgStorage, scopeConfigToOrg, withSubjectJournal, withSubjectMemory, threadOwnerOf, type ThreadOwnership, ORG_RECORD_PRE, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, asReaderJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, sealRequestContext, sealFieldsOf, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry, callerConflictCode, publicConflictDetail, describeProtections, formatProtections, teachingError, resolveWorkIdentity, runOwnerOf, decideRunAccess, userIdOf, type Caller, type RunDecision, type RunOwner, type RawJournal, type RequestContext } from '@gnldev/durable';
+import { createGnl, agentVisibleToOrg, withOrg, withOrgStorage, scopeConfigToOrg, withSubjectJournal, withSubjectMemory, threadOwnerOf, type ThreadOwnership, ORG_RECORD_PRE, checkBudget, getOrgUsage, budgetsEnforceable, toJournal, asReaderJournal, appendLog, cancelAgentRun, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, sealRequestContext, sealFieldsOf, fingerprintAgent, recordAgent, approveAgent, blockAgent, isAgentServable, listAgentRegistry, callerConflictCode, OWNERSHIP_CONFLICT_CODES, publicConflictDetail, describeProtections, formatProtections, teachingError, resolveWorkIdentity, runOwnerOf, decideRunAccess, userIdOf, type Caller, type RunDecision, type RunOwner, type RawJournal, type RequestContext } from '@gnldev/durable';
 import type { CreateGnlConfig, Journal, JournalReader, BudgetLimit, UsageCostCache, RunLimits, ResolvedWorkIdentity, WorkScopeKind, StreamSurface as DurableStreamSurface, StreamSurfaceInput } from '@gnldev/durable';
-import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, callerKind, subjectIdProblem, actorIdOf, engineCallerOf, type AuthProvider, type ReadWriteAuth, type Principal, type PrincipalKind } from '@gnldev/auth';
+import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, callerKind, subjectIdProblem, actorIdOf, engineCallerOf, markRefusal, settleDecision, decisionNotRecorded, type AuthProvider, type ReadWriteAuth, type Principal, type PrincipalKind, type RefusalReason } from '@gnldev/auth';
 // P0.4 @gnldev/workflow is zero-dependency (see its package.json) — depending on it
 // from @gnldev/server is a clean one-way edge (server→workflow), NOT circular: @gnldev/durable's registry.ts
 // deliberately stays workflow-agnostic (WorkflowLike is a structural type, no import) to avoid a
@@ -618,6 +618,8 @@ function callerConflictResponse(c: Context, e: unknown, workKey?: string): Respo
   const code = callerConflictCode(e);
   if (!code) return undefined;
   const err = e as { message?: string; detail?: unknown };
+  // The engine's ownership refusal is a refusal, whatever status carries it (see onDecision).
+  if (OWNERSHIP_CONFLICT_CODES.includes(code)) markRefusal(c.req.raw, 'ownership', { detail: code });
   // Redacted: see `publicConflictDetail` (durable/errors.ts) for what is withheld and why.
   return c.json({ error: err.message, code, detail: withWorkKey(publicConflictDetail(err.detail), workKey) }, 409);
 }
@@ -713,6 +715,14 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   // allowOpenAccess: true (otherwise makeGate throws at setup), outside production a single warning is issued on the first request.
   const authProvider = normalizeAuth(opts.auth);
   const { allow, allowP, deny } = makeGate(authProvider, { allowOpenAccess: opts.allowOpenAccess });
+  /**
+   * Record why this request is refused, and answer it — the response may hide the reason (a foreign
+   * run reads as a 404); the record must not. `withDecisions` reports it once the request is answered.
+   */
+  const refused = (c: Context, reason: RefusalReason, res: Response, detail?: string): Response => {
+    markRefusal(c.req.raw, reason, detail !== undefined ? { detail } : {});
+    return res;
+  };
 
   // WHAT IS ACTUALLY PROTECTING THIS HOST, printed once at construction.
   //
@@ -904,7 +914,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     if (named) return undefined;
     // The SAME constant the read gate returns — not a second copy of the sentence. Two copies is
     // where this started, and a test now asserts the two paths answer byte for byte.
-    return c.json({ error: CLIENT_SUBJECT_REQUIRED }, 400);
+    return refused(c, 'unauthenticated', c.json({ error: CLIENT_SUBJECT_REQUIRED }, 400), CLIENT_SUBJECT_REQUIRED);
   }
 
   /**
@@ -951,11 +961,11 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     if (o.owner === subject) return undefined;
     // Typed like the engine's own refusal: the code a consumer branches on, and what the CALLER sent
     // (its own name, the thread it named) — never the owner's.
-    const refusal = () => c.json({
+    const refusal = () => refused(c, 'ownership', c.json({
       error: 'access denied: this thread belongs to a different resourceId',
       code: 'thread_owner_mismatch',
       detail: { threadId, requested: subject },
-    }, 403);
+    }, 403), 'thread_owner_mismatch');
     if (o.owner) return refusal();
     // NO OWNER. A thread that does not exist yet is this caller's to start — the first turn creates
     // it. One that EXISTS with no owner is staff's work (or pre-dates ownership), and only staff may
@@ -1012,6 +1022,8 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     const owner = await runOwnerOf(rawOf(s).journal as RawJournal, runId);
     const decision = decideRunAccess(owner, callerOf(c, named ?? namedOnRead(c)));
     if (decision === 'deny' && kindOf(c) === 'operator' && owner.state === 'owned' && owner.owner.kind !== 'user') return { decision: 'allow', owner };
+    // Every route answers a `deny` as a refusal — a 403, or the 404 that hides a foreign run.
+    if (decision === 'deny') markRefusal(c.req.raw, 'ownership', { detail: 'run belongs to another caller' });
     return { decision, owner };
   }
   const runDecision = async (c: Context, s: Instance, runId: string, named?: unknown): Promise<RunDecision> =>
@@ -1030,7 +1042,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     const id = userIdOf(caller);
     return id === undefined ? {} : { resourceId: id };
   };
-  const foreignRun = (c: Context) => c.json({ error: 'access denied: this run belongs to a different resourceId' }, 403);
+  const foreignRun = (c: Context) => refused(c, 'ownership', c.json({ error: 'access denied: this run belongs to a different resourceId' }, 403));
 
   /**
    * The question the ENGINE would have asked, asked here because on `/resume` the engine cannot.
@@ -1079,6 +1091,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
       return undefined; // a reader that cannot serve the entry is not evidence of a mismatch
     }
     if (!stamped || stamped === own) return undefined;
+    markRefusal(c.req.raw, 'ownership', { detail: 'run_actor_mismatch' });
     if (asMissing) return asMissing(); // only a user reaches here — see ownershipDenied's `asMissing`
     // Word for word what `ownershipDenied` answers on this same route: the refusal names neither the
     // real owner nor whether the run exists, and one route should not have two vocabularies for one
@@ -1122,6 +1135,13 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   }
 
   async function scopeOrg(c: Context): Promise<Instance | { error: string; status: 400 | 403 }> {
+    const s = await resolveOrgScope(c);
+    // Every caller answers this error as the response, so the refusal is recorded here, once.
+    if ('error' in s) markRefusal(c.req.raw, kindOf(c) === 'unnamed' ? 'unauthenticated' : 'organization', { detail: s.error });
+    return s;
+  }
+
+  async function resolveOrgScope(c: Context): Promise<Instance | { error: string; status: 400 | 403 }> {
     // A caller that names nobody and is not staff can be held to nothing, so it reaches nothing. This
     // is the case the old `!p?.id ⇒ operator` inference turned into staff: a subject whose provider
     // gave it no name (a numeric JWT `sub`, a missing claim) read every user's data.
@@ -1200,7 +1220,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
   ): Promise<Response | undefined> {
     if (!opts.resourceAuth) return undefined;
     const allowed = await opts.resourceAuth(principal, resource, action);
-    return allowed ? undefined : c.json({ error: `resource access denied: ${resource.type}:${resource.id}`, code: EDGE_ERROR_CODES.resourceDenied }, 403);
+    return allowed ? undefined : refused(c, 'resource', c.json({ error: `resource access denied: ${resource.type}:${resource.id}`, code: EDGE_ERROR_CODES.resourceDenied }, 403));
   }
 
   /**
@@ -1242,7 +1262,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     if (!opts.requireAgentApproval) return undefined;
     await agentRegistryBoot;
     if (await isAgentServable(baseJournal, name)) return undefined;
-    return c.json({ error: 'agent not approved to serve', code: EDGE_ERROR_CODES.agentNotApproved }, 403);
+    return refused(c, 'policy', c.json({ error: 'agent not approved to serve', code: EDGE_ERROR_CODES.agentNotApproved }, 403));
   }
 
   /**
@@ -1253,11 +1273,11 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
    */
   function requirePlatformAdmin(c: Context, orgBoundMsg: string): Response | undefined {
     // A role is not the grant: a user holding `platform-admin` is still a user.
-    if (kindOf(c) !== 'operator') return c.json({ error: 'staff only: this is an operator surface' }, 403);
+    if (kindOf(c) !== 'operator') return refused(c, 'rbac', c.json({ error: 'staff only: this is an operator surface' }, 403));
     const p = principalOf(c.req.raw);
-    if (p?.orgId) return c.json({ error: orgBoundMsg }, 403);
+    if (p?.orgId) return refused(c, 'organization', c.json({ error: orgBoundMsg }, 403));
     if (orgIsolationActive && !isPlatformAdmin(p)) {
-      return c.json({ error: 'platform-admin required (fail-closed: no org scope and no platform-admin grant)' }, 403);
+      return refused(c, 'organization', c.json({ error: 'platform-admin required (fail-closed: no org scope and no platform-admin grant)' }, 403));
     }
     return undefined;
   }
@@ -1406,7 +1426,10 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     // WHOSE run this is — see resolveResourceId (it refuses a name no user can have) and callerOf (the
     // one mapping). A user's own identity wins; otherwise the request names the user.
     const subject = resolveResourceId(kindOf(c), principal?.id, body.resourceId);
-    if ('error' in subject) return c.json({ error: subject.error }, 400);
+    if ('error' in subject) {
+      const res = c.json({ error: subject.error }, 400);
+      return subject.error === CLIENT_SUBJECT_REQUIRED ? refused(c, 'unauthenticated', res, CLIENT_SUBJECT_REQUIRED) : res;
+    }
     const caller = callerOf(c, subject.resourceId);
     // WHICH RUN — see identityOrError. From here on `runId` is the run's id (raw or derived) and
     // `declared` is the caller's name for the work: the door is handed the NAME, the gates below use
@@ -1792,7 +1815,10 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     if (resourceDenied) return resourceDenied;
     // WHOSE run this is — see the same lines in /agents/:name/run.
     const subject = resolveResourceId(kindOf(c), principal?.id, body.resourceId);
-    if ('error' in subject) return c.json({ error: subject.error }, 400);
+    if ('error' in subject) {
+      const res = c.json({ error: subject.error }, 400);
+      return subject.error === CLIENT_SUBJECT_REQUIRED ? refused(c, 'unauthenticated', res, CLIENT_SUBJECT_REQUIRED) : res;
+    }
     const caller = callerOf(c, subject.resourceId);
     // A surface's turn key: a NAME when there is a subject to address it under, the raw id it has
     // always been otherwise (the standalone chat/agui regime, kept so an operator's playground turn
@@ -2261,8 +2287,8 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     // the answer, not an exception to work around: an application serving end users has no business
     // reading its customer's billing, and this route was the one place the client class could.
     // The same holds for an end user, which reads its own work and not its organization's bill.
-    if (isClient(c)) return c.json({ error: 'usage is organization-level: not available to a client credential' }, 403);
-    if (kindOf(c) !== 'operator') return c.json({ error: 'usage is organization-level: staff only' }, 403);
+    if (isClient(c)) return refused(c, 'rbac', c.json({ error: 'usage is organization-level: not available to a client credential' }, 403));
+    if (kindOf(c) !== 'operator') return refused(c, 'rbac', c.json({ error: 'usage is organization-level: staff only' }, 403));
     const s = await scope(c);
     if ('error' in s) return c.json({ error: s.error }, s.status);
     // In root scope (org on), the per-org limit doesn't apply → only usage is reported, limit is null.
@@ -2349,7 +2375,7 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
       const o = await threadOwnerOf(rawOf(s).journal, rawOf(s).gnl.memory, threadId);
       // Names neither the real owner nor whether the thread exists — a caller guessing ids would
       // otherwise learn both from the refusal (same wording as the run-ownership check).
-      if (o.owner && o.owner !== expected) return c.json({ error: 'thread not found' }, 404);
+      if (o.owner && o.owner !== expected) return refused(c, 'ownership', c.json({ error: 'thread not found' }, 404));
     }
     // A caller who speaks for a user reads only that user's thread. Asked of OWNERSHIP, not of the
     // messages: a user's own empty thread is still theirs ([]), and a thread that is not theirs — or
@@ -2358,13 +2384,17 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     if (subject) {
       const raw = rawOf(s);
       const rawMemory = raw.gnl.memory!;
-      let owner: string | undefined;
+      let o: ThreadOwnership | undefined;
       try {
-        owner = (await threadOwnerOf(raw.journal, rawMemory, threadId)).owner;
+        o = await threadOwnerOf(raw.journal, rawMemory, threadId);
       } catch {
-        owner = undefined;
+        o = undefined;
       }
-      if (owner !== subject) return c.json({ error: 'thread not found' }, 404);
+      if (o?.owner !== subject) {
+        const res = c.json({ error: 'thread not found' }, 404);
+        // The same 404 either way; the record says which. A thread that exists and is not theirs is a refusal.
+        return o?.exists ? refused(c, 'ownership', res) : res;
+      }
     }
     return c.json(await memory.getMessages(threadId));
   });
@@ -2382,7 +2412,11 @@ function restApiApp(config: CreateGnlConfig, opts: RestApiOptions = {}): Hono {
     // state an expectation (`?resourceId=`), which no view expresses.
     if (!viewSubjectOf(c) && (await runDecision(c, s, runId)) === 'deny') return notFound();
     const entries = await s.journal.readRun(runId);
-    return entries.length ? c.json(entries) : notFound();
+    if (entries.length) return c.json(entries);
+    // The view hid it, or there is nothing: the caller gets the same 404, and the record asks the raw
+    // run which one it was (runAccess records a `deny` as the ownership refusal it is).
+    if (viewSubjectOf(c)) await runDecision(c, s, runId);
+    return notFound();
   });
   /**
    * Agent names FILTERED by the caller's org, exactly as `/agents` and `agentGate` filter them.
@@ -2433,8 +2467,34 @@ export function createRestApi(
   config: CreateGnlConfig & { run?: never; agent?: never },
   opts: RestApiOptions = {},
 ): FetchHandler {
-  const handler = toFetchHandler(restApiApp(config, opts));
+  const provider = normalizeAuth(opts.auth);
+  const routed = toFetchHandler(restApiApp(config, opts));
+  const handler = provider?.onDecision ? withDecisions(routed, provider) : routed;
   return opts.cors ? withCors(handler, opts.cors) : handler;
+}
+
+/**
+ * THE OUTCOME, reported once per request when it has been answered (@gnldev/auth `onDecision`).
+ *
+ * The provider's `authorize` is asked before this package's own gates — ownership, organization,
+ * resource — so its verdict is not what the caller got: measured, `GET /runs/<another user's run>`
+ * answered 404 while the record written from `authorize` said allowed. Each gate that refuses records
+ * why (`refused` / `markRefusal`), and this reports the status the caller actually got.
+ *
+ * Around the handler rather than an `app.use('*')`: the route inventory stays a list of routes (this
+ * package registers no `ALL` entries). A record that cannot be written withholds the response.
+ */
+function withDecisions(h: FetchHandler, provider: AuthProvider): FetchHandler {
+  const call = async (req: Request, ...rest: unknown[]): Promise<Response> => {
+    const res = await h(req, ...rest);
+    try {
+      await settleDecision((d) => provider.onDecision!(d), req, res.status);
+    } catch (err) {
+      return decisionNotRecorded(err);
+    }
+    return res;
+  };
+  return Object.assign(call, { fetch: call, routeTable: h.routeTable });
 }
 
 /**

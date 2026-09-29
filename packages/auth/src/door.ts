@@ -5,6 +5,7 @@
 // the same principal is the same caller whichever door the request came in through.
 import type { Principal } from './types.js';
 import { callerKind, engineCallerOf, type EngineCaller, type Identify } from './scope.js';
+import { markRefusal, notePrincipal } from './decision.js';
 
 /**
  * Why a door refuses an application that names no user. The sentence @gnldev/server answers an
@@ -35,9 +36,13 @@ export type RequestCaller =
  */
 export async function callerOfRequest(identify: Identify | undefined, req: Request, named?: unknown): Promise<RequestCaller> {
   const principal = (await identify?.(req)) ?? undefined;
+  // Noted for the door's `onDecision` (settleDecision): the record names who asked, whatever came of it.
+  notePrincipal(req, principal);
   if (callerKind(principal) === 'application') {
     const caller = engineCallerOf(principal, typeof named === 'string' ? named : undefined);
-    return caller.kind === 'user' ? { principal, caller } : { refused: APPLICATION_NAMES_NO_USER };
+    if (caller.kind === 'user') return { principal, caller };
+    markRefusal(req, 'unauthenticated', { detail: APPLICATION_NAMES_NO_USER });
+    return { refused: APPLICATION_NAMES_NO_USER };
   }
   return { principal, caller: engineCallerOf(principal) };
 }

@@ -12,10 +12,10 @@
 import type { Context } from 'hono';
 import { toFetchHandler, type FetchHandler } from './handler.js';
 import { Hono } from 'hono';
-import { limitBreachFromSteps, blockedFromSteps, BLOCKED_ERROR_CODES, blockedErrorCode, callerConflictCode, publicConflictDetail, sealRequestContext, sealFieldsOf, resolveWorkIdentity } from '@gnldev/durable';
+import { limitBreachFromSteps, blockedFromSteps, BLOCKED_ERROR_CODES, blockedErrorCode, callerConflictCode, OWNERSHIP_CONFLICT_CODES, publicConflictDetail, sealRequestContext, sealFieldsOf, resolveWorkIdentity } from '@gnldev/durable';
 import type { CreateGnlConfig, ResolvedWorkIdentity } from '@gnldev/durable';
 import { createGnl, scopeConfigToOrg } from '@gnldev/durable';
-import { callerOfRequest, type Identify } from '@gnldev/auth';
+import { callerOfRequest, markRefusal, settleDecision, decisionNotRecorded, type AccessDecision, type Identify } from '@gnldev/auth';
 import { streamSSE } from 'hono/streaming';
 // The two limit codes are READ from @gnldev/durable (`LIMIT_ERROR_CODES`) rather than spelled again
 // here. The event/data SHAPE is deliberately a copy (see the note above), but a code is not a shape:
@@ -206,6 +206,17 @@ export interface CreateAguiRouteOptions {
    * unauthenticated request asserts a caller nobody verified.
    */
   identify?: Identify;
+  /**
+   * Report each request's outcome — who asked, allowed or refused and why, the status it got — to the
+   * same hook @gnldev/server and @gnldev/studio report to (@gnldev/auth `AuthProvider.onDecision`). Pass
+   * the provider's: `identify: (req) => auth.authenticate(req), onDecision: (d) => auth.onDecision?.(d)`.
+   *
+   * An option rather than a provider, because this route is handed `identify` and nothing else; it
+   * authorizes nothing itself, so what it reports is who asked and what the engine answered — a foreign
+   * thread or run (409 `thread_owner_mismatch` / `run_owner_mismatch` / `run_actor_mismatch`) is recorded
+   * as an ownership refusal. WITHOUT it this route leaves no record. If it throws, the route answers 500.
+   */
+  onDecision?: (decision: AccessDecision) => void | Promise<void>;
 }
 
 /**
@@ -257,6 +268,18 @@ function aguiRouteApp(config: CreateGnlConfig, opts: CreateAguiRouteOptions = {}
     );
   }
   const app = new Hono();
+  // The outcome, reported once the route has answered (see `onDecision`).
+  if (opts.onDecision) {
+    const onDecision = opts.onDecision;
+    app.use('*', async (c, next) => {
+      await next();
+      try {
+        await settleDecision(onDecision, c.req.raw, c.res.status);
+      } catch (err) {
+        c.res = decisionNotRecorded(err);
+      }
+    });
+  }
   app.post('/agents/:name/run', async (c) => {
     const name = c.req.param('name');
     const body = (await c.req.json().catch(() => ({}))) as any;
@@ -357,6 +380,7 @@ function aguiRouteApp(config: CreateGnlConfig, opts: CreateAguiRouteOptions = {}
       // first cut forgot; a critical-profile input/actor/swept refusal must not collapse to a bare 400).
       const conflict = callerConflictCode(e);
       if (conflict) {
+        if (OWNERSHIP_CONFLICT_CODES.includes(conflict)) markRefusal(c.req.raw, 'ownership', { detail: conflict });
         // Redacted: see `publicConflictDetail` (durable/errors.ts) for what is withheld and why.
         return c.json({ error: e.message, code: conflict, detail: withWorkKey(publicConflictDetail(e.detail), declared) }, 409);
       }

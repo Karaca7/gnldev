@@ -4,7 +4,9 @@
 //   makeGate      → shared Hono gate (allow/deny)
 //   normalizeAuth → AuthProvider | {read,write} backward-compat bridge
 export { PRINCIPAL_KINDS } from './types.js';
-export type { Principal, PrincipalKind, AuthContext, Decision, AuthCapabilities, AuthProvider, Cred } from './types.js';
+export type { Principal, PrincipalKind, AuthContext, Decision, AuthCapabilities, AuthProvider, Cred, AccessDecision, RefusalReason } from './types.js';
+// The outcome a host reports to `AuthProvider.onDecision`: what the caller got, not what `authorize` said first.
+export { markRefusal, outcomeOf, settleDecision, decisionNotRecorded } from './decision.js';
 export { roleAuth, CLIENT_ROLE, CLIENT_WRITES, END_USER_ROLE, type EndUserTokens } from './role-auth.js';
 export { makeGate, principalOf, type Gate, type GateOptions } from './gate.js';
 export { fromReadWrite, normalizeAuth, bindsIdentity, type ReadWriteAuth } from './adapter.js';

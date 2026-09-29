@@ -97,6 +97,53 @@ export interface AuthProvider {
    * normal case): a provider that can authenticate needs to say nothing. See `bindsIdentity()`.
    */
   bindsIdentity?: boolean;
+  /**
+   * Called once per request, when the host has ANSWERED it, with the outcome the caller actually got.
+   *
+   * `authorize` is asked before the host's own gates (ownership, organization, resource), so its verdict
+   * is not the answer: a request `authorize` allowed can still be refused. This hook is where a record of
+   * decisions belongs — @gnldev/auth-ee's audit trail is written here, not in `authorize`.
+   *
+   * A host that answers requests calls it (@gnldev/server, @gnldev/studio, and the chat and AG-UI routes
+   * when given `onDecision`). A host that never calls it leaves no record; a provider cannot see answers
+   * it is not told about. If it throws, the host answers 500 instead of the response it built — a request
+   * whose decision could not be recorded is not delivered.
+   */
+  onDecision?(decision: AccessDecision): void | Promise<void>;
+}
+
+/**
+ * Why a request was refused. The first refusal a host records for a request is the one reported.
+ *
+ *   unauthenticated  no usable identity: no credential, a principal with no name to hold it to, or an
+ *                    application credential that named no user
+ *   rbac             the provider's role/permission verdict, or the caller's kind does not reach the surface
+ *   ownership        the run or thread belongs to someone else (often answered as a 404, to hide it exists)
+ *   organization     the organization scope refused it: another organization, no scope, not registered
+ *   resource         a resource-level check (the host's `resourceAuth`, e.g. auth-ee FGA) refused it
+ *   policy           another host rule answered 401/403 and recorded no finer reason
+ */
+export type RefusalReason = 'unauthenticated' | 'rbac' | 'ownership' | 'organization' | 'resource' | 'policy';
+
+/** The outcome of one request, as the caller got it. See `AuthProvider.onDecision`. */
+export interface AccessDecision {
+  principal: Principal | null;
+  /** `callerKind(principal)`: a subject and an operator with the same `id` are different callers. */
+  kind: PrincipalKind | 'unnamed';
+  orgId?: string;
+  path: string;
+  method: string;
+  action: 'read' | 'write';
+  /** The fine-grained permission the gate asked, when it asked one. */
+  permission?: string;
+  resource?: string;
+  /** False whenever the caller was refused — including a refusal answered as 404 to hide what exists. */
+  allowed: boolean;
+  reason?: RefusalReason;
+  /** The refusing rule's own words, when it gave any. */
+  detail?: string;
+  /** The HTTP status the caller got. */
+  status: number;
 }
 
 /**

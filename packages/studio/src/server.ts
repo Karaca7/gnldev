@@ -8,7 +8,7 @@ import { STUDIO_ERROR_CODES } from './error-codes.js';
 import { ORG_RECORD_PRE, asReaderJournal, reconstructState, forkRun, getRunCost, withOrg, appendLog, listLog, countLog, purgeRun, isRealRun, purgeOrganization, orgPurgedKey, sweepRuns, sweepLog, listOrphanThreadState, POLICY_KEY, PRICING_KEY, effectivePricingTable, DEFAULT_PRICING, readPricing, BUDGET_PRE, readBudget, replayRun, regressionReport, resolveModel, knownModelProviders, getNetworkTrace, RunLimitExceededError, ToolLoopDetectedError, RunThreadMismatchError, blockedErrorCode, upstreamFailure, readProcessorReports, readIncidents, agentVisibleToOrg, readMetricsSummary, metricsRunKey, cancelAgentRun, listAgentRegistry, approveAgent, blockAgent, callerConflictCode, surfacedInterrupts, resolveApprovals as dResolveApprovals, hasRunProbe, runOwnerOf, inheritRunOwner, LIMIT_ERROR_CODES, eraseSubject } from '@gnldev/durable';
 import type { PolicyDoc, PolicyRule, BudgetLimit, PricingDoc } from '@gnldev/durable';
 import type { JournalReader, Journal, WorkflowLike, MetricsRunRow, Caller, Storage, SubjectEraser } from '@gnldev/durable';
-import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, principalScope, assertAssignablePrivileges, isPrincipalKind, callerKind, actorIdOf, engineCallerOf, type AuthProvider, type Principal, type PrincipalKind } from '@gnldev/auth';
+import { makeGate, normalizeAuth, bindsIdentity, principalOf, isPlatformAdmin, principalScope, assertAssignablePrivileges, isPrincipalKind, callerKind, actorIdOf, engineCallerOf, markRefusal, decisionNotRecorded, type AuthProvider, type Principal, type PrincipalKind, type RefusalReason } from '@gnldev/auth';
 import { listTriggers } from '@gnldev/scheduler';
 import { mountSpa, notBuiltHtml } from './spa.js';
 import { openapiSpec, swaggerHtml } from './swagger.js';
@@ -919,7 +919,29 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
   // (otherwise makeGate throws at setup), and outside production it's warned once. Since the org middleware
   // needs the identity-bound org (Principal.orgId), the gate is set up HERE, before the middleware.
   const authProvider = normalizeAuth(auth);
-  const { allow, allowP, deny } = makeGate(authProvider, { allowOpenAccess: opts.allowOpenAccess });
+  const { allow, allowP, deny, settle } = makeGate(authProvider, { allowOpenAccess: opts.allowOpenAccess });
+  /**
+   * THE OUTCOME, reported once per request when it has been answered (@gnldev/auth `onDecision`) —
+   * registered FIRST, so it sees the answer of every middleware below as well as every route. The
+   * twin of @gnldev/server's; see there for why the provider's verdict alone was the wrong record.
+   */
+  // Only when there is a hook to report to: `settle` is a no-op without one, and the route inventory
+  // registers middleware only once `auth` (or `org`) is configured (route-inventory-independent.test).
+  if (authProvider?.onDecision) {
+    app.use('*', async (c, next) => {
+      await next();
+      try {
+        await settle(c.req.raw, c.res.status);
+      } catch (err) {
+        c.res = decisionNotRecorded(err);
+      }
+    });
+  }
+  /** Record why this request is refused, and answer it. */
+  const refused = (c: Context, reason: RefusalReason, res: Response): Response => {
+    markRefusal(c.req.raw, reason);
+    return res;
+  };
   // RBAC (fine-grained permissions) is a PAID capability. When ON, allowP matches the exact permission
   // against the principal's effective permissions; the permission catalog surface is also gated on this.
   // When OFF (free tier), allowP transparently reduces to read/write → the coarse legacy behavior.
@@ -983,6 +1005,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     // this refusal was the one least likely to be warned about it.
     warnRefusal('memory', 'pass `memoryFactory` instead — it receives the org-scoped journal — or set '
       + '`orgScoped: true` on your `memory` object if it already keeps its own organization boundary');
+    markRefusal(c.req.raw, 'organization', { detail: 'org_scope_refused' });
     return c.json({
       code: 'org_scope_refused', // see requireScopedHost — a scope refusal is not a bad token
       error: 'this request reaches the conversation store, which has no organization boundary in this ' +
@@ -1086,6 +1109,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     if (hostReachable(c, what)) return undefined;
     const fix = unscopeableHosts.find((e) => e.what === what)!.fix;
     warnRefusal(what, fix);
+    markRefusal(c.req.raw, 'organization', { detail: 'org_scope_refused' });
     return c.json({
       // A CODE, not just prose. The UI treats an unlabelled 403 as "your token is bad": `isAuthError`
       // matches on status alone, so `shouldForceReauth` fires, the token is cleared and the cache is
@@ -1126,9 +1150,9 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
 
   const requirePlatformAdmin = (c: Context, orgBoundMsg: string): Response | undefined => {
     const p = principalOf(c.req.raw);
-    if (p?.orgId) return c.json({ error: orgBoundMsg }, 403);
+    if (p?.orgId) return refused(c, 'organization', c.json({ error: orgBoundMsg }, 403));
     if (orgIsolationActive && !isPlatformAdmin(p)) {
-      return c.json({ error: 'platform-admin required (fail-closed: no org scope and no platform-admin grant)' }, 403);
+      return refused(c, 'organization', c.json({ error: 'platform-admin required (fail-closed: no org scope and no platform-admin grant)' }, 403));
     }
     return undefined;
   };
@@ -1245,6 +1269,8 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       if (principal) {
         const kind = callerKind(principal);
         if (kind !== 'operator') {
+          // This refusal comes before any per-endpoint gate, so the principal is handed to the record here.
+          markRefusal(c.req.raw, 'rbac', { principal, detail: 'Studio admits staff only' });
           return c.json({
             error: `access denied: Studio is a staff console and this caller is ${kind === 'application' ? 'an application' : kind === 'subject' ? 'an end user' : 'unnamed'}. `
               + (kind === 'application'
@@ -1281,7 +1307,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       // rejected by @gnldev/server; Studio claimed the guarantee without carrying the guard.
       if (opts.org && authProvider && !bindsIdentity(authProvider) &&
           !isSelfDescribingRoute(c)) {
-        return c.json({ error: 'access denied: org isolation is configured but this auth provider binds no identity to an org (fail-closed)' }, 403);
+        return refused(c, 'organization', c.json({ error: 'access denied: org isolation is configured but this auth provider binds no identity to an org (fail-closed)' }, 403));
       }
       // STRICT (EE multi-org) FAIL-CLOSED NET: an AUTHENTICATED identity with no org binding AND no
       // explicit platform-admin grant may NOT reach org data/management surfaces — without this, an
@@ -1294,9 +1320,11 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
         orgIsolationActive && principal && !bound && !isPlatformAdmin(principal) &&
         !isSelfDescribingRoute(c)
       ) {
+        markRefusal(c.req.raw, 'organization', { principal });
         return c.json({ error: 'access denied: no org scope and no platform-admin grant (fail-closed)' }, 403);
       }
       if (bound && requested && requested !== bound) {
+        markRefusal(c.req.raw, 'organization', { principal });
         return c.json({ error: `org mismatch: identity is bound to org '${bound}'` }, 403);
       }
       // An identity-bound org scopes BOTH surfaces. It used to scope only GET: on a write the org was
@@ -1313,6 +1341,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
       // document. An EXPLICIT org header on a write remains rejected (v1 read-only rule) — that is a
       // separate question from which org the caller is bound to.
       if (requested && c.req.method !== 'GET') {
+        markRefusal(c.req.raw, 'organization', { principal });
         return c.json({ error: 'writes are not supported in an org context (v1 read-only audit) — use @gnldev/server\'s org option for writes' }, 403);
       }
       const org = bound ?? requested;
@@ -2894,7 +2923,7 @@ function studioApiApp (input: JournalReader | StudioApiOptions): Hono {
     // /managed-agents return the root store for EVERY org (a leak)" — the same leak, two endpoints over.
     const bound = principalOf(c.req.raw)?.orgId ?? orgALS.getStore();
     if (bound && id !== bound) {
-      return c.json({ error: `unauthorized: identity is bound to org '${bound}', cannot manage the budget of '${id}'` }, 403);
+      return refused(c, 'organization', c.json({ error: `unauthorized: identity is bound to org '${bound}', cannot manage the budget of '${id}'` }, 403));
     }
     if (id.includes(':')) return c.json({ error: "invalid org: cannot contain ':'" }, 400);
     const body = (await c.req.json().catch(() => ({}))) as { usdLimit?: number | null; tokenLimit?: number | null };

@@ -404,6 +404,14 @@ export function callerConflictCode(err: unknown): string | undefined {
   return typeof name === 'string' ? CALLER_CONFLICT_CODES[name] : undefined;
 }
 
+/**
+ * The caller-conflict codes that are an OWNERSHIP refusal: the run or thread belongs to someone else.
+ * The rest of the family (a runId reused for another thread or input, a swept run) is a caller mistake
+ * about its own work. A door reporting a request's outcome (@gnldev/auth `markRefusal`) reads this, so
+ * every door classifies the same 409 the same way.
+ */
+export const OWNERSHIP_CONFLICT_CODES: readonly string[] = ['run_owner_mismatch', 'run_actor_mismatch', 'thread_owner_mismatch'];
+
 export const BLOCKED_ERROR_CODES: Record<string, string> = {
   SideEffectRetryBlockedError: 'side_effect_retry_blocked',
   RetryLimitExceededError: 'retry_limit_exceeded',

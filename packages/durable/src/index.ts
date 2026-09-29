@@ -40,7 +40,7 @@ export {
   ReplicationNotAcknowledgedError, SuiteVersionMismatchError, RunThreadMismatchError,
   RunInputMismatchError, RunActorMismatchError, RunOwnerMismatchError, ThreadOwnerMismatchError, IdempotencyOwnerMismatchError, VectorOwnerConflictError, RunSweptError, BatchPlanMismatchError,
   NotAnAgentRunError,
-  CALLER_CONFLICT_CODES, callerConflictCode, publicConflictDetail, FOREIGN_PARTY_DETAIL_FIELDS,
+  CALLER_CONFLICT_CODES, callerConflictCode, OWNERSHIP_CONFLICT_CODES, publicConflictDetail, FOREIGN_PARTY_DETAIL_FIELDS,
   BLOCKED_ERROR_CODES, blockedErrorCode, upstreamFailure, UPSTREAM_ERROR_CODES, LIMIT_ERROR_CODES,
   // The HTTP status of every wire code, for a client or a door that maps a code to a response.
   WIRE_ERROR_STATUS,

@@ -7,6 +7,7 @@
 import type { AuthProvider, Decision, Principal } from './types.js';
 import { isCrossSiteStateChange } from './same-site.js';
 import { bindsIdentity } from './adapter.js';
+import { notePrincipal, noteVerdict, settleDecision } from './decision.js';
 
 export interface Gate {
   /** Is access allowed? true if there's no provider (opt-in: gate not set up → open; see makeGate in production). */
@@ -24,6 +25,12 @@ export interface Gate {
   allowP(req: Request, permission: string): Promise<boolean>;
   /** Return the denial. If allow() attached its last decision to the context, use its status/reason. */
   deny(req: Request, action: 'read' | 'write'): Response;
+  /**
+   * Report the request's outcome to the provider's `onDecision`, once, with the status the caller got.
+   * The host calls it when it has answered (see `markRefusal` for the refusals only the host can see).
+   * No provider, or none with `onDecision`: nothing. Throws what `onDecision` throws.
+   */
+  settle(req: Request, status: number): Promise<void>;
 }
 
 // Per-request state, keyed by the request itself rather than stashed as a property on it. A Request
@@ -126,6 +133,8 @@ export function makeGate(provider?: AuthProvider, opts?: GateOptions): Gate {
         action,
         resource,
       });
+      notePrincipal(req, principal);
+      noteVerdict(req, { path: new URL(req.url).pathname, method: req.method, action, resource }, decision);
       if (!decision.allow) decisions.set(req, decision);
       return decision.allow;
     },
@@ -137,12 +146,10 @@ export function makeGate(provider?: AuthProvider, opts?: GateOptions): Gate {
       // Free-tier reduction: anything ending in ':read' is a read, everything else is a write. An RBAC
       // provider ignores `action` and matches `permission` exactly; a free provider uses this reduced action.
       const action: 'read' | 'write' = permission.endsWith(':read') ? 'read' : 'write';
-      const decision = await provider.authorize(principal, req, {
-        path: new URL(req.url).pathname,
-        method: req.method,
-        action,
-        permission,
-      });
+      const ctx = { path: new URL(req.url).pathname, method: req.method, action, permission };
+      const decision = await provider.authorize(principal, req, ctx);
+      notePrincipal(req, principal);
+      noteVerdict(req, ctx, decision);
       if (!decision.allow) decisions.set(req, decision);
       return decision.allow;
     },
@@ -152,6 +159,10 @@ export function makeGate(provider?: AuthProvider, opts?: GateOptions): Gate {
       const status = denied?.status ?? (action === 'write' ? 403 : 401);
       const reason = denied?.reason ?? (action === 'write' ? 'unauthorized (admin required)' : 'unauthorized');
       return Response.json({ error: reason }, { status });
+    },
+    async settle(req, status) {
+      if (!provider?.onDecision) return;
+      await settleDecision((d) => provider.onDecision!(d), req, status);
     },
   };
 }

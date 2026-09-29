@@ -9,9 +9,9 @@ import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { convertToModelMessages } from 'ai';
 import type { UIMessage } from 'ai';
-import { createGnl, scopeConfigToOrg, RunThreadMismatchError, blockedErrorCode, callerConflictCode, publicConflictDetail, upstreamFailure, sealRequestContext, sealFieldsOf, resolveWorkIdentity } from '@gnldev/durable';
+import { createGnl, scopeConfigToOrg, RunThreadMismatchError, blockedErrorCode, callerConflictCode, OWNERSHIP_CONFLICT_CODES, publicConflictDetail, upstreamFailure, sealRequestContext, sealFieldsOf, resolveWorkIdentity } from '@gnldev/durable';
 import type { CreateGnlConfig } from '@gnldev/durable';
-import { callerOfRequest, type Identify } from '@gnldev/auth';
+import { callerOfRequest, markRefusal, settleDecision, decisionNotRecorded, type AccessDecision, type Identify } from '@gnldev/auth';
 import { toUIMessageStreamResponse } from './ui-stream.js';
 
 export interface CreateChatRouteOptions {
@@ -41,6 +41,17 @@ export interface CreateChatRouteOptions {
    * unauthenticated request asserts a caller nobody verified.
    */
   identify?: Identify;
+  /**
+   * Report each request's outcome — who asked, allowed or refused and why, the status it got — to the
+   * same hook @gnldev/server and @gnldev/studio report to (@gnldev/auth `AuthProvider.onDecision`). Pass
+   * the provider's: `identify: (req) => auth.authenticate(req), onDecision: (d) => auth.onDecision?.(d)`.
+   *
+   * An option rather than a provider, because this route is handed `identify` and nothing else; it
+   * authorizes nothing itself, so what it reports is who asked and what the engine answered — a foreign
+   * thread or run (409 `thread_owner_mismatch` / `run_owner_mismatch` / `run_actor_mismatch`) is recorded
+   * as an ownership refusal. WITHOUT it this route leaves no record. If it throws, the route answers 500.
+   */
+  onDecision?: (decision: AccessDecision) => void | Promise<void>;
   /**
    * FAZ-2 — per-run concurrency lock, ON by default (`{ ttlMs: 300_000 }`). Two CONCURRENT requests
    * with the same runId (double-click, two tabs, a retry racing the original) used to BOTH execute;
@@ -93,6 +104,7 @@ function typedErrorResponse(c: Context, e: unknown, workKey?: string): Response 
   const conflictCode = callerConflictCode(e);
   if (conflictCode && conflictCode !== 'run_thread_mismatch') {
     const err = e as { message?: string; detail?: unknown };
+    if (OWNERSHIP_CONFLICT_CODES.includes(conflictCode)) markRefusal(c.req.raw, 'ownership', { detail: conflictCode });
     // Redacted: see `publicConflictDetail` (durable/errors.ts) for what is withheld and why.
     return c.json({ error: err.message, code: conflictCode, detail: withWorkKey(publicConflictDetail(err.detail), workKey) }, 409);
   }
@@ -207,6 +219,18 @@ export function createChatRoute(
     );
   }
   const app = new Hono();
+  // The outcome, reported once the route has answered (see `onDecision`).
+  if (opts.onDecision) {
+    const onDecision = opts.onDecision;
+    app.use('*', async (c, next) => {
+      await next();
+      try {
+        await settleDecision(onDecision, c.req.raw, c.res.status);
+      } catch (err) {
+        c.res = decisionNotRecorded(err);
+      }
+    });
+  }
   app.post('/agents/:name/chat', async (c) => {
     const name = c.req.param('name');
     const body = (await c.req.json().catch(() => ({}))) as {
