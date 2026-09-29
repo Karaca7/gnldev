@@ -232,7 +232,7 @@ describe('what an org admin may do to a user in ANOTHER organization', () => {
 describe('a user write whose target the caller cannot see', () => {
   const ROUTES = [
     // `?keepData=true`: this host has no `userErasure`, and these cases are about who may act, not about
-    // what a delete erases (users-delete-erasure.test.ts).
+    // what a delete erases.
     { verb: 'delete', init: (H: Record<string, string>) => ({ method: 'DELETE', headers: H }), call: 'remove', suffix: '?keepData=true' },
     { verb: 'revoke', init: (H: Record<string, string>) => ({ method: 'POST', headers: H }), call: 'revoke', suffix: '/revoke' },
     { verb: 'update', init: (H: Record<string, string>) => ({ method: 'PATCH', headers: { ...H, 'content-type': 'application/json' }, body: JSON.stringify({ roles: ['viewer'] }) }), call: 'update' },
