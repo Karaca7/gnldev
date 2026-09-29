@@ -49,7 +49,7 @@ export {
   // hand-rolled copy of this shape is how three surfaces end up teaching three different lessons.
   teachingError, runBusyMessage,
 } from './errors.js';
-export type { UpstreamFailure } from './errors.js';
+export type { UpstreamFailure, CallerConflictCode, BlockedErrorCode, WireErrorCode } from './errors.js';
 // Task 3: opt-in sibling-suite version-skew guard (see suite-consistency.ts).
 export { assertSuiteConsistent, versionsEqual } from './suite-consistency.js';
 export type { AssertSuiteConsistentOptions } from './suite-consistency.js';

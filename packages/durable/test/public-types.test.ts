@@ -375,3 +375,46 @@ export { sqlite, inMemorySqlite, pg, redis, echo, calling, sqliteNotAny, pgNotAn
   it("SqliteStorage's path is a string", () => expect(codes(d.sqliteNumericPath)).toEqual([2345]));
   it('a subpath does not re-export another', () => expect(codes(d.wrongExportFromSubpath)).toEqual([2305]));
 });
+
+describe('the code maps: a known name reads as its code, an unknown one as undefined', () => {
+  // These were Record<string, string>: `CALLER_CONFLICT_CODES.RunOwnerMismatchEror` compiled as a
+  // string and was undefined at runtime. A dynamic lookup must still compile — the doors do one.
+  const BASE = `${PRELUDE}
+import {
+  CALLER_CONFLICT_CODES, BLOCKED_ERROR_CODES, WIRE_ERROR_STATUS, OWNERSHIP_CONFLICT_CODES,
+  callerConflictCode, blockedErrorCode, type CallerConflictCode, type BlockedErrorCode, type WireErrorCode,
+} from '@gnldev/durable';
+const owner: 'run_owner_mismatch' = CALLER_CONFLICT_CODES.RunOwnerMismatchError;
+const busy: 'run_busy' = BLOCKED_ERROR_CODES.RunBusyError;
+const status: 409 = WIRE_ERROR_STATUS.run_busy;
+declare const name: string;
+const dynamicCode: string = BLOCKED_ERROR_CODES[name] ?? 'run_busy';
+const dynamicStatus: number = WIRE_ERROR_STATUS[name] ?? 500;
+const conflict: CallerConflictCode | undefined = callerConflictCode(new Error('x'));
+const blocked: BlockedErrorCode | undefined = blockedErrorCode(new Error('x'));
+const ownership: readonly CallerConflictCode[] = OWNERSHIP_CONFLICT_CODES;
+const conflictSet: Same<CallerConflictCode, 'run_thread_mismatch' | 'not_an_agent_run' | 'run_input_mismatch' | 'run_actor_mismatch' | 'run_owner_mismatch' | 'thread_owner_mismatch' | 'run_swept' | 'batch_plan_mismatch'> = true;
+const blockedSet: Same<BlockedErrorCode, 'side_effect_retry_blocked' | 'retry_limit_exceeded' | 'run_busy' | 'step_retry_blocked'> = true;
+const wire: WireErrorCode = 'run_limit_exceeded';
+const conflictNotAny: IsAny<CallerConflictCode> = false;
+export { owner, busy, status, dynamicCode, dynamicStatus, conflict, blocked, ownership, conflictSet, blockedSet, wire, conflictNotAny };
+`;
+  const cases = {
+    base: BASE,
+    // a misspelled error name is undefined at runtime, and now in the type too
+    typoName: mutate(BASE, 'const owner: \'run_owner_mismatch\' = CALLER_CONFLICT_CODES.RunOwnerMismatchError;', 'const owner: string = CALLER_CONFLICT_CODES.RunOwnerMismatchEror;'),
+    typoCode: mutate(BASE, 'const status: 409 = WIRE_ERROR_STATUS.run_busy;', 'const status: number = WIRE_ERROR_STATUS.run_bussy;'),
+    // the function answers from the closed set
+    wrongReturn: mutate(BASE, 'const conflict: CallerConflictCode | undefined', "const conflict: 'run_busy' | undefined"),
+    // a code outside the set is not a WireErrorCode
+    notAWireCode: mutate(BASE, "const wire: WireErrorCode = 'run_limit_exceeded';", "const wire: WireErrorCode = 'run_limit_exceded';"),
+  };
+  let d: Record<keyof typeof cases, TypeDiagnostic[]>;
+  beforeAll(() => { d = typeDiagnostics(__dirname, cases) as typeof d; }, COMPILE_TIMEOUT);
+
+  it('known names read as their exact code; a dynamic lookup still compiles', () => expect(d.base).toEqual([]));
+  it('a misspelled error name does not type as a string', () => expect(codes(d.typoName)).toEqual([2322]));
+  it('a misspelled wire code does not type as a number', () => expect(codes(d.typoCode)).toEqual([2322]));
+  it('callerConflictCode answers from the closed set', () => expect(codes(d.wrongReturn)).toEqual([2322]));
+  it('WireErrorCode is the closed set of codes (TS2820 names the nearest code)', () => expect(codes(d.notAWireCode)).toEqual([2820]));
+});

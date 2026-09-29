@@ -349,7 +349,7 @@ export class NotAnAgentRunError extends Error {
   }
 }
 
-export const CALLER_CONFLICT_CODES: Record<string, string> = {
+const CALLER_CONFLICT_BY_NAME = {
   RunThreadMismatchError: 'run_thread_mismatch',
   NotAnAgentRunError: 'not_an_agent_run',
   RunInputMismatchError: 'run_input_mismatch',
@@ -358,7 +358,12 @@ export const CALLER_CONFLICT_CODES: Record<string, string> = {
   ThreadOwnerMismatchError: 'thread_owner_mismatch',
   RunSweptError: 'run_swept',
   BatchPlanMismatchError: 'batch_plan_mismatch',
-};
+} as const;
+/** A code `callerConflictCode` can return — the closed set above, not any string. */
+export type CallerConflictCode = (typeof CALLER_CONFLICT_BY_NAME)[keyof typeof CALLER_CONFLICT_BY_NAME];
+// Known names read as their exact code; any other name reads as `undefined`, which is what it is at
+// runtime. The map used to be `Record<string, string>`, so a misspelled name compiled as a string.
+export const CALLER_CONFLICT_CODES: typeof CALLER_CONFLICT_BY_NAME & { readonly [errorName: string]: CallerConflictCode | undefined } = CALLER_CONFLICT_BY_NAME;
 
 /**
  * The `detail` fields that name a party the CALLER IS NOT — never serialised back to that caller.
@@ -399,7 +404,7 @@ export function publicConflictDetail(detail: unknown): unknown {
 }
 
 /** Name-matched like blockedErrorCode below (dist/src class-identity resilience). */
-export function callerConflictCode(err: unknown): string | undefined {
+export function callerConflictCode(err: unknown): CallerConflictCode | undefined {
   const name = (err as { name?: unknown } | null | undefined)?.name;
   return typeof name === 'string' ? CALLER_CONFLICT_CODES[name] : undefined;
 }
@@ -410,9 +415,9 @@ export function callerConflictCode(err: unknown): string | undefined {
  * about its own work. A door reporting a request's outcome (@gnldev/auth `markRefusal`) reads this, so
  * every door classifies the same 409 the same way.
  */
-export const OWNERSHIP_CONFLICT_CODES: readonly string[] = ['run_owner_mismatch', 'run_actor_mismatch', 'thread_owner_mismatch'];
+export const OWNERSHIP_CONFLICT_CODES: readonly CallerConflictCode[] = ['run_owner_mismatch', 'run_actor_mismatch', 'thread_owner_mismatch'];
 
-export const BLOCKED_ERROR_CODES: Record<string, string> = {
+const BLOCKED_BY_NAME = {
   SideEffectRetryBlockedError: 'side_effect_retry_blocked',
   RetryLimitExceededError: 'retry_limit_exceeded',
   RunBusyError: 'run_busy',
@@ -421,7 +426,10 @@ export const BLOCKED_ERROR_CODES: Record<string, string> = {
   // workflow step surfacing through runWorkflow → server/agui/studio still renders a typed code
   // instead of falling through to the generic 400.
   StepRetryBlockedError: 'step_retry_blocked',
-};
+} as const;
+/** A code `blockedErrorCode` can return. */
+export type BlockedErrorCode = (typeof BLOCKED_BY_NAME)[keyof typeof BLOCKED_BY_NAME];
+export const BLOCKED_ERROR_CODES: typeof BLOCKED_BY_NAME & { readonly [errorName: string]: BlockedErrorCode | undefined } = BLOCKED_BY_NAME;
 
 /**
  * Returns the blocked error code for the given error (if any). Works via `err?.name` (NOT
@@ -429,7 +437,7 @@ export const BLOCKED_ERROR_CODES: Record<string, string> = {
  * (in the same spirit as the existing `instanceof X || name === 'X'` pattern in
  * packages/server/src/index.ts). Returns undefined if there's no match.
  */
-export function blockedErrorCode(err: unknown): string | undefined {
+export function blockedErrorCode(err: unknown): BlockedErrorCode | undefined {
   const name = (err as { name?: unknown } | null | undefined)?.name;
   return typeof name === 'string' ? BLOCKED_ERROR_CODES[name] : undefined;
 }
@@ -556,7 +564,7 @@ export function upstreamFailure(err: unknown): UpstreamFailure | undefined {
  * these numbers; this map pins the documentation to the same ones. A new code without an entry here
  * fails the checker, which is the moment its author still knows the status.
  */
-export const WIRE_ERROR_STATUS: Record<string, number> = {
+const WIRE_STATUS_BY_CODE = {
   // caller-conflict — all 409: something about the request needs fixing; no retry clears it
   run_thread_mismatch: 409,
   not_an_agent_run: 409,
@@ -579,4 +587,7 @@ export const WIRE_ERROR_STATUS: Record<string, number> = {
   upstream_unauthorized: 502,
   upstream_unavailable: 502,
   upstream_timeout: 504,
-};
+} as const;
+/** A code with a pinned HTTP status. */
+export type WireErrorCode = keyof typeof WIRE_STATUS_BY_CODE;
+export const WIRE_ERROR_STATUS: typeof WIRE_STATUS_BY_CODE & { readonly [code: string]: number | undefined } = WIRE_STATUS_BY_CODE;
