@@ -7,8 +7,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
+## [0.8.0] — 2026-09-30
 
+**A minor (0.8.0): a misspelling in a principal or an error code is a compile error, and bundles drop what they do not use.**
 Two type changes can stop code that compiled on 0.7.0 from compiling. Nothing changes at runtime.
 
 1. **`Principal` no longer accepts any field.** It named `kind`, `id`, `roles` and the rest, and then
