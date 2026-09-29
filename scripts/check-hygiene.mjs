@@ -25,13 +25,33 @@
 //    every test runs in the workspace, where server is always there. This check reads the manifests
 //    and the sources.
 //
-// The shape all three share: the failure is INVISIBLE rather than loud, so the only defence is a
+// 4) A `"sideEffects"` promise that is not true. Every published package with an exports map says
+//    `"sideEffects": false` (or lists the executables that are the exception), and webpack and rollup
+//    act on it: they DROP a module whose exports go unused, without running it. Measured on the
+//    built dist, one export each, bytes before → after the field was added: `RunBusyError` from
+//    @gnldev/durable 5502 → 188 (webpack) and 2025 → 99 (rollup); `buildOpenApi` from @gnldev/server
+//    12482 → 5822 and 8747 → 5741; `enqueue` from @gnldev/queue 8892 → 3637. (esbuild already got
+//    there without the field.) The price is that the promise must stay TRUE: a module that installs
+//    a global, a process listener or a timer when imported would be silently skipped in a user's
+//    bundle and in no test, because tests do not bundle. So this check imports every dist module the
+//    manifest calls side-effect free, in a fresh process, and fails on any observable top-level
+//    effect. It needs a build (`pnpm -r build`), which CI runs first.
+//
+// The shape all four share: the failure is INVISIBLE rather than loud, so the only defence is a
 // check that goes looking. That is what this file is.
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { spawnSync } from 'node:child_process';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+// Child mode for section 4: import each module given on the command line, one after another, and
+// print what changed after each. A child, so a module that starts a timer cannot hold this process.
+if (process.argv[2] === '--probe-side-effects') {
+  await probeSideEffects(process.argv.slice(3));
+  process.exit(0);
+}
 const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', '.next', 'coverage', 'build', '.turbo']);
 const TEXT_EXT = /\.(ts|tsx|js|jsx|mjs|cjs|json|md|yml|yaml|css|html)$/;
 
@@ -115,8 +135,76 @@ for (const door of DOORS) {
   }
 }
 
+// ── 4. the sideEffects promise ────────────────────────────────────────────────────────────────────
+// Which packages: published ones with an exports map. create-gnl (a bin, nothing to import) and
+// studio-ui (browser assets served by studio, which mount the app when loaded) have none, and the
+// field would say nothing true about them.
+const promise = [];
+const probeByPkg = new Map();
+const gnlDepsOf = new Map();
+for (const name of readdirSync(pkgDir)) {
+  const dir = join(pkgDir, name);
+  const manifestPath = join(dir, 'package.json');
+  if (!existsSync(manifestPath)) continue;
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  if (manifest.private || !manifest.exports) continue;
+  const se = manifest.sideEffects;
+  const listed = Array.isArray(se) ? se : [];
+  if (se !== false && !(Array.isArray(se) && se.every((e) => typeof e === 'string' && !e.includes('*')))) {
+    promise.push(`${manifest.name} — package.json has no "sideEffects": false (or a list of exact paths)`);
+    continue;
+  }
+  const dist = join(dir, 'dist');
+  if (!existsSync(dist)) { promise.push(`${manifest.name} — no dist/ to check; run \`pnpm -r build\` first`); continue; }
+  // An exception that names a missing file is stale, and a stale list hides nothing but misleads.
+  for (const entry of listed) if (!existsSync(join(dir, entry))) promise.push(`${manifest.name} — "sideEffects" lists ${entry}, which the build does not produce`);
+  const exempt = new Set(listed.map((e) => join(dir, e)));
+  const js = (d) => readdirSync(d, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? js(join(d, e.name)) : /\.m?js$/.test(e.name) ? [join(d, e.name)] : []);
+  probeByPkg.set(manifest.name, js(dist).filter((file) => !exempt.has(file)));
+  gnlDepsOf.set(manifest.name, Object.keys({ ...manifest.dependencies, ...manifest.peerDependencies }).filter((d) => d.startsWith('@gnldev/')));
+}
+// Import order decides who is blamed: an effect is charged to the first file whose import made it, so
+// every file goes after what it imports — packages after their @gnldev dependencies, files after the
+// relative files they import. Then the file charged is the file that does it.
+const toProbe = [];
+const seenPkg = new Set();
+const seenFile = new Set();
+const RELATIVE_IMPORT = /(?:\bfrom|\bimport)\s*\(?\s*['"](\.{1,2}\/[^'"]+)['"]/g;
+const visitFile = (file, own) => {
+  if (seenFile.has(file) || !own.has(file)) return;
+  seenFile.add(file);
+  for (const m of readFileSync(file, 'utf8').matchAll(RELATIVE_IMPORT)) visitFile(join(dirname(file), m[1]), own);
+  toProbe.push(file);
+};
+const visitPkg = (name) => {
+  if (seenPkg.has(name) || !probeByPkg.has(name)) return;
+  seenPkg.add(name);
+  for (const dep of gnlDepsOf.get(name)) visitPkg(dep);
+  const own = new Set(probeByPkg.get(name));
+  for (const file of own) visitFile(file, own);
+};
+for (const name of probeByPkg.keys()) visitPkg(name);
+if (toProbe.length) {
+  const child = spawnSync(process.execPath, [fileURLToPath(import.meta.url), '--probe-side-effects', ...toProbe], { encoding: 'utf8', timeout: 120_000 });
+  const report = child.stdout.split('\n').find((l) => l.startsWith('@@effects@@'));
+  if (!report) {
+    promise.push(`the import probe did not finish (${child.signal ? `killed by ${child.signal} — a module kept the process alive` : `exit ${child.status}`}): ${(child.stderr || '').trim().split('\n').slice(-3).join(' | ')}`);
+  } else {
+    for (const { file, found } of JSON.parse(report.slice('@@effects@@'.length))) promise.push(`${relative(root, file)} — ${found.join(', ')}`);
+  }
+}
+
 // ── report ────────────────────────────────────────────────────────────────────────────────────────
 let failed = false;
+
+if (promise.length) {
+  failed = true;
+  console.error('\n✗ a "sideEffects" promise that does not hold — a bundler skips these modules when their');
+  console.error('  exports go unused, so the effect silently disappears from a user\'s bundle:\n');
+  for (const line of promise) console.error(`    ${line}`);
+  console.error('\n  Fix: move the effect into a function the caller runs. If the file is an executable (a bin),');
+  console.error('  name it in the package\'s "sideEffects" list instead: `"sideEffects": ["./dist/cli.js"]`.\n');
+}
 
 if (coupled.length) {
   failed = true;
@@ -153,3 +241,50 @@ const scanned = [...walk(root)].length;
 console.log(`✓ ${scanned} text files carry no control bytes (grep and git diff can read all of them)`);
 console.log('✓ every package with test files has a `test` script (none is silently skipped)');
 console.log(`✓ no door package (${DOORS.join(', ')}) needs another door, @gnldev/server or @gnldev/studio`);
+console.log(`✓ ${toProbe.length} dist modules the manifests call side-effect free import with no top-level effect`);
+
+/**
+ * Imports each file in turn and reports, per file, what changed in state any other code can observe:
+ * globalThis, the prototypes and statics of the builtins, process listeners, Error hooks, and
+ * resources that keep the event loop alive. A change is charged to the first file whose import made it.
+ */
+async function probeSideEffects(files) {
+  // Set by zod v4 on its first load; it arrives through `ai`, a dependency, not from GNL code.
+  // Measured: `import('ai')` alone, in a package that resolves zod@4, adds exactly these two.
+  const DEPENDENCY_GLOBALS = new Set(['__zod_globalConfig', '__zod_globalRegistry']);
+  const BUILTINS = { Object, Array, Promise, Function, String, Number, Map, Set, Error, RegExp, Date, Symbol, JSON, Math, Reflect };
+  const own = (o) => { const m = new Map(); for (const k of Reflect.ownKeys(o)) { const d = Object.getOwnPropertyDescriptor(o, k); m.set(String(k), d && ('value' in d ? d.value : d.get)); } return m; };
+  const count = (list) => list.reduce((m, r) => m.set(r, (m.get(r) ?? 0) + 1), new Map());
+  const snap = () => {
+    const s = new Map([['globalThis', own(globalThis)]]);
+    for (const [n, c] of Object.entries(BUILTINS)) { s.set(n, own(c)); if (c.prototype) s.set(`${n}.prototype`, own(c.prototype)); }
+    s.set('process listeners', new Map(process.eventNames().map((e) => [String(e), process.listenerCount(e)])));
+    s.set('live resources', count(process.getActiveResourcesInfo().filter((r) => r !== 'Immediate')));
+    return s;
+  };
+  const diff = (a, b) => {
+    const out = [];
+    for (const [where, now] of b) {
+      const was = a.get(where);
+      for (const [k, v] of now) if (!was.has(k)) out.push(`${where}: ${k} added`); else if (was.get(k) !== v && !(Number.isNaN(v) && Number.isNaN(was.get(k)))) out.push(`${where}: ${k} changed`);
+      for (const k of was.keys()) if (!now.has(k)) out.push(`${where}: ${k} removed`);
+    }
+    return out.filter((l) => ![...DEPENDENCY_GLOBALS].some((g) => l === `globalThis: ${g} added`));
+  };
+  // Warm-up. Reading the descriptor of a lazy global (FormData) makes node load undici, which adds
+  // Symbol(undici.globalDispatcher.1) to globalThis — the probe's own doing, so it happens here first.
+  await import('data:text/javascript,');
+  snap();
+  await new Promise((r) => setImmediate(r));
+  const found = [];
+  let before = snap();
+  for (const file of files) {
+    try { await import(pathToFileURL(file).href); } catch (e) { found.push({ file, found: [`import threw: ${String(e?.message ?? e).split('\n')[0]}`] }); }
+    await new Promise((r) => setImmediate(r));
+    const after = snap();
+    const d = diff(before, after);
+    if (d.length) found.push({ file, found: d });
+    before = after;
+  }
+  process.stdout.write(`\n@@effects@@${JSON.stringify(found)}\n`);
+}

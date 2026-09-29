@@ -18,6 +18,10 @@
     "devtools"
   ],
   "type": "module",
+  "sideEffects": [
+    "./dist/cli.js",
+    "./dist/dev-entry.js"
+  ],
   "bin": {
     "gnl": "./dist/cli.js"
   },

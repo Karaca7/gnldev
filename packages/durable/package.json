@@ -20,6 +20,7 @@
     "crash-recovery"
   ],
   "type": "module",
+  "sideEffects": ["./dist/cli/chat.js"],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

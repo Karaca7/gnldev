@@ -27,6 +27,7 @@
     "qualification"
   ],
   "type": "module",
+  "sideEffects": ["./dist/cli.js"],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

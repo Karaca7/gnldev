@@ -18,6 +18,7 @@
     "mcp-server"
   ],
   "type": "module",
+  "sideEffects": ["./dist/cli.js"],
   "bin": {
     "gnl-docs-mcp": "./dist/cli.js"
   },
