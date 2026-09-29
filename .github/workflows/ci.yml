@@ -20,11 +20,11 @@ jobs:
     name: typecheck · build · test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v5
         with:
           version: 10
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm
@@ -51,7 +51,7 @@ jobs:
       # `always()`, not `failure()`: the green runs are the baseline a flake hunt compares against —
       # which test is creeping toward its limit, which one retried — and the XML is free on them.
       - run: pnpm test --reporter=default --reporter=junit --outputFile.junit=test-results.xml
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: test-results
@@ -146,11 +146,11 @@ jobs:
       # it does not have -- the same failure this matrix exists to fix.
       GNL_PG_EXPECT_COLLATION: ${{ matrix.pg.collation }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v5
         with:
           version: 10
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm
