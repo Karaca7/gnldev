@@ -141,7 +141,10 @@ try {
       // The vector write rule on a real Postgres and on rag's PostgresVectorStore over real pgvector.
       'packages/durable/test/vector-store-contract.test.ts',
       // Owned names on a real Postgres, where a lone surrogate would become U+FFFD.
-      'packages/durable/test/owned-name-namespaces.test.ts'], { env }).status === 0);
+      'packages/durable/test/owned-name-namespaces.test.ts',
+      // The EE user directory: seats, concurrent writes and the create rollback on a real Postgres,
+      // where transactions and row locks are real (pg-mem does neither), against the journal store.
+      'packages/auth-ee/test/user-store-drift.test.ts'], { env }).status === 0);
 
   step('real model provider', () => {
     if (!process.env.NVIDIA_API_KEY && !process.env.OPENAI_API_KEY) {
