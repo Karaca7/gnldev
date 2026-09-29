@@ -136,6 +136,11 @@ route let an end user read a staff member's ownerless thread (measured). Passing
 at construction; `threadId` comes from `resolveThreadId` or the body. The package now depends on
 `@gnldev/auth`.
 
+**Recording who asked (`onDecision`).** Without it, this route leaves no audit record. Pass
+`onDecision: (d) => auth.onDecision?.(d)` next to `identify`: it is called once per request with who
+asked and what they got, and a foreign thread or run (`409 …_owner_mismatch`) is recorded as an
+ownership refusal. If the hook throws, the route answers 500.
+
 `@gnldev/chat-adapter`'s README carries the long version of the same section.
 
 ## Which run is this? (`workKey`, and the two regimes)

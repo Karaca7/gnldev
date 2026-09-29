@@ -219,6 +219,25 @@ everyone else.
 | `makeGate` | Turns a provider into a gate a host can apply to routes |
 | `principalOf` | Reads the principal a gate resolved for a request |
 | `normalizeAuth` / `fromReadWrite` | Accepts the older `{ read, write }` predicate pair and adapts it to the provider interface |
+| `AuthProvider.onDecision` / `AccessDecision` | Optional. Called once per request, after the host answered, with what the caller GOT: `{ principal, kind, orgId, path, method, action, permission, allowed, reason, detail, status }`. See below |
+| `markRefusal` / `RefusalReason` | How a host records why it refused a request (`unauthenticated`, `rbac`, `ownership`, `organization`, `resource`, `policy`) — including a refusal it answers as a 404 |
+| `settleDecision` / `outcomeOf` | The one rule that turns a request's notes into an `AccessDecision`; `makeGate(...).settle(req, status)` calls it |
+
+### Recording decisions: `onDecision`, not `authorize`
+
+`authorize` answers **before** the host's own gates — whose run this is, which organization, which
+resource. So its verdict is not the answer: a request it allowed can still be refused. Measured on
+0.7 before this hook: `GET /runs/<another user's run>` answered 404, and a record written from
+`authorize` said "allowed".
+
+A provider that keeps a record implements `onDecision`. `@gnldev/server` and `@gnldev/studio` call it
+once per request with the final outcome. A refusal answered as a 404 (to hide that a run exists) is
+still `allowed: false, reason: 'ownership'` in the record. A real miss is `allowed: true, status: 404`.
+A 401 or 403 that no gate explained is reported as refused (`unauthenticated` / `policy`), never as
+allowed. If `onDecision` throws, the host answers 500 instead: the response is not delivered unrecorded.
+
+The standalone doors have no provider, only `identify`. `@gnldev/chat-adapter` and `@gnldev/agui` take
+an `onDecision` option for this; `@gnldev/mcp` has none, so its calls are not recorded (see its README).
 
 `identityFromAuth` (the MCP-only adapter) was removed in 0.7: `@gnldev/mcp` takes `identify` like every
 other door, and a provider's `authenticate` is already one.

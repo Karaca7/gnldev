@@ -283,6 +283,12 @@ Two things measured about that rule engine, so they are not discovered at 3am:
 - **No prefix wildcards.** `id: 'read_*'` does **not** match `read_invoice`. Only the exact id or a bare `'*'` matches. A pattern that does not match falls through to the default, which is **deny** — so a mistake here fails closed, silently.
 - **Default deny.** With no matching rule, even an `admin` principal is refused.
 
+**Not in the auth-ee audit trail.** This server has no `onDecision`: it is not an HTTP door, and a
+tool call has no status to report. `@gnldev/server`, `@gnldev/studio` and the chat and AG-UI routes
+record every request's outcome; MCP calls are recorded only if you do it in `allowTool`, e.g.
+`recordFgaDecision(sink, principal, { type: 'tool', id: name }, 'run', result, true)` from
+`@gnldev/auth-ee`.
+
 ### Two callers at once, one key
 
 This is the normal case here, not an edge case — a double-click, a client retrying on a timeout, two workers draining one queue. Measured: 10 parallel calls to a 20 ms tool under one key ran the side effect **exactly once**.

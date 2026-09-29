@@ -152,6 +152,25 @@ and `listThreads` have no subject to key by.
 **Honest bound.** An `identify` that trusts an *unauthenticated* request asserts a caller nobody
 verified. Put auth in front of this route — or mount `chatSurface()` on `@gnldev/server` instead.
 
+**Recording who asked (`onDecision`).** Without it, this route leaves no audit record. Pass your
+provider's hook next to `identify`:
+
+```ts
+import { createChatRoute } from '@gnldev/chat-adapter';
+import { roleAuth } from '@gnldev/auth';
+
+const auth = roleAuth({ endUsers: { secret: process.env.GNL_END_USER_SECRET!, orgId: 'acme' } })!;
+
+const chat = createChatRoute(config, {
+  identify: (req) => auth.authenticate(req),
+  onDecision: (d) => auth.onDecision?.(d), // @gnldev/auth-ee's provider writes its audit trail here
+});
+```
+
+It is called once per request, after the route answered, with who asked and what they got. A foreign
+thread or run (the engine's `409 thread_owner_mismatch` / `run_owner_mismatch` / `run_actor_mismatch`)
+is recorded as `allowed: false, reason: 'ownership'`. If the hook throws, the route answers 500.
+
 **Breaking in 0.7.** `identity: (req) => ({ resourceId, orgId, threadId })` was replaced by
 `identify: (req) => Principal`: the old shape could not say "this caller is staff", and the standalone
 route let an end user read a staff member's ownerless thread (measured). Passing `identity` now throws

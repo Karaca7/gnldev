@@ -482,7 +482,7 @@ const { token } = await userStore.create({ email: 'acme-viewer@example.com', rol
     package: `@gnldev/auth-ee`,
     install: `import { createEnterpriseAuth, createJournalAuditSink, consoleAuditSink } from '@gnldev/auth-ee';
 import { toJournal } from '@gnldev/durable';`,
-    apis: [`createJournalAuditSink(journal) — writes every authorization decision permanently to the journal`, `readJournalAudit(journal) — returns written AuditEvents, newest first`, `AuditEvent — { ts, principalId?, orgId?, path, method, action, allowed }`],
+    apis: [`createJournalAuditSink(journal, { secret? }) — writes every request outcome permanently to the journal; secret ≥ 32 bytes`, `readJournalAudit(journal) — returns written AuditEvents, newest first`, `AuditEvent — { ts, principalId?, kind, orgId?, path, method, action, allowed, reason?, status? } — the outcome the caller got (onDecision), not the pre-gate RBAC verdict`, `verifyJournalAudit(journal, secret) — { tampered, gaps }: edits, copies, reorders and mid-sequence deletions; not a deleted tail`],
     example: `const auth = createEnterpriseAuth({
   licenseKey,
   audit: createJournalAuditSink(toJournal(storage.runs)),
