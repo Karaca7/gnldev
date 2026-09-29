@@ -47,7 +47,7 @@ export interface DocFeature {
 }
 
 /** GNL overview summary — short summary mirroring gnl.dev/llms.txt (source for the gnl_docs_overview tool). */
-export const OVERVIEW_SUMMARY = `A thin correctness layer on top of the Vercel AI SDK: journal-based durability, exactly-once tool calls, deterministic replay/time-travel. Runtime footprint ~32 KiB gzip for the core (~100 KiB with the AI SDK bundled), BYO-DB (SQLite/Postgres/your own storage), no telemetry/phone-home — your journal always stays on your own infrastructure.`;
+export const OVERVIEW_SUMMARY = `A thin correctness layer on top of the Vercel AI SDK: journal-based durability, exactly-once tool calls, deterministic replay/time-travel. Runtime footprint ~61 KiB gzip for the core (~129 KiB with the AI SDK bundled), BYO-DB (SQLite/Postgres/your own storage), no telemetry/phone-home — your journal always stays on your own infrastructure.`;
 
 export const OVERVIEW_DETAIL = `GNL keeps the same agent loop via \`runDurable\`, a drop-in replacement for \`generateText\`/\`streamText\`; it additionally takes a \`journal\` + \`runId\`. Even if the process crashes, calling it again with the same \`runId\` resumes deterministically from where it left off, and completed tool calls never run again. Three tiers: Core (free, @gnldev/durable/@gnldev/server/@gnldev/auth/@gnldev/evals), Studio (@gnldev/studio — inspection/management, free), Enterprise (@gnldev/auth-ee — signed license, RBAC/SSO/multi-organization/budget).`;
 
