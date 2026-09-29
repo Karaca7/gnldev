@@ -62,7 +62,7 @@ an option documented nowhere. Two review panels then measured what was left afte
 
 ## Consequences
 
-- **Breaking, released as 0.7.0** (0.x: no shims). See CHANGELOG [Unreleased]. The breaks: ownerless
+- **Breaking, released as 0.7.0** (0.x: no shims). See CHANGELOG [0.7.0]. The breaks: ownerless
   records are staff's; reads you may not make answer 404; tokens are validated strictly; unauthenticated
   writes answer 401; staff actor stamps are `operator:<id>`; standalone chat and AG-UI need `identity`
   in production; scaffolded chat moves to `/agents/:name/chat` on the API.

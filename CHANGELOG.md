@@ -7,7 +7,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
+## [0.7.0] — 2026-09-29
 
 **A minor (0.7.0): end users are isolated by default, at one point, for free — and every package asks
 "who is this?" the same way.** Two decisions, each with the alternatives it rejected:
