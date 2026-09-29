@@ -140,6 +140,11 @@ for (const door of DOORS) {
 // studio-ui (browser assets served by studio, which mount the app when loaded) have none, and the
 // field would say nothing true about them.
 const promise = [];
+// A build that is missing or incomplete is not a broken promise, and must not read as one: with one
+// package's dist absent, every module importing it throws, and the report blamed a dozen innocent
+// files and advised moving an effect that did not exist. So it is its own finding, and the probe
+// does not run on a tree it cannot read.
+const unbuilt = [];
 const probeByPkg = new Map();
 const gnlDepsOf = new Map();
 for (const name of readdirSync(pkgDir)) {
@@ -155,7 +160,7 @@ for (const name of readdirSync(pkgDir)) {
     continue;
   }
   const dist = join(dir, 'dist');
-  if (!existsSync(dist)) { promise.push(`${manifest.name} — no dist/ to check; run \`pnpm -r build\` first`); continue; }
+  if (!existsSync(dist)) { unbuilt.push(`${manifest.name} — no dist/`); continue; }
   // An exception that names a missing file is stale, and a stale list hides nothing but misleads.
   for (const entry of listed) if (!existsSync(join(dir, entry))) promise.push(`${manifest.name} — "sideEffects" lists ${entry}, which the build does not produce`);
   const exempt = new Set(listed.map((e) => join(dir, e)));
@@ -184,18 +189,32 @@ const visitPkg = (name) => {
   for (const file of own) visitFile(file, own);
 };
 for (const name of probeByPkg.keys()) visitPkg(name);
-if (toProbe.length) {
+if (toProbe.length && !unbuilt.length) {
   const child = spawnSync(process.execPath, [fileURLToPath(import.meta.url), '--probe-side-effects', ...toProbe], { encoding: 'utf8', timeout: 120_000 });
   const report = child.stdout.split('\n').find((l) => l.startsWith('@@effects@@'));
   if (!report) {
     promise.push(`the import probe did not finish (${child.signal ? `killed by ${child.signal} — a module kept the process alive` : `exit ${child.status}`}): ${(child.stderr || '').trim().split('\n').slice(-3).join(' | ')}`);
   } else {
-    for (const { file, found } of JSON.parse(report.slice('@@effects@@'.length))) promise.push(`${relative(root, file)} — ${found.join(', ')}`);
+    // A dist file that imports a file the build did not produce: the build is incomplete, not the
+    // promise. One line per missing file — every module above it throws the same error.
+    const importersOf = new Map();
+    for (const { file, found, missing } of JSON.parse(report.slice('@@effects@@'.length))) {
+      if (missing) importersOf.set(missing, (importersOf.get(missing) ?? 0) + 1);
+      else promise.push(`${relative(root, file)} — ${found.join(', ')}`);
+    }
+    for (const [missing, n] of importersOf) unbuilt.push(`${missing} — not built (${n} module${n === 1 ? '' : 's'} import it)`);
   }
 }
 
 // ── report ────────────────────────────────────────────────────────────────────────────────────────
 let failed = false;
+
+if (unbuilt.length) {
+  failed = true;
+  console.error('\n✗ the build is missing or incomplete — the sideEffects check reads dist/, so it has not run:\n');
+  for (const line of unbuilt) console.error(`    ${line}`);
+  console.error('\n  Fix: `pnpm -r build`, then run this again. Nothing here says a module has an effect.\n');
+}
 
 if (promise.length) {
   failed = true;
@@ -279,7 +298,11 @@ async function probeSideEffects(files) {
   const found = [];
   let before = snap();
   for (const file of files) {
-    try { await import(pathToFileURL(file).href); } catch (e) { found.push({ file, found: [`import threw: ${String(e?.message ?? e).split('\n')[0]}`] }); }
+    try { await import(pathToFileURL(file).href); } catch (e) {
+      const missingDist = e?.code === 'ERR_MODULE_NOT_FOUND' && /\/dist\//.test(String(e?.url ?? e?.message ?? ''));
+      if (missingDist) found.push({ file, missing: relative(root, fileURLToPath(e.url ?? pathToFileURL(file))) });
+      else found.push({ file, found: [`import threw: ${String(e?.message ?? e).split('\n')[0]}`] });
+    }
     await new Promise((r) => setImmediate(r));
     const after = snap();
     const d = diff(before, after);
