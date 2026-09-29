@@ -51,6 +51,9 @@ const SOURCES = [
   { dist: ['packages', 'server', 'dist', 'edge-errors.js'], build: '@gnldev/server', status: 'EDGE_ERROR_STATUS', maps: {
     EDGE_ERROR_CODES: (cls) => `HTTP edge (${cls})`,
   } },
+  { dist: ['packages', 'auth', 'dist', 'decision.js'], build: '@gnldev/auth', status: 'AUTH_ERROR_STATUS', maps: {
+    AUTH_ERROR_CODES: (cls) => `decision record (${cls})`,
+  } },
   { dist: ['packages', 'studio', 'dist', 'error-codes.js'], build: '@gnldev/studio', status: 'STUDIO_ERROR_STATUS', maps: {
     STUDIO_ERROR_CODES: (cls) => `operator console (${cls})`,
   } },

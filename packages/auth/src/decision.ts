@@ -103,8 +103,15 @@ export async function settleDecision(
   await onDecision(decision);
 }
 
+/** The codes this package puts on the wire, enumerable so every one has a page in docs/errors. */
+export const AUTH_ERROR_CODES = {
+  /** 500 — the host's `onDecision` hook failed, so the response was withheld rather than sent unrecorded. */
+  decisionNotRecorded: 'decision_not_recorded',
+} as const;
+export const AUTH_ERROR_STATUS: Record<string, number> = { [AUTH_ERROR_CODES.decisionNotRecorded]: 500 };
+
 /** The answer a host gives when `onDecision` failed: the request is not delivered unrecorded. */
 export function decisionNotRecorded(err: unknown): Response {
   console.error('@gnldev/auth: onDecision failed — the response was withheld:', err);
-  return Response.json({ error: 'the decision for this request could not be recorded', code: 'decision_not_recorded' }, { status: 500 });
+  return Response.json({ error: 'the decision for this request could not be recorded', code: AUTH_ERROR_CODES.decisionNotRecorded }, { status: 500 });
 }

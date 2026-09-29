@@ -262,6 +262,49 @@ What it borrowed from server now lives in `@gnldev/durable`, which every door al
   takes `caller`; without one the run is `unknown`'s, and another caller re-entering it is refused
   (`RunOwnerMismatchError`). `gnl.runNetwork` is unchanged.
 
+**The paid package (@gnldev/auth-ee) against 0.7.** The free isolation held with SSO and user-directory
+principals on every door. What broke was the management auth-ee sells. Breaking:
+
+- **Deleting a directory user erases their data.** Studio's `DELETE /users/:id` left the person's runs,
+  threads and memory in place, and a new user created with the same email (the id WAS the email) read
+  the old person's run and continued their thread. Now: user ids are random (`usr_…`) and the email is a
+  separate unique field, so an id never passes to another person (records written before this keep
+  their email-shaped id); and `DELETE /users/:id` revokes, then erases with `eraseSubject`, then removes
+  the entry. It needs the new Studio option `userErasure: { storage, erasers?, memory? }` — without it
+  the route answers 409 (it answered 200), unless the operator passes `?keepData=true` on purpose. An
+  unknown id is 404 (was 200). The answer carries `erased` and `complete`.
+- **A login never undoes a demote, revoke or removal.** The journal user store rewrote the whole record
+  on every login (`lastUsedAt`); a concurrent demote from admin/`*` to viewer came back as admin/`*`.
+  `lastUsedAt` has its own key, and updates are compare-and-swap. `JournalLike` needs `putIfAbsent` and
+  `putIfMatch` (every first-party journal has both). A drift test runs the same concurrent sequences
+  against the journal and Postgres stores.
+- **The licence sets the seats, and they hold under concurrency.** `createEnterpriseAuth` binds the
+  licence's `seats` to the `userStore` (`bindLicenceSeats`); pass the same store object to Studio. A
+  store `seats` option above the licence is refused at boot; below it is your own cap. A seat is a slot
+  claimed atomically (with seats 1, three concurrent creates made three users); `revoke` frees it. The
+  journal store has no multi-key transaction: a process that dies mid-`create` can leave a seat or an
+  email held (README).
+- **The Postgres user store writes in one transaction** (`PoolLike` needs `connect()`); a failed create
+  leaves nothing behind (it left the user row, locked the email and held a seat). Both stores drop
+  duplicate roles and permissions and read a blank email, name or organization as none.
+- **The audit row is what the caller got.** It was written inside `authorize`, before the ownership,
+  organization and resource gates, so mallory's 404 on ayse's run was recorded `allowed=true`. The host
+  now reports its final answer once per request through the new optional `AuthProvider.onDecision`
+  (@gnldev/auth: `AccessDecision`, `RefusalReason`, `markRefusal`, `settleDecision`, `outcomeOf`,
+  `decisionNotRecorded`), and auth-ee writes the row there: `allowed`, `status`, and a `reason` of
+  `unauthenticated | rbac | ownership | organization | resource | policy`. `@gnldev/server` and Studio
+  report every gated request; the chat and AG-UI routes take a new `onDecision` option; `@gnldev/mcp`
+  writes no row (documented). If the hook throws, the host answers 500 `decision_not_recorded` instead
+  of an unrecorded response (`AUTH_ERROR_CODES`, with its page in docs/errors). `authorize` no longer
+  writes rows. New in durable: `OWNERSHIP_CONFLICT_CODES`.
+- **Audit rows say the caller's `kind`** (a subject named `ops` and the operator `ops` wrote identical
+  rows) and carry `status`, `permission`, `detail`, `writer`, `seq`; `reason` is now the category and the
+  old free text is `detail`. The MAC secret must be at least 32 bytes (`MIN_AUDIT_SECRET_BYTES`; an empty
+  one silently wrote unsigned rows). Each row's MAC covers its key, writer and sequence:
+  `verifyJournalAudit` reports edited, replayed and reordered rows as `tampered` and deleted middle rows
+  as `gaps`; deleting a writer's last rows is not detectable inside the journal (README). `auditMac` and
+  `verifyAuditEvent` take the row's id; rows signed before this do not verify.
+
 ### Added
 
 - **`GnlClient.clearToken()`**: forget the held token at logout or when the signed-in user changes,

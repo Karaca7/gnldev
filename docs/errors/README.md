@@ -99,6 +99,15 @@ Refusals the route layer makes on its own, before or around the run — `EDGE_ER
 | [`a2a_signature_invalid`](./a2a_signature_invalid.md) | 401 | The HMAC did not verify over the bytes received. |
 | [`body_consumed_upstream`](./body_consumed_upstream.md) | 500 | A body parser mounted ahead of the handler drained the request. |
 
+## The decision record — `@gnldev/auth`
+
+Written by a host (the REST API, Studio, the chat and AG-UI routes) whose auth provider records every
+decision through `onDecision` — `AUTH_ERROR_CODES` in `@gnldev/auth`.
+
+| Code | Status | In one line |
+| --- | --- | --- |
+| [`decision_not_recorded`](./decision_not_recorded.md) | 500 | The decision could not be recorded, so the response was withheld. |
+
 ## The operator console — Studio's own refusals
 
 These never reach a caller of the agent API; they answer an operator using Studio. Enrolling them
