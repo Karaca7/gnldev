@@ -268,7 +268,16 @@ export async function runOwnerOf(journal: RawJournal, runId: string): Promise<Ru
     const rec = await journal.get<OwnerRecord>(runKeys.input(runId));
     const owner = recordOwner(rec);
     if (owner) return { state: 'owned', owner, kind: kindOf(rec!), recorded: isVersionedRecord(rec), record: rec };
-    if (await rowsPresent(journal, runId)) return { state: 'owned', owner: STAFF, kind: 'other', recorded: false };
+    if (await rowsPresent(journal, runId)) {
+      // Rows with no record is a run from before owners were recorded — unless the record was written
+      // between the two reads: a birth writes its owner before its first row, so a run being born by
+      // another process shows up here as "no record, rows present". Read the record once more; only a
+      // run that still has none is the legacy, staff-owned case.
+      const again = await journal.get<OwnerRecord>(runKeys.input(runId));
+      const born = recordOwner(again);
+      if (born) return { state: 'owned', owner: born, kind: kindOf(again!), recorded: isVersionedRecord(again), record: again };
+      return { state: 'owned', owner: STAFF, kind: 'other', recorded: false };
+    }
     return { state: 'missing' };
   } catch (error) {
     return { state: 'unreadable', error };

@@ -336,6 +336,13 @@ principals on every door. What broke was the management auth-ee sells. Breaking:
   as `gaps`; deleting a writer's last rows is not detectable inside the journal (README). `auditMac` and
   `verifyAuditEvent` take the row's id; rows signed before this do not verify.
 
+**Found by the 0.7.0 release run.** A run being born by one process while another enters the same id
+read as a pre-0.7 legacy run for an instant: the loser read `:input` before the winner wrote it, then
+saw the winner's rows, and "rows with no record" is the legacy, staff-owned shape. The loser got
+`RunOwnerMismatchError` instead of `RunBusyError` (the side effect still ran exactly once). `runOwnerOf`
+now reads the record again when rows are present; only a run that still has none is legacy. Measured
+with two OS processes on one SQLite journal: 2 wrong refusals in 21 races before, 0 in 40 after.
+
 ### Added
 
 - **`GnlClient.clearToken()`**: forget the held token at logout or when the signed-in user changes,
