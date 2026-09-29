@@ -103,7 +103,11 @@ describe('the registry is complete', () => {
     const both = [...doors].filter((d) => d in NOT_A_DOOR);
     expect(both, 'a factory is both a DOOR and NOT_A_DOOR').toEqual([]);
     expect([...exported].filter((n) => !doors.has(n) && !(n in NOT_A_DOOR)), 'unclassified door factory — add a DOOR (one helper) or a NOT_A_DOOR reason').toEqual([]);
-    expect([...doors, ...Object.keys(NOT_A_DOOR)].filter((n) => !exported.has(n)), 'a listed factory is no longer exported').toEqual([]);
+    // A name whose package is not in this checkout is not stale — the package is. The paid tier
+    // (auth-ee) is withheld from the public snapshot and is not part of this repository there.
+    const FROM_PACKAGE: Record<string, string> = { createEnterpriseAuth: 'auth-ee' };
+    const present = (n: string) => !FROM_PACKAGE[n] || existsSync(join(PACKAGES, FROM_PACKAGE[n]!));
+    expect([...doors, ...Object.keys(NOT_A_DOOR)].filter((n) => present(n) && !exported.has(n)), 'a listed factory is no longer exported').toEqual([]);
   });
 
   it('every birth reaches every state it can, and every door has a helper and at least one operation', () => {

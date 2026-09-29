@@ -80,7 +80,9 @@ describe('check-doc-samples: a sample importing a package this checkout lacks', 
     // covered unknown modules. Measured: there is no wildcard. The assumption was the defect.
     writeFileSync(fixture, doc(`import { thing } from 'some-unlikely-third-party-module';\nvoid thing;`));
     const { code, out } = runChecker();
-    expect(out, 'a third-party name must not take the absent-first-party path').not.toContain('not checked here');
+    // Only THIS sample's line: a checkout without a first-party package (the public one has no paid
+    // tier) legitimately prints other `not checked here` lines.
+    expect(out, 'a third-party name must not take the absent-first-party path').not.toContain(`not checked here: docs/zz-doccheck-fixture-${process.pid}.md`);
     expect(code, 'an undeclared third-party import is a problem in the sample').not.toBe(0);
     expect(out).toContain(`docs/zz-doccheck-fixture-${process.pid}.md`);
   }, 180_000);
