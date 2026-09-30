@@ -7,6 +7,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased]
+
+**The paid package (@gnldev/auth-ee): a licence's expiry binds the running process.** Breaking for a
+deployment that stays up past its licence's `exp`.
+
+- **`createEnterpriseAuth` checked `exp` once, at construction.** A process started before `exp` kept
+  SSO and token logins, RBAC grants, FGA and the paid `capabilities()` for as long as it stayed up;
+  only the next restart refused the key. Measured: all of them still granted two days after `exp`. Every
+  call into the provider now reads the clock (one `Date.now()`, ~0.1 µs). After `exp`, under
+  `failClosed` (the default once a `licenseKey` is given) every request is refused with 403 and a reason
+  that names the expiry and the way through; `capabilities()` reports the paid capabilities false and
+  keeps `plan` and `licenseExp`. **To keep serving on the free tier instead, pass
+  `failClosed: false` with a `fallback`** — the provider switches to the fallback at `exp`, as a boot
+  with the expired key does. The audit sink keeps recording in both modes. Perpetual licences (no `exp`)
+  are unchanged. `licenseExpired(exp, now)` is exported: the one rule both checks use.
+
 ## [0.8.0] — 2026-09-30
 
 **A minor (0.8.0): a misspelling in a principal or an error code is a compile error, and bundles drop what they do not use.**
