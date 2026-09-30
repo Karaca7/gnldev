@@ -176,7 +176,6 @@ export function roleAuth(cfg: {
   if (endUsers?.secret != null && Buffer.byteLength(endUsers.secret, 'utf8') < MIN_SUBJECT_SECRET_BYTES) {
     throw new Error(`@gnldev/auth: \`endUsers.secret\` must be at least ${MIN_SUBJECT_SECRET_BYTES} bytes — a short HMAC key lets whoever guesses it sign any user.`);
   }
-  const CEILING_LEEWAY_SEC = 60;
   const maxTtlSec = endUsers?.maxTtlSec ?? MAX_SUBJECT_TTL_SEC;
   const ceiling = endUsers?.isRevoked ? MAX_REVOCABLE_SUBJECT_TTL_SEC : MAX_SUBJECT_TTL_SEC;
   if (endUsers && (!(maxTtlSec > 0) || maxTtlSec > ceiling)) {
@@ -196,13 +195,10 @@ export function roleAuth(cfg: {
     if (!token || token.split('.').length !== 3) return null;
     const now = Date.now();
     let claims: Record<string, unknown> | undefined;
-    const verified = verifyJwt(token, { ...endUsers, onClaims: (c) => { claims = c; } }, now);
+    // `maxTtlSec` (default 1 hour) is enforced by verifyJwt: a token whose exp is further out is refused.
+    const verified = verifyJwt(token, { ...endUsers, maxTtlSec, onClaims: (c) => { claims = c; } }, now);
     if (!verified?.id || !claims) return null;
     if (badSubject(verified.id)) return null;
-    // A token that outlives the bound is refused outright, not clamped: its signer is misconfigured.
-    // The ceiling catches a misconfigured signer (a year-long token), not clock drift: 60s of leeway so
-    // a token minted at exactly the ceiling by a server whose clock runs ahead is not refused.
-    if ((claims.exp as number) * 1000 - now > (maxTtlSec + CEILING_LEEWAY_SEC) * 1000) return null;
     if (endUsers.isRevoked) {
       const iat = typeof claims.iat === 'number' ? claims.iat : undefined;
       const jti = typeof claims.jti === 'string' ? claims.jti : undefined;

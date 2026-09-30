@@ -39,7 +39,13 @@ export interface JwtVerifyOptions {
    * kind reads as `subject`. See @gnldev/auth `Principal.kind`.
    */
   kindOf?: (claims: Record<string, unknown>) => PrincipalKind;
-  /** Receives the verified claims (after signature/exp/nbf/iss/aud pass), for a caller that checks more than a Principal carries. */
+  /**
+   * Longest remaining lifetime a token may claim, in seconds: a token whose `exp` is further out than
+   * this (plus `CEILING_LEEWAY_SEC`) is refused. Unset: no ceiling beyond `exp` itself. `roleAuth`'s
+   * `endUsers` and @gnldev/auth-ee's `createJwtSso` both set one; it lives here so the rule has one owner.
+   */
+  maxTtlSec?: number;
+  /** Receives the verified claims (after signature/exp/nbf/iss/aud/maxTtlSec pass), for a caller that checks more than a Principal carries. */
   onClaims?: (claims: Record<string, unknown>) => void;
 }
 
@@ -52,6 +58,12 @@ export const MAX_SUBJECT_TTL_SEC = 3600;
  * live longer: a credential pasted into an MCP client's config, a link in an email. 30 days.
  */
 export const MAX_REVOCABLE_SUBJECT_TTL_SEC = 30 * 24 * 3600;
+/**
+ * Leeway on the `maxTtlSec` ceiling. The ceiling catches a misconfigured signer (a year-long token),
+ * not clock drift: 60s so a token minted at exactly the ceiling by a server whose clock runs ahead is
+ * not refused.
+ */
+const CEILING_LEEWAY_SEC = 60;
 
 /**
  * Decodes a base64url segment into a Buffer. @gnldev/auth-ee's Auth0 provider reads the id_token
@@ -126,6 +138,11 @@ export function verifyJwt(token: string, opts: JwtVerifyOptions, now: number): P
     // (a perpetual session token is a security hole).
     if (typeof claims.exp !== 'number' || !Number.isFinite(claims.exp)) return null;
     if (now > claims.exp * 1000) return null;
+    // The other end of the same claim: `exp` bounds a token only if nobody may write it ten years out.
+    // Refused outright, not clamped — its signer is misconfigured. It was `endUsers`-only (role-auth.ts)
+    // until an SSO token with exp ten years out was measured verifying like a one-hour one; moved here,
+    // not copied, so both classes read one rule.
+    if (opts.maxTtlSec != null && claims.exp * 1000 - now > (opts.maxTtlSec + CEILING_LEEWAY_SEC) * 1000) return null;
 
     // nbf: the other half of the same sentence, and it was missing. RFC 7519 §4.1.5 — the current
     // time MUST be at or after `nbf`, or the token is not yet valid. Unlike `exp` this one is

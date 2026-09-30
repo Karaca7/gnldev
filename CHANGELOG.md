@@ -23,6 +23,25 @@ deployment that stays up past its licence's `exp`.
   with the expired key does. The audit sink keeps recording in both modes. Perpetual licences (no `exp`)
   are unchanged. `licenseExpired(exp, now)` is exported: the one rule both checks use.
 
+**Breaking (`@gnldev/auth-ee`): `createJwtSso` needs `issuer` and `audience`, and bounds a token's lifetime.**
+Measured on 0.8.0: `createJwtSso({ publicKey })` accepted a token the same identity provider signed for
+another application (another `aud`, another `iss`), with that application's roles. A token with `exp`
+ten years out verified like a one-hour one.
+
+1. **`issuer` and `audience` are required.** Leaving one out, or passing `undefined` or `''` (an env var
+   that is not set), is a startup error that names the fix. To skip a check on purpose, say so:
+   `createJwtSso({ secret, issuer: false, audience: false })`.
+2. **A token may claim at most one day of life** (`maxTtlSec`, default `MAX_SSO_TTL_SEC` = 86400, the
+   longest common IdP default). A token whose `exp` is further out is refused. Raise it in one line:
+   `maxTtlSec: 7 * 24 * 3600`.
+
+### Added
+
+- `@gnldev/auth`: `JwtVerifyOptions.maxTtlSec`. `verifyJwt` refuses a token whose `exp` is further out
+  than this. `roleAuth`'s `endUsers` ceiling moved into it, so both token classes read one rule. Unset,
+  `verifyJwt` behaves as before; `endUsers` behaves as before.
+
+
 ## [0.8.0] — 2026-09-30
 
 **A minor (0.8.0): a misspelling in a principal or an error code is a compile error, and bundles drop what they do not use.**

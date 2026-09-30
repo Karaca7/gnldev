@@ -451,7 +451,7 @@ const auth = createEnterpriseAuth({ licenseKey, rbac, fallback });
     tier: `ee`,
     package: `@gnldev/auth-ee`,
     install: `import { createJwtSso, createEnterpriseAuth } from '@gnldev/auth-ee';`,
-    apis: [`createJwtSso({ secret|publicKey, issuer?, audience? }) — validates the JWT and produces a Principal`, `SsoProvider — { authorizeUrl, handleCallback, principalFromRequest }`, `createAuth0Sso / createWorkOsSso — full OAuth/OIDC providers (redirect → callback → token exchange + JWKS signature verification)`],
+    apis: [`createJwtSso({ secret|publicKey, issuer, audience, maxTtlSec? }) — validates the JWT and produces a Principal; issuer and audience are required (false opts out, explicitly), exp at most one day out by default`, `SsoProvider — { authorizeUrl, handleCallback, principalFromRequest }`, `createAuth0Sso / createWorkOsSso — full OAuth/OIDC providers (redirect → callback → token exchange + JWKS signature verification)`],
     example: `const sso = createJwtSso({
   publicKey: process.env.SSO_JWT_PUBLIC_KEY,
   issuer: 'https://idp.example.com',
