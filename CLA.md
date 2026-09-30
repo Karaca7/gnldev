@@ -1,6 +1,6 @@
 # Contributor License Agreement (CLA)
 
-> **Version 1.1** — effective 23 August 2026.
+> **Version 1.2** — effective 30 September 2026.
 >
 > This document is versioned on purpose. What you accept is the text of the version named above, not
 > whatever this file happens to say later: if the terms are ever revised, the version number is
@@ -13,9 +13,15 @@
 > section, and it is recorded here because the version number should have moved with it and did not —
 > the paragraph above promises exactly that, and this is the correction. No acceptance was affected:
 > every commit in this repository to date is the Maintainer's own, so no one had accepted 1.0.
+>
+> **Changes from 1.1** (30 September 2026): the source repository moved from `Karaca7/gnldev` to
+> `gnlhq/gnldev`, a GitHub organization. The paragraph below names the project by its repository, so
+> the version moves with it. Nothing else changed: the parties, the grants and every section read as
+> in 1.1. The Maintainer is still the person named in LICENSE — an organization on GitHub is an
+> account, not a legal person, and holds no rights in the work.
 
 This is the Contributor License Agreement for **gnl** — the project — whose source repository is
-`Karaca7/gnldev` and whose packages are published under the npm scope `@gnldev`. All three names are
+`gnlhq/gnldev` and whose packages are published under the npm scope `@gnldev`. All three names are
 spelled out because they are no longer the same word: the repository was renamed when `gnl` turned
 out to be the name of a school exercise on several thousand other repositories. It applies to any
 Contribution (code, documentation, or other material) you submit to this project, whether by pull
@@ -141,7 +147,7 @@ You do not need to sign anything separately or in advance. The pull request temp
 single line:
 
 ```
-- [ ] I have read and agree to the CLA, v1.1.
+- [ ] I have read and agree to the CLA, v1.2.
 ```
 
 Ticking that box **is** the acceptance. A workflow (`.github/workflows/cla.yml`) reads the pull
@@ -174,7 +180,7 @@ So the rule is about ownership, not authorship:
   tick the box, or — if a machine account opened it — say so in a comment yourself:
 
   ```
-  I, @your-handle, accept the CLA, v1.1 for this contribution.
+  I, @your-handle, accept the CLA, v1.2 for this contribution.
   ```
 
   Without that, the change is not merged. Deliberately a human step rather than a longer list of bot

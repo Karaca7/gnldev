@@ -29,7 +29,7 @@ what you are submitting and you stand behind it.**
 Two practical consequences:
 
 - Open the pull request from your own account. If a machine account opened it, add a comment saying
-  `I, @your-handle, accept the CLA, v1.1 for this contribution.` — otherwise it is not merged.
+  `I, @your-handle, accept the CLA, v1.2 for this contribution.` — otherwise it is not merged.
 - Review the diff before you send it, in the ordinary sense: you should be able to answer "why is
   this line here?" for every line. A change nobody can explain costs a reviewer more than it saves a
   contributor, which is the whole reason this paragraph exists rather than a ban.
