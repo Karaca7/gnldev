@@ -165,6 +165,23 @@ accept, the route answers `401` and nothing runs; the row says `reason: 'unauthe
 **Honest bound.** An `identify` that trusts an *unauthenticated* request asserts a caller nobody
 verified. Put auth in front of this route — or mount `chatSurface()` on `@gnldev/server` instead.
 
+**Roles (`authorize`).** `identify` says WHO is calling, not WHAT they may do. Without `authorize`,
+every identified caller may run an agent here, including one your provider would refuse on the REST
+API (a `viewer`, or an auth-ee role without `agents:run`). Hand the route your provider's `authorize`
+and it asks for `agents:run` before each run, as `@gnldev/server` does:
+
+```ts
+import { createChatRoute } from '@gnldev/chat-adapter';
+import { roleAuth } from '@gnldev/auth';
+
+const auth = roleAuth({ endUsers: { secret: process.env.GNL_END_USER_SECRET!, orgId: 'acme' } })!;
+
+const chat = createChatRoute(config, {
+  identify: (req) => auth.authenticate(req),
+  authorize: (principal, req, ctx) => auth.authorize(principal, req, ctx), // refused: 403, or 401 with no caller
+});
+```
+
 **Recording who asked (`onDecision`).** Without it, this route leaves no audit record. Pass your
 provider's hook next to `identify`:
 

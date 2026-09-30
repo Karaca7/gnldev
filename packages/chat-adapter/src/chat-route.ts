@@ -11,7 +11,7 @@ import { convertToModelMessages } from 'ai';
 import type { UIMessage } from 'ai';
 import { createGnl, scopeConfigToOrg, RunThreadMismatchError, blockedErrorCode, callerConflictCode, OWNERSHIP_CONFLICT_CODES, publicConflictDetail, upstreamFailure, sealRequestContext, sealFieldsOf, resolveWorkIdentity } from '@gnldev/durable';
 import type { CreateGnlConfig } from '@gnldev/durable';
-import { callerOfRequest, markRefusal, settleDecision, decisionNotRecorded, type AccessDecision, type Identify } from '@gnldev/auth';
+import { callerOfRequest, authorizeDoorRequest, AGENTS_RUN, markRefusal, settleDecision, decisionNotRecorded, type AccessDecision, type Authorize, type Identify } from '@gnldev/auth';
 import { toUIMessageStreamResponse } from './ui-stream.js';
 
 export interface CreateChatRouteOptions {
@@ -41,6 +41,13 @@ export interface CreateChatRouteOptions {
    * unauthenticated request asserts a caller nobody verified.
    */
   identify?: Identify;
+  /**
+   * WHAT the caller may do: the provider's `authorize`, the one @gnldev/server and @gnldev/studio ask.
+   * `authorize: (p, req, ctx) => auth.authorize(p, req, ctx)`. Asked for `agents:run` before a run, so a
+   * role without it (auth-ee's `viewer`, roleAuth's `viewer`) is refused here as it is on the REST API.
+   * WITHOUT it this route checks identity and ownership only: every identified caller may run.
+   */
+  authorize?: Authorize;
   /**
    * Report each request's outcome — who asked, allowed or refused and why, the status it got — to the
    * same hook @gnldev/server and @gnldev/studio report to (@gnldev/auth `AuthProvider.onDecision`). Pass
@@ -249,6 +256,8 @@ export function createChatRoute(
     // the body names nobody.
     const who = await callerOfRequest(opts.identify, c.req.raw, body.resourceId);
     if ('refused' in who) return c.json({ error: who.refused }, who.status ?? 400);
+    const denied = await authorizeDoorRequest(opts.authorize, who.principal, c.req.raw, AGENTS_RUN);
+    if (denied) return c.json({ error: denied.refused }, denied.status);
     const caller = who.caller;
     const subject = caller.kind === 'user' ? caller.id : undefined;
     // WHICH ORGANIZATION: the principal's, never the body's. An org is an isolation boundary, and a

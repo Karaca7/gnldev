@@ -3,9 +3,10 @@
 // A door (the chat and AG-UI routes, an MCP server) has a web Request and the application's `identify`.
 // It asks `identify` once and maps the answer with `engineCallerOf` — the one mapping (ADR-0002) — so
 // the same principal is the same caller whichever door the request came in through.
-import type { Principal } from './types.js';
+import type { AuthProvider, Principal } from './types.js';
 import { callerKind, engineCallerOf, type EngineCaller, type Identify } from './scope.js';
-import { markRefusal, notePrincipal, credentialRejected, CREDENTIAL_REJECTED } from './decision.js';
+import { markRefusal, notePrincipal, noteVerdict, credentialRejected, CREDENTIAL_REJECTED } from './decision.js';
+import { permissionContext } from './gate.js';
 
 /**
  * Why a door refuses an application that names no user. The sentence @gnldev/server answers an
@@ -61,4 +62,38 @@ export async function callerOfRequest(identify: Identify | undefined, req: Reque
     return { refused: APPLICATION_NAMES_NO_USER };
   }
   return { principal, caller: engineCallerOf(principal) };
+}
+
+/**
+ * The provider's `authorize`, as a door takes it: `authorize: (p, req, ctx) => auth.authorize(p, req, ctx)`.
+ * The same function @gnldev/server and @gnldev/studio ask through `makeGate`, so a role means the same
+ * thing on every door that is handed it.
+ */
+export type Authorize = AuthProvider['authorize'];
+
+/** The permission running an agent takes: the one @gnldev/server's run, stream and surface routes ask. */
+export const AGENTS_RUN = 'agents:run';
+
+/**
+ * May this caller do `permission` on this door? Asked ONLY when the door was handed `authorize`: a door
+ * built with `identify` alone keeps checking identity and ownership, and no roles.
+ *
+ * The context is `permissionContext`, the one `makeGate().allowP` asks with, so an RBAC provider matches
+ * the exact permission and a free provider reduces it to read/write. The verdict is noted for the door's `onDecision`, which then
+ * records a refusal as `rbac` (or `unauthenticated`), as @gnldev/server's gate does.
+ *
+ * Returns undefined when allowed, or what to answer with.
+ */
+export async function authorizeDoorRequest(
+  authorize: Authorize | undefined,
+  principal: Principal | undefined,
+  req: Request,
+  permission: string,
+): Promise<{ refused: string; status: 401 | 403 } | undefined> {
+  if (!authorize) return undefined;
+  const ctx = permissionContext(req, permission);
+  const decision = await authorize(principal ?? null, req, ctx);
+  noteVerdict(req, ctx, decision);
+  if (decision.allow) return undefined;
+  return { refused: decision.reason ?? `permission denied: ${permission}`, status: decision.status ?? (principal ? 403 : 401) };
 }

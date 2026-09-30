@@ -11,8 +11,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 **The paid package (@gnldev/auth-ee) stops trusting four things it trusted on 0.8.0.** Each was
 measured on 0.8.0 before the fix; each refusal names the one line that restores the old behaviour.
-The only public-package change is an addition (`JwtVerifyOptions.maxTtlSec` in `@gnldev/auth`). If you
-use auth-ee and are upgrading, check these first:
+Public packages only gain options (`authorize` on the standalone chat and AG-UI routes, `maxTtlSec` in
+`@gnldev/auth`); nothing there breaks. If you use auth-ee and are upgrading, check these first:
 
 1. **A licence's expiry binds the running process.** After `exp`, under `failClosed` (the default once a
    `licenseKey` is given), every request is refused with 403. To fall back to the free tier instead:
@@ -66,6 +66,14 @@ use auth-ee and are upgrading, check these first:
 
 ### Added
 
+- **The standalone chat and AG-UI routes can check roles.** Measured on 0.8.0 with one provider and one
+  token: a `viewer` was refused on the REST API (403) and ran the agent through `createChatRoute` and
+  `createAguiRoute` (200) — the free `roleAuth` too. Pass `authorize` next to `identify`:
+  `authorize: (principal, req, ctx) => auth.authorize(principal, req, ctx)`; the route then asks for
+  `agents:run` before each run, with the same context the REST API asks with, and answers a refusal
+  with 403 (401 with no caller). Optional: without it nothing changes. Routes mounted with `surfaces`
+  already checked roles; MCP keeps `allowTool`. See [ADR-0003](./docs/adr/0003-a-door-asks-roles-from-the-provider.md).
+  `@gnldev/auth` exports `authorizeDoorRequest`, `AGENTS_RUN` and the `Authorize` type.
 - `@gnldev/auth`: `JwtVerifyOptions.maxTtlSec`. `verifyJwt` refuses a token whose `exp` is further out
   than this. `roleAuth`'s `endUsers` ceiling moved into it, so both token classes read one rule. Unset,
   `verifyJwt` behaves as before; `endUsers` behaves as before.

@@ -15,7 +15,7 @@ import { Hono } from 'hono';
 import { limitBreachFromSteps, blockedFromSteps, BLOCKED_ERROR_CODES, blockedErrorCode, callerConflictCode, OWNERSHIP_CONFLICT_CODES, publicConflictDetail, sealRequestContext, sealFieldsOf, resolveWorkIdentity } from '@gnldev/durable';
 import type { CreateGnlConfig, ResolvedWorkIdentity } from '@gnldev/durable';
 import { createGnl, scopeConfigToOrg } from '@gnldev/durable';
-import { callerOfRequest, markRefusal, settleDecision, decisionNotRecorded, type AccessDecision, type Identify } from '@gnldev/auth';
+import { callerOfRequest, authorizeDoorRequest, AGENTS_RUN, markRefusal, settleDecision, decisionNotRecorded, type AccessDecision, type Authorize, type Identify } from '@gnldev/auth';
 import { streamSSE } from 'hono/streaming';
 // The two limit codes are READ from @gnldev/durable (`LIMIT_ERROR_CODES`) rather than spelled again
 // here. The event/data SHAPE is deliberately a copy (see the note above), but a code is not a shape:
@@ -207,6 +207,13 @@ export interface CreateAguiRouteOptions {
    */
   identify?: Identify;
   /**
+   * WHAT the caller may do: the provider's `authorize`, the one @gnldev/server and @gnldev/studio ask.
+   * `authorize: (p, req, ctx) => auth.authorize(p, req, ctx)`. Asked for `agents:run` before a run, so a
+   * role without it (auth-ee's `viewer`, roleAuth's `viewer`) is refused here as it is on the REST API.
+   * WITHOUT it this route checks identity and ownership only: every identified caller may run.
+   */
+  authorize?: Authorize;
+  /**
    * Report each request's outcome — who asked, allowed or refused and why, the status it got — to the
    * same hook @gnldev/server and @gnldev/studio report to (@gnldev/auth `AuthProvider.onDecision`). Pass
    * the provider's: `identify: (req) => auth.authenticate(req), onDecision: (d) => auth.onDecision?.(d)`.
@@ -288,6 +295,8 @@ function aguiRouteApp(config: CreateGnlConfig, opts: CreateAguiRouteOptions = {}
     // `body.resourceId` is read by `callerOfRequest` for an APPLICATION principal only.
     const who = await callerOfRequest(opts.identify, c.req.raw, body.resourceId);
     if ('refused' in who) return c.json({ error: who.refused }, who.status ?? 400);
+    const denied = await authorizeDoorRequest(opts.authorize, who.principal, c.req.raw, AGENTS_RUN);
+    if (denied) return c.json({ error: denied.refused }, denied.status);
     const caller = who.caller;
     const subject = caller.kind === 'user' ? caller.id : undefined;
     // WHICH ORGANIZATION — the principal's, never the body's. Same rule and same reason as the sibling

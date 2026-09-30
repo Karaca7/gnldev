@@ -72,8 +72,9 @@ production it refuses to start without `identify` (`identify: () => undefined` o
 ## API
 - `createAguiRoute(config, opts?)` — a single-endpoint Hono router from `@gnldev/durable`'s `CreateGnlConfig`:
   `POST /agents/:name/run {runId, prompt|messages, threadId?, approvals?}` → AG-UI SSE. Deliberately
-  small: NO auth/tenancy/budget gates. If these are needed, use `@gnldev/server`'s `createRestApi` to
-  produce a `gnl.stream(...)` result and pass it to `pipeAguiStream`.
+  small: the caller comes from `identify` (each run and thread is its caller's, inside its organization),
+  roles are checked only when the route is handed `authorize` (see "Roles" below), and there is no
+  budget gate. For budgets, mount the route on `@gnldev/server`'s `createRestApi` with `surfaces`.
 - `pipeAguiStream(c, runId, result, opts?)` — the AG-UI-output counterpart of `pipeAgentStream` (takes a Hono `Context`
   + AI SDK `StreamTextResult`, starts with `RUN_STARTED`, ends with `RUN_FINISHED`/`RUN_ERROR`).
   If `opts.threadId` is not given, `runId` is used.
@@ -142,6 +143,12 @@ revoked or deleted user's token used to answer 200 as an `unknown` caller, with 
 route let an end user read a staff member's ownerless thread (measured). Passing `identity` now throws
 at construction; `threadId` comes from `resolveThreadId` or the body. The package now depends on
 `@gnldev/auth`.
+
+**Roles (`authorize`).** `identify` says WHO is calling, not WHAT they may do. Without `authorize`,
+every identified caller may run an agent here. Pass
+`authorize: (principal, req, ctx) => auth.authorize(principal, req, ctx)` next to `identify` and the
+route asks for `agents:run` before each run, as `@gnldev/server` does. `@gnldev/chat-adapter`'s README
+has the example.
 
 **Recording who asked (`onDecision`).** Without it, this route leaves no audit record. Pass
 `onDecision: (d) => auth.onDecision?.(d)` next to `identify`: it is called once per request with who
@@ -241,7 +248,7 @@ passes it to `toAguiEvents`. AG-UI SSE frames carry only a `data:` field (the ty
 ## Known limits
 - This adapter has **NO resumable stream (Last-Event-ID)** — `@gnldev/server`'s resumable-id contract is
   not carried here, so a dropped connection restarts the turn rather than resuming it.
-- `createAguiRoute` does not include auth/tenancy/budget (see the API note above).
+- `createAguiRoute` has no budget gate, and checks roles only when handed `authorize` (see the API note above).
 
 ## License
 

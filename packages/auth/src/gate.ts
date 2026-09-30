@@ -56,6 +56,19 @@ export interface GateOptions {
   allowOpenAccess?: boolean;
 }
 
+/**
+ * The context a provider's `authorize` is asked with for one permission. ONE place, because a role must mean
+ * the same thing on every door that asks: @gnldev/server's and Studio's gate (`allowP`) and a standalone
+ * door handed `authorize` (`authorizeDoorRequest`). The two built it separately for a day.
+ *
+ * Free-tier reduction: anything ending in ':read' is a read, everything else is a write. An RBAC provider
+ * ignores `action` and matches `permission` exactly; a free provider uses this reduced action.
+ */
+export function permissionContext(req: Request, permission: string): { path: string; method: string; action: 'read' | 'write'; permission: string } {
+  const action: 'read' | 'write' = permission.endsWith(':read') ? 'read' : 'write';
+  return { path: new URL(req.url).pathname, method: req.method, action, permission };
+}
+
 export function makeGate(provider?: AuthProvider, opts?: GateOptions): Gate {
   // Fail-open audit at SETUP time: in production, a providerless gate can only be set up with the deliberate flag.
   // (If left to request time, the error would blow up on the first request after deploy — an early, clear failure was preferred.)
@@ -143,10 +156,7 @@ export function makeGate(provider?: AuthProvider, opts?: GateOptions): Gate {
       if (!provider) return openSurfaceAllows(req);
       const principal = await provider.authenticate(req);
       if (principal) principals.set(req, principal);
-      // Free-tier reduction: anything ending in ':read' is a read, everything else is a write. An RBAC
-      // provider ignores `action` and matches `permission` exactly; a free provider uses this reduced action.
-      const action: 'read' | 'write' = permission.endsWith(':read') ? 'read' : 'write';
-      const ctx = { path: new URL(req.url).pathname, method: req.method, action, permission };
+      const ctx = permissionContext(req, permission);
       const decision = await provider.authorize(principal, req, ctx);
       notePrincipal(req, principal);
       noteVerdict(req, ctx, decision);
