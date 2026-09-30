@@ -9,6 +9,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-09-30
+
 **The paid package (@gnldev/auth-ee) stops trusting four things it trusted on 0.8.0.** Each was
 measured on 0.8.0 before the fix; each refusal names the one line that restores the old behaviour.
 Public packages only gain options (`authorize` on the standalone chat and AG-UI routes, `maxTtlSec` in
