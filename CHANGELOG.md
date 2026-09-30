@@ -41,6 +41,24 @@ ten years out verified like a one-hour one.
   than this. `roleAuth`'s `endUsers` ceiling moved into it, so both token classes read one rule. Unset,
   `verifyJwt` behaves as before; `endUsers` behaves as before.
 
+**Breaking (`@gnldev/auth-ee`): an SSO callback needs a state check, and a stale JWKS has an age limit.**
+
+### Changed
+
+- **`handleCallback` requires `validateState`** on `createAuth0Sso` and `createWorkOsSso`. Without one it
+  exchanged any code under any state: `?code=<attacker's code>&state=anything` returned the attacker's
+  principal, so a victim's browser could be signed in as the attacker (login CSRF). It now throws, and
+  the message names the option. Compare the callback's state with the one you stored when you called
+  `authorizeUrl`; `validateState: () => true` restores the old behaviour. `principalFromRequest` does
+  not need it.
+- **`createAuth0Sso` stops trusting cached JWKS keys after `jwksMaxStaleMs`** (new, default 1 hour since
+  the last successful fetch). Before, when the JWKS refetch failed, the cached keys were used with no
+  limit. Measured: 24 hours into a JWKS outage, a token signed by a key Auth0 had removed still
+  verified. Past the limit `principalFromRequest` returns `null` and `handleCallback` throws, naming the
+  option. An Auth0 JWKS outage longer than an hour is therefore a login outage; `jwksMaxStaleMs: Infinity`
+  restores the old behaviour. A clock that steps backwards no longer keeps the cache fresh: the keys
+  are refetched.
+
 
 ## [0.8.0] — 2026-09-30
 
