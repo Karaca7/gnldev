@@ -59,6 +59,27 @@ ten years out verified like a one-hour one.
   restores the old behaviour. A clock that steps backwards no longer keeps the cache fresh: the keys
   are refetched.
 
+**Breaking, in @gnldev/auth-ee only: an FGA `principalId` rule names a caller by kind and organization.**
+No public package changes.
+
+1. **`principalId` is the kind-qualified name.** A rule compared the raw `principal.id`, so the end
+   user `ops` held every grant written for the operator `ops`, and the application `ops` did too. The
+   name is now what `actorIdOf` from `@gnldev/auth` gives, the one every other identity comparison in
+   GNL already uses: `'u-1'` for an end user, `'operator:ops'`, `'application:svc'`. A rule written for
+   staff as `principalId: 'ops'` becomes `principalId: 'operator:ops'`. An end user whose id is spelled
+   `operator:ops` matches no rule.
+2. **A rule can name an organization, and a `principalId` rule without one does not reach into every
+   organization.** `FgaRule.orgId` is new. A grant to `u-1` held for `u-1` in acme and in globex; a rule
+   could not say which (ADR-0001 counts those as two users). Left out, a `principalId` rule now matches
+   only a caller with no organization. Add `orgId: 'acme'` to a rule meant for one organization, or
+   `orgId: '*'` when ids are unique across organizations (the user store's `usr_…` ids are). `role`
+   rules and global grants are unchanged: deployment-wide unless they name an `orgId`.
+
+Existing rules keep loading; nothing throws at boot. A caller that stops matching gets a deny whose
+`reason` names the rule and the line to add (`write principalId: 'operator:ops'`, `add orgId: 'acme'
+to it, or orgId: '*'`). The same text is in `FgaDeniedError`'s message and in the audit row's `detail`.
+The MCP README's sample (a `role` rule) is unaffected.
+
 
 ## [0.8.0] — 2026-09-30
 
