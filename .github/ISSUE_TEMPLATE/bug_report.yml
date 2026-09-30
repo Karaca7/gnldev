@@ -10,7 +10,7 @@ body:
         idempotency mode and whether the run was resumed — so please fill them in even when they feel
         unrelated.
 
-        **Security problems do not belong here.** Use [private vulnerability reporting](https://github.com/Karaca7/gnldev/security).
+        **Security problems do not belong here.** Use [private vulnerability reporting](https://github.com/gnlhq/gnldev/security).
 
   - type: textarea
     id: what-happened

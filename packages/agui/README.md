@@ -12,7 +12,7 @@
   (`createRestApi(config, { auth, surfaces: [aguiSurface()] })`). Then the API's auth decides who
   the caller is. See [On the REST API](#on-the-rest-api-recommended).
 
-> Install: `pnpm add @gnldev/agui` — or use it from a [repo clone](https://github.com/Karaca7/gnldev): `pnpm install && pnpm -r build`.
+> Install: `pnpm add @gnldev/agui` — or use it from a [repo clone](https://github.com/gnlhq/gnldev): `pnpm install && pnpm -r build`.
 
 ```bash
 npm i @gnldev/agui   # dep: @gnldev/auth, hono  ·  peer: @gnldev/durable  (no @gnldev/server)

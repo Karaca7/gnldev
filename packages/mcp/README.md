@@ -2,7 +2,7 @@
 
 **MCP client + server.** Client: adapts external MCP tools to AI SDK tools → inside `runDurable` they become **journaled and replayable**: a call already recorded as done is not made again on resume ([at-most-once for the effect](../durable/README.md#what-never-charged-twice-actually-means)). Server: exposes your own tools as MCP (`callTool` deduped against the journal, keyed by the CALLER the transport authenticated — see [Who the caller is](#who-the-caller-is-and-why-it-is-not-the-request)).
 
-> Install: `pnpm add @gnldev/mcp` — or use it from a [repo clone](https://github.com/Karaca7/gnldev): `pnpm install && pnpm -r build`.
+> Install: `pnpm add @gnldev/mcp` — or use it from a [repo clone](https://github.com/gnlhq/gnldev): `pnpm install && pnpm -r build`.
 
 ```bash
 npm i @gnldev/mcp   # peer: @gnldev/durable, ai  ·  dep: @modelcontextprotocol/sdk, @gnldev/auth (installed for you)
@@ -364,7 +364,7 @@ http.listen(3000, '127.0.0.1');
 
 **(2) `listTools` is async and takes the caller** (`await server.listTools({ caller })`) — `serveMcp` does this for you; a host calling `createMcpServer(...).listTools()` directly must await it.
 
-A complete, runnable version of this — with a test that asserts every claim on this page — is [`examples/mcp-server`](https://github.com/Karaca7/gnldev/tree/main/examples/mcp-server) in the repository.
+A complete, runnable version of this — with a test that asserts every claim on this page — is [`examples/mcp-server`](https://github.com/gnlhq/gnldev/tree/main/examples/mcp-server) in the repository.
 
 ### `serveMcp` does not authenticate
 

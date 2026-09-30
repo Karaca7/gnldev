@@ -29,6 +29,9 @@ Public packages only gain options (`authorize` on the standalone chat and AG-UI 
 
 ### Changed
 
+- **The repository moved to [github.com/gnlhq/gnldev](https://github.com/gnlhq/gnldev)**, a GitHub
+  organization. Old `Karaca7/gnldev` links and clones redirect. Every package's `repository` and `bugs`
+  point at the new address, and the CLA is v1.2: the same terms, naming the new repository.
 - **Licence expiry at runtime.** `createEnterpriseAuth` checked `exp` once, at construction: a process
   started before `exp` kept SSO and token logins, RBAC grants, FGA and the paid `capabilities()` for as
   long as it stayed up. Measured: all of them still granted two days after `exp`. Every call into the
@@ -2197,4 +2200,4 @@ whether or not anyone is on the other side of them yet.
   `Infinity`.
 
 <!-- Once v0.1.0 is tagged, this becomes .../compare/v0.1.0...HEAD -->
-[0.5.0]: https://github.com/Karaca7/gnldev/commits/main
+[0.5.0]: https://github.com/gnlhq/gnldev/commits/main

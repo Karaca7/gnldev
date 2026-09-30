@@ -48,11 +48,11 @@
   "author": "Karaca Yılmaz (https://gnl.dev)",
   "homepage": "https://gnl.dev",
   "bugs": {
-    "url": "https://github.com/Karaca7/gnldev/issues"
+    "url": "https://github.com/gnlhq/gnldev/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Karaca7/gnldev.git",
+    "url": "git+https://github.com/gnlhq/gnldev.git",
     "directory": "packages/scheduler"
   },
   "publishConfig": {

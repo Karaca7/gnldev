@@ -9,5 +9,5 @@ contact_links:
     url: https://gnl.dev/tutorial
     about: Nine steps, no API key required.
   - name: Report a security vulnerability
-    url: https://github.com/Karaca7/gnldev/security
+    url: https://github.com/gnlhq/gnldev/security
     about: Private reporting. Please do not open a public issue for a security problem.
