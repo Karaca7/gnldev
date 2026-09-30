@@ -9,31 +9,60 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-**The paid package (@gnldev/auth-ee): a licence's expiry binds the running process.** Breaking for a
-deployment that stays up past its licence's `exp`.
+**The paid package (@gnldev/auth-ee) stops trusting four things it trusted on 0.8.0.** Each was
+measured on 0.8.0 before the fix; each refusal names the one line that restores the old behaviour.
+The only public-package change is an addition (`JwtVerifyOptions.maxTtlSec` in `@gnldev/auth`). If you
+use auth-ee and are upgrading, check these first:
 
-- **`createEnterpriseAuth` checked `exp` once, at construction.** A process started before `exp` kept
-  SSO and token logins, RBAC grants, FGA and the paid `capabilities()` for as long as it stayed up;
-  only the next restart refused the key. Measured: all of them still granted two days after `exp`. Every
-  call into the provider now reads the clock (one `Date.now()`, ~0.1 µs). After `exp`, under
-  `failClosed` (the default once a `licenseKey` is given) every request is refused with 403 and a reason
-  that names the expiry and the way through; `capabilities()` reports the paid capabilities false and
-  keeps `plan` and `licenseExp`. **To keep serving on the free tier instead, pass
-  `failClosed: false` with a `fallback`** — the provider switches to the fallback at `exp`, as a boot
-  with the expired key does. The audit sink keeps recording in both modes. Perpetual licences (no `exp`)
-  are unchanged. `licenseExpired(exp, now)` is exported: the one rule both checks use.
-
-**Breaking (`@gnldev/auth-ee`): `createJwtSso` needs `issuer` and `audience`, and bounds a token's lifetime.**
-Measured on 0.8.0: `createJwtSso({ publicKey })` accepted a token the same identity provider signed for
-another application (another `aud`, another `iss`), with that application's roles. A token with `exp`
-ten years out verified like a one-hour one.
-
-1. **`issuer` and `audience` are required.** Leaving one out, or passing `undefined` or `''` (an env var
-   that is not set), is a startup error that names the fix. To skip a check on purpose, say so:
-   `createJwtSso({ secret, issuer: false, audience: false })`.
-2. **A token may claim at most one day of life** (`maxTtlSec`, default `MAX_SSO_TTL_SEC` = 86400, the
-   longest common IdP default). A token whose `exp` is further out is refused. Raise it in one line:
+1. **A licence's expiry binds the running process.** After `exp`, under `failClosed` (the default once a
+   `licenseKey` is given), every request is refused with 403. To fall back to the free tier instead:
+   `failClosed: false` with a `fallback`.
+2. **`createJwtSso` needs `issuer` and `audience`, and a token may claim at most one day of life.**
+   Skip a check on purpose with `issuer: false` / `audience: false`; raise the ceiling with
    `maxTtlSec: 7 * 24 * 3600`.
+3. **An SSO callback needs `validateState`, and cached JWKS keys expire after `jwksMaxStaleMs`**
+   (default 1 hour of JWKS outage). The old behaviour: `validateState: () => true`,
+   `jwksMaxStaleMs: Infinity`.
+4. **An FGA `principalId` rule names a caller by kind and organization.** Staff rules become
+   `principalId: 'operator:ops'`; a rule meant for one organization adds `orgId: 'acme'`, a rule for ids
+   unique across organizations adds `orgId: '*'`.
+
+### Changed
+
+- **Licence expiry at runtime.** `createEnterpriseAuth` checked `exp` once, at construction: a process
+  started before `exp` kept SSO and token logins, RBAC grants, FGA and the paid `capabilities()` for as
+  long as it stayed up. Measured: all of them still granted two days after `exp`. Every call into the
+  provider now reads the clock (one `Date.now()`, ~0.1 µs). After `exp` the 403's reason names the expiry
+  and the way through; `capabilities()` reports the paid capabilities false and keeps `plan` and
+  `licenseExp`. With `failClosed: false` and a `fallback` the provider switches to the fallback at
+  `exp`, as a boot with the expired key does. The audit sink keeps recording in both modes. Perpetual
+  licences (no `exp`) are unchanged. `licenseExpired(exp, now)` is exported: the one rule both checks use.
+- **`createJwtSso` issuer, audience and lifetime.** `createJwtSso({ publicKey })` accepted a token the same
+  identity provider signed for another application (another `aud`, another `iss`), with that
+  application's roles, and a token with `exp` ten years out verified like a one-hour one. `issuer` and
+  `audience` are now required: leaving one out, or passing `undefined` or `''` (an env var that is not
+  set), is a startup error that names the fix. A token whose `exp` is more than `maxTtlSec` away (default
+  `MAX_SSO_TTL_SEC` = 86400, the longest common IdP default) is refused.
+- **SSO callback state.** `handleCallback` on `createAuth0Sso` and `createWorkOsSso` exchanged any code
+  under any state: `?code=<attacker's code>&state=anything` returned the attacker's principal, so a
+  victim's browser could be signed in as the attacker (login CSRF). It now requires `validateState` and
+  throws without one, naming the option. Compare the callback's state with the one you stored when you
+  called `authorizeUrl`. `principalFromRequest` does not need it.
+- **Stale JWKS.** When the JWKS refetch failed, `createAuth0Sso` used the cached keys with no limit.
+  Measured: 24 hours into a JWKS outage, a token signed by a key Auth0 had removed still verified. Past
+  `jwksMaxStaleMs` `principalFromRequest` returns `null` and `handleCallback` throws, naming the option —
+  so an Auth0 JWKS outage longer than the limit is a login outage. A clock that steps backwards no longer
+  keeps the cache fresh: the keys are refetched.
+- **FGA identity.** A `principalId` rule compared the raw `principal.id`, so the end user `ops` held every
+  grant written for the operator `ops`, and the application `ops` did too; and a grant to `u-1` held for
+  `u-1` in acme and in globex (ADR-0001 counts those as two users). The name is now what `actorIdOf` from
+  `@gnldev/auth` gives, the one every other identity comparison in GNL uses: `'u-1'` for an end user,
+  `'operator:ops'`, `'application:svc'`. `FgaRule.orgId` is new; left out, a `principalId` rule matches
+  only a caller with no organization. `role` rules and global grants are unchanged: deployment-wide
+  unless they name an `orgId`. Existing rules keep loading; nothing throws at boot. A caller that stops
+  matching gets a deny whose `reason` names the rule and the line to add; the same text is in
+  `FgaDeniedError`'s message and in the audit row's `detail`. Rules only grant, so the stricter match
+  can only narrow access, never widen it.
 
 ### Added
 
@@ -41,45 +70,7 @@ ten years out verified like a one-hour one.
   than this. `roleAuth`'s `endUsers` ceiling moved into it, so both token classes read one rule. Unset,
   `verifyJwt` behaves as before; `endUsers` behaves as before.
 
-**Breaking (`@gnldev/auth-ee`): an SSO callback needs a state check, and a stale JWKS has an age limit.**
-
-### Changed
-
-- **`handleCallback` requires `validateState`** on `createAuth0Sso` and `createWorkOsSso`. Without one it
-  exchanged any code under any state: `?code=<attacker's code>&state=anything` returned the attacker's
-  principal, so a victim's browser could be signed in as the attacker (login CSRF). It now throws, and
-  the message names the option. Compare the callback's state with the one you stored when you called
-  `authorizeUrl`; `validateState: () => true` restores the old behaviour. `principalFromRequest` does
-  not need it.
-- **`createAuth0Sso` stops trusting cached JWKS keys after `jwksMaxStaleMs`** (new, default 1 hour since
-  the last successful fetch). Before, when the JWKS refetch failed, the cached keys were used with no
-  limit. Measured: 24 hours into a JWKS outage, a token signed by a key Auth0 had removed still
-  verified. Past the limit `principalFromRequest` returns `null` and `handleCallback` throws, naming the
-  option. An Auth0 JWKS outage longer than an hour is therefore a login outage; `jwksMaxStaleMs: Infinity`
-  restores the old behaviour. A clock that steps backwards no longer keeps the cache fresh: the keys
-  are refetched.
-
-**Breaking, in @gnldev/auth-ee only: an FGA `principalId` rule names a caller by kind and organization.**
-No public package changes.
-
-1. **`principalId` is the kind-qualified name.** A rule compared the raw `principal.id`, so the end
-   user `ops` held every grant written for the operator `ops`, and the application `ops` did too. The
-   name is now what `actorIdOf` from `@gnldev/auth` gives, the one every other identity comparison in
-   GNL already uses: `'u-1'` for an end user, `'operator:ops'`, `'application:svc'`. A rule written for
-   staff as `principalId: 'ops'` becomes `principalId: 'operator:ops'`. An end user whose id is spelled
-   `operator:ops` matches no rule.
-2. **A rule can name an organization, and a `principalId` rule without one does not reach into every
-   organization.** `FgaRule.orgId` is new. A grant to `u-1` held for `u-1` in acme and in globex; a rule
-   could not say which (ADR-0001 counts those as two users). Left out, a `principalId` rule now matches
-   only a caller with no organization. Add `orgId: 'acme'` to a rule meant for one organization, or
-   `orgId: '*'` when ids are unique across organizations (the user store's `usr_…` ids are). `role`
-   rules and global grants are unchanged: deployment-wide unless they name an `orgId`.
-
-Existing rules keep loading; nothing throws at boot. A caller that stops matching gets a deny whose
-`reason` names the rule and the line to add (`write principalId: 'operator:ops'`, `add orgId: 'acme'
-to it, or orgId: '*'`). The same text is in `FgaDeniedError`'s message and in the audit row's `detail`.
-The MCP README's sample (a `role` rule) is unaffected.
-
+---
 
 ## [0.8.0] — 2026-09-30
 
